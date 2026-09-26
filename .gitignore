@@ -1,0 +1,25 @@
+# Dart and Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+build/
+coverage/
+
+# Generated native runners (created by tool/bootstrap.sh)
+android/
+ios/
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Local environment
+.env
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
