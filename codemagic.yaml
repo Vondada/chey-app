@@ -1,0 +1,40 @@
+workflows:
+  chey-mobile:
+    name: Chey Android and iOS
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/Library/Caches/CocoaPods
+        - $HOME/.gradle/caches
+    triggering:
+      events:
+        - push
+        - pull_request
+      branch_patterns:
+        - pattern: "*"
+          include: true
+          source: true
+    scripts:
+      - name: Bootstrap native projects
+        script: ./tool/bootstrap.sh
+      - name: Check formatting
+        script: dart format --output=none --set-exit-if-changed lib test
+      - name: Analyze
+        script: flutter analyze
+      - name: Test
+        script: mkdir -p build && flutter test --machine > build/test-results.json
+        test_report: build/test-results.json
+      - name: Build Android APK
+        script: flutter build apk --release
+      - name: Build unsigned iOS app
+        script: flutter build ios --release --no-codesign
+    artifacts:
+      - build/app/outputs/flutter-apk/*.apk
+      - build/ios/iphoneos/*.app
+      - flutter_drive.log
