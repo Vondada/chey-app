@@ -2316,14 +2316,115 @@ OWNER AGENCY
 
     if (hasAny([
       'stock',
+      'stocks',
       'nasdaq',
       's&p',
       'market',
       'trading',
       'futures',
       'nq',
+      'crypto',
+      'bitcoin',
+      'ethereum',
+      'setup',
+      'entry',
+      'stop loss',
+      'take profit',
     ])) {
       result.add('market_data');
+    }
+
+    if (hasAny([
+      'backtest',
+      'backtesting',
+      'historical test',
+      'strategy test',
+      'indicator',
+      'scanner',
+    ])) {
+      result.add('backtesting');
+    }
+
+    if (hasAny([
+      'copy trade',
+      'copy trading',
+      'mirror trade',
+      'live account',
+      'broker account',
+      'place trade',
+      'execute trade',
+    ])) {
+      result.add('broker_execution');
+    }
+
+    if (hasAny([
+      'prop firm',
+      'propfirm',
+      'funded account',
+      'evaluation account',
+    ])) {
+      result.add('prop_firm');
+    }
+
+    if (hasAny([
+      'public record',
+      'public records',
+      'court record',
+      'property record',
+      'business filing',
+      'became public',
+    ])) {
+      result.add('public_records');
+      if (!result.contains('web_research')) {
+        result.add('web_research');
+      }
+    }
+
+    if (hasAny([
+      'face verify',
+      'face verification',
+      'recognize my face',
+      'facial recognition',
+      'face recognition',
+    ])) {
+      result.add('face_verify');
+    }
+
+    if (hasAny([
+      'cash flow',
+      'business plan',
+      'manage my business',
+      'invoice',
+      'billing',
+      'customer',
+      'crm',
+      'expense',
+      'revenue',
+      'bookkeeping',
+    ])) {
+      result.add('business_ops');
+    }
+
+    if (hasAny([
+      'find clients',
+      'find customers',
+      'find leads',
+      'people who need my service',
+      'people who need my services',
+      'prospects',
+      'lead generation',
+    ])) {
+      result.add('lead_generation');
+    }
+
+    if (hasAny([
+      'charge customer',
+      'charge client',
+      'take payment',
+      'collect payment',
+      'send invoice',
+    ])) {
+      result.add('payments');
     }
 
     if (hasAny([
@@ -2546,16 +2647,24 @@ OWNER AGENCY
       _openAssistantHub(tab: 1);
       return true;
     }
-    if (RegExp(r'\b(open|show|go to)\s+(devices?|connections?)\b').hasMatch(lower)) {
+    if (RegExp(r'\b(open|show|go to)\s+(markets?|trading|stocks?|futures?|crypto)\b').hasMatch(lower)) {
       _openAssistantHub(tab: 2);
       return true;
     }
-    if (RegExp(r'\b(open|show|go to)\s+(music|playlists?)\b').hasMatch(lower)) {
+    if (RegExp(r'\b(open|show|go to)\s+(business|cash flow|customers?|leads?|billing)\b').hasMatch(lower)) {
       _openAssistantHub(tab: 3);
       return true;
     }
-    if (RegExp(r'\b(open|show|go to)\s+(create|innovation|creator)\b').hasMatch(lower)) {
+    if (RegExp(r'\b(open|show|go to)\s+(devices?|connections?|screen|identity)\b').hasMatch(lower)) {
       _openAssistantHub(tab: 4);
+      return true;
+    }
+    if (RegExp(r'\b(open|show|go to)\s+(music|playlists?)\b').hasMatch(lower)) {
+      _openAssistantHub(tab: 5);
+      return true;
+    }
+    if (RegExp(r'\b(open|show|go to)\s+(create|innovation|creator)\b').hasMatch(lower)) {
+      _openAssistantHub(tab: 6);
       return true;
     }
 
