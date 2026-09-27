@@ -307,7 +307,7 @@ export class CheState extends DurableObject {
         const history = Array.isArray(body.history) ? body.history.slice(-12) : [];
         const turns = history.filter((item) => item && ['user', 'assistant'].includes(item.role))
           .map((item) => ({ role: item.role, content: String(item.text || '').slice(0, 2000) }));
-        const model = /\b(code|reason|plan|explain|compare|research|analy[sz]e|invent|innovate|design|prototype|feasib|possible|render|engineer|create)\b/i.test(message)
+        const model = /\b(code|reason|plan|explain|compare|research|analy[sz]e|invent|innovate|design|prototype|feasib|possible|render|engineer|create|trade|trading|market|futures|crypto|backtest|indicator|business|cash flow|public records)\b/i.test(message)
           ? (this.env.CHE_STRONG_MODEL || STRONG_MODEL)
           : (this.env.CHE_FAST_MODEL || FAST_MODEL);
         const answer = await this.env.AI.run(model, {
