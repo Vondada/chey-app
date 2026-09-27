@@ -2573,9 +2573,9 @@ OWNER AGENCY
         : '●  SECURE AGENT ONLINE';
 
     if (_isSending) {
-      statusText = '●  C.H.E. THINKING';
+      statusText = '●  CHAY THINKING • EST. A FEW SECONDS';
     } else if (_isSpeaking) {
-      statusText = '●  C.H.E. SPEAKING';
+      statusText = '●  CHAY SPEAKING';
     } else if (cheSleeping) {
       statusText = isListening
           ? '●  STANDBY • SAY “CHAY”'
@@ -2594,9 +2594,9 @@ OWNER AGENCY
         centerTitle: true,
         toolbarHeight: 95,
         leading: IconButton(
-          onPressed: openMemoryManager,
-          icon: const Icon(Icons.memory, color: accent),
-          tooltip: 'Memory',
+          onPressed: _openAssistantHub,
+          icon: const Icon(Icons.dashboard_rounded, color: accent),
+          tooltip: 'CHE Hub',
         ),
         actions: [
           if (!kIsWeb)
@@ -2658,21 +2658,29 @@ OWNER AGENCY
         title: Column(
           children: [
             const Text(
-              'C.H.E.',
+              'CHE',
               style: TextStyle(
                 color: accent,
-                fontSize: 30,
-                fontWeight: FontWeight.bold,
+                fontSize: 29,
+                fontWeight: FontWeight.w800,
                 letterSpacing: 4,
               ),
             ),
-            const SizedBox(height: 8),
+            const Text(
+              'COGNITIVE.HORIZON.ENGINE',
+              style: TextStyle(
+                color: Colors.white54,
+                fontSize: 8,
+                letterSpacing: 1.4,
+              ),
+            ),
+            const SizedBox(height: 5),
             Text(
               statusText,
               style: const TextStyle(
                 color: accent,
-                fontSize: 11,
-                letterSpacing: 1.6,
+                fontSize: 9.5,
+                letterSpacing: 1.25,
               ),
             ),
           ],
@@ -2682,6 +2690,42 @@ OWNER AGENCY
         child: Column(
           children: [
             const Divider(color: Color(0xFF354859)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 6, 14, 2),
+              child: Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  Chip(
+                    avatar: Icon(
+                      isListening ? Icons.mic : Icons.mic_none,
+                      size: 16,
+                      color: isListening ? accent : Colors.white54,
+                    ),
+                    label: Text(isListening ? 'Listening' : 'Mic standby'),
+                    backgroundColor: const Color(0xFF1A2935),
+                  ),
+                  Chip(
+                    avatar: Icon(
+                      _pendingScreenContext == null
+                          ? Icons.visibility_off_outlined
+                          : Icons.visibility,
+                      size: 16,
+                      color: _pendingScreenContext == null
+                          ? Colors.white54
+                          : accent,
+                    ),
+                    label: Text(
+                      _pendingScreenContext == null
+                          ? 'Screen context off'
+                          : 'Screen context ready',
+                    ),
+                    backgroundColor: const Color(0xFF1A2935),
+                  ),
+                ],
+              ),
+            ),
             if (openConversation)
               Container(
                 width: double.infinity,
@@ -2693,7 +2737,7 @@ OWNER AGENCY
                           ? '● OPEN CONVERSATION • SAY “CHAY” + YOUR COMMAND'
                           : '● OPEN CONVERSATION • LISTENING...')
                       : _isSpeaking
-                          ? '● OPEN CONVERSATION • C.H.E. SPEAKING...'
+                          ? '● OPEN CONVERSATION • CHAY SPEAKING...'
                           : _isSending
                               ? '● OPEN CONVERSATION • THINKING...'
                               : '● OPEN CONVERSATION',
@@ -3733,9 +3777,9 @@ class _CHEAgentException implements Exception {
         : '●  SECURE AGENT ONLINE';
 
     if (_isSending) {
-      statusText = '●  C.H.E. THINKING';
+      statusText = '●  CHAY THINKING • EST. A FEW SECONDS';
     } else if (_isSpeaking) {
-      statusText = '●  C.H.E. SPEAKING';
+      statusText = '●  CHAY SPEAKING';
     } else if (cheSleeping) {
       statusText = isListening
           ? '●  STANDBY • SAY “CHAY”'
@@ -3853,7 +3897,7 @@ class _CHEAgentException implements Exception {
                           ? '● OPEN CONVERSATION • SAY “CHAY” + YOUR COMMAND'
                           : '● OPEN CONVERSATION • LISTENING...')
                       : _isSpeaking
-                          ? '● OPEN CONVERSATION • C.H.E. SPEAKING...'
+                          ? '● OPEN CONVERSATION • CHAY SPEAKING...'
                           : _isSending
                               ? '● OPEN CONVERSATION • THINKING...'
                               : '● OPEN CONVERSATION',
