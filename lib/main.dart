@@ -125,13 +125,16 @@ class _CHEHomeState extends State<CHEHome> {
   List<Map<String, dynamic>> vaultItems = [];
   List<Map<String, dynamic>> team = [];
   List<Map<String, dynamic>> teamTasks = [];
+  List<Map<String, dynamic>> backgroundJobs = [];
   Map<String, bool> integrations = const {
     'storage_vault': false,
     'object_storage': false,
     'work_engine': false,
     'office': false,
     'action_engine': false,
+    'background_jobs': false,
     'natural_voice': false,
+    'quantum_compute': false,
     'web_research': false,
     'public_records': false,
     'music': false,
@@ -749,6 +752,7 @@ OWNER AGENCY
       final vaultData = (data['vault_items'] as List?) ?? const [];
       final teamData = (data['team'] as List?) ?? const [];
       final teamTaskData = (data['team_tasks'] as List?) ?? const [];
+      final jobData = (data['jobs'] as List?) ?? const [];
       final integrationData = (data['integrations'] as Map?) ?? const {};
 
       savedMemories = memoryData.map((e) => e.toString()).toList();
@@ -774,13 +778,19 @@ OWNER AGENCY
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
+      backgroundJobs = jobData
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
       integrations = {
         'storage_vault': integrationData['storage_vault'] == true,
         'object_storage': integrationData['object_storage'] == true,
         'work_engine': integrationData['work_engine'] == true,
         'office': integrationData['office'] == true,
         'action_engine': integrationData['action_engine'] == true,
+        'background_jobs': integrationData['background_jobs'] == true,
         'natural_voice': integrationData['natural_voice'] == true,
+        'quantum_compute': integrationData['quantum_compute'] == true,
         'web_research': integrationData['web_research'] == true,
         'public_records': integrationData['public_records'] == true,
         'music': integrationData['music'] == true,
@@ -2979,6 +2989,26 @@ OWNER AGENCY
           onTap: _openVault,
         ),
         _integrationCard(
+          Icons.cloud_queue_outlined,
+          'CHE Background Work',
+          'Real cloud-side jobs can keep running after the app request returns.',
+          integrations['background_jobs'] == true,
+          onTap: () => _runHubPrompt(
+            'Show me how to give CHE a task to keep working on in the background while I do something else.',
+          ),
+        ),
+        _integrationCard(
+          Icons.memory_outlined,
+          'Advanced / Quantum Compute',
+          integrations['quantum_compute'] == true
+              ? 'A specialized quantum-compute connector is available for suitable optimization or simulation work.'
+              : 'Ready to use a real quantum-compute service when one is connected; CHE will not pretend ordinary chat runs on quantum hardware.',
+          integrations['quantum_compute'] == true,
+          onTap: () => _runHubPrompt(
+            'Check whether this task can actually benefit from quantum or specialized compute. Use the connected quantum service only if available and appropriate.',
+          ),
+        ),
+        _integrationCard(
           Icons.cloud_outlined,
           'Large Object Storage',
           integrations['object_storage'] == true
@@ -3428,6 +3458,37 @@ OWNER AGENCY
           ),
         ),
         const SizedBox(height: 8),
+        if (backgroundJobs.isNotEmpty) ...[
+          const Text(
+            'BACKGROUND WORK',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          ...backgroundJobs.take(6).map(
+            (job) => Card(
+              child: ListTile(
+                leading: Icon(
+                  job['status'] == 'complete'
+                      ? Icons.check_circle_outline
+                      : job['status'] == 'failed'
+                          ? Icons.error_outline
+                          : Icons.sync,
+                ),
+                title: Text(job['title']?.toString() ?? 'CHE background job'),
+                subtitle: Text(
+                  (job['result']?.toString() ?? '').isNotEmpty
+                      ? '${job['status']}\n${job['result']}'
+                      : (job['error']?.toString() ?? '').isNotEmpty
+                          ? '${job['status']}\n${job['error']}'
+                          : job['status']?.toString() ?? 'queued',
+                  maxLines: 4,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
         FilledButton.icon(
           onPressed: _createPartnerDialog,
           icon: const Icon(Icons.person_add_alt_1_outlined),
@@ -3968,6 +4029,16 @@ OWNER AGENCY
     }
 
     if (hasAny([
+      'quantum',
+      'quantum computer',
+      'quantum computing',
+      'quantum optimization',
+      'quantum simulation',
+    ])) {
+      result.add('quantum_compute');
+    }
+
+    if (hasAny([
       'at the same time',
       'while you',
       'also do',
@@ -4499,7 +4570,11 @@ OWNER AGENCY
     speech.cancel();
     flutterTts.stop();
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
-      unawaited(CheNativeVoice.stopAudio().catchError((_) => false));
+      unawaited(
+        CheNativeVoice.stopAudio()
+            .then<void>((_) {})
+            .catchError((_) {}),
+      );
     }
     super.dispose();
   }
