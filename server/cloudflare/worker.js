@@ -274,6 +274,7 @@ async function modelPanel(env, query) {
     ['Anthropic', env.CHE_ANTHROPIC_MODEL_URL, env.CHE_ANTHROPIC_MODEL_TOKEN],
     ['xAI', env.CHE_XAI_MODEL_URL, env.CHE_XAI_MODEL_TOKEN],
     ['DeepSeek', env.CHE_DEEPSEEK_MODEL_URL, env.CHE_DEEPSEEK_MODEL_TOKEN],
+    ['GitHub Copilot', env.CHE_COPILOT_MODEL_URL, env.CHE_COPILOT_MODEL_TOKEN],
   ].filter((item) => Boolean(item[1]));
 
   if (!connectors.length) return [];
@@ -414,6 +415,13 @@ export class CheState extends DurableObject {
             rendering: Boolean(this.env.CHE_RENDER_URL),
             image_generation: Boolean(this.env.CHE_IMAGE_GEN_URL),
             video_generation: Boolean(this.env.CHE_VIDEO_GEN_URL),
+            model_panel: Boolean(
+              this.env.CHE_OPENAI_MODEL_URL ||
+              this.env.CHE_ANTHROPIC_MODEL_URL ||
+              this.env.CHE_XAI_MODEL_URL ||
+              this.env.CHE_DEEPSEEK_MODEL_URL ||
+              this.env.CHE_COPILOT_MODEL_URL
+            ),
             screen_capture: Boolean(this.env.CHE_SCREEN_URL),
             face_verify: Boolean(this.env.CHE_FACE_VERIFY_URL),
             data_recognition: Boolean(this.env.CHE_DATA_RECOGNITION_URL),
@@ -561,9 +569,17 @@ export class CheState extends DurableObject {
         const shouldResearch = requestedCapabilities.includes('web_research') ||
           requestedCapabilities.includes('innovation_mode') ||
           /\b(research|latest|current|novel|prior art|feasib|humanly possible|artistically possible)\b/i.test(message);
-        const research = shouldResearch
-          ? await optionalResearch(this.env, message)
-          : null;
+        const useModelPanel =
+          /\b(reason|analy[sz]e|compare|research|plan|design|code|invent|innovate|trade|trading|market|business|strategy|explain|debug|build)\b/i.test(message);
+
+        const [research, panel] = await Promise.all([
+          shouldResearch
+            ? optionalResearch(this.env, message)
+            : Promise.resolve(null),
+          useModelPanel
+            ? modelPanel(this.env, message)
+            : Promise.resolve([]),
+        ]);
 
         if (research?.summary) {
           data.learned_knowledge = Array.isArray(data.learned_knowledge)
@@ -621,6 +637,7 @@ export class CheState extends DurableObject {
               'When multitasking, report only useful progress and estimated timing. Never claim simultaneous execution unless the underlying tools actually ran concurrently or independently.',
               'If one subtask is blocked, continue making progress on the others when safe instead of stopping the entire job.',
               'When live research is available through a connected tool, use multiple credible sources for novelty and feasibility checks. When live research is not connected, clearly label the research gap and give a concrete research plan instead of pretending the check happened.',
+              'MULTI-MODEL PANEL: connected model providers are advisory sources, not a copied knowledge base. Compare their answers, notice disagreements, prefer evidence and consistency, and synthesize a faster, more accurate final answer. Do not claim access to proprietary training data or internal reasoning from another model.',
               'Rendering requests should produce a real render only through a connected rendering/image tool. Without one, provide a precise render brief, scene/specification, dimensions, materials, camera/view, and prototype instructions.',
               'IMAGE GENERATION: when a connected image generator is available and the owner explicitly asks for an image, create the real image rather than only describing it. Preserve the owner’s requested subject, style, composition and constraints.',
               'VIDEO GENERATION: when a connected video generator is available and the owner explicitly asks for a generated video, create the real video or clip. If unavailable, provide a concise shot list, motion plan, duration, aspect ratio and generation brief instead of pretending it rendered.',
@@ -638,6 +655,13 @@ export class CheState extends DurableObject {
                 rendering: Boolean(this.env.CHE_RENDER_URL),
                 image_generation: Boolean(this.env.CHE_IMAGE_GEN_URL),
                 video_generation: Boolean(this.env.CHE_VIDEO_GEN_URL),
+                model_panel: Boolean(
+                  this.env.CHE_OPENAI_MODEL_URL ||
+                  this.env.CHE_ANTHROPIC_MODEL_URL ||
+                  this.env.CHE_XAI_MODEL_URL ||
+                  this.env.CHE_DEEPSEEK_MODEL_URL ||
+                  this.env.CHE_COPILOT_MODEL_URL
+                ),
                 screen_capture: Boolean(this.env.CHE_SCREEN_URL),
                 face_verify: Boolean(this.env.CHE_FACE_VERIFY_URL),
                 data_recognition: Boolean(this.env.CHE_DATA_RECOGNITION_URL),
@@ -659,6 +683,9 @@ export class CheState extends DurableObject {
                 : multimodal?.error
                   ? `Multimodal status: ${multimodal.error} Do not pretend the attachment was analyzed.`
                   : 'No multimodal attachment analysis is available for this turn.',
+              panel.length
+                ? `Connected multi-model advisory panel: ${JSON.stringify(panel).slice(0, 24000)}`
+                : 'No external model-panel answers were available for this turn.',
               imageGeneration?.error
                 ? `Image generation status: ${imageGeneration.error}`
                 : imageGeneration?.job_id
