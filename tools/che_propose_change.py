@@ -19,6 +19,10 @@ MAX_CONTEXT = 95_000
 MAX_PATCH = 80_000
 ALLOWED_ROOTS = ("lib/", "test/")
 ALLOWED_FILES = {"pubspec.yaml"}
+PROJECT_EXTENSIONS = {
+    ".dart", ".html", ".css", ".js", ".ts", ".json", ".md", ".txt",
+    ".yaml", ".yml", ".xml", ".svg",
+}
 
 
 def run(*args: str, input_text: str | None = None) -> str:
@@ -30,11 +34,13 @@ def run(*args: str, input_text: str | None = None) -> str:
 
 def allowed(path: str) -> bool:
     p = PurePosixPath(path)
+    project_file = path.startswith("projects/") and p.suffix.lower() in PROJECT_EXTENSIONS
     return (
         not p.is_absolute()
         and ".." not in p.parts
         and ((path.startswith(ALLOWED_ROOTS) and path.endswith(".dart"))
-             or path in ALLOWED_FILES)
+             or path in ALLOWED_FILES
+             or project_file)
         and not path.endswith((".key", ".p8", ".p12", ".env"))
     )
 
@@ -62,11 +68,14 @@ def source_context() -> str:
 
 def model_patch(request: str, model: str, key: str, context: str) -> str:
     prompt = (
-        "You edit a Flutter personal assistant called CHE. Produce ONLY a unified "
-        "git diff patch with diff --git headers, no Markdown. Make the smallest "
-        "change that fulfills the owner's request. Do not modify secrets, CI, "
-        "permissions, signing, or unrelated behavior. Never claim an unbuilt "
-        "phone capability. Request:\n" + request + "\n\nSource:\n" + context
+        "You edit a Flutter personal assistant called CHE and can also create owner-requested "
+        "creative projects. Produce ONLY a unified git diff patch with diff --git headers, "
+        "no Markdown outside the patch. Make the smallest change that fulfills the owner's request. "
+        "For a NEW website, app prototype, book, screenplay, movie script, story, or similar project, "
+        "create files under projects/<short-project-name>/ using only allowed text/code formats. "
+        "For an existing CHE feature request, edit the existing CHE source. Do not modify secrets, CI, "
+        "permissions, signing, or unrelated behavior. Never claim an unbuilt phone/device capability. "
+        "Request:\n" + request + "\n\nSource:\n" + context
     )
     payload = json.dumps({
         "model": model,
@@ -95,10 +104,12 @@ def validate_patch(patch: str) -> None:
     paths = re.findall(r"^diff --git a/(\S+) b/(\S+)$", patch, re.M)
     if not paths or len(paths) > 6:
         raise ValueError("Expected a patch for one to six files.")
+    tracked = set(run("git", "ls-files").splitlines())
     for old, new in paths:
         if old != new or not allowed(old):
             raise ValueError(f"Disallowed file change: {old} -> {new}")
-        run("git", "ls-files", "--error-unmatch", "--", old)
+        if old not in tracked and not old.startswith("projects/"):
+            raise ValueError(f"New files are only allowed under projects/: {old}")
     if "GIT binary patch" in patch or "deleted file mode" in patch:
         raise ValueError("Binary changes and deletions require manual review.")
     run("git", "apply", "--check", "-", input_text=patch)
