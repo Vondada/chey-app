@@ -890,9 +890,7 @@ OWNER AGENCY
 
       // Native builds can keep an open foreground conversation more reliably.
       // iPhone Safari/web still requires browser-controlled microphone sessions.
-      if (!kIsWeb &&
-          available &&
-          defaultTargetPlatform != TargetPlatform.iOS) {
+      if (!kIsWeb && available) {
         openConversation = true;
         _restartListeningSoon(delay: const Duration(milliseconds: 700));
       }
@@ -1385,7 +1383,7 @@ OWNER AGENCY
           if (wakePhraseMode && spokenWords.isNotEmpty) {
             final lower = spokenWords.toLowerCase();
 
-            if (!lower.contains(RegExp(r'\bche\b'))) {
+            if (!lower.contains(RegExp(r'\b(?:che|she)\b'))) {
               if (result.finalResult && !kIsWeb && openConversation) {
                 _restartListeningSoon(
                   delay: const Duration(milliseconds: 250),
@@ -1397,7 +1395,7 @@ OWNER AGENCY
             spokenWords = spokenWords
                 .replaceFirst(
                   RegExp(
-                    r'\bche\b[\s,.:;!?-]*',
+                    r'\b(?:che|she)\b[\s,.:;!?-]*',
                     caseSensitive: false,
                   ),
                   '',
@@ -1443,7 +1441,7 @@ OWNER AGENCY
           cancelOnError: true,
           autoPunctuation: true,
           listenMode: stt.ListenMode.dictation,
-          pauseFor: const Duration(milliseconds: 900),
+          pauseFor: const Duration(milliseconds: 2500),
           listenFor: const Duration(seconds: 30),
         ),
       );
