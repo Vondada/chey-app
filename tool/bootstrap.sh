@@ -52,6 +52,7 @@ if [[ -f ios/Runner/AppDelegate.swift ]]; then
 import Flutter
 import UIKit
 import AVFoundation
+import AppIntents
 
 private final class CHEVoiceStreamHandler: NSObject, FlutterStreamHandler {
   func onListen(
@@ -63,6 +64,42 @@ private final class CHEVoiceStreamHandler: NSObject, FlutterStreamHandler {
 
   func onCancel(withArguments arguments: Any?) -> FlutterError? {
     nil
+  }
+}
+
+struct WakeCHEIntent: AppIntent {
+  static let title: LocalizedStringResource = "Wake CHE"
+  static let description = IntentDescription(
+    "Opens CHE for a hands-free conversation."
+  )
+
+  // Apple allows this intent to be invoked while the device is locked.
+  // iOS still decides whether presenting the full app UI requires unlock.
+  static var authenticationPolicy: IntentAuthenticationPolicy {
+    .alwaysAllowed
+  }
+
+  static var openAppWhenRun: Bool { true }
+
+  @MainActor
+  func perform() async throws -> some IntentResult & ProvidesDialog {
+    UserDefaults.standard.set(true, forKey: "CHEWakeRequested")
+    return .result(dialog: "Opening CHE.")
+  }
+}
+
+struct CHEAppShortcuts: AppShortcutsProvider {
+  static var appShortcuts: [AppShortcut] {
+    AppShortcut(
+      intent: WakeCHEIntent(),
+      phrases: [
+        "Wake \(.applicationName)",
+        "Talk to \(.applicationName)",
+        "Open \(.applicationName)",
+      ],
+      shortTitle: "Wake CHE",
+      systemImageName: "waveform"
+    )
   }
 }
 
