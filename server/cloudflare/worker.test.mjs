@@ -32,6 +32,9 @@ test('pairing, owner gate, memories, and revocation', async () => {
   assert.equal((await send('/api/memory/add', 'POST', { memory: 'Likes Sprite' }, token)).status, 200);
   assert.deepEqual((await (await send('/api/state', 'GET', {}, token)).json()).memories, ['Likes Sprite']);
   assert.match(await (await send('/api/chat', 'POST', { message: 'hi' }, token)).text(), /Hello, sir/);
+  assert.match(await (await send('/api/chat', 'POST', { message: 'Remember that my favorite pizza is pepperoni' }, token)).text(), /remember/);
+  assert.deepEqual((await (await send('/api/state', 'GET', {}, token)).json()).memories,
+    ['Likes Sprite', 'my favorite pizza is pepperoni']);
   assert.equal((await send('/api/change/request', 'POST', { request: 'Add a feature to my app' }, token)).status, 503);
   assert.equal((await send('/api/security/revoke_self', 'POST', {}, token)).status, 200);
   assert.equal((await send('/api/chat', 'POST', { message: 'hi' }, token)).status, 401);

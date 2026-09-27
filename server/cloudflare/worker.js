@@ -130,6 +130,23 @@ export class CheState extends DurableObject {
       if (path === '/api/chat') {
         const message = String(body.message || '').trim().slice(0, 5000);
         if (!message) return json({ detail: 'Message required.' }, 400);
+        const remember = /^(?:che[, ]+)?remember(?: that)?\s+(.+)/i.exec(message);
+        if (remember) {
+          const memory = remember[1].trim().slice(0, 500);
+          const reply = /password|passcode|security code|social security|credit card/i.test(memory)
+            ? 'I should not save that kind of secret, sir.'
+            : 'I’ll remember that, sir.';
+          if (reply.startsWith('I’ll')) {
+            if (!data.memories.some((item) => item.toLowerCase() === memory.toLowerCase())) {
+              data.memories.push(memory);
+              data.memories = data.memories.slice(-100);
+              await this.ctx.storage.put('che', data);
+            }
+          }
+          return new Response(JSON.stringify({ type: 'delta', delta: reply }) + '\n', {
+            headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' },
+          });
+        }
         const history = Array.isArray(body.history) ? body.history.slice(-12) : [];
         const turns = history.filter((item) => item && ['user', 'assistant'].includes(item.role))
           .map((item) => ({ role: item.role, content: String(item.text || '').slice(0, 2000) }));
