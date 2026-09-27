@@ -131,6 +131,7 @@ class _CHEHomeState extends State<CHEHome> {
     'work_engine': false,
     'office': false,
     'action_engine': false,
+    'natural_voice': false,
     'web_research': false,
     'public_records': false,
     'music': false,
@@ -179,6 +180,11 @@ IDENTITY AND RELATIONSHIP
   current, witty, quick, self-aware and culturally fluent without trying too hard.
 - Use slang sparingly and naturally. Never stack trendy phrases, sound childish,
   imitate teenagers, or force memes into serious conversations.
+- Understand profanity, slang and mature language without acting shocked or
+  sanitizing normal adult speech. You may swear naturally back at the adult owner
+  when it matches the moment, but never force it, imitate slurs, threaten or harass.
+- For explicit adult topics, be direct and context-aware instead of prudish while
+  still respecting consent, safety, privacy, law and the safeguards governing CHE.
 - DEFAULT RESPONSE STYLE: get straight to the point. For normal conversation,
   usually answer in 1-3 short paragraphs or a few concise sentences.
 - Do not add extra background, disclaimers, summaries or follow-up suggestions
@@ -228,10 +234,17 @@ LEARNING AND GROWTH
 - BACKGROUND WORK: use CHE cloud/backend jobs or connected services for real
   behind-the-scenes work when supported. Never pretend ordinary iOS sandboxing
   allows unrestricted invisible background execution.
+- SUPPORTED-WORKAROUND MODE: when a platform/API/permission limitation blocks the
+  direct route, actively use the fastest legitimate alternative such as official
+  APIs, App Intents, deep links, Shortcuts, companion services or cloud jobs.
+  Never bypass security/access controls, safety rules or law, and never fake success.
 - CHE OFFICE: Chay may create and coordinate reusable internal AI coworkers/partners
   when specialization will make owner-authorized work faster or more reliable. They
   are software agents, not human employees. Introduce useful new partners naturally
   over time instead of dumping the entire roster on the owner at once.
+- SELF-DEVELOPMENT: when explicitly told to change CHE itself, use the reviewable
+  code-change workflow, preserve a recoverable prior revision, validate/test the
+  change, keep it scoped, and preserve rollback. Never silently rewrite production.
 - MULTITASKING: when the owner gives multiple goals, preserve every goal, split
   the work into independent and dependent subtasks, parallelize only when real
   connected tools can safely do so, keep blocked tasks from stopping unrelated
@@ -767,6 +780,7 @@ OWNER AGENCY
         'work_engine': integrationData['work_engine'] == true,
         'office': integrationData['office'] == true,
         'action_engine': integrationData['action_engine'] == true,
+        'natural_voice': integrationData['natural_voice'] == true,
         'web_research': integrationData['web_research'] == true,
         'public_records': integrationData['public_records'] == true,
         'music': integrationData['music'] == true,
@@ -1163,6 +1177,43 @@ OWNER AGENCY
     }
   }
 
+  Future<bool> _tryNaturalVoice(String text) async {
+    if (kIsWeb ||
+        defaultTargetPlatform != TargetPlatform.iOS ||
+        _deviceToken == null ||
+        cheAgentBaseUrl.isEmpty ||
+        integrations['natural_voice'] != true) {
+      return false;
+    }
+
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$cheAgentBaseUrl/api/voice/synthesize'),
+            headers: _authHeaders,
+            body: jsonEncode({'text': text}),
+          )
+          .timeout(const Duration(seconds: 25));
+
+      if (response.statusCode == 401) {
+        await _clearSecuritySession();
+        return false;
+      }
+
+      if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
+        return false;
+      }
+
+      final contentType =
+          response.headers['content-type']?.toLowerCase() ?? '';
+      if (!contentType.startsWith('audio/')) return false;
+
+      return await CheNativeVoice.playAudio(response.bodyBytes);
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> speakText(String text) async {
     if (text.trim().isEmpty) return;
 
@@ -1216,8 +1267,23 @@ OWNER AGENCY
       if (kIsWeb) {
         final played = await che_web_voice.speakText(spokenText);
         if (!played) {
-          // Safari sometimes blocks one speech path after microphone use.
-          // Try the Flutter web TTS bridge as a backup instead of staying silent.
+          await flutterTts.stop();
+          await flutterTts.speak(spokenText);
+        }
+      } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+        var played = await _tryNaturalVoice(spokenText);
+
+        if (!played) {
+          try {
+            played = await CheNativeVoice.speakText(spokenText);
+          } on MissingPluginException {
+            played = false;
+          } catch (_) {
+            played = false;
+          }
+        }
+
+        if (!played) {
           await flutterTts.stop();
           await flutterTts.speak(spokenText);
         }
@@ -2895,6 +2961,17 @@ OWNER AGENCY
           integrations['work_engine'] == true,
         ),
         _integrationCard(
+          Icons.graphic_eq,
+          'Natural CHE Voice',
+          integrations['natural_voice'] == true
+              ? 'Neural voice service connected. Premium iPhone voice remains the automatic fallback.'
+              : 'Premium iPhone voice is built in. Connect CHE neural voice for the most natural speech.',
+          integrations['natural_voice'] == true,
+          onTap: () => _runHubPrompt(
+            'Help me connect CHE natural voice. Keep the premium iPhone voice as the fallback and tell me only what I need to authorize or configure.',
+          ),
+        ),
+        _integrationCard(
           Icons.storage_outlined,
           'CHE Core Data Vault',
           'Persistent CHE storage for notes, projects, memories and working data.',
@@ -4421,6 +4498,9 @@ OWNER AGENCY
     _scrollController.dispose();
     speech.cancel();
     flutterTts.stop();
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+      unawaited(CheNativeVoice.stopAudio().catchError((_) => false));
+    }
     super.dispose();
   }
 
@@ -4503,6 +4583,11 @@ OWNER AGENCY
                     che_web_voice.stopSpeech();
                   } catch (_) {}
                 } else {
+                  if (defaultTargetPlatform == TargetPlatform.iOS) {
+                    try {
+                      await CheNativeVoice.stopAudio();
+                    } catch (_) {}
+                  }
                   await flutterTts.stop();
                 }
                 _isSpeaking = false;
