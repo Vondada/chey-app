@@ -2707,10 +2707,12 @@ OWNER AGENCY
     IconData icon,
     String title,
     String description,
-    bool connected,
-  ) {
+    bool connected, {
+    VoidCallback? onTap,
+  }) {
     return Card(
       child: ListTile(
+        onTap: onTap,
         leading: Icon(icon),
         title: Text(title),
         subtitle: Text(description),
@@ -2826,11 +2828,18 @@ OWNER AGENCY
         ),
         _integrationCard(
           Icons.storage_outlined,
-          'CHE Data Vault',
-          integrations['storage_vault'] == true
-              ? 'Large files, generated media and datasets can use CHE object storage.'
-              : 'Core memory is online; large-file object storage is not connected yet.',
+          'CHE Core Data Vault',
+          'Persistent CHE storage for notes, projects, memories and working data.',
           integrations['storage_vault'] == true,
+          onTap: _openVault,
+        ),
+        _integrationCard(
+          Icons.cloud_outlined,
+          'Large Object Storage',
+          integrations['object_storage'] == true
+              ? 'Large files, generated media and datasets can be archived.'
+              : 'Not connected yet. Core CHE data still persists in the Data Vault.',
+          integrations['object_storage'] == true,
         ),
         _integrationCard(
           Icons.computer,
@@ -2923,55 +2932,83 @@ OWNER AGENCY
   Widget _hubCreateTab() {
     return _hubList(
       'Create + Innovate',
-      'Turn ideas into projects, prototypes and research plans.',
+      'A real CHE workspace for projects, drafts and invention development.',
       [
-        const Card(
-          child: ListTile(
-            leading: Icon(Icons.code),
-            title: Text('Build with your voice'),
-            subtitle: Text(
-              'Ask Chay to draft websites, apps, books, scripts, prototypes, specs and code changes.',
+        FilledButton.icon(
+          onPressed: _createProjectDialog,
+          icon: const Icon(Icons.add),
+          label: const Text('NEW PROJECT'),
+        ),
+        const SizedBox(height: 12),
+        if (projects.isEmpty)
+          const Card(
+            child: ListTile(
+              leading: Icon(Icons.folder_open_outlined),
+              title: Text('No projects yet'),
+              subtitle: Text(
+                'Create one here or say “Chay, write a book…” / “Chay, build a website…”',
+              ),
+            ),
+          )
+        else ...[
+          const Text(
+            'YOUR PROJECTS',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          ...projects.take(12).map(
+            (project) => Card(
+              child: ListTile(
+                leading: const Icon(Icons.auto_awesome),
+                title: Text(project['title']?.toString() ?? 'Untitled project'),
+                subtitle: Text(
+                  '${project['type'] ?? 'project'} • ${project['status'] ?? 'draft'}',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _openProjectEditor(project),
+              ),
             ),
           ),
+        ],
+        const SizedBox(height: 16),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.storage_outlined),
+            title: const Text('CHE Core Data Vault'),
+            subtitle: Text(
+              '${vaultItems.length} saved vault item${vaultItems.length == 1 ? '' : 's'} • persistent project and note storage',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _openVault,
+          ),
         ),
+        const SizedBox(height: 16),
         const Card(
           child: ListTile(
             leading: Icon(Icons.science_outlined),
             title: Text('Innovation mode'),
             subtitle: Text(
-              'Chay separates imagination, feasibility, unknowns, research needs and prototype tests.',
+              'Chay can develop concepts, feasibility assumptions, prototypes and test plans inside a saved project.',
             ),
           ),
         ),
         _integrationCard(
           Icons.public,
-          'Novelty + feasibility research',
-          'Live research checks require the research connection.',
+          'Live novelty + feasibility research',
+          'Research becomes live when the CHE research service is connected.',
           integrations['web_research'] == true,
-        ),
-        _integrationCard(
-          Icons.brush_outlined,
-          'Concept rendering',
-          'Visual renders require the rendering connection; SVG/wireframe project drafts can still be generated.',
-          integrations['rendering'] == true,
         ),
         _integrationCard(
           Icons.image_outlined,
           'Image Generation',
-          'Create original images, concept art, product visuals, diagrams and design variations through a connected image model.',
+          'Generate original visual assets when CHE image compute is connected.',
           integrations['image_generation'] == true,
         ),
         _integrationCard(
           Icons.movie_creation_outlined,
           'Video Generation',
-          'Create short generated video concepts and clips through a connected video model.',
+          'Generate video clips when CHE video compute is connected.',
           integrations['video_generation'] == true,
-        ),
-        _integrationCard(
-          Icons.hub_outlined,
-          'Multi-Model Panel',
-          'Compare connected OpenAI, Claude, Grok/xAI, DeepSeek and Copilot answers, then let Chay synthesize the strongest response.',
-          integrations['model_panel'] == true,
         ),
       ],
     );
