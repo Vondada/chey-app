@@ -3240,7 +3240,15 @@ OWNER AGENCY
                       child: ListTile(
                         leading: const Icon(Icons.task_alt_outlined),
                         title: Text(item['task']?.toString() ?? 'Task'),
-                        subtitle: Text(item['status']?.toString() ?? 'assigned'),
+                        subtitle: Text(
+                          (item['result']?.toString() ?? '').isNotEmpty
+                              ? '${item['status'] ?? 'complete'}\n${item['result']}'
+                              : (item['error']?.toString() ?? '').isNotEmpty
+                                  ? '${item['status'] ?? 'failed'}\n${item['error']}'
+                                  : item['status']?.toString() ?? 'assigned',
+                          maxLines: 5,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                     ),
                   ),
