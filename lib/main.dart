@@ -2340,6 +2340,9 @@ OWNER AGENCY
       'take profit',
     ])) {
       result.add('market_data');
+      if (!result.contains('web_research')) {
+        result.add('web_research');
+      }
     }
 
     if (hasAny([
