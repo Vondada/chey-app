@@ -121,8 +121,11 @@ class _CHEHomeState extends State<CHEHome> {
   List<Map<String, dynamic>> learnedPersonality = [];
   List<String> learnedKnowledge = [];
   List<String> suggestions = [];
+  List<Map<String, dynamic>> projects = [];
+  List<Map<String, dynamic>> vaultItems = [];
   Map<String, bool> integrations = const {
     'storage_vault': false,
+    'object_storage': false,
     'web_research': false,
     'public_records': false,
     'music': false,
@@ -714,6 +717,8 @@ OWNER AGENCY
       final personalityData = (data['personality'] as List?) ?? const [];
       final knowledgeData = (data['learned_knowledge'] as List?) ?? const [];
       final suggestionData = (data['suggestions'] as List?) ?? const [];
+      final projectData = (data['projects'] as List?) ?? const [];
+      final vaultData = (data['vault_items'] as List?) ?? const [];
       final integrationData = (data['integrations'] as Map?) ?? const {};
 
       savedMemories = memoryData.map((e) => e.toString()).toList();
@@ -723,8 +728,17 @@ OWNER AGENCY
           .toList();
       learnedKnowledge = knowledgeData.map((e) => e.toString()).toList();
       suggestions = suggestionData.map((e) => e.toString()).toList();
+      projects = projectData
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      vaultItems = vaultData
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
       integrations = {
         'storage_vault': integrationData['storage_vault'] == true,
+        'object_storage': integrationData['object_storage'] == true,
         'web_research': integrationData['web_research'] == true,
         'public_records': integrationData['public_records'] == true,
         'music': integrationData['music'] == true,
