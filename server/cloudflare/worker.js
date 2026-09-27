@@ -268,6 +268,127 @@ async function optionalModelGateway(urlValue, tokenValue, provider, query) {
   }
 }
 
+async function optionalToolConnector(
+  urlValue,
+  tokenValue,
+  tool,
+  query,
+  extra = {},
+) {
+  if (!urlValue) return null;
+
+  let url;
+  try {
+    url = new URL(urlValue);
+  } catch (_) {
+    return { tool, error: 'invalid connector URL' };
+  }
+  if (url.protocol !== 'https:') {
+    return { tool, error: 'connector must use HTTPS' };
+  }
+
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (tokenValue) headers.Authorization = `Bearer ${tokenValue}`;
+
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        query: String(query || '').slice(0, 8000),
+        tool,
+        ...extra,
+      }),
+    });
+
+    if (!response.ok) {
+      return { tool, error: `connector returned ${response.status}` };
+    }
+
+    const data = await response.json();
+    const result =
+      data.result ??
+      data.answer ??
+      data.summary ??
+      data.data ??
+      data.output ??
+      data;
+
+    return { tool, result };
+  } catch (_) {
+    return { tool, error: 'connector unavailable' };
+  }
+}
+
+async function specialistPanel(env, requestedCapabilities, query) {
+  const requested = new Set(requestedCapabilities || []);
+  const jobs = [];
+
+  if (requested.has('market_data') && env.CHE_MARKET_DATA_URL) {
+    jobs.push(optionalToolConnector(
+      env.CHE_MARKET_DATA_URL,
+      env.CHE_MARKET_DATA_TOKEN,
+      'market_data',
+      query,
+      { mode: 'read_only_analysis' },
+    ));
+  }
+
+  if (requested.has('backtesting') && env.CHE_BACKTEST_URL) {
+    jobs.push(optionalToolConnector(
+      env.CHE_BACKTEST_URL,
+      env.CHE_BACKTEST_TOKEN,
+      'backtesting',
+      query,
+      { mode: 'analysis' },
+    ));
+  }
+
+  if (requested.has('business_ops') && env.CHE_BUSINESS_URL) {
+    jobs.push(optionalToolConnector(
+      env.CHE_BUSINESS_URL,
+      env.CHE_BUSINESS_TOKEN,
+      'business',
+      query,
+      { mode: 'assist' },
+    ));
+  }
+
+  if (requested.has('lead_generation') && env.CHE_LEADS_URL) {
+    jobs.push(optionalToolConnector(
+      env.CHE_LEADS_URL,
+      env.CHE_LEADS_TOKEN,
+      'leads',
+      query,
+      { mode: 'public_professional_only' },
+    ));
+  }
+
+  if (requested.has('public_records') && env.CHE_PUBLIC_RECORDS_URL) {
+    jobs.push(optionalToolConnector(
+      env.CHE_PUBLIC_RECORDS_URL,
+      env.CHE_PUBLIC_RECORDS_TOKEN,
+      'public_records',
+      query,
+      { mode: 'public_only' },
+    ));
+  }
+
+  if (requested.has('prop_firm') && env.CHE_PROP_FIRM_URL) {
+    jobs.push(optionalToolConnector(
+      env.CHE_PROP_FIRM_URL,
+      env.CHE_PROP_FIRM_TOKEN,
+      'prop_firm',
+      query,
+      { mode: 'rules_and_account_read_only' },
+    ));
+  }
+
+  if (!jobs.length) return [];
+  const results = await Promise.all(jobs);
+  return results.filter(Boolean);
+}
+
 async function modelPanel(env, query) {
   const connectors = [
     ['OpenAI', env.CHE_OPENAI_MODEL_URL, env.CHE_OPENAI_MODEL_TOKEN],
@@ -429,6 +550,7 @@ export class CheState extends DurableObject {
           integrations: {
             storage_vault: true,
             object_storage: Boolean(this.env.CHE_DATA_BUCKET),
+            work_engine: true,
             web_research: Boolean(this.env.CHE_RESEARCH_URL),
             public_records: Boolean(this.env.CHE_PUBLIC_RECORDS_URL),
             music: Boolean(this.env.CHE_MUSIC_URL),
@@ -750,13 +872,15 @@ export class CheState extends DurableObject {
         const useModelPanel =
           /\b(reason|analy[sz]e|compare|research|plan|design|code|invent|innovate|trade|trading|market|business|strategy|explain|debug|build)\b/i.test(message);
 
-        const [research, panel] = await Promise.all([
+        // SPEED MODE: independent information sources run in one parallel batch.
+        const [research, panel, specialists] = await Promise.all([
           shouldResearch
             ? optionalResearch(this.env, message)
             : Promise.resolve(null),
           useModelPanel
             ? modelPanel(this.env, message)
             : Promise.resolve([]),
+          specialistPanel(this.env, requestedCapabilities, message),
         ]);
 
         if (research?.summary) {
@@ -815,6 +939,8 @@ export class CheState extends DurableObject {
               'Treat “humanly possible” as an evidence question. Distinguish what is established, plausible but unproven, currently impractical, and inconsistent with known physical constraints. Never present speculation as verified fact.',
               'For artistic possibility, explore unconventional forms, aesthetics, storytelling, interfaces, materials, workflows, and combinations while respecting the owner’s intent.',
               'PROACTIVE MODE: notice useful next steps, unfinished threads, preparation needs, and low-risk opportunities to help without waiting to be asked. Be selective, not noisy. Never invent urgency or facts, and never take consequential actions without authorization.',
+              'SPEED MODE: minimize unnecessary serial work. Batch compatible reads, run independent tool calls concurrently, reuse trusted context, and escalate to heavier compute only when the task actually benefits from it.',
+              'BACKGROUND WORK: cloud-side tasks may continue independently of the visible phone UI only when a real CHE backend job or connected service supports it. Do not claim iOS itself is running unrestricted background work.',
               'MULTITASKING MODE: when the owner gives several goals at once, split them into clear subtasks, identify dependencies, and work on independent subtasks in parallel whenever real connected tools support safe parallel execution.',
               'Keep a concise task ledger in your reasoning: pending, active, blocked, and complete. Do not lose earlier parts of a multi-part request while working on later parts.',
               'For dependent tasks, sequence them correctly. For independent tasks, batch or parallelize them when possible, then combine the results into one coherent answer.',
@@ -870,6 +996,9 @@ export class CheState extends DurableObject {
               panel.length
                 ? `Connected multi-model advisory panel: ${JSON.stringify(panel).slice(0, 24000)}`
                 : 'No external model-panel answers were available for this turn.',
+              specialists.length
+                ? `Parallel specialist-tool results: ${JSON.stringify(specialists).slice(0, 30000)}`
+                : 'No specialist connector result was available for this turn.',
               imageGeneration?.error
                 ? `Image generation status: ${imageGeneration.error}`
                 : imageGeneration?.job_id
