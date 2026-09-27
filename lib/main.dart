@@ -150,9 +150,12 @@ IDENTITY AND RELATIONSHIP
   immediately become focused, precise and professional.
 
 VOICE / VIBE TARGET
+- C.H.E. is pronounced "Chay" (rhymes with "say"). Do not pronounce the letters separately unless the owner asks you to spell the name.
 - Young-adult, feminine, mature, smooth, confident and warm.
+- Keep the warmth and feminine energy of the owner-provided voice reference, but sound more mature, settled and polished rather than high-pitched or childish.
 - Subtle Southern/Virginia softness with Puerto Rican/Caribbean warmth.
 - Never use stereotypes, racial caricatures or fake phonetic accent spellings.
+- Keep humor quick and natural while using practical common sense.
 - The actual audio voice depends on the connected speech engine. This profile
   controls wording, rhythm and personality.
 
@@ -790,8 +793,8 @@ OWNER AGENCY
       // the WORDING and rhythm natural. A true neural voice can replace this
       // TTS layer later without changing the agent/memory/security design.
       await flutterTts.setLanguage('en-US');
-      await flutterTts.setSpeechRate(0.47);
-      await flutterTts.setPitch(1.03);
+      await flutterTts.setSpeechRate(0.44);
+      await flutterTts.setPitch(0.95);
       await flutterTts.setVolume(1.0);
 
       // Native iPhone build: prefer a smoother modern English voice when
@@ -801,10 +804,10 @@ OWNER AGENCY
           final dynamic voices = await flutterTts.getVoices;
           if (voices is List) {
             final preferredNames = <String>[
-              'Ava',
-              'Zoe',
-              'Nicky',
               'Samantha',
+              'Ava',
+              'Nicky',
+              'Zoe',
               'Serena',
             ];
 
@@ -905,6 +908,11 @@ OWNER AGENCY
   Future<void> speakText(String text) async {
     if (text.trim().isEmpty) return;
 
+    final spokenText = text.replaceAll(
+      RegExp(r'\bC\.?\s*H\.?\s*E\.?\b', caseSensitive: false),
+      'Chay',
+    );
+
     if (!voiceResponsesEnabled) {
       if (kIsWeb && openConversation) {
         Future.delayed(
@@ -948,16 +956,16 @@ OWNER AGENCY
       }
 
       if (kIsWeb) {
-        final played = await che_web_voice.speakText(text);
+        final played = await che_web_voice.speakText(spokenText);
         if (!played) {
           // Safari sometimes blocks one speech path after microphone use.
           // Try the Flutter web TTS bridge as a backup instead of staying silent.
           await flutterTts.stop();
-          await flutterTts.speak(text);
+          await flutterTts.speak(spokenText);
         }
       } else {
         await flutterTts.stop();
-        await flutterTts.speak(text);
+        await flutterTts.speak(spokenText);
       }
     } catch (_) {
       // Keep the typed response even if audio output fails. Native mode removes
@@ -1831,12 +1839,17 @@ OWNER AGENCY
 
       // Future-ready fields for a tool-capable CHE Agent gateway.
       'owner_mode': strictOwnerMode,
-      'wake_phrase': 'CHE',
+      'wake_phrase': 'Chay',
       'requested_capabilities': _requestedCapabilities(userMessage),
       'screen_context': _pendingScreenContext,
       'client_identity_profile': _cheIdentityProfile,
       'client_personality_profile': learnedPersonality,
       'client_memories': savedMemories,
+      'client_time': {
+        'local_iso': DateTime.now().toIso8601String(),
+        'timezone_name': DateTime.now().timeZoneName,
+        'utc_offset_minutes': DateTime.now().timeZoneOffset.inMinutes,
+      },
       'client': {
         'platform': kIsWeb ? 'web' : 'flutter',
         'open_conversation': openConversation,
