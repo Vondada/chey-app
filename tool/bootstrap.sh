@@ -42,3 +42,249 @@ with path.open('wb') as stream:
     plistlib.dump(info, stream)
 PY
 fi
+
+
+# Install the CHE native iPhone voice bridge after Flutter creates ios/.
+# It supports provider-generated neural audio when available and a premium
+# on-device AVSpeechSynthesizer fallback without adding another Flutter plugin.
+if [[ -f ios/Runner/AppDelegate.swift ]]; then
+  cat > ios/Runner/AppDelegate.swift <<'SWIFT'
+import Flutter
+import UIKit
+import AVFoundation
+
+private final class CHEVoiceStreamHandler: NSObject, FlutterStreamHandler {
+  func onListen(
+    withArguments arguments: Any?,
+    eventSink events: @escaping FlutterEventSink
+  ) -> FlutterError? {
+    nil
+  }
+
+  func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    nil
+  }
+}
+
+@main
+@objc class AppDelegate: FlutterAppDelegate, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate {
+  private let synthesizer = AVSpeechSynthesizer()
+  private var player: AVAudioPlayer?
+  private var pendingSpeechResult: FlutterResult?
+  private var pendingAudioResult: FlutterResult?
+  private let voiceStreamHandler = CHEVoiceStreamHandler()
+
+  override func application(
+    _ application: UIApplication,
+    didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+  ) -> Bool {
+    GeneratedPluginRegistrant.register(with: self)
+    synthesizer.delegate = self
+
+    if let controller = window?.rootViewController as? FlutterViewController {
+      let methods = FlutterMethodChannel(
+        name: "che/native_voice",
+        binaryMessenger: controller.binaryMessenger
+      )
+      let events = FlutterEventChannel(
+        name: "che/native_voice_events",
+        binaryMessenger: controller.binaryMessenger
+      )
+      events.setStreamHandler(voiceStreamHandler)
+
+      methods.setMethodCallHandler { [weak self] call, result in
+        guard let self else {
+          result(FlutterError(code: "voice_unavailable", message: "CHE voice unavailable.", details: nil))
+          return
+        }
+
+        switch call.method {
+        case "start":
+          // Flutter speech_to_text remains the reliable recognition layer.
+          result(false)
+
+        case "stop":
+          self.stopAllAudio()
+          result(true)
+
+        case "sleep":
+          result(true)
+
+        case "wake":
+          result(true)
+
+        case "assistantSpeaking":
+          result(nil)
+
+        case "status":
+          result([
+            "native_tts": true,
+            "neural_audio_playback": true,
+            "premium_voice_selection": true,
+            "native_recognition": false,
+          ])
+
+        case "stopAudio":
+          self.stopAllAudio()
+          result(true)
+
+        case "speakText":
+          guard
+            let args = call.arguments as? [String: Any],
+            let text = args["text"] as? String,
+            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+          else {
+            result(false)
+            return
+          }
+          self.speak(text, result: result)
+
+        case "playAudio":
+          guard let typed = call.arguments as? FlutterStandardTypedData else {
+            result(false)
+            return
+          }
+          self.play(data: typed.data, result: result)
+
+        default:
+          result(FlutterMethodNotImplemented)
+        }
+      }
+    }
+
+    return super.application(
+      application,
+      didFinishLaunchingWithOptions: launchOptions
+    )
+  }
+
+  private func configureAudioSession() {
+    let session = AVAudioSession.sharedInstance()
+    do {
+      try session.setCategory(
+        .playAndRecord,
+        mode: .voiceChat,
+        options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP]
+      )
+      try session.setActive(true)
+    } catch {
+      // Speech still gets a chance to play with the system's current session.
+    }
+  }
+
+  private func bestEnglishVoice() -> AVSpeechSynthesisVoice? {
+    let voices = AVSpeechSynthesisVoice.speechVoices().filter {
+      $0.language.lowercased().hasPrefix("en")
+    }
+    let preferred = ["Ava", "Samantha", "Zoe", "Nicky", "Serena"]
+
+    func score(_ voice: AVSpeechSynthesisVoice) -> Int {
+      var value = 0
+      if voice.quality == .enhanced {
+        value += 500
+      }
+      if #available(iOS 16.0, *), voice.quality == .premium {
+        value += 1000
+      }
+      if let index = preferred.firstIndex(where: {
+        voice.name.localizedCaseInsensitiveContains($0)
+      }) {
+        value += 300 - index
+      }
+      if voice.language.lowercased().hasPrefix("en-us") {
+        value += 100
+      }
+      return value
+    }
+
+    return voices.max { score($0) < score($1) }
+  }
+
+  private func speak(_ text: String, result: @escaping FlutterResult) {
+    stopAllAudio()
+    configureAudioSession()
+
+    let utterance = AVSpeechUtterance(string: text)
+    utterance.voice = bestEnglishVoice()
+    utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.86
+    utterance.pitchMultiplier = 0.96
+    utterance.volume = 1.0
+    utterance.preUtteranceDelay = 0.02
+    utterance.postUtteranceDelay = 0.03
+
+    pendingSpeechResult = result
+    synthesizer.speak(utterance)
+  }
+
+  private func play(data: Data, result: @escaping FlutterResult) {
+    stopAllAudio()
+    configureAudioSession()
+
+    do {
+      let audioPlayer = try AVAudioPlayer(data: data)
+      audioPlayer.delegate = self
+      audioPlayer.prepareToPlay()
+      player = audioPlayer
+      pendingAudioResult = result
+
+      guard audioPlayer.play() else {
+        pendingAudioResult = nil
+        result(false)
+        return
+      }
+    } catch {
+      result(FlutterError(
+        code: "audio_playback_failed",
+        message: "CHE could not play generated voice audio.",
+        details: error.localizedDescription
+      ))
+    }
+  }
+
+  private func stopAllAudio() {
+    if synthesizer.isSpeaking || synthesizer.isPaused {
+      synthesizer.stopSpeaking(at: .immediate)
+    }
+    player?.stop()
+    player = nil
+
+    if let pending = pendingSpeechResult {
+      pendingSpeechResult = nil
+      pending(false)
+    }
+    if let pending = pendingAudioResult {
+      pendingAudioResult = nil
+      pending(false)
+    }
+  }
+
+  func speechSynthesizer(
+    _ synthesizer: AVSpeechSynthesizer,
+    didFinish utterance: AVSpeechUtterance
+  ) {
+    if let pending = pendingSpeechResult {
+      pendingSpeechResult = nil
+      pending(true)
+    }
+  }
+
+  func speechSynthesizer(
+    _ synthesizer: AVSpeechSynthesizer,
+    didCancel utterance: AVSpeechUtterance
+  ) {
+    if let pending = pendingSpeechResult {
+      pendingSpeechResult = nil
+      pending(false)
+    }
+  }
+
+  func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+    self.player = nil
+    if let pending = pendingAudioResult {
+      pendingAudioResult = nil
+      pending(flag)
+    }
+  }
+}
+SWIFT
+fi
