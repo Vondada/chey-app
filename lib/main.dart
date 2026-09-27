@@ -1699,7 +1699,7 @@ OWNER AGENCY
   }
 
   void _openAssistantHub({int tab = 0}) {
-    _selectedTab = tab.clamp(0, 4);
+    _selectedTab = tab < 0 ? 0 : (tab > 4 ? 4 : tab);
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF101821),
