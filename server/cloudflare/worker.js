@@ -150,6 +150,14 @@ export class CheState extends DurableObject {
           personality: data.personality || [],
           learned_knowledge: data.learned_knowledge || [],
           suggestions: data.suggestions || [],
+          integrations: {
+            web_research: Boolean(this.env.CHE_RESEARCH_URL),
+            music: Boolean(this.env.CHE_MUSIC_URL),
+            windows: Boolean(this.env.CHE_WINDOWS_URL),
+            car: Boolean(this.env.CHE_CAR_URL),
+            smart_home: Boolean(this.env.CHE_SMART_HOME_URL),
+            rendering: Boolean(this.env.CHE_RENDER_URL),
+          },
         });
       }
       if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
