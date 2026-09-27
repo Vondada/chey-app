@@ -80,6 +80,48 @@ function safePreferenceFrom(message) {
   return null;
 }
 
+async function optionalResearch(env, query) {
+  if (!env.CHE_RESEARCH_URL) return null;
+  let url;
+  try {
+    url = new URL(env.CHE_RESEARCH_URL);
+  } catch (_) {
+    return { error: 'Research connector URL is invalid.' };
+  }
+  if (url.protocol !== 'https:') {
+    return { error: 'Research connector must use HTTPS.' };
+  }
+
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (env.CHE_RESEARCH_TOKEN) {
+      headers.Authorization = `Bearer ${env.CHE_RESEARCH_TOKEN}`;
+    }
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        query: String(query || '').slice(0, 4000),
+        purpose: 'CHE feasibility novelty and current-fact research',
+      }),
+    });
+    if (!response.ok) {
+      return { error: `Research connector returned ${response.status}.` };
+    }
+    const data = await response.json();
+    const summary = String(
+      data.summary || data.answer || data.text || '',
+    ).trim().slice(0, 12000);
+    const sources = Array.isArray(data.sources)
+      ? data.sources.slice(0, 8).map((item) => String(item).slice(0, 500))
+      : [];
+    if (!summary) return { error: 'Research connector returned no usable summary.' };
+    return { summary, sources };
+  } catch (_) {
+    return { error: 'Research connector was unavailable.' };
+  }
+}
+
 async function dispatchChange(env, body) {
   const request = String(body.request || '').trim();
   if (request.length < 8 || request.length > 2000) return json({ detail: 'Describe one change in 8–2000 characters.' }, 400);
@@ -211,7 +253,30 @@ export class CheState extends DurableObject {
           data.memories = data.memories.slice(-100);
           await this.ctx.storage.put('che', data);
         }
-        const remember = /^(?:che[, ]+)?remember(?: that)?\s+(.+)/i.exec(message);
+
+        const requestedCapabilities = Array.isArray(body.requested_capabilities)
+          ? body.requested_capabilities.map((item) => String(item))
+          : [];
+        const shouldResearch = requestedCapabilities.includes('web_research') ||
+          requestedCapabilities.includes('innovation_mode') ||
+          /\b(research|latest|current|novel|prior art|feasib|humanly possible|artistically possible)\b/i.test(message);
+        const research = shouldResearch
+          ? await optionalResearch(this.env, message)
+          : null;
+
+        if (research?.summary) {
+          data.learned_knowledge = Array.isArray(data.learned_knowledge)
+            ? data.learned_knowledge
+            : [];
+          const learned = research.summary.replace(/\s+/g, ' ').slice(0, 700);
+          if (learned && !data.learned_knowledge.includes(learned)) {
+            data.learned_knowledge.push(learned);
+            data.learned_knowledge = data.learned_knowledge.slice(-30);
+            await this.ctx.storage.put('che', data);
+          }
+        }
+
+        const remember = /^(?:(?:chay|chey|shay|che)[, ]+)?remember(?: that)?\s+(.+)/i.exec(message);
         if (remember) {
           const memory = remember[1].trim().slice(0, 500);
           const reply = /password|passcode|security code|social security|credit card/i.test(memory)
@@ -251,7 +316,12 @@ export class CheState extends DurableObject {
               'When live research is available through a connected tool, use multiple credible sources for novelty and feasibility checks. When live research is not connected, clearly label the research gap and give a concrete research plan instead of pretending the check happened.',
               'Rendering requests should produce a real render only through a connected rendering/image tool. Without one, provide a precise render brief, scene/specification, dimensions, materials, camera/view, and prototype instructions.',
               'Never claim to have changed code, researched live facts, controlled a phone, computer, car, music service, Bluetooth device, screen, or smart-home device unless a real connected tool confirms it.',
-              `Requested capabilities: ${JSON.stringify(body.requested_capabilities || []).slice(0, 1200)}`,
+              `Requested capabilities: ${JSON.stringify(requestedCapabilities).slice(0, 1200)}`,
+              research?.summary
+                ? `Connected live research summary: ${research.summary}${research.sources?.length ? `\nResearch sources: ${JSON.stringify(research.sources)}` : ''}`
+                : research?.error
+                  ? `Live research status: ${research.error} Do not pretend live research succeeded.`
+                  : 'No connected live research result is available for this turn.',
               body.screen_context
                 ? `Owner-shared screen/text context: ${String(body.screen_context).slice(0, 8000)}`
                 : 'No owner-shared screen context is active for this turn.',
