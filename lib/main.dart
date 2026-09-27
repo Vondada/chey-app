@@ -1886,6 +1886,622 @@ OWNER AGENCY
     );
   }
 
+  Future<Map<String, dynamic>?> _postAgentJson(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    if (!await _ensurePaired()) return null;
+
+    final response = await http.post(
+      Uri.parse('$cheAgentBaseUrl$path'),
+      headers: _authHeaders,
+      body: jsonEncode(body),
+    );
+
+    if (response.statusCode == 401) {
+      await _clearSecuritySession();
+      throw const _CHEAgentException('Pair this device again, sir.');
+    }
+
+    final data = response.body.isEmpty
+        ? <String, dynamic>{}
+        : Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw _CHEAgentException(
+        data['detail']?.toString() ?? 'CHE could not complete that action.',
+      );
+    }
+
+    return data;
+  }
+
+  Future<void> _createProjectDialog() async {
+    if (!await _ensurePaired() || !mounted) return;
+
+    final titleController = TextEditingController();
+    final briefController = TextEditingController();
+    var projectType = 'general';
+    var busy = false;
+    String? errorText;
+
+    final created = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            Future<void> create() async {
+              final title = titleController.text.trim();
+              if (title.isEmpty) {
+                setDialogState(() => errorText = 'Give the project a name.');
+                return;
+              }
+
+              setDialogState(() {
+                busy = true;
+                errorText = null;
+              });
+
+              try {
+                final result = await _postAgentJson('/api/project/create', {
+                  'title': title,
+                  'type': projectType,
+                  'brief': briefController.text.trim(),
+                });
+                final project = result?['project'];
+                if (project is! Map) {
+                  throw const _CHEAgentException(
+                    'CHE did not return the new project.',
+                  );
+                }
+                await _loadAgentState(silent: true);
+                if (dialogContext.mounted) {
+                  Navigator.pop(
+                    dialogContext,
+                    Map<String, dynamic>.from(project),
+                  );
+                }
+              } catch (e) {
+                setDialogState(() {
+                  busy = false;
+                  errorText = e.toString();
+                });
+              }
+            }
+
+            return AlertDialog(
+              backgroundColor: const Color(0xFF162532),
+              title: const Text('NEW CHE PROJECT'),
+              content: SizedBox(
+                width: 460,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: titleController,
+                        decoration: const InputDecoration(
+                          labelText: 'Project name',
+                          hintText: 'Harriet’s Dream website',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        initialValue: projectType,
+                        decoration: const InputDecoration(
+                          labelText: 'Project type',
+                        ),
+                        items: const [
+                          DropdownMenuItem(value: 'general', child: Text('General project')),
+                          DropdownMenuItem(value: 'website', child: Text('Website')),
+                          DropdownMenuItem(value: 'app', child: Text('App')),
+                          DropdownMenuItem(value: 'book', child: Text('Book')),
+                          DropdownMenuItem(value: 'screenplay', child: Text('Movie / screenplay')),
+                          DropdownMenuItem(value: 'invention', child: Text('Invention / prototype')),
+                        ],
+                        onChanged: busy
+                            ? null
+                            : (value) {
+                                if (value != null) {
+                                  setDialogState(() => projectType = value);
+                                }
+                              },
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: briefController,
+                        minLines: 4,
+                        maxLines: 8,
+                        decoration: const InputDecoration(
+                          labelText: 'Tell Chay what to build',
+                          hintText: 'Describe the idea, style, goals and requirements.',
+                          alignLabelWithHint: true,
+                        ),
+                      ),
+                      if (errorText != null) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          errorText!,
+                          style: const TextStyle(color: Colors.redAccent),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: busy ? null : () => Navigator.pop(dialogContext),
+                  child: const Text('CANCEL'),
+                ),
+                FilledButton.icon(
+                  onPressed: busy ? null : create,
+                  icon: busy
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.auto_awesome),
+                  label: Text(busy ? 'BUILDING...' : 'CREATE'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    titleController.dispose();
+    briefController.dispose();
+
+    if (created != null && mounted) {
+      await _openProjectEditor(created);
+    }
+  }
+
+  Future<void> _openProjectEditor(Map<String, dynamic> source) async {
+    if (!mounted) return;
+
+    var project = Map<String, dynamic>.from(source);
+    final titleController = TextEditingController(
+      text: project['title']?.toString() ?? '',
+    );
+    final contentController = TextEditingController(
+      text: project['content']?.toString() ?? '',
+    );
+    final instructionController = TextEditingController();
+    var busy = false;
+    String? statusText;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF101821),
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            Future<void> save() async {
+              setSheetState(() {
+                busy = true;
+                statusText = 'Saving to CHE Vault...';
+              });
+              try {
+                final result = await _postAgentJson('/api/project/update', {
+                  'id': project['id'],
+                  'title': titleController.text.trim(),
+                  'content': contentController.text,
+                  'status': 'draft',
+                });
+                final updated = result?['project'];
+                if (updated is Map) {
+                  project = Map<String, dynamic>.from(updated);
+                }
+                await _loadAgentState(silent: true);
+                setSheetState(() {
+                  busy = false;
+                  statusText = 'Saved.';
+                });
+              } catch (e) {
+                setSheetState(() {
+                  busy = false;
+                  statusText = e.toString();
+                });
+              }
+            }
+
+            Future<void> develop() async {
+              final instruction = instructionController.text.trim();
+              if (instruction.isEmpty) {
+                setSheetState(() {
+                  statusText = 'Tell Chay what you want developed next.';
+                });
+                return;
+              }
+
+              setSheetState(() {
+                busy = true;
+                statusText = 'Chay is developing the project...';
+              });
+
+              try {
+                final result = await _postAgentJson('/api/project/generate', {
+                  'id': project['id'],
+                  'instruction': instruction,
+                });
+                final updated = result?['project'];
+                if (updated is Map) {
+                  project = Map<String, dynamic>.from(updated);
+                  titleController.text = project['title']?.toString() ?? '';
+                  contentController.text = project['content']?.toString() ?? '';
+                }
+                instructionController.clear();
+                await _loadAgentState(silent: true);
+                setSheetState(() {
+                  busy = false;
+                  statusText = 'Project updated.';
+                });
+              } catch (e) {
+                setSheetState(() {
+                  busy = false;
+                  statusText = e.toString();
+                });
+              }
+            }
+
+            Future<void> remove() async {
+              setSheetState(() {
+                busy = true;
+                statusText = 'Deleting project...';
+              });
+              try {
+                await _postAgentJson('/api/project/delete', {
+                  'id': project['id'],
+                });
+                await _loadAgentState(silent: true);
+                if (sheetContext.mounted) Navigator.pop(sheetContext);
+              } catch (e) {
+                setSheetState(() {
+                  busy = false;
+                  statusText = e.toString();
+                });
+              }
+            }
+
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  left: 18,
+                  right: 18,
+                  top: 16,
+                  bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 18,
+                ),
+                child: SizedBox(
+                  height: MediaQuery.of(sheetContext).size.height * 0.88,
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.auto_awesome,
+                            color: Color(0xFF67E8D1),
+                          ),
+                          const SizedBox(width: 10),
+                          const Expanded(
+                            child: Text(
+                              'CHE CREATOR STUDIO',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.4,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: busy ? null : remove,
+                            icon: const Icon(
+                              Icons.delete_outline,
+                              color: Colors.redAccent,
+                            ),
+                          ),
+                        ],
+                      ),
+                      TextField(
+                        controller: titleController,
+                        decoration: const InputDecoration(
+                          labelText: 'Project name',
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: contentController,
+                          expands: true,
+                          minLines: null,
+                          maxLines: null,
+                          textAlignVertical: TextAlignVertical.top,
+                          decoration: const InputDecoration(
+                            labelText: 'Working project',
+                            alignLabelWithHint: true,
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: instructionController,
+                        minLines: 2,
+                        maxLines: 4,
+                        decoration: const InputDecoration(
+                          labelText: 'Tell Chay what to do next',
+                          hintText: 'Example: Write the opening scene with more tension.',
+                        ),
+                      ),
+                      if (statusText != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          statusText!,
+                          style: const TextStyle(color: Colors.white70),
+                        ),
+                      ],
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: busy ? null : save,
+                              icon: const Icon(Icons.save_outlined),
+                              label: const Text('SAVE'),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: busy ? null : develop,
+                              icon: busy
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.auto_awesome),
+                              label: const Text('DEVELOP'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    titleController.dispose();
+    contentController.dispose();
+    instructionController.dispose();
+  }
+
+  Future<void> _addVaultNote() async {
+    if (!await _ensurePaired() || !mounted) return;
+
+    final nameController = TextEditingController();
+    final contentController = TextEditingController();
+    var busy = false;
+    String? errorText;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            Future<void> save() async {
+              final name = nameController.text.trim();
+              final content = contentController.text.trim();
+              if (name.isEmpty || content.isEmpty) {
+                setDialogState(() => errorText = 'Add a name and content.');
+                return;
+              }
+
+              setDialogState(() {
+                busy = true;
+                errorText = null;
+              });
+
+              try {
+                await _postAgentJson('/api/vault/add', {
+                  'name': name,
+                  'content': content,
+                  'kind': 'note',
+                });
+                await _loadAgentState(silent: true);
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+              } catch (e) {
+                setDialogState(() {
+                  busy = false;
+                  errorText = e.toString();
+                });
+              }
+            }
+
+            return AlertDialog(
+              backgroundColor: const Color(0xFF162532),
+              title: const Text('SAVE TO CHE VAULT'),
+              content: SizedBox(
+                width: 440,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: nameController,
+                      decoration: const InputDecoration(labelText: 'Name'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: contentController,
+                      minLines: 5,
+                      maxLines: 10,
+                      decoration: const InputDecoration(
+                        labelText: 'Content',
+                        alignLabelWithHint: true,
+                      ),
+                    ),
+                    if (errorText != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        errorText!,
+                        style: const TextStyle(color: Colors.redAccent),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: busy ? null : () => Navigator.pop(dialogContext),
+                  child: const Text('CANCEL'),
+                ),
+                FilledButton(
+                  onPressed: busy ? null : save,
+                  child: Text(busy ? 'SAVING...' : 'SAVE'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    nameController.dispose();
+    contentController.dispose();
+  }
+
+  Future<void> _openVault() async {
+    await _loadAgentState(silent: true);
+    if (!mounted) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF101821),
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            return SafeArea(
+              child: SizedBox(
+                height: MediaQuery.of(sheetContext).size.height * 0.82,
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 16, 12, 8),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.storage_outlined,
+                            color: Color(0xFF67E8D1),
+                          ),
+                          const SizedBox(width: 10),
+                          const Expanded(
+                            child: Text(
+                              'CHE CORE DATA VAULT',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.3,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () async {
+                              await _addVaultNote();
+                              setSheetState(() {});
+                            },
+                            icon: const Icon(Icons.add_circle_outline),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 18),
+                      child: Text(
+                        'Persistent CHE storage for notes and project data. Large binary files use separate object storage when connected.',
+                        style: TextStyle(color: Colors.white54),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Expanded(
+                      child: vaultItems.isEmpty
+                          ? const Center(
+                              child: Text(
+                                'No vault notes yet.',
+                                style: TextStyle(color: Colors.white54),
+                              ),
+                            )
+                          : ListView.builder(
+                              padding: const EdgeInsets.all(14),
+                              itemCount: vaultItems.length,
+                              itemBuilder: (context, index) {
+                                final item = vaultItems[index];
+                                return Card(
+                                  child: ListTile(
+                                    leading: const Icon(Icons.description_outlined),
+                                    title: Text(item['name']?.toString() ?? 'Vault item'),
+                                    subtitle: Text(
+                                      item['content']?.toString() ?? '',
+                                      maxLines: 3,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    onTap: () {
+                                      showDialog<void>(
+                                        context: context,
+                                        builder: (context) => AlertDialog(
+                                          title: Text(
+                                            item['name']?.toString() ?? 'Vault item',
+                                          ),
+                                          content: SingleChildScrollView(
+                                            child: SelectableText(
+                                              item['content']?.toString() ?? '',
+                                            ),
+                                          ),
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () => Navigator.pop(context),
+                                              child: const Text('CLOSE'),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                    trailing: IconButton(
+                                      icon: const Icon(Icons.delete_outline),
+                                      onPressed: () async {
+                                        try {
+                                          await _postAgentJson('/api/vault/delete', {
+                                            'id': item['id'],
+                                          });
+                                          await _loadAgentState(silent: true);
+                                          setSheetState(() {});
+                                        } catch (_) {}
+                                      },
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   void _openAssistantHub({int tab = 0}) {
     _selectedTab = tab < 0 ? 0 : (tab > 6 ? 6 : tab);
     showModalBottomSheet(
