@@ -124,6 +124,7 @@ class _CHEHomeState extends State<CHEHome> {
     'rendering': false,
     'screen_capture': false,
     'face_verify': false,
+    'data_recognition': false,
     'market_data': false,
     'backtesting': false,
     'broker': false,
@@ -633,6 +634,7 @@ OWNER AGENCY
         'rendering': integrationData['rendering'] == true,
         'screen_capture': integrationData['screen_capture'] == true,
         'face_verify': integrationData['face_verify'] == true,
+        'data_recognition': integrationData['data_recognition'] == true,
         'market_data': integrationData['market_data'] == true,
         'backtesting': integrationData['backtesting'] == true,
         'broker': integrationData['broker'] == true,
@@ -719,7 +721,7 @@ OWNER AGENCY
                       subtitle: Text(
                         kIsWeb
                             ? 'Hands-free while this CHE page stays open. Say “stand down” to sleep and “Chay” to wake.'
-                            : 'While C.H.E. is foreground and listening, say “stand down” to sleep and “CHE” to wake.',
+                            : 'While C.H.E. is foreground and listening, say “stand down” to sleep and “Chay” to wake.',
                       ),
                       onChanged: (value) {
                         setState(() {
@@ -2114,6 +2116,12 @@ OWNER AGENCY
           'Verify an enrolled owner face. Chay does not identify unknown people from images.',
           integrations['face_verify'] == true,
         ),
+        _integrationCard(
+          Icons.document_scanner_outlined,
+          'Data Recognition',
+          'Extract and understand owner-provided documents, tables, screenshots and structured data.',
+          integrations['data_recognition'] == true,
+        ),
       ],
     );
   }
@@ -2388,6 +2396,18 @@ OWNER AGENCY
       'face recognition',
     ])) {
       result.add('face_verify');
+    }
+
+    if (hasAny([
+      'recognize this data',
+      'analyze this data',
+      'read this document',
+      'extract this table',
+      'scan this document',
+      'understand this screenshot',
+      'data recognition',
+    ])) {
+      result.add('data_recognition');
     }
 
     if (hasAny([
