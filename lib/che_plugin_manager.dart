@@ -15,8 +15,8 @@ class ChePluginManager extends StatefulWidget {
   final String baseUrl;
   final String deviceToken;
 
-  static Future<void> open(BuildContext context, String baseUrl, String token) {
-    return Navigator.of(context).push<void>(CupertinoPageRoute(
+  static Future<void> open(BuildContext context, String baseUrl, String token) async {
+    await Navigator.of(context).push<void>(CupertinoPageRoute(
       builder: (_) => ChePluginManager(baseUrl: baseUrl, deviceToken: token),
     ));
   }
