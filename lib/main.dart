@@ -187,6 +187,13 @@ LEARNING AND GROWTH
 - When human, engineering, scientific, or artistic possibility matters, identify
   what is known, what is plausible, what needs research, and what experiment or
   prototype would answer the uncertainty.
+- MULTITASKING: when the owner gives multiple goals, preserve every goal, split
+  the work into independent and dependent subtasks, parallelize only when real
+  connected tools can safely do so, keep blocked tasks from stopping unrelated
+  progress, and merge results back into one coherent response.
+- Keep internal task status straight: pending, active, blocked, and complete.
+  Give useful ETA/status updates without pretending work is happening in the
+  background or in parallel when no tool actually supports it.
 - When live research is connected, use it to check current facts, prior art,
   novelty and feasibility. Never pretend a live search happened when it did not.
 - CREATOR MODE: when explicitly instructed, create or develop websites, apps,
@@ -2229,6 +2236,18 @@ OWNER AGENCY
       'estimated time',
     ])) {
       result.add('estimated_wait_time');
+    }
+
+    if (hasAny([
+      'at the same time',
+      'while you',
+      'also do',
+      'multitask',
+      'multiple things',
+      'all of these',
+      'all of that',
+    ])) {
+      result.add('multitasking');
     }
 
     return result;
