@@ -11,11 +11,13 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'che_native_voice.dart';
@@ -111,6 +113,8 @@ class _CHEHomeState extends State<CHEHome> {
   // Screen/context data is used only when the owner explicitly shares or
   // copies it. A Flutter web page cannot silently read other iPhone apps.
   String? _pendingScreenContext;
+  Map<String, String>? _pendingAttachment;
+  final ImagePicker _imagePicker = ImagePicker();
 
   List<String> savedMemories = [];
   List<Map<String, dynamic>> learnedPersonality = [];
@@ -127,6 +131,7 @@ class _CHEHomeState extends State<CHEHome> {
     'screen_capture': false,
     'face_verify': false,
     'data_recognition': false,
+    'multimodal': false,
     'market_data': false,
     'backtesting': false,
     'broker': false,
@@ -707,6 +712,7 @@ OWNER AGENCY
         'screen_capture': integrationData['screen_capture'] == true,
         'face_verify': integrationData['face_verify'] == true,
         'data_recognition': integrationData['data_recognition'] == true,
+        'multimodal': integrationData['multimodal'] == true,
         'market_data': integrationData['market_data'] == true,
         'backtesting': integrationData['backtesting'] == true,
         'broker': integrationData['broker'] == true,
