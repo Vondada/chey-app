@@ -383,6 +383,11 @@ export class CheState extends DurableObject {
       const data = (await this.ctx.storage.get('che')) || {
         devices: {}, memories: [], failures: {},
       };
+      data.projects = Array.isArray(data.projects) ? data.projects : [];
+      data.vault_items = Array.isArray(data.vault_items) ? data.vault_items : [];
+      data.personality = Array.isArray(data.personality) ? data.personality : [];
+      data.learned_knowledge = Array.isArray(data.learned_knowledge) ? data.learned_knowledge : [];
+      data.suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
       const body = request.method === 'POST' ? await bodyOf(request) : {};
       if (request.method === 'POST' && path === '/api/pair') {
         const secret = this.env.CHE_PAIR_CODE;
@@ -412,12 +417,18 @@ export class CheState extends DurableObject {
       if (request.method === 'GET' && path === '/api/state') {
         return json({
           memories: data.memories,
-          personality: data.personality || [],
-          learned_knowledge: data.learned_knowledge || [],
-          suggestions: data.suggestions || [],
-          storage: storageReadiness(this.env),
+          personality: data.personality,
+          learned_knowledge: data.learned_knowledge,
+          suggestions: data.suggestions,
+          projects: data.projects,
+          vault_items: data.vault_items,
+          storage: {
+            ...storageReadiness(this.env),
+            core_vault: true,
+          },
           integrations: {
-            storage_vault: Boolean(this.env.CHE_DATA_BUCKET),
+            storage_vault: true,
+            object_storage: Boolean(this.env.CHE_DATA_BUCKET),
             web_research: Boolean(this.env.CHE_RESEARCH_URL),
             public_records: Boolean(this.env.CHE_PUBLIC_RECORDS_URL),
             music: Boolean(this.env.CHE_MUSIC_URL),
@@ -483,6 +494,155 @@ export class CheState extends DurableObject {
         await this.ctx.storage.put('che', data);
         return json({ ok: true });
       }
+      if (path === '/api/project/create') {
+        const title = String(body.title || '').trim().slice(0, 120);
+        const type = String(body.type || 'general').trim().slice(0, 40);
+        const brief = String(body.brief || '').trim().slice(0, 6000);
+        if (!title) return json({ detail: 'Project title required.' }, 400);
+
+        let content = '';
+        if (brief) {
+          const draft = await this.env.AI.run(this.env.CHE_STRONG_MODEL || STRONG_MODEL, {
+            messages: [
+              {
+                role: 'system',
+                content: [
+                  'You are CHE Creator Studio.',
+                  'Create a useful first working draft for the owner.',
+                  'Keep the output directly usable and structured for the requested project type.',
+                  'For websites/apps include product structure, screens/features and starter implementation details.',
+                  'For books/scripts include actual prose/scenes, not only an outline.',
+                  'For inventions include concept, mechanism, feasibility assumptions, prototype and tests.',
+                  'Do not claim live research or prior-art checks unless supplied.',
+                ].join('\n'),
+              },
+              {
+                role: 'user',
+                content: JSON.stringify({ title, type, brief }),
+              },
+            ],
+            max_tokens: 2200,
+          });
+          content = String(
+            draft.response || draft.choices?.[0]?.message?.content || '',
+          ).trim().slice(0, 30000);
+        }
+
+        const now = new Date().toISOString();
+        const project = {
+          id: crypto.randomUUID(),
+          title,
+          type,
+          brief,
+          content,
+          status: content ? 'draft' : 'new',
+          created_at: now,
+          updated_at: now,
+        };
+        data.projects.unshift(project);
+        data.projects = data.projects.slice(0, 50);
+        await this.ctx.storage.put('che', data);
+        return json({ project });
+      }
+
+      if (path === '/api/project/update') {
+        const id = String(body.id || '');
+        const project = data.projects.find((item) => item.id === id);
+        if (!project) return json({ detail: 'Project not found.' }, 404);
+
+        if (body.title != null) project.title = String(body.title).trim().slice(0, 120);
+        if (body.brief != null) project.brief = String(body.brief).trim().slice(0, 6000);
+        if (body.content != null) project.content = String(body.content).slice(0, 40000);
+        if (body.status != null) project.status = String(body.status).trim().slice(0, 30);
+        project.updated_at = new Date().toISOString();
+
+        await this.ctx.storage.put('che', data);
+        return json({ project });
+      }
+
+      if (path === '/api/project/generate') {
+        const id = String(body.id || '');
+        const instruction = String(body.instruction || '').trim().slice(0, 6000);
+        const project = data.projects.find((item) => item.id === id);
+        if (!project) return json({ detail: 'Project not found.' }, 404);
+        if (!instruction) return json({ detail: 'Tell Chay what to develop next.' }, 400);
+
+        const draft = await this.env.AI.run(this.env.CHE_STRONG_MODEL || STRONG_MODEL, {
+          messages: [
+            {
+              role: 'system',
+              content: [
+                'You are CHE Creator Studio.',
+                'Continue or revise the owner project using the instruction.',
+                'Return the full updated working content, not commentary about what you changed.',
+                'Preserve useful existing material unless the instruction asks to replace it.',
+              ].join('\n'),
+            },
+            {
+              role: 'user',
+              content: JSON.stringify({
+                title: project.title,
+                type: project.type,
+                brief: project.brief,
+                current_content: project.content,
+                instruction,
+              }),
+            },
+          ],
+          max_tokens: 2600,
+        });
+
+        const content = String(
+          draft.response || draft.choices?.[0]?.message?.content || '',
+        ).trim().slice(0, 40000);
+        if (!content) return json({ detail: 'Creator model returned no content.' }, 502);
+
+        project.content = content;
+        project.status = 'draft';
+        project.updated_at = new Date().toISOString();
+        await this.ctx.storage.put('che', data);
+        return json({ project });
+      }
+
+      if (path === '/api/project/delete') {
+        const id = String(body.id || '');
+        const before = data.projects.length;
+        data.projects = data.projects.filter((item) => item.id !== id);
+        if (data.projects.length === before) return json({ detail: 'Project not found.' }, 404);
+        await this.ctx.storage.put('che', data);
+        return json({ ok: true });
+      }
+
+      if (path === '/api/vault/add') {
+        const name = String(body.name || '').trim().slice(0, 120);
+        const content = String(body.content || '').trim().slice(0, 20000);
+        const kind = String(body.kind || 'note').trim().slice(0, 40);
+        if (!name || !content) return json({ detail: 'Vault name and content required.' }, 400);
+
+        const now = new Date().toISOString();
+        const item = {
+          id: crypto.randomUUID(),
+          name,
+          kind,
+          content,
+          created_at: now,
+          updated_at: now,
+        };
+        data.vault_items.unshift(item);
+        data.vault_items = data.vault_items.slice(0, 100);
+        await this.ctx.storage.put('che', data);
+        return json({ item });
+      }
+
+      if (path === '/api/vault/delete') {
+        const id = String(body.id || '');
+        const before = data.vault_items.length;
+        data.vault_items = data.vault_items.filter((item) => item.id !== id);
+        if (data.vault_items.length === before) return json({ detail: 'Vault item not found.' }, 404);
+        await this.ctx.storage.put('che', data);
+        return json({ ok: true });
+      }
+
       if (path === '/api/proactive/check') {
         const clientClock = formatClientTime(body.client_time);
         const memories = Array.isArray(data.memories) ? data.memories.slice(-20) : [];
