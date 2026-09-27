@@ -1,5 +1,6 @@
 // CHE cloud Agent. One SQLite-backed Durable Object holds paired devices and
 // memories, so deployment does not require creating a separate database.
+import { DurableObject } from 'cloudflare:workers';
 
 const FAST_MODEL = '@cf/meta/llama-3.2-3b-instruct';
 const STRONG_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
@@ -53,16 +54,15 @@ async function dispatchChange(env, body) {
   return json({ message: 'I started a code proposal, sir. Review its draft pull request on your phone. Merging it will start the cloud iPhone build.' });
 }
 
-export class CheState {
+export class CheState extends DurableObject {
   constructor(state, env) {
-    this.state = state;
-    this.env = env;
+    super(state, env);
   }
 
   async fetch(request) {
     try {
       const path = new URL(request.url).pathname;
-      const data = (await this.state.storage.get('che')) || {
+      const data = (await this.ctx.storage.get('che')) || {
         devices: {}, memories: [], failures: {},
       };
       const body = request.method === 'POST' ? await bodyOf(request) : {};
@@ -75,14 +75,14 @@ export class CheState {
         const code = String(body.code || '');
         if ((await digest(code)) !== (await digest(secret))) {
           data.failures[ip] = [...recent, Date.now()];
-          await this.state.storage.put('che', data);
+          await this.ctx.storage.put('che', data);
           return json({ detail: 'Incorrect pairing code.' }, 403);
         }
         const raw = Array.from(crypto.getRandomValues(new Uint8Array(48)),
           (b) => b.toString(16).padStart(2, '0')).join('');
         data.devices[await digest(raw)] = String(body.device_name || 'CHE phone').slice(0, 80);
         delete data.failures[ip];
-        await this.state.storage.put('che', data);
+        await this.ctx.storage.put('che', data);
         return json({ device_token: raw });
       }
 
@@ -97,7 +97,7 @@ export class CheState {
       if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
       if (path === '/api/security/revoke_self') {
         delete data.devices[tokenHash];
-        await this.state.storage.put('che', data);
+        await this.ctx.storage.put('che', data);
         return json({ ok: true });
       }
       if (path === '/api/memory/add') {
@@ -108,7 +108,7 @@ export class CheState {
         if (!data.memories.some((item) => item.toLowerCase() === memory.toLowerCase())) {
           data.memories.push(memory);
           data.memories = data.memories.slice(-100);
-          await this.state.storage.put('che', data);
+          await this.ctx.storage.put('che', data);
         }
         return json({ ok: true });
       }
@@ -118,12 +118,12 @@ export class CheState {
           return json({ detail: 'Memory not found.' }, 400);
         }
         data.memories.splice(index, 1);
-        await this.state.storage.put('che', data);
+        await this.ctx.storage.put('che', data);
         return json({ ok: true });
       }
       if (path === '/api/memory/clear') {
         data.memories = [];
-        await this.state.storage.put('che', data);
+        await this.ctx.storage.put('che', data);
         return json({ ok: true });
       }
       if (path === '/api/change/request') return dispatchChange(this.env, body);
@@ -169,7 +169,6 @@ export class CheState {
 export default {
   async fetch(request, env) {
     if (new URL(request.url).pathname === '/health') return json({ ok: true, agent: 'CHE cloud' });
-    const id = env.CHE_STATE.idFromName('owner');
-    return env.CHE_STATE.get(id).fetch(request);
+    return env.CHE_STATE.getByName('owner').fetch(request);
   },
 };

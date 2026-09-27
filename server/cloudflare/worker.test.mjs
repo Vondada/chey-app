@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 // Import the Worker as an ES module without needing an npm install.
-const code = readFileSync(new URL('./worker.js', import.meta.url), 'utf8');
+const code = readFileSync(new URL('./worker.js', import.meta.url), 'utf8')
+  .replace("import { DurableObject } from 'cloudflare:workers';",
+    'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }');
 const { default: worker, CheState } = await import(
   `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
 );
@@ -14,7 +16,7 @@ test('pairing, owner gate, memories, and revocation', async () => {
   const state = new CheState({ storage: {
     get: (key) => saved.get(key), put: (key, value) => saved.set(key, value),
   } }, env);
-  env.CHE_STATE = { idFromName: () => 'owner', get: () => state };
+  env.CHE_STATE = { getByName: () => state };
   const send = (path, method = 'GET', body = {}, token = '') => worker.fetch(
     new Request(`https://che.example${path}`, {
       method,
