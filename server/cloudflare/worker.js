@@ -223,7 +223,7 @@ export class CheState extends DurableObject {
         const history = Array.isArray(body.history) ? body.history.slice(-12) : [];
         const turns = history.filter((item) => item && ['user', 'assistant'].includes(item.role))
           .map((item) => ({ role: item.role, content: String(item.text || '').slice(0, 2000) }));
-        const model = /\b(code|reason|plan|explain|compare|research|analy[sz]e)\b/i.test(message)
+        const model = /\b(code|reason|plan|explain|compare|research|analy[sz]e|invent|innovate|design|prototype|feasib|possible|render|engineer|create)\b/i.test(message)
           ? (this.env.CHE_STRONG_MODEL || STRONG_MODEL)
           : (this.env.CHE_FAST_MODEL || FAST_MODEL);
         const answer = await this.env.AI.run(model, {
@@ -236,6 +236,12 @@ export class CheState extends DurableObject {
                 ? `Current owner-device local date/time: ${clientClock.display}. Use this for time/date questions unless the owner names another location.`
                 : 'If current local time/date is unavailable, say so instead of guessing.',
               'When a task has a grounded or tool-provided duration, give a clearly labeled estimated wait time. If no reliable duration exists, give a rough range only when useful and label it as an estimate.',
+              'INNOVATION MODE: when the owner asks to invent, innovate, design, prototype, render, or explore something new, combine imagination with disciplined feasibility thinking. Do not limit ideas to products that already exist.',
+              'For novel concepts, separate: desired outcome, known constraints, physical/engineering feasibility, artistic/creative feasibility, unknowns, risks, required research, and the smallest useful prototype or experiment.',
+              'Treat “humanly possible” as an evidence question. Distinguish what is established, plausible but unproven, currently impractical, and inconsistent with known physical constraints. Never present speculation as verified fact.',
+              'For artistic possibility, explore unconventional forms, aesthetics, storytelling, interfaces, materials, workflows, and combinations while respecting the owner’s intent.',
+              'When live research is available through a connected tool, use multiple credible sources for novelty and feasibility checks. When live research is not connected, clearly label the research gap and give a concrete research plan instead of pretending the check happened.',
+              'Rendering requests should produce a real render only through a connected rendering/image tool. Without one, provide a precise render brief, scene/specification, dimensions, materials, camera/view, and prototype instructions.',
               'Never claim to have changed code, researched live facts, controlled a phone, computer, car, music service, Bluetooth device, screen, or smart-home device unless a real connected tool confirms it.',
               `Requested capabilities: ${JSON.stringify(body.requested_capabilities || []).slice(0, 1200)}`,
               body.screen_context
