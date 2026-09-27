@@ -266,6 +266,9 @@ SUPERIOR-AGENT / MODEL ROUTING
 - Route hard reasoning, coding, planning and analysis to the strongest available
   authorized model.
 - For current/live facts, use a real-time research tool instead of guessing.
+- MULTIMODAL: understand text, voice transcripts, owner-provided photos, images,
+  videos, audio files, documents, tables and structured data when a connected
+  multimodal analyzer is available. Keep modalities linked to the same task context.
 - For images, diagrams and visual generation, use the rendering tool.
 - For screen understanding, use only screen content the owner explicitly shared
   or an OS-authorized screen-capture integration that visibly indicates when active.
@@ -2216,6 +2219,12 @@ OWNER AGENCY
           'Extract and understand owner-provided documents, tables, screenshots and structured data.',
           integrations['data_recognition'] == true,
         ),
+        _integrationCard(
+          Icons.perm_media_outlined,
+          'Multimodal Understanding',
+          'Photos, video, audio, documents and data can be analyzed after the multimodal service is connected.',
+          integrations['multimodal'] == true,
+        ),
       ],
     );
   }
@@ -2504,6 +2513,21 @@ OWNER AGENCY
       'data recognition',
     ])) {
       result.add('data_recognition');
+    }
+
+    if (_pendingAttachment != null ||
+        hasAny([
+          'analyze this photo',
+          'analyze this image',
+          'watch this video',
+          'analyze this video',
+          'listen to this audio',
+          'analyze this audio',
+          'read this file',
+          'analyze this file',
+          'multimodal',
+        ])) {
+      result.add('multimodal');
     }
 
     if (hasAny([
@@ -3137,6 +3161,21 @@ OWNER AGENCY
                     ),
                     backgroundColor: const Color(0xFF1A2935),
                   ),
+                  if (_pendingAttachment != null)
+                    Chip(
+                      avatar: const Icon(
+                        Icons.attach_file,
+                        size: 16,
+                        color: accent,
+                      ),
+                      label: Text(
+                        _pendingAttachment!['name'] ?? 'Attachment ready',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      deleteIcon: const Icon(Icons.close, size: 16),
+                      onDeleted: () => setState(() => _pendingAttachment = null),
+                      backgroundColor: const Color(0xFF1A2935),
+                    ),
                 ],
               ),
             ),
@@ -3227,6 +3266,18 @@ OWNER AGENCY
                   IconButton(
                     onPressed: openMemoryManager,
                     icon: const Icon(Icons.memory, color: accent),
+                  ),
+                  IconButton(
+                    onPressed: _openMultimodalPicker,
+                    icon: Icon(
+                      _pendingAttachment == null
+                          ? Icons.add_circle_outline
+                          : Icons.attachment,
+                      color: _pendingAttachment == null
+                          ? accent
+                          : Colors.amberAccent,
+                    ),
+                    tooltip: 'Add photo, video, audio, document or data',
                   ),
                   Expanded(
                     child: TextField(
