@@ -804,6 +804,13 @@ export class CheState extends DurableObject {
       data.team = Array.isArray(data.team) ? data.team : [];
       data.team_tasks = Array.isArray(data.team_tasks) ? data.team_tasks : [];
       data.jobs = Array.isArray(data.jobs) ? data.jobs : [];
+      data.agent_identity = data.agent_identity && typeof data.agent_identity === 'object'
+        ? data.agent_identity
+        : {
+            name: 'CHE',
+            kind: 'software_agent',
+            created_at: new Date().toISOString(),
+          };
       const body = request.method === 'POST' ? await bodyOf(request) : {};
       if (request.method === 'POST' && path === '/api/pair') {
         const secret = this.env.CHE_PAIR_CODE;
@@ -841,6 +848,11 @@ export class CheState extends DurableObject {
           team: data.team,
           team_tasks: data.team_tasks,
           jobs: data.jobs,
+          agent_identity: {
+            ...data.agent_identity,
+            domain: String(this.env.CHE_IDENTITY_DOMAIN || new URL(request.url).host),
+            world_url: `https://${String(this.env.CHE_IDENTITY_DOMAIN || new URL(request.url).host)}/che-world`,
+          },
           storage: {
             ...storageReadiness(this.env),
             core_vault: true,
@@ -851,6 +863,8 @@ export class CheState extends DurableObject {
             work_engine: true,
             office: true,
             background_jobs: true,
+            agent_identity: true,
+            service_accounts: true,
             natural_voice: Boolean(this.env.CHE_VOICE_URL),
             quantum_compute: Boolean(this.env.CHE_QUANTUM_URL),
             web_research: Boolean(this.env.CHE_RESEARCH_URL),
@@ -891,6 +905,16 @@ export class CheState extends DurableObject {
           },
         });
       }
+      if (request.method === 'GET' && path === '/che-world') {
+        const domain = String(this.env.CHE_IDENTITY_DOMAIN || new URL(request.url).host);
+        return json({
+          name: 'CHE',
+          kind: 'software_agent',
+          domain,
+          status: 'online',
+          purpose: 'CHE virtual-world identity and service-integration home',
+        });
+      }
       if (request.method === 'GET' && path === '/api/storage/status') {
         return json(storageReadiness(this.env));
       }
@@ -900,6 +924,41 @@ export class CheState extends DurableObject {
         if (!text) return json({ detail: 'Voice text required.' }, 400);
         return voiceSynthesisResponse(this.env, text);
       }
+      if (path === '/api/service-account/request') {
+        const provider = String(body.provider || '').trim().slice(0, 80);
+        const purpose = String(body.purpose || '').trim().slice(0, 500);
+        if (!provider) return json({ detail: 'Provider required.' }, 400);
+
+        const connector = this.env.CHE_SERVICE_ACCOUNT_URL;
+        if (!connector) {
+          return json({
+            status: 'connector_required',
+            provider,
+            identity: {
+              name: 'CHE',
+              kind: 'software_agent',
+              domain: String(this.env.CHE_IDENTITY_DOMAIN || new URL(request.url).host),
+            },
+            detail: 'CHE can create/use a provider service account only when that provider explicitly supports bots, service accounts, OAuth apps, or API identities and a connector is configured. CHE cannot accept binding terms as a legal person or impersonate the owner.',
+          }, 409);
+        }
+
+        const result = await optionalToolConnector(
+          connector,
+          this.env.CHE_SERVICE_ACCOUNT_TOKEN,
+          'service_account',
+          JSON.stringify({ provider, purpose }),
+          {
+            mode: 'create_or_connect_agent_identity_only_when_provider_allows_it',
+            identity_name: 'CHE',
+            identity_domain: String(this.env.CHE_IDENTITY_DOMAIN || new URL(request.url).host),
+            never_impersonate_owner: true,
+            never_accept_binding_terms_without_authorized_principal: true,
+          },
+        );
+        return json({ status: result?.error ? 'failed' : 'ok', provider, result });
+      }
+
       if (path === '/api/security/revoke_self') {
         delete data.devices[tokenHash];
         await this.ctx.storage.put('che', data);
