@@ -116,11 +116,21 @@ class _CHEHomeState extends State<CHEHome> {
   List<String> suggestions = [];
   Map<String, bool> integrations = const {
     'web_research': false,
+    'public_records': false,
     'music': false,
     'windows': false,
     'car': false,
     'smart_home': false,
     'rendering': false,
+    'screen_capture': false,
+    'face_verify': false,
+    'market_data': false,
+    'backtesting': false,
+    'broker': false,
+    'prop_firm': false,
+    'business': false,
+    'payments': false,
+    'leads': false,
   };
 
   int _selectedTab = 0;
@@ -615,11 +625,21 @@ OWNER AGENCY
       suggestions = suggestionData.map((e) => e.toString()).toList();
       integrations = {
         'web_research': integrationData['web_research'] == true,
+        'public_records': integrationData['public_records'] == true,
         'music': integrationData['music'] == true,
         'windows': integrationData['windows'] == true,
         'car': integrationData['car'] == true,
         'smart_home': integrationData['smart_home'] == true,
         'rendering': integrationData['rendering'] == true,
+        'screen_capture': integrationData['screen_capture'] == true,
+        'face_verify': integrationData['face_verify'] == true,
+        'market_data': integrationData['market_data'] == true,
+        'backtesting': integrationData['backtesting'] == true,
+        'broker': integrationData['broker'] == true,
+        'prop_firm': integrationData['prop_firm'] == true,
+        'business': integrationData['business'] == true,
+        'payments': integrationData['payments'] == true,
+        'leads': integrationData['leads'] == true,
       };
 
       if (mounted) setState(() {});
