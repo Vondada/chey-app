@@ -80,6 +80,127 @@ function safePreferenceFrom(message) {
   return null;
 }
 
+async function voiceSynthesisResponse(env, text) {
+  if (!env.CHE_VOICE_URL) {
+    return json({ detail: 'Natural voice service is not connected yet.' }, 503);
+  }
+
+  let url;
+  try {
+    url = new URL(env.CHE_VOICE_URL);
+  } catch (_) {
+    return json({ detail: 'Natural voice connector URL is invalid.' }, 503);
+  }
+  if (url.protocol !== 'https:') {
+    return json({ detail: 'Natural voice connector must use HTTPS.' }, 503);
+  }
+
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (env.CHE_VOICE_TOKEN) {
+      headers.Authorization = `Bearer ${env.CHE_VOICE_TOKEN}`;
+    }
+
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        text: String(text || '').slice(0, 6000),
+        voice: String(env.CHE_VOICE_ID || 'CHE').slice(0, 120),
+        format: 'mp3',
+        style: {
+          gender_presentation: 'feminine',
+          age: 'young_adult',
+          tone: 'warm confident smooth mature',
+          pace: 'natural',
+          pronunciation: { CHE: 'Chay' },
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      return json({ detail: `Natural voice connector returned ${response.status}.` }, 502);
+    }
+
+    const maxBytes = 6 * 1024 * 1024;
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+
+    const audioResponse = (bytes, type = 'audio/mpeg') => {
+      if (!bytes || bytes.byteLength === 0 || bytes.byteLength > maxBytes) {
+        return json({ detail: 'Natural voice audio was empty or too large.' }, 502);
+      }
+      return new Response(bytes, {
+        headers: {
+          'Content-Type': type,
+          'Cache-Control': 'no-store',
+          'X-CHE-Voice': 'neural',
+        },
+      });
+    };
+
+    if (contentType.startsWith('audio/')) {
+      const bytes = await response.arrayBuffer();
+      return audioResponse(bytes, contentType.split(';')[0]);
+    }
+
+    const data = await response.json();
+    const base64 = String(
+      data.audio_base64 ||
+      data.audio?.base64 ||
+      data.base64 ||
+      '',
+    ).trim();
+
+    if (base64) {
+      const binary = atob(base64);
+      if (binary.length > maxBytes) {
+        return json({ detail: 'Natural voice audio was too large.' }, 502);
+      }
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return audioResponse(
+        bytes,
+        String(data.content_type || data.mime_type || 'audio/mpeg'),
+      );
+    }
+
+    const audioUrl = String(
+      data.audio_url ||
+      data.url ||
+      data.output_url ||
+      '',
+    ).trim();
+
+    if (audioUrl) {
+      let mediaUrl;
+      try {
+        mediaUrl = new URL(audioUrl);
+      } catch (_) {
+        return json({ detail: 'Natural voice connector returned an invalid audio URL.' }, 502);
+      }
+      if (mediaUrl.protocol !== 'https:') {
+        return json({ detail: 'Natural voice audio URL must use HTTPS.' }, 502);
+      }
+
+      const media = await fetch(mediaUrl.toString());
+      if (!media.ok) {
+        return json({ detail: `Natural voice audio fetch returned ${media.status}.` }, 502);
+      }
+      const bytes = await media.arrayBuffer();
+      return audioResponse(
+        bytes,
+        (media.headers.get('content-type') || 'audio/mpeg').split(';')[0],
+      );
+    }
+
+    return json({ detail: 'Natural voice connector returned no playable audio.' }, 502);
+  } catch (_) {
+    return json({ detail: 'Natural voice service was unavailable.' }, 502);
+  }
+}
+
 async function optionalResearch(env, query) {
   if (!env.CHE_RESEARCH_URL) return null;
   let url;
@@ -718,6 +839,7 @@ export class CheState extends DurableObject {
             object_storage: Boolean(this.env.CHE_DATA_BUCKET),
             work_engine: true,
             office: true,
+            natural_voice: Boolean(this.env.CHE_VOICE_URL),
             web_research: Boolean(this.env.CHE_RESEARCH_URL),
             public_records: Boolean(this.env.CHE_PUBLIC_RECORDS_URL),
             music: Boolean(this.env.CHE_MUSIC_URL),
@@ -760,6 +882,11 @@ export class CheState extends DurableObject {
         return json(storageReadiness(this.env));
       }
       if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
+      if (path === '/api/voice/synthesize') {
+        const text = String(body.text || '').trim();
+        if (!text) return json({ detail: 'Voice text required.' }, 400);
+        return voiceSynthesisResponse(this.env, text);
+      }
       if (path === '/api/security/revoke_self') {
         delete data.devices[tokenHash];
         await this.ctx.storage.put('che', data);
@@ -1276,6 +1403,8 @@ export class CheState extends DurableObject {
               'DATA + COMPUTE: core owner state is persisted in CHE storage. Large media, datasets, model artifacts and generated files should use CHE object storage when connected. If storage is not connected, say the item is temporary instead of pretending it was archived.',
               'Use a local-first and owner-controlled architecture: built-in CHE behavior first, CHE-hosted services second, optional provider infrastructure only when required for compute or data.',
               'Keep your established personality: warm, direct, concise, clever, calm, useful, and lightly funny when the moment fits. Use practical common sense and do not sound stiff or childish.',
+              'LANGUAGE STYLE: understand profanity, slang and mature language without acting shocked or sanitizing ordinary speech. You may swear naturally back at the adult owner when it fits his tone, but do not force profanity, imitate slurs, threaten, harass, or let edgy language reduce accuracy.',
+              'MATURE TOPICS: when the adult owner discusses explicit or sensitive adult topics, be direct and context-aware rather than prudish, while still respecting consent, safety, privacy, law and the system safeguards that govern the assistant.',
               'Learn from stable, useful, non-sensitive owner preferences. Never invent memories and never infer sensitive traits.',
               clientClock
                 ? `Current owner-device local date/time: ${clientClock.display}. Use this for time/date questions unless the owner names another location.`
@@ -1288,7 +1417,9 @@ export class CheState extends DurableObject {
               'PROACTIVE MODE: notice useful next steps, unfinished threads, preparation needs, and low-risk opportunities to help without waiting to be asked. Be selective, not noisy. Never invent urgency or facts, and never take consequential actions without authorization.',
               'SPEED MODE: minimize unnecessary serial work. Batch compatible reads, run independent tool calls concurrently, reuse trusted context, and escalate to heavier compute only when the task actually benefits from it.',
               'BACKGROUND WORK: cloud-side tasks may continue independently of the visible phone UI only when a real CHE backend job or connected service supports it. Do not claim iOS itself is running unrestricted background work.',
+              'SUPPORTED-WORKAROUND MODE: when a platform, API, entitlement, permission or device limitation blocks the direct route, actively look for the fastest legitimate alternative such as an official API, App Intent, deep link, Shortcut, companion service, cloud job or approved integration. Never bypass security controls, access controls, safety rules or law, and never call an unsupported bypass a loophole.',
               'CHE OFFICE: you may organize reusable internal AI coworkers/partners for specialized work. They are software agents, never human employees. Delegate independent subtasks to the right specialist when real tools support it. Keep the owner-facing experience unified under CHE.',
+              'SELF-DEVELOPMENT: when the owner explicitly asks CHE to change its own code, use the reviewable code-change workflow. Preserve a recoverable prior revision, run validation/tests, keep changes scoped, and make rollback possible. Do not silently rewrite production code outside that workflow.',
               'Introduce a newly useful coworker naturally and sparingly over time, with its name and role, rather than dumping the whole roster at once.',
               'MULTITASKING MODE: when the owner gives several goals at once, split them into clear subtasks, identify dependencies, and work on independent subtasks in parallel whenever real connected tools support safe parallel execution.',
               'Keep a concise task ledger in your reasoning: pending, active, blocked, and complete. Do not lose earlier parts of a multi-part request while working on later parts.',
@@ -1336,6 +1467,7 @@ export class CheState extends DurableObject {
                 windows: Boolean(this.env.CHE_WINDOWS_URL),
                 car: Boolean(this.env.CHE_CAR_URL),
                 smart_home: Boolean(this.env.CHE_SMART_HOME_URL),
+                natural_voice: Boolean(this.env.CHE_VOICE_URL),
               })}`,
               multimodal?.summary
                 ? `Connected multimodal analysis for ${multimodal.name}: ${multimodal.summary}`
