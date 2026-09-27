@@ -130,6 +130,7 @@ class _CHEHomeState extends State<CHEHome> {
     'object_storage': false,
     'work_engine': false,
     'office': false,
+    'action_engine': false,
     'web_research': false,
     'public_records': false,
     'music': false,
@@ -765,6 +766,7 @@ OWNER AGENCY
         'object_storage': integrationData['object_storage'] == true,
         'work_engine': integrationData['work_engine'] == true,
         'office': integrationData['office'] == true,
+        'action_engine': integrationData['action_engine'] == true,
         'web_research': integrationData['web_research'] == true,
         'public_records': integrationData['public_records'] == true,
         'music': integrationData['music'] == true,
@@ -2745,9 +2747,11 @@ OWNER AGENCY
         title: Text(title),
         subtitle: Text(description),
         trailing: Text(
-          connected ? 'CONNECTED' : 'NOT CONNECTED',
+          connected ? 'CONNECTED' : (onTap != null ? 'SET UP' : 'NOT CONNECTED'),
           style: TextStyle(
-            color: connected ? const Color(0xFF67E8D1) : Colors.white38,
+            color: connected
+                ? const Color(0xFF67E8D1)
+                : (onTap != null ? Colors.amberAccent : Colors.white38),
             fontSize: 10,
             fontWeight: FontWeight.bold,
           ),
@@ -2756,48 +2760,63 @@ OWNER AGENCY
     );
   }
 
+  void _runHubPrompt(String prompt) {
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    controller.text = prompt;
+    Future<void>.delayed(const Duration(milliseconds: 120), () async {
+      if (mounted) await sendMessage();
+    });
+  }
+
   Widget _hubMarketsTab() {
     return _hubList(
       'Markets',
-      'Live market intelligence, testing and execution connections.',
+      'Run analysis now; live data and execution activate when authorized connectors are linked.',
       [
         _integrationCard(
           Icons.candlestick_chart,
-          'Stocks • Futures • Crypto',
-          'Live prices, depth, volatility, sessions and market structure.',
+          'Analyze Markets',
+          'Stocks, futures and crypto structure, catalysts, volatility and risk.',
           integrations['market_data'] == true,
+          onTap: () => _runHubPrompt(
+            'Analyze the market I am focused on right now. Use any connected live market and research tools, separate live facts from assumptions, and give me structure, catalysts, invalidation and risk.',
+          ),
         ),
         _integrationCard(
           Icons.science_outlined,
           'Backtesting Lab',
-          'Historical testing, out-of-sample validation, drawdown and sample statistics.',
+          'Design and evaluate strategy tests with sample size, drawdown and out-of-sample checks.',
           integrations['backtesting'] == true,
+          onTap: () => _runHubPrompt(
+            'Open a backtesting task with me. Help me define the setup, rules, timeframe, data needed, sample size, drawdown and out-of-sample validation. Use the connected backtest system if available.',
+          ),
         ),
         _integrationCard(
           Icons.functions,
           'Custom Indicators',
-          'Chay can design indicator logic and scanners; real validation needs market history.',
+          'Design indicator/scanner logic and validate it when historical data is connected.',
           integrations['backtesting'] == true,
+          onTap: () => _runHubPrompt(
+            'Help me build a custom trading indicator or scanner. Ask only for the missing rules, then produce the logic and a validation plan.',
+          ),
         ),
         _integrationCard(
           Icons.account_balance,
           'Live Broker',
-          'Order routing becomes available only after an authorized broker connection.',
+          'Authorized order routing with explicit risk controls and connector confirmation.',
           integrations['broker'] == true,
+          onTap: () => _runHubPrompt(
+            'Help me connect and configure my broker for CHE. Do not place any order until the broker connector confirms authorization and the trade details and risk controls are explicit.',
+          ),
         ),
         _integrationCard(
           Icons.copy_all_outlined,
           'Prop-Firm Copy Trading',
-          'Mirror approved trades only when account rules, sizing and loss limits are configured.',
+          'Rule-aware mirroring only after the prop-firm connection and limits are verified.',
           integrations['prop_firm'] == true,
-        ),
-        const Card(
-          child: ListTile(
-            leading: Icon(Icons.shield_outlined),
-            title: Text('Risk-first trade support'),
-            subtitle: Text(
-              'Chay can compare setups, catalysts, invalidation and risk. No setup is treated as guaranteed.',
-            ),
+          onTap: () => _runHubPrompt(
+            'Help me connect my prop-firm account and configure compliant copy trading. Verify account rules, sizing and loss limits before any execution.',
           ),
         ),
       ],
@@ -2807,37 +2826,52 @@ OWNER AGENCY
   Widget _hubBusinessTab() {
     return _hubList(
       'Business',
-      'Operations, cash flow, leads, customers and public research.',
+      'Run planning and operations now; connected services unlock live records, leads and payments.',
       [
         _integrationCard(
           Icons.dashboard_customize_outlined,
           'Business Operations',
-          'Plans, workflows, CRM, scheduling, fulfillment and operating dashboards.',
+          'Plans, workflows, CRM, scheduling, fulfillment and operating systems.',
           integrations['business'] == true,
+          onTap: () => _runHubPrompt(
+            'Start a business operations task with me. Help me turn the goal into an efficient plan, workflow, responsibilities, metrics and next actions.',
+          ),
         ),
         _integrationCard(
           Icons.account_balance_wallet_outlined,
           'Cash Flow',
-          'Income, expenses, runway, forecasts, invoices and reconciliations.',
+          'Budgets, runway, forecasts, invoices and reconciliations.',
           integrations['business'] == true,
+          onTap: () => _runHubPrompt(
+            'Help me work through my business cash flow. Ask for only the numbers you actually need, then build the budget, runway and forecast.',
+          ),
         ),
         _integrationCard(
           Icons.person_search_outlined,
           'Lead Discovery',
-          'Find lawful public/professional prospects who may need your services.',
+          'Lawful public/professional prospect research through a connected source.',
           integrations['leads'] == true,
+          onTap: () => _runHubPrompt(
+            'Find and organize lawful public or professional leads for my business using connected lead and research tools. Do not use sensitive personal targeting.',
+          ),
         ),
         _integrationCard(
           Icons.payments_outlined,
           'Payments + Billing',
-          'Charge through an authorized processor only within approved pricing and customer terms.',
+          'Authorized invoicing and payment actions with explicit customer terms.',
           integrations['payments'] == true,
+          onTap: () => _runHubPrompt(
+            'Help me set up CHE payments and billing. Do not charge anyone unless the payment connector confirms authorization, pricing and customer terms.',
+          ),
         ),
         _integrationCard(
           Icons.manage_search_outlined,
           'Public Records',
-          'Search records after they are lawfully public; private records and access controls stay off-limits.',
+          'Research records that are lawfully public through an authorized source.',
           integrations['public_records'] == true,
+          onTap: () => _runHubPrompt(
+            'Help me research lawful public records. Use a connected public-record or research source if available and clearly separate confirmed records from anything unverified.',
+          ),
         ),
       ],
     );
@@ -2880,24 +2914,36 @@ OWNER AGENCY
           'Computer',
           'Windows/Mac companion for approved computer actions.',
           integrations['windows'] == true,
+          onTap: () => _runHubPrompt(
+            'Help me connect my computer to CHE for authorized actions. Walk me through only the required setup and permissions.',
+          ),
         ),
         _integrationCard(
           Icons.bluetooth,
           'Bluetooth / Car',
-          'Supported car audio and Bluetooth control.',
+          'Supported authorized car and Bluetooth actions.',
           integrations['car'] == true,
+          onTap: () => _runHubPrompt(
+            'Help me connect my car or Bluetooth system to CHE. Use only supported authorized controls and tell me exactly what I need to approve.',
+          ),
         ),
         _integrationCard(
           Icons.lightbulb_outline,
           'Smart Home',
           'HomeKit/Matter lights, scenes and approved automations.',
           integrations['smart_home'] == true,
+          onTap: () => _runHubPrompt(
+            'Help me connect my smart-home lights and devices to CHE. Use the supported authorized integration and tell me only when I need to approve something.',
+          ),
         ),
         _integrationCard(
           Icons.public,
           'Live Research',
           'Current web research and novelty/feasibility checking.',
           integrations['web_research'] == true,
+          onTap: () => _runHubPrompt(
+            'Run a live research task for me using connected research tools. Cross-check important claims and show uncertainty instead of guessing.',
+          ),
         ),
         _integrationCard(
           Icons.image_outlined,
@@ -2926,8 +2972,11 @@ OWNER AGENCY
         _integrationCard(
           Icons.perm_media_outlined,
           'Multimodal Understanding',
-          'Photos, video, audio, documents and data can be analyzed after the multimodal service is connected.',
+          'Give Chay a photo, video, audio, document or data file.',
           integrations['multimodal'] == true,
+          onTap: () {
+            _openMultimodalPicker();
+          },
         ),
       ],
     );
@@ -2941,8 +2990,11 @@ OWNER AGENCY
         _integrationCard(
           Icons.music_note,
           'Apple Music',
-          'Search, playlists, play/pause and queue control.',
+          'Search, playlists, play/pause and queue control through an authorized connection.',
           integrations['music'] == true,
+          onTap: () => _runHubPrompt(
+            'Help me connect and control my music through CHE. Use the authorized music integration if connected.',
+          ),
         ),
         _integrationCard(
           Icons.directions_car_filled_outlined,
@@ -3037,12 +3089,18 @@ OWNER AGENCY
           'Image Generation',
           'Generate original visual assets when CHE image compute is connected.',
           integrations['image_generation'] == true,
+          onTap: () => _runHubPrompt(
+            'Create an image for me. Ask only for any essential missing detail, then use the connected CHE image generator if available.',
+          ),
         ),
         _integrationCard(
           Icons.movie_creation_outlined,
           'Video Generation',
           'Generate video clips when CHE video compute is connected.',
           integrations['video_generation'] == true,
+          onTap: () => _runHubPrompt(
+            'Create a video for me. Ask only for any essential missing detail, then use the connected CHE video generator if available.',
+          ),
         ),
       ],
     );
