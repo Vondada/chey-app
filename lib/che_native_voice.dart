@@ -1,12 +1,12 @@
 import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:flutter/services.dart';
 
 class CheNativeVoice {
-  static const MethodChannel _methods =
-      MethodChannel('che/native_voice');
+  static const MethodChannel _methods = MethodChannel('che/native_voice');
 
-  static const EventChannel _events =
-      EventChannel('che/native_voice_events');
+  static const EventChannel _events = EventChannel('che/native_voice_events');
 
   static Stream<Map<String, dynamic>>? _cachedEvents;
 
@@ -34,6 +34,15 @@ class CheNativeVoice {
   static Future<void> setAssistantSpeaking(bool value) async {
     await _methods.invokeMethod('assistantSpeaking', value);
   }
+
+  static Future<bool> speakText(String text) async =>
+      (await _methods.invokeMethod<bool>('speakText', {'text': text})) ?? false;
+
+  static Future<bool> playAudio(Uint8List bytes) async =>
+      (await _methods.invokeMethod<bool>('playAudio', bytes)) ?? false;
+
+  static Future<bool> stopAudio() async =>
+      (await _methods.invokeMethod<bool>('stopAudio')) ?? false;
 
   static Future<Map<String, dynamic>> status() async {
     final raw = await _methods.invokeMethod<dynamic>('status');
