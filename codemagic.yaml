@@ -1,6 +1,6 @@
 workflows:
   chey-mobile:
-    name: CHE Android and SideStore iOS
+    name: CHE iPhone SideStore
     instance_type: mac_mini_m2
     max_build_duration: 60
     environment:
@@ -22,12 +22,6 @@ workflows:
     scripts:
       - name: Bootstrap native projects
         script: bash ./tool/bootstrap.sh
-      - name: Format Dart sources
-        script: dart format lib
-      - name: Analyze
-        script: flutter analyze
-      - name: Build Android APK
-        script: flutter build apk --release
       - name: Build unsigned iOS app
         script: |
           flutter build ios --release --no-codesign \
@@ -41,6 +35,5 @@ workflows:
           zip -qry CHE-unsigned.ipa Payload
           rm -r Payload
     artifacts:
-      - build/app/outputs/flutter-apk/*.apk
       - build/ios/iphoneos/*.app
       - build/ios/ipa/CHE-unsigned.ipa
