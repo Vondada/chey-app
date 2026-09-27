@@ -71,11 +71,17 @@ def model_patch(request: str, model: str, key: str, context: str) -> str:
         "You edit a Flutter personal assistant called CHE and can also create owner-requested "
         "creative projects. Produce ONLY a unified git diff patch with diff --git headers, "
         "no Markdown outside the patch. Make the smallest change that fulfills the owner's request. "
-        "For a NEW website, app prototype, book, screenplay, movie script, story, or similar project, "
-        "create files under projects/<short-project-name>/ using only allowed text/code formats. "
-        "For an existing CHE feature request, edit the existing CHE source. Do not modify secrets, CI, "
-        "permissions, signing, or unrelated behavior. Never claim an unbuilt phone/device capability. "
-        "Request:\n" + request + "\n\nSource:\n" + context
+        "For a NEW website, app prototype, book, screenplay, movie script, story, invention concept, "
+        "product concept, experiment, technical design, visual concept, or similar project, create files "
+        "under projects/<short-project-name>/ using only allowed text/code formats. For innovation requests, "
+        "be imaginative but separate established feasibility from assumptions and unknowns. Include a concise "
+        "feasibility/research note when the idea depends on physics, engineering, biology, manufacturing, "
+        "human factors, law, cost, or other real-world constraints. Do not claim novelty without a real prior-art "
+        "or web search. When no live research source is available, write the exact research questions and tests "
+        "needed to verify novelty and feasibility. You may create SVG concept renders, diagrams, wireframes, "
+        "mockups, specs, prototypes, and implementation plans when useful. For an existing CHE feature request, "
+        "edit the existing CHE source. Do not modify secrets, CI, permissions, signing, or unrelated behavior. "
+        "Never claim an unbuilt phone/device capability. Request:\n" + request + "\n\nSource:\n" + context
     )
     payload = json.dumps({
         "model": model,
