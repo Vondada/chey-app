@@ -8,6 +8,25 @@ its own Durable Object memory and does not yet import the encrypted Windows memo
 
 ## What works in source
 
+- **CHE Plugins:** the Plugins button lists server-approved read-only services.
+  A paired owner can switch each one on or off. Add future services by setting
+  `CHE_PLUGIN_CATALOG` on the Cloudflare Worker to a JSON array like:
+
+  ```json
+  [{"id":"weather","name":"Weather","description":"Current weather and forecasts","endpoint":"https://your-service.example/query","token_secret":"CHE_PLUGIN_WEATHER_TOKEN","triggers":["weather","forecast"]}]
+  ```
+
+  Set `CHE_PLUGIN_WEATHER_TOKEN` as a Worker secret if the service requires it.
+  The remote endpoint accepts POST JSON `{ "query": "...", "tool": "weather",
+  "mode": "read_only" }` and returns JSON with the requested information. New
+  catalog entries appear in the app without another IPA build. They start off.
+  The server sends only the current query, limits results and wait time, and
+  never sends CHE's memory, pairing token or owner-shared screen. The catalog
+  belongs on the server; do not put API secrets or endpoints in the Flutter app.
+  Trades, payments, messages, device control and any other writes require a
+  separate permissioned integration with owner confirmation. New iOS permissions,
+  native phone capabilities or app interface changes still require a new build.
+
 - Flutter can accept an HTTPS Agent address from the cloud button. Changing the
   server clears the old paired-device token. The browser-only voice bridge is
   conditionally imported for web builds. iOS permission text is inserted by
