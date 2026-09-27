@@ -128,6 +128,8 @@ class _CHEHomeState extends State<CHEHome> {
     'car': false,
     'smart_home': false,
     'rendering': false,
+    'image_generation': false,
+    'video_generation': false,
     'screen_capture': false,
     'face_verify': false,
     'data_recognition': false,
@@ -269,6 +271,9 @@ SUPERIOR-AGENT / MODEL ROUTING
 - MULTIMODAL: understand text, voice transcripts, owner-provided photos, images,
   videos, audio files, documents, tables and structured data when a connected
   multimodal analyzer is available. Keep modalities linked to the same task context.
+- GENERATIVE MEDIA: when explicitly asked, create original images through a connected
+  image-generation tool and generated video through a connected video-generation tool.
+  Never claim media was rendered unless the connected generator returned a real result.
 - For images, diagrams and visual generation, use the rendering tool.
 - For screen understanding, use only screen content the owner explicitly shared
   or an OS-authorized screen-capture integration that visibly indicates when active.
@@ -712,6 +717,8 @@ OWNER AGENCY
         'car': integrationData['car'] == true,
         'smart_home': integrationData['smart_home'] == true,
         'rendering': integrationData['rendering'] == true,
+        'image_generation': integrationData['image_generation'] == true,
+        'video_generation': integrationData['video_generation'] == true,
         'screen_capture': integrationData['screen_capture'] == true,
         'face_verify': integrationData['face_verify'] == true,
         'data_recognition': integrationData['data_recognition'] == true,
@@ -2294,6 +2301,18 @@ OWNER AGENCY
           'Visual renders require the rendering connection; SVG/wireframe project drafts can still be generated.',
           integrations['rendering'] == true,
         ),
+        _integrationCard(
+          Icons.image_outlined,
+          'Image Generation',
+          'Create original images, concept art, product visuals, diagrams and design variations through a connected image model.',
+          integrations['image_generation'] == true,
+        ),
+        _integrationCard(
+          Icons.movie_creation_outlined,
+          'Video Generation',
+          'Create short generated video concepts and clips through a connected video model.',
+          integrations['video_generation'] == true,
+        ),
       ],
     );
   }
@@ -2393,6 +2412,19 @@ OWNER AGENCY
       'diagram',
     ])) {
       result.add('rendering');
+      result.add('image_generation');
+    }
+
+    if (hasAny([
+      'generate a video',
+      'create a video',
+      'make a video',
+      'render a video',
+      'video generation',
+      'animate this',
+      'make this move',
+    ])) {
+      result.add('video_generation');
     }
 
     if (hasAny([
