@@ -123,10 +123,13 @@ class _CHEHomeState extends State<CHEHome> {
   List<String> suggestions = [];
   List<Map<String, dynamic>> projects = [];
   List<Map<String, dynamic>> vaultItems = [];
+  List<Map<String, dynamic>> team = [];
+  List<Map<String, dynamic>> teamTasks = [];
   Map<String, bool> integrations = const {
     'storage_vault': false,
     'object_storage': false,
     'work_engine': false,
+    'office': false,
     'web_research': false,
     'public_records': false,
     'music': false,
@@ -224,6 +227,10 @@ LEARNING AND GROWTH
 - BACKGROUND WORK: use CHE cloud/backend jobs or connected services for real
   behind-the-scenes work when supported. Never pretend ordinary iOS sandboxing
   allows unrestricted invisible background execution.
+- CHE OFFICE: Chay may create and coordinate reusable internal AI coworkers/partners
+  when specialization will make owner-authorized work faster or more reliable. They
+  are software agents, not human employees. Introduce useful new partners naturally
+  over time instead of dumping the entire roster on the owner at once.
 - MULTITASKING: when the owner gives multiple goals, preserve every goal, split
   the work into independent and dependent subtasks, parallelize only when real
   connected tools can safely do so, keep blocked tasks from stopping unrelated
@@ -726,6 +733,8 @@ OWNER AGENCY
       final suggestionData = (data['suggestions'] as List?) ?? const [];
       final projectData = (data['projects'] as List?) ?? const [];
       final vaultData = (data['vault_items'] as List?) ?? const [];
+      final teamData = (data['team'] as List?) ?? const [];
+      final teamTaskData = (data['team_tasks'] as List?) ?? const [];
       final integrationData = (data['integrations'] as Map?) ?? const {};
 
       savedMemories = memoryData.map((e) => e.toString()).toList();
@@ -743,10 +752,19 @@ OWNER AGENCY
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
+      team = teamData
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      teamTasks = teamTaskData
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
       integrations = {
         'storage_vault': integrationData['storage_vault'] == true,
         'object_storage': integrationData['object_storage'] == true,
         'work_engine': integrationData['work_engine'] == true,
+        'office': integrationData['office'] == true,
         'web_research': integrationData['web_research'] == true,
         'public_records': integrationData['public_records'] == true,
         'music': integrationData['music'] == true,
@@ -2511,14 +2529,14 @@ OWNER AGENCY
   }
 
   void _openAssistantHub({int tab = 0}) {
-    _selectedTab = tab < 0 ? 0 : (tab > 6 ? 6 : tab);
+    _selectedTab = tab < 0 ? 0 : (tab > 7 ? 7 : tab);
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF101821),
       isScrollControlled: true,
       builder: (context) {
         return DefaultTabController(
-          length: 7,
+          length: 8,
           initialIndex: _selectedTab,
           child: SizedBox(
             height: MediaQuery.of(context).size.height * 0.90,
@@ -2563,6 +2581,7 @@ OWNER AGENCY
                     Tab(icon: Icon(Icons.devices_other_outlined), text: 'Devices'),
                     Tab(icon: Icon(Icons.music_note_outlined), text: 'Music'),
                     Tab(icon: Icon(Icons.lightbulb_outline), text: 'Create'),
+                    Tab(icon: Icon(Icons.workspaces_outline), text: 'Office'),
                   ],
                 ),
                 Expanded(
@@ -2575,6 +2594,7 @@ OWNER AGENCY
                       _hubDevicesTab(),
                       _hubMusicTab(),
                       _hubCreateTab(),
+                      _hubOfficeTab(),
                     ],
                   ),
                 ),
@@ -3024,6 +3044,291 @@ OWNER AGENCY
           'Generate video clips when CHE video compute is connected.',
           integrations['video_generation'] == true,
         ),
+      ],
+    );
+  }
+
+  Future<void> _createPartnerDialog() async {
+    if (!await _ensurePaired() || !mounted) return;
+
+    final roleController = TextEditingController();
+    final specialtyController = TextEditingController();
+    final missionController = TextEditingController();
+    var busy = false;
+    String? errorText;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            Future<void> create() async {
+              final role = roleController.text.trim();
+              if (role.isEmpty) {
+                setDialogState(() => errorText = 'Give the partner a role.');
+                return;
+              }
+
+              setDialogState(() {
+                busy = true;
+                errorText = null;
+              });
+
+              try {
+                await _postAgentJson('/api/team/create', {
+                  'role': role,
+                  'specialty': specialtyController.text.trim(),
+                  'mission': missionController.text.trim(),
+                });
+                await _loadAgentState(silent: true);
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+              } catch (e) {
+                setDialogState(() {
+                  busy = false;
+                  errorText = e.toString();
+                });
+              }
+            }
+
+            return AlertDialog(
+              backgroundColor: const Color(0xFF162532),
+              title: const Text('ADD CHE PARTNER'),
+              content: SizedBox(
+                width: 440,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: roleController,
+                      decoration: const InputDecoration(
+                        labelText: 'Role',
+                        hintText: 'Research Partner',
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: specialtyController,
+                      decoration: const InputDecoration(
+                        labelText: 'Specialty',
+                        hintText: 'Research, verification and source gathering',
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: missionController,
+                      minLines: 3,
+                      maxLines: 6,
+                      decoration: const InputDecoration(
+                        labelText: 'Mission',
+                        alignLabelWithHint: true,
+                      ),
+                    ),
+                    if (errorText != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        errorText!,
+                        style: const TextStyle(color: Colors.redAccent),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: busy ? null : () => Navigator.pop(dialogContext),
+                  child: const Text('CANCEL'),
+                ),
+                FilledButton(
+                  onPressed: busy ? null : create,
+                  child: Text(busy ? 'ADDING...' : 'ADD PARTNER'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    roleController.dispose();
+    specialtyController.dispose();
+    missionController.dispose();
+  }
+
+  Future<void> _openPartner(Map<String, dynamic> partner) async {
+    if (!mounted) return;
+
+    if (partner['introduced'] != true) {
+      try {
+        await _postAgentJson('/api/team/introduce', {
+          'partner_id': partner['id'],
+        });
+        await _loadAgentState(silent: true);
+      } catch (_) {}
+    }
+
+    if (!mounted) return;
+    final partnerId = partner['id']?.toString();
+    final assignments = teamTasks
+        .where((item) => item['partner_id']?.toString() == partnerId)
+        .take(10)
+        .toList();
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF101821),
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: SizedBox(
+            height: MediaQuery.of(sheetContext).size.height * 0.72,
+            child: ListView(
+              padding: const EdgeInsets.all(18),
+              children: [
+                Row(
+                  children: [
+                    const CircleAvatar(
+                      child: Icon(Icons.smart_toy_outlined),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            partner['name']?.toString() ?? 'CHE Partner',
+                            style: const TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text(
+                            partner['role']?.toString() ?? 'AI coworker',
+                            style: const TextStyle(color: Color(0xFF67E8D1)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  partner['specialty']?.toString() ?? '',
+                  style: const TextStyle(color: Colors.white70),
+                ),
+                if ((partner['mission']?.toString() ?? '').isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text(partner['mission'].toString()),
+                ],
+                const SizedBox(height: 20),
+                const Text(
+                  'RECENT ASSIGNMENTS',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                if (assignments.isEmpty)
+                  const Card(
+                    child: ListTile(
+                      title: Text('No assignments yet'),
+                      subtitle: Text(
+                        'Chay will delegate work here when this specialty is useful.',
+                      ),
+                    ),
+                  )
+                else
+                  ...assignments.map(
+                    (item) => Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.task_alt_outlined),
+                        title: Text(item['task']?.toString() ?? 'Task'),
+                        subtitle: Text(item['status']?.toString() ?? 'assigned'),
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    try {
+                      await _postAgentJson('/api/team/delete', {
+                        'partner_id': partner['id'],
+                      });
+                      await _loadAgentState(silent: true);
+                      if (sheetContext.mounted) Navigator.pop(sheetContext);
+                    } catch (_) {}
+                  },
+                  icon: const Icon(Icons.person_remove_outlined),
+                  label: const Text('REMOVE PARTNER'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _hubOfficeTab() {
+    final newPartners = team.where((item) => item['introduced'] != true).length;
+    return _hubList(
+      'CHE Office',
+      'Chay’s internal AI coworkers for delegated and parallel work.',
+      [
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.account_tree_outlined),
+            title: const Text('Chay coordinates the office'),
+            subtitle: Text(
+              '${team.length} AI coworker${team.length == 1 ? '' : 's'} • ${teamTasks.length} tracked assignment${teamTasks.length == 1 ? '' : 's'}',
+            ),
+            trailing: newPartners > 0
+                ? Badge(label: Text('$newPartners NEW'))
+                : null,
+          ),
+        ),
+        const SizedBox(height: 8),
+        FilledButton.icon(
+          onPressed: _createPartnerDialog,
+          icon: const Icon(Icons.person_add_alt_1_outlined),
+          label: const Text('ADD PARTNER'),
+        ),
+        const SizedBox(height: 12),
+        if (team.isEmpty)
+          const Card(
+            child: ListTile(
+              leading: Icon(Icons.groups_outlined),
+              title: Text('Office is ready'),
+              subtitle: Text(
+                'Chay will staff specialist AI coworkers when a task benefits from delegation, or you can add one yourself.',
+              ),
+            ),
+          )
+        else
+          ...team.map(
+            (partner) => Card(
+              child: ListTile(
+                leading: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    const CircleAvatar(
+                      child: Icon(Icons.smart_toy_outlined),
+                    ),
+                    if (partner['introduced'] != true)
+                      const Positioned(
+                        right: -4,
+                        top: -4,
+                        child: Badge(label: Text('NEW')),
+                      ),
+                  ],
+                ),
+                title: Text(partner['name']?.toString() ?? 'CHE Partner'),
+                subtitle: Text(
+                  '${partner['role'] ?? 'AI coworker'}\n${partner['specialty'] ?? ''}',
+                ),
+                isThreeLine: true,
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _openPartner(partner),
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -3852,6 +4157,10 @@ OWNER AGENCY
     }
     if (RegExp(r'\b(open|show|go to)\s+(create|innovation|creator)\b').hasMatch(lower)) {
       _openAssistantHub(tab: 6);
+      return true;
+    }
+    if (RegExp(r'\b(open|show|go to)\s+(office|team|coworkers?|partners?|workplace)\b').hasMatch(lower)) {
+      _openAssistantHub(tab: 7);
       return true;
     }
 
