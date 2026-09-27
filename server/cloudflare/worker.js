@@ -607,6 +607,16 @@ async function specialistPanel(env, requestedCapabilities, query) {
   const requested = new Set(requestedCapabilities || []);
   const jobs = [];
 
+  if (requested.has('quantum_compute') && env.CHE_QUANTUM_URL) {
+    jobs.push(optionalToolConnector(
+      env.CHE_QUANTUM_URL,
+      env.CHE_QUANTUM_TOKEN,
+      'quantum_compute',
+      query,
+      { mode: 'optimization_simulation_or_specialized_compute' },
+    ));
+  }
+
   if (requested.has('market_data') && env.CHE_MARKET_DATA_URL) {
     jobs.push(optionalToolConnector(
       env.CHE_MARKET_DATA_URL,
@@ -794,6 +804,7 @@ export class CheState extends DurableObject {
       data.suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
       data.team = Array.isArray(data.team) ? data.team : [];
       data.team_tasks = Array.isArray(data.team_tasks) ? data.team_tasks : [];
+      data.jobs = Array.isArray(data.jobs) ? data.jobs : [];
       const body = request.method === 'POST' ? await bodyOf(request) : {};
       if (request.method === 'POST' && path === '/api/pair') {
         const secret = this.env.CHE_PAIR_CODE;
@@ -830,6 +841,7 @@ export class CheState extends DurableObject {
           vault_items: data.vault_items,
           team: data.team,
           team_tasks: data.team_tasks,
+          jobs: data.jobs,
           storage: {
             ...storageReadiness(this.env),
             core_vault: true,
@@ -839,7 +851,9 @@ export class CheState extends DurableObject {
             object_storage: Boolean(this.env.CHE_DATA_BUCKET),
             work_engine: true,
             office: true,
+            background_jobs: true,
             natural_voice: Boolean(this.env.CHE_VOICE_URL),
+            quantum_compute: Boolean(this.env.CHE_QUANTUM_URL),
             web_research: Boolean(this.env.CHE_RESEARCH_URL),
             public_records: Boolean(this.env.CHE_PUBLIC_RECORDS_URL),
             music: Boolean(this.env.CHE_MUSIC_URL),
@@ -918,6 +932,43 @@ export class CheState extends DurableObject {
         await this.ctx.storage.put('che', data);
         return json({ ok: true });
       }
+      if (path === '/api/job/create') {
+        const prompt = String(body.prompt || '').trim().slice(0, 8000);
+        const title = String(body.title || prompt.slice(0, 80) || 'CHE background job')
+          .trim()
+          .slice(0, 100);
+        if (!prompt) return json({ detail: 'Background job prompt required.' }, 400);
+
+        const now = new Date().toISOString();
+        const job = {
+          id: crypto.randomUUID(),
+          title,
+          prompt,
+          status: 'queued',
+          result: '',
+          error: '',
+          created_at: now,
+          updated_at: now,
+        };
+        data.jobs.unshift(job);
+        data.jobs = data.jobs.slice(0, 80);
+        await this.ctx.storage.put('che', data);
+        await this.ctx.storage.setAlarm(Date.now() + 250);
+        return json({ job });
+      }
+
+      if (path === '/api/job/cancel') {
+        const id = String(body.id || '');
+        const job = data.jobs.find((item) => item.id === id);
+        if (!job) return json({ detail: 'Background job not found.' }, 404);
+        if (job.status === 'queued') {
+          job.status = 'cancelled';
+          job.updated_at = new Date().toISOString();
+          await this.ctx.storage.put('che', data);
+        }
+        return json({ job });
+      }
+
       if (path === '/api/team/create') {
         const role = String(body.role || '').trim().slice(0, 80);
         const specialty = String(body.specialty || '').trim().slice(0, 120);
@@ -1225,6 +1276,32 @@ export class CheState extends DurableObject {
           ? body.requested_capabilities.map((item) => String(item))
           : [];
 
+        const explicitBackgroundWork =
+          requestedCapabilities.includes('background_work') &&
+          /\b(?:in the background|background task|behind[- ]the[- ]scenes|while i(?:'m| am)?|while we|keep working on)\b/i.test(message);
+
+        if (explicitBackgroundWork) {
+          const now = new Date().toISOString();
+          const job = {
+            id: crypto.randomUUID(),
+            title: message.slice(0, 80),
+            prompt: message,
+            status: 'queued',
+            result: '',
+            error: '',
+            created_at: now,
+            updated_at: now,
+          };
+          data.jobs.unshift(job);
+          data.jobs = data.jobs.slice(0, 80);
+          await this.ctx.storage.put('che', data);
+          await this.ctx.storage.setAlarm(Date.now() + 250);
+          return ndjsonReply(
+            'I put that into CHE background work, sir. You can keep using me while it runs.',
+            { background_job_id: job.id, background_job_status: 'queued' },
+          );
+        }
+
         // CHE OFFICE: quietly staff reusable AI coworkers when a task benefits
         // from specialization. These are software agents, not human employees.
         const roleRules = [
@@ -1468,6 +1545,8 @@ export class CheState extends DurableObject {
                 car: Boolean(this.env.CHE_CAR_URL),
                 smart_home: Boolean(this.env.CHE_SMART_HOME_URL),
                 natural_voice: Boolean(this.env.CHE_VOICE_URL),
+                background_jobs: true,
+                quantum_compute: Boolean(this.env.CHE_QUANTUM_URL),
               })}`,
               multimodal?.summary
                 ? `Connected multimodal analysis for ${multimodal.name}: ${multimodal.summary}`
@@ -1531,6 +1610,91 @@ export class CheState extends DurableObject {
         return json({ detail: 'Invalid or oversized request.' }, 400);
       }
       return json({ detail: 'CHE cloud Agent is temporarily unavailable.' }, 503);
+    }
+  }
+
+  async alarm() {
+    const data = (await this.ctx.storage.get('che')) || {
+      devices: {}, memories: [], failures: {},
+    };
+    data.jobs = Array.isArray(data.jobs) ? data.jobs : [];
+
+    const queued = data.jobs
+      .filter((job) => job.status === 'queued')
+      .slice(0, 4);
+    if (!queued.length) return;
+
+    const startedAt = new Date().toISOString();
+    for (const job of queued) {
+      job.status = 'running';
+      job.updated_at = startedAt;
+    }
+    await this.ctx.storage.put('che', data);
+
+    const memories = Array.isArray(data.memories) ? data.memories.slice(-20) : [];
+    const results = await Promise.all(
+      queued.map(async (job) => {
+        try {
+          const answer = await this.env.AI.run(
+            this.env.CHE_STRONG_MODEL || STRONG_MODEL,
+            {
+              messages: [
+                {
+                  role: 'system',
+                  content: [
+                    'You are CHE background work.',
+                    'Complete the assigned task independently and return a directly useful result.',
+                    'Be concise but complete. Separate verified facts from assumptions.',
+                    'Do not claim an external action, live research, device control, payment, trade, or file change occurred unless a connected tool result is actually supplied.',
+                    'Use the owner memories only as context; never expose secrets.',
+                  ].join('\n'),
+                },
+                {
+                  role: 'user',
+                  content: JSON.stringify({
+                    task: job.prompt,
+                    owner_memories: memories,
+                  }),
+                },
+              ],
+              max_tokens: 1800,
+            },
+          );
+
+          const result = String(
+            answer.response || answer.choices?.[0]?.message?.content || '',
+          ).trim().slice(0, 30000);
+
+          return {
+            id: job.id,
+            status: result ? 'complete' : 'failed',
+            result,
+            error: result ? '' : 'Background model returned no result.',
+          };
+        } catch (_) {
+          return {
+            id: job.id,
+            status: 'failed',
+            result: '',
+            error: 'Background work failed.',
+          };
+        }
+      }),
+    );
+
+    const finishedAt = new Date().toISOString();
+    for (const outcome of results) {
+      const job = data.jobs.find((item) => item.id === outcome.id);
+      if (!job) continue;
+      job.status = outcome.status;
+      job.result = outcome.result;
+      job.error = outcome.error;
+      job.updated_at = finishedAt;
+    }
+    await this.ctx.storage.put('che', data);
+
+    if (data.jobs.some((job) => job.status === 'queued')) {
+      await this.ctx.storage.setAlarm(Date.now() + 250);
     }
   }
 }
