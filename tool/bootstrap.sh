@@ -24,8 +24,16 @@ rm -f test/widget_test.dart
 
 flutter pub get
 
-# Flutter generates ios/ on CI; the permissions must be in the generated
-# Info.plist before the iPhone build asks for microphone/speech access.
+# Generate the iOS AppIcon set from assets/icon/icon.png (the "CHE" wordmark
+# icon) on every build, so it's never out of sync with the source image.
+if [[ -f assets/icon/icon.png && -d ios ]]; then
+  dart run flutter_launcher_icons
+fi
+
+# Flutter generates ios/ on CI; permissions and display name must be in the
+# generated Info.plist before the iPhone build asks for microphone/speech
+# access. flutter create defaults CFBundleDisplayName to the project name
+# ("chey"); the user-facing app should say CHE on the home screen.
 if [[ -f ios/Runner/Info.plist ]]; then
   python3 - <<'PY'
 import plistlib
@@ -34,10 +42,12 @@ from pathlib import Path
 path = Path('ios/Runner/Info.plist')
 with path.open('rb') as stream:
     info = plistlib.load(stream)
+info['CFBundleDisplayName'] = 'CHE'
+info['CFBundleName'] = 'CHE'
 info['NSMicrophoneUsageDescription'] = 'CHE uses your microphone when you speak to your assistant or capture audio.'
 info['NSSpeechRecognitionUsageDescription'] = 'CHE converts your speech to text when you use voice chat.'
-info['NSCameraUsageDescription'] = 'CHE uses the camera only when you choose to capture a photo or video for Chay to analyze.'
-info['NSPhotoLibraryUsageDescription'] = 'CHE accesses selected photos or videos only when you choose them for Chay to analyze.'
+info['NSCameraUsageDescription'] = 'CHE uses the camera only when you choose to capture a photo or video for CHE to analyze.'
+info['NSPhotoLibraryUsageDescription'] = 'CHE accesses selected photos or videos only when you choose them for CHE to analyze.'
 with path.open('wb') as stream:
     plistlib.dump(info, stream)
 PY
@@ -84,7 +94,11 @@ struct WakeCHEIntent: AppIntent {
 
   @MainActor
   func perform() async throws -> some IntentResult & ProvidesDialog {
-    UserDefaults.standard.set(true, forKey: "CHEWakeRequested")
+    // Use the same UserDefaults key Flutter's shared_preferences plugin
+    // reads on iOS (it stores under the "flutter." prefix), so the app can
+    // actually detect this and auto-resume the conversation on launch —
+    // not just come to the foreground silently.
+    UserDefaults.standard.set(true, forKey: "flutter.che_wake_requested")
     return .result(dialog: "Opening CHE.")
   }
 }
@@ -152,8 +166,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
         case "wake":
           result(true)
 
-        case "assistantSpeaking":
-          result(nil)
+        case "assistantSpeaking":          result(nil)
 
         case "status":
           result([

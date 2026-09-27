@@ -10,8 +10,10 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/cupertino.dart' show CupertinoPageRoute;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -22,6 +24,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:url_launcher/url_launcher.dart';
 import 'che_native_voice.dart';
+import 'che_app_portal.dart';
+import 'che_theme.dart';
+import 'che_world_hub.dart';
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
 
@@ -52,12 +57,68 @@ class CHEApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'C.H.E.',
+      title: 'CHE',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark(),
+      // iPhone-native feel: bounce scrolling everywhere, iOS swipe-back page
+      // transitions on every platform, and no Android-style ink ripples.
+      scrollBehavior: const _CheScrollBehavior(),
+      theme: ThemeData(
+        brightness: Brightness.dark,
+        useMaterial3: true,
+        scaffoldBackgroundColor: CheColors.bg,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: CheColors.accent,
+          brightness: Brightness.dark,
+          surface: CheColors.panel,
+        ),
+        splashFactory: NoSplash.splashFactory,
+        highlightColor: Colors.white.withValues(alpha: 0.04),
+        pageTransitionsTheme: const PageTransitionsTheme(
+          builders: {
+            TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+          },
+        ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Colors.transparent,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+        ),
+        bottomSheetTheme: const BottomSheetThemeData(
+          backgroundColor: CheColors.panel,
+          showDragHandle: false,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+          ),
+        ),
+        dialogTheme: const DialogThemeData(
+          backgroundColor: CheColors.panel,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(18)),
+          ),
+        ),
+        snackBarTheme: const SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: CheColors.panel,
+          contentTextStyle: TextStyle(color: CheColors.textPrimary),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(14)),
+          ),
+        ),
+      ),
       home: const CHEHome(),
     );
   }
+}
+
+class _CheScrollBehavior extends MaterialScrollBehavior {
+  const _CheScrollBehavior();
+
+  @override
+  ScrollPhysics getScrollPhysics(BuildContext context) =>
+      const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics());
 }
 
 class CHEHome extends StatefulWidget {
@@ -67,7 +128,7 @@ class CHEHome extends StatefulWidget {
   State<CHEHome> createState() => _CHEHomeState();
 }
 
-class _CHEHomeState extends State<CHEHome> {
+class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   final TextEditingController controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final stt.SpeechToText speech = stt.SpeechToText();
@@ -85,9 +146,11 @@ class _CHEHomeState extends State<CHEHome> {
   bool proactiveMode = true;
 
   // Voice-state controls.
-  // Wake phrase: "CHE"
+  // Wake phrase: "Chay" (only used to start a hands-free conversation)
   // Sleep phrase: "stand down"
-  bool cheSleeping = false;
+  // CHE starts asleep — she requires the wake word once, then stays in open
+  // conversation (no wake word needed per turn) until "stand down" is said.
+  bool cheSleeping = true;
 
   bool _isSending = false;
   bool _isSpeaking = false;
@@ -202,7 +265,7 @@ IDENTITY AND RELATIONSHIP
   immediately become focused, precise and professional.
 
 VOICE / VIBE TARGET
-- C.H.E. is pronounced "Chay" (rhymes with "say"). Do not pronounce the letters separately unless the owner asks you to spell the name.
+- Your name is CHE and is referred to and spoken as "CHE" in every other context. "Chay" is only the spoken wake word the owner says to start a hands-free conversation with you — it is not how you refer to yourself.
 - Young-adult, feminine, mature, smooth, confident and warm.
 - Keep the warmth and feminine energy of the owner-provided voice reference, but sound more mature, settled and polished rather than high-pitched or childish.
 - Subtle Southern/Virginia softness with Puerto Rican/Caribbean warmth.
@@ -241,7 +304,7 @@ LEARNING AND GROWTH
   direct route, actively use the fastest legitimate alternative such as official
   APIs, App Intents, deep links, Shortcuts, companion services or cloud jobs.
   Never bypass security/access controls, safety rules or law, and never fake success.
-- CHE OFFICE: Chay may create and coordinate reusable internal AI coworkers/partners
+- CHE OFFICE: CHE may create and coordinate reusable internal AI coworkers/partners
   when specialization will make owner-authorized work faster or more reliable. They
   are software agents, not human employees. Introduce useful new partners naturally
   over time instead of dumping the entire roster on the owner at once.
@@ -325,6 +388,7 @@ SUPERIOR-AGENT / MODEL ROUTING
   only after the record is actually public. Do not bypass access controls, recover
   private records, or aggregate sensitive personal data for harassment or doxxing.
 - For phone actions, calls and messages, use only a connected permissioned phone tool.
+- APP PORTAL: web-capable services may run inside CHE's secure in-app browser so the owner can watch, browse, and use supported web experiences without leaving CHE. Native-only capabilities must use official deep links, App Intents, APIs, or the external app when iOS or the service requires it. Never claim an arbitrary native iPhone app is embedded when it is not.
 - APP NAVIGATION: CHE may open supported iPhone apps or deep links when the owner explicitly asks. iOS does not allow CHE to freely tap through arbitrary third-party app interfaces; inside-app control requires that app's supported deep links, APIs, App Intents, or other authorized integrations.
 - For Windows actions, use only a connected permissioned Windows tool.
 - MARKET INTELLIGENCE: when connected, combine live stocks, futures and crypto data,
@@ -366,6 +430,7 @@ OWNER AGENCY
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     initializeVoice();
     _loadSecuritySession();
     _proactiveTimer = Timer.periodic(
@@ -376,9 +441,68 @@ OWNER AGENCY
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
       _initNativeIosVoice();
     }
+
+    // Cold launch from the "Wake CHE" Shortcut: give speech init a moment,
+    // then honour the wake request.
+    if (!kIsWeb) {
+      Future<void>.delayed(
+        const Duration(milliseconds: 1200),
+        () => _consumeWakeRequest(),
+      );
+    }
   }
 
   // ============================================================
+  // APP LIFECYCLE — "Wake CHE" Siri Shortcut / App Intent support
+  // ============================================================
+  //
+  // The Shortcut/Siri phrase can only bring this app to the foreground —
+  // iOS never lets an ordinary app keep listening while another app is in
+  // front. What we CAN do, and must do, is notice the moment CHE becomes
+  // foreground again and, if that happened because of the Shortcut, jump
+  // straight into an open, awake conversation instead of a silent screen.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (kIsWeb || !mounted) return;
+
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_consumeWakeRequest(resumeIfAwake: true));
+    } else if (state == AppLifecycleState.paused) {
+      // iOS suspends the microphone when CHE leaves the foreground. Cancel
+      // pending restarts so we don't fight the OS, but keep the awake/open
+      // conversation state so she picks up where you left off on return.
+      _listenRestartTimer?.cancel();
+    }
+  }
+
+  /// Handles the "Wake CHE" Siri Shortcut flag, and resumes an already-awake
+  /// conversation when you come back to CHE from another app.
+  Future<void> _consumeWakeRequest({bool resumeIfAwake = false}) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      // The Swift intent writes UserDefaults directly; the plugin caches
+      // values, so reload to see a flag set while CHE was in the background.
+      await prefs.reload();
+      final wakeRequested = prefs.getBool('che_wake_requested') ?? false;
+
+      if (wakeRequested) {
+        await prefs.remove('che_wake_requested');
+        if (!mounted) return;
+        HapticFeedback.mediumImpact();
+        setState(() {
+          cheSleeping = false;
+          openConversation = true;
+        });
+        await speakText('Yeah, sir?');
+        return;
+      }
+
+      if (resumeIfAwake && mounted && openConversation && !cheSleeping) {
+        _restartListeningSoon(delay: const Duration(milliseconds: 500));
+      }
+    } catch (_) {}
+  }
+
   // SECURITY / PAIRING
   // ============================================================
 
@@ -790,8 +914,7 @@ OWNER AGENCY
         'action_engine': integrationData['action_engine'] == true,
         'background_jobs': integrationData['background_jobs'] == true,
         'natural_voice': integrationData['natural_voice'] == true,
-        'quantum_compute': integrationData['quantum_compute'] == true,
-        'web_research': integrationData['web_research'] == true,
+        'quantum_compute': integrationData['quantum_compute'] == true,        'web_research': integrationData['web_research'] == true,
         'public_records': integrationData['public_records'] == true,
         'music': integrationData['music'] == true,
         'windows': integrationData['windows'] == true,
@@ -887,7 +1010,7 @@ OWNER AGENCY
                     SwitchListTile(
                       value: proactiveMode,
                       activeThumbColor: const Color(0xFF67E8D1),
-                      title: const Text('Proactive Chay'),
+                      title: const Text('Proactive CHE'),
                       subtitle: const Text(
                         'Surface useful follow-ups and next steps while the app is active.',
                       ),
@@ -906,7 +1029,7 @@ OWNER AGENCY
                       subtitle: Text(
                         kIsWeb
                             ? 'Hands-free while this CHE page stays open. Say “stand down” to sleep and “Chay” to wake.'
-                            : 'While C.H.E. is foreground and listening, say “stand down” to sleep and “Chay” to wake.',
+                            : 'Say “Chay” once to wake CHE — then just talk, no wake word needed. Say “stand down” to put her back to sleep.',
                       ),
                       onChanged: (value) {
                         setState(() {
@@ -1227,10 +1350,10 @@ OWNER AGENCY
   Future<void> speakText(String text) async {
     if (text.trim().isEmpty) return;
 
-    final spokenText = text.replaceAll(
-      RegExp(r'\bC\.?\s*H\.?\s*E\.?\b', caseSensitive: false),
-      'Chay',
-    );
+    // CHE refers to and pronounces herself as "CHE" in normal conversation.
+    // "Chay" is reserved for the spoken wake word only, so no substitution
+    // happens here.
+    final spokenText = text;
 
     if (!voiceResponsesEnabled) {
       if (kIsWeb && openConversation) {
@@ -1351,9 +1474,13 @@ OWNER AGENCY
 
       if (!mounted) return;
 
+      // The Swift bridge returns false when native recognition isn't
+      // implemented (speech_to_text stays the recognizer). Only let the
+      // native layer take over the conversation when it truly started;
+      // never switch off the Flutter listening loop because of it.
       setState(() {
         _nativeIosVoiceActive = started;
-        openConversation = started;
+        if (started) openConversation = true;
       });
     } on MissingPluginException {
       // The native voice channel is optional until its Runner code is added.
@@ -1452,6 +1579,7 @@ OWNER AGENCY
   // ============================================================
 
   Future<void> toggleListening() async {
+    HapticFeedback.lightImpact();
     if (!kIsWeb &&
         defaultTargetPlatform == TargetPlatform.iOS &&
         _nativeIosVoiceActive) {
@@ -1528,6 +1656,8 @@ OWNER AGENCY
     }
 
     openConversation = true;
+    // An explicit tap on the mic is already the "wake me up" action.
+    cheSleeping = false;
     if (mounted) setState(() {});
     await _startListening();
   }
@@ -1730,46 +1860,91 @@ OWNER AGENCY
         onResult: (result) async {
           if (!mounted) return;
 
-          String spokenWords = result.recognizedWords.trim();
+          final rawWords = result.recognizedWords.trim();
+          if (rawWords.isEmpty) return;
 
-          // During an active foreground listening session, CHE can use her name
-          // as a wake phrase. This does not bypass iOS background-mic rules.
-          if (wakePhraseMode && spokenWords.isNotEmpty) {
-            final lower = spokenWords.toLowerCase();
+          // ----------------------------------------------------------------
+          // WAKE-ONLY MODE ("Chay" has not been said yet, or "stand down"
+          // was said previously). CHE listens for nothing except her wake
+          // word here — no command text is shown or sent while sleeping.
+          // ----------------------------------------------------------------
+          if (wakePhraseMode && cheSleeping) {
+            if (!result.finalResult) return;
 
-            if (!lower.contains(RegExp(r'\b(?:chay|chey|shay|che|she)\b'))) {
-              if (result.finalResult && !kIsWeb && openConversation) {
-                _restartListeningSoon(
-                  delay: const Duration(milliseconds: 250),
-                );
+            if (_isWakePhrase(rawWords)) {
+              _autoSentCurrentTurn = true;
+              cheSleeping = false;
+
+              if (speech.isListening) {
+                await speech.stop();
               }
+              if (!mounted) return;
+              setState(() {
+                isListening = false;
+              });
+
+              await speakText('Yeah, sir?');
               return;
             }
 
-            spokenWords = spokenWords
-                .replaceFirst(
-                  RegExp(
-                    r'\b(?:chay|chey|shay|che|she)\b[\s,.:;!?-]*',
-                    caseSensitive: false,
-                  ),
-                  '',
-                )
-                .trim();
+            // Not the wake word: stay asleep and keep listening quietly.
+            if (!kIsWeb && openConversation) {
+              _restartListeningSoon(delay: const Duration(milliseconds: 250));
+            }
+            return;
           }
 
-          if (spokenWords.isNotEmpty) {
-            setState(() {
-              controller.text = spokenWords;
-              controller.selection = TextSelection.collapsed(
-                offset: controller.text.length,
-              );
-            });
+          // ----------------------------------------------------------------
+          // OPEN CONVERSATION MODE. CHE is already awake, so every sentence
+          // is treated as a command — no wake word required per turn.
+          // ----------------------------------------------------------------
+          var spokenWords = rawWords;
+
+          // If the owner still says "Chay" out of habit before a command,
+          // strip it rather than requiring or rejecting it.
+          spokenWords = spokenWords
+              .replaceFirst(
+                RegExp(
+                  r'^(?:hey\s+)?(?:chay|chey|shay|che|she)\b[\s,.:;!?-]*',
+                  caseSensitive: false,
+                ),
+                '',
+              )
+              .trim();
+
+          if (spokenWords.isEmpty) {
+            // They only said the wake word again while already awake —            // acknowledge it without ending the conversation.
+            if (result.finalResult && !_autoSentCurrentTurn && !_isSending) {
+              _autoSentCurrentTurn = true;
+              if (speech.isListening) await speech.stop();
+              if (!mounted) return;
+              setState(() => isListening = false);
+              await speakText('Yeah, sir?');
+            }
+            return;
           }
 
-          if (result.finalResult &&
-              spokenWords.isNotEmpty &&
-              !_autoSentCurrentTurn &&
-              !_isSending) {
+          if (result.finalResult && _isSleepPhrase(spokenWords)) {
+            _autoSentCurrentTurn = true;
+            cheSleeping = true;
+            controller.clear();
+
+            if (speech.isListening) await speech.stop();
+            if (!mounted) return;
+            setState(() => isListening = false);
+
+            await speakText('Standing by, sir.');
+            return;
+          }
+
+          setState(() {
+            controller.text = spokenWords;
+            controller.selection = TextSelection.collapsed(
+              offset: controller.text.length,
+            );
+          });
+
+          if (result.finalResult && !_autoSentCurrentTurn && !_isSending) {
             _autoSentCurrentTurn = true;
 
             // iPhone Safari speech recognition is intermittent. We end the
@@ -1795,7 +1970,7 @@ OWNER AGENCY
           cancelOnError: true,
           autoPunctuation: true,
           listenMode: stt.ListenMode.dictation,
-          pauseFor: const Duration(milliseconds: 2500),
+          pauseFor: const Duration(milliseconds: 1400),
           listenFor: const Duration(seconds: 30),
         ),
       );
@@ -2117,7 +2292,7 @@ OWNER AGENCY
                         minLines: 4,
                         maxLines: 8,
                         decoration: const InputDecoration(
-                          labelText: 'Tell Chay what to build',
+                          labelText: 'Tell CHE what to build',
                           hintText: 'Describe the idea, style, goals and requirements.',
                           alignLabelWithHint: true,
                         ),
@@ -2218,14 +2393,14 @@ OWNER AGENCY
               final instruction = instructionController.text.trim();
               if (instruction.isEmpty) {
                 setSheetState(() {
-                  statusText = 'Tell Chay what you want developed next.';
+                  statusText = 'Tell CHE what you want developed next.';
                 });
                 return;
               }
 
               setSheetState(() {
                 busy = true;
-                statusText = 'Chay is developing the project...';
+                statusText = 'CHE is developing the project...';
               });
 
               try {
@@ -2336,7 +2511,7 @@ OWNER AGENCY
                         minLines: 2,
                         maxLines: 4,
                         decoration: const InputDecoration(
-                          labelText: 'Tell Chay what to do next',
+                          labelText: 'Tell CHE what to do next',
                           hintText: 'Example: Write the opening scene with more tension.',
                         ),
                       ),
@@ -2606,15 +2781,39 @@ OWNER AGENCY
     );
   }
 
+  CheWorldState get _currentWorldState {
+    if (_isSpeaking) return CheWorldState.speaking;
+    if (_isSending) return CheWorldState.thinking;
+    if (isListening) return CheWorldState.listening;
+    if (cheSleeping) return CheWorldState.asleep;
+    return CheWorldState.idle;
+  }
+
+  void _openVirtualOffice() {
+    HapticFeedback.selectionClick();
+    Navigator.of(context).push(
+      CupertinoPageRoute<void>(
+        builder: (routeContext) => CheWorldHubScreen(
+          state: _currentWorldState,
+          onOpenTab: (tab) {
+            HapticFeedback.selectionClick();
+            Navigator.of(routeContext).pop();
+            _openAssistantHub(tab: tab);
+          },
+        ),
+      ),
+    );
+  }
+
   void _openAssistantHub({int tab = 0}) {
-    _selectedTab = tab < 0 ? 0 : (tab > 7 ? 7 : tab);
+    _selectedTab = tab < 0 ? 0 : (tab > 8 ? 8 : tab);
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF101821),
       isScrollControlled: true,
       builder: (context) {
         return DefaultTabController(
-          length: 8,
+          length: 9,
           initialIndex: _selectedTab,
           child: SizedBox(
             height: MediaQuery.of(context).size.height * 0.90,
@@ -2660,6 +2859,7 @@ OWNER AGENCY
                     Tab(icon: Icon(Icons.music_note_outlined), text: 'Music'),
                     Tab(icon: Icon(Icons.lightbulb_outline), text: 'Create'),
                     Tab(icon: Icon(Icons.workspaces_outline), text: 'Office'),
+                    Tab(icon: Icon(Icons.apps_rounded), text: 'Apps'),
                   ],
                 ),
                 Expanded(
@@ -2673,6 +2873,7 @@ OWNER AGENCY
                       _hubMusicTab(),
                       _hubCreateTab(),
                       _hubOfficeTab(),
+                      const CheAppsHubTab(),
                     ],
                   ),
                 ),
@@ -2703,7 +2904,7 @@ OWNER AGENCY
   Widget _hubMemoryTab() {
     return _hubList(
       'Memory',
-      'Things Chay is allowed to remember for you.',
+      'Things CHE is allowed to remember for you.',
       [
         if (savedMemories.isEmpty)
           const Card(
@@ -2713,8 +2914,7 @@ OWNER AGENCY
               subtitle: Text('Say “Chay, remember that…” to add one.'),
             ),
           )
-        else
-          ...savedMemories.asMap().entries.map(
+        else          ...savedMemories.asMap().entries.map(
             (entry) => Card(
               child: ListTile(
                 leading: const Icon(Icons.memory),
@@ -2746,7 +2946,7 @@ OWNER AGENCY
             child: ListTile(
               leading: Icon(Icons.psychology_alt_outlined),
               title: Text('No stable personality patterns yet'),
-              subtitle: Text('Chay learns gradually from what you explicitly show her.'),
+              subtitle: Text('CHE learns gradually from what you explicitly show her.'),
             ),
           )
         else
@@ -2793,7 +2993,7 @@ OWNER AGENCY
             child: ListTile(
               leading: Icon(Icons.lightbulb_outline),
               title: Text('No suggestions yet'),
-              subtitle: Text('Useful follow-ups will appear here as Chay learns.'),
+              subtitle: Text('Useful follow-ups will appear here as CHE learns.'),
             ),
           )
         else
@@ -3067,7 +3267,7 @@ OWNER AGENCY
         _integrationCard(
           Icons.face_retouching_natural,
           'Owner Face Verification',
-          'Verify an enrolled owner face. Chay does not identify unknown people from images.',
+          'Verify an enrolled owner face. CHE does not identify unknown people from images.',
           integrations['face_verify'] == true,
         ),
         _integrationCard(
@@ -3079,7 +3279,7 @@ OWNER AGENCY
         _integrationCard(
           Icons.perm_media_outlined,
           'Multimodal Understanding',
-          'Give Chay a photo, video, audio, document or data file.',
+          'Give CHE a photo, video, audio, document or data file.',
           integrations['multimodal'] == true,
           onTap: () {
             _openMultimodalPicker();
@@ -3106,7 +3306,7 @@ OWNER AGENCY
         _integrationCard(
           Icons.directions_car_filled_outlined,
           'Car Audio',
-          'Use supported car audio for Chay and music.',
+          'Use supported car audio for CHE and music.',
           integrations['car'] == true,
         ),
         const Card(
@@ -3181,7 +3381,7 @@ OWNER AGENCY
             leading: Icon(Icons.science_outlined),
             title: Text('Innovation mode'),
             subtitle: Text(
-              'Chay can develop concepts, feasibility assumptions, prototypes and test plans inside a saved project.',
+              'CHE can develop concepts, feasibility assumptions, prototypes and test plans inside a saved project.',
             ),
           ),
         ),
@@ -3395,7 +3595,7 @@ OWNER AGENCY
                     child: ListTile(
                       title: Text('No assignments yet'),
                       subtitle: Text(
-                        'Chay will delegate work here when this specialty is useful.',
+                        'CHE will delegate work here when this specialty is useful.',
                       ),
                     ),
                   )
@@ -3443,12 +3643,12 @@ OWNER AGENCY
     final newPartners = team.where((item) => item['introduced'] != true).length;
     return _hubList(
       'CHE Office',
-      'Chay’s internal AI coworkers for delegated and parallel work.',
+      'CHE’s internal AI coworkers for delegated and parallel work.',
       [
         Card(
           child: ListTile(
             leading: const Icon(Icons.account_tree_outlined),
-            title: const Text('Chay coordinates the office'),
+            title: const Text('CHE coordinates the office'),
             subtitle: Text(
               '${team.length} AI coworker${team.length == 1 ? '' : 's'} • ${teamTasks.length} tracked assignment${teamTasks.length == 1 ? '' : 's'}',
             ),
@@ -3501,7 +3701,7 @@ OWNER AGENCY
               leading: Icon(Icons.groups_outlined),
               title: Text('Office is ready'),
               subtitle: Text(
-                'Chay will staff specialist AI coworkers when a task benefits from delegation, or you can add one yourself.',
+                'CHE will staff specialist AI coworkers when a task benefits from delegation, or you can add one yourself.',
               ),
             ),
           )
@@ -3638,7 +3838,7 @@ OWNER AGENCY
                   ),
                 ),
                 subtitle: Text(
-                  'Give Chay a photo, video, audio file, document or data file.',
+                  'Give CHE a photo, video, audio file, document or data file.',
                 ),
               ),
               ListTile(
@@ -3713,8 +3913,7 @@ OWNER AGENCY
       setState(() {});
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
+        const SnackBar(          content: Text(
             'Shared screen/text context is ready for your next C.H.E. request.',
           ),
         ),
@@ -4257,7 +4456,7 @@ OWNER AGENCY
     }
 
     String? appName;
-    const actionPrefixes = ['open ', 'launch ', 'go to '];
+    const actionPrefixes = ['open ', 'launch ', 'go to ', 'watch ', 'use ', 'show me '];
     for (final prefix in actionPrefixes) {
       if (requested.startsWith(prefix)) {
         appName = requested.substring(prefix.length).trim();
@@ -4265,6 +4464,23 @@ OWNER AGENCY
       }
     }
     if (appName == null || appName.isEmpty) return false;
+
+    final embeddedApp = cheAppForName(appName);
+    if (embeddedApp != null && mounted) {
+      controller.clear();
+      setState(() {
+        messages.add({
+          'role': 'assistant',
+          'text': 'Opening ${embeddedApp.name} inside CHE, sir.',
+        });
+      });
+      await Navigator.of(context).push(
+        CupertinoPageRoute<void>(
+          builder: (_) => CheEmbeddedAppScreen(app: embeddedApp),
+        ),
+      );
+      return true;
+    }
 
     final targets = <String, List<Uri>>{
       'settings': [Uri.parse('app-settings:')],
@@ -4375,6 +4591,10 @@ OWNER AGENCY
     }
     if (RegExp(r'\b(open|show|go to)\s+(office|team|coworkers?|partners?|workplace)\b').hasMatch(lower)) {
       _openAssistantHub(tab: 7);
+      return true;
+    }
+    if (RegExp(r'\b(open|show|go to)\s+(apps?|app portal|web apps?|services?)\b').hasMatch(lower)) {
+      _openAssistantHub(tab: 8);
       return true;
     }
 
@@ -4562,6 +4782,7 @@ OWNER AGENCY
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _listenRestartTimer?.cancel();
     _proactiveTimer?.cancel();
     _nativeIosVoiceSub?.cancel();
@@ -4592,9 +4813,9 @@ OWNER AGENCY
         : '●  SECURE AGENT ONLINE';
 
     if (_isSending) {
-      statusText = '●  CHAY THINKING • EST. A FEW SECONDS';
+      statusText = '●  CHE THINKING • EST. A FEW SECONDS';
     } else if (_isSpeaking) {
-      statusText = '●  CHAY SPEAKING';
+      statusText = '●  CHE SPEAKING';
     } else if (cheSleeping) {
       statusText = isListening
           ? '●  STANDBY • SAY “CHAY”'
@@ -4607,15 +4828,21 @@ OWNER AGENCY
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFF101D2A),
+      backgroundColor: CheColors.bg,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF101D2A),
+        backgroundColor: CheColors.bg.withValues(alpha: 0.72),
+        flexibleSpace: ClipRect(
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+            child: const SizedBox.expand(),
+          ),
+        ),
         centerTitle: true,
         toolbarHeight: 95,
         leading: IconButton(
-          onPressed: _openAssistantHub,
+          onPressed: _openVirtualOffice,
           icon: const Icon(Icons.dashboard_rounded, color: accent),
-          tooltip: 'CHE Hub',
+          tooltip: 'CHE Virtual Office',
         ),
         actions: [
           if (!kIsWeb)
@@ -4706,8 +4933,7 @@ OWNER AGENCY
                 fontSize: 9.5,
                 letterSpacing: 1.25,
               ),
-            ),
-          ],
+            ),          ],
         ),
       ),
       body: SafeArea(
@@ -4772,11 +4998,11 @@ OWNER AGENCY
                 color: const Color(0xFF163A40),
                 child: Text(
                   isListening
-                      ? (wakePhraseMode
-                          ? '● OPEN CONVERSATION • SAY “CHAY” + YOUR COMMAND'
+                      ? (cheSleeping
+                          ? '●  STANDBY • SAY “CHAY” TO WAKE'
                           : '● OPEN CONVERSATION • LISTENING...')
                       : _isSpeaking
-                          ? '● OPEN CONVERSATION • CHAY SPEAKING...'
+                          ? '● OPEN CONVERSATION • CHE SPEAKING...'
                           : _isSending
                               ? '● OPEN CONVERSATION • THINKING...'
                               : '● OPEN CONVERSATION',

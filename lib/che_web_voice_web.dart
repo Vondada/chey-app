@@ -27,7 +27,6 @@ Future<bool> speakText(String text) async {
   final played = await _speakText(text.toJS).toDart;
   return played.toDart;
 }
-
 void primeSpeech() => _primeSpeech();
 
 void stopSpeech() => _stopSpeech();

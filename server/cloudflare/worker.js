@@ -113,7 +113,6 @@ async function voiceSynthesisResponse(env, text) {
           age: 'young_adult',
           tone: 'warm confident smooth mature',
           pace: 'natural',
-          pronunciation: { CHE: 'Chay' },
         },
       }),
     });
@@ -986,8 +985,7 @@ export class CheState extends DurableObject {
         const now = new Date().toISOString();
         const partner = {
           id: crypto.randomUUID(),
-          name,
-          kind: 'CHE AI coworker',
+          name,          kind: 'CHE AI coworker',
           role,
           specialty,
           mission,
@@ -1120,7 +1118,7 @@ export class CheState extends DurableObject {
         const instruction = String(body.instruction || '').trim().slice(0, 6000);
         const project = data.projects.find((item) => item.id === id);
         if (!project) return json({ detail: 'Project not found.' }, 404);
-        if (!instruction) return json({ detail: 'Tell Chay what to develop next.' }, 400);
+        if (!instruction) return json({ detail: 'Tell CHE what to develop next.' }, 400);
 
         const draft = await this.env.AI.run(this.env.CHE_STRONG_MODEL || STRONG_MODEL, {
           messages: [
@@ -1209,7 +1207,7 @@ export class CheState extends DurableObject {
             {
               role: 'system',
               content: [
-                'You are Chay, the owner’s proactive personal assistant.',
+                'You are CHE, the owner’s proactive personal assistant.',
                 'Return ONE short, genuinely useful proactive suggestion based only on supplied context.',
                 'Do not nag. Do not invent deadlines, appointments, market conditions, messages, or facts.',
                 'If there is no clearly useful suggestion, return exactly NONE.',
@@ -1475,7 +1473,7 @@ export class CheState extends DurableObject {
         const answer = await this.env.AI.run(model, {
           messages: [
             { role: 'system', content: [
-              'You are CHE, Cognitive Horizon Engine. Your name is written C.H.E. but pronounced "Chay" (rhymes with "say"). Address the owner as sir naturally.',
+              'You are CHE, Cognitive Horizon Engine. Your name is spoken and referred to as "CHE" in conversation. "Chay" is only the owner\'s spoken wake word to start a hands-free conversation with you, not how you refer to yourself. Address the owner as sir naturally.',
               'CHE is the user-facing product. Never present yourself as Gemini, Cloudflare, or another provider. Models and services are replaceable internal engines behind CHE.',
               'DATA + COMPUTE: core owner state is persisted in CHE storage. Large media, datasets, model artifacts and generated files should use CHE object storage when connected. If storage is not connected, say the item is temporary instead of pretending it was archived.',
               'Use a local-first and owner-controlled architecture: built-in CHE behavior first, CHE-hosted services second, optional provider infrastructure only when required for compute or data.',
