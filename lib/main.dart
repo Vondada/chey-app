@@ -1751,14 +1751,14 @@ OWNER AGENCY
   }
 
   void _openAssistantHub({int tab = 0}) {
-    _selectedTab = tab < 0 ? 0 : (tab > 4 ? 4 : tab);
+    _selectedTab = tab < 0 ? 0 : (tab > 6 ? 6 : tab);
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF101821),
       isScrollControlled: true,
       builder: (context) {
         return DefaultTabController(
-          length: 5,
+          length: 7,
           initialIndex: _selectedTab,
           child: SizedBox(
             height: MediaQuery.of(context).size.height * 0.90,
@@ -1798,6 +1798,8 @@ OWNER AGENCY
                   tabs: const [
                     Tab(icon: Icon(Icons.memory_outlined), text: 'Memory'),
                     Tab(icon: Icon(Icons.auto_awesome_outlined), text: 'Insights'),
+                    Tab(icon: Icon(Icons.show_chart), text: 'Markets'),
+                    Tab(icon: Icon(Icons.business_center_outlined), text: 'Business'),
                     Tab(icon: Icon(Icons.devices_other_outlined), text: 'Devices'),
                     Tab(icon: Icon(Icons.music_note_outlined), text: 'Music'),
                     Tab(icon: Icon(Icons.lightbulb_outline), text: 'Create'),
@@ -1808,6 +1810,8 @@ OWNER AGENCY
                     children: [
                       _hubMemoryTab(),
                       _hubInsightsTab(),
+                      _hubMarketsTab(),
+                      _hubBusinessTab(),
                       _hubDevicesTab(),
                       _hubMusicTab(),
                       _hubCreateTab(),
@@ -1970,6 +1974,93 @@ OWNER AGENCY
     );
   }
 
+  Widget _hubMarketsTab() {
+    return _hubList(
+      'Markets',
+      'Live market intelligence, testing and execution connections.',
+      [
+        _integrationCard(
+          Icons.candlestick_chart,
+          'Stocks • Futures • Crypto',
+          'Live prices, depth, volatility, sessions and market structure.',
+          integrations['market_data'] == true,
+        ),
+        _integrationCard(
+          Icons.science_outlined,
+          'Backtesting Lab',
+          'Historical testing, out-of-sample validation, drawdown and sample statistics.',
+          integrations['backtesting'] == true,
+        ),
+        _integrationCard(
+          Icons.functions,
+          'Custom Indicators',
+          'Chay can design indicator logic and scanners; real validation needs market history.',
+          integrations['backtesting'] == true,
+        ),
+        _integrationCard(
+          Icons.account_balance,
+          'Live Broker',
+          'Order routing becomes available only after an authorized broker connection.',
+          integrations['broker'] == true,
+        ),
+        _integrationCard(
+          Icons.copy_all_outlined,
+          'Prop-Firm Copy Trading',
+          'Mirror approved trades only when account rules, sizing and loss limits are configured.',
+          integrations['prop_firm'] == true,
+        ),
+        const Card(
+          child: ListTile(
+            leading: Icon(Icons.shield_outlined),
+            title: Text('Risk-first trade support'),
+            subtitle: Text(
+              'Chay can compare setups, catalysts, invalidation and risk. No setup is treated as guaranteed.',
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _hubBusinessTab() {
+    return _hubList(
+      'Business',
+      'Operations, cash flow, leads, customers and public research.',
+      [
+        _integrationCard(
+          Icons.dashboard_customize_outlined,
+          'Business Operations',
+          'Plans, workflows, CRM, scheduling, fulfillment and operating dashboards.',
+          integrations['business'] == true,
+        ),
+        _integrationCard(
+          Icons.account_balance_wallet_outlined,
+          'Cash Flow',
+          'Income, expenses, runway, forecasts, invoices and reconciliations.',
+          integrations['business'] == true,
+        ),
+        _integrationCard(
+          Icons.person_search_outlined,
+          'Lead Discovery',
+          'Find lawful public/professional prospects who may need your services.',
+          integrations['leads'] == true,
+        ),
+        _integrationCard(
+          Icons.payments_outlined,
+          'Payments + Billing',
+          'Charge through an authorized processor only within approved pricing and customer terms.',
+          integrations['payments'] == true,
+        ),
+        _integrationCard(
+          Icons.manage_search_outlined,
+          'Public Records',
+          'Search records after they are lawfully public; private records and access controls stay off-limits.',
+          integrations['public_records'] == true,
+        ),
+      ],
+    );
+  }
+
   Widget _hubDevicesTab() {
     return _hubList(
       'Devices',
@@ -2010,6 +2101,18 @@ OWNER AGENCY
           'Rendering',
           'Connected visual rendering and concept visualization.',
           integrations['rendering'] == true,
+        ),
+        _integrationCard(
+          Icons.screen_share_outlined,
+          'Authorized Screen Reading',
+          'Read only screen content you explicitly share or an active OS-authorized capture session.',
+          integrations['screen_capture'] == true,
+        ),
+        _integrationCard(
+          Icons.face_retouching_natural,
+          'Owner Face Verification',
+          'Verify an enrolled owner face. Chay does not identify unknown people from images.',
+          integrations['face_verify'] == true,
         ),
       ],
     );
