@@ -3066,7 +3066,7 @@ OWNER AGENCY
             setState(() {
               messages.add({
                 'role': 'assistant',
-                'text': 'Opening ' + (matchedName ?? appName!) + ', sir.',
+                'text': 'Opening ${matchedName ?? appName!}, sir.',
               });
             });
           }
@@ -3079,7 +3079,7 @@ OWNER AGENCY
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'I could not open ' + (matchedName ?? appName) + ' on this iPhone.',
+            'I could not open ${matchedName ?? appName} on this iPhone.',
           ),
         ),
       );
