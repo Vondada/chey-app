@@ -112,6 +112,18 @@ class _CHEHomeState extends State<CHEHome> {
 
   List<String> savedMemories = [];
   List<Map<String, dynamic>> learnedPersonality = [];
+  List<String> learnedKnowledge = [];
+  List<String> suggestions = [];
+  Map<String, bool> integrations = const {
+    'web_research': false,
+    'music': false,
+    'windows': false,
+    'car': false,
+    'smart_home': false,
+    'rendering': false,
+  };
+
+  int _selectedTab = 0;
 
   final List<Map<String, String>> messages = [
     {
@@ -540,12 +552,25 @@ OWNER AGENCY
 
       final memoryData = (data['memories'] as List?) ?? const [];
       final personalityData = (data['personality'] as List?) ?? const [];
+      final knowledgeData = (data['learned_knowledge'] as List?) ?? const [];
+      final suggestionData = (data['suggestions'] as List?) ?? const [];
+      final integrationData = (data['integrations'] as Map?) ?? const {};
 
       savedMemories = memoryData.map((e) => e.toString()).toList();
       learnedPersonality = personalityData
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
+      learnedKnowledge = knowledgeData.map((e) => e.toString()).toList();
+      suggestions = suggestionData.map((e) => e.toString()).toList();
+      integrations = {
+        'web_research': integrationData['web_research'] == true,
+        'music': integrationData['music'] == true,
+        'windows': integrationData['windows'] == true,
+        'car': integrationData['car'] == true,
+        'smart_home': integrationData['smart_home'] == true,
+        'rendering': integrationData['rendering'] == true,
+      };
 
       if (mounted) setState(() {});
     } catch (_) {
