@@ -226,6 +226,114 @@ async function optionalMediaGeneration(env, kind, prompt) {
   }
 }
 
+
+async function optionalModelGateway(urlValue, tokenValue, provider, query) {
+  if (!urlValue) return null;
+  let url;
+  try {
+    url = new URL(urlValue);
+  } catch (_) {
+    return { provider, error: 'invalid connector URL' };
+  }
+  if (url.protocol !== 'https:') {
+    return { provider, error: 'connector must use HTTPS' };
+  }
+
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (tokenValue) headers.Authorization = `Bearer ${tokenValue}`;
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        prompt: String(query || '').slice(0, 8000),
+        mode: 'answer',
+      }),
+    });
+
+    if (!response.ok) {
+      return { provider, error: `connector returned ${response.status}` };
+    }
+
+    const data = await response.json();
+    const answer = String(
+      data.answer || data.response || data.text || data.output || '',
+    ).trim().slice(0, 12000);
+
+    return answer
+      ? { provider, answer }
+      : { provider, error: 'connector returned no answer' };
+  } catch (_) {
+    return { provider, error: 'connector unavailable' };
+  }
+}
+
+async function modelPanel(env, query) {
+  const connectors = [
+    ['OpenAI', env.CHE_OPENAI_MODEL_URL, env.CHE_OPENAI_MODEL_TOKEN],
+    ['Anthropic', env.CHE_ANTHROPIC_MODEL_URL, env.CHE_ANTHROPIC_MODEL_TOKEN],
+    ['xAI', env.CHE_XAI_MODEL_URL, env.CHE_XAI_MODEL_TOKEN],
+    ['DeepSeek', env.CHE_DEEPSEEK_MODEL_URL, env.CHE_DEEPSEEK_MODEL_TOKEN],
+  ].filter((item) => Boolean(item[1]));
+
+  if (!connectors.length) return [];
+
+  const results = await Promise.all(
+    connectors.map(([provider, url, token]) =>
+      optionalModelGateway(url, token, provider, query),
+    ),
+  );
+
+  return results.filter(Boolean);
+}
+
+async function generateMedia(env, kind, prompt) {
+  const image = kind === 'image';
+  const urlValue = image ? env.CHE_IMAGE_GEN_URL : env.CHE_VIDEO_GEN_URL;
+  const tokenValue = image ? env.CHE_IMAGE_GEN_TOKEN : env.CHE_VIDEO_GEN_TOKEN;
+  if (!urlValue) {
+    return { error: `${image ? 'Image' : 'Video'} generation is not connected yet.` };
+  }
+
+  let url;
+  try {
+    url = new URL(urlValue);
+  } catch (_) {
+    return { error: 'Media connector URL is invalid.' };
+  }
+  if (url.protocol !== 'https:') {
+    return { error: 'Media connector must use HTTPS.' };
+  }
+
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (tokenValue) headers.Authorization = `Bearer ${tokenValue}`;
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        prompt: String(prompt || '').slice(0, 5000),
+        type: kind,
+      }),
+    });
+
+    if (!response.ok) {
+      return { error: `Media connector returned ${response.status}.` };
+    }
+
+    const data = await response.json();
+    const assetUrl = String(
+      data.asset_url || data.url || data.output_url || '',
+    ).trim();
+
+    return assetUrl
+      ? { asset_url: assetUrl, kind }
+      : { error: 'Media connector returned no asset URL.' };
+  } catch (_) {
+    return { error: 'Media connector was unavailable.' };
+  }
+}
+
 async function dispatchChange(env, body) {
   const request = String(body.request || '').trim();
   if (request.length < 8 || request.length > 2000) return json({ detail: 'Describe one change in 8–2000 characters.' }, 400);
