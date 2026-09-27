@@ -202,6 +202,7 @@ export class CheState extends DurableObject {
             rendering: Boolean(this.env.CHE_RENDER_URL),
             screen_capture: Boolean(this.env.CHE_SCREEN_URL),
             face_verify: Boolean(this.env.CHE_FACE_VERIFY_URL),
+            data_recognition: Boolean(this.env.CHE_DATA_RECOGNITION_URL),
             market_data: Boolean(this.env.CHE_MARKET_DATA_URL),
             backtesting: Boolean(this.env.CHE_BACKTEST_URL),
             broker: Boolean(this.env.CHE_BROKER_URL),
@@ -338,6 +339,25 @@ export class CheState extends DurableObject {
               'BUSINESS MODE: help with plans, budgets, cash flow, forecasts, CRM, scheduling, fulfillment and invoicing. Prospecting should use lawful professional/public business information. Payments require an authorized processor and owner-approved pricing and terms.',
               'Never claim to have changed code, researched live facts, controlled a phone, computer, car, music service, Bluetooth device, screen, smart-home device, trading account, or payment unless a real connected tool confirms it.',
               `Requested capabilities: ${JSON.stringify(requestedCapabilities).slice(0, 1200)}`,
+              `Integration readiness: ${JSON.stringify({
+                web_research: Boolean(this.env.CHE_RESEARCH_URL),
+                public_records: Boolean(this.env.CHE_PUBLIC_RECORDS_URL),
+                rendering: Boolean(this.env.CHE_RENDER_URL),
+                screen_capture: Boolean(this.env.CHE_SCREEN_URL),
+                face_verify: Boolean(this.env.CHE_FACE_VERIFY_URL),
+                data_recognition: Boolean(this.env.CHE_DATA_RECOGNITION_URL),
+                market_data: Boolean(this.env.CHE_MARKET_DATA_URL),
+                backtesting: Boolean(this.env.CHE_BACKTEST_URL),
+                broker: Boolean(this.env.CHE_BROKER_URL),
+                prop_firm: Boolean(this.env.CHE_PROP_FIRM_URL),
+                business: Boolean(this.env.CHE_BUSINESS_URL),
+                payments: Boolean(this.env.CHE_PAYMENTS_URL),
+                leads: Boolean(this.env.CHE_LEADS_URL),
+                music: Boolean(this.env.CHE_MUSIC_URL),
+                windows: Boolean(this.env.CHE_WINDOWS_URL),
+                car: Boolean(this.env.CHE_CAR_URL),
+                smart_home: Boolean(this.env.CHE_SMART_HOME_URL),
+              })}`,
               research?.summary
                 ? `Connected live research summary: ${research.summary}${research.sources?.length ? `\nResearch sources: ${JSON.stringify(research.sources)}` : ''}`
                 : research?.error
@@ -354,7 +374,7 @@ export class CheState extends DurableObject {
             ...turns,
             { role: 'user', content: message },
           ],
-          max_tokens: 650,
+          max_tokens: 1000,
         });
         const reply = String(answer.response || answer.choices?.[0]?.message?.content || '').trim();
         if (!reply) return json({ detail: 'The model did not return an answer.' }, 502);
