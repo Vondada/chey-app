@@ -2989,7 +2989,7 @@ OWNER AGENCY
           onTap: _openVault,
         ),
         _integrationCard(
-          Icons.cloud_queue_outlined,
+          Icons.cloud_queue,
           'CHE Background Work',
           'Real cloud-side jobs can keep running after the app request returns.',
           integrations['background_jobs'] == true,
@@ -2998,7 +2998,7 @@ OWNER AGENCY
           ),
         ),
         _integrationCard(
-          Icons.memory_outlined,
+          Icons.memory,
           'Advanced / Quantum Compute',
           integrations['quantum_compute'] == true
               ? 'A specialized quantum-compute connector is available for suitable optimization or simulation work.'
