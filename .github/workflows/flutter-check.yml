@@ -1,8 +1,11 @@
 name: Check CHE Flutter client
 
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,6 +19,8 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-      - run: flutter pub get
+      - run: bash tool/bootstrap.sh
+      - run: dart format --output=none --set-exit-if-changed lib
       - run: flutter analyze
+      - run: node --check server/cloudflare/worker.js
       - run: node --test server/cloudflare/worker.test.mjs
