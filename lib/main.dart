@@ -2987,595 +2987,29 @@ OWNER AGENCY
   }
 
   // ============================================================
-  // SEND MESSAGE
+  // SEND MESSAGE / LOCAL PHONE NAVIGATION
   // ============================================================
 
   Future<bool> _openExternalAppByVoice(String message) async {
-    final lower = message.toLowerCase().trim();
-    final match = RegExp(
-      r'^(?:(?:chay|chey|shay|che)[, ]+)?(?:open|launch|go to)\s+(.+?)\s*
-    final lower = message.toLowerCase();
+    var requested = message.trim().toLowerCase();
 
-    if (RegExp(r'\b(open|show|go to)\s+(my\s+)?memories?\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 0);
-      return true;
-    }
-    if (RegExp(r'\b(open|show|go to)\s+(insights?|suggestions?|learned knowledge)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 1);
-      return true;
-    }
-    if (RegExp(r'\b(open|show|go to)\s+(markets?|trading|stocks?|futures?|crypto)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 2);
-      return true;
-    }
-    if (RegExp(r'\b(open|show|go to)\s+(business|cash flow|customers?|leads?|billing)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 3);
-      return true;
-    }
-    if (RegExp(r'\b(open|show|go to)\s+(devices?|connections?|screen|identity)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 4);
-      return true;
-    }
-    if (RegExp(r'\b(open|show|go to)\s+(music|playlists?)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 5);
-      return true;
-    }
-    if (RegExp(r'\b(open|show|go to)\s+(create|innovation|creator)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 6);
-      return true;
+    const wakePrefixes = ['chay ', 'chey ', 'shay ', 'che '];
+    for (final prefix in wakePrefixes) {
+      if (requested.startsWith(prefix)) {
+        requested = requested.substring(prefix.length).trim();
+        break;
+      }
     }
 
-    return false;
-  }
-
-  Future<void> sendMessage({bool fromVoice = false}) async {
-    if (_isSending) return;
-
-    final typedMessage = controller.text.trim();
-    final message = typedMessage.isEmpty && _pendingAttachment != null
-        ? 'Analyze this attachment.'
-        : typedMessage;
-    if (message.isEmpty) return;
-
-    if (await _openExternalAppByVoice(message)) {
-      return;
+    String? appName;
+    const actionPrefixes = ['open ', 'launch ', 'go to '];
+    for (final prefix in actionPrefixes) {
+      if (requested.startsWith(prefix)) {
+        appName = requested.substring(prefix.length).trim();
+        break;
+      }
     }
-
-    if (await _handleLocalNavigation(message)) {
-      controller.clear();
-      return;
-    }
-
-    if (!await _ensurePaired()) return;
-
-    if (speech.isListening) {
-      await speech.stop();
-    }
-
-    if (!mounted) return;
-
-    _isSending = true;
-
-    setState(() {
-      isListening = false;
-      messages.add({
-        'role': 'user',
-        'text': message,
-      });
-      controller.clear();
-    });
-
-    _scrollToBottom();
-
-    if (message.toLowerCase().startsWith('remember that ')) {
-      final memory = message.substring(14).trim();
-      await saveMemory(memory);
-
-      const reply = 'Got it. I saved that securely, sir.';
-
-      if (!mounted) return;
-
-      setState(() {
-        messages.add({
-          'role': 'assistant',
-          'text': reply,
-        });
-        _isSending = false;
-      });
-
-      _scrollToBottom();
-      await speakText(reply);
-      return;
-    }
-
-    int? assistantIndex;
-
-    try {
-      final recentMessages = messages.length > 14
-          ? messages.sublist(messages.length - 14)
-          : List<Map<String, String>>.from(messages);
-
-      final history = recentMessages
-          .map(
-            (item) => {
-              'role': item['role'] == 'assistant' ? 'assistant' : 'user',
-              'content': item['text'] ?? '',
-            },
-          )
-          .toList();
-
-      assistantIndex = messages.length;
-
-      setState(() {
-        messages.add({
-          'role': 'assistant',
-          'text': '',
-        });
-      });
-
-      _scrollToBottom();
-
-      final reply = await _streamCheResponse(
-        message,
-        history,
-        onPartial: (partialReply) {
-          final index = assistantIndex;
-          if (!mounted || index == null || index >= messages.length) return;
-
-          setState(() {
-            messages[index]['text'] = partialReply;
-          });
-
-          _scrollToBottom();
-        },
-      );
-
-      final finalReply =
-          reply.isEmpty ? 'I could not generate a response, sir.' : reply;
-
-      if (!mounted) return;
-
-      setState(() {
-        if (assistantIndex != null && assistantIndex < messages.length) {
-          messages[assistantIndex]['text'] = finalReply;
-        }
-        _isSending = false;
-      });
-
-      _scrollToBottom();
-
-      // The Agent learns safe, stable preferences in the background after
-      // each turn. Refresh the UI shortly afterward.
-      unawaited(
-        Future.delayed(
-          const Duration(seconds: 2),
-          () => _loadAgentState(silent: true),
-        ),
-      );
-
-      await speakText(finalReply);
-    } on _CHEAgentException catch (e) {
-      final errorReply = e.message;
-
-      if (!mounted) return;
-
-      setState(() {
-        if (assistantIndex != null && assistantIndex < messages.length) {
-          messages[assistantIndex]['text'] = errorReply;
-        } else {
-          messages.add({
-            'role': 'assistant',
-            'text': errorReply,
-          });
-        }
-        _isSending = false;
-      });
-
-      _scrollToBottom();
-      await speakText(errorReply);
-    } catch (_) {
-      const errorReply =
-          'I could not connect to my secure Agent gateway, sir.';
-
-      if (!mounted) return;
-
-      setState(() {
-        if (assistantIndex != null && assistantIndex < messages.length) {
-          messages[assistantIndex]['text'] = errorReply;
-        } else {
-          messages.add({
-            'role': 'assistant',
-            'text': errorReply,
-          });
-        }
-        _isSending = false;
-      });
-
-      _scrollToBottom();
-      await speakText(errorReply);
-    } finally {
-      _isSending = false;
-    }
-  }
-
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollController.hasClients) return;
-      _scrollController.jumpTo(
-        _scrollController.position.maxScrollExtent,
-      );
-    });
-  }
-
-  @override
-  void dispose() {
-    _listenRestartTimer?.cancel();
-    _proactiveTimer?.cancel();
-    _nativeIosVoiceSub?.cancel();
-    controller.dispose();
-    _scrollController.dispose();
-    speech.cancel();
-    flutterTts.stop();
-    super.dispose();
-  }
-
-  // ============================================================
-  // UI
-  // ============================================================
-
-  @override
-  Widget build(BuildContext context) {
-    const accent = Color(0xFF67E8D1);
-
-    String statusText = _deviceToken == null
-        ? '●  SECURITY PAIRING REQUIRED'
-        : '●  SECURE AGENT ONLINE';
-
-    if (_isSending) {
-      statusText = '●  CHAY THINKING • EST. A FEW SECONDS';
-    } else if (_isSpeaking) {
-      statusText = '●  CHAY SPEAKING';
-    } else if (cheSleeping) {
-      statusText = isListening
-          ? '●  STANDBY • SAY “CHAY”'
-          : '●  STANDBY';
-    } else if (isListening) {
-      statusText = '●  LISTENING';
-    } else if (openConversation) {
-      statusText =
-          kIsWeb ? '●  VOICE CONVERSATION ACTIVE' : '●  OPEN CONVERSATION';
-    }
-
-    return Scaffold(
-      backgroundColor: const Color(0xFF101D2A),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF101D2A),
-        centerTitle: true,
-        toolbarHeight: 95,
-        leading: IconButton(
-          onPressed: _openAssistantHub,
-          icon: const Icon(Icons.dashboard_rounded, color: accent),
-          tooltip: 'CHE Hub',
-        ),
-        actions: [
-          if (!kIsWeb)
-            IconButton(
-              onPressed: _showAgentServerDialog,
-              icon: const Icon(Icons.cloud_outlined, color: accent),
-              tooltip: 'CHE server address',
-            ),
-          IconButton(
-            onPressed: _loadSharedScreenContext,
-            icon: Icon(
-              _pendingScreenContext == null
-                  ? Icons.content_paste_search
-                  : Icons.visibility,
-              color: accent,
-            ),
-            tooltip: 'Use owner-shared screen/text context',
-          ),
-          IconButton(
-            onPressed: _openSecurityManager,
-            icon: Icon(
-              _deviceToken == null
-                  ? Icons.shield_outlined
-                  : Icons.shield,
-              color: _deviceToken == null
-                  ? Colors.orangeAccent
-                  : accent,
-            ),
-            tooltip: 'Security + learned personality',
-          ),
-          IconButton(
-            onPressed: () async {
-              setState(() {
-                voiceResponsesEnabled = !voiceResponsesEnabled;
-              });
-
-              if (!voiceResponsesEnabled) {
-                if (kIsWeb) {
-                  try {
-                    che_web_voice.stopSpeech();
-                  } catch (_) {}
-                } else {
-                  await flutterTts.stop();
-                }
-                _isSpeaking = false;
-
-                if (!kIsWeb && openConversation) {
-                  _restartListeningSoon();
-                }
-              }
-            },
-            icon: Icon(
-              voiceResponsesEnabled ? Icons.volume_up : Icons.volume_off,
-              color: accent,
-            ),
-            tooltip: 'C.H.E. voice',
-          ),
-        ],
-        title: Column(
-          children: [
-            const Text(
-              'CHE',
-              style: TextStyle(
-                color: accent,
-                fontSize: 29,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 4,
-              ),
-            ),
-            const Text(
-              'COGNITIVE.HORIZON.ENGINE',
-              style: TextStyle(
-                color: Colors.white54,
-                fontSize: 8,
-                letterSpacing: 1.4,
-              ),
-            ),
-            const SizedBox(height: 5),
-            Text(
-              statusText,
-              style: const TextStyle(
-                color: accent,
-                fontSize: 9.5,
-                letterSpacing: 1.25,
-              ),
-            ),
-          ],
-        ),
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            const Divider(color: Color(0xFF354859)),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 6, 14, 2),
-              child: Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 8,
-                runSpacing: 6,
-                children: [
-                  Chip(
-                    avatar: Icon(
-                      isListening ? Icons.mic : Icons.mic_none,
-                      size: 16,
-                      color: isListening ? accent : Colors.white54,
-                    ),
-                    label: Text(isListening ? 'Listening' : 'Mic standby'),
-                    backgroundColor: const Color(0xFF1A2935),
-                  ),
-                  Chip(
-                    avatar: Icon(
-                      _pendingScreenContext == null
-                          ? Icons.visibility_off_outlined
-                          : Icons.visibility,
-                      size: 16,
-                      color: _pendingScreenContext == null
-                          ? Colors.white54
-                          : accent,
-                    ),
-                    label: Text(
-                      _pendingScreenContext == null
-                          ? 'Screen context off'
-                          : 'Screen context ready',
-                    ),
-                    backgroundColor: const Color(0xFF1A2935),
-                  ),
-                  if (_pendingAttachment != null)
-                    Chip(
-                      avatar: const Icon(
-                        Icons.attach_file,
-                        size: 16,
-                        color: accent,
-                      ),
-                      label: Text(
-                        _pendingAttachment!['name'] ?? 'Attachment ready',
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      deleteIcon: const Icon(Icons.close, size: 16),
-                      onDeleted: () => setState(() => _pendingAttachment = null),
-                      backgroundColor: const Color(0xFF1A2935),
-                    ),
-                ],
-              ),
-            ),
-            if (openConversation)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(8),
-                color: const Color(0xFF163A40),
-                child: Text(
-                  isListening
-                      ? (wakePhraseMode
-                          ? '● OPEN CONVERSATION • SAY “CHAY” + YOUR COMMAND'
-                          : '● OPEN CONVERSATION • LISTENING...')
-                      : _isSpeaking
-                          ? '● OPEN CONVERSATION • CHAY SPEAKING...'
-                          : _isSending
-                              ? '● OPEN CONVERSATION • THINKING...'
-                              : '● OPEN CONVERSATION',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: accent,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.4,
-                    fontSize: 11,
-                  ),
-                ),
-              ),
-            Expanded(
-              child: ListView.builder(
-                controller: _scrollController,
-                padding: const EdgeInsets.all(18),
-                itemCount: messages.length,
-                itemBuilder: (context, index) {
-                  final item = messages[index];
-                  final isUser = item['role'] == 'user';
-
-                  return Align(
-                    alignment:
-                        isUser ? Alignment.centerRight : Alignment.centerLeft,
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(vertical: 9),
-                      padding: const EdgeInsets.all(16),
-                      constraints: BoxConstraints(
-                        maxWidth:
-                            MediaQuery.of(context).size.width * 0.82,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isUser
-                            ? const Color(0xFF205C61)
-                            : const Color(0xFF243747),
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            isUser ? 'YOU' : 'C.H.E.',
-                            style: const TextStyle(
-                              color: accent,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 9),
-                          Text(
-                            item['text'] ?? '',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 15,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: const BoxDecoration(
-                border: Border(
-                  top: BorderSide(color: Color(0xFF354859)),
-                ),
-              ),
-              child: Row(
-                children: [
-                  IconButton(
-                    onPressed: openMemoryManager,
-                    icon: const Icon(Icons.memory, color: accent),
-                  ),
-                  IconButton(
-                    onPressed: _openMultimodalPicker,
-                    icon: Icon(
-                      _pendingAttachment == null
-                          ? Icons.add_circle_outline
-                          : Icons.attachment,
-                      color: _pendingAttachment == null
-                          ? accent
-                          : Colors.amberAccent,
-                    ),
-                    tooltip: 'Add photo, video, audio, document or data',
-                  ),
-                  Expanded(
-                    child: TextField(
-                      controller: controller,
-                      style: const TextStyle(color: Colors.white),
-                      onSubmitted: (_) => sendMessage(),
-                      decoration: InputDecoration(
-                        hintText: isListening
-                            ? 'Listening...'
-                            : _isSending
-                                ? 'C.H.E. is thinking...'
-                                : 'Message C.H.E...',
-                        hintStyle:
-                            const TextStyle(color: Colors.white54),
-                        filled: true,
-                        fillColor: const Color(0xFF243747),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(30),
-                          borderSide: BorderSide.none,
-                        ),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: toggleListening,
-                    icon: Icon(
-                      openConversation || isListening
-                          ? Icons.mic
-                          : Icons.mic_none,
-                      color: openConversation || isListening
-                          ? Colors.redAccent
-                          : accent,
-                      size: 29,
-                    ),
-                    tooltip: kIsWeb
-                        ? (isListening
-                            ? 'Stop listening'
-                            : 'Tap to talk')
-                        : (openConversation
-                            ? 'Stop open conversation'
-                            : 'Start open conversation'),
-                  ),
-                  CircleAvatar(
-                    backgroundColor: accent,
-                    child: IconButton(
-                      onPressed:
-                          _isSending ? null : () => sendMessage(),
-                      icon: const Icon(
-                        Icons.arrow_upward,
-                        color: Color(0xFF101D2A),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _CHEAgentException implements Exception {
-  final String message;
-  const _CHEAgentException(this.message);
-
-  @override
-  String toString() => message;
-}
-,
-      caseSensitive: false,
-    ).firstMatch(lower);
-    if (match == null) return false;
-
-    final requested = (match.group(1) ?? '').trim();
-    if (requested.isEmpty) return false;
+    if (appName == null || appName.isEmpty) return false;
 
     final targets = <String, List<Uri>>{
       'settings': [Uri.parse('app-settings:')],
@@ -3608,12 +3042,16 @@ class _CHEAgentException implements Exception {
     };
 
     List<Uri>? candidates;
+    String? matchedName;
+
     for (final entry in targets.entries) {
-      if (requested == entry.key || requested.contains(entry.key)) {
+      if (appName == entry.key || appName.contains(entry.key)) {
         candidates = entry.value;
+        matchedName = entry.key;
         break;
       }
     }
+
     if (candidates == null) return false;
 
     for (final uri in candidates) {
@@ -3628,7 +3066,7 @@ class _CHEAgentException implements Exception {
             setState(() {
               messages.add({
                 'role': 'assistant',
-                'text': 'Opening ' + requested + ', sir.',
+                'text': 'Opening ' + (matchedName ?? appName!) + ', sir.',
               });
             });
           }
@@ -3640,7 +3078,9 @@ class _CHEAgentException implements Exception {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('I could not open ' + requested + ' on this iPhone.'),
+          content: Text(
+            'I could not open ' + (matchedName ?? appName) + ' on this iPhone.',
+          ),
         ),
       );
     }
@@ -3690,6 +3130,10 @@ class _CHEAgentException implements Exception {
         ? 'Analyze this attachment.'
         : typedMessage;
     if (message.isEmpty) return;
+
+    if (await _openExternalAppByVoice(message)) {
+      return;
+    }
 
     if (await _handleLocalNavigation(message)) {
       controller.clear();
