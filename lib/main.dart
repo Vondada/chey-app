@@ -1403,8 +1403,11 @@ OWNER AGENCY
       return true;
     }
 
-    return RegExp(
-      r'^(?:hey\s+)?(?:chay|chey|shay|che|she|c\.?\s*h\.?\s*e\.?)[\s,!.?]*
+    final wakeMatch = RegExp(
+      r'^(?:hey\s+)?(?:chay|chey|shay|che|she|c\.?\s*h\.?\s*e\.?)[\s,!.?]*',
+      caseSensitive: false,
+    ).firstMatch(raw.trim());
+    return wakeMatch != null && wakeMatch.end == raw.trim().length;
   }
 
   bool _isSleepPhrase(String raw) {
