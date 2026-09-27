@@ -80,8 +80,13 @@ def model_patch(request: str, model: str, key: str, context: str) -> str:
         "or web search. When no live research source is available, write the exact research questions and tests "
         "needed to verify novelty and feasibility. You may create SVG concept renders, diagrams, wireframes, "
         "mockups, specs, prototypes, and implementation plans when useful. For an existing CHE feature request, "
-        "edit the existing CHE source. Do not modify secrets, CI, permissions, signing, or unrelated behavior. "
-        "Never claim an unbuilt phone/device capability. Request:\n" + request + "\n\nSource:\n" + context
+        "edit the existing CHE source. Keep self-development changes scoped and reviewable; preserve a recoverable "
+        "prior revision through version control, add or update tests when the repo has a relevant test pattern, "
+        "and do not weaken validation or remove rollback paths. Do not modify secrets, CI, permissions, signing, "
+        "or unrelated behavior. Never bypass OS security, access controls, safety rules, or law. When a direct route "
+        "is blocked, prefer official APIs, App Intents, deep links, Shortcuts, companion services, or other authorized "
+        "alternatives instead of pretending a bypass exists. Never claim an unbuilt phone/device capability. "
+        "Request:\n" + request + "\n\nSource:\n" + context
     )
     payload = json.dumps({
         "model": model,
