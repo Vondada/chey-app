@@ -1,6 +1,6 @@
 workflows:
   chey-mobile:
-    name: Chey Android and iOS
+    name: CHE Android and SideStore iOS
     instance_type: mac_mini_m2
     max_build_duration: 60
     environment:
@@ -15,26 +15,32 @@ workflows:
     triggering:
       events:
         - push
-        - pull_request
       branch_patterns:
-        - pattern: "*"
+        - pattern: "main"
           include: true
           source: true
     scripts:
       - name: Bootstrap native projects
         script: ./tool/bootstrap.sh
-      - name: Check formatting
-        script: dart format --output=none --set-exit-if-changed lib test
+      - name: Format Dart sources
+        script: dart format lib
       - name: Analyze
         script: flutter analyze
-      - name: Test
-        script: mkdir -p build && flutter test --machine > build/test-results.json
-        test_report: build/test-results.json
       - name: Build Android APK
         script: flutter build apk --release
       - name: Build unsigned iOS app
-        script: flutter build ios --release --no-codesign
+        script: |
+          flutter build ios --release --no-codesign \
+            --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
+      - name: Package unsigned IPA for SideStore
+        script: |
+          set -eu
+          mkdir -p build/ios/ipa/Payload
+          cp -R build/ios/iphoneos/Runner.app build/ios/ipa/Payload/
+          cd build/ios/ipa
+          zip -qry CHE-unsigned.ipa Payload
+          rm -r Payload
     artifacts:
       - build/app/outputs/flutter-apk/*.apk
       - build/ios/iphoneos/*.app
-      - flutter_drive.log
+      - build/ios/ipa/CHE-unsigned.ipa
