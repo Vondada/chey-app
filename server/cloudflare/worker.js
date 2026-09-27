@@ -509,6 +509,8 @@ export class CheState extends DurableObject {
       data.personality = Array.isArray(data.personality) ? data.personality : [];
       data.learned_knowledge = Array.isArray(data.learned_knowledge) ? data.learned_knowledge : [];
       data.suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
+      data.team = Array.isArray(data.team) ? data.team : [];
+      data.team_tasks = Array.isArray(data.team_tasks) ? data.team_tasks : [];
       const body = request.method === 'POST' ? await bodyOf(request) : {};
       if (request.method === 'POST' && path === '/api/pair') {
         const secret = this.env.CHE_PAIR_CODE;
@@ -543,6 +545,8 @@ export class CheState extends DurableObject {
           suggestions: data.suggestions,
           projects: data.projects,
           vault_items: data.vault_items,
+          team: data.team,
+          team_tasks: data.team_tasks,
           storage: {
             ...storageReadiness(this.env),
             core_vault: true,
@@ -551,6 +555,7 @@ export class CheState extends DurableObject {
             storage_vault: true,
             object_storage: Boolean(this.env.CHE_DATA_BUCKET),
             work_engine: true,
+            office: true,
             web_research: Boolean(this.env.CHE_RESEARCH_URL),
             public_records: Boolean(this.env.CHE_PUBLIC_RECORDS_URL),
             music: Boolean(this.env.CHE_MUSIC_URL),
@@ -616,6 +621,86 @@ export class CheState extends DurableObject {
         await this.ctx.storage.put('che', data);
         return json({ ok: true });
       }
+      if (path === '/api/team/create') {
+        const role = String(body.role || '').trim().slice(0, 80);
+        const specialty = String(body.specialty || '').trim().slice(0, 120);
+        const mission = String(body.mission || '').trim().slice(0, 1200);
+        if (!role) return json({ detail: 'Partner role required.' }, 400);
+
+        const existing = data.team.find(
+          (item) => String(item.role || '').toLowerCase() === role.toLowerCase(),
+        );
+        if (existing) return json({ partner: existing, existing: true });
+
+        const names = ['Nova', 'Atlas', 'Mira', 'Knox', 'Sage', 'Lyra', 'Orion', 'Vale'];
+        const used = new Set(data.team.map((item) => String(item.name || '')));
+        const name = names.find((item) => !used.has(item)) || `Partner ${data.team.length + 1}`;
+        const now = new Date().toISOString();
+        const partner = {
+          id: crypto.randomUUID(),
+          name,
+          kind: 'CHE AI coworker',
+          role,
+          specialty,
+          mission,
+          status: 'available',
+          introduced: false,
+          created_at: now,
+          updated_at: now,
+        };
+        data.team.push(partner);
+        data.team = data.team.slice(-24);
+        await this.ctx.storage.put('che', data);
+        return json({ partner, existing: false });
+      }
+
+      if (path === '/api/team/assign') {
+        const partnerId = String(body.partner_id || '');
+        const task = String(body.task || '').trim().slice(0, 3000);
+        if (!task) return json({ detail: 'Task required.' }, 400);
+
+        const partner = data.team.find((item) => item.id === partnerId);
+        if (!partner) return json({ detail: 'Partner not found.' }, 404);
+
+        const now = new Date().toISOString();
+        const assignment = {
+          id: crypto.randomUUID(),
+          partner_id: partner.id,
+          partner_name: partner.name,
+          role: partner.role,
+          task,
+          status: 'assigned',
+          created_at: now,
+          updated_at: now,
+        };
+        data.team_tasks.unshift(assignment);
+        data.team_tasks = data.team_tasks.slice(0, 100);
+        partner.status = 'working';
+        partner.updated_at = now;
+        await this.ctx.storage.put('che', data);
+        return json({ assignment });
+      }
+
+      if (path === '/api/team/introduce') {
+        const partnerId = String(body.partner_id || '');
+        const partner = data.team.find((item) => item.id === partnerId);
+        if (!partner) return json({ detail: 'Partner not found.' }, 404);
+        partner.introduced = true;
+        partner.updated_at = new Date().toISOString();
+        await this.ctx.storage.put('che', data);
+        return json({ partner });
+      }
+
+      if (path === '/api/team/delete') {
+        const partnerId = String(body.partner_id || '');
+        const before = data.team.length;
+        data.team = data.team.filter((item) => item.id !== partnerId);
+        data.team_tasks = data.team_tasks.filter((item) => item.partner_id !== partnerId);
+        if (before === data.team.length) return json({ detail: 'Partner not found.' }, 404);
+        await this.ctx.storage.put('che', data);
+        return json({ ok: true });
+      }
+
       if (path === '/api/project/create') {
         const title = String(body.title || '').trim().slice(0, 120);
         const type = String(body.type || 'general').trim().slice(0, 40);
@@ -842,6 +927,71 @@ export class CheState extends DurableObject {
         const requestedCapabilities = Array.isArray(body.requested_capabilities)
           ? body.requested_capabilities.map((item) => String(item))
           : [];
+
+        // CHE OFFICE: quietly staff reusable AI coworkers when a task benefits
+        // from specialization. These are software agents, not human employees.
+        const roleRules = [
+          {
+            when: ['market_data', 'backtesting', 'broker_execution', 'prop_firm'],
+            role: 'Market Intelligence Partner',
+            specialty: 'markets, backtesting, risk and trading systems',
+          },
+          {
+            when: ['business_ops', 'lead_generation', 'payments'],
+            role: 'Business Operations Partner',
+            specialty: 'planning, operations, leads, billing and workflows',
+          },
+          {
+            when: ['web_research', 'cross_reference', 'public_records'],
+            role: 'Research Partner',
+            specialty: 'source gathering, verification and public research',
+          },
+          {
+            when: ['rendering', 'image_generation', 'video_generation'],
+            role: 'Creative Studio Partner',
+            specialty: 'visual concepts, image/video production and creative assets',
+          },
+          {
+            when: ['windows_action', 'phone_action', 'car_bluetooth', 'smart_home'],
+            role: 'Systems Integration Partner',
+            specialty: 'authorized devices, apps, automations and integrations',
+          },
+          {
+            when: ['innovation_mode', 'multitasking', 'background_work', 'speed_mode'],
+            role: 'Build + Operations Partner',
+            specialty: 'parallel execution, project coordination and implementation',
+          },
+        ];
+
+        const createdPartners = [];
+        for (const rule of roleRules) {
+          if (!rule.when.some((item) => requestedCapabilities.includes(item))) continue;
+          let partner = data.team.find((item) => item.role === rule.role);
+          if (!partner) {
+            const names = ['Nova', 'Atlas', 'Mira', 'Knox', 'Sage', 'Lyra', 'Orion', 'Vale'];
+            const used = new Set(data.team.map((item) => String(item.name || '')));
+            const name = names.find((item) => !used.has(item)) || `Partner ${data.team.length + 1}`;
+            const now = new Date().toISOString();
+            partner = {
+              id: crypto.randomUUID(),
+              name,
+              kind: 'CHE AI coworker',
+              role: rule.role,
+              specialty: rule.specialty,
+              mission: 'Help CHE execute owner-authorized work faster and more reliably.',
+              status: 'available',
+              introduced: false,
+              created_at: now,
+              updated_at: now,
+            };
+            data.team.push(partner);
+            createdPartners.push(partner);
+          }
+        }
+        if (createdPartners.length) {
+          data.team = data.team.slice(-24);
+          await this.ctx.storage.put('che', data);
+        }
         const multimodal = body.attachment
           ? await optionalMultimodal(this.env, body.attachment, message)
           : null;
@@ -941,6 +1091,8 @@ export class CheState extends DurableObject {
               'PROACTIVE MODE: notice useful next steps, unfinished threads, preparation needs, and low-risk opportunities to help without waiting to be asked. Be selective, not noisy. Never invent urgency or facts, and never take consequential actions without authorization.',
               'SPEED MODE: minimize unnecessary serial work. Batch compatible reads, run independent tool calls concurrently, reuse trusted context, and escalate to heavier compute only when the task actually benefits from it.',
               'BACKGROUND WORK: cloud-side tasks may continue independently of the visible phone UI only when a real CHE backend job or connected service supports it. Do not claim iOS itself is running unrestricted background work.',
+              'CHE OFFICE: you may organize reusable internal AI coworkers/partners for specialized work. They are software agents, never human employees. Delegate independent subtasks to the right specialist when real tools support it. Keep the owner-facing experience unified under CHE.',
+              'Introduce a newly useful coworker naturally and sparingly over time, with its name and role, rather than dumping the whole roster at once.',
               'MULTITASKING MODE: when the owner gives several goals at once, split them into clear subtasks, identify dependencies, and work on independent subtasks in parallel whenever real connected tools support safe parallel execution.',
               'Keep a concise task ledger in your reasoning: pending, active, blocked, and complete. Do not lose earlier parts of a multi-part request while working on later parts.',
               'For dependent tasks, sequence them correctly. For independent tasks, batch or parallelize them when possible, then combine the results into one coherent answer.',
@@ -999,6 +1151,9 @@ export class CheState extends DurableObject {
               specialists.length
                 ? `Parallel specialist-tool results: ${JSON.stringify(specialists).slice(0, 30000)}`
                 : 'No specialist connector result was available for this turn.',
+              data.team.length
+                ? `CHE Office roster: ${JSON.stringify(data.team).slice(0, 12000)}`
+                : 'CHE Office has no specialist coworkers yet.',
               imageGeneration?.error
                 ? `Image generation status: ${imageGeneration.error}`
                 : imageGeneration?.job_id
