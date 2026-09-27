@@ -3533,16 +3533,60 @@ OWNER AGENCY
       throw const _CHEAgentException('This device is not paired.');
     }
 
-    // Explicit spoken or typed code requests start a reviewable cloud proposal.
-    // General chat about coding still goes to the conversational Agent.
+    final trimmedRequest = userMessage.trim();
+
+    // Updating CHE itself is different from creating a separate owner project.
+    // CHE self-code changes stay reviewable through the GitHub proposal workflow.
     final codeRequest = RegExp(
       r'^(?:(?:chay|chey|shay|che)[, ]+)?'
-      r'(?:(?:add|change|update|remove|fix|improve|build|create|develop|write)\s+'
-      r'(?:(?:to|in)\s+)?(?:(?:your|the|my|a|an)\s+)?'
-      r'(?:code|app|website|site|book|story|screenplay|movie script|script|prototype|invention)\b|'
-      r'(?:update|improve|fix|build)\s+(?:yourself|your app))',
+      r'(?:(?:add|change|update|remove|fix|improve|build)\s+.+\s+'
+      r'(?:to|in)\s+(?:your|che|c\.?h\.?e\.?)\s+(?:code|app)\b|'
+      r'(?:update|improve|fix|build)\s+(?:yourself|your app|your code)\b)',
       caseSensitive: false,
-    ).hasMatch(userMessage.trim());
+    ).hasMatch(trimmedRequest);
+
+    final projectMatch = RegExp(
+      r'\b(?:build|create|develop|write|start|make)\s+'
+      r'(?:me\s+)?(?:(?:a|an|my)\s+)?'
+      r'(website|site|app|book|story|screenplay|movie script|script|prototype|invention)\b',
+      caseSensitive: false,
+    ).firstMatch(trimmedRequest);
+
+    if (!codeRequest && projectMatch != null) {
+      var projectType = projectMatch.group(1)!.toLowerCase();
+      if (projectType == 'site') projectType = 'website';
+      if (projectType == 'story') projectType = 'book';
+      if (projectType == 'movie script' || projectType == 'script') {
+        projectType = 'screenplay';
+      }
+      if (projectType == 'prototype') projectType = 'invention';
+
+      var title = trimmedRequest.replaceFirst(
+        RegExp(
+          r'^(?:(?:chay|chey|shay|che)[, ]+)?',
+          caseSensitive: false,
+        ),
+        '',
+      );
+      if (title.length > 100) title = title.substring(0, 100);
+
+      final result = await _postAgentJson('/api/project/create', {
+        'title': title,
+        'type': projectType,
+        'brief': trimmedRequest,
+      });
+      final project = result?['project'];
+      await _loadAgentState(silent: true);
+
+      final projectTitle = project is Map
+          ? project['title']?.toString() ?? title
+          : title;
+      final reply =
+          'I created “$projectTitle” in Creator Studio, sir. Open Create whenever you want to keep developing it.';
+      onPartial(reply);
+      return reply;
+    }
+
     if (codeRequest) {
       final response = await http.post(
         Uri.parse('$cheAgentBaseUrl/api/change/request'),
