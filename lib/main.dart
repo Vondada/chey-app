@@ -121,6 +121,7 @@ class _CHEHomeState extends State<CHEHome> {
   List<String> learnedKnowledge = [];
   List<String> suggestions = [];
   Map<String, bool> integrations = const {
+    'storage_vault': false,
     'web_research': false,
     'public_records': false,
     'music': false,
@@ -310,6 +311,7 @@ SUPERIOR-AGENT / MODEL ROUTING
   targeting. Payments may be automated only through an authorized processor and within
   owner-approved pricing/terms; never silently charge people outside agreed terms.
 - CHE is the product and user-facing assistant. Do not tell the owner to switch to another AI app for normal work.
+- DATA + COMPUTE: persist core memory and state in CHE storage. Use CHE-controlled object storage for large files, generated media, datasets and model artifacts when connected. Never claim an item was archived if the storage layer did not confirm it.
 - Use a LOCAL-FIRST capability order: built-in CHE logic first, then owner-controlled/self-hosted CHE services, then optional external infrastructure only when necessary.
 - Treat models and providers as replaceable internal engines, never as CHE's identity. The owner should experience one coherent CHE app.
 - Prefer local/on-device processing for memory, settings, routing, lightweight classification, file handling, voice state, task planning, and cached knowledge where practical.
@@ -720,6 +722,7 @@ OWNER AGENCY
       learnedKnowledge = knowledgeData.map((e) => e.toString()).toList();
       suggestions = suggestionData.map((e) => e.toString()).toList();
       integrations = {
+        'storage_vault': integrationData['storage_vault'] == true,
         'web_research': integrationData['web_research'] == true,
         'public_records': integrationData['public_records'] == true,
         'music': integrationData['music'] == true,
@@ -2188,6 +2191,14 @@ OWNER AGENCY
           'This iPhone',
           _deviceToken == null ? 'Not paired.' : 'Secure CHE Agent paired.',
           _deviceToken != null,
+        ),
+        _integrationCard(
+          Icons.storage_outlined,
+          'CHE Data Vault',
+          integrations['storage_vault'] == true
+              ? 'Large files, generated media and datasets can use CHE object storage.'
+              : 'Core memory is online; large-file object storage is not connected yet.',
+          integrations['storage_vault'] == true,
         ),
         _integrationCard(
           Icons.computer,
