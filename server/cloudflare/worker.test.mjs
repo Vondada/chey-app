@@ -75,3 +75,69 @@ test('pairing, owner gate, memories, and revocation', async () => {
   assert.equal((await send('/api/security/revoke_self', 'POST', {}, token)).status, 200);
   assert.equal((await send('/api/chat', 'POST', { message: 'hi' }, token)).status, 401);
 });
+
+test('plugin catalog is paired, opt-in, read-only and never exposes tokens', async () => {
+  const saved = new Map();
+  let modelPrompt = '';
+  const env = {
+    CHE_PAIR_CODE: '123456',
+    CHE_PLUGIN_WEATHER_TOKEN: 'secret-value',
+    CHE_PLUGIN_CATALOG: JSON.stringify([
+      { id: 'weather', name: 'Weather', description: 'Current forecast',
+        endpoint: 'https://weather.example/query', token_secret: 'CHE_PLUGIN_WEATHER_TOKEN',
+        triggers: ['weather', 'forecast'] },
+      { id: 'unsafe', name: 'Unsafe', description: 'Bad endpoint',
+        endpoint: 'http://localhost/action', triggers: ['unsafe'] },
+    ]),
+    AI: { run: async (_model, input) => {
+      modelPrompt = input.messages[0].content;
+      return { response: 'Forecast received.' };
+    } },
+  };
+  const state = new CheState({ storage: {
+    get: (key) => saved.get(key),
+    put: (key, value) => saved.set(key, value),
+    setAlarm: async () => {},
+  } }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, method = 'GET', body = {}, token = '') => worker.fetch(
+    new Request(`https://che.example${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
+    }), env,
+  );
+  assert.equal((await send('/api/plugins')).status, 401);
+  const token = (await (await send('/api/pair', 'POST', { code: '123456' })).json()).device_token;
+  const list = await (await send('/api/plugins', 'GET', {}, token)).json();
+  assert.deepEqual(list.plugins.map((item) => item.id), ['weather']);
+  assert.equal(list.plugins[0].enabled, false);
+  assert.doesNotMatch(JSON.stringify(list), /secret-value|weather\.example/);
+  assert.equal((await send('/api/plugins/toggle', 'POST', { id: 'unsafe', enabled: true }, token)).status, 404);
+  assert.equal((await send('/api/plugins/toggle', 'POST', { id: 'weather', enabled: 'yes' }, token)).status, 400);
+
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (url, options) => {
+    calls++;
+    assert.equal(url, 'https://weather.example/query');
+    assert.equal(options.headers.Authorization, 'Bearer secret-value');
+    assert.equal(JSON.parse(options.body).mode, 'read_only');
+    return new Response(JSON.stringify({ forecast: 'sunny' }));
+  };
+  try {
+    await send('/api/chat', 'POST', { message: 'weather now' }, token);
+    assert.equal(calls, 0);
+    assert.equal((await send('/api/plugins/toggle', 'POST',
+      { id: 'weather', enabled: true }, token)).status, 200);
+    await send('/api/chat', 'POST', { message: 'weather now' }, token);
+    assert.equal(calls, 1);
+    assert.match(modelPrompt, /sunny/);
+    assert.doesNotMatch(modelPrompt, /secret-value/);
+    await send('/api/plugins/toggle', 'POST', { id: 'weather', enabled: false }, token);
+    await send('/api/chat', 'POST', { message: 'weather now' }, token);
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

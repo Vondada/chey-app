@@ -25,6 +25,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:url_launcher/url_launcher.dart';
 import 'che_native_voice.dart';
 import 'che_app_portal.dart';
+import 'che_plugin_manager.dart';
 import 'che_theme.dart';
 import 'che_world_hub.dart';
 import 'che_web_voice_stub.dart'
@@ -1155,6 +1156,11 @@ OWNER AGENCY
         );
       },
     );
+  }
+
+  Future<void> _openPluginManager() async {
+    if (!await _ensurePaired() || !mounted || _deviceToken == null) return;
+    await ChePluginManager.open(context, cheAgentBaseUrl, _deviceToken!);
   }
 
   // ============================================================
@@ -4850,6 +4856,11 @@ OWNER AGENCY
           tooltip: 'CHE Virtual Office',
         ),
         actions: [
+          IconButton(
+            onPressed: _openPluginManager,
+            icon: const Icon(Icons.extension_outlined, color: accent),
+            tooltip: 'CHE Plugins',
+          ),
           if (!kIsWeb)
             IconButton(
               onPressed: _showAgentServerDialog,
