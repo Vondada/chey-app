@@ -2319,7 +2319,156 @@ OWNER AGENCY
 
   String _mediaTypeFromName(String name) {
     final lower = name.toLowerCase();
-    if (RegExp(r'\.(png|jpg|jpeg|heic|webp|gif)
+    const imageExts = ['.png', '.jpg', '.jpeg', '.heic', '.webp', '.gif'];
+    const videoExts = ['.mp4', '.mov', '.m4v', '.webm'];
+    const audioExts = ['.mp3', '.m4a', '.wav', '.aac', '.flac', '.ogg'];
+
+    if (imageExts.any(lower.endsWith)) return 'image';
+    if (videoExts.any(lower.endsWith)) return 'video';
+    if (audioExts.any(lower.endsWith)) return 'audio';
+    return 'document';
+  }
+
+  Future<void> _setMultimodalAttachment(
+    String name,
+    List<int> bytes,
+  ) async {
+    const maxBytes = 5 * 1024 * 1024;
+    if (bytes.isEmpty) return;
+
+    if (bytes.length > maxBytes) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Keep multimodal attachments under 5 MB for now.'),
+        ),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _pendingAttachment = {
+        'name': name,
+        'media_type': _mediaTypeFromName(name),
+        'base64': base64Encode(bytes),
+      };
+    });
+  }
+
+  Future<void> _pickMultimodalFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: false,
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+
+    final file = result.files.single;
+    final bytes = file.bytes;
+    if (bytes == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('CHE could not read that file on this device.'),
+        ),
+      );
+      return;
+    }
+
+    await _setMultimodalAttachment(file.name, bytes);
+  }
+
+  Future<void> _captureMultimodalImage({
+    required ImageSource source,
+  }) async {
+    final file = await _imagePicker.pickImage(
+      source: source,
+      imageQuality: 82,
+      maxWidth: 1800,
+    );
+    if (file == null) return;
+    await _setMultimodalAttachment(file.name, await file.readAsBytes());
+  }
+
+  Future<void> _captureMultimodalVideo() async {
+    final file = await _imagePicker.pickVideo(
+      source: ImageSource.camera,
+      maxDuration: const Duration(minutes: 2),
+    );
+    if (file == null) return;
+    await _setMultimodalAttachment(file.name, await file.readAsBytes());
+  }
+
+  Future<void> _openMultimodalPicker() async {
+    if (!mounted) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF162532),
+      builder: (context) {
+        return SafeArea(
+          child: Wrap(
+            children: [
+              const ListTile(
+                title: Text(
+                  'MULTIMODAL INPUT',
+                  style: TextStyle(
+                    color: Color(0xFF67E8D1),
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                subtitle: Text(
+                  'Give Chay a photo, video, audio file, document or data file.',
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.camera_alt_outlined),
+                title: const Text('Take photo'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _captureMultimodalImage(source: ImageSource.camera);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Choose photo'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _captureMultimodalImage(source: ImageSource.gallery);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.videocam_outlined),
+                title: const Text('Record video'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _captureMultimodalVideo();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.attach_file),
+                title: const Text('Choose audio, document or data file'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickMultimodalFile();
+                },
+              ),
+              if (_pendingAttachment != null)
+                ListTile(
+                  leading: const Icon(Icons.close, color: Colors.redAccent),
+                  title: const Text('Remove current attachment'),
+                  onTap: () {
+                    setState(() => _pendingAttachment = null);
+                    Navigator.pop(context);
+                  },
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _loadSharedScreenContext() async {
     try {
       final data = await Clipboard.getData(Clipboard.kTextPlain);
