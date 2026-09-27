@@ -320,6 +320,106 @@ async function optionalToolConnector(
   }
 }
 
+async function runOfficeAgents(env, team, requestedCapabilities, query) {
+  const requested = new Set(requestedCapabilities || []);
+  const roleNeeds = [
+    {
+      match: ['market_data', 'backtesting', 'broker_execution', 'prop_firm'],
+      role: 'Market Intelligence Partner',
+      focus: 'Analyze the request from a markets, risk, backtesting and trading-systems perspective. Be precise and do not invent live prices, fills or rules.',
+    },
+    {
+      match: ['business_ops', 'lead_generation', 'payments'],
+      role: 'Business Operations Partner',
+      focus: 'Analyze the request from an operations, business planning, workflow, customer and finance perspective. Keep recommendations practical and authorized.',
+    },
+    {
+      match: ['web_research', 'cross_reference', 'public_records'],
+      role: 'Research Partner',
+      focus: 'Identify what facts need verification, what sources or evidence would matter, and what is known versus uncertain. Do not pretend live research happened unless tool results are supplied.',
+    },
+    {
+      match: ['rendering', 'image_generation', 'video_generation'],
+      role: 'Creative Studio Partner',
+      focus: 'Develop the visual/creative execution: concept, composition, asset plan, production details and constraints.',
+    },
+    {
+      match: ['windows_action', 'phone_action', 'car_bluetooth', 'smart_home'],
+      role: 'Systems Integration Partner',
+      focus: 'Plan the authorized device/app integration path, permissions, APIs/deep links and safe execution boundaries.',
+    },
+    {
+      match: ['innovation_mode', 'multitasking', 'background_work', 'speed_mode'],
+      role: 'Build + Operations Partner',
+      focus: 'Break the request into dependencies, parallelizable work, blockers and the fastest safe execution plan.',
+    },
+  ];
+
+  const active = [];
+  for (const need of roleNeeds) {
+    if (!need.match.some((cap) => requested.has(cap))) continue;
+    const partner = team.find((item) => item.role === need.role);
+    if (partner) active.push({ partner, focus: need.focus });
+  }
+
+  if (!active.length) return [];
+
+  const results = await Promise.all(
+    active.slice(0, 4).map(async ({ partner, focus }) => {
+      try {
+        const answer = await env.AI.run(env.CHE_FAST_MODEL || FAST_MODEL, {
+          messages: [
+            {
+              role: 'system',
+              content: [
+                `You are ${partner.name}, a CHE internal AI coworker.`,
+                `Role: ${partner.role}.`,
+                `Specialty: ${partner.specialty || 'general specialist work'}.`,
+                focus,
+                'Work independently on your assigned slice only.',
+                'Return concise findings, decisions, risks, and next actions for CHE to synthesize.',
+                'You are not the owner-facing assistant; do not address the owner directly.',
+              ].join('\n'),
+            },
+            {
+              role: 'user',
+              content: String(query || '').slice(0, 8000),
+            },
+          ],
+          max_tokens: 700,
+        });
+
+        const result = String(
+          answer.response || answer.choices?.[0]?.message?.content || '',
+        ).trim().slice(0, 12000);
+
+        return result
+          ? {
+              partner_id: partner.id,
+              partner_name: partner.name,
+              role: partner.role,
+              result,
+            }
+          : {
+              partner_id: partner.id,
+              partner_name: partner.name,
+              role: partner.role,
+              error: 'No result returned.',
+            };
+      } catch (_) {
+        return {
+          partner_id: partner.id,
+          partner_name: partner.name,
+          role: partner.role,
+          error: 'Coworker execution failed.',
+        };
+      }
+    }),
+  );
+
+  return results;
+}
+
 async function specialistPanel(env, requestedCapabilities, query) {
   const requested = new Set(requestedCapabilities || []);
   const jobs = [];
@@ -1023,7 +1123,7 @@ export class CheState extends DurableObject {
           /\b(reason|analy[sz]e|compare|research|plan|design|code|invent|innovate|trade|trading|market|business|strategy|explain|debug|build)\b/i.test(message);
 
         // SPEED MODE: independent information sources run in one parallel batch.
-        const [research, panel, specialists] = await Promise.all([
+        const [research, panel, specialists, officeResults] = await Promise.all([
           shouldResearch
             ? optionalResearch(this.env, message)
             : Promise.resolve(null),
@@ -1031,7 +1131,33 @@ export class CheState extends DurableObject {
             ? modelPanel(this.env, message)
             : Promise.resolve([]),
           specialistPanel(this.env, requestedCapabilities, message),
+          runOfficeAgents(this.env, data.team, requestedCapabilities, message),
         ]);
+
+        if (officeResults.length) {
+          const now = new Date().toISOString();
+          for (const result of officeResults) {
+            const partner = data.team.find((item) => item.id === result.partner_id);
+            if (partner) {
+              partner.status = result.error ? 'available' : 'available';
+              partner.updated_at = now;
+            }
+            data.team_tasks.unshift({
+              id: crypto.randomUUID(),
+              partner_id: result.partner_id,
+              partner_name: result.partner_name,
+              role: result.role,
+              task: message.slice(0, 1000),
+              status: result.error ? 'failed' : 'complete',
+              result: result.result || '',
+              error: result.error || '',
+              created_at: now,
+              updated_at: now,
+            });
+          }
+          data.team_tasks = data.team_tasks.slice(0, 100);
+          await this.ctx.storage.put('che', data);
+        }
 
         if (research?.summary) {
           data.learned_knowledge = Array.isArray(data.learned_knowledge)
@@ -1154,6 +1280,9 @@ export class CheState extends DurableObject {
               data.team.length
                 ? `CHE Office roster: ${JSON.stringify(data.team).slice(0, 12000)}`
                 : 'CHE Office has no specialist coworkers yet.',
+              officeResults.length
+                ? `CHE Office completed delegated work in parallel: ${JSON.stringify(officeResults).slice(0, 24000)}`
+                : 'No CHE Office coworker was needed for this turn.',
               imageGeneration?.error
                 ? `Image generation status: ${imageGeneration.error}`
                 : imageGeneration?.job_id
