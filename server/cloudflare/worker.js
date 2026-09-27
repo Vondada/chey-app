@@ -177,6 +177,55 @@ async function optionalMultimodal(env, attachment, query) {
   }
 }
 
+async function optionalMediaGeneration(env, kind, prompt) {
+  const isVideo = kind === 'video';
+  const urlValue = isVideo ? env.CHE_VIDEO_GEN_URL : env.CHE_IMAGE_GEN_URL;
+  const tokenValue = isVideo ? env.CHE_VIDEO_GEN_TOKEN : env.CHE_IMAGE_GEN_TOKEN;
+  if (!urlValue) return null;
+
+  let url;
+  try {
+    url = new URL(urlValue);
+  } catch (_) {
+    return { error: `${kind} generator URL is invalid.` };
+  }
+  if (url.protocol !== 'https:') {
+    return { error: `${kind} generator must use HTTPS.` };
+  }
+
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (tokenValue) headers.Authorization = `Bearer ${tokenValue}`;
+
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        prompt: String(prompt || '').slice(0, 5000),
+        type: kind,
+      }),
+    });
+
+    if (!response.ok) {
+      return { error: `${kind} generator returned ${response.status}.` };
+    }
+
+    const data = await response.json();
+    const mediaUrl = String(
+      data.url || data.output_url || data.image_url || data.video_url || '',
+    ).trim();
+
+    const status = String(data.status || '').trim();
+    const jobId = String(data.job_id || data.id || '').trim();
+
+    if (mediaUrl) return { url: mediaUrl, kind };
+    if (jobId) return { job_id: jobId, status: status || 'submitted', kind };
+    return { error: `${kind} generator returned no media URL or job ID.` };
+  } catch (_) {
+    return { error: `${kind} generator was unavailable.` };
+  }
+}
+
 async function dispatchChange(env, body) {
   const request = String(body.request || '').trim();
   if (request.length < 8 || request.length > 2000) return json({ detail: 'Describe one change in 8–2000 characters.' }, 400);
@@ -380,6 +429,27 @@ export class CheState extends DurableObject {
         const multimodal = body.attachment
           ? await optionalMultimodal(this.env, body.attachment, message)
           : null;
+
+        const imageGeneration = requestedCapabilities.includes('image_generation')
+          ? await optionalMediaGeneration(this.env, 'image', message)
+          : null;
+        const videoGeneration = requestedCapabilities.includes('video_generation')
+          ? await optionalMediaGeneration(this.env, 'video', message)
+          : null;
+
+        if (imageGeneration?.url) {
+          return ndjsonReply(
+            `Image generated, sir. ${imageGeneration.url}`,
+            { media_type: 'image', media_url: imageGeneration.url },
+          );
+        }
+        if (videoGeneration?.url) {
+          return ndjsonReply(
+            `Video generated, sir. ${videoGeneration.url}`,
+            { media_type: 'video', media_url: videoGeneration.url },
+          );
+        }
+
         const shouldResearch = requestedCapabilities.includes('web_research') ||
           requestedCapabilities.includes('innovation_mode') ||
           /\b(research|latest|current|novel|prior art|feasib|humanly possible|artistically possible)\b/i.test(message);
@@ -481,6 +551,16 @@ export class CheState extends DurableObject {
                 : multimodal?.error
                   ? `Multimodal status: ${multimodal.error} Do not pretend the attachment was analyzed.`
                   : 'No multimodal attachment analysis is available for this turn.',
+              imageGeneration?.error
+                ? `Image generation status: ${imageGeneration.error}`
+                : imageGeneration?.job_id
+                  ? `Image generation job submitted: ${imageGeneration.job_id} (${imageGeneration.status}).`
+                  : '',
+              videoGeneration?.error
+                ? `Video generation status: ${videoGeneration.error}`
+                : videoGeneration?.job_id
+                  ? `Video generation job submitted: ${videoGeneration.job_id} (${videoGeneration.status}).`
+                  : '',
               research?.summary
                 ? `Connected live research summary: ${research.summary}${research.sources?.length ? `\nResearch sources: ${JSON.stringify(research.sources)}` : ''}`
                 : research?.error
