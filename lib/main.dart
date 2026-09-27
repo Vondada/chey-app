@@ -20,7 +20,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'che_native_voice.dart';
 import 'che_web_voice_stub.dart'
-    if (dart.library.js_interop) 'che_web_voice_web.dart' as cheWebVoice;
+    if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
 
 // ============================================================
 // C.H.E. AGENT CONNECTION
@@ -366,6 +366,12 @@ OWNER AGENCY
               ? 'CHE iPhone'
               : 'CHE Android',
     );
+
+    if (!mounted) {
+      pairController.dispose();
+      deviceController.dispose();
+      return false;
+    }
 
     final result = await showDialog<bool>(
       context: context,
@@ -944,7 +950,7 @@ OWNER AGENCY
       }
 
       if (kIsWeb) {
-        final played = await cheWebVoice.speakText(text);
+        final played = await che_web_voice.speakText(text);
         if (!played) {
           // Safari sometimes blocks one speech path after microphone use.
           // Try the Flutter web TTS bridge as a backup instead of staying silent.
@@ -1135,7 +1141,7 @@ OWNER AGENCY
     // Agent transcribe it locally instead of using Web Speech recognition.
     if (kIsWeb) {
       try {
-        cheWebVoice.primeSpeech();
+        che_web_voice.primeSpeech();
       } catch (_) {}
 
       if (isListening || openConversation) {
@@ -1255,7 +1261,7 @@ OWNER AGENCY
         throw Exception('This device is not paired.');
       }
 
-      final rawSpeech = (await cheWebVoice.captureSpeech(
+      final rawSpeech = (await che_web_voice.captureSpeech(
         cheAgentBaseUrl,
         token,
       )).trim();
@@ -1980,10 +1986,10 @@ OWNER AGENCY
         history,
         onPartial: (partialReply) {
           if (!mounted || assistantIndex == null) return;
-          if (assistantIndex! >= messages.length) return;
+          if (assistantIndex >= messages.length) return;
 
           setState(() {
-            messages[assistantIndex!]['text'] = partialReply;
+            messages[assistantIndex]['text'] = partialReply;
           });
 
           _scrollToBottom();
@@ -1996,8 +2002,8 @@ OWNER AGENCY
       if (!mounted) return;
 
       setState(() {
-        if (assistantIndex != null && assistantIndex! < messages.length) {
-          messages[assistantIndex!]['text'] = finalReply;
+        if (assistantIndex != null && assistantIndex < messages.length) {
+          messages[assistantIndex]['text'] = finalReply;
         }
         _isSending = false;
       });
@@ -2020,8 +2026,8 @@ OWNER AGENCY
       if (!mounted) return;
 
       setState(() {
-        if (assistantIndex != null && assistantIndex! < messages.length) {
-          messages[assistantIndex!]['text'] = errorReply;
+        if (assistantIndex != null && assistantIndex < messages.length) {
+          messages[assistantIndex]['text'] = errorReply;
         } else {
           messages.add({
             'role': 'assistant',
@@ -2040,8 +2046,8 @@ OWNER AGENCY
       if (!mounted) return;
 
       setState(() {
-        if (assistantIndex != null && assistantIndex! < messages.length) {
-          messages[assistantIndex!]['text'] = errorReply;
+        if (assistantIndex != null && assistantIndex < messages.length) {
+          messages[assistantIndex]['text'] = errorReply;
         } else {
           messages.add({
             'role': 'assistant',
@@ -2154,7 +2160,7 @@ OWNER AGENCY
               if (!voiceResponsesEnabled) {
                 if (kIsWeb) {
                   try {
-                    cheWebVoice.stopSpeech();
+                    che_web_voice.stopSpeech();
                   } catch (_) {}
                 } else {
                   await flutterTts.stop();
