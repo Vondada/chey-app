@@ -194,11 +194,21 @@ export class CheState extends DurableObject {
           suggestions: data.suggestions || [],
           integrations: {
             web_research: Boolean(this.env.CHE_RESEARCH_URL),
+            public_records: Boolean(this.env.CHE_PUBLIC_RECORDS_URL),
             music: Boolean(this.env.CHE_MUSIC_URL),
             windows: Boolean(this.env.CHE_WINDOWS_URL),
             car: Boolean(this.env.CHE_CAR_URL),
             smart_home: Boolean(this.env.CHE_SMART_HOME_URL),
             rendering: Boolean(this.env.CHE_RENDER_URL),
+            screen_capture: Boolean(this.env.CHE_SCREEN_URL),
+            face_verify: Boolean(this.env.CHE_FACE_VERIFY_URL),
+            market_data: Boolean(this.env.CHE_MARKET_DATA_URL),
+            backtesting: Boolean(this.env.CHE_BACKTEST_URL),
+            broker: Boolean(this.env.CHE_BROKER_URL),
+            prop_firm: Boolean(this.env.CHE_PROP_FIRM_URL),
+            business: Boolean(this.env.CHE_BUSINESS_URL),
+            payments: Boolean(this.env.CHE_PAYMENTS_URL),
+            leads: Boolean(this.env.CHE_LEADS_URL),
           },
         });
       }
