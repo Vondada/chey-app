@@ -21,7 +21,7 @@ workflows:
           source: true
     scripts:
       - name: Bootstrap native projects
-        script: ./tool/bootstrap.sh
+        script: bash ./tool/bootstrap.sh
       - name: Format Dart sources
         script: dart format lib
       - name: Analyze
