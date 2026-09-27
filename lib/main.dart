@@ -79,6 +79,7 @@ class _CHEHomeState extends State<CHEHome> {
   // gate; voice alone is never treated as an unbreakable biometric.
   bool strictOwnerMode = true;
   bool wakePhraseMode = true;
+  bool proactiveMode = true;
 
   // Voice-state controls.
   // Wake phrase: "CHE"
@@ -91,6 +92,7 @@ class _CHEHomeState extends State<CHEHome> {
   bool _loadingAgentState = false;
 
   Timer? _listenRestartTimer;
+  Timer? _proactiveTimer;
 
   StreamSubscription<Map<String, dynamic>>? _nativeIosVoiceSub;
   bool _nativeIosVoiceActive = false;
@@ -193,6 +195,10 @@ LEARNING AND GROWTH
   only useful non-sensitive learning.
 - Use common sense: test assumptions, notice contradictions, ask only when a
   missing fact materially blocks the task, and prefer simple workable solutions.
+- PROACTIVE MODE: when useful, surface a concise next step, unfinished follow-up,
+  preparation need or low-risk opportunity without waiting to be asked. Be selective,
+  avoid nagging, never invent urgency, and never take consequential action without
+  the owner’s authorization.
 - For invention and innovation, explore ideas beyond existing products while
   separating imagination from established feasibility and unknowns.
 - When human, engineering, scientific, or artistic possibility matters, identify
@@ -301,6 +307,10 @@ OWNER AGENCY
     super.initState();
     initializeVoice();
     _loadSecuritySession();
+    _proactiveTimer = Timer.periodic(
+      const Duration(minutes: 20),
+      (_) => _checkProactiveSuggestion(),
+    );
 
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
       _initNativeIosVoice();
@@ -323,6 +333,12 @@ OWNER AGENCY
 
     if (_deviceToken != null && _deviceToken!.isNotEmpty) {
       await _loadAgentState(silent: true);
+      unawaited(
+        Future.delayed(
+          const Duration(seconds: 3),
+          _checkProactiveSuggestion,
+        ),
+      );
 
       if (kIsWeb) {
         openConversation = true;
@@ -344,6 +360,62 @@ OWNER AGENCY
     learnedPersonality = [];
 
     if (mounted) setState(() {});
+  }
+
+  Future<void> _checkProactiveSuggestion() async {
+    if (!proactiveMode ||
+        _deviceToken == null ||
+        _deviceToken!.isEmpty ||
+        _isSending ||
+        _isSpeaking) {
+      return;
+    }
+
+    try {
+      final response = await http.post(
+        Uri.parse('$cheAgentBaseUrl/api/proactive/check'),
+        headers: _authHeaders,
+        body: jsonEncode({
+          'client_time': {
+            'local_iso': DateTime.now().toIso8601String(),
+            'timezone_name': DateTime.now().timeZoneName,
+            'utc_offset_minutes': DateTime.now().timeZoneOffset.inMinutes,
+          },
+        }),
+      );
+
+      if (response.statusCode == 401) {
+        await _clearSecuritySession();
+        return;
+      }
+      if (response.statusCode != 200) return;
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final suggestion = data['suggestion']?.toString().trim() ?? '';
+      if (suggestion.isEmpty) return;
+
+      final alreadyShown = messages.any(
+        (item) =>
+            item['role'] == 'assistant' &&
+            item['text']?.trim() == suggestion,
+      );
+      if (alreadyShown || !mounted) return;
+
+      setState(() {
+        suggestions = [suggestion, ...suggestions.where((s) => s != suggestion)]
+            .take(30)
+            .toList();
+        messages.add({
+          'role': 'assistant',
+          'text': suggestion,
+        });
+      });
+
+      _scrollToBottom();
+      if (voiceResponsesEnabled && openConversation) {
+        await speakText(suggestion);
+      }
+    } catch (_) {}
   }
 
   Future<bool> _showAgentServerDialog() async {
@@ -709,6 +781,21 @@ OWNER AGENCY
                       onChanged: (value) {
                         setState(() {
                           strictOwnerMode = value;
+                        });
+                        setModalState(() {});
+                      },
+                    ),
+
+                    SwitchListTile(
+                      value: proactiveMode,
+                      activeThumbColor: const Color(0xFF67E8D1),
+                      title: const Text('Proactive Chay'),
+                      subtitle: const Text(
+                        'Surface useful follow-ups and next steps while the app is active.',
+                      ),
+                      onChanged: (value) {
+                        setState(() {
+                          proactiveMode = value;
                         });
                         setModalState(() {});
                       },
@@ -2869,6 +2956,7 @@ OWNER AGENCY
   @override
   void dispose() {
     _listenRestartTimer?.cancel();
+    _proactiveTimer?.cancel();
     _nativeIosVoiceSub?.cancel();
     controller.dispose();
     _scrollController.dispose();
