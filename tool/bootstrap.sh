@@ -67,6 +67,7 @@ private final class CHEVoiceStreamHandler: NSObject, FlutterStreamHandler {
   }
 }
 
+@available(iOS 16.0, *)
 struct WakeCHEIntent: AppIntent {
   static let title: LocalizedStringResource = "Wake CHE"
   static let description = IntentDescription(
@@ -88,6 +89,7 @@ struct WakeCHEIntent: AppIntent {
   }
 }
 
+@available(iOS 16.0, *)
 struct CHEAppShortcuts: AppShortcutsProvider {
   static var appShortcuts: [AppShortcut] {
     AppShortcut(
