@@ -2817,7 +2817,10 @@ OWNER AGENCY
   Future<void> sendMessage({bool fromVoice = false}) async {
     if (_isSending) return;
 
-    final message = controller.text.trim();
+    final typedMessage = controller.text.trim();
+    final message = typedMessage.isEmpty && _pendingAttachment != null
+        ? 'Analyze this attachment.'
+        : typedMessage;
     if (message.isEmpty) return;
 
     if (await _handleLocalNavigation(message)) {
