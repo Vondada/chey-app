@@ -27,6 +27,59 @@ async function bodyOf(request) {
   return body;
 }
 
+function ndjsonReply(reply, meta = {}) {
+  return new Response(
+    JSON.stringify({ type: 'delta', delta: reply }) + '\n' +
+      JSON.stringify({ type: 'done', ...meta }) + '\n',
+    {
+      headers: {
+        'Content-Type': 'application/x-ndjson; charset=utf-8',
+        'Cache-Control': 'no-store',
+      },
+    },
+  );
+}
+
+function formatClientTime(clientTime) {
+  if (!clientTime || typeof clientTime !== 'object') return null;
+  const raw = String(clientTime.local_iso || '');
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(raw);
+  if (!match) return null;
+
+  const [, year, month, day, hourRaw, minute] = match;
+  const hour = Number(hourRaw);
+  const months = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ];
+  const displayHour = hour % 12 || 12;
+  const ampm = hour >= 12 ? 'PM' : 'AM';
+  const zone = String(clientTime.timezone_name || '').trim();
+  return {
+    display: `${displayHour}:${minute} ${ampm} on ${months[Number(month) - 1]} ${Number(day)}, ${year}${zone ? ` (${zone})` : ''}`,
+    raw,
+    zone,
+    offsetMinutes: Number(clientTime.utc_offset_minutes || 0),
+  };
+}
+
+function safePreferenceFrom(message) {
+  const blocked = /password|passcode|security code|social security|credit card|medical|diagnos|religion|politic|party|vote|race|ethnic|sexual|criminal|address/i;
+  if (blocked.test(message)) return null;
+
+  let match = /\bmy favorite\s+([a-z][a-z\s]{1,30})\s+is\s+(.{1,100})$/i.exec(message.trim());
+  if (match) {
+    return `Favorite ${match[1].trim()}: ${match[2].trim().replace(/[.!?]+$/, '')}`;
+  }
+
+  match = /\bi prefer\s+(.{2,120})$/i.exec(message.trim());
+  if (match) {
+    return `Preference: ${match[1].trim().replace(/[.!?]+$/, '')}`;
+  }
+
+  return null;
+}
+
 async function dispatchChange(env, body) {
   const request = String(body.request || '').trim();
   if (request.length < 8 || request.length > 2000) return json({ detail: 'Describe one change in 8–2000 characters.' }, 400);
@@ -92,7 +145,12 @@ export class CheState extends DurableObject {
       if (!Object.hasOwn(data.devices, tokenHash)) return json({ detail: 'Pair your phone to CHE.' }, 401);
 
       if (request.method === 'GET' && path === '/api/state') {
-        return json({ memories: data.memories, personality: [] });
+        return json({
+          memories: data.memories,
+          personality: data.personality || [],
+          learned_knowledge: data.learned_knowledge || [],
+          suggestions: data.suggestions || [],
+        });
       }
       if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
       if (path === '/api/security/revoke_self') {
@@ -130,6 +188,21 @@ export class CheState extends DurableObject {
       if (path === '/api/chat') {
         const message = String(body.message || '').trim().slice(0, 5000);
         if (!message) return json({ detail: 'Message required.' }, 400);
+
+        const clientClock = formatClientTime(body.client_time);
+        const lowerMessage = message.toLowerCase();
+
+        if (clientClock && /\b(?:what time is it|what(?:'s| is) the time|current time|what day is it|what(?:'s| is) today(?:'s)? date|what date is it|today(?:'s)? date)\b/i.test(message)) {
+          return ndjsonReply(`It’s ${clientClock.display}, sir.`, { source: 'device_clock' });
+        }
+
+        const learnedPreference = safePreferenceFrom(message);
+        if (learnedPreference &&
+            !data.memories.some((item) => item.toLowerCase() === learnedPreference.toLowerCase())) {
+          data.memories.push(learnedPreference);
+          data.memories = data.memories.slice(-100);
+          await this.ctx.storage.put('che', data);
+        }
         const remember = /^(?:che[, ]+)?remember(?: that)?\s+(.+)/i.exec(message);
         if (remember) {
           const memory = remember[1].trim().slice(0, 500);
@@ -156,11 +229,23 @@ export class CheState extends DurableObject {
         const answer = await this.env.AI.run(model, {
           messages: [
             { role: 'system', content: [
-              'You are CHE, Cognitive Horizon Engine. Address the owner as sir naturally.',
-              'Be warm, direct, concise and candid about limitations.',
-              'Never claim to have changed code, researched live facts, or controlled a phone unless a real tool confirms it.',
+              'You are CHE, Cognitive Horizon Engine. Your name is written C.H.E. but pronounced "Chay" (rhymes with "say"). Address the owner as sir naturally.',
+              'Keep your established personality: warm, direct, concise, clever, calm, useful, and lightly funny when the moment fits. Use practical common sense and do not sound stiff or childish.',
+              'Learn from stable, useful, non-sensitive owner preferences. Never invent memories and never infer sensitive traits.',
+              clientClock
+                ? `Current owner-device local date/time: ${clientClock.display}. Use this for time/date questions unless the owner names another location.`
+                : 'If current local time/date is unavailable, say so instead of guessing.',
+              'When a task has a grounded or tool-provided duration, give a clearly labeled estimated wait time. If no reliable duration exists, give a rough range only when useful and label it as an estimate.',
+              'Never claim to have changed code, researched live facts, controlled a phone, computer, car, music service, Bluetooth device, screen, or smart-home device unless a real connected tool confirms it.',
+              `Requested capabilities: ${JSON.stringify(body.requested_capabilities || []).slice(0, 1200)}`,
+              body.screen_context
+                ? `Owner-shared screen/text context: ${String(body.screen_context).slice(0, 8000)}`
+                : 'No owner-shared screen context is active for this turn.',
+              body.client_identity_profile
+                ? `Client identity/personality guidance: ${String(body.client_identity_profile).slice(0, 7000)}`
+                : '',
               `Owner memories: ${JSON.stringify(data.memories).slice(0, 5000)}`,
-            ].join('\n') },
+            ].filter(Boolean).join('\n') },
             ...turns,
             { role: 'user', content: message },
           ],
