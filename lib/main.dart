@@ -1680,6 +1680,340 @@ OWNER AGENCY
     );
   }
 
+  void _openAssistantHub({int tab = 0}) {
+    _selectedTab = tab.clamp(0, 4);
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF101821),
+      isScrollControlled: true,
+      builder: (context) {
+        return DefaultTabController(
+          length: 5,
+          initialIndex: _selectedTab,
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height * 0.90,
+            child: Column(
+              children: [
+                const SizedBox(height: 10),
+                Container(
+                  width: 42,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'CHE',
+                  style: TextStyle(
+                    color: Color(0xFF67E8D1),
+                    fontSize: 26,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 4,
+                  ),
+                ),
+                const Text(
+                  'COGNITIVE.HORIZON.ENGINE',
+                  style: TextStyle(
+                    color: Colors.white54,
+                    fontSize: 9,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TabBar(
+                  onTap: (index) => _selectedTab = index,
+                  isScrollable: true,
+                  tabs: const [
+                    Tab(icon: Icon(Icons.memory_outlined), text: 'Memory'),
+                    Tab(icon: Icon(Icons.auto_awesome_outlined), text: 'Insights'),
+                    Tab(icon: Icon(Icons.devices_other_outlined), text: 'Devices'),
+                    Tab(icon: Icon(Icons.music_note_outlined), text: 'Music'),
+                    Tab(icon: Icon(Icons.lightbulb_outline), text: 'Create'),
+                  ],
+                ),
+                Expanded(
+                  child: TabBarView(
+                    children: [
+                      _hubMemoryTab(),
+                      _hubInsightsTab(),
+                      _hubDevicesTab(),
+                      _hubMusicTab(),
+                      _hubCreateTab(),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _hubList(String title, String subtitle, List<Widget> children) {
+    return ListView(
+      padding: const EdgeInsets.all(18),
+      children: [
+        Text(
+          title,
+          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 4),
+        Text(subtitle, style: const TextStyle(color: Colors.white54)),
+        const SizedBox(height: 16),
+        ...children,
+      ],
+    );
+  }
+
+  Widget _hubMemoryTab() {
+    return _hubList(
+      'Memory',
+      'Things Chay is allowed to remember for you.',
+      [
+        if (savedMemories.isEmpty)
+          const Card(
+            child: ListTile(
+              leading: Icon(Icons.memory),
+              title: Text('No saved memories yet'),
+              subtitle: Text('Say “Chay, remember that…” to add one.'),
+            ),
+          )
+        else
+          ...savedMemories.asMap().entries.map(
+            (entry) => Card(
+              child: ListTile(
+                leading: const Icon(Icons.memory),
+                title: Text(entry.value),
+                trailing: IconButton(
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: () async {
+                    await deleteMemory(entry.key);
+                    if (mounted) setState(() {});
+                  },
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _hubInsightsTab() {
+    return _hubList(
+      'Insights',
+      'Learned patterns, knowledge and suggestions.',
+      [
+        const Text('LEARNED ABOUT YOU',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        if (learnedPersonality.isEmpty)
+          const Card(
+            child: ListTile(
+              leading: Icon(Icons.psychology_alt_outlined),
+              title: Text('No stable personality patterns yet'),
+              subtitle: Text('Chay learns gradually from what you explicitly show her.'),
+            ),
+          )
+        else
+          ...learnedPersonality.map((item) {
+            final statement = item['statement']?.toString() ?? 'Learned pattern';
+            final confidence = (item['confidence'] as num?)?.toDouble();
+            return Card(
+              child: ListTile(
+                leading: const Icon(Icons.psychology_alt_outlined),
+                title: Text(statement),
+                subtitle: confidence == null
+                    ? null
+                    : Text('Confidence ${(confidence * 100).round()}%'),
+              ),
+            );
+          }),
+        const SizedBox(height: 16),
+        const Text('LEARNED KNOWLEDGE',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        if (learnedKnowledge.isEmpty)
+          const Card(
+            child: ListTile(
+              leading: Icon(Icons.school_outlined),
+              title: Text('No researched knowledge stored yet'),
+              subtitle: Text('Live research requires a connected research service.'),
+            ),
+          )
+        else
+          ...learnedKnowledge.map(
+            (item) => Card(
+              child: ListTile(
+                leading: const Icon(Icons.school_outlined),
+                title: Text(item),
+              ),
+            ),
+          ),
+        const SizedBox(height: 16),
+        const Text('SUGGESTIONS',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        if (suggestions.isEmpty)
+          const Card(
+            child: ListTile(
+              leading: Icon(Icons.lightbulb_outline),
+              title: Text('No suggestions yet'),
+              subtitle: Text('Useful follow-ups will appear here as Chay learns.'),
+            ),
+          )
+        else
+          ...suggestions.map(
+            (item) => Card(
+              child: ListTile(
+                leading: const Icon(Icons.lightbulb_outline),
+                title: Text(item),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _integrationCard(
+    IconData icon,
+    String title,
+    String description,
+    bool connected,
+  ) {
+    return Card(
+      child: ListTile(
+        leading: Icon(icon),
+        title: Text(title),
+        subtitle: Text(description),
+        trailing: Text(
+          connected ? 'CONNECTED' : 'NOT CONNECTED',
+          style: TextStyle(
+            color: connected ? const Color(0xFF67E8D1) : Colors.white38,
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _hubDevicesTab() {
+    return _hubList(
+      'Devices',
+      'Real controls only become active after a permissioned integration is connected.',
+      [
+        _integrationCard(
+          Icons.phone_iphone,
+          'This iPhone',
+          _deviceToken == null ? 'Not paired.' : 'Secure CHE Agent paired.',
+          _deviceToken != null,
+        ),
+        _integrationCard(
+          Icons.computer,
+          'Computer',
+          'Windows/Mac companion for approved computer actions.',
+          integrations['windows'] == true,
+        ),
+        _integrationCard(
+          Icons.bluetooth,
+          'Bluetooth / Car',
+          'Supported car audio and Bluetooth control.',
+          integrations['car'] == true,
+        ),
+        _integrationCard(
+          Icons.lightbulb_outline,
+          'Smart Home',
+          'HomeKit/Matter lights, scenes and approved automations.',
+          integrations['smart_home'] == true,
+        ),
+        _integrationCard(
+          Icons.public,
+          'Live Research',
+          'Current web research and novelty/feasibility checking.',
+          integrations['web_research'] == true,
+        ),
+        _integrationCard(
+          Icons.image_outlined,
+          'Rendering',
+          'Connected visual rendering and concept visualization.',
+          integrations['rendering'] == true,
+        ),
+      ],
+    );
+  }
+
+  Widget _hubMusicTab() {
+    return _hubList(
+      'Music',
+      'Music options and future voice controls.',
+      [
+        _integrationCard(
+          Icons.music_note,
+          'Apple Music',
+          'Search, playlists, play/pause and queue control.',
+          integrations['music'] == true,
+        ),
+        _integrationCard(
+          Icons.directions_car_filled_outlined,
+          'Car Audio',
+          'Use supported car audio for Chay and music.',
+          integrations['car'] == true,
+        ),
+        const Card(
+          child: ListTile(
+            leading: Icon(Icons.record_voice_over_outlined),
+            title: Text('Voice examples'),
+            subtitle: Text(
+              '“Chay, open music.”  “Chay, play my playlist.”  “Chay, next song.”',
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _hubCreateTab() {
+    return _hubList(
+      'Create + Innovate',
+      'Turn ideas into projects, prototypes and research plans.',
+      [
+        const Card(
+          child: ListTile(
+            leading: Icon(Icons.code),
+            title: Text('Build with your voice'),
+            subtitle: Text(
+              'Ask Chay to draft websites, apps, books, scripts, prototypes, specs and code changes.',
+            ),
+          ),
+        ),
+        const Card(
+          child: ListTile(
+            leading: Icon(Icons.science_outlined),
+            title: Text('Innovation mode'),
+            subtitle: Text(
+              'Chay separates imagination, feasibility, unknowns, research needs and prototype tests.',
+            ),
+          ),
+        ),
+        _integrationCard(
+          Icons.public,
+          'Novelty + feasibility research',
+          'Live research checks require the research connection.',
+          integrations['web_research'] == true,
+        ),
+        _integrationCard(
+          Icons.brush_outlined,
+          'Concept rendering',
+          'Visual renders require the rendering connection; SVG/wireframe project drafts can still be generated.',
+          integrations['rendering'] == true,
+        ),
+      ],
+    );
+  }
+
   // ============================================================
   // OWNER-SHARED SCREEN / CLIPBOARD CONTEXT
   // ============================================================
@@ -2016,11 +2350,43 @@ OWNER AGENCY
   // SEND MESSAGE
   // ============================================================
 
+  Future<bool> _handleLocalNavigation(String message) async {
+    final lower = message.toLowerCase();
+
+    if (RegExp(r'\b(open|show|go to)\s+(my\s+)?memories?\b').hasMatch(lower)) {
+      _openAssistantHub(tab: 0);
+      return true;
+    }
+    if (RegExp(r'\b(open|show|go to)\s+(insights?|suggestions?|learned knowledge)\b').hasMatch(lower)) {
+      _openAssistantHub(tab: 1);
+      return true;
+    }
+    if (RegExp(r'\b(open|show|go to)\s+(devices?|connections?)\b').hasMatch(lower)) {
+      _openAssistantHub(tab: 2);
+      return true;
+    }
+    if (RegExp(r'\b(open|show|go to)\s+(music|playlists?)\b').hasMatch(lower)) {
+      _openAssistantHub(tab: 3);
+      return true;
+    }
+    if (RegExp(r'\b(open|show|go to)\s+(create|innovation|creator)\b').hasMatch(lower)) {
+      _openAssistantHub(tab: 4);
+      return true;
+    }
+
+    return false;
+  }
+
   Future<void> sendMessage({bool fromVoice = false}) async {
     if (_isSending) return;
 
     final message = controller.text.trim();
     if (message.isEmpty) return;
+
+    if (await _handleLocalNavigation(message)) {
+      controller.clear();
+      return;
+    }
 
     if (!await _ensurePaired()) return;
 
