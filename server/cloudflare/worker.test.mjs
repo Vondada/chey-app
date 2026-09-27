@@ -14,7 +14,9 @@ test('pairing, owner gate, memories, and revocation', async () => {
   const saved = new Map();
   const env = { CHE_PAIR_CODE: '123456', AI: { run: async () => ({ response: 'Hello, sir.' }) } };
   const state = new CheState({ storage: {
-    get: (key) => saved.get(key), put: (key, value) => saved.set(key, value),
+    get: (key) => saved.get(key),
+    put: (key, value) => saved.set(key, value),
+    setAlarm: async () => {},
   } }, env);
   env.CHE_STATE = { getByName: () => state };
   const send = (path, method = 'GET', body = {}, token = '') => worker.fetch(
@@ -36,6 +38,40 @@ test('pairing, owner gate, memories, and revocation', async () => {
   assert.deepEqual((await (await send('/api/state', 'GET', {}, token)).json()).memories,
     ['Likes Sprite', 'my favorite pizza is pepperoni']);
   assert.equal((await send('/api/change/request', 'POST', { request: 'Add a feature to my app' }, token)).status, 503);
+
+  const stateBeforeJobs = await (await send('/api/state', 'GET', {}, token)).json();
+  assert.equal(stateBeforeJobs.integrations.background_jobs, true);
+  assert.equal(stateBeforeJobs.integrations.natural_voice, false);
+  assert.equal(stateBeforeJobs.integrations.quantum_compute, false);
+
+  assert.equal((await send('/api/voice/synthesize', 'POST', { text: 'Hello there' }, token)).status, 503);
+
+  const partnerResponse = await send(
+    '/api/team/create',
+    'POST',
+    { role: 'Research Partner', specialty: 'verification', mission: 'Check facts.' },
+    token,
+  );
+  assert.equal(partnerResponse.status, 200);
+  const partner = (await partnerResponse.json()).partner;
+  assert.equal(partner.role, 'Research Partner');
+
+  const jobResponse = await send(
+    '/api/job/create',
+    'POST',
+    { title: 'Background test', prompt: 'Work on this in the background.' },
+    token,
+  );
+  assert.equal(jobResponse.status, 200);
+  const job = (await jobResponse.json()).job;
+  assert.equal(job.status, 'queued');
+
+  await state.alarm();
+  const stateAfterJob = await (await send('/api/state', 'GET', {}, token)).json();
+  const completedJob = stateAfterJob.jobs.find((item) => item.id === job.id);
+  assert.equal(completedJob.status, 'complete');
+  assert.match(completedJob.result, /Hello, sir/);
+
   assert.equal((await send('/api/security/revoke_self', 'POST', {}, token)).status, 200);
   assert.equal((await send('/api/chat', 'POST', { message: 'hi' }, token)).status, 401);
 });
