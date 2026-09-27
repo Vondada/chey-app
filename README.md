@@ -4,7 +4,7 @@ This project contains the supplied live Flutter app and a new cloud Agent
 prototype. It has **not** been deployed, compiled on macOS, or installed on an
 iPhone. The uploaded Windows `che_agent.py` is a separate local gateway; it
 cannot keep running when the Windows computer is off. This cloud Agent keeps
-its own D1 memory and does not yet import the encrypted Windows memory file.
+its own Durable Object memory and does not yet import the encrypted Windows memory file.
 
 ## What works in source
 
@@ -13,7 +13,8 @@ its own D1 memory and does not yet import the encrypted Windows memory file.
   conditionally imported for web builds. iOS permission text is inserted by
   `tool/bootstrap.sh` when the Runner is generated.
 - `server/cloudflare/worker.js` implements `/api/pair`, `/api/chat`, `/api/state`,
-  memory add/delete/clear, and device unpair using Workers AI and D1. The
+  memory add/delete/clear, and device unpair using Workers AI and a SQLite-backed
+  Durable Object created on deployment. The
   pairing code is configured once as a server secret; it is unrelated to
   SideStore's seven-day app refresh. Cloud model use has a daily free limit.
 - Say or type **“CHE, add to your app a weekly reminder”** to request a change.
@@ -26,15 +27,13 @@ its own D1 memory and does not yet import the encrypted Windows memory file.
 
 ## One-time cloud setup (can be done on the phone)
 
-1. Put this project in the `Vondada/chey-app` GitHub repository's `main` branch.
-   It currently exists as a downloadable draft, not a commit in that private
-   repository. A GitHub connection with write access is required to do this.
-2. Make a free Cloudflare account. Create a D1 database named `che-agent`;
-   replace `REPLACE_WITH_YOUR_D1_DATABASE_ID` in
-   `server/cloudflare/wrangler.jsonc` with its database ID. Execute
-   `server/cloudflare/schema.sql` on that remote database and deploy the Worker
-   with its AI and DB bindings. Set `CHE_PAIR_CODE` as a **secret** containing
-   6–12 digits. Enter the deployed HTTPS `workers.dev` URL in the CHE app.
+1. Review and merge draft pull request #2 in `Vondada/chey-app` after its
+   Flutter check succeeds. This source already lives on its PR branch.
+2. In Cloudflare's free plan connect that GitHub repository as a Worker.
+   Set its root directory to `server/cloudflare`, then deploy. The AI binding
+   and persistent storage class are declared in `wrangler.jsonc`; there is no
+   separate database ID to create. Set `CHE_PAIR_CODE` as a **secret** containing
+   6–12 digits. Enter the deployed HTTPS `workers.dev` URL in CHE's cloud button.
 3. For voice code proposals, add server secrets `CHE_GITHUB_TOKEN` (a token
    restricted to this repository with Actions workflow dispatch permission),
    `CHE_GITHUB_REPO=Vondada/chey-app`, and `CHE_CHANGE_MODEL` (a model supported

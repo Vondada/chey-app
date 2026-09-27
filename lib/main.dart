@@ -1985,11 +1985,11 @@ OWNER AGENCY
         message,
         history,
         onPartial: (partialReply) {
-          if (!mounted || assistantIndex == null) return;
-          if (assistantIndex >= messages.length) return;
+          final index = assistantIndex;
+          if (!mounted || index == null || index >= messages.length) return;
 
           setState(() {
-            messages[assistantIndex]['text'] = partialReply;
+            messages[index]['text'] = partialReply;
           });
 
           _scrollToBottom();
