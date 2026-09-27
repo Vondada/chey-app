@@ -245,6 +245,57 @@ export class CheState extends DurableObject {
         await this.ctx.storage.put('che', data);
         return json({ ok: true });
       }
+      if (path === '/api/proactive/check') {
+        const clientClock = formatClientTime(body.client_time);
+        const memories = Array.isArray(data.memories) ? data.memories.slice(-20) : [];
+        const knowledge = Array.isArray(data.learned_knowledge) ? data.learned_knowledge.slice(-10) : [];
+        const priorSuggestions = Array.isArray(data.suggestions) ? data.suggestions.slice(-10) : [];
+
+        const answer = await this.env.AI.run(this.env.CHE_FAST_MODEL || FAST_MODEL, {
+          messages: [
+            {
+              role: 'system',
+              content: [
+                'You are Chay, the owner’s proactive personal assistant.',
+                'Return ONE short, genuinely useful proactive suggestion based only on supplied context.',
+                'Do not nag. Do not invent deadlines, appointments, market conditions, messages, or facts.',
+                'If there is no clearly useful suggestion, return exactly NONE.',
+                'Prefer unfinished projects, obvious follow-ups, organization, preparation, or low-risk next actions.',
+                'For trading or financial topics, suggest preparation/review rather than telling the owner what trade to take.',
+                'Keep it under 180 characters.',
+              ].join('\n'),
+            },
+            {
+              role: 'user',
+              content: JSON.stringify({
+                local_time: clientClock?.display || null,
+                memories,
+                learned_knowledge: knowledge,
+                recent_suggestions: priorSuggestions,
+              }),
+            },
+          ],
+          max_tokens: 120,
+        });
+
+        const suggestion = String(
+          answer.response || answer.choices?.[0]?.message?.content || '',
+        ).trim();
+
+        if (!suggestion || suggestion.toUpperCase() === 'NONE') {
+          return json({ suggestion: '' });
+        }
+
+        data.suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
+        if (!data.suggestions.includes(suggestion)) {
+          data.suggestions.push(suggestion.slice(0, 240));
+          data.suggestions = data.suggestions.slice(-30);
+          await this.ctx.storage.put('che', data);
+        }
+
+        return json({ suggestion: suggestion.slice(0, 240) });
+      }
+
       if (path === '/api/change/request') return dispatchChange(this.env, body);
       if (path === '/api/chat') {
         const message = String(body.message || '').trim().slice(0, 5000);
@@ -324,6 +375,7 @@ export class CheState extends DurableObject {
               'For novel concepts, separate: desired outcome, known constraints, physical/engineering feasibility, artistic/creative feasibility, unknowns, risks, required research, and the smallest useful prototype or experiment.',
               'Treat “humanly possible” as an evidence question. Distinguish what is established, plausible but unproven, currently impractical, and inconsistent with known physical constraints. Never present speculation as verified fact.',
               'For artistic possibility, explore unconventional forms, aesthetics, storytelling, interfaces, materials, workflows, and combinations while respecting the owner’s intent.',
+              'PROACTIVE MODE: notice useful next steps, unfinished threads, preparation needs, and low-risk opportunities to help without waiting to be asked. Be selective, not noisy. Never invent urgency or facts, and never take consequential actions without authorization.',
               'MULTITASKING MODE: when the owner gives several goals at once, split them into clear subtasks, identify dependencies, and work on independent subtasks in parallel whenever real connected tools support safe parallel execution.',
               'Keep a concise task ledger in your reasoning: pending, active, blocked, and complete. Do not lose earlier parts of a multi-part request while working on later parts.',
               'For dependent tasks, sequence them correctly. For independent tasks, batch or parallelize them when possible, then combine the results into one coherent answer.',
