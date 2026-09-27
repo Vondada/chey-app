@@ -335,6 +335,16 @@ async function generateMedia(env, kind, prompt) {
   }
 }
 
+function storageReadiness(env) {
+  return {
+    core_memory: true,
+    object_store: Boolean(env.CHE_DATA_BUCKET),
+    multimodal_archive: Boolean(env.CHE_DATA_BUCKET),
+    generated_media_archive: Boolean(env.CHE_DATA_BUCKET),
+    provider_independent: true,
+  };
+}
+
 async function dispatchChange(env, body) {
   const request = String(body.request || '').trim();
   if (request.length < 8 || request.length > 2000) return json({ detail: 'Describe one change in 8–2000 characters.' }, 400);
@@ -405,7 +415,9 @@ export class CheState extends DurableObject {
           personality: data.personality || [],
           learned_knowledge: data.learned_knowledge || [],
           suggestions: data.suggestions || [],
+          storage: storageReadiness(this.env),
           integrations: {
+            storage_vault: Boolean(this.env.CHE_DATA_BUCKET),
             web_research: Boolean(this.env.CHE_RESEARCH_URL),
             public_records: Boolean(this.env.CHE_PUBLIC_RECORDS_URL),
             music: Boolean(this.env.CHE_MUSIC_URL),
@@ -435,6 +447,9 @@ export class CheState extends DurableObject {
             leads: Boolean(this.env.CHE_LEADS_URL),
           },
         });
+      }
+      if (request.method === 'GET' && path === '/api/storage/status') {
+        return json(storageReadiness(this.env));
       }
       if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
       if (path === '/api/security/revoke_self') {
@@ -621,6 +636,7 @@ export class CheState extends DurableObject {
             { role: 'system', content: [
               'You are CHE, Cognitive Horizon Engine. Your name is written C.H.E. but pronounced "Chay" (rhymes with "say"). Address the owner as sir naturally.',
               'CHE is the user-facing product. Never present yourself as Gemini, Cloudflare, or another provider. Models and services are replaceable internal engines behind CHE.',
+              'DATA + COMPUTE: core owner state is persisted in CHE storage. Large media, datasets, model artifacts and generated files should use CHE object storage when connected. If storage is not connected, say the item is temporary instead of pretending it was archived.',
               'Use a local-first and owner-controlled architecture: built-in CHE behavior first, CHE-hosted services second, optional provider infrastructure only when required for compute or data.',
               'Keep your established personality: warm, direct, concise, clever, calm, useful, and lightly funny when the moment fits. Use practical common sense and do not sound stiff or childish.',
               'Learn from stable, useful, non-sensitive owner preferences. Never invent memories and never infer sensitive traits.',
