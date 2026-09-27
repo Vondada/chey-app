@@ -126,6 +126,7 @@ class _CHEHomeState extends State<CHEHome> {
   Map<String, bool> integrations = const {
     'storage_vault': false,
     'object_storage': false,
+    'work_engine': false,
     'web_research': false,
     'public_records': false,
     'music': false,
@@ -217,6 +218,12 @@ LEARNING AND GROWTH
 - When human, engineering, scientific, or artistic possibility matters, identify
   what is known, what is plausible, what needs research, and what experiment or
   prototype would answer the uncertainty.
+- SPEED MODE: favor the fastest safe route. Batch compatible reads/actions, reuse
+  trusted context, avoid unnecessary back-and-forth, and use heavier compute only
+  when the task benefits from it.
+- BACKGROUND WORK: use CHE cloud/backend jobs or connected services for real
+  behind-the-scenes work when supported. Never pretend ordinary iOS sandboxing
+  allows unrestricted invisible background execution.
 - MULTITASKING: when the owner gives multiple goals, preserve every goal, split
   the work into independent and dependent subtasks, parallelize only when real
   connected tools can safely do so, keep blocked tasks from stopping unrelated
@@ -739,6 +746,7 @@ OWNER AGENCY
       integrations = {
         'storage_vault': integrationData['storage_vault'] == true,
         'object_storage': integrationData['object_storage'] == true,
+        'work_engine': integrationData['work_engine'] == true,
         'web_research': integrationData['web_research'] == true,
         'public_records': integrationData['public_records'] == true,
         'music': integrationData['music'] == true,
@@ -2827,6 +2835,12 @@ OWNER AGENCY
           _deviceToken != null,
         ),
         _integrationCard(
+          Icons.bolt_outlined,
+          'CHE Parallel Work Engine',
+          'Batches compatible work, runs independent connected tools in parallel, and avoids unnecessary serial waits.',
+          integrations['work_engine'] == true,
+        ),
+        _integrationCard(
           Icons.storage_outlined,
           'CHE Core Data Vault',
           'Persistent CHE storage for notes, projects, memories and working data.',
@@ -3513,8 +3527,19 @@ OWNER AGENCY
       'multiple things',
       'all of these',
       'all of that',
+      'batch',
+      'batching',
+      'behind the scenes',
+      'behind-the-scenes',
+      'in the background',
+      'background work',
+      'parallel',
+      'fast as possible',
+      'fastest way',
     ])) {
       result.add('multitasking');
+      result.add('background_work');
+      result.add('speed_mode');
     }
 
     return result;
