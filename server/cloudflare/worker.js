@@ -546,7 +546,10 @@ export class CheState extends DurableObject {
           return ndjsonReply(`It’s ${clientClock.display}, sir.`, { source: 'device_clock' });
         }
 
-        const learnedPreference = safePreferenceFrom(message);
+        const learnedPreference =
+          /^(?:(?:chay|chey|shay|che)[, ]+)?remember(?: that)?\s+/i.test(message)
+            ? null
+            : safePreferenceFrom(message);
         if (learnedPreference &&
             !data.memories.some((item) => item.toLowerCase() === learnedPreference.toLowerCase())) {
           data.memories.push(learnedPreference);
