@@ -19,9 +19,9 @@ async function digest(value) {
 }
 
 async function bodyOf(request) {
-  if (Number(request.headers.get('content-length') || 0) > 96_000) throw new Error('too_large');
+  if (Number(request.headers.get('content-length') || 0) > 8_000_000) throw new Error('too_large');
   const raw = await request.text();
-  if (raw.length > 96_000) throw new Error('too_large');
+  if (raw.length > 8_000_000) throw new Error('too_large');
   const body = JSON.parse(raw);
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('invalid_json');
   return body;
@@ -122,6 +122,61 @@ async function optionalResearch(env, query) {
   }
 }
 
+async function optionalMultimodal(env, attachment, query) {
+  if (!attachment || typeof attachment !== 'object') return null;
+  if (!env.CHE_MULTIMODAL_URL) {
+    return { error: 'Multimodal analyzer is not connected yet.' };
+  }
+
+  const name = String(attachment.name || 'attachment').slice(0, 160);
+  const mediaType = String(attachment.media_type || 'document').slice(0, 32);
+  const base64 = String(attachment.base64 || '');
+  if (!base64 || base64.length > 7_200_000) {
+    return { error: 'Attachment is empty or too large.' };
+  }
+
+  let url;
+  try {
+    url = new URL(env.CHE_MULTIMODAL_URL);
+  } catch (_) {
+    return { error: 'Multimodal connector URL is invalid.' };
+  }
+  if (url.protocol !== 'https:') {
+    return { error: 'Multimodal connector must use HTTPS.' };
+  }
+
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (env.CHE_MULTIMODAL_TOKEN) {
+      headers.Authorization = `Bearer ${env.CHE_MULTIMODAL_TOKEN}`;
+    }
+
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        query: String(query || '').slice(0, 4000),
+        attachment: { name, media_type: mediaType, base64 },
+      }),
+    });
+
+    if (!response.ok) {
+      return { error: `Multimodal connector returned ${response.status}.` };
+    }
+
+    const data = await response.json();
+    const summary = String(
+      data.summary || data.answer || data.text || data.result || '',
+    ).trim().slice(0, 16000);
+
+    return summary
+      ? { summary, media_type: mediaType, name }
+      : { error: 'Multimodal connector returned no usable analysis.' };
+  } catch (_) {
+    return { error: 'Multimodal connector was unavailable.' };
+  }
+}
+
 async function dispatchChange(env, body) {
   const request = String(body.request || '').trim();
   if (request.length < 8 || request.length > 2000) return json({ detail: 'Describe one change in 8–2000 characters.' }, 400);
@@ -203,6 +258,7 @@ export class CheState extends DurableObject {
             screen_capture: Boolean(this.env.CHE_SCREEN_URL),
             face_verify: Boolean(this.env.CHE_FACE_VERIFY_URL),
             data_recognition: Boolean(this.env.CHE_DATA_RECOGNITION_URL),
+            multimodal: Boolean(this.env.CHE_MULTIMODAL_URL),
             market_data: Boolean(this.env.CHE_MARKET_DATA_URL),
             backtesting: Boolean(this.env.CHE_BACKTEST_URL),
             broker: Boolean(this.env.CHE_BROKER_URL),
@@ -319,6 +375,9 @@ export class CheState extends DurableObject {
         const requestedCapabilities = Array.isArray(body.requested_capabilities)
           ? body.requested_capabilities.map((item) => String(item))
           : [];
+        const multimodal = body.attachment
+          ? await optionalMultimodal(this.env, body.attachment, message)
+          : null;
         const shouldResearch = requestedCapabilities.includes('web_research') ||
           requestedCapabilities.includes('innovation_mode') ||
           /\b(research|latest|current|novel|prior art|feasib|humanly possible|artistically possible)\b/i.test(message);
@@ -398,6 +457,7 @@ export class CheState extends DurableObject {
                 screen_capture: Boolean(this.env.CHE_SCREEN_URL),
                 face_verify: Boolean(this.env.CHE_FACE_VERIFY_URL),
                 data_recognition: Boolean(this.env.CHE_DATA_RECOGNITION_URL),
+                multimodal: Boolean(this.env.CHE_MULTIMODAL_URL),
                 market_data: Boolean(this.env.CHE_MARKET_DATA_URL),
                 backtesting: Boolean(this.env.CHE_BACKTEST_URL),
                 broker: Boolean(this.env.CHE_BROKER_URL),
@@ -410,6 +470,11 @@ export class CheState extends DurableObject {
                 car: Boolean(this.env.CHE_CAR_URL),
                 smart_home: Boolean(this.env.CHE_SMART_HOME_URL),
               })}`,
+              multimodal?.summary
+                ? `Connected multimodal analysis for ${multimodal.name}: ${multimodal.summary}`
+                : multimodal?.error
+                  ? `Multimodal status: ${multimodal.error} Do not pretend the attachment was analyzed.`
+                  : 'No multimodal attachment analysis is available for this turn.',
               research?.summary
                 ? `Connected live research summary: ${research.summary}${research.sources?.length ? `\nResearch sources: ${JSON.stringify(research.sources)}` : ''}`
                 : research?.error
