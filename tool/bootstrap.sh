@@ -16,9 +16,26 @@ if ((${#missing_platforms[@]} > 0)); then
   platforms=$(IFS=,; echo "${missing_platforms[*]}")
   flutter create \
     --org com.cheyapp \
-    --project-name chey_app \
+    --project-name chey \
     --platforms "$platforms" \
     .
 fi
 
 flutter pub get
+
+# Flutter generates ios/ on CI; the permissions must be in the generated
+# Info.plist before the iPhone build asks for microphone/speech access.
+if [[ -f ios/Runner/Info.plist ]]; then
+  python3 - <<'PY'
+import plistlib
+from pathlib import Path
+
+path = Path('ios/Runner/Info.plist')
+with path.open('rb') as stream:
+    info = plistlib.load(stream)
+info['NSMicrophoneUsageDescription'] = 'CHE uses your microphone when you speak to your assistant.'
+info['NSSpeechRecognitionUsageDescription'] = 'CHE converts your speech to text when you use voice chat.'
+with path.open('wb') as stream:
+    plistlib.dump(info, stream)
+PY
+fi

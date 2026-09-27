@@ -1,0 +1,12 @@
+{
+  "name": "che-agent",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-01",
+  "ai": { "binding": "AI" },
+  "durable_objects": {
+    "bindings": [{ "name": "CHE_STATE", "class_name": "CheState" }]
+  },
+  "exports": {
+    "CheState": { "type": "durable-object", "storage": "sqlite" }
+  }
+}

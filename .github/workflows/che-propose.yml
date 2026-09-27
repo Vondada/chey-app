@@ -1,0 +1,56 @@
+name: CHE proposes a change
+
+on:
+  workflow_dispatch:
+    inputs:
+      request:
+        description: What should CHE add or change?
+        required: true
+        type: string
+      model:
+        description: Ollama cloud model available on your free account
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  propose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Generate and validate a proposed change
+        env:
+          CHE_CHANGE_REQUEST: ${{ inputs.request }}
+          CHE_CHANGE_MODEL: ${{ inputs.model }}
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: python3 tools/che_propose_change.py
+      - name: Analyze
+        run: |
+          flutter pub get
+          flutter analyze
+      - name: Open a reviewable pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHE_CHANGE_REQUEST: ${{ inputs.request }}
+        run: |
+          set -eu
+          branch="che/proposal-${GITHUB_RUN_ID}"
+          git config user.name "CHE Build Bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add -u
+          git commit -m "CHE proposal: ${CHE_CHANGE_REQUEST:0:60}"
+          git push origin "$branch"
+          gh pr create --draft --base "${GITHUB_REF_NAME}" --head "$branch" \
+            --title "CHE proposal: ${CHE_CHANGE_REQUEST:0:60}" \
+            --body "Requested from CHE. Review the code and checks before merging. Revert the merge commit to roll back."
