@@ -34,8 +34,10 @@ from pathlib import Path
 path = Path('ios/Runner/Info.plist')
 with path.open('rb') as stream:
     info = plistlib.load(stream)
-info['NSMicrophoneUsageDescription'] = 'CHE uses your microphone when you speak to your assistant.'
+info['NSMicrophoneUsageDescription'] = 'CHE uses your microphone when you speak to your assistant or capture audio.'
 info['NSSpeechRecognitionUsageDescription'] = 'CHE converts your speech to text when you use voice chat.'
+info['NSCameraUsageDescription'] = 'CHE uses the camera only when you choose to capture a photo or video for Chay to analyze.'
+info['NSPhotoLibraryUsageDescription'] = 'CHE accesses selected photos or videos only when you choose them for Chay to analyze.'
 with path.open('wb') as stream:
     plistlib.dump(info, stream)
 PY
