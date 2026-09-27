@@ -420,6 +420,68 @@ async function runOfficeAgents(env, team, requestedCapabilities, query) {
   return results;
 }
 
+async function actionPanel(env, requestedCapabilities, query) {
+  const requested = new Set(requestedCapabilities || []);
+  const jobs = [];
+
+  const add = (capability, url, token, tool, mode) => {
+    if (!requested.has(capability) || !url) return;
+    jobs.push(optionalToolConnector(
+      url,
+      token,
+      tool,
+      query,
+      { mode, require_explicit_owner_request: true },
+    ));
+  };
+
+  add(
+    'broker_execution',
+    env.CHE_BROKER_URL,
+    env.CHE_BROKER_TOKEN,
+    'broker_execution',
+    'execute_only_if_connector_confirms_authorization_and_risk_controls',
+  );
+  add(
+    'payments',
+    env.CHE_PAYMENTS_URL,
+    env.CHE_PAYMENTS_TOKEN,
+    'payments',
+    'execute_only_with_authorized_customer_terms_and_confirmation',
+  );
+  add(
+    'windows_action',
+    env.CHE_WINDOWS_URL,
+    env.CHE_WINDOWS_TOKEN,
+    'computer_action',
+    'authorized_action',
+  );
+  add(
+    'car_bluetooth',
+    env.CHE_CAR_URL,
+    env.CHE_CAR_TOKEN,
+    'car_action',
+    'authorized_action',
+  );
+  add(
+    'smart_home',
+    env.CHE_SMART_HOME_URL,
+    env.CHE_SMART_HOME_TOKEN,
+    'smart_home_action',
+    'authorized_action',
+  );
+  add(
+    'music_control',
+    env.CHE_MUSIC_URL,
+    env.CHE_MUSIC_TOKEN,
+    'music_action',
+    'authorized_action',
+  );
+
+  if (!jobs.length) return [];
+  return (await Promise.all(jobs)).filter(Boolean);
+}
+
 async function specialistPanel(env, requestedCapabilities, query) {
   const requested = new Set(requestedCapabilities || []);
   const jobs = [];
@@ -683,6 +745,14 @@ export class CheState extends DurableObject {
             business: Boolean(this.env.CHE_BUSINESS_URL),
             payments: Boolean(this.env.CHE_PAYMENTS_URL),
             leads: Boolean(this.env.CHE_LEADS_URL),
+            action_engine: Boolean(
+              this.env.CHE_BROKER_URL ||
+              this.env.CHE_PAYMENTS_URL ||
+              this.env.CHE_WINDOWS_URL ||
+              this.env.CHE_CAR_URL ||
+              this.env.CHE_SMART_HOME_URL ||
+              this.env.CHE_MUSIC_URL
+            ),
           },
         });
       }
@@ -1123,7 +1193,7 @@ export class CheState extends DurableObject {
           /\b(reason|analy[sz]e|compare|research|plan|design|code|invent|innovate|trade|trading|market|business|strategy|explain|debug|build)\b/i.test(message);
 
         // SPEED MODE: independent information sources run in one parallel batch.
-        const [research, panel, specialists, officeResults] = await Promise.all([
+        const [research, panel, specialists, officeResults, actionResults] = await Promise.all([
           shouldResearch
             ? optionalResearch(this.env, message)
             : Promise.resolve(null),
@@ -1132,6 +1202,7 @@ export class CheState extends DurableObject {
             : Promise.resolve([]),
           specialistPanel(this.env, requestedCapabilities, message),
           runOfficeAgents(this.env, data.team, requestedCapabilities, message),
+          actionPanel(this.env, requestedCapabilities, message),
         ]);
 
         if (officeResults.length) {
@@ -1283,6 +1354,10 @@ export class CheState extends DurableObject {
               officeResults.length
                 ? `CHE Office completed delegated work in parallel: ${JSON.stringify(officeResults).slice(0, 24000)}`
                 : 'No CHE Office coworker was needed for this turn.',
+              actionResults.length
+                ? `Authorized connector action results: ${JSON.stringify(actionResults).slice(0, 24000)}`
+                : 'No authorized external action connector ran for this turn.',
+              'Treat an external action as completed only when its connector result explicitly confirms success. A missing connector, error, pending state, or request-for-confirmation is not success.',
               imageGeneration?.error
                 ? `Image generation status: ${imageGeneration.error}`
                 : imageGeneration?.job_id
