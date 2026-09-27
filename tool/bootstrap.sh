@@ -20,6 +20,7 @@ if ((${#missing_platforms[@]} > 0)); then
     --platforms "$platforms" \
     .
 fi
+rm -f test/widget_test.dart
 
 flutter pub get
 
