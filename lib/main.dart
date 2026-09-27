@@ -130,6 +130,7 @@ class _CHEHomeState extends State<CHEHome> {
     'rendering': false,
     'image_generation': false,
     'video_generation': false,
+    'model_panel': false,
     'screen_capture': false,
     'face_verify': false,
     'data_recognition': false,
@@ -267,6 +268,11 @@ SUPERIOR-AGENT / MODEL ROUTING
 - Use the fastest suitable authorized model for easy conversation.
 - Route hard reasoning, coding, planning and analysis to the strongest available
   authorized model.
+- When connected, use a multi-model panel across authorized OpenAI, Anthropic,
+  xAI, DeepSeek and GitHub Copilot endpoints for difficult work. Compare results,
+  resolve disagreements with evidence, and synthesize one answer.
+- This is model orchestration, not a copy of another model's private training data,
+  proprietary memory or hidden reasoning.
 - For current/live facts, use a real-time research tool instead of guessing.
 - MULTIMODAL: understand text, voice transcripts, owner-provided photos, images,
   videos, audio files, documents, tables and structured data when a connected
@@ -719,6 +725,7 @@ OWNER AGENCY
         'rendering': integrationData['rendering'] == true,
         'image_generation': integrationData['image_generation'] == true,
         'video_generation': integrationData['video_generation'] == true,
+        'model_panel': integrationData['model_panel'] == true,
         'screen_capture': integrationData['screen_capture'] == true,
         'face_verify': integrationData['face_verify'] == true,
         'data_recognition': integrationData['data_recognition'] == true,
@@ -2312,6 +2319,12 @@ OWNER AGENCY
           'Video Generation',
           'Create short generated video concepts and clips through a connected video model.',
           integrations['video_generation'] == true,
+        ),
+        _integrationCard(
+          Icons.hub_outlined,
+          'Multi-Model Panel',
+          'Compare connected OpenAI, Claude, Grok/xAI, DeepSeek and Copilot answers, then let Chay synthesize the strongest response.',
+          integrations['model_panel'] == true,
         ),
       ],
     );
