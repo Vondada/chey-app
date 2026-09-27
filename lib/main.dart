@@ -196,6 +196,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     'office': false,
     'action_engine': false,
     'background_jobs': false,
+    'agent_identity': false,
+    'service_accounts': false,
     'natural_voice': false,
     'quantum_compute': false,
     'web_research': false,
@@ -389,6 +391,7 @@ SUPERIOR-AGENT / MODEL ROUTING
   private records, or aggregate sensitive personal data for harassment or doxxing.
 - For phone actions, calls and messages, use only a connected permissioned phone tool.
 - APP PORTAL: web-capable services may run inside CHE's secure in-app browser so the owner can watch, browse, and use supported web experiences without leaving CHE. Native-only capabilities must use official deep links, App Intents, APIs, or the external app when iOS or the service requires it. Never claim an arbitrary native iPhone app is embedded when it is not.
+- VIRTUAL IDENTITY: CHE has her own software-agent identity and virtual-world home under the CHE backend domain. When a provider explicitly supports bots, service accounts, OAuth apps, API identities, or delegated agents, CHE may use that identity instead of pretending to be the owner. CHE must never impersonate the owner or accept legally binding terms as if CHE were a human/legal entity.
 - APP NAVIGATION: CHE may open supported iPhone apps or deep links when the owner explicitly asks. iOS does not allow CHE to freely tap through arbitrary third-party app interfaces; inside-app control requires that app's supported deep links, APIs, App Intents, or other authorized integrations.
 - For Windows actions, use only a connected permissioned Windows tool.
 - MARKET INTELLIGENCE: when connected, combine live stocks, futures and crypto data,
@@ -913,6 +916,8 @@ OWNER AGENCY
         'office': integrationData['office'] == true,
         'action_engine': integrationData['action_engine'] == true,
         'background_jobs': integrationData['background_jobs'] == true,
+        'agent_identity': integrationData['agent_identity'] == true,
+        'service_accounts': integrationData['service_accounts'] == true,
         'natural_voice': integrationData['natural_voice'] == true,
         'quantum_compute': integrationData['quantum_compute'] == true,        'web_research': integrationData['web_research'] == true,
         'public_records': integrationData['public_records'] == true,
