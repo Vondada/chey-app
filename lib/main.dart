@@ -25,11 +25,19 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:url_launcher/url_launcher.dart';
 import 'che_native_voice.dart';
 import 'che_account_bridge.dart';
-import 'che_live_voice.dart';
+import 'che_realtime_voice.dart';
+import 'che_voice_state.dart';
+import 'che_voice_ui.dart';
 import 'che_app_portal.dart';
 import 'che_plugin_manager.dart';
 import 'che_theme.dart';
 import 'che_world_hub.dart';
+import 'che_immersive_hub_shell.dart';
+import 'insights_brain_scene.dart';
+import 'devices_hub_scene.dart';
+import 'music_studio_scene.dart';
+import 'create_gallery_scene.dart';
+import 'office_scene.dart';
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
 
@@ -170,6 +178,14 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   StreamSubscription<Map<String, dynamic>>? _nativeIosVoiceSub;
   bool _nativeIosVoiceActive = false;
+
+  final CheVoiceStateMachine _voiceMachine = CheVoiceStateMachine();
+  late CheVoiceSnapshot _voiceSnapshot;
+  CheRealtimeVoiceEngine? _realtimeVoice;
+  bool _realtimeConnecting = false;
+  int? _realtimeAssistantIndex;
+  String? _realtimePendingMediaUrl;
+  String? _realtimePendingMediaType;
 
   String? _deviceToken;
   String _agentBaseUrl = _defaultAgentBaseUrl;
@@ -445,6 +461,8 @@ OWNER AGENCY
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _voiceMachine.startWakeListening();
+    _voiceSnapshot = _voiceMachine.snapshot;
     initializeVoice();
     _loadSecuritySession();
     _proactiveTimer = Timer.periodic(
@@ -481,11 +499,17 @@ OWNER AGENCY
 
     if (state == AppLifecycleState.resumed) {
       unawaited(_consumeWakeRequest(resumeIfAwake: true));
+      if (!kIsWeb &&
+          defaultTargetPlatform == TargetPlatform.iOS &&
+          (_realtimeVoice?.connected != true) &&
+          !_nativeIosVoiceActive) {
+        unawaited(_restartWakeListener());
+      }
     } else if (state == AppLifecycleState.paused) {
-      // iOS suspends the microphone when CHE leaves the foreground. Cancel
-      // pending restarts so we don't fight the OS, but keep the awake/open
-      // conversation state so she picks up where you left off on return.
       _listenRestartTimer?.cancel();
+      if (_realtimeVoice?.connected == true) {
+        unawaited(_returnToWakeStandby(restartWakeListener: false));
+      }
     }
   }
 
@@ -566,7 +590,8 @@ OWNER AGENCY
         _deviceToken == null ||
         _deviceToken!.isEmpty ||
         _isSending ||
-        _isSpeaking) {
+        _isSpeaking ||
+        _realtimeVoice?.connected == true) {
       return;
     }
 
@@ -1174,18 +1199,334 @@ OWNER AGENCY
     await CheAccountBridge.open(context);
   }
 
-  Future<void> _openLiveVoice() async {
-    if (!await _ensurePaired() || !mounted || _deviceToken == null) return;
-    if (cheAgentBaseUrl.isEmpty) {
-      await _showAgentServerDialog();
+  void _applyVoiceSnapshot(CheVoiceSnapshot snapshot) {
+    _voiceSnapshot = snapshot;
+    if (!mounted) return;
+    if (snapshot.phase == CheVoicePhase.disconnected &&
+        _realtimeVoice != null &&
+        !_realtimeConnecting) {
+      unawaited(_fallbackAfterRealtimeLoss(snapshot.lastError));
+    }
+    setState(() {
+      _isSpeaking = snapshot.phase == CheVoicePhase.speaking;
+      _isSending = snapshot.phase == CheVoicePhase.thinking ||
+          snapshot.phase == CheVoicePhase.connecting;
+      isListening = snapshot.microphoneActive &&
+          (snapshot.phase == CheVoicePhase.listening ||
+              snapshot.phase == CheVoicePhase.userSpeaking ||
+              snapshot.phase == CheVoicePhase.wakeListening);
+      openConversation = snapshot.engine == CheVoiceEngine.realtime ||
+          snapshot.engine == CheVoiceEngine.nativeFallback ||
+          snapshot.phase == CheVoicePhase.wakeListening;
+    });
+  }
+
+  Future<void> _fallbackAfterRealtimeLoss(String? reason) async {
+    if (_realtimeConnecting || _realtimeVoice == null) return;
+    final engine = _realtimeVoice;
+    _realtimeVoice = null;
+    try {
+      await engine?.dispose();
+    } catch (_) {}
+
+    _voiceMachine.fallback(reason ?? 'Realtime connection ended.');
+    _applyVoiceSnapshot(_voiceMachine.snapshot);
+
+    try {
+      final started = await CheNativeVoice.start();
+      _nativeIosVoiceActive = started;
+      if (!started) {
+        _voiceMachine.disconnected(reason ?? 'Voice engines unavailable.');
+        _applyVoiceSnapshot(_voiceMachine.snapshot);
+      }
+    } catch (error) {
+      _voiceMachine.disconnected(error.toString());
+      _applyVoiceSnapshot(_voiceMachine.snapshot);
+    }
+  }
+
+
+  Future<void> _restartWakeListener() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return;
+    if (_realtimeVoice?.connected == true || _realtimeConnecting) return;
+    try {
+      final started = await CheNativeVoice.start();
+      _nativeIosVoiceActive = started;
+      if (started) {
+        _voiceMachine.startWakeListening();
+        _applyVoiceSnapshot(_voiceMachine.snapshot);
+      }
+    } catch (error) {
+      _voiceMachine.disconnected(error.toString());
+      _applyVoiceSnapshot(_voiceMachine.snapshot);
+    }
+  }
+
+  Future<void> _beginRealtimeConversation({bool fromWake = false}) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return;
+    if (_realtimeConnecting || _realtimeVoice?.connected == true) return;
+    if (!await _ensurePaired() || _deviceToken == null || cheAgentBaseUrl.isEmpty) {
       return;
     }
-    await Navigator.of(context).push<void>(
-      CupertinoPageRoute(
-        builder: (_) => CheLiveVoiceScreen(
-          baseUrl: cheAgentBaseUrl,
-          deviceToken: _deviceToken!,
-        ),
+
+    _realtimeConnecting = true;
+    if (fromWake) {
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.lightImpact();
+    }
+    if (mounted) {
+      setState(() {
+        cheSleeping = false;
+        openConversation = true;
+      });
+    }
+
+    try {
+      _listenRestartTimer?.cancel();
+      await speech.cancel();
+      await flutterTts.stop();
+      try {
+        await CheNativeVoice.stopAudio();
+      } catch (_) {}
+      try {
+        await CheNativeVoice.stop();
+      } catch (_) {}
+      _nativeIosVoiceActive = false;
+
+      final old = _realtimeVoice;
+      _realtimeVoice = null;
+      if (old != null) await old.dispose();
+
+      final engine = CheRealtimeVoiceEngine(
+        baseUrl: cheAgentBaseUrl,
+        deviceToken: _deviceToken!,
+        state: _voiceMachine,
+        onSnapshot: _applyVoiceSnapshot,
+        onUserTranscript: _onRealtimeUserTranscript,
+        onAssistantTranscript: _onRealtimeAssistantTranscript,
+        onCapabilityRequest: _runRealtimeCapabilityTool,
+        onStandDown: _returnToWakeStandby,
+      );
+      _realtimeVoice = engine;
+      await engine.connect();
+
+      if (mounted) {
+        setState(() {
+          cheSleeping = false;
+          openConversation = true;
+        });
+      }
+    } catch (error) {
+      final engine = _realtimeVoice;
+      _realtimeVoice = null;
+      if (engine != null) {
+        try {
+          await engine.dispose();
+        } catch (_) {}
+      }
+
+      _voiceMachine.fallback(error.toString());
+      _applyVoiceSnapshot(_voiceMachine.snapshot);
+
+      // Native recognition/TTS is a real fallback, never a second simultaneous
+      // mic owner.
+      try {
+        final started = await CheNativeVoice.start();
+        _nativeIosVoiceActive = started;
+        if (mounted) {
+          setState(() {
+            cheSleeping = false;
+            openConversation = started;
+            isListening = started;
+          });
+        }
+      } catch (_) {
+        _voiceMachine.disconnected(error.toString());
+        _applyVoiceSnapshot(_voiceMachine.snapshot);
+      }
+    } finally {
+      _realtimeConnecting = false;
+    }
+  }
+
+  Future<void> _returnToWakeStandby({bool restartWakeListener = true}) async {
+    final engine = _realtimeVoice;
+    _realtimeVoice = null;
+    if (engine != null) {
+      try {
+        await engine.dispose();
+      } catch (_) {}
+    }
+
+    _realtimeAssistantIndex = null;
+    _realtimePendingMediaUrl = null;
+    _realtimePendingMediaType = null;
+    _voiceMachine.sleep();
+
+    if (mounted) {
+      setState(() {
+        cheSleeping = true;
+        openConversation = true;
+        isListening = false;
+        _isSpeaking = false;
+        _isSending = false;
+      });
+    }
+
+    if (restartWakeListener) {
+      await _restartWakeListener();
+    }
+  }
+
+  void _onRealtimeUserTranscript(String text, String? itemId) {
+    final clean = text.trim();
+    if (clean.isEmpty || !mounted) return;
+
+    setState(() {
+      final assistantIndex = _realtimeAssistantIndex;
+      if (assistantIndex != null &&
+          assistantIndex >= 0 &&
+          assistantIndex < messages.length) {
+        messages.insert(assistantIndex, {'role': 'user', 'text': clean});
+        _realtimeAssistantIndex = assistantIndex + 1;
+      } else {
+        messages.add({'role': 'user', 'text': clean});
+      }
+    });
+    _scrollToBottom();
+
+    unawaited(_observeRealtimeTurn(clean, itemId));
+  }
+
+  Future<void> _observeRealtimeTurn(String message, String? itemId) async {
+    if (_deviceToken == null || cheAgentBaseUrl.isEmpty) return;
+    try {
+      await http
+          .post(
+            Uri.parse('$cheAgentBaseUrl/api/realtime/observe'),
+            headers: _authHeaders,
+            body: jsonEncode({
+              'message': message,
+              'item_id': itemId,
+            }),
+          )
+          .timeout(const Duration(seconds: 8));
+    } catch (_) {}
+  }
+
+  void _onRealtimeAssistantTranscript(
+    String text,
+    bool isFinal,
+    String? responseId,
+  ) {
+    final clean = text.trim();
+    if (!mounted || clean.isEmpty) return;
+
+    setState(() {
+      var index = _realtimeAssistantIndex;
+      if (index == null || index >= messages.length) {
+        index = messages.length;
+        messages.add({'role': 'assistant', 'text': clean});
+        _realtimeAssistantIndex = index;
+      } else {
+        messages[index]['text'] = clean;
+      }
+
+      if (isFinal && index < messages.length && _realtimePendingMediaUrl != null) {
+        messages[index]['media_url'] = _realtimePendingMediaUrl!;
+        messages[index]['media_type'] = _realtimePendingMediaType ?? 'image';
+        _realtimePendingMediaUrl = null;
+        _realtimePendingMediaType = null;
+      }
+
+      if (isFinal) {
+        _realtimeAssistantIndex = null;
+      }
+    });
+    _scrollToBottom();
+  }
+
+  Future<String> _runRealtimeCapabilityTool(
+    String request,
+    List<String> capabilityHints,
+  ) async {
+    final clean = request.trim();
+    if (clean.isEmpty) {
+      return jsonEncode({'ok': false, 'error': 'Empty CHE tool request.'});
+    }
+
+    final rememberMatch = RegExp(
+      r'^(?:(?:chay|chey|shay|che)[, ]+)?remember(?: that)?\s+',
+      caseSensitive: false,
+    ).firstMatch(clean);
+    if (rememberMatch != null) {
+      final memory = clean.substring(rememberMatch.end).trim();
+      if (memory.isNotEmpty) {
+        await saveMemory(memory);
+        return jsonEncode({
+          'ok': true,
+          'confirmed': true,
+          'result': 'Saved to CHE memory.',
+        });
+      }
+    }
+
+    final recentMessages = messages.length > 14
+        ? messages.sublist(messages.length - 14)
+        : List<Map<String, String>>.from(messages);
+    final history = recentMessages
+        .map((item) => {
+              'role': item['role'] == 'assistant' ? 'assistant' : 'user',
+              'content': item['text'] ?? '',
+            })
+        .toList();
+
+    _streamMediaUrl = null;
+    _streamMediaType = null;
+
+    try {
+      final result = await _streamCheResponse(
+        clean,
+        history,
+        onPartial: (_) {},
+      );
+
+      _realtimePendingMediaUrl = _streamMediaUrl;
+      _realtimePendingMediaType = _streamMediaType;
+
+      return jsonEncode({
+        'ok': true,
+        'confirmed': true,
+        'result': result,
+        'media_url': _streamMediaUrl,
+        'media_type': _streamMediaType,
+        'requested_capabilities': {
+          ..._requestedCapabilities(clean),
+          ...capabilityHints,
+        }.toList(),
+      });
+    } catch (error) {
+      return jsonEncode({
+        'ok': false,
+        'confirmed': false,
+        'error': error.toString(),
+        'requested_capabilities': {
+          ..._requestedCapabilities(clean),
+          ...capabilityHints,
+        }.toList(),
+      });
+    }
+  }
+
+  void _openVoiceDiagnostics() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => CheVoiceDiagnosticsSheet(
+        snapshot: _voiceSnapshot,
+        serverOnline: _deviceToken != null,
+        lastServerEvent: _realtimeVoice?.lastServerEvent,
       ),
     );
   }
@@ -1393,6 +1734,10 @@ OWNER AGENCY
 
   Future<void> speakText(String text) async {
     if (text.trim().isEmpty) return;
+    if (_realtimeVoice?.connected == true) {
+      // Realtime owns both microphone and speaker during a live session.
+      return;
+    }
     final speechTurn = ++_speechTurn;
 
     // CHE refers to and pronounces herself as "CHE" in normal conversation.
@@ -1506,6 +1851,11 @@ OWNER AGENCY
   }
 
   Future<void> _interruptSpeechAndListen({bool resumeListening = true}) async {
+    if (_realtimeVoice?.connected == true) {
+      await _realtimeVoice!.cancelActiveResponse('owner interruption');
+      _applyVoiceSnapshot(_voiceMachine.snapshot);
+      return;
+    }
     ++_speechTurn;
     _listenRestartTimer?.cancel();
     if (kIsWeb) {
@@ -1585,6 +1935,7 @@ OWNER AGENCY
     final type = event['type']?.toString() ?? '';
 
     if (type == 'state') {
+      if (_realtimeConnecting || _realtimeVoice?.connected == true) return;
       final running = event['running'] == true;
 
       if (mounted) {
@@ -1610,25 +1961,12 @@ OWNER AGENCY
     }
 
     if (type == 'wake_signal') {
-      // Partial speech can confirm that the wake word is being heard, but do
-      // not flip cheSleeping yet. The final utterance must still pass through
-      // the wake-word parser below so "Chay" is treated as a wake command
-      // instead of a normal chat message.
-      if (cheSleeping && mounted) {
-        HapticFeedback.mediumImpact();
-      }
+      if (cheSleeping) HapticFeedback.lightImpact();
       return;
     }
 
     if (type == 'wake') {
-      if (mounted) {
-        setState(() {
-          cheSleeping = false;
-          openConversation = true;
-        });
-      }
-
-      await speakText('Yeah, sir?');
+      await _beginRealtimeConversation(fromWake: true);
       return;
     }
 
@@ -1669,19 +2007,19 @@ OWNER AGENCY
 
         if (wakeMatch == null) return;
 
-        words = words.substring(wakeMatch.end).trim();
+        final afterWake = words.substring(wakeMatch.end).trim();
+        await _beginRealtimeConversation(fromWake: true);
 
-        if (!mounted) return;
-        setState(() {
-          cheSleeping = false;
-          openConversation = true;
-          isListening = true;
-        });
-
-        if (words.isEmpty) {
-          await speakText('Yeah, sir?');
-          return;
+        if (afterWake.isNotEmpty && _realtimeVoice?.connected == true) {
+          if (mounted) {
+            setState(() {
+              messages.add({'role': 'user', 'text': afterWake});
+            });
+            _scrollToBottom();
+          }
+          await _realtimeVoice!.sendText(afterWake);
         }
+        return;
       }
 
       if (_isSleepPhrase(words)) {
@@ -1745,6 +2083,24 @@ OWNER AGENCY
 
   Future<void> toggleListening() async {
     HapticFeedback.lightImpact();
+
+    if (_realtimeVoice?.connected == true) {
+      if (_isSpeaking) {
+        await _realtimeVoice!.cancelActiveResponse('mic button');
+        _applyVoiceSnapshot(_voiceMachine.snapshot);
+      } else {
+        await _returnToWakeStandby();
+      }
+      return;
+    }
+
+    if (!kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.iOS &&
+        cheSleeping) {
+      await _beginRealtimeConversation(fromWake: true);
+      return;
+    }
+
     if (_isSpeaking) {
       await _interruptSpeechAndListen();
       return;
@@ -3012,78 +3368,38 @@ OWNER AGENCY
 
   void _openAssistantHub({int tab = 0}) {
     _selectedTab = tab < 0 ? 0 : (tab > 8 ? 8 : tab);
-    showModalBottomSheet(
+    showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF101821),
       isScrollControlled: true,
       builder: (context) {
-        return DefaultTabController(
-          length: 9,
-          initialIndex: _selectedTab,
-          child: SizedBox(
-            height: MediaQuery.of(context).size.height * 0.90,
-            child: Column(
-              children: [
-                const SizedBox(height: 10),
-                Container(
-                  width: 42,
-                  height: 5,
-                  decoration: BoxDecoration(
-                    color: Colors.white24,
-                    borderRadius: BorderRadius.circular(99),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  'CHE',
-                  style: TextStyle(
-                    color: Color(0xFF67E8D1),
-                    fontSize: 26,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 4,
-                  ),
-                ),
-                const Text(
-                  'COGNITIVE.HORIZON.ENGINE',
-                  style: TextStyle(
-                    color: Colors.white54,
-                    fontSize: 9,
-                    letterSpacing: 1.5,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TabBar(
-                  onTap: (index) => _selectedTab = index,
-                  isScrollable: true,
-                  tabs: const [
-                    Tab(icon: Icon(Icons.memory_outlined), text: 'Memory'),
-                    Tab(icon: Icon(Icons.auto_awesome_outlined), text: 'Insights'),
-                    Tab(icon: Icon(Icons.show_chart), text: 'Markets'),
-                    Tab(icon: Icon(Icons.business_center_outlined), text: 'Business'),
-                    Tab(icon: Icon(Icons.devices_other_outlined), text: 'Devices'),
-                    Tab(icon: Icon(Icons.music_note_outlined), text: 'Music'),
-                    Tab(icon: Icon(Icons.lightbulb_outline), text: 'Create'),
-                    Tab(icon: Icon(Icons.workspaces_outline), text: 'Office'),
-                    Tab(icon: Icon(Icons.apps_rounded), text: 'Apps'),
-                  ],
-                ),
-                Expanded(
-                  child: TabBarView(
-                    children: [
-                      _hubMemoryTab(),
-                      _hubInsightsTab(),
-                      _hubMarketsTab(),
-                      _hubBusinessTab(),
-                      _hubDevicesTab(),
-                      _hubMusicTab(),
-                      _hubCreateTab(),
-                      _hubOfficeTab(),
-                      const CheAppsHubTab(),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+        return SizedBox(
+          height: MediaQuery.of(context).size.height * 0.90,
+          child: CheImmersiveHubShell(
+            initialIndex: _selectedTab,
+            onIndexChanged: (index) => _selectedTab = index,
+            tabs: const [
+              Tab(icon: Icon(Icons.memory_outlined), text: 'Memory'),
+              Tab(icon: Icon(Icons.auto_awesome_outlined), text: 'Insights'),
+              Tab(icon: Icon(Icons.show_chart), text: 'Markets'),
+              Tab(icon: Icon(Icons.business_center_outlined), text: 'Business'),
+              Tab(icon: Icon(Icons.devices_other_outlined), text: 'Devices'),
+              Tab(icon: Icon(Icons.music_note_outlined), text: 'Music'),
+              Tab(icon: Icon(Icons.lightbulb_outline), text: 'Create'),
+              Tab(icon: Icon(Icons.workspaces_outline), text: 'Office'),
+              Tab(icon: Icon(Icons.apps_rounded), text: 'Apps'),
+            ],
+            pages: [
+              (_) => _hubMemoryTab(),
+              (active) => _hubInsightsTab(active),
+              (_) => _hubMarketsTab(),
+              (_) => _hubBusinessTab(),
+              (active) => _hubDevicesTab(active),
+              (active) => _hubMusicTab(active),
+              (active) => _hubCreateTab(active),
+              (active) => _hubOfficeTab(active),
+              (_) => const CheAppsHubTab(),
+            ],
           ),
         );
       },
@@ -3138,79 +3454,12 @@ OWNER AGENCY
     );
   }
 
-  Widget _hubInsightsTab() {
-    return _hubList(
-      'Insights',
-      'Learned patterns, knowledge and suggestions.',
-      [
-        const Text('LEARNED ABOUT YOU',
-            style: TextStyle(fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        if (learnedPersonality.isEmpty)
-          const Card(
-            child: ListTile(
-              leading: Icon(Icons.psychology_alt_outlined),
-              title: Text('No stable personality patterns yet'),
-              subtitle: Text('CHE learns gradually from what you explicitly show her.'),
-            ),
-          )
-        else
-          ...learnedPersonality.map((item) {
-            final statement = item['statement']?.toString() ?? 'Learned pattern';
-            final confidence = (item['confidence'] as num?)?.toDouble();
-            return Card(
-              child: ListTile(
-                leading: const Icon(Icons.psychology_alt_outlined),
-                title: Text(statement),
-                subtitle: confidence == null
-                    ? null
-                    : Text('Confidence ${(confidence * 100).round()}%'),
-              ),
-            );
-          }),
-        const SizedBox(height: 16),
-        const Text('LEARNED KNOWLEDGE',
-            style: TextStyle(fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        if (learnedKnowledge.isEmpty)
-          const Card(
-            child: ListTile(
-              leading: Icon(Icons.school_outlined),
-              title: Text('No researched knowledge stored yet'),
-              subtitle: Text('Live research requires a connected research service.'),
-            ),
-          )
-        else
-          ...learnedKnowledge.map(
-            (item) => Card(
-              child: ListTile(
-                leading: const Icon(Icons.school_outlined),
-                title: Text(item),
-              ),
-            ),
-          ),
-        const SizedBox(height: 16),
-        const Text('SUGGESTIONS',
-            style: TextStyle(fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        if (suggestions.isEmpty)
-          const Card(
-            child: ListTile(
-              leading: Icon(Icons.lightbulb_outline),
-              title: Text('No suggestions yet'),
-              subtitle: Text('Useful follow-ups will appear here as CHE learns.'),
-            ),
-          )
-        else
-          ...suggestions.map(
-            (item) => Card(
-              child: ListTile(
-                leading: const Icon(Icons.lightbulb_outline),
-                title: Text(item),
-              ),
-            ),
-          ),
-      ],
+  Widget _hubInsightsTab(bool active) {
+    return InsightsBrainScene(
+      active: active,
+      learnedAboutYou: learnedPersonality,
+      learnedKnowledge: learnedKnowledge,
+      suggestions: suggestions,
     );
   }
 
@@ -3358,263 +3607,59 @@ OWNER AGENCY
     );
   }
 
-  Widget _hubDevicesTab() {
-    return _hubList(
-      'Devices',
-      'Real controls only become active after a permissioned integration is connected.',
-      [
-        _integrationCard(
-          Icons.phone_iphone,
-          'This iPhone',
-          _deviceToken == null ? 'Not paired.' : 'Secure CHE Agent paired.',
-          _deviceToken != null,
-        ),
-        _integrationCard(
-          Icons.bolt_outlined,
-          'CHE Parallel Work Engine',
-          'Batches compatible work, runs independent connected tools in parallel, and avoids unnecessary serial waits.',
-          integrations['work_engine'] == true,
-        ),
-        _integrationCard(
-          Icons.graphic_eq,
-          'Natural CHE Voice',
-          integrations['natural_voice'] == true
-              ? 'Neural voice service connected. Premium iPhone voice remains the automatic fallback.'
-              : 'Premium iPhone voice is built in. Connect CHE neural voice for the most natural speech.',
-          integrations['natural_voice'] == true,
-          onTap: () => _runHubPrompt(
-            'Help me connect CHE natural voice. Keep the premium iPhone voice as the fallback and tell me only what I need to authorize or configure.',
-          ),
-        ),
-        _integrationCard(
-          Icons.storage_outlined,
-          'CHE Core Data Vault',
-          'Persistent CHE storage for notes, projects, memories and working data.',
-          integrations['storage_vault'] == true,
-          onTap: _openVault,
-        ),
-        _integrationCard(
-          Icons.cloud_queue,
-          'CHE Background Work',
-          'Real cloud-side jobs can keep running after the app request returns.',
-          integrations['background_jobs'] == true,
-          onTap: () => _runHubPrompt(
-            'Show me how to give CHE a task to keep working on in the background while I do something else.',
-          ),
-        ),
-        _integrationCard(
-          Icons.memory,
-          'Advanced / Quantum Compute',
-          integrations['quantum_compute'] == true
-              ? 'A specialized quantum-compute connector is available for suitable optimization or simulation work.'
-              : 'Ready to use a real quantum-compute service when one is connected; CHE will not pretend ordinary chat runs on quantum hardware.',
-          integrations['quantum_compute'] == true,
-          onTap: () => _runHubPrompt(
-            'Check whether this task can actually benefit from quantum or specialized compute. Use the connected quantum service only if available and appropriate.',
-          ),
-        ),
-        _integrationCard(
-          Icons.cloud_outlined,
-          'Large Object Storage',
-          integrations['object_storage'] == true
-              ? 'Large files, generated media and datasets can be archived.'
-              : 'Not connected yet. Core CHE data still persists in the Data Vault.',
-          integrations['object_storage'] == true,
-        ),
-        _integrationCard(
-          Icons.computer,
-          'Computer',
-          'Windows/Mac companion for approved computer actions.',
-          integrations['windows'] == true,
-          onTap: () => _runHubPrompt(
-            'Help me connect my computer to CHE for authorized actions. Walk me through only the required setup and permissions.',
-          ),
-        ),
-        _integrationCard(
-          Icons.bluetooth,
-          'Bluetooth / Car',
-          'Supported authorized car and Bluetooth actions.',
-          integrations['car'] == true,
-          onTap: () => _runHubPrompt(
-            'Help me connect my car or Bluetooth system to CHE. Use only supported authorized controls and tell me exactly what I need to approve.',
-          ),
-        ),
-        _integrationCard(
-          Icons.lightbulb_outline,
-          'Smart Home',
-          'HomeKit/Matter lights, scenes and approved automations.',
-          integrations['smart_home'] == true,
-          onTap: () => _runHubPrompt(
-            'Help me connect my smart-home lights and devices to CHE. Use the supported authorized integration and tell me only when I need to approve something.',
-          ),
-        ),
-        _integrationCard(
-          Icons.public,
-          'Live Research',
-          'Current web research and novelty/feasibility checking.',
-          integrations['web_research'] == true,
-          onTap: () => _runHubPrompt(
-            'Run a live research task for me using connected research tools. Cross-check important claims and show uncertainty instead of guessing.',
-          ),
-        ),
-        _integrationCard(
-          Icons.image_outlined,
-          'Rendering',
-          'Connected visual rendering and concept visualization.',
-          integrations['rendering'] == true,
-        ),
-        _integrationCard(
-          Icons.screen_share_outlined,
-          'Authorized Screen Reading',
-          'Read only screen content you explicitly share or an active OS-authorized capture session.',
-          integrations['screen_capture'] == true,
-        ),
-        _integrationCard(
-          Icons.face_retouching_natural,
-          'Owner Face Verification',
-          'Verify an enrolled owner face. CHE does not identify unknown people from images.',
-          integrations['face_verify'] == true,
-        ),
-        _integrationCard(
-          Icons.document_scanner_outlined,
-          'Data Recognition',
-          'Extract and understand owner-provided documents, tables, screenshots and structured data.',
-          integrations['data_recognition'] == true,
-        ),
-        _integrationCard(
-          Icons.perm_media_outlined,
-          'Multimodal Understanding',
-          'Give CHE a photo, video, audio, document or data file.',
-          integrations['multimodal'] == true,
-          onTap: () {
-            _openMultimodalPicker();
-          },
-        ),
-      ],
+  Widget _hubDevicesTab(bool active) {
+    return DevicesHubScene(
+      active: active,
+      phoneConnected: _deviceToken != null,
+      integrations: integrations,
+      onPrompt: _runHubPrompt,
+      onVault: () {
+        unawaited(_openVault());
+      },
+      onMultimodal: () {
+        unawaited(_openMultimodalPicker());
+      },
     );
   }
 
-  Widget _hubMusicTab() {
-    return _hubList(
-      'Music',
-      'Music options and future voice controls.',
-      [
-        _integrationCard(
-          Icons.music_note,
-          'Apple Music',
-          'Search, playlists, play/pause and queue control through an authorized connection.',
-          integrations['music'] == true,
-          onTap: () => _runHubPrompt(
-            'Help me connect and control my music through CHE. Use the authorized music integration if connected.',
-          ),
-        ),
-        _integrationCard(
-          Icons.directions_car_filled_outlined,
-          'Car Audio',
-          'Use supported car audio for CHE and music.',
-          integrations['car'] == true,
-        ),
-        const Card(
-          child: ListTile(
-            leading: Icon(Icons.record_voice_over_outlined),
-            title: Text('Voice examples'),
-            subtitle: Text(
-              '“Chay, open music.”  “Chay, play my playlist.”  “Chay, next song.”',
-            ),
-          ),
-        ),
-      ],
+  Widget _hubMusicTab(bool active) {
+    return MusicStudioScene(
+      active: active,
+      musicConnected: integrations['music'] == true,
+      carConnected: integrations['car'] == true,
+      onMusic: () => _runHubPrompt(
+        'Help me connect and control my music through CHE. Use the authorized music integration if connected.',
+      ),
+      onCar: () => _runHubPrompt(
+        'Help me connect my car audio to CHE. Use only supported authorized audio controls.',
+      ),
     );
   }
 
-  Widget _hubCreateTab() {
-    return _hubList(
-      'Create + Innovate',
-      'A real CHE workspace for projects, drafts and invention development.',
-      [
-        FilledButton.icon(
-          onPressed: _createProjectDialog,
-          icon: const Icon(Icons.add),
-          label: const Text('NEW PROJECT'),
-        ),
-        const SizedBox(height: 12),
-        if (projects.isEmpty)
-          const Card(
-            child: ListTile(
-              leading: Icon(Icons.folder_open_outlined),
-              title: Text('No projects yet'),
-              subtitle: Text(
-                'Create one here or say “Chay, write a book…” / “Chay, build a website…”',
-              ),
-            ),
-          )
-        else ...[
-          const Text(
-            'YOUR PROJECTS',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          ...projects.take(12).map(
-            (project) => Card(
-              child: ListTile(
-                leading: const Icon(Icons.auto_awesome),
-                title: Text(project['title']?.toString() ?? 'Untitled project'),
-                subtitle: Text(
-                  '${project['type'] ?? 'project'} • ${project['status'] ?? 'draft'}',
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => _openProjectEditor(project),
-              ),
-            ),
-          ),
-        ],
-        const SizedBox(height: 16),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.storage_outlined),
-            title: const Text('CHE Core Data Vault'),
-            subtitle: Text(
-              '${vaultItems.length} saved vault item${vaultItems.length == 1 ? '' : 's'} • persistent project and note storage',
-            ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: _openVault,
-          ),
-        ),
-        const SizedBox(height: 16),
-        const Card(
-          child: ListTile(
-            leading: Icon(Icons.science_outlined),
-            title: Text('Innovation mode'),
-            subtitle: Text(
-              'CHE can develop concepts, feasibility assumptions, prototypes and test plans inside a saved project.',
-            ),
-          ),
-        ),
-        _integrationCard(
-          Icons.public,
-          'Live novelty + feasibility research',
-          'Research becomes live when the CHE research service is connected.',
-          integrations['web_research'] == true,
-        ),
-        _integrationCard(
-          Icons.image_outlined,
-          'Image Generation',
-          'Generate original visual assets when CHE image compute is connected.',
-          integrations['image_generation'] == true,
-          onTap: () => _runHubPrompt(
-            'Create an image for me. Ask only for any essential missing detail, then use the connected CHE image generator if available.',
-          ),
-        ),
-        _integrationCard(
-          Icons.movie_creation_outlined,
-          'Video Generation',
-          'Generate video clips when CHE video compute is connected.',
-          integrations['video_generation'] == true,
-          onTap: () => _runHubPrompt(
-            'Create a video for me. Ask only for any essential missing detail, then use the connected CHE video generator if available.',
-          ),
-        ),
-      ],
+  Widget _hubCreateTab(bool active) {
+    return CreateGalleryScene(
+      active: active,
+      projects: projects,
+      vaultCount: vaultItems.length,
+      researchConnected: integrations['web_research'] == true,
+      imageConnected: integrations['image_generation'] == true,
+      videoConnected: integrations['video_generation'] == true,
+      onNewProject: () {
+        unawaited(_createProjectDialog());
+      },
+      onOpenProject: _openProjectEditor,
+      onVault: () {
+        unawaited(_openVault());
+      },
+      onResearch: () => _runHubPrompt(
+        'Help me research the novelty and feasibility of the project I am working on. Use connected live research if available and clearly separate confirmed facts from assumptions.',
+      ),
+      onImage: () => _runHubPrompt(
+        'Create an image for me. Ask only for any essential missing detail, then use the connected CHE image generator if available.',
+      ),
+      onVideo: () => _runHubPrompt(
+        'Create a video for me. Ask only for any essential missing detail, then use the connected CHE video generator if available.',
+      ),
     );
   }
 
@@ -3844,101 +3889,18 @@ OWNER AGENCY
     );
   }
 
-  Widget _hubOfficeTab() {
-    final newPartners = team.where((item) => item['introduced'] != true).length;
-    return _hubList(
-      'CHE Office',
-      'CHE’s internal AI coworkers for delegated and parallel work.',
-      [
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.account_tree_outlined),
-            title: const Text('CHE coordinates the office'),
-            subtitle: Text(
-              '${team.length} AI coworker${team.length == 1 ? '' : 's'} • ${teamTasks.length} tracked assignment${teamTasks.length == 1 ? '' : 's'}',
-            ),
-            trailing: newPartners > 0
-                ? Badge(label: Text('$newPartners NEW'))
-                : null,
-          ),
-        ),
-        const SizedBox(height: 8),
-        if (backgroundJobs.isNotEmpty) ...[
-          const Text(
-            'BACKGROUND WORK',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          ...backgroundJobs.take(6).map(
-            (job) => Card(
-              child: ListTile(
-                leading: Icon(
-                  job['status'] == 'complete'
-                      ? Icons.check_circle_outline
-                      : job['status'] == 'failed'
-                          ? Icons.error_outline
-                          : Icons.sync,
-                ),
-                title: Text(job['title']?.toString() ?? 'CHE background job'),
-                subtitle: Text(
-                  (job['result']?.toString() ?? '').isNotEmpty
-                      ? '${job['status']}\n${job['result']}'
-                      : (job['error']?.toString() ?? '').isNotEmpty
-                          ? '${job['status']}\n${job['error']}'
-                          : job['status']?.toString() ?? 'queued',
-                  maxLines: 4,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-        ],
-        FilledButton.icon(
-          onPressed: _createPartnerDialog,
-          icon: const Icon(Icons.person_add_alt_1_outlined),
-          label: const Text('ADD PARTNER'),
-        ),
-        const SizedBox(height: 12),
-        if (team.isEmpty)
-          const Card(
-            child: ListTile(
-              leading: Icon(Icons.groups_outlined),
-              title: Text('Office is ready'),
-              subtitle: Text(
-                'CHE will staff specialist AI coworkers when a task benefits from delegation, or you can add one yourself.',
-              ),
-            ),
-          )
-        else
-          ...team.map(
-            (partner) => Card(
-              child: ListTile(
-                leading: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    const CircleAvatar(
-                      child: Icon(Icons.smart_toy_outlined),
-                    ),
-                    if (partner['introduced'] != true)
-                      const Positioned(
-                        right: -4,
-                        top: -4,
-                        child: Badge(label: Text('NEW')),
-                      ),
-                  ],
-                ),
-                title: Text(partner['name']?.toString() ?? 'CHE Partner'),
-                subtitle: Text(
-                  '${partner['role'] ?? 'AI coworker'}\n${partner['specialty'] ?? ''}',
-                ),
-                isThreeLine: true,
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => _openPartner(partner),
-              ),
-            ),
-          ),
-      ],
+  Widget _hubOfficeTab(bool active) {
+    return OfficeScene(
+      active: active,
+      team: team,
+      teamTasks: teamTasks,
+      backgroundJobs: backgroundJobs,
+      onAddPartner: () {
+        unawaited(_createPartnerDialog());
+      },
+      onOpenPartner: (partner) {
+        unawaited(_openPartner(partner));
+      },
     );
   }
 
@@ -4841,6 +4803,17 @@ OWNER AGENCY
 
     if (!await _ensurePaired()) return;
 
+    if (_realtimeVoice?.connected == true) {
+      if (!mounted) return;
+      setState(() {
+        messages.add({'role': 'user', 'text': message});
+        controller.clear();
+      });
+      _scrollToBottom();
+      await _realtimeVoice!.sendText(message);
+      return;
+    }
+
     if (speech.isListening) {
       await speech.stop();
     }
@@ -5001,6 +4974,11 @@ OWNER AGENCY
     _listenRestartTimer?.cancel();
     _proactiveTimer?.cancel();
     _nativeIosVoiceSub?.cancel();
+    final realtime = _realtimeVoice;
+    _realtimeVoice = null;
+    if (realtime != null) {
+      unawaited(realtime.dispose());
+    }
     controller.dispose();
     _scrollController.dispose();
     speech.cancel();
@@ -5025,22 +5003,7 @@ OWNER AGENCY
 
     String statusText = _deviceToken == null
         ? '●  SECURITY PAIRING REQUIRED'
-        : '●  SECURE AGENT ONLINE';
-
-    if (_isSending) {
-      statusText = '●  CHE THINKING • EST. A FEW SECONDS';
-    } else if (_isSpeaking) {
-      statusText = '●  CHE SPEAKING • TAP MIC TO INTERRUPT';
-    } else if (cheSleeping) {
-      statusText = isListening
-          ? '●  STANDBY • SAY “CHAY”'
-          : '●  STANDBY';
-    } else if (isListening) {
-      statusText = '●  LISTENING';
-    } else if (openConversation) {
-      statusText =
-          kIsWeb ? '●  VOICE CONVERSATION ACTIVE' : '●  OPEN CONVERSATION';
-    }
+        : '●  ${_voiceSnapshot.engineLabel.toUpperCase()} • ${_voiceSnapshot.phaseLabel.toUpperCase()}';
 
     return Scaffold(
       backgroundColor: CheColors.bg,
@@ -5073,8 +5036,8 @@ OWNER AGENCY
                 case 'accounts':
                   await _openAccountBridge();
                   break;
-                case 'live_voice':
-                  await _openLiveVoice();
+                case 'diagnostics':
+                  _openVoiceDiagnostics();
                   break;
                 case 'server':
                   await _showAgentServerDialog();
@@ -5089,7 +5052,7 @@ OWNER AGENCY
             },
             itemBuilder: (context) => const [
               PopupMenuItem(value: 'accounts', child: Text('Accounts + Face ID')),
-              PopupMenuItem(value: 'live_voice', child: Text('OpenAI Live Voice')),
+              PopupMenuItem(value: 'diagnostics', child: Text('Voice diagnostics')),
               PopupMenuItem(value: 'server', child: Text('CHE server')),
               PopupMenuItem(value: 'screen', child: Text('Screen context')),
               PopupMenuItem(value: 'security', child: Text('Security + memory')),
@@ -5162,48 +5125,37 @@ OWNER AGENCY
         child: Column(
           children: [
             const Divider(color: Color(0xFF354859)),
-            Container(
-              margin: const EdgeInsets.fromLTRB(14, 8, 14, 6),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0F1D27),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: const Color(0x334DE3CB)),
-              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
               child: Row(
                 children: [
-                  Container(
-                    width: 34,
-                    height: 34,
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: RadialGradient(
-                        colors: [Color(0xFF8BFFF0), Color(0xFF1A7D78), Color(0xFF0B1822)],
-                      ),
-                    ),
+                  CheVoiceOrb(
+                    snapshot: _voiceSnapshot,
+                    onTap: toggleListening,
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 14),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          integrations['openai_live_voice'] == true
-                              ? 'CHE • OPENAI VOICE READY'
-                              : 'CHE • NATIVE VOICE FALLBACK',
+                          _voiceSnapshot.phaseLabel,
                           style: const TextStyle(
                             color: accent,
-                            fontSize: 10.5,
+                            fontSize: 14,
                             fontWeight: FontWeight.w800,
-                            letterSpacing: 0.8,
                           ),
                         ),
                         const SizedBox(height: 2),
-                        const Text(
-                          'Say “Chay” to wake • interrupt anytime',
-                          style: TextStyle(
-                            color: Colors.white60,
-                            fontSize: 10,
+                        Text(
+                          _voiceSnapshot.engine == CheVoiceEngine.realtime
+                              ? 'Realtime voice • interrupt anytime'
+                              : cheSleeping
+                                  ? 'Say “Chay” to wake'
+                                  : _voiceSnapshot.engineLabel,
+                          style: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 10.5,
                           ),
                         ),
                       ],
@@ -5224,30 +5176,6 @@ OWNER AGENCY
                   deleteIcon: const Icon(Icons.close, size: 15),
                   onDeleted: () => setState(() => _pendingAttachment = null),
                   backgroundColor: const Color(0xFF1A2935),
-                ),
-              ),
-            if (openConversation)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
-                color: const Color(0xFF163A40),
-                child: Text(
-                  isListening
-                      ? (cheSleeping
-                          ? '●  STANDBY • SAY “CHAY” TO WAKE'
-                          : '● OPEN CONVERSATION • LISTENING...')
-                      : _isSpeaking
-                          ? '● OPEN CONVERSATION • TAP MIC TO INTERRUPT'
-                          : _isSending
-                              ? '● OPEN CONVERSATION • THINKING...'
-                              : '● OPEN CONVERSATION',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: accent,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.0,
-                    fontSize: 9.5,
-                  ),
                 ),
               ),
             Expanded(
@@ -5365,11 +5293,13 @@ OWNER AGENCY
                       style: const TextStyle(color: Colors.white),
                       onSubmitted: (_) => sendMessage(),
                       decoration: InputDecoration(
-                        hintText: isListening
+                        hintText: _voiceSnapshot.phase == CheVoicePhase.userSpeaking ||
+                                _voiceSnapshot.phase == CheVoicePhase.listening
                             ? 'Listening...'
-                            : _isSending
-                                ? 'C.H.E. is thinking...'
-                                : 'Message C.H.E...',
+                            : _voiceSnapshot.phase == CheVoicePhase.thinking ||
+                                    _voiceSnapshot.phase == CheVoicePhase.connecting
+                                ? 'CHE is thinking...'
+                                : 'Message CHE...',
                         hintStyle:
                             const TextStyle(color: Colors.white54),
                         filled: true,
@@ -5386,12 +5316,14 @@ OWNER AGENCY
                     icon: Icon(
                       _isSpeaking
                           ? Icons.stop_circle_outlined
-                          : openConversation || isListening
+                          : _realtimeVoice?.connected == true
                               ? Icons.mic
                               : Icons.mic_none,
-                      color: _isSpeaking || openConversation || isListening
-                          ? Colors.redAccent
-                          : accent,
+                      color: _isSpeaking
+                          ? Colors.orangeAccent
+                          : _realtimeVoice?.connected == true
+                              ? accent
+                              : Colors.white54,
                       size: 29,
                     ),
                     tooltip: _isSpeaking

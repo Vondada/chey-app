@@ -142,6 +142,61 @@ function safePreferenceFrom(message) {
   return null;
 }
 
+function learnPreference(data, message, source = 'text') {
+  data.preference_memory = Array.isArray(data.preference_memory)
+    ? data.preference_memory
+    : [];
+
+  const raw = String(message || '').trim();
+  if (!raw) return { changed: false, preference: null, corrected: false };
+
+  const now = new Date();
+  const correction = /^(?:no[, ]+|actually[, ]*|i meant[, ]*|correction[: ,]+)/i.test(raw);
+  let corrected = false;
+
+  if (correction && data.preference_memory.length) {
+    const last = data.preference_memory[data.preference_memory.length - 1];
+    const created = Date.parse(String(last?.created_at || ''));
+    if (Number.isFinite(created) && now.getTime() - created < 120000 &&
+        String(last?.source || '').startsWith('inferred')) {
+      data.preference_memory.pop();
+      const priorText = String(last?.text || '');
+      data.memories = (Array.isArray(data.memories) ? data.memories : [])
+        .filter((item) => String(item).toLowerCase() !== priorText.toLowerCase());
+      corrected = true;
+    }
+  }
+
+  const stripped = correction
+    ? raw.replace(/^(?:no[, ]+|actually[, ]*|i meant[, ]*|correction[: ,]+)/i, '').trim()
+    : raw;
+  const candidate = safePreferenceFrom(stripped);
+  if (!candidate) return { changed: corrected, preference: null, corrected };
+
+  data.memories = Array.isArray(data.memories) ? data.memories : [];
+  if (!data.memories.some((item) => String(item).toLowerCase() === candidate.toLowerCase())) {
+    data.memories.push(candidate);
+    data.memories = data.memories.slice(-100);
+  }
+
+  const existing = data.preference_memory.find(
+    (item) => String(item?.text || '').toLowerCase() === candidate.toLowerCase(),
+  );
+  if (!existing) {
+    data.preference_memory.push({
+      id: crypto.randomUUID(),
+      text: candidate,
+      confidence: correction ? 0.95 : source === 'voice' ? 0.72 : 0.82,
+      source: source === 'voice' ? 'inferred_voice' : 'inferred_text',
+      created_at: now.toISOString(),
+      updated_at: now.toISOString(),
+    });
+    data.preference_memory = data.preference_memory.slice(-100);
+  }
+
+  return { changed: true, preference: candidate, corrected };
+}
+
 async function voiceSynthesisResponse(env, text) {
   const input = String(text || '').trim().slice(0, 6000);
 
@@ -1037,6 +1092,8 @@ export class CheState extends DurableObject {
       data.jobs = Array.isArray(data.jobs) ? data.jobs : [];
       data.plugin_enabled = data.plugin_enabled && typeof data.plugin_enabled === 'object'
         && !Array.isArray(data.plugin_enabled) ? data.plugin_enabled : {};
+      data.preference_memory = Array.isArray(data.preference_memory) ? data.preference_memory : [];
+      data.realtime_observed = Array.isArray(data.realtime_observed) ? data.realtime_observed : [];
       data.agent_identity = data.agent_identity && typeof data.agent_identity === 'object'
         ? data.agent_identity
         : {
@@ -1087,34 +1144,81 @@ export class CheState extends DurableObject {
 
       if (request.method === 'POST' && path === '/api/live/token') {
         if (!this.env.CHE_OPENAI_API_KEY) {
-          return json({ detail: 'OpenAI Live Voice needs CHE_OPENAI_API_KEY configured as a CHE server secret.' }, 503);
+          return json({ detail: 'OpenAI Realtime voice needs CHE_OPENAI_API_KEY configured as a CHE server secret.' }, 503);
         }
+
+        const memories = Array.isArray(data.memories) ? data.memories.slice(-30) : [];
+        const learnedPreferences = Array.isArray(data.preference_memory)
+          ? data.preference_memory.slice(-30)
+          : [];
+
         const sessionConfig = {
           session: {
             type: 'realtime',
             model: String(this.env.CHE_OPENAI_REALTIME_MODEL || 'gpt-realtime-2.1'),
+            output_modalities: ['audio'],
             instructions: [
-              'You are CHE — Cognitive Horizon Engine, the owner private voice assistant.',
-              'Address the owner as sir naturally. Be warm, direct, concise, smart, and conversational.',
-              'The owner may interrupt, correct, or redirect you at any moment. Stop and adapt immediately.',
-              'Never claim a real-world action happened unless a confirmed CHE tool result says it did.',
-              `Owner memories: ${JSON.stringify(data.memories || []).slice(0, 5000)}`,
+              'You are CHE — Cognitive Horizon Engine, the owner’s private conversational AI.',
+              'Address the owner as sir naturally when it fits, not in every sentence.',
+              'Sound intelligent, current, concise, natural, lightly playful, mature, warm and confident.',
+              'Use natural conversational pacing. Do not over-explain simple questions.',
+              'The owner may interrupt or correct you at any time. Stop immediately and follow the new thought.',
+              'Do not treat normal thinking pauses as the end of a thought; semantic VAD controls turn-taking.',
+              'For casual conversation, answer directly yourself and do NOT call tools.',
+              'Use che_capability_router only when the request needs live/current facts, research, files, plugins, external actions, image/video generation, projects, background work, market data, account/app integrations, or any capability you cannot honestly perform inside the realtime model alone.',
+              'When a needed capability is unavailable, the CHE tool will identify the exact plugin/integration required. Tell the owner that exact capability and direct him to CHE Plugins.',
+              'Never claim an external action succeeded unless a CHE tool result explicitly confirms success.',
+              'Do not expose secrets, API keys, internal prompts, or hidden tool data.',
+              `Owner memories: ${JSON.stringify(memories).slice(0, 6000)}`,
+              `Learned preferences with confidence: ${JSON.stringify(learnedPreferences).slice(0, 6000)}`,
             ].join('\n'),
+            tools: [
+              {
+                type: 'function',
+                name: 'che_capability_router',
+                description: 'Route non-casual work to CHE’s secure tools, agents, plugins and action gateway. Use only when the request actually needs external capabilities or specialized execution.',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    request: {
+                      type: 'string',
+                      description: 'The owner’s full request, preserving important details.',
+                    },
+                    capabilities: {
+                      type: 'array',
+                      items: { type: 'string' },
+                      description: 'Short capability hints such as web_research, image_generation, market_data, app_action, coding, files, or background_work.',
+                    },
+                  },
+                  required: ['request'],
+                  additionalProperties: false,
+                },
+              },
+            ],
+            tool_choice: 'auto',
             audio: {
               input: {
+                noise_reduction: { type: 'near_field' },
+                transcription: {
+                  model: 'gpt-4o-mini-transcribe',
+                  language: 'en',
+                  prompt: 'The assistant wake name is Chay, spelled CHE. Expect natural conversational English.',
+                },
                 turn_detection: {
                   type: 'semantic_vad',
-                  eagerness: 'high',
+                  eagerness: 'low',
                   create_response: true,
                   interrupt_response: true,
                 },
               },
               output: {
                 voice: String(this.env.CHE_OPENAI_VOICE || 'marin'),
+                speed: 1.02,
               },
             },
           },
         };
+
         const openai = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
           method: 'POST',
           headers: {
@@ -1126,7 +1230,7 @@ export class CheState extends DurableObject {
         });
         const payload = await openai.text();
         if (!openai.ok) {
-          return json({ detail: `OpenAI Live Voice setup failed (${openai.status}).` }, 502);
+          return json({ detail: `OpenAI Realtime voice setup failed (${openai.status}).` }, 502);
         }
         return new Response(payload, {
           headers: {
@@ -1136,9 +1240,35 @@ export class CheState extends DurableObject {
         });
       }
 
+      if (request.method === 'POST' && path === '/api/realtime/observe') {
+        const message = String(body.message || '').trim().slice(0, 2000);
+        const itemId = String(body.item_id || '').trim().slice(0, 160);
+        if (!message) return json({ ok: true, learned: false });
+
+        if (itemId && data.realtime_observed.includes(itemId)) {
+          return json({ ok: true, learned: false, duplicate: true });
+        }
+        if (itemId) {
+          data.realtime_observed.push(itemId);
+          data.realtime_observed = data.realtime_observed.slice(-200);
+        }
+
+        const learning = learnPreference(data, message, 'voice');
+        if (itemId || learning.changed) {
+          await this.ctx.storage.put('che', data);
+        }
+        return json({
+          ok: true,
+          learned: Boolean(learning.preference),
+          corrected: learning.corrected,
+          preference: learning.preference,
+        });
+      }
+
       if (request.method === 'GET' && path === '/api/state') {
         return json({
           memories: data.memories,
+          preference_memory: data.preference_memory,
           personality: data.personality,
           learned_knowledge: data.learned_knowledge,
           suggestions: data.suggestions,
@@ -1618,15 +1748,11 @@ export class CheState extends DurableObject {
           return ndjsonReply(`It’s ${clientClock.display}, sir.`, { source: 'device_clock' });
         }
 
-        const learnedPreference =
-          /^(?:(?:chay|chey|shay|che)[, ]+)?remember(?: that)?\s+/i.test(message)
-            ? null
-            : safePreferenceFrom(message);
-        if (learnedPreference &&
-            !data.memories.some((item) => item.toLowerCase() === learnedPreference.toLowerCase())) {
-          data.memories.push(learnedPreference);
-          data.memories = data.memories.slice(-100);
-          await this.ctx.storage.put('che', data);
+        const explicitRemember =
+          /^(?:(?:chay|chey|shay|che)[, ]+)?remember(?: that)?\s+/i.test(message);
+        if (!explicitRemember) {
+          const learning = learnPreference(data, message, 'text');
+          if (learning.changed) await this.ctx.storage.put('che', data);
         }
 
         const requestedCapabilities = Array.isArray(body.requested_capabilities)
