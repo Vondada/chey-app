@@ -117,7 +117,7 @@ function formatClientTime(clientTime) {
 }
 
 function safePreferenceFrom(message) {
-  const blocked = /password|passcode|security code|social security|credit card|medical|diagnos|religion|politic|party|vote|race|ethnic|sexual|criminal|address/i;
+  const blocked = /password|passcode|security code|social security|credit card|bank account|routing number|medical|diagnos|health|medicat|doctor|symptom|disease|religion|politic|party|vote|race|ethnic|sexual|criminal|address/i;
   if (blocked.test(message)) return null;
   const clean = (value) => String(value || '').trim().replace(/[.!?]+$/, '').slice(0, 180);
 
@@ -1909,6 +1909,7 @@ export class CheState extends DurableObject {
                 car: Boolean(this.env.CHE_CAR_URL),
                 smart_home: Boolean(this.env.CHE_SMART_HOME_URL),
                 natural_voice: Boolean(this.env.CHE_VOICE_URL),
+                openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY),
                 background_jobs: true,
                 quantum_compute: Boolean(this.env.CHE_QUANTUM_URL),
               })}`,
