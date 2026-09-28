@@ -321,7 +321,7 @@ class _CheVoiceSettingsSheetState extends State<CheVoiceSettingsSheet> {
                       child: ListView(
                         children: [
                           DropdownButtonFormField<int>(
-                            value: speakerId,
+                            initialValue: speakerId,
                             isExpanded: true,
                             decoration: const InputDecoration(
                               labelText: 'Local neural voice',
