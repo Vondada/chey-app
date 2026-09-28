@@ -1526,7 +1526,10 @@ OWNER AGENCY
       // so the owner can interrupt naturally (barge-in).
       setState(() {
         _nativeIosVoiceActive = started;
-        if (started) openConversation = true;
+        if (started) {
+          openConversation = true;
+          isListening = true;
+        }
       });
     } on MissingPluginException {
       // The native voice channel is optional until its Runner code is added.
@@ -1561,7 +1564,7 @@ OWNER AGENCY
         setState(() {
           _nativeIosVoiceActive = running;
           openConversation = running;
-          if (!running) isListening = false;
+          isListening = running && !_isSpeaking;
         });
       }
       return;
@@ -1991,6 +1994,15 @@ OWNER AGENCY
   }
 
   Future<void> _startListening() async {
+    // Native iPhone voice already owns the microphone and keeps it open for
+    // interruption detection. Never start the Flutter recognizer on top of it.
+    if (_nativeIosVoiceActive) {
+      if (mounted && !_isSpeaking && isListening != true) {
+        setState(() => isListening = true);
+      }
+      return;
+    }
+
     if (!speechAvailable ||
         !openConversation ||
         _isSending ||
@@ -2142,6 +2154,15 @@ OWNER AGENCY
     Duration delay = const Duration(milliseconds: 450),
   }) {
     if (kIsWeb) return;
+
+    // Native iPhone recognition is continuous and already listening while CHE
+    // talks. Starting speech_to_text here would fight for the same microphone.
+    if (_nativeIosVoiceActive) {
+      if (mounted && !_isSpeaking && isListening != true) {
+        setState(() => isListening = true);
+      }
+      return;
+    }
 
     _listenRestartTimer?.cancel();
 
