@@ -19,9 +19,14 @@ workflows:
         - pattern: "main"
           include: true
           source: true
+        - pattern: "che/final-native-shell"
+          include: true
+          source: true
     scripts:
       - name: Bootstrap native projects
         script: bash ./tool/bootstrap.sh
+      - name: Enable free local AI fallbacks
+        script: python3 ./tool/patch_free_local_ai.py
       - name: Build unsigned iOS app
         script: |
           flutter build ios --release --no-codesign \
