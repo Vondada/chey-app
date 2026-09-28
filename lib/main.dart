@@ -157,6 +157,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   bool _isSpeaking = false;
   bool _autoSentCurrentTurn = false;
   bool _loadingAgentState = false;
+  int _speechTurn = 0;
 
   Timer? _listenRestartTimer;
   Timer? _proactiveTimer;
@@ -1360,6 +1361,7 @@ OWNER AGENCY
 
   Future<void> speakText(String text) async {
     if (text.trim().isEmpty) return;
+    final speechTurn = ++_speechTurn;
 
     // CHE refers to and pronounces herself as "CHE" in normal conversation.
     // "Chay" is reserved for the spoken wake word only, so no substitution
@@ -1439,33 +1441,62 @@ OWNER AGENCY
       // Keep the typed response even if audio output fails. Native mode removes
       // Safari's autoplay restriction entirely.
     } finally {
-      if (!kIsWeb &&
-          defaultTargetPlatform == TargetPlatform.iOS &&
-          _nativeIosVoiceActive) {
-        try {
-          await CheNativeVoice.setAssistantSpeaking(false);
-        } catch (_) {}
-      }
+      if (speechTurn == _speechTurn) {
+        if (!kIsWeb &&
+            defaultTargetPlatform == TargetPlatform.iOS &&
+            _nativeIosVoiceActive) {
+          try {
+            await CheNativeVoice.setAssistantSpeaking(false);
+          } catch (_) {}
+        }
 
+        _isSpeaking = false;
+        if (mounted) setState(() {});
+
+        if (kIsWeb && openConversation) {
+          Future.delayed(
+            const Duration(milliseconds: 450),
+            () {
+              if (mounted &&
+                  openConversation &&
+                  !_isSending &&
+                  !_isSpeaking &&
+                  !isListening) {
+                _captureWebSpeech();
+              }
+            },
+          );
+        } else if (!kIsWeb && openConversation) {
+          _restartListeningSoon();
+        }
+      }
+    }
+  }
+
+  Future<void> _interruptSpeechAndListen({bool resumeListening = true}) async {
+    ++_speechTurn;
+    _listenRestartTimer?.cancel();
+    if (kIsWeb) {
+      try { che_web_voice.stopSpeech(); } catch (_) {}
+    } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+      try { await CheNativeVoice.stopAudio(); } catch (_) {}
+    }
+    await flutterTts.stop();
+    if (!mounted) return;
+    setState(() {
       _isSpeaking = false;
-      if (mounted) setState(() {});
-
-      if (kIsWeb && openConversation) {
-        Future.delayed(
-          const Duration(milliseconds: 450),
-          () {
-            if (mounted &&
-                openConversation &&
-                !_isSending &&
-                !_isSpeaking &&
-                !isListening) {
-              _captureWebSpeech();
-            }
-          },
-        );
-      } else if (!kIsWeb && openConversation) {
-        _restartListeningSoon();
+      if (resumeListening) {
+        openConversation = true;
+        cheSleeping = false;
       }
+    });
+    if (!resumeListening) return;
+    if (kIsWeb) {
+      _rearmWebMicSoon(delay: const Duration(milliseconds: 150));
+    } else if (_nativeIosVoiceActive) {
+      await CheNativeVoice.start();
+    } else {
+      await _startListening();
     }
   }
 
@@ -1591,6 +1622,10 @@ OWNER AGENCY
 
   Future<void> toggleListening() async {
     HapticFeedback.lightImpact();
+    if (_isSpeaking) {
+      await _interruptSpeechAndListen();
+      return;
+    }
     if (!kIsWeb &&
         defaultTargetPlatform == TargetPlatform.iOS &&
         _nativeIosVoiceActive) {
@@ -4614,6 +4649,7 @@ OWNER AGENCY
 
   Future<void> sendMessage({bool fromVoice = false}) async {
     if (_isSending) return;
+    if (_isSpeaking) await _interruptSpeechAndListen(resumeListening: false);
 
     final typedMessage = controller.text.trim();
     final message = typedMessage.isEmpty && _pendingAttachment != null
@@ -4728,15 +4764,6 @@ OWNER AGENCY
 
       _scrollToBottom();
 
-      // The Agent learns safe, stable preferences in the background after
-      // each turn. Refresh the UI shortly afterward.
-      unawaited(
-        Future.delayed(
-          const Duration(seconds: 2),
-          () => _loadAgentState(silent: true),
-        ),
-      );
-
       await speakText(finalReply);
     } on _CHEAgentException catch (e) {
       final errorReply = e.message;
@@ -4826,7 +4853,7 @@ OWNER AGENCY
     if (_isSending) {
       statusText = '●  CHE THINKING • EST. A FEW SECONDS';
     } else if (_isSpeaking) {
-      statusText = '●  CHE SPEAKING';
+      statusText = '●  CHE SPEAKING • TAP MIC TO INTERRUPT';
     } else if (cheSleeping) {
       statusText = isListening
           ? '●  STANDBY • SAY “CHAY”'
@@ -5018,7 +5045,7 @@ OWNER AGENCY
                           ? '●  STANDBY • SAY “CHAY” TO WAKE'
                           : '● OPEN CONVERSATION • LISTENING...')
                       : _isSpeaking
-                          ? '● OPEN CONVERSATION • CHE SPEAKING...'
+                          ? '● OPEN CONVERSATION • TAP MIC TO INTERRUPT'
                           : _isSending
                               ? '● OPEN CONVERSATION • THINKING...'
                               : '● OPEN CONVERSATION',
@@ -5132,21 +5159,23 @@ OWNER AGENCY
                   IconButton(
                     onPressed: toggleListening,
                     icon: Icon(
-                      openConversation || isListening
-                          ? Icons.mic
-                          : Icons.mic_none,
-                      color: openConversation || isListening
+                      _isSpeaking
+                          ? Icons.stop_circle_outlined
+                          : openConversation || isListening
+                              ? Icons.mic
+                              : Icons.mic_none,
+                      color: _isSpeaking || openConversation || isListening
                           ? Colors.redAccent
                           : accent,
                       size: 29,
                     ),
-                    tooltip: kIsWeb
-                        ? (isListening
-                            ? 'Stop listening'
-                            : 'Tap to talk')
-                        : (openConversation
-                            ? 'Stop open conversation'
-                            : 'Start open conversation'),
+                    tooltip: _isSpeaking
+                        ? 'Interrupt CHE and listen'
+                        : kIsWeb
+                            ? (isListening ? 'Stop listening' : 'Tap to talk')
+                            : (openConversation
+                                ? 'Stop open conversation'
+                                : 'Start open conversation'),
                   ),
                   CircleAvatar(
                     backgroundColor: accent,
