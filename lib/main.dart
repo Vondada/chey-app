@@ -32,6 +32,12 @@ import 'che_app_portal.dart';
 import 'che_plugin_manager.dart';
 import 'che_theme.dart';
 import 'che_world_hub.dart';
+import 'che_immersive_hub_shell.dart';
+import 'insights_brain_scene.dart';
+import 'devices_hub_scene.dart';
+import 'music_studio_scene.dart';
+import 'create_gallery_scene.dart';
+import 'office_scene.dart';
 import 'insights_brain_scene.dart';
 import 'devices_hub_scene.dart';
 import 'music_studio_scene.dart';
@@ -3367,86 +3373,39 @@ OWNER AGENCY
 
   void _openAssistantHub({int tab = 0}) {
     _selectedTab = tab < 0 ? 0 : (tab > 8 ? 8 : tab);
-    showModalBottomSheet(
+    showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF101821),
       isScrollControlled: true,
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (sheetContext, setSheetState) {
-            return DefaultTabController(
-              length: 9,
-              initialIndex: _selectedTab,
-              child: SizedBox(
-                height: MediaQuery.of(sheetContext).size.height * 0.90,
-                child: Column(
-                  children: [
-                    const SizedBox(height: 10),
-                    Container(
-                      width: 42,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        color: Colors.white24,
-                        borderRadius: BorderRadius.circular(99),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'CHE',
-                      style: TextStyle(
-                        color: Color(0xFF67E8D1),
-                        fontSize: 26,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 4,
-                      ),
-                    ),
-                    const Text(
-                      'COGNITIVE.HORIZON.ENGINE',
-                      style: TextStyle(
-                        color: Colors.white54,
-                        fontSize: 9,
-                        letterSpacing: 1.5,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TabBar(
-                      onTap: (index) {
-                        setSheetState(() => _selectedTab = index);
-                      },
-                      isScrollable: true,
-                      tabs: const [
-                        Tab(icon: Icon(Icons.memory_outlined), text: 'Memory'),
-                        Tab(icon: Icon(Icons.auto_awesome_outlined), text: 'Insights'),
-                        Tab(icon: Icon(Icons.show_chart), text: 'Markets'),
-                        Tab(icon: Icon(Icons.business_center_outlined), text: 'Business'),
-                        Tab(icon: Icon(Icons.devices_other_outlined), text: 'Devices'),
-                        Tab(icon: Icon(Icons.music_note_outlined), text: 'Music'),
-                        Tab(icon: Icon(Icons.lightbulb_outline), text: 'Create'),
-                        Tab(icon: Icon(Icons.workspaces_outline), text: 'Office'),
-                        Tab(icon: Icon(Icons.apps_rounded), text: 'Apps'),
-                      ],
-                    ),
-                    Expanded(
-                      child: TabBarView(
-                        physics: const NeverScrollableScrollPhysics(),
-                        children: [
-                          _hubMemoryTab(),
-                          _hubInsightsTab(),
-                          _hubMarketsTab(),
-                          _hubBusinessTab(),
-                          _hubDevicesTab(),
-                          _hubMusicTab(),
-                          _hubCreateTab(),
-                          _hubOfficeTab(),
-                          const CheAppsHubTab(),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
+      builder: (context) {
+        return SizedBox(
+          height: MediaQuery.of(context).size.height * 0.90,
+          child: CheImmersiveHubShell(
+            initialIndex: _selectedTab,
+            onIndexChanged: (index) => _selectedTab = index,
+            tabs: const [
+              Tab(icon: Icon(Icons.memory_outlined), text: 'Memory'),
+              Tab(icon: Icon(Icons.auto_awesome_outlined), text: 'Insights'),
+              Tab(icon: Icon(Icons.show_chart), text: 'Markets'),
+              Tab(icon: Icon(Icons.business_center_outlined), text: 'Business'),
+              Tab(icon: Icon(Icons.devices_other_outlined), text: 'Devices'),
+              Tab(icon: Icon(Icons.music_note_outlined), text: 'Music'),
+              Tab(icon: Icon(Icons.lightbulb_outline), text: 'Create'),
+              Tab(icon: Icon(Icons.workspaces_outline), text: 'Office'),
+              Tab(icon: Icon(Icons.apps_rounded), text: 'Apps'),
+            ],
+            pages: [
+              (_) => _hubMemoryTab(),
+              (active) => _hubInsightsTab(active),
+              (_) => _hubMarketsTab(),
+              (_) => _hubBusinessTab(),
+              (active) => _hubDevicesTab(active),
+              (active) => _hubMusicTab(active),
+              (active) => _hubCreateTab(active),
+              (active) => _hubOfficeTab(active),
+              (_) => const CheAppsHubTab(),
+            ],
+          ),
         );
       },
     );
@@ -3500,9 +3459,9 @@ OWNER AGENCY
     );
   }
 
-  Widget _hubInsightsTab() {
+  Widget _hubInsightsTab(bool active) {
     return InsightsBrainScene(
-      active: _selectedTab == 1,
+      active: active,
       learnedAboutYou: learnedPersonality,
       learnedKnowledge: learnedKnowledge,
       suggestions: suggestions,
@@ -3653,42 +3612,46 @@ OWNER AGENCY
     );
   }
 
-  Widget _hubDevicesTab() {
+  Widget _hubDevicesTab(bool active) {
     return DevicesHubScene(
-      active: _selectedTab == 4,
+      active: active,
       phoneConnected: _deviceToken != null,
       integrations: integrations,
       onPrompt: _runHubPrompt,
     );
   }
 
-  Widget _hubMusicTab() {
+  Widget _hubMusicTab(bool active) {
     return MusicStudioScene(
-      active: _selectedTab == 5,
+      active: active,
       musicConnected: integrations['music'] == true,
       carConnected: integrations['car'] == true,
       onMusic: () => _runHubPrompt(
         'Help me connect and control my music through CHE. Use the authorized music integration if connected.',
       ),
       onCar: () => _runHubPrompt(
-        'Help me connect my car audio to CHE. Use only supported authorized controls.',
+        'Help me connect my car audio to CHE. Use only supported authorized audio controls.',
       ),
     );
   }
 
-  Widget _hubCreateTab() {
+  Widget _hubCreateTab(bool active) {
     return CreateGalleryScene(
-      active: _selectedTab == 6,
+      active: active,
       projects: projects,
       vaultCount: vaultItems.length,
       researchConnected: integrations['web_research'] == true,
       imageConnected: integrations['image_generation'] == true,
       videoConnected: integrations['video_generation'] == true,
-      onNewProject: _createProjectDialog,
+      onNewProject: () {
+        unawaited(_createProjectDialog());
+      },
       onOpenProject: _openProjectEditor,
-      onVault: _openVault,
+      onVault: () {
+        unawaited(_openVault());
+      },
       onResearch: () => _runHubPrompt(
-        'Use connected live research to check novelty and feasibility for the project I am working on. Separate confirmed facts from assumptions.',
+        'Help me research the novelty and feasibility of the project I am working on. Use connected live research if available and clearly separate confirmed facts from assumptions.',
       ),
       onImage: () => _runHubPrompt(
         'Create an image for me. Ask only for any essential missing detail, then use the connected CHE image generator if available.',
@@ -3925,13 +3888,15 @@ OWNER AGENCY
     );
   }
 
-  Widget _hubOfficeTab() {
+  Widget _hubOfficeTab(bool active) {
     return OfficeScene(
-      active: _selectedTab == 7,
+      active: active,
       team: team,
       teamTasks: teamTasks,
       backgroundJobs: backgroundJobs,
-      onAddPartner: _createPartnerDialog,
+      onAddPartner: () {
+        unawaited(_createPartnerDialog());
+      },
       onOpenPartner: (partner) {
         unawaited(_openPartner(partner));
       },
