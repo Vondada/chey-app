@@ -55,25 +55,37 @@ fi
 
 
 # Install the CHE native iPhone voice bridge after Flutter creates ios/.
-# It supports provider-generated neural audio when available and a premium
-# on-device AVSpeechSynthesizer fallback without adding another Flutter plugin.
+# FREE VOICE MODE: iOS Speech + premium AVSpeechSynthesizer. This keeps the
+# voice layer on-device / Apple-provided and adds hands-free barge-in so the
+# owner can interrupt CHE while she is speaking without paying a voice API.
 if [[ -f ios/Runner/AppDelegate.swift ]]; then
   cat > ios/Runner/AppDelegate.swift <<'SWIFT'
 import Flutter
 import UIKit
 import AVFoundation
+import Speech
 import AppIntents
 
 private final class CHEVoiceStreamHandler: NSObject, FlutterStreamHandler {
+  private var sink: FlutterEventSink?
+
   func onListen(
     withArguments arguments: Any?,
     eventSink events: @escaping FlutterEventSink
   ) -> FlutterError? {
-    nil
+    sink = events
+    return nil
   }
 
   func onCancel(withArguments arguments: Any?) -> FlutterError? {
-    nil
+    sink = nil
+    return nil
+  }
+
+  func emit(_ event: [String: Any]) {
+    DispatchQueue.main.async { [weak self] in
+      self?.sink?(event)
+    }
   }
 }
 
@@ -84,8 +96,6 @@ struct WakeCHEIntent: AppIntent {
     "Opens CHE for a hands-free conversation."
   )
 
-  // Apple allows this intent to be invoked while the device is locked.
-  // iOS still decides whether presenting the full app UI requires unlock.
   static var authenticationPolicy: IntentAuthenticationPolicy {
     .alwaysAllowed
   }
@@ -94,10 +104,6 @@ struct WakeCHEIntent: AppIntent {
 
   @MainActor
   func perform() async throws -> some IntentResult & ProvidesDialog {
-    // Use the same UserDefaults key Flutter's shared_preferences plugin
-    // reads on iOS (it stores under the "flutter." prefix), so the app can
-    // actually detect this and auto-resume the conversation on launch —
-    // not just come to the foreground silently.
     UserDefaults.standard.set(true, forKey: "flutter.che_wake_requested")
     return .result(dialog: "Opening CHE.")
   }
@@ -125,7 +131,22 @@ struct CHEAppShortcuts: AppShortcutsProvider {
   private var player: AVAudioPlayer?
   private var pendingSpeechResult: FlutterResult?
   private var pendingAudioResult: FlutterResult?
+
   private let voiceStreamHandler = CHEVoiceStreamHandler()
+  private let audioEngine = AVAudioEngine()
+  private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+  private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+  private var recognitionTask: SFSpeechRecognitionTask?
+  private var utteranceTimer: Timer?
+  private var hasInputTap = false
+  private var nativeVoiceRunning = false
+  private var assistantSpeaking = false
+  private var bargeInDetected = false
+  private var latestTranscript = ""
+  private var lastDeliveredTranscript = ""
+  private var assistantText = ""
+  private var ignoreBargeInUntil = Date.distantPast
+  private var recognitionGeneration = 0
 
   override func application(
     _ application: UIApplication,
@@ -147,16 +168,20 @@ struct CHEAppShortcuts: AppShortcutsProvider {
 
       methods.setMethodCallHandler { [weak self] call, result in
         guard let self else {
-          result(FlutterError(code: "voice_unavailable", message: "CHE voice unavailable.", details: nil))
+          result(FlutterError(
+            code: "voice_unavailable",
+            message: "CHE voice unavailable.",
+            details: nil
+          ))
           return
         }
 
         switch call.method {
         case "start":
-          // Flutter speech_to_text remains the reliable recognition layer.
-          result(false)
+          self.startNativeRecognition(result: result)
 
         case "stop":
+          self.stopNativeRecognition()
           self.stopAllAudio()
           result(true)
 
@@ -164,16 +189,27 @@ struct CHEAppShortcuts: AppShortcutsProvider {
           result(true)
 
         case "wake":
-          result(true)
+          if !self.nativeVoiceRunning {
+            self.startNativeRecognition(result: result)
+          } else {
+            result(true)
+          }
 
-        case "assistantSpeaking":          result(nil)
+        case "assistantSpeaking":
+          let speaking = (call.arguments as? Bool) ?? false
+          self.setAssistantSpeaking(speaking)
+          result(nil)
 
         case "status":
           result([
             "native_tts": true,
             "neural_audio_playback": true,
             "premium_voice_selection": true,
-            "native_recognition": false,
+            "native_recognition": true,
+            "barge_in": true,
+            "free_voice_mode": true,
+            "on_device_recognition":
+              self.speechRecognizer?.supportsOnDeviceRecognition == true,
           ])
 
         case "stopAudio":
@@ -216,11 +252,300 @@ struct CHEAppShortcuts: AppShortcutsProvider {
       try session.setCategory(
         .playAndRecord,
         mode: .voiceChat,
-        options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP]
+        options: [.defaultToSpeaker, .allowBluetooth]
       )
       try session.setActive(true)
     } catch {
-      // Speech still gets a chance to play with the system's current session.
+      voiceStreamHandler.emit([
+        "type": "error",
+        "message": "CHE could not configure iPhone voice audio."
+      ])
+    }
+  }
+
+  private func startNativeRecognition(result: @escaping FlutterResult) {
+    if nativeVoiceRunning {
+      result(true)
+      return
+    }
+
+    SFSpeechRecognizer.requestAuthorization { [weak self] status in
+      guard let self else { return }
+      DispatchQueue.main.async {
+        guard status == .authorized else {
+          result(false)
+          self.voiceStreamHandler.emit([
+            "type": "error",
+            "message": "Speech Recognition permission is required for hands-free CHE voice."
+          ])
+          return
+        }
+
+        AVAudioSession.sharedInstance().requestRecordPermission { [weak self] allowed in
+          guard let self else { return }
+          DispatchQueue.main.async {
+            guard allowed else {
+              result(false)
+              self.voiceStreamHandler.emit([
+                "type": "error",
+                "message": "Microphone permission is required for hands-free CHE voice."
+              ])
+              return
+            }
+
+            self.nativeVoiceRunning = true
+            do {
+              try self.beginRecognitionStream()
+              self.voiceStreamHandler.emit([
+                "type": "state",
+                "running": true,
+                "listening": true,
+              ])
+              result(true)
+            } catch {
+              self.nativeVoiceRunning = false
+              self.cancelRecognitionResources()
+              self.voiceStreamHandler.emit([
+                "type": "error",
+                "message": "CHE could not start native speech recognition."
+              ])
+              result(false)
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private func beginRecognitionStream() throws {
+    recognitionGeneration += 1
+    let generation = recognitionGeneration
+
+    utteranceTimer?.invalidate()
+    utteranceTimer = nil
+    latestTranscript = ""
+    cancelRecognitionResources(keepGeneration: true)
+
+    configureAudioSession()
+
+    guard let speechRecognizer, speechRecognizer.isAvailable else {
+      throw NSError(
+        domain: "CHEVoice",
+        code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "Speech recognition unavailable."]
+      )
+    }
+
+    let request = SFSpeechAudioBufferRecognitionRequest()
+    request.shouldReportPartialResults = true
+    request.taskHint = .dictation
+    if speechRecognizer.supportsOnDeviceRecognition {
+      request.requiresOnDeviceRecognition = true
+    }
+    recognitionRequest = request
+
+    let inputNode = audioEngine.inputNode
+    if #available(iOS 13.0, *) {
+      try? inputNode.setVoiceProcessingEnabled(true)
+    }
+
+    let format = inputNode.outputFormat(forBus: 0)
+    inputNode.installTap(
+      onBus: 0,
+      bufferSize: 1024,
+      format: format
+    ) { [weak self] buffer, _ in
+      self?.recognitionRequest?.append(buffer)
+    }
+    hasInputTap = true
+
+    audioEngine.prepare()
+    try audioEngine.start()
+
+    recognitionTask = speechRecognizer.recognitionTask(with: request) {
+      [weak self] result, error in
+      guard let self, self.nativeVoiceRunning else { return }
+      guard generation == self.recognitionGeneration else { return }
+
+      if let result {
+        self.handleRecognition(result)
+      }
+
+      if error != nil && generation == self.recognitionGeneration {
+        self.restartRecognitionSoon(delay: 0.35)
+      }
+    }
+  }
+
+  private func handleRecognition(_ result: SFSpeechRecognitionResult) {
+    let transcript = result.bestTranscription.formattedString
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+
+    guard !transcript.isEmpty else { return }
+    guard transcript != latestTranscript else { return }
+
+    latestTranscript = transcript
+
+    if assistantSpeaking &&
+        !bargeInDetected &&
+        Date() >= ignoreBargeInUntil &&
+        !looksLikeAssistantEcho(transcript) {
+      bargeInDetected = true
+      assistantSpeaking = false
+      stopAllAudio()
+      voiceStreamHandler.emit([
+        "type": "barge_in",
+        "text": transcript,
+      ])
+    }
+
+    if assistantSpeaking && !bargeInDetected {
+      return
+    }
+
+    utteranceTimer?.invalidate()
+
+    if result.isFinal {
+      deliverTranscript(transcript)
+      return
+    }
+
+    utteranceTimer = Timer.scheduledTimer(
+      withTimeInterval: 0.62,
+      repeats: false
+    ) { [weak self] _ in
+      guard let self else { return }
+      guard self.nativeVoiceRunning else { return }
+      guard !self.assistantSpeaking else { return }
+      guard self.latestTranscript == transcript else { return }
+      self.deliverTranscript(transcript)
+    }
+  }
+
+  private func deliverTranscript(_ text: String) {
+    let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !cleaned.isEmpty else { return }
+
+    if cleaned.caseInsensitiveCompare(lastDeliveredTranscript) == .orderedSame {
+      restartRecognitionSoon(delay: 0.12)
+      return
+    }
+
+    lastDeliveredTranscript = cleaned
+    latestTranscript = ""
+    utteranceTimer?.invalidate()
+    utteranceTimer = nil
+
+    voiceStreamHandler.emit([
+      "type": "utterance",
+      "text": cleaned,
+    ])
+
+    bargeInDetected = false
+    restartRecognitionSoon(delay: 0.12)
+  }
+
+  private func looksLikeAssistantEcho(_ candidate: String) -> Bool {
+    let heard = normalizedWords(candidate)
+    let spoken = normalizedWords(assistantText)
+    guard !heard.isEmpty, !spoken.isEmpty else { return false }
+
+    let interruptionWords = [
+      "stop", "wait", "no", "pause", "hold on", "chay", "che", "hey chay"
+    ]
+    if interruptionWords.contains(heard) {
+      return false
+    }
+
+    let wordCount = heard.split(separator: " ").count
+    if wordCount <= 1 {
+      return spoken.contains(heard)
+    }
+
+    return spoken.contains(heard) || heard.contains(spoken)
+  }
+
+  private func normalizedWords(_ value: String) -> String {
+    value
+      .lowercased()
+      .components(separatedBy: CharacterSet.alphanumerics.inverted)
+      .filter { !$0.isEmpty }
+      .joined(separator: " ")
+  }
+
+  private func setAssistantSpeaking(_ speaking: Bool) {
+    if speaking {
+      assistantSpeaking = true
+      bargeInDetected = false
+      latestTranscript = ""
+      ignoreBargeInUntil = Date().addingTimeInterval(0.28)
+      return
+    }
+
+    let wasBargeIn = bargeInDetected
+    assistantSpeaking = false
+    ignoreBargeInUntil = .distantPast
+
+    if !wasBargeIn && nativeVoiceRunning {
+      latestTranscript = ""
+      restartRecognitionSoon(delay: 0.08)
+    }
+  }
+
+  private func restartRecognitionSoon(delay: TimeInterval) {
+    guard nativeVoiceRunning else { return }
+    recognitionGeneration += 1
+    let expectedGeneration = recognitionGeneration
+
+    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+      guard let self, self.nativeVoiceRunning else { return }
+      guard self.recognitionGeneration == expectedGeneration else { return }
+
+      do {
+        try self.beginRecognitionStream()
+      } catch {
+        self.voiceStreamHandler.emit([
+          "type": "error",
+          "message": "CHE voice listening paused. Tap the mic to restart it."
+        ])
+      }
+    }
+  }
+
+  private func stopNativeRecognition() {
+    nativeVoiceRunning = false
+    recognitionGeneration += 1
+    utteranceTimer?.invalidate()
+    utteranceTimer = nil
+    latestTranscript = ""
+    lastDeliveredTranscript = ""
+    bargeInDetected = false
+    assistantSpeaking = false
+    cancelRecognitionResources()
+    voiceStreamHandler.emit([
+      "type": "state",
+      "running": false,
+      "listening": false,
+    ])
+  }
+
+  private func cancelRecognitionResources(keepGeneration: Bool = false) {
+    if !keepGeneration {
+      recognitionGeneration += 1
+    }
+
+    recognitionRequest?.endAudio()
+    recognitionRequest = nil
+    recognitionTask?.cancel()
+    recognitionTask = nil
+
+    if audioEngine.isRunning {
+      audioEngine.stop()
+    }
+
+    if hasInputTap {
+      audioEngine.inputNode.removeTap(onBus: 0)
+      hasInputTap = false
     }
   }
 
@@ -228,10 +553,13 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     let voices = AVSpeechSynthesisVoice.speechVoices().filter {
       $0.language.lowercased().hasPrefix("en")
     }
+
+    // Prefer Apple's premium/enhanced voices when the owner has them installed.
     let preferred = ["Ava", "Samantha", "Zoe", "Nicky", "Serena"]
 
     func score(_ voice: AVSpeechSynthesisVoice) -> Int {
       var value = 0
+
       if voice.quality == .enhanced {
         value += 500
       }
@@ -246,6 +574,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
       if voice.language.lowercased().hasPrefix("en-us") {
         value += 100
       }
+
       return value
     }
 
@@ -256,13 +585,15 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     stopAllAudio()
     configureAudioSession()
 
+    assistantText = text
+
     let utterance = AVSpeechUtterance(string: text)
     utterance.voice = bestEnglishVoice()
-    utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.86
-    utterance.pitchMultiplier = 0.96
+    utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.94
+    utterance.pitchMultiplier = 0.98
     utterance.volume = 1.0
-    utterance.preUtteranceDelay = 0.02
-    utterance.postUtteranceDelay = 0.03
+    utterance.preUtteranceDelay = 0.0
+    utterance.postUtteranceDelay = 0.0
 
     pendingSpeechResult = result
     synthesizer.speak(utterance)
@@ -271,6 +602,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
   private func play(data: Data, result: @escaping FlutterResult) {
     stopAllAudio()
     configureAudioSession()
+    assistantText = ""
 
     do {
       let audioPlayer = try AVAudioPlayer(data: data)
@@ -297,6 +629,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     if synthesizer.isSpeaking || synthesizer.isPaused {
       synthesizer.stopSpeaking(at: .immediate)
     }
+
     player?.stop()
     player = nil
 
@@ -314,6 +647,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     _ synthesizer: AVSpeechSynthesizer,
     didFinish utterance: AVSpeechUtterance
   ) {
+    assistantText = ""
     if let pending = pendingSpeechResult {
       pendingSpeechResult = nil
       pending(true)
@@ -324,13 +658,17 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     _ synthesizer: AVSpeechSynthesizer,
     didCancel utterance: AVSpeechUtterance
   ) {
+    assistantText = ""
     if let pending = pendingSpeechResult {
       pendingSpeechResult = nil
       pending(false)
     }
   }
 
-  func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+  func audioPlayerDidFinishPlaying(
+    _ player: AVAudioPlayer,
+    successfully flag: Bool
+  ) {
     self.player = nil
     if let pending = pendingAudioResult {
       pendingAudioResult = nil
