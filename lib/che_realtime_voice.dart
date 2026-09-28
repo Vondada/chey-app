@@ -51,6 +51,7 @@ class CheRealtimeVoiceEngine {
   bool _handlingTool = false;
   String? _activeResponseId;
   String _assistantTranscript = '';
+  bool _assistantFinalDelivered = false;
 
   String? lastServerEvent;
   String? lastError;
@@ -270,6 +271,7 @@ class CheRealtimeVoiceEngine {
           state.responseCreated(_activeResponseId);
         }
         _assistantTranscript = '';
+        _assistantFinalDelivered = false;
         _emitSnapshot();
         return;
 
@@ -296,7 +298,10 @@ class CheRealtimeVoiceEngine {
             _assistantTranscript;
         if (transcript.trim().isNotEmpty) {
           _assistantTranscript = transcript;
-          onAssistantTranscript(_assistantTranscript, true, responseId);
+          if (!_assistantFinalDelivered) {
+            _assistantFinalDelivered = true;
+            onAssistantTranscript(_assistantTranscript, true, responseId);
+          }
         }
         return;
 
@@ -311,7 +316,8 @@ class CheRealtimeVoiceEngine {
             : _activeResponseId;
         if (state.acceptResponseEvent(responseId)) {
           state.assistantDone(responseId: responseId);
-          if (_assistantTranscript.trim().isNotEmpty) {
+          if (_assistantTranscript.trim().isNotEmpty && !_assistantFinalDelivered) {
+            _assistantFinalDelivered = true;
             onAssistantTranscript(_assistantTranscript, true, responseId);
           }
         }
@@ -435,6 +441,7 @@ class CheRealtimeVoiceEngine {
       'event_id': _eventId('clear'),
     });
     _assistantTranscript = '';
+    _assistantFinalDelivered = false;
     _activeResponseId = null;
   }
 
