@@ -137,6 +137,39 @@ function responseText(output) {
   return String(output?.response || output?.choices?.[0]?.message?.content || '');
 }
 
+function summarizeOlderMessages(messages, maxChars = 1400) {
+  const lines = [];
+  for (const message of messages.slice(-12)) {
+    const text = contentText(message?.content).replace(/\s+/g, ' ').trim();
+    if (!text) continue;
+    const role = ['user', 'assistant', 'tool'].includes(message?.role) ? message.role : 'context';
+    lines.push(`${role}: ${text.slice(0, 180)}`);
+  }
+  const summary = lines.join('\n');
+  return summary.length > maxChars ? summary.slice(summary.length - maxChars) : summary;
+}
+
+function compactEngineInput(input) {
+  const messages = Array.isArray(input?.messages) ? input.messages : [];
+  const system = messages.filter((message) => message?.role === 'system');
+  const conversation = messages.filter((message) => message?.role !== 'system');
+  if (conversation.length <= 10) return { ...input, messages: [...system, ...conversation] };
+
+  const recent = conversation.slice(-10);
+  const summary = summarizeOlderMessages(conversation.slice(0, -10));
+  return {
+    ...input,
+    messages: [
+      ...system,
+      ...(summary ? [{
+        role: 'assistant',
+        content: `Earlier conversation summary for context:\n${summary}`,
+      }] : []),
+      ...recent,
+    ],
+  };
+}
+
 function estimateTotalTokens(input, output) {
   return estimateInputTokens(input) + Math.max(1, Math.ceil(responseText(output).length / 4));
 }
@@ -315,14 +348,15 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   const now = Date.now();
   const casual = isShortCasualRequest(model, input);
   const strongProviderModel = wantsStrongProviderModel(model, input);
+  const engineInput = compactEngineInput(input);
 
   if (env.AI && now >= cloudflareExhaustedUntil) {
     if (await isPastDailyBudget(env, usageStorage, 'cloudflare', now)) {
       errors.push('cloudflare: daily budget at 90%');
     } else {
       try {
-        const out = await env.AI.run(model, input);
-        await addEstimatedUsage(env, usageStorage, 'cloudflare', estimateTotalTokens(input, out), now);
+        const out = await env.AI.run(model, engineInput);
+        await addEstimatedUsage(env, usageStorage, 'cloudflare', estimateTotalTokens(engineInput, out), now);
         return out;
       } catch (error) {
         if (isQuotaError(error)) {
@@ -348,14 +382,27 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
       continue;
     }
     try {
-      const called = await callProvider(env, provider, strongProviderModel, input, fetcher);
+      const called = await callProvider(env, provider, strongProviderModel, engineInput, fetcher);
       await addEstimatedUsage(env, usageStorage, provider.id, called.usageTokens, now);
       return called.result;
     } catch (error) {
+      if (error?.status === 429) {
+        try {
+          const retry = await callProvider(env, provider, false, engineInput, fetcher);
+          await addEstimatedUsage(env, usageStorage, provider.id, retry.usageTokens, now);
+          return retry.result;
+        } catch (retryError) {
+          errors.push(`${provider.id}: ${String(error?.message || error)}; fast retry: ${String(retryError?.message || retryError)}`);
+          const rest = [401, 402, 403].includes(retryError?.status) ? 3_600_000 : retryError?.status === 429 ? 60_000 : 20_000;
+          providerCooldownUntil.set(provider.id, now + rest);
+          continue;
+        }
+      }
+
       // Rest a failing engine so the next message goes straight to one that
       // works: an hour when it wants payment or a key (401/402/403), a
       // minute when rate-limited, 20 seconds for other errors.
-      const rest = [401, 402, 403].includes(error?.status) ? 3_600_000 : error?.status === 429 ? 60_000 : 20_000;
+      const rest = [401, 402, 403].includes(error?.status) ? 3_600_000 : 20_000;
       providerCooldownUntil.set(provider.id, now + rest);
       errors.push(String(error?.message || error));
     }
