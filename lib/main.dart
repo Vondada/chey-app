@@ -1474,15 +1474,7 @@ OWNER AGENCY
       }
     }
 
-    final recentMessages = messages.length > 14
-        ? messages.sublist(messages.length - 14)
-        : List<Map<String, String>>.from(messages);
-    final history = recentMessages
-        .map((item) => {
-              'role': item['role'] == 'assistant' ? 'assistant' : 'user',
-              'content': item['text'] ?? '',
-            })
-        .toList();
+    final history = _recentHistoryExcluding(clean);
 
     _streamMediaUrl = null;
     _streamMediaType = null;
@@ -2003,7 +1995,7 @@ OWNER AGENCY
 
       if (wakePhraseMode && cheSleeping) {
         final wakeMatch = RegExp(
-          r'^(?:hey\s+)?(?:chay|chey|shay|che|she|c\.?\s*h\.?\s*e\.?)[\s,.:;!?-]*',
+          r'^(?:hey\s+)?(?:chay|chey|shay|chai|chee|chi|che|she|c\.?\s*h\.?\s*e\.?)[\s,.:;!?-]*',
           caseSensitive: false,
         ).firstMatch(words);
 
@@ -2043,7 +2035,7 @@ OWNER AGENCY
       words = words
           .replaceFirst(
             RegExp(
-              r'^(?:hey\s+)?(?:chay|chey|shay|che|she|c\.?\s*h\.?\s*e\.?)[\s,.:;!?-]*',
+              r'^(?:hey\s+)?(?:chay|chey|shay|chai|chee|chi|che|she|c\.?\s*h\.?\s*e\.?)[\s,.:;!?-]*',
               caseSensitive: false,
             ),
             '',
@@ -2216,12 +2208,18 @@ OWNER AGENCY
     if (text == 'chay' ||
         text == 'chey' ||
         text == 'shay' ||
+        text == 'chai' ||
+        text == 'chee' ||
+        text == 'chi' ||
         text == 'che' ||
         text == 'c h e' ||
         text == 'c.h.e.' ||
         text == 'hey chay' ||
         text == 'hey chey' ||
         text == 'hey shay' ||
+        text == 'hey chai' ||
+        text == 'hey chee' ||
+        text == 'hey chi' ||
         text == 'hey che' ||
         text == 'hey c h e' ||
         text == 'she') {
@@ -2229,7 +2227,7 @@ OWNER AGENCY
     }
 
     final wakeMatch = RegExp(
-      r'^(?:hey\s+)?(?:chay|chey|shay|che|she|c\.?\s*h\.?\s*e\.?)[\s,!.?]*',
+      r'^(?:hey\s+)?(?:chay|chey|shay|chai|chee|chi|che|she|c\.?\s*h\.?\s*e\.?)[\s,!.?]*',
       caseSensitive: false,
     ).firstMatch(raw.trim());
     return wakeMatch != null && wakeMatch.end == raw.trim().length;
@@ -2459,7 +2457,7 @@ OWNER AGENCY
           spokenWords = spokenWords
               .replaceFirst(
                 RegExp(
-                  r'^(?:hey\s+)?(?:chay|chey|shay|che|she)\b[\s,.:;!?-]*',
+                  r'^(?:hey\s+)?(?:chay|chey|shay|chai|chee|chi|che|she)\b[\s,.:;!?-]*',
                   caseSensitive: false,
                 ),
                 '',
@@ -4630,7 +4628,7 @@ OWNER AGENCY
   Future<bool> _openExternalAppByVoice(String message) async {
     var requested = message.trim().toLowerCase();
 
-    const wakePrefixes = ['chay ', 'chey ', 'shay ', 'che '];
+    const wakePrefixes = ['chay ', 'chey ', 'shay ', 'chai ', 'chee ', 'chi ', 'che '];
     for (final prefix in wakePrefixes) {
       if (requested.startsWith(prefix)) {
         requested = requested.substring(prefix.length).trim();
@@ -4782,6 +4780,637 @@ OWNER AGENCY
     }
 
     return false;
+  }
+
+  List<Map<String, String>> _recentHistoryExcluding(String currentMessage) {
+    final source = List<Map<String, String>>.from(messages);
+    if (source.isNotEmpty &&
+        source.last['role'] == 'user' &&
+        (source.last['text'] ?? '').trim() == currentMessage.trim()) {
+      source.removeLast();
+    }
+    final recent = source.length > 14
+        ? source.sublist(source.length - 14)
+        : source;
+    return recent
+        .map(
+          (item) => {
+            'role': item['role'] == 'assistant' ? 'assistant' : 'user',
+            'content': item['text'] ?? '',
+          },
+        )
+        .toList();
+  }
+
+  String? _credentialAccessReply(String message) {
+    final text = message.trim().toLowerCase();
+    final direct = RegExp(
+      r'^(?:my\s+)?(?:passwords?|passcodes?|login\s+credentials?|security\s+codes?)\??
+    if (_isSending) return;
+    if (_isSpeaking) await _interruptSpeechAndListen(resumeListening: false);
+
+    final typedMessage = controller.text.trim();
+    final message = typedMessage.isEmpty && _pendingAttachment != null
+        ? 'Analyze this attachment.'
+        : typedMessage;
+    if (message.isEmpty) return;
+
+    if (await _openExternalAppByVoice(message)) {
+      return;
+    }
+
+    if (await _handleLocalNavigation(message)) {
+      controller.clear();
+      return;
+    }
+
+    final credentialReply = _credentialAccessReply(message);
+    if (credentialReply != null) {
+      if (!mounted) return;
+      setState(() {
+        messages.add({'role': 'user', 'text': message});
+        messages.add({'role': 'assistant', 'text': credentialReply});
+        controller.clear();
+      });
+      _scrollToBottom();
+      await speakText(credentialReply);
+      return;
+    }
+
+    if (!await _ensurePaired()) return;
+
+    if (_realtimeVoice?.connected == true) {
+      if (!mounted) return;
+      setState(() {
+        messages.add({'role': 'user', 'text': message});
+        controller.clear();
+      });
+      _scrollToBottom();
+      await _realtimeVoice!.sendText(message);
+      return;
+    }
+
+    if (speech.isListening) {
+      await speech.stop();
+    }
+
+    if (!mounted) return;
+
+    _isSending = true;
+
+    setState(() {
+      isListening = false;
+      messages.add({
+        'role': 'user',
+        'text': message,
+      });
+      controller.clear();
+    });
+
+    _scrollToBottom();
+
+    if (message.toLowerCase().startsWith('remember that ')) {
+      final memory = message.substring(14).trim();
+      await saveMemory(memory);
+
+      const reply = 'Got it. I saved that securely, sir.';
+
+      if (!mounted) return;
+
+      setState(() {
+        messages.add({
+          'role': 'assistant',
+          'text': reply,
+        });
+        _isSending = false;
+      });
+
+      _scrollToBottom();
+      await speakText(reply);
+      return;
+    }
+
+    int? assistantIndex;
+
+    try {
+      final history = _recentHistoryExcluding(message);
+
+      assistantIndex = messages.length;
+
+      setState(() {
+        messages.add({
+          'role': 'assistant',
+          'text': '',
+        });
+      });
+
+      _scrollToBottom();
+
+      final reply = await _streamCheResponse(
+        message,
+        history,
+        onPartial: (partialReply) {
+          final index = assistantIndex;
+          if (!mounted || index == null || index >= messages.length) return;
+
+          setState(() {
+            messages[index]['text'] = _sanitizeCheReply(partialReply);
+          });
+
+          _scrollToBottom();
+        },
+      );
+
+      final finalReply = reply.isEmpty
+          ? 'I could not generate a response, sir.'
+          : _sanitizeCheReply(reply);
+
+      if (!mounted) return;
+
+      setState(() {
+        if (assistantIndex != null && assistantIndex < messages.length) {
+          messages[assistantIndex]['text'] = finalReply;
+          if (_streamMediaUrl != null) {
+            messages[assistantIndex]['media_url'] = _streamMediaUrl!;
+            messages[assistantIndex]['media_type'] = _streamMediaType ?? 'image';
+          }
+        }
+        _isSending = false;
+      });
+
+      _scrollToBottom();
+
+      await speakText(finalReply);
+    } on _CHEAgentException catch (e) {
+      final errorReply = e.message;
+
+      if (!mounted) return;
+
+      setState(() {
+        if (assistantIndex != null && assistantIndex < messages.length) {
+          messages[assistantIndex]['text'] = errorReply;
+        } else {
+          messages.add({
+            'role': 'assistant',
+            'text': errorReply,
+          });
+        }
+        _isSending = false;
+      });
+
+      _scrollToBottom();
+      await speakText(errorReply);
+    } catch (_) {
+      const errorReply =
+          'I could not connect to my secure Agent gateway, sir.';
+
+      if (!mounted) return;
+
+      setState(() {
+        if (assistantIndex != null && assistantIndex < messages.length) {
+          messages[assistantIndex]['text'] = errorReply;
+        } else {
+          messages.add({
+            'role': 'assistant',
+            'text': errorReply,
+          });
+        }
+        _isSending = false;
+      });
+
+      _scrollToBottom();
+      await speakText(errorReply);
+    } finally {
+      _isSending = false;
+    }
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      _scrollController.jumpTo(
+        _scrollController.position.maxScrollExtent,
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _listenRestartTimer?.cancel();
+    _proactiveTimer?.cancel();
+    _nativeIosVoiceSub?.cancel();
+    final realtime = _realtimeVoice;
+    _realtimeVoice = null;
+    if (realtime != null) {
+      unawaited(realtime.dispose());
+    }
+    controller.dispose();
+    _scrollController.dispose();
+    speech.cancel();
+    flutterTts.stop();
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+      unawaited(
+        CheNativeVoice.stopAudio()
+            .then<void>((_) {})
+            .catchError((_) {}),
+      );
+    }
+    super.dispose();
+  }
+
+  // ============================================================
+  // UI
+  // ============================================================
+
+  @override
+  Widget build(BuildContext context) {
+    const accent = Color(0xFF67E8D1);
+
+    String statusText = _deviceToken == null
+        ? '●  SECURITY PAIRING REQUIRED'
+        : '●  ${_voiceSnapshot.engineLabel.toUpperCase()} • ${_voiceSnapshot.phaseLabel.toUpperCase()}';
+
+    return Scaffold(
+      backgroundColor: CheColors.bg,
+      appBar: AppBar(
+        backgroundColor: CheColors.bg.withValues(alpha: 0.72),
+        flexibleSpace: ClipRect(
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+            child: const SizedBox.expand(),
+          ),
+        ),
+        centerTitle: true,
+        toolbarHeight: 82,
+        leading: IconButton(
+          onPressed: _openVirtualOffice,
+          icon: const Icon(Icons.dashboard_rounded, color: accent),
+          tooltip: 'CHE Virtual Office',
+        ),
+        actions: [
+          IconButton(
+            onPressed: _openPluginManager,
+            icon: const Icon(Icons.extension_outlined, color: accent),
+            tooltip: 'CHE Plugins',
+          ),
+          PopupMenuButton<String>(
+            tooltip: 'CHE controls',
+            icon: const Icon(Icons.tune_rounded, color: accent),
+            onSelected: (value) async {
+              switch (value) {
+                case 'accounts':
+                  await _openAccountBridge();
+                  break;
+                case 'diagnostics':
+                  _openVoiceDiagnostics();
+                  break;
+                case 'server':
+                  await _showAgentServerDialog();
+                  break;
+                case 'screen':
+                  await _loadSharedScreenContext();
+                  break;
+                case 'security':
+                  await _openSecurityManager();
+                  break;
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'accounts', child: Text('Accounts + Face ID')),
+              PopupMenuItem(value: 'diagnostics', child: Text('Voice diagnostics')),
+              PopupMenuItem(value: 'server', child: Text('CHE server')),
+              PopupMenuItem(value: 'screen', child: Text('Screen context')),
+              PopupMenuItem(value: 'security', child: Text('Security + memory')),
+            ],
+          ),
+          IconButton(
+            onPressed: () async {
+              setState(() {
+                voiceResponsesEnabled = !voiceResponsesEnabled;
+              });
+
+              if (!voiceResponsesEnabled) {
+                if (kIsWeb) {
+                  try {
+                    che_web_voice.stopSpeech();
+                  } catch (_) {}
+                } else {
+                  if (defaultTargetPlatform == TargetPlatform.iOS) {
+                    try {
+                      await CheNativeVoice.stopAudio();
+                    } catch (_) {}
+                  }
+                  await flutterTts.stop();
+                }
+                _isSpeaking = false;
+
+                if (!kIsWeb && openConversation) {
+                  _restartListeningSoon();
+                }
+              }
+            },
+            icon: Icon(
+              voiceResponsesEnabled ? Icons.volume_up : Icons.volume_off,
+              color: accent,
+            ),
+            tooltip: 'C.H.E. voice',
+          ),
+        ],
+        title: Column(
+          children: [
+            const Text(
+              'CHE',
+              style: TextStyle(
+                color: accent,
+                fontSize: 27,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 4,
+              ),
+            ),
+            const Text(
+              'COGNITIVE.HORIZON.ENGINE',
+              style: TextStyle(
+                color: Colors.white54,
+                fontSize: 8,
+                letterSpacing: 1.4,
+              ),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              statusText,
+              style: const TextStyle(
+                color: accent,
+                fontSize: 8.5,
+                letterSpacing: 1.25,
+              ),
+            ),          ],
+        ),
+      ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            const Divider(color: Color(0xFF354859)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: Row(
+                children: [
+                  CheVoiceOrb(
+                    snapshot: _voiceSnapshot,
+                    onTap: toggleListening,
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _voiceSnapshot.phaseLabel,
+                          style: const TextStyle(
+                            color: accent,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _voiceSnapshot.engine == CheVoiceEngine.realtime
+                              ? 'Realtime voice • interrupt anytime'
+                              : cheSleeping
+                                  ? 'Say “Chay” to wake'
+                                  : _voiceSnapshot.engineLabel,
+                          style: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 10.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (_pendingAttachment != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 4, 14, 2),
+                child: Chip(
+                  avatar: const Icon(Icons.attach_file, size: 15, color: accent),
+                  label: Text(
+                    _pendingAttachment!['name'] ?? 'Attachment ready',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  deleteIcon: const Icon(Icons.close, size: 15),
+                  onDeleted: () => setState(() => _pendingAttachment = null),
+                  backgroundColor: const Color(0xFF1A2935),
+                ),
+              ),
+            Expanded(
+              child: ListView.builder(
+                controller: _scrollController,
+                padding: const EdgeInsets.all(18),
+                itemCount: messages.length,
+                itemBuilder: (context, index) {
+                  final item = messages[index];
+                  final isUser = item['role'] == 'user';
+
+                  return Align(
+                    alignment:
+                        isUser ? Alignment.centerRight : Alignment.centerLeft,
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(vertical: 6),
+                      padding: const EdgeInsets.all(13),
+                      constraints: BoxConstraints(
+                        maxWidth:
+                            MediaQuery.of(context).size.width * 0.82,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isUser
+                            ? const Color(0xFF205C61)
+                            : const Color(0xFF243747),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            isUser ? 'YOU' : 'C.H.E.',
+                            style: const TextStyle(
+                              color: accent,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 9),
+                          Text(
+                            item['text'] ?? '',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13.5,
+                              height: 1.32,
+                            ),
+                          ),
+                          if (!isUser &&
+                              item['media_type'] == 'image' &&
+                              (item['media_url'] ?? '').startsWith('https://')) ...[
+                            const SizedBox(height: 10),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(14),
+                              child: Image.network(
+                                item['media_url']!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, _, _) => const Padding(
+                                  padding: EdgeInsets.all(12),
+                                  child: Text(
+                                    'Generated image could not be displayed.',
+                                    style: TextStyle(color: Colors.white54),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                          if (!isUser &&
+                              item['media_type'] == 'video' &&
+                              (item['media_url'] ?? '').startsWith('https://')) ...[
+                            const SizedBox(height: 8),
+                            TextButton.icon(
+                              onPressed: () => launchUrl(
+                                Uri.parse(item['media_url']!),
+                                mode: LaunchMode.externalApplication,
+                              ),
+                              icon: const Icon(Icons.play_circle_outline),
+                              label: const Text('OPEN GENERATED VIDEO'),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: const BoxDecoration(
+                border: Border(
+                  top: BorderSide(color: Color(0xFF354859)),
+                ),
+              ),
+              child: Row(
+                children: [
+                  IconButton(
+                    onPressed: openMemoryManager,
+                    icon: const Icon(Icons.memory, color: accent),
+                  ),
+                  IconButton(
+                    onPressed: _openMultimodalPicker,
+                    icon: Icon(
+                      _pendingAttachment == null
+                          ? Icons.add_circle_outline
+                          : Icons.attachment,
+                      color: _pendingAttachment == null
+                          ? accent
+                          : Colors.amberAccent,
+                    ),
+                    tooltip: 'Add photo, video, audio, document or data',
+                  ),
+                  Expanded(
+                    child: TextField(
+                      controller: controller,
+                      style: const TextStyle(color: Colors.white),
+                      onSubmitted: (_) => sendMessage(),
+                      decoration: InputDecoration(
+                        hintText: _voiceSnapshot.phase == CheVoicePhase.userSpeaking ||
+                                _voiceSnapshot.phase == CheVoicePhase.listening
+                            ? 'Listening...'
+                            : _voiceSnapshot.phase == CheVoicePhase.thinking ||
+                                    _voiceSnapshot.phase == CheVoicePhase.connecting
+                                ? 'CHE is thinking...'
+                                : 'Message CHE...',
+                        hintStyle:
+                            const TextStyle(color: Colors.white54),
+                        filled: true,
+                        fillColor: const Color(0xFF243747),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(30),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: toggleListening,
+                    icon: Icon(
+                      _isSpeaking
+                          ? Icons.stop_circle_outlined
+                          : _realtimeVoice?.connected == true
+                              ? Icons.mic
+                              : Icons.mic_none,
+                      color: _isSpeaking
+                          ? Colors.orangeAccent
+                          : _realtimeVoice?.connected == true
+                              ? accent
+                              : Colors.white54,
+                      size: 29,
+                    ),
+                    tooltip: _isSpeaking
+                        ? 'Interrupt CHE and listen'
+                        : kIsWeb
+                            ? (isListening ? 'Stop listening' : 'Tap to talk')
+                            : (openConversation
+                                ? 'Stop open conversation'
+                                : 'Start open conversation'),
+                  ),
+                  CircleAvatar(
+                    backgroundColor: accent,
+                    child: IconButton(
+                      onPressed:
+                          _isSending ? null : () => sendMessage(),
+                      icon: const Icon(
+                        Icons.arrow_upward,
+                        color: Color(0xFF101D2A),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CHEAgentException implements Exception {
+  final String message;
+  const _CHEAgentException(this.message);
+
+  @override
+  String toString() => message;
+}
+,
+    ).hasMatch(text);
+    final explicit = RegExp(
+      r'^(?:show|open|find|read|tell\s+me|give\s+me|what(?:\s+is|\s+are)?|where(?:\s+is|\s+are)?)\s+(?:my\s+)?(?:passwords?|passcodes?|login\s+credentials?|security\s+codes?)\b',
+    ).hasMatch(text);
+    if (!direct && !explicit) return null;
+    return 'I won’t display or repeat passwords in chat, sir. '
+        'Use Apple’s Passwords app to view saved credentials securely.';
+  }
+
+  String _sanitizeCheReply(String value) {
+    final reply = value.trim();
+    if (reply.isEmpty) return reply;
+    final lower = reply.toLowerCase();
+    final genericWakePrompt = lower.contains('[assistant name]') ||
+        (lower.contains('start the conversation') &&
+            (lower.contains('say "hey') ||
+                lower.contains("say 'hey") ||
+                lower.contains('say “hey')));
+    if (genericWakePrompt) {
+      return 'I’m awake, sir. What do you need?';
+    }
+    return reply;
   }
 
   Future<void> sendMessage({bool fromVoice = false}) async {
