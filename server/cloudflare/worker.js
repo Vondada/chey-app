@@ -2004,8 +2004,7 @@ export class CheState extends DurableObject {
             turns[turns.length - 1].content.trim().toLowerCase() === message.trim().toLowerCase()) {
           turns.pop();
         }
-        const needsStrongModel = message.length <= 140 ||
-          Boolean(multimodal || research?.summary || panel.length || specialists.length || officeResults.length || actionResults.length || plugins.length) ||
+        const needsStrongModel = Boolean(multimodal || research?.summary || panel.length || specialists.length || officeResults.length || actionResults.length || plugins.length) ||
           /\b(debug|write code|implement|architect|deep analysis|step.by.step plan|backtest|legal analysis|financial analysis|medical analysis|research report)\b/i.test(message);
         const model = needsStrongModel
           ? (this.env.CHE_STRONG_MODEL || STRONG_MODEL)
