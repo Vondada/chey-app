@@ -462,15 +462,15 @@ class _CheOrbState extends State<CheOrb> with SingleTickerProviderStateMixin {
                     shape: BoxShape.circle,
                     gradient: RadialGradient(
                       colors: [
-                        base.withOpacity(st == CheOrbState.sleeping ? 0.45 : 0.95),
-                        Color.lerp(base, Colors.black, 0.45)!.withOpacity(0.9),
+                        base.withValues(alpha: st == CheOrbState.sleeping ? 0.45 : 0.95),
+                        Color.lerp(base, Colors.black, 0.45)!.withValues(alpha: 0.9),
                         const Color(0xFF02110E),
                       ],
                       stops: const [0.0, 0.55, 1.0],
                       center: Alignment(-0.2 + 0.2 * breathe, -0.3),
                     ),
-                    border: Border.all(color: base.withOpacity(0.8), width: s > 60 ? 2 : 1),
-                    boxShadow: [BoxShadow(color: base.withOpacity(glow), blurRadius: s * 0.5)],
+                    border: Border.all(color: base.withValues(alpha: 0.8), width: s > 60 ? 2 : 1),
+                    boxShadow: [BoxShadow(color: base.withValues(alpha: glow), blurRadius: s * 0.5)],
                   ),
                   alignment: Alignment.center,
                   child: widget.label
@@ -507,24 +507,24 @@ class _OrbFxPainter extends CustomPainter {
       case CheOrbState.listening:
         for (var i = 0; i < 3; i++) {
           final k = (t * 2 + i / 3) % 1.0;
-          canvas.drawCircle(c, r * (1 + 0.28 * k), stroke..color = color.withOpacity(0.6 * (1 - k)));
+          canvas.drawCircle(c, r * (1 + 0.28 * k), stroke..color = color.withValues(alpha: 0.6 * (1 - k)));
         }
       case CheOrbState.thinking:
         canvas.drawArc(Rect.fromCircle(center: c, radius: r * 1.14), t * math.pi * 4, math.pi * 0.7, false,
-            stroke..color = color.withOpacity(0.9));
+            stroke..color = color.withValues(alpha: 0.9));
         canvas.drawArc(Rect.fromCircle(center: c, radius: r * 1.14), t * math.pi * 4 + math.pi, math.pi * 0.35, false,
-            stroke..color = CheColors.accentAlt.withOpacity(0.7));
+            stroke..color = CheColors.accentAlt.withValues(alpha: 0.7));
       case CheOrbState.working:
-        canvas.drawCircle(c, r * 1.16, stroke..color = color.withOpacity(0.18));
+        canvas.drawCircle(c, r * 1.16, stroke..color = color.withValues(alpha: 0.18));
         final a = t * math.pi * 4;
         canvas.drawCircle(c + Offset(math.cos(a), math.sin(a)) * r * 1.16, size.width * 0.05, Paint()..color = color);
       case CheOrbState.delegating:
-        canvas.drawCircle(c, r * 1.18, stroke..color = color.withOpacity(0.15));
+        canvas.drawCircle(c, r * 1.18, stroke..color = color.withValues(alpha: 0.15));
         for (var i = 0; i < 3; i++) {
           final a = t * math.pi * 2 + i * math.pi * 2 / 3;
           final p = c + Offset(math.cos(a), math.sin(a)) * r * 1.18;
           canvas.drawLine(c, p, Paint()
-            ..color = color.withOpacity(0.25)
+            ..color = color.withValues(alpha: 0.25)
             ..strokeWidth = 1);
           canvas.drawCircle(p, size.width * 0.045, Paint()..color = i == 0 ? color : CheColors.accentAlt);
         }
@@ -534,13 +534,13 @@ class _OrbFxPainter extends CustomPainter {
           final amp = 0.06 + 0.1 * math.sin(t * math.pi * 2 * 7 + i * 1.3).abs();
           final p1 = c + Offset(math.cos(a), math.sin(a)) * r * 1.08;
           final p2 = c + Offset(math.cos(a), math.sin(a)) * r * (1.08 + amp);
-          canvas.drawLine(p1, p2, stroke..color = color.withOpacity(0.7));
+          canvas.drawLine(p1, p2, stroke..color = color.withValues(alpha: 0.7));
         }
       case CheOrbState.waiting:
         final blink = (math.sin(t * math.pi * 2) + 1) / 2;
-        canvas.drawCircle(c, r * 1.14, stroke..color = color.withOpacity(0.2 + 0.5 * blink));
+        canvas.drawCircle(c, r * 1.14, stroke..color = color.withValues(alpha: 0.2 + 0.5 * blink));
       case CheOrbState.completed:
-        canvas.drawCircle(c, r * (1.1 + 0.15 * ((t * 3) % 1.0)), stroke..color = color.withOpacity(0.7 * (1 - (t * 3) % 1.0)));
+        canvas.drawCircle(c, r * (1.1 + 0.15 * ((t * 3) % 1.0)), stroke..color = color.withValues(alpha: 0.7 * (1 - (t * 3) % 1.0)));
       case CheOrbState.sleeping:
       case CheOrbState.awake:
         break;
@@ -849,8 +849,8 @@ class _CheAgentChatScreenState extends State<CheAgentChatScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(CheRadius.pill),
-                  color: CheColors.accent.withOpacity(0.10),
-                  border: Border.all(color: CheColors.accent.withOpacity(0.35)),
+                  color: CheColors.accent.withValues(alpha: 0.10),
+                  border: Border.all(color: CheColors.accent.withValues(alpha: 0.35)),
                 ),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
                   Text(c.mode, style: CheType.caption.copyWith(color: CheColors.accent, fontWeight: FontWeight.w700)),
@@ -916,7 +916,7 @@ class _SendButton extends StatelessWidget {
           shape: BoxShape.circle,
           gradient: on ? CheColors.accentGradient : null,
           color: on ? null : CheColors.surfaceHi,
-          boxShadow: on ? [BoxShadow(color: CheColors.accent.withOpacity(0.5), blurRadius: 14)] : null,
+          boxShadow: on ? [BoxShadow(color: CheColors.accent.withValues(alpha: 0.5), blurRadius: 14)] : null,
         ),
         child: AnimatedSwitcher(
           duration: CheMotion.d(context, CheMotion.fast),
@@ -963,10 +963,10 @@ class _UserBubble extends StatelessWidget {
                 bottomRight: Radius.circular(6),
               ),
               gradient: LinearGradient(colors: [
-                CheColors.accent.withOpacity(0.20),
-                CheColors.accentAlt.withOpacity(0.12),
+                CheColors.accent.withValues(alpha: 0.20),
+                CheColors.accentAlt.withValues(alpha: 0.12),
               ]),
-              border: Border.all(color: CheColors.accent.withOpacity(0.4)),
+              border: Border.all(color: CheColors.accent.withValues(alpha: 0.4)),
             ),
             child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
               if (message.attachments.isNotEmpty)
@@ -1159,7 +1159,7 @@ class _EmptyState extends StatelessWidget {
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(CheRadius.pill),
                     color: CheColors.surface,
-                    border: Border.all(color: CheColors.accent.withOpacity(0.3)),
+                    border: Border.all(color: CheColors.accent.withValues(alpha: 0.3)),
                   ),
                   child: Text(a, style: CheType.label),
                 ),
@@ -1217,7 +1217,7 @@ class _ConversationSheet extends StatelessWidget {
                       background: Container(
                         alignment: Alignment.centerRight,
                         padding: const EdgeInsets.only(right: 20),
-                        color: CheColors.danger.withOpacity(0.2),
+                        color: CheColors.danger.withValues(alpha: 0.2),
                         child: const Icon(Icons.delete_outline_rounded, color: CheColors.danger),
                       ),
                       onDismissed: (_) => controller.deleteConversation(conv),
