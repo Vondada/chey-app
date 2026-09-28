@@ -50,13 +50,14 @@ class CheNativeVoice {
   static const String _pauseKey = 'che.voice.kokoroPause';
   static const String _nativePitchKey = 'che.voice.nativePitch';
   static const String _nativeRateKey = 'che.voice.nativeRate';
+  static const String _signatureVersionKey = 'che.voice.chazeSignatureVersion';
 
   static const List<Map<String, Object>> localVoiceOptions = [
     {'id': 0, 'name': 'American Feminine — Classic', 'speaker': 'af'},
     {'id': 1, 'name': 'American Feminine — Bella', 'speaker': 'af_bella'},
     {'id': 2, 'name': 'American Feminine — Nicole', 'speaker': 'af_nicole'},
     {'id': 3, 'name': 'American Feminine — Sarah', 'speaker': 'af_sarah'},
-    {'id': 4, 'name': 'American Feminine — Sky', 'speaker': 'af_sky'},
+    {'id': 4, 'name': 'Chaze — Signature (Local)', 'speaker': 'af_sky'},
     {'id': 5, 'name': 'American Masculine — Adam', 'speaker': 'am_adam'},
     {'id': 6, 'name': 'American Masculine — Michael', 'speaker': 'am_michael'},
     {'id': 7, 'name': 'British Feminine — Emma', 'speaker': 'bf_emma'},
@@ -78,12 +79,24 @@ class CheNativeVoice {
 
   static Future<Map<String, dynamic>> voiceSettings() async {
     final prefs = await SharedPreferences.getInstance();
+
+    // One-time migration to CHE's Chaze signature profile. This is fully
+    // on-device and unmetered: no account, API key, or per-character billing.
+    if ((prefs.getInt(_signatureVersionKey) ?? 0) < 1) {
+      await prefs.setInt(_speakerKey, 4);
+      await prefs.setDouble(_speedKey, 0.94);
+      await prefs.setDouble(_pauseKey, 0.12);
+      await prefs.setDouble(_nativePitchKey, 0.96);
+      await prefs.setDouble(_nativeRateKey, 0.96);
+      await prefs.setInt(_signatureVersionKey, 1);
+    }
+
     return {
-      'speakerId': prefs.getInt(_speakerKey) ?? 3,
-      'speed': prefs.getDouble(_speedKey) ?? 1.0,
-      'pauseScale': prefs.getDouble(_pauseKey) ?? 0.16,
-      'nativePitch': prefs.getDouble(_nativePitchKey) ?? 0.98,
-      'nativeRate': prefs.getDouble(_nativeRateKey) ?? 0.94,
+      'speakerId': prefs.getInt(_speakerKey) ?? 4,
+      'speed': prefs.getDouble(_speedKey) ?? 0.94,
+      'pauseScale': prefs.getDouble(_pauseKey) ?? 0.12,
+      'nativePitch': prefs.getDouble(_nativePitchKey) ?? 0.96,
+      'nativeRate': prefs.getDouble(_nativeRateKey) ?? 0.96,
     };
   }
 
@@ -182,7 +195,7 @@ class CheNativeVoice {
   }
 
   static Future<bool> previewVoice() => speakText(
-        'Hey, I’m CHE. This is a preview of the voice you selected.',
+        'Hey, I’m CHE. You’re hearing my Chaze signature voice, sir.',
       );
 
   static Future<bool> playAudio(Uint8List bytes) async =>
