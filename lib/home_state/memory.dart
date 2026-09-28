@@ -1743,6 +1743,26 @@ extension _CheHomeMemory on _CHEHomeState {
     }
 
     if (hasAny([
+      'advertising',
+      'advertise',
+      'ad campaign',
+      'ad campaigns',
+      'marketing campaign',
+      'paid ads',
+      'facebook ads',
+      'instagram ads',
+      'google ads',
+      'tiktok ads',
+      'meta ads',
+      'ad copy',
+      'media buying',
+      'campaign budget',
+      'campaign performance',
+    ])) {
+      result.add('advertising');
+    }
+
+    if (hasAny([
       'find clients',
       'find customers',
       'find leads',
