@@ -318,3 +318,42 @@ test('AI router falls through free engines when Cloudflare quota is used up', as
   }, 'm', input, allBusy));
   assert.deepEqual(order, ['api.cerebras.ai', 'api.mistral.ai', 'models.github.ai', 'api.sambanova.ai', 'router.huggingface.co']);
 });
+
+
+test('AI router stores daily usage budgets and puts a fast free engine before paid fallback for casual turns', async () => {
+  resetRouterForTests();
+  const storage = memStorage();
+  const calls = [];
+  let cfCalls = 0;
+  const env = {
+    AI: { run: async () => { cfCalls += 1; throw new Error('4006 neurons'); } },
+    CHE_OPENAI_API_KEY: 'paid',
+    GROQ_API_KEY: 'free',
+    CHE_GROQ_DAILY_TOKEN_LIMIT: '10',
+  };
+  const input = { messages: [{ role: 'user', content: 'hey what\'s up' }], max_tokens: 120 };
+  const fetcher = async (url, init) => {
+    calls.push({ url, body: JSON.parse(init.body) });
+    if (url.includes('groq')) {
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: 'Doing good, sir. What do you need?' } }],
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: 'Paid fallback.' } }],
+    }), { status: 200 });
+  };
+
+  const first = await routeText(env, '@cf/meta/llama-3.2-3b-instruct', input, fetcher, storage);
+  assert.equal(first.engine, 'groq');
+  assert.equal(new URL(calls[0].url).hostname, 'api.groq.com');
+  const usage = storage.raw.get('ai_usage:groq');
+  assert.ok(usage.estimated_tokens >= 9);
+  assert.ok(usage.reset_at > Date.now());
+
+  calls.length = 0;
+  const second = await routeText(env, '@cf/meta/llama-3.2-3b-instruct', input, fetcher, storage);
+  assert.equal(second.engine, 'openai');
+  assert.equal(new URL(calls[0].url).hostname, 'api.openai.com');
+  assert.equal(cfCalls, 1, 'Cloudflare remains rested after its real quota error');
+});
