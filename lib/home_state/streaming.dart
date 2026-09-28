@@ -150,7 +150,10 @@ extension _CheHomeStreaming on _CHEHomeState {
 
     http.StreamedResponse response;
     try {
-      response = await request.send().timeout(const Duration(seconds: 8));
+      // The Worker answers once CHE has finished thinking (agents, plugins,
+      // research), which can take well over 8s. Only a dead connection
+      // falls back to the on-device model.
+      response = await request.send().timeout(const Duration(seconds: 75));
     } catch (_) {
       final local = await _tryLocalOfflineResponse(
         trimmedRequest,
