@@ -88,6 +88,35 @@ void main() {
       expect(voice.phase, CheVoicePhase.fallback);
     });
 
+    test('Realtime label is never trusted until actual audio is verified', () {
+      final voice = CheVoiceStateMachine();
+      voice.beginRealtimeConnect(model: 'gpt-realtime-2.1', voice: 'marin');
+      voice.realtimeReady();
+
+      expect(voice.snapshot.engineLabel, contains('audio not yet verified'));
+      expect(voice.snapshot.audioVerified, isFalse);
+
+      voice.markAudioReturned();
+      expect(voice.snapshot.engineLabel, contains('audio not yet verified'));
+
+      voice.markAudioVerified();
+      expect(voice.snapshot.engineLabel, 'OpenAI Realtime');
+      expect(voice.snapshot.selectedModel, 'gpt-realtime-2.1');
+      expect(voice.snapshot.selectedVoice, 'marin');
+    });
+
+    test('fallback clears verified Realtime status', () {
+      final voice = CheVoiceStateMachine();
+      voice.beginRealtimeConnect();
+      voice.realtimeReady();
+      voice.markAudioVerified();
+      voice.fallback('no audio');
+
+      expect(voice.snapshot.engineLabel, 'Native fallback');
+      expect(voice.snapshot.audioVerified, isFalse);
+      expect(voice.snapshot.lastError, 'no audio');
+    });
+
     test('latency is measured from semantic speech-stop to first assistant audio', () {
       final voice = CheVoiceStateMachine();
       final t0 = DateTime(2026, 9, 27, 22);
