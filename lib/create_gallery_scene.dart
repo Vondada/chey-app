@@ -87,11 +87,11 @@ class _CreateGallerySceneState extends State<CreateGalleryScene>
       'NOV',
       'DEC',
     ];
-    return '\${months[date.month - 1]} \${date.day}, \${date.year}';
+    return '${months[date.month - 1]} ${date.day}, ${date.year}';
   }
 
   Future<void> _showProject(Map<String, dynamic> project, int index) async {
-    final tag = 'che-project-\${project['id'] ?? index}';
+    final tag = 'che-project-${project['id'] ?? index}';
     await Navigator.of(context).push(
       PageRouteBuilder<void>(
         transitionDuration: const Duration(milliseconds: 420),
@@ -197,7 +197,7 @@ class _CreateGallerySceneState extends State<CreateGalleryScene>
                           itemBuilder: (context, index) {
                             final project = widget.projects[index];
                             final tag =
-                                'che-project-\${project['id'] ?? index}';
+                                'che-project-${project['id'] ?? index}';
                             return _GalleryFrame(
                               project: project,
                               dateLabel: _projectDate(project),
@@ -223,7 +223,7 @@ class _CreateGallerySceneState extends State<CreateGalleryScene>
                         icon: Icons.inventory_2_outlined,
                         title: 'CHE Core Data Vault',
                         subtitle:
-                            '\${widget.vaultCount} saved vault item\${widget.vaultCount == 1 ? '' : 's'}',
+                            '${widget.vaultCount} saved vault item${widget.vaultCount == 1 ? '' : 's'}',
                         active: true,
                         onTap: widget.onVault,
                       ),
