@@ -93,19 +93,25 @@ class _ChePluginManagerState extends State<ChePluginManager> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            const Text('Connected skills appear here. Switch on the ones CHE may use in conversation.'),
+            const Text('CHE capabilities live here. Enable only the services you want CHE and her agents to use.'),
             const SizedBox(height: 12),
             if (error != null) Text(error!, style: const TextStyle(color: Colors.orangeAccent)),
             if (loading) const Center(child: CircularProgressIndicator()),
             if (!loading && plugins.isEmpty)
               const ListTile(
                 title: Text('No plugins connected yet'),
-                subtitle: Text('Add a read-only service to CHE’s server catalog. It will appear here without reinstalling the app.'),
+                subtitle: Text('Add a secure server-side plugin. Future capabilities can appear here without rebuilding the IPA.'),
               ),
             for (final plugin in plugins)
               SwitchListTile(
                 title: Text(plugin['name']?.toString() ?? plugin['id'].toString()),
-                subtitle: Text('${plugin['description'] ?? ''}\n${plugin['ready'] == true ? 'Ready · Read only' : 'Needs server setup'}'),
+                subtitle: Text(
+                  '${plugin['description'] ?? ''}\n'
+                  '${plugin['ready'] == true ? 'Ready' : 'Needs secure server setup'}'
+                  ' · ${(plugin['mode'] ?? 'read').toString().toUpperCase()}'
+                  '${plugin['requires_confirmation'] == true ? ' · Confirms before actions' : ''}'
+                  '\n${plugin['security'] ?? 'HTTPS connector · secrets stay server-side'}',
+                ),
                 isThreeLine: true,
                 value: plugin['enabled'] == true,
                 onChanged: plugin['ready'] == true && busyId == null
