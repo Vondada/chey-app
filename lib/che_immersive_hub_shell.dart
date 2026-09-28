@@ -28,7 +28,7 @@ class _CheImmersiveHubShellState extends State<CheImmersiveHubShell>
   @override
   void initState() {
     super.initState();
-    _index = widget.initialIndex.clamp(0, widget.tabs.length - 1);
+    _index = widget.initialIndex.clamp(0, widget.tabs.length - 1).toInt();
     _controller = TabController(
       length: widget.tabs.length,
       initialIndex: _index,
