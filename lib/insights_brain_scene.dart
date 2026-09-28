@@ -99,7 +99,7 @@ class _InsightsBrainSceneState extends State<InsightsBrainScene>
           title: text,
           body: confidence == null
               ? text
-              : '\$text\nConfidence \${(confidence * 100).round()}%',
+              : '$text\nConfidence ${(confidence * 100).round()}%',
           color: _teal,
           position: Offset.zero,
         );
