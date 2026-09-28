@@ -60,6 +60,8 @@ class _MusicStudioSceneState extends State<MusicStudioScene>
     required String subtitle,
     required bool connected,
     required VoidCallback onTap,
+    double phase = 0,
+    bool spin = false,
   }) {
     return GestureDetector(
       onTap: onTap,
@@ -107,10 +109,13 @@ class _MusicStudioSceneState extends State<MusicStudioScene>
                   width: 2,
                 ),
               ),
-              child: Icon(
-                icon,
-                color: connected ? _amber : Colors.white38,
-                size: 26,
+              child: Transform.rotate(
+                angle: spin && connected ? phase * math.pi * 2 : 0,
+                child: Icon(
+                  icon,
+                  color: connected ? _amber : Colors.white38,
+                  size: 26,
+                ),
               ),
             ),
             const SizedBox(width: 12),
@@ -320,6 +325,8 @@ class _MusicStudioSceneState extends State<MusicStudioScene>
                         'Search, playlists, play/pause and queue control through an authorized connection.',
                     connected: widget.musicConnected,
                     onTap: widget.onMusic,
+                    phase: phase,
+                    spin: true,
                   ),
                   const SizedBox(height: 10),
                   _studioObject(
