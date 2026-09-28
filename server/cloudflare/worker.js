@@ -358,13 +358,25 @@ async function geminiSpeech(env, text, fetcher = fetch) {
         }),
       },
     );
-    if (!response.ok) return null;
+    if (!response.ok) {
+      const body = (await response.text().catch(() => '')).slice(0, 2000);
+      console.log("CHE voice error:", response.status, body);
+      return null;
+    }
     const data = await response.json();
     const b64 = data?.candidates?.[0]?.content?.parts?.find((part) => part?.inlineData?.data)?.inlineData?.data;
-    if (!b64) return null;
+    if (!b64) {
+      console.log("CHE voice error:", response.status, JSON.stringify(data).slice(0, 2000));
+      return null;
+    }
     const pcm = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-    return pcm.byteLength ? pcm16ToWav(pcm) : null;
-  } catch (_) {
+    if (!pcm.byteLength) {
+      console.log("CHE voice error:", response.status, 'Gemini returned empty audio');
+      return null;
+    }
+    return pcm16ToWav(pcm);
+  } catch (error) {
+    console.log("CHE voice error:", 'exception', String(error?.message || error));
     return null;
   }
 }
@@ -372,10 +384,19 @@ async function geminiSpeech(env, text, fetcher = fetch) {
 async function voiceSynthesisResponse(env, text) {
   const input = String(text || '').trim().slice(0, 6000);
 
-  // Optional premium-quality CHE/Chaze voice through ElevenLabs.
-  // Credentials stay server-side. If ElevenLabs is unavailable or out of
-  // credits, CHE falls through to OpenAI, Cloudflare, then the iPhone's local
-  // Kokoro voice so speech never depends on one paid provider.
+  // First choice: Google Gemini text-to-speech on the configured free tier.
+  // If Gemini cannot produce audio, keep the existing providers as fallbacks.
+  if (env.GEMINI_API_KEY) {
+    const wav = await geminiSpeech(env, input);
+    if (wav) {
+      return new Response(wav, {
+        headers: { 'Content-Type': 'audio/wav', 'Cache-Control': 'no-store', 'X-CHE-Voice': 'gemini-tts' },
+      });
+    }
+  }
+
+  // Fallback 1: optional premium-quality CHE/Chaze voice through ElevenLabs.
+  // Credentials stay server-side.
   if (env.ELEVENLABS_API_KEY && env.CHE_ELEVENLABS_VOICE_ID) {
     try {
       const voiceId = encodeURIComponent(String(env.CHE_ELEVENLABS_VOICE_ID).trim());
@@ -417,7 +438,7 @@ async function voiceSynthesisResponse(env, text) {
     }
   }
 
-  // Default CHE neural voice: use the OpenAI key stored only on the server.
+  // Fallback 2: OpenAI neural voice using the key stored only on the server.
   // The iPhone never receives the standard API key.
   if (env.CHE_OPENAI_API_KEY) {
     try {
@@ -454,7 +475,7 @@ async function voiceSynthesisResponse(env, text) {
     }
   }
 
-  // Free CHE neural-voice fallback: use the existing Cloudflare Workers AI
+  // Fallback 3: use the existing Cloudflare Workers AI
   // binding. This keeps voice credentials out of the iPhone app and works
   // without an ElevenLabs/OpenAI key while the Workers AI free allocation lasts.
   if (env.AI) {
@@ -483,17 +504,6 @@ async function voiceSynthesisResponse(env, text) {
       }
     } catch (_) {
       // Fall through to any custom CHE voice connector below.
-    }
-  }
-
-  // Free smooth voice fallback: Google Gemini text-to-speech on its free
-  // tier (GEMINI_API_KEY). Returns 24 kHz speech wrapped as WAV.
-  if (env.GEMINI_API_KEY) {
-    const wav = await geminiSpeech(env, input);
-    if (wav) {
-      return new Response(wav, {
-        headers: { 'Content-Type': 'audio/wav', 'Cache-Control': 'no-store', 'X-CHE-Voice': 'gemini-tts' },
-      });
     }
   }
 
