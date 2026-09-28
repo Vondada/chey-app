@@ -718,3 +718,183 @@ class _CheAgentChatScreenState extends State<CheAgentChatScreen> {
                                       message: m,
                                       onRetry: () => c.retry(m),
                                       registry: widget.pluginRegistry,
+                                    ),
+                            );
+                          },
+                        ),
+                      ),
+              ),
+            ),
+            _composer(context),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _topBar(BuildContext context) {
+    final canPop = Navigator.of(context).canPop();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(CheSpace.sm, CheSpace.xs, CheSpace.gutter, CheSpace.sm),
+      child: Column(children: [
+        Row(children: [
+          if (canPop)
+            IconButton(
+              icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
+              onPressed: () => Navigator.of(context).maybePop(),
+            )
+          else
+            const SizedBox(width: CheSpace.sm),
+          CheOrb(size: 30, state: c.orbState),
+          const SizedBox(width: CheSpace.sm),
+          Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            ShaderMask(
+              shaderCallback: (r) => CheColors.accentGradient.createShader(r),
+              child: Text('CHE', style: CheType.display.copyWith(fontSize: 20, color: Colors.white)),
+            ),
+            AnimatedSwitcher(
+              duration: CheMotion.d(context, CheMotion.fast),
+              child: Text(c.orbState.label.toUpperCase(),
+                  key: ValueKey(c.orbState), style: CheType.overline.copyWith(fontSize: 9, letterSpacing: 2)),
+            ),
+          ]),
+          const Spacer(),
+          SizedBox(
+            width: 150,
+            child: PillToggle(options: c.modes, index: c.modeIndex, onChanged: c.setMode, height: 34),
+          ),
+        ]),
+        const SizedBox(height: CheSpace.sm),
+        Row(children: [
+          const SizedBox(width: CheSpace.sm),
+          Expanded(
+            child: ChePressable(
+              onTap: _openConversations,
+              child: Container(
+                height: 38,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  color: CheColors.surface,
+                  borderRadius: BorderRadius.circular(CheRadius.md),
+                  border: Border.all(color: CheColors.stroke),
+                ),
+                child: Row(children: [
+                  Expanded(
+                    child: Text(c.current.title,
+                        maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label),
+                  ),
+                  const Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: CheColors.textDim),
+                ]),
+              ),
+            ),
+          ),
+          const SizedBox(width: CheSpace.sm),
+          CheIconButton(icon: Icons.add_rounded, size: 38, onTap: c.newConversation, tooltip: 'New chat'),
+        ]),
+      ]),
+    );
+  }
+
+  Widget _composer(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewPadding.bottom;
+    final keyboardUp = MediaQuery.of(context).viewInsets.bottom > 0;
+    final canSend = _input.text.trim().isNotEmpty || _attachments.isNotEmpty;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+          CheSpace.md, CheSpace.xs, CheSpace.md, (keyboardUp ? 0 : bottomInset) + CheSpace.sm),
+      child: GlowCard(
+        active: c.busy || _focus.hasFocus,
+        radius: CheRadius.xl,
+        padding: const EdgeInsets.fromLTRB(CheSpace.md, CheSpace.sm, CheSpace.sm, CheSpace.sm),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          if (_attachments.isNotEmpty)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 6, top: 2),
+                child: InputChip(
+                  label: Text('${_attachments.length} attached', style: CheType.caption),
+                  avatar: const Icon(Icons.photo_library_outlined, size: 16, color: CheColors.accent),
+                  onDeleted: () => setState(_attachments.clear),
+                  backgroundColor: CheColors.surfaceHi,
+                  side: const BorderSide(color: CheColors.stroke),
+                ),
+              ),
+            ),
+          Focus(
+            onFocusChange: (_) => setState(() {}),
+            child: TextField(
+              controller: _input,
+              focusNode: _focus,
+              minLines: 1,
+              maxLines: 6,
+              style: CheType.body,
+              cursorColor: CheColors.accent,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: InputDecoration(
+                isDense: true,
+                border: InputBorder.none,
+                hintText: c.mode == 'Agent' ? 'Tell CHE what to build or do…' : 'Ask CHE anything…',
+                hintStyle: CheType.body.copyWith(color: CheColors.textFaint),
+                contentPadding: const EdgeInsets.symmetric(vertical: 8),
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Row(children: [
+            ChePressable(
+              key: _modeKey,
+              onTap: _pickMode,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(CheRadius.pill),
+                  color: CheColors.accent.withOpacity(0.10),
+                  border: Border.all(color: CheColors.accent.withOpacity(0.35)),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text(c.mode, style: CheType.caption.copyWith(color: CheColors.accent, fontWeight: FontWeight.w700)),
+                  const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: CheColors.accent),
+                ]),
+              ),
+            ),
+            const Spacer(),
+            if (widget.onAttach != null)
+              _ComposerIcon(icon: Icons.add_photo_alternate_outlined, onTap: _attach),
+            if (widget.onMic != null)
+              _ComposerIcon(
+                icon: widget.micActive ? Icons.graphic_eq_rounded : Icons.mic_none_rounded,
+                onTap: widget.onMic!,
+                highlight: widget.micActive,
+              ),
+            const SizedBox(width: 4),
+            _SendButton(
+              busy: c.busy,
+              enabled: canSend,
+              onSend: () => _send(),
+              onStop: c.stop,
+            ),
+          ]),
+        ]),
+      ),
+    );
+  }
+}
+
+class _ComposerIcon extends StatelessWidget {
+  const _ComposerIcon({required this.icon, required this.onTap, this.highlight = false});
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool highlight;
+  @override
+  Widget build(BuildContext context) => ChePressable(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Icon(icon, size: 22, color: highlight ? CheColors.accent : CheColors.textDim),
+        ),
+      );
+}
+
+class _SendButton extends StatelessWidget {
+  const _SendButton({required this.busy, required this.enabled, required this.onSend, required this.onStop});
