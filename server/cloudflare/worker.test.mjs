@@ -494,7 +494,7 @@ test('voice falls back to free Gemini speech (WAV) when Cloudflare voice is out 
     assert.equal(bytes.subarray(8, 12).toString(), 'WAVE');
     assert.equal(bytes.readUInt32LE(24), 24000);
     assert.equal(bytes.length, 44 + 480);
-    assert.match(request.url, /gemini-2\.5-flash-preview-tts:generateContent$/);
+    assert.match(request.url, /gemini-3\.8-flash-lite-tts:generateContent$/);
     assert.equal(request.init.headers['x-goog-api-key'], 'gem');
     assert.deepEqual(JSON.parse(request.init.body).generationConfig.responseModalities, ['AUDIO']);
   } finally {
