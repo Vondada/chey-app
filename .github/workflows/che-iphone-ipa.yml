@@ -1,0 +1,51 @@
+name: CHE iPhone IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build-ios:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[ios-build]')
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      CHE_AGENT_URL: ${{ secrets.CHE_AGENT_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Bootstrap native projects
+        run: bash ./tool/bootstrap.sh
+
+      - name: Flutter analyze
+        run: flutter analyze
+
+      - name: Build unsigned iPhone app
+        run: |
+          flutter build ios --release --no-codesign \
+            --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
+
+      - name: Package unsigned IPA
+        run: |
+          set -eu
+          rm -rf build/ios/ipa
+          mkdir -p build/ios/ipa/Payload
+          cp -R build/ios/iphoneos/Runner.app build/ios/ipa/Payload/
+          cd build/ios/ipa
+          zip -qry CHE-unsigned.ipa Payload
+          rm -rf Payload
+
+      - name: Upload CHE IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: CHE-unsigned-ipa
+          path: build/ios/ipa/CHE-unsigned.ipa
+          retention-days: 7
