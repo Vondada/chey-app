@@ -25,7 +25,9 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:url_launcher/url_launcher.dart';
 import 'che_native_voice.dart';
 import 'che_account_bridge.dart';
-import 'che_live_voice.dart';
+import 'che_realtime_voice.dart';
+import 'che_voice_state.dart';
+import 'che_voice_ui.dart';
 import 'che_app_portal.dart';
 import 'che_plugin_manager.dart';
 import 'che_theme.dart';
@@ -170,6 +172,14 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   StreamSubscription<Map<String, dynamic>>? _nativeIosVoiceSub;
   bool _nativeIosVoiceActive = false;
+
+  final CheVoiceStateMachine _voiceMachine = CheVoiceStateMachine();
+  late CheVoiceSnapshot _voiceSnapshot;
+  CheRealtimeVoiceEngine? _realtimeVoice;
+  bool _realtimeConnecting = false;
+  int? _realtimeAssistantIndex;
+  String? _realtimePendingMediaUrl;
+  String? _realtimePendingMediaType;
 
   String? _deviceToken;
   String _agentBaseUrl = _defaultAgentBaseUrl;
@@ -445,6 +455,8 @@ OWNER AGENCY
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _voiceMachine.startWakeListening();
+    _voiceSnapshot = _voiceMachine.snapshot;
     initializeVoice();
     _loadSecuritySession();
     _proactiveTimer = Timer.periodic(
@@ -481,11 +493,17 @@ OWNER AGENCY
 
     if (state == AppLifecycleState.resumed) {
       unawaited(_consumeWakeRequest(resumeIfAwake: true));
+      if (!kIsWeb &&
+          defaultTargetPlatform == TargetPlatform.iOS &&
+          (_realtimeVoice?.connected != true) &&
+          !_nativeIosVoiceActive) {
+        unawaited(_restartWakeListener());
+      }
     } else if (state == AppLifecycleState.paused) {
-      // iOS suspends the microphone when CHE leaves the foreground. Cancel
-      // pending restarts so we don't fight the OS, but keep the awake/open
-      // conversation state so she picks up where you left off on return.
       _listenRestartTimer?.cancel();
+      if (_realtimeVoice?.connected == true) {
+        unawaited(_returnToWakeStandby(restartWakeListener: false));
+      }
     }
   }
 
@@ -1174,18 +1192,293 @@ OWNER AGENCY
     await CheAccountBridge.open(context);
   }
 
-  Future<void> _openLiveVoice() async {
-    if (!await _ensurePaired() || !mounted || _deviceToken == null) return;
-    if (cheAgentBaseUrl.isEmpty) {
-      await _showAgentServerDialog();
+  void _applyVoiceSnapshot(CheVoiceSnapshot snapshot) {
+    _voiceSnapshot = snapshot;
+    if (!mounted) return;
+    setState(() {
+      _isSpeaking = snapshot.phase == CheVoicePhase.speaking;
+      _isSending = snapshot.phase == CheVoicePhase.thinking ||
+          snapshot.phase == CheVoicePhase.connecting;
+      isListening = snapshot.microphoneActive &&
+          (snapshot.phase == CheVoicePhase.listening ||
+              snapshot.phase == CheVoicePhase.userSpeaking ||
+              snapshot.phase == CheVoicePhase.wakeListening);
+      openConversation = snapshot.engine == CheVoiceEngine.realtime ||
+          snapshot.engine == CheVoiceEngine.nativeFallback ||
+          snapshot.phase == CheVoicePhase.wakeListening;
+    });
+  }
+
+  Future<void> _restartWakeListener() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return;
+    if (_realtimeVoice?.connected == true || _realtimeConnecting) return;
+    try {
+      final started = await CheNativeVoice.start();
+      _nativeIosVoiceActive = started;
+      if (started) {
+        _voiceMachine.startWakeListening();
+        _applyVoiceSnapshot(_voiceMachine.snapshot);
+      }
+    } catch (error) {
+      _voiceMachine.disconnected(error.toString());
+      _applyVoiceSnapshot(_voiceMachine.snapshot);
+    }
+  }
+
+  Future<void> _beginRealtimeConversation({bool fromWake = false}) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return;
+    if (_realtimeConnecting || _realtimeVoice?.connected == true) return;
+    if (!await _ensurePaired() || _deviceToken == null || cheAgentBaseUrl.isEmpty) {
       return;
     }
-    await Navigator.of(context).push<void>(
-      CupertinoPageRoute(
-        builder: (_) => CheLiveVoiceScreen(
-          baseUrl: cheAgentBaseUrl,
-          deviceToken: _deviceToken!,
-        ),
+
+    _realtimeConnecting = true;
+    HapticFeedback.lightImpact();
+    if (mounted) {
+      setState(() {
+        cheSleeping = false;
+        openConversation = true;
+      });
+    }
+
+    try {
+      _listenRestartTimer?.cancel();
+      await speech.cancel();
+      await flutterTts.stop();
+      try {
+        await CheNativeVoice.stopAudio();
+      } catch (_) {}
+      try {
+        await CheNativeVoice.stop();
+      } catch (_) {}
+      _nativeIosVoiceActive = false;
+
+      final old = _realtimeVoice;
+      _realtimeVoice = null;
+      if (old != null) await old.dispose();
+
+      final engine = CheRealtimeVoiceEngine(
+        baseUrl: cheAgentBaseUrl,
+        deviceToken: _deviceToken!,
+        state: _voiceMachine,
+        onSnapshot: _applyVoiceSnapshot,
+        onUserTranscript: _onRealtimeUserTranscript,
+        onAssistantTranscript: _onRealtimeAssistantTranscript,
+        onCapabilityRequest: _runRealtimeCapabilityTool,
+        onStandDown: _returnToWakeStandby,
+      );
+      _realtimeVoice = engine;
+      await engine.connect();
+
+      if (mounted) {
+        setState(() {
+          cheSleeping = false;
+          openConversation = true;
+        });
+      }
+    } catch (error) {
+      final engine = _realtimeVoice;
+      _realtimeVoice = null;
+      if (engine != null) {
+        try {
+          await engine.dispose();
+        } catch (_) {}
+      }
+
+      _voiceMachine.fallback(error.toString());
+      _applyVoiceSnapshot(_voiceMachine.snapshot);
+
+      // Native recognition/TTS is a real fallback, never a second simultaneous
+      // mic owner.
+      try {
+        final started = await CheNativeVoice.start();
+        _nativeIosVoiceActive = started;
+        if (mounted) {
+          setState(() {
+            cheSleeping = false;
+            openConversation = started;
+            isListening = started;
+          });
+        }
+      } catch (_) {
+        _voiceMachine.disconnected(error.toString());
+        _applyVoiceSnapshot(_voiceMachine.snapshot);
+      }
+    } finally {
+      _realtimeConnecting = false;
+    }
+  }
+
+  Future<void> _returnToWakeStandby({bool restartWakeListener = true}) async {
+    final engine = _realtimeVoice;
+    _realtimeVoice = null;
+    if (engine != null) {
+      try {
+        await engine.dispose();
+      } catch (_) {}
+    }
+
+    _realtimeAssistantIndex = null;
+    _realtimePendingMediaUrl = null;
+    _realtimePendingMediaType = null;
+    _voiceMachine.sleep();
+
+    if (mounted) {
+      setState(() {
+        cheSleeping = true;
+        openConversation = true;
+        isListening = false;
+        _isSpeaking = false;
+        _isSending = false;
+      });
+    }
+
+    if (restartWakeListener) {
+      await _restartWakeListener();
+    }
+  }
+
+  void _onRealtimeUserTranscript(String text, String? itemId) {
+    final clean = text.trim();
+    if (clean.isEmpty || !mounted) return;
+
+    setState(() {
+      messages.add({'role': 'user', 'text': clean});
+      _realtimeAssistantIndex = null;
+    });
+    _scrollToBottom();
+
+    unawaited(_observeRealtimeTurn(clean, itemId));
+  }
+
+  Future<void> _observeRealtimeTurn(String message, String? itemId) async {
+    if (_deviceToken == null || cheAgentBaseUrl.isEmpty) return;
+    try {
+      await http
+          .post(
+            Uri.parse('$cheAgentBaseUrl/api/realtime/observe'),
+            headers: _authHeaders,
+            body: jsonEncode({
+              'message': message,
+              'item_id': itemId,
+            }),
+          )
+          .timeout(const Duration(seconds: 8));
+    } catch (_) {}
+  }
+
+  void _onRealtimeAssistantTranscript(
+    String text,
+    bool isFinal,
+    String? responseId,
+  ) {
+    final clean = text.trim();
+    if (!mounted || clean.isEmpty) return;
+
+    setState(() {
+      var index = _realtimeAssistantIndex;
+      if (index == null || index >= messages.length) {
+        index = messages.length;
+        messages.add({'role': 'assistant', 'text': clean});
+        _realtimeAssistantIndex = index;
+      } else {
+        messages[index]['text'] = clean;
+      }
+
+      if (isFinal && index < messages.length && _realtimePendingMediaUrl != null) {
+        messages[index]['media_url'] = _realtimePendingMediaUrl!;
+        messages[index]['media_type'] = _realtimePendingMediaType ?? 'image';
+        _realtimePendingMediaUrl = null;
+        _realtimePendingMediaType = null;
+      }
+
+      if (isFinal) {
+        _realtimeAssistantIndex = null;
+      }
+    });
+    _scrollToBottom();
+  }
+
+  Future<String> _runRealtimeCapabilityTool(
+    String request,
+    List<String> capabilityHints,
+  ) async {
+    final clean = request.trim();
+    if (clean.isEmpty) {
+      return jsonEncode({'ok': false, 'error': 'Empty CHE tool request.'});
+    }
+
+    final rememberMatch = RegExp(
+      r'^(?:(?:chay|chey|shay|che)[, ]+)?remember(?: that)?\s+',
+      caseSensitive: false,
+    ).firstMatch(clean);
+    if (rememberMatch != null) {
+      final memory = clean.substring(rememberMatch.end).trim();
+      if (memory.isNotEmpty) {
+        await saveMemory(memory);
+        return jsonEncode({
+          'ok': true,
+          'confirmed': true,
+          'result': 'Saved to CHE memory.',
+        });
+      }
+    }
+
+    final recentMessages = messages.length > 14
+        ? messages.sublist(messages.length - 14)
+        : List<Map<String, String>>.from(messages);
+    final history = recentMessages
+        .map((item) => {
+              'role': item['role'] == 'assistant' ? 'assistant' : 'user',
+              'content': item['text'] ?? '',
+            })
+        .toList();
+
+    _streamMediaUrl = null;
+    _streamMediaType = null;
+
+    try {
+      final result = await _streamCheResponse(
+        clean,
+        history,
+        onPartial: (_) {},
+      );
+
+      _realtimePendingMediaUrl = _streamMediaUrl;
+      _realtimePendingMediaType = _streamMediaType;
+
+      return jsonEncode({
+        'ok': true,
+        'confirmed': true,
+        'result': result,
+        'media_url': _streamMediaUrl,
+        'media_type': _streamMediaType,
+        'requested_capabilities': {
+          ..._requestedCapabilities(clean),
+          ...capabilityHints,
+        }.toList(),
+      });
+    } catch (error) {
+      return jsonEncode({
+        'ok': false,
+        'confirmed': false,
+        'error': error.toString(),
+        'requested_capabilities': {
+          ..._requestedCapabilities(clean),
+          ...capabilityHints,
+        }.toList(),
+      });
+    }
+  }
+
+  void _openVoiceDiagnostics() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => CheVoiceDiagnosticsSheet(
+        snapshot: _voiceSnapshot,
+        serverOnline: _deviceToken != null,
+        lastServerEvent: _realtimeVoice?.lastServerEvent,
       ),
     );
   }
@@ -1393,6 +1686,10 @@ OWNER AGENCY
 
   Future<void> speakText(String text) async {
     if (text.trim().isEmpty) return;
+    if (_realtimeVoice?.connected == true) {
+      // Realtime owns both microphone and speaker during a live session.
+      return;
+    }
     final speechTurn = ++_speechTurn;
 
     // CHE refers to and pronounces herself as "CHE" in normal conversation.
@@ -1506,6 +1803,11 @@ OWNER AGENCY
   }
 
   Future<void> _interruptSpeechAndListen({bool resumeListening = true}) async {
+    if (_realtimeVoice?.connected == true) {
+      await _realtimeVoice!.cancelActiveResponse('owner interruption');
+      _applyVoiceSnapshot(_voiceMachine.snapshot);
+      return;
+    }
     ++_speechTurn;
     _listenRestartTimer?.cancel();
     if (kIsWeb) {
@@ -1585,6 +1887,7 @@ OWNER AGENCY
     final type = event['type']?.toString() ?? '';
 
     if (type == 'state') {
+      if (_realtimeConnecting || _realtimeVoice?.connected == true) return;
       final running = event['running'] == true;
 
       if (mounted) {
@@ -1610,25 +1913,14 @@ OWNER AGENCY
     }
 
     if (type == 'wake_signal') {
-      // Partial speech can confirm that the wake word is being heard, but do
-      // not flip cheSleeping yet. The final utterance must still pass through
-      // the wake-word parser below so "Chay" is treated as a wake command
-      // instead of a normal chat message.
-      if (cheSleeping && mounted) {
-        HapticFeedback.mediumImpact();
+      if (cheSleeping) {
+        unawaited(_beginRealtimeConversation(fromWake: true));
       }
       return;
     }
 
     if (type == 'wake') {
-      if (mounted) {
-        setState(() {
-          cheSleeping = false;
-          openConversation = true;
-        });
-      }
-
-      await speakText('Yeah, sir?');
+      await _beginRealtimeConversation(fromWake: true);
       return;
     }
 
@@ -1679,7 +1971,7 @@ OWNER AGENCY
         });
 
         if (words.isEmpty) {
-          await speakText('Yeah, sir?');
+          await _beginRealtimeConversation(fromWake: true);
           return;
         }
       }
@@ -1745,6 +2037,24 @@ OWNER AGENCY
 
   Future<void> toggleListening() async {
     HapticFeedback.lightImpact();
+
+    if (_realtimeVoice?.connected == true) {
+      if (_isSpeaking) {
+        await _realtimeVoice!.cancelActiveResponse('mic button');
+        _applyVoiceSnapshot(_voiceMachine.snapshot);
+      } else {
+        await _returnToWakeStandby();
+      }
+      return;
+    }
+
+    if (!kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.iOS &&
+        cheSleeping) {
+      await _beginRealtimeConversation(fromWake: true);
+      return;
+    }
+
     if (_isSpeaking) {
       await _interruptSpeechAndListen();
       return;
@@ -4841,6 +5151,17 @@ OWNER AGENCY
 
     if (!await _ensurePaired()) return;
 
+    if (_realtimeVoice?.connected == true) {
+      if (!mounted) return;
+      setState(() {
+        messages.add({'role': 'user', 'text': message});
+        controller.clear();
+      });
+      _scrollToBottom();
+      await _realtimeVoice!.sendText(message);
+      return;
+    }
+
     if (speech.isListening) {
       await speech.stop();
     }
@@ -5001,6 +5322,11 @@ OWNER AGENCY
     _listenRestartTimer?.cancel();
     _proactiveTimer?.cancel();
     _nativeIosVoiceSub?.cancel();
+    final realtime = _realtimeVoice;
+    _realtimeVoice = null;
+    if (realtime != null) {
+      unawaited(realtime.dispose());
+    }
     controller.dispose();
     _scrollController.dispose();
     speech.cancel();
@@ -5025,22 +5351,7 @@ OWNER AGENCY
 
     String statusText = _deviceToken == null
         ? '●  SECURITY PAIRING REQUIRED'
-        : '●  SECURE AGENT ONLINE';
-
-    if (_isSending) {
-      statusText = '●  CHE THINKING • EST. A FEW SECONDS';
-    } else if (_isSpeaking) {
-      statusText = '●  CHE SPEAKING • TAP MIC TO INTERRUPT';
-    } else if (cheSleeping) {
-      statusText = isListening
-          ? '●  STANDBY • SAY “CHAY”'
-          : '●  STANDBY';
-    } else if (isListening) {
-      statusText = '●  LISTENING';
-    } else if (openConversation) {
-      statusText =
-          kIsWeb ? '●  VOICE CONVERSATION ACTIVE' : '●  OPEN CONVERSATION';
-    }
+        : '●  ${_voiceSnapshot.engineLabel.toUpperCase()} • ${_voiceSnapshot.phaseLabel.toUpperCase()}';
 
     return Scaffold(
       backgroundColor: CheColors.bg,
@@ -5073,8 +5384,8 @@ OWNER AGENCY
                 case 'accounts':
                   await _openAccountBridge();
                   break;
-                case 'live_voice':
-                  await _openLiveVoice();
+                case 'diagnostics':
+                  _openVoiceDiagnostics();
                   break;
                 case 'server':
                   await _showAgentServerDialog();
@@ -5089,7 +5400,7 @@ OWNER AGENCY
             },
             itemBuilder: (context) => const [
               PopupMenuItem(value: 'accounts', child: Text('Accounts + Face ID')),
-              PopupMenuItem(value: 'live_voice', child: Text('OpenAI Live Voice')),
+              PopupMenuItem(value: 'diagnostics', child: Text('Voice diagnostics')),
               PopupMenuItem(value: 'server', child: Text('CHE server')),
               PopupMenuItem(value: 'screen', child: Text('Screen context')),
               PopupMenuItem(value: 'security', child: Text('Security + memory')),
@@ -5162,48 +5473,37 @@ OWNER AGENCY
         child: Column(
           children: [
             const Divider(color: Color(0xFF354859)),
-            Container(
-              margin: const EdgeInsets.fromLTRB(14, 8, 14, 6),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0F1D27),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: const Color(0x334DE3CB)),
-              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
               child: Row(
                 children: [
-                  Container(
-                    width: 34,
-                    height: 34,
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: RadialGradient(
-                        colors: [Color(0xFF8BFFF0), Color(0xFF1A7D78), Color(0xFF0B1822)],
-                      ),
-                    ),
+                  CheVoiceOrb(
+                    snapshot: _voiceSnapshot,
+                    onTap: toggleListening,
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 14),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          integrations['openai_live_voice'] == true
-                              ? 'CHE • OPENAI VOICE READY'
-                              : 'CHE • NATIVE VOICE FALLBACK',
+                          _voiceSnapshot.phaseLabel,
                           style: const TextStyle(
                             color: accent,
-                            fontSize: 10.5,
+                            fontSize: 14,
                             fontWeight: FontWeight.w800,
-                            letterSpacing: 0.8,
                           ),
                         ),
                         const SizedBox(height: 2),
-                        const Text(
-                          'Say “Chay” to wake • interrupt anytime',
-                          style: TextStyle(
-                            color: Colors.white60,
-                            fontSize: 10,
+                        Text(
+                          _voiceSnapshot.engine == CheVoiceEngine.realtime
+                              ? 'Realtime voice • interrupt anytime'
+                              : cheSleeping
+                                  ? 'Say “Chay” to wake'
+                                  : _voiceSnapshot.engineLabel,
+                          style: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 10.5,
                           ),
                         ),
                       ],
@@ -5224,30 +5524,6 @@ OWNER AGENCY
                   deleteIcon: const Icon(Icons.close, size: 15),
                   onDeleted: () => setState(() => _pendingAttachment = null),
                   backgroundColor: const Color(0xFF1A2935),
-                ),
-              ),
-            if (openConversation)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
-                color: const Color(0xFF163A40),
-                child: Text(
-                  isListening
-                      ? (cheSleeping
-                          ? '●  STANDBY • SAY “CHAY” TO WAKE'
-                          : '● OPEN CONVERSATION • LISTENING...')
-                      : _isSpeaking
-                          ? '● OPEN CONVERSATION • TAP MIC TO INTERRUPT'
-                          : _isSending
-                              ? '● OPEN CONVERSATION • THINKING...'
-                              : '● OPEN CONVERSATION',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: accent,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.0,
-                    fontSize: 9.5,
-                  ),
                 ),
               ),
             Expanded(
@@ -5365,11 +5641,13 @@ OWNER AGENCY
                       style: const TextStyle(color: Colors.white),
                       onSubmitted: (_) => sendMessage(),
                       decoration: InputDecoration(
-                        hintText: isListening
+                        hintText: _voiceSnapshot.phase == CheVoicePhase.userSpeaking ||
+                                _voiceSnapshot.phase == CheVoicePhase.listening
                             ? 'Listening...'
-                            : _isSending
-                                ? 'C.H.E. is thinking...'
-                                : 'Message C.H.E...',
+                            : _voiceSnapshot.phase == CheVoicePhase.thinking ||
+                                    _voiceSnapshot.phase == CheVoicePhase.connecting
+                                ? 'CHE is thinking...'
+                                : 'Message CHE...',
                         hintStyle:
                             const TextStyle(color: Colors.white54),
                         filled: true,
@@ -5386,12 +5664,14 @@ OWNER AGENCY
                     icon: Icon(
                       _isSpeaking
                           ? Icons.stop_circle_outlined
-                          : openConversation || isListening
+                          : _realtimeVoice?.connected == true
                               ? Icons.mic
                               : Icons.mic_none,
-                      color: _isSpeaking || openConversation || isListening
-                          ? Colors.redAccent
-                          : accent,
+                      color: _isSpeaking
+                          ? Colors.orangeAccent
+                          : _realtimeVoice?.connected == true
+                              ? accent
+                              : Colors.white54,
                       size: 29,
                     ),
                     tooltip: _isSpeaking
