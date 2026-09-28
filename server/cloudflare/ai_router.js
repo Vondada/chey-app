@@ -166,15 +166,22 @@ export async function routeText(env, model, input, fetcher = fetch) {
       const out = await env.AI.run(model, input);
       return out;
     } catch (error) {
-      if (isQuotaError(error)) cloudflareExhaustedUntil = nextUtcMidnight(now);
-      errors.push(`cloudflare: ${error?.message || error}`);
+      if (isQuotaError(error)) {
+        cloudflareExhaustedUntil = nextUtcMidnight(now);
+        errors.push('cloudflare: quota used up');
+      } else {
+        errors.push(`cloudflare: ${error?.message || error}`);
+      }
     }
   } else if (env.AI) {
     errors.push('cloudflare: daily free allowance used up');
   }
   for (const provider of PROVIDERS) {
     if (!providerEnabled(env, provider)) continue;
-    if ((providerCooldownUntil.get(provider.id) || 0) > now) continue;
+    if ((providerCooldownUntil.get(provider.id) || 0) > now) {
+      errors.push(`${provider.id}: resting`);
+      continue;
+    }
     try {
       return await callProvider(env, provider, model, input, fetcher);
     } catch (error) {
@@ -190,8 +197,9 @@ export async function routeText(env, model, input, fetcher = fetch) {
   const hint = configured.length
     ? ''
     : ' Add a free key (GROQ_API_KEY, GEMINI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GITHUB_MODELS_TOKEN, SAMBANOVA_API_KEY, HF_TOKEN or OPENROUTER_API_KEY) so CHE keeps answering when Cloudflare\'s daily allowance runs out.';
-  const error = new Error(`All AI engines failed (${errors.join(' | ').slice(0, 300)}).${hint}`);
+  const error = new Error(`All AI engines failed (${errors.join(' | ').slice(0, 1500)}).${hint}`);
   error.quota = errors.some((e) => /allowance|4006|neurons|429/.test(e));
+  console.log("CHE engine errors:", errors);
   throw error;
 }
 
