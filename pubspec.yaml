@@ -21,6 +21,9 @@ dependencies:
   flutter_webrtc: ^1.6.2+hotfix.3
   porcupine_flutter: ^4.0.0
   shorebird_code_push: ^2.0.0
+  sherpa_onnx: ^1.13.8
+  path_provider: ^2.1.6
+  archive: ^4.3.0
 
 dev_dependencies:
   flutter_test:

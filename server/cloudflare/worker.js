@@ -372,6 +372,51 @@ async function geminiSpeech(env, text, fetcher = fetch) {
 async function voiceSynthesisResponse(env, text) {
   const input = String(text || '').trim().slice(0, 6000);
 
+  // Optional premium-quality CHE/Chaze voice through ElevenLabs.
+  // Credentials stay server-side. If ElevenLabs is unavailable or out of
+  // credits, CHE falls through to OpenAI, Cloudflare, then the iPhone's local
+  // Kokoro voice so speech never depends on one paid provider.
+  if (env.ELEVENLABS_API_KEY && env.CHE_ELEVENLABS_VOICE_ID) {
+    try {
+      const voiceId = encodeURIComponent(String(env.CHE_ELEVENLABS_VOICE_ID).trim());
+      const response = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`,
+        {
+          method: 'POST',
+          headers: {
+            'xi-api-key': String(env.ELEVENLABS_API_KEY),
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            text: input,
+            model_id: String(env.CHE_ELEVENLABS_MODEL || 'eleven_flash_v2_5'),
+            voice_settings: {
+              stability: 0.45,
+              similarity_boost: 0.82,
+              style: 0.28,
+              use_speaker_boost: true,
+            },
+          }),
+        },
+      );
+
+      if (response.ok) {
+        const bytes = await response.arrayBuffer();
+        if (bytes.byteLength > 0 && bytes.byteLength <= 6 * 1024 * 1024) {
+          return new Response(bytes, {
+            headers: {
+              'Content-Type': response.headers.get('content-type') || 'audio/mpeg',
+              'Cache-Control': 'no-store',
+              'X-CHE-Voice': 'elevenlabs-chaze',
+            },
+          });
+        }
+      }
+    } catch (_) {
+      // Fall through to CHE's other voice engines.
+    }
+  }
+
   // Default CHE neural voice: use the OpenAI key stored only on the server.
   // The iPhone never receives the standard API key.
   if (env.CHE_OPENAI_API_KEY) {
@@ -1630,7 +1675,7 @@ export class CheState extends DurableObject {
             background_jobs: true,
             agent_identity: true,
             service_accounts: true,
-            natural_voice: Boolean(this.env.CHE_OPENAI_API_KEY || this.env.AI || this.env.CHE_VOICE_URL || this.env.GEMINI_API_KEY),
+            natural_voice: Boolean((this.env.ELEVENLABS_API_KEY && this.env.CHE_ELEVENLABS_VOICE_ID) || this.env.CHE_OPENAI_API_KEY || this.env.AI || this.env.CHE_VOICE_URL || this.env.GEMINI_API_KEY),
             openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY),
             porcupine_wake_word: Boolean(this.env.CHE_PICOVOICE_ACCESS_KEY && this.env.CHE_PICOVOICE_KEYWORD_PPN_B64),
             apple_vocal_shortcut: true,
@@ -2799,7 +2844,7 @@ export class CheState extends DurableObject {
                 windows: Boolean(this.env.CHE_WINDOWS_URL),
                 car: Boolean(this.env.CHE_CAR_URL),
                 smart_home: Boolean(this.env.CHE_SMART_HOME_URL),
-                natural_voice: Boolean(this.env.CHE_OPENAI_API_KEY || this.env.AI || this.env.CHE_VOICE_URL || this.env.GEMINI_API_KEY),
+                natural_voice: Boolean((this.env.ELEVENLABS_API_KEY && this.env.CHE_ELEVENLABS_VOICE_ID) || this.env.CHE_OPENAI_API_KEY || this.env.AI || this.env.CHE_VOICE_URL || this.env.GEMINI_API_KEY),
                 openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY),
                 background_jobs: true,
                 quantum_compute: Boolean(this.env.CHE_QUANTUM_URL),

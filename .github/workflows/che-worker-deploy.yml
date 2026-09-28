@@ -30,6 +30,9 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
       # Optional free AI engines CHE falls back to when Cloudflare's daily
       # allowance runs out. Add any of these as repository secrets.
+      ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      CHE_ELEVENLABS_VOICE_ID: ${{ secrets.CHE_ELEVENLABS_VOICE_ID }}
+      CHE_OPENAI_API_KEY: ${{ secrets.CHE_OPENAI_API_KEY }}
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -57,12 +60,12 @@ jobs:
         working-directory: server/cloudflare
         run: npx --yes wrangler@4 deploy
 
-      - name: Sync free AI engine keys to the Worker
+      - name: Sync AI engine keys to the Worker
         working-directory: server/cloudflare
         run: |
           node -e '
             const out = {};
-            for (const k of ["GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY"]) {
+            for (const k of ["ELEVENLABS_API_KEY", "CHE_ELEVENLABS_VOICE_ID", "CHE_OPENAI_API_KEY", "GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY"]) {
               if (process.env[k]) out[k] = process.env[k];
             }
             require("fs").writeFileSync("/tmp/che-secrets.json", JSON.stringify(out));
