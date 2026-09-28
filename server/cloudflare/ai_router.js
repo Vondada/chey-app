@@ -110,6 +110,7 @@ function providerEnabled(env, provider) {
 // Per-isolate memory of "Cloudflare's free allowance is gone until…".
 let cloudflareExhaustedUntil = 0;
 const providerCooldownUntil = new Map();
+const providerLastError = new Map();
 
 function nextUtcMidnight(now = Date.now()) {
   const d = new Date(now);
@@ -174,7 +175,11 @@ export async function routeText(env, model, input, fetcher = fetch) {
   }
   for (const provider of PROVIDERS) {
     if (!providerEnabled(env, provider)) continue;
-    if ((providerCooldownUntil.get(provider.id) || 0) > now) continue;
+    if ((providerCooldownUntil.get(provider.id) || 0) > now) {
+      const lastError = providerLastError.get(provider.id);
+      errors.push(`${provider.id}: resting after earlier error${lastError ? ` (${lastError})` : ''}`);
+      continue;
+    }
     try {
       return await callProvider(env, provider, model, input, fetcher);
     } catch (error) {
@@ -183,14 +188,16 @@ export async function routeText(env, model, input, fetcher = fetch) {
       // minute when rate-limited, 20 seconds for other errors.
       const rest = [401, 402, 403].includes(error?.status) ? 3_600_000 : error?.status === 429 ? 60_000 : 20_000;
       providerCooldownUntil.set(provider.id, now + rest);
-      errors.push(String(error?.message || error));
+      const message = String(error?.message || error);
+      providerLastError.set(provider.id, message);
+      errors.push(message);
     }
   }
   const configured = PROVIDERS.filter((p) => !p.keyless && env[p.key]).map((p) => p.id);
   const hint = configured.length
     ? ''
     : ' Add a free key (GROQ_API_KEY, GEMINI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GITHUB_MODELS_TOKEN, SAMBANOVA_API_KEY, HF_TOKEN or OPENROUTER_API_KEY) so CHE keeps answering when Cloudflare\'s daily allowance runs out.';
-  const error = new Error(`All AI engines failed (${errors.join(' | ').slice(0, 300)}).${hint}`);
+  const error = new Error(`All AI engines failed (${errors.join(' | ')}).${hint}`);
   error.quota = errors.some((e) => /allowance|4006|neurons|429/.test(e));
   throw error;
 }
@@ -214,4 +221,5 @@ export function routedEnv(env, fetcher = fetch) {
 export function resetRouterForTests() {
   cloudflareExhaustedUntil = 0;
   providerCooldownUntil.clear();
+  providerLastError.clear();
 }
