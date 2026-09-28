@@ -55,6 +55,8 @@ import 'che_ui/che_theme.dart' as kit show CheTheme;
 import 'plugins/che_plugin_webapp.dart';
 import 'self_update/che_patch_banner.dart';
 import 'self_update/che_update_card.dart';
+import 'rooms/che_markets_room.dart';
+import 'browser/che_browser.dart' show CheBrowserActions;
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
 
@@ -307,6 +309,28 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
       text = 'Could not reach the CHE server.';
     }
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  /// Browser page actions: teach CHE, ask about the page, save to project.
+  void _wireBrowser() {
+    CheBrowserActions.learn = _learnFromBrowserPage;
+    CheBrowserActions.ask = (prompt, title, url, pageText) async {
+      final text = pageText.length > 8000 ? pageText.substring(0, 8000) : pageText;
+      _pendingScreenContext = 'Owner is viewing "$title" ($url) in the CHE browser. Page text:\n$text';
+      if (!mounted) return;
+      Navigator.of(context).popUntil((route) => route.isFirst);
+      controller.text = '$prompt\n(Page: $title — $url)';
+      await sendMessage();
+    };
+    CheBrowserActions.saveToProject = (title, url, pageText) async {
+      final text = pageText.length > 5000 ? pageText.substring(0, 5000) : pageText;
+      await _postAgentJson('/api/project/create', {
+        'title': title.trim().isEmpty ? 'Web research' : title.trim(),
+        'type': 'research',
+        'brief': 'Saved from $url\n\n$text',
+      });
+      await _loadAgentState(silent: true);
+    };
   }
 
   static final RegExp _pluginWord = RegExp(r'\bplug-?ins?\b', caseSensitive: false);
@@ -629,6 +653,7 @@ OWNER AGENCY
     unawaited(_brain.load());
     unawaited(_brainLog.restore());
     unawaited(_skillPlugins.load());
+    _wireBrowser();
     initializeVoice();
     _loadSecuritySession();
     _proactiveTimer = Timer.periodic(
@@ -4129,52 +4154,68 @@ OWNER AGENCY
   }
 
   Widget _hubMarketsTab() {
-    return _hubList(
-      'Markets',
-      'Run analysis now; live data and execution activate when authorized connectors are linked.',
-      [
-        _integrationCard(
-          Icons.candlestick_chart,
-          'Analyze Markets',
-          'Stocks, futures and crypto structure, catalysts, volatility and risk.',
-          integrations['market_data'] == true,
-          onTap: () => _runHubPrompt(
+    return CheMarketsRoom(
+      baseUrl: () => cheAgentBaseUrl,
+      headers: () => _authHeaders,
+      onAsk: _runHubPrompt,
+      actions: [
+        CheDeskAction(
+          icon: Icons.candlestick_chart,
+          title: 'Analyze Markets',
+          body: 'Stocks, futures and crypto structure, catalysts, volatility and risk.',
+          connected: integrations['market_data'] == true,
+          connectorName: 'Live market data (CHE_MARKET_DATA_URL)',
+          onRun: () => _runHubPrompt(
             'Analyze the market I am focused on right now. Use any connected live market and research tools, separate live facts from assumptions, and give me structure, catalysts, invalidation and risk.',
           ),
         ),
-        _integrationCard(
-          Icons.science_outlined,
-          'Backtesting Lab',
-          'Design and evaluate strategy tests with sample size, drawdown and out-of-sample checks.',
-          integrations['backtesting'] == true,
-          onTap: () => _runHubPrompt(
+        CheDeskAction(
+          icon: Icons.science_outlined,
+          title: 'Backtesting Lab',
+          body: 'Strategy tests with sample size, drawdown and out-of-sample checks.',
+          connected: integrations['backtesting'] == true,
+          connectorName: 'Backtest engine (CHE_BACKTEST_URL)',
+          onRun: () => _runHubPrompt(
             'Open a backtesting task with me. Help me define the setup, rules, timeframe, data needed, sample size, drawdown and out-of-sample validation. Use the connected backtest system if available.',
           ),
         ),
-        _integrationCard(
-          Icons.functions,
-          'Custom Indicators',
-          'Design indicator/scanner logic and validate it when historical data is connected.',
-          integrations['backtesting'] == true,
-          onTap: () => _runHubPrompt(
+        CheDeskAction(
+          icon: Icons.functions,
+          title: 'Custom Indicators',
+          body: 'Indicator and scanner logic (VWAP, order blocks, custom rules).',
+          connected: integrations['backtesting'] == true,
+          connectorName: 'Historical data / backtest engine',
+          onRun: () => _runHubPrompt(
             'Help me build a custom trading indicator or scanner. Ask only for the missing rules, then produce the logic and a validation plan.',
           ),
         ),
-        _integrationCard(
-          Icons.account_balance,
-          'Live Broker',
-          'Authorized order routing with explicit risk controls and connector confirmation.',
-          integrations['broker'] == true,
-          onTap: () => _runHubPrompt(
+        CheDeskAction(
+          icon: Icons.menu_book_rounded,
+          title: 'Trading Journal + Review',
+          body: 'Log trades, review execution against your rules, find repeat mistakes.',
+          connected: true,
+          connectorName: '',
+          onRun: () => _runHubPrompt(
+            'Start a trading journal review with me. Ask for my recent trades (or read the ones I paste), check each against my rules, and summarize what to repeat and what to stop.',
+          ),
+        ),
+        CheDeskAction(
+          icon: Icons.account_balance,
+          title: 'Live Broker',
+          body: 'Authorized order routing with explicit risk controls and confirmation.',
+          connected: integrations['broker'] == true,
+          connectorName: 'Broker connector (CHE_BROKER_URL)',
+          onRun: () => _runHubPrompt(
             'Help me connect and configure my broker for CHE. Do not place any order until the broker connector confirms authorization and the trade details and risk controls are explicit.',
           ),
         ),
-        _integrationCard(
-          Icons.copy_all_outlined,
-          'Prop-Firm Copy Trading',
-          'Rule-aware mirroring only after the prop-firm connection and limits are verified.',
-          integrations['prop_firm'] == true,
-          onTap: () => _runHubPrompt(
+        CheDeskAction(
+          icon: Icons.copy_all_outlined,
+          title: 'Prop-Firm Copy Trading',
+          body: 'Rule-aware mirroring only after the prop-firm connection and limits are verified.',
+          connected: integrations['prop_firm'] == true,
+          connectorName: 'Prop-firm connector (CHE_PROP_FIRM_URL)',
+          onRun: () => _runHubPrompt(
             'Help me connect my prop-firm account and configure compliant copy trading. Verify account rules, sizing and loss limits before any execution.',
           ),
         ),

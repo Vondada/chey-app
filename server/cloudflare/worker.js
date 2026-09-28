@@ -13,6 +13,7 @@ import {
   updateAgent,
 } from './agent_runtime.js';
 import { planPluginCall, pluginManifests, runPluginTool } from './plugin_runtime.js';
+import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 
 const FAST_MODEL = '@cf/meta/llama-3.2-3b-instruct';
@@ -1616,6 +1617,16 @@ export class CheState extends DurableObject {
         const index = (await this.ctx.storage.get('log_index')) || [];
         await this.ctx.storage.put('log_index', index.filter((item) => item.id !== logMatch[1]));
         return json({ ok: true });
+      }
+
+      // ─── Markets desk (real quotes only; unavailable says so) ───────────
+      if (path === '/api/markets/snapshot' && request.method === 'GET') {
+        return json(await marketSnapshot(this.env));
+      }
+      if (path === '/api/markets/candles' && request.method === 'GET') {
+        const symbol = new URL(request.url).searchParams.get('symbol') || '^spx';
+        const result = await marketCandles(symbol);
+        return json(result, result.error && !result.candles ? 400 : 200);
       }
 
       // ─── Self-development: owner-approved PRs, never direct pushes ─────
