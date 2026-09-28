@@ -179,8 +179,10 @@ export async function routeText(env, model, input, fetcher = fetch) {
       return await callProvider(env, provider, model, input, fetcher);
     } catch (error) {
       // Rest a failing engine so the next message goes straight to one that
-      // works: a minute when rate-limited, 20 seconds for other errors.
-      providerCooldownUntil.set(provider.id, now + (error?.status === 429 ? 60_000 : 20_000));
+      // works: an hour when it wants payment or a key (401/402/403), a
+      // minute when rate-limited, 20 seconds for other errors.
+      const rest = [401, 402, 403].includes(error?.status) ? 3_600_000 : error?.status === 429 ? 60_000 : 20_000;
+      providerCooldownUntil.set(provider.id, now + rest);
       errors.push(String(error?.message || error));
     }
   }
