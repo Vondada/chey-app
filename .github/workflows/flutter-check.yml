@@ -2,7 +2,7 @@ name: Check CHE Flutter client
 
 on:
   push:
-    branches: [main]
+    branches: [main, che/realtime-conversation-rebuild]
   pull_request:
     branches: [main]
   workflow_dispatch:
