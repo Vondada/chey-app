@@ -107,6 +107,152 @@ function providerEnabled(env, provider) {
   return Boolean(env[provider.key]);
 }
 
+const FREE_PROVIDER_IDS = ['groq', 'cerebras', 'gemini', 'mistral', 'github', 'sambanova', 'huggingface', 'openrouter'];
+const USAGE_KEY_PREFIX = 'ai_usage:';
+
+function usageLimitName(providerId) {
+  return `CHE_${String(providerId).toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_DAILY_TOKEN_LIMIT`;
+}
+
+function dailyTokenLimit(env, providerId) {
+  const value = Number(env[usageLimitName(providerId)] || 0);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+function contentText(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.map((part) => typeof part === 'string' ? part : String(part?.text || '')).join(' ');
+  }
+  return String(content || '');
+}
+
+function estimateInputTokens(input) {
+  const chars = (Array.isArray(input?.messages) ? input.messages : [])
+    .reduce((sum, message) => sum + String(message?.role || '').length + contentText(message?.content).length + 4, 0);
+  return Math.max(1, Math.ceil(chars / 4));
+}
+
+function responseText(output) {
+  return String(output?.response || output?.choices?.[0]?.message?.content || '');
+}
+
+function estimateTotalTokens(input, output) {
+  return estimateInputTokens(input) + Math.max(1, Math.ceil(responseText(output).length / 4));
+}
+
+function zonedParts(timestamp, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(timestamp));
+  const values = {};
+  for (const part of parts) {
+    if (part.type !== 'literal') values[part.type] = Number(part.value);
+  }
+  return values;
+}
+
+function nextZonedMidnight(now, timeZone) {
+  const current = zonedParts(now, timeZone);
+  const targetLocal = Date.UTC(current.year, current.month - 1, current.day + 1, 0, 0, 0);
+  let guess = targetLocal + 12 * 60 * 60 * 1000;
+  for (let i = 0; i < 4; i += 1) {
+    const rendered = zonedParts(guess, timeZone);
+    const renderedLocal = Date.UTC(
+      rendered.year,
+      rendered.month - 1,
+      rendered.day,
+      rendered.hour,
+      rendered.minute,
+      rendered.second,
+    );
+    const delta = targetLocal - renderedLocal;
+    guess += delta;
+    if (Math.abs(delta) < 1000) break;
+  }
+  return guess;
+}
+
+function nextUsageReset(providerId, now) {
+  return providerId === 'gemini'
+    ? nextZonedMidnight(now, 'America/Los_Angeles')
+    : nextUtcMidnight(now);
+}
+
+async function usageRecord(storage, providerId, now) {
+  const key = `${USAGE_KEY_PREFIX}${providerId}`;
+  const stored = storage ? await storage.get(key) : null;
+  if (!stored || now >= Number(stored.reset_at || 0)) {
+    return { estimated_tokens: 0, reset_at: nextUsageReset(providerId, now) };
+  }
+  return {
+    estimated_tokens: Math.max(0, Number(stored.estimated_tokens || 0)),
+    reset_at: Number(stored.reset_at),
+  };
+}
+
+async function isPastDailyBudget(env, storage, providerId, now) {
+  const limit = dailyTokenLimit(env, providerId);
+  if (!storage || !limit) return false;
+  const usage = await usageRecord(storage, providerId, now);
+  return usage.estimated_tokens >= limit * 0.9;
+}
+
+async function addEstimatedUsage(env, storage, providerId, tokens, now = Date.now()) {
+  if (!storage || !Number.isFinite(tokens) || tokens <= 0) return;
+  const update = async (target) => {
+    const usage = await usageRecord(target, providerId, now);
+    await target.put(`${USAGE_KEY_PREFIX}${providerId}`, {
+      estimated_tokens: usage.estimated_tokens + Math.ceil(tokens),
+      reset_at: usage.reset_at,
+      limit: dailyTokenLimit(env, providerId) || null,
+      updated_at: new Date(now).toISOString(),
+    });
+  };
+  if (typeof storage.transaction === 'function') {
+    await storage.transaction(update);
+  } else {
+    await update(storage);
+  }
+}
+
+function isShortCasualRequest(model, input) {
+  if (isStrongModel(model)) return false;
+  const messages = Array.isArray(input?.messages) ? input.messages : [];
+  const latestUser = [...messages].reverse().find((item) => item?.role === 'user');
+  const text = contentText(latestUser?.content).trim();
+  const totalChars = messages.reduce((sum, item) => sum + contentText(item?.content).length, 0);
+  if (!text || text.length > 240 || totalChars > 1600 || Number(input?.max_tokens || 0) > 500) return false;
+  return !/\b(debug|code|implement|architect|research|analy[sz]e|analysis|report|backtest|legal|financial|medical|compare|plan|design|build|fix|investigate)\b/i.test(text);
+}
+
+function wantsStrongProviderModel(model, input) {
+  if (isShortCasualRequest(model, input)) return false;
+  const chars = (Array.isArray(input?.messages) ? input.messages : [])
+    .reduce((sum, item) => sum + contentText(item?.content).length, 0);
+  return isStrongModel(model) || chars > 5000 || Number(input?.max_tokens || 0) > 700;
+}
+
+function orderedProviders(env, casual) {
+  if (!casual) return PROVIDERS;
+  const requested = String(env.CHE_FAST_FREE_PROVIDER || 'groq').trim().toLowerCase();
+  const candidates = [requested, ...FREE_PROVIDER_IDS.filter((id) => id !== requested)];
+  const id = candidates.find((candidate) => {
+    const provider = PROVIDERS.find((item) => item.id === candidate);
+    return provider && providerEnabled(env, provider);
+  });
+  if (!id) return PROVIDERS;
+  const preferred = PROVIDERS.find((provider) => provider.id === id);
+  return [preferred, ...PROVIDERS.filter((provider) => provider !== preferred)];
+}
+
 // Per-isolate memory of "Cloudflare's free allowance is gone until…".
 let cloudflareExhaustedUntil = 0;
 const providerCooldownUntil = new Map();
@@ -125,7 +271,7 @@ function isStrongModel(model) {
   return /8b|70b|strong/i.test(String(model)) && !/3b/i.test(String(model));
 }
 
-async function callProvider(env, provider, model, input, fetcher) {
+async function callProvider(env, provider, strongModel, input, fetcher) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 45_000);
   try {
@@ -137,7 +283,7 @@ async function callProvider(env, provider, model, input, fetcher) {
         ...(provider.id === 'openrouter' ? { 'HTTP-Referer': 'https://che.app', 'X-Title': 'CHE' } : {}),
       },
       body: JSON.stringify({
-        model: isStrongModel(model) ? provider.strong(env) : provider.fast(env),
+        model: strongModel ? provider.strong(env) : provider.fast(env),
         messages: input.messages,
         max_tokens: input.max_tokens || 800,
       }),
@@ -151,39 +297,60 @@ async function callProvider(env, provider, model, input, fetcher) {
     }
     const text = String(data?.choices?.[0]?.message?.content || '').trim();
     if (!text) throw new Error(`${provider.id} returned no text`);
-    return { response: text, engine: provider.id };
+    const reportedTokens = Number(data?.usage?.total_tokens || data?.usage?.totalTokens || 0);
+    return {
+      result: { response: text, engine: provider.id },
+      usageTokens: Number.isFinite(reportedTokens) && reportedTokens > 0
+        ? reportedTokens
+        : estimateInputTokens(input) + Math.max(1, Math.ceil(text.length / 4)),
+    };
   } finally {
     clearTimeout(timer);
   }
 }
 
 // Runs a text model through the first engine that can answer.
-export async function routeText(env, model, input, fetcher = fetch) {
+export async function routeText(env, model, input, fetcher = fetch, usageStorage = null) {
   const errors = [];
   const now = Date.now();
+  const casual = isShortCasualRequest(model, input);
+  const strongProviderModel = wantsStrongProviderModel(model, input);
+
   if (env.AI && now >= cloudflareExhaustedUntil) {
-    try {
-      const out = await env.AI.run(model, input);
-      return out;
-    } catch (error) {
-      if (isQuotaError(error)) {
-        cloudflareExhaustedUntil = nextUtcMidnight(now);
-        errors.push('cloudflare: quota used up');
-      } else {
-        errors.push(`cloudflare: ${error?.message || error}`);
+    if (await isPastDailyBudget(env, usageStorage, 'cloudflare', now)) {
+      errors.push('cloudflare: daily budget at 90%');
+    } else {
+      try {
+        const out = await env.AI.run(model, input);
+        await addEstimatedUsage(env, usageStorage, 'cloudflare', estimateTotalTokens(input, out), now);
+        return out;
+      } catch (error) {
+        if (isQuotaError(error)) {
+          cloudflareExhaustedUntil = nextUtcMidnight(now);
+          errors.push('cloudflare: quota used up');
+        } else {
+          errors.push(`cloudflare: ${error?.message || error}`);
+        }
       }
     }
   } else if (env.AI) {
     errors.push('cloudflare: daily free allowance used up');
   }
-  for (const provider of PROVIDERS) {
+
+  for (const provider of orderedProviders(env, casual)) {
     if (!providerEnabled(env, provider)) continue;
     if ((providerCooldownUntil.get(provider.id) || 0) > now) {
       errors.push(`${provider.id}: resting`);
       continue;
     }
+    if (await isPastDailyBudget(env, usageStorage, provider.id, now)) {
+      errors.push(`${provider.id}: daily budget at 90%`);
+      continue;
+    }
     try {
-      return await callProvider(env, provider, model, input, fetcher);
+      const called = await callProvider(env, provider, strongProviderModel, input, fetcher);
+      await addEstimatedUsage(env, usageStorage, provider.id, called.usageTokens, now);
+      return called.result;
     } catch (error) {
       // Rest a failing engine so the next message goes straight to one that
       // works: an hour when it wants payment or a key (401/402/403), a
@@ -198,20 +365,20 @@ export async function routeText(env, model, input, fetcher = fetch) {
     ? ''
     : ' Add a free key (GROQ_API_KEY, GEMINI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GITHUB_MODELS_TOKEN, SAMBANOVA_API_KEY, HF_TOKEN or OPENROUTER_API_KEY) so CHE keeps answering when Cloudflare\'s daily allowance runs out.';
   const error = new Error(`All AI engines failed (${errors.join(' | ').slice(0, 1500)}).${hint}`);
-  error.quota = errors.some((e) => /quota|allowance|4006|neurons|429/.test(e));
+  error.quota = errors.some((e) => /quota|allowance|4006|neurons|429|budget/.test(e));
   console.log("CHE engine errors:", errors);
   throw error;
 }
 
 // Wraps the Worker env so every `env.AI.run` for text goes through the router.
-export function routedEnv(env, fetcher = fetch) {
+export function routedEnv(env, fetcher = fetch, usageStorage = null) {
   const wrapped = Object.create(env);
   Object.defineProperty(wrapped, 'AI', {
     value: {
       run: (model, input, options) => (
         /flux|stable-diffusion|image/i.test(String(model)) || !Array.isArray(input?.messages)
           ? env.AI.run(model, input, options)
-          : routeText(env, model, input, fetcher)
+          : routeText(env, model, input, fetcher, usageStorage)
       ),
     },
     enumerable: true,
