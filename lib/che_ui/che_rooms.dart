@@ -438,3 +438,171 @@ class _BrainPainter extends CustomPainter {
         if (d > w * 0.2) continue;
         final o = (1 - d / (w * 0.2)) * 0.5;
         canvas.drawLine(pts[i], pts[j], edge..color = blue.withOpacity(o));
+        if ((i + j) % 5 == 0) {
+          final p = ((t * 3 + i * 0.11) % 1.0);
+          canvas.drawCircle(Offset.lerp(pts[i], pts[j], p)!, 1.8, Paint()..color = Colors.white.withOpacity(0.9));
+        }
+      }
+    }
+    for (var i = 0; i < n; i++) {
+      final fire = 0.5 + 0.5 * _wave(t, 4, i * 0.13);
+      canvas.drawCircle(pts[i], 5 + 5 * fire, _glow(blue.withOpacity(0.35 * fire), 8));
+      canvas.drawCircle(pts[i], 1.8 + fire, Paint()..color = Colors.white.withOpacity(0.7 + 0.3 * fire));
+    }
+    // "lightning" arc that roams across the network
+    final k = ((t * 5) % 1.0);
+    final a = pts[(k * n).floor() % n], b = pts[((k * n).floor() + 17) % n];
+    final path = Path()..moveTo(a.dx, a.dy);
+    for (var i = 1; i <= 6; i++) {
+      final p = Offset.lerp(a, b, i / 6)!;
+      path.lineTo(p.dx + (rnd.nextDouble() - 0.5) * 14, p.dy + (rnd.nextDouble() - 0.5) * 14);
+    }
+    canvas.drawPath(path, _glow(Colors.white.withOpacity(0.6 * (1 - k)), 3)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5);
+  }
+
+  @override
+  bool shouldRepaint(covariant _BrainPainter o) => o.t != t;
+}
+
+// ─── Markets desk: live candlesticks ───────────────────────────────────────
+class _MarketsPainter extends CustomPainter {
+  _MarketsPainter(this.t);
+  final double t;
+  static const up = Color(0xFF3DDC97);
+  static const down = Color(0xFFFF4D5E);
+
+  @override
+  void paint(Canvas canvas, Size s) {
+    final w = s.width, h = s.height;
+    canvas.drawRect(Offset.zero & s, Paint()..color = const Color(0xFF020406));
+    final grid = Paint()
+      ..color = const Color(0xFF1B2A33)
+      ..strokeWidth = 0.7;
+    for (var i = 0; i < 10; i++) {
+      canvas.drawLine(Offset(0, h * i / 10), Offset(w, h * i / 10), grid);
+      canvas.drawLine(Offset(w * i / 10, 0), Offset(w * i / 10, h), grid);
+    }
+    const count = 60;
+    final cw = w / 34;
+    final scroll = t * count;
+    final base = h * 0.45;
+    double price(double i) =>
+        base + math.sin(i * 0.23) * h * 0.12 + math.sin(i * 0.071) * h * 0.1 + math.sin(i * 1.7) * h * 0.02;
+    final path = Path();
+    for (var k = 0; k < 36; k++) {
+      final i = k + scroll.floor();
+      final x = k * cw - (scroll % 1) * cw;
+      final o = price(i.toDouble()), c = price(i + 1.0);
+      final hi = math.min(o, c) - h * 0.02 * (1 + math.sin(i * 3.1).abs());
+      final lo = math.max(o, c) + h * 0.02 * (1 + math.cos(i * 2.3).abs());
+      final col = c < o ? up : down; // y grows downward → lower y is higher price
+      canvas.drawLine(Offset(x + cw / 2, hi), Offset(x + cw / 2, lo), Paint()
+        ..color = col.withOpacity(0.8)
+        ..strokeWidth = 1);
+      canvas.drawRect(Rect.fromLTRB(x + cw * 0.2, math.min(o, c), x + cw * 0.8, math.max(o, c) + 1), Paint()..color = col);
+      final vwap = (o + c) / 2 + h * 0.05;
+      k == 0 ? path.moveTo(x, vwap) : path.lineTo(x, vwap);
+    }
+    canvas.drawPath(path, Paint()
+      ..color = const Color(0xFF7CC4FF).withOpacity(0.7)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4);
+    // arrows
+    final pulse = 0.5 + 0.5 * _wave(t, 6);
+    void arrow(Offset c, bool isUp) {
+      final p = Path();
+      final d = isUp ? -1 : 1;
+      p.moveTo(c.dx, c.dy + d * 14);
+      p.lineTo(c.dx - 12, c.dy - d * 8);
+      p.lineTo(c.dx + 12, c.dy - d * 8);
+      p.close();
+      final col = isUp ? up : down;
+      canvas.drawPath(p, _glow(col.withOpacity(0.5 * pulse), 10));
+      canvas.drawPath(p, Paint()..color = col);
+    }
+
+    arrow(Offset(w * 0.2, h * 0.14), true);
+    arrow(Offset(w * 0.66, h * 0.2), false);
+    // ticker strip
+    final ty = h * 0.86;
+    canvas.drawRect(Rect.fromLTWH(0, ty, w, h * 0.06), Paint()..color = const Color(0xFF07131C));
+    const syms = ['NQ', 'ES', 'BTC', 'SPY', 'QQQ', 'CL', 'GC', 'ETH', 'AAPL', 'NVDA'];
+    final off = (t * w * 2) % (w * 2);
+    for (var i = 0; i < syms.length * 2; i++) {
+      final x = i * w * 0.22 - off;
+      final chg = math.sin(i * 1.9 + t * 4) * 2.4;
+      final tp = TextPainter(
+        text: TextSpan(children: [
+          TextSpan(text: '${syms[i % syms.length]} ', style: const TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.w700)),
+          TextSpan(
+              text: '${chg >= 0 ? '+' : ''}${chg.toStringAsFixed(2)}%',
+              style: TextStyle(color: chg >= 0 ? up : down, fontSize: 10, fontWeight: FontWeight.w600)),
+        ]),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(x, ty + (h * 0.06 - tp.height) / 2));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _MarketsPainter o) => o.t != t;
+}
+
+// ─── Art studio: warm gallery wall + lamp glow ─────────────────────────────
+class _ArtPainter extends CustomPainter {
+  _ArtPainter(this.t);
+  final double t;
+  @override
+  void paint(Canvas canvas, Size s) {
+    final w = s.width, h = s.height;
+    canvas.drawRect(
+        Offset.zero & s,
+        Paint()
+          ..shader = const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFFF1E3CF), Color(0xFFE4CFB3), Color(0xFF8C6A4A)],
+          ).createShader(Offset.zero & s));
+    const palette = [
+      Color(0xFFD9483B), Color(0xFF1F4E79), Color(0xFF2E7D5B), Color(0xFFF2A541), Color(0xFF6B3FA0),
+      Color(0xFF0E7C86), Color(0xFFE85D75), Color(0xFF334155), Color(0xFFB45309), Color(0xFF155E75),
+    ];
+    final rnd = math.Random(21);
+    for (var i = 0; i < 26; i++) {
+      final cw = w * (0.08 + rnd.nextDouble() * 0.1);
+      final ch = cw * (0.6 + rnd.nextDouble() * 0.7);
+      final x = rnd.nextDouble() * (w - cw);
+      final y = h * 0.04 + rnd.nextDouble() * h * 0.5;
+      final r = Rect.fromLTWH(x, y, cw, ch);
+      final c1 = palette[rnd.nextInt(palette.length)];
+      final c2 = palette[rnd.nextInt(palette.length)];
+      final round = rnd.nextDouble() < 0.2;
+      final paint = Paint()
+        ..shader = LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [c1, c2]).createShader(r);
+      canvas.drawRect(r.inflate(2), Paint()..color = Colors.black.withOpacity(0.18));
+      round ? canvas.drawOval(r, paint) : canvas.drawRect(r, paint);
+      // horizon line like the sunset canvases
+      canvas.drawLine(Offset(r.left, r.top + ch * 0.6), Offset(r.right, r.top + ch * 0.6),
+          Paint()..color = Colors.white.withOpacity(0.25));
+    }
+    // shelf + desk
+    canvas.drawRect(Rect.fromLTWH(w * 0.5, h * 0.52, w * 0.5, h * 0.015), Paint()..color = Colors.white.withOpacity(0.9));
+    canvas.drawRect(Rect.fromLTWH(0, h * 0.72, w, h * 0.28), Paint()..color = const Color(0xFFF3EFE8));
+    // pencil cups / paint tubes
+    for (var i = 0; i < 9; i++) {
+      canvas.drawRRect(
+          RRect.fromRectAndRadius(Rect.fromLTWH(w * (0.52 + i * 0.045), h * 0.64, w * 0.025, h * 0.08), const Radius.circular(3)),
+          Paint()..color = palette[i % palette.length]);
+    }
+    // warm lamp glow (gentle flicker)
+    final flick = 0.85 + 0.15 * _wave(t, 9);
+    final lamp = Offset(w * 0.2, h * 0.62);
+    canvas.drawCircle(lamp, w * 0.45, _glow(const Color(0xFFFFB45A).withOpacity(0.35 * flick), 60));
+    canvas.drawOval(Rect.fromCenter(center: lamp, width: w * 0.12, height: h * 0.1), Paint()..color = const Color(0xFFFFE1A8));
+  }
+
+  @override
+  bool shouldRepaint(covariant _ArtPainter o) => o.t != t;
+}
