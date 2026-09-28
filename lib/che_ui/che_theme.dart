@@ -1,6 +1,7 @@
 // CHE design system — colors, type, spacing, radii, motion, ThemeData.
 // Every CHE screen should pull from here instead of hard-coding values.
 
+import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 
 class CheColors {
@@ -163,7 +164,11 @@ class CheTheme {
         contentTextStyle: CheType.label,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(CheRadius.md)),
-      )
+      ),
+      pageTransitionsTheme: const PageTransitionsTheme(builders: {
+        TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+      }),
     );
   }
 }
