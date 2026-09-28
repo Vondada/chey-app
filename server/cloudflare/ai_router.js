@@ -13,6 +13,13 @@
 
 const PROVIDERS = [
   {
+    id: 'openai',
+    key: 'CHE_OPENAI_API_KEY',
+    url: 'https://api.openai.com/v1/chat/completions',
+    fast: (env) => env.CHE_OPENAI_FAST_MODEL || 'gpt-4.1-mini',
+    strong: (env) => env.CHE_OPENAI_STRONG_MODEL || 'gpt-4.1',
+  },
+  {
     id: 'groq',
     key: 'GROQ_API_KEY',
     url: 'https://api.groq.com/openai/v1/chat/completions',
@@ -114,7 +121,7 @@ export async function routeText(env, model, input, fetcher = fetch) {
   const configured = PROVIDERS.filter((p) => env[p.key]).map((p) => p.id);
   const hint = configured.length
     ? ''
-    : ' Add a free GROQ_API_KEY, GEMINI_API_KEY or OPENROUTER_API_KEY so CHE keeps answering when Cloudflare\'s daily allowance runs out.';
+    : ' Add CHE_OPENAI_API_KEY, GROQ_API_KEY, GEMINI_API_KEY or OPENROUTER_API_KEY so CHE keeps answering when Cloudflare\'s daily allowance runs out.';
   const error = new Error(`All AI engines failed (${errors.join(' | ').slice(0, 300)}).${hint}`);
   error.quota = errors.some((e) => /allowance|4006|neurons|429/.test(e));
   throw error;
