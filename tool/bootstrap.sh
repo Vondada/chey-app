@@ -141,7 +141,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
 }
 
 @main
-@objc class AppDelegate: FlutterAppDelegate, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate, UNUserNotificationCenterDelegate {
+@objc class AppDelegate: FlutterAppDelegate, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate {
   private let synthesizer = AVSpeechSynthesizer()
   private var player: AVAudioPlayer?
   private var pendingSpeechResult: FlutterResult?
