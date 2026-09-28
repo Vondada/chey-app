@@ -1,3 +1,4 @@
+// ignore_for_file: use_null_aware_elements
 // CHE Virtual Office hub + section shell.
 // Replaces the crowded top tab row: the hub grid is home, and inside a section
 // a single scrolling section bar lets you hop between sections (no overlap).
@@ -192,8 +193,8 @@ class _WorldCarouselState extends State<_WorldCarousel> {
                 child: Container(
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(CheRadius.xl),
-                    border: Border.all(color: room.accent.withOpacity(0.55)),
-                    boxShadow: [BoxShadow(color: room.accent.withOpacity(0.28), blurRadius: 24)],
+                    border: Border.all(color: room.accent.withValues(alpha: 0.55)),
+                    boxShadow: [BoxShadow(color: room.accent.withValues(alpha: 0.28), blurRadius: 24)],
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(CheRadius.xl),
@@ -367,9 +368,9 @@ class CheFeatureCard extends StatelessWidget {
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              color: h.withOpacity(0.14),
+              color: h.withValues(alpha: 0.14),
               borderRadius: BorderRadius.circular(CheRadius.sm),
-              border: Border.all(color: h.withOpacity(0.5)),
+              border: Border.all(color: h.withValues(alpha: 0.5)),
             ),
             child: Icon(icon, size: 20, color: h),
           ),
