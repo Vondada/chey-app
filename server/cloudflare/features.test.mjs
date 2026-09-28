@@ -286,8 +286,22 @@ test('AI router falls through free engines when Cloudflare quota is used up', as
     },
   );
   assert.equal(answer.response, 'Keyless hello.');
-  assert.equal(answer.engine, 'pollinations');
+  assert.equal(answer.engine, 'pollinations:openai');
   assert.equal(keyless[0].url, 'https://text.pollinations.ai/openai');
   assert.equal(keyless[0].headers.Authorization, undefined);
   assert.equal(keyless[0].body.model, 'openai');
+
+  // A busy keyless model is skipped for the next message; the next model answers.
+  resetRouterForTests();
+  const models = [];
+  const rotating = async (url, init) => {
+    const model = JSON.parse(init.body).model;
+    models.push(model);
+    if (model === 'openai') return new Response('{"error":"busy"}', { status: 429 });
+    return new Response(JSON.stringify({ choices: [{ message: { content: `from ${model}` } }] }), { status: 200 });
+  };
+  const noCf = { AI: { run: async () => { throw new Error('4006 neurons'); } } };
+  assert.equal((await routeText(noCf, 'm', input, rotating)).response, 'from mistral');
+  assert.equal((await routeText(noCf, 'm', input, rotating)).response, 'from mistral');
+  assert.deepEqual(models, ['openai', 'mistral', 'mistral'], 'rested model is not retried right away');
 });
