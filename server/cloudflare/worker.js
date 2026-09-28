@@ -237,6 +237,38 @@ async function voiceSynthesisResponse(env, text) {
     }
   }
 
+  // Free CHE neural-voice fallback: use the existing Cloudflare Workers AI
+  // binding. This keeps voice credentials out of the iPhone app and works
+  // without an ElevenLabs/OpenAI key while the Workers AI free allocation lasts.
+  if (env.AI) {
+    try {
+      const response = await env.AI.run(
+        String(env.CHE_CLOUDFLARE_TTS_MODEL || '@cf/deepgram/aura-2-en'),
+        {
+          text: input,
+          speaker: String(env.CHE_CLOUDFLARE_TTS_VOICE || 'luna'),
+          encoding: 'mp3',
+        },
+        { returnRawResponse: true },
+      );
+
+      if (response && response.ok) {
+        const bytes = await response.arrayBuffer();
+        if (bytes.byteLength > 0 && bytes.byteLength <= 6 * 1024 * 1024) {
+          return new Response(bytes, {
+            headers: {
+              'Content-Type': response.headers.get('content-type') || 'audio/mpeg',
+              'Cache-Control': 'no-store',
+              'X-CHE-Voice': 'cloudflare-aura',
+            },
+          });
+        }
+      }
+    } catch (_) {
+      // Fall through to any custom CHE voice connector below.
+    }
+  }
+
   if (!env.CHE_VOICE_URL) {
     return json({ detail: 'Natural voice service is not connected yet.' }, 503);
   }
@@ -1288,7 +1320,7 @@ export class CheState extends DurableObject {
             background_jobs: true,
             agent_identity: true,
             service_accounts: true,
-            natural_voice: Boolean(this.env.CHE_OPENAI_API_KEY || this.env.CHE_VOICE_URL),
+            natural_voice: Boolean(this.env.CHE_OPENAI_API_KEY || this.env.AI || this.env.CHE_VOICE_URL),
             openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY),
             quantum_compute: Boolean(this.env.CHE_QUANTUM_URL),
             web_research: Boolean(this.env.CHE_RESEARCH_URL),
@@ -2083,7 +2115,7 @@ export class CheState extends DurableObject {
                 windows: Boolean(this.env.CHE_WINDOWS_URL),
                 car: Boolean(this.env.CHE_CAR_URL),
                 smart_home: Boolean(this.env.CHE_SMART_HOME_URL),
-                natural_voice: Boolean(this.env.CHE_OPENAI_API_KEY || this.env.CHE_VOICE_URL),
+                natural_voice: Boolean(this.env.CHE_OPENAI_API_KEY || this.env.AI || this.env.CHE_VOICE_URL),
                 openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY),
                 background_jobs: true,
                 quantum_compute: Boolean(this.env.CHE_QUANTUM_URL),
