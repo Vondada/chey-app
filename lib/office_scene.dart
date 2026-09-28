@@ -92,7 +92,7 @@ class _OfficeSceneState extends State<OfficeScene>
                         Text(
                           'REAL WORKPLACE',
                           style: TextStyle(
-                            color: Color(0xFF67E8D1),
+                            color: Color(0xFF34E0B8),
                             fontSize: 12,
                             fontWeight: FontWeight.w900,
                             letterSpacing: 1.5,
@@ -110,7 +110,7 @@ class _OfficeSceneState extends State<OfficeScene>
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF67E8D1),
+                        color: const Color(0xFF34E0B8),
                         borderRadius: BorderRadius.circular(99),
                       ),
                       child: Text(
@@ -169,7 +169,7 @@ class _OfficeSceneState extends State<OfficeScene>
                               child: Text(
                                 'CHE OFFICE',
                                 style: TextStyle(
-                                  color: Color(0xFF67E8D1),
+                                  color: Color(0xFF34E0B8),
                                   fontWeight: FontWeight.w900,
                                   letterSpacing: 1.4,
                                 ),

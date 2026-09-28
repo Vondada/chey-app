@@ -26,7 +26,7 @@ class DevicesHubScene extends StatefulWidget {
 class _DevicesHubSceneState extends State<DevicesHubScene>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
-  static const _teal = Color(0xFF67E8D1);
+  static const _teal = Color(0xFF34E0B8);
 
   @override
   void initState() {
@@ -388,7 +388,7 @@ class _DevicesHubSceneState extends State<DevicesHubScene>
                                     gradient: const RadialGradient(
                                       colors: [
                                         Color(0xFFB9FFF5),
-                                        Color(0xFF67E8D1),
+                                        Color(0xFF34E0B8),
                                         Color(0xFF17505A),
                                         Color(0xFF071018),
                                       ],
@@ -515,7 +515,7 @@ class _SystemRackTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const teal = Color(0xFF67E8D1);
+    const teal = Color(0xFF34E0B8);
     return GestureDetector(
       onTap: module.onTap ??
           () {
@@ -612,7 +612,7 @@ class _DeviceBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const teal = Color(0xFF67E8D1);
+    const teal = Color(0xFF34E0B8);
     return SizedBox(
       width: 88,
       child: Column(
@@ -698,7 +698,7 @@ class _ConnectionsPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = connected ? 1.8 : 1.2
         ..color = connected
-            ? const Color(0xFF67E8D1).withValues(alpha: .36)
+            ? const Color(0xFF34E0B8).withValues(alpha: .36)
             : Colors.white.withValues(alpha: .10);
 
       if (!connected) {

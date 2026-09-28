@@ -24,7 +24,7 @@ class MusicStudioScene extends StatefulWidget {
 class _MusicStudioSceneState extends State<MusicStudioScene>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
-  static const _teal = Color(0xFF67E8D1);
+  static const _teal = Color(0xFF34E0B8);
   static const _amber = Color(0xFFFFB45F);
   static const _purple = Color(0xFF9B6DFF);
 
@@ -299,7 +299,7 @@ class _MusicStudioSceneState extends State<MusicStudioScene>
                                   borderRadius: BorderRadius.circular(99),
                                   gradient: const LinearGradient(
                                     colors: [
-                                      Color(0xFF67E8D1),
+                                      Color(0xFF34E0B8),
                                       Color(0xFFFFC85F),
                                       Color(0xFFFF6B72),
                                     ],
@@ -419,7 +419,7 @@ class _ChannelStrip extends StatelessWidget {
                     colors: [
                       Color(0xFFFF625F),
                       Color(0xFFFFD36B),
-                      Color(0xFF67E8D1),
+                      Color(0xFF34E0B8),
                     ],
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
@@ -492,14 +492,14 @@ class _StudioMonitor extends StatelessWidget {
               color: const Color(0xFF151A1E),
               border: Border.all(
                 color: active
-                    ? const Color(0xFF67E8D1)
+                    ? const Color(0xFF34E0B8)
                     : Colors.white24,
                 width: 2,
               ),
               boxShadow: active
                   ? [
                       BoxShadow(
-                        color: const Color(0xFF67E8D1).withValues(alpha: .18),
+                        color: const Color(0xFF34E0B8).withValues(alpha: .18),
                         blurRadius: 12,
                       ),
                     ]

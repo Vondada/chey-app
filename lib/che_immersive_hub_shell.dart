@@ -27,7 +27,7 @@ class CheImmersiveHubShell extends StatefulWidget {
 
 class _CheImmersiveHubShellState extends State<CheImmersiveHubShell>
     with SingleTickerProviderStateMixin {
-  static const _accent = Color(0xFF67E8D1);
+  static const _accent = Color(0xFF34E0B8);
 
   late final TabController _controller;
   late int _index;
@@ -181,7 +181,7 @@ class _RoomPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const accent = Color(0xFF67E8D1);
+    const accent = Color(0xFF34E0B8);
     return Semantics(
       button: true,
       selected: selected,

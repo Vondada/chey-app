@@ -13,17 +13,17 @@ import 'package:flutter/material.dart';
 class CheColors {
   CheColors._();
 
-  static const Color bg = Color(0xFF0A121B);
-  static const Color bgDeep = Color(0xFF060B11);
-  static const Color panel = Color(0xFF101D2A);
-  static const Color panelGlass = Color(0xCC13212F);
-  static const Color accent = Color(0xFF67E8D1);
-  static const Color accentDim = Color(0xFF2E8C7C);
+  static const Color bg = Color(0xFF030607); // kit bg
+  static const Color bgDeep = Color(0xFF030607);
+  static const Color panel = Color(0xFF0A1214); // kit surface
+  static const Color panelGlass = Color(0xCC101B1E);
+  static const Color accent = Color(0xFF34E0B8); // logo main
+  static const Color accentDim = Color(0xFF0C9A7E); // logo deep
   static const Color violet = Color(0xFF8B7BFF);
   static const Color amber = Color(0xFFFFC876);
   static const Color rose = Color(0xFFFF7E9B);
-  static const Color textPrimary = Color(0xFFEAF3F2);
-  static const Color textDim = Color(0xB3EAF3F2);
+  static const Color textPrimary = Color(0xFFEAF4F2);
+  static const Color textDim = Color(0xFF8FA4A1);
 
   static const List<Color> buildingPalette = [
     accent,
@@ -50,7 +50,7 @@ class CheBackdrop extends StatelessWidget {
         gradient: RadialGradient(
           center: Alignment(0, -0.6),
           radius: 1.4,
-          colors: [Color(0xFF122536), CheColors.bgDeep],
+          colors: [Color(0xFF06100F), CheColors.bgDeep],
         ),
       ),
       child: child,

@@ -22,7 +22,7 @@ class InsightsBrainScene extends StatefulWidget {
 class _InsightsBrainSceneState extends State<InsightsBrainScene>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
-  static const _teal = Color(0xFF67E8D1);
+  static const _teal = Color(0xFF34E0B8);
   static const _violet = Color(0xFFB58BFF);
   static const _amber = Color(0xFFFFC86B);
 
@@ -365,7 +365,7 @@ class _BrainPainter extends CustomPainter {
     final glow = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2
-      ..color = const Color(0xFF67E8D1).withValues(alpha: .18)
+      ..color = const Color(0xFF34E0B8).withValues(alpha: .18)
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10);
 
     final left = Path()
@@ -425,7 +425,7 @@ class _BrainPainter extends CustomPainter {
       const Offset(345, 360),
       95,
       Paint()
-        ..color = const Color(0xFF67E8D1).withValues(alpha: .12)
+        ..color = const Color(0xFF34E0B8).withValues(alpha: .12)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 30),
     );
   }
