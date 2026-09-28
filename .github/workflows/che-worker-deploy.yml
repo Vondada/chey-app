@@ -1,0 +1,52 @@
+name: Deploy CHE Worker
+
+# Deploys server/cloudflare to Cloudflare Workers.
+# One-time setup: add a repository secret CLOUDFLARE_API_TOKEN
+# (Cloudflare dashboard -> My Profile -> API Tokens -> "Edit Cloudflare
+# Workers" template). Then run this workflow from the Actions tab, or just
+# merge to main: changes under server/cloudflare deploy automatically.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'server/cloudflare/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: che-worker-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Worker tests
+        run: |
+          for f in server/cloudflare/*.js; do node --check "$f"; done
+          node --test server/cloudflare/worker.test.mjs server/cloudflare/features.test.mjs
+
+      - name: Check Cloudflare token
+        id: token
+        run: |
+          if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
+            echo "::error::Add the CLOUDFLARE_API_TOKEN repository secret (Edit Cloudflare Workers token) to deploy CHE."
+            exit 1
+          fi
+
+      - name: Deploy
+        working-directory: server/cloudflare
+        run: npx --yes wrangler@4 deploy
