@@ -1396,6 +1396,26 @@ export class CheState extends DurableObject {
         });
       }
 
+      if (request.method === 'GET' && path === '/api/wake/config') {
+        const accessKey = String(this.env.CHE_PICOVOICE_ACCESS_KEY || '').trim();
+        const keyword = String(this.env.CHE_PICOVOICE_KEYWORD_PPN_B64 || '').trim();
+        const rawSensitivity = Number(this.env.CHE_PICOVOICE_SENSITIVITY || 0.62);
+        const sensitivity = Number.isFinite(rawSensitivity)
+          ? Math.max(0, Math.min(1, rawSensitivity))
+          : 0.62;
+
+        return json({
+          enabled: Boolean(accessKey && keyword),
+          engine: 'porcupine',
+          wake_word: 'Chay / Hey CHE',
+          access_key: accessKey && keyword ? accessKey : '',
+          keyword_ppn_base64: accessKey && keyword ? keyword : '',
+          sensitivity,
+          microphone_owner_after_wake: 'openai_realtime_webrtc',
+          iphone_level_trigger: 'apple_vocal_shortcut',
+        });
+      }
+
       if (request.method === 'GET' && path === '/api/state') {
         return json({
           memories: data.memories,
@@ -1438,6 +1458,8 @@ export class CheState extends DurableObject {
             service_accounts: true,
             natural_voice: Boolean(this.env.CHE_OPENAI_API_KEY || this.env.AI || this.env.CHE_VOICE_URL),
             openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY),
+            porcupine_wake_word: Boolean(this.env.CHE_PICOVOICE_ACCESS_KEY && this.env.CHE_PICOVOICE_KEYWORD_PPN_B64),
+            apple_vocal_shortcut: true,
             quantum_compute: Boolean(this.env.CHE_QUANTUM_URL),
             web_research: Boolean(this.env.CHE_RESEARCH_URL),
             public_records: Boolean(this.env.CHE_PUBLIC_RECORDS_URL),
