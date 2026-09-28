@@ -179,11 +179,13 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     GeneratedPluginRegistrant.register(with: self)
     synthesizer.delegate = self
     UNUserNotificationCenter.current().delegate = self
-    BGTaskScheduler.shared.register(
-      forTaskWithIdentifier: "com.cheyapp.che.refresh",
-      using: nil
-    ) { task in
-      task.setTaskCompleted(success: true)
+    if #available(iOS 13.0, *) {
+      BGTaskScheduler.shared.register(
+        forTaskWithIdentifier: "com.cheyapp.che.refresh",
+        using: nil
+      ) { task in
+        task.setTaskCompleted(success: true)
+      }
     }
 
     if let controller = window?.rootViewController as? FlutterViewController {
@@ -210,14 +212,18 @@ struct CHEAppShortcuts: AppShortcutsProvider {
             DispatchQueue.main.async { result(granted) }
           }
         case "scheduleRefresh":
-          let request = BGAppRefreshTaskRequest(
-            identifier: "com.cheyapp.che.refresh"
-          )
-          request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
-          do {
-            try BGTaskScheduler.shared.submit(request)
-            result(true)
-          } catch {
+          if #available(iOS 13.0, *) {
+            let request = BGAppRefreshTaskRequest(
+              identifier: "com.cheyapp.che.refresh"
+            )
+            request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+            do {
+              try BGTaskScheduler.shared.submit(request)
+              result(true)
+            } catch {
+              result(false)
+            }
+          } else {
             result(false)
           }
         default:
