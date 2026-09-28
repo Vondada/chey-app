@@ -550,7 +550,7 @@ async function pluginResults(env, state, message) {
   }));
 }
 
-async function runOfficeAgentsasync function runOfficeAgents(env, team, requestedCapabilities, query, fullAgentMode = false) {
+async function runOfficeAgents(env, team, requestedCapabilities, query, fullAgentMode = false) {
   const requested = new Set(requestedCapabilities || []);
   const roleNeeds = [
     {
