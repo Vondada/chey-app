@@ -53,11 +53,11 @@ class CheNativeVoice {
   static const String _signatureVersionKey = 'che.voice.chazeSignatureVersion';
 
   static const List<Map<String, Object>> localVoiceOptions = [
-    {'id': 0, 'name': 'American Feminine — Classic', 'speaker': 'af'},
+    {'id': 0, 'name': 'Chaze — Signature (Local)', 'speaker': 'af'},
     {'id': 1, 'name': 'American Feminine — Bella', 'speaker': 'af_bella'},
     {'id': 2, 'name': 'American Feminine — Nicole', 'speaker': 'af_nicole'},
     {'id': 3, 'name': 'American Feminine — Sarah', 'speaker': 'af_sarah'},
-    {'id': 4, 'name': 'Chaze — Signature (Local)', 'speaker': 'af_sky'},
+    {'id': 4, 'name': 'American Feminine — Sky', 'speaker': 'af_sky'},
     {'id': 5, 'name': 'American Masculine — Adam', 'speaker': 'am_adam'},
     {'id': 6, 'name': 'American Masculine — Michael', 'speaker': 'am_michael'},
     {'id': 7, 'name': 'British Feminine — Emma', 'speaker': 'bf_emma'},
@@ -83,7 +83,7 @@ class CheNativeVoice {
     // One-time migration to CHE's Chaze signature profile. This is fully
     // on-device and unmetered: no account, API key, or per-character billing.
     if ((prefs.getInt(_signatureVersionKey) ?? 0) < 1) {
-      await prefs.setInt(_speakerKey, 4);
+      await prefs.setInt(_speakerKey, 0);
       await prefs.setDouble(_speedKey, 0.94);
       await prefs.setDouble(_pauseKey, 0.12);
       await prefs.setDouble(_nativePitchKey, 0.96);
@@ -92,7 +92,7 @@ class CheNativeVoice {
     }
 
     return {
-      'speakerId': prefs.getInt(_speakerKey) ?? 4,
+      'speakerId': prefs.getInt(_speakerKey) ?? 0,
       'speed': prefs.getDouble(_speedKey) ?? 0.94,
       'pauseScale': prefs.getDouble(_pauseKey) ?? 0.12,
       'nativePitch': prefs.getDouble(_nativePitchKey) ?? 0.96,
