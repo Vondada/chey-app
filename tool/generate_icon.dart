@@ -38,10 +38,10 @@ void main() {
   void setPixel(int x, int y, int r, int g, int b, [int a = 255]) {
     if (x < 0 || y < 0 || x >= size || y >= size) return;
     final i = (y * size + x) * 4;
-    rgba[i] = r.clamp(0, 255);
-    rgba[i + 1] = g.clamp(0, 255);
-    rgba[i + 2] = b.clamp(0, 255);
-    rgba[i + 3] = a.clamp(0, 255);
+    rgba[i] = r.clamp(0, 255).toInt();
+    rgba[i + 1] = g.clamp(0, 255).toInt();
+    rgba[i + 2] = b.clamp(0, 255).toInt();
+    rgba[i + 3] = a.clamp(0, 255).toInt();
   }
 
   // Deep navy/black radial background with a controlled aqua glow.
