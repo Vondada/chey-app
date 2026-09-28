@@ -1,3 +1,4 @@
+// ignore_for_file: use_null_aware_elements
 // CHE reusable widgets: background, glow card, glass panel, pill toggle,
 // office tile, header, section bar, step line, thinking shimmer, code card,
 // rich (markdown-lite) text, and a glowing popover menu.
@@ -41,7 +42,7 @@ class CheBackground extends StatelessWidget {
             child: DecoratedBox(
               decoration: BoxDecoration(
                 gradient: RadialGradient(
-                  colors: [aura.withOpacity(0.16), aura.withOpacity(0.0)],
+                  colors: [aura.withValues(alpha: 0.16), aura.withValues(alpha: 0.0)],
                 ),
               ),
             ),
@@ -129,7 +130,7 @@ class _GlowCardState extends State<GlowCard> with SingleTickerProviderStateMixin
             borderRadius: r,
             boxShadow: [
               BoxShadow(
-                color: color.withOpacity(0.22 * pulse + (widget.active ? 0.12 : 0)),
+                color: color.withValues(alpha: 0.22 * pulse + (widget.active ? 0.12 : 0)),
                 blurRadius: widget.active ? 34 : 22,
                 spreadRadius: widget.active ? 1 : 0,
               ),
@@ -146,7 +147,7 @@ class _GlowCardState extends State<GlowCard> with SingleTickerProviderStateMixin
             child: ClipRRect(
               borderRadius: r,
               child: Container(
-                color: widget.fill ?? CheColors.surface.withOpacity(0.92),
+                color: widget.fill ?? CheColors.surface.withValues(alpha: 0.92),
                 padding: widget.padding,
                 child: child,
               ),
@@ -180,10 +181,10 @@ class _GlowBorderPainter extends CustomPainter {
     final shader = SweepGradient(
       transform: GradientRotation(progress * math.pi * 2),
       colors: [
-        color.withOpacity(0.15 * intensity),
-        color.withOpacity(0.95 * intensity),
-        alt.withOpacity(0.7 * intensity),
-        color.withOpacity(0.15 * intensity),
+        color.withValues(alpha: 0.15 * intensity),
+        color.withValues(alpha: 0.95 * intensity),
+        alt.withValues(alpha: 0.7 * intensity),
+        color.withValues(alpha: 0.15 * intensity),
       ],
       stops: const [0.0, 0.35, 0.6, 1.0],
     ).createShader(rect);
@@ -231,7 +232,7 @@ class GlassPanel extends StatelessWidget {
           padding: padding,
           decoration: BoxDecoration(
             borderRadius: r,
-            color: (tint ?? CheColors.surfaceHi).withOpacity(0.72),
+            color: (tint ?? CheColors.surfaceHi).withValues(alpha: 0.72),
             border: Border.all(color: CheColors.stroke),
           ),
           child: child,
@@ -282,11 +283,11 @@ class PillToggle extends StatelessWidget {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(CheRadius.pill),
                 gradient: LinearGradient(colors: [
-                  CheColors.accent.withOpacity(0.28),
-                  CheColors.accentAlt.withOpacity(0.18),
+                  CheColors.accent.withValues(alpha: 0.28),
+                  CheColors.accentAlt.withValues(alpha: 0.18),
                 ]),
-                border: Border.all(color: CheColors.accent.withOpacity(0.7)),
-                boxShadow: [BoxShadow(color: CheColors.accent.withOpacity(0.35), blurRadius: 14)],
+                border: Border.all(color: CheColors.accent.withValues(alpha: 0.7)),
+                boxShadow: [BoxShadow(color: CheColors.accent.withValues(alpha: 0.35), blurRadius: 14)],
               ),
             ),
           ),
@@ -391,10 +392,10 @@ class CheTile extends StatelessWidget {
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [hue.withOpacity(0.20), CheColors.surface.withOpacity(0.9)],
+            colors: [hue.withValues(alpha: 0.20), CheColors.surface.withValues(alpha: 0.9)],
           ),
-          border: Border.all(color: hue.withOpacity(0.45)),
-          boxShadow: [BoxShadow(color: hue.withOpacity(0.18), blurRadius: 18)],
+          border: Border.all(color: hue.withValues(alpha: 0.45)),
+          boxShadow: [BoxShadow(color: hue.withValues(alpha: 0.18), blurRadius: 18)],
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -405,9 +406,9 @@ class CheTile extends StatelessWidget {
                 height: 46,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: hue.withOpacity(0.16),
-                  border: Border.all(color: hue.withOpacity(0.7), width: 1.2),
-                  boxShadow: [BoxShadow(color: hue.withOpacity(0.45), blurRadius: 16)],
+                  color: hue.withValues(alpha: 0.16),
+                  border: Border.all(color: hue.withValues(alpha: 0.7), width: 1.2),
+                  boxShadow: [BoxShadow(color: hue.withValues(alpha: 0.45), blurRadius: 16)],
                 ),
                 child: Icon(icon, color: hue, size: 22),
               ),
@@ -468,14 +469,14 @@ class _CheStatusDotState extends State<CheStatusDot> with SingleTickerProviderSt
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: _c,
-      builder: (_, __) => Container(
+      builder: (_, _) => Container(
         width: widget.size,
         height: widget.size,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: widget.color,
           boxShadow: [
-            BoxShadow(color: widget.color.withOpacity(0.3 + 0.5 * _c.value), blurRadius: 8, spreadRadius: 1),
+            BoxShadow(color: widget.color.withValues(alpha: 0.3 + 0.5 * _c.value), blurRadius: 8, spreadRadius: 1),
           ],
         ),
       ),
@@ -569,9 +570,9 @@ class CheIconButton extends StatelessWidget {
         height: size,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: glow ? c.withOpacity(0.18) : CheColors.surfaceHi,
-          border: Border.all(color: glow ? c.withOpacity(0.8) : CheColors.stroke),
-          boxShadow: glow ? [BoxShadow(color: c.withOpacity(0.45), blurRadius: 18)] : null,
+          color: glow ? c.withValues(alpha: 0.18) : CheColors.surfaceHi,
+          border: Border.all(color: glow ? c.withValues(alpha: 0.8) : CheColors.stroke),
+          boxShadow: glow ? [BoxShadow(color: c.withValues(alpha: 0.45), blurRadius: 18)] : null,
         ),
         child: Icon(icon, size: size * 0.46, color: glow ? c : CheColors.text),
       ),
@@ -641,7 +642,7 @@ class _CheSectionBarState extends State<CheSectionBar> {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: CheSpace.gutter),
         itemCount: widget.items.length,
-        separatorBuilder: (_, __) => const SizedBox(width: CheSpace.sm),
+        separatorBuilder: (_, _) => const SizedBox(width: CheSpace.sm),
         itemBuilder: (context, i) {
           final it = widget.items[i];
           final sel = i == widget.index;
@@ -654,9 +655,9 @@ class _CheSectionBarState extends State<CheSectionBar> {
               padding: const EdgeInsets.symmetric(horizontal: 14),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(CheRadius.pill),
-                color: sel ? it.hue.withOpacity(0.18) : CheColors.surface,
-                border: Border.all(color: sel ? it.hue.withOpacity(0.85) : CheColors.stroke),
-                boxShadow: sel ? [BoxShadow(color: it.hue.withOpacity(0.35), blurRadius: 14)] : null,
+                color: sel ? it.hue.withValues(alpha: 0.18) : CheColors.surface,
+                border: Border.all(color: sel ? it.hue.withValues(alpha: 0.85) : CheColors.stroke),
+                boxShadow: sel ? [BoxShadow(color: it.hue.withValues(alpha: 0.35), blurRadius: 14)] : null,
               ),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
                 Icon(it.icon, size: 16, color: sel ? it.hue : CheColors.textDim),
@@ -790,7 +791,7 @@ class _BlinkingCursorState extends State<BlinkingCursor> with SingleTickerProvid
           decoration: BoxDecoration(
             color: CheColors.accent,
             borderRadius: BorderRadius.circular(2),
-            boxShadow: [BoxShadow(color: CheColors.accent.withOpacity(0.6), blurRadius: 8)],
+            boxShadow: [BoxShadow(color: CheColors.accent.withValues(alpha: 0.6), blurRadius: 8)],
           ),
         ),
       );
@@ -873,9 +874,9 @@ class _RememberChip extends StatelessWidget {
       margin: const EdgeInsets.only(top: CheSpace.sm),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: CheColors.accent.withOpacity(0.08),
+        color: CheColors.accent.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(CheRadius.md),
-        border: Border.all(color: CheColors.accent.withOpacity(0.35)),
+        border: Border.all(color: CheColors.accent.withValues(alpha: 0.35)),
       ),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Icon(Icons.psychology_rounded, size: 16, color: CheColors.accent),
@@ -966,7 +967,7 @@ class _Paragraphs extends StatelessWidget {
           style: CheType.mono.copyWith(
               fontSize: base.fontSize! - 1.5,
               color: CheColors.accent,
-              backgroundColor: CheColors.accent.withOpacity(0.10)),
+              backgroundColor: CheColors.accent.withValues(alpha: 0.10)),
         ));
       }
       i = m.end;
@@ -998,8 +999,8 @@ class CodeCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: const Color(0xFF060B0D),
         borderRadius: BorderRadius.circular(CheRadius.md),
-        border: Border.all(color: CheColors.accent.withOpacity(0.35)),
-        boxShadow: [BoxShadow(color: CheColors.accent.withOpacity(0.12), blurRadius: 18)],
+        border: Border.all(color: CheColors.accent.withValues(alpha: 0.35)),
+        boxShadow: [BoxShadow(color: CheColors.accent.withValues(alpha: 0.12), blurRadius: 18)],
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Container(
@@ -1093,7 +1094,7 @@ Future<T?> showCheMenu<T>(BuildContext context, GlobalKey anchor, List<CheMenuIt
     context: context,
     barrierDismissible: true,
     barrierLabel: 'menu',
-    barrierColor: Colors.black.withOpacity(0.25),
+    barrierColor: Colors.black.withValues(alpha: 0.25),
     transitionDuration: CheMotion.d(context, CheMotion.fast),
     pageBuilder: (ctx, a, b) => Stack(children: [
       Positioned(
