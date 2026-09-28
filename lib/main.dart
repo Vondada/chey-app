@@ -184,6 +184,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   bool _isSending = false;
   bool _isSpeaking = false;
   bool _autoSentCurrentTurn = false;
+  String? _lastVoiceEngine;
+  bool _naturalVoiceServerErrored = false;
   bool _loadingAgentState = false;
   int _speechTurn = 0;
 
@@ -1038,6 +1040,18 @@ OWNER AGENCY
                   onTap: _openOfficeFloor,
                 ),
               ),
+              if (_lastVoiceEngine != null && _lastVoiceEngine!.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2, bottom: 2),
+                  child: Text(
+                    _lastVoiceEngine!,
+                    style: kit.CheType.overline.copyWith(
+                      fontSize: 9,
+                      letterSpacing: 0.8,
+                      color: kit.CheColors.muted,
+                    ),
+                  ),
+                ),
               CheConversationBar(
                 title: _chatTitle,
                 onOpen: _openConversationSheet,
