@@ -184,8 +184,6 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   late CheVoiceSnapshot _voiceSnapshot;
   CheRealtimeVoiceEngine? _realtimeVoice;
   CheWakeWordEngine? _porcupineWake;
-  bool _porcupineWakeActive = false;
-  String _wakeWordStatus = 'Native wake fallback';
   bool _realtimeConnecting = false;
   int? _realtimeAssistantIndex;
   String? _realtimePendingMediaUrl;
@@ -1274,13 +1272,10 @@ OWNER AGENCY
   Future<void> _stopPorcupineWake({bool disposeEngine = false}) async {
     final wake = _porcupineWake;
     if (wake == null) {
-      _porcupineWakeActive = false;
       return;
     }
     await wake.stop(disposeManager: disposeEngine);
-    _porcupineWakeActive = false;
     if (disposeEngine) _porcupineWake = null;
-    if (mounted) setState(() {});
   }
 
   Future<void> _handlePorcupineWake() async {
@@ -1324,15 +1319,10 @@ OWNER AGENCY
       baseUrl: cheAgentBaseUrl,
       deviceToken: _deviceToken!,
       onWake: _handlePorcupineWake,
-      onStatus: (status) {
-        _wakeWordStatus = status;
-        if (mounted) setState(() {});
-      },
     );
     _porcupineWake = wake;
 
     final started = await wake.start();
-    _porcupineWakeActive = started;
     if (started) {
       try {
         await CheNativeVoice.stop();
@@ -1340,7 +1330,6 @@ OWNER AGENCY
       _nativeIosVoiceActive = false;
       _voiceMachine.startWakeListening();
       _applyVoiceSnapshot(_voiceMachine.snapshot);
-      if (mounted) setState(() {});
     }
     return started;
   }
@@ -1985,8 +1974,6 @@ OWNER AGENCY
 
   Future<void> _initNativeIosVoice() async {
     _nativeIosVoiceSub?.cancel();
-    unawaited(_stopPorcupineWake(disposeEngine: true));
-
     _nativeIosVoiceSub = CheNativeVoice.events.listen(
       _handleNativeIosVoiceEvent,
       onError: (_) {
@@ -2870,23 +2857,43 @@ OWNER AGENCY
     String text = '',
     Map<String, String>? attachment,
   }) async {
-    final result = await _postAgentJson('/api/context/ingest', {
-      'source': source,
-      'title': title,
-      if (text.trim().isNotEmpty) 'text': text.trim(),
-      if (attachment != null) 'attachment': attachment,
-    });
-    if (result == null) return;
-    await _loadAgentState(silent: true);
-    if (!mounted) return;
-    final item = result['item'] is Map
-        ? Map<String, dynamic>.from(result['item'] as Map)
-        : <String, dynamic>{};
-    final type = item['type']?.toString() ?? 'knowledge';
-    final owner = item['owner_agent_name']?.toString() ?? 'CHE Office';
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('CHE learned this as $type • owned by $owner.')),
-    );
+    try {
+      final result = await _postAgentJson('/api/context/ingest', {
+        'source': source,
+        'title': title,
+        if (text.trim().isNotEmpty) 'text': text.trim(),
+        if (attachment != null) 'attachment': attachment,
+      });
+      if (result == null) return;
+
+      await _loadAgentState(silent: true);
+      if (!mounted) return;
+
+      final item = result['item'] is Map
+          ? Map<String, dynamic>.from(result['item'] as Map)
+          : <String, dynamic>{};
+      final type = item['type']?.toString() ?? 'knowledge';
+      final owner = item['owner_agent_name']?.toString() ?? 'CHE Office';
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('CHE learned this as $type • owned by $owner.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      final message = error
+          .toString()
+          .replaceFirst('CHEAgentException: ', '')
+          .replaceFirst('_CHEAgentException: ', '');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            message.isEmpty
+                ? 'CHE could not learn from that source.'
+                : message,
+          ),
+        ),
+      );
+    }
   }
 
   bool _isTextLikeFile(String name) {
@@ -5433,6 +5440,7 @@ OWNER AGENCY
     _listenRestartTimer?.cancel();
     _proactiveTimer?.cancel();
     _nativeIosVoiceSub?.cancel();
+    unawaited(_stopPorcupineWake(disposeEngine: true));
     final realtime = _realtimeVoice;
     _realtimeVoice = null;
     if (realtime != null) {
