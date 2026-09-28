@@ -1048,7 +1048,7 @@ OWNER AGENCY
                     style: kit.CheType.overline.copyWith(
                       fontSize: 9,
                       letterSpacing: 0.8,
-                      color: kit.CheColors.muted,
+                      color: kit.CheColors.textDim,
                     ),
                   ),
                 ),
