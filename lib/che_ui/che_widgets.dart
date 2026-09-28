@@ -298,3 +298,303 @@ class PillToggle extends StatelessWidget {
                   onTap: () {
                     if (i == index) return;
                     HapticFeedback.selectionClick();
+                    onChanged(i);
+                  },
+                  child: Center(
+                    child: AnimatedDefaultTextStyle(
+                      duration: CheMotion.d(context, CheMotion.fast),
+                      style: CheType.label.copyWith(
+                        color: i == index ? CheColors.text : CheColors.textDim,
+                        fontWeight: i == index ? FontWeight.w700 : FontWeight.w500,
+                      ),
+                      child: Text(options[i], maxLines: 1, overflow: TextOverflow.ellipsis),
+                    ),
+                  ),
+                ),
+              ),
+          ]),
+        ]);
+      }),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Pressable (scale-on-press + haptic) — wrap any tappable card with it.
+// ─────────────────────────────────────────────────────────────────────────
+
+class ChePressable extends StatefulWidget {
+  const ChePressable({super.key, required this.child, required this.onTap, this.haptic = true});
+  final Widget child;
+  final VoidCallback? onTap;
+  final bool haptic;
+
+  @override
+  State<ChePressable> createState() => _ChePressableState();
+}
+
+class _ChePressableState extends State<ChePressable> {
+  bool _down = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => setState(() => _down = true),
+      onTapCancel: () => setState(() => _down = false),
+      onTapUp: (_) => setState(() => _down = false),
+      onTap: widget.onTap == null
+          ? null
+          : () {
+              if (widget.haptic) HapticFeedback.lightImpact();
+              widget.onTap!();
+            },
+      child: AnimatedScale(
+        scale: _down ? 0.96 : 1,
+        duration: CheMotion.d(context, CheMotion.fast),
+        curve: CheMotion.curve,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Office tile
+// ─────────────────────────────────────────────────────────────────────────
+
+class CheTile extends StatelessWidget {
+  const CheTile({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.hue,
+    required this.onTap,
+    this.badge,
+  });
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color hue;
+  final VoidCallback onTap;
+  final String? badge;
+
+  @override
+  Widget build(BuildContext context) {
+    return ChePressable(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(CheSpace.sm, CheSpace.md, CheSpace.sm, CheSpace.md),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(CheRadius.lg),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [hue.withOpacity(0.20), CheColors.surface.withOpacity(0.9)],
+          ),
+          border: Border.all(color: hue.withOpacity(0.45)),
+          boxShadow: [BoxShadow(color: hue.withOpacity(0.18), blurRadius: 18)],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Stack(clipBehavior: Clip.none, children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: hue.withOpacity(0.16),
+                  border: Border.all(color: hue.withOpacity(0.7), width: 1.2),
+                  boxShadow: [BoxShadow(color: hue.withOpacity(0.45), blurRadius: 16)],
+                ),
+                child: Icon(icon, color: hue, size: 22),
+              ),
+              if (badge != null)
+                Positioned(
+                  right: -6,
+                  top: -4,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    decoration: BoxDecoration(
+                        color: hue, borderRadius: BorderRadius.circular(CheRadius.pill)),
+                    child: Text(badge!,
+                        style: CheType.caption.copyWith(color: Colors.black, fontWeight: FontWeight.w800)),
+                  ),
+                ),
+            ]),
+            const SizedBox(height: CheSpace.sm),
+            Text(title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: CheType.label),
+            const SizedBox(height: 2),
+            Text(subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: CheType.caption),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Header — "CHE / COGNITIVE.HORIZON.ENGINE" (single copy, no ghost title)
+// ─────────────────────────────────────────────────────────────────────────
+
+class CheStatusDot extends StatefulWidget {
+  const CheStatusDot({super.key, this.color = CheColors.success, this.size = 7});
+  final Color color;
+  final double size;
+  @override
+  State<CheStatusDot> createState() => _CheStatusDotState();
+}
+
+class _CheStatusDotState extends State<CheStatusDot> with SingleTickerProviderStateMixin {
+  late final AnimationController _c =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 1400))..repeat(reverse: true);
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (_, __) => Container(
+        width: widget.size,
+        height: widget.size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: widget.color,
+          boxShadow: [
+            BoxShadow(color: widget.color.withOpacity(0.3 + 0.5 * _c.value), blurRadius: 8, spreadRadius: 1),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class CheHeader extends StatelessWidget {
+  const CheHeader({
+    super.key,
+    this.title = 'CHE',
+    this.subtitle = 'COGNITIVE.HORIZON.ENGINE',
+    this.status = 'ONLINE',
+    this.leading,
+    this.trailing,
+    this.compact = false,
+  });
+  final String title;
+  final String subtitle;
+  final String? status;
+  final Widget? leading;
+  final Widget? trailing;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.sm, CheSpace.gutter, CheSpace.sm),
+      child: Row(children: [
+        if (leading != null) ...[leading!, const SizedBox(width: CheSpace.sm)],
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ShaderMask(
+                shaderCallback: (r) => CheColors.accentGradient.createShader(r),
+                child: Text(title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: (compact ? CheType.display.copyWith(fontSize: 24) : CheType.display)
+                        .copyWith(color: Colors.white)),
+              ),
+              const SizedBox(height: 4),
+              Row(children: [
+                if (status != null) ...[
+                  const CheStatusDot(),
+                  const SizedBox(width: 6),
+                  Text(status!, style: CheType.overline.copyWith(color: CheColors.success)),
+                  const SizedBox(width: 10),
+                ],
+                Flexible(
+                  child: Text(subtitle,
+                      maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.overline),
+                ),
+              ]),
+            ],
+          ),
+        ),
+        if (trailing != null) trailing!,
+      ]),
+    );
+  }
+}
+
+/// Round glowing icon button (chat button, +, mic, etc.)
+class CheIconButton extends StatelessWidget {
+  const CheIconButton({
+    super.key,
+    required this.icon,
+    required this.onTap,
+    this.size = 44,
+    this.glow = false,
+    this.color,
+    this.tooltip,
+  });
+  final IconData icon;
+  final VoidCallback? onTap;
+  final double size;
+  final bool glow;
+  final Color? color;
+  final String? tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = color ?? CheColors.accent;
+    final btn = ChePressable(
+      onTap: onTap,
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: glow ? c.withOpacity(0.18) : CheColors.surfaceHi,
+          border: Border.all(color: glow ? c.withOpacity(0.8) : CheColors.stroke),
+          boxShadow: glow ? [BoxShadow(color: c.withOpacity(0.45), blurRadius: 18)] : null,
+        ),
+        child: Icon(icon, size: size * 0.46, color: glow ? c : CheColors.text),
+      ),
+    );
+    return tooltip == null ? btn : Semantics(label: tooltip, button: true, child: btn);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Section bar — replaces the crowded tab row. Scrolls, never overlaps,
+// auto-centers the selected section.
+// ─────────────────────────────────────────────────────────────────────────
+
+class CheSectionBarItem {
+  const CheSectionBarItem({required this.label, required this.icon, required this.hue});
+  final String label;
+  final IconData icon;
+  final Color hue;
+}
+
+class CheSectionBar extends StatefulWidget {
+  const CheSectionBar({super.key, required this.items, required this.index, required this.onChanged});
+  final List<CheSectionBarItem> items;
+  final int index;
+  final ValueChanged<int> onChanged;
+
