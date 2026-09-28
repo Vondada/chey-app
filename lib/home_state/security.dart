@@ -447,6 +447,7 @@ extension _CheHomeSecurity on _CHEHomeState {
         'broker': integrationData['broker'] == true,
         'prop_firm': integrationData['prop_firm'] == true,
         'business': integrationData['business'] == true,
+        'advertising': integrationData['advertising'] == true,
         'payments': integrationData['payments'] == true,
         'leads': integrationData['leads'] == true,
       };
