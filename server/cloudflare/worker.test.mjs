@@ -414,3 +414,44 @@ test('media routes serve owner-only images; chat image requests use the CHE imag
   }, token)).text();
   assert.match(reply, /"media_type":"image","media_url":"https:\/\/che\.example\/api\/media\/[a-f0-9-]+\/image"/);
 });
+
+test('chat recovers when the model rejects the full prompt, and reports real errors', async () => {
+  const saved = new Map();
+  const seen = [];
+  let failAll = false;
+  const env = {
+    CHE_PAIR_CODE: '123456',
+    AI: {
+      run: async (model, input) => {
+        const system = input.messages[0].content;
+        seen.push({ model, length: system.length });
+        if (failAll) throw new Error('AiError: 3036: model overloaded');
+        if (system.length > 8000) throw new Error('AiError: 5021: input exceeds the model context window');
+        return { response: 'Hey sir, all good.' };
+      },
+    },
+  };
+  const state = new CheState({ storage: {
+    get: async (key) => (saved.has(key) ? JSON.parse(saved.get(key)) : undefined),
+    put: async (key, value) => saved.set(key, JSON.stringify(value)),
+    setAlarm: async () => {},
+  } }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, body = {}, token = '') => worker.fetch(new Request(`https://che.example${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(body),
+  }), env);
+  const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
+
+  const ok = await send('/api/chat', { message: "What's up", brain_context: ['[CHE SOUL] warm'] }, token);
+  assert.equal(ok.status, 200);
+  assert.match(await ok.text(), /Hey sir, all good/);
+  assert.ok(seen[0].length > 8000, 'full prompt tried first');
+  assert.ok(seen[1].length < 8000, 'compact prompt retried');
+
+  failAll = true;
+  const bad = await send('/api/chat', { message: 'Why' }, token);
+  assert.equal(bad.status, 503);
+  assert.match((await bad.json()).detail, /temporarily unavailable \(AiError: 3036: model overloaded\)/);
+});
