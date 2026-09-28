@@ -5257,7 +5257,7 @@ OWNER AGENCY
                               child: Image.network(
                                 item['media_url']!,
                                 fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => const Padding(
+                                errorBuilder: (_, _, _) => const Padding(
                                   padding: EdgeInsets.all(12),
                                   child: Text(
                                     'Generated image could not be displayed.',
