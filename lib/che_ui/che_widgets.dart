@@ -598,3 +598,303 @@ class CheSectionBar extends StatefulWidget {
   final int index;
   final ValueChanged<int> onChanged;
 
+  @override
+  State<CheSectionBar> createState() => _CheSectionBarState();
+}
+
+class _CheSectionBarState extends State<CheSectionBar> {
+  late List<GlobalKey> _keys;
+
+  @override
+  void initState() {
+    super.initState();
+    _keys = List.generate(widget.items.length, (_) => GlobalKey());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _reveal(animate: false));
+  }
+
+  @override
+  void didUpdateWidget(covariant CheSectionBar old) {
+    super.didUpdateWidget(old);
+    if (old.items.length != widget.items.length) {
+      _keys = List.generate(widget.items.length, (_) => GlobalKey());
+    }
+    if (old.index != widget.index) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _reveal());
+    }
+  }
+
+  void _reveal({bool animate = true}) {
+    if (widget.index < 0 || widget.index >= _keys.length) return;
+    final ctx = _keys[widget.index].currentContext;
+    if (ctx == null) return;
+    Scrollable.ensureVisible(ctx,
+        alignment: 0.5,
+        duration: animate ? CheMotion.d(context, CheMotion.base) : Duration.zero,
+        curve: CheMotion.curve);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 44,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: CheSpace.gutter),
+        itemCount: widget.items.length,
+        separatorBuilder: (_, __) => const SizedBox(width: CheSpace.sm),
+        itemBuilder: (context, i) {
+          final it = widget.items[i];
+          final sel = i == widget.index;
+          return ChePressable(
+            key: _keys[i],
+            onTap: () => widget.onChanged(i),
+            child: AnimatedContainer(
+              duration: CheMotion.d(context, CheMotion.base),
+              curve: CheMotion.curve,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(CheRadius.pill),
+                color: sel ? it.hue.withOpacity(0.18) : CheColors.surface,
+                border: Border.all(color: sel ? it.hue.withOpacity(0.85) : CheColors.stroke),
+                boxShadow: sel ? [BoxShadow(color: it.hue.withOpacity(0.35), blurRadius: 14)] : null,
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(it.icon, size: 16, color: sel ? it.hue : CheColors.textDim),
+                const SizedBox(width: 6),
+                Text(it.label,
+                    maxLines: 1,
+                    softWrap: false,
+                    style: CheType.label.copyWith(
+                        color: sel ? CheColors.text : CheColors.textDim,
+                        fontWeight: sel ? FontWeight.w700 : FontWeight.w500)),
+              ]),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Agent working state: steps + thinking shimmer
+// ─────────────────────────────────────────────────────────────────────────
+
+enum StepStatus { running, done, error }
+
+class StepLine extends StatelessWidget {
+  const StepLine({super.key, required this.label, required this.status});
+  final String label;
+  final StepStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final Widget icon = switch (status) {
+      StepStatus.done => const Icon(Icons.check_rounded, size: 15, color: CheColors.success),
+      StepStatus.error => const Icon(Icons.error_outline_rounded, size: 15, color: CheColors.danger),
+      StepStatus.running => const SizedBox(
+          width: 12,
+          height: 12,
+          child: CircularProgressIndicator(strokeWidth: 1.6, color: CheColors.accent),
+        ),
+    };
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: CheMotion.d(context, CheMotion.base),
+      curve: CheMotion.curve,
+      builder: (context, t, child) => Opacity(
+        opacity: t,
+        child: Transform.translate(offset: Offset(0, (1 - t) * 6), child: child),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(children: [
+          SizedBox(width: 18, child: Center(child: icon)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: status == StepStatus.running
+                ? ThinkingShimmer(text: label, style: CheType.bodyDim.copyWith(fontSize: 13.5))
+                : Text(label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: CheType.bodyDim.copyWith(fontSize: 13.5)),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+class ThinkingShimmer extends StatefulWidget {
+  const ThinkingShimmer({super.key, this.text = 'Thinking…', this.style});
+  final String text;
+  final TextStyle? style;
+  @override
+  State<ThinkingShimmer> createState() => _ThinkingShimmerState();
+}
+
+class _ThinkingShimmerState extends State<ThinkingShimmer> with SingleTickerProviderStateMixin {
+  late final AnimationController _c =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 1300))..repeat();
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final style = widget.style ?? CheType.bodyDim;
+    if (CheMotion.reduced(context)) return Text(widget.text, style: style);
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (_, child) => ShaderMask(
+        blendMode: BlendMode.srcIn,
+        shaderCallback: (r) {
+          final x = -1.0 + 3.0 * _c.value;
+          return LinearGradient(
+            begin: Alignment(x - 1, 0),
+            end: Alignment(x, 0),
+            colors: const [CheColors.textFaint, CheColors.text, CheColors.textFaint],
+          ).createShader(r);
+        },
+        child: child,
+      ),
+      child: Text(widget.text, maxLines: 1, overflow: TextOverflow.ellipsis, style: style),
+    );
+  }
+}
+
+class BlinkingCursor extends StatefulWidget {
+  const BlinkingCursor({super.key});
+  @override
+  State<BlinkingCursor> createState() => _BlinkingCursorState();
+}
+
+class _BlinkingCursorState extends State<BlinkingCursor> with SingleTickerProviderStateMixin {
+  late final AnimationController _c =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 520))..repeat(reverse: true);
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => FadeTransition(
+        opacity: _c,
+        child: Container(
+          width: 8,
+          height: 17,
+          margin: const EdgeInsets.only(left: 2),
+          decoration: BoxDecoration(
+            color: CheColors.accent,
+            borderRadius: BorderRadius.circular(2),
+            boxShadow: [BoxShadow(color: CheColors.accent.withOpacity(0.6), blurRadius: 8)],
+          ),
+        ),
+      );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Rich text (markdown-lite): paragraphs, **bold**, `code`, bullets,
+// headings and ``` fenced code blocks rendered as CodeCards.
+// ─────────────────────────────────────────────────────────────────────────
+
+class CheRichText extends StatelessWidget {
+  const CheRichText({super.key, required this.text, this.streaming = false});
+  final String text;
+  final bool streaming;
+
+  @override
+  Widget build(BuildContext context) {
+    final blocks = _parseBlocks(text);
+    final children = <Widget>[];
+    for (var i = 0; i < blocks.length; i++) {
+      final b = blocks[i];
+      final last = i == blocks.length - 1;
+      if (b.isCode && b.lang == 'che-remember') {
+        children.add(_RememberChip(lines: b.text));
+      } else if (b.isCode) {
+        children.add(CodeCard(code: b.text, filename: b.lang));
+        if (last && streaming) children.add(const BlinkingCursor());
+      } else {
+        children.add(_Paragraphs(text: b.text, cursor: last && streaming));
+      }
+    }
+    if (children.isEmpty && streaming) children.add(const BlinkingCursor());
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: children);
+  }
+
+  static List<_Block> _parseBlocks(String src) {
+    final out = <_Block>[];
+    final lines = src.split('\n');
+    final buf = StringBuffer();
+    String? lang;
+    var inCode = false;
+    void flush(bool code) {
+      final s = buf.toString();
+      buf.clear();
+      if (code || s.trim().isNotEmpty) out.add(_Block(s.trimRight(), code, lang));
+    }
+
+    for (final line in lines) {
+      if (line.trimLeft().startsWith('```')) {
+        if (!inCode) {
+          flush(false);
+          lang = line.trim().substring(3).trim();
+          if (lang!.isEmpty) lang = null;
+          inCode = true;
+        } else {
+          flush(true);
+          inCode = false;
+          lang = null;
+        }
+        continue;
+      }
+      buf.writeln(line);
+    }
+    flush(inCode); // unterminated fence while streaming still renders as code
+    return out;
+  }
+}
+
+class _RememberChip extends StatelessWidget {
+  const _RememberChip({required this.lines});
+  final String lines;
+  @override
+  Widget build(BuildContext context) {
+    final items = lines
+        .split('\n')
+        .map((l) => l.replaceFirst(RegExp(r'^\s*[-*•]\s*'), '').trim())
+        .where((l) => l.isNotEmpty)
+        .toList();
+    return Container(
+      margin: const EdgeInsets.only(top: CheSpace.sm),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: CheColors.accent.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(CheRadius.md),
+        border: Border.all(color: CheColors.accent.withOpacity(0.35)),
+      ),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Icon(Icons.psychology_rounded, size: 16, color: CheColors.accent),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Saved to brain', style: CheType.caption.copyWith(color: CheColors.accent, fontWeight: FontWeight.w700)),
+            for (final i in items) Text(i, style: CheType.caption),
+          ]),
+        ),
+      ]),
+    );
+  }
+}
+
+class _Block {
+  _Block(this.text, this.isCode, this.lang);
+  final String text;
+  final bool isCode;
+  final String? lang;
+}
+
