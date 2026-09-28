@@ -25,6 +25,9 @@ jobs:
       - name: Bootstrap native projects
         run: bash ./tool/bootstrap.sh
 
+      - name: Enable local AI + voice tuning bridge
+        run: python3 ./tool/patch_local_runtime.py
+
       - name: Flutter analyze
         run: flutter analyze
 
