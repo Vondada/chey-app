@@ -41,6 +41,8 @@ import 'create_gallery_scene.dart';
 import 'office_scene.dart';
 import 'agents/che_agent_runtime.dart';
 import 'agents/che_office_floor_screen.dart';
+import 'che_ui/che_agents.dart';
+import 'home/che_live_steps.dart';
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
 
@@ -199,6 +201,24 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     baseUrl: () => cheAgentBaseUrl,
     headers: () => _authHeaders,
   );
+  late final CheAgentRuntimeController _officeRuntime =
+      CheAgentRuntimeController(_agentRuntime)..addListener(_onOfficeChanged);
+  bool _officeRuntimeStarted = false;
+
+  // Live step lines for the reply being produced ("✓ Nova delivered").
+  final List<CheLiveStep> _liveSteps = [];
+  DateTime? _replyStartedAt;
+  String? _lastUserMessage;
+
+  void _onOfficeChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _ensureOfficeRuntime() {
+    if (_officeRuntimeStarted || _deviceToken == null || cheAgentBaseUrl.isEmpty) return;
+    _officeRuntimeStarted = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _officeRuntime.start());
+  }
 
   String get cheAgentBaseUrl {
     if (kIsWeb) return Uri.base.origin;
@@ -5029,6 +5049,21 @@ OWNER AGENCY
         );
       }
 
+      if (type == 'step') {
+        final text = data['text']?.toString() ?? '';
+        if (text.isNotEmpty && mounted) {
+          setState(() {
+            _liveSteps.add(CheLiveStep(
+              text: text,
+              agentId: data['agent_id']?.toString(),
+              agentName: data['agent']?.toString(),
+            ));
+          });
+          _scrollToBottom();
+        }
+        continue;
+      }
+
       if (type == 'delta') {
         final delta = data['delta']?.toString() ?? '';
         if (delta.isEmpty) continue;
@@ -5331,6 +5366,9 @@ OWNER AGENCY
         'text': message,
       });
       controller.clear();
+      _liveSteps.clear();
+      _replyStartedAt = DateTime.now();
+      _lastUserMessage = message;
     });
 
     _scrollToBottom();
@@ -5396,6 +5434,13 @@ OWNER AGENCY
       setState(() {
         if (assistantIndex != null && assistantIndex < messages.length) {
           messages[assistantIndex]['text'] = finalReply;
+          if (_liveSteps.isNotEmpty) {
+            messages[assistantIndex]['steps'] = _liveSteps.map((step) => step.text).join('\n');
+          }
+          if (_replyStartedAt != null) {
+            messages[assistantIndex]['thought_ms'] =
+                '${DateTime.now().difference(_replyStartedAt!).inMilliseconds}';
+          }
           if (_streamMediaUrl != null) {
             messages[assistantIndex]['media_url'] = _streamMediaUrl!;
             messages[assistantIndex]['media_type'] = _streamMediaType ?? 'image';
@@ -5451,6 +5496,73 @@ OWNER AGENCY
     }
   }
 
+  Future<void> _showMessageActions(int index) async {
+    if (index < 0 || index >= messages.length) return;
+    final item = messages[index];
+    final isUser = item['role'] == 'user';
+    final text = item['text'] ?? '';
+    HapticFeedback.selectionClick();
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: CheColors.surface,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.copy_rounded),
+              title: const Text('Copy'),
+              onTap: () async {
+                await Clipboard.setData(ClipboardData(text: text));
+                if (sheetContext.mounted) Navigator.pop(sheetContext);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.copy_all_rounded),
+              title: const Text('Copy whole conversation'),
+              onTap: () async {
+                final all = messages
+                    .map((m) => '${m['role'] == 'user' ? 'You' : 'CHE'}: ${m['text'] ?? ''}')
+                    .join('\n\n');
+                await Clipboard.setData(ClipboardData(text: all));
+                if (sheetContext.mounted) Navigator.pop(sheetContext);
+              },
+            ),
+            if (!isUser && !_isSending)
+              ListTile(
+                leading: const Icon(Icons.refresh_rounded),
+                title: const Text('Retry'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  String? prompt;
+                  for (var i = index - 1; i >= 0; i--) {
+                    if (messages[i]['role'] == 'user') {
+                      prompt = messages[i]['text'];
+                      break;
+                    }
+                  }
+                  prompt ??= _lastUserMessage;
+                  if (prompt == null || prompt.trim().isEmpty) return;
+                  controller.text = prompt;
+                  unawaited(sendMessage());
+                },
+              ),
+            if (isUser && !_isSending)
+              ListTile(
+                leading: const Icon(Icons.edit_rounded),
+                title: const Text('Edit and resend'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  controller.text = text;
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
@@ -5463,6 +5575,9 @@ OWNER AGENCY
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _officeRuntime
+      ..removeListener(_onOfficeChanged)
+      ..dispose();
     _listenRestartTimer?.cancel();
     _proactiveTimer?.cancel();
     _nativeIosVoiceSub?.cancel();
@@ -5494,6 +5609,7 @@ OWNER AGENCY
   Widget build(BuildContext context) {
     const accent = Color(0xFF67E8D1);
 
+    _ensureOfficeRuntime();
     String statusText = _deviceToken == null
         ? '●  SECURITY PAIRING REQUIRED'
         : '●  ${_voiceSnapshot.engineLabel.toUpperCase()} • ${_voiceSnapshot.phaseLabel.toUpperCase()}';
@@ -5646,6 +5762,8 @@ OWNER AGENCY
                               : cheSleeping
                                   ? 'Say “Chay” to wake'
                                   : _voiceSnapshot.engineLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             color: Colors.white54,
                             fontSize: 10.5,
@@ -5653,6 +5771,14 @@ OWNER AGENCY
                         ),
                       ],
                     ),
+                  ),
+                  const SizedBox(width: 8),
+                  CheOfficePresence(
+                    che: _officeRuntime.che,
+                    working: _officeRuntime.working,
+                    liveMeetings: _officeRuntime.meetings.where((m) => m.live).length,
+                    connected: _deviceToken != null && _officeRuntime.error == null,
+                    onTap: _openOfficeFloor,
                   ),
                 ],
               ),
@@ -5679,10 +5805,16 @@ OWNER AGENCY
                 itemBuilder: (context, index) {
                   final item = messages[index];
                   final isUser = item['role'] == 'user';
+                  final isLiveReply = !isUser &&
+                      _isSending &&
+                      index == messages.length - 1 &&
+                      _replyStartedAt != null;
 
                   return Align(
                     alignment:
                         isUser ? Alignment.centerRight : Alignment.centerLeft,
+                    child: GestureDetector(
+                    onLongPress: () => _showMessageActions(index),
                     child: Container(
                       margin: const EdgeInsets.symmetric(vertical: 6),
                       padding: const EdgeInsets.all(13),
@@ -5708,7 +5840,27 @@ OWNER AGENCY
                             ),
                           ),
                           const SizedBox(height: 9),
-                          Text(
+                          if (isLiveReply) ...[
+                            CheLiveStepsView(
+                              startedAt: _replyStartedAt!,
+                              steps: List.of(_liveSteps),
+                              agents: [for (final p in _officeRuntime.agents) p.agent],
+                              onTapAgent: (_) => _openOfficeFloor(),
+                            ),
+                            if ((item['text'] ?? '').isNotEmpty) const SizedBox(height: 8),
+                          ] else if (!isUser &&
+                              ((item['steps'] ?? '').isNotEmpty || item['thought_ms'] != null)) ...[
+                            CheThoughtLine(
+                              thoughtMs: int.tryParse(item['thought_ms'] ?? ''),
+                              steps: (item['steps'] ?? '')
+                                  .split('\n')
+                                  .where((line) => line.trim().isNotEmpty)
+                                  .toList(),
+                            ),
+                            const SizedBox(height: 6),
+                          ],
+                          if (!isLiveReply || (item['text'] ?? '').isNotEmpty)
+                          SelectableText(
                             item['text'] ?? '',
                             style: const TextStyle(
                               color: Colors.white,
@@ -5750,6 +5902,7 @@ OWNER AGENCY
                           ],
                         ],
                       ),
+                    ),
                     ),
                   );
                 },
