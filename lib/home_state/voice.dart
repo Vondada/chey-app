@@ -256,16 +256,19 @@ extension _CheHomeVoice on _CHEHomeState {
           await flutterTts.speak(spokenText);
         }
       } else if (defaultTargetPlatform == TargetPlatform.iOS) {
-        var played = await _tryNaturalVoice(spokenText);
+        // Fastest/free default: CHE's Chaze signature voice runs locally first.
+        // ElevenLabs/OpenAI/Cloudflare remain optional server fallbacks.
+        var played = false;
+        try {
+          played = await CheNativeVoice.speakText(spokenText);
+        } on MissingPluginException {
+          played = false;
+        } catch (_) {
+          played = false;
+        }
 
         if (!played) {
-          try {
-            played = await CheNativeVoice.speakText(spokenText);
-          } on MissingPluginException {
-            played = false;
-          } catch (_) {
-            played = false;
-          }
+          played = await _tryNaturalVoice(spokenText);
         }
 
         if (!played) {
