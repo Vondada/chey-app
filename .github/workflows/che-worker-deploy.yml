@@ -36,6 +36,11 @@ jobs:
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+      GITHUB_MODELS_TOKEN: ${{ secrets.GITHUB_MODELS_TOKEN }}
+      SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -65,7 +70,7 @@ jobs:
         run: |
           node -e '
             const out = {};
-            for (const k of ["ELEVENLABS_API_KEY", "CHE_ELEVENLABS_VOICE_ID", "CHE_OPENAI_API_KEY", "GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY"]) {
+            for (const k of ["ELEVENLABS_API_KEY", "CHE_ELEVENLABS_VOICE_ID", "CHE_OPENAI_API_KEY", "GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GITHUB_MODELS_TOKEN", "SAMBANOVA_API_KEY", "HF_TOKEN"]) {
               if (process.env[k]) out[k] = process.env[k];
             }
             require("fs").writeFileSync("/tmp/che-secrets.json", JSON.stringify(out));

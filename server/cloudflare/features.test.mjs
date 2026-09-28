@@ -304,4 +304,17 @@ test('AI router falls through free engines when Cloudflare quota is used up', as
   assert.equal((await routeText(noCf, 'm', input, rotating)).response, 'from mistral');
   assert.equal((await routeText(noCf, 'm', input, rotating)).response, 'from mistral');
   assert.deepEqual(models, ['openai', 'mistral', 'mistral'], 'rested model is not retried right away');
+
+  // Every free-tier key the owner adds joins the rotation in order.
+  resetRouterForTests();
+  const order = [];
+  const allBusy = async (url) => {
+    order.push(new URL(url).hostname);
+    return new Response('{"error":"busy"}', { status: 429 });
+  };
+  await assert.rejects(routeText({
+    CHE_DISABLE_KEYLESS_AI: '1',
+    CEREBRAS_API_KEY: 'c', MISTRAL_API_KEY: 'm', GITHUB_MODELS_TOKEN: 'gh', SAMBANOVA_API_KEY: 's', HF_TOKEN: 'h',
+  }, 'm', input, allBusy));
+  assert.deepEqual(order, ['api.cerebras.ai', 'api.mistral.ai', 'models.github.ai', 'api.sambanova.ai', 'router.huggingface.co']);
 });
