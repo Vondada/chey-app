@@ -69,7 +69,7 @@ class CheWakeWordEngine {
           config['keyword_ppn_base64']?.toString().trim() ?? '';
       final sensitivityValue = config['sensitivity'];
       final sensitivity = sensitivityValue is num
-          ? sensitivityValue.toDouble().clamp(0.0, 1.0)
+          ? sensitivityValue.toDouble().clamp(0.0, 1.0).toDouble()
           : 0.62;
 
       if (accessKey.isEmpty || keywordBase64.isEmpty) {
