@@ -898,3 +898,183 @@ class _ComposerIcon extends StatelessWidget {
 
 class _SendButton extends StatelessWidget {
   const _SendButton({required this.busy, required this.enabled, required this.onSend, required this.onStop});
+  final bool busy;
+  final bool enabled;
+  final VoidCallback onSend;
+  final VoidCallback onStop;
+
+  @override
+  Widget build(BuildContext context) {
+    final on = busy || enabled;
+    return ChePressable(
+      onTap: busy ? onStop : (enabled ? onSend : null),
+      child: AnimatedContainer(
+        duration: CheMotion.d(context, CheMotion.fast),
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: on ? CheColors.accentGradient : null,
+          color: on ? null : CheColors.surfaceHi,
+          boxShadow: on ? [BoxShadow(color: CheColors.accent.withOpacity(0.5), blurRadius: 14)] : null,
+        ),
+        child: AnimatedSwitcher(
+          duration: CheMotion.d(context, CheMotion.fast),
+          transitionBuilder: (c, a) => ScaleTransition(scale: a, child: c),
+          child: Icon(
+            busy ? Icons.stop_rounded : Icons.arrow_upward_rounded,
+            key: ValueKey(busy),
+            size: 20,
+            color: on ? const Color(0xFF02110E) : CheColors.textFaint,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Messages
+// ─────────────────────────────────────────────────────────────────────────
+
+class _UserBubble extends StatelessWidget {
+  const _UserBubble({required this.message});
+  final CheMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    final maxW = MediaQuery.of(context).size.width * 0.8;
+    return Align(
+      alignment: Alignment.centerRight,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: maxW),
+        child: TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0.9, end: 1),
+          duration: CheMotion.d(context, CheMotion.base),
+          curve: CheMotion.spring,
+          builder: (_, s, child) => Transform.scale(scale: s, alignment: Alignment.bottomRight, child: child),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(CheRadius.lg),
+                topRight: Radius.circular(CheRadius.lg),
+                bottomLeft: Radius.circular(CheRadius.lg),
+                bottomRight: Radius.circular(6),
+              ),
+              gradient: LinearGradient(colors: [
+                CheColors.accent.withOpacity(0.20),
+                CheColors.accentAlt.withOpacity(0.12),
+              ]),
+              border: Border.all(color: CheColors.accent.withOpacity(0.4)),
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              if (message.attachments.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.photo_library_outlined, size: 14, color: CheColors.accent),
+                    const SizedBox(width: 4),
+                    Text('${message.attachments.length} attached', style: CheType.caption),
+                  ]),
+                ),
+              if (message.text.isNotEmpty) SelectableText(message.text, style: CheType.body),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AssistantMessage extends StatefulWidget {
+  const _AssistantMessage({required this.message, required this.onRetry, this.registry});
+  final CheMessage message;
+  final VoidCallback onRetry;
+  final ChePluginRegistry? registry;
+  @override
+  State<_AssistantMessage> createState() => _AssistantMessageState();
+}
+
+class _AssistantMessageState extends State<_AssistantMessage> {
+  bool _showSteps = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = widget.message;
+    final waiting = m.streaming && m.text.isEmpty;
+    final stepsVisible = waiting || _showSteps;
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Padding(padding: const EdgeInsets.only(top: 2), child: CheOrb(size: 24, active: m.streaming)),
+      const SizedBox(width: CheSpace.md),
+      Expanded(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (waiting)
+            _LiveTimer(start: m.startedAt ?? DateTime.now())
+          else if (m.thoughtMs != null && m.steps.isNotEmpty)
+            GestureDetector(
+              onTap: () => setState(() => _showSteps = !_showSteps),
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text('Thought ${_fmt(m.thoughtMs!)}', style: CheType.caption),
+                  AnimatedRotation(
+                    turns: _showSteps ? 0.25 : 0,
+                    duration: CheMotion.d(context, CheMotion.fast),
+                    child: const Icon(Icons.chevron_right_rounded, size: 16, color: CheColors.textDim),
+                  ),
+                ]),
+              ),
+            ),
+          AnimatedSize(
+            duration: CheMotion.d(context, CheMotion.base),
+            curve: CheMotion.curve,
+            alignment: Alignment.topLeft,
+            child: stepsVisible
+                ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    for (final s in m.steps) StepLine(label: s.label, status: s.status),
+                    const SizedBox(height: 4),
+                  ])
+                : const SizedBox(width: double.infinity),
+          ),
+          if (m.text.isNotEmpty) CheRichText(text: m.text, streaming: m.streaming),
+          if (!m.streaming && widget.registry != null)
+            for (final p in ChePluginRegistry.findInText(m.text))
+              ChePluginOfferCard(registry: widget.registry!, plugin: p),
+          if (m.isError) ...[
+            const SizedBox(height: 6),
+            Text(m.errorText ?? 'Something went wrong.',
+                style: CheType.bodyDim.copyWith(color: CheColors.danger)),
+            const SizedBox(height: 6),
+            _ActionChip(icon: Icons.refresh_rounded, label: 'Retry', onTap: widget.onRetry),
+          ] else if (!m.streaming && m.text.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Row(children: [
+              _ActionChip(
+                icon: Icons.copy_rounded,
+                label: 'Copy',
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: m.text));
+                  ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                      const SnackBar(content: Text('Copied'), duration: Duration(milliseconds: 900)));
+                },
+              ),
+              const SizedBox(width: 6),
+              _ActionChip(icon: Icons.refresh_rounded, label: 'Redo', onTap: widget.onRetry),
+            ]),
+          ],
+        ]),
+      ),
+    ]);
+  }
+
+  static String _fmt(int ms) => ms < 10000 ? '${(ms / 1000).toStringAsFixed(1)}s' : '${(ms / 1000).round()}s';
+}
+
+class _LiveTimer extends StatefulWidget {
+  const _LiveTimer({required this.start});
+  final DateTime start;
+  @override
+  State<_LiveTimer> createState() => _LiveTimerState();
+}
+
