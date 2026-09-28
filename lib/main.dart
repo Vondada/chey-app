@@ -43,6 +43,12 @@ import 'agents/che_agent_runtime.dart';
 import 'agents/che_office_floor_screen.dart';
 import 'che_ui/che_agents.dart';
 import 'home/che_live_steps.dart';
+import 'home/che_insights_room.dart';
+import 'home/che_cloud_logs_screen.dart';
+import 'che_ui/che_agent_chat.dart' show CheAgentController;
+import 'che_ui/che_backend.dart' show CheBackend;
+import 'che_ui/che_brain.dart' show CheBrain;
+import 'che_ui/che_log.dart' show CheConversationStore;
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
 
@@ -209,6 +215,49 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   final List<CheLiveStep> _liveSteps = [];
   DateTime? _replyStartedAt;
   String? _lastUserMessage;
+
+  // CHE's brain (soul, facts, reflections) and the word-for-word log of every
+  // typed and spoken conversation. Files: On My iPhone → CHE → che_logs.
+  final CheBrain _brain = CheBrain();
+  late final CheConversationStore _logStore = CheConversationStore(
+    resolveLogUrl: () => _deviceToken == null || cheAgentBaseUrl.isEmpty
+        ? null
+        : Uri.parse('$cheAgentBaseUrl/api/logs'),
+    resolveLogHeaders: () => _authHeaders,
+  );
+  late final CheAgentController _brainLog = CheAgentController(
+    backend: CheBackend.fromFuture((req) => _brainReflect(req.message, req.systemAddons)),
+    store: _logStore,
+    brain: _brain,
+  );
+
+  /// Private background reflection (never shown as a chat reply).
+  Future<String> _brainReflect(String prompt, List<String> addons) async {
+    if (_deviceToken == null || cheAgentBaseUrl.isEmpty) return '';
+    final response = await http
+        .post(
+          Uri.parse('$cheAgentBaseUrl/api/brain/reflect'),
+          headers: _authHeaders,
+          body: jsonEncode({'prompt': prompt, 'soul': _brain.soul}),
+        )
+        .timeout(const Duration(seconds: 40));
+    if (response.statusCode != 200) return '';
+    final data = jsonDecode(response.body);
+    return data is Map ? '${data['text'] ?? ''}' : '';
+  }
+
+  List<String> _brainContextFor(String message) {
+    final recent = <String>[];
+    for (final m in messages.reversed) {
+      if (m['role'] == 'assistant' && (m['text'] ?? '').isNotEmpty) recent.add(m['text']!);
+      if (recent.length >= 5) break;
+    }
+    try {
+      return _brain.contextFor(message, _brainLog.conversations, recentReplies: recent);
+    } catch (_) {
+      return const [];
+    }
+  }
 
   void _onOfficeChanged() {
     if (mounted) setState(() {});
@@ -497,6 +546,8 @@ OWNER AGENCY
     WidgetsBinding.instance.addObserver(this);
     _voiceMachine.startWakeListening();
     _voiceSnapshot = _voiceMachine.snapshot;
+    unawaited(_brain.load());
+    unawaited(_brainLog.restore());
     initializeVoice();
     _loadSecuritySession();
     _proactiveTimer = Timer.periodic(
@@ -1568,6 +1619,15 @@ OWNER AGENCY
 
       if (isFinal) {
         _realtimeAssistantIndex = null;
+        var youSaid = '';
+        for (var i = index - 1; i >= 0; i--) {
+          if (messages[i]['role'] == 'user') {
+            youSaid = messages[i]['text'] ?? '';
+            break;
+          }
+          if (messages[i]['role'] == 'assistant') break;
+        }
+        _brainLog.logVoiceTurn(youSaid.isEmpty ? '(spoken)' : youSaid, clean);
       }
     });
     _scrollToBottom();
@@ -3902,11 +3962,23 @@ OWNER AGENCY
   }
 
   Widget _hubInsightsTab(bool active) {
-    return InsightsBrainScene(
-      active: active,
-      learnedAboutYou: learnedPersonality,
-      learnedKnowledge: learnedKnowledge,
-      suggestions: suggestions,
+    return CheInsightsRoom(
+      brain: _brain,
+      log: _brainLog,
+      onOpenCloudLogs: _deviceToken == null
+          ? null
+          : () => Navigator.of(context).push(MaterialPageRoute<void>(
+                builder: (_) => CheCloudLogsScreen(
+                  baseUrl: () => cheAgentBaseUrl,
+                  headers: () => _authHeaders,
+                ),
+              )),
+      map: InsightsBrainScene(
+        active: active,
+        learnedAboutYou: learnedPersonality,
+        learnedKnowledge: learnedKnowledge,
+        suggestions: suggestions,
+      ),
     );
   }
 
@@ -4998,6 +5070,7 @@ OWNER AGENCY
       'client_identity_profile': _cheIdentityProfile,
       'client_personality_profile': learnedPersonality,
       'client_memories': savedMemories,
+      'brain_context': _brainContextFor(userMessage),
       'client_time': {
         'local_iso': DateTime.now().toIso8601String(),
         'timezone_name': DateTime.now().timeZoneName,
@@ -5292,7 +5365,10 @@ OWNER AGENCY
   }
 
   String _sanitizeCheReply(String value) {
-    final reply = value.trim();
+    // CHE's ```che-remember blocks are saved to her brain, not shown.
+    final reply = value
+        .replaceAll(RegExp(r'```che-remember[\s\S]*?(```|$)'), '')
+        .trim();
     if (reply.isEmpty) return reply;
     final lower = reply.toLowerCase();
     final genericWakePrompt = lower.contains('[assistant name]') ||
@@ -5451,6 +5527,9 @@ OWNER AGENCY
 
       _scrollToBottom();
 
+      _brainLog.logTurn(message, reply.isEmpty ? finalReply : reply,
+          source: fromVoice ? 'voice' : 'chat');
+
       await speakText(finalReply);
     } on _CHEAgentException catch (e) {
       final errorReply = e.message;
@@ -5578,6 +5657,8 @@ OWNER AGENCY
     _officeRuntime
       ..removeListener(_onOfficeChanged)
       ..dispose();
+    _brainLog.dispose();
+    _brain.dispose();
     _listenRestartTimer?.cancel();
     _proactiveTimer?.cancel();
     _nativeIosVoiceSub?.cancel();

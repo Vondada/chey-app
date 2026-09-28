@@ -24,11 +24,15 @@ import 'che_theme.dart';
 import 'che_widgets.dart';
 
 class CheConversationStore {
-  CheConversationStore({this.logUrl, this.logHeaders = const {}});
+  CheConversationStore({this.logUrl, this.logHeaders = const {}, this.resolveLogUrl, this.resolveLogHeaders});
 
   /// Optional Worker endpoint that receives each finished turn (POST JSON).
   final Uri? logUrl;
   final Map<String, String> logHeaders;
+
+  /// Dynamic versions (the server address / pairing token can change).
+  final Uri? Function()? resolveLogUrl;
+  final Map<String, String> Function()? resolveLogHeaders;
 
   static Future<Directory> _dir() async {
     final home = Platform.environment['HOME'];
@@ -83,11 +87,15 @@ class CheConversationStore {
   /// Sends one finished turn to the Worker (fire-and-forget).
   static final HttpClient _http = HttpClient()..connectionTimeout = const Duration(seconds: 6);
   Future<void> remoteLog(CheConversation c, CheMessage user, CheMessage reply, {String source = 'chat'}) async {
-    if (logUrl == null) return;
+    final url = resolveLogUrl?.call() ?? logUrl;
+    if (url == null) return;
     try {
-      final r = await _http.postUrl(logUrl!);
+      final r = await _http.postUrl(url);
+      final headers = resolveLogHeaders?.call() ?? logHeaders;
+      headers.forEach((k, v) {
+        if (k.toLowerCase() != 'content-type') r.headers.set(k, v);
+      });
       r.headers.contentType = ContentType.json;
-      logHeaders.forEach((k, v) => r.headers.set(k, v));
       r.add(utf8.encode(jsonEncode({
         'conversationId': c.id,
         'title': c.title,
