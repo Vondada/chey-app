@@ -26,6 +26,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'che_native_voice.dart';
 import 'che_account_bridge.dart';
 import 'che_realtime_voice.dart';
+import 'che_wake_word.dart';
 import 'che_voice_state.dart';
 import 'che_voice_ui.dart';
 import 'che_app_portal.dart';
@@ -182,6 +183,9 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   final CheVoiceStateMachine _voiceMachine = CheVoiceStateMachine();
   late CheVoiceSnapshot _voiceSnapshot;
   CheRealtimeVoiceEngine? _realtimeVoice;
+  CheWakeWordEngine? _porcupineWake;
+  bool _porcupineWakeActive = false;
+  String _wakeWordStatus = 'Native wake fallback';
   bool _realtimeConnecting = false;
   int? _realtimeAssistantIndex;
   String? _realtimePendingMediaUrl;
@@ -511,6 +515,7 @@ OWNER AGENCY
       }
     } else if (state == AppLifecycleState.paused) {
       _listenRestartTimer?.cancel();
+      unawaited(_stopPorcupineWake());
       if (_realtimeVoice?.connected == true) {
         unawaited(_returnToWakeStandby(restartWakeListener: false));
       }
@@ -562,6 +567,9 @@ OWNER AGENCY
 
     if (_deviceToken != null && _deviceToken!.isNotEmpty) {
       await _loadAgentState(silent: true);
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+        unawaited(_restartWakeListener());
+      }
       unawaited(
         Future.delayed(
           const Duration(seconds: 3),
@@ -1263,9 +1271,90 @@ OWNER AGENCY
   }
 
 
+  Future<void> _stopPorcupineWake({bool disposeEngine = false}) async {
+    final wake = _porcupineWake;
+    if (wake == null) {
+      _porcupineWakeActive = false;
+      return;
+    }
+    await wake.stop(disposeManager: disposeEngine);
+    _porcupineWakeActive = false;
+    if (disposeEngine) _porcupineWake = null;
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _handlePorcupineWake() async {
+    if (!mounted ||
+        !cheSleeping ||
+        _realtimeConnecting ||
+        _realtimeVoice?.connected == true) {
+      return;
+    }
+
+    await _stopPorcupineWake();
+    HapticFeedback.mediumImpact();
+    if (mounted) {
+      setState(() {
+        cheSleeping = false;
+        openConversation = true;
+        isListening = false;
+      });
+    }
+    await _beginRealtimeConversation(fromWake: true);
+  }
+
+  Future<bool> _startPorcupineWake() async {
+    if (kIsWeb ||
+        defaultTargetPlatform != TargetPlatform.iOS ||
+        !cheSleeping ||
+        _realtimeVoice?.connected == true ||
+        _realtimeConnecting ||
+        _deviceToken == null ||
+        _deviceToken!.isEmpty ||
+        cheAgentBaseUrl.isEmpty) {
+      return false;
+    }
+
+    final current = _porcupineWake;
+    if (current != null) {
+      await current.dispose();
+    }
+
+    final wake = CheWakeWordEngine(
+      baseUrl: cheAgentBaseUrl,
+      deviceToken: _deviceToken!,
+      onWake: _handlePorcupineWake,
+      onStatus: (status) {
+        _wakeWordStatus = status;
+        if (mounted) setState(() {});
+      },
+    );
+    _porcupineWake = wake;
+
+    final started = await wake.start();
+    _porcupineWakeActive = started;
+    if (started) {
+      try {
+        await CheNativeVoice.stop();
+      } catch (_) {}
+      _nativeIosVoiceActive = false;
+      _voiceMachine.startWakeListening();
+      _applyVoiceSnapshot(_voiceMachine.snapshot);
+      if (mounted) setState(() {});
+    }
+    return started;
+  }
+
   Future<void> _restartWakeListener() async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return;
     if (_realtimeVoice?.connected == true || _realtimeConnecting) return;
+
+    // Production wake stack:
+    // 1) Apple Vocal Shortcuts/App Intent gets CHE foregrounded at iPhone level.
+    // 2) Porcupine listens locally while CHE is active/asleep.
+    // 3) OpenAI Realtime/WebRTC exclusively owns the mic after wake.
+    if (await _startPorcupineWake()) return;
+
     try {
       final started = await CheNativeVoice.start();
       _nativeIosVoiceActive = started;
@@ -1301,6 +1390,9 @@ OWNER AGENCY
 
     try {
       _listenRestartTimer?.cancel();
+
+      // Realtime is the only microphone owner once CHE wakes.
+      await _stopPorcupineWake();
       await speech.cancel();
       await flutterTts.stop();
       try {
@@ -1893,6 +1985,7 @@ OWNER AGENCY
 
   Future<void> _initNativeIosVoice() async {
     _nativeIosVoiceSub?.cancel();
+    unawaited(_stopPorcupineWake(disposeEngine: true));
 
     _nativeIosVoiceSub = CheNativeVoice.events.listen(
       _handleNativeIosVoiceEvent,
