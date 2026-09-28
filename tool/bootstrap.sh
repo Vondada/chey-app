@@ -57,6 +57,8 @@ info['NSContactsUsageDescription'] = 'CHE accesses contacts only when you explic
 info['NSCalendarsFullAccessUsageDescription'] = 'CHE accesses your calendar only for owner-authorized scheduling and calendar actions.'
 info['NSBluetoothAlwaysUsageDescription'] = 'CHE uses Bluetooth only for owner-authorized accessories, audio, and supported devices.'
 info['NSLocationWhenInUseUsageDescription'] = 'CHE uses your location only while you are using location-aware features.'
+info['CFBundleURLTypes'] = [{'CFBundleURLName': 'CHE', 'CFBundleURLSchemes': ['che']}]
+info['BGTaskSchedulerPermittedIdentifiers'] = ['com.cheyapp.che.refresh']
 with path.open('wb') as stream:
     plistlib.dump(info, stream)
 PY
@@ -76,6 +78,8 @@ import Speech
 import AppIntents
 import LocalAuthentication
 import Security
+import UserNotifications
+import BackgroundTasks
 
 private final class CHEVoiceStreamHandler: NSObject, FlutterStreamHandler {
   private var sink: FlutterEventSink?
@@ -137,7 +141,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
 }
 
 @main
-@objc class AppDelegate: FlutterAppDelegate, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate {
+@objc class AppDelegate: FlutterAppDelegate, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate, UNUserNotificationCenterDelegate {
   private let synthesizer = AVSpeechSynthesizer()
   private var player: AVAudioPlayer?
   private var pendingSpeechResult: FlutterResult?
@@ -155,6 +159,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
   private var bargeInDetected = false
   private var latestTranscript = ""
   private var lastDeliveredTranscript = ""
+  private var lastDeliveredAt = Date.distantPast
   private var assistantText = ""
   private var ignoreBargeInUntil = Date.distantPast
   private var recognitionGeneration = 0
@@ -166,6 +171,13 @@ struct CHEAppShortcuts: AppShortcutsProvider {
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
     synthesizer.delegate = self
+    UNUserNotificationCenter.current().delegate = self
+    BGTaskScheduler.shared.register(
+      forTaskWithIdentifier: "com.cheyapp.che.refresh",
+      using: nil
+    ) { task in
+      task.setTaskCompleted(success: true)
+    }
 
     if let controller = window?.rootViewController as? FlutterViewController {
       let methods = FlutterMethodChannel(
@@ -177,6 +189,34 @@ struct CHEAppShortcuts: AppShortcutsProvider {
         binaryMessenger: controller.binaryMessenger
       )
       events.setStreamHandler(voiceStreamHandler)
+
+      let nativeShell = FlutterMethodChannel(
+        name: "che/native_shell",
+        binaryMessenger: controller.binaryMessenger
+      )
+      nativeShell.setMethodCallHandler { call, result in
+        switch call.method {
+        case "requestNotifications":
+          UNUserNotificationCenter.current().requestAuthorization(
+            options: [.alert, .sound, .badge]
+          ) { granted, _ in
+            DispatchQueue.main.async { result(granted) }
+          }
+        case "scheduleRefresh":
+          let request = BGAppRefreshTaskRequest(
+            identifier: "com.cheyapp.che.refresh"
+          )
+          request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+          do {
+            try BGTaskScheduler.shared.submit(request)
+            result(true)
+          } catch {
+            result(false)
+          }
+        default:
+          result(FlutterMethodNotImplemented)
+        }
+      }
 
       let accountBridge = FlutterMethodChannel(
         name: "che/account_bridge",
@@ -380,6 +420,18 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     return status == errSecSuccess || status == errSecItemNotFound
   }
 
+  override func application(
+    _ app: UIApplication,
+    open url: URL,
+    options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+  ) -> Bool {
+    UserDefaults.standard.set(
+      url.absoluteString,
+      forKey: "flutter.che_pending_deep_link"
+    )
+    return super.application(app, open: url, options: options)
+  }
+
   private func configureAudioSession() {
     let session = AVAudioSession.sharedInstance()
     do {
@@ -527,7 +579,10 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     // unchanged.
     let wakeCandidate = normalizedWords(transcript)
     let wakeWords = ["chay", "chey", "shay", "che", "c h e", "hey chay", "hey chey", "hey che"]
-    if !assistantSpeaking && !wakeSignalSent && wakeWords.contains(wakeCandidate) {
+    let heardWake = wakeWords.contains { word in
+      wakeCandidate == word || wakeCandidate.hasPrefix(word + " ")
+    }
+    if !assistantSpeaking && !wakeSignalSent && heardWake {
       wakeSignalSent = true
       voiceStreamHandler.emit([
         "type": "wake_signal",
@@ -575,12 +630,15 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !cleaned.isEmpty else { return }
 
-    if cleaned.caseInsensitiveCompare(lastDeliveredTranscript) == .orderedSame {
+    let now = Date()
+    if cleaned.caseInsensitiveCompare(lastDeliveredTranscript) == .orderedSame &&
+        now.timeIntervalSince(lastDeliveredAt) < 1.25 {
       restartRecognitionSoon(delay: 0.12)
       return
     }
 
     lastDeliveredTranscript = cleaned
+    lastDeliveredAt = now
     latestTranscript = ""
     utteranceTimer?.invalidate()
     utteranceTimer = nil
