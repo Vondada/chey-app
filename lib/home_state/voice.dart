@@ -256,11 +256,13 @@ extension _CheHomeVoice on _CHEHomeState {
           await flutterTts.speak(spokenText);
         }
       } else if (defaultTargetPlatform == TargetPlatform.iOS) {
-        // Fastest/free default: CHE's Chaze signature voice runs locally first.
-        // ElevenLabs/OpenAI/Cloudflare remain optional server fallbacks.
+        // Smooth voice order: CHE's local Chaze neural voice when its voice
+        // pack is ready (free, unmetered), then the smooth cloud voices
+        // (ElevenLabs / OpenAI / Cloudflare / Gemini), and only then the
+        // basic iPhone voice. The basic voice never pre-empts a smooth one.
         var played = false;
         try {
-          played = await CheNativeVoice.speakText(spokenText);
+          played = await CheNativeVoice.speakNeural(spokenText);
         } on MissingPluginException {
           played = false;
         } catch (_) {
@@ -269,6 +271,16 @@ extension _CheHomeVoice on _CHEHomeState {
 
         if (!played) {
           played = await _tryNaturalVoice(spokenText);
+        }
+
+        if (!played) {
+          try {
+            played = await CheNativeVoice.speakText(spokenText);
+          } on MissingPluginException {
+            played = false;
+          } catch (_) {
+            played = false;
+          }
         }
 
         if (!played) {

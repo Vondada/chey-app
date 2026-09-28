@@ -194,6 +194,24 @@ class CheNativeVoice {
         false;
   }
 
+  /// Speaks with the on-device Kokoro neural voice only. Returns false (and
+  /// starts preparing the voice pack in the background) until it is ready,
+  /// so callers can use a smooth cloud voice instead of the basic one.
+  static Future<bool> speakNeural(String text) async {
+    final clean = text.trim();
+    if (clean.isEmpty) return false;
+    await _applyStoredSettings();
+    if (!_kokoro.isReady) {
+      unawaited(_kokoro.prepare());
+      return false;
+    }
+    try {
+      return await _kokoro.speak(clean);
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<bool> previewVoice() => speakText(
         'Hey, I’m CHE. You’re hearing my Chaze signature voice, sir.',
       );
