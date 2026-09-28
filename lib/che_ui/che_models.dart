@@ -1,3 +1,4 @@
+// ignore_for_file: prefer_initializing_formals
 // Data models shared by the CHE chat UI, backend adapter and plugin system.
 
 import 'che_widgets.dart' show StepStatus;
