@@ -1686,6 +1686,35 @@ export class CheState extends DurableObject {
           ? []
           : pluginRecommendations(this.env, data.plugin_enabled, requestedCapabilities);
 
+        let officePeerReview = null;
+        if (body.agent_mode === 'full' && officeResults.length > 1) {
+          try {
+            const review = await this.env.AI.run(this.env.CHE_FAST_MODEL || FAST_MODEL, {
+              messages: [
+                {
+                  role: 'system',
+                  content: [
+                    'You are CHE internal peer review.',
+                    'Compare the coworker findings. Identify agreements, conflicts, missing evidence, and the strongest next action.',
+                    'Do not address the owner directly. Do not invent tool results.',
+                  ].join('\n'),
+                },
+                {
+                  role: 'user',
+                  content: JSON.stringify({
+                    request: message,
+                    coworker_results: officeResults,
+                  }).slice(0, 16000),
+                },
+              ],
+              max_tokens: 650,
+            });
+            officePeerReview = String(
+              review.response || review.choices?.[0]?.message?.content || '',
+            ).trim().slice(0, 10000) || null;
+          } catch (_) {}
+        }
+
         if (officeResults.length) {
           const now = new Date().toISOString();
           for (const result of officeResults) {
@@ -1844,6 +1873,9 @@ export class CheState extends DurableObject {
               officeResults.length
                 ? `CHE Office completed delegated work in parallel: ${JSON.stringify(officeResults).slice(0, 24000)}`
                 : 'No CHE Office coworker was needed for this turn.',
+              officePeerReview
+                ? `CHE Office peer review: ${officePeerReview}`
+                : 'No CHE Office peer review was needed for this turn.',
               actionResults.length
                 ? `Authorized connector action results: ${JSON.stringify(actionResults).slice(0, 24000)}`
                 : 'No authorized external action connector ran for this turn.',
