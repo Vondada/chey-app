@@ -456,3 +456,47 @@ test('chat recovers when the model rejects the full prompt, and reports real err
   assert.equal(bad.status, 503);
   assert.match((await bad.json()).detail, /temporarily unavailable \(All AI engines failed \(cloudflare: AiError: 3036: model overloaded\)/);
 });
+
+test('voice falls back to free Gemini speech (WAV) when Cloudflare voice is out of allowance', async () => {
+  const saved = new Map();
+  const env = {
+    CHE_PAIR_CODE: '123456',
+    GEMINI_API_KEY: 'gem',
+    AI: { run: async () => { throw new Error('4006: daily free allocation of 10,000 neurons'); } },
+  };
+  const state = new CheState({ storage: {
+    get: async (key) => (saved.has(key) ? JSON.parse(saved.get(key)) : undefined),
+    put: async (key, value) => saved.set(key, JSON.stringify(value)),
+    setAlarm: async () => {},
+  } }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, body = {}, token = '') => worker.fetch(new Request(`https://che.example${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(body),
+  }), env);
+  const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
+  const realFetch = globalThis.fetch;
+  let request;
+  globalThis.fetch = async (url, init) => {
+    request = { url: String(url), init };
+    const pcm = Buffer.alloc(480, 1).toString('base64');
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/L16;rate=24000', data: pcm } }] } }] }));
+  };
+  try {
+    const voice = await send('/api/voice/synthesize', { text: 'Hey sir, ready when you are.' }, token);
+    assert.equal(voice.status, 200);
+    assert.equal(voice.headers.get('Content-Type'), 'audio/wav');
+    assert.equal(voice.headers.get('X-CHE-Voice'), 'gemini-tts');
+    const bytes = Buffer.from(await voice.arrayBuffer());
+    assert.equal(bytes.subarray(0, 4).toString(), 'RIFF');
+    assert.equal(bytes.subarray(8, 12).toString(), 'WAVE');
+    assert.equal(bytes.readUInt32LE(24), 24000);
+    assert.equal(bytes.length, 44 + 480);
+    assert.match(request.url, /gemini-2\.5-flash-preview-tts:generateContent$/);
+    assert.equal(request.init.headers['x-goog-api-key'], 'gem');
+    assert.deepEqual(JSON.parse(request.init.body).generationConfig.responseModalities, ['AUDIO']);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
