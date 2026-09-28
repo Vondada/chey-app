@@ -21,5 +21,6 @@ jobs:
           channel: stable
       - run: bash tool/bootstrap.sh
       - run: flutter analyze
+      - run: flutter test
       - run: node --check server/cloudflare/worker.js
       - run: node --test server/cloudflare/worker.test.mjs
