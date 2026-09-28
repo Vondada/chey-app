@@ -898,3 +898,242 @@ class _Block {
   final String? lang;
 }
 
+class _Paragraphs extends StatelessWidget {
+  const _Paragraphs({required this.text, required this.cursor});
+  final String text;
+  final bool cursor;
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = text.split('\n');
+    final widgets = <Widget>[];
+    for (var i = 0; i < lines.length; i++) {
+      final raw = lines[i];
+      final isLast = i == lines.length - 1;
+      if (raw.trim().isEmpty) {
+        widgets.add(const SizedBox(height: 6));
+        continue;
+      }
+      var style = CheType.body;
+      var content = raw;
+      Widget? bullet;
+      if (raw.startsWith('### ') || raw.startsWith('## ') || raw.startsWith('# ')) {
+        content = raw.replaceFirst(RegExp(r'^#+\s'), '');
+        style = CheType.headline;
+      } else if (RegExp(r'^\s*[-*•]\s').hasMatch(raw)) {
+        content = raw.replaceFirst(RegExp(r'^\s*[-*•]\s'), '');
+        bullet = Container(
+          margin: const EdgeInsets.only(top: 9, right: 10),
+          width: 5,
+          height: 5,
+          decoration: const BoxDecoration(color: CheColors.accent, shape: BoxShape.circle),
+        );
+      } else if (RegExp(r'^\s*\d+[.)]\s').hasMatch(raw)) {
+        final m = RegExp(r'^\s*(\d+)[.)]\s').firstMatch(raw)!;
+        content = raw.substring(m.end);
+        bullet = Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: Text('${m.group(1)}.', style: CheType.body.copyWith(color: CheColors.accent)),
+        );
+      }
+      final spans = _inline(content, style);
+      if (cursor && isLast) {
+        spans.add(const WidgetSpan(alignment: PlaceholderAlignment.middle, child: BlinkingCursor()));
+      }
+      final rich = Text.rich(TextSpan(children: spans));
+      widgets.add(Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: bullet == null
+            ? rich
+            : Row(crossAxisAlignment: CrossAxisAlignment.start, children: [bullet, Expanded(child: rich)]),
+      ));
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: widgets);
+  }
+
+  static List<InlineSpan> _inline(String s, TextStyle base) {
+    final spans = <InlineSpan>[];
+    final re = RegExp(r'(\*\*[^*]+\*\*|`[^`]+`)');
+    var i = 0;
+    for (final m in re.allMatches(s)) {
+      if (m.start > i) spans.add(TextSpan(text: s.substring(i, m.start), style: base));
+      final t = m.group(0)!;
+      if (t.startsWith('**')) {
+        spans.add(TextSpan(text: t.substring(2, t.length - 2), style: base.copyWith(fontWeight: FontWeight.w700)));
+      } else {
+        spans.add(TextSpan(
+          text: ' ${t.substring(1, t.length - 1)} ',
+          style: CheType.mono.copyWith(
+              fontSize: base.fontSize! - 1.5,
+              color: CheColors.accent,
+              backgroundColor: CheColors.accent.withOpacity(0.10)),
+        ));
+      }
+      i = m.end;
+    }
+    if (i < s.length) spans.add(TextSpan(text: s.substring(i), style: base));
+    return spans;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Code card — file-style header, copy button, light syntax colors.
+// ─────────────────────────────────────────────────────────────────────────
+
+class CodeCard extends StatelessWidget {
+  const CodeCard({super.key, required this.code, this.filename});
+  final String code;
+  final String? filename;
+
+  static final _kw = RegExp(
+      r'\b(import|export|from|return|final|const|var|let|function|class|extends|if|else|for|while|async|await|new|void|def|true|false|null|this|static|int|double|String|bool)\b');
+  static final _str = RegExp(r'''("[^"\n]*"|'[^'\n]*')''');
+  static final _num = RegExp(r'\b\d+(\.\d+)?\b');
+  static final _cmt = RegExp(r'(//.*$|#.*$)', multiLine: true);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: CheSpace.sm),
+      decoration: BoxDecoration(
+        color: const Color(0xFF060B0D),
+        borderRadius: BorderRadius.circular(CheRadius.md),
+        border: Border.all(color: CheColors.accent.withOpacity(0.35)),
+        boxShadow: [BoxShadow(color: CheColors.accent.withOpacity(0.12), blurRadius: 18)],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+          decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: CheColors.stroke))),
+          child: Row(children: [
+            const Icon(Icons.code_rounded, size: 16, color: CheColors.accent),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(filename ?? 'code',
+                  maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.mono.copyWith(color: CheColors.textDim)),
+            ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.copy_rounded, size: 16, color: CheColors.textDim),
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: code));
+                HapticFeedback.lightImpact();
+                ScaffoldMessenger.maybeOf(context)
+                    ?.showSnackBar(const SnackBar(content: Text('Copied'), duration: Duration(milliseconds: 900)));
+              },
+            ),
+          ]),
+        ),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.all(12),
+          child: Text.rich(TextSpan(children: _highlight(code))),
+        ),
+      ]),
+    );
+  }
+
+  List<TextSpan> _highlight(String src) {
+    // Assign a color per character, later rules win, then merge runs.
+    final colors = List<Color>.filled(src.length, CheColors.text);
+    void paint(RegExp re, Color c) {
+      for (final m in re.allMatches(src)) {
+        for (var i = m.start; i < m.end; i++) {
+          colors[i] = c;
+        }
+      }
+    }
+
+    paint(_num, CheColors.warning);
+    paint(_kw, CheColors.accentAlt);
+    paint(_str, CheColors.accent);
+    paint(_cmt, CheColors.textFaint);
+
+    final spans = <TextSpan>[];
+    var start = 0;
+    for (var i = 1; i <= src.length; i++) {
+      if (i == src.length || colors[i] != colors[start]) {
+        spans.add(TextSpan(text: src.substring(start, i), style: CheType.mono.copyWith(color: colors[start])));
+        start = i;
+      }
+    }
+    return spans;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Glowing popover menu anchored to a widget (Framer-style quick actions).
+// Usage:  final key = GlobalKey();  ...  showCheMenu(context, key, [...])
+// ─────────────────────────────────────────────────────────────────────────
+
+class CheMenuItem<T> {
+  const CheMenuItem({required this.value, required this.label, this.icon, this.trailing});
+  final T value;
+  final String label;
+  final IconData? icon;
+  final String? trailing;
+}
+
+Future<T?> showCheMenu<T>(BuildContext context, GlobalKey anchor, List<CheMenuItem<T>> items) {
+  final box = anchor.currentContext?.findRenderObject() as RenderBox?;
+  final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+  final pos = box?.localToGlobal(Offset.zero, ancestor: overlay) ?? Offset.zero;
+  final size = box?.size ?? Size.zero;
+  final screen = overlay.size;
+  const menuW = 230.0;
+  final maxLeft = math.max(12.0, screen.width - menuW - 12.0);
+  final double left = (pos.dx + size.width - menuW).clamp(12.0, maxLeft).toDouble();
+  final estH = items.length * 44.0 + 16;
+  final below = pos.dy + size.height + 8;
+  final double top =
+      below + estH < screen.height - 40 ? below : (pos.dy - estH - 8).clamp(40.0, screen.height).toDouble();
+
+  HapticFeedback.selectionClick();
+  return showGeneralDialog<T>(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: 'menu',
+    barrierColor: Colors.black.withOpacity(0.25),
+    transitionDuration: CheMotion.d(context, CheMotion.fast),
+    pageBuilder: (ctx, a, b) => Stack(children: [
+      Positioned(
+        left: left,
+        top: top,
+        width: menuW,
+        child: Material(
+          type: MaterialType.transparency,
+          child: GlowCard(
+            active: true,
+            radius: CheRadius.md,
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              for (final it in items)
+                InkWell(
+                  onTap: () => Navigator.of(ctx).pop(it.value),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                    child: Row(children: [
+                      if (it.icon != null) ...[
+                        Icon(it.icon, size: 17, color: CheColors.accent),
+                        const SizedBox(width: 10),
+                      ],
+                      Expanded(child: Text(it.label, style: CheType.label)),
+                      if (it.trailing != null) Text(it.trailing!, style: CheType.caption),
+                    ]),
+                  ),
+                ),
+            ]),
+          ),
+        ),
+      ),
+    ]),
+    transitionBuilder: (ctx, a, b, child) => FadeTransition(
+      opacity: a,
+      child: ScaleTransition(
+        scale: Tween(begin: 0.94, end: 1.0).animate(CurvedAnimation(parent: a, curve: CheMotion.curve)),
+        alignment: Alignment.topRight,
+        child: child,
+      ),
+    ),
+  );
+}
