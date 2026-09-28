@@ -38,17 +38,38 @@ App:
 
 Deliberate trade-off: agents live in the owner's single `CheState` Durable Object instead of one Durable Object per agent. That keeps a single consistent store and needs no new Durable Object migration. The runtime module works on plain data, so moving to one Durable Object per agent later is a storage change, not a rewrite.
 
-## Next phases (in order)
+## Phases 1–6 progress
 
-1. **Wire the kit chat into Home.** Use `CheAgentChat` with the `CheWorkerBackend` NDJSON adapter. Show `step` events as live step lines and `CheAgentChip` for "Delegating to Nova…". Put CHE's mini person next to the orb with Office status.
-2. **Fix the known label bugs.** These are "Businessiness", "GALGALLERY", "Innovatiaation", "Of Devices", "light jht", the faded duplicate "CHE" title and the crowded 9-tab bar. Replace the tab bar with the room carousel plus a few primary anchors.
-3. **Brain.** Add the Soul editor, `che-remember` facts in 7 categories, reflections, and a conversation log that also writes Files-app copies. Mirror it on the Worker.
-4. **Plugins v2.** Add the manifest registry (`GET /plugins`), `che-plugin` install cards, rollback and Safe Mode.
-5. **Self-development.** Add `che-update` cards, then `POST /self-update`, then a PR, then CI, then a Shorebird patch. The code must tell Shorebird-eligible changes (Dart only) apart from ones that need a full IPA rebuild.
-6. **Rooms, one at a time:** Markets desk, Creator/Sound Studio, Art Studio, Devices garage, Browser v2 (tabs, reader, ask CHE). Each shows an honest "Connect" state when its service isn't set up.
-7. **Split `main.dart`** into `voice/`, `memory/`, `projects/`, `browser/`, `apps/` and so on while it stays buildable.
+| Phase | Status |
+|---|---|
+| Home: live step lines, delegation chips, CHE mini person + Office status, copy/retry | Done |
+| Room navigator instead of the 9-tab bar; clipped pages (fixes "Businessiness"/"GALGALLERY" overlap); no duplicate CHE title | Done |
+| Brain: Soul, 7-category facts, reflections, `che-remember`, word-for-word log (Files app + cloud `/api/logs`) | Done |
+| Plugins v2: manifest catalog, guarded tool runner, install cards, quick actions, mini apps, rollback, Safe mode | Done |
+| Self-development: `che-update` card → PR → CI status → merge → Shorebird patch; rollback PR | Done. Shorebird needs one-time `shorebird init` + `SHOREBIRD_TOKEN` |
+| Markets desk (ticker, index panels, candles, desk actions) | Done |
+| Browser v2 (tabs, history, favorites, reader, summarize, ask, save to project) | Done |
+| Creator / Sound Studio (ON AIR, render queue, create actions) | Done |
+| Business War Room entry | Done |
 
-## Phone test checklist (this pass)
+## Still to do
+
+1. Split `main.dart` into domain modules while it stays buildable.
+2. Replace the kit-less home chat bubbles with the kit's streaming chat widgets (code file cards, glowing composer).
+3. Richer Art Studio (versions, upscaling, variations) once an image engine is connected.
+4. Per-agent Durable Objects if the single owner Durable Object gets hot.
+
+## Phone test checklist
+
+- [ ] Send a message that delegates. Step lines and agent chips appear under "Thinking… Xs", and the finished reply keeps a collapsible "Thought" line.
+- [ ] Hub rooms swipe without labels overlapping. The room pill row stays on one line.
+- [ ] Insights → Brain: edit the Soul, add a fact, see the latest thought after a few messages. Insights → Log: search and open a transcript. Files → On My iPhone → CHE → che_logs has .md files.
+- [ ] Plugins → Skill plugins: install Weather from the catalog, ask "weather in Chicago", see "✓ Used Weather · forecast".
+- [ ] Ask "CHE, add a settings toggle to your app". An Update ready card appears. Approve it and a PR opens with CI status.
+- [ ] Markets: the ticker moves, index panels show delayed values (or say Unavailable), tapping one changes the chart.
+- [ ] Apps → any site: tabs, favorites, reader mode, Summarize and Ask CHE all work.
+- [ ] Music → Studio: ON AIR lights while CHE talks. Podcast creates a cloud job in the render queue.
+
 
 - [ ] Pair the phone. Open Hub → Office → **Enter the Office floor + War Room**. CHE's desk is shown, and "0 working" when idle.
 - [ ] Tap the person icon, hire "Research Partner" with a first task. Nova appears as *Waiting*, then *Researching*, then *Done*.

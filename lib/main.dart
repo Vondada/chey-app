@@ -4230,6 +4230,16 @@ OWNER AGENCY
       'Run planning and operations now; connected services unlock live records, leads and payments.',
       [
         _integrationCard(
+          Icons.groups_rounded,
+          'Business War Room',
+          'Convene CHE’s agents on a business goal: they draft, cross-check each other and CHE delivers the plan.',
+          true,
+          onTap: () {
+            Navigator.of(context).pop();
+            _openOfficeFloor();
+          },
+        ),
+        _integrationCard(
           Icons.dashboard_customize_outlined,
           'Business Operations',
           'Plans, workflows, CRM, scheduling, fulfillment and operating systems.',
