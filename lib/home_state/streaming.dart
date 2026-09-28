@@ -2,12 +2,36 @@ part of '../main.dart';
 
 // Split out of main.dart: _CHEHomeState members (streaming).
 extension _CheHomeStreaming on _CHEHomeState {
+  Future<String?> _tryLocalOfflineResponse(
+    String userMessage,
+    List<Map<String, String>> history, {
+    required void Function(String text) onPartial,
+  }) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return null;
+
+    final local = await CheLocalAI.respond(
+      userMessage,
+      history: history,
+      memoryContext: _brainContextFor(userMessage),
+    );
+    final clean = local?.trim() ?? '';
+    if (clean.isEmpty) return null;
+    onPartial(clean);
+    return clean;
+  }
+
   Future<String> _streamCheResponse(
     String userMessage,
     List<Map<String, String>> history, {
     required void Function(String text) onPartial,
   }) async {
     if (!await _ensurePaired()) {
+      final local = await _tryLocalOfflineResponse(
+        userMessage,
+        history,
+        onPartial: onPartial,
+      );
+      if (local != null) return local;
       throw const _CHEAgentException('This device is not paired.');
     }
 
@@ -124,7 +148,20 @@ extension _CheHomeStreaming on _CHEHomeState {
       },
     });
 
-    final response = await request.send();
+    http.StreamedResponse response;
+    try {
+      response = await request.send().timeout(const Duration(seconds: 8));
+    } catch (_) {
+      final local = await _tryLocalOfflineResponse(
+        trimmedRequest,
+        history,
+        onPartial: onPartial,
+      );
+      if (local != null) return local;
+      throw const _CHEAgentException(
+        'I could not reach my Agent gateway or the on-device fallback.',
+      );
+    }
 
     if (response.statusCode == 401) {
       await _clearSecuritySession();
@@ -135,6 +172,23 @@ extension _CheHomeStreaming on _CHEHomeState {
 
     if (response.statusCode != 200) {
       final body = await response.stream.bytesToString();
+      final lower = body.toLowerCase();
+      final cloudFailure = response.statusCode == 429 ||
+          response.statusCode >= 500 ||
+          lower.contains('quota') ||
+          lower.contains('neurons') ||
+          lower.contains('daily limit') ||
+          lower.contains('temporarily unavailable');
+
+      if (cloudFailure) {
+        final local = await _tryLocalOfflineResponse(
+          trimmedRequest,
+          history,
+          onPartial: onPartial,
+        );
+        if (local != null) return local;
+      }
+
       throw _CHEAgentException(
         'CHE Agent error ${response.statusCode}: $body',
       );
@@ -155,9 +209,19 @@ extension _CheHomeStreaming on _CHEHomeState {
       final type = data['type']?.toString();
 
       if (type == 'error') {
-        throw _CHEAgentException(
-          data['message']?.toString() ?? 'Unknown CHE Agent error.',
-        );
+        final message = data['message']?.toString() ?? 'Unknown CHE Agent error.';
+        final lower = message.toLowerCase();
+        if (lower.contains('quota') ||
+            lower.contains('daily limit') ||
+            lower.contains('temporarily unavailable')) {
+          final local = await _tryLocalOfflineResponse(
+            trimmedRequest,
+            history,
+            onPartial: onPartial,
+          );
+          if (local != null) return local;
+        }
+        throw _CHEAgentException(message);
       }
 
       if (type == 'step') {
