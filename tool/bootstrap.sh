@@ -178,7 +178,6 @@ struct CHEAppShortcuts: AppShortcutsProvider {
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
     synthesizer.delegate = self
-    UNUserNotificationCenter.current().delegate = self
     if #available(iOS 13.0, *) {
       BGTaskScheduler.shared.register(
         forTaskWithIdentifier: "com.cheyapp.che.refresh",
