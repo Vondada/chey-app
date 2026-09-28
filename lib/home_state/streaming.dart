@@ -181,6 +181,8 @@ extension _CheHomeStreaming on _CHEHomeState {
           lower.contains('quota') ||
           lower.contains('neurons') ||
           lower.contains('daily limit') ||
+          lower.contains('allowance') ||
+          lower.contains('engines failed') ||
           lower.contains('temporarily unavailable');
 
       if (cloudFailure) {
@@ -216,6 +218,8 @@ extension _CheHomeStreaming on _CHEHomeState {
         final lower = message.toLowerCase();
         if (lower.contains('quota') ||
             lower.contains('daily limit') ||
+            lower.contains('allowance') ||
+            lower.contains('engines failed') ||
             lower.contains('temporarily unavailable')) {
           final local = await _tryLocalOfflineResponse(
             trimmedRequest,
