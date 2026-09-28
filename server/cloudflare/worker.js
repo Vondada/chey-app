@@ -1033,6 +1033,49 @@ export class CheState extends DurableObject {
         return json({ plugins: visiblePlugins(this.env, data.plugin_enabled) });
       }
 
+      if (request.method === 'POST' && path === '/api/live/token') {
+        if (!this.env.CHE_OPENAI_API_KEY) {
+          return json({ detail: 'OpenAI Live Voice needs CHE_OPENAI_API_KEY configured as a CHE server secret.' }, 503);
+        }
+        const sessionConfig = {
+          session: {
+            type: 'realtime',
+            model: String(this.env.CHE_OPENAI_REALTIME_MODEL || 'gpt-realtime-2.1'),
+            instructions: [
+              'You are CHE — Cognitive Horizon Engine, the owner private voice assistant.',
+              'Address the owner as sir naturally. Be warm, direct, concise, smart, and conversational.',
+              'The owner may interrupt, correct, or redirect you at any moment. Stop and adapt immediately.',
+              'Never claim a real-world action happened unless a confirmed CHE tool result says it did.',
+              `Owner memories: ${JSON.stringify(data.memories || []).slice(0, 5000)}`,
+            ].join('\n'),
+            audio: {
+              output: {
+                voice: String(this.env.CHE_OPENAI_VOICE || 'marin'),
+              },
+            },
+          },
+        };
+        const openai = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.env.CHE_OPENAI_API_KEY}`,
+            'Content-Type': 'application/json',
+            'OpenAI-Safety-Identifier': (await digest(tokenHash || 'che-owner')).slice(0, 32),
+          },
+          body: JSON.stringify(sessionConfig),
+        });
+        const payload = await openai.text();
+        if (!openai.ok) {
+          return json({ detail: `OpenAI Live Voice setup failed (${openai.status}).` }, 502);
+        }
+        return new Response(payload, {
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store',
+          },
+        });
+      }
+
       if (request.method === 'GET' && path === '/api/state') {
         return json({
           memories: data.memories,
