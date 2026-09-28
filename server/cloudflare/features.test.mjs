@@ -255,6 +255,12 @@ test('AI router falls through free engines when Cloudflare quota is used up', as
   assert.equal(first.engine, 'gemini');
   assert.equal(hits[0].model, 'openai/gpt-oss-20b');
   assert.equal(hits[0].auth, 'Bearer g');
+  assert.deepEqual(
+    hits.map((h) => new URL(h.url).hostname),
+    ['api.groq.com', 'api.groq.com', 'generativelanguage.googleapis.com'],
+    'Groq retries once with its fast model, then Gemini is attempted',
+  );
+  assert.equal(hits[1].model, 'openai/gpt-oss-20b');
 
   // Cloudflare is skipped for the rest of the day; Groq rests after its 429.
   hits.length = 0;
@@ -303,7 +309,7 @@ test('AI router falls through free engines when Cloudflare quota is used up', as
   const noCf = { AI: { run: async () => { throw new Error('4006 neurons'); } } };
   assert.equal((await routeText(noCf, 'm', input, rotating)).response, 'from mistral');
   assert.equal((await routeText(noCf, 'm', input, rotating)).response, 'from mistral');
-  assert.deepEqual(models, ['openai', 'mistral', 'mistral'], 'rested model is not retried right away');
+  assert.deepEqual(models, ['openai', 'openai', 'mistral', 'mistral'], '429 retries once, then rested model is not retried right away');
 
   // Every free-tier key the owner adds joins the rotation in order.
   resetRouterForTests();
@@ -316,7 +322,13 @@ test('AI router falls through free engines when Cloudflare quota is used up', as
     CHE_DISABLE_KEYLESS_AI: '1',
     CEREBRAS_API_KEY: 'c', MISTRAL_API_KEY: 'm', GITHUB_MODELS_TOKEN: 'gh', SAMBANOVA_API_KEY: 's', HF_TOKEN: 'h',
   }, 'm', input, allBusy));
-  assert.deepEqual(order, ['api.cerebras.ai', 'api.mistral.ai', 'models.github.ai', 'api.sambanova.ai', 'router.huggingface.co']);
+  assert.deepEqual(order, [
+    'api.cerebras.ai', 'api.cerebras.ai',
+    'api.mistral.ai', 'api.mistral.ai',
+    'models.github.ai', 'models.github.ai',
+    'api.sambanova.ai', 'api.sambanova.ai',
+    'router.huggingface.co', 'router.huggingface.co',
+  ]);
 });
 
 
@@ -356,4 +368,34 @@ test('AI router stores daily usage budgets and puts a fast free engine before pa
   assert.equal(second.engine, 'openai');
   assert.equal(new URL(calls[0].url).hostname, 'api.openai.com');
   assert.equal(cfCalls, 1, 'Cloudflare remains rested after its real quota error');
+});
+
+
+test('AI router compacts old conversation history before provider calls', async () => {
+  resetRouterForTests();
+  const sent = [];
+  const messages = [
+    { role: 'system', content: 'Keep answers concise.' },
+    ...Array.from({ length: 14 }, (_, i) => ({
+      role: i % 2 ? 'assistant' : 'user',
+      content: `message-${i} ${'x'.repeat(40)}`,
+    })),
+  ];
+  const input = { messages, max_tokens: 120 };
+  const result = await routeText(
+    { GROQ_API_KEY: 'g' },
+    '@cf/meta/llama-3.2-3b-instruct',
+    input,
+    async (_url, init) => {
+      sent.push(JSON.parse(init.body));
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 });
+    },
+  );
+  assert.equal(result.engine, 'groq');
+  const outbound = sent[0].messages;
+  assert.equal(outbound[0].role, 'system');
+  assert.match(outbound[1].content, /Earlier conversation summary/);
+  assert.equal(outbound.length, 12, 'system + one summary + last 10 conversation messages');
+  assert.equal(outbound.at(-1).content.startsWith('message-13'), true);
+  assert.ok(JSON.stringify(outbound).length < JSON.stringify(messages).length);
 });
