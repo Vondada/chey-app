@@ -1367,8 +1367,9 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
 export class CheState extends DurableObject {
   constructor(state, env) {
     super(state, env);
-    // Every text model call goes through CHE's free-engine router.
-    this.env = routedEnv(env);
+    // Every text model call goes through CHE's free-engine router. Persist
+    // per-engine daily usage estimates in this owner's Durable Object.
+    this.env = routedEnv(env, fetch, state.storage);
   }
 
   async loadData() {
