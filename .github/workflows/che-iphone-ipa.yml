@@ -16,6 +16,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Apple's on-device model (FoundationModels) needs the iOS 26 SDK.
+      # Without it the keyless on-device fallback compiles out.
+      - name: Use newest Xcode
+        run: |
+          latest="$(ls -d /Applications/Xcode_2[6-9]*.app 2>/dev/null | sort -V | tail -1 || true)"
+          if [[ -n "$latest" ]]; then sudo xcode-select -s "$latest/Contents/Developer"; fi
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
