@@ -1062,6 +1062,14 @@ export class CheState extends DurableObject {
               `Owner memories: ${JSON.stringify(data.memories || []).slice(0, 5000)}`,
             ].join('\n'),
             audio: {
+              input: {
+                turn_detection: {
+                  type: 'semantic_vad',
+                  eagerness: 'high',
+                  create_response: true,
+                  interrupt_response: true,
+                },
+              },
               output: {
                 voice: String(this.env.CHE_OPENAI_VOICE || 'marin'),
               },
