@@ -198,7 +198,7 @@ export async function routeText(env, model, input, fetcher = fetch) {
     ? ''
     : ' Add a free key (GROQ_API_KEY, GEMINI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GITHUB_MODELS_TOKEN, SAMBANOVA_API_KEY, HF_TOKEN or OPENROUTER_API_KEY) so CHE keeps answering when Cloudflare\'s daily allowance runs out.';
   const error = new Error(`All AI engines failed (${errors.join(' | ').slice(0, 1500)}).${hint}`);
-  error.quota = errors.some((e) => /allowance|4006|neurons|429/.test(e));
+  error.quota = errors.some((e) => /quota|allowance|4006|neurons|429/.test(e));
   console.log("CHE engine errors:", errors);
   throw error;
 }
