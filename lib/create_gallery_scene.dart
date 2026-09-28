@@ -227,6 +227,30 @@ class _CreateGallerySceneState extends State<CreateGalleryScene>
                         onTap: widget.onVault,
                       ),
                       _WorkbenchRow(
+                        icon: Icons.science_outlined,
+                        title: 'Innovation Mode',
+                        subtitle:
+                            'CHE can develop concepts, feasibility assumptions, prototypes and test plans inside a saved project.',
+                        active: true,
+                        onTap: () {
+                          showModalBottomSheet<void>(
+                            context: context,
+                            backgroundColor: const Color(0xF51A1D20),
+                            showDragHandle: true,
+                            builder: (context) => const Padding(
+                              padding: EdgeInsets.fromLTRB(20, 4, 20, 28),
+                              child: Text(
+                                'Innovation mode\n\nCHE can develop concepts, feasibility assumptions, prototypes and test plans inside a saved project.',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  height: 1.5,
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      _WorkbenchRow(
                         icon: Icons.public,
                         title: 'Novelty + Feasibility Research',
                         subtitle: widget.researchConnected
