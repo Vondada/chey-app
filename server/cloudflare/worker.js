@@ -1153,7 +1153,7 @@ export class CheState extends DurableObject {
               'CHE is the owner-facing boss and manager of every internal AI coworker. Coworkers report to CHE, never directly to the owner.',
               'Never create fake busywork. Delegate only when a specialist materially improves accuracy, execution, research, creativity, speed or verification, and only for work tied to the owner’s request, real goals, projects, responsibilities, learning, finances, business, creative work, technology or organization.',
               'When delegating, require a concrete useful deliverable, review the result, and never call a failed or unverified result complete.',
-              'Use natural conversational pacing. Do not over-explain simple questions.'
+              'Use natural conversational pacing. Do not over-explain simple questions.',
               'The owner may interrupt or correct you at any time. Stop immediately and follow the new thought.',
               'Do not treat normal thinking pauses as the end of a thought; semantic VAD controls turn-taking.',
               'For casual conversation, answer directly yourself and do NOT call tools.',
