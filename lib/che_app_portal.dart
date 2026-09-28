@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -47,8 +49,16 @@ CheAppDefinition? cheAppForName(String input) {
   return null;
 }
 
+typedef CheLearnPageCallback = Future<void> Function(
+  String title,
+  String url,
+  String pageText,
+);
+
 class CheAppsHubTab extends StatefulWidget {
-  const CheAppsHubTab({super.key});
+  const CheAppsHubTab({super.key, this.onLearnPage});
+
+  final CheLearnPageCallback? onLearnPage;
 
   @override
   State<CheAppsHubTab> createState() => _CheAppsHubTabState();
@@ -84,6 +94,7 @@ class _CheAppsHubTabState extends State<CheAppsHubTab> {
             icon: Icons.language,
             aliases: const [],
           ),
+          onLearnPage: widget.onLearnPage,
         ),
       ),
     );
@@ -116,7 +127,12 @@ class _CheAppsHubTabState extends State<CheAppsHubTab> {
             return InkWell(
               borderRadius: BorderRadius.circular(16),
               onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(builder: (_) => CheEmbeddedAppScreen(app: app)),
+                MaterialPageRoute<void>(
+                  builder: (_) => CheEmbeddedAppScreen(
+                    app: app,
+                    onLearnPage: widget.onLearnPage,
+                  ),
+                ),
               ),
               child: Container(
                 decoration: BoxDecoration(
@@ -167,8 +183,13 @@ class _CheAppsHubTabState extends State<CheAppsHubTab> {
 }
 
 class CheEmbeddedAppScreen extends StatefulWidget {
-  const CheEmbeddedAppScreen({super.key, required this.app});
+  const CheEmbeddedAppScreen({
+    super.key,
+    required this.app,
+    this.onLearnPage,
+  });
   final CheAppDefinition app;
+  final CheLearnPageCallback? onLearnPage;
 
   @override
   State<CheEmbeddedAppScreen> createState() => _CheEmbeddedAppScreenState();
@@ -213,6 +234,30 @@ class _CheEmbeddedAppScreenState extends State<CheEmbeddedAppScreen> {
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
+  Future<void> _teachCheThisPage() async {
+    final callback = widget.onLearnPage;
+    if (callback == null) return;
+
+    final title = (await _controller.getTitle())?.trim();
+    String pageText = '';
+    try {
+      final raw = await _controller.runJavaScriptReturningResult(
+        'document.body ? document.body.innerText : ""',
+      );
+      pageText = raw.toString();
+      try {
+        final decoded = jsonDecode(pageText);
+        if (decoded is String) pageText = decoded;
+      } catch (_) {}
+    } catch (_) {}
+
+    await callback(
+      title?.isNotEmpty == true ? title! : widget.app.name,
+      _currentUrl,
+      pageText,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -235,6 +280,12 @@ class _CheEmbeddedAppScreenState extends State<CheEmbeddedAppScreen> {
             icon: const Icon(Icons.arrow_forward_ios, size: 18),
           ),
           IconButton(tooltip: 'Reload', onPressed: () => _controller.reload(), icon: const Icon(Icons.refresh)),
+          if (widget.onLearnPage != null)
+            IconButton(
+              tooltip: 'Teach CHE this page',
+              onPressed: _teachCheThisPage,
+              icon: const Icon(Icons.psychology_alt_outlined),
+            ),
           IconButton(tooltip: 'Open official app/browser', onPressed: _openExternal, icon: const Icon(Icons.open_in_new)),
         ],
       ),

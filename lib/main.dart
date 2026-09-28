@@ -26,6 +26,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'che_native_voice.dart';
 import 'che_account_bridge.dart';
 import 'che_realtime_voice.dart';
+import 'che_wake_word.dart';
 import 'che_voice_state.dart';
 import 'che_voice_ui.dart';
 import 'che_app_portal.dart';
@@ -182,6 +183,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   final CheVoiceStateMachine _voiceMachine = CheVoiceStateMachine();
   late CheVoiceSnapshot _voiceSnapshot;
   CheRealtimeVoiceEngine? _realtimeVoice;
+  CheWakeWordEngine? _porcupineWake;
   bool _realtimeConnecting = false;
   int? _realtimeAssistantIndex;
   String? _realtimePendingMediaUrl;
@@ -215,11 +217,15 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   List<Map<String, dynamic>> team = [];
   List<Map<String, dynamic>> teamTasks = [];
   List<Map<String, dynamic>> backgroundJobs = [];
+  List<Map<String, dynamic>> ownerContext = [];
+  Map<String, String> personalSources = const {};
   Map<String, bool> integrations = const {
     'storage_vault': false,
     'object_storage': false,
     'work_engine': false,
     'office': false,
+    'owner_context': false,
+    'personal_source_learning': false,
     'action_engine': false,
     'background_jobs': false,
     'agent_identity': false,
@@ -507,6 +513,7 @@ OWNER AGENCY
       }
     } else if (state == AppLifecycleState.paused) {
       _listenRestartTimer?.cancel();
+      unawaited(_stopPorcupineWake());
       if (_realtimeVoice?.connected == true) {
         unawaited(_returnToWakeStandby(restartWakeListener: false));
       }
@@ -558,6 +565,9 @@ OWNER AGENCY
 
     if (_deviceToken != null && _deviceToken!.isNotEmpty) {
       await _loadAgentState(silent: true);
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+        unawaited(_restartWakeListener());
+      }
       unawaited(
         Future.delayed(
           const Duration(seconds: 3),
@@ -918,6 +928,8 @@ OWNER AGENCY
       final teamData = (data['team'] as List?) ?? const [];
       final teamTaskData = (data['team_tasks'] as List?) ?? const [];
       final jobData = (data['jobs'] as List?) ?? const [];
+      final ownerContextData = (data['owner_context'] as List?) ?? const [];
+      final personalSourceData = (data['personal_sources'] as Map?) ?? const {};
       final integrationData = (data['integrations'] as Map?) ?? const {};
 
       savedMemories = memoryData.map((e) => e.toString()).toList();
@@ -947,11 +959,20 @@ OWNER AGENCY
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
+      ownerContext = ownerContextData
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      personalSources = personalSourceData.map(
+        (key, value) => MapEntry(key.toString(), value.toString()),
+      );
       integrations = {
         'storage_vault': integrationData['storage_vault'] == true,
         'object_storage': integrationData['object_storage'] == true,
         'work_engine': integrationData['work_engine'] == true,
         'office': integrationData['office'] == true,
+        'owner_context': integrationData['owner_context'] == true,
+        'personal_source_learning': integrationData['personal_source_learning'] == true,
         'action_engine': integrationData['action_engine'] == true,
         'background_jobs': integrationData['background_jobs'] == true,
         'agent_identity': integrationData['agent_identity'] == true,
@@ -1248,9 +1269,81 @@ OWNER AGENCY
   }
 
 
+  Future<void> _stopPorcupineWake({bool disposeEngine = false}) async {
+    final wake = _porcupineWake;
+    if (wake == null) {
+      return;
+    }
+    await wake.stop(disposeManager: disposeEngine);
+    if (disposeEngine) _porcupineWake = null;
+  }
+
+  Future<void> _handlePorcupineWake() async {
+    if (!mounted ||
+        !cheSleeping ||
+        _realtimeConnecting ||
+        _realtimeVoice?.connected == true) {
+      return;
+    }
+
+    await _stopPorcupineWake();
+    HapticFeedback.mediumImpact();
+    if (mounted) {
+      setState(() {
+        cheSleeping = false;
+        openConversation = true;
+        isListening = false;
+      });
+    }
+    await _beginRealtimeConversation(fromWake: true);
+  }
+
+  Future<bool> _startPorcupineWake() async {
+    if (kIsWeb ||
+        defaultTargetPlatform != TargetPlatform.iOS ||
+        !cheSleeping ||
+        _realtimeVoice?.connected == true ||
+        _realtimeConnecting ||
+        _deviceToken == null ||
+        _deviceToken!.isEmpty ||
+        cheAgentBaseUrl.isEmpty) {
+      return false;
+    }
+
+    final current = _porcupineWake;
+    if (current != null) {
+      await current.dispose();
+    }
+
+    final wake = CheWakeWordEngine(
+      baseUrl: cheAgentBaseUrl,
+      deviceToken: _deviceToken!,
+      onWake: _handlePorcupineWake,
+    );
+    _porcupineWake = wake;
+
+    final started = await wake.start();
+    if (started) {
+      try {
+        await CheNativeVoice.stop();
+      } catch (_) {}
+      _nativeIosVoiceActive = false;
+      _voiceMachine.startWakeListening();
+      _applyVoiceSnapshot(_voiceMachine.snapshot);
+    }
+    return started;
+  }
+
   Future<void> _restartWakeListener() async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return;
     if (_realtimeVoice?.connected == true || _realtimeConnecting) return;
+
+    // Production wake stack:
+    // 1) Apple Vocal Shortcuts/App Intent gets CHE foregrounded at iPhone level.
+    // 2) Porcupine listens locally while CHE is active/asleep.
+    // 3) OpenAI Realtime/WebRTC exclusively owns the mic after wake.
+    if (await _startPorcupineWake()) return;
+
     try {
       final started = await CheNativeVoice.start();
       _nativeIosVoiceActive = started;
@@ -1286,6 +1379,9 @@ OWNER AGENCY
 
     try {
       _listenRestartTimer?.cancel();
+
+      // Realtime is the only microphone owner once CHE wakes.
+      await _stopPorcupineWake();
       await speech.cancel();
       await flutterTts.stop();
       try {
@@ -1878,7 +1974,6 @@ OWNER AGENCY
 
   Future<void> _initNativeIosVoice() async {
     _nativeIosVoiceSub?.cancel();
-
     _nativeIosVoiceSub = CheNativeVoice.events.listen(
       _handleNativeIosVoiceEvent,
       onError: (_) {
@@ -2756,6 +2851,283 @@ OWNER AGENCY
     return data;
   }
 
+  Future<void> _ingestOwnerContext({
+    required String source,
+    required String title,
+    String text = '',
+    Map<String, String>? attachment,
+  }) async {
+    try {
+      final payload = <String, dynamic>{
+        'source': source,
+        'title': title,
+        if (text.trim().isNotEmpty) 'text': text.trim(),
+      };
+      if (attachment != null) {
+        payload['attachment'] = attachment;
+      }
+
+      final result = await _postAgentJson('/api/context/ingest', payload);
+      if (result == null) return;
+
+      await _loadAgentState(silent: true);
+      if (!mounted) return;
+
+      final item = result['item'] is Map
+          ? Map<String, dynamic>.from(result['item'] as Map)
+          : <String, dynamic>{};
+      final type = item['type']?.toString() ?? 'knowledge';
+      final owner = item['owner_agent_name']?.toString() ?? 'CHE Office';
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('CHE learned this as $type • owned by $owner.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      final message = error
+          .toString()
+          .replaceFirst('CHEAgentException: ', '')
+          .replaceFirst('_CHEAgentException: ', '');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            message.isEmpty
+                ? 'CHE could not learn from that source.'
+                : message,
+          ),
+        ),
+      );
+    }
+  }
+
+  bool _isTextLikeFile(String name) {
+    final lower = name.toLowerCase();
+    const extensions = [
+      '.txt', '.md', '.csv', '.json', '.yaml', '.yml', '.xml', '.log',
+      '.dart', '.js', '.ts', '.html', '.css', '.py', '.sql', '.rtf',
+    ];
+    return extensions.any(lower.endsWith);
+  }
+
+  Future<void> _learnFromFiles() async {
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+
+    for (final file in result.files.take(8)) {
+      final bytes = file.bytes;
+      if (bytes == null || bytes.isEmpty) continue;
+      if (bytes.length > 5 * 1024 * 1024) continue;
+
+      if (_isTextLikeFile(file.name)) {
+        final text = utf8.decode(bytes, allowMalformed: true);
+        await _ingestOwnerContext(
+          source: 'files',
+          title: file.name,
+          text: text.length > 12000 ? text.substring(0, 12000) : text,
+        );
+      } else {
+        await _ingestOwnerContext(
+          source: 'files',
+          title: file.name,
+          attachment: {
+            'name': file.name,
+            'media_type': _mediaTypeFromName(file.name),
+            'base64': base64Encode(bytes),
+          },
+        );
+      }
+    }
+  }
+
+  Future<void> _learnFromPhoto() async {
+    final file = await _imagePicker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 82,
+      maxWidth: 1800,
+    );
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
+    if (bytes.length > 5 * 1024 * 1024) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Choose a photo under 5 MB for learning.')),
+        );
+      }
+      return;
+    }
+    await _ingestOwnerContext(
+      source: 'photos_videos',
+      title: file.name,
+      attachment: {
+        'name': file.name,
+        'media_type': 'image',
+        'base64': base64Encode(bytes),
+      },
+    );
+  }
+
+  Future<void> _learnFromVideo() async {
+    final file = await _imagePicker.pickVideo(
+      source: ImageSource.gallery,
+      maxDuration: const Duration(minutes: 2),
+    );
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
+    if (bytes.length > 5 * 1024 * 1024) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Choose a short video under 5 MB for learning.')),
+        );
+      }
+      return;
+    }
+    await _ingestOwnerContext(
+      source: 'photos_videos',
+      title: file.name,
+      attachment: {
+        'name': file.name,
+        'media_type': 'video',
+        'base64': base64Encode(bytes),
+      },
+    );
+  }
+
+  Future<void> _learnFromClipboard() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text?.trim() ?? '';
+    if (text.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Copy a message, email, webpage text or note first.'),
+          ),
+        );
+      }
+      return;
+    }
+    await _ingestOwnerContext(
+      source: 'shared_text',
+      title: 'Shared text',
+      text: text.length > 12000 ? text.substring(0, 12000) : text,
+    );
+  }
+
+  Future<void> _learnFromBrowserPage(
+    String title,
+    String url,
+    String pageText,
+  ) async {
+    final cleanText = pageText.trim();
+    await _ingestOwnerContext(
+      source: 'che_browser',
+      title: title.trim().isEmpty ? Uri.tryParse(url)?.host ?? 'Web page' : title,
+      text: [
+        if (url.trim().isNotEmpty) 'URL: $url',
+        if (cleanText.isNotEmpty)
+          cleanText.length > 12000 ? cleanText.substring(0, 12000) : cleanText,
+      ].join('\n\n'),
+    );
+  }
+
+  Future<void> _openPersonalSources() async {
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF162532),
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Wrap(
+            children: [
+              const ListTile(
+                title: Text(
+                  'PERSONAL SOURCES',
+                  style: TextStyle(
+                    color: Color(0xFF67E8D1),
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                subtitle: Text(
+                  'You choose what CHE can learn. Nothing here silently bypasses iPhone privacy controls.',
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Photos'),
+                subtitle: const Text('Choose a photo for CHE to analyze and organize.'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  unawaited(_learnFromPhoto());
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.video_library_outlined),
+                title: const Text('Videos'),
+                subtitle: const Text('Choose a short video for connected multimodal analysis.'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  unawaited(_learnFromVideo());
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.folder_open_outlined),
+                title: const Text('Files'),
+                subtitle: const Text('Import documents, notes, data, audio or other files.'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  unawaited(_learnFromFiles());
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.content_paste_outlined),
+                title: const Text('Messages, email or shared text'),
+                subtitle: const Text('Copy/share text, then let CHE classify it into her brain.'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  unawaited(_learnFromClipboard());
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.language_outlined),
+                title: const Text('CHE browser'),
+                subtitle: const Text('Open a page in Apps, then tap the brain icon to teach CHE that page.'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  Future<void>.delayed(
+                    const Duration(milliseconds: 150),
+                    () => _openAssistantHub(tab: 8),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.mail_outline),
+                title: const Text('Email account sync'),
+                subtitle: const Text('Full mailbox sync needs an authorized email connector/OAuth plugin.'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _runHubPrompt(
+                    'Set up an authorized email connector for CHE so she can learn from the mailboxes I explicitly connect. Keep credentials server-side and let me choose folders and sync scope.',
+                  );
+                },
+              ),
+              const ListTile(
+                leading: Icon(Icons.sms_outlined),
+                title: Text('Apple Messages'),
+                subtitle: Text(
+                  'iOS does not expose the full Messages database to normal apps. Use share/copy import or a companion connector.',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _createProjectDialog() async {
     if (!await _ensurePaired() || !mounted) return;
 
@@ -3398,7 +3770,7 @@ OWNER AGENCY
               (active) => _hubMusicTab(active),
               (active) => _hubCreateTab(active),
               (active) => _hubOfficeTab(active),
-              (_) => const CheAppsHubTab(),
+              (_) => CheAppsHubTab(onLearnPage: _learnFromBrowserPage),
             ],
           ),
         );
@@ -3423,10 +3795,57 @@ OWNER AGENCY
   }
 
   Widget _hubMemoryTab() {
+    final counts = <String, int>{};
+    for (final item in ownerContext) {
+      final type = item['type']?.toString() ?? 'knowledge';
+      counts[type] = (counts[type] ?? 0) + 1;
+    }
+
     return _hubList(
       'Memory',
       'Things CHE is allowed to remember for you.',
       [
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.hub_outlined),
+            title: const Text(
+              'Personal Sources',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Text(
+              ownerContext.isEmpty
+                  ? 'Connect Photos, Files, shared text and CHE browser pages.'
+                  : 'People ${counts['people'] ?? 0} • Projects ${counts['projects'] ?? 0} • Decisions ${counts['decisions'] ?? 0} • Companies ${counts['companies'] ?? 0} • Meetings ${counts['meetings'] ?? 0} • Daily ${counts['daily'] ?? 0} • Knowledge ${counts['knowledge'] ?? 0}',
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => unawaited(_openPersonalSources()),
+          ),
+        ),
+        if (ownerContext.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          ...ownerContext.take(7).map(
+            (item) => Card(
+              child: ListTile(
+                leading: const Icon(Icons.account_tree_outlined),
+                title: Text(
+                  item['title']?.toString().trim().isNotEmpty == true
+                      ? item['title'].toString()
+                      : item['type']?.toString() ?? 'Knowledge',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  '${item['type'] ?? 'knowledge'} • ${item['owner_agent_name'] ?? 'CHE Office'}\n${item['next_responsibility'] ?? ''}',
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+          ),
+        ],
         if (savedMemories.isEmpty)
           const Card(
             child: ListTile(
@@ -5025,6 +5444,7 @@ OWNER AGENCY
     _listenRestartTimer?.cancel();
     _proactiveTimer?.cancel();
     _nativeIosVoiceSub?.cancel();
+    unawaited(_stopPorcupineWake(disposeEngine: true));
     final realtime = _realtimeVoice;
     _realtimeVoice = null;
     if (realtime != null) {
