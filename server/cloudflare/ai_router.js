@@ -1,9 +1,13 @@
 // CHE's text-model router: one `AI.run` for all of CHE, many free engines
 // behind it. Order:
 //   1. Cloudflare Workers AI (the AI binding; 10k free neurons/day)
-//   2. Groq           (GROQ_API_KEY,       free tier)
-//   3. Google Gemini  (GEMINI_API_KEY,     free tier)
-//   4. OpenRouter     (OPENROUTER_API_KEY, free ":free" models)
+//   2. OpenAI         (CHE_OPENAI_API_KEY, paid)
+//   3. Free tiers, each with its own daily allowance, used in turn:
+//      Groq (GROQ_API_KEY), Gemini (GEMINI_API_KEY), Cerebras
+//      (CEREBRAS_API_KEY), Mistral (MISTRAL_API_KEY), GitHub Models
+//      (GITHUB_MODELS_TOKEN), SambaNova (SAMBANOVA_API_KEY), Hugging Face
+//      (HF_TOKEN), OpenRouter (OPENROUTER_API_KEY, ":free" models)
+//   4. Keyless Pollinations models (no account)
 // When Cloudflare reports its daily allowance is used up, CHE skips it until
 // the next UTC midnight and goes straight to the next engine with a key, so
 // she keeps answering. Image models (FLUX) always stay on Cloudflare.
@@ -32,6 +36,41 @@ const PROVIDERS = [
     url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
     fast: (env) => env.CHE_GEMINI_FAST_MODEL || 'gemini-2.5-flash-lite',
     strong: (env) => env.CHE_GEMINI_STRONG_MODEL || 'gemini-2.5-flash',
+  },
+  {
+    id: 'cerebras',
+    key: 'CEREBRAS_API_KEY',
+    url: 'https://api.cerebras.ai/v1/chat/completions',
+    fast: (env) => env.CHE_CEREBRAS_FAST_MODEL || 'llama3.1-8b',
+    strong: (env) => env.CHE_CEREBRAS_STRONG_MODEL || 'llama-3.3-70b',
+  },
+  {
+    id: 'mistral',
+    key: 'MISTRAL_API_KEY',
+    url: 'https://api.mistral.ai/v1/chat/completions',
+    fast: (env) => env.CHE_MISTRAL_FAST_MODEL || 'mistral-small-latest',
+    strong: (env) => env.CHE_MISTRAL_STRONG_MODEL || 'mistral-medium-latest',
+  },
+  {
+    id: 'github',
+    key: 'GITHUB_MODELS_TOKEN',
+    url: 'https://models.github.ai/inference/chat/completions',
+    fast: (env) => env.CHE_GITHUB_FAST_MODEL || 'openai/gpt-4.1-mini',
+    strong: (env) => env.CHE_GITHUB_STRONG_MODEL || 'openai/gpt-4.1',
+  },
+  {
+    id: 'sambanova',
+    key: 'SAMBANOVA_API_KEY',
+    url: 'https://api.sambanova.ai/v1/chat/completions',
+    fast: (env) => env.CHE_SAMBANOVA_FAST_MODEL || 'Meta-Llama-3.1-8B-Instruct',
+    strong: (env) => env.CHE_SAMBANOVA_STRONG_MODEL || 'Meta-Llama-3.3-70B-Instruct',
+  },
+  {
+    id: 'huggingface',
+    key: 'HF_TOKEN',
+    url: 'https://router.huggingface.co/v1/chat/completions',
+    fast: (env) => env.CHE_HF_FAST_MODEL || 'meta-llama/Llama-3.1-8B-Instruct',
+    strong: (env) => env.CHE_HF_STRONG_MODEL || 'meta-llama/Llama-3.3-70B-Instruct',
   },
   {
     id: 'openrouter',
@@ -148,7 +187,7 @@ export async function routeText(env, model, input, fetcher = fetch) {
   const configured = PROVIDERS.filter((p) => !p.keyless && env[p.key]).map((p) => p.id);
   const hint = configured.length
     ? ''
-    : ' Add CHE_OPENAI_API_KEY, GROQ_API_KEY, GEMINI_API_KEY or OPENROUTER_API_KEY so CHE keeps answering when Cloudflare\'s daily allowance runs out.';
+    : ' Add a free key (GROQ_API_KEY, GEMINI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GITHUB_MODELS_TOKEN, SAMBANOVA_API_KEY, HF_TOKEN or OPENROUTER_API_KEY) so CHE keeps answering when Cloudflare\'s daily allowance runs out.';
   const error = new Error(`All AI engines failed (${errors.join(' | ').slice(0, 300)}).${hint}`);
   error.quota = errors.some((e) => /allowance|4006|neurons|429/.test(e));
   throw error;
