@@ -1541,7 +1541,7 @@ export class CheState extends DurableObject {
           requestedCapabilities.includes('innovation_mode') ||
           /\b(research|latest|current|novel|prior art|feasib|humanly possible|artistically possible)\b/i.test(message);
         const useModelPanel =
-          /\b(reason|analy[sz]e|compare|research|plan|design|code|invent|innovate|trade|trading|market|business|strategy|explain|debug|build)\b/i.test(message);
+          /\b(compare (?:models?|options?|sources?)|research|deep analysis|second opinion|cross.check)\b/i.test(message);
 
         // SPEED MODE: independent information sources run in one parallel batch.
         const [research, panel, specialists, officeResults, actionResults, plugins] = await Promise.all([
@@ -1617,7 +1617,9 @@ export class CheState extends DurableObject {
             role: item.role,
             content: String(item.content ?? item.text ?? '').slice(0, 2000),
           }));
-        const model = /\b(code|reason|plan|explain|compare|research|analy[sz]e|invent|innovate|design|prototype|feasib|possible|render|engineer|create|trade|trading|market|futures|crypto|backtest|indicator|business|cash flow|public records)\b/i.test(message)
+        const needsStrongModel = Boolean(multimodal || research?.summary || panel.length || specialists.length || officeResults.length || actionResults.length || plugins.length) ||
+          /\b(debug|write code|implement|architect|deep analysis|step.by.step plan|backtest|legal analysis|financial analysis|medical analysis|research report)\b/i.test(message);
+        const model = needsStrongModel
           ? (this.env.CHE_STRONG_MODEL || STRONG_MODEL)
           : (this.env.CHE_FAST_MODEL || FAST_MODEL);
         const answer = await this.env.AI.run(model, {
@@ -1627,7 +1629,7 @@ export class CheState extends DurableObject {
               'CHE is the user-facing product. Never present yourself as Gemini, Cloudflare, or another provider. Models and services are replaceable internal engines behind CHE.',
               'DATA + COMPUTE: core owner state is persisted in CHE storage. Large media, datasets, model artifacts and generated files should use CHE object storage when connected. If storage is not connected, say the item is temporary instead of pretending it was archived.',
               'Use a local-first and owner-controlled architecture: built-in CHE behavior first, CHE-hosted services second, optional provider infrastructure only when required for compute or data.',
-              'Keep your established personality: warm, direct, concise, clever, calm, useful, and lightly funny when the moment fits. Use practical common sense and do not sound stiff or childish.',
+              'Keep your established personality: warm, direct, concise, clever, calm, useful, and lightly funny when the moment fits. Answer ordinary voice turns in one or two short sentences; expand when the owner asks or accuracy needs it. Use practical common sense and do not sound stiff or childish.',
               'LANGUAGE STYLE: understand profanity, slang and mature language without acting shocked or sanitizing ordinary speech. You may swear naturally back at the adult owner when it fits his tone, but do not force profanity, imitate slurs, threaten, harass, or let edgy language reduce accuracy.',
               'MATURE TOPICS: when the adult owner discusses explicit or sensitive adult topics, be direct and context-aware rather than prudish, while still respecting consent, safety, privacy, law and the system safeguards that govern the assistant.',
               'Learn from stable, useful, non-sensitive owner preferences. Never invent memories and never infer sensitive traits.',
@@ -1747,7 +1749,7 @@ export class CheState extends DurableObject {
             ...turns,
             { role: 'user', content: message },
           ],
-          max_tokens: 1000,
+          max_tokens: needsStrongModel ? 1000 : 360,
         });
         const reply = String(answer.response || answer.choices?.[0]?.message?.content || '').trim();
         if (!reply) return json({ detail: 'The model did not return an answer.' }, 502);
