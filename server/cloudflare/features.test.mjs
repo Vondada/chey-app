@@ -269,7 +269,25 @@ test('AI router falls through free engines when Cloudflare quota is used up', as
   const wrapped = routedEnv({ AI: { run: async (m) => ({ image: m }) } });
   assert.deepEqual(await wrapped.AI.run('@cf/black-forest-labs/flux-1-schnell', { prompt: 'x' }), { image: '@cf/black-forest-labs/flux-1-schnell' });
   await assert.rejects(
-    routeText({ AI: { run: async () => { throw new Error('4006 neurons'); } } }, 'm', input, fetcher),
+    routeText({ CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { throw new Error('4006 neurons'); } } }, 'm', input, fetcher),
     (error) => error.quota === true && /GROQ_API_KEY/.test(error.message),
   );
+
+  // With zero keys, the keyless engine still answers (no Authorization sent).
+  resetRouterForTests();
+  const keyless = [];
+  const answer = await routeText(
+    { AI: { run: async () => { throw new Error('4006 neurons'); } } },
+    '@cf/meta/llama-3.2-3b-instruct',
+    input,
+    async (url, init) => {
+      keyless.push({ url, headers: init.headers, body: JSON.parse(init.body) });
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'Keyless hello.' } }] }), { status: 200 });
+    },
+  );
+  assert.equal(answer.response, 'Keyless hello.');
+  assert.equal(answer.engine, 'pollinations');
+  assert.equal(keyless[0].url, 'https://text.pollinations.ai/openai');
+  assert.equal(keyless[0].headers.Authorization, undefined);
+  assert.equal(keyless[0].body.model, 'openai');
 });

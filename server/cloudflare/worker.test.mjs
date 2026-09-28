@@ -422,6 +422,7 @@ test('chat recovers when the model rejects the full prompt, and reports real err
   let failAll = false;
   const env = {
     CHE_PAIR_CODE: '123456',
+    CHE_DISABLE_KEYLESS_AI: '1',
     AI: {
       run: async (model, input) => {
         const system = input.messages[0].content;
