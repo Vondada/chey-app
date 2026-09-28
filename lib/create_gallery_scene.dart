@@ -523,7 +523,7 @@ class _WorkbenchRow extends StatelessWidget {
                       Text(
                         subtitle,
                         style: const TextStyle(
-                          color: Colors.white50,
+                          color: Colors.white54,
                           fontSize: 10,
                         ),
                       ),
