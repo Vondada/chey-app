@@ -20,6 +20,7 @@ dependencies:
   webview_flutter: ^4.14.1
   flutter_webrtc: ^1.6.2+hotfix.3
   porcupine_flutter: ^4.0.0
+  shorebird_code_push: ^2.0.0
 
 dev_dependencies:
   flutter_test:

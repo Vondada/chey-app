@@ -10,3 +10,4 @@ export 'che_plugins.dart';
 export 'che_log.dart';
 export 'che_brain.dart';
 export 'che_rooms.dart';
+export 'che_agents.dart';

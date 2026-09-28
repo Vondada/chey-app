@@ -58,14 +58,33 @@ class CheAgentController extends ChangeNotifier {
 
   /// Log a spoken exchange (from the "Chay" voice mode) into the current
   /// conversation so voice talks appear in the same log, word for word.
-  void logVoiceTurn(String youSaid, String cheSaid) {
-    final u = CheMessage.user('🎙 $youSaid');
+  void logVoiceTurn(String youSaid, String cheSaid) => logTurn(youSaid, cheSaid, source: 'voice');
+
+  /// Log one finished exchange that happened outside this controller's own
+  /// chat (e.g. the home screen chat or voice), word for word. CHE's
+  /// ```che-remember facts are saved and she reflects every few turns.
+  void logTurn(String youSaid, String cheSaid, {String source = 'chat'}) {
+    if (youSaid.trim().isEmpty && cheSaid.trim().isEmpty) return;
+    final voice = source == 'voice';
+    final u = CheMessage.user(voice ? '🎙 $youSaid' : youSaid);
     final r = CheMessage.assistant()..text = cheSaid;
     current.messages..add(u)..add(r);
-    if (current.title == 'New Chat') current.title = 'Voice: ${youSaid.length > 28 ? '${youSaid.substring(0, 28)}…' : youSaid}';
+    if (current.title == 'New Chat') {
+      final head = youSaid.length > 28 ? '${youSaid.substring(0, 28)}…' : youSaid;
+      current.title = voice ? 'Voice: $head' : head;
+    }
     current.updatedAt = DateTime.now();
+    conversations
+      ..remove(current)
+      ..insert(0, current);
     store?.save(current);
-    store?.remoteLog(current, u, r, source: 'voice');
+    store?.remoteLog(current, u, r, source: source);
+    if (brain != null) {
+      for (final f in CheBrain.findRemember(cheSaid)) {
+        brain!.addFact(f, source: 'che');
+      }
+      _maybeReflect(current);
+    }
     notifyListeners();
   }
 

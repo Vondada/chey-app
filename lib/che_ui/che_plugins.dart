@@ -122,11 +122,15 @@ IconData cheIconFromName(String? name) {
 // ─────────────────────────────────────────────────────────────────────────
 
 class ChePluginRegistry extends ChangeNotifier {
-  ChePluginRegistry({this.catalogUrl, this.catalogHeaders = const {}});
+  ChePluginRegistry({this.catalogUrl, this.catalogHeaders = const {}, this.resolveCatalogUrl, this.resolveCatalogHeaders});
 
   /// Worker route returning `[manifest, manifest, ...]` or `{"plugins":[...]}`.
   final Uri? catalogUrl;
   final Map<String, String> catalogHeaders;
+
+  /// Dynamic versions (the server address / pairing token can change).
+  final Uri? Function()? resolveCatalogUrl;
+  final Map<String, String> Function()? resolveCatalogHeaders;
 
   final Map<String, ChePlugin> _installed = {};
   final Map<String, List<Map<String, dynamic>>> _history = {}; // previous versions
@@ -145,10 +149,12 @@ class ChePluginRegistry extends ChangeNotifier {
           if (p.instructions.trim().isNotEmpty) '[Plugin: ${p.name} v${p.version}]\n${p.instructions.trim()}',
       ];
 
-  /// Tools from enabled plugins → include in the Worker request body.
+  /// Tools from enabled plugins → include in the Worker request body. Each
+  /// carries its plugin's declared permissions so the Worker only calls the
+  /// hosts the owner approved at install time.
   List<Map<String, dynamic>> tools() => [
         for (final p in enabled)
-          for (final t in p.tools) {...t, 'plugin': p.id},
+          for (final t in p.tools) {...t, 'plugin': p.id, 'plugin_name': p.name, 'permissions': p.permissions},
       ];
 
   List<String> quickActions() => [for (final p in enabled) ...p.quickActions];
@@ -251,8 +257,9 @@ class ChePluginRegistry extends ChangeNotifier {
   }
 
   Future<List<ChePlugin>> fetchCatalog() async {
-    if (catalogUrl == null) return const [];
-    final j = await _getJson(catalogUrl!, catalogHeaders);
+    final url = resolveCatalogUrl?.call() ?? catalogUrl;
+    if (url == null) return const [];
+    final j = await _getJson(url, resolveCatalogHeaders?.call() ?? catalogHeaders);
     final list = j is Map ? (j['plugins'] as List? ?? const []) : (j as List);
     return list.whereType<Map>().map((m) => ChePlugin(m.cast<String, dynamic>())).toList();
   }

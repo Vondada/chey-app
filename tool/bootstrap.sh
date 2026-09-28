@@ -93,6 +93,9 @@ info['NSLocationWhenInUseUsageDescription'] = 'CHE uses your location only while
 info['CFBundleURLTypes'] = [{'CFBundleURLName': 'CHE', 'CFBundleURLSchemes': ['che']}]
 info['BGTaskSchedulerPermittedIdentifiers'] = ['com.cheyapp.che.refresh']
 info['UIBackgroundModes'] = ['fetch']
+# Conversation logs (Documents/che_logs) show in Files → On My iPhone → CHE.
+info['UIFileSharingEnabled'] = True
+info['LSSupportsOpeningDocumentsInPlace'] = True
 with path.open('wb') as stream:
     plistlib.dump(info, stream)
 PY

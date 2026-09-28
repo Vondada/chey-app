@@ -406,6 +406,8 @@ class _BuildingTileState extends State<_BuildingTile> {
                     Text(
                       b.title,
                       textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: CheColors.textPrimary,
                         fontWeight: FontWeight.w700,

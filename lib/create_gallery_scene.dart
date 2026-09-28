@@ -38,7 +38,7 @@ class CreateGalleryScene extends StatefulWidget {
 class _CreateGallerySceneState extends State<CreateGalleryScene>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
-  static const _teal = Color(0xFF67E8D1);
+  static const _teal = Color(0xFF34E0B8);
 
   @override
   void initState() {
@@ -514,7 +514,7 @@ class _WorkbenchRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const teal = Color(0xFF67E8D1);
+    const teal = Color(0xFF34E0B8);
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(

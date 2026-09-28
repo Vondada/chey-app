@@ -1,9 +1,6 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 
+import 'browser/che_browser.dart';
 import 'che_theme.dart';
 
 class CheAppDefinition {
@@ -196,105 +193,15 @@ class CheEmbeddedAppScreen extends StatefulWidget {
 }
 
 class _CheEmbeddedAppScreenState extends State<CheEmbeddedAppScreen> {
-  late final WebViewController _controller;
-  int _progress = 0;
-  String _currentUrl = '';
-
   @override
   void initState() {
     super.initState();
-    _currentUrl = widget.app.webUrl;
-    _controller = WebViewController()
-      ..setBackgroundColor(CheColors.bgDeep)
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onProgress: (value) {
-            if (mounted) setState(() => _progress = value);
-          },
-          onPageStarted: (url) {
-            if (mounted) setState(() => _currentUrl = url);
-          },
-          onNavigationRequest: (request) {
-            final uri = Uri.tryParse(request.url);
-            if (uri == null) return NavigationDecision.prevent;
-            if (uri.scheme == 'http' || uri.scheme == 'https' || uri.scheme == 'about') {
-              return NavigationDecision.navigate;
-            }
-            launchUrl(uri, mode: LaunchMode.externalApplication);
-            return NavigationDecision.prevent;
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse(widget.app.webUrl));
-  }
-
-  Future<void> _openExternal() async {
-    final uri = Uri.tryParse(_currentUrl) ?? Uri.parse(widget.app.webUrl);
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
-  }
-
-  Future<void> _teachCheThisPage() async {
-    final callback = widget.onLearnPage;
-    if (callback == null) return;
-
-    final title = (await _controller.getTitle())?.trim();
-    String pageText = '';
-    try {
-      final raw = await _controller.runJavaScriptReturningResult(
-        'document.body ? document.body.innerText : ""',
-      );
-      pageText = raw.toString();
-      try {
-        final decoded = jsonDecode(pageText);
-        if (decoded is String) pageText = decoded;
-      } catch (_) {}
-    } catch (_) {}
-
-    await callback(
-      title?.isNotEmpty == true ? title! : widget.app.name,
-      _currentUrl,
-      pageText,
-    );
+    // Page-level "Teach CHE" from this entry point, if the app didn't set one.
+    if (widget.onLearnPage != null) CheBrowserActions.learn ??= widget.onLearnPage;
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: CheColors.bgDeep,
-      appBar: AppBar(
-        title: Text(widget.app.name),
-        actions: [
-          IconButton(
-            tooltip: 'Back',
-            onPressed: () async {
-              if (await _controller.canGoBack()) await _controller.goBack();
-            },
-            icon: const Icon(Icons.arrow_back_ios_new, size: 18),
-          ),
-          IconButton(
-            tooltip: 'Forward',
-            onPressed: () async {
-              if (await _controller.canGoForward()) await _controller.goForward();
-            },
-            icon: const Icon(Icons.arrow_forward_ios, size: 18),
-          ),
-          IconButton(tooltip: 'Reload', onPressed: () => _controller.reload(), icon: const Icon(Icons.refresh)),
-          if (widget.onLearnPage != null)
-            IconButton(
-              tooltip: 'Teach CHE this page',
-              onPressed: _teachCheThisPage,
-              icon: const Icon(Icons.psychology_alt_outlined),
-            ),
-          IconButton(tooltip: 'Open official app/browser', onPressed: _openExternal, icon: const Icon(Icons.open_in_new)),
-        ],
-      ),
-      body: Column(
-        children: [
-          if (_progress < 100) LinearProgressIndicator(value: _progress / 100.0, minHeight: 2),
-          Expanded(child: WebViewWidget(controller: _controller)),
-        ],
-      ),
-    );
+    return CheBrowserScreen(initialUrl: widget.app.webUrl, title: widget.app.name);
   }
 }

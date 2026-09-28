@@ -87,7 +87,20 @@ class _ChePreviewAppState extends State<ChePreviewApp> {
             devices: (_) => _placeholder('Devices', const []),
             music: (_) => _placeholder('Music', const []),
             create: (_) => _placeholder('Create', const []),
-            office: (_) => _placeholder('Office', const []),
+            office: (_) => _placeholder('Office', [
+                  // PREVIEW ONLY — real agents + states come from the backend Agent Runtime.
+                  CheOfficeFloor(
+                    che: CheAgent.che(status: chat.busy ? CheAgentStatus.talking : CheAgentStatus.idle),
+                    agents: const [
+                      CheAgent(id: 'nova', name: 'Nova', role: 'Research', color: Color(0xFF5CC8FF), status: CheAgentStatus.researching, task: 'Market catalysts'),
+                      CheAgent(id: 'mira', name: 'Mira', role: 'Design', color: Color(0xFFFF8A4C), hair: Color(0xFF7A3B1D), skin: Color(0xFFE0B08A), status: CheAgentStatus.building, task: 'Studio visuals'),
+                      CheAgent(id: 'atlas', name: 'Atlas', role: 'Quant', color: Color(0xFF3DDC97), skin: Color(0xFF8D5A3B), status: CheAgentStatus.analyzing),
+                      CheAgent(id: 'sage', name: 'Sage', role: 'Reviewer', color: Color(0xFF8B7BFF), status: CheAgentStatus.waiting),
+                    ],
+                    onTapAgent: (a) => _openChat('What is ${a.name} working on?'),
+                    onConvene: () => _openChat('Convene the team in the War Room'),
+                  ),
+                ]),
             apps: (_) => _placeholder('Apps', const []),
             plugins: (_) => ChePluginsScreen(
               registry: plugins,
