@@ -246,7 +246,7 @@ class _DevicesHubSceneState extends State<DevicesHubScene>
                 builder: (context, constraints) {
                   final size = Size(
                     constraints.maxWidth,
-                    math.max(560, constraints.maxHeight),
+                    constraints.maxHeight < 560.0 ? 560.0 : constraints.maxHeight,
                   );
                   final positions = nodes
                       .map(
