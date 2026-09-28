@@ -58,7 +58,7 @@ jobs:
         working-directory: server/cloudflare
         run: npx --yes wrangler@4 deploy
 
-      - name: Sync free AI engine keys to the Worker
+      - name: Sync AI engine keys to the Worker
         working-directory: server/cloudflare
         run: |
           node -e '
