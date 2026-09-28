@@ -289,7 +289,7 @@ export function updateAgent(data, agent, body) {
 
 const MEETING_ROLES = [
   { test: /market|trad|stock|crypto|futures|portfolio|price/, role: 'Market Intelligence Partner', specialty: 'markets, backtesting, risk and trading systems' },
-  { test: /business|revenue|customer|sales|launch|pricing|budget|cash/, role: 'Business Operations Partner', specialty: 'planning, operations, leads, billing and workflows' },
+  { test: /business|revenue|customer|sales|launch|pricing|budget|cash|advertis|marketing|campaign|media buying/, role: 'Business Operations Partner', specialty: 'planning, operations, leads, advertising, campaigns, billing and workflows' },
   { test: /design|brand|visual|video|image|music|creative|logo/, role: 'Creative Studio Partner', specialty: 'visual concepts, media production and creative assets' },
   { test: /app|code|build|software|website|api|feature/, role: 'Build + Operations Partner', specialty: 'implementation plans, engineering trade-offs and delivery' },
 ];
