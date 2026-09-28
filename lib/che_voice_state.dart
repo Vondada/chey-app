@@ -80,6 +80,8 @@ class CheVoiceSnapshot {
       case CheVoiceEngine.nativeFallback:
         return 'Native fallback';
       case CheVoiceEngine.none:
+        if (phase == CheVoicePhase.wakeListening) return 'Wake listener';
+        if (phase == CheVoicePhase.sleeping) return 'Sleeping';
         return 'Disconnected';
     }
   }

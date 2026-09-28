@@ -1146,6 +1146,7 @@ export class CheState extends DurableObject {
             output_modalities: ['audio'],
             instructions: [
               'You are CHE — Cognitive Horizon Engine, the owner’s private conversational AI.',
+              'The voice session is already active. Never ask the owner to say “Hey [assistant name]”, “Ok [assistant name]”, or any generic wake phrase. CHE/Chay wake detection is handled by the iPhone client before you receive the turn.',
               'Address the owner as sir naturally when it fits, not in every sentence.',
               'Sound bright, warm, confident, current and natural — like a sharp friend, not a help desk.',
               'Default to one or two short sentences. Lead with exactly what the owner needs. No preamble, recap, or extra explanation unless it is necessary or he asks for more.',
@@ -1737,6 +1738,16 @@ export class CheState extends DurableObject {
         const clientClock = formatClientTime(body.client_time);
         const lowerMessage = message.toLowerCase();
 
+        const directCredentialRequest =
+          /^(?:my\s+)?(?:passwords?|passcodes?|login\s+credentials?|security\s+codes?)\??$/i.test(message) ||
+          /^(?:show|open|find|read|tell\s+me|give\s+me|what(?:\s+is|\s+are)?|where(?:\s+is|\s+are)?)\s+(?:my\s+)?(?:passwords?|passcodes?|login\s+credentials?|security\s+codes?)\b/i.test(message);
+        if (directCredentialRequest) {
+          return ndjsonReply(
+            'I won’t display or repeat passwords in chat, sir. Use Apple’s Passwords app to view saved credentials securely.',
+            { source: 'credential_safety' },
+          );
+        }
+
         if (clientClock && /\b(?:what time is it|what(?:'s| is) the time|current time|what day is it|what(?:'s| is) today(?:'s)? date|what date is it|today(?:'s)? date)\b/i.test(message)) {
           return ndjsonReply(`It’s ${clientClock.display}, sir.`, { source: 'device_clock' });
         }
@@ -1988,6 +1999,11 @@ export class CheState extends DurableObject {
             role: item.role,
             content: String(item.content ?? item.text ?? '').slice(0, 2000),
           }));
+        if (turns.length &&
+            turns[turns.length - 1].role === 'user' &&
+            turns[turns.length - 1].content.trim().toLowerCase() === message.trim().toLowerCase()) {
+          turns.pop();
+        }
         const needsStrongModel = Boolean(multimodal || research?.summary || panel.length || specialists.length || officeResults.length || actionResults.length || plugins.length) ||
           /\b(debug|write code|implement|architect|deep analysis|step.by.step plan|backtest|legal analysis|financial analysis|medical analysis|research report)\b/i.test(message);
         const model = needsStrongModel
@@ -1997,6 +2013,7 @@ export class CheState extends DurableObject {
           messages: [
             { role: 'system', content: [
               'You are CHE, Cognitive Horizon Engine. Your name is spoken and referred to as "CHE" in conversation. "Chay" is only the owner\'s spoken wake word to start a hands-free conversation with you, not how you refer to yourself. Address the owner as sir naturally.',
+              'This chat turn is already active. Never ask the owner to say “Hey [assistant name]”, “Ok [assistant name]”, or any generic wake phrase. If the owner says CHE/Chay, answer as CHE instead of teaching a wake phrase.',
               'CHE is the user-facing product. Never present yourself as Gemini, Cloudflare, or another provider. Models and services are replaceable internal engines behind CHE.',
               'DATA + COMPUTE: core owner state is persisted in CHE storage. Large media, datasets, model artifacts and generated files should use CHE object storage when connected. If storage is not connected, say the item is temporary instead of pretending it was archived.',
               'Use a local-first and owner-controlled architecture: built-in CHE behavior first, CHE-hosted services second, optional provider infrastructure only when required for compute or data.',
@@ -2131,8 +2148,12 @@ export class CheState extends DurableObject {
           ],
           max_tokens: needsStrongModel ? 1000 : 360,
         });
-        const reply = String(answer.response || answer.choices?.[0]?.message?.content || '').trim();
+        let reply = String(answer.response || answer.choices?.[0]?.message?.content || '').trim();
         if (!reply) return json({ detail: 'The model did not return an answer.' }, 502);
+        if (/\[assistant name\]/i.test(reply) ||
+            (/start the conversation/i.test(reply) && /say\s+[“"'']?hey\b/i.test(reply))) {
+          reply = 'I’m awake, sir. What do you need?';
+        }
         return new Response(JSON.stringify({ type: 'delta', delta: reply }) + '\n' +
           JSON.stringify({ type: 'done', model }) + '\n', {
           headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' },

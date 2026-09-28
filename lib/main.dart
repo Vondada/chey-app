@@ -1474,15 +1474,7 @@ OWNER AGENCY
       }
     }
 
-    final recentMessages = messages.length > 14
-        ? messages.sublist(messages.length - 14)
-        : List<Map<String, String>>.from(messages);
-    final history = recentMessages
-        .map((item) => {
-              'role': item['role'] == 'assistant' ? 'assistant' : 'user',
-              'content': item['text'] ?? '',
-            })
-        .toList();
+    final history = _recentHistoryExcluding(clean);
 
     _streamMediaUrl = null;
     _streamMediaType = null;
@@ -2003,7 +1995,7 @@ OWNER AGENCY
 
       if (wakePhraseMode && cheSleeping) {
         final wakeMatch = RegExp(
-          r'^(?:hey\s+)?(?:chay|chey|shay|che|she|c\.?\s*h\.?\s*e\.?)[\s,.:;!?-]*',
+          r'^(?:hey\s+)?(?:chay|chey|shay|chai|chee|chi|che|she|c\.?\s*h\.?\s*e\.?)[\s,.:;!?-]*',
           caseSensitive: false,
         ).firstMatch(words);
 
@@ -2043,7 +2035,7 @@ OWNER AGENCY
       words = words
           .replaceFirst(
             RegExp(
-              r'^(?:hey\s+)?(?:chay|chey|shay|che|she|c\.?\s*h\.?\s*e\.?)[\s,.:;!?-]*',
+              r'^(?:hey\s+)?(?:chay|chey|shay|chai|chee|chi|che|she|c\.?\s*h\.?\s*e\.?)[\s,.:;!?-]*',
               caseSensitive: false,
             ),
             '',
@@ -2216,12 +2208,18 @@ OWNER AGENCY
     if (text == 'chay' ||
         text == 'chey' ||
         text == 'shay' ||
+        text == 'chai' ||
+        text == 'chee' ||
+        text == 'chi' ||
         text == 'che' ||
         text == 'c h e' ||
         text == 'c.h.e.' ||
         text == 'hey chay' ||
         text == 'hey chey' ||
         text == 'hey shay' ||
+        text == 'hey chai' ||
+        text == 'hey chee' ||
+        text == 'hey chi' ||
         text == 'hey che' ||
         text == 'hey c h e' ||
         text == 'she') {
@@ -2229,7 +2227,7 @@ OWNER AGENCY
     }
 
     final wakeMatch = RegExp(
-      r'^(?:hey\s+)?(?:chay|chey|shay|che|she|c\.?\s*h\.?\s*e\.?)[\s,!.?]*',
+      r'^(?:hey\s+)?(?:chay|chey|shay|chai|chee|chi|che|she|c\.?\s*h\.?\s*e\.?)[\s,!.?]*',
       caseSensitive: false,
     ).firstMatch(raw.trim());
     return wakeMatch != null && wakeMatch.end == raw.trim().length;
@@ -2459,7 +2457,7 @@ OWNER AGENCY
           spokenWords = spokenWords
               .replaceFirst(
                 RegExp(
-                  r'^(?:hey\s+)?(?:chay|chey|shay|che|she)\b[\s,.:;!?-]*',
+                  r'^(?:hey\s+)?(?:chay|chey|shay|chai|chee|chi|che|she)\b[\s,.:;!?-]*',
                   caseSensitive: false,
                 ),
                 '',
@@ -4630,7 +4628,7 @@ OWNER AGENCY
   Future<bool> _openExternalAppByVoice(String message) async {
     var requested = message.trim().toLowerCase();
 
-    const wakePrefixes = ['chay ', 'chey ', 'shay ', 'che '];
+    const wakePrefixes = ['chay ', 'chey ', 'shay ', 'chai ', 'chee ', 'chi ', 'che '];
     for (final prefix in wakePrefixes) {
       if (requested.startsWith(prefix)) {
         requested = requested.substring(prefix.length).trim();
@@ -4784,6 +4782,54 @@ OWNER AGENCY
     return false;
   }
 
+  List<Map<String, String>> _recentHistoryExcluding(String currentMessage) {
+    final source = List<Map<String, String>>.from(messages);
+    if (source.isNotEmpty &&
+        source.last['role'] == 'user' &&
+        (source.last['text'] ?? '').trim() == currentMessage.trim()) {
+      source.removeLast();
+    }
+    final recent = source.length > 14
+        ? source.sublist(source.length - 14)
+        : source;
+    return recent
+        .map(
+          (item) => {
+            'role': item['role'] == 'assistant' ? 'assistant' : 'user',
+            'content': item['text'] ?? '',
+          },
+        )
+        .toList();
+  }
+
+  String? _credentialAccessReply(String message) {
+    final text = message.trim().toLowerCase();
+    final direct = RegExp(
+      r'^(?:my\s+)?(?:passwords?|passcodes?|login\s+credentials?|security\s+codes?)\??$',
+    ).hasMatch(text);
+    final explicit = RegExp(
+      r'^(?:show|open|find|read|tell\s+me|give\s+me|what(?:\s+is|\s+are)?|where(?:\s+is|\s+are)?)\s+(?:my\s+)?(?:passwords?|passcodes?|login\s+credentials?|security\s+codes?)\b',
+    ).hasMatch(text);
+    if (!direct && !explicit) return null;
+    return 'I won’t display or repeat passwords in chat, sir. '
+        'Use Apple’s Passwords app to view saved credentials securely.';
+  }
+
+  String _sanitizeCheReply(String value) {
+    final reply = value.trim();
+    if (reply.isEmpty) return reply;
+    final lower = reply.toLowerCase();
+    final genericWakePrompt = lower.contains('[assistant name]') ||
+        (lower.contains('start the conversation') &&
+            (lower.contains('say "hey') ||
+                lower.contains("say 'hey") ||
+                lower.contains('say “hey')));
+    if (genericWakePrompt) {
+      return 'I’m awake, sir. What do you need?';
+    }
+    return reply;
+  }
+
   Future<void> sendMessage({bool fromVoice = false}) async {
     if (_isSending) return;
     if (_isSpeaking) await _interruptSpeechAndListen(resumeListening: false);
@@ -4800,6 +4846,19 @@ OWNER AGENCY
 
     if (await _handleLocalNavigation(message)) {
       controller.clear();
+      return;
+    }
+
+    final credentialReply = _credentialAccessReply(message);
+    if (credentialReply != null) {
+      if (!mounted) return;
+      setState(() {
+        messages.add({'role': 'user', 'text': message});
+        messages.add({'role': 'assistant', 'text': credentialReply});
+        controller.clear();
+      });
+      _scrollToBottom();
+      await speakText(credentialReply);
       return;
     }
 
@@ -4859,18 +4918,7 @@ OWNER AGENCY
     int? assistantIndex;
 
     try {
-      final recentMessages = messages.length > 14
-          ? messages.sublist(messages.length - 14)
-          : List<Map<String, String>>.from(messages);
-
-      final history = recentMessages
-          .map(
-            (item) => {
-              'role': item['role'] == 'assistant' ? 'assistant' : 'user',
-              'content': item['text'] ?? '',
-            },
-          )
-          .toList();
+      final history = _recentHistoryExcluding(message);
 
       assistantIndex = messages.length;
 
@@ -4891,15 +4939,16 @@ OWNER AGENCY
           if (!mounted || index == null || index >= messages.length) return;
 
           setState(() {
-            messages[index]['text'] = partialReply;
+            messages[index]['text'] = _sanitizeCheReply(partialReply);
           });
 
           _scrollToBottom();
         },
       );
 
-      final finalReply =
-          reply.isEmpty ? 'I could not generate a response, sir.' : reply;
+      final finalReply = reply.isEmpty
+          ? 'I could not generate a response, sir.'
+          : _sanitizeCheReply(reply);
 
       if (!mounted) return;
 
