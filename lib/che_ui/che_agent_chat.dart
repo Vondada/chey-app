@@ -538,3 +538,183 @@ class _OrbFxPainter extends CustomPainter {
         }
       case CheOrbState.waiting:
         final blink = (math.sin(t * math.pi * 2) + 1) / 2;
+        canvas.drawCircle(c, r * 1.14, stroke..color = color.withOpacity(0.2 + 0.5 * blink));
+      case CheOrbState.completed:
+        canvas.drawCircle(c, r * (1.1 + 0.15 * ((t * 3) % 1.0)), stroke..color = color.withOpacity(0.7 * (1 - (t * 3) % 1.0)));
+      case CheOrbState.sleeping:
+      case CheOrbState.awake:
+        break;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _OrbFxPainter o) => o.t != t || o.state != state || o.color != color;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Screen
+// ─────────────────────────────────────────────────────────────────────────
+
+class CheAgentChatScreen extends StatefulWidget {
+  const CheAgentChatScreen({
+    super.key,
+    required this.controller,
+    this.onAttach,
+    this.onMic,
+    this.micActive = false,
+    this.pluginRegistry,
+    this.quickActions = const [
+      'Analyze the markets today',
+      'Create an image concept',
+      'Plan my week',
+      'Build me a plugin',
+    ],
+  });
+
+  final CheAgentController controller;
+
+  /// Hook up the EXISTING photo picker; return the picked items (up to 20).
+  final Future<List<Object>?> Function()? onAttach;
+
+  /// Hook up the EXISTING voice / "Chay" wake-word toggle.
+  final VoidCallback? onMic;
+  final bool micActive;
+
+  /// When set, plugins CHE writes in chat show an "Install" card.
+  final ChePluginRegistry? pluginRegistry;
+  final List<String> quickActions;
+
+  @override
+  State<CheAgentChatScreen> createState() => _CheAgentChatScreenState();
+}
+
+class _CheAgentChatScreenState extends State<CheAgentChatScreen> {
+  final _input = TextEditingController();
+  final _focus = FocusNode();
+  final _scroll = ScrollController();
+  final _modeKey = GlobalKey();
+  final List<Object> _attachments = [];
+  bool _stickToBottom = true;
+
+  CheAgentController get c => widget.controller;
+
+  @override
+  void initState() {
+    super.initState();
+    c.addListener(_onChange);
+    _input.addListener(() => setState(() {}));
+    _scroll.addListener(() {
+      if (!_scroll.hasClients) return;
+      final pos = _scroll.position;
+      _stickToBottom = pos.maxScrollExtent - pos.pixels < 120;
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant CheAgentChatScreen old) {
+    super.didUpdateWidget(old);
+    if (!identical(old.controller, widget.controller)) {
+      old.controller.removeListener(_onChange);
+      widget.controller.addListener(_onChange);
+    }
+  }
+
+  void _onChange() {
+    if (!mounted) return;
+    setState(() {});
+    if (_stickToBottom) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scroll.hasClients) _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    c.removeListener(_onChange);
+    _input.dispose();
+    _focus.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _send([String? preset]) {
+    final text = preset ?? _input.text;
+    if (text.trim().isEmpty && _attachments.isEmpty) return;
+    _stickToBottom = true;
+    c.send(text, attachments: List.of(_attachments));
+    _input.clear();
+    setState(_attachments.clear);
+  }
+
+  Future<void> _attach() async {
+    if (widget.onAttach == null) return;
+    final picked = await widget.onAttach!();
+    if (picked == null || picked.isEmpty) return;
+    setState(() {
+      _attachments.addAll(picked);
+      if (_attachments.length > 20) _attachments.removeRange(20, _attachments.length);
+    });
+  }
+
+  Future<void> _pickMode() async {
+    final v = await showCheMenu<int>(context, _modeKey, [
+      for (var i = 0; i < c.modes.length; i++)
+        CheMenuItem(
+          value: i,
+          label: c.modes[i],
+          icon: i == 0 ? Icons.auto_awesome_rounded : Icons.chat_bubble_outline_rounded,
+          trailing: i == c.modeIndex ? '✓' : null,
+        ),
+    ]);
+    if (v != null) c.setMode(v);
+  }
+
+  void _openConversations() {
+    HapticFeedback.selectionClick();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => _ConversationSheet(controller: c),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final msgs = c.current.messages;
+    return Scaffold(
+      backgroundColor: CheColors.bg,
+      resizeToAvoidBottomInset: true,
+      body: CheBackground(
+        child: SafeArea(
+          bottom: false,
+          child: Column(children: [
+            _topBar(context),
+            Expanded(
+              child: AnimatedSwitcher(
+                duration: CheMotion.d(context, CheMotion.base),
+                child: msgs.isEmpty
+                    ? _EmptyState(
+                        key: const ValueKey('empty'),
+                        actions: widget.quickActions,
+                        onPick: _send,
+                        orbState: c.orbState,
+                      )
+                    : GestureDetector(
+                        key: ValueKey(c.current.id),
+                        onTap: () => _focus.unfocus(),
+                        child: ListView.builder(
+                          controller: _scroll,
+                          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                          padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, CheSpace.xl),
+                          itemCount: msgs.length,
+                          itemBuilder: (context, i) {
+                            final m = msgs[i];
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: CheSpace.lg),
+                              child: m.isUser
+                                  ? _UserBubble(message: m)
+                                  : _AssistantMessage(
+                                      message: m,
+                                      onRetry: () => c.retry(m),
+                                      registry: widget.pluginRegistry,
