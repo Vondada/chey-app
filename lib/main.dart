@@ -209,6 +209,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     'agent_identity': false,
     'service_accounts': false,
     'natural_voice': false,
+    'openai_live_voice': false,
     'quantum_compute': false,
     'web_research': false,
     'public_records': false,
@@ -447,7 +448,7 @@ OWNER AGENCY
     initializeVoice();
     _loadSecuritySession();
     _proactiveTimer = Timer.periodic(
-      const Duration(minutes: 20),
+      const Duration(minutes: 10),
       (_) => _checkProactiveSuggestion(),
     );
 
@@ -929,6 +930,7 @@ OWNER AGENCY
         'agent_identity': integrationData['agent_identity'] == true,
         'service_accounts': integrationData['service_accounts'] == true,
         'natural_voice': integrationData['natural_voice'] == true,
+        'openai_live_voice': integrationData['openai_live_voice'] == true,
         'quantum_compute': integrationData['quantum_compute'] == true,        'web_research': integrationData['web_research'] == true,
         'public_records': integrationData['public_records'] == true,
         'music': integrationData['music'] == true,
