@@ -39,8 +39,22 @@ const PROVIDERS = [
     url: 'https://openrouter.ai/api/v1/chat/completions',
     fast: (env) => env.CHE_OPENROUTER_FAST_MODEL || 'meta-llama/llama-3.3-70b-instruct:free',
     strong: (env) => env.CHE_OPENROUTER_STRONG_MODEL || 'meta-llama/llama-3.3-70b-instruct:free',
+  },  // Keyless last resort: Pollinations' free OpenAI-compatible endpoint. No
+  // account or key, so CHE keeps answering even with zero keys configured.
+  // Set CHE_DISABLE_KEYLESS_AI=1 on the Worker to turn it off.
+  {
+    id: 'pollinations',
+    keyless: true,
+    url: 'https://text.pollinations.ai/openai',
+    fast: (env) => env.CHE_POLLINATIONS_MODEL || 'openai',
+    strong: (env) => env.CHE_POLLINATIONS_MODEL || 'openai',
   },
 ];
+
+function providerEnabled(env, provider) {
+  if (provider.keyless) return !['1', 'true', 'yes'].includes(String(env.CHE_DISABLE_KEYLESS_AI || '').toLowerCase());
+  return Boolean(env[provider.key]);
+}
 
 // Per-isolate memory of "Cloudflare's free allowance is gone until…".
 let cloudflareExhaustedUntil = 0;
@@ -67,7 +81,7 @@ async function callProvider(env, provider, model, input, fetcher) {
     const response = await fetcher(provider.url, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${env[provider.key]}`,
+        ...(provider.keyless ? {} : { Authorization: `Bearer ${env[provider.key]}` }),
         'Content-Type': 'application/json',
         ...(provider.id === 'openrouter' ? { 'HTTP-Referer': 'https://che.app', 'X-Title': 'CHE' } : {}),
       },
@@ -108,7 +122,7 @@ export async function routeText(env, model, input, fetcher = fetch) {
     errors.push('cloudflare: daily free allowance used up');
   }
   for (const provider of PROVIDERS) {
-    if (!env[provider.key]) continue;
+    if (!providerEnabled(env, provider)) continue;
     if ((providerCooldownUntil.get(provider.id) || 0) > now) continue;
     try {
       return await callProvider(env, provider, model, input, fetcher);
@@ -118,7 +132,7 @@ export async function routeText(env, model, input, fetcher = fetch) {
       errors.push(String(error?.message || error));
     }
   }
-  const configured = PROVIDERS.filter((p) => env[p.key]).map((p) => p.id);
+  const configured = PROVIDERS.filter((p) => !p.keyless && env[p.key]).map((p) => p.id);
   const hint = configured.length
     ? ''
     : ' Add CHE_OPENAI_API_KEY, GROQ_API_KEY, GEMINI_API_KEY or OPENROUTER_API_KEY so CHE keeps answering when Cloudflare\'s daily allowance runs out.';
