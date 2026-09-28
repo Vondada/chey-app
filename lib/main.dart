@@ -140,6 +140,10 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   bool voiceResponsesEnabled = true;
   bool openConversation = false;
 
+  // Free voice mode keeps speech input/output on the iPhone's built-in
+  // speech stack. The conversational brain can stay exactly as configured.
+  bool freeNativeVoiceMode = true;
+
   // Owner-focused behavior. A paired trusted device remains the real security
   // gate; voice alone is never treated as an unbreakable biometric.
   bool strictOwnerMode = true;
@@ -1323,7 +1327,8 @@ OWNER AGENCY
   }
 
   Future<bool> _tryNaturalVoice(String text) async {
-    if (kIsWeb ||
+    if (freeNativeVoiceMode ||
+        kIsWeb ||
         defaultTargetPlatform != TargetPlatform.iOS ||
         _deviceToken == null ||
         cheAgentBaseUrl.isEmpty ||
@@ -1516,10 +1521,9 @@ OWNER AGENCY
 
       if (!mounted) return;
 
-      // The Swift bridge returns false when native recognition isn't
-      // implemented (speech_to_text stays the recognizer). Only let the
-      // native layer take over the conversation when it truly started;
-      // never switch off the Flutter listening loop because of it.
+      // The native iPhone bridge now owns hands-free speech recognition
+      // when it starts successfully. It keeps listening during CHE speech
+      // so the owner can interrupt naturally (barge-in).
       setState(() {
         _nativeIosVoiceActive = started;
         if (started) openConversation = true;
@@ -1587,11 +1591,88 @@ OWNER AGENCY
       return;
     }
 
-    if (type == 'utterance') {
-      if (cheSleeping || _isSending || _isSpeaking) return;
+    if (type == 'barge_in') {
+      // The native iPhone layer has already stopped CHE's audio. Advance the
+      // speech generation immediately so the cancelled response cannot resume.
+      ++_speechTurn;
+      _listenRestartTimer?.cancel();
+      await flutterTts.stop();
 
-      final words = event['text']?.toString().trim() ?? '';
+      if (!mounted) return;
+      setState(() {
+        _isSpeaking = false;
+        openConversation = true;
+        cheSleeping = false;
+        isListening = true;
+      });
+      return;
+    }
+
+    if (type == 'utterance') {
+      var words = event['text']?.toString().trim() ?? '';
       if (words.isEmpty) return;
+
+      // Race-safe fallback: if the final transcript arrives before the
+      // barge-in event, stop any remaining audio before handling the command.
+      if (_isSpeaking) {
+        await _interruptSpeechAndListen(resumeListening: false);
+      }
+
+      if (_isSending) return;
+
+      if (wakePhraseMode && cheSleeping) {
+        final wakeMatch = RegExp(
+          r'^(?:hey\s+)?(?:chay|chey|shay|che|she|c\.?\s*h\.?\s*e\.?)[\s,.:;!?-]*',
+          caseSensitive: false,
+        ).firstMatch(words);
+
+        if (wakeMatch == null) return;
+
+        words = words.substring(wakeMatch.end).trim();
+
+        if (!mounted) return;
+        setState(() {
+          cheSleeping = false;
+          openConversation = true;
+          isListening = true;
+        });
+
+        if (words.isEmpty) {
+          await speakText('Yeah, sir?');
+          return;
+        }
+      }
+
+      if (_isSleepPhrase(words)) {
+        if (!mounted) return;
+        setState(() {
+          cheSleeping = true;
+          isListening = false;
+        });
+
+        try {
+          await CheNativeVoice.sleep();
+        } catch (_) {}
+
+        await speakText('Standing by, sir.');
+        return;
+      }
+
+      // If the owner still says the wake name while already awake, strip it.
+      words = words
+          .replaceFirst(
+            RegExp(
+              r'^(?:hey\s+)?(?:chay|chey|shay|che|she|c\.?\s*h\.?\s*e\.?)[\s,.:;!?-]*',
+              caseSensitive: false,
+            ),
+            '',
+          )
+          .trim();
+
+      if (words.isEmpty) {
+        await speakText('Yeah, sir?');
+        return;
+      }
 
       if (!mounted) return;
 
@@ -1600,6 +1681,7 @@ OWNER AGENCY
         controller.selection = TextSelection.collapsed(
           offset: controller.text.length,
         );
+        isListening = false;
       });
 
       await sendMessage(fromVoice: true);
@@ -1629,6 +1711,22 @@ OWNER AGENCY
     if (!kIsWeb &&
         defaultTargetPlatform == TargetPlatform.iOS &&
         _nativeIosVoiceActive) {
+      // When CHE is in wake-word standby, tapping the mic means "wake now"
+      // rather than "turn the microphone off."
+      if (openConversation && cheSleeping) {
+        try {
+          await CheNativeVoice.wake();
+        } catch (_) {}
+
+        if (mounted) {
+          setState(() {
+            cheSleeping = false;
+            isListening = true;
+          });
+        }
+        return;
+      }
+
       if (openConversation) {
         await CheNativeVoice.stop();
 
@@ -1645,6 +1743,8 @@ OWNER AGENCY
           setState(() {
             _nativeIosVoiceActive = started;
             openConversation = started;
+            cheSleeping = !started ? cheSleeping : false;
+            isListening = started;
           });
         }
       }
