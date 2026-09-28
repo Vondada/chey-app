@@ -66,6 +66,10 @@ jobs:
         if: steps.configured.outputs.ready == 'true'
         run: bash ./tool/bootstrap.sh
 
+      - name: Enable local AI + voice tuning bridge
+        if: steps.configured.outputs.ready == 'true'
+        run: python3 ./tool/patch_local_runtime.py
+
       - name: Shorebird release (unsigned)
         if: steps.configured.outputs.ready == 'true' && env.MODE == 'release'
         run: shorebird release ios --no-codesign -- --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"

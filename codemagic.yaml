@@ -16,6 +16,8 @@ workflows:
     scripts:
       - name: Bootstrap native projects
         script: bash ./tool/bootstrap.sh
+      - name: Enable local AI + voice tuning bridge
+        script: python3 ./tool/patch_local_runtime.py
       - name: Build unsigned iOS app
         script: |
           flutter build ios --release --no-codesign \
