@@ -2858,12 +2858,16 @@ OWNER AGENCY
     Map<String, String>? attachment,
   }) async {
     try {
-      final result = await _postAgentJson('/api/context/ingest', {
+      final payload = <String, dynamic>{
         'source': source,
         'title': title,
         if (text.trim().isNotEmpty) 'text': text.trim(),
-        if (attachment != null) 'attachment': attachment,
-      });
+      };
+      if (attachment != null) {
+        payload['attachment'] = attachment;
+      }
+
+      final result = await _postAgentJson('/api/context/ingest', payload);
       if (result == null) return;
 
       await _loadAgentState(silent: true);
