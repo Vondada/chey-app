@@ -1,0 +1,12 @@
+// CHE UI kit — import this one file: import 'che_ui/che_ui.dart';
+export 'che_theme.dart';
+export 'che_widgets.dart';
+export 'che_transitions.dart';
+export 'che_models.dart';
+export 'che_backend.dart';
+export 'che_agent_chat.dart';
+export 'che_office_hub.dart';
+export 'che_plugins.dart';
+export 'che_log.dart';
+export 'che_brain.dart';
+export 'che_rooms.dart';
