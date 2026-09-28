@@ -59,6 +59,7 @@ info['NSBluetoothAlwaysUsageDescription'] = 'CHE uses Bluetooth only for owner-a
 info['NSLocationWhenInUseUsageDescription'] = 'CHE uses your location only while you are using location-aware features.'
 info['CFBundleURLTypes'] = [{'CFBundleURLName': 'CHE', 'CFBundleURLSchemes': ['che']}]
 info['BGTaskSchedulerPermittedIdentifiers'] = ['com.cheyapp.che.refresh']
+info['UIBackgroundModes'] = ['fetch']
 with path.open('wb') as stream:
     plistlib.dump(info, stream)
 PY
