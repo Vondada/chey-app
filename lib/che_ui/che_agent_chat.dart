@@ -358,3 +358,183 @@ class CheAgentController extends ChangeNotifier {
     if (s.contains('SocketException') || s.contains('HandshakeException')) {
       return 'No connection to CHE right now. Check your signal and tap retry.';
     }
+    if (e is CheBackendException) return 'CHE hit an error (${e.statusCode}). Tap retry.';
+    return 'Something went wrong. Tap retry.';
+  }
+
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _cancel?.cancelled = true;
+    _sub?.cancel();
+    super.dispose();
+  }
+}
+
+class _Cancel {
+  bool cancelled = false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Orb — CHE's living presence. Every state from the spec animates differently.
+// ─────────────────────────────────────────────────────────────────────────
+
+enum CheOrbState { sleeping, awake, listening, thinking, speaking, working, delegating, waiting, completed }
+
+extension CheOrbStateLabel on CheOrbState {
+  String get label => switch (this) {
+        CheOrbState.sleeping => 'Sleeping',
+        CheOrbState.awake => 'Awake',
+        CheOrbState.listening => 'Listening',
+        CheOrbState.thinking => 'Thinking',
+        CheOrbState.speaking => 'Speaking',
+        CheOrbState.working => 'Working',
+        CheOrbState.delegating => 'Delegating',
+        CheOrbState.waiting => 'Waiting',
+        CheOrbState.completed => 'Completed',
+      };
+}
+
+class CheOrb extends StatefulWidget {
+  const CheOrb({super.key, this.size = 28, this.label = false, this.active = false, this.state});
+  final double size;
+  final bool label;
+
+  /// Legacy flag: true ≈ thinking, false ≈ awake (used when [state] is null).
+  final bool active;
+  final CheOrbState? state;
+  @override
+  State<CheOrb> createState() => _CheOrbState();
+}
+
+class _CheOrbState extends State<CheOrb> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(seconds: 3))..repeat();
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  CheOrbState get _state => widget.state ?? (widget.active ? CheOrbState.thinking : CheOrbState.awake);
+
+  @override
+  Widget build(BuildContext context) {
+    final s = widget.size;
+    return SizedBox(
+      width: s,
+      height: s,
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (context, _) {
+          final t = CheMotion.reduced(context) ? 0.25 : _c.value;
+          final st = _state;
+          final base = switch (st) {
+            CheOrbState.sleeping => CheColors.textFaint,
+            CheOrbState.waiting => CheColors.warning,
+            CheOrbState.completed => CheColors.success,
+            CheOrbState.listening => CheColors.accentAlt,
+            _ => CheColors.accent,
+          };
+          final breathe = 0.5 + 0.5 * math.sin(t * math.pi * 2 * (st == CheOrbState.sleeping ? 1 : 2));
+          double scale = 1;
+          if (st == CheOrbState.speaking) {
+            scale = 1 + 0.06 * (math.sin(t * math.pi * 2 * 9).abs() * 0.6 + math.sin(t * math.pi * 2 * 5).abs() * 0.4);
+          } else if (st == CheOrbState.sleeping) {
+            scale = 0.94 + 0.02 * breathe;
+          }
+          final glow = switch (st) {
+            CheOrbState.sleeping => 0.12,
+            CheOrbState.awake => 0.3 + 0.15 * breathe,
+            CheOrbState.completed => 0.7,
+            _ => 0.45 + 0.25 * breathe,
+          };
+          return CustomPaint(
+            painter: _OrbFxPainter(state: st, t: t, color: base),
+            child: Center(
+              child: Transform.scale(
+                scale: scale,
+                child: Container(
+                  width: s * 0.78,
+                  height: s * 0.78,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        base.withOpacity(st == CheOrbState.sleeping ? 0.45 : 0.95),
+                        Color.lerp(base, Colors.black, 0.45)!.withOpacity(0.9),
+                        const Color(0xFF02110E),
+                      ],
+                      stops: const [0.0, 0.55, 1.0],
+                      center: Alignment(-0.2 + 0.2 * breathe, -0.3),
+                    ),
+                    border: Border.all(color: base.withOpacity(0.8), width: s > 60 ? 2 : 1),
+                    boxShadow: [BoxShadow(color: base.withOpacity(glow), blurRadius: s * 0.5)],
+                  ),
+                  alignment: Alignment.center,
+                  child: widget.label
+                      ? Text('CHE',
+                          style: CheType.display.copyWith(
+                              fontSize: s * 0.18, color: const Color(0xFF02110E), letterSpacing: s * 0.025))
+                      : null,
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Rings, arcs and satellites around the orb for each state.
+class _OrbFxPainter extends CustomPainter {
+  _OrbFxPainter({required this.state, required this.t, required this.color});
+  final CheOrbState state;
+  final double t;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = size.center(Offset.zero);
+    final r = size.width * 0.39;
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = math.max(1.2, size.width * 0.025);
+    switch (state) {
+      case CheOrbState.listening:
+        for (var i = 0; i < 3; i++) {
+          final k = (t * 2 + i / 3) % 1.0;
+          canvas.drawCircle(c, r * (1 + 0.28 * k), stroke..color = color.withOpacity(0.6 * (1 - k)));
+        }
+      case CheOrbState.thinking:
+        canvas.drawArc(Rect.fromCircle(center: c, radius: r * 1.14), t * math.pi * 4, math.pi * 0.7, false,
+            stroke..color = color.withOpacity(0.9));
+        canvas.drawArc(Rect.fromCircle(center: c, radius: r * 1.14), t * math.pi * 4 + math.pi, math.pi * 0.35, false,
+            stroke..color = CheColors.accentAlt.withOpacity(0.7));
+      case CheOrbState.working:
+        canvas.drawCircle(c, r * 1.16, stroke..color = color.withOpacity(0.18));
+        final a = t * math.pi * 4;
+        canvas.drawCircle(c + Offset(math.cos(a), math.sin(a)) * r * 1.16, size.width * 0.05, Paint()..color = color);
+      case CheOrbState.delegating:
+        canvas.drawCircle(c, r * 1.18, stroke..color = color.withOpacity(0.15));
+        for (var i = 0; i < 3; i++) {
+          final a = t * math.pi * 2 + i * math.pi * 2 / 3;
+          final p = c + Offset(math.cos(a), math.sin(a)) * r * 1.18;
+          canvas.drawLine(c, p, Paint()
+            ..color = color.withOpacity(0.25)
+            ..strokeWidth = 1);
+          canvas.drawCircle(p, size.width * 0.045, Paint()..color = i == 0 ? color : CheColors.accentAlt);
+        }
+      case CheOrbState.speaking:
+        for (var i = 0; i < 24; i++) {
+          final a = i / 24 * math.pi * 2;
+          final amp = 0.06 + 0.1 * math.sin(t * math.pi * 2 * 7 + i * 1.3).abs();
+          final p1 = c + Offset(math.cos(a), math.sin(a)) * r * 1.08;
+          final p2 = c + Offset(math.cos(a), math.sin(a)) * r * (1.08 + amp);
+          canvas.drawLine(p1, p2, stroke..color = color.withOpacity(0.7));
+        }
+      case CheOrbState.waiting:
+        final blink = (math.sin(t * math.pi * 2) + 1) / 2;
