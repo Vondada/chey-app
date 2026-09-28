@@ -28,7 +28,7 @@ class CheRoute<T> extends PageRouteBuilder<T> {
                 if (sigma > 0.2) {
                   w = ImageFiltered(imageFilter: ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma), child: w);
                 }
-                return ColoredBox(color: CheColors.bg.withOpacity(v), child: w);
+                return ColoredBox(color: CheColors.bg.withValues(alpha: v), child: w);
               },
             );
           },
