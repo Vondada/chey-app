@@ -1078,3 +1078,176 @@ class _LiveTimer extends StatefulWidget {
   State<_LiveTimer> createState() => _LiveTimerState();
 }
 
+class _LiveTimerState extends State<_LiveTimer> {
+  Timer? _t;
+  @override
+  void initState() {
+    super.initState();
+    _t = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _t?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ms = DateTime.now().difference(widget.start).inMilliseconds;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: ThinkingShimmer(text: 'Thinking…  ${(ms / 1000).toStringAsFixed(1)}s', style: CheType.caption),
+    );
+  }
+}
+
+class _ActionChip extends StatelessWidget {
+  const _ActionChip({required this.icon, required this.label, required this.onTap});
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) => ChePressable(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(CheRadius.pill),
+            color: CheColors.surface,
+            border: Border.all(color: CheColors.stroke),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(icon, size: 14, color: CheColors.textDim),
+            const SizedBox(width: 5),
+            Text(label, style: CheType.caption),
+          ]),
+        ),
+      );
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({super.key, required this.actions, required this.onPick, this.orbState = CheOrbState.awake});
+  final List<String> actions;
+  final CheOrbState orbState;
+  final void Function(String) onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: CheSpace.gutter, vertical: CheSpace.xxl),
+      child: Column(children: [
+        CheOrb(size: 120, label: true, state: orbState),
+        const SizedBox(height: CheSpace.xl),
+        const Text('What should we build?', style: CheType.title, textAlign: TextAlign.center),
+        const SizedBox(height: CheSpace.sm),
+        const Text('Ask, plan, create or run a task. CHE works fast and shows every step.',
+            style: CheType.bodyDim, textAlign: TextAlign.center),
+        const SizedBox(height: CheSpace.xl),
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: CheSpace.sm,
+          runSpacing: CheSpace.sm,
+          children: [
+            for (final a in actions)
+              ChePressable(
+                onTap: () => onPick(a),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(CheRadius.pill),
+                    color: CheColors.surface,
+                    border: Border.all(color: CheColors.accent.withOpacity(0.3)),
+                  ),
+                  child: Text(a, style: CheType.label),
+                ),
+              ),
+          ],
+        ),
+      ]),
+    );
+  }
+}
+
+class _ConversationSheet extends StatelessWidget {
+  const _ConversationSheet({required this.controller});
+  final CheAgentController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        final list = controller.conversations;
+        return SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const SizedBox(height: 10),
+              Container(
+                  width: 38,
+                  height: 4,
+                  decoration: BoxDecoration(color: CheColors.stroke, borderRadius: BorderRadius.circular(2))),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.lg, CheSpace.sm, CheSpace.sm),
+                child: Row(children: [
+                  const Expanded(child: Text('Conversations', style: CheType.headline)),
+                  TextButton.icon(
+                    onPressed: () {
+                      controller.newConversation();
+                      Navigator.pop(context);
+                    },
+                    icon: const Icon(Icons.add_rounded, color: CheColors.accent),
+                    label: Text('New', style: CheType.label.copyWith(color: CheColors.accent)),
+                  ),
+                ]),
+              ),
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: list.length,
+                  itemBuilder: (context, i) {
+                    final conv = list[i];
+                    final sel = identical(conv, controller.current);
+                    return Dismissible(
+                      key: ValueKey(conv.id),
+                      direction: DismissDirection.endToStart,
+                      background: Container(
+                        alignment: Alignment.centerRight,
+                        padding: const EdgeInsets.only(right: 20),
+                        color: CheColors.danger.withOpacity(0.2),
+                        child: const Icon(Icons.delete_outline_rounded, color: CheColors.danger),
+                      ),
+                      onDismissed: (_) => controller.deleteConversation(conv),
+                      child: ListTile(
+                        onTap: () {
+                          controller.open(conv);
+                          Navigator.pop(context);
+                        },
+                        leading: Icon(sel ? Icons.radio_button_checked : Icons.chat_bubble_outline_rounded,
+                            color: sel ? CheColors.accent : CheColors.textDim, size: 20),
+                        title: Text(conv.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label),
+                        subtitle: Text('${conv.messages.length} messages', style: CheType.caption),
+                        trailing: IconButton(
+                          tooltip: 'Read full log',
+                          icon: const Icon(Icons.description_outlined, color: CheColors.textDim, size: 20),
+                          onPressed: () {
+                            final nav = Navigator.of(context);
+                            nav.pop();
+                            nav.push(CheRoute(builder: (_) => CheTranscriptScreen(conversation: conv)));
+                          },
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ]),
+          ),
+        );
+      },
+    );
+  }
+}
