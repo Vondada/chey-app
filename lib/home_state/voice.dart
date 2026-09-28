@@ -157,12 +157,16 @@ extension _CheHomeVoice on _CHEHomeState {
   }
 
   Future<bool> _tryNaturalVoice(String text) async {
-    if (freeNativeVoiceMode ||
-        kIsWeb ||
-        defaultTargetPlatform != TargetPlatform.iOS ||
-        _deviceToken == null ||
+    _naturalVoiceServerErrored = false;
+
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) {
+      return false;
+    }
+
+    if (_deviceToken == null ||
         cheAgentBaseUrl.isEmpty ||
         integrations['natural_voice'] != true) {
+      _naturalVoiceServerErrored = true;
       return false;
     }
 
@@ -176,20 +180,37 @@ extension _CheHomeVoice on _CHEHomeState {
           .timeout(const Duration(seconds: 25));
 
       if (response.statusCode == 401) {
+        _naturalVoiceServerErrored = true;
         await _clearSecuritySession();
         return false;
       }
 
       if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
+        _naturalVoiceServerErrored = true;
         return false;
       }
 
       final contentType =
           response.headers['content-type']?.toLowerCase() ?? '';
-      if (!contentType.startsWith('audio/')) return false;
+      if (!contentType.startsWith('audio/')) {
+        _naturalVoiceServerErrored = true;
+        return false;
+      }
 
-      return await CheNativeVoice.playAudio(response.bodyBytes);
+      final played = await CheNativeVoice.playAudio(response.bodyBytes);
+      if (played) {
+        final engine = (response.headers['x-che-voice'] ?? '').trim();
+        if (mounted) {
+          _set(() {
+            _lastVoiceEngine = engine.isEmpty ? 'server-voice' : engine;
+          });
+        } else {
+          _lastVoiceEngine = engine.isEmpty ? 'server-voice' : engine;
+        }
+      }
+      return played;
     } catch (_) {
+      _naturalVoiceServerErrored = true;
       return false;
     }
   }
@@ -256,26 +277,24 @@ extension _CheHomeVoice on _CHEHomeState {
           await flutterTts.speak(spokenText);
         }
       } else if (defaultTargetPlatform == TargetPlatform.iOS) {
-        // Smooth voice order: CHE's local Chaze neural voice when its voice
-        // pack is ready (free, unmetered), then the smooth cloud voices
-        // (ElevenLabs / OpenAI / Cloudflare / Gemini), and only then the
-        // basic iPhone voice. The basic voice never pre-empts a smooth one.
+        // Server voice first. The iPhone voice is only a fallback when the
+        // server voice request fails, unless the owner explicitly forces
+        // free native voice mode.
         var played = false;
-        try {
-          played = await CheNativeVoice.speakNeural(spokenText);
-        } on MissingPluginException {
-          played = false;
-        } catch (_) {
-          played = false;
-        }
-
-        if (!played) {
+        if (!freeNativeVoiceMode) {
           played = await _tryNaturalVoice(spokenText);
+        } else {
+          _naturalVoiceServerErrored = true;
         }
 
-        if (!played) {
+        if (!played && _naturalVoiceServerErrored) {
           try {
-            played = await CheNativeVoice.speakText(spokenText);
+            played = await CheNativeVoice.speakNeural(spokenText);
+            if (played && mounted) {
+              _set(() {
+                _lastVoiceEngine = 'iphone-neural';
+              });
+            }
           } on MissingPluginException {
             played = false;
           } catch (_) {
@@ -283,9 +302,29 @@ extension _CheHomeVoice on _CHEHomeState {
           }
         }
 
-        if (!played) {
+        if (!played && _naturalVoiceServerErrored) {
+          try {
+            played = await CheNativeVoice.speakText(spokenText);
+            if (played && mounted) {
+              _set(() {
+                _lastVoiceEngine = 'iphone-voice';
+              });
+            }
+          } on MissingPluginException {
+            played = false;
+          } catch (_) {
+            played = false;
+          }
+        }
+
+        if (!played && _naturalVoiceServerErrored) {
           await flutterTts.stop();
           await flutterTts.speak(spokenText);
+          if (mounted) {
+            _set(() {
+              _lastVoiceEngine = 'iphone-tts';
+            });
+          }
         }
       } else {
         await flutterTts.stop();
