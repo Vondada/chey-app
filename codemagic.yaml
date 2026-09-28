@@ -19,6 +19,7 @@ workflows:
         - pattern: "main"
           include: true
           source: true
+      cancel_previous_builds: true
     scripts:
       - name: Bootstrap native projects
         script: bash ./tool/bootstrap.sh
