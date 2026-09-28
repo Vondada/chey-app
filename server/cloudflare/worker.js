@@ -527,6 +527,18 @@ function pluginCatalog(env) {
       : [];
     let url;
     try { url = new URL(String(entry.endpoint || '')); } catch (_) { return []; }
+
+    let uiUrl = '';
+    if (entry.ui_url) {
+      try {
+        const parsedUi = new URL(String(entry.ui_url));
+        if (parsedUi.protocol !== 'https:' || parsedUi.username || parsedUi.password) return [];
+        uiUrl = parsedUi.toString();
+      } catch (_) {
+        return [];
+      }
+    }
+
     if (!/^[a-z][a-z0-9_]{2,39}$/.test(id) || seen.has(id) || !name || !description ||
         !triggers.length || url.protocol !== 'https:' || url.username || url.password ||
         !url.hostname.includes('.') || /^(?:localhost|.*\.localhost|.*\.local|.*\.internal)$/i.test(url.hostname) ||
@@ -535,7 +547,7 @@ function pluginCatalog(env) {
     seen.add(id);
     return [{
       id, name, description, endpoint: url.toString(), token_secret: secretName,
-      triggers, capabilities, mode,
+      triggers, capabilities, mode, ui_url: uiUrl,
       requires_confirmation: entry.requires_confirmation !== false && ['action','create'].includes(mode),
     }];
   });
@@ -545,6 +557,7 @@ function visiblePlugins(env, state) {
   return pluginCatalog(env).map((p) => ({
     id: p.id, name: p.name, description: p.description, mode: p.mode,
     capabilities: p.capabilities,
+    ui_url: p.ui_url || '',
     ready: !p.token_secret || Boolean(env[p.token_secret]),
     enabled: state?.[p.id] === true,
     requires_confirmation: p.requires_confirmation,
