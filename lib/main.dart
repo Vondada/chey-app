@@ -1615,8 +1615,9 @@ OWNER AGENCY
           openConversation = true;
           isListening = true;
         });
-        await speakText('Yeah, sir?');
       }
+      // The final utterance handler will either answer "Yeah, sir?" for a
+      // wake-word-only turn or immediately process the words after "Chay".
       return;
     }
 
