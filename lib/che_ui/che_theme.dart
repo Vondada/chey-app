@@ -164,11 +164,7 @@ class CheTheme {
         contentTextStyle: CheType.label,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(CheRadius.md)),
-      ),
-      pageTransitionsTheme: const PageTransitionsTheme(builders: {
-        TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
-        TargetPlatform.android: CupertinoPageTransitionsBuilder(),
-      }),
+      )
     );
   }
 }
