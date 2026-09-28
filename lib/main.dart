@@ -61,6 +61,8 @@ import 'self_update/che_patch_banner.dart';
 import 'self_update/che_update_card.dart';
 import 'rooms/che_markets_room.dart';
 import 'rooms/che_creator_studio.dart';
+import 'rooms/che_art_studio.dart';
+import 'rooms/che_room_segments.dart';
 import 'browser/che_browser.dart' show CheBrowserActions;
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;

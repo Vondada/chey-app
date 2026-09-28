@@ -133,3 +133,64 @@ test('markets parse delayed candles and label unavailable data honestly', async 
   assert.equal(snap.quotes.find((q) => q.symbol === 'ETH').status, 'unavailable');
   assert.equal(snap.live, false);
 });
+
+import { deleteMedia, generateImage, listMedia, readBlob, upscaleImage } from './media.js';
+
+function memStorage() {
+  const m = new Map();
+  return {
+    get: async (k) => (m.has(k) ? structuredClone(m.get(k)) : undefined),
+    put: async (k, v) => { m.set(k, structuredClone(v)); },
+    delete: async (k) => m.delete(k),
+    raw: m,
+  };
+}
+
+test('art studio: real images with versions, draft opt-in, honest upscaling', async () => {
+  const storage = memStorage();
+  const calls = [];
+  const env = {
+    AI: { run: async (model, input) => { calls.push({ model, input }); return { image: Buffer.from('JPEGDATA').toString('base64') }; } },
+  };
+  const made = await generateImage(env, storage, { prompt: 'A neon studio at night' });
+  assert.equal(made.status, 200);
+  assert.equal(calls[0].model, '@cf/black-forest-labs/flux-1-schnell');
+  assert.equal(calls[0].input.steps, 8, 'highest quality by default');
+  assert.equal(made.item.version, 1);
+  assert.equal(Buffer.from(await readBlob(env, storage, made.item)).toString(), 'JPEGDATA');
+
+  const variation = await generateImage(env, storage, { mode: 'variation', parent_id: made.item.id });
+  assert.equal(variation.item.root_id, made.item.id);
+  assert.equal(variation.item.version, 2);
+  assert.match(variation.item.prompt, /Fresh variation/);
+  const refine = await generateImage(env, storage, { mode: 'refine', parent_id: variation.item.id, prompt: 'warmer light', draft: true });
+  assert.equal(refine.item.version, 3);
+  assert.equal(calls[2].input.steps, 4, 'draft only when asked');
+  assert.equal((await listMedia(storage)).length, 3);
+
+  assert.equal((await generateImage(env, storage, { prompt: '' })).status, 400);
+  assert.equal((await generateImage(env, storage, { mode: 'variation', parent_id: 'nope' })).status, 404);
+  assert.equal((await generateImage({}, storage, { prompt: 'x' })).status, 503);
+
+  const up = await upscaleImage(env, storage, made.item.id);
+  assert.equal(up.status, 409);
+  assert.match(up.detail, /CHE_UPSCALE_URL/);
+  const upEnv = { ...env, CHE_UPSCALE_URL: 'https://up.example/x' };
+  const upscaled = await upscaleImage(upEnv, storage, made.item.id,
+    undefined, async () => new Response('{"url":"https://cdn.example/big.jpg"}', { status: 200 }));
+  assert.equal(upscaled.item.mode, 'upscale');
+  assert.equal(upscaled.item.url, 'https://cdn.example/big.jpg');
+  assert.equal(upscaled.item.version, 4);
+
+  assert.equal((await deleteMedia(env, storage, made.item.id)).status, 200);
+  assert.ok(!storage.raw.has(`media:${made.item.id}`));
+});
+
+test('art studio prefers the owner image connector', async () => {
+  const storage = memStorage();
+  const env = { CHE_IMAGE_GEN_URL: 'https://img.example/gen', AI: { run: async () => { throw new Error('should not run'); } } };
+  const made = await generateImage(env, storage, { prompt: 'logo' },
+    async () => new Response('{"url":"https://img.example/out.png"}', { status: 200 }));
+  assert.equal(made.item.url, 'https://img.example/out.png');
+  assert.equal(made.item.engine, 'Your image connector');
+});

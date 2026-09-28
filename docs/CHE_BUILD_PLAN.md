@@ -52,12 +52,15 @@ Deliberate trade-off: agents live in the owner's single `CheState` Durable Objec
 | Creator / Sound Studio (ON AIR, render queue, create actions) | Done |
 | Business War Room entry | Done |
 
+| Home swapped to the kit agent-chat design (9-state orb, glow composer, Agent/Chat, Stop, conversation switcher, code file cards, Saved-to-brain chips) | Done |
+| App-wide kit theme (logo colors) | Done |
+| `main.dart` split into `lib/home_state/*` part files (6.4k → 1.1k lines) | Done |
+| Art Studio: real images (Workers AI FLUX or your connector), versions, variation, refine, draft opt-in, upscale via connector, save to Vault | Done |
+
 ## Still to do
 
-1. Split `main.dart` into domain modules while it stays buildable.
-2. Replace the kit-less home chat bubbles with the kit's streaming chat widgets (code file cards, glowing composer).
-3. Richer Art Studio (versions, upscaling, variations) once an image engine is connected.
-4. Per-agent Durable Objects if the single owner Durable Object gets hot.
+1. Per-agent Durable Objects if the single owner Durable Object gets hot.
+2. Check on a deployed Worker that Stooq/CoinGecko/Open-Meteo answer Cloudflare requests. If Stooq blocks them, connect `CHE_MARKET_DATA_URL`.
 
 ## Phone test checklist
 
@@ -69,6 +72,8 @@ Deliberate trade-off: agents live in the owner's single `CheState` Durable Objec
 - [ ] Markets: the ticker moves, index panels show delayed values (or say Unavailable), tapping one changes the chart.
 - [ ] Apps → any site: tabs, favorites, reader mode, Summarize and Ask CHE all work.
 - [ ] Music → Studio: ON AIR lights while CHE talks. Podcast creates a cloud job in the render queue.
+- [ ] Home: the orb label changes Sleeping → Listening → Thinking → Speaking. Stop cancels a reply. Agent/Chat switches the hint. New Chat clears the screen, and the old chat is in the ▾ list.
+- [ ] Create → Art Studio: New piece shows up on the gallery wall. Variation and Refine add v2 and v3. Upscale says it needs a connector.
 
 
 - [ ] Pair the phone. Open Hub → Office → **Enter the Office floor + War Room**. CHE's desk is shown, and "0 working" when idle.

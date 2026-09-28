@@ -31,6 +31,8 @@ extension _CheHomeUi on _CHEHomeState {
             borderRadius: BorderRadius.circular(14),
             child: Image.network(
               item['media_url']!,
+              // Images CHE made on her own server need the paired-device token.
+              headers: item['media_url']!.startsWith(cheAgentBaseUrl) ? _authHeaders : null,
               fit: BoxFit.cover,
               errorBuilder: (_, _, _) => const Padding(
                 padding: EdgeInsets.all(12),

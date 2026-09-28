@@ -439,6 +439,24 @@ extension _CheHomeHubRooms on _CHEHomeState {
   }
 
   Widget _hubCreateTab(bool active) {
+    return CheRoomSegments(
+      labels: const ['Projects', 'Art Studio'],
+      icons: const [Icons.collections_bookmark_outlined, Icons.palette_outlined],
+      children: [
+        () => _createProjectsScene(active),
+        () => CheArtStudio(
+              baseUrl: () => cheAgentBaseUrl,
+              headers: () => _authHeaders,
+              onSaveToVault: (name, content) async {
+                await _postAgentJson('/api/vault/add', {'name': name, 'content': content, 'kind': 'art'});
+                await _loadAgentState(silent: true);
+              },
+            ),
+      ],
+    );
+  }
+
+  Widget _createProjectsScene(bool active) {
     return CreateGalleryScene(
       active: active,
       projects: projects,

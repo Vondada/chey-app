@@ -8,6 +8,7 @@ import 'package:chey/home/che_live_steps.dart';
 import 'package:chey/che_ui/che_agent_chat.dart';
 import 'package:chey/che_ui/che_backend.dart';
 import 'package:chey/che_ui/che_brain.dart';
+import 'package:chey/rooms/che_art_studio.dart';
 import 'package:chey/rooms/che_creator_studio.dart';
 import 'package:chey/rooms/che_markets_room.dart';
 import 'package:chey/self_update/che_update_card.dart';
@@ -218,5 +219,43 @@ void main() {
     await tester.pump(const Duration(seconds: 2));
     log.dispose();
     brain.dispose();
+  });
+
+  testWidgets('Art Studio shows the gallery wall and opens a piece with versions', (tester) async {
+    _phone(tester);
+    final client = MockClient((request) async {
+      if (request.url.path == '/api/media') {
+        return http.Response(jsonEncode({
+          'engine': 'workers_ai',
+          'upscaler': false,
+          'items': [
+            {'id': 'v2-000000', 'root_id': 'v1-000000', 'title': 'Neon studio', 'prompt': 'variation', 'mode': 'variation', 'version': 2, 'engine': 'CHE image engine'},
+            {'id': 'v1-000000', 'root_id': 'v1-000000', 'title': 'Neon studio', 'prompt': 'A neon studio', 'mode': 'new', 'version': 1, 'engine': 'CHE image engine'},
+          ],
+        }), 200);
+      }
+      return http.Response('', 404);
+    });
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: CheArtStudio(
+          baseUrl: () => 'https://che.example',
+          headers: () => const {},
+          client: client,
+          onSaveToVault: (_, _) async {},
+        ),
+      ),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('CHE image engine · highest quality'), findsOneWidget);
+    expect(find.text('Neon studio'), findsOneWidget);
+    expect(find.text('v2 · 2 versions'), findsOneWidget);
+    await tester.tap(find.text('Neon studio'));
+    await tester.pumpAndSettle();
+    expect(find.text('Variation'), findsOneWidget);
+    expect(find.text('Upscale (connect)'), findsOneWidget);
+    expect(find.text('v1'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
   });
 }

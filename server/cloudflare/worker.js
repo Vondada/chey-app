@@ -13,6 +13,7 @@ import {
   updateAgent,
 } from './agent_runtime.js';
 import { planPluginCall, pluginManifests, runPluginTool } from './plugin_runtime.js';
+import { deleteMedia, generateImage, listMedia, readBlob, upscaleImage } from './media.js';
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 
@@ -1619,6 +1620,40 @@ export class CheState extends DurableObject {
         return json({ ok: true });
       }
 
+      // ─── Art Studio media (real images, versions, honest upscaling) ────
+      if (path === '/api/media' && request.method === 'GET') {
+        return json({
+          items: await listMedia(this.ctx.storage),
+          engine: this.env.CHE_IMAGE_GEN_URL ? 'connector' : this.env.AI ? 'workers_ai' : 'none',
+          upscaler: Boolean(this.env.CHE_UPSCALE_URL),
+        });
+      }
+      if (path === '/api/media/generate' && request.method === 'POST') {
+        const { status, ...rest } = await generateImage(this.env, this.ctx.storage, body);
+        return json(rest, status);
+      }
+      const mediaMatch = /^\/api\/media\/([A-Za-z0-9-]{8,64})(\/image|\/upscale)?$/.exec(path);
+      if (mediaMatch) {
+        const [, mediaId, action] = mediaMatch;
+        if (action === '/image' && request.method === 'GET') {
+          const item = (await listMedia(this.ctx.storage)).find((entry) => entry.id === mediaId);
+          if (!item) return json({ detail: 'Piece not found.' }, 404);
+          if (item.url) return Response.redirect(item.url, 302);
+          const bytes = await readBlob(this.env, this.ctx.storage, item);
+          if (!bytes) return json({ detail: 'Image data missing.' }, 404);
+          return new Response(bytes, { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=86400' } });
+        }
+        if (action === '/upscale' && request.method === 'POST') {
+          const { status, ...rest } = await upscaleImage(this.env, this.ctx.storage, mediaId);
+          return json(rest, status);
+        }
+        if (!action && request.method === 'DELETE') {
+          const { status, ...rest } = await deleteMedia(this.env, this.ctx.storage, mediaId);
+          return json(rest, status);
+        }
+        return json({ detail: 'Not found.' }, 404);
+      }
+
       // ─── Markets desk (real quotes only; unavailable says so) ───────────
       if (path === '/api/markets/snapshot' && request.method === 'GET') {
         return json(await marketSnapshot(this.env));
@@ -2398,9 +2433,15 @@ export class CheState extends DurableObject {
           ? await optionalMultimodal(this.env, body.attachment, message)
           : null;
 
-        const imageGeneration = requestedCapabilities.includes('image_generation')
+        let imageGeneration = requestedCapabilities.includes('image_generation')
           ? await optionalMediaGeneration(this.env, 'image', message)
           : null;
+        if (requestedCapabilities.includes('image_generation') && !this.env.CHE_IMAGE_GEN_URL && this.env.AI) {
+          const made = await generateImage(this.env, this.ctx.storage, { prompt: message, title: message.slice(0, 60) });
+          imageGeneration = made.item
+            ? { url: `${new URL(request.url).origin}/api/media/${made.item.id}/image` }
+            : { error: made.detail };
+        }
         const videoGeneration = requestedCapabilities.includes('video_generation')
           ? await optionalMediaGeneration(this.env, 'video', message)
           : null;

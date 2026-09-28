@@ -9,7 +9,8 @@ const code = readFileSync(new URL('./worker.js', import.meta.url), 'utf8')
   .replace("from './agent_runtime.js'", `from '${new URL('./agent_runtime.js', import.meta.url).href}'`)
   .replace("from './plugin_runtime.js'", `from '${new URL('./plugin_runtime.js', import.meta.url).href}'`)
   .replace("from './self_update.js'", `from '${new URL('./self_update.js', import.meta.url).href}'`)
-  .replace("from './markets.js'", `from '${new URL('./markets.js', import.meta.url).href}'`);
+  .replace("from './markets.js'", `from '${new URL('./markets.js', import.meta.url).href}'`)
+  .replace("from './media.js'", `from '${new URL('./media.js', import.meta.url).href}'`);
 const { default: worker, CheState } = await import(
   `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
 );
@@ -368,4 +369,46 @@ test('logs, brain reflect, plugins, markets and self-update routes', async () =>
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test('media routes serve owner-only images; chat image requests use the CHE image engine', async () => {
+  const saved = new Map();
+  const env = {
+    CHE_PAIR_CODE: '123456',
+    AI: {
+      run: async (model, input) => (model.includes('flux')
+        ? { image: Buffer.from('IMG').toString('base64') }
+        : { response: 'Done.' }),
+    },
+  };
+  const state = new CheState({ storage: {
+    get: async (key) => (saved.has(key) ? JSON.parse(saved.get(key)) : undefined),
+    put: async (key, value) => saved.set(key, JSON.stringify(value)),
+    delete: async (key) => saved.delete(key),
+    setAlarm: async () => {},
+  } }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, method = 'GET', body = {}, token = '') => worker.fetch(
+    new Request(`https://che.example${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      ...(['POST', 'PATCH'].includes(method) ? { body: JSON.stringify(body) } : {}),
+    }), env,
+  );
+  const token = (await (await send('/api/pair', 'POST', { code: '123456' })).json()).device_token;
+
+  const made = (await (await send('/api/media/generate', 'POST', { prompt: 'a fox' }, token)).json()).item;
+  assert.equal((await send(`/api/media/${made.id}/image`)).status, 401);
+  const image = await send(`/api/media/${made.id}/image`, 'GET', {}, token);
+  assert.equal(image.headers.get('Content-Type'), 'image/jpeg');
+  assert.equal(Buffer.from(await image.arrayBuffer()).toString(), 'IMG');
+  const list = await (await send('/api/media', 'GET', {}, token)).json();
+  assert.equal(list.engine, 'workers_ai');
+  assert.equal(list.items.length, 1);
+  assert.equal((await send(`/api/media/${made.id}/upscale`, 'POST', {}, token)).status, 409);
+
+  const reply = await (await send('/api/chat', 'POST', {
+    message: 'Make an image of a red car', requested_capabilities: ['image_generation'],
+  }, token)).text();
+  assert.match(reply, /"media_type":"image","media_url":"https:\/\/che\.example\/api\/media\/[a-f0-9-]+\/image"/);
 });
