@@ -1,6 +1,17 @@
 // CHE cloud Agent. One SQLite-backed Durable Object holds paired devices and
 // memories, so deployment does not require creating a separate database.
 import { DurableObject } from 'cloudflare:workers';
+import {
+  agentDetail,
+  conveneMeeting,
+  createAgent,
+  normalizeAgent,
+  processAgentWork,
+  queueAgentTask,
+  recoverStaleWork,
+  runtimeSnapshot,
+  updateAgent,
+} from './agent_runtime.js';
 
 const FAST_MODEL = '@cf/meta/llama-3.2-3b-instruct';
 const STRONG_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
@@ -1199,6 +1210,42 @@ export class CheState extends DurableObject {
     super(state, env);
   }
 
+  async loadData() {
+    const data = (await this.ctx.storage.get('che')) || { devices: {}, memories: [], failures: {} };
+    data.team = Array.isArray(data.team) ? data.team : [];
+    data.team_tasks = Array.isArray(data.team_tasks) ? data.team_tasks : [];
+    data.jobs = Array.isArray(data.jobs) ? data.jobs : [];
+    data.meetings = Array.isArray(data.meetings) ? data.meetings : [];
+    data.owner_context = Array.isArray(data.owner_context) ? data.owner_context : [];
+    data.memories = Array.isArray(data.memories) ? data.memories : [];
+    return data;
+  }
+
+  // Pushes the live Agent Runtime state to every connected Office screen.
+  broadcastAgents(data) {
+    const sockets = this.ctx.getWebSockets ? this.ctx.getWebSockets() : [];
+    if (!sockets.length) return;
+    const message = JSON.stringify({ type: 'agents', ...runtimeSnapshot(data) });
+    for (const socket of sockets) {
+      try { socket.send(message); } catch (_) { /* closed socket */ }
+    }
+  }
+
+  async scheduleWork() {
+    await this.ctx.storage.setAlarm(Date.now() + 250);
+  }
+
+  async webSocketMessage(socket, message) {
+    if (String(message) === 'ping') socket.send(JSON.stringify({ type: 'pong' }));
+    if (String(message) === 'snapshot') {
+      socket.send(JSON.stringify({ type: 'agents', ...runtimeSnapshot(await this.loadData()) }));
+    }
+  }
+
+  async webSocketClose(socket, code) {
+    try { socket.close(code, 'closed'); } catch (_) { /* already closed */ }
+  }
+
   async fetch(request) {
     try {
       const path = new URL(request.url).pathname;
@@ -1213,6 +1260,8 @@ export class CheState extends DurableObject {
       data.team = Array.isArray(data.team) ? data.team : [];
       data.team_tasks = Array.isArray(data.team_tasks) ? data.team_tasks : [];
       data.jobs = Array.isArray(data.jobs) ? data.jobs : [];
+      data.meetings = Array.isArray(data.meetings) ? data.meetings : [];
+      data.team.forEach(normalizeAgent);
       data.plugin_enabled = data.plugin_enabled && typeof data.plugin_enabled === 'object'
         && !Array.isArray(data.plugin_enabled) ? data.plugin_enabled : {};
       data.preference_memory = Array.isArray(data.preference_memory) ? data.preference_memory : [];
@@ -1225,7 +1274,7 @@ export class CheState extends DurableObject {
             kind: 'software_agent',
             created_at: new Date().toISOString(),
           };
-      const body = request.method === 'POST' ? await bodyOf(request) : {};
+      const body = ['POST', 'PATCH'].includes(request.method) ? await bodyOf(request) : {};
       if (request.method === 'POST' && path === '/api/pair') {
         const secret = this.env.CHE_PAIR_CODE;
         if (!secret || !/^\d{6,12}$/.test(secret)) return json({ detail: 'Set CHE_PAIR_CODE as a server secret.' }, 503);
@@ -1511,6 +1560,74 @@ export class CheState extends DurableObject {
       }
       if (request.method === 'GET' && path === '/api/storage/status') {
         return json(storageReadiness(this.env));
+      }
+
+      // ─── Agent Runtime (Office agents live here, not in the app) ───────
+      if (path === '/api/agents/live') {
+        if (request.headers.get('Upgrade') !== 'websocket') {
+          return json({ detail: 'WebSocket upgrade required.' }, 426);
+        }
+        const pair = new WebSocketPair();
+        this.ctx.acceptWebSocket(pair[1]);
+        pair[1].send(JSON.stringify({ type: 'agents', ...runtimeSnapshot(data) }));
+        return new Response(null, { status: 101, webSocket: pair[0] });
+      }
+      if (path === '/api/agents' && request.method === 'GET') {
+        if (recoverStaleWork(data)) {
+          await this.ctx.storage.put('che', data);
+          await this.scheduleWork();
+        }
+        return json(runtimeSnapshot(data));
+      }
+      if (path === '/api/agents' && request.method === 'POST') {
+        const made = createAgent(data, body);
+        if (made.error) return json({ detail: made.error }, 400);
+        let task = null;
+        if (String(body.task || '').trim()) task = queueAgentTask(data, made.agent, body.task, 'owner');
+        await this.ctx.storage.put('che', data);
+        if (task) await this.scheduleWork();
+        this.broadcastAgents(data);
+        return json({ agent: agentDetail(data, made.agent).agent, task });
+      }
+      if (path === '/api/meetings' && request.method === 'GET') {
+        return json({ meetings: runtimeSnapshot(data).meetings });
+      }
+      if (path === '/api/meetings' && request.method === 'POST') {
+        const convened = conveneMeeting(data, body);
+        if (convened.error) return json({ detail: convened.error }, 400);
+        await this.ctx.storage.put('che', data);
+        await this.scheduleWork();
+        this.broadcastAgents(data);
+        return json({ meeting: convened.meeting, created_agents: convened.created.map((item) => item.name) });
+      }
+      const meetingMatch = /^\/api\/meetings\/([A-Za-z0-9-]{8,64})$/.exec(path);
+      if (meetingMatch && request.method === 'GET') {
+        const meeting = data.meetings.find((item) => item.id === meetingMatch[1]);
+        if (!meeting) return json({ detail: 'War Room not found.' }, 404);
+        return json({ meeting });
+      }
+      const agentMatch = /^\/api\/agents\/([A-Za-z0-9-]{8,64})(\/task)?$/.exec(path);
+      if (agentMatch) {
+        const agent = data.team.find((item) => item.id === agentMatch[1]);
+        if (!agent) return json({ detail: 'Agent not found.' }, 404);
+        if (!agentMatch[2] && request.method === 'GET') return json(agentDetail(data, agent));
+        if (agentMatch[2] && request.method === 'POST') {
+          const text = String(body.task || body.message || '').trim();
+          if (!text) return json({ detail: 'Tell the agent what to do.' }, 400);
+          const task = queueAgentTask(data, agent, text, 'owner');
+          await this.ctx.storage.put('che', data);
+          await this.scheduleWork();
+          this.broadcastAgents(data);
+          return json({ task });
+        }
+        if (!agentMatch[2] && request.method === 'PATCH') {
+          const outcome = updateAgent(data, agent, body);
+          if (outcome.error) return json({ detail: outcome.error }, 400);
+          await this.ctx.storage.put('che', data);
+          this.broadcastAgents(data);
+          return json(outcome.retired ? { ok: true, retired: agent.id } : agentDetail(data, agent));
+        }
+        return json({ detail: 'Not found.' }, 404);
       }
       if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
       if (path === '/api/voice/synthesize') {
@@ -2479,7 +2596,18 @@ export class CheState extends DurableObject {
             (/start the conversation/i.test(reply) && /say\s+[“"'']?hey\b/i.test(reply))) {
           reply = 'I’m awake, sir. What do you need?';
         }
-        return new Response(JSON.stringify({ type: 'delta', delta: reply }) + '\n' +
+        const steps = [
+          ...createdPartners.map((item) => ({ type: 'step', text: `Added ${item.name} (${item.role}) to the Office` })),
+          ...officeResults.map((item) => ({
+            type: 'step',
+            agent_id: item.partner_id,
+            agent: item.partner_name,
+            text: item.error ? `${item.partner_name} couldn’t finish` : `✓ ${item.partner_name} delivered (${item.role})`,
+          })),
+          ...(officePeerReview ? [{ type: 'step', text: '✓ Cross-checked the team’s findings' }] : []),
+        ];
+        return new Response(steps.map((item) => JSON.stringify(item) + '\n').join('') +
+          JSON.stringify({ type: 'delta', delta: reply }) + '\n' +
           JSON.stringify({ type: 'done', model }) + '\n', {
           headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' },
         });
@@ -2494,15 +2622,23 @@ export class CheState extends DurableObject {
   }
 
   async alarm() {
-    const data = (await this.ctx.storage.get('che')) || {
-      devices: {}, memories: [], failures: {},
-    };
-    data.jobs = Array.isArray(data.jobs) ? data.jobs : [];
+    const moreJobs = await this.processJobs();
+    const moreAgentWork = await processAgentWork({
+      env: this.env,
+      load: () => this.loadData(),
+      save: (value) => this.ctx.storage.put('che', value),
+      notify: () => { this.loadData().then((value) => this.broadcastAgents(value)).catch(() => {}); },
+      models: { fast: FAST_MODEL, strong: STRONG_MODEL },
+    });
+    if (moreJobs || moreAgentWork) await this.scheduleWork();
+  }
 
+  async processJobs() {
+    const data = await this.loadData();
     const queued = data.jobs
       .filter((job) => job.status === 'queued')
       .slice(0, 4);
-    if (!queued.length) return;
+    if (!queued.length) return false;
 
     const startedAt = new Date().toISOString();
     for (const job of queued) {
@@ -2562,20 +2698,19 @@ export class CheState extends DurableObject {
       }),
     );
 
+    // Re-read so memories, tasks or jobs added while the model ran survive.
+    const fresh = await this.loadData();
     const finishedAt = new Date().toISOString();
     for (const outcome of results) {
-      const job = data.jobs.find((item) => item.id === outcome.id);
+      const job = fresh.jobs.find((item) => item.id === outcome.id);
       if (!job) continue;
       job.status = outcome.status;
       job.result = outcome.result;
       job.error = outcome.error;
       job.updated_at = finishedAt;
     }
-    await this.ctx.storage.put('che', data);
-
-    if (data.jobs.some((job) => job.status === 'queued')) {
-      await this.ctx.storage.setAlarm(Date.now() + 250);
-    }
+    await this.ctx.storage.put('che', fresh);
+    return fresh.jobs.some((job) => job.status === 'queued');
   }
 }
 
