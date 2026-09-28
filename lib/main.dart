@@ -53,6 +53,8 @@ import 'che_ui/che_plugins.dart'
     show ChePluginOfferCard, ChePluginRegistry, ChePluginsScreen, chePluginAuthoringGuide;
 import 'che_ui/che_theme.dart' as kit show CheTheme;
 import 'plugins/che_plugin_webapp.dart';
+import 'self_update/che_patch_banner.dart';
+import 'self_update/che_update_card.dart';
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
 
@@ -270,6 +272,42 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
         : Uri.parse('$cheAgentBaseUrl/api/plugins/manifests'),
     resolveCatalogHeaders: () => _authHeaders,
   )..addListener(_onOfficeChanged);
+
+  // Self-development: approved che-update proposals become pull requests.
+  final CheUpdateTracker _updates = CheUpdateTracker();
+
+  Future<void> _rollbackLastUpdate() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Roll back last CHE update?'),
+        content: const Text(
+          'CHE opens a pull request that restores the files her last merged update changed. Nothing changes until you merge it.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Open rollback PR')),
+        ],
+      ),
+    );
+    if (ok != true || !await _ensurePaired() || !mounted) return;
+    String text;
+    try {
+      final r = await http
+          .post(Uri.parse('$cheAgentBaseUrl/api/self-update/rollback'), headers: _authHeaders, body: '{}')
+          .timeout(const Duration(seconds: 60));
+      final j = jsonDecode(r.body);
+      text = r.statusCode == 200 && j is Map
+          ? 'Rollback PR #${j['number']} opened for update #${j['rolls_back']}.'
+          : (j is Map ? '${j['detail'] ?? 'Rollback failed.'}' : 'Rollback failed.');
+      if (r.statusCode == 200 && j is Map && j['url'] is String) {
+        unawaited(launchUrl(Uri.parse(j['url'] as String), mode: LaunchMode.externalApplication));
+      }
+    } catch (_) {
+      text = 'Could not reach the CHE server.';
+    }
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
 
   static final RegExp _pluginWord = RegExp(r'\bplug-?ins?\b', caseSensitive: false);
 
@@ -5815,6 +5853,9 @@ OWNER AGENCY
                 case 'security':
                   await _openSecurityManager();
                   break;
+                case 'rollback':
+                  await _rollbackLastUpdate();
+                  break;
               }
             },
             itemBuilder: (context) => const [
@@ -5823,6 +5864,7 @@ OWNER AGENCY
               PopupMenuItem(value: 'server', child: Text('CHE server')),
               PopupMenuItem(value: 'screen', child: Text('Screen context')),
               PopupMenuItem(value: 'security', child: Text('Security + memory')),
+              PopupMenuItem(value: 'rollback', child: Text('Roll back last update')),
             ],
           ),
           IconButton(
@@ -5891,6 +5933,7 @@ OWNER AGENCY
       body: SafeArea(
         child: Column(
           children: [
+            const ChePatchBanner(),
             const Divider(color: Color(0xFF354859)),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
@@ -6021,15 +6064,26 @@ OWNER AGENCY
                           SelectableText(
                             isUser
                                 ? item['text'] ?? ''
-                                : (item['text'] ?? '')
+                                : CheUpdateProposal.stripBlocks((item['text'] ?? '')
                                     .replaceAll(RegExp(r'```che-plugin[\s\S]*?(```|$)'), '')
-                                    .trim(),
+                                    .trim()),
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 13.5,
                               height: 1.32,
                             ),
                           ),
+                          if (!isUser && !isLiveReply)
+                            for (final proposal in CheUpdateProposal.findInText(item['text'] ?? ''))
+                              Theme(
+                                data: kit.CheTheme.dark(),
+                                child: CheUpdateCard(
+                                  proposal: proposal,
+                                  tracker: _updates,
+                                  baseUrl: () => cheAgentBaseUrl,
+                                  headers: () => _authHeaders,
+                                ),
+                              ),
                           if (!isUser && !isLiveReply)
                             for (final plugin in ChePluginRegistry.findInText(item['text'] ?? ''))
                               Theme(

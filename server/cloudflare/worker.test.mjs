@@ -7,7 +7,8 @@ const code = readFileSync(new URL('./worker.js', import.meta.url), 'utf8')
   .replace("import { DurableObject } from 'cloudflare:workers';",
     'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }')
   .replace("from './agent_runtime.js'", `from '${new URL('./agent_runtime.js', import.meta.url).href}'`)
-  .replace("from './plugin_runtime.js'", `from '${new URL('./plugin_runtime.js', import.meta.url).href}'`);
+  .replace("from './plugin_runtime.js'", `from '${new URL('./plugin_runtime.js', import.meta.url).href}'`)
+  .replace("from './self_update.js'", `from '${new URL('./self_update.js', import.meta.url).href}'`);
 const { default: worker, CheState } = await import(
   `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
 );

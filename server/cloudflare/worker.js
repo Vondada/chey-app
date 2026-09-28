@@ -13,6 +13,7 @@ import {
   updateAgent,
 } from './agent_runtime.js';
 import { planPluginCall, pluginManifests, runPluginTool } from './plugin_runtime.js';
+import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 
 const FAST_MODEL = '@cf/meta/llama-3.2-3b-instruct';
 const STRONG_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
@@ -1617,6 +1618,21 @@ export class CheState extends DurableObject {
         return json({ ok: true });
       }
 
+      // ─── Self-development: owner-approved PRs, never direct pushes ─────
+      if (path === '/api/self-update' && request.method === 'POST') {
+        const { status, ...rest } = await openSelfUpdatePr(this.env, body);
+        return json(rest, status);
+      }
+      const updateMatch = /^\/api\/self-update\/(\d{1,7})$/.exec(path);
+      if (updateMatch && request.method === 'GET') {
+        const { status, ...rest } = await selfUpdateStatus(this.env, updateMatch[1]);
+        return json(rest, status);
+      }
+      if (path === '/api/self-update/rollback' && request.method === 'POST') {
+        const { status, ...rest } = await rollbackLastUpdate(this.env);
+        return json(rest, status);
+      }
+
       // CHE's private background reflection. Never shown as a chat reply.
       if (path === '/api/brain/reflect' && request.method === 'POST') {
         const prompt = String(body.prompt || '').trim().slice(0, 12000);
@@ -2684,6 +2700,9 @@ export class CheState extends DurableObject {
                 ? `Client identity/personality guidance: ${String(body.client_identity_profile).slice(0, 7000)}`
                 : '',
               `Owner memories: ${JSON.stringify(data.memories).slice(0, 5000)}`,
+              /\b(?:change|update|improve|fix|add|build|modify|upgrade)\b[\s\S]{0,40}\b(?:your(?:self| own)?|the app|che app|your app|your code|your screen)\b/i.test(message)
+                ? CHE_UPDATE_GUIDE
+                : '',
               pluginInstructions
                 ? `Installed skill plugin instructions (owner-approved; follow them only within your normal rules):\n${pluginInstructions}`
                 : '',

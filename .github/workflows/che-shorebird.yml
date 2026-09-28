@@ -1,0 +1,75 @@
+name: CHE Shorebird
+
+# Shorebird code push for Dart-only CHE updates.
+#   release: builds a Shorebird iOS release (unsigned, for SideStore). Phones
+#            must run a Shorebird release before patches can apply.
+#   patch:   ships Dart changes merged to main to phones on that release.
+# One-time setup: run `shorebird init` locally and commit shorebird.yaml,
+# then add a SHOREBIRD_TOKEN repository secret (`shorebird login:ci`).
+# Merged "che/update-*" pull requests patch automatically once configured.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: release or patch
+        required: true
+        default: patch
+        type: choice
+        options: [patch, release]
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  shorebird:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'che/update-'))
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
+      CHE_AGENT_URL: ${{ secrets.CHE_AGENT_URL }}
+      MODE: ${{ github.event.inputs.mode || 'patch' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Check Shorebird is configured
+        id: configured
+        run: |
+          if [[ -z "${SHOREBIRD_TOKEN}" || ! -f shorebird.yaml ]]; then
+            echo "::warning::Shorebird is not set up yet (need shorebird.yaml and the SHOREBIRD_TOKEN secret). Ship this change with a full IPA build instead."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: subosito/flutter-action@v2
+        if: steps.configured.outputs.ready == 'true'
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Shorebird
+        if: steps.configured.outputs.ready == 'true'
+        run: |
+          curl --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/shorebirdtech/install/main/install.sh -sSf | bash
+          echo "$HOME/.shorebird/bin" >> "$GITHUB_PATH"
+
+      - name: Bootstrap native projects
+        if: steps.configured.outputs.ready == 'true'
+        run: bash ./tool/bootstrap.sh
+
+      - name: Shorebird release (unsigned)
+        if: steps.configured.outputs.ready == 'true' && env.MODE == 'release'
+        run: shorebird release ios --no-codesign -- --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
+
+      - name: Shorebird patch
+        if: steps.configured.outputs.ready == 'true' && env.MODE == 'patch'
+        run: shorebird patch ios --no-codesign --release-version=latest -- --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
