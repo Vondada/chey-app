@@ -2,7 +2,7 @@ name: Check CHE Flutter client
 
 on:
   push:
-    branches: [main, che/realtime-conversation-rebuild, che-core-rebuild]
+    branches: [main, che/final-native-shell, che/realtime-conversation-rebuild, che-core-rebuild]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -20,6 +20,7 @@ jobs:
         with:
           channel: stable
       - run: bash tool/bootstrap.sh
+      - run: python3 tool/patch_free_local_ai.py
       - run: flutter analyze
       - run: flutter test
       - run: node --check server/cloudflare/worker.js
