@@ -77,7 +77,7 @@ class _CheRoomBackdropState extends State<CheRoomBackdrop> with SingleTickerProv
 
   @override
   Widget build(BuildContext context) {
-    return Stack(fit: StackFit.expand, children: [
+    final layers = [
       RepaintBoundary(
         child: AnimatedBuilder(
           animation: _c,
@@ -100,8 +100,16 @@ class _CheRoomBackdropState extends State<CheRoomBackdrop> with SingleTickerProv
           ),
         ),
       ),
-      if (widget.child != null) widget.child!,
-    ]);
+    ];
+    final child = widget.child;
+    return LayoutBuilder(builder: (context, constraints) {
+      // Inside a scroll view (unbounded height) the room sizes to its child
+      // instead of forcing infinite height.
+      if (child != null && !constraints.hasBoundedHeight) {
+        return Stack(children: [for (final layer in layers) Positioned.fill(child: layer), child]);
+      }
+      return Stack(fit: StackFit.expand, children: [...layers, ?child]);
+    });
   }
 }
 

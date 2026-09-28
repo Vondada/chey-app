@@ -370,14 +370,29 @@ class CheOfficeFloor extends StatelessWidget {
           padding: const EdgeInsets.all(CheSpace.md),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Row(children: [
-              Text('CHE OFFICE', style: CheType.overline.copyWith(color: Colors.white)),
-              const Spacer(),
-              Text('${agents.where((a) => a.status != CheAgentStatus.idle && a.status != CheAgentStatus.offline).length} working',
-                  style: CheType.caption.copyWith(color: Colors.white70)),
+              Flexible(
+                child: Text('CHE OFFICE',
+                    maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.overline.copyWith(color: Colors.white)),
+              ),
+              const SizedBox(width: CheSpace.sm),
+              Expanded(
+                child: Text(
+                  '${agents.where((a) => !const [CheAgentStatus.idle, CheAgentStatus.offline, CheAgentStatus.done].contains(a.status)).length} working',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.end,
+                  style: CheType.caption.copyWith(color: Colors.white70),
+                ),
+              ),
               if (onConvene != null) ...[
-                const SizedBox(width: CheSpace.sm),
+                const SizedBox(width: CheSpace.xs),
                 TextButton.icon(
                   onPressed: onConvene,
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: CheSpace.sm),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                  ),
                   icon: const Icon(Icons.groups_rounded, size: 18, color: Color(0xFFE8B04A)),
                   label: Text('War Room', style: CheType.label.copyWith(color: const Color(0xFFE8B04A))),
                 ),

@@ -39,6 +39,8 @@ import 'devices_hub_scene.dart';
 import 'music_studio_scene.dart';
 import 'create_gallery_scene.dart';
 import 'office_scene.dart';
+import 'agents/che_agent_runtime.dart';
+import 'agents/che_office_floor_screen.dart';
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
 
@@ -191,6 +193,12 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   String? _deviceToken;
   String _agentBaseUrl = _defaultAgentBaseUrl;
+
+  // Office agents run in the backend Agent Runtime; the app mirrors them.
+  late final CheAgentRuntimeClient _agentRuntime = CheAgentRuntimeClient(
+    baseUrl: () => cheAgentBaseUrl,
+    headers: () => _authHeaders,
+  );
 
   String get cheAgentBaseUrl {
     if (kIsWeb) return Uri.base.origin;
@@ -4308,9 +4316,23 @@ OWNER AGENCY
     );
   }
 
+  void _openOfficeFloor() {
+    HapticFeedback.selectionClick();
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CheOfficeFloorScreen(
+          client: _agentRuntime,
+          // Tapping CHE's desk returns to the conversation.
+          onTalkToChe: () => Navigator.of(context).popUntil((route) => route.isFirst),
+        ),
+      ),
+    ).then((_) => _loadAgentState(silent: true));
+  }
+
   Widget _hubOfficeTab(bool active) {
     return OfficeScene(
       active: active,
+      onOpenFloor: _openOfficeFloor,
       team: team,
       teamTasks: teamTasks,
       backgroundJobs: backgroundJobs,

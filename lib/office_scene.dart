@@ -10,6 +10,7 @@ class OfficeScene extends StatefulWidget {
     required this.backgroundJobs,
     required this.onAddPartner,
     required this.onOpenPartner,
+    this.onOpenFloor,
   });
 
   final bool active;
@@ -18,6 +19,9 @@ class OfficeScene extends StatefulWidget {
   final List<Map<String, dynamic>> backgroundJobs;
   final VoidCallback onAddPartner;
   final void Function(Map<String, dynamic> partner) onOpenPartner;
+
+  /// Opens the live Office floor (agents at desks, War Room).
+  final VoidCallback? onOpenFloor;
 
   @override
   State<OfficeScene> createState() => _OfficeSceneState();
@@ -214,6 +218,17 @@ class _OfficeSceneState extends State<OfficeScene>
                 ),
               ),
               const SizedBox(height: 14),
+              if (widget.onOpenFloor != null) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: widget.onOpenFloor,
+                    icon: const Icon(Icons.meeting_room_rounded),
+                    label: const Text('ENTER THE OFFICE FLOOR + WAR ROOM'),
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
               Row(
                 children: [
                   Expanded(
