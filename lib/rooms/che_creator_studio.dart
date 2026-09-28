@@ -75,7 +75,7 @@ class _CheCreatorStudioState extends State<CheCreatorStudio> with SingleTickerPr
   Widget build(BuildContext context) {
     return Theme(
       data: CheTheme.dark(),
-      child: ColoredBox(
+      child: Material(
         color: const Color(0xFF07040A),
         child: Column(children: [
           Padding(

@@ -40,7 +40,7 @@ class _CheInsightsRoomState extends State<CheInsightsRoom> {
   Widget build(BuildContext context) {
     return Theme(
       data: CheTheme.dark(),
-      child: ColoredBox(
+      child: Material(
         color: CheColors.bg,
         child: Column(
           children: [

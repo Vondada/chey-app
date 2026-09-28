@@ -276,3 +276,96 @@ test('agent runtime: roster, delegated tasks, CHE review, War Room and lifecycle
   assert.ok(!roster.agents.some((item) => item.id === nova.id));
   assert.equal((await send(`/api/agents/${nova.id}`, 'GET', {}, token)).status, 404);
 });
+
+test('logs, brain reflect, plugins, markets and self-update routes', async () => {
+  const saved = new Map();
+  const prompts = [];
+  const env = {
+    CHE_PAIR_CODE: '123456',
+    AI: {
+      run: async (model, input) => {
+        const system = input.messages[0].content;
+        prompts.push(system);
+        if (system.startsWith("Decide if ONE of these tools")) {
+          return { response: /Tool results so far/.test(system) ? 'NONE' : '{"plugin":"wikipedia","tool":"summary","params":{"title":"Chicago"}}' };
+        }
+        return { response: 'Chicago is a city in Illinois.' };
+      },
+    },
+  };
+  const state = new CheState({ storage: {
+    get: async (key) => (saved.has(key) ? JSON.parse(saved.get(key)) : undefined),
+    put: async (key, value) => saved.set(key, JSON.stringify(value)),
+    delete: async (key) => saved.delete(key),
+    setAlarm: async () => {},
+  } }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, method = 'GET', body = {}, token = '') => worker.fetch(
+    new Request(`https://che.example${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      ...(['POST', 'PATCH'].includes(method) ? { body: JSON.stringify(body) } : {}),
+    }), env,
+  );
+  const token = (await (await send('/api/pair', 'POST', { code: '123456' })).json()).device_token;
+
+  // Cloud conversation logs live under their own keys, not in 'che'.
+  for (const text of ['hello', 'second']) {
+    assert.equal((await send('/api/logs', 'POST', {
+      conversationId: 'c1', title: 'Hi', source: 'voice',
+      user: { text, at: '2026-09-28T10:00:00Z' }, che: { text: `re ${text}` },
+    }, token)).status, 200);
+  }
+  const logs = (await (await send('/api/logs', 'GET', {}, token)).json()).logs;
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].turns, 2);
+  const log = await (await send('/api/logs/c1', 'GET', {}, token)).json();
+  assert.equal(log.turns[1].user, 'second');
+  assert.equal(log.turns[0].source, 'voice');
+  assert.ok(!String(saved.get('che')).includes('re hello'));
+  assert.equal((await send('/api/logs', 'POST', {}, token)).status, 400);
+
+  const reflection = await (await send('/api/brain/reflect', 'POST', { prompt: 'Reflect', soul: 'You are CHE.' }, token)).json();
+  assert.equal(reflection.text, 'Chicago is a city in Illinois.');
+
+  const manifests = (await (await send('/api/plugins/manifests', 'GET', {}, token)).json()).plugins;
+  assert.ok(manifests.some((item) => item.id === 'weather'));
+
+  assert.equal((await send('/api/self-update', 'POST', { summary: 'x', files: [] }, token)).status, 503);
+  assert.equal((await send('/api/self-update/rollback', 'POST', {}, token)).status, 503);
+
+  // Chat: brain context and a plugin tool call, with a step line.
+  const realFetch = globalThis.fetch;
+  const fetched = [];
+  globalThis.fetch = async (url) => {
+    fetched.push(String(url));
+    if (String(url).startsWith('https://en.wikipedia.org/')) {
+      return new Response('{"extract":"Chicago is the third-largest US city."}', { status: 200 });
+    }
+    if (String(url).includes('stooq') || String(url).includes('coingecko')) return new Response('nope', { status: 503 });
+    return new Response('{}', { status: 404 });
+  };
+  try {
+    const wiki = manifests.find((item) => item.id === 'wikipedia');
+    const reply = await (await send('/api/chat', 'POST', {
+      message: 'Tell me about Chicago',
+      brain_context: ['[CHE SOUL] warm and sharp', '[Projects] Launch the pricing tier'],
+      plugin_instructions: ['[Plugin: Wikipedia] cite Wikipedia'],
+      plugin_tools: wiki.tools.map((t) => ({ ...t, plugin: 'wikipedia', plugin_name: 'Wikipedia', permissions: wiki.permissions })),
+    }, token)).text();
+    assert.match(reply, /"type":"step","text":"✓ Used Wikipedia · summary"/);
+    assert.match(reply, /Chicago is a city/);
+    assert.ok(fetched.includes('https://en.wikipedia.org/api/rest_v1/page/summary/Chicago'));
+    const chatPrompt = prompts.find((item) => item.startsWith('You are CHE, Cognitive Horizon Engine'));
+    assert.match(chatPrompt, /Launch the pricing tier/);
+    assert.match(chatPrompt, /third-largest US city/);
+    assert.match(chatPrompt, /cite Wikipedia/);
+    assert.match(chatPrompt, /che-remember/);
+
+    const markets = await (await send('/api/markets/snapshot', 'GET', {}, token)).json();
+    assert.ok(markets.quotes.length >= 3);
+    assert.ok(markets.quotes.every((q) => q.status === 'unavailable'));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

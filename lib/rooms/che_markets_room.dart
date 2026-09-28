@@ -154,7 +154,7 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
   Widget build(BuildContext context) {
     return Theme(
       data: CheTheme.dark(),
-      child: ColoredBox(
+      child: Material(
         color: const Color(0xFF05080A),
         child: RefreshIndicator(
           onRefresh: () async {

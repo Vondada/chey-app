@@ -41,7 +41,6 @@ import 'create_gallery_scene.dart';
 import 'office_scene.dart';
 import 'agents/che_agent_runtime.dart';
 import 'agents/che_office_floor_screen.dart';
-import 'che_ui/che_agents.dart';
 import 'home/che_live_steps.dart';
 import 'home/che_insights_room.dart';
 import 'home/che_cloud_logs_screen.dart';

@@ -104,7 +104,8 @@ async function putFile(env, branch, path, content, message, fetcher) {
 
 async function deleteFile(env, branch, path, message, fetcher) {
   const existing = await gh(env, 'GET', `/contents/${path}?ref=${encodeURIComponent(branch)}`, null, fetcher);
-  if (!existing.ok) return {};
+  if (existing.status === 404) return {}; // already gone
+  if (!existing.ok) return { error: `Could not read ${path} (${existing.status}).` };
   const del = await gh(env, 'DELETE', `/contents/${path}`, { message, sha: existing.data.sha, branch }, fetcher);
   return del.ok ? {} : { error: `Could not remove ${path} (${del.status}).` };
 }
