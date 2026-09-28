@@ -110,7 +110,7 @@ class _OfficeSceneState extends State<OfficeScene>
                         borderRadius: BorderRadius.circular(99),
                       ),
                       child: Text(
-                        newPartners.toString() + ' NEW',
+                        '$newPartners NEW',
                         style: const TextStyle(
                           color: Color(0xFF071318),
                           fontSize: 9,
@@ -218,13 +218,7 @@ class _OfficeSceneState extends State<OfficeScene>
                 children: [
                   Expanded(
                     child: Text(
-                      widget.team.length.toString() +
-                          ' AI coworker' +
-                          (widget.team.length == 1 ? '' : 's') +
-                          ' • ' +
-                          widget.teamTasks.length.toString() +
-                          ' tracked assignment' +
-                          (widget.teamTasks.length == 1 ? '' : 's'),
+                      '${widget.team.length} AI coworker${widget.team.length == 1 ? '' : 's'} • ${widget.teamTasks.length} tracked assignment${widget.teamTasks.length == 1 ? '' : 's'}',
                       style: const TextStyle(color: Colors.white54, fontSize: 11),
                     ),
                   ),
@@ -276,9 +270,9 @@ class _OfficeSceneState extends State<OfficeScene>
                   return _DeskPaper(
                     title: job['title']?.toString() ?? 'CHE background job',
                     body: result.isNotEmpty
-                        ? status + '\n' + result
+                        ? '$status\n$result'
                         : error.isNotEmpty
-                            ? status + '\n' + error
+                            ? '$status\n$error'
                             : status,
                     icon: status == 'complete'
                         ? Icons.check_circle_outline
@@ -366,7 +360,7 @@ class _PartnerFolder extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  role + (specialty.isEmpty ? '' : ' • ' + specialty),
+                  specialty.isEmpty ? role : '$role • $specialty',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
