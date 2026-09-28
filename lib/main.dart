@@ -3613,6 +3613,12 @@ OWNER AGENCY
       phoneConnected: _deviceToken != null,
       integrations: integrations,
       onPrompt: _runHubPrompt,
+      onVault: () {
+        unawaited(_openVault());
+      },
+      onMultimodal: () {
+        unawaited(_openMultimodalPicker());
+      },
     );
   }
 
