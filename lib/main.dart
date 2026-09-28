@@ -24,6 +24,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:url_launcher/url_launcher.dart';
 import 'che_native_voice.dart';
+import 'che_account_bridge.dart';
+import 'che_live_voice.dart';
 import 'che_app_portal.dart';
 import 'che_plugin_manager.dart';
 import 'che_theme.dart';
@@ -184,6 +186,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   // copies it. A Flutter web page cannot silently read other iPhone apps.
   String? _pendingScreenContext;
   Map<String, String>? _pendingAttachment;
+  String? _streamMediaUrl;
+  String? _streamMediaType;
   final ImagePicker _imagePicker = ImagePicker();
 
   List<String> savedMemories = [];
@@ -1163,6 +1167,27 @@ OWNER AGENCY
     );
   }
 
+  Future<void> _openAccountBridge() async {
+    if (!mounted) return;
+    await CheAccountBridge.open(context);
+  }
+
+  Future<void> _openLiveVoice() async {
+    if (!await _ensurePaired() || !mounted || _deviceToken == null) return;
+    if (cheAgentBaseUrl.isEmpty) {
+      await _showAgentServerDialog();
+      return;
+    }
+    await Navigator.of(context).push<void>(
+      CupertinoPageRoute(
+        builder: (_) => CheLiveVoiceScreen(
+          baseUrl: cheAgentBaseUrl,
+          deviceToken: _deviceToken!,
+        ),
+      ),
+    );
+  }
+
   Future<void> _openPluginManager() async {
     if (!await _ensurePaired() || !mounted || _deviceToken == null) return;
     await ChePluginManager.open(context, cheAgentBaseUrl, _deviceToken!);
@@ -1579,6 +1604,19 @@ OWNER AGENCY
       }
 
       await speakText('Standing by, sir.');
+      return;
+    }
+
+    if (type == 'wake_signal') {
+      if (cheSleeping && mounted) {
+        HapticFeedback.mediumImpact();
+        setState(() {
+          cheSleeping = false;
+          openConversation = true;
+          isListening = true;
+        });
+        await speakText('Yeah, sir?');
+      }
       return;
     }
 
@@ -4542,6 +4580,9 @@ OWNER AGENCY
         'timezone_name': DateTime.now().timeZoneName,
         'utc_offset_minutes': DateTime.now().timeZoneOffset.inMinutes,
       },
+      'agent_mode': 'full',
+      'proactive_mode': true,
+      'plugin_recommendations': true,
       'client': {
         'platform': kIsWeb ? 'web' : 'flutter',
         'open_conversation': openConversation,
@@ -4567,6 +4608,8 @@ OWNER AGENCY
     }
 
     final complete = StringBuffer();
+    _streamMediaUrl = null;
+    _streamMediaType = null;
 
     await for (final line in response.stream
         .transform(utf8.decoder)
@@ -4597,6 +4640,15 @@ OWNER AGENCY
           if (complete.isNotEmpty) complete.write('\n');
           complete.write(toolText);
           onPartial(complete.toString());
+        }
+      }
+
+      if (type == 'done') {
+        final mediaUrl = data['media_url']?.toString().trim() ?? '';
+        final mediaType = data['media_type']?.toString().trim() ?? '';
+        if (mediaUrl.startsWith('https://')) {
+          _streamMediaUrl = mediaUrl;
+          _streamMediaType = mediaType;
         }
       }
     }
@@ -4879,6 +4931,10 @@ OWNER AGENCY
       setState(() {
         if (assistantIndex != null && assistantIndex < messages.length) {
           messages[assistantIndex]['text'] = finalReply;
+          if (_streamMediaUrl != null) {
+            messages[assistantIndex]['media_url'] = _streamMediaUrl!;
+            messages[assistantIndex]['media_type'] = _streamMediaType ?? 'image';
+          }
         }
         _isSending = false;
       });
@@ -4997,7 +5053,7 @@ OWNER AGENCY
           ),
         ),
         centerTitle: true,
-        toolbarHeight: 95,
+        toolbarHeight: 82,
         leading: IconButton(
           onPressed: _openVirtualOffice,
           icon: const Icon(Icons.dashboard_rounded, color: accent),
@@ -5009,33 +5065,35 @@ OWNER AGENCY
             icon: const Icon(Icons.extension_outlined, color: accent),
             tooltip: 'CHE Plugins',
           ),
-          if (!kIsWeb)
-            IconButton(
-              onPressed: _showAgentServerDialog,
-              icon: const Icon(Icons.cloud_outlined, color: accent),
-              tooltip: 'CHE server address',
-            ),
-          IconButton(
-            onPressed: _loadSharedScreenContext,
-            icon: Icon(
-              _pendingScreenContext == null
-                  ? Icons.content_paste_search
-                  : Icons.visibility,
-              color: accent,
-            ),
-            tooltip: 'Use owner-shared screen/text context',
-          ),
-          IconButton(
-            onPressed: _openSecurityManager,
-            icon: Icon(
-              _deviceToken == null
-                  ? Icons.shield_outlined
-                  : Icons.shield,
-              color: _deviceToken == null
-                  ? Colors.orangeAccent
-                  : accent,
-            ),
-            tooltip: 'Security + learned personality',
+          PopupMenuButton<String>(
+            tooltip: 'CHE controls',
+            icon: const Icon(Icons.tune_rounded, color: accent),
+            onSelected: (value) async {
+              switch (value) {
+                case 'accounts':
+                  await _openAccountBridge();
+                  break;
+                case 'live_voice':
+                  await _openLiveVoice();
+                  break;
+                case 'server':
+                  await _showAgentServerDialog();
+                  break;
+                case 'screen':
+                  await _loadSharedScreenContext();
+                  break;
+                case 'security':
+                  await _openSecurityManager();
+                  break;
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'accounts', child: Text('Accounts + Face ID')),
+              PopupMenuItem(value: 'live_voice', child: Text('OpenAI Live Voice')),
+              PopupMenuItem(value: 'server', child: Text('CHE server')),
+              PopupMenuItem(value: 'screen', child: Text('Screen context')),
+              PopupMenuItem(value: 'security', child: Text('Security + memory')),
+            ],
           ),
           IconButton(
             onPressed: () async {
@@ -5076,7 +5134,7 @@ OWNER AGENCY
               'CHE',
               style: TextStyle(
                 color: accent,
-                fontSize: 29,
+                fontSize: 27,
                 fontWeight: FontWeight.w800,
                 letterSpacing: 4,
               ),
@@ -5094,7 +5152,7 @@ OWNER AGENCY
               statusText,
               style: const TextStyle(
                 color: accent,
-                fontSize: 9.5,
+                fontSize: 8.5,
                 letterSpacing: 1.25,
               ),
             ),          ],
@@ -5104,61 +5162,24 @@ OWNER AGENCY
         child: Column(
           children: [
             const Divider(color: Color(0xFF354859)),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 6, 14, 2),
-              child: Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 8,
-                runSpacing: 6,
-                children: [
-                  Chip(
-                    avatar: Icon(
-                      isListening ? Icons.mic : Icons.mic_none,
-                      size: 16,
-                      color: isListening ? accent : Colors.white54,
-                    ),
-                    label: Text(isListening ? 'Listening' : 'Mic standby'),
-                    backgroundColor: const Color(0xFF1A2935),
+            if (_pendingAttachment != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 4, 14, 2),
+                child: Chip(
+                  avatar: const Icon(Icons.attach_file, size: 15, color: accent),
+                  label: Text(
+                    _pendingAttachment!['name'] ?? 'Attachment ready',
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  Chip(
-                    avatar: Icon(
-                      _pendingScreenContext == null
-                          ? Icons.visibility_off_outlined
-                          : Icons.visibility,
-                      size: 16,
-                      color: _pendingScreenContext == null
-                          ? Colors.white54
-                          : accent,
-                    ),
-                    label: Text(
-                      _pendingScreenContext == null
-                          ? 'Screen context off'
-                          : 'Screen context ready',
-                    ),
-                    backgroundColor: const Color(0xFF1A2935),
-                  ),
-                  if (_pendingAttachment != null)
-                    Chip(
-                      avatar: const Icon(
-                        Icons.attach_file,
-                        size: 16,
-                        color: accent,
-                      ),
-                      label: Text(
-                        _pendingAttachment!['name'] ?? 'Attachment ready',
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      deleteIcon: const Icon(Icons.close, size: 16),
-                      onDeleted: () => setState(() => _pendingAttachment = null),
-                      backgroundColor: const Color(0xFF1A2935),
-                    ),
-                ],
+                  deleteIcon: const Icon(Icons.close, size: 15),
+                  onDeleted: () => setState(() => _pendingAttachment = null),
+                  backgroundColor: const Color(0xFF1A2935),
+                ),
               ),
-            ),
             if (openConversation)
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(8),
+                padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
                 color: const Color(0xFF163A40),
                 child: Text(
                   isListening
@@ -5174,8 +5195,8 @@ OWNER AGENCY
                   style: const TextStyle(
                     color: accent,
                     fontWeight: FontWeight.bold,
-                    letterSpacing: 1.4,
-                    fontSize: 11,
+                    letterSpacing: 1.0,
+                    fontSize: 9.5,
                   ),
                 ),
               ),
@@ -5192,8 +5213,8 @@ OWNER AGENCY
                     alignment:
                         isUser ? Alignment.centerRight : Alignment.centerLeft,
                     child: Container(
-                      margin: const EdgeInsets.symmetric(vertical: 9),
-                      padding: const EdgeInsets.all(16),
+                      margin: const EdgeInsets.symmetric(vertical: 6),
+                      padding: const EdgeInsets.all(13),
                       constraints: BoxConstraints(
                         maxWidth:
                             MediaQuery.of(context).size.width * 0.82,
@@ -5220,9 +5241,42 @@ OWNER AGENCY
                             item['text'] ?? '',
                             style: const TextStyle(
                               color: Colors.white,
-                              fontSize: 15,
+                              fontSize: 13.5,
+                              height: 1.32,
                             ),
                           ),
+                          if (!isUser &&
+                              item['media_type'] == 'image' &&
+                              (item['media_url'] ?? '').startsWith('https://')) ...[
+                            const SizedBox(height: 10),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(14),
+                              child: Image.network(
+                                item['media_url']!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => const Padding(
+                                  padding: EdgeInsets.all(12),
+                                  child: Text(
+                                    'Generated image could not be displayed.',
+                                    style: TextStyle(color: Colors.white54),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                          if (!isUser &&
+                              item['media_type'] == 'video' &&
+                              (item['media_url'] ?? '').startsWith('https://')) ...[
+                            const SizedBox(height: 8),
+                            TextButton.icon(
+                              onPressed: () => launchUrl(
+                                Uri.parse(item['media_url']!),
+                                mode: LaunchMode.externalApplication,
+                              ),
+                              icon: const Icon(Icons.play_circle_outline),
+                              label: const Text('OPEN GENERATED VIDEO'),
+                            ),
+                          ],
                         ],
                       ),
                     ),
