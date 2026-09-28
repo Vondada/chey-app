@@ -66,21 +66,30 @@ function formatClientTime(clientTime) {
 function safePreferenceFrom(message) {
   const blocked = /password|passcode|security code|social security|credit card|medical|diagnos|religion|politic|party|vote|race|ethnic|sexual|criminal|address/i;
   if (blocked.test(message)) return null;
+  const clean = (value) => String(value || '').trim().replace(/[.!?]+$/, '').slice(0, 180);
 
   let match = /\bmy favorite\s+([a-z][a-z\s]{1,30})\s+is\s+(.{1,100})$/i.exec(message.trim());
-  if (match) {
-    return `Favorite ${match[1].trim()}: ${match[2].trim().replace(/[.!?]+$/, '')}`;
-  }
+  if (match) return `Favorite ${match[1].trim()}: ${clean(match[2])}`;
 
-  match = /\bi prefer\s+(.{2,120})$/i.exec(message.trim());
-  if (match) {
-    return `Preference: ${match[1].trim().replace(/[.!?]+$/, '')}`;
-  }
+  match = /\bi prefer\s+(.{2,140})$/i.exec(message.trim());
+  if (match) return `Preference: ${clean(match[1])}`;
+
+  match = /\bi (?:really )?(?:like|love)\s+(.{2,140})$/i.exec(message.trim());
+  if (match) return `Likes: ${clean(match[1])}`;
+
+  match = /\bi (?:do not|don't|dont|dislike|hate)\s+(.{2,140})$/i.exec(message.trim());
+  if (match) return `Avoids: ${clean(match[1])}`;
+
+  match = /\bi (?:usually|normally|always)\s+(.{2,140})$/i.exec(message.trim());
+  if (match) return `Usual pattern: ${clean(match[1])}`;
+
+  match = /\b(?:from now on|when you talk to me|i want you to)\s+(.{2,160})$/i.exec(message.trim());
+  if (match) return `Assistant preference: ${clean(match[1])}`;
 
   return null;
 }
 
-async function voiceSynthesisResponse(env, text) {
+async function voiceSynthesisResponseasync function voiceSynthesisResponse(env, text) {
   if (!env.CHE_VOICE_URL) {
     return json({ detail: 'Natural voice service is not connected yet.' }, 503);
   }
@@ -444,76 +453,104 @@ async function optionalToolConnector(
 // as executable code or supplied by the model or a phone request.
 function pluginCatalog(env) {
   let entries;
-  try {
-    entries = JSON.parse(String(env.CHE_PLUGIN_CATALOG || '[]'));
-  } catch (_) {
-    return [];
-  }
+  try { entries = JSON.parse(String(env.CHE_PLUGIN_CATALOG || '[]')); }
+  catch (_) { return []; }
   if (!Array.isArray(entries)) return [];
+
   const seen = new Set();
-  return entries.slice(0, 30).flatMap((entry) => {
+  const modes = new Set(['read','search','model','media','stream','action','create','background']);
+  return entries.slice(0, 50).flatMap((entry) => {
     if (!entry || typeof entry !== 'object') return [];
     const id = String(entry.id || '');
     const name = String(entry.name || '').trim().slice(0, 60);
     const description = String(entry.description || '').trim().slice(0, 180);
     const secretName = String(entry.token_secret || '');
+    const mode = modes.has(String(entry.mode || '').toLowerCase()) ? String(entry.mode).toLowerCase() : 'read';
     const triggers = Array.isArray(entry.triggers)
-      ? entry.triggers.filter((term) => typeof term === 'string' &&
-          term.trim().length >= 3 && term.trim().length <= 40).slice(0, 12)
+      ? entry.triggers.filter((x) => typeof x === 'string' && x.trim().length >= 3 && x.trim().length <= 40).slice(0, 16)
+      : [];
+    const capabilities = Array.isArray(entry.capabilities)
+      ? entry.capabilities.filter((x) => typeof x === 'string' && /^[a-z][a-z0-9_]{1,39}$/.test(x)).slice(0, 16)
       : [];
     let url;
     try { url = new URL(String(entry.endpoint || '')); } catch (_) { return []; }
-    if (!/^[a-z][a-z0-9_]{2,39}$/.test(id) || seen.has(id) || !name ||
-        !description || !triggers.length || url.protocol !== 'https:' ||
-        url.username || url.password || !url.hostname.includes('.') ||
-        /^(?:localhost|.*\.localhost|.*\.local|.*\.internal)$/i.test(url.hostname) ||
-        /^(?:\d{1,3}\.){3}\d{1,3}$/.test(url.hostname) ||
-        url.hostname.includes(':') ||
+    if (!/^[a-z][a-z0-9_]{2,39}$/.test(id) || seen.has(id) || !name || !description ||
+        !triggers.length || url.protocol !== 'https:' || url.username || url.password ||
+        !url.hostname.includes('.') || /^(?:localhost|.*\.localhost|.*\.local|.*\.internal)$/i.test(url.hostname) ||
+        /^(?:\d{1,3}\.){3}\d{1,3}$/.test(url.hostname) || url.hostname.includes(':') ||
         (secretName && !/^CHE_PLUGIN_[A-Z0-9_]+_TOKEN$/.test(secretName))) return [];
     seen.add(id);
-    return [{ id, name, description, endpoint: url.toString(),
-      token_secret: secretName, triggers }];
+    return [{
+      id, name, description, endpoint: url.toString(), token_secret: secretName,
+      triggers, capabilities, mode,
+      requires_confirmation: entry.requires_confirmation !== false && ['action','create'].includes(mode),
+    }];
   });
 }
 
 function visiblePlugins(env, state) {
-  return pluginCatalog(env).map(({ id, name, description, token_secret }) => ({
-    id, name, description, mode: 'read_only',
-    ready: !token_secret || Boolean(env[token_secret]),
-    enabled: state?.[id] === true,
+  return pluginCatalog(env).map((p) => ({
+    id: p.id, name: p.name, description: p.description, mode: p.mode,
+    capabilities: p.capabilities,
+    ready: !p.token_secret || Boolean(env[p.token_secret]),
+    enabled: state?.[p.id] === true,
+    requires_confirmation: p.requires_confirmation,
+    security: 'Server allow-list • HTTPS only • secrets stay server-side',
   }));
 }
 
+function pluginRecommendations(env, state, requestedCapabilities) {
+  const requested = new Set(requestedCapabilities || []);
+  if (!requested.size) return [];
+  return pluginCatalog(env)
+    .filter((p) => p.capabilities.some((cap) => requested.has(cap)) && state?.[p.id] !== true)
+    .slice(0, 5)
+    .map((p) => ({
+      id: p.id, name: p.name, mode: p.mode,
+      ready: !p.token_secret || Boolean(env[p.token_secret]),
+      capabilities: p.capabilities,
+    }));
+}
+
 async function pluginResults(env, state, message) {
-  const active = pluginCatalog(env).filter((plugin) =>
-    state?.[plugin.id] === true &&
-    (!plugin.token_secret || env[plugin.token_secret]) &&
-    plugin.triggers.some((term) => message.toLowerCase().includes(term.toLowerCase()))
-  ).slice(0, 2);
-  return Promise.all(active.map(async (plugin) => {
+  const active = pluginCatalog(env).filter((p) =>
+    state?.[p.id] === true &&
+    (!p.token_secret || env[p.token_secret]) &&
+    p.triggers.some((term) => message.toLowerCase().includes(term.toLowerCase()))
+  ).slice(0, 4);
+
+  return Promise.all(active.map(async (p) => {
+    if (p.requires_confirmation) {
+      return {
+        plugin: p.id, name: p.name, mode: p.mode, requires_owner_confirmation: true,
+        result: 'Connected and ready; owner confirmation is required before write/action execution.',
+      };
+    }
     try {
-      const response = await fetch(plugin.endpoint, {
+      const response = await fetch(p.endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(plugin.token_secret ? { Authorization: `Bearer ${env[plugin.token_secret]}` } : {}),
+          ...(p.token_secret ? { Authorization: `Bearer ${env[p.token_secret]}` } : {}),
         },
-        body: JSON.stringify({ query: message.slice(0, 3000), tool: plugin.id,
-          mode: 'read_only' }),
-        signal: AbortSignal.timeout(8000),
+        body: JSON.stringify({ query: message.slice(0, 3000), tool: p.id, mode: p.mode }),
+        signal: AbortSignal.timeout(10000),
       });
-      if (!response.ok) return { plugin: plugin.id, error: `connector returned ${response.status}` };
-      const raw = (await response.text()).slice(0, 6000);
+      if (!response.ok) return { plugin: p.id, name: p.name, error: `connector returned ${response.status}` };
+      const raw = (await response.text()).slice(0, 9000);
       let result;
       try { result = JSON.parse(raw); } catch (_) { result = raw; }
-      return { plugin: plugin.id, result: JSON.stringify(result).slice(0, 5000) };
+      return {
+        plugin: p.id, name: p.name, mode: p.mode,
+        result: typeof result === 'string' ? result : JSON.stringify(result).slice(0, 8000),
+      };
     } catch (_) {
-      return { plugin: plugin.id, error: 'connector unavailable' };
+      return { plugin: p.id, name: p.name, error: 'connector unavailable' };
     }
   }));
 }
 
-async function runOfficeAgents(env, team, requestedCapabilities, query) {
+async function runOfficeAgentsasync function runOfficeAgents(env, team, requestedCapabilities, query) {
   const requested = new Set(requestedCapabilities || []);
   const roleNeeds = [
     {
