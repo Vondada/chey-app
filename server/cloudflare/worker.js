@@ -317,6 +317,58 @@ function ownerContextPreview(item) {
   };
 }
 
+// PCM16 mono -> WAV container so AVAudioPlayer can play it directly.
+function pcm16ToWav(pcm, sampleRate = 24000) {
+  const header = new ArrayBuffer(44);
+  const v = new DataView(header);
+  const writeText = (offset, text) => { for (let i = 0; i < text.length; i++) v.setUint8(offset + i, text.charCodeAt(i)); };
+  writeText(0, 'RIFF');
+  v.setUint32(4, 36 + pcm.byteLength, true);
+  writeText(8, 'WAVE');
+  writeText(12, 'fmt ');
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); // PCM
+  v.setUint16(22, 1, true); // mono
+  v.setUint32(24, sampleRate, true);
+  v.setUint32(28, sampleRate * 2, true);
+  v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true);
+  writeText(36, 'data');
+  v.setUint32(40, pcm.byteLength, true);
+  const out = new Uint8Array(44 + pcm.byteLength);
+  out.set(new Uint8Array(header), 0);
+  out.set(pcm, 44);
+  return out;
+}
+
+async function geminiSpeech(env, text, fetcher = fetch) {
+  try {
+    const model = String(env.CHE_GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts');
+    const response = await fetcher(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: `Say warmly, smoothly and naturally, like a confident, friendly young woman in conversation: ${text.slice(0, 4000)}` }] }],
+          generationConfig: {
+            responseModalities: ['AUDIO'],
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: String(env.CHE_GEMINI_VOICE || 'Aoede') } } },
+          },
+        }),
+      },
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    const b64 = data?.candidates?.[0]?.content?.parts?.find((part) => part?.inlineData?.data)?.inlineData?.data;
+    if (!b64) return null;
+    const pcm = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    return pcm.byteLength ? pcm16ToWav(pcm) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 async function voiceSynthesisResponse(env, text) {
   const input = String(text || '').trim().slice(0, 6000);
 
@@ -386,6 +438,17 @@ async function voiceSynthesisResponse(env, text) {
       }
     } catch (_) {
       // Fall through to any custom CHE voice connector below.
+    }
+  }
+
+  // Free smooth voice fallback: Google Gemini text-to-speech on its free
+  // tier (GEMINI_API_KEY). Returns 24 kHz speech wrapped as WAV.
+  if (env.GEMINI_API_KEY) {
+    const wav = await geminiSpeech(env, input);
+    if (wav) {
+      return new Response(wav, {
+        headers: { 'Content-Type': 'audio/wav', 'Cache-Control': 'no-store', 'X-CHE-Voice': 'gemini-tts' },
+      });
     }
   }
 
@@ -1567,7 +1630,7 @@ export class CheState extends DurableObject {
             background_jobs: true,
             agent_identity: true,
             service_accounts: true,
-            natural_voice: Boolean(this.env.CHE_OPENAI_API_KEY || this.env.AI || this.env.CHE_VOICE_URL),
+            natural_voice: Boolean(this.env.CHE_OPENAI_API_KEY || this.env.AI || this.env.CHE_VOICE_URL || this.env.GEMINI_API_KEY),
             openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY),
             porcupine_wake_word: Boolean(this.env.CHE_PICOVOICE_ACCESS_KEY && this.env.CHE_PICOVOICE_KEYWORD_PPN_B64),
             apple_vocal_shortcut: true,
@@ -2736,7 +2799,7 @@ export class CheState extends DurableObject {
                 windows: Boolean(this.env.CHE_WINDOWS_URL),
                 car: Boolean(this.env.CHE_CAR_URL),
                 smart_home: Boolean(this.env.CHE_SMART_HOME_URL),
-                natural_voice: Boolean(this.env.CHE_OPENAI_API_KEY || this.env.AI || this.env.CHE_VOICE_URL),
+                natural_voice: Boolean(this.env.CHE_OPENAI_API_KEY || this.env.AI || this.env.CHE_VOICE_URL || this.env.GEMINI_API_KEY),
                 openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY),
                 background_jobs: true,
                 quantum_compute: Boolean(this.env.CHE_QUANTUM_URL),
