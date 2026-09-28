@@ -49,6 +49,10 @@ import 'che_ui/che_agent_chat.dart' show CheAgentController;
 import 'che_ui/che_backend.dart' show CheBackend;
 import 'che_ui/che_brain.dart' show CheBrain;
 import 'che_ui/che_log.dart' show CheConversationStore;
+import 'che_ui/che_plugins.dart'
+    show ChePluginOfferCard, ChePluginRegistry, ChePluginsScreen, chePluginAuthoringGuide;
+import 'che_ui/che_theme.dart' as kit show CheTheme;
+import 'plugins/che_plugin_webapp.dart';
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
 
@@ -257,6 +261,44 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     } catch (_) {
       return const [];
     }
+  }
+
+  // Skill plugins: JSON manifests installed on the phone (no rebuild).
+  late final ChePluginRegistry _skillPlugins = ChePluginRegistry(
+    resolveCatalogUrl: () => _deviceToken == null || cheAgentBaseUrl.isEmpty
+        ? null
+        : Uri.parse('$cheAgentBaseUrl/api/plugins/manifests'),
+    resolveCatalogHeaders: () => _authHeaders,
+  )..addListener(_onOfficeChanged);
+
+  static final RegExp _pluginWord = RegExp(r'\bplug-?ins?\b', caseSensitive: false);
+
+  List<String> _pluginInstructionsFor(String message) => [
+        ..._skillPlugins.systemAddons(),
+        if (_pluginWord.hasMatch(message)) chePluginAuthoringGuide.trim(),
+      ];
+
+  /// Sends a prompt from a plugin card / quick action / mini app to CHE.
+  void _runPluginPrompt(String prompt) {
+    if (!mounted) return;
+    Navigator.of(context).popUntil((route) => route.isFirst);
+    controller.text = prompt;
+    unawaited(sendMessage());
+  }
+
+  Future<void> _openSkillPlugins() async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => Theme(
+        data: kit.CheTheme.dark(),
+        child: ChePluginsScreen(
+          registry: _skillPlugins,
+          onAskCheToBuild: () => _runPluginPrompt('Build me a plugin that '),
+          onRunPrompt: _runPluginPrompt,
+          webAppBuilder: (context, {String? html, String? url}) =>
+              ChePluginWebApp(html: html, url: url, onPrompt: _runPluginPrompt),
+        ),
+      ),
+    ));
   }
 
   void _onOfficeChanged() {
@@ -548,6 +590,7 @@ OWNER AGENCY
     _voiceSnapshot = _voiceMachine.snapshot;
     unawaited(_brain.load());
     unawaited(_brainLog.restore());
+    unawaited(_skillPlugins.load());
     initializeVoice();
     _loadSecuritySession();
     _proactiveTimer = Timer.periodic(
@@ -1710,6 +1753,35 @@ OWNER AGENCY
   }
 
   Future<void> _openPluginManager() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: CheColors.panel,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.extension_rounded),
+              title: const Text('Skill plugins'),
+              subtitle: const Text('Install, build with CHE, roll back, Safe mode'),
+              onTap: () => Navigator.pop(sheetContext, 'skills'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.dns_outlined),
+              title: const Text('Server connectors'),
+              subtitle: const Text('Read-only services configured on your CHE server'),
+              onTap: () => Navigator.pop(sheetContext, 'server'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || choice == null) return;
+    if (choice == 'skills') {
+      await _openSkillPlugins();
+      return;
+    }
     if (!await _ensurePaired() || !mounted || _deviceToken == null) return;
     await ChePluginManager.open(context, cheAgentBaseUrl, _deviceToken!);
   }
@@ -5071,6 +5143,8 @@ OWNER AGENCY
       'client_personality_profile': learnedPersonality,
       'client_memories': savedMemories,
       'brain_context': _brainContextFor(userMessage),
+      'plugin_instructions': _pluginInstructionsFor(userMessage),
+      'plugin_tools': _skillPlugins.tools(),
       'client_time': {
         'local_iso': DateTime.now().toIso8601String(),
         'timezone_name': DateTime.now().timeZoneName,
@@ -5583,7 +5657,7 @@ OWNER AGENCY
     HapticFeedback.selectionClick();
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: CheColors.surface,
+      backgroundColor: CheColors.panel,
       showDragHandle: true,
       builder: (sheetContext) => SafeArea(
         child: Column(
@@ -5659,6 +5733,9 @@ OWNER AGENCY
       ..dispose();
     _brainLog.dispose();
     _brain.dispose();
+    _skillPlugins
+      ..removeListener(_onOfficeChanged)
+      ..dispose();
     _listenRestartTimer?.cancel();
     _proactiveTimer?.cancel();
     _nativeIosVoiceSub?.cancel();
@@ -5942,13 +6019,23 @@ OWNER AGENCY
                           ],
                           if (!isLiveReply || (item['text'] ?? '').isNotEmpty)
                           SelectableText(
-                            item['text'] ?? '',
+                            isUser
+                                ? item['text'] ?? ''
+                                : (item['text'] ?? '')
+                                    .replaceAll(RegExp(r'```che-plugin[\s\S]*?(```|$)'), '')
+                                    .trim(),
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 13.5,
                               height: 1.32,
                             ),
                           ),
+                          if (!isUser && !isLiveReply)
+                            for (final plugin in ChePluginRegistry.findInText(item['text'] ?? ''))
+                              Theme(
+                                data: kit.CheTheme.dark(),
+                                child: ChePluginOfferCard(registry: _skillPlugins, plugin: plugin),
+                              ),
                           if (!isUser &&
                               item['media_type'] == 'image' &&
                               (item['media_url'] ?? '').startsWith('https://')) ...[
@@ -5989,6 +6076,25 @@ OWNER AGENCY
                 },
               ),
             ),
+            if (_skillPlugins.quickActions().isNotEmpty)
+              SizedBox(
+                height: 40,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  children: [
+                    for (final action in _skillPlugins.quickActions().take(8))
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ActionChip(
+                          avatar: const Icon(Icons.bolt_rounded, size: 16, color: accent),
+                          label: Text(action, maxLines: 1, overflow: TextOverflow.ellipsis),
+                          onPressed: _isSending ? null : () => _runPluginPrompt(action),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
             Container(
               padding: const EdgeInsets.all(14),
               decoration: const BoxDecoration(
