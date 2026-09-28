@@ -13,6 +13,7 @@ import {
   updateAgent,
 } from './agent_runtime.js';
 import { planPluginCall, pluginManifests, runPluginTool } from './plugin_runtime.js';
+import { routedEnv } from './ai_router.js';
 import { deleteMedia, generateImage, listMedia, readBlob, upscaleImage } from './media.js';
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
@@ -1248,6 +1249,8 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
     } catch (error) {
       lastError = error;
       console.error('CHE chat model attempt failed', attempt.model, attempt.system.length, error?.message);
+      // Every engine is out of quota: retrying only burns more allowance.
+      if (error?.quota) break;
     }
   }
   throw lastError;
@@ -1256,6 +1259,8 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
 export class CheState extends DurableObject {
   constructor(state, env) {
     super(state, env);
+    // Every text model call goes through CHE's free-engine router.
+    this.env = routedEnv(env);
   }
 
   async loadData() {

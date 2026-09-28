@@ -231,3 +231,45 @@ test('art studio prefers the owner image connector', async () => {
   assert.equal(made.item.url, 'https://img.example/out.png');
   assert.equal(made.item.engine, 'Your image connector');
 });
+
+import { resetRouterForTests, routeText, routedEnv } from './ai_router.js';
+
+test('AI router falls through free engines when Cloudflare quota is used up', async () => {
+  resetRouterForTests();
+  let cfCalls = 0;
+  const env = {
+    AI: { run: async () => { cfCalls += 1; throw new Error('4006: you have used up your daily free allocation of 10,000 neurons'); } },
+    GROQ_API_KEY: 'g',
+    GEMINI_API_KEY: 'm',
+  };
+  const hits = [];
+  const fetcher = async (url, init) => {
+    const body = JSON.parse(init.body);
+    hits.push({ url, model: body.model, auth: init.headers.Authorization });
+    if (url.includes('groq')) return new Response('{"error":{"message":"rate limit"}}', { status: 429 });
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'From Gemini.' } }] }), { status: 200 });
+  };
+  const input = { messages: [{ role: 'user', content: 'hi' }], max_tokens: 50 };
+  const first = await routeText(env, '@cf/meta/llama-3.2-3b-instruct', input, fetcher);
+  assert.equal(first.response, 'From Gemini.');
+  assert.equal(first.engine, 'gemini');
+  assert.equal(hits[0].model, 'llama-3.1-8b-instant');
+  assert.equal(hits[0].auth, 'Bearer g');
+
+  // Cloudflare is skipped for the rest of the day; Groq rests after its 429.
+  hits.length = 0;
+  const second = await routeText(env, '@cf/meta/llama-3.1-8b-instruct-fp8', input, fetcher);
+  assert.equal(second.response, 'From Gemini.');
+  assert.equal(cfCalls, 1);
+  assert.deepEqual(hits.map((h) => h.url.includes('generativelanguage.googleapis.com')), [true]);
+  assert.equal(hits[0].model, 'gemini-2.5-flash');
+
+  // Images never leave Cloudflare; text with no fallback keys explains itself.
+  resetRouterForTests();
+  const wrapped = routedEnv({ AI: { run: async (m) => ({ image: m }) } });
+  assert.deepEqual(await wrapped.AI.run('@cf/black-forest-labs/flux-1-schnell', { prompt: 'x' }), { image: '@cf/black-forest-labs/flux-1-schnell' });
+  await assert.rejects(
+    routeText({ AI: { run: async () => { throw new Error('4006 neurons'); } } }, 'm', input, fetcher),
+    (error) => error.quota === true && /GROQ_API_KEY/.test(error.message),
+  );
+});

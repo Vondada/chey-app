@@ -10,7 +10,8 @@ const code = readFileSync(new URL('./worker.js', import.meta.url), 'utf8')
   .replace("from './plugin_runtime.js'", `from '${new URL('./plugin_runtime.js', import.meta.url).href}'`)
   .replace("from './self_update.js'", `from '${new URL('./self_update.js', import.meta.url).href}'`)
   .replace("from './markets.js'", `from '${new URL('./markets.js', import.meta.url).href}'`)
-  .replace("from './media.js'", `from '${new URL('./media.js', import.meta.url).href}'`);
+  .replace("from './media.js'", `from '${new URL('./media.js', import.meta.url).href}'`)
+  .replace("from './ai_router.js'", `from '${new URL('./ai_router.js', import.meta.url).href}'`);
 const { default: worker, CheState } = await import(
   `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
 );
@@ -453,5 +454,5 @@ test('chat recovers when the model rejects the full prompt, and reports real err
   failAll = true;
   const bad = await send('/api/chat', { message: 'Why' }, token);
   assert.equal(bad.status, 503);
-  assert.match((await bad.json()).detail, /temporarily unavailable \(AiError: 3036: model overloaded\)/);
+  assert.match((await bad.json()).detail, /temporarily unavailable \(All AI engines failed \(cloudflare: AiError: 3036: model overloaded\)/);
 });
