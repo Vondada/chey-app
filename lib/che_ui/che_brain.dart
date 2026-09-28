@@ -605,9 +605,9 @@ class CheBrainCard extends StatelessWidget {
                 width: double.infinity,
                 padding: const EdgeInsets.all(CheSpace.md),
                 decoration: BoxDecoration(
-                  color: CheColors.accent.withOpacity(0.06),
+                  color: CheColors.accent.withValues(alpha: 0.06),
                   borderRadius: BorderRadius.circular(CheRadius.md),
-                  border: Border.all(color: CheColors.accent.withOpacity(0.25)),
+                  border: Border.all(color: CheColors.accent.withValues(alpha: 0.25)),
                 ),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text('LATEST THOUGHT', style: CheType.overline.copyWith(color: CheColors.accent)),
@@ -822,7 +822,7 @@ class _GraphPainter extends CustomPainter {
       pts.add(Offset(x, y));
     }
     final link = Paint()
-      ..color = CheColors.accent.withOpacity(0.18)
+      ..color = CheColors.accent.withValues(alpha: 0.18)
       ..strokeWidth = 1;
     for (var i = 0; i < n; i++) {
       for (var j = i + 1; j < n; j++) {
@@ -830,14 +830,14 @@ class _GraphPainter extends CustomPainter {
         canvas.drawLine(pts[i], pts[j], link);
         final p = ((t * 2 + i * 0.13 + j * 0.07) % 1.0);
         final pulse = Offset.lerp(pts[i], pts[j], p)!;
-        canvas.drawCircle(pulse, 1.6, Paint()..color = CheColors.accent.withOpacity(0.8));
+        canvas.drawCircle(pulse, 1.6, Paint()..color = CheColors.accent.withValues(alpha: 0.8));
       }
     }
     for (var i = 0; i < n; i++) {
       final c = counts[cheKnowledgeKinds[i]] ?? 0;
       final r = 5.0 + math.min(10.0, c * 1.5);
       canvas.drawCircle(pts[i], r * 2.2,
-          Paint()..shader = RadialGradient(colors: [CheColors.accent.withOpacity(c > 0 ? 0.45 : 0.12), Colors.transparent])
+          Paint()..shader = RadialGradient(colors: [CheColors.accent.withValues(alpha: c > 0 ? 0.45 : 0.12), Colors.transparent])
               .createShader(Rect.fromCircle(center: pts[i], radius: r * 2.2)));
       canvas.drawCircle(pts[i], r, Paint()..color = c > 0 ? CheColors.accent : CheColors.textFaint);
       final tp = TextPainter(
