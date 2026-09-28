@@ -102,14 +102,6 @@ async function putFile(env, branch, path, content, message, fetcher) {
   return put.ok ? {} : { error: `Could not write ${path} (${put.status}).` };
 }
 
-async function deleteFile(env, branch, path, message, fetcher) {
-  const existing = await gh(env, 'GET', `/contents/${path}?ref=${encodeURIComponent(branch)}`, null, fetcher);
-  if (existing.status === 404) return {}; // already gone
-  if (!existing.ok) return { error: `Could not read ${path} (${existing.status}).` };
-  const del = await gh(env, 'DELETE', `/contents/${path}`, { message, sha: existing.data.sha, branch }, fetcher);
-  return del.ok ? {} : { error: `Could not remove ${path} (${del.status}).` };
-}
-
 export async function openSelfUpdatePr(env, body, fetcher = fetch) {
   if (!repoOf(env)) return { status: 503, detail: 'Self-update needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the CHE server.' };
   const summary = String(body.summary || '').trim().slice(0, 2000);
@@ -170,41 +162,44 @@ export async function selfUpdateStatus(env, number, fetcher = fetch) {
   };
 }
 
-// Opens a PR restoring every file the last merged CHE update changed.
+// Opens a real git revert of the last merged CHE update (GitHub's
+// revertPullRequest). Only that update's changes are undone; later edits to
+// the same files are kept, and a revert that would conflict is refused
+// instead of overwriting newer work.
 export async function rollbackLastUpdate(env, fetcher = fetch) {
   if (!repoOf(env)) return { status: 503, detail: 'Self-update is not connected to GitHub.' };
   const list = await gh(env, 'GET', '/pulls?state=closed&per_page=50&sort=updated&direction=desc', null, fetcher);
   const last = (Array.isArray(list.data) ? list.data : [])
     .find((pr) => pr.merged_at && String(pr.head?.ref || '').startsWith(BRANCH_PREFIX));
   if (!last) return { status: 404, detail: 'No merged CHE update to roll back.' };
-  const files = await gh(env, 'GET', `/pulls/${last.number}/files?per_page=100`, null, fetcher);
-  if (!files.ok) return { status: 502, detail: 'Could not read the update’s files.' };
-  const base = await baseBranch(env, fetcher);
-  const branch = `che/rollback-${last.number}-${Date.now().toString(36)}`;
-  const made = await createBranch(env, branch, base, fetcher);
-  if (made.error) return { status: 502, detail: made.error };
-  const beforeSha = last.base.sha;
-  for (const file of files.data) {
-    const message = `Roll back CHE update #${last.number}: ${file.filename}`;
-    if (file.status === 'added') {
-      const removed = await deleteFile(env, branch, file.filename, message, fetcher);
-      if (removed.error) return { status: 502, detail: removed.error };
-      continue;
-    }
-    const old = await gh(env, 'GET', `/contents/${file.previous_filename || file.filename}?ref=${beforeSha}`, null, fetcher);
-    if (!old.ok || typeof old.data?.content !== 'string') return { status: 502, detail: `Could not read the old ${file.filename}.` };
-    const text = new TextDecoder().decode(Uint8Array.from(atob(old.data.content.replace(/\n/g, '')), (c) => c.charCodeAt(0)));
-    const wrote = await putFile(env, branch, file.previous_filename || file.filename, text, message, fetcher);
-    if (wrote.error) return { status: 502, detail: wrote.error };
+  if (!last.node_id) return { status: 502, detail: 'GitHub did not return the update’s id.' };
+  const response = await fetcher('https://api.github.com/graphql', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.CHE_GITHUB_TOKEN}`,
+      'Content-Type': 'application/json',
+      'User-Agent': 'CHE-Agent',
+    },
+    body: JSON.stringify({
+      query: 'mutation($id: ID!, $title: String!, $body: String) { revertPullRequest(input: {pullRequestId: $id, title: $title, body: $body}) { revertPullRequest { number url } } }',
+      variables: {
+        id: last.node_id,
+        title: `Roll back CHE update #${last.number}`,
+        body: `Reverts only the changes from #${last.number}. Requested from the CHE app. Merge after CI passes.`,
+      },
+    }),
+  });
+  let data = null;
+  try { data = await response.json(); } catch (_) { data = null; }
+  const pr = data?.data?.revertPullRequest?.revertPullRequest;
+  if (!response.ok || !pr) {
+    const reason = String(data?.errors?.[0]?.message || `GitHub returned ${response.status}`);
+    return {
+      status: 409,
+      detail: `GitHub could not revert #${last.number} cleanly (${reason}). Later work overlaps it; revert it by hand so nothing newer is lost.`,
+    };
   }
-  const pr = await gh(env, 'POST', '/pulls', {
-    title: `Roll back CHE update #${last.number}`,
-    head: branch,
-    base,
-    body: `Restores the files changed by #${last.number} to their state before it merged. Requested from the CHE app.`,
-  }, fetcher);
-  if (!pr.ok) return { status: 502, detail: `Could not open the rollback pull request (${pr.status}).` };
-  return { status: 200, number: pr.data.number, url: pr.data.html_url, rolls_back: last.number };
+  return { status: 200, number: pr.number, url: pr.url, rolls_back: last.number };
 }
 
 export const CHE_UPDATE_GUIDE = `When the owner explicitly asks you to change your own app (a new screen, fix, or feature in CHE's Flutter code), reply with a short plain explanation and ONE fenced block tagged che-update containing strict JSON:

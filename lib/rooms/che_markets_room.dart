@@ -132,8 +132,11 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
   }
 
   Future<void> _loadCandles() async {
+    final symbol = _chartSymbol;
     try {
-      final j = await _get('/api/markets/candles?symbol=${Uri.encodeQueryComponent(_chartSymbol)}');
+      final j = await _get('/api/markets/candles?symbol=${Uri.encodeQueryComponent(symbol)}');
+      // A slower response for an index the owner already left is discarded.
+      if (symbol != _chartSymbol) return;
       _candles = [
         for (final c in (j['candles'] as List? ?? const []))
           if (c is Map)
@@ -142,6 +145,7 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
       ];
       _chartNote = j['error']?.toString() ?? j['source']?.toString();
     } catch (e) {
+      if (symbol != _chartSymbol) return;
       _candles = const [];
       _chartNote = '$e'.replaceFirst('Exception: ', '');
     }

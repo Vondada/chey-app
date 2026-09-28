@@ -141,6 +141,36 @@ export function buildToolUrl(tool, params, permissions) {
   return { url: url.toString() };
 }
 
+const MAX_RESPONSE_BYTES = 12000;
+
+// Reads at most maxBytes, then cancels the stream so a huge or endless body
+// can't hold the Worker's memory or time.
+export async function readCapped(response, maxBytes) {
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (total < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const room = maxBytes - total;
+      const part = value.byteLength > room ? value.subarray(0, room) : value;
+      chunks.push(part);
+      total += part.byteLength;
+    }
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+  const all = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    all.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(all);
+}
+
 export async function runPluginTool(tool, params, permissions, fetcher = fetch) {
   const built = buildToolUrl(tool, params, permissions);
   if (built.error) return { ok: false, error: built.error };
@@ -156,7 +186,7 @@ export async function runPluginTool(tool, params, permissions, fetcher = fetch) 
     if (response.status >= 300 && response.status < 400) {
       return { ok: false, status: response.status, error: 'Plugin API tried to redirect; blocked.' };
     }
-    const text = (await response.text()).slice(0, 12000);
+    const text = await readCapped(response, MAX_RESPONSE_BYTES);
     let data = text;
     try { data = JSON.parse(text); } catch (_) { /* plain text */ }
     return { ok: response.ok, status: response.status, data };

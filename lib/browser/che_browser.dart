@@ -218,6 +218,8 @@ class _CheBrowserScreenState extends State<CheBrowserScreen> {
       return;
     }
     _tabs.removeAt(i);
+    // Keep the same page active when an earlier tab closes.
+    if (i < _active) _active--;
     if (_active >= _tabs.length) _active = _tabs.length - 1;
     _syncAddress();
     setState(() {});

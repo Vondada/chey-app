@@ -104,15 +104,52 @@ test('self-update opens a PR on a new branch and never touches main', async () =
   assert.equal(pr.body.head, result.branch);
 });
 
-test('rollback restores modified files and removes added ones', async () => {
+test('rollback is a real revert of only the last CHE update', async () => {
   const env = { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' };
-  const { calls, fetcher } = fakeGitHub();
+  const calls = [];
+  const fetcher = async (url, init = {}) => {
+    calls.push({ url, body: init.body ? JSON.parse(init.body) : null });
+    if (url.includes('/pulls?state=closed')) {
+      return new Response(JSON.stringify([
+        { number: 6, merged_at: '2026-01-02', head: { ref: 'feature/other' }, node_id: 'PR_other' },
+        { number: 5, merged_at: '2026-01-01', head: { ref: 'che/update-abc' }, node_id: 'PR_5' },
+      ]));
+    }
+    if (url === 'https://api.github.com/graphql') {
+      return new Response(JSON.stringify({ data: { revertPullRequest: { revertPullRequest: { number: 9, url: 'https://github.com/o/r/pull/9' } } } }));
+    }
+    return new Response('{}', { status: 500 });
+  };
   const result = await rollbackLastUpdate(env, fetcher);
   assert.equal(result.status, 200);
   assert.equal(result.rolls_back, 5);
-  const put = calls.find((c) => c.method === 'PUT');
-  assert.equal(Buffer.from(put.body.content, 'base64').toString(), 'old code ✓');
-  assert.ok(calls.some((c) => c.method === 'DELETE' && c.path === '/contents/lib/new.dart'));
+  assert.equal(result.number, 9);
+  const mutation = calls.find((c) => c.url.endsWith('/graphql')).body;
+  assert.match(mutation.query, /revertPullRequest/);
+  assert.equal(mutation.variables.id, 'PR_5');
+  // No file contents are ever written directly.
+  assert.ok(!calls.some((c) => c.url.includes('/contents/')));
+
+  const conflicted = await rollbackLastUpdate(env, async (url) => (url.endsWith('/graphql')
+    ? new Response(JSON.stringify({ errors: [{ message: 'merge conflict' }] }))
+    : fetcher(url)));
+  assert.equal(conflicted.status, 409);
+  assert.match(conflicted.detail, /merge conflict/);
+});
+
+test('plugin responses are capped while streaming', async () => {
+  const [findPlace] = weather.tools;
+  let pulled = 0;
+  let cancelled = false;
+  const endless = new ReadableStream({
+    pull(controller) { pulled += 1; controller.enqueue(new Uint8Array(4096).fill(65)); },
+    cancel() { cancelled = true; },
+  });
+  const result = await runPluginTool(findPlace, { name: 'x' }, weather.permissions,
+    async () => new Response(endless, { status: 200 }));
+  assert.equal(result.data.length, 12000);
+  assert.ok(cancelled, 'stream cancelled at the cap');
+  assert.ok(pulled < 10);
 });
 
 test('markets parse delayed candles and label unavailable data honestly', async () => {

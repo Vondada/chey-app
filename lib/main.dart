@@ -404,7 +404,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
       builder: (dialogContext) => AlertDialog(
         title: const Text('Roll back last CHE update?'),
         content: const Text(
-          'CHE opens a pull request that restores the files her last merged update changed. Nothing changes until you merge it.',
+          'CHE opens a pull request that reverts only her last merged update. Newer work is kept; if it overlaps, GitHub refuses instead of overwriting it. Nothing changes until you merge.',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:chey/browser/che_browser.dart';
@@ -256,6 +257,42 @@ void main() {
     expect(find.text('Variation'), findsOneWidget);
     expect(find.text('Upscale (connect)'), findsOneWidget);
     expect(find.text('v1'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('Markets chart ignores a slow response for an index the owner already left', (tester) async {
+    _phone(tester);
+    final slowSpx = Completer<http.Response>();
+    final client = MockClient((request) async {
+      if (request.url.path == '/api/markets/snapshot') {
+        return http.Response(jsonEncode({
+          'quotes': [
+            {'symbol': '^spx', 'name': 'S&P 500', 'price': 1, 'change_pct': 0, 'status': 'delayed'},
+            {'symbol': '^ndq', 'name': 'Nasdaq', 'price': 2, 'change_pct': 0, 'status': 'delayed'},
+          ],
+        }), 200);
+      }
+      final symbol = request.url.queryParameters['symbol'];
+      if (symbol == '^spx') return slowSpx.future;
+      return http.Response(jsonEncode({'candles': [
+        {'date': '2026-09-25', 'open': 1, 'high': 2, 'low': 1, 'close': 2},
+      ], 'source': 'NDQ source'}), 200);
+    });
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: CheMarketsRoom(baseUrl: () => 'https://che.example', headers: () => const {}, client: client, onAsk: (_) {}, actions: const []),
+      ),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.text('Nasdaq').first);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.textContaining('NDQ source'), findsOneWidget);
+    slowSpx.complete(http.Response(jsonEncode({'candles': [], 'error': 'SPX stale'}), 200));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.textContaining('SPX stale'), findsNothing);
+    expect(find.textContaining('NDQ source'), findsOneWidget);
+    expect(find.text('Nasdaq · daily'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
 }
