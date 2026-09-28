@@ -590,7 +590,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     // actually a sleeping/wake-word turn, so normal open conversation stays
     // unchanged.
     let wakeCandidate = normalizedWords(transcript)
-    let wakeWords = ["chay", "chey", "shay", "che", "c h e", "hey chay", "hey chey", "hey che"]
+    let wakeWords = ["chay", "chey", "shay", "chai", "chee", "chi", "che", "c h e", "hey chay", "hey chey", "hey shay", "hey chai", "hey chee", "hey chi", "hey che"]
     let heardWake = wakeWords.contains { word in
       wakeCandidate == word || wakeCandidate.hasPrefix(word + " ")
     }
@@ -672,7 +672,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     guard !heard.isEmpty, !spoken.isEmpty else { return false }
 
     let interruptionWords = [
-      "stop", "wait", "no", "pause", "hold on", "chay", "che", "hey chay"
+      "stop", "wait", "no", "pause", "hold on", "chay", "chey", "shay", "chai", "chee", "chi", "che", "hey chay", "hey che"
     ]
     if interruptionWords.contains(heard) {
       return false
