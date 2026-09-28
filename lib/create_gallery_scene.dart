@@ -39,7 +39,6 @@ class _CreateGallerySceneState extends State<CreateGalleryScene>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
   static const _teal = Color(0xFF67E8D1);
-  static const _gold = Color(0xFFD7B26D);
 
   @override
   void initState() {
