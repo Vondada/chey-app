@@ -3699,7 +3699,7 @@ OWNER AGENCY
     );
   }
 
-  Future<void> _createPartnerDialog() async {  Future<void> _createPartnerDialog() async {
+  Future<void> _createPartnerDialog() async {
     if (!await _ensurePaired() || !mounted) return;
 
     final roleController = TextEditingController();
@@ -3938,7 +3938,7 @@ OWNER AGENCY
     );
   }
 
-  String _mediaTypeFromName(String name) {  String _mediaTypeFromName(String name) {
+  String _mediaTypeFromName(String name) {
     final lower = name.toLowerCase();
     const imageExts = ['.png', '.jpg', '.jpeg', '.heic', '.webp', '.gif'];
     const videoExts = ['.mp4', '.mov', '.m4v', '.webm'];
