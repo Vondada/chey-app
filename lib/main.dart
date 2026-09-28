@@ -142,9 +142,9 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   bool voiceResponsesEnabled = true;
   bool openConversation = false;
 
-  // Free voice mode keeps speech input/output on the iPhone's built-in
-  // speech stack. The conversational brain can stay exactly as configured.
-  bool freeNativeVoiceMode = true;
+  // Prefer CHE's server-side neural voice when available. The native iPhone
+  // voice remains the automatic fallback if the server voice is unavailable.
+  bool freeNativeVoiceMode = false;
 
   // Owner-focused behavior. A paired trusted device remains the real security
   // gate; voice alone is never treated as an unbreakable biometric.
@@ -1610,16 +1610,13 @@ OWNER AGENCY
     }
 
     if (type == 'wake_signal') {
+      // Partial speech can confirm that the wake word is being heard, but do
+      // not flip cheSleeping yet. The final utterance must still pass through
+      // the wake-word parser below so "Chay" is treated as a wake command
+      // instead of a normal chat message.
       if (cheSleeping && mounted) {
         HapticFeedback.mediumImpact();
-        setState(() {
-          cheSleeping = false;
-          openConversation = true;
-          isListening = true;
-        });
       }
-      // The final utterance handler will either answer "Yeah, sir?" for a
-      // wake-word-only turn or immediately process the words after "Chay".
       return;
     }
 
@@ -5165,6 +5162,56 @@ OWNER AGENCY
         child: Column(
           children: [
             const Divider(color: Color(0xFF354859)),
+            Container(
+              margin: const EdgeInsets.fromLTRB(14, 8, 14, 6),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F1D27),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: const Color(0x334DE3CB)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [Color(0xFF8BFFF0), Color(0xFF1A7D78), Color(0xFF0B1822)],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          integrations['openai_live_voice'] == true
+                              ? 'CHE • OPENAI VOICE READY'
+                              : 'CHE • NATIVE VOICE FALLBACK',
+                          style: const TextStyle(
+                            color: accent,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.8,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        const Text(
+                          'Say “Chay” to wake • interrupt anytime',
+                          style: TextStyle(
+                            color: Colors.white60,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
             if (_pendingAttachment != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(14, 4, 14, 2),

@@ -143,6 +143,45 @@ function safePreferenceFrom(message) {
 }
 
 async function voiceSynthesisResponse(env, text) {
+  const input = String(text || '').trim().slice(0, 6000);
+
+  // Default CHE neural voice: use the OpenAI key stored only on the server.
+  // The iPhone never receives the standard API key.
+  if (env.CHE_OPENAI_API_KEY) {
+    try {
+      const response = await fetch('https://api.openai.com/v1/audio/speech', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${env.CHE_OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: String(env.CHE_OPENAI_TTS_MODEL || 'gpt-4o-mini-tts'),
+          voice: String(env.CHE_OPENAI_VOICE || 'marin'),
+          input,
+          instructions:
+            'Warm, confident, smooth, intelligent young-adult feminine voice. Natural conversational pacing. Concise and expressive, never robotic.',
+          response_format: 'mp3',
+        }),
+      });
+
+      if (response.ok) {
+        const bytes = await response.arrayBuffer();
+        if (bytes.byteLength > 0 && bytes.byteLength <= 6 * 1024 * 1024) {
+          return new Response(bytes, {
+            headers: {
+              'Content-Type': 'audio/mpeg',
+              'Cache-Control': 'no-store',
+              'X-CHE-Voice': 'openai-neural',
+            },
+          });
+        }
+      }
+    } catch (_) {
+      // Fall through to any custom CHE voice connector below.
+    }
+  }
+
   if (!env.CHE_VOICE_URL) {
     return json({ detail: 'Natural voice service is not connected yet.' }, 503);
   }
@@ -1125,7 +1164,7 @@ export class CheState extends DurableObject {
             background_jobs: true,
             agent_identity: true,
             service_accounts: true,
-            natural_voice: Boolean(this.env.CHE_VOICE_URL),
+            natural_voice: Boolean(this.env.CHE_OPENAI_API_KEY || this.env.CHE_VOICE_URL),
             openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY),
             quantum_compute: Boolean(this.env.CHE_QUANTUM_URL),
             web_research: Boolean(this.env.CHE_RESEARCH_URL),
@@ -1916,7 +1955,7 @@ export class CheState extends DurableObject {
                 windows: Boolean(this.env.CHE_WINDOWS_URL),
                 car: Boolean(this.env.CHE_CAR_URL),
                 smart_home: Boolean(this.env.CHE_SMART_HOME_URL),
-                natural_voice: Boolean(this.env.CHE_VOICE_URL),
+                natural_voice: Boolean(this.env.CHE_OPENAI_API_KEY || this.env.CHE_VOICE_URL),
                 openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY),
                 background_jobs: true,
                 quantum_compute: Boolean(this.env.CHE_QUANTUM_URL),
