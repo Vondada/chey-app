@@ -1,7 +1,6 @@
 // CHE design system — colors, type, spacing, radii, motion, ThemeData.
 // Every CHE screen should pull from here instead of hard-coding values.
 
-import 'dart:ui' show FontFeature;
 import 'package:flutter/material.dart';
 
 class CheColors {
@@ -144,7 +143,7 @@ class CheTheme {
       ),
       textSelectionTheme: TextSelectionThemeData(
         cursorColor: CheColors.accent,
-        selectionColor: CheColors.accent.withOpacity(0.3),
+        selectionColor: CheColors.accent.withValues(alpha: 0.3),
         selectionHandleColor: CheColors.accent,
       ),
       appBarTheme: const AppBarTheme(
