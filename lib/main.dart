@@ -56,6 +56,7 @@ import 'plugins/che_plugin_webapp.dart';
 import 'self_update/che_patch_banner.dart';
 import 'self_update/che_update_card.dart';
 import 'rooms/che_markets_room.dart';
+import 'rooms/che_creator_studio.dart';
 import 'browser/che_browser.dart' show CheBrowserActions;
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
@@ -4292,17 +4293,138 @@ OWNER AGENCY
     );
   }
 
+  /// Starts a real cloud job (keeps running with the phone locked).
+  Future<void> _startCloudJob(String title, String prompt) async {
+    if (!await _ensurePaired() || !mounted) return;
+    try {
+      await _postAgentJson('/api/job/create', {'title': title, 'prompt': prompt});
+      await _loadAgentState(silent: true);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$title is rendering in the cloud.')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not start the cloud job.')),
+        );
+      }
+    }
+  }
+
+  Future<void> _openJob(Map<String, dynamic> job) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: CheColors.panel,
+      builder: (sheetContext) => SizedBox(
+        height: MediaQuery.of(sheetContext).size.height * 0.75,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
+          children: [
+            Text('${job['title'] ?? 'Job'}',
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 4),
+            Text('${job['status'] ?? ''}', style: const TextStyle(color: Colors.white54)),
+            const SizedBox(height: 16),
+            SelectableText(
+              '${job['result'] ?? ''}'.isNotEmpty
+                  ? '${job['result']}'
+                  : '${job['error'] ?? ''}'.isNotEmpty
+                      ? '${job['error']}'
+                      : 'Still working. This keeps going on the CHE server.',
+              style: const TextStyle(height: 1.45),
+            ),
+            if ('${job['result'] ?? ''}'.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                onPressed: () => Clipboard.setData(ClipboardData(text: '${job['result']}')),
+                icon: const Icon(Icons.copy_rounded),
+                label: const Text('Copy'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _hubMusicTab(bool active) {
-    return MusicStudioScene(
-      active: active,
-      musicConnected: integrations['music'] == true,
-      carConnected: integrations['car'] == true,
-      onMusic: () => _runHubPrompt(
-        'Help me connect and control my music through CHE. Use the authorized music integration if connected.',
+    final musicReady = integrations['music'] == true;
+    final voiceReady = integrations['natural_voice'] == true;
+    return CheCreatorStudio(
+      speaking: _isSpeaking,
+      jobs: backgroundJobs,
+      onOpenJob: (job) => unawaited(_openJob(job)),
+      musicScene: MusicStudioScene(
+        active: active,
+        musicConnected: musicReady,
+        carConnected: integrations['car'] == true,
+        onMusic: () => _runHubPrompt(
+          'Help me connect and control my music through CHE. Use the authorized music integration if connected.',
+        ),
+        onCar: () => _runHubPrompt(
+          'Help me connect my car audio to CHE. Use only supported authorized audio controls.',
+        ),
       ),
-      onCar: () => _runHubPrompt(
-        'Help me connect my car audio to CHE. Use only supported authorized audio controls.',
-      ),
+      actions: [
+        CheStudioAction(
+          icon: Icons.music_note_rounded,
+          title: 'Make music',
+          body: 'Songs, beats, stems and lyrics at the connected engine\'s highest quality.',
+          connected: musicReady,
+          connectorName: 'Music engine (CHE_MUSIC_URL)',
+          onRun: () => _runHubPrompt(
+            'Let\'s make a track. Ask only what you need (genre, mood, tempo, length, vocals), then create it with the connected music engine at the highest quality. If none is connected, write the full production brief and lyrics.',
+          ),
+        ),
+        CheStudioAction(
+          icon: Icons.record_voice_over_rounded,
+          title: 'Voice + narration',
+          body: 'Voiceovers and narration in natural voices.',
+          connected: voiceReady,
+          connectorName: 'Natural voice (CHE_OPENAI_API_KEY or CHE_VOICE_URL)',
+          onRun: () => _runHubPrompt('Help me record a voiceover. Ask for the script and tone, then produce it with the connected voice engine.'),
+        ),
+        CheStudioAction(
+          icon: Icons.podcasts_rounded,
+          title: 'Podcast episode',
+          body: 'Outline, full script, show notes and chapter markers.',
+          connected: true,
+          connectorName: '',
+          background: true,
+          onRun: () => unawaited(_startCloudJob(
+            'Podcast episode draft',
+            'Write a complete podcast episode package for the owner: working title, hook, segment outline, full conversational script, show notes and chapter markers. Base it on the owner\'s saved projects and interests if relevant; label assumptions.',
+          )),
+        ),
+        CheStudioAction(
+          icon: Icons.movie_creation_outlined,
+          title: 'Script + storyboard',
+          body: 'Scenes, shot list and storyboard frames for video.',
+          connected: true,
+          connectorName: '',
+          onRun: () => _runHubPrompt('Let\'s write a video script and storyboard. Ask for the idea and length, then give me scenes, a shot list and frame-by-frame storyboard notes.'),
+        ),
+        CheStudioAction(
+          icon: Icons.slideshow_rounded,
+          title: 'Presentation',
+          body: 'Slide-by-slide deck with speaker notes.',
+          connected: true,
+          connectorName: '',
+          onRun: () => _runHubPrompt('Build a presentation with me. Ask for the audience and goal, then produce slide-by-slide content with speaker notes.'),
+        ),
+        CheStudioAction(
+          icon: Icons.videocam_rounded,
+          title: 'Generate video',
+          body: 'Video clips from a prompt or storyboard.',
+          connected: integrations['video_generation'] == true,
+          connectorName: 'Video generator (CHE_VIDEO_GEN_URL)',
+          onRun: () => _runHubPrompt('Create a video for me. Ask only for any essential missing detail, then use the connected CHE video generator if available.'),
+        ),
+      ],
     );
   }
 
