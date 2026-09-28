@@ -24,6 +24,10 @@ rm -f test/widget_test.dart
 
 flutter pub get
 
+# Build the source icon inside CI so the repository stays text-only while every
+# IPA still gets the same bold CHE icon.
+dart run tool/generate_icon.dart
+
 # Generate the iOS AppIcon set from assets/icon/icon.png (the "CHE" wordmark
 # icon) on every build, so it's never out of sync with the source image.
 if [[ -f assets/icon/icon.png && -d ios ]]; then
@@ -48,6 +52,20 @@ info['NSMicrophoneUsageDescription'] = 'CHE uses your microphone when you speak 
 info['NSSpeechRecognitionUsageDescription'] = 'CHE converts your speech to text when you use voice chat.'
 info['NSCameraUsageDescription'] = 'CHE uses the camera only when you choose to capture a photo or video for CHE to analyze.'
 info['NSPhotoLibraryUsageDescription'] = 'CHE accesses selected photos or videos only when you choose them for CHE to analyze.'
+info['NSPhotoLibraryAddUsageDescription'] = 'CHE saves generated or edited media to Photos only when you choose Save.'
+info['NSFaceIDUsageDescription'] = 'CHE uses Face ID to unlock your private connected-account vault.'
+info['NSContactsUsageDescription'] = 'CHE accesses contacts only when you explicitly authorize a contact-based action.'
+info['NSCalendarsUsageDescription'] = 'CHE accesses your calendar only for owner-authorized scheduling and calendar actions.'
+info['NSCalendarsFullAccessUsageDescription'] = 'CHE accesses your calendar only for owner-authorized scheduling and calendar actions.'
+info['NSRemindersUsageDescription'] = 'CHE accesses reminders only for owner-authorized reminder actions.'
+info['NSRemindersFullAccessUsageDescription'] = 'CHE accesses reminders only for owner-authorized reminder actions.'
+info['NSBluetoothAlwaysUsageDescription'] = 'CHE uses Bluetooth only for owner-authorized accessories, audio, and supported devices.'
+info['NSLocalNetworkUsageDescription'] = 'CHE uses the local network only to connect to owner-authorized devices and services.'
+info['NSAppleMusicUsageDescription'] = 'CHE accesses your media library only for owner-authorized music actions.'
+info['NSLocationWhenInUseUsageDescription'] = 'CHE uses your location only while you are using location-aware features.'
+info['CFBundleURLTypes'] = [{'CFBundleURLName': 'CHE', 'CFBundleURLSchemes': ['che']}]
+info['BGTaskSchedulerPermittedIdentifiers'] = ['com.cheyapp.che.refresh']
+info['UIBackgroundModes'] = ['fetch']
 with path.open('wb') as stream:
     plistlib.dump(info, stream)
 PY
@@ -65,6 +83,10 @@ import UIKit
 import AVFoundation
 import Speech
 import AppIntents
+import LocalAuthentication
+import Security
+import UserNotifications
+import BackgroundTasks
 
 private final class CHEVoiceStreamHandler: NSObject, FlutterStreamHandler {
   private var sink: FlutterEventSink?
@@ -144,9 +166,11 @@ struct CHEAppShortcuts: AppShortcutsProvider {
   private var bargeInDetected = false
   private var latestTranscript = ""
   private var lastDeliveredTranscript = ""
+  private var lastDeliveredAt = Date.distantPast
   private var assistantText = ""
   private var ignoreBargeInUntil = Date.distantPast
   private var recognitionGeneration = 0
+  private var wakeSignalSent = false
 
   override func application(
     _ application: UIApplication,
@@ -154,6 +178,14 @@ struct CHEAppShortcuts: AppShortcutsProvider {
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
     synthesizer.delegate = self
+    if #available(iOS 13.0, *) {
+      BGTaskScheduler.shared.register(
+        forTaskWithIdentifier: "com.cheyapp.che.refresh",
+        using: nil
+      ) { task in
+        task.setTaskCompleted(success: true)
+      }
+    }
 
     if let controller = window?.rootViewController as? FlutterViewController {
       let methods = FlutterMethodChannel(
@@ -165,6 +197,90 @@ struct CHEAppShortcuts: AppShortcutsProvider {
         binaryMessenger: controller.binaryMessenger
       )
       events.setStreamHandler(voiceStreamHandler)
+
+      let nativeShell = FlutterMethodChannel(
+        name: "che/native_shell",
+        binaryMessenger: controller.binaryMessenger
+      )
+      nativeShell.setMethodCallHandler { call, result in
+        switch call.method {
+        case "requestNotifications":
+          UNUserNotificationCenter.current().requestAuthorization(
+            options: [.alert, .sound, .badge]
+          ) { granted, _ in
+            DispatchQueue.main.async { result(granted) }
+          }
+        case "scheduleRefresh":
+          if #available(iOS 13.0, *) {
+            let request = BGAppRefreshTaskRequest(
+              identifier: "com.cheyapp.che.refresh"
+            )
+            request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+            do {
+              try BGTaskScheduler.shared.submit(request)
+              result(true)
+            } catch {
+              result(false)
+            }
+          } else {
+            result(false)
+          }
+        default:
+          result(FlutterMethodNotImplemented)
+        }
+      }
+
+      let accountBridge = FlutterMethodChannel(
+        name: "che/account_bridge",
+        binaryMessenger: controller.binaryMessenger
+      )
+      accountBridge.setMethodCallHandler { [weak self] call, result in
+        guard let self else {
+          result(false)
+          return
+        }
+
+        switch call.method {
+        case "authenticate":
+          let args = call.arguments as? [String: Any]
+          let reason = (args?["reason"] as? String) ?? "Unlock CHE"
+          self.authenticateOwner(reason: reason, result: result)
+
+        case "secureSet":
+          guard
+            let args = call.arguments as? [String: Any],
+            let key = args["key"] as? String,
+            let value = args["value"] as? String
+          else {
+            result(false)
+            return
+          }
+          result(self.keychainSet(key: key, value: value))
+
+        case "secureGet":
+          guard
+            let args = call.arguments as? [String: Any],
+            let key = args["key"] as? String
+          else {
+            result(nil)
+            return
+          }
+          result(self.keychainGet(key: key))
+
+        case "secureDelete":
+          guard
+            let args = call.arguments as? [String: Any],
+            let key = args["key"] as? String
+          else {
+            result(false)
+            return
+          }
+          result(self.keychainDelete(key: key))
+
+        default:
+          result(FlutterMethodNotImplemented)
+        }
+      }
 
       methods.setMethodCallHandler { [weak self] call, result in
         guard let self else {
@@ -246,6 +362,88 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     )
   }
 
+  private let accountService = "com.cheyapp.che.accountbridge"
+
+  private func authenticateOwner(
+    reason: String,
+    result: @escaping FlutterResult
+  ) {
+    let context = LAContext()
+    context.localizedCancelTitle = "Cancel"
+    var error: NSError?
+
+    guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
+      result(false)
+      return
+    }
+
+    context.evaluatePolicy(
+      .deviceOwnerAuthentication,
+      localizedReason: reason
+    ) { success, _ in
+      DispatchQueue.main.async {
+        result(success)
+      }
+    }
+  }
+
+  private func keychainSet(key: String, value: String) -> Bool {
+    guard !key.isEmpty, key.count <= 160,
+          let data = value.data(using: .utf8) else {
+      return false
+    }
+
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: accountService,
+      kSecAttrAccount as String: key,
+    ]
+    SecItemDelete(query as CFDictionary)
+
+    var item = query
+    item[kSecValueData as String] = data
+    item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+    return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
+  }
+
+  private func keychainGet(key: String) -> String? {
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: accountService,
+      kSecAttrAccount as String: key,
+      kSecReturnData as String: true,
+      kSecMatchLimit as String: kSecMatchLimitOne,
+    ]
+    var item: CFTypeRef?
+    guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+          let data = item as? Data else {
+      return nil
+    }
+    return String(data: data, encoding: .utf8)
+  }
+
+  private func keychainDelete(key: String) -> Bool {
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: accountService,
+      kSecAttrAccount as String: key,
+    ]
+    let status = SecItemDelete(query as CFDictionary)
+    return status == errSecSuccess || status == errSecItemNotFound
+  }
+
+  override func application(
+    _ app: UIApplication,
+    open url: URL,
+    options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+  ) -> Bool {
+    UserDefaults.standard.set(
+      url.absoluteString,
+      forKey: "flutter.che_pending_deep_link"
+    )
+    return super.application(app, open: url, options: options)
+  }
+
   private func configureAudioSession() {
     let session = AVAudioSession.sharedInstance()
     do {
@@ -324,6 +522,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     utteranceTimer?.invalidate()
     utteranceTimer = nil
     latestTranscript = ""
+    wakeSignalSent = false
     cancelRecognitionResources(keepGeneration: true)
 
     configureAudioSession()
@@ -386,6 +585,23 @@ struct CHEAppShortcuts: AppShortcutsProvider {
 
     latestTranscript = transcript
 
+    // Wake CHE immediately from a partial recognition result instead of
+    // waiting for Apple's final transcript. Flutter decides whether this is
+    // actually a sleeping/wake-word turn, so normal open conversation stays
+    // unchanged.
+    let wakeCandidate = normalizedWords(transcript)
+    let wakeWords = ["chay", "chey", "shay", "che", "c h e", "hey chay", "hey chey", "hey che"]
+    let heardWake = wakeWords.contains { word in
+      wakeCandidate == word || wakeCandidate.hasPrefix(word + " ")
+    }
+    if !assistantSpeaking && !wakeSignalSent && heardWake {
+      wakeSignalSent = true
+      voiceStreamHandler.emit([
+        "type": "wake_signal",
+        "text": transcript,
+      ])
+    }
+
     if assistantSpeaking &&
         !bargeInDetected &&
         Date() >= ignoreBargeInUntil &&
@@ -426,12 +642,15 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !cleaned.isEmpty else { return }
 
-    if cleaned.caseInsensitiveCompare(lastDeliveredTranscript) == .orderedSame {
+    let now = Date()
+    if cleaned.caseInsensitiveCompare(lastDeliveredTranscript) == .orderedSame &&
+        now.timeIntervalSince(lastDeliveredAt) < 1.25 {
       restartRecognitionSoon(delay: 0.12)
       return
     }
 
     lastDeliveredTranscript = cleaned
+    lastDeliveredAt = now
     latestTranscript = ""
     utteranceTimer?.invalidate()
     utteranceTimer = nil
