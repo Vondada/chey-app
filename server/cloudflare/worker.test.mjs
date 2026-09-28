@@ -141,3 +141,34 @@ test('plugin catalog is paired, opt-in, read-only and never exposes tokens', asy
     globalThis.fetch = originalFetch;
   }
 });
+
+
+test('ordinary voice turns use the fast model and concise budget', async () => {
+  const saved = new Map();
+  const runs = [];
+  const env = {
+    CHE_PAIR_CODE: '123456',
+    CHE_FAST_MODEL: 'fast-test',
+    CHE_STRONG_MODEL: 'strong-test',
+    AI: { run: async (model, input) => {
+      runs.push({ model, tokens: input.max_tokens });
+      return { response: 'Okay, sir.' };
+    } },
+  };
+  const state = new CheState({ storage: {
+    get: (key) => saved.get(key),
+    put: (key, value) => saved.set(key, value),
+    setAlarm: async () => {},
+  } }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, body, token = '') => worker.fetch(new Request(`https://che.example${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(body),
+  }), env);
+  const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
+  await send('/api/chat', { message: 'Explain this simply' }, token);
+  assert.deepEqual(runs.at(-1), { model: 'fast-test', tokens: 360 });
+  await send('/api/chat', { message: 'Debug this code' }, token);
+  assert.deepEqual(runs.at(-1), { model: 'strong-test', tokens: 1000 });
+});
