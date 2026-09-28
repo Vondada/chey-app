@@ -294,9 +294,9 @@ Future<bool> showChePluginReview(BuildContext context, ChePluginRegistry reg, Ch
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: p.color.withOpacity(0.15),
+                color: p.color.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(CheRadius.md),
-                border: Border.all(color: p.color.withOpacity(0.6)),
+                border: Border.all(color: p.color.withValues(alpha: 0.6)),
               ),
               child: Icon(p.icon, color: p.color),
             ),
@@ -573,7 +573,7 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
       decoration: BoxDecoration(
         color: CheColors.surface,
         borderRadius: BorderRadius.circular(CheRadius.lg),
-        border: Border.all(color: reg.isEnabled(p.id) ? p.color.withOpacity(0.5) : CheColors.stroke),
+        border: Border.all(color: reg.isEnabled(p.id) ? p.color.withValues(alpha: 0.5) : CheColors.stroke),
       ),
       child: Row(children: [
         GestureDetector(
@@ -582,7 +582,7 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
             width: 42,
             height: 42,
             decoration: BoxDecoration(
-              color: p.color.withOpacity(0.14),
+              color: p.color.withValues(alpha: 0.14),
               borderRadius: BorderRadius.circular(CheRadius.sm),
             ),
             child: Icon(p.icon, color: p.color),
@@ -614,7 +614,7 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
         ),
         Switch(
           value: reg.isEnabled(p.id),
-          activeColor: p.color,
+          activeThumbColor: p.color,
           onChanged: (v) {
             HapticFeedback.selectionClick();
             reg.setEnabled(p.id, v);
