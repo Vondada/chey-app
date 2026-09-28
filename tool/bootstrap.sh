@@ -24,6 +24,10 @@ rm -f test/widget_test.dart
 
 flutter pub get
 
+# Build the source icon inside CI so the repository stays text-only while every
+# IPA still gets the same bold CHE icon.
+dart run tool/generate_icon.dart
+
 # Generate the iOS AppIcon set from assets/icon/icon.png (the "CHE" wordmark
 # icon) on every build, so it's never out of sync with the source image.
 if [[ -f assets/icon/icon.png && -d ios ]]; then
@@ -48,6 +52,11 @@ info['NSMicrophoneUsageDescription'] = 'CHE uses your microphone when you speak 
 info['NSSpeechRecognitionUsageDescription'] = 'CHE converts your speech to text when you use voice chat.'
 info['NSCameraUsageDescription'] = 'CHE uses the camera only when you choose to capture a photo or video for CHE to analyze.'
 info['NSPhotoLibraryUsageDescription'] = 'CHE accesses selected photos or videos only when you choose them for CHE to analyze.'
+info['NSFaceIDUsageDescription'] = 'CHE uses Face ID to unlock your private connected-account vault.'
+info['NSContactsUsageDescription'] = 'CHE accesses contacts only when you explicitly authorize a contact-based action.'
+info['NSCalendarsFullAccessUsageDescription'] = 'CHE accesses your calendar only for owner-authorized scheduling and calendar actions.'
+info['NSBluetoothAlwaysUsageDescription'] = 'CHE uses Bluetooth only for owner-authorized accessories, audio, and supported devices.'
+info['NSLocationWhenInUseUsageDescription'] = 'CHE uses your location only while you are using location-aware features.'
 with path.open('wb') as stream:
     plistlib.dump(info, stream)
 PY
@@ -65,6 +74,8 @@ import UIKit
 import AVFoundation
 import Speech
 import AppIntents
+import LocalAuthentication
+import Security
 
 private final class CHEVoiceStreamHandler: NSObject, FlutterStreamHandler {
   private var sink: FlutterEventSink?
@@ -166,6 +177,58 @@ struct CHEAppShortcuts: AppShortcutsProvider {
       )
       events.setStreamHandler(voiceStreamHandler)
 
+      let accountBridge = FlutterMethodChannel(
+        name: "che/account_bridge",
+        binaryMessenger: controller.binaryMessenger
+      )
+      accountBridge.setMethodCallHandler { [weak self] call, result in
+        guard let self else {
+          result(false)
+          return
+        }
+
+        switch call.method {
+        case "authenticate":
+          let args = call.arguments as? [String: Any]
+          let reason = (args?["reason"] as? String) ?? "Unlock CHE"
+          self.authenticateOwner(reason: reason, result: result)
+
+        case "secureSet":
+          guard
+            let args = call.arguments as? [String: Any],
+            let key = args["key"] as? String,
+            let value = args["value"] as? String
+          else {
+            result(false)
+            return
+          }
+          result(self.keychainSet(key: key, value: value))
+
+        case "secureGet":
+          guard
+            let args = call.arguments as? [String: Any],
+            let key = args["key"] as? String
+          else {
+            result(nil)
+            return
+          }
+          result(self.keychainGet(key: key))
+
+        case "secureDelete":
+          guard
+            let args = call.arguments as? [String: Any],
+            let key = args["key"] as? String
+          else {
+            result(false)
+            return
+          }
+          result(self.keychainDelete(key: key))
+
+        default:
+          result(FlutterMethodNotImplemented)
+        }
+      }
+
       methods.setMethodCallHandler { [weak self] call, result in
         guard let self else {
           result(FlutterError(
@@ -244,6 +307,76 @@ struct CHEAppShortcuts: AppShortcutsProvider {
       application,
       didFinishLaunchingWithOptions: launchOptions
     )
+  }
+
+  private let accountService = "com.cheyapp.che.accountbridge"
+
+  private func authenticateOwner(
+    reason: String,
+    result: @escaping FlutterResult
+  ) {
+    let context = LAContext()
+    context.localizedCancelTitle = "Cancel"
+    var error: NSError?
+
+    guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
+      result(false)
+      return
+    }
+
+    context.evaluatePolicy(
+      .deviceOwnerAuthentication,
+      localizedReason: reason
+    ) { success, _ in
+      DispatchQueue.main.async {
+        result(success)
+      }
+    }
+  }
+
+  private func keychainSet(key: String, value: String) -> Bool {
+    guard !key.isEmpty, key.count <= 160,
+          let data = value.data(using: .utf8) else {
+      return false
+    }
+
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: accountService,
+      kSecAttrAccount as String: key,
+    ]
+    SecItemDelete(query as CFDictionary)
+
+    var item = query
+    item[kSecValueData as String] = data
+    item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+    return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
+  }
+
+  private func keychainGet(key: String) -> String? {
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: accountService,
+      kSecAttrAccount as String: key,
+      kSecReturnData as String: true,
+      kSecMatchLimit as String: kSecMatchLimitOne,
+    ]
+    var item: CFTypeRef?
+    guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+          let data = item as? Data else {
+      return nil
+    }
+    return String(data: data, encoding: .utf8)
+  }
+
+  private func keychainDelete(key: String) -> Bool {
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: accountService,
+      kSecAttrAccount as String: key,
+    ]
+    let status = SecItemDelete(query as CFDictionary)
+    return status == errSecSuccess || status == errSecItemNotFound
   }
 
   private func configureAudioSession() {
