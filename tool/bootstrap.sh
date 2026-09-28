@@ -626,8 +626,10 @@ struct CHEAppShortcuts: AppShortcutsProvider {
       return
     }
 
+    // Native recognition is wake/fallback only. Normal conversation uses
+    // Realtime Semantic VAD, so keep this fallback pause conservative.
     utteranceTimer = Timer.scheduledTimer(
-      withTimeInterval: 0.62,
+      withTimeInterval: 1.10,
       repeats: false
     ) { [weak self] _ in
       guard let self else { return }
