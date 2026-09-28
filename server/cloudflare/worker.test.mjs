@@ -41,7 +41,7 @@ test('pairing, owner gate, memories, and revocation', async () => {
 
   const stateBeforeJobs = await (await send('/api/state', 'GET', {}, token)).json();
   assert.equal(stateBeforeJobs.integrations.background_jobs, true);
-  assert.equal(stateBeforeJobs.integrations.natural_voice, false);
+  assert.equal(stateBeforeJobs.integrations.natural_voice, true);
   assert.equal(stateBeforeJobs.integrations.quantum_compute, false);
 
   assert.equal((await send('/api/voice/synthesize', 'POST', { text: 'Hello there' }, token)).status, 503);
