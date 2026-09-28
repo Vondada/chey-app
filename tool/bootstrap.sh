@@ -24,6 +24,33 @@ rm -f test/widget_test.dart
 
 flutter pub get
 
+# CHE requires iOS 16+ for the Porcupine 4.x on-device wake-word engine.
+# Apple Vocal Shortcuts remains the iPhone-level trigger; Porcupine is used
+# only while CHE is active/asleep, and Realtime owns the mic after wake.
+if [[ -f ios/Podfile ]]; then
+  python3 - <<'PY'
+from pathlib import Path
+import re
+p = Path('ios/Podfile')
+text = p.read_text()
+if re.search(r"^\s*#?\s*platform\s+:ios", text, flags=re.M):
+    text = re.sub(r"^\s*#?\s*platform\s+:ios,\s*'[^']+'", "platform :ios, '16.0'", text, flags=re.M)
+else:
+    text = "platform :ios, '16.0'\n" + text
+p.write_text(text)
+PY
+fi
+if [[ -f ios/Runner.xcodeproj/project.pbxproj ]]; then
+  python3 - <<'PY'
+from pathlib import Path
+import re
+p = Path('ios/Runner.xcodeproj/project.pbxproj')
+text = p.read_text()
+text = re.sub(r"IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;", "IPHONEOS_DEPLOYMENT_TARGET = 16.0;", text)
+p.write_text(text)
+PY
+fi
+
 # Build the source icon inside CI so the repository stays text-only while every
 # IPA still gets the same bold CHE icon.
 dart run tool/generate_icon.dart
@@ -115,7 +142,7 @@ private final class CHEVoiceStreamHandler: NSObject, FlutterStreamHandler {
 struct WakeCHEIntent: AppIntent {
   static let title: LocalizedStringResource = "Wake CHE"
   static let description = IntentDescription(
-    "Opens CHE for a hands-free conversation."
+    "Opens CHE for a hands-free conversation. Assign this action to an Apple Vocal Shortcut such as Hey CHE or Chay."
   )
 
   static var authenticationPolicy: IntentAuthenticationPolicy {
