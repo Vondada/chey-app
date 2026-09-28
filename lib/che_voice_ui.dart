@@ -178,6 +178,11 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
             row('Voice state', snapshot.phaseLabel),
             row('Microphone', snapshot.microphoneActive ? 'Active' : 'Inactive'),
             row('Realtime link', snapshot.connectionState),
+            row('Model', snapshot.selectedModel ?? '—'),
+            row('Voice', snapshot.selectedVoice ?? '—'),
+            row('Session ready', snapshot.sessionReady ? 'Yes' : 'No'),
+            row('Audio returned', snapshot.audioReturned ? 'Yes' : 'No'),
+            row('Audio verified', snapshot.audioVerified ? 'Yes' : 'No'),
             row('CHE server', serverOnline ? 'Connected' : 'Not confirmed'),
             row('Last event', lastServerEvent ?? '—'),
             row(

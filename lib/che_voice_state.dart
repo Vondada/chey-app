@@ -26,6 +26,11 @@ class CheVoiceSnapshot {
     required this.lastInterruptionReason,
     required this.lastLatencyMs,
     required this.lastError,
+    required this.selectedModel,
+    required this.selectedVoice,
+    required this.audioReturned,
+    required this.audioVerified,
+    required this.sessionReady,
   });
 
   final CheVoicePhase phase;
@@ -35,6 +40,11 @@ class CheVoiceSnapshot {
   final String? lastInterruptionReason;
   final int? lastLatencyMs;
   final String? lastError;
+  final String? selectedModel;
+  final String? selectedVoice;
+  final bool audioReturned;
+  final bool audioVerified;
+  final bool sessionReady;
 
   String get phaseLabel {
     switch (phase) {
@@ -64,7 +74,9 @@ class CheVoiceSnapshot {
   String get engineLabel {
     switch (engine) {
       case CheVoiceEngine.realtime:
-        return 'Realtime';
+        return audioVerified
+            ? 'OpenAI Realtime'
+            : 'OpenAI Realtime (audio not yet verified)';
       case CheVoiceEngine.nativeFallback:
         return 'Native fallback';
       case CheVoiceEngine.none:
@@ -86,6 +98,11 @@ class CheVoiceStateMachine {
   String? lastInterruptionReason;
   int? lastLatencyMs;
   String? lastError;
+  String? selectedModel;
+  String? selectedVoice;
+  bool audioReturned = false;
+  bool audioVerified = false;
+  bool sessionReady = false;
 
   String? _activeResponseId;
   final Set<String> _cancelledResponseIds = <String>{};
@@ -102,6 +119,11 @@ class CheVoiceStateMachine {
         lastInterruptionReason: lastInterruptionReason,
         lastLatencyMs: lastLatencyMs,
         lastError: lastError,
+        selectedModel: selectedModel,
+        selectedVoice: selectedVoice,
+        audioReturned: audioReturned,
+        audioVerified: audioVerified,
+        sessionReady: sessionReady,
       );
 
   void startWakeListening() {
@@ -110,14 +132,27 @@ class CheVoiceStateMachine {
     connectionState = 'wake-listener';
     microphoneActive = true;
     _activeResponseId = null;
+    sessionReady = false;
+    audioReturned = false;
+    audioVerified = false;
   }
 
-  void beginRealtimeConnect() {
+  void beginRealtimeConnect({String? model, String? voice}) {
     phase = CheVoicePhase.connecting;
     engine = CheVoiceEngine.realtime;
     connectionState = 'connecting';
     microphoneActive = false;
     lastError = null;
+    sessionReady = false;
+    audioReturned = false;
+    audioVerified = false;
+    if (model != null && model.trim().isNotEmpty) selectedModel = model.trim();
+    if (voice != null && voice.trim().isNotEmpty) selectedVoice = voice.trim();
+  }
+
+  void configureRealtime({String? model, String? voice}) {
+    if (model != null && model.trim().isNotEmpty) selectedModel = model.trim();
+    if (voice != null && voice.trim().isNotEmpty) selectedVoice = voice.trim();
   }
 
   void realtimeReady() {
@@ -126,6 +161,16 @@ class CheVoiceStateMachine {
     connectionState = 'connected';
     microphoneActive = true;
     lastError = null;
+    sessionReady = true;
+  }
+
+  void markAudioReturned() {
+    audioReturned = true;
+  }
+
+  void markAudioVerified() {
+    audioReturned = true;
+    audioVerified = true;
   }
 
   void connectionChanged(String value) {
@@ -169,6 +214,7 @@ class CheVoiceStateMachine {
       lastLatencyMs = (now ?? DateTime.now()).difference(stoppedAt).inMilliseconds;
     }
     phase = CheVoicePhase.speaking;
+    audioReturned = true;
   }
 
   void assistantDone({String? responseId}) {
@@ -194,6 +240,8 @@ class CheVoiceStateMachine {
     engine = CheVoiceEngine.nativeFallback;
     connectionState = 'fallback';
     microphoneActive = true;
+    sessionReady = false;
+    audioVerified = false;
     if (error != null && error.trim().isNotEmpty) {
       lastError = error.trim();
     }
@@ -208,6 +256,8 @@ class CheVoiceStateMachine {
     engine = CheVoiceEngine.none;
     connectionState = 'disconnected';
     microphoneActive = false;
+    sessionReady = false;
+    audioVerified = false;
     if (error != null && error.trim().isNotEmpty) {
       lastError = error.trim();
     }
@@ -218,6 +268,8 @@ class CheVoiceStateMachine {
     engine = CheVoiceEngine.none;
     connectionState = 'sleeping';
     microphoneActive = false;
+    sessionReady = false;
+    audioVerified = false;
     _activeResponseId = null;
   }
 

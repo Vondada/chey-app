@@ -531,12 +531,14 @@ OWNER AGENCY
           cheSleeping = false;
           openConversation = true;
         });
-        await speakText('Yeah, sir?');
+        await _beginRealtimeConversation(fromWake: true);
         return;
       }
 
       if (resumeIfAwake && mounted && openConversation && !cheSleeping) {
-        _restartListeningSoon(delay: const Duration(milliseconds: 500));
+        if (_realtimeVoice?.connected != true && !_realtimeConnecting) {
+          await _beginRealtimeConversation();
+        }
       }
     } catch (_) {}
   }

@@ -19,6 +19,18 @@ typedef CheRealtimeToolHandler = Future<String> Function(
 );
 typedef CheRealtimeSleepCallback = Future<void> Function();
 
+class _CheEphemeralConfig {
+  const _CheEphemeralConfig({
+    required this.key,
+    this.model,
+    this.voice,
+  });
+
+  final String key;
+  final String? model;
+  final String? voice;
+}
+
 class CheRealtimeVoiceEngine {
   CheRealtimeVoiceEngine({
     required this.baseUrl,
@@ -52,11 +64,13 @@ class CheRealtimeVoiceEngine {
   String? _activeResponseId;
   String _assistantTranscript = '';
   bool _assistantFinalDelivered = false;
+  Completer<void>? _sessionReady;
+  Completer<void>? _audioStarted;
 
   String? lastServerEvent;
   String? lastError;
 
-  bool get connected => _connected;
+  bool get connected => _connected && state.audioVerified;
 
   Future<void> initialize() async {
     if (_rendererReady) return;
@@ -74,9 +88,25 @@ class CheRealtimeVoiceEngine {
     _emitSnapshot();
 
     try {
-      final ephemeralKey = await _fetchEphemeralKey();
+      final config = await _fetchEphemeralKey();
+      state.configureRealtime(model: config.model, voice: config.voice);
+      _emitSnapshot();
+      _sessionReady = Completer<void>();
+      _audioStarted = Completer<void>();
 
       await Helper.ensureAudioSession();
+      await Helper.setAppleAudioConfiguration(
+        AppleAudioConfiguration(
+          appleAudioCategory: AppleAudioCategory.playAndRecord,
+          appleAudioCategoryOptions: const {
+            AppleAudioCategoryOption.allowBluetooth,
+            AppleAudioCategoryOption.allowBluetoothA2DP,
+            AppleAudioCategoryOption.allowAirPlay,
+            AppleAudioCategoryOption.defaultToSpeaker,
+          },
+          appleAudioMode: AppleAudioMode.voiceChat,
+        ),
+      );
       _localStream = await navigator.mediaDevices.getUserMedia({
         'audio': {
           'echoCancellation': true,
@@ -102,8 +132,6 @@ class CheRealtimeVoiceEngine {
       pc.onConnectionState = (value) {
         state.connectionChanged(value.name);
         if (value == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
-          _connected = true;
-          state.realtimeReady();
           _emitSnapshot();
         } else if (value == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
             value == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
@@ -137,10 +165,6 @@ class CheRealtimeVoiceEngine {
       channel.onMessage = _handleMessage;
       channel.onDataChannelState = (channelState) {
         state.connectionChanged('data:${channelState.name}');
-        if (channelState == RTCDataChannelState.RTCDataChannelOpen) {
-          _connected = true;
-          state.realtimeReady();
-        }
         _emitSnapshot();
       };
 
@@ -151,7 +175,7 @@ class CheRealtimeVoiceEngine {
           .post(
             Uri.parse('https://api.openai.com/v1/realtime/calls'),
             headers: {
-              'Authorization': 'Bearer $ephemeralKey',
+              'Authorization': 'Bearer ${config.key}',
               'Content-Type': 'application/sdp',
             },
             body: offer.sdp ?? '',
@@ -167,6 +191,34 @@ class CheRealtimeVoiceEngine {
       );
 
       await Helper.setSpeakerphoneOnButPreferBluetooth();
+
+      await _sessionReady!.future.timeout(
+        const Duration(seconds: 6),
+        onTimeout: () => throw TimeoutException(
+          'OpenAI Realtime connected but no session.created event arrived.',
+        ),
+      );
+
+      _send({
+        'type': 'response.create',
+        'event_id': _eventId('health'),
+        'response': {
+          'instructions':
+              'The owner just woke you. Reply in three words or fewer, naturally.',
+        },
+      });
+
+      await _audioStarted!.future.timeout(
+        const Duration(seconds: 8),
+        onTimeout: () => throw TimeoutException(
+          'OpenAI Realtime connected but returned no audio.',
+        ),
+      );
+
+      await _verifyInboundAudio();
+      _connected = true;
+      state.realtimeReady();
+      _emitSnapshot();
     } catch (error) {
       lastError = error.toString();
       state.reportError(lastError!);
@@ -176,7 +228,7 @@ class CheRealtimeVoiceEngine {
     }
   }
 
-  Future<String> _fetchEphemeralKey() async {
+  Future<_CheEphemeralConfig> _fetchEphemeralKey() async {
     final root = baseUrl.replaceFirst(RegExp(r'/$'), '');
     final response = await http
         .post(
@@ -207,7 +259,39 @@ class CheRealtimeVoiceEngine {
     if (value == null || value.isEmpty) {
       throw StateError('Realtime session token was empty.');
     }
-    return value;
+    return _CheEphemeralConfig(
+      key: value,
+      model: decoded['model']?.toString(),
+      voice: decoded['voice']?.toString(),
+    );
+  }
+
+  Future<void> _verifyInboundAudio() async {
+    final peer = _peer;
+    if (peer == null) {
+      throw StateError('Realtime peer disappeared before audio verification.');
+    }
+
+    final deadline = DateTime.now().add(const Duration(milliseconds: 1800));
+    while (DateTime.now().isBefore(deadline)) {
+      var total = 0;
+      for (final report in await peer.getStats()) {
+        final kind = report.values['kind'] ?? report.values['mediaType'];
+        if (report.type == 'inbound-rtp' && kind == 'audio') {
+          total += (report.values['bytesReceived'] as num? ?? 0).toInt();
+        }
+      }
+      if (total > 0) {
+        state.markAudioVerified();
+        _emitSnapshot();
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+
+    throw StateError(
+      'OpenAI Realtime reported speech, but no inbound audio bytes reached the iPhone.',
+    );
   }
 
   void _handleMessage(RTCDataChannelMessage message) {
@@ -226,8 +310,9 @@ class CheRealtimeVoiceEngine {
     switch (type) {
       case 'session.created':
       case 'session.updated':
-        state.realtimeReady();
-        _connected = true;
+        final ready = _sessionReady;
+        if (ready != null && !ready.isCompleted) ready.complete();
+        state.connectionChanged(type);
         _emitSnapshot();
         return;
 
@@ -235,6 +320,10 @@ class CheRealtimeVoiceEngine {
         final wasSpeaking = state.phase == CheVoicePhase.speaking;
         state.userSpeechStarted();
         if (wasSpeaking) {
+          _send({
+            'type': 'response.cancel',
+            'event_id': _eventId('cancel'),
+          });
           _send({
             'type': 'output_audio_buffer.clear',
             'event_id': _eventId('clear'),
@@ -272,6 +361,16 @@ class CheRealtimeVoiceEngine {
         }
         _assistantTranscript = '';
         _assistantFinalDelivered = false;
+        _emitSnapshot();
+        return;
+
+      case 'output_audio_buffer.started':
+      case 'response.output_audio.delta':
+      case 'response.audio.delta':
+        state.markAudioReturned();
+        state.assistantAudioStarted(responseId: _activeResponseId);
+        final audio = _audioStarted;
+        if (audio != null && !audio.isCompleted) audio.complete();
         _emitSnapshot();
         return;
 
@@ -452,6 +551,8 @@ class CheRealtimeVoiceEngine {
 
   Future<void> disconnect({bool keepRenderer = false}) async {
     _connected = false;
+    _sessionReady = null;
+    _audioStarted = null;
 
     final events = _events;
     _events = null;
