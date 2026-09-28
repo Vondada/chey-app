@@ -142,7 +142,7 @@ function safePreferenceFrom(message) {
   return null;
 }
 
-async function voiceSynthesisResponseasync function voiceSynthesisResponse(env, text) {
+async function voiceSynthesisResponse(env, text) {
   if (!env.CHE_VOICE_URL) {
     return json({ detail: 'Natural voice service is not connected yet.' }, 503);
   }
