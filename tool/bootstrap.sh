@@ -158,6 +158,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
   private var assistantText = ""
   private var ignoreBargeInUntil = Date.distantPast
   private var recognitionGeneration = 0
+  private var wakeSignalSent = false
 
   override func application(
     _ application: UIApplication,
@@ -457,6 +458,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     utteranceTimer?.invalidate()
     utteranceTimer = nil
     latestTranscript = ""
+    wakeSignalSent = false
     cancelRecognitionResources(keepGeneration: true)
 
     configureAudioSession()
@@ -518,6 +520,20 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     guard transcript != latestTranscript else { return }
 
     latestTranscript = transcript
+
+    // Wake CHE immediately from a partial recognition result instead of
+    // waiting for Apple's final transcript. Flutter decides whether this is
+    // actually a sleeping/wake-word turn, so normal open conversation stays
+    // unchanged.
+    let wakeCandidate = normalizedWords(transcript)
+    let wakeWords = ["chay", "chey", "shay", "che", "c h e", "hey chay", "hey chey", "hey che"]
+    if !assistantSpeaking && !wakeSignalSent && wakeWords.contains(wakeCandidate) {
+      wakeSignalSent = true
+      voiceStreamHandler.emit([
+        "type": "wake_signal",
+        "text": transcript,
+      ])
+    }
 
     if assistantSpeaking &&
         !bargeInDetected &&
