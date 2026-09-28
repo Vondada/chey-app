@@ -178,3 +178,183 @@ class CheAgentController extends ChangeNotifier {
   }
 
   void _run(CheMessage reply, CheMessage user) {
+    final cancel = _Cancel();
+    _cancel = cancel;
+    final all = current.messages.where((m) => !identical(m, reply) && !m.isError).toList();
+    final history = all.length > historyLimit ? all.sublist(all.length - historyLimit) : all;
+
+    final req = CheRequest(
+      message: user.text,
+      mode: mode,
+      history: history,
+      attachments: user.attachments,
+      systemAddons: [
+        ...?brain?.contextFor(user.text, conversations, exclude: current, recentReplies: _recentReplies()),
+        ...?systemAddons?.call(),
+        if (RegExp(r'\bplug-?ins?\b', caseSensitive: false).hasMatch(user.text)) chePluginAuthoringGuide.trim(),
+      ],
+      isCancelled: () => cancel.cancelled,
+      onStep: (label) {
+        if (cancel.cancelled) return;
+        for (final s in reply.steps) {
+          if (s.status == StepStatus.running) s.status = StepStatus.done;
+        }
+        reply.steps.add(CheStep(label));
+        _notifySoon();
+      },
+    );
+
+    var first = true;
+    _sub = backend.reply(req).listen(
+      (chunk) {
+        if (cancel.cancelled) return;
+        if (first) {
+          first = false;
+          reply.thoughtMs = DateTime.now().difference(reply.startedAt!).inMilliseconds;
+          for (final s in reply.steps) {
+            if (s.status == StepStatus.running) s.status = StepStatus.done;
+          }
+          HapticFeedback.selectionClick();
+        }
+        reply.text += chunk;
+        _notifySoon();
+      },
+      onError: (Object e, StackTrace st) {
+        reply
+          ..isError = true
+          ..errorText = _friendlyError(e);
+        for (final s in reply.steps) {
+          if (s.status == StepStatus.running) s.status = StepStatus.error;
+        }
+        _finish(reply);
+      },
+      onDone: () => _finish(reply),
+      cancelOnError: true,
+    );
+  }
+
+  List<String> _recentReplies() {
+    final out = <String>[];
+    for (final c in conversations) {
+      for (final m in c.messages.reversed) {
+        if (!m.isUser && !m.isError && !m.streaming && m.text.isNotEmpty) out.add(m.text);
+        if (out.length >= 5) return out;
+      }
+    }
+    return out;
+  }
+
+  /// Every [reflectEvery] finished exchanges, CHE privately reflects on the
+  /// conversation in the background (never slows down a reply).
+  final int reflectEvery = 4;
+  final Map<String, int> _sinceReflect = {};
+  bool _reflecting = false;
+
+  Future<void> _maybeReflect(CheConversation conv) async {
+    if (brain == null || _reflecting) return;
+    final n = (_sinceReflect[conv.id] ?? 0) + 1;
+    _sinceReflect[conv.id] = n;
+    if (n < reflectEvery) return;
+    _sinceReflect[conv.id] = 0;
+    _reflecting = true;
+    try {
+      final buf = StringBuffer();
+      final req = CheRequest(
+        message: CheBrain.reflectionPrompt(conv),
+        mode: 'Reflect',
+        history: const [],
+        attachments: const [],
+        systemAddons: [brain!.soul],
+        onStep: (_) {},
+        isCancelled: () => false,
+      );
+      await for (final chunk in backend.reply(req).timeout(const Duration(seconds: 45))) {
+        buf.write(chunk);
+      }
+      final text = buf.toString();
+      for (final f in CheBrain.findRemember(text)) {
+        await brain!.addFact(f, source: 'che');
+      }
+      await brain!.addReflection(text.replaceAll(RegExp(r'```che-remember[\s\S]*?```'), '').trim());
+    } catch (_) {
+      // reflection is best-effort
+    } finally {
+      _reflecting = false;
+    }
+  }
+
+  void _finish(CheMessage reply) {
+    reply.thoughtMs ??= DateTime.now().difference(reply.startedAt ?? DateTime.now()).inMilliseconds;
+    reply.streaming = false;
+    for (final s in reply.steps) {
+      if (s.status == StepStatus.running) s.status = StepStatus.done;
+    }
+    _sub = null;
+    _cancel = null;
+    if (!reply.isError) {
+      HapticFeedback.lightImpact();
+      _justCompleted = true;
+      Future<void>.delayed(const Duration(milliseconds: 1400), () {
+        if (_disposed) return;
+        _justCompleted = false;
+        notifyListeners();
+      });
+    }
+    notifyListeners();
+    final conv = current.messages.contains(reply)
+        ? current
+        : conversations.firstWhere((c) => c.messages.contains(reply), orElse: () => current);
+    conv.updatedAt = DateTime.now();
+    store?.save(conv);
+    final i = conv.messages.indexOf(reply);
+    if (i > 0) store?.remoteLog(conv, conv.messages[i - 1], reply);
+    if (brain != null && !reply.isError) {
+      for (final f in CheBrain.findRemember(reply.text)) {
+        brain!.addFact(f, source: 'che');
+      }
+      _maybeReflect(conv);
+    }
+  }
+
+  void stop() {
+    if (_sub == null) return;
+    _cancel?.cancelled = true;
+    _sub?.cancel();
+    final last = current.messages.isNotEmpty ? current.messages.last : null;
+    if (last != null && !last.isUser && last.streaming) {
+      if (last.text.isEmpty) last.text = 'Stopped.';
+      _finish(last);
+    } else {
+      _sub = null;
+      _cancel = null;
+      notifyListeners();
+    }
+  }
+
+  /// Re-run the user message that produced [reply].
+  void retry(CheMessage reply) {
+    if (busy) return;
+    final i = current.messages.indexOf(reply);
+    if (i <= 0) return;
+    final user = current.messages[i - 1];
+    current.messages.removeRange(i - 1, i + 1);
+    send(user.text, attachments: user.attachments);
+  }
+
+  /// Batch rapid token updates into one rebuild per frame (smooth at any speed).
+  void _notifySoon() {
+    if (_pendingNotify) return;
+    _pendingNotify = true;
+    SchedulerBinding.instance.scheduleFrameCallback((_) {
+      _pendingNotify = false;
+      notifyListeners();
+    });
+    SchedulerBinding.instance.scheduleFrame();
+  }
+
+  static String _friendlyError(Object e) {
+    final s = e.toString();
+    if (e is TimeoutException) return 'CHE took too long to answer. Tap retry.';
+    if (s.contains('SocketException') || s.contains('HandshakeException')) {
+      return 'No connection to CHE right now. Check your signal and tap retry.';
+    }
