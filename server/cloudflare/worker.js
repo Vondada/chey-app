@@ -1189,6 +1189,16 @@ async function specialistPanel(env, requestedCapabilities, query) {
     ));
   }
 
+  if (requested.has('advertising') && env.CHE_ADVERTISING_URL) {
+    jobs.push(optionalToolConnector(
+      env.CHE_ADVERTISING_URL,
+      env.CHE_ADVERTISING_TOKEN,
+      'advertising',
+      query,
+      { mode: 'campaign_assist' },
+    ));
+  }
+
   if (requested.has('lead_generation') && env.CHE_LEADS_URL) {
     jobs.push(optionalToolConnector(
       env.CHE_LEADS_URL,
@@ -1716,11 +1726,13 @@ export class CheState extends DurableObject {
             broker: Boolean(this.env.CHE_BROKER_URL),
             prop_firm: Boolean(this.env.CHE_PROP_FIRM_URL),
             business: Boolean(this.env.CHE_BUSINESS_URL),
+            advertising: Boolean(this.env.CHE_ADVERTISING_URL),
             payments: Boolean(this.env.CHE_PAYMENTS_URL),
             leads: Boolean(this.env.CHE_LEADS_URL),
             action_engine: Boolean(
               this.env.CHE_BROKER_URL ||
               this.env.CHE_PAYMENTS_URL ||
+              this.env.CHE_ADVERTISING_URL ||
               this.env.CHE_WINDOWS_URL ||
               this.env.CHE_CAR_URL ||
               this.env.CHE_SMART_HOME_URL ||
@@ -2825,6 +2837,7 @@ export class CheState extends DurableObject {
               'For trading setups, explain evidence, entry conditions, invalidation, risk, assumptions and alternatives. No setup is guaranteed. Current political or economic events may be treated as sourced market inputs without political advocacy.',
               'COPY TRADING: live or prop-firm mirroring requires a real authorized broker/prop connection plus account rules, position-size limits, max-loss limits and an enabled execution policy. Never claim an order was copied or placed unless the connector confirms it.',
               'BUSINESS MODE: help with plans, budgets, cash flow, forecasts, CRM, scheduling, fulfillment and invoicing. Prospecting should use lawful professional/public business information. Payments require an authorized processor and owner-approved pricing and terms.',
+              'ADVERTISING MODE: help plan campaigns, positioning, audiences, channels, budgets, ad copy, creative briefs, testing and measurement. Do not target or infer sensitive personal traits. Publishing ads or spending money requires an authorized ad-platform connector and owner-approved campaign terms/budget; never claim a campaign launched unless the connector confirms it.',
               'Never claim to have changed code, researched live facts, controlled a phone, computer, car, music service, Bluetooth device, screen, smart-home device, trading account, or payment unless a real connected tool confirms it.',
               `Requested capabilities: ${JSON.stringify(requestedCapabilities).slice(0, 1200)}`,
               `Integration readiness: ${JSON.stringify({
@@ -2849,6 +2862,7 @@ export class CheState extends DurableObject {
                 broker: Boolean(this.env.CHE_BROKER_URL),
                 prop_firm: Boolean(this.env.CHE_PROP_FIRM_URL),
                 business: Boolean(this.env.CHE_BUSINESS_URL),
+            advertising: Boolean(this.env.CHE_ADVERTISING_URL),
                 payments: Boolean(this.env.CHE_PAYMENTS_URL),
                 leads: Boolean(this.env.CHE_LEADS_URL),
                 music: Boolean(this.env.CHE_MUSIC_URL),
