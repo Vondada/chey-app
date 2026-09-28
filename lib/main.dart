@@ -38,11 +38,6 @@ import 'devices_hub_scene.dart';
 import 'music_studio_scene.dart';
 import 'create_gallery_scene.dart';
 import 'office_scene.dart';
-import 'insights_brain_scene.dart';
-import 'devices_hub_scene.dart';
-import 'music_studio_scene.dart';
-import 'create_gallery_scene.dart';
-import 'office_scene.dart';
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
 
