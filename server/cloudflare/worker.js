@@ -343,7 +343,7 @@ function pcm16ToWav(pcm, sampleRate = 24000) {
 
 async function geminiSpeech(env, text, fetcher = fetch) {
   try {
-    const model = String(env.CHE_GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts');
+    const model = String(env.CHE_GEMINI_TTS_MODEL || 'gemini-3.8-flash-lite-tts');
     const response = await fetcher(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
       {
