@@ -39,19 +39,31 @@ const PROVIDERS = [
     url: 'https://openrouter.ai/api/v1/chat/completions',
     fast: (env) => env.CHE_OPENROUTER_FAST_MODEL || 'meta-llama/llama-3.3-70b-instruct:free',
     strong: (env) => env.CHE_OPENROUTER_STRONG_MODEL || 'meta-llama/llama-3.3-70b-instruct:free',
-  },  // Keyless last resort: Pollinations' free OpenAI-compatible endpoint. No
-  // account or key, so CHE keeps answering even with zero keys configured.
-  // Set CHE_DISABLE_KEYLESS_AI=1 on the Worker to turn it off.
-  {
-    id: 'pollinations',
+  },
+  // Keyless last resort: Pollinations' free OpenAI-compatible endpoint,
+  // rotated across several models so one busy model never stops CHE. No
+  // account or key. CHE_POLLINATIONS_MODELS overrides the list;
+  // CHE_DISABLE_KEYLESS_AI=1 turns keyless engines off.
+  ...['openai', 'mistral', 'openai-large'].map((model) => ({
+    id: `pollinations:${model}`,
     keyless: true,
     url: 'https://text.pollinations.ai/openai',
-    fast: (env) => env.CHE_POLLINATIONS_MODEL || 'openai',
-    strong: (env) => env.CHE_POLLINATIONS_MODEL || 'openai',
-  },
+    modelName: model,
+    fast: () => model,
+    strong: () => model,
+  })),
 ];
 
+function keylessModels(env) {
+  const raw = String(env.CHE_POLLINATIONS_MODELS || '').trim();
+  return raw ? raw.split(',').map((item) => item.trim()).filter(Boolean) : null;
+}
+
 function providerEnabled(env, provider) {
+  if (provider.keyless) {
+    const only = keylessModels(env);
+    if (only && !only.includes(provider.modelName)) return false;
+  }
   if (provider.keyless) return !['1', 'true', 'yes'].includes(String(env.CHE_DISABLE_KEYLESS_AI || '').toLowerCase());
   return Boolean(env[provider.key]);
 }
@@ -127,8 +139,9 @@ export async function routeText(env, model, input, fetcher = fetch) {
     try {
       return await callProvider(env, provider, model, input, fetcher);
     } catch (error) {
-      // Rate-limited: rest this engine for a minute; others keep answering.
-      if (error?.status === 429) providerCooldownUntil.set(provider.id, now + 60_000);
+      // Rest a failing engine so the next message goes straight to one that
+      // works: a minute when rate-limited, 20 seconds for other errors.
+      providerCooldownUntil.set(provider.id, now + (error?.status === 429 ? 60_000 : 20_000));
       errors.push(String(error?.message || error));
     }
   }
