@@ -843,7 +843,7 @@ class CheRichText extends StatelessWidget {
         if (!inCode) {
           flush(false);
           lang = line.trim().substring(3).trim();
-          if (lang!.isEmpty) lang = null;
+          if (lang.isEmpty) lang = null;
           inCode = true;
         } else {
           flush(true);
