@@ -584,7 +584,8 @@ OWNER AGENCY
         _deviceToken == null ||
         _deviceToken!.isEmpty ||
         _isSending ||
-        _isSpeaking) {
+        _isSpeaking ||
+        _realtimeVoice?.connected == true) {
       return;
     }
 
@@ -1195,6 +1196,11 @@ OWNER AGENCY
   void _applyVoiceSnapshot(CheVoiceSnapshot snapshot) {
     _voiceSnapshot = snapshot;
     if (!mounted) return;
+    if (snapshot.phase == CheVoicePhase.disconnected &&
+        _realtimeVoice != null &&
+        !_realtimeConnecting) {
+      unawaited(_fallbackAfterRealtimeLoss(snapshot.lastError));
+    }
     setState(() {
       _isSpeaking = snapshot.phase == CheVoicePhase.speaking;
       _isSending = snapshot.phase == CheVoicePhase.thinking ||
@@ -1208,6 +1214,31 @@ OWNER AGENCY
           snapshot.phase == CheVoicePhase.wakeListening;
     });
   }
+
+  Future<void> _fallbackAfterRealtimeLoss(String? reason) async {
+    if (_realtimeConnecting || _realtimeVoice == null) return;
+    final engine = _realtimeVoice;
+    _realtimeVoice = null;
+    try {
+      await engine?.dispose();
+    } catch (_) {}
+
+    _voiceMachine.fallback(reason ?? 'Realtime connection ended.');
+    _applyVoiceSnapshot(_voiceMachine.snapshot);
+
+    try {
+      final started = await CheNativeVoice.start();
+      _nativeIosVoiceActive = started;
+      if (!started) {
+        _voiceMachine.disconnected(reason ?? 'Voice engines unavailable.');
+        _applyVoiceSnapshot(_voiceMachine.snapshot);
+      }
+    } catch (error) {
+      _voiceMachine.disconnected(error.toString());
+      _applyVoiceSnapshot(_voiceMachine.snapshot);
+    }
+  }
+
 
   Future<void> _restartWakeListener() async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return;
@@ -1233,7 +1264,11 @@ OWNER AGENCY
     }
 
     _realtimeConnecting = true;
-    HapticFeedback.lightImpact();
+    if (fromWake) {
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.lightImpact();
+    }
     if (mounted) {
       setState(() {
         cheSleeping = false;
@@ -1343,8 +1378,15 @@ OWNER AGENCY
     if (clean.isEmpty || !mounted) return;
 
     setState(() {
-      messages.add({'role': 'user', 'text': clean});
-      _realtimeAssistantIndex = null;
+      final assistantIndex = _realtimeAssistantIndex;
+      if (assistantIndex != null &&
+          assistantIndex >= 0 &&
+          assistantIndex < messages.length) {
+        messages.insert(assistantIndex, {'role': 'user', 'text': clean});
+        _realtimeAssistantIndex = assistantIndex + 1;
+      } else {
+        messages.add({'role': 'user', 'text': clean});
+      }
     });
     _scrollToBottom();
 
@@ -1913,9 +1955,7 @@ OWNER AGENCY
     }
 
     if (type == 'wake_signal') {
-      if (cheSleeping) {
-        unawaited(_beginRealtimeConversation(fromWake: true));
-      }
+      if (cheSleeping) HapticFeedback.lightImpact();
       return;
     }
 
@@ -1961,19 +2001,19 @@ OWNER AGENCY
 
         if (wakeMatch == null) return;
 
-        words = words.substring(wakeMatch.end).trim();
+        final afterWake = words.substring(wakeMatch.end).trim();
+        await _beginRealtimeConversation(fromWake: true);
 
-        if (!mounted) return;
-        setState(() {
-          cheSleeping = false;
-          openConversation = true;
-          isListening = true;
-        });
-
-        if (words.isEmpty) {
-          await _beginRealtimeConversation(fromWake: true);
-          return;
+        if (afterWake.isNotEmpty && _realtimeVoice?.connected == true) {
+          if (mounted) {
+            setState(() {
+              messages.add({'role': 'user', 'text': afterWake});
+            });
+            _scrollToBottom();
+          }
+          await _realtimeVoice!.sendText(afterWake);
         }
+        return;
       }
 
       if (_isSleepPhrase(words)) {
