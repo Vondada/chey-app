@@ -81,7 +81,7 @@ class _CheRoomBackdropState extends State<CheRoomBackdrop> with SingleTickerProv
       RepaintBoundary(
         child: AnimatedBuilder(
           animation: _c,
-          builder: (_, __) => CustomPaint(painter: _painterFor(widget.room, _c.value)),
+          builder: (_, _) => CustomPaint(painter: _painterFor(widget.room, _c.value)),
         ),
       ),
       IgnorePointer(
@@ -91,9 +91,9 @@ class _CheRoomBackdropState extends State<CheRoomBackdrop> with SingleTickerProv
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
               colors: [
-                Colors.black.withOpacity(widget.scrim * 0.35),
-                Colors.black.withOpacity(widget.scrim * 0.75),
-                Colors.black.withOpacity(math.min(1, widget.scrim * 1.25)),
+                Colors.black.withValues(alpha: widget.scrim * 0.35),
+                Colors.black.withValues(alpha: widget.scrim * 0.75),
+                Colors.black.withValues(alpha: math.min(1, widget.scrim * 1.25)),
               ],
               stops: const [0.0, 0.45, 1.0],
             ),
@@ -138,7 +138,7 @@ class _CorePainter extends CustomPainter {
     final horizon = s.height * 0.55;
     final vp = Offset(s.width / 2, horizon);
     final line = Paint()
-      ..color = CheColors.accent.withOpacity(0.22)
+      ..color = CheColors.accent.withValues(alpha: 0.22)
       ..strokeWidth = 1;
     for (var i = -10; i <= 10; i++) {
       canvas.drawLine(vp, Offset(s.width / 2 + i * s.width * 0.18, s.height), line);
@@ -146,15 +146,15 @@ class _CorePainter extends CustomPainter {
     for (var i = 0; i < 12; i++) {
       final f = ((i / 12) + t * 0.5) % 1.0;
       final y = horizon + (s.height - horizon) * f * f;
-      canvas.drawLine(Offset(0, y), Offset(s.width, y), line..color = CheColors.accent.withOpacity(0.08 + 0.25 * f));
+      canvas.drawLine(Offset(0, y), Offset(s.width, y), line..color = CheColors.accent.withValues(alpha: 0.08 + 0.25 * f));
     }
-    canvas.drawCircle(vp, s.width * 0.35, _glow(CheColors.accent.withOpacity(0.18), 60));
+    canvas.drawCircle(vp, s.width * 0.35, _glow(CheColors.accent.withValues(alpha: 0.18), 60));
     final rnd = math.Random(7);
     for (var i = 0; i < 40; i++) {
       final x = rnd.nextDouble() * s.width;
       final y = (rnd.nextDouble() * horizon - t * horizon * (0.3 + rnd.nextDouble())) % horizon;
       canvas.drawCircle(Offset(x, y), 1 + rnd.nextDouble() * 1.5,
-          Paint()..color = CheColors.accent.withOpacity(0.25 + 0.4 * rnd.nextDouble()));
+          Paint()..color = CheColors.accent.withValues(alpha: 0.25 + 0.4 * rnd.nextDouble()));
     }
   }
 
@@ -184,19 +184,19 @@ class _StudioPainter extends CustomPainter {
     final back = Rect.fromLTWH(w * 0.22, h * 0.12, w * 0.56, h * 0.46);
     canvas.drawRect(back, Paint()..color = const Color(0xFF3A0C14));
     final rim = Paint()
-      ..color = cyan.withOpacity(0.55)
+      ..color = cyan.withValues(alpha: 0.55)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2;
     canvas.drawLine(Offset(0, 0), back.topLeft, rim);
     canvas.drawLine(Offset(w, 0), back.topRight, rim);
-    canvas.drawLine(back.topLeft, back.topRight, rim..color = cyan.withOpacity(0.35));
-    canvas.drawLine(back.topLeft, back.topRight, _glow(cyan.withOpacity(0.5), 8)..strokeWidth = 3);
+    canvas.drawLine(back.topLeft, back.topRight, rim..color = cyan.withValues(alpha: 0.35));
+    canvas.drawLine(back.topLeft, back.topRight, _glow(cyan.withValues(alpha: 0.5), 8)..strokeWidth = 3);
     // booth window glow
     final win = Rect.fromLTWH(back.left + back.width * 0.3, back.top + back.height * 0.2, back.width * 0.4, back.height * 0.55);
     canvas.drawRect(win, Paint()..color = const Color(0xFF52210F));
-    canvas.drawRect(win, _glow(const Color(0xFFFF8A3D).withOpacity(0.35), 20));
+    canvas.drawRect(win, _glow(const Color(0xFFFF8A3D).withValues(alpha: 0.35), 20));
     canvas.drawRect(win, Paint()
-      ..color = red.withOpacity(0.8)
+      ..color = red.withValues(alpha: 0.8)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5);
     // big wall speakers left / right with a gentle "breathing" cone
@@ -204,7 +204,7 @@ class _StudioPainter extends CustomPainter {
     for (final left in [true, false]) {
       final r = Rect.fromLTWH(left ? w * 0.02 : w * 0.80, h * 0.14, w * 0.18, h * 0.34);
       canvas.drawRRect(RRect.fromRectAndRadius(r, const Radius.circular(4)), Paint()..color = const Color(0xFF6B1420));
-      canvas.drawRRect(RRect.fromRectAndRadius(r, const Radius.circular(4)), _glow(red.withOpacity(0.35), 14));
+      canvas.drawRRect(RRect.fromRectAndRadius(r, const Radius.circular(4)), _glow(red.withValues(alpha: 0.35), 14));
       for (final cy in [0.3, 0.7]) {
         final c = Offset(r.center.dx, r.top + r.height * cy);
         canvas.drawCircle(c, r.width * (0.26 + 0.015 * beat), Paint()..color = const Color(0xFF16060A));
@@ -229,15 +229,15 @@ class _StudioPainter extends CustomPainter {
       ..lineTo(w, h * 0.86)
       ..lineTo(0, h * 0.86)
       ..close();
-    canvas.drawPath(desk, Paint()..color = const Color(0xFFD9D4D6).withOpacity(0.18));
-    canvas.drawLine(Offset(0, h * 0.72), Offset(w, h * 0.72), _glow(cyan.withOpacity(0.7), 6)..strokeWidth = 2);
+    canvas.drawPath(desk, Paint()..color = const Color(0xFFD9D4D6).withValues(alpha: 0.18));
+    canvas.drawLine(Offset(0, h * 0.72), Offset(w, h * 0.72), _glow(cyan.withValues(alpha: 0.7), 6)..strokeWidth = 2);
     const faders = 22;
     for (var i = 0; i < faders; i++) {
       final x = w * (0.04 + 0.92 * i / (faders - 1));
       final lvl = 0.35 + 0.35 * (0.5 + 0.5 * _wave(t, 8 + i % 5, i * 0.17));
       canvas.drawLine(Offset(x, h * 0.84), Offset(x, h * 0.84 - h * 0.1 * lvl), Paint()
         ..strokeWidth = 3
-        ..color = (lvl > 0.62 ? red : cyan).withOpacity(0.85));
+        ..color = (lvl > 0.62 ? red : cyan).withValues(alpha: 0.85));
     }
     canvas.drawRect(Rect.fromLTWH(0, h * 0.86, w, h * 0.14), Paint()..color = const Color(0xFF060203));
   }
@@ -295,7 +295,7 @@ class _OfficePainter extends CustomPainter {
     for (final bx in [0.08, 0.56]) {
       final r = Rect.fromLTWH(w * bx, h * 0.34, w * 0.2, h * 0.36);
       canvas.drawRect(r, Paint()..color = const Color(0xFFC8A77E));
-      canvas.drawRect(r.deflate(w * 0.015), Paint()..color = const Color(0xFF6E8398).withOpacity(0.85));
+      canvas.drawRect(r.deflate(w * 0.015), Paint()..color = const Color(0xFF6E8398).withValues(alpha: 0.85));
     }
     // desks + chairs
     final desk = Paint()..color = const Color(0xFFD2AF7F);
@@ -325,9 +325,9 @@ class _OfficePainter extends CustomPainter {
         Offset.zero & s,
         Paint()
           ..shader = LinearGradient(colors: [
-            Colors.white.withOpacity(0),
-            Colors.white.withOpacity(0.14),
-            Colors.white.withOpacity(0),
+            Colors.white.withValues(alpha: 0),
+            Colors.white.withValues(alpha: 0.14),
+            Colors.white.withValues(alpha: 0),
           ], stops: const [0, 0.5, 1]).createShader(Rect.fromLTWH(sx - w * 0.2, 0, w * 0.4, h)));
   }
 
@@ -352,7 +352,7 @@ class _ConferencePainter extends CustomPainter {
           ).createShader(Offset.zero & s));
     // wall screen with 4 participant tiles
     final scr = Rect.fromLTWH(w * 0.08, h * 0.18, w * 0.34, h * 0.3);
-    canvas.drawRect(scr, _glow(const Color(0xFF9FC4FF).withOpacity(0.35), 18));
+    canvas.drawRect(scr, _glow(const Color(0xFF9FC4FF).withValues(alpha: 0.35), 18));
     canvas.drawRect(scr, Paint()..color = const Color(0xFFDDE6F0));
     for (var i = 0; i < 4; i++) {
       final tile = Rect.fromLTWH(scr.left + 6 + (i % 2) * (scr.width / 2 - 3), scr.top + 6 + (i ~/ 2) * (scr.height / 2 - 3),
@@ -384,19 +384,19 @@ class _ConferencePainter extends CustomPainter {
     for (var i = 0; i < 4; i++) {
       final x = w * (i / 4);
       canvas.drawLine(Offset(x, 0), Offset(x, h), Paint()
-        ..color = Colors.white.withOpacity(0.18)
+        ..color = Colors.white.withValues(alpha: 0.18)
         ..strokeWidth = 2);
       final rx = x + ((t * 1.5 + i * 0.27) % 1.0) * w / 4;
       canvas.drawRect(
           Rect.fromLTWH(rx - 20, 0, 40, h),
           Paint()
             ..shader = LinearGradient(colors: [
-              Colors.white.withOpacity(0),
-              Colors.white.withOpacity(0.07),
-              Colors.white.withOpacity(0),
+              Colors.white.withValues(alpha: 0),
+              Colors.white.withValues(alpha: 0.07),
+              Colors.white.withValues(alpha: 0),
             ]).createShader(Rect.fromLTWH(rx - 20, 0, 40, h)));
     }
-    canvas.drawRect(Offset.zero & s, Paint()..color = const Color(0xFF7FA0B8).withOpacity(0.06));
+    canvas.drawRect(Offset.zero & s, Paint()..color = const Color(0xFF7FA0B8).withValues(alpha: 0.06));
   }
 
   @override
@@ -437,17 +437,17 @@ class _BrainPainter extends CustomPainter {
         final d = (pts[i] - pts[j]).distance;
         if (d > w * 0.2) continue;
         final o = (1 - d / (w * 0.2)) * 0.5;
-        canvas.drawLine(pts[i], pts[j], edge..color = blue.withOpacity(o));
+        canvas.drawLine(pts[i], pts[j], edge..color = blue.withValues(alpha: o));
         if ((i + j) % 5 == 0) {
           final p = ((t * 3 + i * 0.11) % 1.0);
-          canvas.drawCircle(Offset.lerp(pts[i], pts[j], p)!, 1.8, Paint()..color = Colors.white.withOpacity(0.9));
+          canvas.drawCircle(Offset.lerp(pts[i], pts[j], p)!, 1.8, Paint()..color = Colors.white.withValues(alpha: 0.9));
         }
       }
     }
     for (var i = 0; i < n; i++) {
       final fire = 0.5 + 0.5 * _wave(t, 4, i * 0.13);
-      canvas.drawCircle(pts[i], 5 + 5 * fire, _glow(blue.withOpacity(0.35 * fire), 8));
-      canvas.drawCircle(pts[i], 1.8 + fire, Paint()..color = Colors.white.withOpacity(0.7 + 0.3 * fire));
+      canvas.drawCircle(pts[i], 5 + 5 * fire, _glow(blue.withValues(alpha: 0.35 * fire), 8));
+      canvas.drawCircle(pts[i], 1.8 + fire, Paint()..color = Colors.white.withValues(alpha: 0.7 + 0.3 * fire));
     }
     // "lightning" arc that roams across the network
     final k = ((t * 5) % 1.0);
@@ -457,7 +457,7 @@ class _BrainPainter extends CustomPainter {
       final p = Offset.lerp(a, b, i / 6)!;
       path.lineTo(p.dx + (rnd.nextDouble() - 0.5) * 14, p.dy + (rnd.nextDouble() - 0.5) * 14);
     }
-    canvas.drawPath(path, _glow(Colors.white.withOpacity(0.6 * (1 - k)), 3)
+    canvas.drawPath(path, _glow(Colors.white.withValues(alpha: 0.6 * (1 - k)), 3)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5);
   }
@@ -499,14 +499,14 @@ class _MarketsPainter extends CustomPainter {
       final lo = math.max(o, c) + h * 0.02 * (1 + math.cos(i * 2.3).abs());
       final col = c < o ? up : down; // y grows downward → lower y is higher price
       canvas.drawLine(Offset(x + cw / 2, hi), Offset(x + cw / 2, lo), Paint()
-        ..color = col.withOpacity(0.8)
+        ..color = col.withValues(alpha: 0.8)
         ..strokeWidth = 1);
       canvas.drawRect(Rect.fromLTRB(x + cw * 0.2, math.min(o, c), x + cw * 0.8, math.max(o, c) + 1), Paint()..color = col);
       final vwap = (o + c) / 2 + h * 0.05;
       k == 0 ? path.moveTo(x, vwap) : path.lineTo(x, vwap);
     }
     canvas.drawPath(path, Paint()
-      ..color = const Color(0xFF7CC4FF).withOpacity(0.7)
+      ..color = const Color(0xFF7CC4FF).withValues(alpha: 0.7)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.4);
     // arrows
@@ -519,7 +519,7 @@ class _MarketsPainter extends CustomPainter {
       p.lineTo(c.dx + 12, c.dy - d * 8);
       p.close();
       final col = isUp ? up : down;
-      canvas.drawPath(p, _glow(col.withOpacity(0.5 * pulse), 10));
+      canvas.drawPath(p, _glow(col.withValues(alpha: 0.5 * pulse), 10));
       canvas.drawPath(p, Paint()..color = col);
     }
 
@@ -581,14 +581,14 @@ class _ArtPainter extends CustomPainter {
       final round = rnd.nextDouble() < 0.2;
       final paint = Paint()
         ..shader = LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [c1, c2]).createShader(r);
-      canvas.drawRect(r.inflate(2), Paint()..color = Colors.black.withOpacity(0.18));
+      canvas.drawRect(r.inflate(2), Paint()..color = Colors.black.withValues(alpha: 0.18));
       round ? canvas.drawOval(r, paint) : canvas.drawRect(r, paint);
       // horizon line like the sunset canvases
       canvas.drawLine(Offset(r.left, r.top + ch * 0.6), Offset(r.right, r.top + ch * 0.6),
-          Paint()..color = Colors.white.withOpacity(0.25));
+          Paint()..color = Colors.white.withValues(alpha: 0.25));
     }
     // shelf + desk
-    canvas.drawRect(Rect.fromLTWH(w * 0.5, h * 0.52, w * 0.5, h * 0.015), Paint()..color = Colors.white.withOpacity(0.9));
+    canvas.drawRect(Rect.fromLTWH(w * 0.5, h * 0.52, w * 0.5, h * 0.015), Paint()..color = Colors.white.withValues(alpha: 0.9));
     canvas.drawRect(Rect.fromLTWH(0, h * 0.72, w, h * 0.28), Paint()..color = const Color(0xFFF3EFE8));
     // pencil cups / paint tubes
     for (var i = 0; i < 9; i++) {
@@ -599,7 +599,7 @@ class _ArtPainter extends CustomPainter {
     // warm lamp glow (gentle flicker)
     final flick = 0.85 + 0.15 * _wave(t, 9);
     final lamp = Offset(w * 0.2, h * 0.62);
-    canvas.drawCircle(lamp, w * 0.45, _glow(const Color(0xFFFFB45A).withOpacity(0.35 * flick), 60));
+    canvas.drawCircle(lamp, w * 0.45, _glow(const Color(0xFFFFB45A).withValues(alpha: 0.35 * flick), 60));
     canvas.drawOval(Rect.fromCenter(center: lamp, width: w * 0.12, height: h * 0.1), Paint()..color = const Color(0xFFFFE1A8));
   }
 
