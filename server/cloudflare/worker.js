@@ -2133,9 +2133,12 @@ export class CheState extends DurableObject {
       }
 
       // ─── Connected world: activity feed, greeting, find anything ────
-      if (request.method === 'GET' && ['/api/activity', '/api/greeting', '/api/find'].includes(path)) {
+      if (request.method === 'GET' && ['/api/activity', '/api/greeting', '/api/find', '/api/stalled', '/api/decisions', '/api/next'].includes(path)) {
         const url = new URL(request.url);
         const media = await listMedia(this.ctx.storage);
+        if (path === '/api/stalled') return json({ items: stalledTasks(data) });
+        if (path === '/api/decisions') return json({ items: decisionsNeeded(data) });
+        if (path === '/api/next') return json({ actions: nextActions(data) });
         if (path === '/api/activity') {
           const limit = Math.max(1, Math.min(60, Number(url.searchParams.get('limit')) || 30));
           return json({ events: activityFeed(data, media, url.origin, limit) });
