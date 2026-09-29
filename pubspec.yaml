@@ -34,6 +34,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/office3d/
 
 flutter_launcher_icons:
   # Regenerates ios/Runner/Assets.xcassets/AppIcon.appiconset from this one
