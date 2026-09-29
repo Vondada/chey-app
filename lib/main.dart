@@ -478,12 +478,20 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => Theme(
         data: kit.CheTheme.dark(),
-        child: ChePluginsScreen(
+        child: Scaffold(
+          backgroundColor: const Color(0xFF0B1118),
+          appBar: AppBar(
+            backgroundColor: const Color(0xFF0B1118),
+            elevation: 0,
+            scrolledUnderElevation: 0,
+          ),
+          body: ChePluginsScreen(
           registry: _skillPlugins,
           onAskCheToBuild: () => _runPluginPrompt('Build me a plugin that '),
           onRunPrompt: _runPluginPrompt,
           webAppBuilder: (context, {String? html, String? url}) =>
               ChePluginWebApp(html: html, url: url, onPrompt: _runPluginPrompt),
+          ),
         ),
       ),
     ));

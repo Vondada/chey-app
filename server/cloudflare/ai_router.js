@@ -315,11 +315,14 @@ async function callProvider(env, provider, strongModel, input, fetcher) {
         'Content-Type': 'application/json',
         ...(provider.id === 'openrouter' ? { 'HTTP-Referer': 'https://che.app', 'X-Title': 'CHE' } : {}),
       },
-      body: JSON.stringify({
-        model: strongModel ? provider.strong(env) : provider.fast(env),
+      body: JSON.stringify(((modelName) => ({
+        model: modelName,
         messages: input.messages,
         max_tokens: input.max_tokens || 800,
-      }),
+        // Reasoning models spend tokens "thinking"; keep that short so the
+        // reply arrives fast and isn't cut off.
+        ...(/gpt-oss/i.test(modelName) ? { reasoning_effort: 'low' } : {}),
+      }))(strongModel ? provider.strong(env) : provider.fast(env))),
       signal: controller.signal,
     });
     const data = await response.json().catch(() => null);
@@ -346,14 +349,20 @@ async function callProvider(env, provider, strongModel, input, fetcher) {
 export async function routeText(env, model, input, fetcher = fetch, usageStorage = null) {
   const errors = [];
   const now = Date.now();
-  const casual = isShortCasualRequest(model, input);
-  const strongProviderModel = wantsStrongProviderModel(model, input);
+  // "quality" = CHE's main reply to the owner: use the smartest free engines
+  // first and keep Cloudflare's small models as the last resort.
+  const quality = input?.che_route === 'quality';
+  const casual = !quality && isShortCasualRequest(model, input);
+  const strongProviderModel = quality || wantsStrongProviderModel(model, input);
   const engineInput = compactEngineInput(input);
+  delete engineInput.che_route;
 
-  if (env.AI && now >= cloudflareExhaustedUntil) {
-    if (await isPastDailyBudget(env, usageStorage, 'cloudflare', now)) {
-      errors.push('cloudflare: daily budget at 90%');
-    } else {
+  const tryCloudflare = async () => {
+    if (env.AI && now >= cloudflareExhaustedUntil) {
+      if (await isPastDailyBudget(env, usageStorage, 'cloudflare', now)) {
+        errors.push('cloudflare: daily budget at 90%');
+        return null;
+      }
       try {
         const out = await env.AI.run(model, engineInput);
         await addEstimatedUsage(env, usageStorage, 'cloudflare', estimateTotalTokens(engineInput, out), now);
@@ -366,51 +375,62 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
           errors.push(`cloudflare: ${error?.message || error}`);
         }
       }
+    } else if (env.AI) {
+      errors.push('cloudflare: quota cooldown active; retrying within 30 minutes');
     }
-  } else if (env.AI) {
-    errors.push('cloudflare: quota cooldown active; retrying within 30 minutes');
-  }
+    return null;
+  };
 
-  for (const provider of orderedProviders(env, casual)) {
-    if (!providerEnabled(env, provider)) continue;
-    if ((providerCooldownUntil.get(provider.id) || 0) > now) {
-      errors.push(`${provider.id}: resting`);
-      continue;
-    }
-    if (await isPastDailyBudget(env, usageStorage, provider.id, now)) {
-      errors.push(`${provider.id}: daily budget at 90%`);
-      continue;
-    }
-    try {
-      const called = await callProvider(env, provider, strongProviderModel, engineInput, fetcher);
-      await addEstimatedUsage(env, usageStorage, provider.id, called.usageTokens, now);
-      return called.result;
-    } catch (error) {
-      // Busy or overloaded (429 / 5xx): try the same engine's lighter model
-      // once, which usually has its own separate limit, before moving on.
-      const busy = error?.status === 429 || [500, 502, 503, 504].includes(error?.status);
-      if (busy) {
-        try {
-          if (!strongProviderModel) await new Promise((resolve) => setTimeout(resolve, 700));
-          const retry = await callProvider(env, provider, false, engineInput, fetcher);
-          await addEstimatedUsage(env, usageStorage, provider.id, retry.usageTokens, now);
-          return retry.result;
-        } catch (retryError) {
-          errors.push(`${provider.id}: ${String(error?.message || error)}; fast retry: ${String(retryError?.message || retryError)}`);
-          const rest = [401, 402, 403].includes(retryError?.status) ? 3_600_000 : 20_000;
-          providerCooldownUntil.set(provider.id, now + rest);
-          continue;
-        }
+  const tryProviders = async (keyless = true) => {
+    for (const provider of orderedProviders(env, casual || quality)) {
+      if (!providerEnabled(env, provider)) continue;
+      if (provider.keyless && !keyless) continue;
+      if ((providerCooldownUntil.get(provider.id) || 0) > now) {
+        errors.push(`${provider.id}: resting`);
+        continue;
       }
-
-      // Rest a failing engine so the next message goes straight to one that
-      // works: an hour when it wants payment or a key (401/402/403), a
-      // minute when rate-limited, 20 seconds for other errors.
-      const rest = [401, 402, 403].includes(error?.status) ? 3_600_000 : 20_000;
-      providerCooldownUntil.set(provider.id, now + rest);
-      errors.push(String(error?.message || error));
+      if (await isPastDailyBudget(env, usageStorage, provider.id, now)) {
+        errors.push(`${provider.id}: daily budget at 90%`);
+        continue;
+      }
+      try {
+        const called = await callProvider(env, provider, strongProviderModel, engineInput, fetcher);
+        await addEstimatedUsage(env, usageStorage, provider.id, called.usageTokens, now);
+        return called.result;
+      } catch (error) {
+        // Busy or overloaded (429 / 5xx): try the same engine's lighter model
+        // once, which usually has its own separate limit, before moving on.
+        const busy = error?.status === 429 || [500, 502, 503, 504].includes(error?.status);
+        if (busy) {
+          try {
+            if (!strongProviderModel) await new Promise((resolve) => setTimeout(resolve, 700));
+            const retry = await callProvider(env, provider, false, engineInput, fetcher);
+            await addEstimatedUsage(env, usageStorage, provider.id, retry.usageTokens, now);
+            return retry.result;
+          } catch (retryError) {
+            errors.push(`${provider.id}: ${String(error?.message || error)}; fast retry: ${String(retryError?.message || retryError)}`);
+            const rest = [401, 402, 403].includes(retryError?.status) ? 3_600_000 : 20_000;
+            providerCooldownUntil.set(provider.id, now + rest);
+            continue;
+          }
+        }
+        // Rest a failing engine so the next message goes straight to one that
+        // works: an hour when it wants payment or a key, 20 seconds otherwise.
+        const rest = [401, 402, 403].includes(error?.status) ? 3_600_000 : 20_000;
+        providerCooldownUntil.set(provider.id, now + rest);
+        errors.push(String(error?.message || error));
+      }
     }
-  }
+    return null;
+  };
+
+  // Quality: keyed smart engines → Cloudflare → keyless last resort.
+  // Everything else: Cloudflare first (it's free and quick) → other engines.
+  const answer = quality
+    ? (await tryProviders(false)) || (await tryCloudflare()) || (await tryProviders(true))
+    : (await tryCloudflare()) || (await tryProviders(true));
+  if (answer) return answer;
+
   const configured = PROVIDERS.filter((p) => !p.keyless && env[p.key]).map((p) => p.id);
   const hint = configured.length
     ? ''

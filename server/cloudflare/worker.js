@@ -684,17 +684,65 @@ async function optionalResearch(env, query) {
   }
 }
 
+// Built-in image/PDF understanding through Gemini (free tier) when no
+// separate multimodal connector is configured.
+function guessMime(name, mediaType) {
+  const ext = String(name).toLowerCase().split('.').pop();
+  const byExt = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', heic: 'image/heic', heif: 'image/heif', webp: 'image/webp', gif: 'image/gif', pdf: 'application/pdf' };
+  if (byExt[ext]) return byExt[ext];
+  if (/image|photo|screenshot/i.test(mediaType)) return 'image/jpeg';
+  if (/pdf|document/i.test(mediaType)) return 'application/pdf';
+  return 'image/jpeg';
+}
+
+async function geminiVision(env, { name, mediaType, base64 }, query, fetcher = fetch) {
+  const models = [env.CHE_GEMINI_VISION_MODEL || 'gemini-3.5-flash-lite', 'gemini-3.8-flash'];
+  let lastError = 'no answer';
+  for (const model of models) {
+    try {
+      const response = await fetcher(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { inline_data: { mime_type: guessMime(name, mediaType), data: base64 } },
+                { text: `The owner attached this and said: "${String(query || '').slice(0, 2000)}". Describe exactly what is visible (all readable text, buttons, errors, layout) and what is relevant to the owner's message. Do not guess beyond what is shown.` },
+              ],
+            }],
+            generationConfig: { maxOutputTokens: 900 },
+          }),
+        },
+      );
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        lastError = `${response.status} ${String(data?.error?.message || '').slice(0, 160)}`;
+        continue;
+      }
+      const summary = (data?.candidates?.[0]?.content?.parts || []).map((part) => part?.text || '').join('').trim().slice(0, 16000);
+      if (summary) return { summary, media_type: mediaType, name, engine: `gemini-vision:${model}` };
+      lastError = 'empty answer';
+    } catch (error) {
+      lastError = String(error?.message || error).slice(0, 160);
+    }
+  }
+  return { error: `Image understanding failed (${lastError}).` };
+}
+
 async function optionalMultimodal(env, attachment, query) {
   if (!attachment || typeof attachment !== 'object') return null;
-  if (!env.CHE_MULTIMODAL_URL) {
-    return { error: 'Multimodal analyzer is not connected yet.' };
-  }
-
   const name = String(attachment.name || 'attachment').slice(0, 160);
   const mediaType = String(attachment.media_type || 'document').slice(0, 32);
   const base64 = String(attachment.base64 || '');
   if (!base64 || base64.length > 7_200_000) {
     return { error: 'Attachment is empty or too large.' };
+  }
+
+  if (!env.CHE_MULTIMODAL_URL) {
+    if (env.GEMINI_API_KEY) return geminiVision(env, { name, mediaType, base64 }, query);
+    return { error: 'Multimodal analyzer is not connected yet.' };
   }
 
   let url;
@@ -1389,6 +1437,7 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
           { role: 'user', content: message },
         ],
         max_tokens: maxTokens,
+        che_route: 'quality',
       });
     } catch (error) {
       lastError = error;
@@ -2772,7 +2821,14 @@ export class CheState extends DurableObject {
           ? body.plugin_tools.filter((item) => item && typeof item === 'object').slice(0, 30)
           : [];
         const skillResults = [];
-        for (let round = 0; round < 2 && pluginTools.length; round++) {
+        // Only spend an AI call on tool planning when the message plausibly
+        // needs one of the installed tools (saves ~1-2s on ordinary chat).
+        const toolWords = new Set(pluginTools.flatMap((tool) => `${tool.plugin || ''} ${tool.plugin_name || ''} ${tool.name || ''} ${tool.description || ''}`
+          .toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3 && !['from', 'with', 'that', 'this', 'your', 'name', 'current', 'short', 'summary'].includes(w))));
+        const messageWords = message.toLowerCase().split(/[^a-z0-9]+/);
+        const toolsLikelyNeeded = messageWords.some((w) => toolWords.has(w)) ||
+          /\b(weather|forecast|temperature|rain|price|btc|eth|sol|crypto|bitcoin|who (is|was)|what is|tell me about|look up|lookup|search|wiki)\b/i.test(message);
+        for (let round = 0; round < 2 && pluginTools.length && toolsLikelyNeeded; round++) {
           const choice = await planPluginCall(this.env, this.env.CHE_FAST_MODEL || FAST_MODEL, message, pluginTools, skillResults);
           if (!choice) break;
           const outcome = await runPluginTool(choice.tool, choice.params, choice.tool.permissions);
