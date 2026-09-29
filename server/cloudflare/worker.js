@@ -17,6 +17,7 @@ import { routedEnv } from './ai_router.js';
 import { deleteMedia, generateImage, listMedia, readBlob, upscaleImage } from './media.js';
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
+import { prepareSelfUpdate } from './self_development.js';
 import { approveProposal, proposeProduct, rejectProposal, salesSummary, storeStatus } from './stripe_store.js';
 import {
   addLead, approveProposal as approveDealProposal, buildBrief, checkPaid, createPaymentLink, draftProposal, findDeal, markStage, pipelineSummary,
@@ -2805,6 +2806,43 @@ export class CheState extends DurableObject {
         // a slow database cannot make voice conversation hang.
         const vectorRecall = await retrieveVectorContext(this.env, message);
         const vectorMemoryContext = vectorContextText(vectorRecall);
+
+        // Direct owner commands to alter CHE's Flutter UI/code are handled by
+        // the engineering team, not by CHE drafting code in the owner-facing
+        // chat model. The resulting proposal still requires the owner's
+        // explicit approval card before a PR can be opened.
+        const selfChangeRequest =
+          /\b(?:change|update|upgrade|redesign|restyle|modify|fix|add|remove|move|rearrange|rebuild|improve|make|create)\b[\s\S]{0,120}\b(?:che|your(?:self| app| ui| interface| code)?|the app|app|ui|screen|page|layout|navigation|menu|button|code)\b/i.test(message) ||
+          /\b(?:che|your)\b[\s\S]{0,80}\b(?:ui|interface|screen|page|layout|navigation|code)\b[\s\S]{0,80}\b(?:change|update|redesign|fix|move|add|remove|improve)\b/i.test(message);
+        if (selfChangeRequest) {
+          const prepared = await prepareSelfUpdate(this.env, message);
+          if (prepared.status === 200 && prepared.proposal) {
+            const team = Array.isArray(prepared.team) ? prepared.team.join(', ') : 'CHE engineering team';
+            const proposalBlock = ```che-update\n${JSON.stringify(prepared.proposal)}\n```;
+            return ndjsonReply(
+              `I delegated that to ${team}, sir. The code was independently reviewed. Nothing has been added yet—approve the update card if you want it applied.\n\n${proposalBlock}`,
+              {
+                source: 'che_engineering_team',
+                engineering_team: prepared.team || [],
+                code_review_passed: true,
+                owner_approval_required: true,
+                vector_memory_status: vectorRecall.status,
+                vector_memory_checked: Boolean(vectorRecall.checked),
+                vector_memory_matches: vectorRecall.matches?.length || 0,
+              },
+            );
+          }
+          return ndjsonReply(
+            `The coding team did not produce a review-passed update, sir. ${prepared.detail || 'Nothing was changed.'}`,
+            {
+              source: 'che_engineering_team',
+              code_review_passed: false,
+              owner_approval_required: true,
+              vector_memory_status: vectorRecall.status,
+              vector_memory_checked: Boolean(vectorRecall.checked),
+            },
+          );
+        }
 
         const clientClock = formatClientTime(body.client_time);
         const lowerMessage = message.toLowerCase();
