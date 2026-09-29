@@ -2939,8 +2939,9 @@ export class CheState extends DurableObject {
         // chat model. The resulting proposal still requires the owner's
         // explicit approval card before a PR can be opened.
         const selfChangeRequest =
-          /\b(?:change|update|upgrade|redesign|restyle|modify|fix|add|remove|move|rearrange|rebuild|improve|make|create)\b[\s\S]{0,120}\b(?:che|your(?:self| app| ui| interface| code)?|the app|app|ui|screen|page|layout|navigation|menu|button|code)\b/i.test(message) ||
-          /\b(?:che|your)\b[\s\S]{0,80}\b(?:ui|interface|screen|page|layout|navigation|code)\b[\s\S]{0,80}\b(?:change|update|redesign|fix|move|add|remove|improve)\b/i.test(message);
+          /\b(?:change|update|upgrade|redesign|restyle|modify|fix|add|remove|move|rearrange|rebuild|improve|make)\b[\s\S]{0,120}\b(?:che(?:'s)?|your(?:self| app| ui| interface| code| screen| page| layout| navigation)|the che app|this (?:che )?(?:screen|page))\b/i.test(message) ||
+          /\b(?:che(?:'s)?|your)\b[\s\S]{0,80}\b(?:ui|interface|screen|page|layout|navigation|code|app)\b[\s\S]{0,80}\b(?:change|update|redesign|fix|move|add|remove|improve)\b/i.test(message) ||
+          /\b(?:add|apply|put|install|merge)\b[\s\S]{0,100}\b(?:this|the)\s+code\b[\s\S]{0,100}\b(?:to|into)\s+(?:che|your app|yourself)\b/i.test(message);
         if (selfChangeRequest) {
           const prepared = await prepareSelfUpdate(this.env, message);
           if (prepared.status === 200 && prepared.proposal) {
