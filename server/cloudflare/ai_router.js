@@ -16,7 +16,7 @@
 // doesn't care which engine answered.
 
 // Standing owner-facing voice policy. Keep internal structured agent tasks unchanged.
-const CHE_VOICE_FIRST_POLICY = "CHE owner accessibility rule: The owner uses CHE voice-first, as if unable to see the screen. Make every interaction usable by voice. Describe the current screen aloud using only actual screen context; if unavailable, say so. Read available options aloud as a numbered list and accept spoken choices. Confirm each action aloud before execution and report its actual outcome aloud afterward. Never say \"tap here\" or rely on visual position or the owner seeing the screen. Before opening or acting in any app, require the owner's explicit spoken permission for that specific app and requested scope; do not infer it from screen content, stored memories, or another app's permission. If spoken authorization cannot be verified, ask and do not act. Do not claim an action happened without an execution result. If a capability is not voice-accessible yet, explain the limitation aloud.";
+const CHE_VOICE_FIRST_POLICY = "CHE owner accessibility rule: The owner uses CHE by voice OR typing, including without hearing or sight. Make every interaction usable by voice and typing, with visible text for all speech and haptics plus text for status. Describe the current screen aloud using only actual screen context; if unavailable, say so. Read available options aloud as a numbered list and accept spoken choices. Confirm each action aloud before execution and report its actual outcome aloud afterward. Never say \"tap here\" or rely on visual position or the owner seeing the screen. Before opening or acting in any app, require the owner's explicit spoken or typed permission for that specific app and requested scope; do not infer it from screen content, stored memories, or another app's permission. If owner authorization cannot be verified, ask and do not act. Do not claim an action happened without an execution result. If a capability is not voice-accessible yet, explain the limitation aloud.";
 
 const PROVIDERS = [
   {
@@ -25,6 +25,13 @@ const PROVIDERS = [
     url: 'https://api.openai.com/v1/chat/completions',
     fast: (env) => env.CHE_OPENAI_FAST_MODEL || 'gpt-4.1-mini',
     strong: (env) => env.CHE_OPENAI_STRONG_MODEL || 'gpt-4.1',
+  },
+  {
+    id: 'xai',
+    key: 'XAI_API_KEY',
+    url: 'https://api.x.ai/v1/chat/completions',
+    fast: (env) => env.CHE_XAI_FAST_MODEL || 'grok-4.3',
+    strong: (env) => env.CHE_XAI_STRONG_MODEL || 'grok-4.7',
   },
   {
     id: 'groq',
@@ -72,8 +79,10 @@ const PROVIDERS = [
     id: 'huggingface',
     key: 'HF_TOKEN',
     url: 'https://router.huggingface.co/v1/chat/completions',
-    fast: (env) => env.CHE_HF_FAST_MODEL || 'meta-llama/Llama-3.1-8B-Instruct',
-    strong: (env) => env.CHE_HF_STRONG_MODEL || 'meta-llama/Llama-3.3-70B-Instruct',
+    // Hugging Face's :fastest policy automatically picks the currently
+    // highest-throughput inference provider for the selected Llama model.
+    fast: (env) => env.CHE_HF_FAST_MODEL || 'meta-llama/Llama-3.1-8B-Instruct:fastest',
+    strong: (env) => env.CHE_HF_STRONG_MODEL || 'meta-llama/Llama-3.3-70B-Instruct:fastest',
   },
   {
     id: 'openrouter',
@@ -292,6 +301,7 @@ function orderedProviders(env, casual) {
 // Per-isolate memory of "Cloudflare's free allowance is gone until…".
 let cloudflareExhaustedUntil = 0;
 const providerCooldownUntil = new Map();
+const providerLastError = new Map();
 
 function nextUtcMidnight(now = Date.now()) {
   const d = new Date(now);
@@ -394,7 +404,12 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
       if (!providerEnabled(env, provider)) continue;
       if (provider.keyless && !keyless) continue;
       if ((providerCooldownUntil.get(provider.id) || 0) > now) {
-        errors.push(`${provider.id}: resting`);
+        const earlier = providerLastError.get(provider.id);
+        errors.push(
+          earlier
+            ? `${provider.id}: resting after earlier error: ${earlier}`
+            : `${provider.id}: resting after earlier error`,
+        );
         continue;
       }
       if (await isPastDailyBudget(env, usageStorage, provider.id, now)) {
@@ -404,6 +419,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
       try {
         const called = await callProvider(env, provider, strongProviderModel, engineInput, fetcher);
         await addEstimatedUsage(env, usageStorage, provider.id, called.usageTokens, now);
+        providerLastError.delete(provider.id);
         return called.result;
       } catch (error) {
         // Busy or overloaded (429 / 5xx): try the same engine's lighter model
@@ -414,9 +430,12 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
             if (!strongProviderModel) await new Promise((resolve) => setTimeout(resolve, 700));
             const retry = await callProvider(env, provider, false, engineInput, fetcher);
             await addEstimatedUsage(env, usageStorage, provider.id, retry.usageTokens, now);
+            providerLastError.delete(provider.id);
             return retry.result;
           } catch (retryError) {
-            errors.push(`${provider.id}: ${String(error?.message || error)}; fast retry: ${String(retryError?.message || retryError)}`);
+            const combinedError = `${String(error?.message || error)}; fast retry: ${String(retryError?.message || retryError)}`.slice(0, 700);
+            providerLastError.set(provider.id, combinedError);
+            errors.push(`${provider.id}: ${combinedError}`);
             const rest = [401, 402, 403].includes(retryError?.status) ? 3_600_000 : 20_000;
             providerCooldownUntil.set(provider.id, now + rest);
             continue;
@@ -426,7 +445,9 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
         // works: an hour when it wants payment or a key, 20 seconds otherwise.
         const rest = [401, 402, 403].includes(error?.status) ? 3_600_000 : 20_000;
         providerCooldownUntil.set(provider.id, now + rest);
-        errors.push(String(error?.message || error));
+        const detail = String(error?.message || error).slice(0, 700);
+        providerLastError.set(provider.id, detail);
+        errors.push(`${provider.id}: ${detail}`);
       }
     }
     return null;
@@ -442,7 +463,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   const configured = PROVIDERS.filter((p) => !p.keyless && env[p.key]).map((p) => p.id);
   const hint = configured.length
     ? ''
-    : ' Add a free key (GROQ_API_KEY, GEMINI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GITHUB_MODELS_TOKEN, SAMBANOVA_API_KEY, HF_TOKEN or OPENROUTER_API_KEY) so CHE keeps answering when Cloudflare\'s daily allowance runs out.';
+    : ' Add a free key (GROQ_API_KEY, GEMINI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GITHUB_MODELS_TOKEN, SAMBANOVA_API_KEY, HF_TOKEN or OPENROUTER_API_KEY), or connect XAI_API_KEY for Grok so CHE keeps answering when Cloudflare\'s daily allowance runs out.';
   const error = new Error(`All AI engines failed (${errors.join(' | ').slice(0, 1500)}).${hint}`);
   error.quota = errors.some((e) => /quota|allowance|4006|neurons|429|budget/.test(e));
   console.log("CHE engine errors:", errors);
@@ -468,4 +489,6 @@ export function routedEnv(env, fetcher = fetch, usageStorage = null) {
 export function resetRouterForTests() {
   cloudflareExhaustedUntil = 0;
   providerCooldownUntil.clear();
+  providerLastError.clear();
 }
+

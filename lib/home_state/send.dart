@@ -209,6 +209,7 @@ extension _CheHomeSend on _CHEHomeState {
   }
 
   Future<void> sendMessage({bool fromVoice = false}) async {
+    if (await _controlAutonomy(controller.text.trim())) return;
     if (_isSending) return;
     if (_isSpeaking) await _interruptSpeechAndListen(resumeListening: false);
 
@@ -496,3 +497,4 @@ extension _CheHomeSend on _CHEHomeState {
     });
   }
 }
+

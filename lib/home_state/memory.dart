@@ -1835,6 +1835,59 @@ extension _CheHomeMemory on _CHEHomeState {
     }
 
     if (hasAny([
+      'change your ui',
+      'change the ui',
+      'redesign your',
+      'redesign the ui',
+      'modify your app',
+      'update your app',
+      'change your screen',
+      'move this button',
+      'move this control',
+      'proofread code',
+      'review code',
+      'write code',
+      'edit code',
+      'refactor',
+      'add it to yourself',
+      'add this to yourself',
+      'your code',
+    ])) {
+      result.add('self_development');
+    }
+
+    if (hasAny([
+      'write a book',
+      'book idea',
+      'novel',
+      'movie',
+      'film',
+      'screenplay',
+      'script',
+      'episode',
+      'scene',
+      'story',
+      'character arc',
+    ])) {
+      result.add('creative_writing');
+    }
+
+    if (hasAny([
+      'marketing',
+      'social media',
+      'instagram',
+      'tiktok',
+      'facebook',
+      'youtube content',
+      'content calendar',
+      'brand strategy',
+      'ad copy',
+      'campaign',
+    ])) {
+      result.add('marketing_social');
+    }
+
+    if (hasAny([
       'how long',
       'wait time',
       'eta',
@@ -1852,6 +1905,23 @@ extension _CheHomeMemory on _CHEHomeState {
       'quantum simulation',
     ])) {
       result.add('quantum_compute');
+    }
+
+    if (hasAny([
+      'fine tune',
+      'fine-tune',
+      'fine tuning',
+      'fine-tuning',
+      'train model',
+      'train a model',
+      'lora',
+      'adapter tuning',
+      'vmware private ai',
+      'vmware training',
+      'hugging face training',
+      'huggingface training',
+    ])) {
+      result.add('fine_tuning');
     }
 
     if (hasAny([

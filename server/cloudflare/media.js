@@ -28,9 +28,9 @@ function b64ToBytes(b64) {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
 
-async function storeBlob(env, storage, id, base64) {
+async function storeBlob(env, storage, id, base64, mimeType = 'image/jpeg') {
   if (env.CHE_DATA_BUCKET) {
-    await env.CHE_DATA_BUCKET.put(`media/${id}.jpg`, b64ToBytes(base64), { httpMetadata: { contentType: 'image/jpeg' } });
+    await env.CHE_DATA_BUCKET.put(`media/${id}.jpg`, b64ToBytes(base64), { httpMetadata: { contentType: mimeType } });
     return 'r2';
   }
   await storage.put(`media:${id}`, base64);
@@ -90,25 +90,42 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
     version: parent ? items.filter((item) => (item.root_id || item.id) === (parent.root_id || parent.id)).length + 1 : 1,
     created_at: now(),
   };
-  try {
-    if (env.CHE_IMAGE_GEN_URL) {
-      record.url = await connectorImage(env, finalPrompt, fetcher);
-      record.engine = 'Your image connector';
-    } else if (env.AI) {
-      const result = await env.AI.run(IMAGE_MODEL, {
-        prompt: finalPrompt.slice(0, 2048),
-        steps: draft ? 4 : 8, // 8 is FLUX schnell's maximum quality setting
-        seed: Math.floor(Math.random() * 2 ** 31),
-      });
-      const b64 = String(result?.image || '');
-      if (!b64) return { status: 502, detail: 'The image model returned no image.' };
-      record.blob = await storeBlob(env, storage, id, b64);
-      record.engine = draft ? 'CHE image engine (draft)' : 'CHE image engine';
-    } else {
-      return { status: 503, detail: 'Image generation is not connected.' };
-    }
-  } catch (error) {
-    return { status: 502, detail: String(error?.message || 'Image generation failed.') };
+  const engines = [];
+  if (env.CHE_IMAGE_GEN_URL) engines.push({ id: 'Your image connector', run: async () => ({ url: await connectorImage(env, finalPrompt, fetcher) }) });
+  if (env.AI) engines.push({ id: draft ? 'CHE image engine (draft)' : 'CHE image engine', run: async () => {
+    const result = await env.AI.run(IMAGE_MODEL, { prompt: finalPrompt.slice(0, 2048), steps: draft ? 4 : 8, seed: Math.floor(Math.random() * 2 ** 31) });
+    if (!result?.image) throw new Error('The image model returned no image.');
+    return { base64: result.image, mime_type: 'image/jpeg' };
+  } });
+  if (env.GEMINI_API_KEY) engines.push({ id: 'gemini-image', run: async () => {
+    const model = env.CHE_GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image';
+    const response = await fetcher(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+      method: 'POST', signal: AbortSignal.timeout(60000),
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+      body: JSON.stringify({ contents: [{ parts: [{ text: finalPrompt }] }], generationConfig: { responseModalities: ['TEXT', 'IMAGE'] } }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(`${response.status}: ${data?.error?.message || 'image request failed'}`);
+    const parts = data?.candidates?.[0]?.content?.parts || [];
+    const image = parts.map(p => p.inlineData || p.inline_data).find(p => p?.data);
+    if (!image) throw new Error('Gemini returned no image.');
+    const mime = image.mimeType || image.mime_type;
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(mime)) throw new Error('Unsupported image format.');
+    return { base64: image.data, mime_type: mime };
+  } });
+  const errors = [];
+  let generated;
+  for (const engine of engines) {
+    try { generated = await engine.run(); record.engine = engine.id; break; }
+    catch (error) { errors.push(`${engine.id}: ${error.message}`); console.log('CHE image error:', engine.id, error.message); }
+  }
+  if (!generated) return { status: engines.length ? 502 : 503, detail: `All image engines failed (${errors.join(' | ') || 'none configured'}).` };
+  if (generated.url) record.url = generated.url;
+  else {
+    record.mime_type = generated.mime_type;
+    // Storage failures must not invoke another billable generator.
+    try { record.blob = await storeBlob(env, storage, id, generated.base64, record.mime_type); }
+    catch (error) { return { status: 502, detail: `Image generated but could not be saved: ${error.message}` }; }
   }
   await saveIndex(storage, [record, ...items]);
   return { status: 200, item: record };
@@ -172,3 +189,4 @@ export async function deleteMedia(env, storage, id) {
   await saveIndex(storage, items.filter((entry) => entry.id !== id));
   return { status: 200, ok: true };
 }
+

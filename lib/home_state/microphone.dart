@@ -131,7 +131,7 @@ extension _CheHomeMicrophone on _CHEHomeState {
   bool _isSleepPhrase(String raw) {
     final text = raw.trim().toLowerCase();
 
-    return text == 'stand down' ||
+    return text == 'stand by' || text == 'chay stand by' || text == 'che stand by' || text == 'stand down' ||
         text == 'chay stand down' ||
         text == 'chey stand down' ||
         text == 'shay stand down' ||
@@ -227,7 +227,7 @@ extension _CheHomeMicrophone on _CHEHomeState {
           controller.clear();
         });
 
-        await speakText('Standing by, sir.');
+        await _controlAutonomy('stand by');
         return;
       }
 
@@ -376,7 +376,7 @@ extension _CheHomeMicrophone on _CHEHomeState {
             if (!mounted) return;
             _set(() => isListening = false);
 
-            await speakText('Standing by, sir.');
+            await _controlAutonomy('stand by');
             return;
           }
 
@@ -464,3 +464,4 @@ extension _CheHomeMicrophone on _CHEHomeState {
     });
   }
 }
+

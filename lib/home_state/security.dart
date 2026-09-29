@@ -408,6 +408,15 @@ extension _CheHomeSecurity on _CHEHomeState {
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
+      _autonomy = data['autonomy'] != false;
+      final oldApprovalIds = _actionApprovals.map((a) => a['id']).toSet();
+      _actionApprovals = ((data['action_approvals'] as List?) ?? []).whereType<Map>().map((a) => Map<String, dynamic>.from(a)).where((a) => a['status'] == 'pending').toList();
+      if (_actionApprovals.any((a) => !oldApprovalIds.contains(a['id']))) {
+        unawaited(_statusHaptic(2));
+        final options = [for (var i = 0; i < _actionApprovals.length; i++) '${i + 1}. ${_actionApprovals[i]['query']}'].join(' ');
+        if (!_isSpeaking && !_isSending) unawaited(speakText('Approval needed. $options Say or type approve action and its number, or reject action and its number.'));
+      }
+      unawaited(_notifyFinishedJobs());
       ownerContext = ownerContextData
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
@@ -943,6 +952,7 @@ extension _CheHomeSecurity on _CHEHomeState {
     });
     _scrollToBottom();
 
+    unawaited(_controlAutonomy(clean));
     unawaited(_observeRealtimeTurn(clean, itemId));
   }
 
@@ -1113,3 +1123,4 @@ extension _CheHomeSecurity on _CHEHomeState {
     await ChePluginManager.open(context, cheAgentBaseUrl, _deviceToken!);
   }
 }
+

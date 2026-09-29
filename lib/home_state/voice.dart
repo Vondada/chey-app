@@ -227,6 +227,9 @@ extension _CheHomeVoice on _CHEHomeState {
 
   Future<void> speakText(String text) async {
     if (text.trim().isEmpty) return;
+    if (mounted && (messages.isEmpty || messages.last['text'] != text)) {
+      _set(() => messages.add({'role': 'assistant', 'text': text}));
+    }
     if (_realtimeVoice?.connected == true) {
       // Realtime owns both microphone and speaker during a live session.
       return;
@@ -408,13 +411,29 @@ extension _CheHomeVoice on _CHEHomeState {
     }
   }
 
+  Future<void> _fallbackSpeech(String reason) async {
+    if (_usingSpeechFallback) return;
+    _usingSpeechFallback = true;
+    debugPrint('CHE speech error: native: $reason');
+    try { await CheNativeVoice.stop(); } catch (_) {}
+    _nativeIosVoiceActive = false;
+    if (!speechAvailable) await initializeVoice();
+    if (!mounted) return;
+    if (speechAvailable) {
+      _set(() { openConversation = true; cheSleeping = false; });
+      await _startListening();
+    } else {
+      debugPrint('CHE speech error: speech_to_text unavailable');
+      await speakText('Both speech recognizers are unavailable. You can still type every request.');
+    }
+  }
+
   Future<void> _initNativeIosVoice() async {
     _nativeIosVoiceSub?.cancel();
     _nativeIosVoiceSub = CheNativeVoice.events.listen(
       _handleNativeIosVoiceEvent,
       onError: (_) {
-        _nativeIosVoiceActive = false;
-        if (mounted) _set(() {});
+        unawaited(_fallbackSpeech('Native voice event stream failed'));
       },
     );
 
@@ -433,12 +452,11 @@ extension _CheHomeVoice on _CHEHomeState {
           isListening = true;
         }
       });
+      if (!started) await _fallbackSpeech('Native recognition did not start');
     } on MissingPluginException {
-      // The native voice channel is optional until its Runner code is added.
-      // The microphone button uses speech_to_text in the meantime.
-      _nativeIosVoiceActive = false;
+      await _fallbackSpeech('Native voice bridge unavailable');
     } catch (e) {
-      _nativeIosVoiceActive = false;
+      await _fallbackSpeech(e.toString());
 
       if (mounted) {
         _set(() {});
@@ -481,7 +499,7 @@ extension _CheHomeVoice on _CHEHomeState {
         });
       }
 
-      await speakText('Standing by, sir.');
+      await _controlAutonomy('stand by');
       return;
     }
 
@@ -576,7 +594,7 @@ extension _CheHomeVoice on _CHEHomeState {
           await CheNativeVoice.sleep();
         } catch (_) {}
 
-        await speakText('Standing by, sir.');
+        await _controlAutonomy('stand by');
         return;
       }
 
@@ -606,9 +624,8 @@ extension _CheHomeVoice on _CHEHomeState {
       final message =
           event['message']?.toString() ?? 'Unknown native voice error.';
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      await _fallbackSpeech(message);
     }
   }
 }
+

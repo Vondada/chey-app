@@ -399,3 +399,16 @@ test('AI router compacts old conversation history before provider calls', async 
   assert.equal(outbound.at(-1).content.startsWith('message-13'), true);
   assert.ok(JSON.stringify(outbound).length < JSON.stringify(messages).length);
 });
+
+
+test('image relay falls from FLUX to Gemini and keeps the returned MIME type', async () => {
+  const storage = memStorage(); const calls = [];
+  const result = await generateImage({ GEMINI_API_KEY: 'key', AI: {run: async () => {calls.push('flux'); throw new Error('quota');}} }, storage, {prompt:'A tree'}, async (url, init) => {
+    calls.push('gemini');
+    assert.equal(init.headers['x-goog-api-key'], 'key');
+    return Response.json({candidates:[{content:{parts:[{inlineData:{data:'YQ==',mimeType:'image/png'}}]}}]});
+  });
+  assert.deepEqual(calls, ['flux', 'gemini']);
+  assert.equal(result.status, 200); assert.equal(result.item.mime_type, 'image/png');
+  assert.equal(result.item.engine, 'gemini-image');
+});

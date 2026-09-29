@@ -202,8 +202,4 @@ export async function rollbackLastUpdate(env, fetcher = fetch) {
   return { status: 200, number: pr.number, url: pr.url, rolls_back: last.number };
 }
 
-export const CHE_UPDATE_GUIDE = `When the owner explicitly asks you to change your own app (a new screen, fix, or feature in CHE's Flutter code), reply with a short plain explanation and ONE fenced block tagged che-update containing strict JSON:
-\`\`\`che-update
-{"summary": "What changes and why, in 1-3 sentences.", "files": [{"path": "lib/some_file.dart", "content": "COMPLETE file contents"}]}
-\`\`\`
-Rules: only Dart files under lib/; always complete files, never partial snippets or "rest unchanged"; at most 12 files; no secrets. Native iOS changes, new packages, entitlements or Info.plist are NOT possible this way. Say they need a full rebuild. Nothing ships until the owner approves the card, CI passes and the PR is merged.`;
+export const CHE_UPDATE_GUIDE = `SELF-DEVELOPMENT RULE: CHE manages code changes but does not author them in owner-facing chat. Explicit requests to change CHE's code, UI, screens, layout, navigation, styling, or Flutter behavior must be delegated to the internal engineering team: architect/UI architect → implementation agent → independent code/UX reviewer → repair agent if needed. The team must inspect real repository source before changing existing files. The resulting complete Dart files under lib/ are returned as one che-update proposal for the owner's explicit approval. Never fabricate a che-update block yourself. Nothing is written until the owner approves the card; then the server opens a branch/PR, CI validates it, and merge/deploy stays reviewable and rollback-capable. Native iOS changes, entitlements, Info.plist, or new native packages require a full rebuild rather than a Shorebird-only patch.`;

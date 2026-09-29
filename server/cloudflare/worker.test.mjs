@@ -1,23 +1,29 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 
-// Import the Worker as an ES module without needing an npm install.
+// Import the Worker as a normal temporary ES module. Keeping the generated
+// module beside worker.js lets every relative import resolve naturally and
+// avoids a huge data: URL that becomes brittle as CHE's Worker grows.
+const generatedWorker = new URL('./.worker.test.generated.mjs', import.meta.url);
 const code = readFileSync(new URL('./worker.js', import.meta.url), 'utf8')
-  .replace("import { DurableObject } from 'cloudflare:workers';",
-    'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }')
-  .replace("from './agent_runtime.js'", `from '${new URL('./agent_runtime.js', import.meta.url).href}'`)
-  .replace("from './plugin_runtime.js'", `from '${new URL('./plugin_runtime.js', import.meta.url).href}'`)
-  .replace("from './self_update.js'", `from '${new URL('./self_update.js', import.meta.url).href}'`)
-  .replace("from './markets.js'", `from '${new URL('./markets.js', import.meta.url).href}'`)
-  .replace("from './media.js'", `from '${new URL('./media.js', import.meta.url).href}'`)
-  .replace("from './ai_router.js'", `from '${new URL('./ai_router.js', import.meta.url).href}'`)
-  .replace("from './stripe_store.js'", `from '${new URL('./stripe_store.js', import.meta.url).href}'`)
-  .replace("from './pipeline.js'", `from '${new URL('./pipeline.js', import.meta.url).href}'`)
-  .replace("from './nightly.js'", `from '${new URL('./nightly.js', import.meta.url).href}'`);
-const { default: worker, CheState } = await import(
-  `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
-);
+  .replace(
+    "import { DurableObject } from 'cloudflare:workers';",
+    'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }',
+  );
+
+writeFileSync(generatedWorker, code, 'utf8');
+let worker;
+let CheState;
+let publicResearch;
+let geminiVision;
+try {
+  ({ default: worker, CheState, publicResearch, geminiVision } = await import(
+    generatedWorker.href + '?test=' + Date.now(),
+  ));
+} finally {
+  try { unlinkSync(generatedWorker); } catch (_) {}
+}
 
 test('pairing, owner gate, memories, and revocation', async () => {
   const saved = new Map();
@@ -457,8 +463,12 @@ test('chat recovers when the model rejects the full prompt, and reports real err
 
   failAll = true;
   const bad = await send('/api/chat', { message: 'Why' }, token);
-  assert.equal(bad.status, 503);
-  assert.match((await bad.json()).detail, /temporarily unavailable \(All AI engines failed \(cloudflare: AiError: 3036: model overloaded\)/);
+  assert.equal(bad.status, 200);
+  assert.match(await bad.text(), /All my engines are busy/);
+  const queued = JSON.parse(saved.get('che')).jobs[0];
+  assert.equal(queued.status, 'queued');
+  assert.equal(queued.prompt, 'Why');
+  assert.ok(queued.retry_at > Date.now());
 });
 
 test('voice falls back to free Gemini speech (WAV) when Cloudflare voice is out of allowance', async () => {
@@ -503,4 +513,86 @@ test('voice falls back to free Gemini speech (WAV) when Cloudflare voice is out 
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+
+test('quota jobs retry at five minutes, pause durably, resume and stop after 24 retries', async () => {
+  const saved = new Map(); let alarmAt; let calls = 0;
+  const state = new CheState({ storage: {
+    get: async key => saved.has(key) ? structuredClone(saved.get(key)) : undefined,
+    put: async (key, value) => saved.set(key, structuredClone(value)),
+    setAlarm: async value => { alarmAt = value; }, deleteAlarm: async () => { alarmAt = null; },
+  } }, { CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { calls++; throw new Error('429 busy'); } } });
+  saved.set('che', { jobs: [{ id: 'job', prompt: 'Draft a guide', status: 'queued' }], devices: {}, memories: [] });
+  const before = Date.now();
+  await state.processJobs();
+  let job = saved.get('che').jobs[0];
+  assert.equal(job.status, 'queued'); assert.equal(job.retry_count, 1);
+  assert.ok(job.retry_at >= before + 300000); assert.equal(alarmAt, job.retry_at);
+  const attempts = calls; await state.processJobs(); assert.equal(calls, attempts);
+  await state.setAutonomy(false); assert.equal(alarmAt, null);
+  job.retry_at = 0; saved.get('che').jobs[0] = job;
+  await state.alarm(); assert.equal(calls, attempts);
+  await state.setAutonomy(true); assert.ok(alarmAt);
+  saved.get('che').jobs[0].retry_count = 24;
+  await state.processJobs();
+  job = saved.get('che').jobs[0]; assert.equal(job.status, 'failed');
+  assert.match(job.error, /Retry limit reached/);
+});
+
+test('public research and vision try the next engine and aggregate failures', async () => {
+  const calls = [];
+  const result = await publicResearch('test', async url => {
+    calls.push(url);
+    return url.includes('wikipedia') ? new Response('', {status: 503})
+      : Response.json({ AbstractText: 'Reference answer.', AbstractURL: 'https://example.org/source' });
+  });
+  assert.equal(calls.length, 2); assert.equal(result.engine, 'duckduckgo');
+  let count = 0;
+  const vision = await geminiVision({ GEMINI_API_KEY: 'test' }, {name:'a.png', mediaType:'image', base64:'YQ=='}, 'describe', async () => {
+    count++;
+    return count === 1 ? Response.json({error:{message:'busy'}}, {status:429}) : Response.json({candidates:[{content:{parts:[{text:'Actual image description'}]}}]});
+  });
+  assert.equal(count, 2); assert.equal(vision.summary, 'Actual image description');
+});
+
+test('multi-step jobs checkpoint each result and pause between steps', async () => {
+  const saved = new Map(); let calls = 0;
+  const state = new CheState({storage: {
+    get: async key => saved.has(key) ? structuredClone(saved.get(key)) : undefined,
+    put: async (key, value) => saved.set(key, structuredClone(value)),
+    setAlarm: async () => {}, deleteAlarm: async () => {},
+  }}, {CHE_DISABLE_KEYLESS_AI:'1', AI:{run:async () => ({response:`Step ${++calls} result`})}});
+  saved.set('che', {jobs:[{id:'steps', prompt:'Write and review', steps:['Write','Review'], status:'queued'}], devices:{}, memories:[]});
+  await state.processJobs();
+  assert.equal(saved.get('che').jobs[0].status, 'queued');
+  assert.equal(saved.get('che').jobs[0].step_index, 1);
+  await state.setAutonomy(false); await state.processJobs(); assert.equal(calls, 1);
+  await state.setAutonomy(true); await state.processJobs();
+  assert.equal(saved.get('che').jobs[0].status, 'complete');
+  assert.match(saved.get('che').jobs[0].result, /Step 1 result\n\nStep 2 result/);
+});
+
+test('action connectors require a single-use explicit approval', async () => {
+  const saved = new Map(); let writes = 0;
+  const env = { CHE_PAIR_CODE:'123456', CHE_PAYMENTS_URL:'https://payments.example/action', CHE_DISABLE_KEYLESS_AI:'1', AI:{run:async () => ({response:'Approval needed.'})} };
+  const state = new CheState({storage:{
+    get:async k => saved.has(k) ? structuredClone(saved.get(k)) : undefined,
+    put:async (k,v) => saved.set(k, structuredClone(v)), setAlarm:async () => {},
+  }}, env);
+  const send = (path, body, token='') => state.fetch(new Request(`https://che.example${path}`, {method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${token}`},body:JSON.stringify(body)}));
+  const token = (await (await send('/api/pair',{code:'123456'})).json()).device_token;
+  const oldFetch = globalThis.fetch;
+  globalThis.fetch = async () => { writes++; return Response.json({result:{ok:true}}); };
+  try {
+    const reply = await send('/api/chat',{message:'Prepare this payment', requested_capabilities:['payments']},token);
+    assert.equal(reply.status, 200, await reply.text());
+    assert.equal(writes,0);
+    const approval = saved.get('che').action_approvals[0];
+    assert.equal(approval.status,'pending');
+    assert.equal((await send('/api/action/approval',{id:approval.id,approve:true},token)).status,200);
+    assert.equal(writes,1);
+    assert.equal((await send('/api/action/approval',{id:approval.id,approve:true},token)).status,409);
+    assert.equal(writes,1);
+  } finally { globalThis.fetch = oldFetch; }
 });
