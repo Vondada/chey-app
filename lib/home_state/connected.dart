@@ -144,7 +144,7 @@ extension _CheHomeConnected on _CHEHomeState {
       return true;
     }
 
-    if (RegExp(r"^(what('s| is) stalled|what needs me|what do you need from me|any decisions?)\\b").hasMatch(lower)) {
+    if (RegExp(r"^(what('s| is) stalled|what needs me|what do you need from me|any decisions?)\b").hasMatch(lower)) {
       final events = await _loadActivity();
       if (events == null) {
         await speakText('I could not load Office state just now.', record: false);
