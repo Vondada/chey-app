@@ -8,9 +8,9 @@
 //      (GITHUB_MODELS_TOKEN), SambaNova (SAMBANOVA_API_KEY), Hugging Face
 //      (HF_TOKEN), OpenRouter (OPENROUTER_API_KEY, ":free" models)
 //   4. Keyless Pollinations models (no account)
-// When Cloudflare reports its daily allowance is used up, CHE skips it until
-// the next UTC midnight and goes straight to the next engine with a key, so
-// she keeps answering. Image models (FLUX) always stay on Cloudflare.
+// When Cloudflare reports its free allowance is used up, CHE rests it for
+// 30 minutes, then tries it again. Meanwhile it goes straight to the next
+// engine with a key so she keeps answering. Image models (FLUX) always stay on Cloudflare.
 //
 // Every provider returns `{ response }` like Workers AI, so the rest of CHE
 // doesn't care which engine answered.
@@ -360,7 +360,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
         return out;
       } catch (error) {
         if (isQuotaError(error)) {
-          cloudflareExhaustedUntil = nextUtcMidnight(now);
+          cloudflareExhaustedUntil = now + 30 * 60 * 1000;
           errors.push('cloudflare: quota used up');
         } else {
           errors.push(`cloudflare: ${error?.message || error}`);
@@ -368,7 +368,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
       }
     }
   } else if (env.AI) {
-    errors.push('cloudflare: daily free allowance used up');
+    errors.push('cloudflare: quota cooldown active; retrying within 30 minutes');
   }
 
   for (const provider of orderedProviders(env, casual)) {
