@@ -144,17 +144,27 @@ extension _CheHomeConnected on _CHEHomeState {
       return true;
     }
 
-    if (RegExp(r"^(what('s| is) stalled|what needs me|what do you need from me|any decisions?)\b").hasMatch(lower)) {
-      final events = await _loadActivity();
-      if (events == null) {
-        await speakText('I could not load Office state just now.', record: false);
-        return true;
-      }
-      final stalled = events.where((e) => e['kind'] == 'stalled').toList();
-      final line = stalled.isEmpty
-          ? 'Nothing is waiting on you right now.'
-          : stalled.take(4).map((e) => e['line']).join(' ');
-      await speakText(line, record: false);
+    // Stalled work / decisions / next actions.
+    if (RegExp(r"^(what'?s|what is)\s+stalled\b|any\s+stalled\b").hasMatch(lower)) {
+      final data = await _getAgentJson('/api/stalled');
+      final items = as List? ?? const [])) if (e is Map) Map<String, dynamic>.from(e)];
+      if (items.isEmpty) { await speakText("Nothing's stalled right now."); return true; }
+      final top = items.take(3).map((e) => '${e } — ${e }, stuck ${e } minutes.').join(' ');
+      await speakText("Here's what's stalled. $top");
+      return true;
+    }
+    if (RegExp(r"\b(what needs me|what do you need from me|any decisions|needs my (call|decision|approval))\b").hasMatch(lower)) {
+      final data = await _getAgentJson('/api/decisions');
+      final items = as List? ?? const [])) if (e is Map) Map<String, dynamic>.from(e)];
+      if (items.isEmpty) { await speakText("Nothing needs your call right now."); return true; }
+      await speakText("Here's what needs you. ${items.take(3).map((e) => e ).join(' ')}");
+      return true;
+    }
+    if (RegExp(r"^(what should i do|next actions|what'?s next|what do i do next)\b").hasMatch(lower)) {
+      final data = await _getAgentJson('/api/next');
+      final actions = [for (final e in (data?['actions'] as List? ?? const [])) e.toString()].where((e) => e.isNotEmpty).toList();
+      if (actions.isEmpty) { await speakText("No next actions queued."); return true; }
+      await speakText("Here's what's next. ${actions.join(' ')}");
       return true;
     }
 
