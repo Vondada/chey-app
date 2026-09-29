@@ -380,6 +380,12 @@ extension _CheHomeMicrophone on _CHEHomeState {
             return;
           }
 
+          // Speech already held from before a mid-thought pause is kept in
+          // front of what he says next, so nothing he said is lost.
+          if (_heldSpeech.isNotEmpty) {
+            spokenWords = '$_heldSpeech $spokenWords';
+          }
+
           _set(() {
             controller.text = spokenWords;
             controller.selection = TextSelection.collapsed(
@@ -387,8 +393,25 @@ extension _CheHomeMicrophone on _CHEHomeState {
             );
           });
 
+          // He trailed off ("um", "and", "so...") — he is still thinking, not
+          // finished. Keep the turn open and keep listening instead of sending.
+          if (result.finalResult &&
+              !_autoSentCurrentTurn &&
+              !_isSending &&
+              cheSoundsUnfinished(spokenWords) &&
+              _heldSpeechRestarts < 3) {
+            _heldSpeech = spokenWords;
+            _heldSpeechRestarts += 1;
+            if (!kIsWeb && openConversation) {
+              _restartListeningSoon(delay: const Duration(milliseconds: 150));
+            }
+            return;
+          }
+
           if (result.finalResult && !_autoSentCurrentTurn && !_isSending) {
             _autoSentCurrentTurn = true;
+            _heldSpeech = '';
+            _heldSpeechRestarts = 0;
 
             // iPhone Safari speech recognition is intermittent. We end the
             // web turn cleanly instead of forcing an on/off restart loop.
@@ -413,8 +436,11 @@ extension _CheHomeMicrophone on _CHEHomeState {
           cancelOnError: true,
           autoPunctuation: true,
           listenMode: stt.ListenMode.dictation,
-          pauseFor: const Duration(milliseconds: 1400),
-          listenFor: const Duration(seconds: 30),
+          // Let the owner breathe and think mid-sentence: only a real pause
+          // (about 3.5 seconds of silence) ends his turn, and one turn can
+          // run up to five minutes. Trailing fillers are held open below.
+          pauseFor: const Duration(milliseconds: 3500),
+          listenFor: const Duration(minutes: 5),
         ),
       );
 

@@ -274,6 +274,9 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   bool _isSending = false;
   bool _isSpeaking = false;
   bool _autoSentCurrentTurn = false;
+  // Words held open while the owner pauses mid-thought (see microphone.dart).
+  String _heldSpeech = '';
+  int _heldSpeechRestarts = 0;
   String? _lastVoiceEngine;
   String _voiceFailReason = '';
   bool _naturalVoiceServerErrored = false;

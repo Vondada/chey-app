@@ -26,3 +26,19 @@ String? cheWakeRemainder(String raw) {
 
 /// True when the utterance starts with CHE's wake name.
 bool cheIsWake(String raw) => cheWakeRemainder(raw) != null;
+
+/// True when a finished speech segment ends mid-thought — a filler or a
+/// joining word such as "um", "and", "so" or "because". CHE then keeps
+/// listening instead of sending, so a breath or a pause to think never cuts
+/// the owner off.
+bool cheSoundsUnfinished(String words) {
+  final cleaned = words.toLowerCase().replaceAll(RegExp(r"[^a-z' ]"), ' ').trim();
+  if (cleaned.isEmpty) return false;
+  final last = cleaned.split(RegExp(r'\s+')).last;
+  const trailing = {
+    'um', 'umm', 'uh', 'uhh', 'er', 'erm', 'hmm', 'like', 'and', 'so', 'but',
+    'or', 'because', 'cause', 'the', 'a', 'an', 'to', 'with', 'for', 'of',
+    'then', 'that', 'if', 'when', 'my', 'your', 'maybe',
+  };
+  return trailing.contains(last);
+}
