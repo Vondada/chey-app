@@ -13,6 +13,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../che_app_portal.dart' show cheAppForName;
+
 typedef ChePageCallback = Future<void> Function(String title, String url, String pageText);
 
 /// App-level hooks the browser uses to reach CHE. Set once by the app.
@@ -27,6 +29,10 @@ class CheBrowserActions {
 
   /// Sends a prompt about the page to CHE (page text goes as screen context).
   static Future<void> Function(String prompt, String title, String url, String pageText)? ask;
+
+  /// Voice control of the browser that is open right now. Returns what CHE
+  /// should say, or null when the words aren't a browser command.
+  static Future<String?> Function(String words)? voice;
 }
 
 class CheBrowserEntry {
@@ -187,6 +193,7 @@ class _CheBrowserScreenState extends State<CheBrowserScreen> {
     super.initState();
     unawaited(CheBrowserStore.instance.load());
     _openTab(widget.initialUrl);
+    CheBrowserActions.voice = _voiceCommand;
     _addressFocus.addListener(() {
       if (!_addressFocus.hasFocus) _syncAddress();
     });
@@ -194,9 +201,148 @@ class _CheBrowserScreenState extends State<CheBrowserScreen> {
 
   @override
   void dispose() {
+    if (CheBrowserActions.voice == _voiceCommand) CheBrowserActions.voice = null;
     _address.dispose();
     _addressFocus.dispose();
     super.dispose();
+  }
+
+  // ─── Voice navigation (voice-first use) ─────────────────────────────────
+  static const _ordinals = {
+    'first': 1, 'one': 1, '1st': 1, 'second': 2, 'two': 2, '2nd': 2, 'third': 3, 'three': 3, '3rd': 3,
+    'fourth': 4, 'four': 4, '4th': 4, 'fifth': 5, 'five': 5, '5th': 5, 'sixth': 6, 'six': 6, '6th': 6,
+    'seventh': 7, 'seven': 7, '7th': 7, 'eighth': 8, 'eight': 8, '8th': 8,
+  };
+
+  Future<String> _js(String code) async {
+    try {
+      final raw = await _tab.controller.runJavaScriptReturningResult(code);
+      var text = raw.toString();
+      try {
+        final decoded = jsonDecode(text);
+        if (decoded is String) text = decoded;
+      } catch (_) {}
+      return text;
+    } catch (_) {
+      return '';
+    }
+  }
+
+  static const _listJs = r'''(function(){
+var els=[].slice.call(document.querySelectorAll('a,button,[role=button],[role=link],input[type=submit]'));
+document.querySelectorAll('[data-che-n]').forEach(function(e){e.removeAttribute('data-che-n');});
+var out=[],seen={};
+for(var i=0;i<els.length&&out.length<8;i++){var e=els[i];var r=e.getBoundingClientRect();
+if(r.width<20||r.height<12||r.bottom<0||r.top>innerHeight)continue;
+var t=(e.getAttribute('aria-label')||e.innerText||e.title||'').replace(/\s+/g,' ').trim();
+if(t.length<3||t.length>140||seen[t])continue;seen[t]=1;e.setAttribute('data-che-n',String(out.length+1));out.push(t);}
+return JSON.stringify({title:document.title||'',items:out});})()''';
+
+  Future<List<String>> _listItems() async {
+    final raw = await _js(_listJs);
+    try {
+      final j = jsonDecode(raw);
+      if (j is Map) return [for (final i in (j['items'] as List? ?? const [])) '$i'];
+    } catch (_) {}
+    return const [];
+  }
+
+  Future<String> _describe() async {
+    final items = await _listItems();
+    if (items.isEmpty) return 'This is $_title. I can\'t find anything to open on this part of the page. Say "scroll down" or "read the page".';
+    final spoken = [for (var i = 0; i < items.length; i++) '${i + 1}: ${items[i]}'].join('. ');
+    return 'On $_title I see: $spoken. Say "open" and a number, or "scroll down" for more.';
+  }
+
+  Future<String> _clickNumber(int n) async {
+    var label = await _js('(function(){var e=document.querySelector(\'[data-che-n="$n"]\');if(!e)return "";var t=(e.getAttribute("aria-label")||e.innerText||"").replace(/\\s+/g," ").trim().slice(0,100);e.scrollIntoView({block:"center"});e.click();return t;})()');
+    if (label.isEmpty) {
+      final items = await _listItems();
+      if (n > items.length) return 'There are only ${items.length} options on screen right now.';
+      label = await _js('(function(){var e=document.querySelector(\'[data-che-n="$n"]\');if(!e)return "";var t=(e.getAttribute("aria-label")||e.innerText||"").replace(/\\s+/g," ").trim().slice(0,100);e.scrollIntoView({block:"center"});e.click();return t;})()');
+    }
+    return label.isEmpty ? 'I couldn\'t open number $n.' : 'Opening $label.';
+  }
+
+  Future<String> _clickText(String query) async {
+    final q = jsonEncode(query.toLowerCase());
+    final label = await _js('''(function(q){var els=[].slice.call(document.querySelectorAll('a,button,[role=button],[role=link]'));var best=null,bs=0;
+els.forEach(function(e){var t=(e.getAttribute('aria-label')||e.innerText||e.title||'').replace(/\\s+/g,' ').trim().toLowerCase();if(!t)return;var s=0;
+if(t===q)s=100;else if(t.indexOf(q)>=0)s=60-Math.min(40,t.length/10);else{var w=q.split(' ').filter(function(x){return x.length>2});var hit=w.filter(function(x){return t.indexOf(x)>=0}).length;if(w.length&&hit===w.length)s=40;}
+var r=e.getBoundingClientRect();if(r.bottom>0&&r.top<innerHeight)s+=5;if(s>bs){bs=s;best=e;}});
+if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'').replace(/\\s+/g,' ').trim().slice(0,100);best.scrollIntoView({block:'center'});best.click();return label;})($q)''');
+    return label.isEmpty ? 'I couldn\'t find "$query" on this page. Say "what\'s on screen" and I\'ll read the options.' : 'Opening $label.';
+  }
+
+  Future<String?> _voiceCommand(String words) async {
+    if (!mounted || _tabs.isEmpty) return null;
+    final w = words.toLowerCase().replaceAll(RegExp(r'[.!?,]+$'), '').trim();
+    if (w.isEmpty) return null;
+
+    if (RegExp(r'^(scroll )?(down|next|more)( please)?$|^scroll down').hasMatch(w)) {
+      await _js('window.scrollBy({top: innerHeight*0.8, behavior: "smooth"}); "ok"');
+      return 'Scrolled down.';
+    }
+    if (RegExp(r'^(scroll )?up$|^scroll up').hasMatch(w)) {
+      await _js('window.scrollBy({top: -innerHeight*0.8, behavior: "smooth"}); "ok"');
+      return 'Scrolled up.';
+    }
+    if (RegExp(r'^(go )?back$').hasMatch(w)) {
+      if (await _tab.controller.canGoBack()) {
+        await _tab.controller.goBack();
+        return 'Going back.';
+      }
+      return 'This is the first page.';
+    }
+    if (RegExp(r'^(go )?forward$').hasMatch(w)) {
+      if (await _tab.controller.canGoForward()) await _tab.controller.goForward();
+      return 'Going forward.';
+    }
+    if (RegExp(r'^(reload|refresh)( (the )?page)?$').hasMatch(w)) {
+      await _tab.controller.reload();
+      return 'Reloading.';
+    }
+    if (RegExp(r'^(pause|stop)( the)?( video| it)?$').hasMatch(w)) {
+      await _js('(function(){var v=document.querySelector("video");if(v)v.pause();return v?"1":"";})()');
+      return 'Paused.';
+    }
+    if (RegExp(r'^(play|resume)( the)?( video| it)?$').hasMatch(w)) {
+      await _js('(function(){var v=document.querySelector("video");if(v)v.play();return v?"1":"";})()');
+      return 'Playing.';
+    }
+    if (RegExp(r'^(close|exit|leave)( the)?( browser| app| this)?$').hasMatch(w)) {
+      Navigator.of(context).maybePop();
+      return 'Closed.';
+    }
+    if (RegExp(r"^(read|read me)( the| this)? (page|article|screen)$").hasMatch(w)) {
+      final text = await _pageText();
+      if (text.isEmpty) return 'There\'s no readable text on this page.';
+      final clipped = text.length > 900 ? '${text.substring(0, 900)}…' : text;
+      return clipped;
+    }
+    if (RegExp(r"^(what('?s| is) on (the |my )?screen|what do you see|describe (the |this )?(screen|page)|what are (my|the) options|read (the )?(options|links|results|videos|list))").hasMatch(w)) {
+      return _describe();
+    }
+    final search = RegExp(r'^search(?: youtube)?(?: for)? (.+)$').firstMatch(w);
+    if (search != null) {
+      final q = Uri.encodeQueryComponent(search.group(1)!.trim());
+      final host = Uri.tryParse(_tab.url)?.host ?? '';
+      final url = host.contains('youtube') || w.startsWith('search youtube')
+          ? 'https://m.youtube.com/results?search_query=$q'
+          : 'https://www.google.com/search?q=$q';
+      await _tab.controller.loadRequest(Uri.parse(url));
+      return 'Searching for ${search.group(1)!.trim()}. Say "what\'s on screen" when you want the results.';
+    }
+    final pick = RegExp(r'^(?:open|play|click|tap|select|choose|pick|watch)(?: the)?(?: number)? (.+?)(?: one| video| result| link| option)?$').firstMatch(w);
+    if (pick != null) {
+      final target = pick.group(1)!.trim();
+      final n = int.tryParse(target) ?? _ordinals[target];
+      if (n != null) return _clickNumber(n);
+      // "open YouTube" etc. is an app switch, not a click on this page.
+      if (cheAppForName(target) != null && target.split(' ').length <= 2) return null;
+      return _clickText(target);
+    }
+    return null;
   }
 
   void _changed() {

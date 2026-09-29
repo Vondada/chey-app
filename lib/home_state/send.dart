@@ -218,6 +218,17 @@ extension _CheHomeSend on _CHEHomeState {
         : typedMessage;
     if (message.isEmpty) return;
 
+    // Voice navigation inside the CHE browser/app that is open right now.
+    final browserVoice = CheBrowserActions.voice;
+    if (browserVoice != null && _pendingAttachment == null) {
+      final reply = await browserVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        await speakText(reply);
+        return;
+      }
+    }
+
     if (await _openExternalAppByVoice(message)) {
       return;
     }
