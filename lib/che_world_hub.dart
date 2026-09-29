@@ -96,6 +96,13 @@ const List<CheBuilding> cheCampusBuildings = [
     icon: Icons.apps_rounded,
     color: Color(0xFF67D8FF),
   ),
+  CheBuilding(
+    tab: 9,
+    title: 'Theater',
+    subtitle: 'Watch together',
+    icon: Icons.theaters_outlined,
+    color: Color(0xFFFF6F91),
+  ),
 ];
 
 enum CheWorldState { asleep, listening, thinking, speaking, idle }
@@ -263,9 +270,8 @@ class _CheCampus extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final rows = <List<CheBuilding>>[
-      cheCampusBuildings.sublist(0, 3),
-      cheCampusBuildings.sublist(3, 6),
-      cheCampusBuildings.sublist(6, 9),
+      for (var i = 0; i < cheCampusBuildings.length; i += 3)
+        cheCampusBuildings.sublist(i, i + 3 > cheCampusBuildings.length ? cheCampusBuildings.length : i + 3),
     ];
 
     return Column(
@@ -276,7 +282,7 @@ class _CheCampus extends StatelessWidget {
             onOpenTab: onOpenTab,
             // Rows further "back" (lower index) sit smaller/dimmer to fake
             // depth-of-field, like distant buildings in a game world.
-            depthScale: 0.82 + (r * 0.09),
+            depthScale: (0.82 + (r * 0.09)).clamp(0.82, 1.0),
             stagger: r.isOdd,
           ),
           const SizedBox(height: 18),

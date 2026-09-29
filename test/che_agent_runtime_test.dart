@@ -80,6 +80,13 @@ MockClient _backend(List<http.Request> seen) => MockClient((request) async {
     });
 
 void main() {
+  test('short summaries keep titles glanceable', () {
+    expect(cheShortSummary('Find competitors'), 'Find competitors');
+    expect(cheShortSummary('Research the top five competitors in Houston. Then write a report.'),
+        'Research the top five competitors in…');
+    expect(cheShortSummary('Plan the launch: budget, venues and guests'), 'Plan the launch');
+  });
+
   test('runtime client parses roster, agent detail and meetings', () async {
     final seen = <http.Request>[];
     final client = CheAgentRuntimeClient(

@@ -547,6 +547,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
       MaterialPageRoute<void>(
         builder: (_) => CheOfficeFloorScreen(
           client: _agentRuntime,
+          onSpeak: speakText,
           // Tapping CHE's desk returns to the conversation.
           onTalkToChe: () => Navigator.of(context).popUntil((route) => route.isFirst),
         ),
@@ -555,18 +556,14 @@ extension _CheHomeHubRooms on _CHEHomeState {
   }
 
   Widget _hubOfficeTab(bool active) {
-    return OfficeScene(
-      active: active,
-      onOpenFloor: _openOfficeFloor,
-      team: team,
-      teamTasks: teamTasks,
-      backgroundJobs: backgroundJobs,
-      onAddPartner: () {
-        unawaited(_createPartnerDialog());
-      },
-      onOpenPartner: (partner) {
-        unawaited(_openPartner(partner));
-      },
+    // The live Office world IS the Office tab: desks, walking agents and the
+    // War Room, with read-aloud on every summary.
+    return CheOfficeFloorScreen(
+      client: _agentRuntime,
+      embedded: true,
+      onSpeak: speakText,
+      onTalkToChe: () => Navigator.of(context).popUntil((route) => route.isFirst),
     );
   }
+
 }

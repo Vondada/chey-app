@@ -6,6 +6,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../che_ui/che_agents.dart';
@@ -15,13 +16,38 @@ import 'che_agent_runtime.dart';
 import 'che_office_world.dart';
 import 'che_war_room_screen.dart';
 
+/// Short, glanceable version of an agent's task or a meeting objective: the
+/// first clause, cut at a word boundary. The full text stays one tap (or one
+/// "read aloud") away.
+String cheShortSummary(String text, {int max = 40}) {
+  var t = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+  final clause = RegExp(r'^(.{12,}?)[.;:!?\n]').firstMatch(t);
+  if (clause != null) t = clause.group(1)!.trim();
+  if (t.length <= max) return t;
+  final cut = t.substring(0, max);
+  final space = cut.lastIndexOf(' ');
+  return '${(space > max ~/ 2 ? cut.substring(0, space) : cut).trimRight()}…';
+}
+
 class CheOfficeFloorScreen extends StatefulWidget {
-  const CheOfficeFloorScreen({super.key, required this.client, this.onTalkToChe});
+  const CheOfficeFloorScreen({
+    super.key,
+    required this.client,
+    this.onTalkToChe,
+    this.onSpeak,
+    this.embedded = false,
+  });
 
   final CheAgentRuntimeClient client;
 
   /// Opens CHE's chat (tapping CHE's own desk).
   final VoidCallback? onTalkToChe;
+
+  /// Reads text aloud in CHE's voice. Falls back to a VoiceOver announcement.
+  final Future<void> Function(String text)? onSpeak;
+
+  /// True when shown as the hub's Office tab (no app bar or back route).
+  final bool embedded;
 
   @override
   State<CheOfficeFloorScreen> createState() => _CheOfficeFloorScreenState();
@@ -72,13 +98,15 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
 
   void _snack(String text) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(text)));
   }
+
+  Future<void> _speak(String text) => cheReadAloud(context, text, widget.onSpeak);
 
   Future<void> _openAgent(CheAgent agent) async {
     if (agent.isChe) {
       if (widget.onTalkToChe != null) {
-        Navigator.of(context).pop();
+        if (!widget.embedded) Navigator.of(context).pop();
         widget.onTalkToChe!();
       }
       return;
@@ -88,7 +116,12 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
       isScrollControlled: true,
       backgroundColor: CheColors.surface,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(CheRadius.xl))),
-      builder: (_) => _AgentDeskSheet(client: widget.client, agentId: agent.id, onChanged: _runtime.refresh),
+      builder: (_) => _AgentDeskSheet(
+        client: widget.client,
+        agentId: agent.id,
+        onChanged: _runtime.refresh,
+        onSpeak: widget.onSpeak,
+      ),
     );
     await _runtime.refresh();
   }
@@ -207,9 +240,113 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
     await _runtime.refresh();
   }
 
+  String _officeSummary() {
+    final r = _runtime;
+    final working = r.agents.where((p) => p.working).length;
+    final parts = <String>[
+      r.agents.isEmpty
+          ? 'The Office is empty. Ask CHE to build a team.'
+          : '${r.agents.length} agents, $working working.',
+      if (r.che.task != null) 'CHE: ${r.che.task}.',
+      for (final p in r.agents)
+        '${p.agent.name}, ${p.agent.role}: ${p.agent.task?.isNotEmpty == true ? p.agent.task : p.agent.status.label}.',
+      if (r.meetings.isNotEmpty) '${r.meetings.length} War Room meetings.',
+    ];
+    return parts.join(' ');
+  }
+
+  List<Widget> _content(BuildContext context) {
+    final r = _runtime;
+    final screen = MediaQuery.sizeOf(context).height;
+    return [
+      if (!r.loaded)
+        const Padding(padding: EdgeInsets.all(CheSpace.xxl), child: Center(child: CircularProgressIndicator()))
+      else ...[
+        if (r.error != null) _Banner(text: r.error!, color: CheColors.warning),
+        CheOfficeFloor(
+          che: r.che,
+          agents: [for (final p in r.agents) p.agent],
+          onTapAgent: _openAgent,
+          onConvene: _convene,
+        ),
+        const SizedBox(height: CheSpace.sm),
+        if (r.che.task != null)
+          Row(children: [
+            Expanded(
+              child: Text('CHE: ${cheShortSummary(r.che.task!)}',
+                  maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.caption),
+            ),
+            _ReadAloudButton(label: 'Read CHE\'s task aloud', onPressed: () => _speak('CHE is on: ${r.che.task}')),
+          ]),
+        const SizedBox(height: CheSpace.lg),
+        Text('WAR ROOM', style: CheType.overline),
+        const SizedBox(height: CheSpace.sm),
+        if (r.meetings.isEmpty)
+          Text('No meetings yet. Convene the team when a project needs several specialties.', style: CheType.bodyDim)
+        else
+          for (final m in r.meetings)
+            _MeetingTile(
+              meeting: m,
+              onTap: () => _openMeeting(m.id),
+              onReadAloud: () => _speak('${m.statusLabel}. ${m.objective}. With ${m.participantNames.join(', ')}.'),
+            ),
+        const SizedBox(height: CheSpace.lg),
+        CheOfficeWorld(
+          che: r.che,
+          agents: r.agents,
+          level: _worldLevel,
+          onOpenAgent: _openAgent,
+          onUpgrade: _setWorldLevel,
+          // The world is the Office: give it most of the screen.
+          height: (screen * 0.6).clamp(420.0, 720.0),
+        ),
+      ],
+    ];
+  }
+
+  List<Widget> _actions() => [
+        IconButton(
+          tooltip: 'Read the Office aloud',
+          onPressed: () => _speak(_officeSummary()),
+          icon: const Icon(Icons.volume_up_rounded),
+        ),
+        IconButton(tooltip: 'Refresh', onPressed: _runtime.refresh, icon: const Icon(Icons.refresh_rounded)),
+        IconButton(tooltip: 'New agent', onPressed: _newAgent, icon: const Icon(Icons.person_add_alt_1_rounded)),
+      ];
+
   @override
   Widget build(BuildContext context) {
     final r = _runtime;
+    final list = RefreshIndicator(
+      onRefresh: r.refresh,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.sm, CheSpace.gutter, CheSpace.xxl),
+        children: _content(context),
+      ),
+    );
+    if (widget.embedded) {
+      return Theme(
+        data: CheTheme.dark(),
+        child: Material(
+          color: CheColors.bg,
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.xs, CheSpace.xs, 0),
+              child: Row(children: [
+                Expanded(
+                  child: Semantics(
+                    header: true,
+                    child: Text('CHE Office', maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.title),
+                  ),
+                ),
+                ..._actions(),
+              ]),
+            ),
+            Expanded(child: list),
+          ]),
+        ),
+      );
+    }
     return Theme(
       data: CheTheme.dark(),
       child: Scaffold(
@@ -217,55 +354,38 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
         appBar: AppBar(
           backgroundColor: Colors.transparent,
           title: const Text('CHE Office'),
-          actions: [
-            IconButton(tooltip: 'Refresh', onPressed: r.refresh, icon: const Icon(Icons.refresh_rounded)),
-            IconButton(tooltip: 'New agent', onPressed: _newAgent, icon: const Icon(Icons.person_add_alt_1_rounded)),
-          ],
+          actions: _actions(),
         ),
-        body: SafeArea(
-          top: false,
-          child: RefreshIndicator(
-            onRefresh: r.refresh,
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.sm, CheSpace.gutter, CheSpace.xxl),
-              children: [
-                if (!r.loaded)
-                  const Padding(padding: EdgeInsets.all(CheSpace.xxl), child: Center(child: CircularProgressIndicator()))
-                else ...[
-                  if (r.error != null) _Banner(text: r.error!, color: CheColors.warning),
-                  CheOfficeFloor(
-                    che: r.che,
-                    agents: [for (final p in r.agents) p.agent],
-                    onTapAgent: _openAgent,
-                    onConvene: _convene,
-                  ),
-                  const SizedBox(height: CheSpace.sm),
-                  if (r.che.task != null) Text('CHE: ${r.che.task}', maxLines: 2, overflow: TextOverflow.ellipsis, style: CheType.caption),
-                  const SizedBox(height: CheSpace.lg),
-                  Text('WAR ROOM', style: CheType.overline),
-                  const SizedBox(height: CheSpace.sm),
-                  if (r.meetings.isEmpty)
-                    Text('No meetings yet. Convene the team when a project needs several specialties.', style: CheType.bodyDim)
-                  else
-                    for (final m in r.meetings) _MeetingTile(meeting: m, onTap: () => _openMeeting(m.id)),
-                  const SizedBox(height: CheSpace.lg),
-                  Text('OFFICE WORLD', style: CheType.overline),
-                  const SizedBox(height: CheSpace.sm),
-                  CheOfficeWorld(
-                    che: r.che,
-                    agents: r.agents,
-                    level: _worldLevel,
-                    onOpenAgent: _openAgent,
-                    onUpgrade: _setWorldLevel,
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
+        body: SafeArea(top: false, child: list),
       ),
     );
   }
+}
+
+/// Speaks [text] with CHE's voice when available, else via VoiceOver.
+Future<void> cheReadAloud(BuildContext context, String text, Future<void> Function(String text)? speak) async {
+  HapticFeedback.selectionClick();
+  if (speak != null) {
+    await speak(text);
+    return;
+  }
+  final view = View.maybeOf(context);
+  if (view != null) {
+    await SemanticsService.sendAnnouncement(view, text, Directionality.of(context));
+  }
+}
+
+class _ReadAloudButton extends StatelessWidget {
+  const _ReadAloudButton({required this.label, required this.onPressed});
+  final String label;
+  final VoidCallback onPressed;
+  @override
+  Widget build(BuildContext context) => IconButton(
+        tooltip: label,
+        visualDensity: VisualDensity.compact,
+        onPressed: onPressed,
+        icon: const Icon(Icons.volume_up_rounded, size: 20, color: CheColors.accent),
+      );
 }
 
 class _Banner extends StatelessWidget {
@@ -286,9 +406,10 @@ class _Banner extends StatelessWidget {
 }
 
 class _MeetingTile extends StatelessWidget {
-  const _MeetingTile({required this.meeting, required this.onTap});
+  const _MeetingTile({required this.meeting, required this.onTap, required this.onReadAloud});
   final CheMeetingSummary meeting;
   final VoidCallback onTap;
+  final VoidCallback onReadAloud;
   @override
   Widget build(BuildContext context) {
     const amber = Color(0xFFE8B04A);
@@ -302,7 +423,8 @@ class _MeetingTile extends StatelessWidget {
       child: ListTile(
         onTap: onTap,
         leading: Icon(meeting.live ? Icons.groups_rounded : Icons.fact_check_rounded, color: meeting.live ? amber : CheColors.textDim),
-        title: Text(meeting.objective, maxLines: 2, overflow: TextOverflow.ellipsis, style: CheType.label),
+        title: Text(cheShortSummary(meeting.objective),
+            maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label, semanticsLabel: meeting.objective),
         subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const SizedBox(height: 4),
           Text('${meeting.statusLabel} • ${meeting.participantNames.join(', ')}',
@@ -312,7 +434,7 @@ class _MeetingTile extends StatelessWidget {
             LinearProgressIndicator(value: meeting.progress, color: amber, backgroundColor: CheColors.stroke),
           ],
         ]),
-        trailing: const Icon(Icons.chevron_right_rounded),
+        trailing: _ReadAloudButton(label: 'Read this meeting aloud', onPressed: onReadAloud),
       ),
     );
   }
@@ -321,10 +443,11 @@ class _MeetingTile extends StatelessWidget {
 // ─── Agent desk: profile, task, history, actions ────────────────────────
 
 class _AgentDeskSheet extends StatefulWidget {
-  const _AgentDeskSheet({required this.client, required this.agentId, required this.onChanged});
+  const _AgentDeskSheet({required this.client, required this.agentId, required this.onChanged, this.onSpeak});
   final CheAgentRuntimeClient client;
   final String agentId;
   final Future<void> Function() onChanged;
+  final Future<void> Function(String text)? onSpeak;
   @override
   State<_AgentDeskSheet> createState() => _AgentDeskSheetState();
 }
@@ -457,12 +580,25 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
                         Text(a.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.title.copyWith(color: Colors.white)),
                         Text(a.role, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label.copyWith(color: Colors.white70)),
                         const SizedBox(height: CheSpace.xs),
-                        Text(a.status.label + (a.task != null ? ' • ${a.task}' : ''),
-                            maxLines: 2, overflow: TextOverflow.ellipsis, style: CheType.caption.copyWith(color: a.color)),
+                        Text(a.status.label + (a.task != null ? ' • ${cheShortSummary(a.task!)}' : ''),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: CheType.caption.copyWith(color: a.color),
+                            semanticsLabel: a.status.label + (a.task != null ? ', ${a.task}' : '')),
                         const SizedBox(height: CheSpace.xs),
-                        Wrap(spacing: CheSpace.xs, children: [
+                        Wrap(spacing: CheSpace.xs, crossAxisAlignment: WrapCrossAlignment.center, children: [
                           _Pill(p.modelTier == 'strong' ? 'Upgraded engine' : 'Fast engine'),
                           if (p.temporary) const _Pill('Temporary'),
+                          _ReadAloudButton(
+                            label: 'Read ${a.name} aloud',
+                            onPressed: () => cheReadAloud(
+                              context,
+                              '${a.name}, ${a.role}. ${a.status.label}.'
+                              '${a.task != null ? ' Working on: ${a.task}.' : ''}'
+                              '${p.responsibilities.isNotEmpty ? ' Responsible for: ${p.responsibilities.join('; ')}.' : ''}',
+                              widget.onSpeak,
+                            ),
+                          ),
                         ]),
                       ]),
                     ),
@@ -534,7 +670,15 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
               IconButton(tooltip: 'Refresh', onPressed: _load, icon: const Icon(Icons.refresh_rounded, size: 18)),
             ]),
             if (d.history.isEmpty) Text('No tasks yet.', style: CheType.bodyDim),
-            for (final t in d.history) _TaskCard(task: t),
+            for (final t in d.history)
+              _TaskCard(
+                task: t,
+                onReadAloud: () => cheReadAloud(
+                  context,
+                  '${t.task}. ${t.result.isNotEmpty ? t.result : ''} ${t.cheReview.isNotEmpty ? 'CHE review: ${t.cheReview}' : ''}',
+                  widget.onSpeak,
+                ),
+              ),
           ],
         );
       },
@@ -572,8 +716,9 @@ class _Section extends StatelessWidget {
 }
 
 class _TaskCard extends StatelessWidget {
-  const _TaskCard({required this.task});
+  const _TaskCard({required this.task, required this.onReadAloud});
   final CheAgentTask task;
+  final VoidCallback onReadAloud;
   @override
   Widget build(BuildContext context) {
     final (label, color) = switch (task.status) {
@@ -590,11 +735,19 @@ class _TaskCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: CheSpace.sm),
       child: ExpansionTile(
         shape: const Border(),
-        title: Text(task.task, maxLines: 2, overflow: TextOverflow.ellipsis, style: CheType.label),
-        subtitle: Text(label, style: CheType.caption.copyWith(color: color)),
+        title: Text(cheShortSummary(task.task),
+            maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label, semanticsLabel: task.task),
+        subtitle: Row(children: [
+          Flexible(child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.caption.copyWith(color: color))),
+          _ReadAloudButton(label: 'Read this task aloud', onPressed: onReadAloud),
+        ]),
         childrenPadding: const EdgeInsets.fromLTRB(CheSpace.lg, 0, CheSpace.lg, CheSpace.md),
         expandedCrossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (task.task.length > 40) ...[
+            SelectableText(task.task, style: CheType.bodyDim),
+            const SizedBox(height: CheSpace.sm),
+          ],
           if (task.result.isNotEmpty) SelectableText(task.result, style: CheType.body),
           if (task.cheReview.isNotEmpty) ...[
             const SizedBox(height: CheSpace.sm),

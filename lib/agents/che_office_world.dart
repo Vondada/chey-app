@@ -63,7 +63,7 @@ class CheOfficeWorld extends StatefulWidget {
     required this.level,
     required this.onOpenAgent,
     this.onUpgrade,
-    this.height = 380,
+    this.height = 460,
   });
 
   final CheAgent che;
@@ -149,7 +149,8 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
       _seenAssignment[id] = p.assignmentId;
       if (fresh) {
         _ack[id] = now;
-        final task = p.assignmentTask.length > 42 ? '${p.assignmentTask.substring(0, 42)}…' : p.assignmentTask;
+        final words = p.assignmentTask.trim().split(RegExp(r'\s+'));
+        final task = words.length <= 4 ? words.join(' ') : '${words.take(4).join(' ')}…';
         _ackText[id] = 'Got it! $task';
         _announcement = '${p.agent.name} heard you and is on it: ${p.assignmentTask}';
         HapticFeedback.mediumImpact();
@@ -227,8 +228,13 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
     // Never change the view controller during build.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final s = _viewportWidth / _world.width;
-      _view.value = Matrix4(s, 0, 0, 0, 0, s, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
+      // Open at a roomy, readable scale: fill the height and start on the
+      // Office itself; pan sideways to walk to the other rooms.
+      final fitWidth = _viewportWidth / _world.width;
+      final s = math.max(fitWidth, math.min(1.0, widget.height / _world.height));
+      final office = _roomFor('office').rect;
+      final tx = math.min(0.0, math.max(_viewportWidth - _world.width * s, -(office.left * s) + 8));
+      _view.value = Matrix4(s, 0, 0, 0, 0, s, 0, 0, 0, 0, 1, 0, tx, 0, 0, 1);
     });
   }
 
