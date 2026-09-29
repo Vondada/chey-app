@@ -23,4 +23,5 @@ jobs:
       - run: flutter analyze
       - run: flutter test
       - run: for f in server/cloudflare/*.js; do node --check "$f"; done
-      - run: node --test server/cloudflare/worker.test.mjs server/cloudflare/features.test.mjs
+      - run: node --test server/cloudflare/*.test.mjs
+

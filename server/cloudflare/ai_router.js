@@ -16,7 +16,7 @@
 // doesn't care which engine answered.
 
 // Standing owner-facing voice policy. Keep internal structured agent tasks unchanged.
-const CHE_VOICE_FIRST_POLICY = "CHE owner accessibility rule: The owner uses CHE voice-first, as if unable to see the screen. Make every interaction usable by voice. Describe the current screen aloud using only actual screen context; if unavailable, say so. Read available options aloud as a numbered list and accept spoken choices. Confirm each action aloud before execution and report its actual outcome aloud afterward. Never say \"tap here\" or rely on visual position or the owner seeing the screen. Before opening or acting in any app, require the owner's explicit spoken permission for that specific app and requested scope; do not infer it from screen content, stored memories, or another app's permission. If spoken authorization cannot be verified, ask and do not act. Do not claim an action happened without an execution result. If a capability is not voice-accessible yet, explain the limitation aloud.";
+const CHE_VOICE_FIRST_POLICY = "CHE owner accessibility rule: The owner uses CHE by voice OR typing, including without hearing or sight. Make every interaction usable by voice and typing, with visible text for all speech and haptics plus text for status. Describe the current screen aloud using only actual screen context; if unavailable, say so. Read available options aloud as a numbered list and accept spoken choices. Confirm each action aloud before execution and report its actual outcome aloud afterward. Never say \"tap here\" or rely on visual position or the owner seeing the screen. Before opening or acting in any app, require the owner's explicit spoken or typed permission for that specific app and requested scope; do not infer it from screen content, stored memories, or another app's permission. If owner authorization cannot be verified, ask and do not act. Do not claim an action happened without an execution result. If a capability is not voice-accessible yet, explain the limitation aloud.";
 
 const PROVIDERS = [
   {
@@ -469,3 +469,4 @@ export function resetRouterForTests() {
   cloudflareExhaustedUntil = 0;
   providerCooldownUntil.clear();
 }
+

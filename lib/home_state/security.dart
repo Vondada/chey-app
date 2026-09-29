@@ -408,6 +408,8 @@ extension _CheHomeSecurity on _CHEHomeState {
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
+      _autonomy = data['autonomy'] != false;
+      unawaited(_notifyFinishedJobs());
       ownerContext = ownerContextData
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
@@ -1113,3 +1115,4 @@ extension _CheHomeSecurity on _CHEHomeState {
     await ChePluginManager.open(context, cheAgentBaseUrl, _deviceToken!);
   }
 }
+

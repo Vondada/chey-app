@@ -457,8 +457,12 @@ test('chat recovers when the model rejects the full prompt, and reports real err
 
   failAll = true;
   const bad = await send('/api/chat', { message: 'Why' }, token);
-  assert.equal(bad.status, 503);
-  assert.match((await bad.json()).detail, /temporarily unavailable \(All AI engines failed \(cloudflare: AiError: 3036: model overloaded\)/);
+  assert.equal(bad.status, 200);
+  assert.match(await bad.text(), /All my engines are busy/);
+  const queued = JSON.parse(saved.get('che')).jobs[0];
+  assert.equal(queued.status, 'queued');
+  assert.equal(queued.prompt, 'Why');
+  assert.ok(queued.retry_at > Date.now());
 });
 
 test('voice falls back to free Gemini speech (WAV) when Cloudflare voice is out of allowance', async () => {
@@ -503,4 +507,46 @@ test('voice falls back to free Gemini speech (WAV) when Cloudflare voice is out 
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+
+test('quota jobs retry at five minutes, pause durably, resume and stop after 24 retries', async () => {
+  const saved = new Map(); let alarmAt; let calls = 0;
+  const state = new CheState({ storage: {
+    get: async key => saved.has(key) ? structuredClone(saved.get(key)) : undefined,
+    put: async (key, value) => saved.set(key, structuredClone(value)),
+    setAlarm: async value => { alarmAt = value; }, deleteAlarm: async () => { alarmAt = null; },
+  } }, { CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { calls++; throw new Error('429 busy'); } } });
+  saved.set('che', { jobs: [{ id: 'job', prompt: 'Draft a guide', status: 'queued' }], devices: {}, memories: [] });
+  const before = Date.now();
+  await state.processJobs();
+  let job = saved.get('che').jobs[0];
+  assert.equal(job.status, 'queued'); assert.equal(job.retry_count, 1);
+  assert.ok(job.retry_at >= before + 300000); assert.equal(alarmAt, job.retry_at);
+  const attempts = calls; await state.processJobs(); assert.equal(calls, attempts);
+  await state.setAutonomy(false); assert.equal(alarmAt, null);
+  job.retry_at = 0; saved.get('che').jobs[0] = job;
+  await state.alarm(); assert.equal(calls, attempts);
+  await state.setAutonomy(true); assert.ok(alarmAt);
+  saved.get('che').jobs[0].retry_count = 24;
+  await state.processJobs();
+  job = saved.get('che').jobs[0]; assert.equal(job.status, 'failed');
+  assert.match(job.error, /Retry limit reached/);
+});
+
+test('public research and vision try the next engine and aggregate failures', async () => {
+  const { publicResearch, geminiVision } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
+  const calls = [];
+  const result = await publicResearch('test', async url => {
+    calls.push(url);
+    return url.includes('wikipedia') ? new Response('', {status: 503})
+      : Response.json({ AbstractText: 'Reference answer.', AbstractURL: 'https://example.org/source' });
+  });
+  assert.equal(calls.length, 2); assert.equal(result.engine, 'duckduckgo');
+  let count = 0;
+  const vision = await geminiVision({ GEMINI_API_KEY: 'test' }, {name:'a.png', mediaType:'image', base64:'YQ=='}, 'describe', async () => {
+    count++;
+    return count === 1 ? Response.json({error:{message:'busy'}}, {status:429}) : Response.json({candidates:[{content:{parts:[{text:'Actual image description'}]}}]});
+  });
+  assert.equal(count, 2); assert.equal(vision.summary, 'Actual image description');
 });

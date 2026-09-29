@@ -643,6 +643,13 @@ async function voiceSynthesisResponse(env, text) {
 }
 
 async function optionalResearch(env, query) {
+  const result = await connectorResearch(env, query);
+  if (result?.summary) return result;
+  if (result?.error) console.log('CHE research error:', result.error);
+  return publicResearch(query);
+}
+
+async function connectorResearch(env, query) {
   if (!env.CHE_RESEARCH_URL) return null;
   let url;
   try {
@@ -684,6 +691,40 @@ async function optionalResearch(env, query) {
   }
 }
 
+// These sources provide reference facts, not exhaustive live web coverage.
+export async function publicResearch(query, fetcher = fetch) {
+  const errors = [];
+  for (const engine of ['wikipedia', 'duckduckgo']) {
+    try {
+      const q = encodeURIComponent(String(query || '').slice(0, 1000));
+      const url = engine === 'wikipedia'
+        ? `https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${q}&gsrlimit=3&prop=extracts|info&exintro=1&explaintext=1&inprop=url&format=json`
+        : `https://api.duckduckgo.com/?q=${q}&format=json&no_html=1&skip_disambig=1`;
+      const response = await fetcher(url, { signal: AbortSignal.timeout(15000) });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      const pages = Object.values(data?.query?.pages || {});
+      const summary = engine === 'wikipedia'
+        ? pages.map(p => `${p.title}: ${p.extract || ''}`).filter(t => t.length > 30).join('\n').slice(0, 10000)
+        : String(data.AbstractText || data.Answer || (data.RelatedTopics || []).map(t => t.Text || '').filter(Boolean).slice(0, 5).join('\n')).slice(0, 10000);
+      if (!summary.trim()) throw new Error('No reference result');
+      const sources = engine === 'wikipedia' ? pages.map(p => p.fullurl).filter(Boolean) : [data.AbstractURL, ...(data.RelatedTopics || []).map(t => t.FirstURL)].filter(Boolean).slice(0, 8);
+      return { summary, sources, engine, limitation: 'Reference summaries; not exhaustive or real-time news.' };
+    } catch (error) {
+      errors.push(`${engine}: ${error.message}`);
+      console.log('CHE research error:', engine, error.message);
+    }
+  }
+  return { error: `All research engines failed (${errors.join(' | ')}).` };
+}
+
+export function busyError(error) {
+  return Boolean(error?.quota || error?.busy || [429, 500, 502, 503, 504].includes(error?.status) ||
+    /quota|busy|overload|rate.?limit|429|\b50[234]\b|neurons|resting|cooldown|daily budget|timed? ?out|abort/i.test(String(error?.message || error)));
+}
+const BUSY_REPLY = "All my engines are busy — I saved this and I'll finish it automatically as soon as one frees up.";
+const WORK_POLICY = 'ACCESSIBILITY: support typing OR voice, numbered options, large text for all speech, visible status plus distinct haptics. Never depend on hearing or sight alone. AUTONOMY: finish authorized queued and multi-step work; stand by pauses it and Chay, resume restarts it. Ask only for a necessary decision, money, or sending to a real person; require explicit approval for those and app-specific permission before app actions. HONESTY: never claim completion without a real result. Busy work is saved and retried every five minutes, at most 24 retries; report exhaustion honestly. Use available fallback engines, and say which capability failed only after all options fail.';
+
 // Built-in image/PDF understanding through Gemini (free tier) when no
 // separate multimodal connector is configured.
 function guessMime(name, mediaType) {
@@ -695,9 +736,10 @@ function guessMime(name, mediaType) {
   return 'image/jpeg';
 }
 
-async function geminiVision(env, { name, mediaType, base64 }, query, fetcher = fetch) {
-  const models = [env.CHE_GEMINI_VISION_MODEL || 'gemini-3.5-flash-lite', 'gemini-3.8-flash'];
+export async function geminiVision(env, { name, mediaType, base64 }, query, fetcher = fetch) {
+  const models = [...new Set([...(env.CHE_GEMINI_VISION_MODELS || '').split(',').filter(Boolean), env.CHE_GEMINI_VISION_MODEL || 'gemini-3.5-flash-lite', 'gemini-3.8-flash'])];
   let lastError = 'no answer';
+  const errors = [];
   for (const model of models) {
     try {
       const response = await fetcher(
@@ -719,19 +761,33 @@ async function geminiVision(env, { name, mediaType, base64 }, query, fetcher = f
       const data = await response.json().catch(() => null);
       if (!response.ok) {
         lastError = `${response.status} ${String(data?.error?.message || '').slice(0, 160)}`;
+        errors.push(`${model}: ${lastError}`);
+      console.log('CHE vision error:', model, lastError);
         continue;
       }
       const summary = (data?.candidates?.[0]?.content?.parts || []).map((part) => part?.text || '').join('').trim().slice(0, 16000);
       if (summary) return { summary, media_type: mediaType, name, engine: `gemini-vision:${model}` };
       lastError = 'empty answer';
+      errors.push(`${model}: ${lastError}`);
+      console.log('CHE vision error:', model, lastError);
     } catch (error) {
       lastError = String(error?.message || error).slice(0, 160);
+      errors.push(`${model}: ${lastError}`);
+      console.log('CHE vision error:', model, lastError);
     }
   }
-  return { error: `Image understanding failed (${lastError}).` };
+  return { error: `Image understanding failed (${errors.join(' | ')}).` };
 }
 
 async function optionalMultimodal(env, attachment, query) {
+  const result = await connectorMultimodal(env, attachment, query);
+  if (!result?.error || !env.GEMINI_API_KEY || !env.CHE_MULTIMODAL_URL) return result;
+  console.log('CHE vision error: connector:', result.error);
+  if (!attachment?.base64 || String(attachment.base64).length > 7_200_000) return result;
+  return geminiVision(env, { name: attachment.name, mediaType: attachment.media_type, base64: attachment.base64 }, query);
+}
+
+async function connectorMultimodal(env, attachment, query) {
   if (!attachment || typeof attachment !== 'object') return null;
   const name = String(attachment.name || 'attachment').slice(0, 160);
   const mediaType = String(attachment.media_type || 'document').slice(0, 32);
@@ -1462,6 +1518,7 @@ export class CheState extends DurableObject {
     data.team = Array.isArray(data.team) ? data.team : [];
     data.team_tasks = Array.isArray(data.team_tasks) ? data.team_tasks : [];
     data.jobs = Array.isArray(data.jobs) ? data.jobs : [];
+    data.autonomy = data.autonomy !== false;
     data.meetings = Array.isArray(data.meetings) ? data.meetings : [];
     data.owner_context = Array.isArray(data.owner_context) ? data.owner_context : [];
     data.memories = Array.isArray(data.memories) ? data.memories : [];
@@ -1479,8 +1536,24 @@ export class CheState extends DurableObject {
   }
 
   async scheduleWork() {
-    await this.ctx.storage.setAlarm(Date.now() + 250);
+    const data = await this.loadData();
+    if (!data.autonomy) return;
+    const times = [...data.jobs, ...data.team_tasks].filter(j => j.status === 'queued')
+      .map(j => Math.max(Date.now() + 250, Number(j.retry_at) || 0));
+    if (data.meetings.some(m => ['drafting', 'cross_check', 'synthesizing'].includes(m.status))) times.push(Date.now() + 250);
+    if (times.length) await this.ctx.storage.setAlarm(Math.min(...times));
   }
+
+  async setAutonomy(enabled) {
+    const data = await this.loadData();
+    data.autonomy = enabled;
+    await this.ctx.storage.put('che', data);
+    if (enabled) await this.scheduleWork();
+    else if (this.ctx.storage.deleteAlarm) await this.ctx.storage.deleteAlarm();
+    this.broadcastAgents(data);
+    return enabled ? 'Resuming queued work, sir.' : 'Standing by, sir. Queued work is paused.';
+  }
+
 
   async webSocketMessage(socket, message) {
     if (String(message) === 'ping') socket.send(JSON.stringify({ type: 'pong' }));
@@ -1507,6 +1580,7 @@ export class CheState extends DurableObject {
       data.team = Array.isArray(data.team) ? data.team : [];
       data.team_tasks = Array.isArray(data.team_tasks) ? data.team_tasks : [];
       data.jobs = Array.isArray(data.jobs) ? data.jobs : [];
+    data.autonomy = data.autonomy !== false;
       data.meetings = Array.isArray(data.meetings) ? data.meetings : [];
       data.team.forEach(normalizeAgent);
       data.plugin_enabled = data.plugin_enabled && typeof data.plugin_enabled === 'object'
@@ -1742,6 +1816,7 @@ export class CheState extends DurableObject {
           team: data.team,
           team_tasks: data.team_tasks,
           jobs: data.jobs,
+          autonomy: data.autonomy,
           agent_identity: {
             ...data.agent_identity,
             domain: String(this.env.CHE_IDENTITY_DOMAIN || new URL(request.url).host),
@@ -1766,7 +1841,7 @@ export class CheState extends DurableObject {
             porcupine_wake_word: Boolean(this.env.CHE_PICOVOICE_ACCESS_KEY && this.env.CHE_PICOVOICE_KEYWORD_PPN_B64),
             apple_vocal_shortcut: true,
             quantum_compute: Boolean(this.env.CHE_QUANTUM_URL),
-            web_research: Boolean(this.env.CHE_RESEARCH_URL),
+            web_research: true,
             public_records: Boolean(this.env.CHE_PUBLIC_RECORDS_URL),
             music: Boolean(this.env.CHE_MUSIC_URL),
             windows: Boolean(this.env.CHE_WINDOWS_URL),
@@ -1886,7 +1961,7 @@ export class CheState extends DurableObject {
           if (item.url) return Response.redirect(item.url, 302);
           const bytes = await readBlob(this.env, this.ctx.storage, item);
           if (!bytes) return json({ detail: 'Image data missing.' }, 404);
-          return new Response(bytes, { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=86400' } });
+          return new Response(bytes, { headers: { 'Content-Type': item.mime_type || 'image/jpeg', 'Cache-Control': 'private, max-age=86400' } });
         }
         if (action === '/upscale' && request.method === 'POST') {
           const { status, ...rest } = await upscaleImage(this.env, this.ctx.storage, mediaId);
@@ -2316,9 +2391,10 @@ export class CheState extends DurableObject {
           updated_at: now,
         };
         data.jobs.unshift(job);
-        data.jobs = data.jobs.slice(0, 80);
+        // Never silently discard pending owner work.
+        data.jobs = [...data.jobs.filter(j => ['queued', 'running'].includes(j.status)), ...data.jobs.filter(j => !['queued', 'running'].includes(j.status)).slice(0, 80)];
         await this.ctx.storage.put('che', data);
-        await this.ctx.storage.setAlarm(Date.now() + 250);
+        await this.scheduleWork();
         return json({ job });
       }
 
@@ -2633,11 +2709,19 @@ export class CheState extends DurableObject {
         return json({ suggestion: suggestion.slice(0, 240) });
       }
 
+      if (path === '/api/autonomy' && request.method === 'POST') {
+        if (typeof body.enabled !== 'boolean') return json({ detail: 'enabled must be boolean.' }, 400);
+        return json({ autonomy: body.enabled, reply: await this.setAutonomy(body.enabled) });
+      }
       if (path === '/api/change/request') return dispatchChange(this.env, body);
       if (path === '/api/chat') {
         const message = String(body.message || '').trim().slice(0, 5000);
         if (!message) return json({ detail: 'Message required.' }, 400);
 
+        const control = message.toLowerCase().replace(/^(?:chay|chey|che)[, ]+/, '').replace(/[.!?]+$/, '').trim();
+        if (control === 'stand by' || control === 'resume') {
+          return ndjsonReply(await this.setAutonomy(control === 'resume'), { autonomy: control === 'resume' });
+        }
         const clientClock = formatClientTime(body.client_time);
         const lowerMessage = message.toLowerCase();
         const brainContext = Array.isArray(body.brain_context)
@@ -2686,9 +2770,10 @@ export class CheState extends DurableObject {
             updated_at: now,
           };
           data.jobs.unshift(job);
-          data.jobs = data.jobs.slice(0, 80);
+          // Never silently discard pending owner work.
+        data.jobs = [...data.jobs.filter(j => ['queued', 'running'].includes(j.status)), ...data.jobs.filter(j => !['queued', 'running'].includes(j.status)).slice(0, 80)];
           await this.ctx.storage.put('che', data);
-          await this.ctx.storage.setAlarm(Date.now() + 250);
+          await this.scheduleWork();
           return ndjsonReply(
             'I put that into CHE background work, sir. You can keep using me while it runs.',
             { background_job_id: job.id, background_job_status: 'queued' },
@@ -2957,7 +3042,7 @@ export class CheState extends DurableObject {
               'CHE is the user-facing product. Never present yourself as Gemini, Cloudflare, or another provider. Models and services are replaceable internal engines behind CHE.',
               'HONESTY (highest priority): never claim an action happened unless a tool in this turn returned success, and give the receipt (link, ID or result) when it did. Label anything unverified as unverified. Say "I don\u2019t know" or "I can\u2019t do that yet" instead of guessing. Never invent plugins, settings, panels, features, services, outages, prices, sales or numbers.',
               'SELF-KNOWLEDGE: your voice is chosen by CHE\u2019s server code (Gemini voice first, then other connected voices, then the iPhone voice as a last resort). There is no voice plugin and you cannot change your voice, server code or keys yourself; the owner changes those in the server/code. Your built-in plugins are only Weather, Crypto Prices and Wikipedia unless the plugin list in this turn says otherwise.',
-              'VOICE-FIRST (always): treat the owner as someone who uses CHE entirely by voice, as if he cannot see the screen. Be his eyes and navigator: describe what is on screen in plain spoken language, read choices as a short numbered list, confirm what you are about to do and what happened, and never say \u201ctap here\u201d or rely on him seeing something. Keep spoken replies short. Only act inside an app after he gives spoken permission for that app. Inside CHE\u2019s built-in apps and browser you can read the page, scroll, search, and open or play items by name or number. You cannot see or control apps outside CHE; for those, say so and suggest iPhone Voice Control or VoiceOver (Settings \u2192 Accessibility).',
+              'VOICE-FIRST (always): treat the owner as someone who uses CHE entirely by voice, as if he cannot see the screen. Be his eyes and navigator: describe what is on screen in plain spoken language, read choices as a short numbered list, confirm what you are about to do and what happened, and never say \u201ctap here\u201d or rely on him seeing something. Keep spoken replies short. Only act inside an app after explicit spoken or typed permission for that app. Inside CHE\u2019s built-in apps and browser you can read the page, scroll, search, and open or play items by name or number. You cannot see or control apps outside CHE; for those, say so and suggest iPhone Voice Control or VoiceOver (Settings \u2192 Accessibility).',
               'STORE: products are sold only through the CHE Studio Store (Business \u2192 CHE Studio Store). You may suggest product ideas, but nothing exists in Stripe until the owner approves it there, and you must never claim a product, payment link or sale exists unless the store data shows it.',
               'DATA + COMPUTE: core owner state is persisted in CHE storage. Large media, datasets, model artifacts and generated files should use CHE object storage when connected. If storage is not connected, say the item is temporary instead of pretending it was archived.',
               'Use a local-first and owner-controlled architecture: built-in CHE behavior first, CHE-hosted services second, optional provider infrastructure only when required for compute or data.',
@@ -3003,7 +3088,7 @@ export class CheState extends DurableObject {
               'Never claim to have changed code, researched live facts, controlled a phone, computer, car, music service, Bluetooth device, screen, smart-home device, trading account, or payment unless a real connected tool confirms it.',
               `Requested capabilities: ${JSON.stringify(requestedCapabilities).slice(0, 1200)}`,
               `Integration readiness: ${JSON.stringify({
-                web_research: Boolean(this.env.CHE_RESEARCH_URL),
+                web_research: true,
                 public_records: Boolean(this.env.CHE_PUBLIC_RECORDS_URL),
                 rendering: Boolean(this.env.CHE_RENDER_URL),
                 image_generation: Boolean(this.env.CHE_IMAGE_GEN_URL),
@@ -3095,6 +3180,8 @@ export class CheState extends DurableObject {
                 : '',
               `Owner memories: ${JSON.stringify(data.memories).slice(0, 5000)}`,
               nightlyContext(data),
+              WORK_POLICY,
+              `Autonomy is ${data.autonomy ? 'on' : 'paused'}.`,
               /\b(?:change|update|improve|fix|add|build|modify|upgrade)\b[\s\S]{0,40}\b(?:your(?:self| own)?|the app|che app|your app|your code|your screen)\b/i.test(message)
                 ? CHE_UPDATE_GUIDE
                 : '',
@@ -3109,10 +3196,12 @@ export class CheState extends DurableObject {
                 : '',
               'BRAIN: when you learn a durable, non-sensitive fact about the owner, end your reply with a ```che-remember block, one fact per line, tagged [People]/[Projects]/[Decisions]/[Companies]/[Meetings]/[Daily]/[Knowledge]. Never save passwords, card numbers, keys or other secrets. Never repeat the same opening or catchphrase twice in a row.',
             ].filter(Boolean).join('\n');
-        const answer = await runChatModel(this.env, {
+        let answer;
+        try {
+        answer = await runChatModel(this.env, {
           model,
           systemPrompt,
-          compactPrompt: compactChatPrompt({
+          compactPrompt: WORK_POLICY + '\n' + compactChatPrompt({
             clientClock,
             brainContext,
             officeResults,
@@ -3123,6 +3212,19 @@ export class CheState extends DurableObject {
           message,
           maxTokens: needsStrongModel ? 1000 : 360,
         });
+        } catch (error) {
+          if (!busyError(error)) throw error;
+          const fresh = await this.loadData();
+          const job = { id: crypto.randomUUID(), title: message.slice(0, 80), prompt: message,
+            status: 'queued', retry_count: 0, retry_at: Date.now() + 5 * 60_000,
+            chat_context: { systemPrompt, turns: turns.slice(-10) },
+            result: '', error: String(error.message || error).slice(0, 1000),
+            created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+          fresh.jobs.unshift(job);
+          await this.ctx.storage.put('che', fresh);
+          await this.scheduleWork();
+          return ndjsonReply(BUSY_REPLY, { background_job_id: job.id, background_job_status: 'queued', autonomy: fresh.autonomy });
+        }
         let reply = String(answer.response || answer.choices?.[0]?.message?.content || '').trim();
         if (!reply) return json({ detail: 'The model did not return an answer.' }, 502);
         if (/\[assistant name\]/i.test(reply) ||
@@ -3164,6 +3266,7 @@ export class CheState extends DurableObject {
   // Called by the nightly cron (see `scheduled` below).
   async nightly() {
     const data = await this.loadData();
+    if (!data.autonomy) return { status: 'paused' };
     const result = await runNightlyReview(this.env, this.ctx.storage, data, this.env.CHE_STRONG_MODEL || STRONG_MODEL);
     const fresh = await this.loadData();
     Object.assign(fresh, {
@@ -3179,6 +3282,7 @@ export class CheState extends DurableObject {
   }
 
   async alarm() {
+    if (!(await this.loadData()).autonomy) return;
     const moreJobs = await this.processJobs();
     const moreAgentWork = await processAgentWork({
       env: this.env,
@@ -3192,10 +3296,11 @@ export class CheState extends DurableObject {
 
   async processJobs() {
     const data = await this.loadData();
+    if (!data.autonomy) return false;
     const queued = data.jobs
-      .filter((job) => job.status === 'queued')
+      .filter((job) => job.status === 'queued' && (!job.retry_at || job.retry_at <= Date.now()))
       .slice(0, 4);
-    if (!queued.length) return false;
+    if (!queued.length) { await this.scheduleWork(); return false; }
 
     const startedAt = new Date().toISOString();
     for (const job of queued) {
@@ -3216,6 +3321,8 @@ export class CheState extends DurableObject {
                   role: 'system',
                   content: [
                     'You are CHE background work.',
+                    WORK_POLICY,
+                    job.chat_context?.systemPrompt || '',
                     'Complete the assigned task independently and return a directly useful result.',
                     'Be concise but complete. Separate verified facts from assumptions.',
                     'Do not claim an external action, live research, device control, payment, trade, or file change occurred unless a connected tool result is actually supplied.',
@@ -3226,6 +3333,7 @@ export class CheState extends DurableObject {
                   role: 'user',
                   content: JSON.stringify({
                     task: job.prompt,
+                    prior_turns: job.chat_context?.turns || [],
                     owner_memories: memories,
                   }),
                 },
@@ -3244,12 +3352,14 @@ export class CheState extends DurableObject {
             result,
             error: result ? '' : 'Background model returned no result.',
           };
-        } catch (_) {
+        } catch (error) {
+          const retry = busyError(error) && (job.retry_count || 0) < 24;
+          console.log('CHE background error:', job.id, String(error.message || error));
           return {
-            id: job.id,
-            status: 'failed',
-            result: '',
-            error: 'Background work failed.',
+            id: job.id, status: retry ? 'queued' : 'failed', result: '',
+            retry_count: (job.retry_count || 0) + (retry ? 1 : 0),
+            retry_at: retry ? Date.now() + 5 * 60_000 : null,
+            error: `${busyError(error) && !retry ? 'Retry limit reached. ' : ''}${String(error.message || error).slice(0, 1000)}`,
           };
         }
       }),
@@ -3260,13 +3370,16 @@ export class CheState extends DurableObject {
     const finishedAt = new Date().toISOString();
     for (const outcome of results) {
       const job = fresh.jobs.find((item) => item.id === outcome.id);
-      if (!job) continue;
+      if (!job || job.status === 'cancelled') continue;
+      job.retry_count = outcome.retry_count ?? job.retry_count ?? 0;
+      job.retry_at = outcome.retry_at || null;
       job.status = outcome.status;
       job.result = outcome.result;
       job.error = outcome.error;
       job.updated_at = finishedAt;
     }
     await this.ctx.storage.put('che', fresh);
+    await this.scheduleWork();
     return fresh.jobs.some((job) => job.status === 'queued');
   }
 }
@@ -3282,3 +3395,4 @@ export default {
     return env.CHE_STATE.getByName('owner').fetch(request);
   },
 };
+

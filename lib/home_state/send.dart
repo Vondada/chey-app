@@ -217,6 +217,7 @@ extension _CheHomeSend on _CHEHomeState {
         ? 'Analyze this attachment.'
         : typedMessage;
     if (message.isEmpty) return;
+    if (await _controlAutonomy(message)) return;
 
     // Voice navigation inside the CHE browser/app that is open right now.
     final browserVoice = CheBrowserActions.voice;
@@ -496,3 +497,4 @@ extension _CheHomeSend on _CHEHomeState {
     });
   }
 }
+

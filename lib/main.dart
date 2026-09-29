@@ -155,7 +155,72 @@ class CHEHome extends StatefulWidget {
 
 class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   /// setState for members split into lib/home_state/*.dart extensions.
-  void _set(VoidCallback fn) => setState(fn);
+  String _statusBanner = 'Ready. Type or speak a request.';
+  String _lastStatusKey = '';
+  bool _autonomy = true;
+  bool _usingSpeechFallback = false;
+  Timer? _jobPollTimer;
+  final Set<String> _notifiedJobs = {};
+  void _set(VoidCallback fn) {
+    if (!mounted) return;
+    setState(fn);
+    final status = !_autonomy ? 'Standing by. Queued work is paused.'
+        : _isSending ? 'Working on your request.'
+        : _isSpeaking ? 'CHE is speaking. The reply is also in the conversation.'
+        : isListening ? 'Listening. You can also type.'
+        : cheSleeping ? 'Voice standby. Say Chay or type a request.' : 'Ready. Type or speak a request.';
+    if (status != _lastStatusKey) {
+      _lastStatusKey = status;
+      _statusBanner = status;
+      unawaited(_statusHaptic(_isSending ? 2 : 1));
+    }
+  }
+
+  Future<void> _statusHaptic(int pulses) async {
+    for (var i = 0; i < pulses; i++) {
+      await HapticFeedback.mediumImpact();
+      if (i + 1 < pulses) await Future<void>.delayed(const Duration(milliseconds: 140));
+    }
+  }
+
+  Future<bool> _controlAutonomy(String text) async {
+    final command = text.toLowerCase().trim().replaceFirst(RegExp(r'^(?:chay|chey|che)[, ]+'), '').replaceFirst(RegExp(r'[.!?]+$'), '');
+    if (command != 'stand by' && command != 'resume') return false;
+    final enabled = command == 'resume';
+    await speakText(enabled ? 'Resuming queued work.' : 'Pausing queued work.');
+    Map<String, dynamic>? result;
+    try { result = await _postAgentJson('/api/autonomy', {'enabled': enabled}); }
+    catch (error) { debugPrint('CHE autonomy error: $error'); }
+    if (!mounted) return true;
+    if (result == null) {
+      await speakText('I could not confirm the change. Cloud work may still be running.');
+      return true;
+    }
+    final response = result;
+    _set(() { _autonomy = response['autonomy'] == true; controller.clear(); });
+    await speakText(result['reply']?.toString() ?? 'Autonomy updated.');
+    return true;
+  }
+
+  Future<void> _notifyFinishedJobs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'che_job_notices_${cheAgentBaseUrl.hashCode}';
+    _notifiedJobs.addAll(prefs.getStringList(key) ?? []);
+    for (final job in backgroundJobs) {
+      final id = job['id']?.toString() ?? '';
+      if (id.isEmpty || !['complete', 'failed'].contains(job['status']) || !_notifiedJobs.add(id)) continue;
+      final text = job['status'] == 'complete'
+          ? 'Finished: ${job['title']}. ${job['result']}'
+          : 'Work needs attention: ${job['title']}. ${job['error']}';
+      await _statusHaptic(3);
+      if (!mounted) return;
+      _set(() => messages.add({'role': 'assistant', 'text': text}));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text, maxLines: 4, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 20))));
+      if (!_isSpeaking && !_isSending) await speakText(text);
+    }
+    await prefs.setStringList(key, _notifiedJobs.toList());
+  }
+
 
   final TextEditingController controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
@@ -791,6 +856,7 @@ OWNER AGENCY
     _wireBrowser();
     initializeVoice();
     _loadSecuritySession();
+    _jobPollTimer = Timer.periodic(const Duration(seconds: 15), (_) => _loadAgentState(silent: true));
     _proactiveTimer = Timer.periodic(
       const Duration(minutes: 10),
       (_) => _checkProactiveSuggestion(),
@@ -888,6 +954,7 @@ OWNER AGENCY
       ..dispose();
     _listenRestartTimer?.cancel();
     _proactiveTimer?.cancel();
+    _jobPollTimer?.cancel();
     _nativeIosVoiceSub?.cancel();
     unawaited(_stopPorcupineWake(disposeEngine: true));
     final realtime = _realtimeVoice;
@@ -1045,6 +1112,16 @@ OWNER AGENCY
           child: Column(
             children: [
               const ChePatchBanner(),
+              Semantics(
+                liveRegion: true,
+                label: _statusBanner,
+                child: Container(
+                  width: double.infinity,
+                  color: const Color(0xFF163B36),
+                  padding: const EdgeInsets.all(8),
+                  child: Text(_statusBanner, style: const TextStyle(fontSize: 20, color: Colors.white)),
+                ),
+              ),
               CheHomePresence(
                 orbState: _orbState,
                 subtitle: subtitle,
@@ -1174,3 +1251,4 @@ class _CHEAgentException implements Exception {
   @override
   String toString() => message;
 }
+

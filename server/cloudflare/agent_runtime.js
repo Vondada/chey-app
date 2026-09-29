@@ -410,7 +410,8 @@ async function runModel(env, model, system, user, maxTokens) {
 async function runOneTask(ctx) {
   const { env, load, save, notify, models } = ctx;
   let data = await load();
-  const task = [...data.team_tasks].reverse().find((item) => item.status === 'queued');
+  if (data.autonomy === false) return false;
+  const task = [...data.team_tasks].reverse().find((item) => item.status === 'queued' && (!item.retry_at || item.retry_at <= Date.now()));
   if (!task) return false;
   const agent = data.team.find((item) => item.id === task.partner_id);
   if (!agent) {
@@ -641,6 +642,7 @@ async function advanceMeeting(ctx) {
 // Does a bounded slice of agent work. Returns true if more work remains.
 export async function processAgentWork(ctx, budget = 6) {
   for (let i = 0; i < budget; i++) {
+    if ((await ctx.load()).autonomy === false) return false;
     const did = (await advanceMeeting(ctx)) || (await runOneTask(ctx));
     if (!did) return false;
   }
@@ -663,3 +665,4 @@ export function recoverStaleWork(data, maxAgeMs = 5 * 60_000) {
   }
   return changed;
 }
+
