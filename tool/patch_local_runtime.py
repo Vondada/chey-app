@@ -140,3 +140,15 @@ text = text.replace(
 
 path.write_text(text)
 print('CHE local runtime bridge + voice tuning enabled')
+
+# Weak-link Apple's on-device AI framework. It only exists on iOS 26+, and a
+# hard link makes CHE close instantly on launch on any older iPhone.
+pbx = Path('ios/Runner.xcodeproj/project.pbxproj')
+if pbx.exists():
+    ptext = pbx.read_text()
+    if '-weak_framework' not in ptext:
+        anchor = 'PRODUCT_BUNDLE_IDENTIFIER = com.cheyapp.chey;'
+        flags = ('OTHER_LDFLAGS = ("$(inherited)", "-weak_framework", '
+                 'FoundationModels, );\n\t\t\t\t')
+        ptext = ptext.replace(anchor, flags + anchor)
+        pbx.write_text(ptext)
