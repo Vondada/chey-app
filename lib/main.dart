@@ -101,7 +101,10 @@ part 'home_state/voice.dart';
 // ============================================================
 
 const String _androidAgentBaseUrl = 'http://10.0.2.2:8787';
-const String _defaultAgentBaseUrl = String.fromEnvironment('CHE_AGENT_URL');
+const String _defaultAgentBaseUrl = String.fromEnvironment(
+  'CHE_AGENT_URL',
+  defaultValue: 'https://chey-app.henryjavoni.workers.dev',
+);
 
 void main() {
   runApp(const CHEApp());
