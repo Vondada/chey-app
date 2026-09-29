@@ -14,7 +14,10 @@ const code = readFileSync(new URL('./worker.js', import.meta.url), 'utf8')
   .replace("from './ai_router.js'", `from '${new URL('./ai_router.js', import.meta.url).href}'`)
   .replace("from './stripe_store.js'", `from '${new URL('./stripe_store.js', import.meta.url).href}'`)
   .replace("from './pipeline.js'", `from '${new URL('./pipeline.js', import.meta.url).href}'`)
-  .replace("from './nightly.js'", `from '${new URL('./nightly.js', import.meta.url).href}'`);
+  .replace("from './nightly.js'", `from '${new URL('./nightly.js', import.meta.url).href}'`)
+  .replace("from './self_development.js'", `from '${new URL('./self_development.js', import.meta.url).href}'`)
+  .replace("from './fine_tuning.js'", `from '${new URL('./fine_tuning.js', import.meta.url).href}'`)
+  .replace("from './vector_memory.js'", `from '${new URL('./vector_memory.js', import.meta.url).href}'`);
 const { default: worker, CheState } = await import(
   `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
 );
