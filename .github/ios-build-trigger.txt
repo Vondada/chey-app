@@ -1,3 +1,3 @@
 CHE iPhone build trigger.
-Safe Sherpa on-disk model initialization for LiveContainer.
-Build 1.4.4+10.
+Validated Kokoro download/extract flow with complete file-tree gate.
+Build 1.4.5+11.
