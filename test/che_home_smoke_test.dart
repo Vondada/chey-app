@@ -16,6 +16,9 @@ void main() {
     }
 
     expect(find.text('What should we do?'), findsOneWidget);
+    expect(find.text('Talk to CHE'), findsOneWidget);
+    expect(find.text('HAPPENING NOW'), findsOneWidget);
+    expect(find.text('Read to me'), findsOneWidget);
     expect(find.text('New Chat'), findsOneWidget);
     expect(find.text('Tell CHE what to build or do…'), findsOneWidget);
     expect(find.text('Agent'), findsOneWidget);

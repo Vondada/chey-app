@@ -263,6 +263,18 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
         const Padding(padding: EdgeInsets.all(CheSpace.xxl), child: Center(child: CircularProgressIndicator()))
       else ...[
         if (r.error != null) _Banner(text: r.error!, color: CheColors.warning),
+        // In the hub tab the live world comes first and fills the screen.
+        if (widget.embedded) ...[
+          CheOfficeWorld(
+            che: r.che,
+            agents: r.agents,
+            level: _worldLevel,
+            onOpenAgent: _openAgent,
+            onUpgrade: _setWorldLevel,
+            height: (screen * 0.72).clamp(460.0, 900.0),
+          ),
+          const SizedBox(height: CheSpace.lg),
+        ],
         CheOfficeFloor(
           che: r.che,
           agents: [for (final p in r.agents) p.agent],
@@ -290,6 +302,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
               onTap: () => _openMeeting(m.id),
               onReadAloud: () => _speak('${m.statusLabel}. ${m.objective}. With ${m.participantNames.join(', ')}.'),
             ),
+        if (!widget.embedded) ...[
         const SizedBox(height: CheSpace.lg),
         CheOfficeWorld(
           che: r.che,
@@ -300,15 +313,21 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
           // The world is the Office: give it most of the screen.
           height: (screen * 0.6).clamp(420.0, 720.0),
         ),
+        ],
       ],
     ];
   }
 
   List<Widget> _actions() => [
-        IconButton(
-          tooltip: 'Read the Office aloud',
-          onPressed: () => _speak(_officeSummary()),
-          icon: const Icon(Icons.volume_up_rounded),
+        Semantics(
+          button: true,
+          label: 'Read the whole Office to me',
+          excludeSemantics: true,
+          child: TextButton.icon(
+            onPressed: () => _speak(_officeSummary()),
+            icon: const Icon(Icons.volume_up_rounded),
+            label: const Text('Read to me'),
+          ),
         ),
         IconButton(tooltip: 'Refresh', onPressed: _runtime.refresh, icon: const Icon(Icons.refresh_rounded)),
         IconButton(tooltip: 'New agent', onPressed: _newAgent, icon: const Icon(Icons.person_add_alt_1_rounded)),

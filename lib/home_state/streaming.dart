@@ -141,6 +141,7 @@ extension _CheHomeStreaming on _CHEHomeState {
       },
       'agent_mode': _homeMode == 0 ? 'full' : 'chat',
       'proactive_mode': true,
+      'explain_level': _explainLevel,
       'plugin_recommendations': true,
       'client': {
         'platform': kIsWeb ? 'web' : 'flutter',

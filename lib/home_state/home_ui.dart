@@ -61,6 +61,7 @@ extension _CheHomeUi on _CHEHomeState {
       extras: extras,
       onTapAgent: (_) => _openOfficeFloor(),
       onRedo: _isSending ? null : () => _redoFrom(index),
+      onReadAloud: display.trim().isEmpty ? null : () => speakText(display),
       onLongPress: () => _showMessageActions(index),
       ),
     );

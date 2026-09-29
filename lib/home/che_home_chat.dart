@@ -161,6 +161,7 @@ class CheHomeAssistantMessage extends StatelessWidget {
     required this.extras,
     this.onTapAgent,
     this.onRedo,
+    this.onReadAloud,
     this.onLongPress,
   });
 
@@ -178,6 +179,9 @@ class CheHomeAssistantMessage extends StatelessWidget {
   final List<Widget> extras;
   final void Function(CheAgent agent)? onTapAgent;
   final VoidCallback? onRedo;
+
+  /// Reads this reply aloud in CHE's voice.
+  final VoidCallback? onReadAloud;
   final VoidCallback? onLongPress;
 
   @override
@@ -219,6 +223,7 @@ class CheHomeAssistantMessage extends StatelessWidget {
                     );
                   },
                 ),
+                if (onReadAloud != null) _Chip(icon: Icons.volume_up_rounded, label: 'Read', onTap: onReadAloud!),
                 if (onRedo != null) _Chip(icon: Icons.refresh_rounded, label: 'Redo', onTap: onRedo!),
               ]),
             ],
@@ -235,7 +240,11 @@ class _Chip extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
   @override
-  Widget build(BuildContext context) => ChePressable(
+  Widget build(BuildContext context) => Semantics(
+        button: true,
+        label: label == 'Read' ? 'Read this reply aloud' : label,
+        excludeSemantics: true,
+        child: ChePressable(
         onTap: onTap,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -250,6 +259,7 @@ class _Chip extends StatelessWidget {
             Text(label, style: CheType.caption),
           ]),
         ),
+      ),
       );
 }
 
@@ -431,59 +441,154 @@ class _SendButton extends StatelessWidget {
   }
 }
 
+/// Home, voice-first: at most three big things. 1) Talk to CHE (a big button
+/// that also backs up the wake word), 2) what's happening now, read aloud on
+/// request, 3) three smart suggestions. Everything else is one sentence away.
 class CheHomeEmptyState extends StatelessWidget {
-  const CheHomeEmptyState({super.key, required this.actions, required this.onPick, this.proactive});
+  const CheHomeEmptyState({
+    super.key,
+    required this.actions,
+    required this.onPick,
+    required this.onTalk,
+    this.proactive,
+    this.onReadAloud,
+    this.onActivity,
+    this.listening = false,
+  });
+
+  /// Smart suggestions; only the first three are shown.
   final List<String> actions;
   final ValueChanged<String> onPick;
+  final VoidCallback onTalk;
 
-  /// One important proactive item, if CHE has one.
+  /// CHE's one-line greeting / what's happening now.
   final String? proactive;
+  final VoidCallback? onReadAloud;
+  final VoidCallback? onActivity;
+  final bool listening;
 
   @override
   Widget build(BuildContext context) {
+    final now = proactive?.trim() ?? '';
     return ListView(
-      padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.xl, CheSpace.gutter, CheSpace.xl),
+      padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.lg, CheSpace.gutter, CheSpace.xl),
       children: [
-        Center(
-          child: ShaderMask(
-            shaderCallback: (r) => CheColors.accentGradient.createShader(r),
-            child: Text('What should we do?', style: CheType.title.copyWith(color: Colors.white)),
+        // 1. Talk to CHE.
+        Semantics(
+          button: true,
+          label: listening ? 'CHE is listening. Double tap to stop.' : 'Talk to CHE. Double tap, then just speak.',
+          excludeSemantics: true,
+          child: ChePressable(
+            onTap: () {
+              HapticFeedback.heavyImpact();
+              onTalk();
+            },
+            child: Container(
+              height: 132,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(CheRadius.xl),
+                gradient: CheColors.accentGradient,
+                boxShadow: [BoxShadow(color: CheColors.accent.withValues(alpha: 0.35), blurRadius: 28)],
+              ),
+              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Icon(listening ? Icons.graphic_eq_rounded : Icons.mic_rounded, size: 52, color: const Color(0xFF03120F)),
+                const SizedBox(width: CheSpace.md),
+                Flexible(
+                  child: Text(
+                    listening ? 'Listening…' : 'Talk to CHE',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: CheType.title.copyWith(color: const Color(0xFF03120F), fontSize: 28, fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ]),
+            ),
           ),
         ),
         const SizedBox(height: CheSpace.lg),
-        if (proactive != null && proactive!.trim().isNotEmpty) ...[
-          GlowCard(
-            radius: CheRadius.md,
-            child: Row(children: [
-              const Icon(Icons.tips_and_updates_outlined, color: CheColors.accent, size: 20),
-              const SizedBox(width: CheSpace.sm),
-              Expanded(child: Text(proactive!, style: CheType.body)),
+        // 2. What's happening now.
+        GlowCard(
+          radius: CheRadius.lg,
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('HAPPENING NOW', style: CheType.overline.copyWith(color: CheColors.accent)),
+            const SizedBox(height: CheSpace.xs),
+            Semantics(
+              liveRegion: true,
+              child: Text(
+                now.isEmpty ? 'What should we do?' : now,
+                style: CheType.title.copyWith(fontSize: 21, height: 1.3),
+              ),
+            ),
+            const SizedBox(height: CheSpace.sm),
+            Wrap(spacing: CheSpace.sm, runSpacing: CheSpace.sm, children: [
+              if (onReadAloud != null)
+                _BigChip(icon: Icons.volume_up_rounded, label: 'Read to me', semantics: 'Read what is happening aloud', onTap: onReadAloud!),
+              if (onActivity != null)
+                _BigChip(icon: Icons.history_rounded, label: 'What happened', semantics: 'Open everything CHE and the Office did', onTap: onActivity!),
             ]),
-          ),
-          const SizedBox(height: CheSpace.lg),
-        ],
-        Wrap(
-          alignment: WrapAlignment.center,
-          spacing: CheSpace.sm,
-          runSpacing: CheSpace.sm,
-          children: [
-            for (final a in actions)
-              ChePressable(
+          ]),
+        ),
+        const SizedBox(height: CheSpace.lg),
+        // 3. Three smart suggestions.
+        Text('TRY SAYING', style: CheType.overline),
+        const SizedBox(height: CheSpace.sm),
+        for (final (i, a) in actions.take(3).indexed)
+          Padding(
+            padding: const EdgeInsets.only(bottom: CheSpace.sm),
+            child: Semantics(
+              button: true,
+              label: 'Suggestion ${i + 1}: $a',
+              excludeSemantics: true,
+              child: ChePressable(
                 onTap: () => onPick(a),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                  constraints: const BoxConstraints(minHeight: 58),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   decoration: BoxDecoration(
                     color: CheColors.surface,
-                    borderRadius: BorderRadius.circular(CheRadius.pill),
+                    borderRadius: BorderRadius.circular(CheRadius.lg),
                     border: Border.all(color: CheColors.accent.withValues(alpha: 0.35)),
-                    boxShadow: [BoxShadow(color: CheColors.accent.withValues(alpha: 0.12), blurRadius: 12)],
                   ),
-                  child: Text(a, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label),
+                  child: Row(children: [
+                    const Icon(Icons.auto_awesome_rounded, color: CheColors.accent, size: 22),
+                    const SizedBox(width: CheSpace.sm),
+                    Expanded(child: Text('“$a”', maxLines: 2, overflow: TextOverflow.ellipsis, style: CheType.body.copyWith(fontSize: 18))),
+                  ]),
                 ),
               ),
-          ],
-        ),
+            ),
+          ),
       ],
     );
   }
+}
+
+class _BigChip extends StatelessWidget {
+  const _BigChip({required this.icon, required this.label, required this.semantics, required this.onTap});
+  final IconData icon;
+  final String label;
+  final String semantics;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) => Semantics(
+        button: true,
+        label: semantics,
+        excludeSemantics: true,
+        child: ChePressable(
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: CheColors.surfaceHi,
+              borderRadius: BorderRadius.circular(CheRadius.pill),
+              border: Border.all(color: CheColors.stroke),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(icon, size: 20, color: CheColors.accent),
+              const SizedBox(width: 6),
+              Text(label, style: CheType.label.copyWith(fontSize: 16)),
+            ]),
+          ),
+        ),
+      );
 }

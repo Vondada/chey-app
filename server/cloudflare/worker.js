@@ -29,6 +29,7 @@ import {
 } from './provider_registry.js';
 import { routedEnv } from './ai_router.js';
 import { deleteMedia, generateImage, listMedia, readBlob, upscaleImage } from './media.js';
+import { activityFeed, creations, findCreations, greeting, suggestions } from './activity.js';
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 import { prepareSelfUpdate } from './self_development.js';
@@ -2131,6 +2132,23 @@ export class CheState extends DurableObject {
         return json({ ok: true });
       }
 
+      // ─── Connected world: activity feed, greeting, find anything ────
+      if (request.method === 'GET' && ['/api/activity', '/api/greeting', '/api/find'].includes(path)) {
+        const url = new URL(request.url);
+        const media = await listMedia(this.ctx.storage);
+        if (path === '/api/activity') {
+          const limit = Math.max(1, Math.min(60, Number(url.searchParams.get('limit')) || 30));
+          return json({ events: activityFeed(data, media, url.origin, limit) });
+        }
+        if (path === '/api/greeting') {
+          const hour = Number(url.searchParams.get('hour'));
+          const since = String(url.searchParams.get('since') || '');
+          return json({ ...greeting(data, media, { hour, since }), suggestions: suggestions(data, { hour }) });
+        }
+        const q = String(url.searchParams.get('q') || '').slice(0, 200);
+        return json({ query: q, items: findCreations(data, media, q, url.origin) });
+      }
+
       // ─── Art Studio media (real images, versions, honest upscaling) ────
       if (path === '/api/media' && request.method === 'GET') {
         return json({
@@ -3592,9 +3610,22 @@ export class CheState extends DurableObject {
         const model = needsStrongModel
           ? (this.env.CHE_STRONG_MODEL || STRONG_MODEL)
           : (this.env.CHE_FAST_MODEL || FAST_MODEL);
+        const explainLevel = ['simple', 'normal', 'deeper'].includes(body.explain_level) ? body.explain_level : 'simple';
+        const madeAcrossRooms = creations(data, await listMedia(this.ctx.storage)).slice(0, 12)
+          .map((item) => `${item.maker}: ${item.kind.replace('_', ' ')} \u201c${item.title}\u201d`).join('; ');
         const systemPrompt = [
               'You are CHE, Cognitive Horizon Engine. Your name is spoken and referred to as "CHE" in conversation. "Chay" is only the owner\'s spoken wake word to start a hands-free conversation with you, not how you refer to yourself. Address the owner as sir naturally.',
               'This chat turn is already active. Never ask the owner to say “Hey [assistant name]”, “Ok [assistant name]”, or any generic wake phrase. If the owner says CHE/Chay, answer as CHE instead of teaching a wake phrase.',
+              'PERSONALITY: warm, quick and a little playful, like a trusted friend who is great at getting things done. Short by default: one to three sentences unless the owner asks for more. No filler, no disclaimers, no preamble.',
+              explainLevel === 'deeper'
+                ? 'EXPLANATION LEVEL: go deeper. Give the reasoning, the details and the trade-offs, clearly organized.'
+                : explainLevel === 'normal'
+                  ? 'EXPLANATION LEVEL: normal. Clear and complete, no jargon without a quick explanation.'
+                  : 'EXPLANATION LEVEL: simple. Explain like the owner is five: short sentences, everyday words, one idea at a time. He can say \u201cgo deeper\u201d for more.',
+              'NEXT STEP: when you finish a task or answer, end with ONE short offer of the single best next step (for example \u201cWant me to turn this into a plan?\u201d). Never list several options unless asked.',
+              madeAcrossRooms
+                ? `ONE CONNECTED WORLD: things made across CHE\u2019s rooms (newest first): ${madeAcrossRooms}. When the owner refers to something made in any room (\u201cthe song Mira made\u201d), use this list; if it is not here, say so honestly.`
+                : '',
               'CHE is the user-facing product. Never present yourself as Gemini, Cloudflare, or another provider. Models and services are replaceable internal engines behind CHE.',
               'HONESTY (highest priority): never claim an action happened unless a tool in this turn returned success, and give the receipt (link, ID or result) when it did. Label anything unverified as unverified. Say "I don\u2019t know" or "I can\u2019t do that yet" instead of guessing. Never invent plugins, settings, panels, features, services, outages, prices, sales or numbers.',
               'SELF-KNOWLEDGE: your voice is chosen by CHE\u2019s server code (Gemini voice first, then other connected voices, then the iPhone voice as a last resort). There is no voice plugin and you cannot change your voice, server code or keys yourself; the owner changes those in the server/code. Your built-in plugins are only Weather, Crypto Prices and Wikipedia unless the plugin list in this turn says otherwise.',
