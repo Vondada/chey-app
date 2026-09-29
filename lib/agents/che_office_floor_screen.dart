@@ -3,6 +3,8 @@
 // task, history, responsibilities; message / reassign / upgrade / retire).
 // Tap CHE to talk to her. "War Room" convenes a multi-agent project.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -10,6 +12,7 @@ import '../che_ui/che_agents.dart';
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
 import 'che_agent_runtime.dart';
+import 'che_office_world.dart';
 import 'che_war_room_screen.dart';
 
 class CheOfficeFloorScreen extends StatefulWidget {
@@ -27,10 +30,33 @@ class CheOfficeFloorScreen extends StatefulWidget {
 class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
   late final CheAgentRuntimeController _runtime = CheAgentRuntimeController(widget.client)..addListener(_changed);
 
+  int _worldLevel = 1;
+
   @override
   void initState() {
     super.initState();
     _runtime.start();
+    unawaited(_loadWorldLevel());
+  }
+
+  Future<void> _loadWorldLevel() async {
+    try {
+      final level = await widget.client.officeWorldLevel();
+      if (mounted) setState(() => _worldLevel = level);
+    } catch (_) {
+      // Default size until the server answers.
+    }
+  }
+
+  Future<void> _setWorldLevel(int level) async {
+    try {
+      final saved = await widget.client.setOfficeWorldLevel(level);
+      HapticFeedback.mediumImpact();
+      if (mounted) setState(() => _worldLevel = saved);
+      _snack(saved > 1 ? 'The Office is now size $saved of 3, with more room to work and hang out.' : 'The Office is back to its standard size.');
+    } catch (e) {
+      _snack('$e');
+    }
   }
 
   @override
@@ -222,6 +248,16 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
                     Text('No meetings yet. Convene the team when a project needs several specialties.', style: CheType.bodyDim)
                   else
                     for (final m in r.meetings) _MeetingTile(meeting: m, onTap: () => _openMeeting(m.id)),
+                  const SizedBox(height: CheSpace.lg),
+                  Text('OFFICE WORLD', style: CheType.overline),
+                  const SizedBox(height: CheSpace.sm),
+                  CheOfficeWorld(
+                    che: r.che,
+                    agents: r.agents,
+                    level: _worldLevel,
+                    onOpenAgent: _openAgent,
+                    onUpgrade: _setWorldLevel,
+                  ),
                 ],
               ],
             ),

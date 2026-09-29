@@ -63,6 +63,13 @@ class CheAgentProfile {
     required this.responsibilities,
     required this.modelTier,
     required this.temporary,
+    this.room = 'office',
+    this.activity = 'idle',
+    this.working = false,
+    this.assignmentId = '',
+    this.assignmentTask = '',
+    this.assignmentStatus = '',
+    this.provider = 'auto',
   });
 
   final CheAgent agent;
@@ -71,13 +78,40 @@ class CheAgentProfile {
   final String modelTier; // fast | strong
   final bool temporary;
 
-  static CheAgentProfile fromJson(Map<String, dynamic> j) => CheAgentProfile(
-        agent: CheAgent.fromJson(j),
-        mission: '${j['mission'] ?? ''}',
-        responsibilities: [for (final r in (j['responsibilities'] as List? ?? const [])) '$r'],
-        modelTier: '${j['model_tier'] ?? 'fast'}',
-        temporary: j['temporary'] == true,
-      );
+  /// Where the agent is in CHE's world (office, studio, gallery, music,
+  /// lounge), derived on the server from real task state.
+  final String room;
+
+  /// making_art, djing, composing, creating, on_break, meeting, idle…
+  final String activity;
+  final bool working;
+
+  /// Latest real assignment, used for the "got it!" reaction.
+  final String assignmentId;
+  final String assignmentTask;
+  final String assignmentStatus;
+
+  /// Provider family this employee prefers (xai, openai, … or auto).
+  final String provider;
+
+  static CheAgentProfile fromJson(Map<String, dynamic> j) {
+    final loc = j['location'] is Map ? j['location'] as Map : const {};
+    final latest = j['latest_assignment'] is Map ? j['latest_assignment'] as Map : const {};
+    return CheAgentProfile(
+      agent: CheAgent.fromJson(j),
+      mission: '${j['mission'] ?? ''}',
+      responsibilities: [for (final r in (j['responsibilities'] as List? ?? const [])) '$r'],
+      modelTier: '${j['model_tier'] ?? 'fast'}',
+      temporary: j['temporary'] == true,
+      room: '${loc['room'] ?? 'office'}',
+      activity: '${loc['activity'] ?? 'idle'}',
+      working: loc['working'] == true,
+      assignmentId: '${latest['id'] ?? ''}',
+      assignmentTask: '${latest['task'] ?? ''}',
+      assignmentStatus: '${latest['status'] ?? ''}',
+      provider: '${j['provider_preference'] ?? 'auto'}',
+    );
+  }
 }
 
 class CheAgentDetail {
@@ -267,6 +301,29 @@ class CheAgentRuntimeClient {
     });
     return CheMeeting.fromJson(j['meeting'] as Map<String, dynamic>);
   }
+
+  /// Office world size level (1–3), stored on the server.
+  Future<int> officeWorldLevel() async {
+    final j = await _send('GET', '/api/office/world');
+    return (j['level'] as num?)?.toInt() ?? 1;
+  }
+
+  Future<int> setOfficeWorldLevel(int level) async {
+    final j = await _send('POST', '/api/office/world', {'level': level});
+    return (j['level'] as num?)?.toInt() ?? level;
+  }
+
+  /// Tells the server the owner is (not) watching in CHE's Theater, so free
+  /// Office agents take (or leave) the Theater seats.
+  Future<void> setTheaterWatching(bool watching) => _send('POST', '/api/theater', {'watching': watching});
+
+  /// Saves captions CHE saw in the Theater, so she can talk about the movie.
+  Future<void> saveTheaterNotes(String title, String host, List<Map<String, Object>> lines) =>
+      _send('POST', '/api/theater/notes', {'title': title, 'host': host, 'lines': lines});
+
+  /// CHE's universal AI layer overview (providers, models, health, privacy).
+  /// Contains connection states only, never credential values.
+  Future<Map<String, dynamic>> aiOverview() => _send('GET', '/api/ai/overview');
 
   Future<CheMeeting> meeting(String id) async {
     final j = await _send('GET', '/api/meetings/$id');

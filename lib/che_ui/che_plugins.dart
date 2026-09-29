@@ -25,6 +25,7 @@ import 'package:flutter/services.dart';
 import 'che_theme.dart';
 import 'che_widgets.dart';
 import 'che_office_hub.dart';
+import 'che_ai_models_panel.dart';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Manifest
@@ -449,8 +450,13 @@ class ChePluginsScreen extends StatefulWidget {
     this.webAppBuilder,
     this.onRunPrompt,
     this.onOpenLearning,
+    this.loadAiOverview,
   });
   final ChePluginRegistry registry;
+
+  /// Loads CHE's AI layer overview (GET /api/ai/overview) for the
+  /// AI & Models section. Hidden when null.
+  final Future<Map<String, dynamic>> Function()? loadAiOverview;
 
   /// Opens chat with a prompt like "Build me a plugin that…".
   final VoidCallback onAskCheToBuild;
@@ -847,6 +853,8 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
                   _navChip('installed', 'Installed', Icons.extension_rounded),
                   _navChip('learn', 'Learn', Icons.psychology_alt_outlined),
                   _navChip('build', 'Build', Icons.add_circle_outline_rounded),
+                  if (widget.loadAiOverview != null)
+                    _navChip('models', 'AI & Models', Icons.hub_outlined),
                 ],
               ),
               if (_section == 'discover' || _section == 'installed')
@@ -855,6 +863,8 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
               if (_section == 'installed') _installedPanel(installed),
               if (_section == 'learn') _learningPanel(),
               if (_section == 'build') _buildPanel(),
+              if (_section == 'models' && widget.loadAiOverview != null)
+                CheAiModelsPanel(load: widget.loadAiOverview!, onRunPrompt: widget.onRunPrompt),
             ],
           ),
         );

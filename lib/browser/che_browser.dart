@@ -14,6 +14,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../che_app_portal.dart' show cheAppForName;
+import '../security/che_password_vault.dart';
 
 typedef ChePageCallback = Future<void> Function(String title, String url, String pageText);
 
@@ -132,6 +133,12 @@ class _BrowserTab {
     controller = WebViewController()
       ..setBackgroundColor(const Color(0xFF060B11))
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      // Owner signs in once (Face ID AutoFill or typing); CHE saves that login
+      // to her on-device Keychain vault. Sessions persist in the web view's
+      // own cookie store, so he stays logged in.
+      ..addJavaScriptChannel('CheVaultCapture', onMessageReceived: (message) {
+        unawaited(_saveCapturedLogin(message.message));
+      })
       ..setNavigationDelegate(NavigationDelegate(
         onProgress: (value) {
           progress = value;
@@ -146,6 +153,8 @@ class _BrowserTab {
           title = (await controller.getTitle())?.trim() ?? title;
           if (title.isEmpty) title = Uri.tryParse(u)?.host ?? u;
           unawaited(CheBrowserStore.instance.visit(u, title));
+          unawaited(controller.runJavaScript(_loginCaptureJs));
+          unawaited(_autoFill(controller, u));
           onChanged();
         },
         onNavigationRequest: (request) {
@@ -163,6 +172,63 @@ class _BrowserTab {
         },
       ))
       ..loadRequest(Uri.parse(url));
+  }
+
+  // Watches sign-in forms on this page and hands the login to the vault
+  // when the owner submits it. Nothing leaves the phone.
+  static const _loginCaptureJs = r'''
+(function () {
+  if (window.__cheLoginCapture) return;
+  window.__cheLoginCapture = true;
+  function grab() {
+    var pw = document.querySelector('input[type=password]');
+    if (!pw || !pw.value) return;
+    var user = document.querySelector('input[autocomplete=username],input[type=email],input[name*=user i],input[name*=email i],input[id*=user i],input[id*=email i]');
+    try {
+      CheVaultCapture.postMessage(JSON.stringify({ host: location.host, username: user ? user.value : '', password: pw.value }));
+    } catch (e) {}
+  }
+  document.addEventListener('submit', grab, true);
+  document.addEventListener('click', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('button,input[type=submit],[role=button]') : null;
+    if (b) setTimeout(grab, 0);
+  }, true);
+  document.addEventListener('keydown', function (e) { if (e.key === 'Enter') setTimeout(grab, 0); }, true);
+})();
+''';
+
+  // On a sign-in page for a site CHE already has, fill the login in
+  // automatically (the owner or CHE still presses Sign in).
+  static Future<void> _autoFill(WebViewController controller, String pageUrl) async {
+    try {
+      final host = Uri.tryParse(pageUrl)?.host ?? '';
+      if (host.isEmpty) return;
+      final entry = await CheVault.instance.find(host);
+      if (entry == null) return;
+      final u = jsonEncode(entry.username);
+      final p = jsonEncode(entry.password);
+      await controller.runJavaScript('''(function(u,p){
+var pw=document.querySelector('input[type=password]');if(!pw||pw.value)return;
+function set(e,v){var s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;s.call(e,v);e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));}
+var user=document.querySelector('input[autocomplete=username],input[type=email],input[name*=user i],input[name*=email i],input[id*=user i],input[id*=email i]');
+if(user&&u&&!user.value)set(user,u);set(pw,p);})($u,$p)''');
+    } catch (_) {}
+  }
+
+  static Future<void> _saveCapturedLogin(String raw) async {
+    try {
+      final data = jsonDecode(raw);
+      if (data is! Map) return;
+      final host = '${data['host'] ?? ''}';
+      final password = '${data['password'] ?? ''}';
+      if (host.isEmpty || password.isEmpty) return;
+      final site = CheVaultCommand.normalizeSite(host);
+      final existing = await CheVault.instance.find(site);
+      if (existing != null && existing.password == password && existing.site == site) return;
+      await CheVault.instance.save(CheVaultEntry(site: site, password: password, username: '${data['username'] ?? ''}'));
+    } catch (_) {
+      // Never let a capture problem affect the page.
+    }
   }
 
   final VoidCallback onChanged;
@@ -264,6 +330,82 @@ return JSON.stringify({title:document.title||'',items:out});})()''';
     return label.isEmpty ? 'I couldn\'t open number $n.' : 'Opening $label.';
   }
 
+  // ── Typing into web apps (Gmail, WhatsApp Web, …) ───────────────────
+  // Fills the field whose label, placeholder or aria-label matches `field`,
+  // or the focused / first empty text field when no field is named.
+  Future<String> _typeInto(String text, String? field) async {
+    final t = jsonEncode(text);
+    final f = jsonEncode((field ?? '').toLowerCase());
+    final label = await _js('''(function(text,field){
+var sel='input:not([type=hidden]):not([type=password]):not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]),textarea,[contenteditable=true],[contenteditable=""],[role=textbox]';
+var els=[].slice.call(document.querySelectorAll(sel)).filter(function(e){var r=e.getBoundingClientRect();return r.width>8&&r.height>8;});
+function name(e){var id=e.id?document.querySelector('label[for="'+e.id+'"]'):null;return ((e.getAttribute('aria-label')||'')+' '+(e.placeholder||'')+' '+(e.name||'')+' '+(id?id.innerText:'')).toLowerCase().replace(/\\s+/g,' ').trim();}
+var target=null;
+if(field){target=els.filter(function(e){return name(e).indexOf(field)>=0;})[0]||null;}
+if(!target&&document.activeElement&&els.indexOf(document.activeElement)>=0)target=document.activeElement;
+if(!target)target=els.filter(function(e){return !(e.value||e.innerText||'').trim();})[0]||els[0]||null;
+if(!target)return '';
+target.scrollIntoView({block:'center'});target.focus();
+if(target.isContentEditable||target.getAttribute('role')==='textbox'){document.execCommand('insertText',false,text);}
+else{var proto=target.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;var setter=Object.getOwnPropertyDescriptor(proto,'value').set;setter.call(target,(target.value?target.value+' ':'')+text);}
+target.dispatchEvent(new Event('input',{bubbles:true}));target.dispatchEvent(new Event('change',{bubbles:true}));
+return name(target)||'the text box';})($t,$f)''');
+    return label.isEmpty
+        ? 'I couldn\'t find a place to type on this page. Say "what\'s on screen" and I\'ll read the options.'
+        : 'Typed it into ${label.length > 60 ? label.substring(0, 60) : label}.';
+  }
+
+  // What's typed on the page right now (for reading a draft back).
+  Future<String> _draftText() => _js('''(function(){
+var parts=[];[].slice.call(document.querySelectorAll('input:not([type=hidden]):not([type=password]),textarea,[contenteditable=true],[role=textbox]')).forEach(function(e){
+var v=(e.value!==undefined&&e.tagName!=='DIV'?e.value:e.innerText)||'';v=v.replace(/\\s+/g,' ').trim();if(v)parts.push(v.slice(0,400));});
+return parts.slice(0,4).join(' | ');})()''');
+
+  // Owner rule (Sep 28, 2026): CHE has full permission to act, except when
+  // something costs money — those presses need his spoken yes first.
+  static final RegExp _consequential = RegExp(
+    r'\b(pay|pay now|buy|buy now|purchase|order|place order|checkout|check out|subscribe|upgrade|rent|donate|tip|transfer|send money|add to cart|confirm (?:payment|purchase|order)|book)\b',
+  );
+  // Owner rule: deleting anything also always needs his yes first.
+  static final RegExp _destructive = RegExp(
+    r'\b(delete|remove|trash|discard|erase|clear all|empty trash|unsubscribe|deactivate|close account|archive all)\b',
+  );
+
+  // Fills the saved username/password for this site from CHE's on-device
+  // vault. Values go straight into the page, never into chat or the server.
+  Future<String> _signIn() async {
+    final host = Uri.tryParse(_tab.url)?.host ?? '';
+    final entry = await CheVault.instance.find(host.isEmpty ? _title : host) ?? await CheVault.instance.find(_title);
+    if (entry == null) {
+      return 'I don\'t have a saved password for this site. Say "save my ${host.replaceFirst('www.', '')} password" and the password.';
+    }
+    final u = jsonEncode(entry.username);
+    final p = jsonEncode(entry.password);
+    final filled = await _js('''(function(u,p){
+function set(e,v){var proto=HTMLInputElement.prototype;var s=Object.getOwnPropertyDescriptor(proto,'value').set;e.focus();s.call(e,v);e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));}
+var pw=document.querySelector('input[type=password]');
+var user=document.querySelector('input[autocomplete=username],input[type=email],input[name*=user i],input[name*=email i],input[id*=user i],input[id*=email i],input[type=text]');
+var did=[];if(user&&u){set(user,u);did.push('user');}if(pw){set(pw,p);did.push('pass');}
+return did.join(',');})($u,$p)''');
+    if (filled.isEmpty) return 'I don\'t see a sign-in box on this page yet. Open the sign-in page and say "sign me in" again.';
+    final both = filled.contains('pass');
+    return both
+        ? 'Filled in your ${entry.site} sign-in. Say "click sign in" or "next" to continue.'
+        : 'Filled in your username. Say "next", then "sign me in" again for the password.';
+  }
+  String? _pendingPress;
+  int? _pendingNumber;
+
+  Future<String> _confirmPrompt(String label) async {
+    final draft = (await _draftText()).trim();
+    final host = Uri.tryParse(_tab.url)?.host ?? 'this page';
+    if (_destructive.hasMatch(label.toLowerCase())) {
+      return 'Double-checking before I delete anything: I\'m about to press "$label" on $host. Say "yes" to delete, or "cancel".';
+    }
+    return 'This costs money: I\'m about to press "$label" on $host${draft.isNotEmpty ? ' ($draft)' : ''}. '
+        'Say "yes" to pay, or "cancel".';
+  }
+
   Future<String> _clickText(String query) async {
     final q = jsonEncode(query.toLowerCase());
     final label = await _js('''(function(q){var els=[].slice.call(document.querySelectorAll('a,button,[role=button],[role=link]'));var best=null,bs=0;
@@ -333,11 +475,77 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
       await _tab.controller.loadRequest(Uri.parse(url));
       return 'Searching for ${search.group(1)!.trim()}. Say "what\'s on screen" when you want the results.';
     }
-    final pick = RegExp(r'^(?:open|play|click|tap|select|choose|pick|watch)(?: the)?(?: number)? (.+?)(?: one| video| result| link| option)?$').firstMatch(w);
+    if (RegExp(r'^(sign|log) (me )?in$|^(fill|enter|put) (in )?my (password|login|sign ?in)$').hasMatch(w)) {
+      return _signIn();
+    }
+    // Confirming or cancelling a pending money press.
+    if (_pendingPress != null || _pendingNumber != null) {
+      if (RegExp(r'^(yes|yeah|yep|confirm|do it|go ahead)\b').hasMatch(w)) {
+        final text = _pendingPress;
+        final number = _pendingNumber;
+        _pendingPress = null;
+        _pendingNumber = null;
+        final done = number != null ? await _clickNumber(number) : await _clickText(text!);
+        return done.startsWith('Opening ') ? 'Done. I pressed ${done.substring(8)}' : done;
+      }
+      if (RegExp(r'^(no|nope|cancel|stop|don.?t|never ?mind)\b').hasMatch(w)) {
+        _pendingPress = null;
+        _pendingNumber = null;
+        return 'Cancelled. Nothing was paid for or deleted.';
+      }
+    }
+    if (RegExp(r"^(read|read me|what did i|what's)( back)?( what)?( i| you)?( typed| wrote| the draft| my draft| draft)").hasMatch(w)) {
+      final draft = (await _draftText()).trim();
+      return draft.isEmpty ? 'Nothing is typed on this page yet.' : 'It says: $draft';
+    }
+    final fill = RegExp(r'^fill (?:in |out )?(?:the )?(.+?)(?: box| field)? with (.+)$').firstMatch(w);
+    if (fill != null) {
+      final original = words.trim();
+      final at = original.toLowerCase().lastIndexOf(' with ');
+      return _typeInto(at >= 0 ? original.substring(at + 6).trim() : fill.group(2)!, fill.group(1));
+    }
+    if (RegExp(r'^(?:type|write|enter|put)\s+.+$').hasMatch(w)) {
+      // Keep the owner's own capitalization for what gets typed.
+      final original = words.trim().replaceFirst(RegExp(r'^(?:type|write|enter|put)\s+', caseSensitive: false), '');
+      var text = original;
+      String? field;
+      final seps = RegExp(r'\s+(?:in|into)\s+(?:the\s+)?').allMatches(original.toLowerCase()).toList();
+      if (seps.isNotEmpty) {
+        final candidate = original.substring(seps.last.end).trim().replaceFirst(RegExp(r'\s+(?:box|field)$', caseSensitive: false), '');
+        final known = RegExp(r'^(?:to|subject|message|body|search|email|name|recipient|reply|comment|chat|text|title|caption|address|note|notes)\b', caseSensitive: false);
+        if (candidate.split(' ').length <= 3 && known.hasMatch(candidate)) {
+          field = candidate.toLowerCase();
+          text = original.substring(0, seps.last.start).trim();
+        }
+      }
+      return _typeInto(text, field);
+    }
+
+    final pick = RegExp(r'^(?:open|play|click|tap|select|choose|pick|watch|press|hit)(?: the)?(?: number)? (.+?)(?: one| video| result| link| option| button)?$').firstMatch(w);
+    // Sending needs no confirmation (owner's standing permission).
+    final bareSend = RegExp(r'^(send|post|submit|reply)( it| this| the message| the email)?$').firstMatch(w);
+    if (bareSend != null) {
+      final done = await _clickText(bareSend.group(1)!);
+      return done.startsWith('Opening ') ? 'Sent. I pressed ${done.substring(8)}' : done;
+    }
     if (pick != null) {
       final target = pick.group(1)!.trim();
       final n = int.tryParse(target) ?? _ordinals[target];
-      if (n != null) return _clickNumber(n);
+      if (n != null) {
+        final items = await _listItems();
+        if (n >= 1 && n <= items.length &&
+            (_consequential.hasMatch(items[n - 1].toLowerCase()) || _destructive.hasMatch(items[n - 1].toLowerCase()))) {
+          _pendingNumber = n;
+          _pendingPress = null;
+          return _confirmPrompt(items[n - 1]);
+        }
+        return _clickNumber(n);
+      }
+      if (_consequential.hasMatch(target) || _destructive.hasMatch(target)) {
+        _pendingPress = target;
+        _pendingNumber = null;
+        return _confirmPrompt(target);
+      }
       // "open YouTube" etc. is an app switch, not a click on this page.
       if (cheAppForName(target) != null && target.split(' ').length <= 2) return null;
       return _clickText(target);

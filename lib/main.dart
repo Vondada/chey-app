@@ -42,6 +42,7 @@ import 'create_gallery_scene.dart';
 import 'office_scene.dart';
 import 'agents/che_agent_runtime.dart';
 import 'agents/che_office_floor_screen.dart';
+import 'agents/che_office_world.dart' show CheRoomVisitors;
 import 'home/che_live_steps.dart';
 import 'home/che_insights_room.dart';
 import 'home/che_cloud_logs_screen.dart';
@@ -66,6 +67,8 @@ import 'rooms/che_pipeline_room.dart';
 import 'rooms/che_creator_studio.dart';
 import 'rooms/che_art_studio.dart';
 import 'rooms/che_room_segments.dart';
+import 'rooms/che_theater_room.dart';
+import 'security/che_password_vault.dart';
 import 'browser/che_browser.dart' show CheBrowserActions;
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
@@ -580,6 +583,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
           onAskCheToBuild: () => _runPluginPrompt('Build me a plugin that '),
           onRunPrompt: _runPluginPrompt,
           onOpenLearning: _openPersonalSources,
+          loadAiOverview: _agentRuntime.aiOverview,
           webAppBuilder: (context, {String? html, String? url}) =>
               ChePluginWebApp(html: html, url: url, onPrompt: _runPluginPrompt),
           ),
