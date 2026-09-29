@@ -27,6 +27,13 @@ const PROVIDERS = [
     strong: (env) => env.CHE_OPENAI_STRONG_MODEL || 'gpt-4.1',
   },
   {
+    id: 'xai',
+    key: 'XAI_API_KEY',
+    url: 'https://api.x.ai/v1/chat/completions',
+    fast: (env) => env.CHE_XAI_FAST_MODEL || 'grok-4.3',
+    strong: (env) => env.CHE_XAI_STRONG_MODEL || 'grok-4.7',
+  },
+  {
     id: 'groq',
     key: 'GROQ_API_KEY',
     url: 'https://api.groq.com/openai/v1/chat/completions',
@@ -456,7 +463,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   const configured = PROVIDERS.filter((p) => !p.keyless && env[p.key]).map((p) => p.id);
   const hint = configured.length
     ? ''
-    : ' Add a free key (GROQ_API_KEY, GEMINI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GITHUB_MODELS_TOKEN, SAMBANOVA_API_KEY, HF_TOKEN or OPENROUTER_API_KEY) so CHE keeps answering when Cloudflare\'s daily allowance runs out.';
+    : ' Add a free key (GROQ_API_KEY, GEMINI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GITHUB_MODELS_TOKEN, SAMBANOVA_API_KEY, HF_TOKEN or OPENROUTER_API_KEY), or connect XAI_API_KEY for Grok so CHE keeps answering when Cloudflare\'s daily allowance runs out.';
   const error = new Error(`All AI engines failed (${errors.join(' | ').slice(0, 1500)}).${hint}`);
   error.quota = errors.some((e) => /quota|allowance|4006|neurons|429|budget/.test(e));
   console.log("CHE engine errors:", errors);
