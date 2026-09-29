@@ -1,5 +1,7 @@
 part of '../main.dart';
 
+const String _homeBaseUrlKey = 'che.homeBaseUrl';
+
 // One connected world: CHE's greeting on open, the activity feed, "find
 // anything made in any room", the explanation level and "read to me". All
 // data comes from the CHE server's real state (/api/greeting, /api/activity,
@@ -7,7 +9,6 @@ part of '../main.dart';
 extension _CheHomeConnected on _CHEHomeState {
   static const String _lastSeenKey = 'che.home.lastSeenAt';
   static const String _explainKey = 'che.explainLevel';
-  static const String _homeBaseUrlKey = 'che.homeBaseUrl';
 
   Future<Map<String, dynamic>?> _getAgentJson(String path) async {
     final cloud = await _getCloudAgentJson(path);
