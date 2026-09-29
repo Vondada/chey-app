@@ -2428,7 +2428,7 @@ export class CheState extends DurableObject {
           await this.ctx.storage.put('che', data);
         }
         const vectorId = `memory:${await digest(memory.toLowerCase())}`;
-        this.ctx.waitUntil(storeVectorMemory(this.env, {
+        this.ctx.waitUntil?.(storeVectorMemory(this.env, {
           external_id: vectorId,
           kind: 'memory',
           title: 'CHE memory',
@@ -2447,14 +2447,14 @@ export class CheState extends DurableObject {
         await this.ctx.storage.put('che', data);
         if (removed) {
           const vectorId = `memory:${await digest(String(removed).toLowerCase())}`;
-          this.ctx.waitUntil(deleteVectorMemory(this.env, vectorId));
+          this.ctx.waitUntil?.(deleteVectorMemory(this.env, vectorId));
         }
         return json({ ok: true });
       }
       if (path === '/api/memory/clear') {
         data.memories = [];
         await this.ctx.storage.put('che', data);
-        this.ctx.waitUntil(clearVectorMemoryKind(this.env, 'memory'));
+        this.ctx.waitUntil?.(clearVectorMemoryKind(this.env, 'memory'));
         return json({ ok: true });
       }
 
@@ -2526,7 +2526,7 @@ export class CheState extends DurableObject {
           existing.owner_agent_role = partner.role;
           existing.next_responsibility = spec.responsibility;
           await this.ctx.storage.put('che', data);
-          this.ctx.waitUntil(storeVectorMemory(this.env, {
+          this.ctx.waitUntil?.(storeVectorMemory(this.env, {
             external_id: existing.id,
             kind: 'owner_context',
             title: existing.title || type,
@@ -2560,7 +2560,7 @@ export class CheState extends DurableObject {
         data.owner_context.unshift(item);
         data.owner_context = data.owner_context.slice(0, 500);
         await this.ctx.storage.put('che', data);
-        this.ctx.waitUntil(storeVectorMemory(this.env, {
+        this.ctx.waitUntil?.(storeVectorMemory(this.env, {
           external_id: item.id,
           kind: 'owner_context',
           title: item.title || type,
@@ -2579,14 +2579,14 @@ export class CheState extends DurableObject {
           return json({ detail: 'Context item not found.' }, 404);
         }
         await this.ctx.storage.put('che', data);
-        this.ctx.waitUntil(deleteVectorMemory(this.env, id));
+        this.ctx.waitUntil?.(deleteVectorMemory(this.env, id));
         return json({ ok: true });
       }
 
       if (request.method === 'POST' && path === '/api/context/clear') {
         data.owner_context = [];
         await this.ctx.storage.put('che', data);
-        this.ctx.waitUntil(clearVectorMemoryKind(this.env, 'owner_context'));
+        this.ctx.waitUntil?.(clearVectorMemoryKind(this.env, 'owner_context'));
         return json({ ok: true });
       }
 
