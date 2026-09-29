@@ -59,6 +59,7 @@ import 'che_ui/che_agents.dart' show CheAgent;
 import 'che_ui/che_agent_chat.dart' show CheOrbState;
 import 'che_ui/che_log.dart' show CheTranscriptScreen;
 import 'home/che_home_chat.dart';
+import 'local_server/activity_local.dart';
 import 'plugins/che_plugin_webapp.dart';
 import 'self_update/che_patch_banner.dart';
 import 'self_update/che_update_card.dart';
@@ -170,6 +171,14 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   List<String> _homeSuggestions = const [];
   bool _greetedThisLaunch = false;
   String _explainLevel = 'simple';
+  Map<String, dynamic> _localSnapshotCache = {
+    'team': const <Map<String, dynamic>>[],
+    'team_tasks': const <Map<String, dynamic>>[],
+    'projects': const <Map<String, dynamic>>[],
+    'vault_items': const <Map<String, dynamic>>[],
+    'jobs': const <Map<String, dynamic>>[],
+    'meetings': const <Map<String, dynamic>>[],
+  };
   bool _usingSpeechFallback = false;
   Timer? _jobPollTimer;
   final Set<String> _notifiedJobs = {};
