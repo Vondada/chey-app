@@ -270,14 +270,6 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
               onTap: () => _openMeeting(m.id),
               onReadAloud: () => _speak('${m.statusLabel}. ${m.objective}. With ${m.participantNames.join(', ')}.'),
             ),
-        if (!widget.embedded) ...[
-          const SizedBox(height: CheSpace.lg),
-          Office3DView(
-            agents: _office3dAgents(),
-            onAgentTap: (id) => unawaited(_openOffice3dAgent(id)),
-            height: (screen * 0.6).clamp(420.0, 720.0),
-          ),
-        ],
       ],
     ];
   }
