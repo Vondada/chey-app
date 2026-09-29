@@ -34,10 +34,47 @@ export function ensureLaAgenciaRoster(data) {
   return data.team;
 }
 
+// La Agencia agents need their tool on the server (one owner credential each,
+// stored only as Worker secrets). A missing tool blocks the job honestly.
 export function officeToolBlocker(env, agent) {
   const pref = String(agent?.provider_preference || '').toLowerCase();
-  if (pref === 'openai' && !(env.CHE_OPENAI_API_KEY || env.OPENAI_API_KEY)) return 'Blocked: Codex/OpenAI tool not configured';
-  if (pref === 'xai' && !(env.XAI_API_KEY || env.CHE_XAI_API_KEY || env.CHE_XAI_MODEL_URL)) return 'Blocked: Grok/xAI tool not configured';
-  if (String(agent?.name) === 'Sage' && !env.STRIPE_SECRET_KEY) return 'Blocked: Stripe not connected';
+  if (String(agent?.name) === 'Sage' && !env.STRIPE_SECRET_KEY) return 'Blocked: tool not configured (Stripe not connected)';
+  if (pref === 'openai' && !(env.CODEX_OWNER_TOKEN || env.CHE_OPENAI_API_KEY || env.OPENAI_API_KEY)) return 'Blocked: tool not configured (Codex)';
+  if (pref === 'xai' && !(env.XAI_API_KEY || env.CHE_XAI_API_KEY || env.GROK_API_KEY || env.CHE_XAI_MODEL_URL)) return 'Blocked: tool not configured (Grok)';
   return '';
+}
+
+export function isLaAgenciaAgent(agent) {
+  return Boolean(agent && LA_AGENCIA_ROLES[agent.name] && String(agent.workspace_key || '').startsWith('office/'));
+}
+
+const GOAL_ROUTES = [
+  ['Knox', /\b(?:code|coding|build|app|bug|fix|deploy|api|website|site|feature|test|codex)\b/],
+  ['Sage', /\b(?:stripe|revenue|finance|money|sales|earnings|invoice|report on (?:sales|money))\b/],
+  ['Nova', /\b(?:product|listing|listings|offer|pricing|price|sales page|store|shop)\b/],
+  ['Mira', /\b(?:customer|support|reply|replies|email|faq|help desk|service)\b/],
+  ['Lyra', /\b(?:social|post|posts|content|instagram|tiktok|caption|campaign|video|blog)\b/],
+  ['Atlas', /\b(?:research|competitor|competitors|find|source|compare|market|look up)\b/],
+];
+
+// CHE splits one owner goal into Office jobs, one per clause, each routed to
+// the La Agencia agent whose role fits. Deterministic so the owner hears
+// exactly what was queued.
+export function splitGoal(goal) {
+  const text = String(goal || '').replace(/\s+/g, ' ').trim();
+  if (!text) return [];
+  const parts = text
+    .split(/(?:[.;]\s+|,?\s+(?:and then|then|and also|also)\s+|,\s+and\s+|\s+and\s+(?=(?:build|write|research|find|make|draft|post|fix|report|create|list|reply|answer|compare|ship)\b))/i)
+    .map((part) => part.replace(/[.;,]+$/, '').trim())
+    .filter((part) => part.split(' ').length >= 2)
+    .slice(0, 6);
+  const jobs = (parts.length ? parts : [text]).map((part) => {
+    const lower = part.toLowerCase();
+    // A leading research verb wins ("research sites like ours" is Atlas's).
+    const hit = /^(?:research|find|compare|look up)\b/.test(lower)
+      ? ['Atlas']
+      : GOAL_ROUTES.find(([, pattern]) => pattern.test(lower));
+    return { agent: hit ? hit[0] : 'Atlas', task: part.charAt(0).toUpperCase() + part.slice(1) };
+  });
+  return jobs;
 }

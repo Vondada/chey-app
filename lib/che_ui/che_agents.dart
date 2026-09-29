@@ -347,7 +347,12 @@ class CheOfficeFloor extends StatelessWidget {
     required this.agents,
     required this.onTapAgent,
     this.onConvene,
+    this.deskNotes = const {},
   });
+
+  /// Real job status per agent name from the Office board (e.g. "Blocked:
+  /// tool not configured (Codex)"), shown when the runtime status is idle.
+  final Map<String, String> deskNotes;
 
   /// CHE's own live state (manager desk, front and center).
   final CheAgent che;
@@ -399,13 +404,16 @@ class CheOfficeFloor extends StatelessWidget {
               ],
             ]),
             const SizedBox(height: CheSpace.sm),
-            Center(child: _Desk(agent: che, big: true, onTap: () => onTapAgent(che))),
+            Center(child: RepaintBoundary(child: _Desk(agent: che, big: true, onTap: () => onTapAgent(che)))),
             const SizedBox(height: CheSpace.sm),
             Wrap(
               alignment: WrapAlignment.center,
               spacing: CheSpace.sm,
               runSpacing: CheSpace.sm,
-              children: [for (final a in agents) _Desk(agent: a, onTap: () => onTapAgent(a))],
+              children: [
+                for (final a in agents)
+                  RepaintBoundary(child: _Desk(agent: a, note: deskNotes[a.name], onTap: () => onTapAgent(a))),
+              ],
             ),
             if (agents.isEmpty)
               Padding(
@@ -426,37 +434,65 @@ String _shortTask(String task) {
   return words.length <= 3 ? words.join(' ') : '${words.take(3).join(' ')}…';
 }
 
+/// What a desk shows under the name: the live task, else the board's real
+/// job status (blocked, up next, finished), else the runtime status.
+String cheDeskLine(CheAgent agent, String? note) {
+  if (agent.task?.isNotEmpty == true && agent.status != CheAgentStatus.offline) return agent.task!;
+  if (note != null && note.isNotEmpty) return note;
+  if (agent.task?.isNotEmpty == true) return agent.task!;
+  return agent.status.label;
+}
+
 class _Desk extends StatelessWidget {
-  const _Desk({required this.agent, required this.onTap, this.big = false});
+  const _Desk({required this.agent, required this.onTap, this.big = false, this.note});
   final CheAgent agent;
   final VoidCallback onTap;
   final bool big;
+  final String? note;
   @override
   Widget build(BuildContext context) {
-    final w = big ? 110.0 : 92.0;
-    return GestureDetector(
-      onTap: () {
-        HapticFeedback.selectionClick();
-        onTap();
-      },
-      child: Container(
-        width: w,
-        padding: const EdgeInsets.fromLTRB(4, 6, 4, 8),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.35),
-          borderRadius: BorderRadius.circular(CheRadius.md),
-          border: Border.all(color: agent.color.withValues(alpha: big ? 0.9 : 0.45)),
-          boxShadow: big ? [BoxShadow(color: agent.color.withValues(alpha: 0.4), blurRadius: 18)] : null,
+    final w = big ? 118.0 : 100.0;
+    final line = cheDeskLine(agent, note);
+    return Semantics(
+      button: true,
+      label: '${agent.name}${agent.role.isNotEmpty ? ', ${agent.role}' : ''}. $line. '
+          '${agent.isChe ? 'Talk to CHE.' : 'Open ${agent.name}\'s desk.'}',
+      excludeSemantics: true,
+      child: GestureDetector(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          onTap();
+        },
+        child: Container(
+          width: w,
+          padding: const EdgeInsets.fromLTRB(4, 6, 4, 8),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.35),
+            borderRadius: BorderRadius.circular(CheRadius.md),
+            border: Border.all(color: agent.color.withValues(alpha: big ? 0.9 : 0.45)),
+            boxShadow: big ? [BoxShadow(color: agent.color.withValues(alpha: 0.4), blurRadius: 18)] : null,
+          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            CheMiniPerson(agent: agent, size: big ? 70 : 56, showDesk: true),
+            const SizedBox(height: 4),
+            // Full name, never truncated: it shrinks to fit instead.
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(agent.name, maxLines: 1, style: CheType.label.copyWith(color: Colors.white)),
+            ),
+            if (agent.role.isNotEmpty)
+              Text(agent.role,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: CheType.caption.copyWith(color: Colors.white70, fontSize: 10)),
+            Text(line == agent.task ? _shortTask(line) : line,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: CheType.caption.copyWith(color: agent.color, fontSize: 10.5)),
+          ]),
         ),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          CheMiniPerson(agent: agent, size: big ? 70 : 56, showDesk: true),
-          const SizedBox(height: 4),
-          Text(agent.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label.copyWith(color: Colors.white)),
-          Text(agent.task?.isNotEmpty == true ? _shortTask(agent.task!) : agent.status.label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: CheType.caption.copyWith(color: agent.color, fontSize: 10.5)),
-        ]),
       ),
     );
   }

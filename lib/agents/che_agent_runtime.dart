@@ -224,8 +224,39 @@ class CheMeeting {
 }
 
 
+/// One La Agencia desk on the Office board, with its real job status.
+class CheOfficeDesk {
+  const CheOfficeDesk({required this.id, required this.name, required this.role, required this.state, required this.status, required this.job});
+  final String id; // lowercase name for the core roster (knox)
+  final String name;
+  final String role;
+  final String state; // working, queued, blocked, done, failed, idle
+  final String status; // spoken/visible line, e.g. "Working: Build checkout"
+  final String job;
+
+  static CheOfficeDesk fromJson(Map<String, dynamic> j) => CheOfficeDesk(
+        id: '${j['id'] ?? ''}',
+        name: '${j['name'] ?? ''}',
+        role: '${j['role'] ?? ''}',
+        state: '${j['state'] ?? 'idle'}',
+        status: '${j['status'] ?? 'Idle'}',
+        job: '${j['job'] ?? ''}',
+      );
+}
+
+/// Today's Office board from GET /api/office/today (persisted jobs + Stripe).
 class CheOfficeToday {
-  const CheOfficeToday({required this.started, required this.shipped, required this.blockers, required this.agentsWorking, required this.stripeConnected, required this.chargesCents, required this.refundsCents, required this.netCents});
+  const CheOfficeToday({
+    required this.started,
+    required this.shipped,
+    required this.blockers,
+    required this.agentsWorking,
+    required this.stripeConnected,
+    required this.chargesCents,
+    required this.refundsCents,
+    required this.netCents,
+    this.desks = const [],
+  });
   final List<Map<String, dynamic>> started;
   final List<Map<String, dynamic>> shipped;
   final List<Map<String, dynamic>> blockers;
@@ -234,6 +265,21 @@ class CheOfficeToday {
   final int chargesCents;
   final int refundsCents;
   final int netCents;
+  final List<CheOfficeDesk> desks;
+
+  int get startedToday => started.length;
+  int get builtToday => shipped.length;
+
+  /// Earned today is net of refunds, and exactly $0.00 without Stripe.
+  int get earnedTodayCents => stripeConnected ? netCents : 0;
+
+  CheOfficeDesk? deskFor(String name) {
+    final key = name.toLowerCase();
+    for (final d in desks) {
+      if (d.name.toLowerCase() == key || d.id == key) return d;
+    }
+    return null;
+  }
 
   factory CheOfficeToday.fromJson(Map<String, dynamic> j) {
     final stripe = j['stripe'] is Map ? Map<String, dynamic>.from(j['stripe'] as Map) : <String, dynamic>{};
@@ -245,8 +291,57 @@ class CheOfficeToday {
       chargesCents: (stripe['charges_cents'] as num?)?.toInt() ?? 0,
       refundsCents: (stripe['refunds_cents'] as num?)?.toInt() ?? 0,
       netCents: (stripe['net_cents'] as num?)?.toInt() ?? 0,
+      desks: [for (final d in rows('agents')) CheOfficeDesk.fromJson(d)],
     );
   }
+}
+
+/// How the phone's link to the Office server is doing right now.
+enum CheOfficeConnection { live, reconnecting, down }
+
+extension CheOfficeConnectionLabel on CheOfficeConnection {
+  String get label => switch (this) {
+        CheOfficeConnection.live => 'live',
+        CheOfficeConnection.reconnecting => 'reconnecting',
+        CheOfficeConnection.down => 'down',
+      };
+}
+
+/// "$12.50" from cents.
+String cheDollars(int cents) {
+  final negative = cents < 0;
+  final abs = cents.abs();
+  return '${negative ? '-' : ''}\$${abs ~/ 100}.${(abs % 100).toString().padLeft(2, '0')}';
+}
+
+/// The always-visible Office header, as plain lines (shown and spoken).
+List<String> cheOfficeHeaderLines(CheOfficeToday? today, CheOfficeConnection connection) {
+  final t = today;
+  return [
+    'Built today: ${t?.builtToday ?? 0}',
+    'Earned today: ${cheDollars(t?.earnedTodayCents ?? 0)}',
+    'Agents working: ${t?.agentsWorking ?? 0}',
+    'Connection: ${connection.label}',
+    if (t != null && t.stripeConnected)
+      'Stripe today: charges ${cheDollars(t.chargesCents)}, refunds ${cheDollars(t.refundsCents)}, net ${cheDollars(t.netCents)}'
+    else
+      '\$0.00 · Stripe not connected',
+  ];
+}
+
+/// The full board, read aloud by CHE: started, finished, Stripe, blockers, desks.
+String cheOfficeBoardSpeech(CheOfficeToday? today, CheOfficeConnection connection) {
+  final t = today;
+  if (t == null) return 'CHE here. The Office board has not loaded yet. Connection ${connection.label}.';
+  final money = t.stripeConnected
+      ? 'Stripe today: charges ${cheDollars(t.chargesCents)}, refunds ${cheDollars(t.refundsCents)}, net ${cheDollars(t.netCents)}.'
+      : 'Stripe not connected. Earned today \$0.00.';
+  final blockers = t.blockers.isEmpty
+      ? 'No blockers.'
+      : 'Blockers: ${t.blockers.map((b) => '${b['agent'] ?? 'An agent'}: ${b['detail'] ?? 'Blocked'}').join('; ')}.';
+  final desks = [for (var i = 0; i < t.desks.length; i++) '${i + 1}. ${t.desks[i].name}: ${t.desks[i].status}'].join('. ');
+  return 'CHE here. Office board. Started today ${t.startedToday}. Finished today ${t.builtToday}. '
+      '${t.agentsWorking} working. $money $blockers${desks.isEmpty ? '' : ' Desks: $desks.'} Connection ${connection.label}.';
 }
 
 /// Thin HTTP client over the Worker's Agent Runtime API.
@@ -285,6 +380,19 @@ class CheAgentRuntimeClient {
   Future<CheOfficeToday> officeToday() async {
     final j = await _send('GET', '/api/office/today');
     return CheOfficeToday.fromJson(Map<String, dynamic>.from(j['board'] as Map? ?? const {}));
+  }
+
+  /// CHE splits an owner goal into Office jobs; returns CHE's spoken reply.
+  Future<String> officeGoal(String goal) async {
+    final j = await _send('POST', '/api/office/goals', {'goal': goal});
+    return '${j['reply'] ?? 'CHE queued the Office jobs.'}';
+  }
+
+  /// Pauses queued Office work (same switch as "stand by"). Returns CHE's reply.
+  Future<String> standDown() async {
+    final j = await _send('POST', '/api/autonomy', {'enabled': false});
+    if (j['autonomy'] == true) throw const CheAgentRuntimeException('CHE could not confirm the Office stood down.');
+    return 'CHE here. Office standing down. ${j['reply'] ?? ''}'.trim();
   }
 
   Future<CheAgentDetail> agent(String id) async {
@@ -376,6 +484,14 @@ class CheAgentRuntimeController extends ChangeNotifier {
   CheOfficeToday? today;
   String? error;
   bool loaded = false;
+  int _failures = 0;
+
+  /// live after a good refresh; reconnecting for up to two misses; then down.
+  CheOfficeConnection get connection {
+    if (!loaded) return CheOfficeConnection.reconnecting;
+    if (_failures == 0) return CheOfficeConnection.live;
+    return _failures < 3 ? CheOfficeConnection.reconnecting : CheOfficeConnection.down;
+  }
 
   Timer? _timer;
   Timer? _boardTimer;
@@ -387,6 +503,7 @@ class CheAgentRuntimeController extends ChangeNotifier {
     if (_timer != null) return;
     unawaited(refresh());
     unawaited(refreshBoard());
+    // Stripe webhooks update the server immediately; this poll is the backup.
     _boardTimer = Timer.periodic(const Duration(seconds: 45), (_) => unawaited(refreshBoard()));
   }
 
@@ -421,8 +538,10 @@ class CheAgentRuntimeController extends ChangeNotifier {
       ];
       working = (j['working'] as num?)?.toInt() ?? 0;
       error = null;
+      _failures = 0;
     } catch (e) {
       error = e.toString();
+      _failures++;
     }
     loaded = true;
     if (_disposed) return;

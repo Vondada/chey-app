@@ -238,13 +238,13 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
         const Padding(padding: EdgeInsets.all(CheSpace.xxl), child: Center(child: CircularProgressIndicator()))
       else ...[
         if (r.error != null) _Banner(text: r.error!, color: CheColors.warning),
-        if (widget.embedded) ...[
-          _CompanyBoard(today: r.today, totalAgents: r.agents.length + 1),
-          const SizedBox(height: CheSpace.md),
-        ],
         CheOfficeFloor(
           che: r.che,
           agents: [for (final p in r.agents) p.agent],
+          deskNotes: {
+            for (final d in r.today?.desks ?? const <CheOfficeDesk>[])
+              if (d.state != 'idle') d.name: d.status,
+          },
           onTapAgent: _openAgent,
           onConvene: _convene,
         ),
@@ -269,8 +269,77 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
               onTap: () => _openMeeting(m.id),
               onReadAloud: () => _speak('${m.statusLabel}. ${m.objective}. With ${m.participantNames.join(', ')}.'),
             ),
+        const SizedBox(height: CheSpace.lg),
+        Wrap(spacing: CheSpace.sm, runSpacing: CheSpace.sm, children: [
+          OutlinedButton.icon(
+            onPressed: _giveGoal,
+            icon: const Icon(Icons.flag_rounded, size: 18),
+            label: const Text('Give the Office a goal'),
+          ),
+          OutlinedButton.icon(
+            onPressed: _standDown,
+            icon: const Icon(Icons.pause_circle_rounded, size: 18),
+            label: const Text('Stand down the Office'),
+          ),
+        ]),
+        const SizedBox(height: CheSpace.md),
+        CheOfficeBoard(today: r.today, onReadAloud: () => _speak(cheOfficeBoardSpeech(r.today, r.connection))),
       ],
     ];
+  }
+
+  /// Reports an action's real outcome: spoken, shown as a banner, and felt.
+  Future<void> _report(String text, {required bool ok}) async {
+    if (ok) {
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.heavyImpact();
+    }
+    _snack(text);
+    await _speak(text);
+  }
+
+  Future<void> _giveGoal() async {
+    final goal = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: CheColors.surfaceHi,
+        title: const Text('Give the Office a goal'),
+        content: TextField(
+          controller: goal,
+          autofocus: true,
+          maxLines: 3,
+          decoration: const InputDecoration(
+            labelText: 'Goal',
+            hintText: 'CHE splits it into jobs for Nova, Atlas, Mira, Knox, Sage and Lyra.',
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Send to CHE')),
+        ],
+      ),
+    );
+    if (ok != true || goal.text.trim().isEmpty) return;
+    try {
+      final reply = await widget.client.officeGoal(goal.text.trim());
+      await _runtime.refresh();
+      await _runtime.refreshBoard();
+      await _report(reply, ok: true);
+    } catch (e) {
+      await _report('CHE here. The goal did not reach the Office: $e', ok: false);
+    }
+  }
+
+  Future<void> _standDown() async {
+    try {
+      final reply = await widget.client.standDown();
+      await _runtime.refresh();
+      await _report(reply, ok: true);
+    } catch (e) {
+      await _report('CHE here. The Office did not stand down: $e', ok: false);
+    }
   }
 
   List<Widget> _actions() => [
@@ -279,7 +348,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
           label: 'Read the whole Office to me',
           excludeSemantics: true,
           child: TextButton.icon(
-            onPressed: () => _speak(_officeSummary()),
+            onPressed: () => _speak('${cheOfficeBoardSpeech(_runtime.today, _runtime.connection)} ${_officeSummary()}'),
             icon: const Icon(Icons.volume_up_rounded),
             label: const Text('Read to me'),
           ),
@@ -316,6 +385,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
                 ..._actions(),
               ]),
             ),
+            CheOfficeHeader(today: r.today, connection: r.connection),
             Expanded(child: list),
           ]),
         ),
@@ -330,7 +400,13 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
           title: const Text('CHE Office'),
           actions: _actions(),
         ),
-        body: SafeArea(top: false, child: list),
+        body: SafeArea(
+          top: false,
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            CheOfficeHeader(today: r.today, connection: r.connection),
+            Expanded(child: list),
+          ]),
+        ),
       ),
     );
   }
@@ -349,30 +425,103 @@ Future<void> cheReadAloud(BuildContext context, String text, Future<void> Functi
   }
 }
 
-class _CompanyBoard extends StatelessWidget {
-  const _CompanyBoard({required this.today, required this.totalAgents});
+/// Always-visible Office header: built today, earned today, agents working,
+/// connection, and Stripe totals (or an explicit \$0.00 without Stripe).
+class CheOfficeHeader extends StatelessWidget {
+  const CheOfficeHeader({super.key, required this.today, required this.connection});
   final CheOfficeToday? today;
-  final int totalAgents;
+  final CheOfficeConnection connection;
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = cheOfficeHeaderLines(today, connection);
+    final color = switch (connection) {
+      CheOfficeConnection.live => CheColors.success,
+      CheOfficeConnection.reconnecting => CheColors.warning,
+      CheOfficeConnection.down => CheColors.danger,
+    };
+    return RepaintBoundary(
+      child: Semantics(
+        container: true,
+        liveRegion: true,
+        label: 'Office header. ${lines.join('. ')}.',
+        excludeSemantics: true,
+        child: Container(
+          width: double.infinity,
+          margin: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.xs, CheSpace.gutter, CheSpace.xs),
+          padding: const EdgeInsets.symmetric(horizontal: CheSpace.md, vertical: CheSpace.sm),
+          decoration: BoxDecoration(
+            color: CheColors.surface,
+            borderRadius: BorderRadius.circular(CheRadius.md),
+            border: Border.all(color: color.withValues(alpha: 0.6)),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Wrap(spacing: CheSpace.md, runSpacing: 2, children: [
+              for (final line in lines.take(3)) Text(line, style: CheType.label),
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.circle, size: 10, color: color),
+                const SizedBox(width: 4),
+                Text(lines[3], style: CheType.label.copyWith(color: color)),
+              ]),
+            ]),
+            const SizedBox(height: 2),
+            Text(lines[4], style: CheType.caption),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+/// Today's board: started, finished, Stripe today, blockers.
+class CheOfficeBoard extends StatelessWidget {
+  const CheOfficeBoard({super.key, required this.today, required this.onReadAloud});
+  final CheOfficeToday? today;
+  final VoidCallback onReadAloud;
+
   @override
   Widget build(BuildContext context) {
     final t = today;
-    return RepaintBoundary(child: Container(
-      width: double.infinity, padding: const EdgeInsets.all(CheSpace.md),
-      decoration: BoxDecoration(color: CheColors.surface, borderRadius: BorderRadius.circular(CheRadius.lg), border: Border.all(color: CheColors.stroke)),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('LA AGENCIA • TODAY', style: CheType.overline.copyWith(color: CheColors.accent)),
-        const SizedBox(height: 8),
-        Text('Today earned: \$money', style: CheType.label),
-        Text('Agents working: ${t?.agentsWorking ?? 0}/$totalAgents', style: CheType.label),
-        Text('Stripe: ${t?.stripeConnected == true ? 'connected' : 'not connected'}', style: CheType.caption),
-        const SizedBox(height: 8),
-        Text('Today built', style: CheType.label),
-        Text((t?.shipped.isNotEmpty ?? false) ? t!.shipped.take(3).map((e) => '${e['agent']}: ${e['task']}').join(' • ') : 'Nothing shipped yet.', maxLines: 3, overflow: TextOverflow.ellipsis, style: CheType.caption),
-        if ((t?.blockers.isNotEmpty ?? false)) Text('Blocked: ${t!.blockers.length}', style: CheType.caption.copyWith(color: CheColors.warning)),
-      ]),
-    ));
+    String rows(List<Map<String, dynamic>> items, String empty, String Function(Map<String, dynamic>) line) =>
+        items.isEmpty ? empty : items.take(5).map(line).join('\n');
+    final stripe = t == null || !t.stripeConnected
+        ? '\$0.00 · Stripe not connected'
+        : 'Charges ${cheDollars(t.chargesCents)} · Refunds ${cheDollars(t.refundsCents)} · Net ${cheDollars(t.netCents)}';
+    Widget section(String title, String body, {Color? color}) => Padding(
+          padding: const EdgeInsets.only(top: CheSpace.sm),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: CheType.overline),
+            Text(body, style: CheType.caption.copyWith(color: color)),
+          ]),
+        );
+    return RepaintBoundary(
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(CheSpace.md),
+        decoration: BoxDecoration(
+          color: CheColors.surface,
+          borderRadius: BorderRadius.circular(CheRadius.lg),
+          border: Border.all(color: CheColors.stroke),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Expanded(child: Text('LA AGENCIA • TODAY', style: CheType.overline.copyWith(color: CheColors.accent))),
+            _ReadAloudButton(label: 'Read this Office to me', onPressed: onReadAloud),
+          ]),
+          section('STARTED TODAY (${t?.startedToday ?? 0})',
+              rows(t?.started ?? const [], 'Nothing started yet.', (e) => '${e['agent']}: ${e['task']} (${e['status']})')),
+          section('FINISHED TODAY (${t?.builtToday ?? 0})',
+              rows(t?.shipped ?? const [], 'Nothing finished yet.', (e) => '${e['agent']}: ${e['task']}')),
+          section('STRIPE TODAY', stripe),
+          section('BLOCKERS (${t?.blockers.length ?? 0})',
+              rows(t?.blockers ?? const [], 'No blockers.', (e) => '${e['agent']}: ${e['detail']}'),
+              color: (t?.blockers.isNotEmpty ?? false) ? CheColors.warning : null),
+        ]),
+      ),
+    );
   }
 }
+
 class _ReadAloudButton extends StatelessWidget {
   const _ReadAloudButton({required this.label, required this.onPressed});
   final String label;

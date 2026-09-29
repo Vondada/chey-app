@@ -13,6 +13,8 @@
 // keeps going when the phone is locked.
 
 import { classifyItem, extractCandidateMemories } from './privacy_policy.js';
+import { isLaAgenciaAgent, officeToolBlocker } from './office_company.js';
+import { codexThreadId } from './office_router.js';
 
 export const AGENT_STATUSES = [
   'idle', 'researching', 'building', 'analyzing', 'meeting',
@@ -689,12 +691,21 @@ export function routingForAgent(agent, data, task = null, route = 'office') {
     ...(agent?.capability_requirements?.[0] ? { che_capability: agent.capability_requirements[0] } : {}),
     ...(data?.ai_layer?.policy?.local_only ? { che_local_only: true } : {}),
     ...(task?.context_items?.length ? { che_context: { items: task.context_items, permissions } } : {}),
+    // Every Office model call goes through CHE's router tagged with the agent
+    // and a stable per-job thread: office/<agentId>/<jobId>.
+    ...(agent ? { che_agent_id: officeAgentId(agent) } : {}),
+    ...(agent && task ? { che_thread_id: codexThreadId(officeAgentId(agent), task.job_id || task.id) } : {}),
     che_audit: {
       task: clip(task?.task || route, 160),
       agent: agent ? `${agent.name} (${agent.role})` : 'CHE',
       route,
     },
   };
+}
+
+// La Agencia agents are addressed by their lowercase name (knox); others by id.
+export function officeAgentId(agent) {
+  return isLaAgenciaAgent(agent) ? String(agent.name).toLowerCase() : String(agent?.id || '');
 }
 
 async function runModelDetailed(env, model, system, user, maxTokens, routing = {}) {
@@ -740,6 +751,20 @@ async function runOneTask(ctx) {
     return true;
   }
   normalizeAgent(agent);
+  // A La Agencia job whose tool has no owner credential on the server stops
+  // here with an honest blocker; CHE reads it aloud from the board.
+  const blocker = isLaAgenciaAgent(agent) ? officeToolBlocker(env, agent) : '';
+  if (blocker) {
+    task.status = 'blocked';
+    task.error = blocker;
+    task.updated_at = now();
+    agent.runtime_status = 'offline';
+    agent.runtime_task = blocker;
+    agent.runtime_updated_at = now();
+    await save(data);
+    notify();
+    return true;
+  }
   task.status = 'running';
   task.updated_at = now();
   agent.runtime_status = workingStatusFor(agent);

@@ -34,7 +34,10 @@ import { candles as marketCandles, snapshot as marketSnapshot } from './markets.
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 import { prepareSelfUpdate } from './self_development.js';
 import { officeToday } from './office_board.js';
-import { ensureLaAgenciaRoster, officeToolBlocker } from './office_company.js';
+import { ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
+import { matchOfficePhrase, speakGoalPlan, speakOfficeBoard } from './office_phrases.js';
+import { assertOwnerTalksToCheOnly } from './office_router.js';
+import { recordStripeEvent, verifyStripeSignature } from './stripe_webhooks.js';
 import { approveProposal, proposeProduct, rejectProposal, salesSummary, storeStatus } from './stripe_store.js';
 import {
   addLead, approveProposal as approveDealProposal, buildBrief, checkPaid, createPaymentLink, draftProposal, findDeal, markStage, pipelineSummary,
@@ -1724,6 +1727,49 @@ export class CheState extends DurableObject {
     await this.ctx.storage.put('che', data);
   }
 
+  // Opening the Office staffs La Agencia's core roster once; existing agents
+  // keep their IDs and history. A blank CHE stays blank until then.
+  async staffOffice(data) {
+    const before = data.team.map((a) => a.id).join();
+    ensureLaAgenciaRoster(data);
+    data.team.forEach(normalizeAgent);
+    if (data.team.map((a) => a.id).join() !== before) await this.ctx.storage.put('che', data);
+  }
+
+  async officeBoard(data) {
+    await this.staffOffice(data);
+    const today = new Date().toISOString().slice(0, 10);
+    // Webhook totals are live; the Stripe API read is only the backup.
+    const stripe = data.office_stripe?.date === today ? null : await salesSummary(this.env);
+    return officeToday(data, stripe, new Date(), this.env);
+  }
+
+  // CHE splits one owner goal into Office jobs that persist in this Durable
+  // Object. A job whose tool is missing is recorded as blocked, not faked.
+  async officeGoal(data, goal) {
+    await this.staffOffice(data);
+    const goalId = crypto.randomUUID();
+    const jobs = [];
+    for (const step of splitGoal(goal)) {
+      const agent = data.team.find((a) => a.name === step.agent && !a.retired);
+      if (!agent) continue;
+      const task = queueAgentTask(data, agent, step.task, 'owner_goal', { job_id: goalId });
+      const blocker = officeToolBlocker(this.env, agent);
+      if (blocker) {
+        task.status = 'blocked';
+        task.error = blocker;
+      }
+      jobs.push({ id: task.id, agent: agent.name, task: task.task, status: task.status, blocker });
+    }
+    data.office_goals = Array.isArray(data.office_goals) ? data.office_goals : [];
+    data.office_goals.push({ id: goalId, goal, job_ids: jobs.map((j) => j.id), created_at: new Date().toISOString() });
+    data.office_goals = data.office_goals.slice(-100);
+    await this.ctx.storage.put('che', data);
+    if (jobs.some((j) => j.status === 'queued')) await this.scheduleWork();
+    this.broadcastAgents(data);
+    return { goal_id: goalId, jobs, reply: speakGoalPlan(jobs) };
+  }
+
   async setAutonomy(enabled) {
     const data = await this.loadData();
     data.autonomy = enabled;
@@ -1765,7 +1811,7 @@ export class CheState extends DurableObject {
       data.meetings = Array.isArray(data.meetings) ? data.meetings : [];
       data.team.forEach(normalizeAgent);
       for (const agent of data.team) {
-        const blocker = officeToolBlocker(this.env, agent);
+        const blocker = isLaAgenciaAgent(agent) ? officeToolBlocker(this.env, agent) : '';
         if (blocker && ['waiting', 'building', 'researching', 'analyzing'].includes(agent.runtime_status)) {
           agent.runtime_status = 'offline';
           agent.runtime_task = blocker;
@@ -1783,6 +1829,25 @@ export class CheState extends DurableObject {
             kind: 'software_agent',
             created_at: new Date().toISOString(),
           };
+      // Stripe calls this directly (no device token): the signature, checked
+      // against STRIPE_WEBHOOK_SECRET on the raw body, is the authentication.
+      if (request.method === 'POST' && path === '/api/stripe/webhook') {
+        const raw = await request.text();
+        try {
+          await verifyStripeSignature(raw, request.headers.get('Stripe-Signature'), this.env.STRIPE_WEBHOOK_SECRET);
+        } catch (error) {
+          const missing = error.message === 'stripe_webhook_secret_missing';
+          return json({ detail: missing ? 'Stripe webhook secret is not configured.' : 'Invalid Stripe signature.' }, missing ? 503 : 400);
+        }
+        let event;
+        try { event = JSON.parse(raw); } catch (_) { return json({ detail: 'Invalid JSON.' }, 400); }
+        const outcome = recordStripeEvent(data, event);
+        if (!outcome.duplicate) {
+          await this.ctx.storage.put('che', data);
+          this.broadcastAgents(data);
+        }
+        return json({ received: true, duplicate: outcome.duplicate });
+      }
       const body = ['POST', 'PATCH'].includes(request.method) ? await bodyOf(request) : {};
       if (request.method === 'POST' && path === '/api/pair') {
         const secret = this.env.CHE_PAIR_CODE;
@@ -2563,6 +2628,10 @@ export class CheState extends DurableObject {
         }
         return json({ detail: 'Not found.' }, 404);
       }
+      // GET routes must sit above the POST-only guard below.
+      if (path === '/api/office/today' && request.method === 'GET') {
+        return json({ board: await this.officeBoard(data) });
+      }
       if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
       if (path === '/api/fine-tune/status' && request.method === 'POST') {
         return json(fineTuneReadiness(this.env));
@@ -3182,15 +3251,28 @@ export class CheState extends DurableObject {
         if (typeof body.enabled !== 'boolean') return json({ detail: 'enabled must be boolean.' }, 400);
         return json({ autonomy: body.enabled, reply: await this.setAutonomy(body.enabled) });
       }
-      if (path === '/api/office/today' && request.method === 'GET') {
-        // Opening the Office staffs La Agencia's core roster once; existing
-        // agents keep their IDs and history. A blank CHE stays blank until then.
-        const before = data.team.map((a) => a.id).join();
-        ensureLaAgenciaRoster(data);
-        data.team.forEach(normalizeAgent);
-        if (data.team.map((a) => a.id).join() !== before) await this.ctx.storage.put('che', data);
-        const stripe = await salesSummary(this.env);
-        return json({ board: officeToday(data, stripe) });
+      if (path === '/api/office/goals' && request.method === 'POST') {
+        const goal = String(body.goal || '').trim().slice(0, 2000);
+        if (!goal) return json({ detail: 'Goal required.' }, 400);
+        const plan = await this.officeGoal(data, goal);
+        return json(plan);
+      }
+      // The owner talks only to CHE; agents report only to CHE. Anything
+      // addressed around CHE is refused here, in code.
+      if (path === '/api/office/messages' && request.method === 'POST') {
+        let route;
+        try {
+          route = assertOwnerTalksToCheOnly(body);
+        } catch (error) {
+          return json({ detail: error.message }, error.status || 403);
+        }
+        const text = String(body.text || body.message || '').trim().slice(0, 4000);
+        if (!text) return json({ detail: 'Message text required.' }, 400);
+        data.office_inbox = Array.isArray(data.office_inbox) ? data.office_inbox : [];
+        data.office_inbox.push({ id: crypto.randomUUID(), from: route.speaker, to: 'che', text, at: new Date().toISOString() });
+        data.office_inbox = data.office_inbox.slice(-200);
+        await this.ctx.storage.put('che', data);
+        return json({ ok: true, to: 'che' });
       }
       if (path === '/api/change/request') return dispatchChange(this.env, body);
       if (path === '/api/chat') {
@@ -3200,6 +3282,21 @@ export class CheState extends DurableObject {
         const control = message.toLowerCase().replace(/^(?:chay|chey|che)[, ]+/, '').replace(/[.!?]+$/, '').trim();
         if (control === 'stand by' || control === 'resume') {
           return ndjsonReply(await this.setAutonomy(control === 'resume'), { autonomy: control === 'resume' });
+        }
+
+        // The Office by voice. CHE answers from the live board; agents never speak.
+        const officePhrase = matchOfficePhrase(message);
+        if (officePhrase?.type === 'goal') {
+          const plan = await this.officeGoal(data, officePhrase.goal);
+          return ndjsonReply(plan.reply, { office: 'goal', jobs: plan.jobs.length });
+        }
+        if (officePhrase?.type === 'standDown') {
+          await this.setAutonomy(false);
+          return ndjsonReply(speakOfficeBoard({}, officePhrase), { office: 'standDown', autonomy: false });
+        }
+        if (officePhrase) {
+          const board = await this.officeBoard(data);
+          return ndjsonReply(speakOfficeBoard(board, officePhrase), { office: officePhrase.type });
         }
 
         // CHE's universal AI layer by voice: models, providers, privacy,
