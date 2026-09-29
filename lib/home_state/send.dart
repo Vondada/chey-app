@@ -439,20 +439,23 @@ extension _CheHomeSend on _CHEHomeState {
 
       _scrollToBottom();
 
-      final reply = await _streamCheResponse(
-        message,
-        history,
-        onPartial: (partialReply) {
-          final index = assistantIndex;
-          if (!mounted || index == null || index >= messages.length) return;
-
-          _set(() {
-            messages[index]['text'] = _sanitizeCheReply(partialReply);
-          });
-
-          _scrollToBottom();
-        },
-      );
+      final uiBatcher = CheStreamBatcher((partialReply) {
+        final index = assistantIndex;
+        if (!mounted || index == null || index >= messages.length) return;
+        _set(() => messages[index]['text'] = _sanitizeCheReply(partialReply));
+        _scrollToBottom();
+      });
+      late final String reply;
+      try {
+        reply = await _streamCheResponse(
+          message,
+          history,
+          onPartial: uiBatcher.add,
+        );
+        uiBatcher.flush();
+      } finally {
+        uiBatcher.dispose();
+      }
 
       final stopped = _stopRequested;
       _stopRequested = false;
