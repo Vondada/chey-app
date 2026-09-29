@@ -233,16 +233,6 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
                   const Padding(padding: EdgeInsets.all(CheSpace.xxl), child: Center(child: CircularProgressIndicator()))
                 else ...[
                   if (r.error != null) _Banner(text: r.error!, color: CheColors.warning),
-                  CheOfficeWorld(
-                    che: r.che,
-                    agents: r.agents,
-                    level: _worldLevel,
-                    onOpenAgent: _openAgent,
-                    onUpgrade: _setWorldLevel,
-                  ),
-                  const SizedBox(height: CheSpace.lg),
-                  Text('DESKS', style: CheType.overline),
-                  const SizedBox(height: CheSpace.sm),
                   CheOfficeFloor(
                     che: r.che,
                     agents: [for (final p in r.agents) p.agent],
@@ -258,6 +248,16 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
                     Text('No meetings yet. Convene the team when a project needs several specialties.', style: CheType.bodyDim)
                   else
                     for (final m in r.meetings) _MeetingTile(meeting: m, onTap: () => _openMeeting(m.id)),
+                  const SizedBox(height: CheSpace.lg),
+                  Text('OFFICE WORLD', style: CheType.overline),
+                  const SizedBox(height: CheSpace.sm),
+                  CheOfficeWorld(
+                    che: r.che,
+                    agents: r.agents,
+                    level: _worldLevel,
+                    onOpenAgent: _openAgent,
+                    onUpgrade: _setWorldLevel,
+                  ),
                 ],
               ],
             ),
