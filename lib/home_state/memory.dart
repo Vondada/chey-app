@@ -1104,7 +1104,23 @@ extension _CheHomeMemory on _CHEHomeState {
               (_) => CheAppsHubTab(onLearnPage: _learnFromBrowserPage),
               (_) {
                 _ensureOfficeRuntime();
-                return CheTheaterRoom(runtime: _officeRuntime, client: _agentRuntime, onOpenOffice: _openOfficeFloor);
+                return CheTheaterRoom(
+                  runtime: _officeRuntime,
+                  client: _agentRuntime,
+                  onOpenOffice: _openOfficeFloor,
+                  onAskAboutScene: (prompt, jpeg) async {
+                    if (jpeg != null) {
+                      _set(() => _pendingAttachment = {
+                            'name': 'theater-scene.jpg',
+                            'media_type': 'image',
+                            'base64': jpeg,
+                          });
+                    }
+                    Navigator.of(context).popUntil((route) => route.isFirst);
+                    controller.text = prompt;
+                    await sendMessage();
+                  },
+                );
               },
             ],
           ),

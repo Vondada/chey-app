@@ -12,6 +12,7 @@
 // its own app — only after the owner explicitly confirms.
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -88,11 +89,15 @@ class CheTheaterGuard {
 }
 
 class CheTheaterRoom extends StatefulWidget {
-  const CheTheaterRoom({super.key, required this.runtime, required this.client, this.onOpenOffice});
+  const CheTheaterRoom({super.key, required this.runtime, required this.client, this.onOpenOffice, this.onAskAboutScene});
 
   final CheAgentRuntimeController runtime;
   final CheAgentRuntimeClient client;
   final VoidCallback? onOpenOffice;
+
+  /// Sends a question to CHE, with a JPEG (base64) of the paused frame when
+  /// the site allows reading the picture.
+  final Future<void> Function(String prompt, String? jpegBase64)? onAskAboutScene;
 
   @override
   State<CheTheaterRoom> createState() => _CheTheaterRoomState();
@@ -106,9 +111,115 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
   String? _blockedUrl;
   int _blockedCount = 0;
   bool _watching = false;
+  final List<Map<String, Object>> _captionBuffer = [];
+  Timer? _captionFlush;
+  String _pageTitle = '';
+  int _captionCount = 0;
+
+  // Reads captions (text tracks, or on-screen subtitle text) with the video
+  // time, every 1.5 seconds, and hands them to CHE's Theater notes.
+  static const String _captionJs = r'''
+(function () {
+  if (window.__cheCaptions) return;
+  window.__cheCaptions = true;
+  var last = '';
+  setInterval(function () {
+    var v = document.querySelector('video');
+    if (!v) return;
+    var text = '';
+    try {
+      for (var i = 0; i < v.textTracks.length; i++) {
+        var tr = v.textTracks[i];
+        if (tr.kind !== 'subtitles' && tr.kind !== 'captions') continue;
+        if (tr.mode === 'disabled') tr.mode = 'hidden';
+        var cues = tr.activeCues || [];
+        for (var j = 0; j < cues.length; j++) text += ' ' + (cues[j].text || '');
+      }
+    } catch (e) {}
+    if (!text.trim()) {
+      var box = document.querySelector('.player-timedtext, [class*="caption-window"], [class*="subtitle"], [class*="Subtitle"], [class*="captions-text"], [data-testid*="subtitle"]');
+      if (box) text = box.innerText || '';
+    }
+    text = text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!text || text === last) return;
+    last = text;
+    try { CheCaptions.postMessage(JSON.stringify({ t: Math.round(v.currentTime || 0), text: text })); } catch (e) {}
+  }, 1500);
+})();
+''';
+
+  static const String _frameJs = r'''
+(function () {
+  var v = document.querySelector('video');
+  if (!v || !v.videoWidth) return 'novideo';
+  try {
+    var c = document.createElement('canvas');
+    var scale = Math.min(1, 960 / v.videoWidth);
+    c.width = Math.round(v.videoWidth * scale); c.height = Math.round(v.videoHeight * scale);
+    c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+    var data = c.toDataURL('image/jpeg', 0.8);
+    if (!data || data.length < 2000) return 'blank';
+    return data.split(',')[1];
+  } catch (e) { return 'blocked'; }
+})()
+''';
+
+  void _onCaption(String raw) {
+    try {
+      final j = jsonDecode(raw);
+      if (j is! Map) return;
+      final text = '${j['text'] ?? ''}'.trim();
+      if (text.isEmpty) return;
+      _captionBuffer.add({'t': (j['t'] as num?)?.round() ?? 0, 'text': text});
+      _captionCount += 1;
+      _captionFlush ??= Timer(const Duration(seconds: 20), _flushCaptions);
+    } catch (_) {}
+  }
+
+  Future<void> _flushCaptions() async {
+    _captionFlush = null;
+    if (_captionBuffer.isEmpty) return;
+    final lines = List<Map<String, Object>>.from(_captionBuffer);
+    _captionBuffer.clear();
+    final host = Uri.tryParse(_address.text.contains('://') ? _address.text : 'https://${_address.text}')?.host ?? '';
+    try {
+      await widget.client.saveTheaterNotes(_pageTitle.isEmpty ? host : _pageTitle, host, lines);
+    } catch (_) {
+      _captionBuffer.insertAll(0, lines);
+    }
+  }
+
+  // "Look at this scene": pause-frame to CHE when the site allows it.
+  Future<void> _askAboutScene() async {
+    final ask = widget.onAskAboutScene;
+    final web = _web;
+    if (ask == null || web == null) return;
+    await _flushCaptions();
+    String result;
+    try {
+      final raw = await web.runJavaScriptReturningResult(_frameJs);
+      result = raw.toString().replaceAll('"', '');
+    } catch (_) {
+      result = 'blocked';
+    }
+    final hasImage = result.length > 100;
+    if (!hasImage && mounted) {
+      setState(() => _status = result == 'novideo'
+          ? 'I don\'t see a video playing yet.'
+          : 'This site blocks reading the picture, so I\'ll use the captions only.');
+    }
+    await ask(
+      hasImage
+          ? 'Look at this scene from what I\'m watching and tell me what\'s going on, using the Theater notes for context.'
+          : 'Talk with me about the scene I\'m watching right now, using the Theater notes (captions only, no picture).',
+      hasImage ? result : null,
+    );
+  }
 
   @override
   void dispose() {
+    _captionFlush?.cancel();
+    unawaited(_flushCaptions());
     if (_watching) unawaited(_setWatching(false));
     _address.dispose();
     super.dispose();
@@ -141,6 +252,7 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
       ..addJavaScriptChannel('CheTheater', onMessageReceived: (message) {
         if (message.message == 'popup') _notice('Blocked a pop-up.');
       })
+      ..addJavaScriptChannel('CheCaptions', onMessageReceived: (message) => _onCaption(message.message))
       ..setNavigationDelegate(NavigationDelegate(
         onNavigationRequest: (request) {
           final verdict = _guard.check(request.url, isMainFrame: request.isMainFrame);
@@ -158,8 +270,12 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
           }
           return NavigationDecision.prevent;
         },
-        onPageFinished: (_) {
-          unawaited(_web?.runJavaScript(CheTheaterGuard.popupShield));
+        onPageFinished: (_) async {
+          final web = _web;
+          if (web == null) return;
+          unawaited(web.runJavaScript(CheTheaterGuard.popupShield));
+          unawaited(web.runJavaScript(_captionJs));
+          _pageTitle = ((await web.getTitle()) ?? '').trim();
         },
         onWebResourceError: (error) {
           if (mounted && error.isForMainFrame == true) {
@@ -306,6 +422,14 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
                 onTap: _stop,
                 child: TextButton.icon(onPressed: _stop, icon: const Icon(Icons.stop_rounded, size: 18), label: const Text('Close')),
               ),
+            if (web != null && widget.onAskAboutScene != null)
+              Semantics(
+                button: true,
+                label: 'Ask CHE about this scene. She uses the captions she saved, and the picture when the site allows it.',
+                excludeSemantics: true,
+                onTap: _askAboutScene,
+                child: FilledButton.icon(onPressed: _askAboutScene, icon: const Icon(Icons.forum_outlined, size: 18), label: const Text('Talk about this scene')),
+              ),
             if (_blockedUrl != null)
               Semantics(
                 button: true,
@@ -321,7 +445,7 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
           child: Semantics(
             liveRegion: true,
             child: Text(
-              '$_status${_blockedCount > 0 ? '  ·  $_blockedCount blocked' : ''}',
+              '$_status${_blockedCount > 0 ? '  ·  $_blockedCount blocked' : ''}${_captionCount > 0 ? '  ·  $_captionCount caption lines saved' : ''}',
               style: CheType.caption,
             ),
           ),

@@ -397,3 +397,18 @@ test('free agents join the owner in the Theater; working agents keep working', a
   assert.equal(agentLocation({ id: 'a', runtime_status: 'building', runtime_task: 'DJ my playlist' }, now).activity, 'djing');
   assert.notEqual(agentLocation({ id: 'a', runtime_status: 'idle' }, now, now - 1).room, 'theater');
 });
+
+test('Theater notes give CHE the relevant movie dialogue', async () => {
+  const generated = new URL('./.theater.test.generated.mjs', import.meta.url);
+  writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
+    "import { DurableObject } from 'cloudflare:workers';",
+    'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }',
+  ));
+  let mod;
+  try { mod = await import(`${generated.href}?t=${Date.now()}`); } finally { unlinkSync(generated); }
+  const notes = { title: 'Heist Night', lines: [{ t: 65, text: 'Meet me at the diner at midnight.' }, { t: 3700, text: 'The vault code is in the painting.' }] };
+  const ctx = mod.theaterNotesContext(notes, 'What did he say about the diner in the movie?');
+  assert.match(ctx, /\[01:05\] Meet me at the diner/);
+  assert.match(ctx, /not the picture/);
+  assert.equal(mod.theaterNotesContext(notes, 'what is the weather'), '');
+});

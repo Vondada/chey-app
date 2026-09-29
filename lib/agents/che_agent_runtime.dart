@@ -317,6 +317,10 @@ class CheAgentRuntimeClient {
   /// Office agents take (or leave) the Theater seats.
   Future<void> setTheaterWatching(bool watching) => _send('POST', '/api/theater', {'watching': watching});
 
+  /// Saves captions CHE saw in the Theater, so she can talk about the movie.
+  Future<void> saveTheaterNotes(String title, String host, List<Map<String, Object>> lines) =>
+      _send('POST', '/api/theater/notes', {'title': title, 'host': host, 'lines': lines});
+
   /// CHE's universal AI layer overview (providers, models, health, privacy).
   /// Contains connection states only, never credential values.
   Future<Map<String, dynamic>> aiOverview() => _send('GET', '/api/ai/overview');
