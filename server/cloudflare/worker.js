@@ -2908,7 +2908,7 @@ export class CheState extends DurableObject {
           const prepared = await prepareSelfUpdate(this.env, message);
           if (prepared.status === 200 && prepared.proposal) {
             const team = Array.isArray(prepared.team) ? prepared.team.join(', ') : 'CHE engineering team';
-            const proposalBlock = ```che-update\n${JSON.stringify(prepared.proposal)}\n```;
+            const proposalBlock = '```che-update\\n' + JSON.stringify(prepared.proposal) + '\\n```';
             return ndjsonReply(
               `I delegated that to ${team}, sir. The code was independently reviewed. Nothing has been added yet—approve the update card if you want it applied.\n\n${proposalBlock}`,
               {
