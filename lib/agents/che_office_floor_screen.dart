@@ -283,16 +283,9 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
         const Padding(padding: EdgeInsets.all(CheSpace.xxl), child: Center(child: CircularProgressIndicator()))
       else ...[
         if (r.error != null) _Banner(text: r.error!, color: CheColors.warning),
-        // La Agencia is the live Office world: Flutter streams the real
-        // Agent Runtime roster into Three.js and taps route back to the
-        // existing agent desk / CHE conversation behavior.
         if (widget.embedded) ...[
-          Office3DView(
-            agents: _office3dAgents(),
-            onAgentTap: (id) => unawaited(_openOffice3dAgent(id)),
-            height: (screen * 0.72).clamp(460.0, 900.0),
-          ),
-          const SizedBox(height: CheSpace.lg),
+          _CompanyBoard(today: r.today, totalAgents: r.agents.length + 1),
+          const SizedBox(height: CheSpace.md),
         ],
         CheOfficeFloor(
           che: r.che,
@@ -409,6 +402,31 @@ Future<void> cheReadAloud(BuildContext context, String text, Future<void> Functi
   }
 }
 
+class _CompanyBoard extends StatelessWidget {
+  const _CompanyBoard({required this.today, required this.totalAgents});
+  final CheOfficeToday? today;
+  final int totalAgents;
+  @override
+  Widget build(BuildContext context) {
+    final t = today;
+    final money = ((t?.netCents ?? 0) / 100).toStringAsFixed(2);
+    return RepaintBoundary(child: Container(
+      width: double.infinity, padding: const EdgeInsets.all(CheSpace.md),
+      decoration: BoxDecoration(color: CheColors.surface, borderRadius: BorderRadius.circular(CheRadius.lg), border: Border.all(color: CheColors.stroke)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('LA AGENCIA • TODAY', style: CheType.overline.copyWith(color: CheColors.accent)),
+        const SizedBox(height: 8),
+        Text('Today earned: \$money', style: CheType.label),
+        Text('Agents working: ${t?.agentsWorking ?? 0}/$totalAgents', style: CheType.label),
+        Text('Stripe: ${t?.stripeConnected == true ? 'connected' : 'not connected'}', style: CheType.caption),
+        const SizedBox(height: 8),
+        Text('Today built', style: CheType.label),
+        Text((t?.shipped.isNotEmpty ?? false) ? t!.shipped.take(3).map((e) => '${e['agent']}: ${e['task']}').join(' • ') : 'Nothing shipped yet.', maxLines: 3, overflow: TextOverflow.ellipsis, style: CheType.caption),
+        if ((t?.blockers.isNotEmpty ?? false)) Text('Blocked: ${t!.blockers.length}', style: CheType.caption.copyWith(color: CheColors.warning)),
+      ]),
+    ));
+  }
+}
 class _ReadAloudButton extends StatelessWidget {
   const _ReadAloudButton({required this.label, required this.onPressed});
   final String label;
