@@ -44,14 +44,42 @@ extension _CheHomeConnected on _CHEHomeState {
     return null;
   }
 
-  Map<String, dynamic> _localSnapshot() => {
-        'team_tasks': const [],
-        'projects': const [],
-        'vault_items': const [],
-        'jobs': const [],
-        'meetings': const [],
-        'team': const [],
+  void _restoreLocalSnapshotCache(SharedPreferences prefs) {
+    final raw = prefs.getString('che.local.snapshot');
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      _localSnapshotCache = {
+        'team': [
+          for (final e in (decoded['team'] as List? ?? const []))
+            if (e is Map) Map<String, dynamic>.from(e),
+        ],
+        'team_tasks': [
+          for (final e in (decoded['team_tasks'] as List? ?? const []))
+            if (e is Map) Map<String, dynamic>.from(e),
+        ],
+        'projects': [
+          for (final e in (decoded['projects'] as List? ?? const []))
+            if (e is Map) Map<String, dynamic>.from(e),
+        ],
+        'vault_items': [
+          for (final e in (decoded['vault_items'] as List? ?? const []))
+            if (e is Map) Map<String, dynamic>.from(e),
+        ],
+        'jobs': [
+          for (final e in (decoded['jobs'] as List? ?? const []))
+            if (e is Map) Map<String, dynamic>.from(e),
+        ],
+        'meetings': [
+          for (final e in (decoded['meetings'] as List? ?? const []))
+            if (e is Map) Map<String, dynamic>.from(e),
+        ],
       };
+    } catch (_) {}
+  }
+
+  Map<String, dynamic> _localSnapshot() => _localSnapshotCache;
 
   Future<void> _loadExplainLevel() async {
     try {
