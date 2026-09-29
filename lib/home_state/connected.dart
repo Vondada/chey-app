@@ -144,6 +144,20 @@ extension _CheHomeConnected on _CHEHomeState {
       return true;
     }
 
+    if (RegExp(r"^(what('s| is) stalled|what needs me|what do you need from me|any decisions?)\\b").hasMatch(lower)) {
+      final events = await _loadActivity();
+      if (events == null) {
+        await speakText('I could not load Office state just now.', record: false);
+        return true;
+      }
+      final stalled = events.where((e) => e['kind'] == 'stalled').toList();
+      final line = stalled.isEmpty
+          ? 'Nothing is waiting on you right now.'
+          : stalled.take(4).map((e) => e['line']).join(' ');
+      await speakText(line, record: false);
+      return true;
+    }
+
     // Find anything made in any room: "play the song Mira made".
     final made = RegExp(r"^(?:play|show|open|find|read|get)\s+(?:me\s+)?(.+?\b(?:made|created|wrote|drew|did|finished)\b.*)$").firstMatch(lower);
     final find = made ?? RegExp(r'^find\s+(?:me\s+)?(.+)$').firstMatch(lower);
