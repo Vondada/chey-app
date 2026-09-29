@@ -41,8 +41,8 @@ const PROVIDERS = [
     id: 'cerebras',
     key: 'CEREBRAS_API_KEY',
     url: 'https://api.cerebras.ai/v1/chat/completions',
-    fast: (env) => env.CHE_CEREBRAS_FAST_MODEL || 'llama3.1-8b',
-    strong: (env) => env.CHE_CEREBRAS_STRONG_MODEL || 'llama-3.3-70b',
+    fast: (env) => env.CHE_CEREBRAS_FAST_MODEL || 'qwen-3.8-27b',
+    strong: (env) => env.CHE_CEREBRAS_STRONG_MODEL || 'gpt-oss-120b',
   },
   {
     id: 'mistral',
@@ -386,14 +386,18 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
       await addEstimatedUsage(env, usageStorage, provider.id, called.usageTokens, now);
       return called.result;
     } catch (error) {
-      if (error?.status === 429) {
+      // Busy or overloaded (429 / 5xx): try the same engine's lighter model
+      // once, which usually has its own separate limit, before moving on.
+      const busy = error?.status === 429 || [500, 502, 503, 504].includes(error?.status);
+      if (busy) {
         try {
+          if (!strongProviderModel) await new Promise((resolve) => setTimeout(resolve, 700));
           const retry = await callProvider(env, provider, false, engineInput, fetcher);
           await addEstimatedUsage(env, usageStorage, provider.id, retry.usageTokens, now);
           return retry.result;
         } catch (retryError) {
           errors.push(`${provider.id}: ${String(error?.message || error)}; fast retry: ${String(retryError?.message || retryError)}`);
-          const rest = [401, 402, 403].includes(retryError?.status) ? 3_600_000 : retryError?.status === 429 ? 60_000 : 20_000;
+          const rest = [401, 402, 403].includes(retryError?.status) ? 3_600_000 : 20_000;
           providerCooldownUntil.set(provider.id, now + rest);
           continue;
         }
