@@ -35,6 +35,35 @@ const List<CheAppDefinition> cheAppCatalog = [
   CheAppDefinition(name: 'NinjaTrader', webUrl: 'https://ninjatrader.com', icon: Icons.candlestick_chart, aliases: ['ninjatrader', 'ninja trader']),
 ];
 
+/// The app's real icon (the site's own favicon), with the old symbol only as
+/// a fallback when there's no connection.
+String cheAppIconUrl(String webUrl) {
+  final host = Uri.tryParse(webUrl)?.host ?? '';
+  final domain = host.replaceFirst(RegExp(r'^(www|open|web)\.'), '');
+  return 'https://www.google.com/s2/favicons?sz=128&domain=${Uri.encodeComponent(domain)}';
+}
+
+class CheAppIcon extends StatelessWidget {
+  const CheAppIcon({super.key, required this.app, this.size = 40});
+  final CheAppDefinition app;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(size * 0.22),
+      child: Image.network(
+        cheAppIconUrl(app.webUrl),
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.high,
+        errorBuilder: (context, error, stackTrace) => Icon(app.icon, size: size * 0.7, color: CheColors.accent),
+      ),
+    );
+  }
+}
+
 CheAppDefinition? cheAppForName(String input) {
   final value = input.toLowerCase().trim();
   for (final app in cheAppCatalog) {
@@ -141,7 +170,7 @@ class _CheAppsHubTabState extends State<CheAppsHubTab> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(app.icon, size: 28, color: CheColors.accent),
+                    CheAppIcon(app: app, size: 40),
                     const SizedBox(height: 8),
                     Text(
                       app.name,

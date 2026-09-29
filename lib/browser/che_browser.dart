@@ -5,6 +5,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show Factory;
+import 'package:flutter/gestures.dart' show EagerGestureRecognizer, OneSequenceGestureRecognizer;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -461,7 +463,18 @@ class _CheBrowserScreenState extends State<CheBrowserScreen> {
         Expanded(
           child: IndexedStack(
             index: _active,
-            children: [for (final t in _tabs) WebViewWidget(key: ObjectKey(t), controller: t.controller)],
+            children: [
+              for (final t in _tabs)
+                WebViewWidget(
+                  key: ObjectKey(t),
+                  controller: t.controller,
+                  // Hand every touch straight to the page so iOS tells scrolls
+                  // and taps apart itself (prevents scrolling from "clicking").
+                  gestureRecognizers: {
+                    Factory<OneSequenceGestureRecognizer>(() => EagerGestureRecognizer()),
+                  },
+                ),
+            ],
           ),
         ),
       ]),
