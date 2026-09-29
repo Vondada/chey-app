@@ -60,6 +60,7 @@ import 'plugins/che_plugin_webapp.dart';
 import 'self_update/che_patch_banner.dart';
 import 'self_update/che_update_card.dart';
 import 'rooms/che_markets_room.dart';
+import 'rooms/che_store_room.dart';
 import 'rooms/che_creator_studio.dart';
 import 'rooms/che_art_studio.dart';
 import 'rooms/che_room_segments.dart';

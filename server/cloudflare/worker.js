@@ -17,6 +17,7 @@ import { routedEnv } from './ai_router.js';
 import { deleteMedia, generateImage, listMedia, readBlob, upscaleImage } from './media.js';
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
+import { approveProposal, proposeProduct, rejectProposal, salesSummary, storeStatus } from './stripe_store.js';
 
 const FAST_MODEL = '@cf/meta/llama-3.2-3b-instruct';
 const STRONG_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
@@ -1727,7 +1728,7 @@ export class CheState extends DurableObject {
             prop_firm: Boolean(this.env.CHE_PROP_FIRM_URL),
             business: Boolean(this.env.CHE_BUSINESS_URL),
             advertising: Boolean(this.env.CHE_ADVERTISING_URL),
-            payments: Boolean(this.env.CHE_PAYMENTS_URL),
+            payments: Boolean(this.env.CHE_PAYMENTS_URL || this.env.STRIPE_SECRET_KEY),
             leads: Boolean(this.env.CHE_LEADS_URL),
             action_engine: Boolean(
               this.env.CHE_BROKER_URL ||
@@ -1856,6 +1857,32 @@ export class CheState extends DurableObject {
       }
       if (path === '/api/self-update/rollback' && request.method === 'POST') {
         const { status, ...rest } = await rollbackLastUpdate(this.env);
+        return json(rest, status);
+      }
+
+      // ─── CHE Studio store: Stripe, owner-approved, no money movement ───
+      if (path === '/api/stripe/status' && request.method === 'GET') {
+        return json(storeStatus(this.env, data));
+      }
+      if (path === '/api/stripe/proposals' && request.method === 'GET') {
+        return json({ proposals: data.stripe_proposals || [], ...storeStatus(this.env, data) });
+      }
+      if (path === '/api/stripe/proposals' && request.method === 'POST') {
+        const { status, ...rest } = proposeProduct(data, body);
+        if (status === 200) await this.ctx.storage.put('che', data);
+        return json(rest, status);
+      }
+      const proposalMatch = /^\/api\/stripe\/proposals\/([0-9a-f-]{36})\/(approve|reject)$/.exec(path);
+      if (proposalMatch && request.method === 'POST') {
+        const [, proposalId, action] = proposalMatch;
+        const { status, ...rest } = action === 'approve'
+          ? await approveProposal(this.env, data, proposalId)
+          : rejectProposal(data, proposalId);
+        await this.ctx.storage.put('che', data);
+        return json(rest, status);
+      }
+      if (path === '/api/stripe/sales' && request.method === 'GET') {
+        const { status, ...rest } = await salesSummary(this.env);
         return json(rest, status);
       }
 
@@ -2863,7 +2890,7 @@ export class CheState extends DurableObject {
                 prop_firm: Boolean(this.env.CHE_PROP_FIRM_URL),
                 business: Boolean(this.env.CHE_BUSINESS_URL),
             advertising: Boolean(this.env.CHE_ADVERTISING_URL),
-                payments: Boolean(this.env.CHE_PAYMENTS_URL),
+                payments: Boolean(this.env.CHE_PAYMENTS_URL || this.env.STRIPE_SECRET_KEY),
                 leads: Boolean(this.env.CHE_LEADS_URL),
                 music: Boolean(this.env.CHE_MUSIC_URL),
                 windows: Boolean(this.env.CHE_WINDOWS_URL),

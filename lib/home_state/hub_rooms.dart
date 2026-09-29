@@ -240,6 +240,26 @@ extension _CheHomeHubRooms on _CHEHomeState {
           },
         ),
         _integrationCard(
+          Icons.storefront_outlined,
+          'CHE Studio Store',
+          'Products and classes you approve, sold through Stripe payment links. Real sales only.',
+          integrations['payments'] == true,
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => CheStoreRoom(
+                  baseUrl: () => cheAgentBaseUrl,
+                  headers: () => _authHeaders,
+                  onAsk: (prompt) {
+                    Navigator.of(context).pop();
+                    _runHubPrompt(prompt);
+                  },
+                ),
+              ),
+            );
+          },
+        ),
+        _integrationCard(
           Icons.dashboard_customize_outlined,
           'Business Operations',
           'Plans, workflows, CRM, scheduling, fulfillment and operating systems.',

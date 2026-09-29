@@ -41,6 +41,7 @@ jobs:
       GITHUB_MODELS_TOKEN: ${{ secrets.GITHUB_MODELS_TOKEN }}
       SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -51,7 +52,7 @@ jobs:
       - name: Worker tests
         run: |
           for f in server/cloudflare/*.js; do node --check "$f"; done
-          node --test server/cloudflare/worker.test.mjs server/cloudflare/features.test.mjs
+          node --test server/cloudflare/worker.test.mjs server/cloudflare/features.test.mjs server/cloudflare/stripe_store.test.mjs
 
       - name: Check Cloudflare token
         id: token
@@ -70,7 +71,7 @@ jobs:
         run: |
           node -e '
             const out = {};
-            for (const k of ["ELEVENLABS_API_KEY", "CHE_ELEVENLABS_VOICE_ID", "CHE_OPENAI_API_KEY", "GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GITHUB_MODELS_TOKEN", "SAMBANOVA_API_KEY", "HF_TOKEN"]) {
+            for (const k of ["ELEVENLABS_API_KEY", "CHE_ELEVENLABS_VOICE_ID", "CHE_OPENAI_API_KEY", "GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GITHUB_MODELS_TOKEN", "SAMBANOVA_API_KEY", "HF_TOKEN", "STRIPE_SECRET_KEY"]) {
               if (process.env[k]) out[k] = process.env[k];
             }
             require("fs").writeFileSync("/tmp/che-secrets.json", JSON.stringify(out));
