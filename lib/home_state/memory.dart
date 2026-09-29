@@ -1908,6 +1908,23 @@ extension _CheHomeMemory on _CHEHomeState {
     }
 
     if (hasAny([
+      'fine tune',
+      'fine-tune',
+      'fine tuning',
+      'fine-tuning',
+      'train model',
+      'train a model',
+      'lora',
+      'adapter tuning',
+      'vmware private ai',
+      'vmware training',
+      'hugging face training',
+      'huggingface training',
+    ])) {
+      result.add('fine_tuning');
+    }
+
+    if (hasAny([
       'at the same time',
       'while you',
       'also do',
