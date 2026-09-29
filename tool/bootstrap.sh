@@ -92,7 +92,7 @@ info['NSAppleMusicUsageDescription'] = 'CHE accesses your media library only for
 info['NSLocationWhenInUseUsageDescription'] = 'CHE uses your location only while you are using location-aware features.'
 info['CFBundleURLTypes'] = [{'CFBundleURLName': 'CHE', 'CFBundleURLSchemes': ['che']}]
 info['BGTaskSchedulerPermittedIdentifiers'] = ['com.cheyapp.che.refresh']
-info['UIBackgroundModes'] = ['fetch']
+info['UIBackgroundModes'] = ['audio', 'fetch']
 # Conversation logs (Documents/che_logs) show in Files → On My iPhone → CHE.
 info['UIFileSharingEnabled'] = True
 info['LSSupportsOpeningDocumentsInPlace'] = True
