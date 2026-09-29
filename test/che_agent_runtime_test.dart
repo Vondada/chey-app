@@ -206,8 +206,8 @@ void main() {
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
-    expect(find.textContaining('agents ·'), findsOneWidget);
-    expect(find.text('Whole office'), findsOneWidget);
+    expect(find.text('Nova'), findsWidgets);
+    expect(find.textContaining('Agents working:'), findsOneWidget);
     await tester.tap(find.text('Read to me'));
     await tester.pump();
     expect(spoken.single, contains('Nova'));
