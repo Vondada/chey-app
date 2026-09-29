@@ -34,10 +34,11 @@ jobs:
           CHE_CHANGE_MODEL: ${{ inputs.model }}
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
         run: python3 tools/che_propose_change.py
-      - name: Analyze
+      - name: Analyze and test
         run: |
           flutter pub get
           flutter analyze
+          flutter test
       - name: Open a reviewable pull request
         env:
           GH_TOKEN: ${{ github.token }}
@@ -53,4 +54,4 @@ jobs:
           git push origin "$branch"
           gh pr create --draft --base "${GITHUB_REF_NAME}" --head "$branch" \
             --title "CHE proposal: ${CHE_CHANGE_REQUEST:0:60}" \
-            --body "Requested from CHE. Review the code and checks before merging. Revert the merge commit to roll back."
+            --body "Requested from CHE. The proposal was produced by CHE's architect → implementation → independent QA/security review pipeline, then Flutter analyze/test. Review the code before merging. Revert the merge commit to roll back."
