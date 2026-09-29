@@ -13,7 +13,7 @@
 // keeps going when the phone is locked.
 
 import { classifyItem, extractCandidateMemories } from './privacy_policy.js';
-import { isLaAgenciaAgent, officeToolBlocker } from './office_company.js';
+import { agentActionGuard, isLaAgenciaAgent, officeToolBlocker } from './office_company.js';
 import { codexThreadId } from './office_router.js';
 
 export const AGENT_STATUSES = [
@@ -753,7 +753,7 @@ async function runOneTask(ctx) {
   normalizeAgent(agent);
   // A La Agencia job whose tool has no owner credential on the server stops
   // here with an honest blocker; CHE reads it aloud from the board.
-  const blocker = isLaAgenciaAgent(agent) ? officeToolBlocker(env, agent) : '';
+  const blocker = agentActionGuard(agent, task.task) || (isLaAgenciaAgent(agent) ? officeToolBlocker(env, agent) : '');
   if (blocker) {
     task.status = 'blocked';
     task.error = blocker;

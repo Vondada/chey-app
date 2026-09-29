@@ -34,9 +34,9 @@ import { candles as marketCandles, snapshot as marketSnapshot } from './markets.
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 import { prepareSelfUpdate } from './self_development.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
-import { ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
+import { agentActionGuard, ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
 import { matchOfficePhrase, speakGoalPlan, speakOfficeBoard } from './office_phrases.js';
-import { assertOwnerTalksToCheOnly } from './office_router.js';
+import { assertOwnerTalksToCheOnly, codexWorkPacket } from './office_router.js';
 import { recordStripeEvent, verifyStripeSignature } from './stripe_webhooks.js';
 import { approveProposal, proposeProduct, rejectProposal, salesSummary, storeStatus } from './stripe_store.js';
 import {
@@ -1754,7 +1754,8 @@ export class CheState extends DurableObject {
       const agent = data.team.find((a) => a.name === step.agent && !a.retired);
       if (!agent) continue;
       const task = queueAgentTask(data, agent, step.task, 'owner_goal', { job_id: goalId });
-      const blocker = officeToolBlocker(this.env, agent);
+      task.work_packet = codexWorkPacket(agent, task);
+      const blocker = agentActionGuard(agent, step.task) || officeToolBlocker(this.env, agent);
       if (blocker) {
         task.status = 'blocked';
         task.error = blocker;
@@ -2629,6 +2630,18 @@ export class CheState extends DurableObject {
         return json({ detail: 'Not found.' }, 404);
       }
       // GET routes must sit above the POST-only guard below.
+      // CHE collects each agent's Codex work packets (no credentials inside).
+      if (path === '/api/office/work-packets' && request.method === 'GET') {
+        await this.staffOffice(data);
+        const packets = data.team_tasks
+          .filter((t) => ['queued', 'running', 'reviewing', 'blocked'].includes(t.status))
+          .map((t) => {
+            const agent = data.team.find((a) => a.id === t.partner_id);
+            return agent && isLaAgenciaAgent(agent) ? (t.work_packet || codexWorkPacket(agent, t)) : null;
+          })
+          .filter(Boolean);
+        return json({ packets });
+      }
       if (path === '/api/office/today' && request.method === 'GET') {
         return json({ board: await this.officeBoard(data) });
       }

@@ -40,3 +40,29 @@ export function toolBlocker(env) {
   if (!env.XAI_API_KEY && !env.CHE_XAI_API_KEY && !env.GROK_API_KEY) missing.push('Grok');
   return missing.length ? `Blocked: tool not configured (${missing.join(', ')})` : null;
 }
+
+// A Codex work packet: everything one agent's isolated thread needs, with no
+// credential inside it. The single owner Codex credential stays a Worker
+// secret; each agent gets its own thread under office/<agent>/.
+export function codexWorkPacket(agent, task, createdAt = new Date().toISOString()) {
+  const agentId = String(agent?.name || agent?.id || '').toLowerCase();
+  return {
+    kind: 'codex_work_packet',
+    version: 1,
+    agent_id: agentId,
+    agent_name: String(agent?.name || ''),
+    role: String(agent?.role || ''),
+    workspace: `office/${agentId}`,
+    thread_id: codexThreadId(agentId, task?.job_id || task?.id),
+    job_id: String(task?.id || ''),
+    objective: String(task?.task || ''),
+    credential: 'owner_codex',
+    constraints: [
+      'Report results to CHE only; never message the owner.',
+      'Work on a branch; never merge, spend money or open payouts.',
+      'Say plainly when something could not be done.',
+    ],
+    report_to: 'che',
+    created_at: createdAt,
+  };
+}
