@@ -53,7 +53,7 @@ extension _CheHomeConnected on _CHEHomeState {
     if (route == '/api/activity') return {'events': activityFeed(data)};
     if (route == '/api/greeting') {
       final hour = int.tryParse(uri.queryParameters['hour'] ?? '') ?? DateTime.now().hour;
-      return {...greeting(data, hour: hour), 'suggestions': suggestions(data, hour: hour)};
+      return {...greeting(data, hour: hour), 'suggestions': localSuggestions(data, hour: hour)};
     }
     if (route == '/api/find') return {'items': <Map<String, dynamic>>[]};
     return null;
