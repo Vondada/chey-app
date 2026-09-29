@@ -50,7 +50,7 @@ extension _CheHomeConnected on _CHEHomeState {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return;
-      _localSnapshotCache = {
+      _cachedSnapshot = {
         'team': [
           for (final e in (decoded['team'] as List? ?? const []))
             if (e is Map) Map<String, dynamic>.from(e),
@@ -79,7 +79,14 @@ extension _CheHomeConnected on _CHEHomeState {
     } catch (_) {}
   }
 
-  Map<String, dynamic> _localSnapshot() => _localSnapshotCache;
+  Map<String, dynamic> _localSnapshot() => {
+        'team': team.isNotEmpty ? team : (_cachedSnapshot['team'] as List? ?? const []),
+        'team_tasks': teamTasks.isNotEmpty ? teamTasks : (_cachedSnapshot['team_tasks'] as List? ?? const []),
+        'projects': projects.isNotEmpty ? projects : (_cachedSnapshot['projects'] as List? ?? const []),
+        'vault_items': vaultItems.isNotEmpty ? vaultItems : (_cachedSnapshot['vault_items'] as List? ?? const []),
+        'jobs': backgroundJobs.isNotEmpty ? backgroundJobs : (_cachedSnapshot['jobs'] as List? ?? const []),
+        'meetings': _cachedSnapshot['meetings'] as List? ?? const [],
+      };
 
   Future<void> _loadExplainLevel() async {
     try {
