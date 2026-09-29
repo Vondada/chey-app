@@ -420,6 +420,12 @@ class CheOfficeFloor extends StatelessWidget {
   }
 }
 
+// First few words of a task so a desk card stays glanceable.
+String _shortTask(String task) {
+  final words = task.replaceAll(RegExp(r'\s+'), ' ').trim().split(' ');
+  return words.length <= 3 ? words.join(' ') : '${words.take(3).join(' ')}…';
+}
+
 class _Desk extends StatelessWidget {
   const _Desk({required this.agent, required this.onTap, this.big = false});
   final CheAgent agent;
@@ -446,7 +452,7 @@ class _Desk extends StatelessWidget {
           CheMiniPerson(agent: agent, size: big ? 70 : 56, showDesk: true),
           const SizedBox(height: 4),
           Text(agent.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label.copyWith(color: Colors.white)),
-          Text(agent.task?.isNotEmpty == true ? agent.task! : agent.status.label,
+          Text(agent.task?.isNotEmpty == true ? _shortTask(agent.task!) : agent.status.label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: CheType.caption.copyWith(color: agent.color, fontSize: 10.5)),

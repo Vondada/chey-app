@@ -182,7 +182,7 @@ class CheVault {
       if (e.site == q) return e;
     }
     for (final e in all) {
-      if (q.contains(e.site) || e.site.contains(q)) return e;
+      if (siteMatches(q, e.site)) return e;
     }
     // Common sign-in hosts for spoken names.
     const aliases = {
@@ -199,8 +199,28 @@ class CheVault {
     };
     for (final e in all) {
       final hosts = aliases[e.site] ?? const <String>[];
-      if (hosts.any(q.endsWith)) return e;
+      if (hosts.any((h) => q == h || q.endsWith('.$h'))) return e;
     }
     return null;
+  }
+
+  static const _genericLabels = {
+    'www', 'com', 'net', 'org', 'io', 'co', 'app', 'uk', 'us', 'login', 'signin', 'accounts', 'account', 'auth', 'my', 'm', 'mobile',
+  };
+
+  static Set<String> _labels(String value) => value
+      .toLowerCase()
+      .split(RegExp(r'[.\s/:_-]+'))
+      .where((l) => l.isNotEmpty && !_genericLabels.contains(l))
+      .toSet();
+
+  /// Whole-label match between a spoken name or page host and a saved site:
+  /// "accounts.google.com" matches "google", "netflix" matches "netflix.com",
+  /// but "x" never matches "netflix.com" (no substring matching).
+  static bool siteMatches(String query, String site) {
+    final q = _labels(query);
+    final e = _labels(site);
+    if (q.isEmpty || e.isEmpty) return false;
+    return e.every(q.contains) || q.every(e.contains);
   }
 }

@@ -26,6 +26,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'che_native_voice.dart';
 import 'che_account_bridge.dart';
 import 'che_realtime_voice.dart';
+import 'che_wake_setup.dart';
 import 'che_wake_word.dart';
 import 'che_wake_match.dart';
 import 'che_voice_state.dart';
@@ -39,7 +40,6 @@ import 'insights_brain_scene.dart';
 import 'devices_hub_scene.dart';
 import 'music_studio_scene.dart';
 import 'create_gallery_scene.dart';
-import 'office_scene.dart';
 import 'agents/che_agent_runtime.dart';
 import 'agents/che_office_floor_screen.dart';
 import 'agents/che_office_world.dart' show CheRoomVisitors;
@@ -1074,11 +1074,15 @@ OWNER AGENCY
                 case 'memory':
                   openMemoryManager();
                   break;
+                case 'wake':
+                  await _openWakeSetup();
+                  break;
               }
             },
             itemBuilder: (context) => const [
               PopupMenuItem(value: 'accounts', child: Text('Accounts + Face ID')),
               PopupMenuItem(value: 'diagnostics', child: Text('Voice diagnostics')),
+              PopupMenuItem(value: 'wake', child: Text('Wake word “Chay”')),
               PopupMenuItem(value: 'server', child: Text('CHE server')),
               PopupMenuItem(value: 'screen', child: Text('Screen context')),
               PopupMenuItem(value: 'security', child: Text('Security + memory')),

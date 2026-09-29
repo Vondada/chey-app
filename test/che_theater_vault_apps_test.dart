@@ -47,6 +47,15 @@ void main() {
       expect(CheVaultCommand.parse('what passwords do you have')!.kind, 'list');
       expect(CheVaultCommand.parse('what is the weather'), isNull);
     });
+
+    test('vault lookup matches whole labels only', () {
+      expect(CheVault.siteMatches('x', 'netflix.com'), isFalse);
+      expect(CheVault.siteMatches('flix', 'netflix.com'), isFalse);
+      expect(CheVault.siteMatches('netflix', 'netflix.com'), isTrue);
+      expect(CheVault.siteMatches('accounts.google.com', 'google'), isTrue);
+      expect(CheVault.siteMatches('x.com', 'x'), isTrue);
+      expect(CheVault.siteMatches('com', 'netflix.com'), isFalse);
+    });
   });
 
   group('Web versions of apps', () {
