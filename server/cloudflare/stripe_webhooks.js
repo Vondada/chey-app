@@ -2,6 +2,8 @@
 // STRIPE_WEBHOOK_SECRET (Worker secret only) before any event is trusted.
 // This file only reads money events; it never refunds, transfers or pays out.
 
+import { chicagoDayKey } from './chicago_time.js';
+
 const TOLERANCE_SECONDS = 300;
 
 async function hmacHex(secret, payload) {
@@ -66,9 +68,9 @@ export function applyStripeEvent(today, event) {
 }
 
 // Applies one verified event to the Durable Object's Office money state,
-// resetting at the UTC day boundary and ignoring replays by event id.
+// resetting at Chicago midnight (the owner's day) and ignoring replays by event id.
 export function recordStripeEvent(data, event, now = new Date()) {
-  const date = now.toISOString().slice(0, 10);
+  const date = chicagoDayKey(now);
   const current = data.office_stripe && data.office_stripe.date === date
     ? data.office_stripe
     : { date, charges_cents: 0, refunds_cents: 0, net_cents: 0, event_ids: [], refunded_by_charge: {} };

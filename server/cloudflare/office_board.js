@@ -2,14 +2,15 @@
 // Agents report to CHE; this module never creates owner-facing agent messages.
 
 import { LA_AGENCIA_ROLES, officeToolBlocker } from './office_company.js';
+import { chicagoDayKey } from './chicago_time.js';
 
 const ACTIVE = new Set(['queued', 'running', 'reviewing']);
 const DONE = new Set(['complete']);
 const BLOCKED = new Set(['failed', 'blocked']);
 
+// The owner's day (America/Chicago), not the UTC day.
 function dayKey(value, now = new Date()) {
-  const d = value ? new Date(value) : now;
-  return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+  return chicagoDayKey(value ? new Date(value) : now);
 }
 
 // Real per-desk status: the agent's latest job decides it, never a default

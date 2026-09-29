@@ -37,6 +37,11 @@ import { officeToday } from './office_board.js';
 import { ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
 import { matchOfficePhrase, speakGoalPlan, speakOfficeBoard } from './office_phrases.js';
 import { assertOwnerTalksToCheOnly } from './office_router.js';
+import { assertOwnerToCheOnly } from './che_router.js';
+import { chicagoDayKey } from './chicago_time.js';
+import { assertAgentMayRun, permissionBlocker } from './agent_permissions.js';
+import { makeWorkPacket, savePacket, startCodexJob } from './codex_packets.js';
+import { newBlockerAnnouncements } from './blocker_speech.js';
 import { recordStripeEvent, verifyStripeSignature } from './stripe_webhooks.js';
 import { approveProposal, proposeProduct, rejectProposal, salesSummary, storeStatus } from './stripe_store.js';
 import {
@@ -1738,10 +1743,21 @@ export class CheState extends DurableObject {
 
   async officeBoard(data) {
     await this.staffOffice(data);
-    const today = new Date().toISOString().slice(0, 10);
+    // "Today" is the owner's Chicago day, not the UTC day.
+    const today = chicagoDayKey();
     // Webhook totals are live; the Stripe API read is only the backup.
     const stripe = data.office_stripe?.date === today ? null : await salesSummary(this.env);
-    return officeToday(data, stripe, new Date(), this.env);
+    const board = officeToday(data, stripe, new Date(), this.env);
+    // CHE speaks a desk that just turned Blocked without being asked. Keys
+    // persist here so a poll never repeats the same line.
+    const said = newBlockerAnnouncements(board.agents, data.che_spoken_blockers);
+    board.che_announcements = said.lines;
+    if (said.lines.length || said.keys.length !== (data.che_spoken_blockers || []).length) {
+      data.che_spoken_blockers = said.keys;
+      await this.ctx.storage.put('che', data);
+    }
+    board.packets = (data.office_packets || []).slice(0, 20);
+    return board;
   }
 
   // CHE splits one owner goal into Office jobs that persist in this Durable
@@ -1753,8 +1769,24 @@ export class CheState extends DurableObject {
     for (const step of splitGoal(goal)) {
       const agent = data.team.find((a) => a.name === step.agent && !a.retired);
       if (!agent) continue;
+      // Permission flags are checked before the job is queued.
+      let refused = '';
+      try {
+        assertAgentMayRun(agent, { task: step.task });
+      } catch (error) {
+        refused = permissionBlocker(agent, error);
+      }
       const task = queueAgentTask(data, agent, step.task, 'owner_goal', { job_id: goalId });
-      const blocker = officeToolBlocker(this.env, agent);
+      let blocker = refused || officeToolBlocker(this.env, agent);
+      // Codex desks get a real work packet: own thread id and workspace,
+      // persisted here. The owner Codex token stays on the Worker.
+      if (!refused && agent.provider_preference === 'openai') {
+        const packet = savePacket(data, startCodexJob(this.env, makeWorkPacket({
+          jobId: task.id, agentId: agent.name, goal: step.task,
+        })));
+        task.packet_id = packet.packet_id;
+        if (!blocker && packet.status.startsWith('Blocked:')) blocker = packet.status;
+      }
       if (blocker) {
         task.status = 'blocked';
         task.error = blocker;
@@ -2412,7 +2444,14 @@ export class CheState extends DurableObject {
         if (made.error) return json({ detail: made.error }, 400);
         let task = null;
         if (String(body.task || '').trim()) {
+          try {
+            assertAgentMayRun(made.agent, { kind: body.kind, task: body.task });
+          } catch (error) {
+            await this.ctx.storage.put('che', data);
+            return json({ detail: error.message, agent: agentDetail(data, made.agent).agent }, error.status || 403);
+          }
           task = queueAgentTask(data, made.agent, body.task, 'owner', {
+            kind: body.kind,
             use_computer: body.use_computer === true,
             owner_approved_computer: body.owner_approved_computer === true,
             computer_permissions: body.computer_permissions,
@@ -2608,7 +2647,13 @@ export class CheState extends DurableObject {
         if (agentMatch[2] && request.method === 'POST') {
           const text = String(body.task || body.message || '').trim();
           if (!text) return json({ detail: 'Tell the agent what to do.' }, 400);
+          try {
+            assertAgentMayRun(agent, { kind: body.kind, task: text });
+          } catch (error) {
+            return json({ detail: error.message, blocker: permissionBlocker(agent, error) }, error.status || 403);
+          }
           const task = queueAgentTask(data, agent, text, 'owner', {
+            kind: body.kind,
             use_computer: body.use_computer === true,
             owner_approved_computer: body.owner_approved_computer === true,
             computer_permissions: body.computer_permissions,
@@ -2631,6 +2676,10 @@ export class CheState extends DurableObject {
       // GET routes must sit above the POST-only guard below.
       if (path === '/api/office/today' && request.method === 'GET') {
         return json({ board: await this.officeBoard(data) });
+      }
+      // CHE fetches the Codex work packets (no credentials in them).
+      if (path === '/api/office/packets' && request.method === 'GET') {
+        return json({ packets: (data.office_packets || []).slice(0, 100) });
       }
       if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
       if (path === '/api/fine-tune/status' && request.method === 'POST') {
@@ -3276,6 +3325,13 @@ export class CheState extends DurableObject {
       }
       if (path === '/api/change/request') return dispatchChange(this.env, body);
       if (path === '/api/chat') {
+        // Chat and voice both land here: the owner talks only to CHE, and an
+        // agent can never use this route to reach the owner.
+        try {
+          assertOwnerToCheOnly(body);
+        } catch (error) {
+          return json({ detail: error.message }, error.status || 403);
+        }
         const message = String(body.message || '').trim().slice(0, 5000);
         if (!message) return json({ detail: 'Message required.' }, 400);
 
