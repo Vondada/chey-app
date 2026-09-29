@@ -12,8 +12,8 @@ import 'package:flutter/services.dart';
 import '../che_ui/che_agents.dart';
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
+import '../widgets/office_3d_view.dart';
 import 'che_agent_runtime.dart';
-import 'che_office_world.dart';
 import 'che_war_room_screen.dart';
 
 /// Short, glanceable version of an agent's task or a meeting objective: the
@@ -56,33 +56,10 @@ class CheOfficeFloorScreen extends StatefulWidget {
 class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
   late final CheAgentRuntimeController _runtime = CheAgentRuntimeController(widget.client)..addListener(_changed);
 
-  int _worldLevel = 1;
-
   @override
   void initState() {
     super.initState();
     _runtime.start();
-    unawaited(_loadWorldLevel());
-  }
-
-  Future<void> _loadWorldLevel() async {
-    try {
-      final level = await widget.client.officeWorldLevel();
-      if (mounted) setState(() => _worldLevel = level);
-    } catch (_) {
-      // Default size until the server answers.
-    }
-  }
-
-  Future<void> _setWorldLevel(int level) async {
-    try {
-      final saved = await widget.client.setOfficeWorldLevel(level);
-      HapticFeedback.mediumImpact();
-      if (mounted) setState(() => _worldLevel = saved);
-      _snack(saved > 1 ? 'The Office is now size $saved of 3, with more room to work and hang out.' : 'The Office is back to its standard size.');
-    } catch (e) {
-      _snack('$e');
-    }
   }
 
   @override
@@ -240,6 +217,49 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
     await _runtime.refresh();
   }
 
+  String _office3dStatus(CheAgentStatus status) => switch (status) {
+        CheAgentStatus.researching ||
+        CheAgentStatus.building ||
+        CheAgentStatus.talking ||
+        CheAgentStatus.meeting => 'working',
+        CheAgentStatus.analyzing ||
+        CheAgentStatus.reviewing => 'thinking',
+        CheAgentStatus.done => 'celebrating',
+        CheAgentStatus.waiting ||
+        CheAgentStatus.offline => 'blocked',
+        _ => 'idle',
+      };
+
+  List<Map<String, dynamic>> _office3dAgents() {
+    final r = _runtime;
+    Map<String, dynamic> item(CheAgent a) => {
+          'id': a.id,
+          'name': a.name,
+          'role': a.role,
+          'status': _office3dStatus(a.status),
+          'task': a.task ?? '',
+          'isChe': a.isChe,
+        };
+    return [
+      item(r.che),
+      for (final p in r.agents) item(p.agent),
+    ];
+  }
+
+  Future<void> _openOffice3dAgent(String id) async {
+    final r = _runtime;
+    if (id == r.che.id) {
+      await _openAgent(r.che);
+      return;
+    }
+    for (final p in r.agents) {
+      if (p.agent.id == id) {
+        await _openAgent(p.agent);
+        return;
+      }
+    }
+  }
+
   String _officeSummary() {
     final r = _runtime;
     final working = r.agents.where((p) => p.working).length;
@@ -263,14 +283,13 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
         const Padding(padding: EdgeInsets.all(CheSpace.xxl), child: Center(child: CircularProgressIndicator()))
       else ...[
         if (r.error != null) _Banner(text: r.error!, color: CheColors.warning),
-        // In the hub tab the live world comes first and fills the screen.
+        // La Agencia is the live Office world: Flutter streams the real
+        // Agent Runtime roster into Three.js and taps route back to the
+        // existing agent desk / CHE conversation behavior.
         if (widget.embedded) ...[
-          CheOfficeWorld(
-            che: r.che,
-            agents: r.agents,
-            level: _worldLevel,
-            onOpenAgent: _openAgent,
-            onUpgrade: _setWorldLevel,
+          Office3DView(
+            agents: _office3dAgents(),
+            onAgentTap: (id) => unawaited(_openOffice3dAgent(id)),
             height: (screen * 0.72).clamp(460.0, 900.0),
           ),
           const SizedBox(height: CheSpace.lg),
@@ -303,16 +322,12 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
               onReadAloud: () => _speak('${m.statusLabel}. ${m.objective}. With ${m.participantNames.join(', ')}.'),
             ),
         if (!widget.embedded) ...[
-        const SizedBox(height: CheSpace.lg),
-        CheOfficeWorld(
-          che: r.che,
-          agents: r.agents,
-          level: _worldLevel,
-          onOpenAgent: _openAgent,
-          onUpgrade: _setWorldLevel,
-          // The world is the Office: give it most of the screen.
-          height: (screen * 0.6).clamp(420.0, 720.0),
-        ),
+          const SizedBox(height: CheSpace.lg),
+          Office3DView(
+            agents: _office3dAgents(),
+            onAgentTap: (id) => unawaited(_openOffice3dAgent(id)),
+            height: (screen * 0.6).clamp(420.0, 720.0),
+          ),
         ],
       ],
     ];
