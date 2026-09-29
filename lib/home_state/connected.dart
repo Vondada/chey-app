@@ -16,7 +16,7 @@ extension _CheHomeConnected on _CHEHomeState {
     if (_homeBaseUrl.isNotEmpty) {
       try {
         final response = await http
-            .get(Uri.parse('$_homeBaseUrl$path'))
+            .get(Uri.parse('$_homeBaseUrl$path'), headers: _authHeaders)
             .timeout(const Duration(seconds: 12));
         if (response.statusCode == 200) {
           final decoded = jsonDecode(response.body);
