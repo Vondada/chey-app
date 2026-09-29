@@ -580,7 +580,8 @@ test('action connectors require a single-use explicit approval', async () => {
   const oldFetch = globalThis.fetch;
   globalThis.fetch = async () => { writes++; return Response.json({result:{ok:true}}); };
   try {
-    await send('/api/chat',{message:'Prepare this payment', requested_capabilities:['payments']},token);
+    const reply = await send('/api/chat',{message:'Prepare this payment', requested_capabilities:['payments']},token);
+    assert.equal(reply.status, 200, await reply.text());
     assert.equal(writes,0);
     const approval = saved.get('che').action_approvals[0];
     assert.equal(approval.status,'pending');

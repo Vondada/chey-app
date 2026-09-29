@@ -1550,6 +1550,15 @@ export class CheState extends DurableObject {
     if (times.length) await this.ctx.storage.setAlarm(Math.min(...times));
   }
 
+  async saveChatData(data) {
+    const fresh = await this.loadData();
+    // A pause, job completion or approval may arrive while chat engines run.
+    data.autonomy = fresh.autonomy;
+    data.jobs = fresh.jobs;
+    data.action_approvals = fresh.action_approvals || [];
+    await this.ctx.storage.put('che', data);
+  }
+
   async setAutonomy(enabled) {
     const data = await this.loadData();
     data.autonomy = enabled;
@@ -2870,7 +2879,7 @@ export class CheState extends DurableObject {
         }
         if (createdPartners.length) {
           data.team = data.team.slice(-24);
-          await this.ctx.storage.put('che', data);
+          await this.saveChatData(data);
         }
         const multimodal = body.attachment
           ? await optionalMultimodal(this.env, body.attachment, message)
@@ -3021,7 +3030,7 @@ export class CheState extends DurableObject {
             });
           }
           data.team_tasks = data.team_tasks.slice(0, 100);
-          await this.ctx.storage.put('che', data);
+          await this.saveChatData(data);
         }
 
         if (research?.summary) {
@@ -3032,7 +3041,7 @@ export class CheState extends DurableObject {
           if (learned && !data.learned_knowledge.includes(learned)) {
             data.learned_knowledge.push(learned);
             data.learned_knowledge = data.learned_knowledge.slice(-30);
-            await this.ctx.storage.put('che', data);
+            await this.saveChatData(data);
           }
         }
 
@@ -3046,7 +3055,7 @@ export class CheState extends DurableObject {
             if (!data.memories.some((item) => item.toLowerCase() === memory.toLowerCase())) {
               data.memories.push(memory);
               data.memories = data.memories.slice(-100);
-              await this.ctx.storage.put('che', data);
+              await this.saveChatData(data);
             }
           }
           return new Response(JSON.stringify({ type: 'delta', delta: reply }) + '\n', {
