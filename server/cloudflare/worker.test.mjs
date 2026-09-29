@@ -15,8 +15,10 @@ const code = readFileSync(new URL('./worker.js', import.meta.url), 'utf8')
 writeFileSync(generatedWorker, code, 'utf8');
 let worker;
 let CheState;
+let publicResearch;
+let geminiVision;
 try {
-  ({ default: worker, CheState } = await import(
+  ({ default: worker, CheState, publicResearch, geminiVision } = await import(
     generatedWorker.href + '?test=' + Date.now(),
   ));
 } finally {
@@ -539,7 +541,6 @@ test('quota jobs retry at five minutes, pause durably, resume and stop after 24 
 });
 
 test('public research and vision try the next engine and aggregate failures', async () => {
-  const { publicResearch, geminiVision } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
   const calls = [];
   const result = await publicResearch('test', async url => {
     calls.push(url);
