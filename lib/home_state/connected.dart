@@ -9,6 +9,12 @@ extension _CheHomeConnected on _CHEHomeState {
   static const String _explainKey = 'che.explainLevel';
 
   Future<Map<String, dynamic>?> _getAgentJson(String path) async {
+    final cloud = await _getCloudAgentJson(path);
+    if (cloud != null) return cloud;
+    return _localAnswer(path);
+  }
+
+  Future<Map<String, dynamic>?> _getCloudAgentJson(String path) async {
     if (_deviceToken == null || _deviceToken!.isEmpty || cheAgentBaseUrl.isEmpty) return null;
     try {
       final response = await http
@@ -21,6 +27,59 @@ extension _CheHomeConnected on _CHEHomeState {
       return null;
     }
   }
+
+  Map<String, dynamic>? _localAnswer(String path) {
+    final data = _localSnapshot();
+    final uri = Uri.parse(path.startsWith('http') ? path : 'http://local$path');
+    final route = uri.path;
+    if (route == '/api/stalled') return {'items': stalledTasks(data)};
+    if (route == '/api/decisions') return {'items': decisionsNeeded(data)};
+    if (route == '/api/next') return {'actions': nextActions(data)};
+    if (route == '/api/activity') return {'events': activityFeed(data)};
+    if (route == '/api/greeting') {
+      final hour = int.tryParse(uri.queryParameters['hour'] ?? '') ?? DateTime.now().hour;
+      return {...greeting(data, hour: hour), 'suggestions': suggestions(data, hour: hour)};
+    }
+    if (route == '/api/find') return {'items': <Map<String, dynamic>>[]};
+    return null;
+  }
+
+  void _restoreLocalSnapshotCache(SharedPreferences prefs) {
+    final raw = prefs.getString('che.local.snapshot');
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      _localSnapshotCache = {
+        'team': [
+          for (final e in (decoded['team'] as List? ?? const []))
+            if (e is Map) Map<String, dynamic>.from(e),
+        ],
+        'team_tasks': [
+          for (final e in (decoded['team_tasks'] as List? ?? const []))
+            if (e is Map) Map<String, dynamic>.from(e),
+        ],
+        'projects': [
+          for (final e in (decoded['projects'] as List? ?? const []))
+            if (e is Map) Map<String, dynamic>.from(e),
+        ],
+        'vault_items': [
+          for (final e in (decoded['vault_items'] as List? ?? const []))
+            if (e is Map) Map<String, dynamic>.from(e),
+        ],
+        'jobs': [
+          for (final e in (decoded['jobs'] as List? ?? const []))
+            if (e is Map) Map<String, dynamic>.from(e),
+        ],
+        'meetings': [
+          for (final e in (decoded['meetings'] as List? ?? const []))
+            if (e is Map) Map<String, dynamic>.from(e),
+        ],
+      };
+    } catch (_) {}
+  }
+
+  Map<String, dynamic> _localSnapshot() => _localSnapshotCache;
 
   Future<void> _loadExplainLevel() async {
     try {
