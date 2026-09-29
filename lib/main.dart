@@ -576,6 +576,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
           registry: _skillPlugins,
           onAskCheToBuild: () => _runPluginPrompt('Build me a plugin that '),
           onRunPrompt: _runPluginPrompt,
+          onOpenLearning: _openPersonalSources,
           webAppBuilder: (context, {String? html, String? url}) =>
               ChePluginWebApp(html: html, url: url, onPrompt: _runPluginPrompt),
           ),
