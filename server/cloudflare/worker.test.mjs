@@ -13,7 +13,8 @@ const code = readFileSync(new URL('./worker.js', import.meta.url), 'utf8')
   .replace("from './media.js'", `from '${new URL('./media.js', import.meta.url).href}'`)
   .replace("from './ai_router.js'", `from '${new URL('./ai_router.js', import.meta.url).href}'`)
   .replace("from './stripe_store.js'", `from '${new URL('./stripe_store.js', import.meta.url).href}'`)
-  .replace("from './pipeline.js'", `from '${new URL('./pipeline.js', import.meta.url).href}'`);
+  .replace("from './pipeline.js'", `from '${new URL('./pipeline.js', import.meta.url).href}'`)
+  .replace("from './nightly.js'", `from '${new URL('./nightly.js', import.meta.url).href}'`);
 const { default: worker, CheState } = await import(
   `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
 );

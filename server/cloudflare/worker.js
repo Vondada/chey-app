@@ -21,6 +21,7 @@ import { approveProposal, proposeProduct, rejectProposal, salesSummary, storeSta
 import {
   addLead, approveProposal as approveDealProposal, buildBrief, checkPaid, createPaymentLink, draftProposal, findDeal, markStage, pipelineSummary,
 } from './pipeline.js';
+import { nightlyContext, runNightlyReview } from './nightly.js';
 
 const FAST_MODEL = '@cf/meta/llama-3.2-3b-instruct';
 const STRONG_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
@@ -1900,6 +1901,16 @@ export class CheState extends DurableObject {
         return json(rest, status);
       }
 
+      // ─── Nightly review: CHE rereads the day and keeps honest notes ───
+      if (path === '/api/nightly' && request.method === 'GET') {
+        return json({ reviews: data.nightly_reviews || [], last_run: data.last_nightly_at || null });
+      }
+      if (path === '/api/nightly/run' && request.method === 'POST') {
+        const { status, ...rest } = await runNightlyReview(this.env, this.ctx.storage, data, this.env.CHE_STRONG_MODEL || STRONG_MODEL);
+        await this.ctx.storage.put('che', data);
+        return json(rest, status);
+      }
+
       // ─── Client Pipeline: owner approves every step touching people or money ───
       if (path === '/api/pipeline' && request.method === 'GET') {
         return json(pipelineSummary(data));
@@ -3026,6 +3037,7 @@ export class CheState extends DurableObject {
                 ? `Client identity/personality guidance: ${String(body.client_identity_profile).slice(0, 7000)}`
                 : '',
               `Owner memories: ${JSON.stringify(data.memories).slice(0, 5000)}`,
+              nightlyContext(data),
               /\b(?:change|update|improve|fix|add|build|modify|upgrade)\b[\s\S]{0,40}\b(?:your(?:self| own)?|the app|che app|your app|your code|your screen)\b/i.test(message)
                 ? CHE_UPDATE_GUIDE
                 : '',
@@ -3090,6 +3102,23 @@ export class CheState extends DurableObject {
       const reason = String(error?.message || error?.name || 'unknown error').replace(/\s+/g, ' ').slice(0, 160);
       return json({ detail: `CHE cloud Agent is temporarily unavailable (${reason}).` }, 503);
     }
+  }
+
+  // Called by the nightly cron (see `scheduled` below).
+  async nightly() {
+    const data = await this.loadData();
+    const result = await runNightlyReview(this.env, this.ctx.storage, data, this.env.CHE_STRONG_MODEL || STRONG_MODEL);
+    const fresh = await this.loadData();
+    Object.assign(fresh, {
+      nightly_reviews: data.nightly_reviews,
+      learned_knowledge: data.learned_knowledge,
+      last_nightly_at: data.last_nightly_at,
+    });
+    await this.ctx.storage.put('che', fresh);
+    // Keep the Office working through the night on anything still queued.
+    await this.scheduleWork();
+    console.log('CHE nightly review:', result.status, result.detail || (result.review ? 'saved' : ''));
+    return { status: result.status };
   }
 
   async alarm() {
@@ -3186,6 +3215,9 @@ export class CheState extends DurableObject {
 }
 
 export default {
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(env.CHE_STATE.getByName('owner').nightly());
+  },
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
     if (path === '/health') return json({ ok: true, agent: 'CHE cloud' });

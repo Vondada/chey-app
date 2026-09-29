@@ -27,6 +27,7 @@ import 'che_native_voice.dart';
 import 'che_account_bridge.dart';
 import 'che_realtime_voice.dart';
 import 'che_wake_word.dart';
+import 'che_wake_match.dart';
 import 'che_voice_state.dart';
 import 'che_voice_ui.dart';
 import 'che_app_portal.dart';

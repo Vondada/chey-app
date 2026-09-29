@@ -78,9 +78,9 @@ class CheWakeWordEngine {
       }
 
       final keywordBytes = base64Decode(keywordBase64);
-      final dir = Directory('\${Directory.systemTemp.path}/che_wake');
+      final dir = Directory('${Directory.systemTemp.path}/che_wake');
       if (!await dir.exists()) await dir.create(recursive: true);
-      final keywordFile = File('\${dir.path}/chay_ios.ppn');
+      final keywordFile = File('${dir.path}/chay_ios.ppn');
       await keywordFile.writeAsBytes(keywordBytes, flush: true);
 
       final current = _manager;

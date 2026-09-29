@@ -525,24 +525,42 @@ extension _CheHomeVoice on _CHEHomeState {
       if (_isSending) return;
 
       if (wakePhraseMode && cheSleeping) {
-        final wakeMatch = RegExp(
-          r'^(?:hey\s+)?(?:chay|chey|shay|chai|chee|chi|che|she|c\.?\s*h\.?\s*e\.?)[\s,.:;!?-]*',
-          caseSensitive: false,
-        ).firstMatch(words);
+        final afterWake = cheWakeRemainder(words);
+        if (afterWake == null) return;
 
-        if (wakeMatch == null) return;
-
-        final afterWake = words.substring(wakeMatch.end).trim();
-        await _beginRealtimeConversation(fromWake: true);
-
-        if (afterWake.isNotEmpty && _realtimeVoice?.connected == true) {
-          if (mounted) {
-            _set(() {
-              messages.add({'role': 'user', 'text': afterWake});
-            });
-            _scrollToBottom();
+        // Live (OpenAI Realtime) voice only when the server says it is set up.
+        if (integrations['openai_live_voice'] == true) {
+          await _beginRealtimeConversation(fromWake: true);
+          if (_realtimeVoice?.connected == true) {
+            if (afterWake.isNotEmpty) {
+              if (mounted) {
+                _set(() {
+                  messages.add({'role': 'user', 'text': afterWake});
+                });
+                _scrollToBottom();
+              }
+              await _realtimeVoice!.sendText(afterWake);
+            }
+            return;
           }
-          await _realtimeVoice!.sendText(afterWake);
+        }
+
+        // Standard wake: CHE is awake, answers out loud, and handles any
+        // command said in the same breath ("Chay, what's the weather?").
+        HapticFeedback.mediumImpact();
+        if (!mounted) return;
+        _set(() {
+          cheSleeping = false;
+          openConversation = true;
+        });
+        if (afterWake.isEmpty) {
+          await speakText('Yeah, sir?');
+        } else {
+          _set(() {
+            controller.text = afterWake;
+            isListening = false;
+          });
+          await sendMessage(fromVoice: true);
         }
         return;
       }
@@ -563,15 +581,7 @@ extension _CheHomeVoice on _CHEHomeState {
       }
 
       // If the owner still says the wake name while already awake, strip it.
-      words = words
-          .replaceFirst(
-            RegExp(
-              r'^(?:hey\s+)?(?:chay|chey|shay|chai|chee|chi|che|she|c\.?\s*h\.?\s*e\.?)[\s,.:;!?-]*',
-              caseSensitive: false,
-            ),
-            '',
-          )
-          .trim();
+      words = cheWakeRemainder(words) ?? words;
 
       if (words.isEmpty) {
         await speakText('Yeah, sir?');
