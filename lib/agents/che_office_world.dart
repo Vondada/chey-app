@@ -271,12 +271,17 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
         ),
         padding: const EdgeInsets.all(14),
         alignment: Alignment.topLeft,
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
+        child: Row(children: [
           Icon(room.icon, color: room.color, size: 22),
           const SizedBox(width: 8),
-          Text(room.label, style: CheType.label.copyWith(color: room.color, fontSize: 18)),
-          const SizedBox(width: 8),
-          Text('$here', style: CheType.caption),
+          Flexible(
+            child: Text(
+              '${room.label} · $here',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: CheType.label.copyWith(color: room.color, fontSize: 18),
+            ),
+          ),
         ]),
       ),
     );
@@ -352,9 +357,15 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
                   ),
                   child: CheMiniPerson(agent: agent, size: 54),
                 ),
-                Text(agent.name, style: CheType.caption.copyWith(color: CheColors.text, fontWeight: FontWeight.w600)),
+                Text(agent.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: CheType.caption.copyWith(color: CheColors.text, fontWeight: FontWeight.w600)),
                 if (profile != null && profile.activity != 'idle')
-                  Text(cheActivityLabel(profile.activity), style: CheType.caption.copyWith(fontSize: 10)),
+                  Text(cheActivityLabel(profile.activity),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: CheType.caption.copyWith(fontSize: 10)),
               ]),
             ),
           ),
