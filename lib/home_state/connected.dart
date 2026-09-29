@@ -7,10 +7,24 @@ part of '../main.dart';
 extension _CheHomeConnected on _CHEHomeState {
   static const String _lastSeenKey = 'che.home.lastSeenAt';
   static const String _explainKey = 'che.explainLevel';
+  static const String _homeBaseUrlKey = 'che.homeBaseUrl';
 
   Future<Map<String, dynamic>?> _getAgentJson(String path) async {
     final cloud = await _getCloudAgentJson(path);
     if (cloud != null) return cloud;
+
+    if (_homeBaseUrl.isNotEmpty) {
+      try {
+        final response = await http
+            .get(Uri.parse('$_homeBaseUrl$path'), headers: _authHeaders)
+            .timeout(const Duration(seconds: 12));
+        if (response.statusCode == 200) {
+          final decoded = jsonDecode(response.body);
+          if (decoded is Map) return Map<String, dynamic>.from(decoded);
+        }
+      } catch (_) {}
+    }
+
     return _localAnswer(path);
   }
 
