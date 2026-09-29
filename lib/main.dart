@@ -319,6 +319,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   String? _deviceToken;
   String _agentBaseUrl = _defaultAgentBaseUrl;
+  String _homeBaseUrl = '';
 
   // Office agents run in the backend Agent Runtime; the app mirrors them.
   late final CheAgentRuntimeClient _agentRuntime = CheAgentRuntimeClient(
