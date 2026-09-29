@@ -472,7 +472,7 @@ extension _CheHomeSecurity on _CHEHomeState {
       };
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('che.local.snapshot', jsonEncode(localSnapshot));
-      _localSnapshotCache = localSnapshot;
+      _cachedSnapshot = localSnapshot;
 
       if (mounted) _set(() {});
     } catch (_) {
