@@ -24,6 +24,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:url_launcher/url_launcher.dart';
 import 'che_native_voice.dart';
+import 'che_stream_batcher.dart';
 import 'che_account_bridge.dart';
 import 'che_realtime_voice.dart';
 import 'che_wake_setup.dart';
