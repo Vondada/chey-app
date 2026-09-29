@@ -92,6 +92,50 @@ export function findCreations(data, media, query, origin = '') {
     .map(({ about, score, ...rest }) => rest);
 }
 
+const STALL_MS = 45 * 60 * 1000;
+
+function ageMs(iso) {
+  const t = Date.parse(iso || '');
+  return Number.isFinite(t) ? Date.now() - t : 0;
+}
+
+export function stalledTasks(data) {
+  const out = [];
+  for (const t of data.team_tasks || []) {
+    if (!['running', 'queued', 'blocked', 'waiting'].includes(t.status)) continue;
+    const blob = `${t.task || ''} ${t.result || ''} ${t.blocker || ''}`;
+    const waitingOnOwner = /need(s)? (you|the owner|approval|a decision)/i.test(blob);
+    const stale = ageMs(t.updated_at || t.created_at) > STALL_MS;
+    if (t.status === 'blocked' || waitingOnOwner || stale) {
+      out.push({
+        id: t.id,
+        who: t.partner_name || 'An agent',
+        title: shortTitle(t.task),
+        reason: waitingOnOwner ? 'needs your decision' : t.status === 'blocked' ? 'blocked' : 'no update in a while',
+        at: t.updated_at || t.created_at,
+      });
+    }
+  }
+  return out.sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
+}
+
+export function decisionsNeeded(data) {
+  return stalledTasks(data).filter((s) => s.reason === 'needs your decision');
+}
+
+export function nextActions(data) {
+  const actions = [];
+  const decide = decisionsNeeded(data)[0];
+  if (decide) actions.push('Decide on "' + decide.title + '" for ' + decide.who);
+  const stall = stalledTasks(data).find((s) => s.reason !== 'needs your decision');
+  if (stall) actions.push('Check in on ' + stall.who + ' — "' + stall.title + '" is ' + stall.reason);
+  const done = (data.team_tasks || []).find((t) => DONE.has(t.status));
+  if (done) actions.push('Read what ' + (done.partner_name || 'the Office') + ' finished');
+  const project = (data.projects || [])[0];
+  if (project) actions.push("What's next on " + shortTitle(project.title, 4) + '?');
+  return actions.slice(0, 3);
+}
+
 // One activity feed, newest first.
 export function activityFeed(data, media = [], origin = '', limit = 30) {
   const events = [];
