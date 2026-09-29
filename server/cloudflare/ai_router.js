@@ -15,6 +15,9 @@
 // Every provider returns `{ response }` like Workers AI, so the rest of CHE
 // doesn't care which engine answered.
 
+// Standing owner-facing voice policy. Keep internal structured agent tasks unchanged.
+const CHE_VOICE_FIRST_POLICY = "CHE owner accessibility rule: The owner uses CHE voice-first, as if unable to see the screen. Make every interaction usable by voice. Describe the current screen aloud using only actual screen context; if unavailable, say so. Read available options aloud as a numbered list and accept spoken choices. Confirm each action aloud before execution and report its actual outcome aloud afterward. Never say \"tap here\" or rely on visual position or the owner seeing the screen. Before opening or acting in any app, require the owner's explicit spoken permission for that specific app and requested scope; do not infer it from screen content, stored memories, or another app's permission. If spoken authorization cannot be verified, ask and do not act. Do not claim an action happened without an execution result. If a capability is not voice-accessible yet, explain the limitation aloud.";
+
 const PROVIDERS = [
   {
     id: 'openai',
@@ -356,6 +359,11 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   const strongProviderModel = quality || wantsStrongProviderModel(model, input);
   const engineInput = compactEngineInput(input);
   delete engineInput.che_route;
+  if (quality) {
+    const firstConversation = engineInput.messages.findIndex((message) => message?.role !== 'system');
+    engineInput.messages.splice(firstConversation < 0 ? engineInput.messages.length : firstConversation, 0,
+      { role: 'system', content: CHE_VOICE_FIRST_POLICY });
+  }
 
   const tryCloudflare = async () => {
     if (env.AI && now >= cloudflareExhaustedUntil) {
