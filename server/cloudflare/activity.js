@@ -92,36 +92,87 @@ export function findCreations(data, media, query, origin = '') {
     .map(({ about, score, ...rest }) => rest);
 }
 
+const STALL_MS = 45 * 60 * 1000;
+
+function ageMs(iso) {
+  const t = Date.parse(iso || '');
+  return Number.isFinite(t) ? Date.now() - t : 0;
+}
+
+export function stalledTasks(data) {
+  const out = [];
+  for (const t of data.team_tasks || []) {
+    if (!['running', 'queued', 'blocked', 'waiting'].includes(t.status)) continue;
+    const blob = `${t.task || ''} ${t.result || ''} ${t.blocker || ''}`;
+    const waitingOnOwner = /need(s)? (you|the owner|approval|a decision)/i.test(blob);
+    const stale = ageMs(t.updated_at || t.created_at) > STALL_MS;
+    if (t.status === 'blocked' || waitingOnOwner || stale) {
+      out.push({
+        id: t.id,
+        who: t.partner_name || 'An agent',
+        title: shortTitle(t.task),
+        reason: waitingOnOwner ? 'needs your decision' : t.status === 'blocked' ? 'blocked' : 'no update in a while',
+        at: t.updated_at || t.created_at,
+      });
+    }
+  }
+  return out.sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
+}
+
+export function decisionsNeeded(data) {
+  return stalledTasks(data).filter((s) => s.reason === 'needs your decision');
+}
+
+export function nextActions(data) {
+  const actions = [];
+  const decide = decisionsNeeded(data)[0];
+  if (decide) actions.push('Decide on "' + decide.title + '" for ' + decide.who);
+  const stall = stalledTasks(data).find((s) => s.reason !== 'needs your decision');
+  if (stall) actions.push('Check in on ' + stall.who + ' — "' + stall.title + '" is ' + stall.reason);
+  const done = (data.team_tasks || []).find((t) => DONE.has(t.status));
+  if (done) actions.push('Read what ' + (done.partner_name || 'the Office') + ' finished');
+  const project = (data.projects || [])[0];
+  if (project) actions.push("What's next on " + shortTitle(project.title, 4) + '?');
+  return actions.slice(0, 3);
+}
+
 // One activity feed, newest first.
 export function activityFeed(data, media = [], origin = '', limit = 30) {
   const events = [];
+  for (const s of stalledTasks(data)) {
+    events.push({ at: s.at, who: s.who, kind: 'stalled', id: s.id, line: s.who + ' is stalled on "' + s.title + '" (' + s.reason + ').' });
+  }
   for (const t of data.team_tasks || []) {
     const who = t.partner_name || 'An agent';
     const title = shortTitle(t.task);
-    const line = DONE.has(t.status) ? `${who} finished “${title}”.`
-      : t.status === 'running' ? `${who} is working on “${title}”.`
-        : t.status === 'queued' ? `${who} has “${title}” next.`
-          : t.status === 'failed' ? `${who} couldn’t finish “${title}”.` : '';
+    let line = '';
+    if (DONE.has(t.status)) line = who + ' finished "' + title + '".';
+    else if (t.status === 'running') line = who + ' is working on "' + title + '".';
+    else if (t.status === 'queued') line = who + ' has "' + title + '" next.';
+    else if (t.status === 'failed') line = who + ' could not finish "' + title + '".';
     if (line) events.push({ at: t.updated_at || t.created_at, who, line, kind: 'agent_task', id: t.id });
   }
   for (const m of data.meetings || []) {
-    const done = Boolean(m.final_plan);
     events.push({
       at: m.updated_at || m.created_at, who: 'War Room', kind: 'meeting', id: m.id,
-      line: done ? `The War Room made a plan for “${shortTitle(m.objective)}”.` : `The War Room is meeting on “${shortTitle(m.objective)}”.`,
+      line: m.final_plan
+        ? 'The War Room made a plan for "' + shortTitle(m.objective) + '".'
+        : 'The War Room is meeting on "' + shortTitle(m.objective) + '".',
     });
   }
   for (const m of media) {
-    events.push({ at: m.created_at, who: 'Art Studio', kind: 'image', id: m.id, line: `Art Studio made “${shortTitle(m.title || m.prompt)}”.` });
+    events.push({ at: m.created_at, who: 'Art Studio', kind: 'image', id: m.id, line: 'Art Studio made "' + shortTitle(m.title || m.prompt) + '".' });
   }
   for (const j of data.jobs || []) {
     const title = shortTitle(j.title || j.prompt);
-    const line = DONE.has(j.status) ? `CHE finished “${title}”.` : ['queued', 'running'].includes(j.status) ? `CHE is working on “${title}”.`
-      : j.status === 'failed' ? `CHE couldn’t finish “${title}”.` : '';
+    let line = '';
+    if (DONE.has(j.status)) line = 'CHE finished "' + title + '".';
+    else if (j.status === 'queued' || j.status === 'running') line = 'CHE is working on "' + title + '".';
+    else if (j.status === 'failed') line = 'CHE could not finish "' + title + '".';
     if (line) events.push({ at: j.updated_at || j.created_at, who: 'CHE', kind: 'job', id: j.id, line });
   }
   for (const p of data.projects || []) {
-    events.push({ at: p.created_at, who: 'CHE', kind: 'project', id: p.id, line: `CHE started the project “${shortTitle(p.title)}”.` });
+    events.push({ at: p.created_at, who: 'CHE', kind: 'project', id: p.id, line: 'CHE started the project "' + shortTitle(p.title) + '".' });
   }
   return events.filter((e) => e.at).sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, limit);
 }
@@ -147,34 +198,31 @@ function partOfDay(hour) {
 export function greeting(data, media = [], { hour = 12, since = '' } = {}) {
   const h = Number.isFinite(Number(hour)) ? Math.max(0, Math.min(23, Number(hour))) : 12;
   const hello = partOfDay(h);
+  const decide = decisionsNeeded(data)[0];
+  if (decide) return { line: hello + '! ' + decide.who + ' needs you on "' + decide.title + '".', kind: 'decision' };
+  const stall = stalledTasks(data)[0];
+  if (stall) return { line: hello + '! ' + stall.who + ' is stalled on "' + stall.title + '".', kind: 'stalled' };
   const tasks = data.team_tasks || [];
   const finished = tasks.filter((t) => DONE.has(t.status) && (!since || String(t.updated_at || '') > since));
   if (finished.length) {
     const t = finished[0];
-    const more = finished.length > 1 ? ` and ${finished.length - 1} more thing${finished.length > 2 ? 's' : ''}` : '';
-    return { line: `${hello}! ${t.partner_name || 'The Office'} finished “${shortTitle(t.task, 5)}”${more}. Want to hear it?`, kind: 'finished' };
+    const more = finished.length > 1 ? ' and ' + (finished.length - 1) + ' more' : '';
+    return { line: hello + '! ' + (t.partner_name || 'The Office') + ' finished "' + shortTitle(t.task, 5) + '"' + more + '. Want to hear it?', kind: 'finished' };
   }
   const running = tasks.find((t) => t.status === 'running' || t.status === 'queued');
-  if (running) {
-    return { line: `${hello}! ${running.partner_name || 'The Office'} is on “${shortTitle(running.task, 5)}”. ${timeSuggestion(h)}`, kind: 'working' };
-  }
+  if (running) return { line: hello + '! ' + (running.partner_name || 'The Office') + ' is on "' + shortTitle(running.task, 5) + '". ' + timeSuggestion(h), kind: 'working' };
   const plan = (data.meetings || []).find((m) => m.final_plan && (!since || String(m.updated_at || '') > since));
-  if (plan) return { line: `${hello}! The War Room has a plan for “${shortTitle(plan.objective, 5)}”. Want it?`, kind: 'plan' };
-  return { line: `${hello}! ${timeSuggestion(h)}`, kind: 'suggestion' };
+  if (plan) return { line: hello + '! The War Room has a plan for "' + shortTitle(plan.objective, 5) + '". Want it?', kind: 'plan' };
+  return { line: hello + '! ' + timeSuggestion(h), kind: 'suggestion' };
 }
 
-// Three smart suggestions: real follow-ups first, then time of day.
 export function suggestions(data, { hour = 12 } = {}) {
-  const out = [];
-  const tasks = data.team_tasks || [];
-  const done = tasks.find((t) => DONE.has(t.status));
-  if (done) out.push(`Read me what ${done.partner_name || 'the Office'} finished`);
-  const project = (data.projects || [])[0];
-  if (project) out.push(`What's next on ${shortTitle(project.title, 4)}?`);
-  if ((data.team || []).some((a) => !a.retired)) out.push('What is the Office doing?');
-  const h = Number(hour);
-  const fill = h < 11 ? ['Plan my day', 'What’s the weather today?', 'Play some music']
-    : h < 18 ? ['Put the team on my top task', 'Make me an image', 'Research something for me']
+  const out = nextActions(data);
+  if ((data.team || []).some((a) => !a.retired) && !out.some((s) => /office/i.test(s))) out.push('What is the Office doing?');
+  const fill = Number(hour) < 11
+    ? ['Plan my day', 'What is the weather today?', 'Play some music']
+    : Number(hour) < 18
+      ? ['Put the team on my top task', 'Make me an image', 'Research something for me']
       : ['Watch something in the Theater', 'Recap my day', 'Play some music'];
   for (const f of fill) if (out.length < 3 && !out.includes(f)) out.push(f);
   return out.slice(0, 3);
