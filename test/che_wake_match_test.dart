@@ -1,0 +1,37 @@
+import 'package:chey/che_ui/che_wake.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  test('wake name matches Chay, CHE and Hey Chay; unrelated speech does not', () {
+    expect(matchWake('Chay'), isTrue);
+    expect(matchWake('CHE'), isTrue);
+    expect(matchWake('Hey Chay'), isTrue);
+    expect(matchWake('hey chay, you there?'), isTrue);
+    expect(matchWake('Check the weather'), isFalse);
+    expect(matchWake('Order a pizza'), isFalse);
+    expect(matchWake(''), isFalse);
+  });
+
+  test('the command after the wake name is kept', () {
+    expect(commandAfterWake('Hey Chay, what is Knox doing?'), 'what is Knox doing?');
+    expect(commandAfterWake('Chay'), '');
+    expect(commandAfterWake('what is Knox doing?'), isNull);
+  });
+
+  test('all six Office phrases still match after the wake name', () {
+    expect(matchOfficePhrase("Hey Chay, what's happening in the Office?")?.type, CheOfficePhrase.happening);
+    expect(matchOfficePhrase('Chay what did they build today')?.type, CheOfficePhrase.builtToday);
+    expect(matchOfficePhrase('CHE, how much did we make today?')?.type, CheOfficePhrase.earnedToday);
+    expect(matchOfficePhrase('Chay, read this Office to me')?.type, CheOfficePhrase.readOffice);
+    final knox = matchOfficePhrase('Hey Chay, what is Knox doing?');
+    expect(knox?.type, CheOfficePhrase.agentStatus);
+    expect(knox?.agentId, 'knox');
+    expect(matchOfficePhrase('Chay, stand down')?.type, CheOfficePhrase.standDown);
+  });
+
+  test('Office phrases also match without the wake name; others do not', () {
+    expect(matchOfficePhrase('Read the Office to me')?.type, CheOfficePhrase.readOffice);
+    expect(matchOfficePhrase('What is Bob doing?'), isNull);
+    expect(matchOfficePhrase('Tell me a joke'), isNull);
+  });
+}

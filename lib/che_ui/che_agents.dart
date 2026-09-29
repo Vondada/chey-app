@@ -116,8 +116,43 @@ class CheMiniPerson extends StatefulWidget {
   State<CheMiniPerson> createState() => _CheMiniPersonState();
 }
 
+/// Statuses that mean an agent is actually doing work right now. Only these
+/// animate; idle, waiting (up next), done and offline desks are static.
+bool cheAgentIsMoving(CheAgentStatus status) => const {
+      CheAgentStatus.researching,
+      CheAgentStatus.building,
+      CheAgentStatus.analyzing,
+      CheAgentStatus.meeting,
+      CheAgentStatus.reviewing,
+      CheAgentStatus.talking,
+    }.contains(status);
+
 class _CheMiniPersonState extends State<CheMiniPerson> with SingleTickerProviderStateMixin {
-  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
+  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(seconds: 2));
+
+  @override
+  void initState() {
+    super.initState();
+    _syncMotion();
+  }
+
+  @override
+  void didUpdateWidget(covariant CheMiniPerson oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.agent.status != widget.agent.status) _syncMotion();
+  }
+
+  // Light motion only while working; a static pose otherwise, so an idle
+  // Office costs no frames.
+  void _syncMotion() {
+    if (cheAgentIsMoving(widget.agent.status)) {
+      if (!_c.isAnimating) _c.repeat();
+    } else {
+      _c.stop();
+      _c.value = 0.25;
+    }
+  }
+
   @override
   void dispose() {
     _c.dispose();

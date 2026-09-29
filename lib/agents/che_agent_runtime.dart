@@ -256,6 +256,7 @@ class CheOfficeToday {
     required this.refundsCents,
     required this.netCents,
     this.desks = const [],
+    this.announcements = const [],
   });
   final List<Map<String, dynamic>> started;
   final List<Map<String, dynamic>> shipped;
@@ -266,6 +267,9 @@ class CheOfficeToday {
   final int refundsCents;
   final int netCents;
   final List<CheOfficeDesk> desks;
+
+  /// New blocker lines CHE says unprompted (server-deduped, spoken once).
+  final List<String> announcements;
 
   int get startedToday => started.length;
   int get builtToday => shipped.length;
@@ -292,6 +296,7 @@ class CheOfficeToday {
       refundsCents: (stripe['refunds_cents'] as num?)?.toInt() ?? 0,
       netCents: (stripe['net_cents'] as num?)?.toInt() ?? 0,
       desks: [for (final d in rows('agents')) CheOfficeDesk.fromJson(d)],
+      announcements: [for (final a in (j['che_announcements'] as List? ?? const [])) if (a is String && a.isNotEmpty) a],
     );
   }
 }

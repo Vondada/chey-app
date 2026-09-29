@@ -13,6 +13,7 @@ import '../che_ui/che_agents.dart';
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
 import 'che_agent_runtime.dart';
+import 'che_office_store.dart';
 import 'che_war_room_screen.dart';
 
 /// Short, glanceable version of an agent's task or a meeting objective: the
@@ -55,6 +56,20 @@ class CheOfficeFloorScreen extends StatefulWidget {
 class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
   late final CheAgentRuntimeController _runtime = CheAgentRuntimeController(widget.client)..addListener(_changed);
 
+  /// One store for the floor: desks update individually, the plan only
+  /// rebuilds when desks are added or removed.
+  final CheOfficeStore _store = CheOfficeStore();
+  CheOfficeToday? _lastBoard;
+  Future<void> _speech = Future<void>.value();
+
+  // Built once and reused, so a runtime refresh never rebuilds the whole
+  // floor; each desk listens to its own notifier.
+  late final Widget _floorPlan = CheOfficeFloorPlan(
+    store: _store,
+    onTapDesk: _openDesk,
+    onWarRoom: _warRoom,
+  );
+
   @override
   void initState() {
     super.initState();
@@ -65,11 +80,49 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
   void dispose() {
     _runtime.removeListener(_changed);
     _runtime.dispose();
+    _store.dispose();
     super.dispose();
   }
 
   void _changed() {
+    final r = _runtime;
+    _store.setRoster(r.che, [for (final p in r.agents) p.agent]);
+    _store.setMeetings(r.meetings);
+    if (!identical(r.today, _lastBoard)) {
+      _lastBoard = r.today;
+      _store.setBoard(r.today);
+      // CHE says new blockers without being asked (deduped on the server).
+      for (final line in _store.takeAnnouncements()) {
+        _speech = _speech.then((_) => _announce(line));
+        _snack(line);
+      }
+    }
     if (mounted) setState(() {});
+  }
+
+  Future<void> _announce(String line) async {
+    if (!mounted) return;
+    try {
+      await _speak(line);
+    } catch (_) {
+      // Speech failing must not stop the next announcement.
+    }
+  }
+
+  void _openDesk(String id) {
+    final view = _store.desk(id)?.value;
+    if (view != null) unawaited(_openAgent(view.agent));
+  }
+
+  /// The War Room on the floor plan: opens the live meeting if there is one,
+  /// otherwise convenes a new one.
+  void _warRoom() {
+    final live = _runtime.meetings.where((m) => m.live).toList();
+    if (live.isNotEmpty) {
+      unawaited(_openMeeting(live.first.id));
+    } else {
+      unawaited(_convene());
+    }
   }
 
   void _snack(String text) {
@@ -238,16 +291,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
         const Padding(padding: EdgeInsets.all(CheSpace.xxl), child: Center(child: CircularProgressIndicator()))
       else ...[
         if (r.error != null) _Banner(text: r.error!, color: CheColors.warning),
-        CheOfficeFloor(
-          che: r.che,
-          agents: [for (final p in r.agents) p.agent],
-          deskNotes: {
-            for (final d in r.today?.desks ?? const <CheOfficeDesk>[])
-              if (d.state != 'idle') d.name: d.status,
-          },
-          onTapAgent: _openAgent,
-          onConvene: _convene,
-        ),
+        _floorPlan,
         const SizedBox(height: CheSpace.sm),
         if (r.che.task != null)
           Row(children: [
@@ -903,6 +947,248 @@ class _TaskCard extends StatelessWidget {
           ],
           if (task.error.isNotEmpty) Text(task.error, style: CheType.caption.copyWith(color: CheColors.danger)),
         ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Floor plan: one canvas. Labeled agent desks in a grid (the open floor),
+// the War Room as a room on the right, CHE's desk front and center.
+// ─────────────────────────────────────────────────────────────────────────
+
+const Color _warRoomColor = Color(0xFFE8B04A);
+
+class CheOfficeFloorPlan extends StatelessWidget {
+  const CheOfficeFloorPlan({super.key, required this.store, required this.onTapDesk, required this.onWarRoom});
+
+  final CheOfficeStore store;
+  final void Function(String id) onTapDesk;
+  final VoidCallback onWarRoom;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(CheRadius.xl),
+      child: CheRoomBackdrop(
+        room: CheRoom.office,
+        scrim: 0.45,
+        child: Padding(
+          padding: const EdgeInsets.all(CheSpace.md),
+          // Rebuilds only when desks are added or removed; status changes
+          // reach each desk through its own notifier.
+          child: ValueListenableBuilder<List<String>>(
+            valueListenable: store.deskOrder,
+            builder: (context, _, _) {
+              final ids = store.agentDeskIds;
+              final che = store.desk(CheOfficeStore.cheId);
+              return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Row(children: [
+                  Expanded(
+                    child: Semantics(
+                      header: true,
+                      child: Text('CHE OFFICE · FLOOR PLAN',
+                          maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.overline.copyWith(color: Colors.white)),
+                    ),
+                  ),
+                  ValueListenableBuilder<int>(
+                    valueListenable: store.working,
+                    builder: (context, n, _) =>
+                        Text('$n working', style: CheType.caption.copyWith(color: Colors.white70)),
+                  ),
+                ]),
+                const SizedBox(height: CheSpace.sm),
+                Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Expanded(
+                    flex: 3,
+                    child: _OpenFloor(store: store, ids: ids, onTapDesk: onTapDesk),
+                  ),
+                  const SizedBox(width: CheSpace.sm),
+                  Expanded(
+                    flex: 2,
+                    child: _WarRoomOnPlan(warRoom: store.warRoom, onTap: onWarRoom),
+                  ),
+                ]),
+                const SizedBox(height: CheSpace.md),
+                Text('FRONT OF THE OFFICE',
+                    textAlign: TextAlign.center, style: CheType.overline.copyWith(color: Colors.white70)),
+                const SizedBox(height: CheSpace.xs),
+                if (che != null)
+                  Center(
+                    child: SizedBox(
+                      width: 150,
+                      height: 160,
+                      child: _PlanDesk(view: che, big: true, onTap: () => onTapDesk(CheOfficeStore.cheId)),
+                    ),
+                  ),
+              ]);
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OpenFloor extends StatelessWidget {
+  const _OpenFloor({required this.store, required this.ids, required this.onTapDesk});
+  final CheOfficeStore store;
+  final List<String> ids;
+  final void Function(String id) onTapDesk;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Text('OPEN FLOOR', style: CheType.overline.copyWith(color: Colors.white70)),
+      const SizedBox(height: CheSpace.xs),
+      if (ids.isEmpty)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: CheSpace.lg),
+          child: Text('No agents yet. Ask CHE to build a team for a project.',
+              style: CheType.bodyDim.copyWith(color: Colors.white70)),
+        )
+      else
+        LayoutBuilder(
+          builder: (context, box) => GridView.count(
+            crossAxisCount: box.maxWidth >= 330 ? 3 : 2,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            padding: EdgeInsets.zero,
+            mainAxisSpacing: CheSpace.sm,
+            crossAxisSpacing: CheSpace.sm,
+            childAspectRatio: 0.66,
+            children: [
+              for (final id in ids)
+                if (store.desk(id) case final view?)
+                  _PlanDesk(key: ValueKey(id), view: view, onTap: () => onTapDesk(id)),
+            ],
+          ),
+        ),
+    ]);
+  }
+}
+
+/// One labeled desk. Listens only to its own notifier, inside its own
+/// RepaintBoundary, so another desk's status change never repaints it.
+class _PlanDesk extends StatelessWidget {
+  const _PlanDesk({super.key, required this.view, required this.onTap, this.big = false});
+  final ValueNotifier<CheDeskView> view;
+  final VoidCallback onTap;
+  final bool big;
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: ValueListenableBuilder<CheDeskView>(
+        valueListenable: view,
+        builder: (context, d, _) {
+          final agent = d.agent;
+          final line = d.line;
+          final shown = line == agent.task ? cheShortSummary(line, max: 32) : line;
+          final blocked = line.startsWith('Blocked');
+          return Semantics(
+            button: true,
+            label: '${agent.name}${agent.role.isNotEmpty ? ', ${agent.role}' : ''}. $line. '
+                '${agent.isChe ? 'CHE\'s desk, front and center. Talk to CHE.' : 'Open ${agent.name}\'s desk.'}',
+            excludeSemantics: true,
+            child: GestureDetector(
+              onTap: () {
+                HapticFeedback.selectionClick();
+                onTap();
+              },
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(4, 6, 4, 6),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(CheRadius.md),
+                  border: Border.all(
+                    color: blocked ? CheColors.warning : agent.color.withValues(alpha: big ? 0.9 : 0.45),
+                  ),
+                  boxShadow: big ? [BoxShadow(color: agent.color.withValues(alpha: 0.4), blurRadius: 18)] : null,
+                ),
+                child: Column(children: [
+                  // The figure shrinks to the space left, so labels never overflow.
+                  Expanded(child: FittedBox(child: CheMiniPerson(agent: agent, size: big ? 64 : 48, showDesk: true))),
+                  const SizedBox(height: 2),
+                  // Full name, never truncated: it scales down instead.
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(agent.name, maxLines: 1, style: CheType.label.copyWith(color: Colors.white)),
+                  ),
+                  if (agent.role.isNotEmpty)
+                    Text(agent.role,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: CheType.caption.copyWith(color: Colors.white70, fontSize: 10)),
+                  Text(shown,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: CheType.caption.copyWith(
+                        color: blocked ? CheColors.warning : agent.color,
+                        fontSize: 10.5,
+                      )),
+                ]),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// The War Room as a room on the floor plan (right side).
+class _WarRoomOnPlan extends StatelessWidget {
+  const _WarRoomOnPlan({required this.warRoom, required this.onTap});
+  final ValueNotifier<({int live, int total})> warRoom;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: ValueListenableBuilder<({int live, int total})>(
+        valueListenable: warRoom,
+        builder: (context, w, _) {
+          final status = w.live > 0
+              ? '${w.live} ${w.live == 1 ? 'meeting' : 'meetings'} in session'
+              : w.total > 0
+                  ? 'Empty now. ${w.total} past ${w.total == 1 ? 'meeting' : 'meetings'}.'
+                  : 'Empty. Convene the team here.';
+          return Semantics(
+            button: true,
+            label: 'War Room. $status ${w.live > 0 ? 'Open the live meeting.' : 'Convene the War Room.'}',
+            excludeSemantics: true,
+            child: GestureDetector(
+              onTap: () {
+                HapticFeedback.selectionClick();
+                onTap();
+              },
+              child: Container(
+                constraints: const BoxConstraints(minHeight: 180),
+                padding: const EdgeInsets.all(CheSpace.sm),
+                decoration: BoxDecoration(
+                  color: _warRoomColor.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(CheRadius.md),
+                  border: Border.all(color: _warRoomColor.withValues(alpha: w.live > 0 ? 0.95 : 0.5), width: 1.5),
+                ),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Text('WAR ROOM', style: CheType.overline.copyWith(color: _warRoomColor)),
+                  const SizedBox(height: CheSpace.sm),
+                  const Icon(Icons.groups_rounded, size: 34, color: _warRoomColor),
+                  const SizedBox(height: CheSpace.sm),
+                  Text(status,
+                      textAlign: TextAlign.center,
+                      style: CheType.caption.copyWith(color: Colors.white.withValues(alpha: 0.85))),
+                  const SizedBox(height: CheSpace.sm),
+                  Text(w.live > 0 ? 'Open meeting' : 'Convene',
+                      style: CheType.label.copyWith(color: _warRoomColor)),
+                ]),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
