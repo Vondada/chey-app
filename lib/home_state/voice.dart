@@ -225,9 +225,11 @@ extension _CheHomeVoice on _CHEHomeState {
     }
   }
 
-  Future<void> speakText(String text) async {
+  /// Speaks [text]. With [record] false (the home greeting) nothing is added
+  /// to the conversation, so the voice-first home stays on screen.
+  Future<void> speakText(String text, {bool record = true}) async {
     if (text.trim().isEmpty) return;
-    if (mounted && (messages.isEmpty || messages.last['text'] != text)) {
+    if (record && mounted && (messages.isEmpty || messages.last['text'] != text)) {
       _set(() => messages.add({'role': 'assistant', 'text': text}));
     }
     if (_realtimeVoice?.connected == true) {

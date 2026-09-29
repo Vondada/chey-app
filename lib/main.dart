@@ -42,6 +42,7 @@ import 'music_studio_scene.dart';
 import 'create_gallery_scene.dart';
 import 'agents/che_agent_runtime.dart';
 import 'agents/che_office_floor_screen.dart';
+import 'home/che_activity_feed.dart';
 import 'agents/che_office_world.dart' show CheRoomVisitors;
 import 'home/che_live_steps.dart';
 import 'home/che_insights_room.dart';
@@ -73,6 +74,7 @@ import 'browser/che_browser.dart' show CheBrowserActions;
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
 
+part 'home_state/connected.dart';
 part 'home_state/home_ui.dart';
 part 'home_state/hub_rooms.dart';
 part 'home_state/memory.dart';
@@ -163,6 +165,11 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   bool _autonomy = true;
   List<Map<String, dynamic>> _actionApprovals = [];
   bool _approvalBusy = false;
+  // Connected world (lib/home_state/connected.dart).
+  String? _homeGreeting;
+  List<String> _homeSuggestions = const [];
+  bool _greetedThisLaunch = false;
+  String _explainLevel = 'simple';
   bool _usingSpeechFallback = false;
   Timer? _jobPollTimer;
   final Set<String> _notifiedJobs = {};
@@ -887,6 +894,9 @@ OWNER AGENCY
     initializeVoice();
     _loadSecuritySession();
     _jobPollTimer = Timer.periodic(const Duration(seconds: 15), (_) => _loadAgentState(silent: true));
+    unawaited(_loadExplainLevel());
+    // CHE greets once, in one short line, with something useful.
+    Future<void>.delayed(const Duration(milliseconds: 2600), () => _loadHomeGreeting(speak: true));
     _proactiveTimer = Timer.periodic(
       const Duration(minutes: 10),
       (_) => _checkProactiveSuggestion(),
@@ -921,6 +931,7 @@ OWNER AGENCY
 
     if (state == AppLifecycleState.resumed) {
       unawaited(_loadAgentState(silent: true));
+      unawaited(_loadHomeGreeting());
       unawaited(_consumeWakeRequest(resumeIfAwake: true));
       if (!kIsWeb &&
           defaultTargetPlatform == TargetPlatform.iOS &&
@@ -1206,15 +1217,19 @@ OWNER AGENCY
                   child: messages.isEmpty
                       ? CheHomeEmptyState(
                           key: const ValueKey('empty'),
-                          proactive: proactive,
+                          proactive: _homeGreeting ?? proactive,
                           actions: [
+                            ..._homeSuggestions,
                             ..._skillPlugins.quickActions().take(3),
-                            'Plan my week',
-                            'Analyze the markets today',
-                            'Convene the team on my top project',
-                            'Build me a plugin',
+                            'Plan my day',
+                            'What is the Office doing?',
+                            'Make me an image',
                           ],
                           onPick: _runPluginPrompt,
+                          onTalk: toggleListening,
+                          listening: _realtimeVoice?.connected == true || isListening,
+                          onReadAloud: () => speakText(_homeGreeting ?? proactive ?? 'I am here. Just tell me what you need.', record: false),
+                          onActivity: () => _openActivityFeed(),
                         )
                       : GestureDetector(
                           key: const ValueKey('chat'),

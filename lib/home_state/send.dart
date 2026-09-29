@@ -361,6 +361,11 @@ extension _CheHomeSend on _CHEHomeState {
       return;
     }
 
+    if (await _handleConnectedCommand(message)) {
+      controller.clear();
+      return;
+    }
+
     if (!await _ensurePaired()) return;
 
     if (_realtimeVoice?.connected == true) {

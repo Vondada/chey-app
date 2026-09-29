@@ -46,6 +46,7 @@ List<CheSection> cheDefaultSections({
   required WidgetBuilder create,
   required WidgetBuilder office,
   required WidgetBuilder apps,
+  WidgetBuilder? theater,
   WidgetBuilder? plugins,
 }) =>
     [
@@ -58,6 +59,8 @@ List<CheSection> cheDefaultSections({
       CheSection(room: CheRoom.art, id: 'create', title: 'Create', subtitle: 'Creator studio', icon: Icons.lightbulb_outline_rounded, hue: CheColors.create, builder: create),
       CheSection(room: CheRoom.office, id: 'office', title: 'Office', subtitle: 'AI coworkers', icon: Icons.groups_rounded, hue: CheColors.office, builder: office),
       CheSection(room: CheRoom.core, id: 'apps', title: 'Apps', subtitle: 'Connected apps', icon: Icons.apps_rounded, hue: CheColors.apps, builder: apps),
+      if (theater != null)
+        CheSection(room: CheRoom.studio, id: 'theater', title: 'Theater', subtitle: 'Watch together', icon: Icons.theaters_rounded, hue: CheColors.danger, builder: theater),
       if (plugins != null)
         CheSection(room: CheRoom.core, id: 'plugins', title: 'Plugins', subtitle: 'Add skills to CHE', icon: Icons.extension_rounded, hue: CheColors.accent, builder: plugins),
     ];

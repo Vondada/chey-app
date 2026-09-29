@@ -95,7 +95,8 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
   String _announcement = '';
   String? _focusedId;
 
-  Size get _world => Size(900 + 320.0 * (widget.level - 1), 640 + 200.0 * (widget.level - 1));
+  // Each upgrade visibly grows every room (and the furniture spreads out).
+  Size get _world => Size(1100 + 380.0 * (widget.level - 1), 800 + 240.0 * (widget.level - 1));
 
   List<_Room> get _rooms {
     final w = _world.width, h = _world.height;
@@ -151,7 +152,7 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
         _ack[id] = now;
         final words = p.assignmentTask.trim().split(RegExp(r'\s+'));
         final task = words.length <= 4 ? words.join(' ') : '${words.take(4).join(' ')}…';
-        _ackText[id] = 'Got it! $task';
+        _ackText[id] = '${_ackLine(p.agent)} $task';
         _announcement = '${p.agent.name} heard you and is on it: ${p.assignmentTask}';
         HapticFeedback.mediumImpact();
       }
@@ -296,22 +297,90 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
   Widget _props() {
     final office = _roomFor('office').rect;
     final lounge = _roomFor('lounge').rect;
+    final studio = _roomFor('studio').rect;
     final music = _roomFor('music').rect;
     final gallery = _roomFor('gallery').rect;
-    Widget prop(Rect r, Color c, {double radius = 10}) => Positioned.fromRect(
+    final theater = _roomFor('theater').rect;
+    Widget box(Rect r, Color c, {double radius = 10, Color? border}) => Positioned.fromRect(
           rect: r,
-          child: DecoratedBox(decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(radius))),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: c,
+              borderRadius: BorderRadius.circular(radius),
+              border: border == null ? null : Border.all(color: border, width: 2),
+            ),
+          ),
         );
-    return Stack(children: [
-      for (var i = 0; i < 10; i++)
-        if (_deskSpot(i).dy + 40 < office.bottom)
-          prop(Rect.fromCenter(center: _deskSpot(i) + const Offset(0, 34), width: 92, height: 22), CheColors.surfaceHi),
-      prop(Rect.fromLTWH(lounge.left + 30, lounge.bottom - 90, lounge.width - 60, 40), CheColors.warning.withValues(alpha: 0.25), radius: 20),
-      prop(Rect.fromLTWH(music.center.dx - 60, music.top + 60, 120, 34), CheColors.music.withValues(alpha: 0.3)),
-      for (var i = 0; i < 3; i++)
-        prop(Rect.fromLTWH(gallery.left + 24 + i * (gallery.width - 48) / 3, gallery.top + 56, (gallery.width - 48) / 3 - 14, 46),
-            CheColors.insights.withValues(alpha: 0.22), radius: 4),
-    ]);
+    Widget icon(Offset at, IconData i, Color c, double size) =>
+        Positioned(left: at.dx - size / 2, top: at.dy - size / 2, child: Icon(i, color: c, size: size));
+    Widget plant(Offset at) => icon(at, Icons.local_florist_rounded, CheColors.success.withValues(alpha: 0.85), 34);
+    Widget window(Rect room, int i, int count) {
+      final w = (room.width - 120) / count - 16;
+      return box(Rect.fromLTWH(room.left + 60 + i * (w + 16), room.top + 46, w, 26),
+          const Color(0xFF7FD4FF).withValues(alpha: 0.18), radius: 6, border: const Color(0xFF7FD4FF).withValues(alpha: 0.35));
+    }
+    const warm = Color(0xFFE8B04A);
+    final frameColors = [CheColors.insights, CheColors.create, CheColors.music, warm, CheColors.accent];
+    final seatRows = math.max(2, ((theater.height - 150) / 34).floor());
+    return ExcludeSemantics(
+      child: Stack(children: [
+        // Office: windows, desks with monitors, plants and a whiteboard.
+        for (var i = 0; i < 4; i++) window(office, i, 4),
+        for (var i = 0; i < 10; i++)
+          if (_deskSpot(i).dy + 40 < office.bottom) ...[
+            box(Rect.fromCenter(center: _deskSpot(i) + const Offset(0, 34), width: 96, height: 24), CheColors.surfaceHi),
+            icon(_deskSpot(i) + const Offset(22, 22), Icons.desktop_windows_rounded, CheColors.textDim.withValues(alpha: 0.6), 18),
+          ],
+        plant(Offset(office.left + 30, office.bottom - 34)),
+        plant(Offset(office.right - 30, office.bottom - 34)),
+        box(Rect.fromLTWH(office.right - 150, office.top + 90, 110, 60), Colors.white.withValues(alpha: 0.08), radius: 4,
+            border: Colors.white.withValues(alpha: 0.2)),
+        // Lounge: couches around a rug, a coffee bar with cups, a plant.
+        box(Rect.fromCenter(center: lounge.center + const Offset(0, 30), width: lounge.width * 0.6, height: 90),
+            warm.withValues(alpha: 0.10), radius: 45),
+        box(Rect.fromLTWH(lounge.left + 30, lounge.bottom - 80, lounge.width * 0.45, 36), warm.withValues(alpha: 0.35), radius: 18),
+        box(Rect.fromLTWH(lounge.right - 30 - lounge.width * 0.3, lounge.bottom - 80, lounge.width * 0.3, 36), warm.withValues(alpha: 0.35), radius: 18),
+        icon(Offset(lounge.left + 60, lounge.bottom - 100), Icons.weekend_rounded, warm, 30),
+        box(Rect.fromLTWH(lounge.left + 30, lounge.top + 60, lounge.width - 60, 30), const Color(0xFF6B4A2F).withValues(alpha: 0.7), radius: 8),
+        icon(Offset(lounge.left + 60, lounge.top + 75), Icons.local_cafe_rounded, Colors.white70, 22),
+        icon(Offset(lounge.left + 100, lounge.top + 75), Icons.coffee_maker_rounded, Colors.white70, 22),
+        icon(Offset(lounge.left + 140, lounge.top + 75), Icons.emoji_food_beverage_rounded, Colors.white70, 22),
+        plant(Offset(lounge.right - 34, lounge.top + 120)),
+        // Studio: camera, lights and a green screen.
+        box(Rect.fromLTWH(studio.left + 24, studio.top + 50, studio.width - 48, 40), CheColors.success.withValues(alpha: 0.18), radius: 4),
+        icon(Offset(studio.center.dx, studio.center.dy + 20), Icons.videocam_rounded, CheColors.create, 34),
+        icon(Offset(studio.left + 40, studio.bottom - 40), Icons.light_rounded, warm, 26),
+        icon(Offset(studio.right - 40, studio.bottom - 40), Icons.light_rounded, warm, 26),
+        // Art Gallery: framed art on the wall and a bench.
+        for (var i = 0; i < 3; i++)
+          box(Rect.fromLTWH(gallery.left + 22 + i * (gallery.width - 44) / 3, gallery.top + 56, (gallery.width - 44) / 3 - 14, 54),
+              frameColors[i].withValues(alpha: 0.35), radius: 3, border: warm.withValues(alpha: 0.8)),
+        box(Rect.fromLTWH(gallery.left + 30, gallery.bottom - 50, gallery.width - 60, 18), CheColors.surfaceHi, radius: 6),
+        plant(Offset(gallery.right - 26, gallery.bottom - 70)),
+        // Music: a DJ booth with two decks and speakers.
+        box(Rect.fromLTWH(music.center.dx - 70, music.top + 60, 140, 40), CheColors.music.withValues(alpha: 0.3), radius: 8),
+        icon(Offset(music.center.dx - 35, music.top + 80), Icons.album_rounded, Colors.white70, 26),
+        icon(Offset(music.center.dx + 35, music.top + 80), Icons.album_rounded, Colors.white70, 26),
+        icon(Offset(music.left + 28, music.bottom - 36), Icons.speaker_rounded, CheColors.music, 30),
+        icon(Offset(music.right - 28, music.bottom - 36), Icons.speaker_rounded, CheColors.music, 30),
+        // Theater: the big screen and rows of seats.
+        box(Rect.fromLTWH(theater.left + 20, theater.top + 50, theater.width - 40, 50), Colors.white.withValues(alpha: 0.12), radius: 4,
+            border: CheColors.danger.withValues(alpha: 0.5)),
+        for (var row = 0; row < seatRows; row++)
+          for (var seat = 0; seat < 4; seat++)
+            icon(Offset(theater.left + 34 + seat * (theater.width - 68) / 3, theater.top + 130 + row * 34.0),
+                Icons.event_seat_rounded, CheColors.danger.withValues(alpha: 0.55), 22),
+      ]),
+    );
+  }
+
+  // Agents react in their own way when handed a task.
+  String _ackLine(CheAgent a) {
+    final p = a.personality.toLowerCase();
+    if (RegExp(r'curious|playful|fun').hasMatch(p)) return 'Ooh, on it!';
+    if (RegExp(r'bold|fast|driven').hasMatch(p)) return 'Consider it done!';
+    if (RegExp(r'steady|calm|dry|pragmatic').hasMatch(p)) return 'Got it.';
+    return 'Got it!';
   }
 
   Widget _walker(CheAgent agent, {CheAgentProfile? profile}) {

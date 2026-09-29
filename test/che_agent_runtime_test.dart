@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:chey/agents/che_agent_runtime.dart';
 import 'package:chey/agents/che_office_floor_screen.dart';
+import 'package:chey/home/che_activity_feed.dart';
 import 'package:chey/che_ui/che_agents.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -186,5 +187,47 @@ void main() {
     expect(find.text('Draft text'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('Office tab opens on the live world with Read to me', (tester) async {
+    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    final spoken = <String>[];
+    final client = CheAgentRuntimeClient(
+      baseUrl: () => 'https://che.example',
+      headers: () => const {},
+      client: _backend([]),
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: CheOfficeFloorScreen(client: client, embedded: true, onSpeak: (t) async => spoken.add(t)),
+      ),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.textContaining('agents ·'), findsOneWidget);
+    expect(find.text('Whole office'), findsOneWidget);
+    await tester.tap(find.text('Read to me'));
+    await tester.pump();
+    expect(spoken.single, contains('Nova'));
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('activity feed reads real events aloud', (tester) async {
+    final spoken = <String>[];
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: CheActivityFeedSheet(
+          events: const [
+            {'line': 'Mira finished “Summer song”.', 'at': '2026-09-29T10:00:00Z'},
+          ],
+          onSpeak: (t) async => spoken.add(t),
+        ),
+      ),
+    ));
+    expect(find.text('Mira finished “Summer song”.'), findsOneWidget);
+    await tester.tap(find.text('Read all'));
+    expect(spoken.single, 'Mira finished “Summer song”.');
   });
 }
