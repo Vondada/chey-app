@@ -40,7 +40,36 @@ jobs:
       - name: Flutter analyze
         run: flutter analyze
 
-      - name: Build unsigned iPhone app
+      # A Shorebird release is what lets CHE upgrade herself later: Dart-only
+      # changes then arrive as patches, with no new IPA. Without Shorebird set
+      # up, this falls back to a plain build that can never receive patches.
+      - name: Check Shorebird is configured
+        id: shorebird
+        env:
+          SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
+        run: |
+          if [[ -n "${SHOREBIRD_TOKEN}" && -f shorebird.yaml ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Shorebird is not set up (need shorebird.yaml and the SHOREBIRD_TOKEN secret). This IPA CANNOT receive CHE self-updates; every change will need another IPA."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Shorebird
+        if: steps.shorebird.outputs.ready == 'true'
+        run: |
+          curl --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/shorebirdtech/install/main/install.sh -sSf | bash
+          echo "$HOME/.shorebird/bin" >> "$GITHUB_PATH"
+
+      - name: Build unsigned iPhone app (Shorebird release, patchable)
+        if: steps.shorebird.outputs.ready == 'true'
+        env:
+          SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
+        run: |
+          shorebird release ios --no-codesign -- --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
+
+      - name: Build unsigned iPhone app (plain, not patchable)
+        if: steps.shorebird.outputs.ready != 'true'
         run: |
           flutter build ios --release --no-codesign \
             --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
@@ -48,9 +77,14 @@ jobs:
       - name: Package unsigned IPA
         run: |
           set -eu
+          app="build/ios/iphoneos/Runner.app"
+          if [[ "${{ steps.shorebird.outputs.ready }}" == "true" ]]; then
+            app="$(find build/ios/archive -maxdepth 5 -type d -path '*Products/Applications/Runner.app' | head -1)"
+          fi
+          test -d "$app" || { echo "::error::Runner.app not found"; exit 1; }
           rm -rf build/ios/ipa
           mkdir -p build/ios/ipa/Payload
-          cp -R build/ios/iphoneos/Runner.app build/ios/ipa/Payload/
+          cp -R "$app" build/ios/ipa/Payload/
           cd build/ios/ipa
           zip -qry CHE-unsigned.ipa Payload
           rm -rf Payload
@@ -58,6 +92,6 @@ jobs:
       - name: Upload CHE IPA
         uses: actions/upload-artifact@v4
         with:
-          name: CHE-unsigned-ipa
+          name: ${{ steps.shorebird.outputs.ready == 'true' && 'CHE-unsigned-ipa-self-updating' || 'CHE-unsigned-ipa-NOT-self-updating' }}
           path: build/ios/ipa/CHE-unsigned.ipa
           retention-days: 7

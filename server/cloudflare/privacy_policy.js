@@ -172,8 +172,10 @@ export function redactSecrets(value) {
   return String(value ?? '').replace(SECRETISH, '[redacted]');
 }
 
-export function auditEntry({ provider, model, task, agent = 'CHE', memory = [], withheld = [], ok = true, route = '', latency_ms = null }) {
+export function auditEntry({ provider, model, task, agent = 'CHE', memory = [], withheld = [], ok = true, route = '', latency_ms = null, agent_id = '', thread_id = '' }) {
   return {
+    ...(agent_id ? { agent_id: clip(agent_id, 80) } : {}),
+    ...(thread_id ? { thread_id: clip(thread_id, 200) } : {}),
     at: new Date().toISOString(),
     provider: clip(provider, 60),
     model: clip(model, 120),

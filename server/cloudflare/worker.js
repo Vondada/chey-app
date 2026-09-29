@@ -33,6 +33,16 @@ import { activityFeed, creations, findCreations, greeting, suggestions, stalledT
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 import { prepareSelfUpdate } from './self_development.js';
+import { officeToday } from './office_board.js';
+import { ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
+import { matchOfficePhrase, speakGoalPlan, speakOfficeBoard } from './office_phrases.js';
+import { assertOwnerTalksToCheOnly } from './office_router.js';
+import { assertOwnerToCheOnly } from './che_router.js';
+import { chicagoDayKey } from './chicago_time.js';
+import { assertAgentMayRun, permissionBlocker } from './agent_permissions.js';
+import { makeWorkPacket, savePacket, startCodexJob } from './codex_packets.js';
+import { newBlockerAnnouncements } from './blocker_speech.js';
+import { recordStripeEvent, verifyStripeSignature } from './stripe_webhooks.js';
 import { approveProposal, proposeProduct, rejectProposal, salesSummary, storeStatus } from './stripe_store.js';
 import {
   addLead, approveProposal as approveDealProposal, buildBrief, checkPaid, createPaymentLink, draftProposal, findDeal, markStage, pipelineSummary,
@@ -1722,6 +1732,76 @@ export class CheState extends DurableObject {
     await this.ctx.storage.put('che', data);
   }
 
+  // Opening the Office staffs La Agencia's core roster once; existing agents
+  // keep their IDs and history. A blank CHE stays blank until then.
+  async staffOffice(data) {
+    const before = data.team.map((a) => a.id).join();
+    ensureLaAgenciaRoster(data);
+    data.team.forEach(normalizeAgent);
+    if (data.team.map((a) => a.id).join() !== before) await this.ctx.storage.put('che', data);
+  }
+
+  async officeBoard(data) {
+    await this.staffOffice(data);
+    // "Today" is the owner's Chicago day, not the UTC day.
+    const today = chicagoDayKey();
+    // Webhook totals are live; the Stripe API read is only the backup.
+    const stripe = data.office_stripe?.date === today ? null : await salesSummary(this.env);
+    const board = officeToday(data, stripe, new Date(), this.env);
+    // CHE speaks a desk that just turned Blocked without being asked. Keys
+    // persist here so a poll never repeats the same line.
+    const said = newBlockerAnnouncements(board.agents, data.che_spoken_blockers);
+    board.che_announcements = said.lines;
+    if (said.lines.length || said.keys.length !== (data.che_spoken_blockers || []).length) {
+      data.che_spoken_blockers = said.keys;
+      await this.ctx.storage.put('che', data);
+    }
+    board.packets = (data.office_packets || []).slice(0, 20);
+    return board;
+  }
+
+  // CHE splits one owner goal into Office jobs that persist in this Durable
+  // Object. A job whose tool is missing is recorded as blocked, not faked.
+  async officeGoal(data, goal) {
+    await this.staffOffice(data);
+    const goalId = crypto.randomUUID();
+    const jobs = [];
+    for (const step of splitGoal(goal)) {
+      const agent = data.team.find((a) => a.name === step.agent && !a.retired);
+      if (!agent) continue;
+      // Permission flags are checked before the job is queued.
+      let refused = '';
+      try {
+        assertAgentMayRun(agent, { task: step.task });
+      } catch (error) {
+        refused = permissionBlocker(agent, error);
+      }
+      const task = queueAgentTask(data, agent, step.task, 'owner_goal', { job_id: goalId });
+      let blocker = refused || officeToolBlocker(this.env, agent);
+      // Codex desks get a real work packet: own thread id and workspace,
+      // persisted here. The owner Codex token stays on the Worker.
+      if (!refused && agent.provider_preference === 'openai') {
+        const packet = savePacket(data, startCodexJob(this.env, makeWorkPacket({
+          jobId: task.id, agentId: agent.name, goal: step.task,
+        })));
+        task.packet_id = packet.packet_id;
+        if (!blocker && packet.status.startsWith('Blocked:')) blocker = packet.status;
+      }
+      if (blocker) {
+        task.status = 'blocked';
+        task.error = blocker;
+      }
+      jobs.push({ id: task.id, agent: agent.name, task: task.task, status: task.status, blocker });
+    }
+    data.office_goals = Array.isArray(data.office_goals) ? data.office_goals : [];
+    data.office_goals.push({ id: goalId, goal, job_ids: jobs.map((j) => j.id), created_at: new Date().toISOString() });
+    data.office_goals = data.office_goals.slice(-100);
+    await this.ctx.storage.put('che', data);
+    if (jobs.some((j) => j.status === 'queued')) await this.scheduleWork();
+    this.broadcastAgents(data);
+    return { goal_id: goalId, jobs, reply: speakGoalPlan(jobs) };
+  }
+
   async setAutonomy(enabled) {
     const data = await this.loadData();
     data.autonomy = enabled;
@@ -1762,6 +1842,13 @@ export class CheState extends DurableObject {
     data.autonomy = data.autonomy !== false;
       data.meetings = Array.isArray(data.meetings) ? data.meetings : [];
       data.team.forEach(normalizeAgent);
+      for (const agent of data.team) {
+        const blocker = isLaAgenciaAgent(agent) ? officeToolBlocker(this.env, agent) : '';
+        if (blocker && ['waiting', 'building', 'researching', 'analyzing'].includes(agent.runtime_status)) {
+          agent.runtime_status = 'offline';
+          agent.runtime_task = blocker;
+        }
+      }
       data.plugin_enabled = data.plugin_enabled && typeof data.plugin_enabled === 'object'
         && !Array.isArray(data.plugin_enabled) ? data.plugin_enabled : {};
       data.preference_memory = Array.isArray(data.preference_memory) ? data.preference_memory : [];
@@ -1774,6 +1861,25 @@ export class CheState extends DurableObject {
             kind: 'software_agent',
             created_at: new Date().toISOString(),
           };
+      // Stripe calls this directly (no device token): the signature, checked
+      // against STRIPE_WEBHOOK_SECRET on the raw body, is the authentication.
+      if (request.method === 'POST' && path === '/api/stripe/webhook') {
+        const raw = await request.text();
+        try {
+          await verifyStripeSignature(raw, request.headers.get('Stripe-Signature'), this.env.STRIPE_WEBHOOK_SECRET);
+        } catch (error) {
+          const missing = error.message === 'stripe_webhook_secret_missing';
+          return json({ detail: missing ? 'Stripe webhook secret is not configured.' : 'Invalid Stripe signature.' }, missing ? 503 : 400);
+        }
+        let event;
+        try { event = JSON.parse(raw); } catch (_) { return json({ detail: 'Invalid JSON.' }, 400); }
+        const outcome = recordStripeEvent(data, event);
+        if (!outcome.duplicate) {
+          await this.ctx.storage.put('che', data);
+          this.broadcastAgents(data);
+        }
+        return json({ received: true, duplicate: outcome.duplicate });
+      }
       const body = ['POST', 'PATCH'].includes(request.method) ? await bodyOf(request) : {};
       if (request.method === 'POST' && path === '/api/pair') {
         const secret = this.env.CHE_PAIR_CODE;
@@ -2338,7 +2444,14 @@ export class CheState extends DurableObject {
         if (made.error) return json({ detail: made.error }, 400);
         let task = null;
         if (String(body.task || '').trim()) {
+          try {
+            assertAgentMayRun(made.agent, { kind: body.kind, task: body.task });
+          } catch (error) {
+            await this.ctx.storage.put('che', data);
+            return json({ detail: error.message, agent: agentDetail(data, made.agent).agent }, error.status || 403);
+          }
           task = queueAgentTask(data, made.agent, body.task, 'owner', {
+            kind: body.kind,
             use_computer: body.use_computer === true,
             owner_approved_computer: body.owner_approved_computer === true,
             computer_permissions: body.computer_permissions,
@@ -2534,7 +2647,13 @@ export class CheState extends DurableObject {
         if (agentMatch[2] && request.method === 'POST') {
           const text = String(body.task || body.message || '').trim();
           if (!text) return json({ detail: 'Tell the agent what to do.' }, 400);
+          try {
+            assertAgentMayRun(agent, { kind: body.kind, task: text });
+          } catch (error) {
+            return json({ detail: error.message, blocker: permissionBlocker(agent, error) }, error.status || 403);
+          }
           const task = queueAgentTask(data, agent, text, 'owner', {
+            kind: body.kind,
             use_computer: body.use_computer === true,
             owner_approved_computer: body.owner_approved_computer === true,
             computer_permissions: body.computer_permissions,
@@ -2553,6 +2672,14 @@ export class CheState extends DurableObject {
           return json(outcome.retired ? { ok: true, retired: agent.id } : agentDetail(data, agent));
         }
         return json({ detail: 'Not found.' }, 404);
+      }
+      // GET routes must sit above the POST-only guard below.
+      if (path === '/api/office/today' && request.method === 'GET') {
+        return json({ board: await this.officeBoard(data) });
+      }
+      // CHE fetches the Codex work packets (no credentials in them).
+      if (path === '/api/office/packets' && request.method === 'GET') {
+        return json({ packets: (data.office_packets || []).slice(0, 100) });
       }
       if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
       if (path === '/api/fine-tune/status' && request.method === 'POST') {
@@ -3173,14 +3300,59 @@ export class CheState extends DurableObject {
         if (typeof body.enabled !== 'boolean') return json({ detail: 'enabled must be boolean.' }, 400);
         return json({ autonomy: body.enabled, reply: await this.setAutonomy(body.enabled) });
       }
+      if (path === '/api/office/goals' && request.method === 'POST') {
+        const goal = String(body.goal || '').trim().slice(0, 2000);
+        if (!goal) return json({ detail: 'Goal required.' }, 400);
+        const plan = await this.officeGoal(data, goal);
+        return json(plan);
+      }
+      // The owner talks only to CHE; agents report only to CHE. Anything
+      // addressed around CHE is refused here, in code.
+      if (path === '/api/office/messages' && request.method === 'POST') {
+        let route;
+        try {
+          route = assertOwnerTalksToCheOnly(body);
+        } catch (error) {
+          return json({ detail: error.message }, error.status || 403);
+        }
+        const text = String(body.text || body.message || '').trim().slice(0, 4000);
+        if (!text) return json({ detail: 'Message text required.' }, 400);
+        data.office_inbox = Array.isArray(data.office_inbox) ? data.office_inbox : [];
+        data.office_inbox.push({ id: crypto.randomUUID(), from: route.speaker, to: 'che', text, at: new Date().toISOString() });
+        data.office_inbox = data.office_inbox.slice(-200);
+        await this.ctx.storage.put('che', data);
+        return json({ ok: true, to: 'che' });
+      }
       if (path === '/api/change/request') return dispatchChange(this.env, body);
       if (path === '/api/chat') {
+        // Chat and voice both land here: the owner talks only to CHE, and an
+        // agent can never use this route to reach the owner.
+        try {
+          assertOwnerToCheOnly(body);
+        } catch (error) {
+          return json({ detail: error.message }, error.status || 403);
+        }
         const message = String(body.message || '').trim().slice(0, 5000);
         if (!message) return json({ detail: 'Message required.' }, 400);
 
         const control = message.toLowerCase().replace(/^(?:chay|chey|che)[, ]+/, '').replace(/[.!?]+$/, '').trim();
         if (control === 'stand by' || control === 'resume') {
           return ndjsonReply(await this.setAutonomy(control === 'resume'), { autonomy: control === 'resume' });
+        }
+
+        // The Office by voice. CHE answers from the live board; agents never speak.
+        const officePhrase = matchOfficePhrase(message);
+        if (officePhrase?.type === 'goal') {
+          const plan = await this.officeGoal(data, officePhrase.goal);
+          return ndjsonReply(plan.reply, { office: 'goal', jobs: plan.jobs.length });
+        }
+        if (officePhrase?.type === 'standDown') {
+          await this.setAutonomy(false);
+          return ndjsonReply(speakOfficeBoard({}, officePhrase), { office: 'standDown', autonomy: false });
+        }
+        if (officePhrase) {
+          const board = await this.officeBoard(data);
+          return ndjsonReply(speakOfficeBoard(board, officePhrase), { office: officePhrase.type });
         }
 
         // CHE's universal AI layer by voice: models, providers, privacy,

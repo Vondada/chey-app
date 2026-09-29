@@ -13,6 +13,9 @@
 // keeps going when the phone is locked.
 
 import { classifyItem, extractCandidateMemories } from './privacy_policy.js';
+import { isLaAgenciaAgent, officeToolBlocker } from './office_company.js';
+import { codexThreadId } from './office_router.js';
+import { assertAgentMayRun, permissionBlocker } from './agent_permissions.js';
 
 export const AGENT_STATUSES = [
   'idle', 'researching', 'building', 'analyzing', 'meeting',
@@ -321,6 +324,9 @@ export function queueAgentTask(data, agent, task, source = 'owner', options = {}
     citations: [],
     provider_trail: [],
     job_id: clip(options.job_id, 80),
+    // Job kind (e.g. merge, spend, payout) is checked against the agent's
+    // permission flags before the job runs.
+    kind: clip(options.kind, 40),
     error: '',
     created_at: at,
     updated_at: at,
@@ -689,12 +695,21 @@ export function routingForAgent(agent, data, task = null, route = 'office') {
     ...(agent?.capability_requirements?.[0] ? { che_capability: agent.capability_requirements[0] } : {}),
     ...(data?.ai_layer?.policy?.local_only ? { che_local_only: true } : {}),
     ...(task?.context_items?.length ? { che_context: { items: task.context_items, permissions } } : {}),
+    // Every Office model call goes through CHE's router tagged with the agent
+    // and a stable per-job thread: office/<agentId>/<jobId>.
+    ...(agent ? { che_agent_id: officeAgentId(agent) } : {}),
+    ...(agent && task ? { che_thread_id: codexThreadId(officeAgentId(agent), task.job_id || task.id) } : {}),
     che_audit: {
       task: clip(task?.task || route, 160),
       agent: agent ? `${agent.name} (${agent.role})` : 'CHE',
       route,
     },
   };
+}
+
+// La Agencia agents are addressed by their lowercase name (knox); others by id.
+export function officeAgentId(agent) {
+  return isLaAgenciaAgent(agent) ? String(agent.name).toLowerCase() : String(agent?.id || '');
 }
 
 async function runModelDetailed(env, model, system, user, maxTokens, routing = {}) {
@@ -740,6 +755,34 @@ async function runOneTask(ctx) {
     return true;
   }
   normalizeAgent(agent);
+  // Permission flags are checked before any work runs: an agent without
+  // can_merge_code / can_spend_money / can_open_payouts is refused in code.
+  try {
+    assertAgentMayRun(agent, task);
+  } catch (error) {
+    task.status = 'blocked';
+    task.error = permissionBlocker(agent, error);
+    task.updated_at = now();
+    agent.runtime_status = 'available';
+    agent.runtime_task = '';
+    agent.runtime_updated_at = now();
+    await save(data);
+    return true;
+  }
+  // A La Agencia job whose tool has no owner credential on the server stops
+  // here with an honest blocker; CHE reads it aloud from the board.
+  const blocker = isLaAgenciaAgent(agent) ? officeToolBlocker(env, agent) : '';
+  if (blocker) {
+    task.status = 'blocked';
+    task.error = blocker;
+    task.updated_at = now();
+    agent.runtime_status = 'offline';
+    agent.runtime_task = blocker;
+    agent.runtime_updated_at = now();
+    await save(data);
+    notify();
+    return true;
+  }
   task.status = 'running';
   task.updated_at = now();
   agent.runtime_status = workingStatusFor(agent);
