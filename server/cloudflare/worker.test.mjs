@@ -1,26 +1,27 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 
-// Import the Worker as an ES module without needing an npm install.
+// Import the Worker as a normal temporary ES module. Keeping the generated
+// module beside worker.js lets every relative import resolve naturally and
+// avoids a huge data: URL that becomes brittle as CHE's Worker grows.
+const generatedWorker = new URL('./.worker.test.generated.mjs', import.meta.url);
 const code = readFileSync(new URL('./worker.js', import.meta.url), 'utf8')
-  .replace("import { DurableObject } from 'cloudflare:workers';",
-    'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }')
-  .replace("from './agent_runtime.js'", `from '${new URL('./agent_runtime.js', import.meta.url).href}'`)
-  .replace("from './plugin_runtime.js'", `from '${new URL('./plugin_runtime.js', import.meta.url).href}'`)
-  .replace("from './self_update.js'", `from '${new URL('./self_update.js', import.meta.url).href}'`)
-  .replace("from './markets.js'", `from '${new URL('./markets.js', import.meta.url).href}'`)
-  .replace("from './media.js'", `from '${new URL('./media.js', import.meta.url).href}'`)
-  .replace("from './ai_router.js'", `from '${new URL('./ai_router.js', import.meta.url).href}'`)
-  .replace("from './stripe_store.js'", `from '${new URL('./stripe_store.js', import.meta.url).href}'`)
-  .replace("from './pipeline.js'", `from '${new URL('./pipeline.js', import.meta.url).href}'`)
-  .replace("from './nightly.js'", `from '${new URL('./nightly.js', import.meta.url).href}'`)
-  .replace("from './self_development.js'", `from '${new URL('./self_development.js', import.meta.url).href}'`)
-  .replace("from './fine_tuning.js'", `from '${new URL('./fine_tuning.js', import.meta.url).href}'`)
-  .replace("from './vector_memory.js'", `from '${new URL('./vector_memory.js', import.meta.url).href}'`);
-const { default: worker, CheState } = await import(
-  `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
-);
+  .replace(
+    "import { DurableObject } from 'cloudflare:workers';",
+    'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }',
+  );
+
+writeFileSync(generatedWorker, code, 'utf8');
+let worker;
+let CheState;
+try {
+  ({ default: worker, CheState } = await import(
+    generatedWorker.href + '?test=' + Date.now(),
+  ));
+} finally {
+  try { unlinkSync(generatedWorker); } catch (_) {}
+}
 
 test('pairing, owner gate, memories, and revocation', async () => {
   const saved = new Map();
