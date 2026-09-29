@@ -11,7 +11,10 @@ extension _CheHomeSecurity on _CHEHomeState {
     final prefs = await SharedPreferences.getInstance();
     _restoreLocalSnapshotCache(prefs);
     _agentBaseUrl = prefs.getString('che_agent_base_url') ?? _defaultAgentBaseUrl;
-    _homeBaseUrl = (prefs.getString(_homeBaseUrlKey) ?? '').trim();
+    final savedHomeBaseUrl = (prefs.getString(_homeBaseUrlKey) ?? '').trim();
+    _homeBaseUrl = savedHomeBaseUrl.endsWith('/')
+        ? savedHomeBaseUrl.substring(0, savedHomeBaseUrl.length - 1)
+        : savedHomeBaseUrl;
     _deviceToken = prefs.getString('che_agent_device_token');
 
     if (_deviceToken != null && _deviceToken!.isNotEmpty) {
