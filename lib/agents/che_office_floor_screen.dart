@@ -356,7 +356,6 @@ class _CompanyBoard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = today;
-    final money = ((t?.netCents ?? 0) / 100).toStringAsFixed(2);
     return RepaintBoundary(child: Container(
       width: double.infinity, padding: const EdgeInsets.all(CheSpace.md),
       decoration: BoxDecoration(color: CheColors.surface, borderRadius: BorderRadius.circular(CheRadius.lg), border: Border.all(color: CheColors.stroke)),
