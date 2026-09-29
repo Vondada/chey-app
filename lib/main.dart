@@ -171,7 +171,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   List<String> _homeSuggestions = const [];
   bool _greetedThisLaunch = false;
   String _explainLevel = 'simple';
-  Map<String, dynamic> _localSnapshotCache = {
+  Map<String, dynamic> _cachedSnapshot = {
     'team': const <Map<String, dynamic>>[],
     'team_tasks': const <Map<String, dynamic>>[],
     'projects': const <Map<String, dynamic>>[],
