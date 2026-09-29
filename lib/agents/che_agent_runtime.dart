@@ -378,6 +378,7 @@ class CheAgentRuntimeController extends ChangeNotifier {
   bool loaded = false;
 
   Timer? _timer;
+  Timer? _boardTimer;
   bool _disposed = false;
 
   bool get busy => working > 0 || che.status != CheAgentStatus.idle || meetings.any((m) => m.live);
@@ -385,11 +386,15 @@ class CheAgentRuntimeController extends ChangeNotifier {
   void start() {
     if (_timer != null) return;
     unawaited(refresh());
+    unawaited(refreshBoard());
+    _boardTimer = Timer.periodic(const Duration(seconds: 45), (_) => unawaited(refreshBoard()));
   }
 
   void stop() {
     _timer?.cancel();
     _timer = null;
+    _boardTimer?.cancel();
+    _boardTimer = null;
   }
 
   void _schedule() {
@@ -400,9 +405,7 @@ class CheAgentRuntimeController extends ChangeNotifier {
 
   Future<void> refresh() async {
     try {
-      final results = await Future.wait<Object>([client.roster(), client.officeToday()]);
-      final j = results[0] as Map<String, dynamic>;
-      today = results[1] as CheOfficeToday;
+      final j = await client.roster();
       final c = j['che'] as Map? ?? const {};
       che = CheAgent.che(
         status: CheAgentStatusLabel.parse(c['status']?.toString()),
@@ -425,6 +428,15 @@ class CheAgentRuntimeController extends ChangeNotifier {
     if (_disposed) return;
     notifyListeners();
     _schedule();
+  }
+
+  Future<void> refreshBoard() async {
+    try {
+      today = await client.officeToday();
+      if (!_disposed) notifyListeners();
+    } catch (_) {
+      // Board/Stripe is supplemental. Never let it take the live roster down.
+    }
   }
 
   @override
