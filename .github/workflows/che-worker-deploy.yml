@@ -52,7 +52,7 @@ jobs:
       - name: Worker tests
         run: |
           for f in server/cloudflare/*.js; do node --check "$f"; done
-          node --test server/cloudflare/worker.test.mjs server/cloudflare/features.test.mjs server/cloudflare/stripe_store.test.mjs
+          node --test server/cloudflare/worker.test.mjs server/cloudflare/features.test.mjs server/cloudflare/stripe_store.test.mjs server/cloudflare/pipeline.test.mjs
 
       - name: Check Cloudflare token
         id: token

@@ -18,6 +18,9 @@ import { deleteMedia, generateImage, listMedia, readBlob, upscaleImage } from '.
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 import { approveProposal, proposeProduct, rejectProposal, salesSummary, storeStatus } from './stripe_store.js';
+import {
+  addLead, approveProposal as approveDealProposal, buildBrief, checkPaid, createPaymentLink, draftProposal, findDeal, markStage, pipelineSummary,
+} from './pipeline.js';
 
 const FAST_MODEL = '@cf/meta/llama-3.2-3b-instruct';
 const STRONG_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
@@ -1894,6 +1897,56 @@ export class CheState extends DurableObject {
       }
       if (path === '/api/stripe/sales' && request.method === 'GET') {
         const { status, ...rest } = await salesSummary(this.env);
+        return json(rest, status);
+      }
+
+      // ─── Client Pipeline: owner approves every step touching people or money ───
+      if (path === '/api/pipeline' && request.method === 'GET') {
+        return json(pipelineSummary(data));
+      }
+      if (path === '/api/pipeline' && request.method === 'POST') {
+        const { status, ...rest } = addLead(data, body);
+        if (status === 200) await this.ctx.storage.put('che', data);
+        return json(rest, status);
+      }
+      const dealMatch = /^\/api\/pipeline\/([0-9a-f-]{36})\/(draft|approve|build|review|invoice|check-paid|lost)$/.exec(path);
+      if (dealMatch && request.method === 'POST') {
+        const [, dealId, step] = dealMatch;
+        const deal = findDeal(data, dealId);
+        if (!deal) return json({ detail: 'Deal not found.' }, 404);
+        let outcome;
+        if (step === 'draft') {
+          outcome = await draftProposal(this.env, deal, this.env.CHE_STRONG_MODEL || STRONG_MODEL);
+        } else if (step === 'approve') {
+          outcome = approveDealProposal(deal, body);
+        } else if (step === 'build') {
+          outcome = markStage(deal, 'building');
+          if (outcome.status === 200) {
+            const spec = { role: 'Build + Operations Partner', specialty: 'implementation plans, engineering trade-offs and delivery' };
+            let agent = data.team.find((item) => item.role === spec.role && !item.retired);
+            if (!agent) agent = createAgent(data, spec).agent;
+            if (agent) {
+              const task = queueAgentTask(data, agent, buildBrief(deal), 'pipeline');
+              deal.build_task_id = task.id;
+              deal.builder = agent.name;
+              deal.history.unshift({ at: new Date().toISOString(), text: `${agent.name} started building.` });
+            }
+          }
+        } else if (step === 'review') {
+          outcome = markStage(deal, 'review');
+        } else if (step === 'invoice') {
+          outcome = await createPaymentLink(this.env, deal);
+        } else if (step === 'check-paid') {
+          outcome = await checkPaid(this.env, deal);
+        } else {
+          outcome = markStage(deal, 'lost');
+        }
+        const { status, ...rest } = outcome;
+        await this.ctx.storage.put('che', data);
+        if (step === 'build' && status === 200) {
+          await this.scheduleWork();
+          this.broadcastAgents(data);
+        }
         return json(rest, status);
       }
 

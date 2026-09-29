@@ -45,7 +45,7 @@ export function formEncode(params, prefix = '') {
   return parts.filter(Boolean).join('&');
 }
 
-async function stripe(env, method, path, params, fetcher, idempotencyKey) {
+export async function stripe(env, method, path, params, fetcher, idempotencyKey) {
   const headers = {
     Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
     'Stripe-Version': String(env.CHE_STRIPE_API_VERSION || '2024-06-20'),
