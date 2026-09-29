@@ -233,7 +233,6 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
 
   List<Widget> _content(BuildContext context) {
     final r = _runtime;
-    final screen = MediaQuery.sizeOf(context).height;
     return [
       if (!r.loaded)
         const Padding(padding: EdgeInsets.all(CheSpace.xxl), child: Center(child: CircularProgressIndicator()))
