@@ -9,6 +9,7 @@ extension _CheHomeSecurity on _CHEHomeState {
 
   Future<void> _loadSecuritySession() async {
     final prefs = await SharedPreferences.getInstance();
+    _restoreLocalSnapshotCache(prefs);
     _agentBaseUrl = prefs.getString('che_agent_base_url') ?? _defaultAgentBaseUrl;
     _deviceToken = prefs.getString('che_agent_device_token');
 
@@ -460,6 +461,18 @@ extension _CheHomeSecurity on _CHEHomeState {
         'payments': integrationData['payments'] == true,
         'leads': integrationData['leads'] == true,
       };
+
+      final localSnapshot = <String, dynamic>{
+        'team': team,
+        'team_tasks': teamTasks,
+        'projects': projects,
+        'vault_items': vaultItems,
+        'jobs': backgroundJobs,
+        'meetings': const [],
+      };
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('che.local.snapshot', jsonEncode(localSnapshot));
+      _localSnapshotCache = localSnapshot;
 
       if (mounted) _set(() {});
     } catch (_) {
