@@ -1,2 +1,2 @@
 La Agencia production iPhone build trigger.
-Unique SideStore version build 1.4.1+7.
+Stable WebView guard build 1.4.2+8.
