@@ -33,7 +33,7 @@ import { activityFeed, creations, findCreations, greeting, suggestions, stalledT
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 import { prepareSelfUpdate } from './self_development.js';
-import { officeToday } from './office_board.js';
+import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
 import { ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
 import { matchOfficePhrase, speakGoalPlan, speakOfficeBoard } from './office_phrases.js';
 import { assertOwnerTalksToCheOnly } from './office_router.js';
@@ -1738,7 +1738,7 @@ export class CheState extends DurableObject {
 
   async officeBoard(data) {
     await this.staffOffice(data);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = ownerDayKey(new Date(), ownerTimeZone(this.env));
     // Webhook totals are live; the Stripe API read is only the backup.
     const stripe = data.office_stripe?.date === today ? null : await salesSummary(this.env);
     return officeToday(data, stripe, new Date(), this.env);
@@ -1841,7 +1841,7 @@ export class CheState extends DurableObject {
         }
         let event;
         try { event = JSON.parse(raw); } catch (_) { return json({ detail: 'Invalid JSON.' }, 400); }
-        const outcome = recordStripeEvent(data, event);
+        const outcome = recordStripeEvent(data, event, new Date(), ownerTimeZone(this.env));
         if (!outcome.duplicate) {
           await this.ctx.storage.put('che', data);
           this.broadcastAgents(data);

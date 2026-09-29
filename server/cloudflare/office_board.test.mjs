@@ -24,3 +24,16 @@ test('agents cannot message owner directly',()=>{
  for(const id of ['nova','atlas','mira','knox','sage','lyra']) assert.equal(agentMayMessageOwner(id),false);
  assert.equal(agentMayMessageOwner('che'),true);
 });
+
+test('today follows Chicago midnight, not UTC (no 7 PM reset)', async () => {
+  const { ownerDayKey } = await import('./office_board.js');
+  // 8 PM Chicago on Sep 29 is already Sep 30 in UTC.
+  assert.equal(ownerDayKey(new Date('2026-09-30T01:00:00Z')), '2026-09-29');
+  assert.equal(ownerDayKey(new Date('2026-09-30T05:30:00Z')), '2026-09-30');
+  const now = new Date('2026-09-30T01:00:00Z');
+  const board = officeToday({ team: [], team_tasks: [
+    { id: 'a', status: 'complete', task: 'Morning job', created_at: '2026-09-29T14:00:00Z', updated_at: '2026-09-29T15:00:00Z' },
+    { id: 'b', status: 'complete', task: 'Evening job', created_at: '2026-09-30T00:30:00Z', updated_at: '2026-09-30T00:45:00Z' },
+  ] }, null, now);
+  assert.equal(board.finished_today, 2);
+});
