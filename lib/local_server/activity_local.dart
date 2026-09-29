@@ -307,7 +307,7 @@ Map<String, dynamic> greeting(
   };
 }
 
-List<String> suggestions(
+List<String> localSuggestions(
   Map<String, dynamic> data, {
   int hour = 12,
 }) {
