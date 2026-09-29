@@ -236,7 +236,7 @@ Map<String, dynamic> greeting(
   int hour = 12,
   String since = '',
 }) {
-  final h = hour.clamp(0, 23);
+  final h = hour.clamp(0, 23).toInt();
   final hello = _localPartOfDay(h);
 
   final decisions = decisionsNeeded(data);
