@@ -223,6 +223,32 @@ class CheMeeting {
       );
 }
 
+
+class CheOfficeToday {
+  const CheOfficeToday({required this.started, required this.shipped, required this.blockers, required this.agentsWorking, required this.stripeConnected, required this.chargesCents, required this.refundsCents, required this.netCents});
+  final List<Map<String, dynamic>> started;
+  final List<Map<String, dynamic>> shipped;
+  final List<Map<String, dynamic>> blockers;
+  final int agentsWorking;
+  final bool stripeConnected;
+  final int chargesCents;
+  final int refundsCents;
+  final int netCents;
+
+  factory CheOfficeToday.fromJson(Map<String, dynamic> j) {
+    final stripe = j['stripe'] is Map ? Map<String, dynamic>.from(j['stripe'] as Map) : <String, dynamic>{};
+    List<Map<String, dynamic>> rows(String key) => [for (final x in (j[key] as List? ?? const [])) if (x is Map) Map<String, dynamic>.from(x)];
+    return CheOfficeToday(
+      started: rows('started'), shipped: rows('shipped'), blockers: rows('blockers'),
+      agentsWorking: (j['agents_working'] as num?)?.toInt() ?? 0,
+      stripeConnected: stripe['connected'] == true,
+      chargesCents: (stripe['charges_cents'] as num?)?.toInt() ?? 0,
+      refundsCents: (stripe['refunds_cents'] as num?)?.toInt() ?? 0,
+      netCents: (stripe['net_cents'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
 /// Thin HTTP client over the Worker's Agent Runtime API.
 class CheAgentRuntimeClient {
   CheAgentRuntimeClient({required this.baseUrl, required this.headers, http.Client? client})
@@ -255,6 +281,11 @@ class CheAgentRuntimeClient {
   }
 
   Future<Map<String, dynamic>> roster() => _send('GET', '/api/agents');
+
+  Future<CheOfficeToday> officeToday() async {
+    final j = await _send('GET', '/api/office/today');
+    return CheOfficeToday.fromJson(Map<String, dynamic>.from(j['board'] as Map? ?? const {}));
+  }
 
   Future<CheAgentDetail> agent(String id) async {
     final j = await _send('GET', '/api/agents/$id');
@@ -342,6 +373,7 @@ class CheAgentRuntimeController extends ChangeNotifier {
   List<CheAgentProfile> agents = const [];
   List<CheMeetingSummary> meetings = const [];
   int working = 0;
+  CheOfficeToday? today;
   String? error;
   bool loaded = false;
 
@@ -368,7 +400,9 @@ class CheAgentRuntimeController extends ChangeNotifier {
 
   Future<void> refresh() async {
     try {
-      final j = await client.roster();
+      final results = await Future.wait<Object>([client.roster(), client.officeToday()]);
+      final j = results[0] as Map<String, dynamic>;
+      today = results[1] as CheOfficeToday;
       final c = j['che'] as Map? ?? const {};
       che = CheAgent.che(
         status: CheAgentStatusLabel.parse(c['status']?.toString()),
