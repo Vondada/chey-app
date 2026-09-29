@@ -12,7 +12,6 @@ import 'package:flutter/services.dart';
 import '../che_ui/che_agents.dart';
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
-import '../widgets/office_3d_view.dart';
 import 'che_agent_runtime.dart';
 import 'che_war_room_screen.dart';
 
@@ -215,49 +214,6 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
       builder: (_) => CheWarRoomScreen(client: widget.client, meetingId: id),
     ));
     await _runtime.refresh();
-  }
-
-  String _office3dStatus(CheAgentStatus status) => switch (status) {
-        CheAgentStatus.researching ||
-        CheAgentStatus.building ||
-        CheAgentStatus.talking ||
-        CheAgentStatus.meeting => 'working',
-        CheAgentStatus.analyzing ||
-        CheAgentStatus.reviewing => 'thinking',
-        CheAgentStatus.done => 'celebrating',
-        CheAgentStatus.waiting ||
-        CheAgentStatus.offline => 'blocked',
-        _ => 'idle',
-      };
-
-  List<Map<String, dynamic>> _office3dAgents() {
-    final r = _runtime;
-    Map<String, dynamic> item(CheAgent a) => {
-          'id': a.id,
-          'name': a.name,
-          'role': a.role,
-          'status': _office3dStatus(a.status),
-          'task': a.task ?? '',
-          'isChe': a.isChe,
-        };
-    return [
-      item(r.che),
-      for (final p in r.agents) item(p.agent),
-    ];
-  }
-
-  Future<void> _openOffice3dAgent(String id) async {
-    final r = _runtime;
-    if (id == r.che.id) {
-      await _openAgent(r.che);
-      return;
-    }
-    for (final p in r.agents) {
-      if (p.agent.id == id) {
-        await _openAgent(p.agent);
-        return;
-      }
-    }
   }
 
   String _officeSummary() {
