@@ -64,6 +64,7 @@ import 'local_server/activity_local.dart';
 import 'plugins/che_plugin_webapp.dart';
 import 'self_update/che_patch_banner.dart';
 import 'self_update/che_update_card.dart';
+import 'self_update/che_self_update_intent.dart';
 import 'rooms/che_markets_room.dart';
 import 'rooms/che_store_room.dart';
 import 'rooms/che_pipeline_room.dart';
