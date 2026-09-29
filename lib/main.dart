@@ -171,6 +171,14 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   List<String> _homeSuggestions = const [];
   bool _greetedThisLaunch = false;
   String _explainLevel = 'simple';
+  Map<String, dynamic> _localSnapshotCache = {
+    'team': const <Map<String, dynamic>>[],
+    'team_tasks': const <Map<String, dynamic>>[],
+    'projects': const <Map<String, dynamic>>[],
+    'vault_items': const <Map<String, dynamic>>[],
+    'jobs': const <Map<String, dynamic>>[],
+    'meetings': const <Map<String, dynamic>>[],
+  };
   bool _usingSpeechFallback = false;
   Timer? _jobPollTimer;
   final Set<String> _notifiedJobs = {};
