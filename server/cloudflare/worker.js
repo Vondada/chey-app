@@ -33,6 +33,7 @@ import { activityFeed, creations, findCreations, greeting, suggestions, stalledT
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 import { prepareSelfUpdate } from './self_development.js';
+import { officeToday } from './office_board.js';
 import { approveProposal, proposeProduct, rejectProposal, salesSummary, storeStatus } from './stripe_store.js';
 import {
   addLead, approveProposal as approveDealProposal, buildBrief, checkPaid, createPaymentLink, draftProposal, findDeal, markStage, pipelineSummary,
@@ -3172,6 +3173,10 @@ export class CheState extends DurableObject {
       if (path === '/api/autonomy' && request.method === 'POST') {
         if (typeof body.enabled !== 'boolean') return json({ detail: 'enabled must be boolean.' }, 400);
         return json({ autonomy: body.enabled, reply: await this.setAutonomy(body.enabled) });
+      }
+      if (path === '/api/office/today' && request.method === 'GET') {
+        const stripe = await salesSummary(this.env);
+        return json({ board: officeToday(data, stripe) });
       }
       if (path === '/api/change/request') return dispatchChange(this.env, body);
       if (path === '/api/chat') {
