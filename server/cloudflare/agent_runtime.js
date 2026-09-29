@@ -12,6 +12,8 @@
 // CheState Durable Object. Long work runs from the Durable Object alarm, so it
 // keeps going when the phone is locked.
 
+import { classifyItem, extractCandidateMemories } from './privacy_policy.js';
+
 export const AGENT_STATUSES = [
   'idle', 'researching', 'building', 'analyzing', 'meeting',
   'waiting', 'reviewing', 'talking', 'done', 'offline',
@@ -90,6 +92,18 @@ export function normalizeAgent(agent) {
   agent.skill_ids = Array.isArray(agent.skill_ids) ? agent.skill_ids.slice(0, 40) : [];
   agent.model_tier = agent.model_tier === 'strong' ? 'strong' : 'fast';
   agent.temporary = Boolean(agent.temporary);
+  // Provider-neutral employee profile: CHE owns the agent; the provider and
+  // model are only preferences the capability router may honor or replace.
+  agent.provider_preference = clip(agent.provider_preference, 40).toLowerCase();
+  agent.model_preference = clip(agent.model_preference, 160);
+  agent.capability_requirements = Array.isArray(agent.capability_requirements)
+    ? agent.capability_requirements.map((item) => clip(item, 40)).filter(Boolean).slice(0, 8)
+    : [];
+  agent.permissions = Array.isArray(agent.permissions)
+    ? agent.permissions.map((item) => clip(item, 60)).filter(Boolean).slice(0, 16)
+    : ['office_workspace', 'che_memory_read_filtered'];
+  agent.handoff_history = Array.isArray(agent.handoff_history) ? agent.handoff_history.slice(-30) : [];
+  agent.memory_refs = Array.isArray(agent.memory_refs) ? agent.memory_refs.slice(-40) : [];
   if (!AGENT_STATUSES.includes(agent.runtime_status)) {
     // Legacy `status` was 'available' / 'working' with nothing actually running.
     agent.runtime_status = 'idle';
@@ -122,6 +136,11 @@ export function createAgent(data, spec) {
       ? spec.responsibilities.map((item) => clip(item, 200)).filter(Boolean).slice(0, 12)
       : [],
     temporary: Boolean(spec.temporary),
+    provider_preference: spec.provider_preference,
+    model_preference: spec.model_preference,
+    capability_requirements: spec.capability_requirements,
+    permissions: spec.permissions,
+    kind_detail: clip(spec.kind_detail, 120),
     status: 'available',
     introduced: false,
     created_at: at,
@@ -135,6 +154,32 @@ export function createAgent(data, spec) {
 function doneIsFresh(agent) {
   const at = Date.parse(agent.runtime_updated_at || '');
   return Number.isFinite(at) && Date.now() - at < 10 * 60_000;
+}
+
+// Where an agent is in CHE's app world, from real runtime state: working in
+// the room that fits the assignment, or on a break in a social space.
+export const WORLD_ROOMS = ['office', 'studio', 'gallery', 'music', 'lounge', 'theater'];
+
+export function agentLocation(agent, now = Date.now(), theaterUntil = 0) {
+  const status = agent.runtime_status || 'idle';
+  const text = `${agent.runtime_task || ''} ${agent.role || ''} ${agent.specialty || ''}`.toLowerCase();
+  const working = !['idle', 'done', 'offline'].includes(status);
+  if (working) {
+    if (status === 'meeting') return { room: 'office', activity: 'meeting', working: true };
+    if (/\b(?:dj|playlist|song|music|beat|mix|track|album)\b/.test(text)) return { room: 'music', activity: /\bdj|playlist|play\b/.test(text) ? 'djing' : 'composing', working: true };
+    if (/\b(?:art|paint|draw|illustrat|image|logo|gallery|portrait)\b/.test(text)) return { room: 'gallery', activity: 'making_art', working: true };
+    if (/\b(?:video|film|design|creative|studio|brand|visual)\b/.test(text)) return { room: 'studio', activity: 'creating', working: true };
+    return { room: 'office', activity: status, working: true };
+  }
+  if (status === 'offline') return { room: 'office', activity: 'offline', working: false };
+  // While the owner watches something in CHE's Theater, free agents join
+  // him in the seats. (They see the room, not the video.)
+  if (Number(theaterUntil) > now) return { room: 'theater', activity: 'watching_with_you', working: false };
+  // Breaks rotate every ~20 minutes, differently per agent.
+  const slot = Math.floor(now / (20 * 60_000)) + hashOf(agent.id || agent.name);
+  const breakRooms = ['lounge', 'studio', 'gallery', 'music', 'lounge', 'office'];
+  const room = breakRooms[slot % breakRooms.length];
+  return { room, activity: room === 'office' ? 'idle' : 'on_break', working: false };
 }
 
 export function agentView(agent, data) {
@@ -159,6 +204,11 @@ export function agentView(agent, data) {
       ...owned.slice(0, 6).map((item) => `${item.title || item.type}: ${item.next_responsibility || 'keep current'}`),
     ],
     model_tier: agent.model_tier,
+    location: agentLocation({ ...agent, runtime_status: status }, Date.now(), Number(data?.theater_watching_until || 0)),
+    latest_assignment: (() => {
+      const latest = (data.team_tasks || []).find((item) => item.partner_id === agent.id);
+      return latest ? { id: latest.id, task: clip(latest.task, 120), status: latest.status, queued_at: latest.created_at } : null;
+    })(),
     workspace: {
       notes: Array.isArray(agent.workspace?.notes) ? agent.workspace.notes.length : 0,
       files: Array.isArray(agent.workspace?.files) ? agent.workspace.files.length : 0,
@@ -166,6 +216,12 @@ export function agentView(agent, data) {
     },
     learned_skills: Array.isArray(agent.skill_ids) ? agent.skill_ids.length : 0,
     temporary: agent.temporary,
+    provider_preference: agent.provider_preference || 'auto',
+    model_preference: agent.model_preference || 'auto',
+    capability_requirements: agent.capability_requirements,
+    permissions: agent.permissions,
+    memory_refs: agent.memory_refs.length,
+    handoffs: agent.handoff_history.length,
     introduced: Boolean(agent.introduced),
     created_at: agent.created_at,
     updated_at: agent.updated_at,
@@ -222,9 +278,12 @@ export function agentDetail(data, agent) {
         che_review: item.che_review || '',
         verified_by_che: Boolean(item.verified_by_che),
         error: item.error || '',
+        provider_trail: Array.isArray(item.provider_trail) ? item.provider_trail.slice(-10) : [],
+        handoffs: Array.isArray(item.handoffs) ? item.handoffs.slice(-10) : [],
         created_at: item.created_at,
         updated_at: item.updated_at,
       })),
+    handoff_history: agent.handoff_history.slice(-20),
     meetings: (data.meetings || [])
       .filter((item) => item.participants.some((p) => p.agent_id === agent.id))
       .slice(0, 10)
@@ -255,6 +314,13 @@ export function queueAgentTask(data, agent, task, source = 'owner', options = {}
       ? options.computer_permissions.map((item) => clip(item, 80)).filter(Boolean).slice(0, 12)
       : [],
     teach_as_skill: clip(options.teach_as_skill, 80),
+    // Provider-neutral envelope: context, artifacts, citations and history
+    // travel with the task, whichever provider family works on it next.
+    context_items: Array.isArray(options.context_items) ? options.context_items.slice(0, 16) : null,
+    artifacts: Array.isArray(options.artifacts) ? options.artifacts.slice(0, 20) : [],
+    citations: [],
+    provider_trail: [],
+    job_id: clip(options.job_id, 80),
     error: '',
     created_at: at,
     updated_at: at,
@@ -282,6 +348,12 @@ export function teachOfficeSkill(data, body = {}) {
     ? body.steps.map((item) => clip(item, 500)).filter(Boolean).slice(0, 20)
     : [];
   if (!name || !trigger || !steps.length) return { error: 'Skill name, trigger, and at least one step are required.' };
+  // Skills describe workflow and capabilities, never "always use model X";
+  // the router picks the best available provider when the skill runs.
+  const neutralSteps = steps.map(neutralizeProviderMentions);
+  const capabilities = Array.isArray(body.capabilities)
+    ? body.capabilities.map((item) => clip(item, 40)).filter(Boolean).slice(0, 8)
+    : inferSkillCapabilities(`${name} ${trigger} ${steps.join(' ')}`);
   const store = ensureSkillStore(data);
   const id = clip(body.id, 80) || crypto.randomUUID();
   const existing = store.find((item) => item.id === id || item.name.toLowerCase() === name.toLowerCase());
@@ -289,7 +361,9 @@ export function teachOfficeSkill(data, body = {}) {
   Object.assign(skill, {
     name,
     trigger,
-    steps,
+    steps: neutralSteps,
+    capabilities,
+    provider_neutral: true,
     notes: clip(body.notes, 1200),
     updated_at: now(),
     uses: Number(skill.uses || 0),
@@ -305,11 +379,29 @@ export function officeSkillsView(data) {
     name: skill.name,
     trigger: skill.trigger,
     steps: skill.steps,
+    capabilities: Array.isArray(skill.capabilities) ? skill.capabilities : [],
+    provider_neutral: skill.provider_neutral !== false,
     notes: skill.notes || '',
     uses: Number(skill.uses || 0),
     created_at: skill.created_at,
     updated_at: skill.updated_at,
   }));
+}
+
+const PROVIDER_WORDS = /\b(?:always\s+)?use\s+(?:the\s+)?(?:gpt[-\w.]*|chatgpt|openai|grok[-\w.]*|xai|gemini[-\w.]*|claude[-\w.]*|anthropic|llama[-\w.]*|mistral[-\w.]*|ollama)(?:\s+model)?\b/gi;
+
+export function neutralizeProviderMentions(step) {
+  return String(step || '').replace(PROVIDER_WORDS, 'use the best available model for this step');
+}
+
+function inferSkillCapabilities(text) {
+  const lower = String(text).toLowerCase();
+  const caps = [];
+  if (/research|source|search|find/.test(lower)) caps.push('deep_reasoning');
+  if (/code|build|implement|debug|test/.test(lower)) caps.push('coding');
+  if (/image|logo|visual/.test(lower)) caps.push('image_generation');
+  if (/document|pdf|file/.test(lower)) caps.push('file_analysis');
+  return caps.length ? caps : ['text'];
 }
 
 function matchedOfficeSkills(data, task, max = 3) {
@@ -346,14 +438,33 @@ export function handoffAgentTask(data, taskId, targetAgentId, note = '') {
   if (!target) return { error: 'Target agent not found.' };
   const from = data.team.find((item) => item.id === task.partner_id);
   task.handoffs = Array.isArray(task.handoffs) ? task.handoffs : [];
-  task.handoffs.push({
+  const handoff = {
     from_agent_id: task.partner_id,
     from_agent_name: task.partner_name,
+    from_provider: from?.provider_preference || task.provider_trail?.slice(-1)[0]?.provider || 'auto',
     to_agent_id: target.id,
     to_agent_name: target.name,
+    to_provider: target.provider_preference || 'auto',
     note: clip(note, 1200),
+    carried: {
+      prior_result: Boolean(task.result || task.prior_result),
+      review_feedback: Boolean(task.review_feedback),
+      steering: (task.steering || []).length,
+      context_items: Array.isArray(task.context_items) ? task.context_items.length : 0,
+      artifacts: (task.artifacts || []).length,
+      citations: (task.citations || []).length,
+    },
     at: now(),
-  });
+  };
+  task.handoffs.push(handoff);
+  // The next worker builds on everything done so far.
+  if (task.result && !task.prior_result) task.prior_result = task.result;
+  for (const agent of [from, target]) {
+    if (!agent) continue;
+    normalizeAgent(agent);
+    agent.handoff_history.push({ task_id: task.id, from: handoff.from_agent_name, to: handoff.to_agent_name, from_provider: handoff.from_provider, to_provider: handoff.to_provider, at: handoff.at });
+    agent.handoff_history = agent.handoff_history.slice(-30);
+  }
   task.handoffs = task.handoffs.slice(-20);
   task.partner_id = target.id;
   task.partner_name = target.name;
@@ -439,6 +550,9 @@ export function updateAgent(data, agent, body) {
     if (body.role != null && clip(body.role, 80)) agent.role = clip(body.role, 80);
   } else if (action === 'keep') {
     agent.temporary = false;
+  } else if (action === 'set_provider') {
+    agent.provider_preference = clip(body.provider, 40).toLowerCase();
+    agent.model_preference = clip(body.model, 160);
   } else if (action && action !== 'edit') {
     return { error: 'Unknown agent action.' };
   }
@@ -562,15 +676,52 @@ function modelFor(env, agent, models) {
     : (env.CHE_FAST_MODEL || models.fast);
 }
 
-async function runModel(env, model, system, user, maxTokens) {
+// Routing hints for an Office agent: the capability router honors the
+// agent's provider/model preference when that provider is healthy and
+// authorized, and falls back otherwise. Context items are filtered per
+// provider inside the router, so a handoff to another family re-filters them.
+export function routingForAgent(agent, data, task = null, route = 'office') {
+  const privacy = data?.ai_layer?.privacy || {};
+  const permissions = Object.fromEntries(Object.entries(privacy).map(([id, value]) => [id, value?.allowed || []]));
+  return {
+    ...(agent?.provider_preference ? { che_provider: agent.provider_preference } : {}),
+    ...(agent?.provider_preference && agent?.model_preference ? { che_model: agent.model_preference } : {}),
+    ...(agent?.capability_requirements?.[0] ? { che_capability: agent.capability_requirements[0] } : {}),
+    ...(data?.ai_layer?.policy?.local_only ? { che_local_only: true } : {}),
+    ...(task?.context_items?.length ? { che_context: { items: task.context_items, permissions } } : {}),
+    che_audit: {
+      task: clip(task?.task || route, 160),
+      agent: agent ? `${agent.name} (${agent.role})` : 'CHE',
+      route,
+    },
+  };
+}
+
+async function runModelDetailed(env, model, system, user, maxTokens, routing = {}) {
   const answer = await env.AI.run(model, {
     messages: [
       { role: 'system', content: system },
       { role: 'user', content: String(user).slice(0, 16000) },
     ],
     max_tokens: maxTokens,
+    ...routing,
   });
-  return modelText(answer);
+  return { text: modelText(answer), engine: String(answer?.engine || ''), model: String(answer?.model || '') };
+}
+
+async function runModel(env, model, system, user, maxTokens, routing = {}) {
+  return (await runModelDetailed(env, model, system, user, maxTokens, routing)).text;
+}
+
+// Builds CHE's canonical context items for a task from pgvector recall.
+// Secrets never enter; the router later sends each provider only the classes
+// it may receive.
+export function contextItemsFrom(matches = []) {
+  return matches.map((match) => {
+    const text = clip(`${match.title ? `${match.title}: ` : ''}${match.content || ''}`, 700);
+    const dataClass = classifyItem(match);
+    return { id: clip(match.id || match.external_id, 120), section: clip(match.kind || 'knowledge', 40), data_class: dataClass, text };
+  }).filter((item) => item.text && item.data_class !== 'secret').slice(0, 12);
 }
 
 // Runs one queued delegated task: agent works, CHE reviews, result recorded.
@@ -608,6 +759,23 @@ async function runOneTask(ctx) {
     if (!agent.skill_ids.includes(skill.id)) agent.skill_ids.push(skill.id);
   }
   const computer = await runComputerWorkspace(env, agent, task);
+  // pgvector context is gathered once and stored on the task envelope so it
+  // survives handoffs between provider families.
+  if (!Array.isArray(task.context_items) && typeof ctx.recall === 'function') {
+    try {
+      const recall = await ctx.recall(task.task);
+      const items = contextItemsFrom(recall?.matches || []);
+      const fresh = await load();
+      const stored = fresh.team_tasks.find((item) => item.id === task.id);
+      if (stored) {
+        stored.context_items = items;
+        await save(fresh);
+      }
+      task.context_items = items;
+    } catch (_) {
+      task.context_items = [];
+    }
+  }
   const steeringText = (task.steering || []).map((item) => item.text).filter(Boolean).join('\n- ');
   const workContext = [
     task.prior_result ? `PRIOR WORK TO PRESERVE OR IMPROVE:\n${task.prior_result}` : '',
@@ -616,14 +784,18 @@ async function runOneTask(ctx) {
     skills.length ? `REUSABLE OFFICE SKILLS:\n${skills.map((skill) => `${skill.name}: ${skill.steps.join(' -> ')}`).join('\n')}` : '',
     computer ? `CONNECTED COMPUTER RESULT:\n${JSON.stringify(computer).slice(0, 16000)}` : '',
   ].filter(Boolean).join('\n\n');
+  let worker = { engine: '', model: '' };
   try {
-    result = clip(await runModel(
+    const detailed = await runModelDetailed(
       env,
       modelFor(env, agent, models),
       agentSystemPrompt(agent, workContext),
       task.task,
       agent.model_tier === 'strong' ? 1800 : 1100,
-    ), 16000);
+      routingForAgent(agent, data, task),
+    );
+    result = clip(detailed.text, 16000);
+    worker = { engine: detailed.engine, model: detailed.model };
     if (!result) error = 'No result returned.';
   } catch (failure) {
     error = String(failure?.message || failure).slice(0, 1000);
@@ -667,6 +839,19 @@ async function runOneTask(ctx) {
   t1.status = 'reviewing';
   t1.result = result;
   t1.updated_at = now();
+  t1.provider_trail = Array.isArray(t1.provider_trail) ? t1.provider_trail : [];
+  t1.provider_trail.push({ agent: agent.name, provider: worker.engine || 'unknown', model: worker.model || '', at: now() });
+  t1.provider_trail = t1.provider_trail.slice(-20);
+  if (a1 && Array.isArray(t1.context_items)) {
+    normalizeAgent(a1);
+    a1.memory_refs = [...new Set([...a1.memory_refs, ...t1.context_items.map((item) => item.id).filter(Boolean)])].slice(-40);
+  }
+  // Useful knowledge from any provider comes back into CHE's memory review
+  // queue, never straight into owner memory.
+  const candidates = extractCandidateMemories(result, { provider: worker.engine, task: task.task });
+  if (candidates.length) {
+    data.memory_candidates = [...candidates, ...(Array.isArray(data.memory_candidates) ? data.memory_candidates : [])].slice(0, 60);
+  }
   if (a1) {
     a1.runtime_status = 'waiting';
     a1.runtime_task = 'Waiting on CHE review';
@@ -810,7 +995,8 @@ async function advanceMeeting(ctx) {
       try {
         const text = await runModel(env, modelFor(env, agent, models),
           agentSystemPrompt(agent, `You are in a War Room chaired by CHE. Your responsibility: ${p.responsibility}`),
-          `Objective: ${meeting.objective}\nDraft your slice: key findings, proposal, risks, open questions. Under 220 words.`, 600);
+          `Objective: ${meeting.objective}\nDraft your slice: key findings, proposal, risks, open questions. Under 220 words.`, 600,
+          routingForAgent(agent, data, { task: meeting.objective }, 'war_room'));
         return { from: agent.name, agent_id: agent.id, kind: 'draft', text: clip(text, 4000) || '(no draft returned)', at: now() };
       } catch (_) {
         return { from: agent.name, agent_id: agent.id, kind: 'draft', text: '(draft failed)', failed: true, at: now() };
@@ -835,7 +1021,8 @@ async function advanceMeeting(ctx) {
       try {
         const text = await runModel(env, modelFor(env, agent, models),
           agentSystemPrompt(agent, 'You are cross-checking a teammate in the War Room. Challenge weak assumptions directly but constructively, in character.'),
-          `Objective: ${meeting.objective}\n${target.from}'s draft:\n${target.text}\n\nReply to ${target.from}: what holds up, what is weak or missing, and one concrete fix. Under 120 words.`, 350);
+          `Objective: ${meeting.objective}\n${target.from}'s draft:\n${target.text}\n\nReply to ${target.from}: what holds up, what is weak or missing, and one concrete fix. Under 120 words.`, 350,
+          routingForAgent(agent, data, { task: meeting.objective }, 'war_room_review'));
         return { from: agent.name, agent_id: agent.id, to: target.from, kind: 'critique', text: clip(text, 3000), at: now() };
       } catch (_) {
         return null;

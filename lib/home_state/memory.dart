@@ -1069,7 +1069,7 @@ extension _CheHomeMemory on _CHEHomeState {
   }
 
   void _openAssistantHub({int tab = 0}) {
-    _selectedTab = tab < 0 ? 0 : (tab > 8 ? 8 : tab);
+    _selectedTab = tab < 0 ? 0 : (tab > 9 ? 9 : tab);
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF101821),
@@ -1090,6 +1090,7 @@ extension _CheHomeMemory on _CHEHomeState {
               Tab(icon: Icon(Icons.lightbulb_outline), text: 'Create'),
               Tab(icon: Icon(Icons.workspaces_outline), text: 'Office'),
               Tab(icon: Icon(Icons.apps_rounded), text: 'Apps'),
+              Tab(icon: Icon(Icons.theaters_outlined), text: 'Theater'),
             ],
             pages: [
               (_) => _hubMemoryTab(),
@@ -1101,6 +1102,10 @@ extension _CheHomeMemory on _CHEHomeState {
               (active) => _hubCreateTab(active),
               (active) => _hubOfficeTab(active),
               (_) => CheAppsHubTab(onLearnPage: _learnFromBrowserPage),
+              (_) {
+                _ensureOfficeRuntime();
+                return CheTheaterRoom(runtime: _officeRuntime, client: _agentRuntime, onOpenOffice: _openOfficeFloor);
+              },
             ],
           ),
         );

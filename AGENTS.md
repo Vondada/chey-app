@@ -4,7 +4,8 @@ The owner uses CHE voice-first, as if blind. Every feature must be fully usable 
 
 - CHE describes the current screen aloud, based on actual available screen context.
 - Read options aloud as a numbered list and support spoken choices.
-- Confirm every action aloud before and after execution; report actual success or failure.
+- Report every action aloud after execution with its actual success or failure. Owner rule (September 28, 2026): CHE has full standing permission to act, including sending messages and emails; she must ask first only when an action costs money (paying, buying, ordering, subscribing, transferring) and before deleting or removing anything. Consequential AI-provider permission changes are still confirmed aloud.
+- Passwords: the owner authorized CHE to store his passwords. They live only in the on-device Keychain vault (lib/security/che_password_vault.dart) and must never be sent to the Worker, any AI provider, chat history, memory or logs.
 - Never say "tap here" or depend on the owner seeing the screen.
 - Open or act in an app only after the owner gives explicit spoken or typed permission for that app. Enforce permission in execution code, not only in model instructions.
 - Every screen touched must be voice-accessible: VoiceOver labels on every button, spoken feedback, and a voice route to each action.

@@ -33,6 +33,33 @@ const List<CheAppDefinition> cheAppCatalog = [
   CheAppDefinition(name: 'GitHub', webUrl: 'https://github.com', icon: Icons.code, aliases: ['github', 'git hub']),
   CheAppDefinition(name: 'TradingView', webUrl: 'https://www.tradingview.com', icon: Icons.show_chart, aliases: ['tradingview', 'trading view']),
   CheAppDefinition(name: 'NinjaTrader', webUrl: 'https://ninjatrader.com', icon: Icons.candlestick_chart, aliases: ['ninjatrader', 'ninja trader']),
+  // Web versions CHE can use when a phone app can't be controlled directly.
+  CheAppDefinition(name: 'Gmail', webUrl: 'https://mail.google.com', icon: Icons.mail_outline, aliases: ['gmail', 'google mail']),
+  CheAppDefinition(name: 'Outlook', webUrl: 'https://outlook.live.com/mail', icon: Icons.mark_email_unread_outlined, aliases: ['outlook', 'hotmail']),
+  CheAppDefinition(name: 'Yahoo Mail', webUrl: 'https://mail.yahoo.com', icon: Icons.mail_outline, aliases: ['yahoo mail']),
+  CheAppDefinition(name: 'Google Calendar', webUrl: 'https://calendar.google.com', icon: Icons.calendar_month_outlined, aliases: ['google calendar']),
+  CheAppDefinition(name: 'Google Drive', webUrl: 'https://drive.google.com', icon: Icons.folder_open_outlined, aliases: ['google drive', 'drive']),
+  CheAppDefinition(name: 'Google Docs', webUrl: 'https://docs.google.com', icon: Icons.description_outlined, aliases: ['google docs']),
+  CheAppDefinition(name: 'Google Maps', webUrl: 'https://www.google.com/maps', icon: Icons.map_outlined, aliases: ['google maps']),
+  CheAppDefinition(name: 'WhatsApp', webUrl: 'https://web.whatsapp.com', icon: Icons.chat_outlined, aliases: ['whatsapp', 'whats app']),
+  CheAppDefinition(name: 'Messenger', webUrl: 'https://www.messenger.com', icon: Icons.messenger_outline, aliases: ['messenger', 'facebook messenger']),
+  CheAppDefinition(name: 'Telegram', webUrl: 'https://web.telegram.org', icon: Icons.send_outlined, aliases: ['telegram']),
+  CheAppDefinition(name: 'Slack', webUrl: 'https://app.slack.com', icon: Icons.tag_outlined, aliases: ['slack']),
+  CheAppDefinition(name: 'Microsoft Teams', webUrl: 'https://teams.microsoft.com', icon: Icons.groups_2_outlined, aliases: ['teams', 'microsoft teams']),
+  CheAppDefinition(name: 'Zoom', webUrl: 'https://app.zoom.us', icon: Icons.videocam_outlined, aliases: ['zoom']),
+  CheAppDefinition(name: 'Netflix', webUrl: 'https://www.netflix.com', icon: Icons.movie_outlined, aliases: ['netflix']),
+  CheAppDefinition(name: 'Hulu', webUrl: 'https://www.hulu.com', icon: Icons.live_tv_outlined, aliases: ['hulu']),
+  CheAppDefinition(name: 'Prime Video', webUrl: 'https://www.primevideo.com', icon: Icons.ondemand_video_outlined, aliases: ['prime video', 'amazon prime video']),
+  CheAppDefinition(name: 'Disney+', webUrl: 'https://www.disneyplus.com', icon: Icons.movie_filter_outlined, aliases: ['disney plus', 'disney+']),
+  CheAppDefinition(name: 'Max', webUrl: 'https://play.max.com', icon: Icons.tv_outlined, aliases: ['hbo max', 'hbo']),
+  CheAppDefinition(name: 'Tubi', webUrl: 'https://tubitv.com', icon: Icons.tv_outlined, aliases: ['tubi']),
+  CheAppDefinition(name: 'Pluto TV', webUrl: 'https://pluto.tv', icon: Icons.tv_outlined, aliases: ['pluto', 'pluto tv']),
+  CheAppDefinition(name: 'Amazon', webUrl: 'https://www.amazon.com', icon: Icons.shopping_cart_outlined, aliases: ['amazon']),
+  CheAppDefinition(name: 'PayPal', webUrl: 'https://www.paypal.com', icon: Icons.account_balance_wallet_outlined, aliases: ['paypal', 'pay pal']),
+  CheAppDefinition(name: 'Notion', webUrl: 'https://www.notion.so', icon: Icons.notes_outlined, aliases: ['notion']),
+  CheAppDefinition(name: 'Pinterest', webUrl: 'https://www.pinterest.com', icon: Icons.push_pin_outlined, aliases: ['pinterest']),
+  CheAppDefinition(name: 'ChatGPT', webUrl: 'https://chatgpt.com', icon: Icons.smart_toy_outlined, aliases: ['chatgpt', 'chat gpt']),
+  CheAppDefinition(name: 'Grok', webUrl: 'https://grok.com', icon: Icons.smart_toy_outlined, aliases: ['grok']),
 ];
 
 /// The app's real icon (the site's own favicon), with the old symbol only as
@@ -66,11 +93,30 @@ class CheAppIcon extends StatelessWidget {
 
 CheAppDefinition? cheAppForName(String input) {
   final value = input.toLowerCase().trim();
+  // Whole-word matches only, so "netflix" never matches the "x" alias.
+  bool mentions(String alias) =>
+      value == alias || RegExp('(^|[^a-z0-9])${RegExp.escape(alias)}(\$|[^a-z0-9])').hasMatch(value);
   for (final app in cheAppCatalog) {
-    if (app.name.toLowerCase() == value ||
-        app.aliases.any((alias) => value == alias || value.contains(alias))) {
-      return app;
-    }
+    if (app.name.toLowerCase() == value) return app;
+  }
+  for (final app in cheAppCatalog) {
+    if (app.aliases.any(mentions)) return app;
+  }
+  return null;
+}
+
+/// Phone apps with no usable web version. CHE says so plainly instead of
+/// pretending she can get in.
+const Map<String, String> cheAppsWithoutWeb = {
+  'imessage': 'iMessage has no web version, so I can only draft the text and open Messages for you to send.',
+  'facetime': 'FaceTime has no web version I can use, sir.',
+  'iwebtv': 'iWebTV has no web version. I can open the app itself once you say yes, or play a video page in CHE\'s Theater.',
+};
+
+String? cheNoWebVersionReason(String input) {
+  final value = input.toLowerCase();
+  for (final entry in cheAppsWithoutWeb.entries) {
+    if (value.contains(entry.key) || (entry.key == 'iwebtv' && value.contains('iweb'))) return entry.value;
   }
   return null;
 }
