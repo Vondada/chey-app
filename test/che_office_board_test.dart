@@ -156,12 +156,15 @@ void main() {
     expect(find.bySemanticsLabel(RegExp(r'^Atlas, Research\. Up next: Research competitors in Houston\.')), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp(r'^CHE, Manager\.')), findsOneWidget);
 
-    await tester.scrollUntilVisible(find.text('Stand down the Office'), 200, scrollable: find.byType(Scrollable).first);
+    // The board sits below the floor plan and action buttons; scroll to it.
+    await tester.scrollUntilVisible(find.text('BLOCKERS (1)'), 200, scrollable: find.byType(Scrollable).first);
     expect(find.text('STARTED TODAY (3)'), findsOneWidget);
     expect(find.text('FINISHED TODAY (1)'), findsOneWidget);
     expect(find.text('STRIPE TODAY'), findsOneWidget);
     expect(find.text('BLOCKERS (1)'), findsOneWidget);
 
+    await tester.ensureVisible(find.text('Stand down the Office'));
+    await tester.pump();
     await tester.tap(find.text('Stand down the Office'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
