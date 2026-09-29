@@ -147,15 +147,15 @@ extension _CheHomeConnected on _CHEHomeState {
     // Stalled work / decisions / next actions.
     if (RegExp(r"^(what'?s|what is)\s+stalled\b|any\s+stalled\b").hasMatch(lower)) {
       final data = await _getAgentJson('/api/stalled');
-      final items = as List? ?? const [])) if (e is Map) Map<String, dynamic>.from(e)];
+      final items = [for (final e in (data?['items'] as List? ?? const [])) if (e is Map) Map<String, dynamic>.from(e)];
       if (items.isEmpty) { await speakText("Nothing's stalled right now."); return true; }
-      final top = items.take(3).map((e) => '${e } — ${e }, stuck ${e } minutes.').join(' ');
+      final top = items.take(3).map((e) => '${e['who']} — ${e['title']}, ${e['reason']}.').join(' ');
       await speakText("Here's what's stalled. $top");
       return true;
     }
     if (RegExp(r"\b(what needs me|what do you need from me|any decisions|needs my (call|decision|approval))\b").hasMatch(lower)) {
       final data = await _getAgentJson('/api/decisions');
-      final items = as List? ?? const [])) if (e is Map) Map<String, dynamic>.from(e)];
+      final items = [for (final e in (data?['items'] as List? ?? const [])) if (e is Map) Map<String, dynamic>.from(e)];
       if (items.isEmpty) { await speakText("Nothing needs your call right now."); return true; }
       await speakText("Here's what needs you. ${items.take(3).map((e) => e ).join(' ')}");
       return true;
