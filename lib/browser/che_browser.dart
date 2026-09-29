@@ -133,6 +133,12 @@ class _BrowserTab {
     controller = WebViewController()
       ..setBackgroundColor(const Color(0xFF060B11))
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      // Owner signs in once (Face ID AutoFill or typing); CHE saves that login
+      // to her on-device Keychain vault. Sessions persist in the web view's
+      // own cookie store, so he stays logged in.
+      ..addJavaScriptChannel('CheVaultCapture', onMessageReceived: (message) {
+        unawaited(_saveCapturedLogin(message.message));
+      })
       ..setNavigationDelegate(NavigationDelegate(
         onProgress: (value) {
           progress = value;
@@ -147,6 +153,8 @@ class _BrowserTab {
           title = (await controller.getTitle())?.trim() ?? title;
           if (title.isEmpty) title = Uri.tryParse(u)?.host ?? u;
           unawaited(CheBrowserStore.instance.visit(u, title));
+          unawaited(controller.runJavaScript(_loginCaptureJs));
+          unawaited(_autoFill(controller, u));
           onChanged();
         },
         onNavigationRequest: (request) {
@@ -164,6 +172,63 @@ class _BrowserTab {
         },
       ))
       ..loadRequest(Uri.parse(url));
+  }
+
+  // Watches sign-in forms on this page and hands the login to the vault
+  // when the owner submits it. Nothing leaves the phone.
+  static const _loginCaptureJs = r'''
+(function () {
+  if (window.__cheLoginCapture) return;
+  window.__cheLoginCapture = true;
+  function grab() {
+    var pw = document.querySelector('input[type=password]');
+    if (!pw || !pw.value) return;
+    var user = document.querySelector('input[autocomplete=username],input[type=email],input[name*=user i],input[name*=email i],input[id*=user i],input[id*=email i]');
+    try {
+      CheVaultCapture.postMessage(JSON.stringify({ host: location.host, username: user ? user.value : '', password: pw.value }));
+    } catch (e) {}
+  }
+  document.addEventListener('submit', grab, true);
+  document.addEventListener('click', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('button,input[type=submit],[role=button]') : null;
+    if (b) setTimeout(grab, 0);
+  }, true);
+  document.addEventListener('keydown', function (e) { if (e.key === 'Enter') setTimeout(grab, 0); }, true);
+})();
+''';
+
+  // On a sign-in page for a site CHE already has, fill the login in
+  // automatically (the owner or CHE still presses Sign in).
+  static Future<void> _autoFill(WebViewController controller, String pageUrl) async {
+    try {
+      final host = Uri.tryParse(pageUrl)?.host ?? '';
+      if (host.isEmpty) return;
+      final entry = await CheVault.instance.find(host);
+      if (entry == null) return;
+      final u = jsonEncode(entry.username);
+      final p = jsonEncode(entry.password);
+      await controller.runJavaScript('''(function(u,p){
+var pw=document.querySelector('input[type=password]');if(!pw||pw.value)return;
+function set(e,v){var s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;s.call(e,v);e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));}
+var user=document.querySelector('input[autocomplete=username],input[type=email],input[name*=user i],input[name*=email i],input[id*=user i],input[id*=email i]');
+if(user&&u&&!user.value)set(user,u);set(pw,p);})($u,$p)''');
+    } catch (_) {}
+  }
+
+  static Future<void> _saveCapturedLogin(String raw) async {
+    try {
+      final data = jsonDecode(raw);
+      if (data is! Map) return;
+      final host = '${data['host'] ?? ''}';
+      final password = '${data['password'] ?? ''}';
+      if (host.isEmpty || password.isEmpty) return;
+      final site = CheVaultCommand.normalizeSite(host);
+      final existing = await CheVault.instance.find(site);
+      if (existing != null && existing.password == password && existing.site == site) return;
+      await CheVault.instance.save(CheVaultEntry(site: site, password: password, username: '${data['username'] ?? ''}'));
+    } catch (_) {
+      // Never let a capture problem affect the page.
+    }
   }
 
   final VoidCallback onChanged;
