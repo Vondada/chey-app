@@ -157,7 +157,7 @@ extension _CheHomeConnected on _CHEHomeState {
       final data = await _getAgentJson('/api/decisions');
       final items = [for (final e in (data?['items'] as List? ?? const [])) if (e is Map) Map<String, dynamic>.from(e)];
       if (items.isEmpty) { await speakText("Nothing needs your call right now."); return true; }
-      await speakText("Here's what needs you. ${items.take(3).map((e) => e ).join(' ')}");
+      await speakText("Here's what needs you. ${items.take(3).map((e) => e['title']).join(' ')}");
       return true;
     }
     if (RegExp(r"^(what should i do|next actions|what'?s next|what do i do next)\b").hasMatch(lower)) {
