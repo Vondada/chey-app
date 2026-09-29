@@ -136,43 +136,48 @@ export function nextActions(data) {
   return actions.slice(0, 3);
 }
 
-// One activity feed, newest first.
+const quote = (text) => `“${text}”`;
+
+// One activity feed, newest first. Each task appears once with its real
+// state; a task that is blocked or waiting on the owner says so on its own
+// line instead of adding a duplicate "stalled" entry above the real one.
 export function activityFeed(data, media = [], origin = '', limit = 30) {
   const events = [];
-  for (const s of stalledTasks(data)) {
-    events.push({ at: s.at, who: s.who, kind: 'stalled', id: s.id, line: s.who + ' is stalled on "' + s.title + '" (' + s.reason + ').' });
-  }
+  const waiting = new Map(decisionsNeeded(data).map((s) => [s.id, s]));
   for (const t of data.team_tasks || []) {
     const who = t.partner_name || 'An agent';
-    const title = shortTitle(t.task);
+    const title = quote(shortTitle(t.task));
     let line = '';
-    if (DONE.has(t.status)) line = who + ' finished "' + title + '".';
-    else if (t.status === 'running') line = who + ' is working on "' + title + '".';
-    else if (t.status === 'queued') line = who + ' has "' + title + '" next.';
-    else if (t.status === 'failed') line = who + ' could not finish "' + title + '".';
-    if (line) events.push({ at: t.updated_at || t.created_at, who, line, kind: 'agent_task', id: t.id });
+    let kind = 'agent_task';
+    if (waiting.has(t.id)) { line = `${who} needs your decision on ${title}.`; kind = 'stalled'; }
+    else if (DONE.has(t.status)) line = `${who} finished ${title}.`;
+    else if (t.status === 'running') line = `${who} is working on ${title}.`;
+    else if (t.status === 'queued') line = `${who} has ${title} next.`;
+    else if (t.status === 'blocked' || t.status === 'waiting') { line = `${who} is blocked on ${title}.`; kind = 'stalled'; }
+    else if (t.status === 'failed') line = `${who} could not finish ${title}.`;
+    if (line) events.push({ at: t.updated_at || t.created_at, who, line, kind, id: t.id });
   }
   for (const m of data.meetings || []) {
     events.push({
       at: m.updated_at || m.created_at, who: 'War Room', kind: 'meeting', id: m.id,
       line: m.final_plan
-        ? 'The War Room made a plan for "' + shortTitle(m.objective) + '".'
-        : 'The War Room is meeting on "' + shortTitle(m.objective) + '".',
+        ? `The War Room made a plan for ${quote(shortTitle(m.objective))}.`
+        : `The War Room is meeting on ${quote(shortTitle(m.objective))}.`,
     });
   }
   for (const m of media) {
-    events.push({ at: m.created_at, who: 'Art Studio', kind: 'image', id: m.id, line: 'Art Studio made "' + shortTitle(m.title || m.prompt) + '".' });
+    events.push({ at: m.created_at, who: 'Art Studio', kind: 'image', id: m.id, line: `Art Studio made ${quote(shortTitle(m.title || m.prompt))}.` });
   }
   for (const j of data.jobs || []) {
-    const title = shortTitle(j.title || j.prompt);
+    const title = quote(shortTitle(j.title || j.prompt));
     let line = '';
-    if (DONE.has(j.status)) line = 'CHE finished "' + title + '".';
-    else if (j.status === 'queued' || j.status === 'running') line = 'CHE is working on "' + title + '".';
-    else if (j.status === 'failed') line = 'CHE could not finish "' + title + '".';
+    if (DONE.has(j.status)) line = `CHE finished ${title}.`;
+    else if (j.status === 'queued' || j.status === 'running') line = `CHE is working on ${title}.`;
+    else if (j.status === 'failed') line = `CHE could not finish ${title}.`;
     if (line) events.push({ at: j.updated_at || j.created_at, who: 'CHE', kind: 'job', id: j.id, line });
   }
   for (const p of data.projects || []) {
-    events.push({ at: p.created_at, who: 'CHE', kind: 'project', id: p.id, line: 'CHE started the project "' + shortTitle(p.title) + '".' });
+    events.push({ at: p.created_at, who: 'CHE', kind: 'project', id: p.id, line: `CHE started the project ${quote(shortTitle(p.title))}.` });
   }
   return events.filter((e) => e.at).sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, limit);
 }
@@ -199,20 +204,21 @@ export function greeting(data, media = [], { hour = 12, since = '' } = {}) {
   const h = Number.isFinite(Number(hour)) ? Math.max(0, Math.min(23, Number(hour))) : 12;
   const hello = partOfDay(h);
   const decide = decisionsNeeded(data)[0];
-  if (decide) return { line: hello + '! ' + decide.who + ' needs you on "' + decide.title + '".', kind: 'decision' };
-  const stall = stalledTasks(data)[0];
-  if (stall) return { line: hello + '! ' + stall.who + ' is stalled on "' + stall.title + '".', kind: 'stalled' };
+  if (decide) return { line: `${hello}! ${decide.who} needs you on ${quote(decide.title)}.`, kind: 'decision' };
+  // Finished work leads; a stale check-in comes after it.
   const tasks = data.team_tasks || [];
   const finished = tasks.filter((t) => DONE.has(t.status) && (!since || String(t.updated_at || '') > since));
   if (finished.length) {
     const t = finished[0];
-    const more = finished.length > 1 ? ' and ' + (finished.length - 1) + ' more' : '';
-    return { line: hello + '! ' + (t.partner_name || 'The Office') + ' finished "' + shortTitle(t.task, 5) + '"' + more + '. Want to hear it?', kind: 'finished' };
+    const more = finished.length > 1 ? ` and ${finished.length - 1} more` : '';
+    return { line: `${hello}! ${t.partner_name || 'The Office'} finished ${quote(shortTitle(t.task, 5))}${more}. Want to hear it?`, kind: 'finished' };
   }
+  const stall = stalledTasks(data)[0];
+  if (stall) return { line: `${hello}! ${stall.who} is stalled on ${quote(stall.title)}.`, kind: 'stalled' };
   const running = tasks.find((t) => t.status === 'running' || t.status === 'queued');
-  if (running) return { line: hello + '! ' + (running.partner_name || 'The Office') + ' is on "' + shortTitle(running.task, 5) + '". ' + timeSuggestion(h), kind: 'working' };
+  if (running) return { line: `${hello}! ${running.partner_name || 'The Office'} is on ${quote(shortTitle(running.task, 5))}. ${timeSuggestion(h)}`, kind: 'working' };
   const plan = (data.meetings || []).find((m) => m.final_plan && (!since || String(m.updated_at || '') > since));
-  if (plan) return { line: hello + '! The War Room has a plan for "' + shortTitle(plan.objective, 5) + '". Want it?', kind: 'plan' };
+  if (plan) return { line: `${hello}! The War Room has a plan for ${quote(shortTitle(plan.objective, 5))}. Want it?`, kind: 'plan' };
   return { line: hello + '! ' + timeSuggestion(h), kind: 'suggestion' };
 }
 
