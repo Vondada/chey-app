@@ -4,8 +4,9 @@ name: CHE Shorebird
 #   release: builds a Shorebird iOS release (unsigned, for SideStore). Phones
 #            must run a Shorebird release before patches can apply.
 #   patch:   ships Dart changes merged to main to phones on that release.
-# One-time setup: run `shorebird init` locally and commit shorebird.yaml,
-# then add a SHOREBIRD_TOKEN repository secret (`shorebird login:ci`).
+# One-time setup: create a Shorebird API key at https://console.shorebird.dev,
+# save it as the SHOREBIRD_TOKEN repository secret, and the "CHE Shorebird
+# setup" workflow runs `shorebird init` and commits shorebird.yaml.
 # Merged "che/update-*" pull requests patch automatically once configured.
 
 on:
