@@ -158,6 +158,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   String _statusBanner = 'Ready. Type or speak a request.';
   String _lastStatusKey = '';
   bool _autonomy = true;
+  List<Map<String, dynamic>> _actionApprovals = [];
+  bool _approvalBusy = false;
   bool _usingSpeechFallback = false;
   Timer? _jobPollTimer;
   final Set<String> _notifiedJobs = {};
@@ -185,6 +187,14 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   Future<bool> _controlAutonomy(String text) async {
     final command = text.toLowerCase().trim().replaceFirst(RegExp(r'^(?:chay|chey|che)[, ]+'), '').replaceFirst(RegExp(r'[.!?]+$'), '');
+    final approval = RegExp(r'^(approve|reject) action (\d+)$').firstMatch(command);
+    if (approval != null) {
+      final index = int.parse(approval.group(2)!) - 1;
+      if (index >= 0 && index < _actionApprovals.length) {
+        await _decideAction(_actionApprovals[index], approval.group(1) == 'approve');
+      } else { await speakText('That action number is not available.'); }
+      return true;
+    }
     if (command != 'stand by' && command != 'resume') return false;
     final enabled = command == 'resume';
     await speakText(enabled ? 'Resuming queued work.' : 'Pausing queued work.');
@@ -202,9 +212,21 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     return true;
   }
 
+  Future<void> _decideAction(Map<String, dynamic> action, bool approve) async {
+    if (_approvalBusy) return;
+    _set(() => _approvalBusy = true);
+    try {
+      await speakText('${approve ? 'Approving' : 'Rejecting'}: ${action['query']}');
+      final result = await _postAgentJson('/api/action/approval', {'id': action['id'], 'approve': approve});
+      await speakText(result?['reply']?.toString() ?? 'The decision could not be confirmed.');
+      await _loadAgentState(silent: true);
+    } catch (error) { await speakText('The action could not be confirmed: $error'); }
+    finally { if (mounted) _set(() => _approvalBusy = false); }
+  }
+
   Future<void> _notifyFinishedJobs() async {
     final prefs = await SharedPreferences.getInstance();
-    final key = 'che_job_notices_${cheAgentBaseUrl.hashCode}';
+    final key = 'che_job_notices_$cheAgentBaseUrl';
     _notifiedJobs.addAll(prefs.getStringList(key) ?? []);
     for (final job in backgroundJobs) {
       final id = job['id']?.toString() ?? '';
@@ -212,7 +234,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
       final text = job['status'] == 'complete'
           ? 'Finished: ${job['title']}. ${job['result']}'
           : 'Work needs attention: ${job['title']}. ${job['error']}';
-      await _statusHaptic(3);
+      await _statusHaptic(job['status'] == 'complete' ? 3 : 4);
       if (!mounted) return;
       _set(() => messages.add({'role': 'assistant', 'text': text}));
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text, maxLines: 4, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 20))));
@@ -890,6 +912,7 @@ OWNER AGENCY
     if (kIsWeb || !mounted) return;
 
     if (state == AppLifecycleState.resumed) {
+      unawaited(_loadAgentState(silent: true));
       unawaited(_consumeWakeRequest(resumeIfAwake: true));
       if (!kIsWeb &&
           defaultTargetPlatform == TargetPlatform.iOS &&
@@ -1122,6 +1145,20 @@ OWNER AGENCY
                   child: Text(_statusBanner, style: const TextStyle(fontSize: 20, color: Colors.white)),
                 ),
               ),
+              if (_actionApprovals.isNotEmpty)
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 150),
+                  child: ListView(shrinkWrap: true, children: [
+                    for (var i = 0; i < _actionApprovals.length; i++)
+                      Column(children: [
+                        Text('Action ${i + 1}: ${_actionApprovals[i]['query']}', style: const TextStyle(fontSize: 20)),
+                        Wrap(children: [
+                          TextButton(onPressed: _approvalBusy ? null : () => _decideAction(_actionApprovals[i], true), child: Text('Approve action ${i + 1}')),
+                          TextButton(onPressed: _approvalBusy ? null : () => _decideAction(_actionApprovals[i], false), child: Text('Reject action ${i + 1}')),
+                        ]),
+                      ]),
+                  ]),
+                ),
               CheHomePresence(
                 orbState: _orbState,
                 subtitle: subtitle,

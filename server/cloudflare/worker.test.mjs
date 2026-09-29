@@ -550,3 +550,43 @@ test('public research and vision try the next engine and aggregate failures', as
   });
   assert.equal(count, 2); assert.equal(vision.summary, 'Actual image description');
 });
+
+test('multi-step jobs checkpoint each result and pause between steps', async () => {
+  const saved = new Map(); let calls = 0;
+  const state = new CheState({storage: {
+    get: async key => saved.has(key) ? structuredClone(saved.get(key)) : undefined,
+    put: async (key, value) => saved.set(key, structuredClone(value)),
+    setAlarm: async () => {}, deleteAlarm: async () => {},
+  }}, {CHE_DISABLE_KEYLESS_AI:'1', AI:{run:async () => ({response:`Step ${++calls} result`})}});
+  saved.set('che', {jobs:[{id:'steps', prompt:'Write and review', steps:['Write','Review'], status:'queued'}], devices:{}, memories:[]});
+  await state.processJobs();
+  assert.equal(saved.get('che').jobs[0].status, 'queued');
+  assert.equal(saved.get('che').jobs[0].step_index, 1);
+  await state.setAutonomy(false); await state.processJobs(); assert.equal(calls, 1);
+  await state.setAutonomy(true); await state.processJobs();
+  assert.equal(saved.get('che').jobs[0].status, 'complete');
+  assert.match(saved.get('che').jobs[0].result, /Step 1 result\n\nStep 2 result/);
+});
+
+test('action connectors require a single-use explicit approval', async () => {
+  const saved = new Map(); let writes = 0;
+  const env = { CHE_PAIR_CODE:'123456', CHE_PAYMENTS_URL:'https://payments.example/action', CHE_DISABLE_KEYLESS_AI:'1', AI:{run:async () => ({response:'Approval needed.'})} };
+  const state = new CheState({storage:{
+    get:async k => saved.has(k) ? structuredClone(saved.get(k)) : undefined,
+    put:async (k,v) => saved.set(k, structuredClone(v)), setAlarm:async () => {},
+  }}, env);
+  const send = (path, body, token='') => state.fetch(new Request(`https://che.example${path}`, {method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${token}`},body:JSON.stringify(body)}));
+  const token = (await (await send('/api/pair',{code:'123456'})).json()).device_token;
+  const oldFetch = globalThis.fetch;
+  globalThis.fetch = async () => { writes++; return Response.json({result:{ok:true}}); };
+  try {
+    await send('/api/chat',{message:'Prepare this payment', requested_capabilities:['payments']},token);
+    assert.equal(writes,0);
+    const approval = saved.get('che').action_approvals[0];
+    assert.equal(approval.status,'pending');
+    assert.equal((await send('/api/action/approval',{id:approval.id,approve:true},token)).status,200);
+    assert.equal(writes,1);
+    assert.equal((await send('/api/action/approval',{id:approval.id,approve:true},token)).status,409);
+    assert.equal(writes,1);
+  } finally { globalThis.fetch = oldFetch; }
+});

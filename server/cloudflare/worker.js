@@ -705,7 +705,7 @@ export async function publicResearch(query, fetcher = fetch) {
       const data = await response.json();
       const pages = Object.values(data?.query?.pages || {});
       const summary = engine === 'wikipedia'
-        ? pages.map(p => `${p.title}: ${p.extract || ''}`).filter(t => t.length > 30).join('\n').slice(0, 10000)
+        ? pages.filter(p => p.extract?.trim()).map(p => `${p.title}: ${p.extract}`).join('\n').slice(0, 10000)
         : String(data.AbstractText || data.Answer || (data.RelatedTopics || []).map(t => t.Text || '').filter(Boolean).slice(0, 5).join('\n')).slice(0, 10000);
       if (!summary.trim()) throw new Error('No reference result');
       const sources = engine === 'wikipedia' ? pages.map(p => p.fullurl).filter(Boolean) : [data.AbstractURL, ...(data.RelatedTopics || []).map(t => t.FirstURL)].filter(Boolean).slice(0, 8);
@@ -1203,18 +1203,24 @@ async function runOfficeAgents(env, team, requestedCapabilities, query, fullAgen
   return results;
 }
 
-async function actionPanel(env, requestedCapabilities, query) {
+async function actionPanel(env, requestedCapabilities, query, approved = false) {
   const requested = new Set(requestedCapabilities || []);
   const jobs = [];
 
   const add = (capability, url, token, tool, mode) => {
     if (!requested.has(capability) || !url) return;
+    if (!approved) {
+      jobs.push(Promise.resolve({ id: crypto.randomUUID(), capability, tool, query,
+        status: 'pending', requires_owner_confirmation: true,
+        result: 'Awaiting explicit owner approval. No action has executed.', created_at: new Date().toISOString() }));
+      return;
+    }
     jobs.push(optionalToolConnector(
       url,
       token,
       tool,
       query,
-      { mode, require_explicit_owner_request: true },
+      { mode, require_explicit_owner_request: true, owner_confirmed: true },
     ));
   };
 
@@ -1817,6 +1823,7 @@ export class CheState extends DurableObject {
           team_tasks: data.team_tasks,
           jobs: data.jobs,
           autonomy: data.autonomy,
+          action_approvals: data.action_approvals || [],
           agent_identity: {
             ...data.agent_identity,
             domain: String(this.env.CHE_IDENTITY_DOMAIN || new URL(request.url).host),
@@ -2384,6 +2391,8 @@ export class CheState extends DurableObject {
           id: crypto.randomUUID(),
           title,
           prompt,
+          steps: Array.isArray(body.steps) ? body.steps.filter(s => typeof s === 'string' && s.trim()).slice(0, 24).map(s => s.slice(0, 4000)) : [],
+          step_index: 0, step_results: [],
           status: 'queued',
           result: '',
           error: '',
@@ -2709,6 +2718,24 @@ export class CheState extends DurableObject {
         return json({ suggestion: suggestion.slice(0, 240) });
       }
 
+      if (path === '/api/action/approval' && request.method === 'POST') {
+        const fresh = await this.loadData();
+        const approval = (fresh.action_approvals || []).find(a => a.id === body.id);
+        if (!approval || approval.status !== 'pending') return json({ detail: 'This action is not awaiting approval.' }, 409);
+        if (typeof body.approve !== 'boolean') return json({ detail: 'Approval decision required.' }, 400);
+        approval.status = body.approve ? 'executing' : 'rejected';
+        await this.ctx.storage.put('che', fresh); // consume once before any external request
+        if (!body.approve) return json({ reply: 'Action rejected. Nothing was sent.', approval });
+        const results = await actionPanel(this.env, [approval.capability], approval.query, true);
+        const outcome = results[0];
+        const confirmed = outcome && !outcome.error && (outcome.result?.ok === true || outcome.result?.success === true || outcome.result?.status === 'complete');
+        const latest = await this.loadData();
+        const record = latest.action_approvals.find(a => a.id === approval.id);
+        record.status = confirmed ? 'complete' : 'unconfirmed';
+        record.result = outcome || { error: 'Connector unavailable.' };
+        await this.ctx.storage.put('che', latest);
+        return json({ approval: record, reply: confirmed ? 'The connector confirmed this action completed.' : 'The action was attempted but completion is unconfirmed. I will not retry it automatically.', result: outcome });
+      }
       if (path === '/api/autonomy' && request.method === 'POST') {
         if (typeof body.enabled !== 'boolean') return json({ detail: 'enabled must be boolean.' }, 400);
         return json({ autonomy: body.enabled, reply: await this.setAutonomy(body.enabled) });
@@ -2900,6 +2927,12 @@ export class CheState extends DurableObject {
           actionPanel(this.env, requestedCapabilities, message),
           pluginResults(this.env, data.plugin_enabled, message),
         ]);
+        const awaitingApproval = actionResults.filter(a => a.requires_owner_confirmation);
+        if (awaitingApproval.length) {
+          const fresh = await this.loadData();
+          fresh.action_approvals = [...(fresh.action_approvals || []).filter(a => a.status === 'pending'), ...awaitingApproval];
+          await this.ctx.storage.put('che', fresh);
+        }
         // SKILL PLUGINS: at most two chained read-only tool calls, chosen by
         // the fast model from the owner's installed + enabled plugins.
         const pluginTools = Array.isArray(body.plugin_tools)
@@ -3283,20 +3316,26 @@ export class CheState extends DurableObject {
 
   async alarm() {
     if (!(await this.loadData()).autonomy) return;
-    const moreJobs = await this.processJobs();
-    const moreAgentWork = await processAgentWork({
+    await this.processJobs();
+    await processAgentWork({
       env: this.env,
       load: () => this.loadData(),
       save: (value) => this.ctx.storage.put('che', value),
       notify: () => { this.loadData().then((value) => this.broadcastAgents(value)).catch(() => {}); },
       models: { fast: FAST_MODEL, strong: STRONG_MODEL },
     });
-    if (moreJobs || moreAgentWork) await this.scheduleWork();
+    // A retry may be queued but not due yet, so always compute the next alarm.
+    await this.scheduleWork();
   }
 
   async processJobs() {
     const data = await this.loadData();
     if (!data.autonomy) return false;
+    for (const job of data.jobs) {
+      if (job.status === 'running' && Date.parse(job.updated_at) <= Date.now() - 300000) {
+        job.status = 'queued'; job.retry_at = 0;
+      }
+    }
     const queued = data.jobs
       .filter((job) => job.status === 'queued' && (!job.retry_at || job.retry_at <= Date.now()))
       .slice(0, 4);
@@ -3309,10 +3348,29 @@ export class CheState extends DurableObject {
     }
     await this.ctx.storage.put('che', data);
 
+    await this.ctx.storage.setAlarm(Date.now() + 300000);
     const memories = Array.isArray(data.memories) ? data.memories.slice(-20) : [];
     const results = await Promise.all(
       queued.map(async (job) => {
         try {
+          if (!job.steps?.length && /\b(then|multi.step|step.by.step|end.to.end)\b/i.test(job.prompt)) {
+            const plan = await this.env.AI.run(this.env.CHE_FAST_MODEL || FAST_MODEL, {
+              messages: [
+                {role:'system', content:'Split this writing or analysis task into at most 8 self-contained sequential steps. Return only a JSON array of step instruction strings. Do not plan external actions, sending, purchases or payments; prepare drafts for owner approval instead. Each step receives prior step results. The final step must deliver the complete useful result. If splitting is not helpful, return [].'},
+                {role:'user', content:job.prompt},
+              ], max_tokens:600,
+            });
+            let steps;
+            try { steps = JSON.parse(String(plan.response || '').replace(/^```(?:json)?\s*|\s*```$/g, '')); } catch (_) { steps = []; }
+            if (Array.isArray(steps) && steps.length && steps.length <= 8 && steps.every(s => typeof s === 'string' && s.trim())) {
+              job.steps = steps.map(s => s.slice(0, 4000)); job.step_index = 0; job.step_results = [];
+              const checkpoint = await this.loadData();
+              const stored = checkpoint.jobs.find(j => j.id === job.id);
+              if (stored) Object.assign(stored, {steps:job.steps, step_index:0, step_results:[]});
+              await this.ctx.storage.put('che', checkpoint);
+              if (!checkpoint.autonomy) return {id:job.id, status:'queued', result:'', error:''};
+            }
+          }
           const answer = await this.env.AI.run(
             this.env.CHE_STRONG_MODEL || STRONG_MODEL,
             {
@@ -3332,7 +3390,9 @@ export class CheState extends DurableObject {
                 {
                   role: 'user',
                   content: JSON.stringify({
-                    task: job.prompt,
+                    task: job.steps?.length ? job.steps[job.step_index || 0] : job.prompt,
+                    overall_request: job.prompt,
+                    completed_steps: job.step_results || [],
                     prior_turns: job.chat_context?.turns || [],
                     owner_memories: memories,
                   }),
@@ -3346,10 +3406,14 @@ export class CheState extends DurableObject {
             answer.response || answer.choices?.[0]?.message?.content || '',
           ).trim().slice(0, 30000);
 
+          const stepResults = result && job.steps?.length ? [...(job.step_results || []), result] : null;
+          const stepIndex = stepResults ? (job.step_index || 0) + 1 : 0;
+          const moreSteps = stepResults && stepIndex < job.steps.length;
           return {
             id: job.id,
-            status: result ? 'complete' : 'failed',
-            result,
+            status: result ? (moreSteps ? 'queued' : 'complete') : 'failed',
+            step_results: stepResults, step_index: stepIndex,
+            result: stepResults ? stepResults.join('\n\n') : result,
             error: result ? '' : 'Background model returned no result.',
           };
         } catch (error) {
@@ -3371,6 +3435,7 @@ export class CheState extends DurableObject {
     for (const outcome of results) {
       const job = fresh.jobs.find((item) => item.id === outcome.id);
       if (!job || job.status === 'cancelled') continue;
+      if (outcome.step_results) { job.step_results = outcome.step_results; job.step_index = outcome.step_index; }
       job.retry_count = outcome.retry_count ?? job.retry_count ?? 0;
       job.retry_at = outcome.retry_at || null;
       job.status = outcome.status;

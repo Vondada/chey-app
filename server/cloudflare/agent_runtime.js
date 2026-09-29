@@ -432,12 +432,15 @@ async function runOneTask(ctx) {
 
   let result = '';
   let error = '';
+  let retryable = false;
   try {
     result = clip(await runModel(env, modelFor(env, agent, models), agentSystemPrompt(agent),
       task.task, agent.model_tier === 'strong' ? 1400 : 800), 12000);
     if (!result) error = 'No result returned.';
-  } catch (_) {
-    error = 'Agent execution failed.';
+  } catch (failure) {
+    error = String(failure?.message || failure).slice(0, 1000);
+    retryable = Boolean(failure?.quota || /quota|busy|overload|429|resting|cooldown|budget|neurons|timeout|abort/i.test(error));
+    console.log('CHE Office error:', task.id, error);
   }
 
   data = await load();
@@ -445,7 +448,10 @@ async function runOneTask(ctx) {
   const a1 = data.team.find((item) => item.id === agent.id);
   if (!t1) return true;
   if (error) {
-    t1.status = 'failed';
+    const retry = retryable && (t1.retry_count || 0) < 24;
+    t1.status = retry ? 'queued' : 'failed';
+    t1.retry_count = (t1.retry_count || 0) + (retry ? 1 : 0);
+    t1.retry_at = retry ? Date.now() + 300000 : null;
     t1.error = error;
     t1.updated_at = now();
     if (a1) {
