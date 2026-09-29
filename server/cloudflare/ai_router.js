@@ -294,6 +294,7 @@ function orderedProviders(env, casual) {
 // Per-isolate memory of "Cloudflare's free allowance is gone until…".
 let cloudflareExhaustedUntil = 0;
 const providerCooldownUntil = new Map();
+const providerLastError = new Map();
 
 function nextUtcMidnight(now = Date.now()) {
   const d = new Date(now);
@@ -396,7 +397,12 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
       if (!providerEnabled(env, provider)) continue;
       if (provider.keyless && !keyless) continue;
       if ((providerCooldownUntil.get(provider.id) || 0) > now) {
-        errors.push(`${provider.id}: resting`);
+        const earlier = providerLastError.get(provider.id);
+        errors.push(
+          earlier
+            ? `${provider.id}: resting after earlier error: ${earlier}`
+            : `${provider.id}: resting after earlier error`,
+        );
         continue;
       }
       if (await isPastDailyBudget(env, usageStorage, provider.id, now)) {
@@ -406,6 +412,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
       try {
         const called = await callProvider(env, provider, strongProviderModel, engineInput, fetcher);
         await addEstimatedUsage(env, usageStorage, provider.id, called.usageTokens, now);
+        providerLastError.delete(provider.id);
         return called.result;
       } catch (error) {
         // Busy or overloaded (429 / 5xx): try the same engine's lighter model
@@ -416,9 +423,12 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
             if (!strongProviderModel) await new Promise((resolve) => setTimeout(resolve, 700));
             const retry = await callProvider(env, provider, false, engineInput, fetcher);
             await addEstimatedUsage(env, usageStorage, provider.id, retry.usageTokens, now);
+            providerLastError.delete(provider.id);
             return retry.result;
           } catch (retryError) {
-            errors.push(`${provider.id}: ${String(error?.message || error)}; fast retry: ${String(retryError?.message || retryError)}`);
+            const combinedError = `${String(error?.message || error)}; fast retry: ${String(retryError?.message || retryError)}`.slice(0, 700);
+            providerLastError.set(provider.id, combinedError);
+            errors.push(`${provider.id}: ${combinedError}`);
             const rest = [401, 402, 403].includes(retryError?.status) ? 3_600_000 : 20_000;
             providerCooldownUntil.set(provider.id, now + rest);
             continue;
@@ -428,7 +438,9 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
         // works: an hour when it wants payment or a key, 20 seconds otherwise.
         const rest = [401, 402, 403].includes(error?.status) ? 3_600_000 : 20_000;
         providerCooldownUntil.set(provider.id, now + rest);
-        errors.push(String(error?.message || error));
+        const detail = String(error?.message || error).slice(0, 700);
+        providerLastError.set(provider.id, detail);
+        errors.push(`${provider.id}: ${detail}`);
       }
     }
     return null;
@@ -470,5 +482,6 @@ export function routedEnv(env, fetcher = fetch, usageStorage = null) {
 export function resetRouterForTests() {
   cloudflareExhaustedUntil = 0;
   providerCooldownUntil.clear();
+  providerLastError.clear();
 }
 
