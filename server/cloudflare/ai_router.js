@@ -72,8 +72,10 @@ const PROVIDERS = [
     id: 'huggingface',
     key: 'HF_TOKEN',
     url: 'https://router.huggingface.co/v1/chat/completions',
-    fast: (env) => env.CHE_HF_FAST_MODEL || 'meta-llama/Llama-3.1-8B-Instruct',
-    strong: (env) => env.CHE_HF_STRONG_MODEL || 'meta-llama/Llama-3.3-70B-Instruct',
+    // Hugging Face's :fastest policy automatically picks the currently
+    // highest-throughput inference provider for the selected Llama model.
+    fast: (env) => env.CHE_HF_FAST_MODEL || 'meta-llama/Llama-3.1-8B-Instruct:fastest',
+    strong: (env) => env.CHE_HF_STRONG_MODEL || 'meta-llama/Llama-3.3-70B-Instruct:fastest',
   },
   {
     id: 'openrouter',
