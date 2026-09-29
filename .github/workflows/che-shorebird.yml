@@ -50,6 +50,14 @@ jobs:
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # Same toolchain as the CHE iPhone IPA build, so patches match releases.
+      - name: Use newest Xcode
+        if: steps.configured.outputs.ready == 'true'
+        run: |
+          latest="$(ls -d /Applications/Xcode_2[6-9]*.app 2>/dev/null | sort -V | tail -1 || true)"
+          if [[ -n "$latest" ]]; then sudo xcode-select -s "$latest/Contents/Developer"; fi
+          xcodebuild -version
+
       - uses: subosito/flutter-action@v2
         if: steps.configured.outputs.ready == 'true'
         with:
@@ -77,3 +85,21 @@ jobs:
       - name: Shorebird patch
         if: steps.configured.outputs.ready == 'true' && env.MODE == 'patch'
         run: shorebird patch ios --no-codesign --release-version=latest -- --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
+
+      - name: Package unsigned IPA (release only)
+        if: steps.configured.outputs.ready == 'true' && env.MODE == 'release'
+        run: |
+          set -eu
+          app="$(find build/ios/archive -maxdepth 5 -type d -path '*Products/Applications/Runner.app' | head -1)"
+          test -d "$app" || { echo "::error::Runner.app not found"; exit 1; }
+          mkdir -p build/ios/ipa/Payload
+          cp -R "$app" build/ios/ipa/Payload/
+          cd build/ios/ipa && zip -qry CHE-unsigned.ipa Payload && rm -rf Payload
+
+      - name: Upload CHE IPA (release only)
+        if: steps.configured.outputs.ready == 'true' && env.MODE == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: CHE-unsigned-ipa-self-updating
+          path: build/ios/ipa/CHE-unsigned.ipa
+          retention-days: 7
