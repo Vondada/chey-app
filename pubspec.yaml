@@ -17,7 +17,9 @@ dependencies:
   image_picker: ^1.2.0
   file_picker: ^10.3.3
   url_launcher: ^6.3.2
-  webview_flutter: ^4.14.1
+  webview_flutter: ^4.10.0
+  webview_flutter_android: ^3.16.0
+  webview_flutter_wkwebview: ^3.14.0
   flutter_webrtc: ^1.6.2+hotfix.3
   porcupine_flutter: ^4.0.0
   shorebird_code_push: ^2.0.0
@@ -34,6 +36,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/office3d/
 
 flutter_launcher_icons:
   # Regenerates ios/Runner/Assets.xcassets/AppIcon.appiconset from this one
