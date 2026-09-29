@@ -1,0 +1,46 @@
+name: Deploy CHE Studio
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - '.github/workflows/che-studio-pages.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: che-studio-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check Cloudflare token
+        run: |
+          if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
+            echo "::error::CLOUDFLARE_API_TOKEN is missing."
+            exit 1
+          fi
+
+      - name: Ensure Pages project exists
+        run: |
+          npx --yes wrangler@4 pages project create che-studio --production-branch main || true
+
+      - name: Deploy CHE Studio
+        run: |
+          npx --yes wrangler@4 pages deploy site --project-name che-studio --branch main
