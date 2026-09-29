@@ -1763,7 +1763,6 @@ export class CheState extends DurableObject {
       data.jobs = Array.isArray(data.jobs) ? data.jobs : [];
     data.autonomy = data.autonomy !== false;
       data.meetings = Array.isArray(data.meetings) ? data.meetings : [];
-      ensureLaAgenciaRoster(data);
       data.team.forEach(normalizeAgent);
       for (const agent of data.team) {
         const blocker = officeToolBlocker(this.env, agent);
@@ -3184,6 +3183,12 @@ export class CheState extends DurableObject {
         return json({ autonomy: body.enabled, reply: await this.setAutonomy(body.enabled) });
       }
       if (path === '/api/office/today' && request.method === 'GET') {
+        // Opening the Office staffs La Agencia's core roster once; existing
+        // agents keep their IDs and history. A blank CHE stays blank until then.
+        const before = data.team.map((a) => a.id).join();
+        ensureLaAgenciaRoster(data);
+        data.team.forEach(normalizeAgent);
+        if (data.team.map((a) => a.id).join() !== before) await this.ctx.storage.put('che', data);
         const stripe = await salesSummary(this.env);
         return json({ board: officeToday(data, stripe) });
       }
