@@ -214,26 +214,8 @@ export function greeting(data, media = [], { hour = 12, since = '' } = {}) {
   const plan = (data.meetings || []).find((m) => m.final_plan && (!since || String(m.updated_at || '') > since));
   if (plan) return { line: hello + '! The War Room has a plan for "' + shortTitle(plan.objective, 5) + '". Want it?', kind: 'plan' };
   return { line: hello + '! ' + timeSuggestion(h), kind: 'suggestion' };
-} = {}) {
-  const h = Number.isFinite(Number(hour)) ? Math.max(0, Math.min(23, Number(hour))) : 12;
-  const hello = partOfDay(h);
-  const tasks = data.team_tasks || [];
-  const finished = tasks.filter((t) => DONE.has(t.status) && (!since || String(t.updated_at || '') > since));
-  if (finished.length) {
-    const t = finished[0];
-    const more = finished.length > 1 ? ` and ${finished.length - 1} more thing${finished.length > 2 ? 's' : ''}` : '';
-    return { line: `${hello}! ${t.partner_name || 'The Office'} finished “${shortTitle(t.task, 5)}”${more}. Want to hear it?`, kind: 'finished' };
-  }
-  const running = tasks.find((t) => t.status === 'running' || t.status === 'queued');
-  if (running) {
-    return { line: `${hello}! ${running.partner_name || 'The Office'} is on “${shortTitle(running.task, 5)}”. ${timeSuggestion(h)}`, kind: 'working' };
-  }
-  const plan = (data.meetings || []).find((m) => m.final_plan && (!since || String(m.updated_at || '') > since));
-  if (plan) return { line: `${hello}! The War Room has a plan for “${shortTitle(plan.objective, 5)}”. Want it?`, kind: 'plan' };
-  return { line: `${hello}! ${timeSuggestion(h)}`, kind: 'suggestion' };
 }
 
-// Three smart suggestions: real follow-ups first, then time of day.
 export function suggestions(data, { hour = 12 } = {}) {
   const out = nextActions(data);
   if ((data.team || []).some((a) => !a.retired) && !out.some((s) => /office/i.test(s))) out.push('What is the Office doing?');
@@ -241,20 +223,6 @@ export function suggestions(data, { hour = 12 } = {}) {
     ? ['Plan my day', 'What is the weather today?', 'Play some music']
     : Number(hour) < 18
       ? ['Put the team on my top task', 'Make me an image', 'Research something for me']
-      : ['Watch something in the Theater', 'Recap my day', 'Play some music'];
-  for (const f of fill) if (out.length < 3 && !out.includes(f)) out.push(f);
-  return out.slice(0, 3);
-} = {}) {
-  const out = [];
-  const tasks = data.team_tasks || [];
-  const done = tasks.find((t) => DONE.has(t.status));
-  if (done) out.push(`Read me what ${done.partner_name || 'the Office'} finished`);
-  const project = (data.projects || [])[0];
-  if (project) out.push(`What's next on ${shortTitle(project.title, 4)}?`);
-  if ((data.team || []).some((a) => !a.retired)) out.push('What is the Office doing?');
-  const h = Number(hour);
-  const fill = h < 11 ? ['Plan my day', 'What’s the weather today?', 'Play some music']
-    : h < 18 ? ['Put the team on my top task', 'Make me an image', 'Research something for me']
       : ['Watch something in the Theater', 'Recap my day', 'Play some music'];
   for (const f of fill) if (out.length < 3 && !out.includes(f)) out.push(f);
   return out.slice(0, 3);
