@@ -186,6 +186,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   bool _isSpeaking = false;
   bool _autoSentCurrentTurn = false;
   String? _lastVoiceEngine;
+  String _voiceFailReason = '';
   bool _naturalVoiceServerErrored = false;
   bool _loadingAgentState = false;
   int _speechTurn = 0;

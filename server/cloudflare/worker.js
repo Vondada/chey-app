@@ -342,7 +342,9 @@ function pcm16ToWav(pcm, sampleRate = 24000) {
   return out;
 }
 
+let lastGeminiVoiceError = '';
 async function geminiSpeech(env, text, fetcher = fetch) {
+  lastGeminiVoiceError = '';
   try {
     const model = String(env.CHE_GEMINI_TTS_MODEL || 'gemini-3.8-flash-lite-tts');
     const response = await fetcher(
@@ -362,22 +364,26 @@ async function geminiSpeech(env, text, fetcher = fetch) {
     if (!response.ok) {
       const body = (await response.text().catch(() => '')).slice(0, 2000);
       console.log("CHE voice error:", response.status, body);
+      lastGeminiVoiceError = `${response.status} ${body.replace(/\s+/g, ' ').slice(0, 220)}`;
       return null;
     }
     const data = await response.json();
     const b64 = data?.candidates?.[0]?.content?.parts?.find((part) => part?.inlineData?.data)?.inlineData?.data;
     if (!b64) {
       console.log("CHE voice error:", response.status, JSON.stringify(data).slice(0, 2000));
+      lastGeminiVoiceError = 'Gemini answered without audio';
       return null;
     }
     const pcm = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
     if (!pcm.byteLength) {
       console.log("CHE voice error:", response.status, 'Gemini returned empty audio');
+      lastGeminiVoiceError = 'Gemini returned empty audio';
       return null;
     }
     return pcm16ToWav(pcm);
   } catch (error) {
     console.log("CHE voice error:", 'exception', String(error?.message || error));
+    lastGeminiVoiceError = String(error?.message || error).slice(0, 220);
     return null;
   }
 }
@@ -509,7 +515,12 @@ async function voiceSynthesisResponse(env, text) {
   }
 
   if (!env.CHE_VOICE_URL) {
-    return json({ detail: 'Natural voice service is not connected yet.' }, 503);
+    const reasons = [];
+    if (env.GEMINI_API_KEY) reasons.push(`gemini: ${lastGeminiVoiceError || 'no audio'}`);
+    else reasons.push('gemini: no GEMINI_API_KEY');
+    if (!env.ELEVENLABS_API_KEY) reasons.push('elevenlabs: not set up');
+    if (!env.CHE_OPENAI_API_KEY) reasons.push('openai: not set up');
+    return json({ detail: `No server voice worked (${reasons.join(' | ')}).` }, 503);
   }
 
   let url;
@@ -2824,6 +2835,9 @@ export class CheState extends DurableObject {
               'You are CHE, Cognitive Horizon Engine. Your name is spoken and referred to as "CHE" in conversation. "Chay" is only the owner\'s spoken wake word to start a hands-free conversation with you, not how you refer to yourself. Address the owner as sir naturally.',
               'This chat turn is already active. Never ask the owner to say “Hey [assistant name]”, “Ok [assistant name]”, or any generic wake phrase. If the owner says CHE/Chay, answer as CHE instead of teaching a wake phrase.',
               'CHE is the user-facing product. Never present yourself as Gemini, Cloudflare, or another provider. Models and services are replaceable internal engines behind CHE.',
+              'HONESTY (highest priority): never claim an action happened unless a tool in this turn returned success, and give the receipt (link, ID or result) when it did. Label anything unverified as unverified. Say "I don\u2019t know" or "I can\u2019t do that yet" instead of guessing. Never invent plugins, settings, panels, features, services, outages, prices, sales or numbers.',
+              'SELF-KNOWLEDGE: your voice is chosen by CHE\u2019s server code (Gemini voice first, then other connected voices, then the iPhone voice as a last resort). There is no voice plugin and you cannot change your voice, server code or keys yourself; the owner changes those in the server/code. Your built-in plugins are only Weather, Crypto Prices and Wikipedia unless the plugin list in this turn says otherwise.',
+              'STORE: products are sold only through the CHE Studio Store (Business \u2192 CHE Studio Store). You may suggest product ideas, but nothing exists in Stripe until the owner approves it there, and you must never claim a product, payment link or sale exists unless the store data shows it.',
               'DATA + COMPUTE: core owner state is persisted in CHE storage. Large media, datasets, model artifacts and generated files should use CHE object storage when connected. If storage is not connected, say the item is temporary instead of pretending it was archived.',
               'Use a local-first and owner-controlled architecture: built-in CHE behavior first, CHE-hosted services second, optional provider infrastructure only when required for compute or data.',
               'PERSONALITY: bright, warm, confident, current, direct, useful and lightly playful. Default to one or two short sentences. Lead with exactly what the owner needs; no preamble, recap, disclaimers, warnings or extra suggestions unless genuinely necessary. If he asks for more detail, go deep and hold nothing useful back.',

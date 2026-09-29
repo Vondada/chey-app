@@ -158,6 +158,7 @@ extension _CheHomeVoice on _CHEHomeState {
 
   Future<bool> _tryNaturalVoice(String text) async {
     _naturalVoiceServerErrored = false;
+    _voiceFailReason = '';
 
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) {
       return false;
@@ -167,6 +168,7 @@ extension _CheHomeVoice on _CHEHomeState {
         cheAgentBaseUrl.isEmpty ||
         integrations['natural_voice'] != true) {
       _naturalVoiceServerErrored = true;
+      _voiceFailReason = 'server voice not connected';
       return false;
     }
 
@@ -187,8 +189,15 @@ extension _CheHomeVoice on _CHEHomeState {
 
       if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
         _naturalVoiceServerErrored = true;
+        try {
+          final decoded = jsonDecode(response.body);
+          _voiceFailReason = decoded is Map ? '${decoded['detail'] ?? ''}' : '';
+        } catch (_) {
+          _voiceFailReason = 'server voice ${response.statusCode}';
+        }
         return false;
       }
+      _voiceFailReason = '';
 
       final contentType =
           response.headers['content-type']?.toLowerCase() ?? '';
@@ -209,8 +218,9 @@ extension _CheHomeVoice on _CHEHomeState {
         }
       }
       return played;
-    } catch (_) {
+    } catch (e) {
       _naturalVoiceServerErrored = true;
+      _voiceFailReason = e is TimeoutException ? 'server voice timed out' : 'server voice unreachable';
       return false;
     }
   }
@@ -292,7 +302,7 @@ extension _CheHomeVoice on _CHEHomeState {
             played = await CheNativeVoice.speakNeural(spokenText);
             if (played && mounted) {
               _set(() {
-                _lastVoiceEngine = 'iphone-neural';
+                _lastVoiceEngine = _voiceFailReason.isEmpty ? 'iphone-neural' : 'iphone-neural (server voice failed: $_voiceFailReason)';
               });
             }
           } on MissingPluginException {
@@ -307,7 +317,7 @@ extension _CheHomeVoice on _CHEHomeState {
             played = await CheNativeVoice.speakText(spokenText);
             if (played && mounted) {
               _set(() {
-                _lastVoiceEngine = 'iphone-voice';
+                _lastVoiceEngine = _voiceFailReason.isEmpty ? 'iphone-voice' : 'iphone-voice (server voice failed: $_voiceFailReason)';
               });
             }
           } on MissingPluginException {
@@ -322,7 +332,7 @@ extension _CheHomeVoice on _CHEHomeState {
           await flutterTts.speak(spokenText);
           if (mounted) {
             _set(() {
-              _lastVoiceEngine = 'iphone-tts';
+              _lastVoiceEngine = _voiceFailReason.isEmpty ? 'iphone-tts' : 'iphone-tts (server voice failed: $_voiceFailReason)';
             });
           }
         }
