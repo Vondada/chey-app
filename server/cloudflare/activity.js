@@ -127,10 +127,10 @@ export function nextActions(data) {
   const actions = [];
   const decide = decisionsNeeded(data)[0];
   if (decide) actions.push('Decide on "' + decide.title + '" for ' + decide.who);
-  const stall = stalledTasks(data).find((s) => s.reason !== 'needs your decision');
-  if (stall) actions.push('Check in on ' + stall.who + ' — "' + stall.title + '" is ' + stall.reason);
   const done = (data.team_tasks || []).find((t) => DONE.has(t.status));
   if (done) actions.push('Read what ' + (done.partner_name || 'the Office') + ' finished');
+  const stall = stalledTasks(data).find((s) => s.reason !== 'needs your decision');
+  if (stall) actions.push('Check in on ' + stall.who + ' — "' + stall.title + '" is ' + stall.reason);
   const project = (data.projects || [])[0];
   if (project) actions.push("What's next on " + shortTitle(project.title, 4) + '?');
   return actions.slice(0, 3);
