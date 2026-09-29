@@ -61,29 +61,39 @@ extension _CheHomeConnected on _CHEHomeState {
     } catch (_) {}
     if (speak && !_greetedThisLaunch && line.isNotEmpty && messages.isEmpty && voiceResponsesEnabled && !_isSpeaking) {
       _greetedThisLaunch = true;
-      await speakText(line);
+      await speakText(line, record: false);
     }
   }
 
-  Future<List<Map<String, dynamic>>> _loadActivity() async {
+  /// Null when the feed could not be loaded (never reported as "empty").
+  Future<List<Map<String, dynamic>>?> _loadActivity() async {
     final data = await _getAgentJson('/api/activity?limit=40');
-    return [for (final e in (data?['events'] as List? ?? const [])) if (e is Map) Map<String, dynamic>.from(e)];
+    final list = data?['events'];
+    if (list is! List) return null;
+    return [for (final e in list) if (e is Map) Map<String, dynamic>.from(e)];
   }
 
   Future<void> _openActivityFeed({bool readAloud = false}) async {
     final events = await _loadActivity();
     if (!mounted) return;
+    if (events == null) {
+      await speakText('I couldn’t load the activity from the CHE server just now. Try again in a moment.', record: false);
+      return;
+    }
     if (readAloud) {
-      await speakText(events.isEmpty
-          ? 'Nothing new yet. Give me or the Office a task and I will keep track here.'
-          : 'Here is what happened. ${events.take(5).map((e) => e['line']).join(' ')}');
+      await speakText(
+        events.isEmpty
+            ? 'Nothing new yet. Give me or the Office a task and I will keep track here.'
+            : 'Here is what happened. ${events.take(5).map((e) => e['line']).join(' ')}',
+        record: false,
+      );
     }
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: kit.CheColors.surface,
-      builder: (_) => CheActivityFeedSheet(events: events, onSpeak: speakText),
+      builder: (_) => CheActivityFeedSheet(events: events, onSpeak: (t) => speakText(t, record: false)),
     );
   }
 
@@ -97,6 +107,10 @@ extension _CheHomeConnected on _CHEHomeState {
     }
     return parts.join(' ');
   }
+
+  bool _looksLikeCredential(String lower) => RegExp(
+        r'\b(pass ?words?|pass ?codes?|pins?|log ?ins?|credentials?|security codes?|2fa|otp|card numbers?|credit cards?|cvv|ssn|social security|bank accounts?|routing numbers?|api keys?|tokens?|secrets?)\b',
+      ).hasMatch(lower);
 
   /// Voice/typed commands for the connected world. Returns true when handled.
   Future<bool> _handleConnectedCommand(String message) async {
@@ -131,8 +145,11 @@ extension _CheHomeConnected on _CHEHomeState {
     }
 
     // Find anything made in any room: "play the song Mira made".
-    final made = RegExp(r"^(?:play|show|open|find|read|get)\s+(?:me\s+)?(.+?\b(?:made|created|wrote|drew|did)\b.*)$").firstMatch(lower);
+    final made = RegExp(r"^(?:play|show|open|find|read|get)\s+(?:me\s+)?(.+?\b(?:made|created|wrote|drew|did|finished)\b.*)$").firstMatch(lower);
     final find = made ?? RegExp(r'^find\s+(?:me\s+)?(.+)$').firstMatch(lower);
+    // Anything that could be a credential stays on the phone: never search
+    // the server with it (passwords live only in the on-device vault).
+    if (find != null && _looksLikeCredential(lower)) return false;
     if (find != null) {
       final data = await _getAgentJson('/api/find?q=${Uri.encodeQueryComponent(message)}');
       final items = [for (final e in (data?['items'] as List? ?? const [])) if (e is Map) Map<String, dynamic>.from(e)];

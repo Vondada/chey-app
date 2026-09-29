@@ -27,6 +27,11 @@ test('finds things made in any room by maker and topic', () => {
   const image = findCreations(data, media, 'show the neon city picture', 'https://che.example');
   assert.equal(image[0].media_url, 'https://che.example/api/media/i1/image');
   assert.deepEqual(findCreations(data, media, 'the song Nova made'), [], 'never credits the wrong maker');
+  // The home suggestion "Read me what Mira finished" finds her stored result.
+  const finished = findCreations(data, media, suggestions(data, { hour: 9 })[0]);
+  assert.equal(suggestions(data, { hour: 9 })[0], 'Read me what Mira finished');
+  assert.equal(finished[0].id, 't1');
+  assert.match(finished[0].text, /Verse one/);
 });
 
 test('activity feed and greeting use only real state', () => {

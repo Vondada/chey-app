@@ -348,11 +348,6 @@ extension _CheHomeSend on _CHEHomeState {
       return;
     }
 
-    if (await _handleConnectedCommand(message)) {
-      controller.clear();
-      return;
-    }
-
     final credentialReply = _credentialAccessReply(message);
     if (credentialReply != null) {
       if (!mounted) return;
@@ -363,6 +358,11 @@ extension _CheHomeSend on _CHEHomeState {
       });
       _scrollToBottom();
       await speakText(credentialReply);
+      return;
+    }
+
+    if (await _handleConnectedCommand(message)) {
+      controller.clear();
       return;
     }
 

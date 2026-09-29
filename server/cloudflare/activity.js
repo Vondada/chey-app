@@ -66,7 +66,8 @@ export function creations(data, media = [], origin = '') {
 }
 
 const STOP = new Set(['the', 'a', 'an', 'my', 'that', 'which', 'who', 'made', 'make', 'created', 'wrote', 'did', 'by', 'from',
-  'play', 'show', 'open', 'find', 'me', 'get', 'read', 'of', 'for', 'it', 'one', 'thing', 'please', 'che', 'chay']);
+  'play', 'show', 'open', 'find', 'me', 'get', 'read', 'of', 'for', 'it', 'one', 'thing', 'please', 'che', 'chay',
+  'what', 'finished', 'done', 'drew', 'did']);
 
 const tokens = (text) => String(text || '').toLowerCase().split(/[^a-z0-9']+/).filter((w) => w && !STOP.has(w));
 

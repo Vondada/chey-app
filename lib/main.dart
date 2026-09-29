@@ -1228,7 +1228,7 @@ OWNER AGENCY
                           onPick: _runPluginPrompt,
                           onTalk: toggleListening,
                           listening: _realtimeVoice?.connected == true || isListening,
-                          onReadAloud: () => speakText(_homeGreeting ?? proactive ?? 'I am here. Just tell me what you need.'),
+                          onReadAloud: () => speakText(_homeGreeting ?? proactive ?? 'I am here. Just tell me what you need.', record: false),
                           onActivity: () => _openActivityFeed(),
                         )
                       : GestureDetector(
