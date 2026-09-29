@@ -26,30 +26,38 @@ class Office3DView extends StatefulWidget {
 }
 
 class _Office3DViewState extends State<Office3DView> {
-  late final WebViewController _controller;
+  WebViewController? _controller;
   bool _ready = false;
   String? _lastPayload;
 
   @override
   void initState() {
     super.initState();
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(const Color(0xFFF7ECD9))
-      ..addJavaScriptChannel(
-        'OfficeBridge',
-        onMessageReceived: _handleBridgeMessage,
-      )
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageFinished: (_) async {
-            if (!mounted) return;
-            _ready = true;
-            await _pushAgents(force: true);
-          },
-        ),
-      )
-      ..loadFlutterAsset('assets/office3d/index.html');
+    try {
+      final controller = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..setBackgroundColor(const Color(0xFFF7ECD9))
+        ..addJavaScriptChannel(
+          'OfficeBridge',
+          onMessageReceived: _handleBridgeMessage,
+        )
+        ..setNavigationDelegate(
+          NavigationDelegate(
+            onPageFinished: (_) async {
+              if (!mounted) return;
+              _ready = true;
+              await _pushAgents(force: true);
+            },
+          ),
+        )
+        ..loadFlutterAsset('assets/office3d/index.html');
+      _controller = controller;
+    } catch (_) {
+      // Flutter widget tests and unsupported runtimes may not provide a
+      // WebViewPlatform. Keep the Office usable instead of crashing.
+      _controller = null;
+      _ready = false;
+    }
   }
 
   @override
@@ -84,7 +92,9 @@ class _Office3DViewState extends State<Office3DView> {
     // Encode the JSON string again so arbitrary task/name text cannot break
     // the JavaScript source passed to the WebView.
     final escapedPayload = jsonEncode(payload);
-    await _controller.runJavaScript(
+    final controller = _controller;
+    if (controller == null) return;
+    await controller.runJavaScript(
       'window.updateAgents && window.updateAgents(JSON.parse($escapedPayload));',
     );
   }
@@ -100,7 +110,17 @@ class _Office3DViewState extends State<Office3DView> {
         child: SizedBox(
           height: widget.height,
           width: double.infinity,
-          child: WebViewWidget(controller: _controller),
+          child: _controller == null
+              ? Container(
+                  color: const Color(0xFFF7ECD9),
+                  alignment: Alignment.center,
+                  child: const Text(
+                    'La Agencia 3D view is unavailable on this device.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Color(0xFF6F534A)),
+                  ),
+                )
+              : WebViewWidget(controller: _controller!),
         ),
       ),
     );
