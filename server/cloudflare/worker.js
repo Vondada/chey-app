@@ -34,6 +34,7 @@ import { candles as marketCandles, snapshot as marketSnapshot } from './markets.
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 import { prepareSelfUpdate } from './self_development.js';
 import { officeToday } from './office_board.js';
+import { ensureLaAgenciaRoster, officeToolBlocker } from './office_company.js';
 import { approveProposal, proposeProduct, rejectProposal, salesSummary, storeStatus } from './stripe_store.js';
 import {
   addLead, approveProposal as approveDealProposal, buildBrief, checkPaid, createPaymentLink, draftProposal, findDeal, markStage, pipelineSummary,
@@ -1762,7 +1763,15 @@ export class CheState extends DurableObject {
       data.jobs = Array.isArray(data.jobs) ? data.jobs : [];
     data.autonomy = data.autonomy !== false;
       data.meetings = Array.isArray(data.meetings) ? data.meetings : [];
+      ensureLaAgenciaRoster(data);
       data.team.forEach(normalizeAgent);
+      for (const agent of data.team) {
+        const blocker = officeToolBlocker(this.env, agent);
+        if (blocker && ['waiting', 'building', 'researching', 'analyzing'].includes(agent.runtime_status)) {
+          agent.runtime_status = 'offline';
+          agent.runtime_task = blocker;
+        }
+      }
       data.plugin_enabled = data.plugin_enabled && typeof data.plugin_enabled === 'object'
         && !Array.isArray(data.plugin_enabled) ? data.plugin_enabled : {};
       data.preference_memory = Array.isArray(data.preference_memory) ? data.preference_memory : [];
