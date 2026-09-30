@@ -73,6 +73,7 @@ import 'che_ui/che_phone_shell.dart';
 import 'che_ui/che_i18n.dart';
 import 'local_server/activity_local.dart';
 import 'plugins/che_plugin_webapp.dart';
+import 'mailbox/che_mailbox_screen.dart';
 import 'memory/che_offline_library.dart';
 import 'self_update/che_patch_banner.dart';
 import 'self_update/che_update_card.dart';
@@ -1667,6 +1668,19 @@ OWNER AGENCY
       che: _officeRuntime.che,
       onTalkToChe: () => _goShellTab(1),
       items: [
+        CheMoreItem(
+          icon: Icons.markunread_mailbox_rounded,
+          title: 'Keys & Mailbox',
+          subtitle: 'Letters from your AIs · add or fix free keys',
+          onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+            builder: (_) => CheMailboxScreen(
+              baseUrl: cheAgentBaseUrl,
+              headers: () => _authHeaders,
+              onSpeak: (text) => unawaited(speakText(text, record: false)),
+            ),
+          )),
+          hue: kit.CheColors.accentAlt,
+        ),
         CheMoreItem(
           icon: Icons.tune_rounded,
           title: 'UI Controls',
