@@ -150,7 +150,7 @@ const PROVIDERS = [
     key: 'GROQ_API_KEY',
     url: 'https://api.groq.com/openai/v1/chat/completions',
     fast: (env) => env.CHE_GROQ_FAST_MODEL || 'openai/gpt-oss-20b',
-    strong: (env) => env.CHE_GROQ_STRONG_MODEL || 'openai/gpt-oss-120b',
+    strong: (env) => env.CHE_GROQ_STRONG_MODEL || 'llama-3.3-70b-versatile',
     // gpt-oss sometimes answers with a tool call or nothing; this model is
     // the same-engine fallback for those replies.
     alt: (env) => env.CHE_GROQ_ALT_MODEL || 'llama-3.3-70b-versatile',
@@ -340,7 +340,7 @@ function summarizeOlderMessages(messages, maxChars = 1400) {
 // Trim oversized prompts per engine instead of letting them 413: keep the
 // start of each system message (identity + rules come first), and the most
 // recent turns, within a character budget.
-const INPUT_CHAR_BUDGET = { groq: 16000, cerebras: 22000, pollinations: 18000, sambanova: 30000, mistral: 60000, github: 24000, huggingface: 16000, openrouter: 40000, omniroute: 60000 };
+const INPUT_CHAR_BUDGET = { groq: 8000, cerebras: 22000, pollinations: 18000, sambanova: 30000, mistral: 60000, github: 24000, huggingface: 16000, openrouter: 40000, omniroute: 60000 };
 
 export function fitToBudget(input, maxChars) {
   const messages = Array.isArray(input?.messages) ? input.messages : [];

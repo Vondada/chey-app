@@ -1,3 +1,4 @@
+import { checkDartFiles } from './dart_check.js';
 // CHE self-development: controlled engineering, not uncontrolled
 // self-modification.
 //
@@ -67,6 +68,8 @@ export function validateUpdateFiles(files) {
     if (totalBytes > MAX_FILE_BYTES * 3) return { error: 'Update is too large overall; split into a narrower change.' };
     const smuggle = scanUpdateContent(content, path);
     if (smuggle) return { error: smuggle };
+    const dartErr = checkDartFiles([{ path, content }]);
+    if (dartErr) return { error: dartErr };
     if (seen.has(path)) return { error: `${path} appears twice.` };
     seen.add(path);
     out.push({ path, content });
