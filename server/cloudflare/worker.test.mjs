@@ -486,11 +486,22 @@ test('chat recovers when the model rejects the full prompt, and reports real err
   }), env);
   const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
 
+  // Ordinary chat prefers the compact/fast prompt so first token is sooner.
   const ok = await send('/api/chat', { message: "What's up", brain_context: ['[CHE SOUL] warm'] }, token);
   assert.equal(ok.status, 200);
   assert.match(await ok.text(), /Hey sir, all good/);
-  assert.ok(seen[0].length > 8000, 'full prompt tried first');
-  assert.ok(seen[1].length < 8000, 'compact prompt retried');
+  assert.ok(seen[0].length < 8000, 'compact/fast prompt tried first on casual chat');
+
+  // Complex turns still try the full quality prompt first, then compact.
+  seen.length = 0;
+  const heavy = await send('/api/chat', {
+    message: 'Please debug this and write a deep analysis research report',
+    brain_context: ['[CHE SOUL] warm'],
+  }, token);
+  assert.equal(heavy.status, 200);
+  assert.match(await heavy.text(), /Hey sir, all good/);
+  assert.ok(seen[0].length > 8000, 'full prompt tried first on heavy turns');
+  assert.ok(seen[1].length < 8000, 'compact prompt retried after full prompt failure');
 
   failAll = true;
   const bad = await send('/api/chat', { message: 'Why' }, token);
