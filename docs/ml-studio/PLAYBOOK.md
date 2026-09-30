@@ -34,3 +34,8 @@ Demo seed examples are used when the spoken command has no uploaded dataset yet.
 
 - Local Worker ML eval: no spend gate.  
 - External fine-tune / paid APIs: owner `approved: true` still required.
+
+## Brain room
+
+ML jobs write **unlimited** `memory_notes` with `kind: ml_eval` and cluster links.
+Phone Memory constellation + Insights Map show them as neural dots (`brain_graph`).

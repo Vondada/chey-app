@@ -20,6 +20,7 @@ class CheMemoryDot {
     required this.category,
     this.tokens = const [],
     this.at,
+    this.clusterId,
   });
 
   final String id;
@@ -28,6 +29,7 @@ class CheMemoryDot {
   final String category;
   final List<String> tokens;
   final DateTime? at;
+  final String? clusterId;
 }
 
 /// Build unlimited dots from Worker memories / notes / learning — never capped.
@@ -36,7 +38,10 @@ List<CheMemoryDot> cheBuildMemoryDots({
   required List<Map<String, dynamic>> memoryNotes,
   required List<Map<String, dynamic>> learnedPersonality,
   required List<String> learnedKnowledge,
+  List<Map<String, dynamic>> brainLinks = const [],
 }) {
+  // brainLinks are applied in CheMemoryBrainRoom via cheRelatedMemoryEdges.
+
   final out = <CheMemoryDot>[];
   var i = 0;
   for (final m in savedMemories) {
@@ -54,19 +59,31 @@ List<CheMemoryDot> cheBuildMemoryDots({
   for (final n in memoryNotes) {
     final title = '${n['title'] ?? 'Note'}'.trim();
     final bullets = (n['bullets'] as List?) ?? const [];
+    final bodyText = '${n['body'] ?? n['text'] ?? ''}';
     final body = [
-      title,
+      if (bodyText.trim().isNotEmpty) bodyText.trim(),
+      if (bodyText.trim().isEmpty) title,
       for (final b in bullets) '• $b',
       if ('${n['url'] ?? ''}'.isNotEmpty) '${n['url']}',
     ].where((s) => s.trim().isNotEmpty).join('\n');
     if (body.trim().isEmpty) continue;
+    final kind = '${n['kind'] ?? n['region'] ?? ''}'.toLowerCase();
+    final category = kind.contains('ml') || kind.contains('classif') || kind.contains('cluster')
+        ? 'ML Learning'
+        : kind.contains('translat')
+            ? 'Translation'
+            : kind.contains('scout') || kind.contains('research')
+                ? 'Research'
+                : 'Learning';
+    final rawId = '${n['id'] ?? ''}';
     out.add(CheMemoryDot(
-      id: 'note-${n['id'] ?? i}',
+      id: rawId.isNotEmpty ? rawId : 'note-$i',
       title: _shortTitle(title),
       body: body,
-      category: 'Learning',
-      tokens: _tokens('$title $body'),
+      category: category,
+      tokens: _tokens('$title $body $kind ${n['locale'] ?? ''}'),
       at: DateTime.tryParse('${n['created_at'] ?? ''}'),
+      clusterId: n['cluster_id']?.toString(),
     ));
     i++;
   }
@@ -103,6 +120,51 @@ String _shortTitle(String text) {
   return '${line.substring(0, 40).trimRight()}…';
 }
 
+/// Worker brain_graph.links + same-cluster + token overlap → edge pairs for paint.
+List<(String, String)> cheRelatedMemoryEdges(
+  List<CheMemoryDot> dots, {
+  List<Map<String, dynamic>> brainLinks = const [],
+}) {
+  final ids = {for (final d in dots) d.id};
+  final edges = <(String, String)>[];
+  final seen = <String>{};
+  void add(String a, String b) {
+    if (a == b || !ids.contains(a) || !ids.contains(b)) return;
+    final key = a.compareTo(b) < 0 ? '$a|$b' : '$b|$a';
+    if (seen.add(key)) edges.add((a, b));
+  }
+  for (final link in brainLinks) {
+    add('${link['source'] ?? ''}', '${link['target'] ?? ''}');
+  }
+  // Same cluster_id (ML clustering nodes)
+  for (var i = 0; i < dots.length; i++) {
+    final a = dots[i];
+    if (a.clusterId == null || a.clusterId!.isEmpty) continue;
+    for (var j = i + 1; j < dots.length; j++) {
+      if (dots[j].clusterId == a.clusterId) add(a.id, dots[j].id);
+    }
+  }
+  // Token overlap fallback
+  final byToken = <String, List<CheMemoryDot>>{};
+  for (final d in dots) {
+    for (final tok in d.tokens.take(8)) {
+      byToken.putIfAbsent(tok, () => []).add(d);
+    }
+  }
+  for (final group in byToken.values) {
+    if (group.length < 2) continue;
+    final take = group.length > 12 ? group.take(12).toList() : group;
+    for (var i = 0; i < take.length; i++) {
+      var links = 0;
+      for (var j = i + 1; j < take.length && links < 3; j++) {
+        add(take[i].id, take[j].id);
+        links++;
+      }
+    }
+  }
+  return edges;
+}
+
 List<String> _tokens(String text) {
   return text
       .toLowerCase()
@@ -117,12 +179,15 @@ class CheMemoryBrainRoom extends StatefulWidget {
   const CheMemoryBrainRoom({
     super.key,
     required this.dots,
+    this.brainLinks = const [],
     this.onReadAloud,
     this.onRefresh,
     this.embedded = true,
   });
 
   final List<CheMemoryDot> dots;
+  /// Related links from Worker `/api/state` brain_graph (clustering + similarity).
+  final List<Map<String, dynamic>> brainLinks;
   final Future<void> Function(String text)? onReadAloud;
   final Future<void> Function()? onRefresh;
   final bool embedded;
@@ -352,7 +417,7 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
             builder: (context, constraints) {
               final size = Size(math.max(constraints.maxWidth, 360), math.max(constraints.maxHeight, 420));
               final pos = _layout(dots, size);
-              final edges = _edges(dots);
+              final edges = cheRelatedMemoryEdges(dots, brainLinks: widget.brainLinks);
               return InteractiveViewer(
                 minScale: 0.55,
                 maxScale: 4,

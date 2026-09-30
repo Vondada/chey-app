@@ -25,7 +25,9 @@ extension _CheHomeHubRooms on _CHEHomeState {
         memoryNotes: memoryNotes,
         learnedPersonality: learnedPersonality,
         learnedKnowledge: learnedKnowledge,
+        brainLinks: brainLinks,
       ),
+      brainLinks: brainLinks,
       onReadAloud: (t) => speakText(t, record: false),
       onRefresh: () => _loadAgentState(silent: true),
     );
@@ -48,6 +50,8 @@ extension _CheHomeHubRooms on _CHEHomeState {
         learnedAboutYou: learnedPersonality,
         learnedKnowledge: learnedKnowledge,
         suggestions: suggestions,
+        memoryNotes: memoryNotes,
+        brainLinks: brainLinks,
       ),
     );
   }

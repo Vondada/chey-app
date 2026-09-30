@@ -26,6 +26,9 @@ enum CheOfficePhrase {
   hireIris,
   fiverrScout,
   robloxJob,
+  mlJob,
+  translate,
+  setLocale,
   goal,
 }
 
@@ -63,6 +66,30 @@ const cheOfficeRoster = ['nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris'
   }
   if (RegExp(r'^(?:office )?stand down\b|\boffice,? stand down\b').hasMatch(t)) {
     return (type: CheOfficePhrase.standDown, agentId: null, detail: null);
+  }
+
+
+  // ML learning jobs (classification / clustering) — metrics on Projects + Brain.
+  final wantsMl = RegExp(r'\b(?:ml|machine learning|learning job|model eval|ml.?eval)\b').hasMatch(t) ||
+      RegExp(r'\b(?:classif(?:y|ication)|cluster(?:ing)?|k-?means|k-?nn|supervised|unsupervised)\b').hasMatch(t);
+  final mlAction = RegExp(r'\b(?:train|run|start|kick|do|make|evaluate|eval|learn)\b').hasMatch(t) ||
+      RegExp(r'\bml\b|\bmachine learning\b|\blearning job\b').hasMatch(t);
+  if (wantsMl && (mlAction || RegExp(r'\b(?:clustering|unsupervised|supervised)\b').hasMatch(t))) {
+    final kind = RegExp(r'\bcluster|unsupervised|k-?means\b').hasMatch(t) ? 'clustering' : 'classification';
+    return (type: CheOfficePhrase.mlJob, agentId: null, detail: kind);
+  }
+
+  // Translate / set locale
+  final setLoc = RegExp(r'\b(?:set|prefer|use)\s+(?:my\s+)?(?:locale|language|reply language)\s+(?:to\s+)?([a-z]{2,20})\b').firstMatch(t) ??
+      RegExp(r'\b(?:speak|reply|answer)\s+(?:to me\s+)?in\s+([a-z]{2,20})\b').firstMatch(t);
+  if (setLoc != null && !RegExp(r'\btranslat').hasMatch(t)) {
+    return (type: CheOfficePhrase.setLocale, agentId: null, detail: setLoc.group(1));
+  }
+  if (RegExp(r'\btranslat(?:e|ion)\b').hasMatch(t)) {
+    final to = RegExp(r'\bto\s+([a-z]{2,20})\b').firstMatch(t);
+    final colon = RegExp(r'\btranslat(?:e|ion)\b[\s\S]*?:\s*([\s\S]+)$', caseSensitive: false).firstMatch(originalSpoken);
+    final detail = colon?.group(1)?.trim() ?? originalSpoken;
+    return (type: CheOfficePhrase.translate, agentId: to?.group(1), detail: detail);
   }
 
   // Roblox / Luau catalog (games, weapon, clothing/UGC, passes) — owner confirm before publish/spend.

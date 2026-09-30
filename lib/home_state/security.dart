@@ -403,6 +403,11 @@ extension _CheHomeSecurity on _CHEHomeState {
       final suggestionData = (data['suggestions'] as List?) ?? const [];
       final projectData = (data['projects'] as List?) ?? const [];
       final memoryNoteData = (data['memory_notes'] as List?) ?? const [];
+      final brainGraphData = (data['brain_graph'] is Map)
+          ? Map<String, dynamic>.from(data['brain_graph'] as Map)
+          : <String, dynamic>{};
+      final brainNodeData = (brainGraphData['nodes'] as List?) ?? const [];
+      final brainLinkData = (brainGraphData['links'] as List?) ?? const [];
       final officeGoalData = (data['office_goals'] as List?) ?? const [];
       final scoutData = (data['opportunity_scouts'] as List?) ?? const [];
       final pipelineData = (data['pipeline'] is Map) ? Map<String, dynamic>.from(data['pipeline'] as Map) : <String, dynamic>{};
@@ -416,7 +421,13 @@ extension _CheHomeSecurity on _CHEHomeState {
       final integrationData = (data['integrations'] as Map?) ?? const {};
 
       savedMemories = memoryData.map((e) => e.toString()).toList();
-      memoryNotes = memoryNoteData
+      // Prefer brain_graph.nodes (cluster/locale metadata) when present.
+      final noteSource = brainNodeData.isNotEmpty ? brainNodeData : memoryNoteData;
+      memoryNotes = noteSource
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      brainLinks = brainLinkData
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();

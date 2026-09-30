@@ -89,9 +89,13 @@ List<CheBoardItem> cheBuildBoardItems({
       kind: CheBoardKind.goal,
       typeLabel: kind.contains('scout')
           ? 'Opportunity scout'
-          : _goalLooksRoblox(goal)
-              ? 'Roblox / Office'
-              : 'Office goal',
+          : kind.contains('ml') || kind == 'ml_eval' || kind == 'ml_studio'
+              ? (kind.contains('cluster') || '${g['ml_kind']}'.contains('cluster') ? 'ML · Clustering' : 'ML · Classification')
+              : kind.contains('translat')
+                  ? 'Translation'
+                  : _goalLooksRoblox(goal)
+                      ? 'Roblox / Office'
+                      : 'Office goal',
       statusLabel: status,
       progress: progress,
       subtitle: linked.isEmpty
@@ -190,6 +194,7 @@ String _projectTypeLabel(String type) {
     'roblox_pass' => 'Roblox · Game Pass',
     'ml_classification' => 'ML · Classification',
     'ml_clustering' => 'ML · Clustering',
+    'translate' || 'translation' => 'Translation',
     _ => type.isEmpty ? 'Project' : type,
   };
 }
@@ -272,7 +277,20 @@ String _formatMetrics(Map<String, dynamic> m) {
   }
   if (task == 'clustering' || m.containsKey('silhouette')) {
     final sil = (m['silhouette'] as num?)?.toDouble() ?? 0;
-    return 'k=${m['k'] ?? '?'} · Silhouette ${sil.toStringAsFixed(3)} · Inertia ${m['inertia'] ?? '?'} · n=${m['n'] ?? '?'}';
+    final cm = m['confusion_matrix'];
+    final cmLine = cm is Map && cm['summary'] != null ? '\nConfusion: ${cm['summary']}' : '';
+    return 'k=${m['k'] ?? '?'} · Silhouette ${sil.toStringAsFixed(3)} · Inertia ${m['inertia'] ?? '?'} · n=${m['n'] ?? '?'}$cmLine';
+  }
+  if (m['available'] == true || m.containsKey('token_f1') || m.containsKey('chrf')) {
+    final f1 = ((m['token_f1'] as num?) ?? (m['f1'] as num?) ?? 0).toDouble() * 100;
+    final summary = '${m['summary'] ?? ''}';
+    return summary.isNotEmpty ? summary : 'Translation quality · Token F1 ${f1.toStringAsFixed(1)}%';
+  }
+  if (m.containsKey('confusion_matrix')) {
+    final cm = m['confusion_matrix'];
+    final summary = cm is Map ? '${cm['summary'] ?? ''}' : '';
+    final acc = ((m['accuracy'] as num?)?.toDouble() ?? 0) * 100;
+    return 'Accuracy ${acc.toStringAsFixed(1)}%${summary.isNotEmpty ? ' · $summary' : ''}';
   }
   return m.entries.take(8).map((e) => '${e.key}: ${e.value}').join('\n');
 }

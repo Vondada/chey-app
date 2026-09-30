@@ -8,12 +8,18 @@ class InsightsBrainScene extends StatefulWidget {
     required this.learnedAboutYou,
     required this.learnedKnowledge,
     required this.suggestions,
+    this.memoryNotes = const [],
+    this.brainLinks = const [],
   });
 
   final bool active;
   final List<Map<String, dynamic>> learnedAboutYou;
   final List<String> learnedKnowledge;
   final List<String> suggestions;
+  /// Unlimited Worker memory_notes — each becomes a neural dot on the Map.
+  final List<Map<String, dynamic>> memoryNotes;
+  /// Related links from Worker brain_graph (source/target/relation).
+  final List<Map<String, dynamic>> brainLinks;
 
   @override
   State<InsightsBrainScene> createState() => _InsightsBrainSceneState();
@@ -136,6 +142,50 @@ class _InsightsBrainSceneState extends State<InsightsBrainScene>
           .toList(),
     );
 
+    // Unlimited memory_notes from Worker → neural dots (ML / translate / research / knowledge).
+    const noteCyan = Color(0xFF5BE7FF);
+    const notePink = Color(0xFFFF7AD9);
+    const noteLime = Color(0xFFB6FF6A);
+    final notes = widget.memoryNotes;
+    if (notes.isNotEmpty) {
+      final ml = <_BrainNode>[];
+      final tr = <_BrainNode>[];
+      final other = <_BrainNode>[];
+      for (final n in notes) {
+        final kind = '${n['kind'] ?? n['region'] ?? ''}'.toLowerCase();
+        final title = '${n['title'] ?? 'Note'}';
+        final body = (n['body'] ?? n['text'] ?? ((n['bullets'] is List) ? (n['bullets'] as List).join(' · ') : title)).toString();
+        final id = '${n['id'] ?? title}';
+        final node = _BrainNode(
+          region: kind.contains('ml') || kind.contains('classif') || kind.contains('cluster')
+              ? 'ML Learning'
+              : kind.contains('translat')
+                  ? 'Translation'
+                  : 'Memory Notes',
+          title: title,
+          body: body,
+          color: kind.contains('ml') || kind.contains('classif') || kind.contains('cluster')
+              ? notePink
+              : kind.contains('translat')
+                  ? noteLime
+                  : noteCyan,
+          position: Offset.zero,
+          id: id,
+          clusterId: n['cluster_id']?.toString(),
+        );
+        if (node.region == 'ML Learning') {
+          ml.add(node);
+        } else if (node.region == 'Translation') {
+          tr.add(node);
+        } else {
+          other.add(node);
+        }
+      }
+      addCluster('ML Learning', notePink, const Offset(120, 480), ml);
+      addCluster('Translation', noteLime, const Offset(560, 480), tr);
+      addCluster('Memory Notes', noteCyan, const Offset(345, 140), other);
+    }
+
     return result;
   }
 
@@ -232,7 +282,7 @@ class _InsightsBrainSceneState extends State<InsightsBrainScene>
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'What CHE has learned, connected like a living map.',
+                  'Memory notes, ML clusters, and translations as neural dots — unlimited learned nodes.',
                   style: TextStyle(color: Colors.white54, fontSize: 12),
                 ),
               ),
@@ -332,6 +382,8 @@ class _BrainNode {
     required this.color,
     required this.position,
     this.empty = false,
+    this.id,
+    this.clusterId,
   });
 
   final String region;
@@ -340,6 +392,8 @@ class _BrainNode {
   final Color color;
   final Offset position;
   final bool empty;
+  final String? id;
+  final String? clusterId;
 
   _BrainNode copyWith({Offset? position}) => _BrainNode(
         region: region,
@@ -348,6 +402,8 @@ class _BrainNode {
         color: color,
         position: position ?? this.position,
         empty: empty,
+        id: id,
+        clusterId: clusterId,
       );
 }
 
@@ -391,11 +447,15 @@ class _BrainPainter extends CustomPainter {
     ];
 
     for (final node in nodes) {
-      final hub = node.region == 'Learned About You'
-          ? hubs[0]
-          : node.region == 'Learned Knowledge'
-              ? hubs[1]
-              : hubs[2];
+      final hub = switch (node.region) {
+        'Learned About You' => hubs[0],
+        'Learned Knowledge' => hubs[1],
+        'Suggestions' => hubs[2],
+        'ML Learning' => const Offset(120, 480),
+        'Translation' => const Offset(560, 480),
+        'Memory Notes' => const Offset(345, 140),
+        _ => hubs[2],
+      };
 
       linePaint.color = node.color.withValues(
         alpha: node.empty ? .09 : .24,
@@ -419,6 +479,18 @@ class _BrainPainter extends CustomPainter {
       if (nodes[i].region != nodes[i + 1].region) continue;
       linePaint.color = nodes[i].color.withValues(alpha: .10);
       canvas.drawLine(nodes[i].position, nodes[i + 1].position, linePaint);
+    }
+
+    // Related / cluster links (same cluster_id glow)
+    for (var i = 0; i < nodes.length; i++) {
+      final a = nodes[i];
+      if (a.empty || a.clusterId == null || a.clusterId!.isEmpty) continue;
+      for (var j = i + 1; j < nodes.length; j++) {
+        final b = nodes[j];
+        if (b.clusterId != a.clusterId) continue;
+        linePaint.color = a.color.withValues(alpha: .28);
+        canvas.drawLine(a.position, b.position, linePaint);
+      }
     }
 
     canvas.drawCircle(

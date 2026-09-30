@@ -1,17 +1,18 @@
-# Translation & multilingual
+# CHE translation + multilingual
 
-## Phone
+Worker-side only (Groq/Gemini/Workers AI m2m100). No secrets in Flutter.
 
-- **More → Language & translate** — sets CHE **reply language** (chat + TTS).
-- **More → Translate target** — language for one-shot translate actions.
-- Long-press any chat bubble → **Translate to …**
-- Chat requests send `reply_language` to the Worker.
+## Phrases
 
-## Worker
+- `Translate to Spanish: good morning`
+- `Translate to ja: hello reference: こんにちは` (quality metrics)
+- `Set my language to French` / `Speak in Spanish`
 
-- `POST /api/translate` `{ "text", "target_lang" }` — Workers AI m2m100 when available, else chat model.
+## APIs
+
+- `POST /api/translate` `{ "text", "target_lang", "reference"? }`
 - `GET /api/languages`
-- Voice: `Translate to Spanish: good morning`
-- System prompt injects `REPLY LANGUAGE` when reply language ≠ English.
 
-Prefs (on device only): `che_reply_language`, `che_translate_target`.
+## Brain / Projects
+
+Successful translates land as `memory_notes` (`kind: translate`, `locale`) and optional project type `translate` with quality metrics.
