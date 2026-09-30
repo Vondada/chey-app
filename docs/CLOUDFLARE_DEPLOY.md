@@ -1,3 +1,8 @@
+> **Auto-deploy:** Cloudflare Workers Builds is connected to this repo (root
+> `server/cloudflare`, branch `main`, `npx wrangler deploy`). Every push to
+> `main` redeploys the Worker. Do not put `[skip ci]` in a commit that must
+> deploy: Workers Builds honors it and skips.
+
 # Cloudflare Worker deploy checklist
 
 Last verified **2026-09-29** (America/Chicago). Do not put secret values in Flutter, git, or this file.
