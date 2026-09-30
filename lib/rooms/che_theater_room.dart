@@ -509,7 +509,7 @@ class _Theater3DStage extends StatelessWidget {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<CheBrowserEntry?>(
       valueListenable: CheBrowserStore.instance.nowPlaying,
-      builder: (context, _, __) {
+      builder: (context, value, child) {
         return Che3DRoomView(
           assetPath: 'assets/office3d/theater.html',
           updateFunction: 'updateScene',
