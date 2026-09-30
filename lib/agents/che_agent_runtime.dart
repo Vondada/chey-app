@@ -410,6 +410,7 @@ class CheAgentRuntimeClient {
   }
 
   Future<CheAgentDetail> agent(String id) async {
+    if (id == 'che') return cheDesk();
     final j = await _send('GET', '/api/agents/$id');
     return CheAgentDetail(
       profile: CheAgentProfile.fromJson(j['agent'] as Map<String, dynamic>),
@@ -417,6 +418,43 @@ class CheAgentRuntimeClient {
         for (final t in (j['history'] as List? ?? const []))
           if (t is Map<String, dynamic>) CheAgentTask.fromJson(t),
       ],
+      meetings: [
+        for (final m in (j['meetings'] as List? ?? const []))
+          if (m is Map<String, dynamic>) CheMeetingSummary.fromJson(m),
+      ],
+    );
+  }
+
+  /// CHE is not in `data.team` — her desk is built from the roster snapshot
+  /// so assign/request UI can open for her the same way as other desks.
+  Future<CheAgentDetail> cheDesk() async {
+    final j = await roster();
+    final c = j['che'] as Map? ?? const {};
+    final che = CheAgent.che(
+      status: CheAgentStatusLabel.parse(c['status']?.toString()),
+      task: c['task']?.toString(),
+    );
+    final busy = che.status != CheAgentStatus.idle &&
+        che.status != CheAgentStatus.offline &&
+        che.status != CheAgentStatus.done;
+    return CheAgentDetail(
+      profile: CheAgentProfile(
+        agent: che,
+        mission:
+            'Primary agent and Office manager. Talk with the owner, split requests into Office jobs, review coworker output, and chair the War Room.',
+        responsibilities: const [
+          'Talk with the owner',
+          'Split requests into Office jobs',
+          'Review coworker output',
+          'Chair the War Room',
+        ],
+        modelTier: 'strong',
+        temporary: false,
+        working: busy,
+        assignmentTask: che.task ?? '',
+        assignmentStatus: che.task != null ? 'active' : '',
+      ),
+      history: const [],
       meetings: [
         for (final m in (j['meetings'] as List? ?? const []))
           if (m is Map<String, dynamic>) CheMeetingSummary.fromJson(m),
