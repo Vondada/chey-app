@@ -36,6 +36,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/office3d/
+    - assets/avatars/
     - shorebird.yaml
 
 flutter_launcher_icons:

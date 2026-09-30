@@ -18,11 +18,27 @@ from pathlib import PurePosixPath
 MAX_CONTEXT = 95_000
 MAX_PATCH = 80_000
 ALLOWED_ROOTS = ("lib/", "test/")
-ALLOWED_FILES = {"pubspec.yaml"}
+# pubspec.yaml is NOT auto-allowed: new packages can pull native iOS code
+# and need a full IPA. projects/ stays text-only for owner project assets.
+ALLOWED_FILES = set()
+BLOCKED_PATH_FRAGMENTS = (
+    "ios/", "android/", "macos/", "windows/", "linux/",
+    ".entitlements", "Info.plist", ".github/workflows/",
+    "server/cloudflare/.dev.vars", "wrangler.toml", "codemagic.yaml",
+    "shorebird.yaml", ".env", "box-secrets", "host-secrets",
+)
 PROJECT_EXTENSIONS = {
     ".dart", ".html", ".css", ".js", ".ts", ".json", ".md", ".txt",
-    ".yaml", ".yml", ".xml", ".svg",
+    ".svg",
 }
+SECRET_RE = re.compile(
+    r"(BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY|"
+    r"(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}|"
+    r"(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|"
+    r"(?:CHE_GITHUB_TOKEN|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET|OLLAMA_API_KEY|CHE_OPENAI_API_KEY|XAI_API_KEY)\s*[:=]|"
+    r"AIza[0-9A-Za-z_-]{20,})",
+    re.I,
+)
 
 
 def run(*args: str, input_text: str | None = None) -> str:
@@ -34,14 +50,18 @@ def run(*args: str, input_text: str | None = None) -> str:
 
 def allowed(path: str) -> bool:
     p = PurePosixPath(path)
+    lowered = path.lower()
+    if p.is_absolute() or ".." in p.parts:
+        return False
+    if any(frag.lower() in lowered for frag in BLOCKED_PATH_FRAGMENTS):
+        return False
+    if path.endswith((".key", ".p8", ".p12", ".env", ".pem", ".mobileprovision")):
+        return False
     project_file = path.startswith("projects/") and p.suffix.lower() in PROJECT_EXTENSIONS
     return (
-        not p.is_absolute()
-        and ".." not in p.parts
-        and ((path.startswith(ALLOWED_ROOTS) and path.endswith(".dart"))
-             or path in ALLOWED_FILES
-             or project_file)
-        and not path.endswith((".key", ".p8", ".p12", ".env"))
+        (path.startswith(ALLOWED_ROOTS) and path.endswith(".dart"))
+        or path in ALLOWED_FILES
+        or project_file
     )
 
 
@@ -164,6 +184,8 @@ def validate_patch(patch: str) -> None:
         raise ValueError("The proposed patch is empty or too large.")
     if patch.startswith("```"):
         raise ValueError("The model returned Markdown rather than a patch.")
+    if SECRET_RE.search(patch):
+        raise ValueError("Patch looks like it contains a secret or private key.")
     paths = re.findall(r"^diff --git a/(\S+) b/(\S+)$", patch, re.M)
     if not paths or len(paths) > 6:
         raise ValueError("Expected a patch for one to six files.")
@@ -175,6 +197,10 @@ def validate_patch(patch: str) -> None:
             raise ValueError(f"New files are only allowed under projects/: {old}")
     if "GIT binary patch" in patch or "deleted file mode" in patch:
         raise ValueError("Binary changes and deletions require manual review.")
+    # Reject overly broad Flutter slices (too many added lines across the patch).
+    added = sum(1 for line in patch.splitlines() if line.startswith("+") and not line.startswith("+++"))
+    if added > 800:
+        raise ValueError("Patch adds too many lines; keep the Flutter slice narrow.")
     run("git", "apply", "--check", "-", input_text=patch)
     listed = run("git", "apply", "--numstat", "-", input_text=patch)
     actual = [line.split("\t", 2)[2] for line in listed.splitlines()]

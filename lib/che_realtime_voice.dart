@@ -216,6 +216,11 @@ class CheRealtimeVoiceEngine {
       );
 
       await _verifyInboundAudio();
+      // Re-assert speaker route after audio is verified — some iOS builds fall
+      // back to the earpiece after WebRTC renegotiation.
+      try {
+        await Helper.setSpeakerphoneOnButPreferBluetooth();
+      } catch (_) {}
       _connected = true;
       state.realtimeReady();
       _emitSnapshot();

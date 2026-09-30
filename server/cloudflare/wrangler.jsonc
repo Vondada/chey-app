@@ -10,5 +10,7 @@
   },
   "exports": {
     "CheState": { "type": "durable-object", "storage": "sqlite" }
-  }
+  },
+  // Required by `npx wrangler preview`; empty means previews inherit the top-level settings.
+  "previews": {}
 }

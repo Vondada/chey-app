@@ -1,3 +1,5 @@
+import { pendingBulkDecisions } from './twilio_sms.js';
+
 // CHE's connected world: one activity feed of what CHE and the Office really
 // did, a "find anything" search across every room (agent work, Art Studio
 // images, projects, vault items, background jobs, War Room plans), and a
@@ -15,6 +17,7 @@ export function shortTitle(text, maxWords = 6) {
   const words = (clause ? clause[1] : clean).split(' ').filter(Boolean);
   return words.length <= maxWords ? words.join(' ') : `${words.slice(0, maxWords).join(' ')}…`;
 }
+
 
 const DONE = new Set(['complete', 'completed', 'done', 'succeeded']);
 
@@ -46,6 +49,21 @@ export function creations(data, media = [], origin = '') {
     items.push({
       kind: 'vault', id: v.id, maker: 'CHE', title: shortTitle(v.name), text: clip(v.content, 600),
       about: `${v.name} ${v.kind} ${v.content}`, at: v.updated_at || v.created_at,
+    });
+  }
+  for (const j of data.twilio_bulk_jobs || []) {
+    if (j.status !== 'pending_owner') continue;
+    events.push({
+      at: j.created_at, who: 'CHE', kind: 'twilio_bulk', id: j.id,
+      line: `CHE needs your decision on bulk SMS to ${j.recipient_count} numbers (sample: “${String(j.sample || '').slice(0, 40)}”).`,
+    });
+  }
+  for (const m of data.twilio_inbound || []) {
+    events.push({
+      at: m.at, who: 'CHE', kind: 'twilio_inbound', id: m.id,
+      line: m.kind === 'opt_out'
+        ? `SMS opt-out from ${m.from}.`
+        : `Inbound SMS from ${m.from}: “${String(m.body || '').slice(0, 60)}”.`,
     });
   }
   for (const j of data.jobs || []) {
@@ -120,7 +138,9 @@ export function stalledTasks(data) {
 }
 
 export function decisionsNeeded(data) {
-  return stalledTasks(data).filter((s) => s.reason === 'needs your decision');
+  const fromTasks = stalledTasks(data).filter((s) => s.reason === 'needs your decision');
+  const fromSms = pendingBulkDecisions(data);
+  return [...fromSms, ...fromTasks];
 }
 
 export function nextActions(data) {

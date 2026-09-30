@@ -64,6 +64,19 @@ void main() {
       expect(cheAppForName('gmail')!.webUrl, 'https://mail.google.com');
       expect(cheAppForName('whatsapp')!.webUrl, 'https://web.whatsapp.com');
       expect(cheAppForName('x')!.name, 'X');
+      expect(cheAppForName('tradesea')!.name, 'TradeSea');
+      expect(cheAppForName('trade sea')!.webUrl, 'https://app.tradesea.ai/login?source=mobile-app&theme=dark');
+      expect(cheAppForName('trade sea ai')!.name, 'TradeSea');
+      expect(cheIsTradeSeaUrl('https://app.tradesea.ai/dashboard'), isTrue);
+      expect(cheIsTradeSeaUrl('https://www.tradingview.com'), isFalse);
+      expect(
+        cheTradeSeaEmbedUrl('https://app.tradesea.ai/login'),
+        'https://app.tradesea.ai/login?source=mobile-app&theme=dark',
+      );
+      expect(
+        cheTradeSeaEmbedUrl('https://app.tradesea.ai/login?source=mobile-app&theme=light'),
+        'https://app.tradesea.ai/login?source=mobile-app&theme=light',
+      );
       expect(cheNoWebVersionReason('iwebtv'), isNotNull);
     });
   });

@@ -11,17 +11,49 @@
 // The GitHub token is a Worker secret (CHE_GITHUB_TOKEN). It never reaches
 // the phone.
 
-const MAX_FILES = 12;
+const MAX_FILES = 6;
 const MAX_FILE_BYTES = 200_000;
 const BRANCH_PREFIX = 'che/update-';
 
 // Dart files under lib/ only. Everything else (pubspec, ios/, native code,
 // entitlements, Info.plist, workflows) is outside the self-update lane.
+// Content is scanned so a "Dart" file cannot smuggle secrets or native config.
+const SECRET_CONTENT = [
+  /\bBEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY\b/,
+  /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b/,
+  /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/,
+  /\b(?:CHE_GITHUB_TOKEN|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET|OLLAMA_API_KEY|CHE_OPENAI_API_KEY|XAI_API_KEY)\s*[:=]/,
+  /\bAIza[0-9A-Za-z_-]{20,}\b/,
+  /\bxai-[A-Za-z0-9]{20,}\b/,
+];
+
+// Structural native/config payloads only — plain comments that mention
+// Info.plist are fine; embedding plist/entitlement XML is not.
+const NATIVE_SMUGGLE = [
+  /<\?xml[\s\S]{0,200}<(?:plist|dict)\b/i,
+  /<key>com\.apple\.developer\./,
+  /<key>UIBackgroundModes<\/key>/,
+  /CODE_SIGN_ENTITLEMENTS\s*=/,
+  /\.entitlements['"]\s*:/,
+];
+
+export function scanUpdateContent(content, path = '') {
+  const text = String(content || '');
+  for (const re of SECRET_CONTENT) {
+    if (re.test(text)) return `Refusing ${path || 'file'}: looks like a secret or private key.`;
+  }
+  for (const re of NATIVE_SMUGGLE) {
+    if (re.test(text)) return `Refusing ${path || 'file'}: self-update cannot touch native iOS entitlements or Info.plist.`;
+  }
+  return null;
+}
+
 export function validateUpdateFiles(files) {
   if (!Array.isArray(files) || !files.length) return { error: 'An update needs at least one file.' };
-  if (files.length > MAX_FILES) return { error: `An update may change at most ${MAX_FILES} files.` };
+  if (files.length > MAX_FILES) return { error: `An update may change at most ${MAX_FILES} files (keep the slice narrow).` };
   const out = [];
   const seen = new Set();
+  let totalBytes = 0;
   for (const file of files) {
     const path = String(file?.path || '').trim();
     const content = typeof file?.content === 'string' ? file.content : null;
@@ -29,7 +61,12 @@ export function validateUpdateFiles(files) {
       return { error: `Only Dart files under lib/ can be self-updated (${path || 'missing path'}).` };
     }
     if (content === null) return { error: `${path} has no content.` };
-    if (new TextEncoder().encode(content).length > MAX_FILE_BYTES) return { error: `${path} is too large.` };
+    const bytes = new TextEncoder().encode(content).length;
+    if (bytes > MAX_FILE_BYTES) return { error: `${path} is too large.` };
+    totalBytes += bytes;
+    if (totalBytes > MAX_FILE_BYTES * 3) return { error: 'Update is too large overall; split into a narrower change.' };
+    const smuggle = scanUpdateContent(content, path);
+    if (smuggle) return { error: smuggle };
     if (seen.has(path)) return { error: `${path} appears twice.` };
     seen.add(path);
     out.push({ path, content });

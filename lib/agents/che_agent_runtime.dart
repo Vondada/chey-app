@@ -255,17 +255,25 @@ class CheOfficeToday {
     required this.chargesCents,
     required this.refundsCents,
     required this.netCents,
+    this.stalled = const [],
     this.desks = const [],
+    this.announcements = const [],
   });
   final List<Map<String, dynamic>> started;
   final List<Map<String, dynamic>> shipped;
   final List<Map<String, dynamic>> blockers;
+
+  /// Live stalled work (blocked, waiting on owner, or no update for a while).
+  final List<Map<String, dynamic>> stalled;
   final int agentsWorking;
   final bool stripeConnected;
   final int chargesCents;
   final int refundsCents;
   final int netCents;
   final List<CheOfficeDesk> desks;
+
+  /// New blocker lines CHE says unprompted (server-deduped, spoken once).
+  final List<String> announcements;
 
   int get startedToday => started.length;
   int get builtToday => shipped.length;
@@ -286,12 +294,14 @@ class CheOfficeToday {
     List<Map<String, dynamic>> rows(String key) => [for (final x in (j[key] as List? ?? const [])) if (x is Map) Map<String, dynamic>.from(x)];
     return CheOfficeToday(
       started: rows('started'), shipped: rows('shipped'), blockers: rows('blockers'),
+      stalled: rows('stalled'),
       agentsWorking: (j['agents_working'] as num?)?.toInt() ?? 0,
       stripeConnected: stripe['connected'] == true,
       chargesCents: (stripe['charges_cents'] as num?)?.toInt() ?? 0,
       refundsCents: (stripe['refunds_cents'] as num?)?.toInt() ?? 0,
       netCents: (stripe['net_cents'] as num?)?.toInt() ?? 0,
       desks: [for (final d in rows('agents')) CheOfficeDesk.fromJson(d)],
+      announcements: [for (final a in (j['che_announcements'] as List? ?? const [])) if (a is String && a.isNotEmpty) a],
     );
   }
 }
@@ -326,6 +336,7 @@ List<String> cheOfficeHeaderLines(CheOfficeToday? today, CheOfficeConnection con
       'Stripe today: charges ${cheDollars(t.chargesCents)}, refunds ${cheDollars(t.refundsCents)}, net ${cheDollars(t.netCents)}'
     else
       '\$0.00 · Stripe not connected',
+    if ((t?.stalled.isNotEmpty ?? false)) 'Stalled: ${t!.stalled.length}',
   ];
 }
 
@@ -339,9 +350,12 @@ String cheOfficeBoardSpeech(CheOfficeToday? today, CheOfficeConnection connectio
   final blockers = t.blockers.isEmpty
       ? 'No blockers.'
       : 'Blockers: ${t.blockers.map((b) => '${b['agent'] ?? 'An agent'}: ${b['detail'] ?? 'Blocked'}').join('; ')}.';
+  final stalled = t.stalled.isEmpty
+      ? 'Nothing stalled.'
+      : 'Stalled: ${t.stalled.map((b) => '${b['agent'] ?? 'An agent'}: ${b['task'] ?? 'a job'} (${b['detail'] ?? 'stalled'})').join('; ')}.';
   final desks = [for (var i = 0; i < t.desks.length; i++) '${i + 1}. ${t.desks[i].name}: ${t.desks[i].status}'].join('. ');
   return 'CHE here. Office board. Started today ${t.startedToday}. Finished today ${t.builtToday}. '
-      '${t.agentsWorking} working. $money $blockers${desks.isEmpty ? '' : ' Desks: $desks.'} Connection ${connection.label}.';
+      '${t.agentsWorking} working. $money $blockers $stalled${desks.isEmpty ? '' : ' Desks: $desks.'} Connection ${connection.label}.';
 }
 
 /// Thin HTTP client over the Worker's Agent Runtime API.
@@ -396,6 +410,7 @@ class CheAgentRuntimeClient {
   }
 
   Future<CheAgentDetail> agent(String id) async {
+    if (id == 'che') return cheDesk();
     final j = await _send('GET', '/api/agents/$id');
     return CheAgentDetail(
       profile: CheAgentProfile.fromJson(j['agent'] as Map<String, dynamic>),
@@ -403,6 +418,43 @@ class CheAgentRuntimeClient {
         for (final t in (j['history'] as List? ?? const []))
           if (t is Map<String, dynamic>) CheAgentTask.fromJson(t),
       ],
+      meetings: [
+        for (final m in (j['meetings'] as List? ?? const []))
+          if (m is Map<String, dynamic>) CheMeetingSummary.fromJson(m),
+      ],
+    );
+  }
+
+  /// CHE is not in `data.team` — her desk is built from the roster snapshot
+  /// so assign/request UI can open for her the same way as other desks.
+  Future<CheAgentDetail> cheDesk() async {
+    final j = await roster();
+    final c = j['che'] as Map? ?? const {};
+    final che = CheAgent.che(
+      status: CheAgentStatusLabel.parse(c['status']?.toString()),
+      task: c['task']?.toString(),
+    );
+    final busy = che.status != CheAgentStatus.idle &&
+        che.status != CheAgentStatus.offline &&
+        che.status != CheAgentStatus.done;
+    return CheAgentDetail(
+      profile: CheAgentProfile(
+        agent: che,
+        mission:
+            'Primary agent and Office manager. Talk with the owner, split requests into Office jobs, review coworker output, and chair the War Room.',
+        responsibilities: const [
+          'Talk with the owner',
+          'Split requests into Office jobs',
+          'Review coworker output',
+          'Chair the War Room',
+        ],
+        modelTier: 'strong',
+        temporary: false,
+        working: busy,
+        assignmentTask: che.task ?? '',
+        assignmentStatus: che.task != null ? 'active' : '',
+      ),
+      history: const [],
       meetings: [
         for (final m in (j['meetings'] as List? ?? const []))
           if (m is Map<String, dynamic>) CheMeetingSummary.fromJson(m),

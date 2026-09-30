@@ -13,6 +13,24 @@ const MAX_PROPOSALS = 100;
 const MIN_CENTS = 50; // Stripe's USD minimum charge
 const MAX_CENTS = 99_999_900;
 
+// Hard allow-list. CHE may create products/prices/payment links and read
+// charges/balance/checkout — never refund, transfer, payout, or create charges.
+const STRIPE_ALLOWED = {
+  GET: new Set(['/charges', '/balance', '/checkout/sessions', '/products', '/prices', '/payment_links']),
+  POST: new Set(['/products', '/prices', '/payment_links']),
+};
+
+export function assertStripeCallAllowed(method, path) {
+  const m = String(method || '').toUpperCase();
+  const p = String(path || '').split('?')[0];
+  const allowed = STRIPE_ALLOWED[m];
+  if (!allowed || !allowed.has(p)) {
+    const error = new Error(`CHE Stripe path blocked: ${m} ${p}. Refunds, transfers, payouts and direct charges are not allowed.`);
+    error.status = 403;
+    throw error;
+  }
+}
+
 function now() {
   return new Date().toISOString();
 }
@@ -46,6 +64,7 @@ export function formEncode(params, prefix = '') {
 }
 
 export async function stripe(env, method, path, params, fetcher, idempotencyKey) {
+  assertStripeCallAllowed(method, path);
   const headers = {
     Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
     'Stripe-Version': String(env.CHE_STRIPE_API_VERSION || '2024-06-20'),
@@ -126,7 +145,8 @@ export function rejectProposal(data, id) {
 
 // Owner approval: create the Stripe product with its price, then a payment
 // link. Idempotency keys make a retried approval reuse the same Stripe objects.
-export async function approveProposal(env, data, id, fetcher = fetch) {
+// `confirmed: true` is required so a bare POST cannot spend/create money objects.
+export async function approveProposal(env, data, id, fetcher = fetch, { confirmed = false } = {}) {
   if (stripeMode(env) === 'not_connected') {
     return { status: 503, detail: 'Stripe is not connected. Add STRIPE_SECRET_KEY to the CHE Worker.' };
   }
@@ -134,6 +154,9 @@ export async function approveProposal(env, data, id, fetcher = fetch) {
   if (!proposal) return { status: 404, detail: 'Proposal not found.' };
   if (proposal.status === 'approved') return { status: 200, proposal };
   if (proposal.status !== 'pending') return { status: 409, detail: `This proposal is ${proposal.status}.` };
+  if (confirmed !== true) {
+    return { status: 400, detail: 'Confirm in the app before CHE creates anything in Stripe.' };
+  }
   try {
     const product = await stripe(env, 'POST', '/products', {
       name: proposal.name,

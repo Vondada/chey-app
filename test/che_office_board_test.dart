@@ -21,6 +21,9 @@ Map<String, dynamic> _board({bool stripe = false}) => {
       'blockers': [
         {'id': 't2', 'agent': 'Knox', 'task': 'Build a landing page', 'detail': 'Blocked: tool not configured (Codex)'},
       ],
+      'stalled': [
+        {'id': 't2', 'agent': 'Knox', 'task': 'Build a landing page', 'detail': 'blocked'},
+      ],
       'agents_working': 1,
       'agents': [
         {'id': 'atlas', 'name': 'Atlas', 'role': 'Research', 'state': 'queued', 'status': 'Up next: Research competitors in Houston', 'job': 'Research competitors in Houston'},
@@ -45,6 +48,7 @@ void main() {
       'Agents working: 1',
       'Connection: live',
       r'$0.00 · Stripe not connected',
+      'Stalled: 1',
     ]);
 
     final on = CheOfficeToday.fromJson(_board(stripe: true));
@@ -55,6 +59,7 @@ void main() {
       'Agents working: 1',
       'Connection: reconnecting',
       r'Stripe today: charges $50.00, refunds $12.50, net $37.50',
+      'Stalled: 1',
     ]);
 
     // Before the first board arrives the header still shows honest zeros.
@@ -70,7 +75,9 @@ void main() {
     expect(speech, startsWith('CHE here. Office board. Started today 3. Finished today 1. 1 working.'));
     expect(speech, contains(r'Stripe not connected. Earned today $0.00.'));
     expect(speech, contains('Blockers: Knox: Blocked: tool not configured (Codex).'));
+    expect(speech, contains('Stalled: Knox: Build a landing page (blocked).'));
     expect(speech, contains('1. Atlas: Up next: Research competitors in Houston. 2. Knox: Blocked: tool not configured (Codex). 3. Lyra: Idle'));
+    expect(cheOfficeHeaderLines(t, CheOfficeConnection.live).last, 'Stalled: 1');
   });
 
   test('desks show real job status instead of Idle', () {
@@ -156,12 +163,17 @@ void main() {
     expect(find.bySemanticsLabel(RegExp(r'^Atlas, Research\. Up next: Research competitors in Houston\.')), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp(r'^CHE, Manager\.')), findsOneWidget);
 
-    await tester.scrollUntilVisible(find.text('Stand down the Office'), 200, scrollable: find.byType(Scrollable).first);
+    // The board sits below the floor plan and action buttons; scroll to it.
+    await tester.scrollUntilVisible(find.text('BLOCKERS (1)'), 200, scrollable: find.byType(Scrollable).first);
     expect(find.text('STARTED TODAY (3)'), findsOneWidget);
     expect(find.text('FINISHED TODAY (1)'), findsOneWidget);
     expect(find.text('STRIPE TODAY'), findsOneWidget);
     expect(find.text('BLOCKERS (1)'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('STALLED (1)'), 200, scrollable: find.byType(Scrollable).first);
+    expect(find.text('STALLED (1)'), findsOneWidget);
 
+    await tester.ensureVisible(find.text('Stand down the Office'));
+    await tester.pump();
     await tester.tap(find.text('Stand down the Office'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));

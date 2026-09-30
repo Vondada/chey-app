@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { buildToolUrl, planPluginCall, pluginManifests, runPluginTool } from './plugin_runtime.js';
-import { classifyUpdate, openSelfUpdatePr, rollbackLastUpdate, validateUpdateFiles } from './self_update.js';
+import { classifyUpdate, openSelfUpdatePr, rollbackLastUpdate, scanUpdateContent, validateUpdateFiles } from './self_update.js';
 import { parseStooqCsv, snapshot } from './markets.js';
 
 const weather = pluginManifests({}).find((item) => item.id === 'weather');
@@ -48,6 +48,15 @@ test('self-update accepts only complete Dart files under lib/', () => {
   assert.ok(validateUpdateFiles([{ path: 'lib/a.dart' }]).error);
   assert.equal(classifyUpdate(['lib/a.dart']).delivery, 'shorebird_patch');
   assert.equal(classifyUpdate(['ios/Podfile']).delivery, 'full_rebuild');
+});
+
+test('self-update rejects secrets, native smuggling and oversized slices', () => {
+  assert.match(scanUpdateContent('const k = "sk_live_abcdefghijklmnopqrstuvwxyz";', 'lib/a.dart') || '', /secret/);
+  assert.match(scanUpdateContent('<?xml version="1.0"?><plist><dict></dict></plist>', 'lib/a.dart') || '', /native|entitlement|Info/);
+  assert.ok(validateUpdateFiles([{ path: 'lib/a.dart', content: 'STRIPE_SECRET_KEY=sk_test_abcdefghijklmnopqrst' }]).error);
+  assert.ok(validateUpdateFiles([{ path: 'lib/a.dart', content: '<?xml version="1.0"?><plist><dict></dict></plist>' }]).error);
+  const many = Array.from({ length: 7 }, (_, i) => ({ path: `lib/f${i}.dart`, content: 'x' }));
+  assert.match(validateUpdateFiles(many).error || '', /at most 6/);
 });
 
 function fakeGitHub() {

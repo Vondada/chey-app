@@ -48,8 +48,8 @@ export function inferNeeds(input = {}) {
     capability,
     difficulty,
     local_only: input.che_local_only === true,
-    provider: String(input.che_provider || '').trim().toLowerCase(),
-    model: String(input.che_model || '').trim(),
+    provider: (() => { const p = String(input.che_provider || '').trim().toLowerCase(); return p === 'auto' ? '' : p; })(),
+    model: (() => { const m = String(input.che_model || '').trim(); return m.toLowerCase() === 'auto' ? '' : m; })(),
     strongest: input.che_strongest === true,
   };
 }
@@ -172,7 +172,7 @@ export function planPairedJob(objective, connected = [], requestedFamilies = [])
     ...researchers.map((provider) => ({ role: `${providerLabel(provider)} Researcher`, provider, capability: 'deep_reasoning', stage: 'independent' })),
     { role: 'Analyst', provider: pick('huggingface', 'ollama', 'groq', 'gemini') || '', capability: 'deep_reasoning', stage: 'compare' },
     { role: 'QA/Security Reviewer', provider: pick('anthropic', 'openai', 'xai', 'gemini') || '', capability: 'deep_reasoning', stage: 'review' },
-    { role: 'CHE Manager', provider: 'che', capability: 'synthesis', stage: 'synthesize' },
+    { role: 'CHE Office Boss', provider: 'che', capability: 'synthesis', stage: 'synthesize' },
   ];
   return {
     objective: String(objective || '').slice(0, 2000),

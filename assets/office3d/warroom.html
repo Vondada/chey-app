@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>WAR ROOM — CHE</title>
+  <style>
+    * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+    html,body { width:100%; height:100%; margin:0; overflow:hidden;
+      background:radial-gradient(circle at 44% 15%,#fffdf7 0%,#f9edda 49%,#efd9bd 100%);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      touch-action:none; user-select:none; }
+    #scene { position:absolute; inset:0; }
+    canvas { display:block; width:100%; height:100%; }
+    #brand { position:absolute; top:12px; left:12px; z-index:5; pointer-events:none;
+      padding:10px 14px; border-radius:16px; border:1px solid rgba(255,255,255,.74);
+      background:rgba(255,250,240,.78); color:#463530;
+      box-shadow:0 12px 30px rgba(92,56,37,.10); backdrop-filter:blur(12px); }
+    #brand strong { display:block; font-size:15px; letter-spacing:.08em; }
+    #brand span { display:block; margin-top:4px; font-size:9px; font-weight:800;
+      letter-spacing:.12em; text-transform:uppercase; color:#2b9992; }
+    #hint { position:absolute; left:50%; bottom:12px; transform:translateX(-50%);
+      z-index:5; max-width:calc(100% - 24px); overflow:hidden; text-overflow:ellipsis;
+      padding:7px 12px; border-radius:999px; white-space:nowrap; pointer-events:none;
+      background:rgba(255,250,240,.78); color:rgba(70,53,48,.74);
+      font-size:10px; font-weight:750; }
+    #error { display:none; position:absolute; inset:20px; z-index:20; place-items:center;
+      padding:24px; text-align:center; border-radius:20px;
+      background:rgba(255,248,237,.96); color:#6c4a40; font-weight:750; }
+    #tvOverlay { display:none; position:absolute; right:12px; top:12px; z-index:6;
+      width:min(42vw,220px); aspect-ratio:16/10; border-radius:12px; overflow:hidden;
+      border:2px solid rgba(70,53,48,.35); background:#111; box-shadow:0 10px 28px rgba(0,0,0,.25); }
+    #tvOverlay iframe { width:100%; height:100%; border:0; background:#000; }
+    #tvCard { display:none; position:absolute; inset:0; padding:10px; color:#f7ecd9;
+      font-size:11px; background:linear-gradient(160deg,#1a2228,#0d1216); }
+    #tvCard .t { font-weight:800; font-size:12px; margin-bottom:6px; }
+    #tvCard .u { opacity:.7; word-break:break-all; }
+  </style>
+</head>
+<body>
+<div id="scene"></div>
+<div id="brand"><strong>WAR ROOM</strong><span>CHE Conference</span></div>
+<div id="hint">Agents around the table · speaker highlighted</div>
+<div id="error">3D renderer could not start.</div>
+
+<script src="three.min.js"></script>
+<script src="che3d-agents.js"></script>
+<script>
+(() => {
+  "use strict";
+  if (!window.THREE || !window.Che3D) {
+    document.getElementById("error").style.display = "grid";
+    return;
+  }
+  const { C, M, mat, box, sphere, cylinder, torus, AgentCrowd } = Che3D;
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(C.cream);
+  scene.fog = new THREE.FogExp2(C.cream, 0.014);
+  const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:"high-performance" });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.06;
+  document.getElementById("scene").appendChild(renderer.domElement);
+  const camera = new THREE.OrthographicCamera(-9,9,6.5,-6.5,0.1,80);
+  const cameraTarget = new THREE.Vector3(0,1.5,0);
+  let yaw = 0.55, pitch = 0.68;
+  const radius = 16;
+  function positionCamera() {
+    const cp = Math.cos(pitch);
+    camera.position.set(Math.sin(yaw)*cp*radius, Math.sin(pitch)*radius, Math.cos(yaw)*cp*radius);
+    camera.lookAt(cameraTarget);
+    camera.updateProjectionMatrix();
+  }
+  positionCamera();
+  scene.add(new THREE.HemisphereLight(0xFFF3DB, 0x846253, 2.0));
+  const sun = new THREE.DirectionalLight(0xFFF0D0, 3.8);
+  sun.position.set(-7,14,9); sun.castShadow = true;
+  sun.shadow.mapSize.set(1536,1536);
+  sun.shadow.camera.left=-14; sun.shadow.camera.right=14;
+  sun.shadow.camera.top=14; sun.shadow.camera.bottom=-14;
+  sun.shadow.bias=-0.0006; scene.add(sun);
+  const room = new THREE.Group(); scene.add(room);
+  const floor = box(16,.4,12,M.cream); floor.position.y=-.28; room.add(floor);
+  const tileColors=[0xF5E4CE,0xF5D8C5,0xDCE8DA,0xF3E1AE,0xD8E8E5];
+  for(let x=0;x<11;x++) for(let z=0;z<8;z++) {
+    const tile=box(1.35,.04,1.35,mat(tileColors[(x*2+z*3)%tileColors.length],.92));
+    tile.position.set((x-5)*1.4,-.02,(z-3.5)*1.4); room.add(tile);
+  }
+  const back=box(16.2,4.8,.28,mat(0xF2D4BF)); back.position.set(0,2.2,-5.9); room.add(back);
+  const side=box(.28,4.8,11.6,mat(0xE9D9BD)); side.position.set(-7.95,2.2,-.2); room.add(side);
+
+  // Conference table + chairs + board
+  const table = cylinder(2.6,2.7,.18,M.wood,40); table.position.set(0,.72,0); room.add(table);
+  const tableCore = cylinder(.35,.45,.55,M.chrome,20); tableCore.position.set(0,.35,0); room.add(tableCore);
+  const board = box(5.2,2.4,.08,M.blackGlass); board.position.set(0,2.55,-5.55); room.add(board);
+  const boardGlow = box(4.7,2.0,.02,mat(0x2FAFA6,.3,.2,{emissive:0x2FAFA6,emissiveIntensity:.45}));
+  boardGlow.position.set(0,2.55,-5.48); room.add(boardGlow);
+  // amber chairs markers (homes)
+  const homes = [];
+  const seats = 8;
+  for (let i=0;i<seats;i++){
+    const a = (i/seats)*Math.PI*2 - Math.PI/2;
+    const x = Math.cos(a)*3.55, z = Math.sin(a)*3.55;
+    const chair = box(.55,.12,.55,M.mustard); chair.position.set(x,.42,z); room.add(chair);
+    homes.push(new THREE.Vector3(x, .30, z));
+  }
+  // CHE chair head of table (index 0 shifted)
+  homes[0] = new THREE.Vector3(0, .30, 3.7);
+  const waypoints = [
+    new THREE.Vector3(-4.5,.30,-2), new THREE.Vector3(4.5,.30,-2),
+    new THREE.Vector3(-3.5,.30,2.5), new THREE.Vector3(3.5,.30,2.5),
+    new THREE.Vector3(0,.30,-3.2)
+  ];
+  const crowd = new AgentCrowd({ scene, room: 'warroom', homes, waypoints });
+  // Face center
+  homes.forEach((h,i)=>{ /* facing set on tick via home */ });
+
+  window.updateMeeting = function(data){
+    const agents = (data && data.agents) || [];
+    crowd.upsert(agents);
+    // Face table center
+    crowd.chars.forEach(g => {
+      if (g.userData.home) {
+        g.userData.facing = Math.atan2(-g.userData.home.x, -g.userData.home.z);
+        g.rotation.y = g.userData.facing;
+      }
+    });
+    const hint = document.getElementById('hint');
+    const obj = (data && data.objective) ? String(data.objective) : '';
+    const speaking = agents.find(a => a.speaking);
+    hint.textContent = speaking
+      ? (speaking.name + ' is speaking' + (obj ? ' · ' + obj.slice(0,42) : ''))
+      : (obj ? obj.slice(0,64) : (agents.length + ' at the table'));
+  };
+  window.updateMeeting({
+    objective: 'War Room',
+    agents: [{id:'che',name:'CHE',role:'Chair',status:'meeting',isChe:true,speaking:true}]
+  });
+
+  const raycaster=new THREE.Raycaster(), pointer=new THREE.Vector2();
+  let pointerDown=null, dragging=false;
+  function setPointer(e){
+    const rect=renderer.domElement.getBoundingClientRect();
+    pointer.x=((e.clientX-rect.left)/rect.width)*2-1;
+    pointer.y=-((e.clientY-rect.top)/rect.height)*2+1;
+  }
+  renderer.domElement.addEventListener('pointerdown',e=>{ pointerDown={x:e.clientX,y:e.clientY,yaw}; dragging=false; });
+  renderer.domElement.addEventListener('pointermove',e=>{
+    if(!pointerDown) return;
+    const dx=e.clientX-pointerDown.x, dy=e.clientY-pointerDown.y;
+    if(Math.abs(dx)+Math.abs(dy)>8) dragging=true;
+    if(dragging){ yaw=pointerDown.yaw+dx*.006; pitch=Math.max(.48,Math.min(.82,.68-dy*.003)); positionCamera(); }
+  });
+  renderer.domElement.addEventListener('pointerup',e=>{
+    if(pointerDown && !dragging){
+      setPointer(e); raycaster.setFromCamera(pointer,camera);
+      const hit=crowd.hitTest(raycaster);
+      if(hit && window.OfficeBridge){
+        window.OfficeBridge.postMessage(JSON.stringify({type:'agentTap',id:hit.userData.agentId}));
+      }
+    }
+    pointerDown=null; dragging=false;
+  });
+
+  const clock=new THREE.Clock();
+  let last=0;
+  function animate(){
+    requestAnimationFrame(animate);
+    const t=clock.getElapsedTime();
+    const dt=Math.min(0.05, t-last || 0.016); last=t;
+    boardGlow.material.emissiveIntensity=.35+.15*Math.sin(t*2);
+    crowd.tick(t, dt);
+    renderer.render(scene,camera);
+  }
+  animate();
+  function resize(){
+    const w=Math.max(1,window.innerWidth), h=Math.max(1,window.innerHeight), aspect=w/h, viewH=6.5;
+    camera.left=-viewH*aspect; camera.right=viewH*aspect; camera.top=viewH; camera.bottom=-viewH;
+    camera.updateProjectionMatrix(); renderer.setSize(w,h,false);
+  }
+  window.addEventListener('resize',resize); resize();
+})();
+
+</script>
+</body>
+</html>

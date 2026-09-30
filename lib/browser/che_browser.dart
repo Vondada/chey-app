@@ -13,8 +13,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-import '../che_app_portal.dart' show cheAppForName;
+import '../che_app_portal.dart' show cheAppForName, cheIsTradeSeaUrl, cheTradeSeaEmbedUrl;
 import '../security/che_password_vault.dart';
+import '../security/che_vault_auth.dart';
 
 typedef ChePageCallback = Future<void> Function(String title, String url, String pageText);
 
@@ -62,6 +63,9 @@ class CheBrowserStore {
   List<CheBrowserEntry> favorites = [];
   bool _loaded = false;
 
+  /// Live "now playing" page for Theater TV (best-effort URL/title mirror).
+  final ValueNotifier<CheBrowserEntry?> nowPlaying = ValueNotifier<CheBrowserEntry?>(null);
+
   Future<void> load() async {
     if (_loaded) return;
     final prefs = await SharedPreferences.getInstance();
@@ -87,10 +91,12 @@ class CheBrowserStore {
 
   Future<void> visit(String url, String title) async {
     await load();
+    final entry = CheBrowserEntry(url: url, title: title, at: DateTime.now());
+    nowPlaying.value = entry;
     if (history.isNotEmpty && history.first.url == url) {
-      history[0] = CheBrowserEntry(url: url, title: title, at: DateTime.now());
+      history[0] = entry;
     } else {
-      history.insert(0, CheBrowserEntry(url: url, title: title, at: DateTime.now()));
+      history.insert(0, entry);
     }
     if (history.length > 300) history = history.sublist(0, 300);
     await _save();
@@ -146,6 +152,11 @@ class _BrowserTab {
         },
         onPageStarted: (u) {
           url = u;
+          if (cheIsTradeSeaUrl(u)) {
+            unawaited(controller.runJavaScript(
+              "window.__webView=true;try{if(!new URLSearchParams(location.search).get('source')){var u=new URL(location.href);u.searchParams.set('source','mobile-app');u.searchParams.set('theme',u.searchParams.get('theme')||'dark');history.replaceState(null,'',u.toString());}}catch(e){}",
+            ));
+          }
           onChanged();
         },
         onPageFinished: (u) async {
@@ -166,12 +177,23 @@ class _BrowserTab {
             launchUrl(uri, mode: LaunchMode.externalApplication);
             return NavigationDecision.prevent;
           }
-          if (uri.scheme == 'http' || uri.scheme == 'https' || uri.scheme == 'about') return NavigationDecision.navigate;
+          if (uri.scheme == 'http' || uri.scheme == 'https' || uri.scheme == 'about') {
+            // Keep TradeSea's mobile-app embed flag across SPA/OAuth returns so
+            // the site does not replace login with the App Store / Play sheet.
+            if (uri.scheme != 'about' && cheIsTradeSeaUrl(uri.toString())) {
+              final embedded = cheTradeSeaEmbedUrl(uri.toString());
+              if (embedded != uri.toString()) {
+                unawaited(controller.loadRequest(Uri.parse(embedded)));
+                return NavigationDecision.prevent;
+              }
+            }
+            return NavigationDecision.navigate;
+          }
           launchUrl(uri, mode: LaunchMode.externalApplication);
           return NavigationDecision.prevent;
         },
       ))
-      ..loadRequest(Uri.parse(url));
+      ..loadRequest(Uri.parse(cheIsTradeSeaUrl(url) ? cheTradeSeaEmbedUrl(url) : url));
   }
 
   // Watches sign-in forms on this page and hands the login to the vault
@@ -198,11 +220,21 @@ class _BrowserTab {
 ''';
 
   // On a sign-in page for a site CHE already has, fill the login in
-  // automatically (the owner or CHE still presses Sign in).
+  // automatically (the owner or CHE still presses Sign in). Face ID is
+  // required unless a recent vault unlock session is still valid.
   static Future<void> _autoFill(WebViewController controller, String pageUrl) async {
     try {
       final host = Uri.tryParse(pageUrl)?.host ?? '';
       if (host.isEmpty) return;
+      // Only prompt Face ID when a password field is actually present.
+      final hasLogin = await controller.runJavaScriptReturningResult(
+        r"(function(){var pw=document.querySelector('input[type=password]');return !!(pw&&!pw.value);})()",
+      );
+      if (hasLogin != true && hasLogin != 'true' && hasLogin != 1) return;
+      final unlocked = await CheVaultAuth.instance.ensureUnlocked(
+        reason: 'Unlock CHE vault with Face ID to autofill this sign-in',
+      );
+      if (!unlocked) return;
       final entry = await CheVault.instance.find(host);
       if (entry == null) return;
       final u = jsonEncode(entry.username);
@@ -373,8 +405,15 @@ return parts.slice(0,4).join(' | ');})()''');
 
   // Fills the saved username/password for this site from CHE's on-device
   // vault. Values go straight into the page, never into chat or the server.
+  // Face ID required unless the vault session TTL is still valid.
   Future<String> _signIn() async {
     final host = Uri.tryParse(_tab.url)?.host ?? '';
+    final unlocked = await CheVaultAuth.instance.ensureUnlocked(
+      reason: 'Unlock CHE vault with Face ID to sign in',
+    );
+    if (!unlocked) {
+      return 'Face ID was cancelled — I did not fill your password.';
+    }
     final entry = await CheVault.instance.find(host.isEmpty ? _title : host) ?? await CheVault.instance.find(_title);
     if (entry == null) {
       return 'I don\'t have a saved password for this site. Say "save my ${host.replaceFirst('www.', '')} password" and the password.';
@@ -607,6 +646,88 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
 
   void _snack(String text) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 
+  bool get _isTradeSea => cheIsTradeSeaUrl(_tab.url);
+
+  /// Same spirit as Devices → Computer: connect the Windows/Mac companion,
+  /// then use authorized windows_action / computer use scoped to TradeSea.
+  Future<void> _showTradeSeaComputer() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xF5121C25),
+      showDragHandle: true,
+      builder: (sheet) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 6, 20, 26),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Semantics(
+                label: 'Computer companion for TradeSea',
+                child: Container(
+                  width: 58,
+                  height: 58,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withValues(alpha: .06),
+                    border: Border.all(color: Colors.white24),
+                  ),
+                  child: const Icon(Icons.laptop_mac_rounded, color: Colors.white54, size: 30),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text('Computer', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 5),
+              const Text(
+                'WINDOWS / MAC COMPANION',
+                style: TextStyle(
+                  color: Colors.white38,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.3,
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Connect your computer for authorized TradeSea actions '
+                '(companion / windows_action / computer use). Honest companion only — '
+                'no fake VNC. CHE asks before acting.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white60, height: 1.4),
+              ),
+              const SizedBox(height: 18),
+              FilledButton.icon(
+                onPressed: () {
+                  Navigator.of(sheet).pop();
+                  unawaited(_ask(
+                    'Help me connect my computer to CHE for authorized actions scoped to TradeSea '
+                    '(app.tradesea.ai). Walk me through only the required Windows or Mac companion '
+                    'setup and permissions (windows_action / use_computer). Be honest — no fake VNC.',
+                  ));
+                },
+                icon: const Icon(Icons.add_link),
+                label: const Text('CONNECT COMPUTER'),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.of(sheet).pop();
+                  unawaited(_ask(
+                    'Use my connected computer for TradeSea at app.tradesea.ai. '
+                    'Authorized companion / windows_action / computer use only, scoped to TradeSea. '
+                    'Ask for my approval before acting. No fake VNC.',
+                  ));
+                },
+                icon: const Icon(Icons.laptop_mac_rounded),
+                label: const Text('USE FOR TRADESEA'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _reader() async {
     final text = await _pageText();
     if (!mounted) return;
@@ -765,6 +886,12 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
           ),
         ),
         actions: [
+          if (_isTradeSea)
+            IconButton(
+              tooltip: 'Computer for TradeSea',
+              icon: const Icon(Icons.laptop_mac_rounded),
+              onPressed: _showTradeSeaComputer,
+            ),
           IconButton(
             tooltip: fav ? 'Remove favorite' : 'Add favorite',
             icon: Icon(fav ? Icons.star_rounded : Icons.star_border_rounded),
@@ -777,6 +904,8 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
             tooltip: 'Page actions',
             onSelected: (v) async {
               switch (v) {
+                case 'computer':
+                  await _showTradeSeaComputer();
                 case 'reader':
                   await _reader();
                 case 'summarize':
@@ -798,16 +927,18 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
                   await launchUrl(Uri.parse(_tab.url), mode: LaunchMode.externalApplication);
               }
             },
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'reader', child: ListTile(leading: Icon(Icons.chrome_reader_mode_outlined), title: Text('Reader mode'))),
-              PopupMenuItem(value: 'summarize', child: ListTile(leading: Icon(Icons.summarize_outlined), title: Text('Summarize'))),
-              PopupMenuItem(value: 'ask', child: ListTile(leading: Icon(Icons.question_answer_outlined), title: Text('Ask CHE about this page'))),
-              PopupMenuItem(value: 'teach', child: ListTile(leading: Icon(Icons.psychology_alt_outlined), title: Text('Teach CHE this page'))),
-              PopupMenuItem(value: 'project', child: ListTile(leading: Icon(Icons.folder_special_outlined), title: Text('Save to project'))),
-              PopupMenuItem(value: 'history', child: ListTile(leading: Icon(Icons.history_rounded), title: Text('History'))),
-              PopupMenuItem(value: 'favorites', child: ListTile(leading: Icon(Icons.star_outline_rounded), title: Text('Favorites'))),
-              PopupMenuItem(value: 'copy', child: ListTile(leading: Icon(Icons.link_rounded), title: Text('Copy link'))),
-              PopupMenuItem(value: 'external', child: ListTile(leading: Icon(Icons.open_in_new_rounded), title: Text('Open in official app / Safari'))),
+            itemBuilder: (_) => [
+              if (_isTradeSea)
+                const PopupMenuItem(value: 'computer', child: ListTile(leading: Icon(Icons.laptop_mac_rounded), title: Text('Computer'))),
+              const PopupMenuItem(value: 'reader', child: ListTile(leading: Icon(Icons.chrome_reader_mode_outlined), title: Text('Reader mode'))),
+              const PopupMenuItem(value: 'summarize', child: ListTile(leading: Icon(Icons.summarize_outlined), title: Text('Summarize'))),
+              const PopupMenuItem(value: 'ask', child: ListTile(leading: Icon(Icons.question_answer_outlined), title: Text('Ask CHE about this page'))),
+              const PopupMenuItem(value: 'teach', child: ListTile(leading: Icon(Icons.psychology_alt_outlined), title: Text('Teach CHE this page'))),
+              const PopupMenuItem(value: 'project', child: ListTile(leading: Icon(Icons.folder_special_outlined), title: Text('Save to project'))),
+              const PopupMenuItem(value: 'history', child: ListTile(leading: Icon(Icons.history_rounded), title: Text('History'))),
+              const PopupMenuItem(value: 'favorites', child: ListTile(leading: Icon(Icons.star_outline_rounded), title: Text('Favorites'))),
+              const PopupMenuItem(value: 'copy', child: ListTile(leading: Icon(Icons.link_rounded), title: Text('Copy link'))),
+              const PopupMenuItem(value: 'external', child: ListTile(leading: Icon(Icons.open_in_new_rounded), title: Text('Open in official app / Safari'))),
             ],
           ),
         ],
