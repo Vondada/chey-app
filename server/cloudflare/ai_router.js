@@ -714,3 +714,39 @@ export function resetRouterForTests() {
   providerLastError.clear();
 }
 
+
+// Public, secret-free engine report for diagnosing "all engines busy":
+// which engines are configured, resting, and their last few errors.
+export async function engineStatus(env, storage, now = Date.now()) {
+  const scrub = (text) => String(text || '')
+    .replace(/(?:sk|gsk|csk|AIza|hf|ghp|github_pat)[-_A-Za-z0-9]{8,}/g, '[key]')
+    .replace(/Bearer\s+\S+/gi, 'Bearer [key]')
+    .replace(/https?:\/\/\S+/g, '[url]')
+    .slice(0, 160);
+  const health = (await storedValue(storage, 'ai_health')) || {};
+  const engines = PROVIDERS.map((provider) => {
+    const base = provider.id.split(':')[0];
+    const h = health[base] || {};
+    return {
+      id: provider.id,
+      configured: providerEnabled(env, provider),
+      paid_blocked: PAID_PROVIDER_IDS.has(base) && !paidAllowed(env),
+      resting_seconds: Math.max(0, Math.round(((providerCooldownUntil.get(provider.id) || 0) - now) / 1000)),
+      last_ok_minutes_ago: h.last_ok_at ? Math.round((now - h.last_ok_at) / 60000) : null,
+      last_error_minutes_ago: h.last_error_at ? Math.round((now - h.last_error_at) / 60000) : null,
+      score: typeof h.score === 'number' ? Math.round(h.score * 100) / 100 : null,
+      recent_errors: (h.recent_errors || []).slice(-3).map((e) => ({ minutes_ago: Math.round((now - e.at) / 60000), status: e.status, error: scrub(e.error) })),
+    };
+  });
+  const cf = health.cloudflare || {};
+  return {
+    at: new Date(now).toISOString(),
+    cloudflare: {
+      bound: Boolean(env.AI),
+      resting_seconds: Math.max(0, Math.round((cloudflareExhaustedUntil - now) / 1000)),
+      last_ok_minutes_ago: cf.last_ok_at ? Math.round((now - cf.last_ok_at) / 60000) : null,
+      recent_errors: (cf.recent_errors || []).slice(-3).map((e) => ({ minutes_ago: Math.round((now - e.at) / 60000), status: e.status, error: scrub(e.error) })),
+    },
+    engines,
+  };
+}

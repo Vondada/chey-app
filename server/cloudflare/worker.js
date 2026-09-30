@@ -27,7 +27,7 @@ import { fineTuneDisclosure, setProviderPermission } from './privacy_policy.js';
 import {
   accountsView, approveProviderPlugin, authorizeProvider, ensureAiState, proposeProviderPlugin,
 } from './provider_registry.js';
-import { routedEnv } from './ai_router.js';
+import { engineStatus, routedEnv } from './ai_router.js';
 import { deleteMedia, generateImage, listMedia, readBlob, upscaleImage } from './media.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
@@ -2410,6 +2410,10 @@ export class CheState extends DurableObject {
             kind: 'software_agent',
             created_at: new Date().toISOString(),
           };
+      // Engine report (no secrets) so failures can be diagnosed remotely.
+      if (path === '/health/engines' && request.method === 'GET') {
+        return json(await engineStatus(this.env, this.ctx.storage));
+      }
       // Flagstaff 369: AIs post/read with the secret link, no device token.
       const flagstaff = await handleWebMailbox(request, this.ctx.storage);
       if (flagstaff) return flagstaff;
@@ -5292,6 +5296,7 @@ export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
     if (path === '/health') return json({ ok: true, agent: 'CHE cloud' });
+    if (path === '/health/engines') return env.CHE_STATE.getByName('owner').fetch(request);
     if (path === '/live-voice') return liveVoicePage();
     return env.CHE_STATE.getByName('owner').fetch(request);
   },
