@@ -628,6 +628,8 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   };
   let used = { provided: [], withheld: [] };
   const started = Date.now();
+  // Answer or fail before the app's 75s timeout: stop trying new engines at 40s.
+  const DEADLINE_MS = Number(env.CHE_ROUTER_DEADLINE_MS) || 40000;
 
   const tryCloudflare = async () => {
     if (needs.local_only) return null;
@@ -688,6 +690,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
 
   const tryProviders = async (keyless = true) => {
     for (const provider of providerOrder()) {
+      if (Date.now() - started > DEADLINE_MS) { errors.push('deadline reached; stopped trying engines'); break; }
       if (!providerEnabled(env, provider)) continue;
       if (provider.keyless && !keyless) continue;
       if ((providerCooldownUntil.get(provider.id) || 0) > now) {
