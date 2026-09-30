@@ -6,7 +6,7 @@ import { resetRouterForTests, routeText } from './ai_router.js';
 test('quality routing can use Grok 4.7 when xAI is connected', async () => {
   resetRouterForTests();
   const calls = [];
-  const env = { XAI_API_KEY: 'xai-test' };
+  const env = { CHE_ALLOW_PAID_AI: '1', XAI_API_KEY: 'xai-test' };
   const result = await routeText(
     env,
     '@cf/meta/llama-3.1-8b-instruct-fp8',

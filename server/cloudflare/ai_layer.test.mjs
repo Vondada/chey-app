@@ -42,7 +42,7 @@ const chatReply = (text) => jsonResponse({ choices: [{ message: { content: text 
 
 test('provider registry normalizes providers and models', () => {
   const data = emptyData();
-  const view = registryView({ XAI_API_KEY: 'xai-secret-value', AI: {} }, data);
+  const view = registryView({ CHE_ALLOW_PAID_AI: '1', XAI_API_KEY: 'xai-secret-value', AI: {} }, data);
   const xai = view.find((item) => item.id === 'xai');
   assert.equal(xai.state, 'connected');
   assert.ok(xai.capabilities.includes('deep_reasoning'));
@@ -57,7 +57,7 @@ test('provider registry normalizes providers and models', () => {
 
 test('xAI model discovery registers new models as candidates', async () => {
   const data = emptyData();
-  const env = { XAI_API_KEY: 'xai-test' };
+  const env = { CHE_ALLOW_PAID_AI: '1', XAI_API_KEY: 'xai-test' };
   const manifest = BUILTIN_PROVIDER_MANIFESTS.find((m) => m.id === 'xai');
   let catalog = [{ id: 'grok-4.3' }, { id: 'grok-4.7' }];
   const calls = [];
@@ -82,11 +82,11 @@ test('model watcher skips unconnected providers and respects its interval', asyn
   const data = emptyData();
   const urls = [];
   const fetcher = async (url) => { urls.push(url); return jsonResponse({ data: [{ id: 'm1' }] }); };
-  const result = await runModelWatcher({ XAI_API_KEY: 'k' }, data, { fetcher, now: 1_000_000_000_000 });
+  const result = await runModelWatcher({ CHE_ALLOW_PAID_AI: '1', XAI_API_KEY: 'k' }, data, { fetcher, now: 1_000_000_000_000 });
   assert.equal(result.status, 'ran');
   assert.ok(urls.every((url) => url.startsWith('https://api.x.ai')));
   assert.ok(result.available_to_connect.some((item) => item.id === 'openai'));
-  const again = await runModelWatcher({ XAI_API_KEY: 'k' }, data, { fetcher, now: 1_000_000_000_000 + 60_000 });
+  const again = await runModelWatcher({ CHE_ALLOW_PAID_AI: '1', XAI_API_KEY: 'k' }, data, { fetcher, now: 1_000_000_000_000 + 60_000 });
   assert.equal(again.status, 'skipped');
 });
 
@@ -105,10 +105,10 @@ test('candidate evaluation stores results and promotes only within policy', asyn
   assert.equal(evaluation.passed, true);
   assert.equal(evaluation.score, 1);
   ai.policy.max_cost_class = 'low';
-  let applied = applyEvaluation({ XAI_API_KEY: 'k' }, data, evaluation);
+  let applied = applyEvaluation({ CHE_ALLOW_PAID_AI: '1', XAI_API_KEY: 'k' }, data, evaluation);
   assert.equal(applied.decision.promote, false);
   ai.policy.max_cost_class = 'high';
-  applied = applyEvaluation({ XAI_API_KEY: 'k' }, data, evaluation);
+  applied = applyEvaluation({ CHE_ALLOW_PAID_AI: '1', XAI_API_KEY: 'k' }, data, evaluation);
   assert.equal(applied.decision.promote, true);
   assert.equal(ai.catalog.xai.models[0].status, 'active');
   assert.ok(ai.catalog.xai.models[0].trial_until > Date.now());
@@ -119,7 +119,7 @@ test('candidate evaluation stores results and promotes only within policy', asyn
 
 test('capability routing picks by need, not fixed order', async () => {
   resetRouterForTests();
-  const env = { CHE_OPENAI_API_KEY: 'o', XAI_API_KEY: 'x', GROQ_API_KEY: 'g', CHE_DISABLE_KEYLESS_AI: '1' };
+  const env = { CHE_ALLOW_PAID_AI: '1', CHE_OPENAI_API_KEY: 'o', XAI_API_KEY: 'x', GROQ_API_KEY: 'g', CHE_DISABLE_KEYLESS_AI: '1' };
   const hits = [];
   const fetcher = async (url, init) => { hits.push({ url, model: JSON.parse(init.body).model }); return chatReply('ok'); };
   const coding = await routeText(env, '@cf/x', {
@@ -136,7 +136,7 @@ test('capability routing picks by need, not fixed order', async () => {
 
 test('provider pinning routes to Grok and local-only never leaves local', async () => {
   resetRouterForTests();
-  const env = { CHE_OPENAI_API_KEY: 'o', XAI_API_KEY: 'x', CHE_DISABLE_KEYLESS_AI: '1' };
+  const env = { CHE_ALLOW_PAID_AI: '1', CHE_OPENAI_API_KEY: 'o', XAI_API_KEY: 'x', CHE_DISABLE_KEYLESS_AI: '1' };
   const urls = [];
   const fetcher = async (url) => { urls.push(url); return chatReply('done'); };
   const pinned = await routeText(env, '@cf/x', { che_provider: 'xai', che_model: 'grok-5', messages: [{ role: 'user', content: 'Plan the launch' }] }, fetcher);
@@ -155,7 +155,7 @@ test('provider pinning routes to Grok and local-only never leaves local', async 
 test('provider health failover reroutes around an unhealthy provider', async () => {
   resetRouterForTests();
   const storage = memoryStorage();
-  const env = { CHE_OPENAI_API_KEY: 'o', XAI_API_KEY: 'x', CHE_DISABLE_KEYLESS_AI: '1' };
+  const env = { CHE_ALLOW_PAID_AI: '1', CHE_OPENAI_API_KEY: 'o', XAI_API_KEY: 'x', CHE_DISABLE_KEYLESS_AI: '1' };
   const fetcher = async (url) => (url.includes('openai.com')
     ? jsonResponse({ error: { message: 'down' } }, 500)
     : chatReply('grok ok'));
@@ -230,8 +230,8 @@ test('provider secrets are never returned to the app', async () => {
   const saved = new Map();
   const env = {
     CHE_PAIR_CODE: '123456',
-    XAI_API_KEY: 'xai-SUPERSECRETVALUE123',
-    CHE_OPENAI_API_KEY: 'sk-SUPERSECRETVALUE456',
+    CHE_ALLOW_PAID_AI: '1', XAI_API_KEY: 'xai-SUPERSECRETVALUE123',
+    CHE_ALLOW_PAID_AI: '1', CHE_OPENAI_API_KEY: 'sk-SUPERSECRETVALUE456',
     AI: { run: async () => ({ response: 'ok' }) },
   };
   const state = new mod.CheState({ storage: { get: (k) => saved.get(k), put: (k, v) => saved.set(k, v), setAlarm: async () => {} } }, env);
@@ -273,7 +273,7 @@ test('new provider needs validation and owner authorization before use', () => {
 
 test('Grok-backed employee, OpenAI/xAI handoff and provider-neutral envelope', () => {
   const data = emptyData();
-  const env = { XAI_API_KEY: 'x', CHE_OPENAI_API_KEY: 'o' };
+  const env = { CHE_ALLOW_PAID_AI: '1', XAI_API_KEY: 'x', CHE_OPENAI_API_KEY: 'o' };
   assert.ok(createProviderEmployee({}, data, { provider: 'xai', specialty: 'coding' }).error);
   const grok = createProviderEmployee(env, data, { provider: 'xai', specialty: 'coding' }).agent;
   assert.equal(grok.role, 'Grok Coding Specialist');
@@ -310,7 +310,7 @@ test('Grok-backed employee, OpenAI/xAI handoff and provider-neutral envelope', (
 test('cross-provider handoff executes on the new provider with context', async () => {
   resetRouterForTests();
   const data = emptyData();
-  const env = { XAI_API_KEY: 'x', CHE_OPENAI_API_KEY: 'o', CHE_DISABLE_KEYLESS_AI: '1' };
+  const env = { CHE_ALLOW_PAID_AI: '1', XAI_API_KEY: 'x', CHE_OPENAI_API_KEY: 'o', CHE_DISABLE_KEYLESS_AI: '1' };
   const grok = createProviderEmployee(env, data, { provider: 'xai', specialty: 'coding' }).agent;
   const task = queueAgentTask(data, grok, 'Build it', 'owner', {
     context_items: [{ id: 'm9', section: 'projects', data_class: 'personal', text: 'Project Aurora uses Flutter' }],
@@ -327,14 +327,14 @@ test('cross-provider handoff executes on the new provider with context', async (
 
 test('paired intelligence staffs multiple provider families', () => {
   const data = emptyData();
-  const env = { XAI_API_KEY: 'x', CHE_OPENAI_API_KEY: 'o' };
+  const env = { CHE_ALLOW_PAID_AI: '1', XAI_API_KEY: 'x', CHE_OPENAI_API_KEY: 'o' };
   const started = startPairedJob(env, data, { objective: 'Compare two launch strategies', families: ['openai', 'xai'] });
   assert.ok(started.meeting);
   const roles = data.team.map((a) => a.role);
   assert.ok(roles.includes('OpenAI Researcher'));
   assert.ok(roles.includes('Grok Researcher'));
   assert.ok(data.team.every((a) => a.temporary));
-  assert.ok(startPairedJob({ XAI_API_KEY: 'x' }, emptyData(), { objective: 'x', families: ['openai', 'xai'] }).error);
+  assert.ok(startPairedJob({ CHE_ALLOW_PAID_AI: '1', XAI_API_KEY: 'x' }, emptyData(), { objective: 'x', families: ['openai', 'xai'] }).error);
   assert.equal(shouldCrossCheck({ difficulty: 'trivial' }, {}, 3), false);
   assert.equal(shouldCrossCheck({ difficulty: 'hard' }, {}, 3), true);
 });
@@ -371,7 +371,7 @@ test('RAG stays the personal lane; fine-tuning discloses and needs approval', ()
 test('voice intents confirm consequential permissions aloud', async () => {
   const data = emptyData();
   const storage = memoryStorage();
-  const env = { GEMINI_API_KEY: 'g', XAI_API_KEY: 'x' };
+  const env = { GEMINI_API_KEY: 'g', CHE_ALLOW_PAID_AI: '1', XAI_API_KEY: 'x' };
   setProviderPermission(data, 'gemini', { allow: ['personal'] }, true);
   const ask = await handleAiVoiceIntent(env, data, storage, "Don't send my personal memories to Gemini");
   assert.match(ask.reply, /To confirm/);

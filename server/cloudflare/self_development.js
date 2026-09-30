@@ -62,7 +62,7 @@ async function runAgent(env, role, assignment, payload, maxTokens = 2200, provid
             'Never claim you inspected a file unless its actual source is included in your task.',
           ].join('\n'),
         },
-        { role: 'user', content: JSON.stringify(payload).slice(0, 120000) },
+        { role: 'user', content: JSON.stringify(payload).slice(0, 48000) },
       ],
       max_tokens: maxTokens,
       che_route: 'quality',
@@ -194,7 +194,7 @@ async function readFull(env, base, path, fetcher) {
 
 // Big files are shown as numbered windows around the lines that matter, so the
 // model sees the real code without the file being truncated or rewritten.
-export function focusView(source, terms, maxChars = 30000) {
+export function focusView(source, terms, maxChars = 14000) {
   if (source.length <= maxChars) return { whole: true, text: source };
   const lines = source.split('\n');
   const wanted = new Set();

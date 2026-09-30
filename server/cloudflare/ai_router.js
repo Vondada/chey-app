@@ -153,7 +153,15 @@ function keylessModels(env) {
   return raw ? raw.split(',').map((item) => item.trim()).filter(Boolean) : null;
 }
 
+// Owner rule: CHE runs on free engines only. Paid engines stay off even if a
+// key exists, unless CHE_ALLOW_PAID_AI=1 is set on purpose.
+const PAID_PROVIDER_IDS = new Set(['openai', 'xai', 'anthropic']);
+export function paidAllowed(env) {
+  return ['1', 'true', 'yes'].includes(String(env?.CHE_ALLOW_PAID_AI || '').toLowerCase());
+}
+
 function providerEnabled(env, provider) {
+  if (PAID_PROVIDER_IDS.has(provider.id.split(':')[0]) && !paidAllowed(env)) return false;
   if (provider.keyless) {
     const only = keylessModels(env);
     if (only && !only.includes(provider.modelName)) return false;

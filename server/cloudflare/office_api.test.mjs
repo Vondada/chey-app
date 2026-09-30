@@ -130,7 +130,7 @@ test('CHE splits an owner goal into persisted jobs; missing tools are blockers',
     { agent: 'Iris', task: 'Draft a tonight pack of ad creatives for the cafe' },
   ]);
 
-  const o = await office({ XAI_API_KEY: 'xai-test' });
+  const o = await office({ CHE_ALLOW_PAID_AI: '1', XAI_API_KEY: 'xai-test' });
   const reply = await o.say('Tell the Office to research competitors in Houston and build a landing page');
   assert.match(reply, /^CHE here\. I split that into 2 jobs\. 1\. Atlas: Research competitors in Houston\. 2\. Knox: Build a landing page — Blocked: tool not configured \(Codex\)\./);
 
@@ -234,7 +234,7 @@ test('Office Atlas prefers auto; pinned xai still tags Grok with office/<agent>/
   const calls = [];
   const saved = new Map();
   const storage = { get: async (k) => saved.get(k), put: async (k, v) => saved.set(k, v) };
-  const result = await routeText({ XAI_API_KEY: 'xai-test' }, '@cf/meta/llama-3.1-8b-instruct-fp8', {
+  const result = await routeText({ CHE_ALLOW_PAID_AI: '1', XAI_API_KEY: 'xai-test' }, '@cf/meta/llama-3.1-8b-instruct-fp8', {
     messages: [{ role: 'user', content: 'Research competitors' }], max_tokens: 200, ...routing, che_provider_strict: true,
   }, async (url, init) => {
     calls.push({ url, headers: init.headers, body: JSON.parse(init.body) });
@@ -256,7 +256,7 @@ test('spoken board never invents money', () => {
 });
 
 test('hire Iris via chat staffs Ad Studio; Fiverr scout queues shortlist-only jobs', async () => {
-  const o = await office({ XAI_API_KEY: 'xai-test' });
+  const o = await office({ CHE_ALLOW_PAID_AI: '1', XAI_API_KEY: 'xai-test' });
   const hired = await o.say('hire Iris');
   assert.match(hired, /Iris is hired on Ad Studio/i);
   const board = await o.board();
@@ -282,7 +282,7 @@ test('hire Iris via chat staffs Ad Studio; Fiverr scout queues shortlist-only jo
 });
 
 test('opportunity scout queues shortlist-only jobs (Pinterest); memory write-back distills notes', async () => {
-  const o = await office({ XAI_API_KEY: 'xai-test' });
+  const o = await office({ CHE_ALLOW_PAID_AI: '1', XAI_API_KEY: 'xai-test' });
   await o.say('hire Iris');
   const scout = await o.say('scout Pinterest for printable planners');
   assert.match(scout, /Opportunity scout queued on pinterest/i);

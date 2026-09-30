@@ -348,7 +348,7 @@ test('AI router stores daily usage budgets and puts a fast free engine before pa
   let cfCalls = 0;
   const env = {
     AI: { run: async () => { cfCalls += 1; throw new Error('4006 neurons'); } },
-    CHE_OPENAI_API_KEY: 'paid',
+    CHE_ALLOW_PAID_AI: '1', CHE_OPENAI_API_KEY: 'paid',
     GROQ_API_KEY: 'free',
     CHE_GROQ_DAILY_TOKEN_LIMIT: '10',
   };

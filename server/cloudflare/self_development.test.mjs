@@ -123,3 +123,9 @@ test('crew uses different engines per pair, shares a team board, and reviewers s
   assert.ok(out.discussion.some((m) => /Mira/.test(m.from) && /APPROVE/.test(m.msg)));
   assert.deepEqual(out.team, ['Atlas', 'Iris', 'Knox', 'Nova', 'Sage', 'Mira']);
 });
+
+test('paid AI engines stay off unless the owner opts in', async () => {
+  const { paidAllowed } = await import('./ai_router.js');
+  assert.equal(paidAllowed({ CHE_OPENAI_API_KEY: 'k' }), false);
+  assert.equal(paidAllowed({ CHE_ALLOW_PAID_AI: '1' }), true);
+});
