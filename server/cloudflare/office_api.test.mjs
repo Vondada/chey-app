@@ -108,7 +108,11 @@ test('CHE speaks Office answers from the live board through /api/chat', async ()
   assert.match(full, /^CHE here\. Office board\./);
   assert.match(full, /Stripe not connected\. Earned today \$0\.00\./);
   for (const name of ['Nova', 'Atlas', 'Mira', 'Knox', 'Sage', 'Lyra', 'Iris']) assert.match(full, new RegExp(`\\d\\. ${name}: `));
-  assert.ok(!/\bIdle\b/.test(full.split('Desks:')[1]), 'blocked desks never read as Idle');
+  // Nova/Knox need Codex; Sage needs Stripe. Iris/Atlas/Mira/Lyra are auto → Idle is OK.
+  assert.match(full, /Knox: Blocked: tool not configured \(Codex\)/);
+  assert.match(full, /Sage: Blocked: tool not configured \(Stripe not connected\)/);
+  assert.match(full, /Atlas: Idle/);
+  assert.match(full, /Iris: Idle/);
 
   const standDown = await o.say('Stand down');
   assert.match(standDown, /^CHE here\. Office standing down\./);
@@ -211,13 +215,19 @@ test('owner talks only to CHE; agents report only to CHE', async () => {
   assert.deepEqual(inbox.map((m) => `${m.from}->${m.to}`), ['owner->che', 'atlas->che']);
 });
 
-test('Grok calls from the Office go through CHE router with agent_id and office/<agent>/<job> thread', async () => {
+test('Office Atlas prefers auto; pinned xai still tags Grok with office/<agent>/<job> thread', async () => {
   const data = { team: [] };
   ensureLaAgenciaRoster(data);
   const atlas = data.team.find((a) => a.name === 'Atlas');
+  assert.equal(atlas.provider_preference, 'auto');
+  const autoRouting = routingForAgent(atlas, data, { id: 'job-42', task: 'Research competitors' });
+  assert.equal(autoRouting.che_agent_id, 'atlas');
+  assert.equal(autoRouting.che_thread_id, 'office/atlas/job-42');
+  assert.equal(autoRouting.che_provider, undefined);
+
+  // Explicit xai pin (owner-set) still routes through CHE with Grok thread headers.
+  atlas.provider_preference = 'xai';
   const routing = routingForAgent(atlas, data, { id: 'job-42', task: 'Research competitors' });
-  assert.equal(routing.che_agent_id, 'atlas');
-  assert.equal(routing.che_thread_id, 'office/atlas/job-42');
   assert.equal(routing.che_provider, 'xai');
 
   resetRouterForTests();

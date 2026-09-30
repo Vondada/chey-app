@@ -48,8 +48,8 @@ export function inferNeeds(input = {}) {
     capability,
     difficulty,
     local_only: input.che_local_only === true,
-    provider: String(input.che_provider || '').trim().toLowerCase(),
-    model: String(input.che_model || '').trim(),
+    provider: (() => { const p = String(input.che_provider || '').trim().toLowerCase(); return p === 'auto' ? '' : p; })(),
+    model: (() => { const m = String(input.che_model || '').trim(); return m.toLowerCase() === 'auto' ? '' : m; })(),
     strongest: input.che_strongest === true,
   };
 }

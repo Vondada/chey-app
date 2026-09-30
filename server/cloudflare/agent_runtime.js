@@ -690,9 +690,14 @@ function modelFor(env, agent, models) {
 export function routingForAgent(agent, data, task = null, route = 'office') {
   const privacy = data?.ai_layer?.privacy || {};
   const permissions = Object.fromEntries(Object.entries(privacy).map(([id, value]) => [id, value?.allowed || []]));
+  // 'auto' means let ai_router pick (Groq/Gemini/Cerebras/…); do not pin a fake provider id.
+  const pref = String(agent?.provider_preference || '').trim().toLowerCase();
+  const modelPref = String(agent?.model_preference || '').trim();
+  const realProvider = pref && pref !== 'auto' ? pref : '';
+  const realModel = modelPref && modelPref.toLowerCase() !== 'auto' ? modelPref : '';
   return {
-    ...(agent?.provider_preference ? { che_provider: agent.provider_preference } : {}),
-    ...(agent?.provider_preference && agent?.model_preference ? { che_model: agent.model_preference } : {}),
+    ...(realProvider ? { che_provider: realProvider } : {}),
+    ...(realProvider && realModel ? { che_model: realModel } : {}),
     ...(agent?.capability_requirements?.[0] ? { che_capability: agent.capability_requirements[0] } : {}),
     ...(data?.ai_layer?.policy?.local_only ? { che_local_only: true } : {}),
     ...(task?.context_items?.length ? { che_context: { items: task.context_items, permissions } } : {}),
