@@ -2888,6 +2888,14 @@ export class CheState extends DurableObject {
         const q = new URL(request.url).searchParams.get('q');
         return json(q ? { hits: lib.search(q, 8) } : { docs: lib.list() });
       }
+      if (path === '/api/library/export' && request.method === 'GET') {
+        // The phone downloads each saved text once so CHE can recall it offline.
+        const id = new URL(request.url).searchParams.get('id') || '';
+        const lib = new CheLibrary(this.ctx.storage);
+        const doc = lib.list().find((item) => item.id === id);
+        if (!doc) return json({ detail: 'Not in the library.' }, 404);
+        return json({ ...doc, parts: lib.chunks(id) });
+      }
       if (path === '/api/library' && request.method === 'POST') {
         let title = String(body.title || '');
         let text = String(body.text || '');

@@ -9,10 +9,12 @@ extension _CheHomeStreaming on _CHEHomeState {
   }) async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return null;
 
+    // Saved library passages first: the owner asked CHE to remember these.
+    final library = await _offlineLibrary.search(userMessage);
     final local = await CheLocalAI.respond(
       userMessage,
       history: history,
-      memoryContext: _brainContextFor(userMessage),
+      memoryContext: [...library, ..._brainContextFor(userMessage)],
     );
     final clean = local?.trim() ?? '';
     if (clean.isEmpty) return null;

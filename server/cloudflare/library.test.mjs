@@ -38,6 +38,7 @@ test('library saves a whole script and recalls the right scene offline from its 
   assert.match(hits[0].text, /silver key under the lighthouse stairs/);
   assert.match(libraryContext(hits), /CHE LIBRARY/);
   assert.equal(lib.list().length, 1);
+  assert.equal(lib.chunks(saved.id).length, saved.chunks);
   lib.remove(saved.id);
   assert.equal(lib.list().length, 0);
 });

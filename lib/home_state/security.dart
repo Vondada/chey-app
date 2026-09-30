@@ -395,6 +395,9 @@ extension _CheHomeSecurity on _CHEHomeState {
 
       if (response.statusCode != 200) return;
 
+      // Keep the phone's copy of CHE's library current for offline recall.
+      unawaited(_offlineLibrary.sync(cheAgentBaseUrl, _authHeaders));
+
       final data = jsonDecode(response.body);
 
       final memoryData = (data['memories'] as List?) ?? const [];

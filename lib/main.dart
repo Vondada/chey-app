@@ -73,6 +73,7 @@ import 'che_ui/che_phone_shell.dart';
 import 'che_ui/che_i18n.dart';
 import 'local_server/activity_local.dart';
 import 'plugins/che_plugin_webapp.dart';
+import 'memory/che_offline_library.dart';
 import 'self_update/che_patch_banner.dart';
 import 'self_update/che_update_card.dart';
 import 'self_update/che_self_update_intent.dart';
@@ -556,6 +557,9 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
         : Uri.parse('$cheAgentBaseUrl/api/plugins/manifests'),
     resolveCatalogHeaders: () => _authHeaders,
   )..addListener(_onOfficeChanged);
+
+  // Offline library: word-for-word copies of memorized texts, on the phone.
+  final CheOfflineLibrary _offlineLibrary = CheOfflineLibrary();
 
   // Self-development: approved che-update proposals become pull requests.
   final CheUpdateTracker _updates = CheUpdateTracker();

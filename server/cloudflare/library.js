@@ -84,6 +84,11 @@ export class CheLibrary {
     return [...this.sql.exec('SELECT id, title, source, chars, chunks, added FROM lib_docs ORDER BY added DESC LIMIT 200')];
   }
 
+  chunks(id) {
+    if (!this.init()) return [];
+    return [...this.sql.exec('SELECT body FROM lib_chunks WHERE doc_id = ? ORDER BY n', String(id || ''))].map((row) => row.body);
+  }
+
   remove(id) {
     if (!this.init()) return false;
     this.sql.exec('DELETE FROM lib_chunks WHERE doc_id = ?', id);
