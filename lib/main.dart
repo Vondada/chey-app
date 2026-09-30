@@ -83,6 +83,7 @@ import 'rooms/che_art_studio.dart';
 import 'rooms/che_room_segments.dart';
 import 'rooms/che_theater_room.dart';
 import 'security/che_password_vault.dart';
+import 'security/che_vault_auth.dart';
 import 'browser/che_browser.dart' show CheBrowserActions;
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;

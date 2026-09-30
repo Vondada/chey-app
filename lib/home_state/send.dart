@@ -230,6 +230,15 @@ extension _CheHomeSend on _CHEHomeState {
         spoken = 'Saved your ${command.site} password in CHE\'s vault on this iPhone, sir.';
         shown = spoken;
       case 'read':
+        // Face ID before speaking/showing a vault password (TTL skips re-prompt).
+        final unlocked = await CheVaultAuth.instance.ensureUnlocked(
+          reason: 'Unlock CHE vault with Face ID to show this password',
+        );
+        if (!unlocked) {
+          spoken = 'Face ID was cancelled — I did not reveal your password, sir.';
+          shown = spoken;
+          break;
+        }
         final entry = await vault.find(command.site);
         if (entry == null) {
           spoken = 'I don\'t have a ${command.site} password saved, sir.';
