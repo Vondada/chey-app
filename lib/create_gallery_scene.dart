@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'widgets/che_3d_room_view.dart';
 
 class CreateGalleryScene extends StatefulWidget {
   const CreateGalleryScene({
@@ -132,7 +134,40 @@ class _CreateGallerySceneState extends State<CreateGalleryScene>
           ),
           child: SafeArea(
             top: false,
-            child: Stack(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  child: Che3DRoomView(
+                    assetPath: 'assets/office3d/projects.html',
+                    updateFunction: 'updateScene',
+                    payload: {
+                      'agents': [
+                        {'id': 'che', 'name': 'CHE', 'role': 'Curator', 'status': 'idle', 'isChe': true},
+                      ],
+                      'items': [
+                        for (final proj in widget.projects.take(9))
+                          {
+                            'id': '${proj['id']}',
+                            'title': '${proj['title'] ?? 'Project'}',
+                            'progress': 0.4,
+                          },
+                      ],
+                    },
+                    height: 260,
+                    semanticsLabel: '3D Projects gallery',
+                    onTapId: (id) {
+                      final match = widget.projects.where((proj) => '${proj['id']}' == id);
+                      if (match.isNotEmpty) {
+                        unawaited(widget.onOpenProject(match.first));
+                      }
+                    },
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: Stack(
               children: [
                 Positioned.fill(
                   child: CustomPaint(
@@ -278,6 +313,9 @@ class _CreateGallerySceneState extends State<CreateGalleryScene>
                         onTap: widget.onVideo,
                       ),
                     ],
+                  ),
+                ),
+              ],
                   ),
                 ),
               ],

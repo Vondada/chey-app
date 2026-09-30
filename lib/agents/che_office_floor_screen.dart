@@ -16,6 +16,7 @@ import '../che_ui/che_voice_actions.dart';
 import 'che_agent_runtime.dart';
 import 'che_office_store.dart';
 import 'che_war_room_screen.dart';
+import '../widgets/office_3d_view.dart';
 
 /// Short, glanceable version of an agent's task or a meeting objective: the
 /// first clause, cut at a word boundary. The full text stays one tap (or one
@@ -64,13 +65,13 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
   Future<void> _speech = Future<void>.value();
   String _filter = 'All'; // All | Research | Trading | Content
 
-  // Built once and reused, so a runtime refresh never rebuilds the whole
-  // floor; each desk listens to its own notifier.
+  // Flat floor plan kept as a fallback when the WebView 3D surface fails.
   late final Widget _floorPlan = CheOfficeFloorPlan(
     store: _store,
     onTapDesk: _openDesk,
     onWarRoom: _warRoom,
   );
+  bool _useFlatPlan = false;
 
   @override
   void initState() {
@@ -271,6 +272,63 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
     await _runtime.refresh();
   }
 
+
+  List<Map<String, dynamic>> _agentsFor3d() {
+    final r = _runtime;
+    String statusOf(CheAgent a) {
+      final s = a.status.name;
+      if (const {'researching', 'building', 'meeting', 'talking'}.contains(s)) return 'working';
+      if (const {'analyzing', 'reviewing'}.contains(s)) return 'thinking';
+      if (s == 'done') return 'celebrating';
+      if (const {'waiting', 'offline'}.contains(s)) return 'blocked';
+      return 'idle';
+    }
+    Map<String, dynamic> row(CheAgent a) => {
+          'id': a.id,
+          'name': a.name,
+          'role': a.role,
+          'status': statusOf(a),
+          'task': a.task ?? '',
+          'isChe': a.isChe,
+        };
+    return [
+      row(r.che),
+      for (final p in r.agents) row(p.agent),
+    ];
+  }
+
+  Widget _officeStage() {
+    if (_useFlatPlan || !_runtime.loaded) {
+      return _floorPlan;
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Office3DView(
+          agents: _agentsFor3d(),
+          height: 420,
+          onAgentTap: (id) {
+            if (id.toLowerCase() == 'che') {
+              if (widget.onTalkToChe != null) {
+                if (!widget.embedded) Navigator.of(context).pop();
+                widget.onTalkToChe!();
+              }
+              return;
+            }
+            _openDesk(id);
+          },
+        ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton(
+            onPressed: () => setState(() => _useFlatPlan = true),
+            child: const Text('Flat floor plan'),
+          ),
+        ),
+      ],
+    );
+  }
+
   String _officeSummary() {
     final r = _runtime;
     final working = r.agents.where((p) => p.working).length;
@@ -330,7 +388,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
           ],
         ),
         const SizedBox(height: CheSpace.md),
-        _floorPlan,
+        _officeStage(),
         const SizedBox(height: CheSpace.sm),
         if (r.che.task != null)
           Row(children: [

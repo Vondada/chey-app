@@ -56,6 +56,7 @@
 <div id="error">La Agencia could not start its 3D renderer.</div>
 
 <script src="three.min.js"></script>
+<script src="che3d-agents.js"></script>
 <script>
 (() => {
   "use strict";
@@ -453,7 +454,7 @@
 
     if(isChe){
       const waist=sphere(.52,M.teal,.92,.46,.64); waist.position.y=1.00; g.add(waist);
-      const collarL=box(.22,.07,.045,material(0xE6D9CF)); collarL.position.set(-.12,1.54,.38); collarL.rotation.z=-.34;
+      const collarL=box(.22,.07,.045,mat(0xE6D9CF)); collarL.position.set(-.12,1.54,.38); collarL.rotation.z=-.34;
       const collarR=collarL.clone(); collarR.position.x=.12; collarR.rotation.z=.34;
       g.add(collarL,collarR);
     }
@@ -561,7 +562,7 @@
     thought.visible=false; g.add(thought);
 
     // blocked alert diamond
-    const alert=box(.18,.18,.08,material(C.blocked,.35,.12));
+    const alert=box(.18,.18,.08,mat(C.blocked,.35,.12));
     alert.rotation.z=Math.PI/4; alert.position.set(-.68,3.08,.04); alert.visible=false; g.add(alert);
 
     // celebration crown/sparks
@@ -616,6 +617,7 @@
 
   function updateCharacter(g,agent,index){
     g.userData.status=normalizeStatus(agent.status);
+    g.userData.homeSlot=characterSlot(index);
     if(g.userData.beaconMat){
       const color=statusColor(agent.status);
       g.userData.beaconMat.color.setHex(color);
@@ -626,8 +628,11 @@
       g.userData.labelMat.map=faceLabelTexture(agent);
       g.userData.labelMat.needsUpdate=true;
     }
-    const slot=characterSlot(index);
-    g.userData.targetPosition=new THREE.Vector3(slot[0],slot[1],slot[2]);
+    if(!g.userData.targetPosition){
+      const slot=characterSlot(index);
+      g.userData.targetPosition=new THREE.Vector3(slot[0],slot[1],slot[2]);
+    }
+    g.userData.nextWanderAt = g.userData.nextWanderAt || 0;
   }
 
   window.updateAgents=function(agents){
@@ -746,19 +751,46 @@
     chars.forEach((g)=>{
       const s=g.userData.status || "idle";
       const phase=g.userData.phase || 0;
+      // Alive locomotion: idle agents wander; busy agents return to desk.
+      if(!g.userData.nextWanderAt || t >= g.userData.nextWanderAt){
+        g.userData.nextWanderAt = t + 3 + Math.random()*5;
+        const home = g.userData.homeSlot || characterSlot(0);
+        if(s==="idle" || s==="celebrating"){
+          const spot = slots[Math.floor(Math.random()*Math.min(slots.length,6))] || home;
+          g.userData.targetPosition = new THREE.Vector3(spot[0]+(Math.random()-.5)*.4, home[1], spot[2]+(Math.random()-.5)*.4);
+          g.userData.walking = true;
+        } else {
+          g.userData.targetPosition = new THREE.Vector3(home[0], home[1], home[2]);
+          g.userData.walking = true;
+        }
+      }
       const target=g.userData.targetPosition;
       if(target){
-        g.position.x+=(target.x-g.position.x)*.08;
-        g.position.z+=(target.z-g.position.z)*.08;
+        const dx=target.x-g.position.x, dz=target.z-g.position.z;
+        const dist=Math.hypot(dx,dz);
+        if(dist>0.06){
+          g.position.x+=dx*Math.min(1,.12);
+          g.position.z+=dz*Math.min(1,.12);
+          g.rotation.y += (Math.atan2(dx,dz)-g.rotation.y)*.15;
+          g.userData.walking = true;
+        } else {
+          g.userData.walking = false;
+        }
         g.userData.baseY=target.y;
       }
 
       const baseY=g.userData.baseY || .30;
       const breathe=Math.sin(t*2.0+phase)*.025;
-      g.position.y=baseY+breathe;
+      if(g.userData.walking){
+        const swing=Math.sin(t*9+phase)*.5;
+        if(g.userData.armL&&g.userData.armR){ g.userData.armL.rotation.x=-swing*.7; g.userData.armR.rotation.x=swing*.7; }
+        g.position.y=baseY+Math.abs(Math.sin(t*9+phase))*.05;
+      } else {
+        g.position.y=baseY+breathe;
+      }
 
       const armL=g.userData.armL, armR=g.userData.armR;
-      if(armL && armR){
+      if(armL && armR && !g.userData.walking){
         armL.rotation.x=0; armR.rotation.x=0;
         armL.rotation.z=-.16; armR.rotation.z=.16;
 

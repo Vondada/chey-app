@@ -10,6 +10,7 @@ import '../agents/che_agent_runtime.dart' show CheMeetingSummary;
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_voice_actions.dart';
 import '../che_ui/che_widgets.dart';
+import '../widgets/che_3d_room_view.dart';
 
 enum CheBoardKind { project, goal, scout, deal, meeting }
 
@@ -481,6 +482,34 @@ class _CheProjectsBoardState extends State<CheProjectsBoard> {
                   tooltip: 'New project',
                 ),
             ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: CheSpace.gutter),
+          child: Che3DRoomView(
+            assetPath: 'assets/office3d/projects.html',
+            updateFunction: 'updateScene',
+            payload: {
+              'agents': [
+                {'id': 'che', 'name': 'CHE', 'role': 'PM', 'status': 'working', 'isChe': true},
+              ],
+              'items': [
+                for (final i in rows.take(9))
+                  {
+                    'id': i.id,
+                    'title': i.title,
+                    'kind': i.kind.name,
+                    'progress': i.progress,
+                    'status': i.statusLabel,
+                  },
+              ],
+            },
+            height: 300,
+            semanticsLabel: '3D Projects build floor',
+            onTapId: (id) {
+              final match = rows.where((i) => i.id == id);
+              if (match.isNotEmpty) _openDetail(match.first);
+            },
           ),
         ),
         const SizedBox(height: CheSpace.sm),
