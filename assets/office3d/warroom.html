@@ -57,10 +57,8 @@
   scene.background = new THREE.Color(C.cream);
   scene.fog = new THREE.FogExp2(C.cream, 0.014);
   const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:"high-performance" });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  Che3D.tuneRenderer(renderer, {maxDpr:1.5});
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.06;
@@ -78,11 +76,10 @@
   positionCamera();
   scene.add(new THREE.HemisphereLight(0xFFF3DB, 0x846253, 2.0));
   const sun = new THREE.DirectionalLight(0xFFF0D0, 3.8);
-  sun.position.set(-7,14,9); sun.castShadow = true;
-  sun.shadow.mapSize.set(1536,1536);
+  sun.position.set(-7,14,9); Che3D.tuneSunShadow(sun, 1024);
   sun.shadow.camera.left=-14; sun.shadow.camera.right=14;
   sun.shadow.camera.top=14; sun.shadow.camera.bottom=-14;
-  sun.shadow.bias=-0.0006; scene.add(sun);
+  scene.add(sun);
   const room = new THREE.Group(); scene.add(room);
   const floor = box(16,.4,12,M.cream); floor.position.y=-.28; room.add(floor);
   const tileColors=[0xF5E4CE,0xF5D8C5,0xDCE8DA,0xF3E1AE,0xD8E8E5];
@@ -166,17 +163,11 @@
     pointerDown=null; dragging=false;
   });
 
-  const clock=new THREE.Clock();
-  let last=0;
-  function animate(){
-    requestAnimationFrame(animate);
-    const t=clock.getElapsedTime();
-    const dt=Math.min(0.05, t-last || 0.016); last=t;
+  Che3D.frameLoop(function(t, dt){
     boardGlow.material.emissiveIntensity=.35+.15*Math.sin(t*2);
     crowd.tick(t, dt);
     renderer.render(scene,camera);
-  }
-  animate();
+  }, {fps:24});
   function resize(){
     const w=Math.max(1,window.innerWidth), h=Math.max(1,window.innerHeight), aspect=w/h, viewH=6.5;
     camera.left=-viewH*aspect; camera.right=viewH*aspect; camera.top=viewH; camera.bottom=-viewH;

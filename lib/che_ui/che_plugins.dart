@@ -829,12 +829,14 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
               child: Semantics(
                 button: true,
                 label: '${p.name}. ${p.description}. Review plugin.',
-                child: CheFeatureCard(
-                  icon: p.icon,
-                  hue: p.color,
-                  title: reg.byId(p.id) == null ? p.name : '${p.name} · update',
-                  body: p.description,
-                  onTap: () => showChePluginReview(context, reg, p),
+                child: RepaintBoundary(
+                  child: CheFeatureCard(
+                    icon: p.icon,
+                    hue: p.color,
+                    title: reg.byId(p.id) == null ? p.name : '${p.name} · update',
+                    body: p.description,
+                    onTap: () => showChePluginReview(context, reg, p),
+                  ),
                 ),
               ),
             ),
@@ -897,7 +899,8 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
   }
 
   Widget _installedTile(ChePlugin p) {
-    return Semantics(
+    return RepaintBoundary(
+      child: Semantics(
       label: '${p.name}, version ${p.version}, ${reg.isEnabled(p.id) ? 'enabled' : 'disabled'}',
       child: Container(
         padding: const EdgeInsets.all(CheSpace.md),
@@ -969,6 +972,7 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
           ),
         ]),
       ),
+    ),
     );
   }
 }

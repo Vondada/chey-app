@@ -462,8 +462,70 @@
     return hits[0].object.userData.agentRoot || null;
   };
 
+
+  /** Cap DPR, prefer cheap shadows — big win on phone GPUs. */
+  function tuneRenderer(renderer, opts) {
+    opts = opts || {};
+    const maxDpr = opts.maxDpr != null ? opts.maxDpr : 1.5;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxDpr));
+    if (renderer.shadowMap) {
+      renderer.shadowMap.enabled = opts.shadows !== false;
+      // BasicShadowMap is far cheaper than PCFSoft on mobile.
+      renderer.shadowMap.type = THREE.BasicShadowMap;
+    }
+    return renderer;
+  }
+
+  function tuneSunShadow(sun, mapSize) {
+    const size = mapSize || 1024;
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(size, size);
+    sun.shadow.bias = -0.0006;
+    return sun;
+  }
+
+  /**
+   * Shared rAF loop: FPS cap + pause when tab hidden or Flutter says so.
+   * Exposes window.__che3dSetPaused(bool) for the Flutter WebView bridge.
+   */
+  function frameLoop(tick, opts) {
+    opts = opts || {};
+    const fps = opts.fps || 24;
+    const minDt = 1 / fps;
+    const clock = opts.clock || new THREE.Clock();
+    let last = 0;
+    let paused = false;
+    let raf = 0;
+    function setPaused(v) {
+      paused = !!v;
+      if (!paused && !document.hidden && !raf) loop();
+    }
+    window.__che3dSetPaused = setPaused;
+    window.__che3dIsPaused = function () { return paused || document.hidden; };
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) {
+        // keep paused flag; loop still scheduled but skips work
+      } else if (!paused) {
+        last = clock.getElapsedTime();
+        if (!raf) loop();
+      }
+    });
+    function loop() {
+      raf = requestAnimationFrame(loop);
+      if (paused || document.hidden) return;
+      const t = clock.getElapsedTime();
+      const dt = t - last;
+      if (dt < minDt) return;
+      last = t;
+      tick(t, Math.min(0.05, dt || 0.016));
+    }
+    loop();
+    return { setPaused: setPaused, clock: clock };
+  }
+
   global.Che3D = {
     C, M, mat, box, sphere, cylinder, torus, finish,
-    normalizeStatus, statusColor, chibiBot, AgentCrowd, ROOM_ACTIONS
+    normalizeStatus, statusColor, chibiBot, AgentCrowd, ROOM_ACTIONS,
+    tuneRenderer, tuneSunShadow, frameLoop
   };
 })(window);

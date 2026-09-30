@@ -75,6 +75,11 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
   );
   bool _useFlatPlan = false;
 
+  /// Stable 3D payload list so runtime polls do not rebuild Office3DView with a
+  /// fresh List identity when agent rows are unchanged.
+  List<Map<String, dynamic>> _agents3d = const [];
+  String? _agents3dFp;
+
   @override
   void initState() {
     super.initState();
@@ -303,6 +308,17 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
     ];
   }
 
+  List<Map<String, dynamic>> _agentsFor3dStable() {
+    final next = _agentsFor3d();
+    final fp = next
+        .map((a) => '${a['id']}|${a['status']}|${a['task']}|${a['name']}|${a['role']}')
+        .join(';');
+    if (fp == _agents3dFp) return _agents3d;
+    _agents3dFp = fp;
+    _agents3d = next;
+    return _agents3d;
+  }
+
   Widget _officeStage() {
     if (_useFlatPlan || !_runtime.loaded) {
       return _floorPlan;
@@ -311,7 +327,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Office3DView(
-          agents: _agentsFor3d(),
+          agents: _agentsFor3dStable(),
           height: 420,
           onAgentTap: (id) {
             if (id.toLowerCase() == 'che') {

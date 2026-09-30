@@ -9,6 +9,9 @@ import 'package:webview_flutter/webview_flutter.dart';
 /// Loads an HTML asset under [assets/office3d/], pushes JSON state through
 /// [updateFunction], and reports taps as `{type:"tap", id:"..."}` via
 /// [bridgeName] (default OfficeBridge, same channel as the Office).
+///
+/// Pauses the Three.js loop when the app is backgrounded or [TickerMode] is
+/// off so inactive hub tabs do not keep rendering.
 class Che3DRoomView extends StatefulWidget {
   const Che3DRoomView({
     super.key,
@@ -37,14 +40,16 @@ class Che3DRoomView extends StatefulWidget {
   State<Che3DRoomView> createState() => _Che3DRoomViewState();
 }
 
-class _Che3DRoomViewState extends State<Che3DRoomView> {
+class _Che3DRoomViewState extends State<Che3DRoomView> with WidgetsBindingObserver {
   WebViewController? _controller;
   bool _ready = false;
   String? _lastPayload;
+  bool _paused = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     try {
       final controller = WebViewController()
         ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -59,6 +64,7 @@ class _Che3DRoomViewState extends State<Che3DRoomView> {
               if (!mounted) return;
               _ready = true;
               await _push(force: true);
+              await _syncPaused(force: true);
             },
           ),
         )
@@ -71,9 +77,53 @@ class _Che3DRoomViewState extends State<Che3DRoomView> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncPaused();
+  }
+
+  @override
   void didUpdateWidget(covariant Che3DRoomView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (_ready) _push();
+    _syncPaused();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _syncPaused();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    final c = _controller;
+    if (c != null && _ready) {
+      c.runJavaScript('window.__che3dSetPaused && window.__che3dSetPaused(true);');
+    }
+    super.dispose();
+  }
+
+  bool get _shouldPause {
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    final appBg = lifecycle == AppLifecycleState.paused ||
+        lifecycle == AppLifecycleState.inactive ||
+        lifecycle == AppLifecycleState.detached ||
+        lifecycle == AppLifecycleState.hidden;
+    final tickersOff = !TickerMode.valuesOf(context).enabled;
+    return appBg || tickersOff;
+  }
+
+  Future<void> _syncPaused({bool force = false}) async {
+    if (!_ready || !mounted) return;
+    final pause = _shouldPause;
+    if (!force && pause == _paused) return;
+    _paused = pause;
+    final controller = _controller;
+    if (controller == null) return;
+    await controller.runJavaScript(
+      'window.__che3dSetPaused && window.__che3dSetPaused(${pause ? 'true' : 'false'});',
+    );
   }
 
   void _handleBridgeMessage(JavaScriptMessage message) {
@@ -105,26 +155,28 @@ class _Che3DRoomViewState extends State<Che3DRoomView> {
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      container: true,
-      label: widget.semanticsLabel,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
-        child: SizedBox(
-          height: widget.height,
-          width: double.infinity,
-          child: _controller == null
-              ? Container(
-                  color: widget.backgroundColor,
-                  alignment: Alignment.center,
-                  padding: const EdgeInsets.all(16),
-                  child: Text(
-                    widget.fallbackMessage,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Color(0xFF6F534A)),
-                  ),
-                )
-              : WebViewWidget(controller: _controller!),
+    return RepaintBoundary(
+      child: Semantics(
+        container: true,
+        label: widget.semanticsLabel,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: SizedBox(
+            height: widget.height,
+            width: double.infinity,
+            child: _controller == null
+                ? Container(
+                    color: widget.backgroundColor,
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.all(16),
+                    child: Text(
+                      widget.fallbackMessage,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Color(0xFF6F534A)),
+                    ),
+                  )
+                : WebViewWidget(controller: _controller!),
+          ),
         ),
       ),
     );

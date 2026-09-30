@@ -91,10 +91,8 @@
     alpha:false,
     powerPreference:"high-performance"
   });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  Che3D.tuneRenderer(renderer, {maxDpr:1.5});
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.08;
@@ -122,13 +120,11 @@
 
   const sun = new THREE.DirectionalLight(0xFFF0D0, 4.15);
   sun.position.set(-8,15,10);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048,2048);
+  Che3D.tuneSunShadow(sun, 1024);
   sun.shadow.camera.left = -18;
   sun.shadow.camera.right = 18;
   sun.shadow.camera.top = 18;
   sun.shadow.camera.bottom = -18;
-  sun.shadow.bias = -0.0006;
   scene.add(sun);
 
   const warmLight = new THREE.PointLight(0xFFB277, 20, 24, 2);
@@ -753,11 +749,7 @@
 
   /* ---------- animation ---------- */
 
-  const clock=new THREE.Clock();
-
-  function animate(){
-    requestAnimationFrame(animate);
-    const t=clock.getElapsedTime();
+  Che3D.frameLoop(function(t, dt){
 
     coreGroup.rotation.y=t*.42;
     coreGroup.children[1].rotation.z=t*.25;
@@ -853,9 +845,7 @@
     });
 
     renderer.render(scene,camera);
-  }
-
-  animate();
+  }, {fps:24});
 
   /* ---------- resize ---------- */
 
