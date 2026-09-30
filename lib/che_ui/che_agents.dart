@@ -813,7 +813,7 @@ class _Desk extends StatelessWidget {
     return Semantics(
       button: true,
       label: '${agent.name}${agent.role.isNotEmpty ? ', ${agent.role}' : ''}. $line. '
-          '${agent.isChe ? 'Talk to CHE.' : 'Open ${agent.name}\'s desk.'}',
+          '${agent.isChe ? 'Open CHE\'s desk. Talk or send a request.' : 'Open ${agent.name}\'s desk.'}',
       excludeSemantics: true,
       child: GestureDetector(
         onTap: () {

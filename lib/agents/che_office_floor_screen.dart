@@ -1,7 +1,9 @@
 // CHE Office floor: CHE and every agent at their desk, mirrored live from the
-// backend Agent Runtime. Tap an agent to open their desk (profile, current
-// task, history, responsibilities; message / reassign / upgrade / retire).
-// Tap CHE to talk to her. "War Room" convenes a multi-agent project.
+// backend Agent Runtime. Tap an agent (including CHE) to open their desk
+// (profile, current task, history, responsibilities; message / reassign /
+// upgrade / retire). CHE's desk also offers Talk and a request field that
+// queues work through her Office goal API. "War Room" convenes a multi-agent
+// project.
 
 import 'dart:async';
 
@@ -41,7 +43,7 @@ class CheOfficeFloorScreen extends StatefulWidget {
 
   final CheAgentRuntimeClient client;
 
-  /// Opens CHE's chat (tapping CHE's own desk).
+  /// Opens CHE's chat from her desk sheet (Talk to CHE).
   final VoidCallback? onTalkToChe;
 
   /// Reads text aloud in CHE's voice. Falls back to a VoiceOver announcement.
@@ -135,14 +137,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
   Future<void> _speak(String text) => cheReadAloud(context, text, widget.onSpeak);
 
   Future<void> _openAgent(CheAgent agent) async {
-    if (agent.isChe) {
-      if (widget.onTalkToChe != null) {
-        if (!widget.embedded) Navigator.of(context).pop();
-        widget.onTalkToChe!();
-      }
-      return;
-    }
-    await showModalBottomSheet<void>(
+    final talk = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       backgroundColor: CheColors.surface,
@@ -150,10 +145,21 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
       builder: (_) => _AgentDeskSheet(
         client: widget.client,
         agentId: agent.id,
-        onChanged: _runtime.refresh,
+        onChanged: () async {
+          await _runtime.refresh();
+          await _runtime.refreshBoard();
+        },
         onSpeak: widget.onSpeak,
+        onTalkToChe: agent.isChe ? widget.onTalkToChe : null,
       ),
     );
+    if (talk == true && agent.isChe && widget.onTalkToChe != null) {
+      if (!widget.embedded && mounted && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+      widget.onTalkToChe!();
+      return;
+    }
     await _runtime.refresh();
   }
 
@@ -891,11 +897,20 @@ class _MeetingTile extends StatelessWidget {
 // ─── Agent desk: profile, task, history, actions ────────────────────────
 
 class _AgentDeskSheet extends StatefulWidget {
-  const _AgentDeskSheet({required this.client, required this.agentId, required this.onChanged, this.onSpeak});
+  const _AgentDeskSheet({
+    required this.client,
+    required this.agentId,
+    required this.onChanged,
+    this.onSpeak,
+    this.onTalkToChe,
+  });
   final CheAgentRuntimeClient client;
   final String agentId;
   final Future<void> Function() onChanged;
   final Future<void> Function(String text)? onSpeak;
+
+  /// When set (CHE's desk), shows Talk to CHE and routes requests via officeGoal.
+  final VoidCallback? onTalkToChe;
   @override
   State<_AgentDeskSheet> createState() => _AgentDeskSheetState();
 }
@@ -991,6 +1006,26 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
     if (ok == true) await _run(() => widget.client.patchAgent(p.agent.id, {'action': 'retire'}), close: true);
   }
 
+  bool get _isChe => widget.agentId == 'che';
+
+  Future<void> _sendRequest(CheAgent a) async {
+    final t = _message.text.trim();
+    if (t.isEmpty) return;
+    _message.clear();
+    if (_isChe) {
+      await _run(() async {
+        final reply = await widget.client.officeGoal(t);
+        if (mounted && widget.onSpeak != null) {
+          try {
+            await widget.onSpeak!(reply);
+          } catch (_) {}
+        }
+      });
+      return;
+    }
+    await _run(() => widget.client.assignTask(a.id, t));
+  }
+
   @override
   Widget build(BuildContext context) {
     final d = _detail;
@@ -1057,11 +1092,19 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
             if (_error != null) Padding(padding: const EdgeInsets.only(top: CheSpace.sm), child: _Banner(text: _error!, color: CheColors.warning)),
             const SizedBox(height: CheSpace.md),
             if (a.specialty.isNotEmpty) _Section('SPECIALTY', a.specialty),
-            _Section('PERSONALITY', a.personality),
+            if (a.personality.isNotEmpty) _Section('PERSONALITY', a.personality),
             if (p.mission.isNotEmpty) _Section('MISSION', p.mission),
             _Section('RESPONSIBILITIES', p.responsibilities.isEmpty ? 'None assigned yet.' : p.responsibilities.map((s) => '• $s').join('\n')),
             const SizedBox(height: CheSpace.sm),
-            Text('MESSAGE ${a.name.toUpperCase()}', style: CheType.overline),
+            if (_isChe && widget.onTalkToChe != null) ...[
+              FilledButton.icon(
+                onPressed: _working ? null : () => Navigator.of(context).pop(true),
+                icon: const Icon(Icons.record_voice_over_rounded, size: 18),
+                label: const Text('Talk to CHE'),
+              ),
+              const SizedBox(height: CheSpace.md),
+            ],
+            Text(_isChe ? 'REQUEST TO CHE' : 'MESSAGE ${a.name.toUpperCase()}', style: CheType.overline),
             const SizedBox(height: CheSpace.xs),
             Row(children: [
               Expanded(
@@ -1069,55 +1112,55 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
                   controller: _message,
                   minLines: 1,
                   maxLines: 4,
-                  decoration: InputDecoration(hintText: 'Give ${a.name} a task. CHE reviews the result.'),
+                  decoration: InputDecoration(
+                    hintText: _isChe
+                        ? 'Give CHE a request. She splits it into Office jobs.'
+                        : 'Give ${a.name} a task. CHE reviews the result.',
+                  ),
                 ),
               ),
               IconButton(
-                tooltip: 'Send task',
-                onPressed: _working
-                    ? null
-                    : () {
-                        final t = _message.text.trim();
-                        if (t.isEmpty) return;
-                        _message.clear();
-                        _run(() => widget.client.assignTask(a.id, t));
-                      },
+                tooltip: _isChe ? 'Send request' : 'Send task',
+                onPressed: _working ? null : () => _sendRequest(a),
                 icon: const Icon(Icons.send_rounded, color: CheColors.accent),
               ),
             ]),
             const SizedBox(height: CheSpace.md),
-            Wrap(spacing: CheSpace.sm, runSpacing: CheSpace.sm, children: [
-              OutlinedButton.icon(
-                onPressed: _working ? null : () => _reassign(p),
-                icon: const Icon(Icons.assignment_ind_rounded, size: 18),
-                label: const Text('Reassign'),
-              ),
-              OutlinedButton.icon(
-                onPressed: _working
-                    ? null
-                    : () => _run(() => widget.client.patchAgent(a.id, {'action': p.modelTier == 'strong' ? 'downgrade' : 'upgrade'})),
-                icon: Icon(p.modelTier == 'strong' ? Icons.speed_rounded : Icons.upgrade_rounded, size: 18),
-                label: Text(p.modelTier == 'strong' ? 'Use fast engine' : 'Upgrade'),
-              ),
-              if (p.temporary)
+            if (!_isChe)
+              Wrap(spacing: CheSpace.sm, runSpacing: CheSpace.sm, children: [
                 OutlinedButton.icon(
-                  onPressed: _working ? null : () => _run(() => widget.client.patchAgent(a.id, {'action': 'keep'})),
-                  icon: const Icon(Icons.push_pin_rounded, size: 18),
-                  label: const Text('Keep long-term'),
+                  onPressed: _working ? null : () => _reassign(p),
+                  icon: const Icon(Icons.assignment_ind_rounded, size: 18),
+                  label: const Text('Reassign'),
                 ),
-              OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(foregroundColor: CheColors.danger),
-                onPressed: _working ? null : () => _retire(p),
-                icon: const Icon(Icons.logout_rounded, size: 18),
-                label: const Text('Retire'),
-              ),
-            ]),
+                OutlinedButton.icon(
+                  onPressed: _working
+                      ? null
+                      : () => _run(() => widget.client.patchAgent(a.id, {'action': p.modelTier == 'strong' ? 'downgrade' : 'upgrade'})),
+                  icon: Icon(p.modelTier == 'strong' ? Icons.speed_rounded : Icons.upgrade_rounded, size: 18),
+                  label: Text(p.modelTier == 'strong' ? 'Use fast engine' : 'Upgrade'),
+                ),
+                if (p.temporary)
+                  OutlinedButton.icon(
+                    onPressed: _working ? null : () => _run(() => widget.client.patchAgent(a.id, {'action': 'keep'})),
+                    icon: const Icon(Icons.push_pin_rounded, size: 18),
+                    label: const Text('Keep long-term'),
+                  ),
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(foregroundColor: CheColors.danger),
+                  onPressed: _working ? null : () => _retire(p),
+                  icon: const Icon(Icons.logout_rounded, size: 18),
+                  label: const Text('Retire'),
+                ),
+              ]),
             const SizedBox(height: CheSpace.lg),
             Row(children: [
               Expanded(child: Text('WORK HISTORY', style: CheType.overline)),
               IconButton(tooltip: 'Refresh', onPressed: _load, icon: const Icon(Icons.refresh_rounded, size: 18)),
             ]),
-            if (d.history.isEmpty) Text('No tasks yet.', style: CheType.bodyDim),
+            if (d.history.isEmpty)
+              Text(_isChe ? 'No Office requests on this desk yet. Send one above.' : 'No tasks yet.',
+                  style: CheType.bodyDim),
             for (final t in d.history)
               _TaskCard(
                 task: t,
@@ -1346,7 +1389,7 @@ class _PlanDesk extends StatelessWidget {
           return Semantics(
             button: true,
             label: '${agent.name}${agent.role.isNotEmpty ? ', ${agent.role}' : ''}. $line. '
-                '${agent.isChe ? 'CHE\'s desk, front and center. Talk to CHE.' : 'Open ${agent.name}\'s desk.'}',
+                '${agent.isChe ? 'CHE\'s desk, front and center. Open to talk or send a request.' : 'Open ${agent.name}\'s desk.'}',
             excludeSemantics: true,
             child: GestureDetector(
               onTap: () {
