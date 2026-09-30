@@ -13,6 +13,7 @@
 // keeps going when the phone is locked.
 
 import { classifyItem, extractCandidateMemories } from './privacy_policy.js';
+import { isResearchStyleJob, writeResearchMemoryNote } from './research_memory.js';
 import { isLaAgenciaAgent, officeToolBlocker } from './office_company.js';
 import { codexThreadId } from './office_router.js';
 import { assertAgentMayRun, permissionBlocker } from './agent_permissions.js';
@@ -37,7 +38,7 @@ const PERSONAS = {
   Juno: 'Pragmatic builder. Prefers the smallest version that works today.',
   Rhea: 'Customer-minded. Asks who this is for and what they would actually do.',
   Cato: 'Debater. Argues the other side on purpose to stress-test the plan.',
-  Iris: 'Pattern spotter. Links people, projects and past decisions together.',
+  Iris: 'Ad-minded creative. Tight headlines, clear CTAs, honest about missing brand assets.',
 };
 
 const OUTFITS = ['5CC8FF', 'FF8A4C', '3DDC97', '8B7BFF', 'E8B04A', 'FF5C8A', '4CD4C0', 'B38CFF', '7FD35C', 'FFB85C'];
@@ -941,6 +942,19 @@ async function runOneTask(ctx) {
   }
 
   t2.status = 'complete';
+  // Research / opportunity scout → Durable Object memory notes (owner-visible).
+  if (isResearchStyleJob(t2, a2 || agent)) {
+    const written = writeResearchMemoryNote(data, {
+      result: t2.result || result,
+      task: t2,
+      agent: a2 || agent,
+      sources: Array.isArray(t2.citations) ? t2.citations : [],
+    });
+    if (written.written) {
+      t2.memory_note_id = written.note.id;
+      t2.memory_written = true;
+    }
+  }
   if (approved && t2.teach_as_skill) {
     const skill = teachOfficeSkill(data, {
       name: t2.teach_as_skill,

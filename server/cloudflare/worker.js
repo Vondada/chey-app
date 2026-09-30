@@ -37,6 +37,26 @@ import { officeToday } from './office_board.js';
 import { ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
 import { matchOfficePhrase, speakGoalPlan, speakOfficeBoard } from './office_phrases.js';
 import { assertOwnerTalksToCheOnly } from './office_router.js';
+import {
+  buildFiverrFitTask,
+  buildFiverrScoutTask,
+  emptyScoutNote,
+  speakFiverrScoutPlan,
+  speakHireIris,
+} from './fiverr_scout.js';
+import {
+  buildOpportunityFitTask,
+  buildOpportunityScoutTask,
+  emptyOpportunityNote,
+  normalizeOpportunityChannel,
+  speakOpportunityScoutPlan,
+} from './opportunity_scout.js';
+import {
+  addOwnerMemory,
+  isSafeMemoryText,
+  listMemoryNotes,
+  writeResearchMemoryNote,
+} from './research_memory.js';
 import { assertOwnerToCheOnly } from './che_router.js';
 import { chicagoDayKey } from './chicago_time.js';
 import { assertAgentMayRun, permissionBlocker } from './agent_permissions.js';
@@ -1130,14 +1150,34 @@ function pluginCatalog(env) {
 }
 
 function visiblePlugins(env, state) {
-  return pluginCatalog(env).map((p) => ({
+  const connectors = pluginCatalog(env).map((p) => ({
     id: p.id, name: p.name, description: p.description, mode: p.mode,
     capabilities: p.capabilities,
     ui_url: p.ui_url || '',
     ready: !p.token_secret || Boolean(env[p.token_secret]),
     enabled: state?.[p.id] === true,
     requires_confirmation: p.requires_confirmation,
+    toggleable: true,
+    kind: 'connector',
     security: 'Server allow-list • HTTPS only • secrets stay server-side',
+  }));
+  // Day-one defaults when CHE_PLUGIN_CATALOG is unset: keyless skill plugins
+  // (Weather, Crypto, Wikipedia). Listed read-only; install/enable them from
+  // Skill plugins on the phone — not toggled as connectors here.
+  if (connectors.length) return connectors;
+  return pluginManifests(env).map((m) => ({
+    id: m.id,
+    name: m.name,
+    description: m.description,
+    mode: 'read_only',
+    capabilities: [],
+    ui_url: '',
+    ready: true,
+    enabled: false,
+    requires_confirmation: false,
+    toggleable: false,
+    kind: 'skill',
+    security: 'Builtin skill • HTTPS GET only • install from Skill plugins • secrets stay server-side',
   }));
 }
 
@@ -1802,6 +1842,142 @@ export class CheState extends DurableObject {
     return { goal_id: goalId, jobs, reply: speakGoalPlan(jobs) };
   }
 
+  // Ensure Iris (Ad Studio) is on the La Agencia roster; optionally queue a first task.
+  async officeHireIris(data, taskText = '') {
+    await this.staffOffice(data);
+    await this.ctx.storage.put('che', data);
+    this.broadcastAgents(data);
+    const iris = data.team.find((a) => a.name === 'Iris' && !a.retired);
+    const brief = String(taskText || '').trim();
+    if (brief) {
+      const goal = /tonight pack|ad creativ|flyer|banner|caption pack|paid social/i.test(brief)
+        ? (/^draft\b/i.test(brief) ? brief : `Draft ${brief}`)
+        : brief;
+      const plan = await this.officeGoal(data, goal);
+      const note = plan.jobs.length
+        ? `Queued ${plan.jobs.length} ${plan.jobs.length === 1 ? 'job' : 'jobs'}: ${plan.jobs.map((j) => `${j.agent} — ${j.task}`).join('; ')}.`
+        : 'No job was queued from that brief.';
+      return { agent: iris, jobs: plan.jobs, reply: speakHireIris(iris, note) };
+    }
+    return { agent: iris, jobs: [], reply: speakHireIris(iris) };
+  }
+
+  // Queue a Fiverr scout shortlist for owner review — never auto-message/bid.
+  async officeFiverrScout(data, query) {
+    await this.staffOffice(data);
+    const goalId = crypto.randomUUID();
+    const q = String(query || 'AI ad buyers').replace(/\s+/g, ' ').trim().slice(0, 200) || 'AI ad buyers';
+    const jobs = [];
+    const atlas = data.team.find((a) => a.name === 'Atlas' && !a.retired);
+    const iris = data.team.find((a) => a.name === 'Iris' && !a.retired);
+    const steps = [];
+    if (atlas) steps.push({ agent: atlas, task: buildFiverrScoutTask(q), kind: 'fiverr_scout' });
+    if (iris) steps.push({ agent: iris, task: buildFiverrFitTask(q), kind: 'fiverr_scout' });
+    for (const step of steps) {
+      let refused = '';
+      try {
+        assertAgentMayRun(step.agent, { task: step.task });
+      } catch (error) {
+        refused = permissionBlocker(step.agent, error);
+      }
+      const task = queueAgentTask(data, step.agent, step.task, 'fiverr_scout', {
+        job_id: goalId,
+        kind: step.kind,
+      });
+      task.owner_confirm_required = true;
+      task.outbound_allowed = false;
+      let blocker = refused || officeToolBlocker(this.env, step.agent);
+      if (blocker) {
+        task.status = 'blocked';
+        task.error = blocker;
+      }
+      jobs.push({ id: task.id, agent: step.agent.name, task: task.task, status: task.status, blocker });
+    }
+    data.fiverr_scouts = Array.isArray(data.fiverr_scouts) ? data.fiverr_scouts : [];
+    data.fiverr_scouts.push({
+      id: goalId,
+      ...emptyScoutNote(q),
+      job_ids: jobs.map((j) => j.id),
+      created_at: new Date().toISOString(),
+    });
+    data.fiverr_scouts = data.fiverr_scouts.slice(-50);
+    data.office_goals = Array.isArray(data.office_goals) ? data.office_goals : [];
+    data.office_goals.push({
+      id: goalId,
+      goal: `Fiverr scout: ${q}`,
+      job_ids: jobs.map((j) => j.id),
+      kind: 'fiverr_scout',
+      owner_confirm_required: true,
+      created_at: new Date().toISOString(),
+    });
+    data.office_goals = data.office_goals.slice(-100);
+    await this.ctx.storage.put('che', data);
+    if (jobs.some((j) => j.status === 'queued')) await this.scheduleWork();
+    this.broadcastAgents(data);
+    return { goal_id: goalId, query: q, jobs, reply: speakFiverrScoutPlan(jobs, q) };
+  }
+
+  // Forever opportunity scout (Fiverr/Pinterest/dropship/multi) — shortlist only.
+  async officeOpportunityScout(data, query, channel = 'multi') {
+    await this.staffOffice(data);
+    const goalId = crypto.randomUUID();
+    const ch = normalizeOpportunityChannel(channel);
+    const q = String(query || 'AI service buyers').replace(/\s+/g, ' ').trim().slice(0, 200) || 'AI service buyers';
+    // Dedicated Fiverr path keeps existing Iris/Atlas Fiverr playbook wiring.
+    if (ch === 'fiverr') return this.officeFiverrScout(data, q);
+    const jobs = [];
+    const atlas = data.team.find((a) => a.name === 'Atlas' && !a.retired);
+    const iris = data.team.find((a) => a.name === 'Iris' && !a.retired);
+    const steps = [];
+    if (atlas) steps.push({ agent: atlas, task: buildOpportunityScoutTask(q, ch), kind: 'opportunity_scout' });
+    if (iris) steps.push({ agent: iris, task: buildOpportunityFitTask(q, ch), kind: 'opportunity_scout' });
+    for (const step of steps) {
+      let refused = '';
+      try {
+        assertAgentMayRun(step.agent, { task: step.task });
+      } catch (error) {
+        refused = permissionBlocker(step.agent, error);
+      }
+      const task = queueAgentTask(data, step.agent, step.task, 'opportunity_scout', {
+        job_id: goalId,
+        kind: step.kind,
+      });
+      task.owner_confirm_required = true;
+      task.outbound_allowed = false;
+      task.auto_message = false;
+      task.auto_buy_inventory = false;
+      let blocker = refused || officeToolBlocker(this.env, step.agent);
+      if (blocker) {
+        task.status = 'blocked';
+        task.error = blocker;
+      }
+      jobs.push({ id: task.id, agent: step.agent.name, task: task.task, status: task.status, blocker });
+    }
+    data.opportunity_scouts = Array.isArray(data.opportunity_scouts) ? data.opportunity_scouts : [];
+    data.opportunity_scouts.push({
+      id: goalId,
+      ...emptyOpportunityNote(q, ch),
+      job_ids: jobs.map((j) => j.id),
+      created_at: new Date().toISOString(),
+    });
+    data.opportunity_scouts = data.opportunity_scouts.slice(-50);
+    data.office_goals = Array.isArray(data.office_goals) ? data.office_goals : [];
+    data.office_goals.push({
+      id: goalId,
+      goal: `Opportunity scout (${ch}): ${q}`,
+      job_ids: jobs.map((j) => j.id),
+      kind: 'opportunity_scout',
+      channel: ch,
+      owner_confirm_required: true,
+      created_at: new Date().toISOString(),
+    });
+    data.office_goals = data.office_goals.slice(-100);
+    await this.ctx.storage.put('che', data);
+    if (jobs.some((j) => j.status === 'queued')) await this.scheduleWork();
+    this.broadcastAgents(data);
+    return { goal_id: goalId, query: q, channel: ch, jobs, reply: speakOpportunityScoutPlan(jobs, q, ch) };
+  }
+
   async setAutonomy(enabled) {
     const data = await this.loadData();
     data.autonomy = enabled;
@@ -1924,6 +2100,9 @@ export class CheState extends DurableObject {
         const plugin = visiblePlugins(this.env, data.plugin_enabled)
           .find((item) => item.id === id);
         if (!plugin) return json({ detail: 'Plugin is not in the CHE catalog.' }, 404);
+        if (plugin.toggleable === false || plugin.kind === 'skill') {
+          return json({ detail: 'Install this from Skill plugins on the phone. Builtin skills are not toggled here.' }, 400);
+        }
         if (body.enabled && !plugin.ready) return json({ detail: 'Connect this plugin on the CHE server first.' }, 409);
         data.plugin_enabled[id] = body.enabled;
         await this.ctx.storage.put('che', data);
@@ -2083,6 +2262,7 @@ export class CheState extends DurableObject {
       if (request.method === 'GET' && path === '/api/state') {
         return json({
           memories: data.memories,
+          memory_notes: listMemoryNotes(data),
           preference_memory: data.preference_memory,
           owner_context: data.owner_context.map(ownerContextPreview),
           personal_sources: {
@@ -2333,7 +2513,7 @@ export class CheState extends DurableObject {
       if (proposalMatch && request.method === 'POST') {
         const [, proposalId, action] = proposalMatch;
         const { status, ...rest } = action === 'approve'
-          ? await approveProposal(this.env, data, proposalId)
+          ? await approveProposal(this.env, data, proposalId, fetch, { confirmed: body.confirmed === true })
           : rejectProposal(data, proposalId);
         await this.ctx.storage.put('che', data);
         return json(rest, status);
@@ -2388,7 +2568,7 @@ export class CheState extends DurableObject {
         } else if (step === 'review') {
           outcome = markStage(deal, 'review');
         } else if (step === 'invoice') {
-          outcome = await createPaymentLink(this.env, deal);
+          outcome = await createPaymentLink(this.env, deal, fetch, { confirmed: body.confirmed === true });
         } else if (step === 'check-paid') {
           outcome = await checkPaid(this.env, deal);
         } else {
@@ -2742,14 +2922,11 @@ export class CheState extends DurableObject {
       }
       if (path === '/api/memory/add') {
         const memory = String(body.memory || '').trim().slice(0, 500);
-        if (!memory || /password|passcode|security code|social security|credit card/i.test(memory)) {
+        if (!isSafeMemoryText(memory)) {
           return json({ detail: 'Choose a non-sensitive memory.' }, 400);
         }
-        if (!data.memories.some((item) => item.toLowerCase() === memory.toLowerCase())) {
-          data.memories.push(memory);
-          data.memories = data.memories.slice(-100);
-          await this.ctx.storage.put('che', data);
-        }
+        const added = addOwnerMemory(data, memory);
+        if (added.added) await this.ctx.storage.put('che', data);
         const vectorId = `memory:${await digest(memory.toLowerCase())}`;
         this.ctx.waitUntil?.(storeVectorMemory(this.env, {
           external_id: vectorId,
@@ -3346,6 +3523,29 @@ export class CheState extends DurableObject {
           const plan = await this.officeGoal(data, officePhrase.goal);
           return ndjsonReply(plan.reply, { office: 'goal', jobs: plan.jobs.length });
         }
+        if (officePhrase?.type === 'hireIris') {
+          const hired = await this.officeHireIris(data, officePhrase.task || '');
+          return ndjsonReply(hired.reply, { office: 'hireIris', jobs: hired.jobs.length, agent: hired.agent?.name || 'Iris' });
+        }
+        if (officePhrase?.type === 'fiverrScout') {
+          const scout = await this.officeFiverrScout(data, officePhrase.query);
+          return ndjsonReply(scout.reply, {
+            office: 'fiverrScout',
+            jobs: scout.jobs.length,
+            owner_confirm_required: true,
+            outbound_allowed: false,
+          });
+        }
+        if (officePhrase?.type === 'opportunityScout') {
+          const scout = await this.officeOpportunityScout(data, officePhrase.query, officePhrase.channel);
+          return ndjsonReply(scout.reply, {
+            office: 'opportunityScout',
+            channel: scout.channel,
+            jobs: scout.jobs.length,
+            goal_id: scout.goal_id,
+            owner_confirm_required: true,
+          });
+        }
         if (officePhrase?.type === 'standDown') {
           await this.setAutonomy(false);
           return ndjsonReply(speakOfficeBoard({}, officePhrase), { office: 'standDown', autonomy: false });
@@ -3748,8 +3948,15 @@ export class CheState extends DurableObject {
           if (learned && !data.learned_knowledge.includes(learned)) {
             data.learned_knowledge.push(learned);
             data.learned_knowledge = data.learned_knowledge.slice(-30);
-            await this.saveChatData(data);
           }
+          writeResearchMemoryNote(data, {
+            force: true,
+            result: research.summary,
+            sources: research.sources || [],
+            task: { id: 'chat-research', kind: 'research', task: message },
+            agent: { name: 'CHE', role: 'Research Partner' },
+          });
+          await this.saveChatData(data);
         }
 
         const remember = /^(?:(?:chay|chey|shay|che)[, ]+)?remember(?: that)?\s+(.+)/i.exec(message);

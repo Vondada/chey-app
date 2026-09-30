@@ -356,7 +356,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
           maxLines: 3,
           decoration: const InputDecoration(
             labelText: 'Goal',
-            hintText: 'CHE splits it into jobs for Nova, Atlas, Mira, Knox, Sage and Lyra.',
+            hintText: 'CHE splits it into jobs for Nova, Atlas, Mira, Knox, Sage, Lyra and Iris.',
           ),
         ),
         actions: [
@@ -510,6 +510,10 @@ class CheOfficeHeader extends StatelessWidget {
             ]),
             const SizedBox(height: 2),
             Text(lines[4], style: CheType.caption),
+            if (lines.length > 5) ...[
+              const SizedBox(height: 2),
+              Text(lines[5], style: CheType.caption.copyWith(color: CheColors.warning)),
+            ],
           ]),
         ),
       ),
@@ -517,7 +521,7 @@ class CheOfficeHeader extends StatelessWidget {
   }
 }
 
-/// Today's board: started, finished, Stripe today, blockers.
+/// Today's board: started, finished, Stripe today, blockers, stalled.
 class CheOfficeBoard extends StatelessWidget {
   const CheOfficeBoard({super.key, required this.today, required this.onReadAloud});
   final CheOfficeToday? today;
@@ -560,6 +564,9 @@ class CheOfficeBoard extends StatelessWidget {
           section('BLOCKERS (${t?.blockers.length ?? 0})',
               rows(t?.blockers ?? const [], 'No blockers.', (e) => '${e['agent']}: ${e['detail']}'),
               color: (t?.blockers.isNotEmpty ?? false) ? CheColors.warning : null),
+          section('STALLED (${t?.stalled.length ?? 0})',
+              rows(t?.stalled ?? const [], 'Nothing stalled.', (e) => '${e['agent']}: ${e['task']} (${e['detail']})'),
+              color: (t?.stalled.isNotEmpty ?? false) ? CheColors.warning : null),
         ]),
       ),
     );

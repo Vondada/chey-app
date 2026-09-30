@@ -1,0 +1,19 @@
+{
+  "name": "chey-app-worker",
+  "version": "1.0.0",
+  "description": "CHE Cloudflare Worker (local wrangler + unit tests)",
+  "main": "activity.js",
+  "scripts": {
+    "dev": "wrangler dev --port 8787 --ip 0.0.0.0 --local",
+    "test": "node --test ./*.test.mjs",
+    "check": "for f in ./*.js; do node --check \"$f\" || exit 1; done"
+  },
+  "license": "ISC",
+  "devDependencies": {
+    "wrangler": "^4.144.0"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -9,10 +9,11 @@ test('owner messages must target CHE', () => {
 });
 
 test('agents cannot message the owner', () => {
-  for (const agent of ['nova', 'atlas', 'mira', 'knox', 'sage', 'lyra']) {
+  for (const agent of ['nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris']) {
     assert.throws(() => assertOwnerToCheOnly({ from: agent, to: 'owner' }), { message: 'agents_report_to_che_only' });
   }
   assert.deepEqual(assertOwnerToCheOnly({ from: 'mira', to: 'che' }), { speaker: 'mira', target: 'che' });
+  assert.deepEqual(assertOwnerToCheOnly({ from: 'iris', to: 'che' }), { speaker: 'iris', target: 'che' });
   assert.throws(() => assertOwnerToCheOnly({ from: 'stranger', to: 'che' }), { message: 'unknown_speaker' });
 });
 

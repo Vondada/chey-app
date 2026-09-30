@@ -91,6 +91,37 @@ test('pairing, owner gate, memories, and revocation', async () => {
   assert.equal((await send('/api/chat', 'POST', { message: 'hi' }, token)).status, 401);
 });
 
+
+test('builtin skill plugins when CHE_PLUGIN_CATALOG is empty', async () => {
+  const saved = new Map();
+  const env = {
+    CHE_PAIR_CODE: '123456',
+    AI: { run: async () => ({ response: 'ok' }) },
+  };
+  const state = new CheState({ storage: {
+    get: (key) => saved.get(key),
+    put: (key, value) => saved.set(key, value),
+    setAlarm: async () => {},
+  } }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, method = 'GET', body = {}, token = '') => worker.fetch(
+    new Request(`https://che.example${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
+    }), env,
+  );
+  const token = (await (await send('/api/pair', 'POST', { code: '123456' })).json()).device_token;
+  const list = await (await send('/api/plugins', 'GET', {}, token)).json();
+  const ids = list.plugins.map((item) => item.id);
+  assert.ok(ids.includes('weather'));
+  assert.ok(ids.includes('crypto-prices'));
+  assert.ok(ids.includes('wikipedia'));
+  assert.equal(list.plugins[0].kind, 'skill');
+  assert.equal(list.plugins[0].toggleable, false);
+  assert.equal((await send('/api/plugins/toggle', 'POST', { id: 'weather', enabled: true }, token)).status, 400);
+});
+
 test('plugin catalog is paired, opt-in, read-only and never exposes tokens', async () => {
   const saved = new Map();
   let modelPrompt = '';

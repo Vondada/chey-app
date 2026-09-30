@@ -61,6 +61,17 @@ Deliberate trade-off: agents live in the owner's single `CheState` Durable Objec
 
 1. Per-agent Durable Objects if the single owner Durable Object gets hot.
 2. Check on a deployed Worker that Stooq/CoinGecko/Open-Meteo answer Cloudflare requests. If Stooq blocks them, connect `CHE_MARKET_DATA_URL`.
+3. Owner: GitHub connect, Cloudflare deploy, AI keys, macOS IPA + SideStore (`docs/SIDESTORE_CODEMAGIC.md`), Swift `che/native_voice` Runner.
+
+## Session log
+
+See `docs/SESSION_PROGRESS.md` for the owner vision capability map and cumulative session changes.
+
+## Landed this pass (local tree)
+
+- Office board exposes **stalled** (API + floor UI + voice phrase "what's stalled?").
+- `/api/plugins` falls back to builtin skill rows (Weather / Crypto / Wikipedia) when `CHE_PLUGIN_CATALOG` is unset.
+- SideStore + Codemagic install notes in `docs/SIDESTORE_CODEMAGIC.md`.
 
 ## Phone test checklist
 

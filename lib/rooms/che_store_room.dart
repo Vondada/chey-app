@@ -85,10 +85,48 @@ class _CheStoreRoomState extends State<CheStoreRoom> {
     if (mounted) setState(() {});
   }
 
+  Future<bool> _confirmMoney(String title, String body) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF101821),
+        title: Text(title),
+        content: Text(body),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Confirm')),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
   Future<void> _act(String id, String action) async {
+    if (action == 'approve') {
+      Map<String, dynamic>? proposal;
+      for (final p in _proposals) {
+        if ('${p['id']}' == id) {
+          proposal = p;
+          break;
+        }
+      }
+      final name = '${proposal?['name'] ?? 'this product'}';
+      final cents = (proposal?['unit_amount'] as num?)?.toInt();
+      final price = cents == null ? '' : '\$${(cents / 100).toStringAsFixed(2)}';
+      final ok = await _confirmMoney(
+        'Create in Stripe?',
+        'CHE will create "$name"${price.isEmpty ? '' : ' at $price'} as a Stripe product with a payment link. '
+        'Nothing is charged until a customer pays. Confirm only if you want this live.',
+      );
+      if (!ok) return;
+    }
     setState(() => _busy.add(id));
     try {
-      await _call('POST', '/api/stripe/proposals/$id/$action');
+      await _call(
+        'POST',
+        '/api/stripe/proposals/$id/$action',
+        action == 'approve' ? const {'confirmed': true} : null,
+      );
       await _refresh();
       if (mounted && action == 'approve') {
         ScaffoldMessenger.of(context).showSnackBar(

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  approveProposal, formEncode, proposeProduct, rejectProposal, salesSummary, storeStatus, stripeMode, validateProposal,
+  approveProposal, assertStripeCallAllowed, formEncode, proposeProduct, rejectProposal, salesSummary, storeStatus, stripeMode, validateProposal,
 } from './stripe_store.js';
 
 test('stripe mode reads the key type without exposing it', () => {
@@ -42,14 +42,15 @@ test('approval creates product + payment link with receipts and idempotency', as
   const env = { STRIPE_SECRET_KEY: 'rk_test_abc' };
   const data = {};
   const { proposal } = proposeProduct(data, { name: 'Intro Class', kind: 'class', price_usd: 25 });
-  const result = await approveProposal(env, data, proposal.id, fetcher);
+  assert.equal((await approveProposal(env, data, proposal.id, fetcher)).status, 400);
+  const result = await approveProposal(env, data, proposal.id, fetcher, { confirmed: true });
   assert.equal(result.status, 200);
   assert.equal(result.proposal.receipt.payment_link_url, 'https://buy.stripe.com/test_1');
   assert.equal(calls.length, 2);
   assert.equal(calls[0].init.headers['Idempotency-Key'], `che-product-${proposal.id}`);
   assert.match(calls[0].init.body, /unit_amount%5D=2500/);
   // Approving again does not create a second product.
-  await approveProposal(env, data, proposal.id, fetcher);
+  await approveProposal(env, data, proposal.id, fetcher, { confirmed: true });
   assert.equal(calls.length, 2);
 });
 
@@ -57,7 +58,7 @@ test('stripe errors are reported, not hidden as success', async () => {
   const fetcher = async () => new Response(JSON.stringify({ error: { message: 'Invalid API key' } }), { status: 401 });
   const data = {};
   const { proposal } = proposeProduct(data, { name: 'Guide', price_usd: 5 });
-  const result = await approveProposal({ STRIPE_SECRET_KEY: 'rk_test_x' }, data, proposal.id, fetcher);
+  const result = await approveProposal({ STRIPE_SECRET_KEY: 'rk_test_x' }, data, proposal.id, fetcher, { confirmed: true });
   assert.equal(result.status, 502);
   assert.match(result.detail, /Invalid API key/);
   assert.equal(data.stripe_proposals[0].status, 'pending');
@@ -79,4 +80,13 @@ test('sales come straight from Stripe charges and balance', async () => {
   assert.equal(result.sales.length, 1);
   assert.equal(result.recent_total_cents, 999);
   assert.equal(result.balance.available_cents, 900);
+});
+
+test('Stripe money-out paths are blocked at the helper', () => {
+  assert.throws(() => assertStripeCallAllowed('POST', '/refunds'), /blocked/);
+  assert.throws(() => assertStripeCallAllowed('POST', '/charges'), /blocked/);
+  assert.throws(() => assertStripeCallAllowed('POST', '/transfers'), /blocked/);
+  assert.throws(() => assertStripeCallAllowed('POST', '/payouts'), /blocked/);
+  assert.doesNotThrow(() => assertStripeCallAllowed('POST', '/payment_links'));
+  assert.doesNotThrow(() => assertStripeCallAllowed('GET', '/charges'));
 });

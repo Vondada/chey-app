@@ -52,7 +52,8 @@ test('payment link only after review, paid only when Stripe says so', async () =
   };
   assert.equal((await createPaymentLink(env, deal, fetcher)).status, 409);
   deal.stage = 'review';
-  const linked = await createPaymentLink(env, deal, fetcher);
+  assert.equal((await createPaymentLink(env, deal, fetcher)).status, 400);
+  const linked = await createPaymentLink(env, deal, fetcher, { confirmed: true });
   assert.equal(linked.deal.stage, 'invoiced');
   assert.equal(linked.deal.payment.url, 'https://buy.stripe.com/test_9');
   assert.equal((await checkPaid(env, deal, fetcher)).paid, false);
