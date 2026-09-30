@@ -33,6 +33,7 @@ import { activityFeed, creations, findCreations, greeting, suggestions, stalledT
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 import { prepareSelfUpdate } from './self_development.js';
+import { listThreads, mailboxIntent, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
 import { agentActionGuard, ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
 import {
@@ -1772,6 +1773,7 @@ async function dispatchChange(env, body, memory = null) {
     return json({ detail: `The coding team failed: ${String(error?.message || error).slice(0, 160)}. Nothing was changed.` }, 502);
   }
   if (prepared.status !== 200 || !prepared.proposal) {
+    await sendMail(env, { from: 'che', to: 'claude', text: `My coding crew failed on: "${request.slice(0, 300)}". Reason: ${String(prepared.detail || 'unknown').slice(0, 800)}` }).catch(() => null);
     return json({ detail: `The coding team did not produce a review-passed update, sir. ${prepared.detail || 'Nothing was changed.'}` }, prepared.status && prepared.status !== 200 ? prepared.status : 422);
   }
   const team = Array.isArray(prepared.team) ? prepared.team.join(', ') : 'CHE engineering team';
@@ -2877,6 +2879,16 @@ export class CheState extends DurableObject {
         const symbol = new URL(request.url).searchParams.get('symbol') || '^spx';
         const result = await marketCandles(symbol);
         return json(result, result.error && !result.candles ? 400 : 200);
+      }
+
+      // ─── AI mailbox (GitHub che-mailbox branch) ───────────────────────
+      if (path === '/api/mailbox' && request.method === 'GET') {
+        const peer = new URL(request.url).searchParams.get('peer');
+        return json(peer ? await readThread(this.env, peer) : await listThreads(this.env));
+      }
+      if (path === '/api/mailbox' && request.method === 'POST') {
+        const { status, ...rest } = await sendMail(this.env, { from: 'che', to: body.to, text: body.text, replyTo: body.reply_to });
+        return json(rest, status);
       }
 
       // ─── Self-development: owner-approved PRs, never direct pushes ─────
@@ -4229,6 +4241,26 @@ export class CheState extends DurableObject {
         // the engineering team, not by CHE drafting code in the owner-facing
         // chat model. The resulting proposal still requires the owner's
         // explicit approval card before a PR can be opened.
+        // Mailbox: "tell Claude …", "check the mailbox".
+        const mail = mailboxIntent(message);
+        if (mail?.kind === 'send') {
+          const sent = await sendMail(this.env, { from: 'che', to: mail.to, text: `From CHE on behalf of the owner: ${mail.text}` });
+          return ndjsonReply(sent.status === 200
+            ? `Sent to ${mail.to} through our GitHub mailbox, sir. I'll read you the reply when it comes in.`
+            : `I couldn't send that, sir. ${sent.detail}`, { source: 'che_mailbox' });
+        }
+        if (mail?.kind === 'read') {
+          if (mail.peer) {
+            const thread = await readThread(this.env, mail.peer);
+            const recent = thread.messages.slice(-4);
+            return ndjsonReply(thread.error ? `I couldn't open the mailbox, sir. ${thread.error}`
+              : recent.length ? `Latest with ${mail.peer}, sir:\n${recent.map((m, i) => `${i + 1}. ${m.from}: ${String(m.text).slice(0, 400)}`).join('\n')}`
+                : `No messages with ${mail.peer} yet, sir.`, { source: 'che_mailbox' });
+          }
+          const all = await listThreads(this.env);
+          return ndjsonReply(all.error ? `I couldn't open the mailbox, sir. ${all.error}` : speakThreads(all.threads), { source: 'che_mailbox' });
+        }
+
         const selfChangeRequest =
           /\b(?:change|update|upgrade|redesign|restyle|modify|fix|add|remove|move|rearrange|rebuild|improve|make)\b[\s\S]{0,120}\b(?:che(?:'s)?|your(?:self| app| ui| interface| code| screen| page| layout| navigation)|the che app|this (?:che )?(?:screen|page))\b/i.test(message) ||
           /\b(?:che(?:'s)?|your)\b[\s\S]{0,80}\b(?:ui|interface|screen|page|layout|navigation|code|app)\b[\s\S]{0,80}\b(?:change|update|redesign|fix|move|add|remove|improve)\b/i.test(message) ||
@@ -4261,6 +4293,7 @@ export class CheState extends DurableObject {
               },
             );
           }
+          await sendMail(this.env, { from: 'che', to: 'claude', text: `My coding crew failed on: "${message.slice(0, 300)}". Reason: ${String(prepared.detail || 'unknown').slice(0, 800)}` }).catch(() => null);
           const ghMissing = /CHE_GITHUB|GitHub|github|Flutter repo/i.test(String(prepared.detail || ''));
           return ndjsonReply(
             ghMissing
