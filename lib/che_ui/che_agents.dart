@@ -64,12 +64,12 @@ class CheAgent {
   final String? task; // current real assignment
   final bool isChe;
 
-  /// CHE herself (the manager), in her logo colors.
+  /// CHE herself (Office Boss), in her logo colors.
   static CheAgent che({CheAgentStatus status = CheAgentStatus.idle, String? task}) => CheAgent(
         id: 'che',
         name: 'CHE',
-        role: 'Manager',
-        specialty: 'Leads the team, delegates, reviews and delivers',
+        role: 'Office Boss',
+        specialty: 'Office Boss — assigns, steers, reviews handoffs, owns outcomes, reports to the owner',
         color: CheColors.accent,
         hair: const Color(0xFF1A1110),
         skin: const Color(0xFFB9825A),
@@ -496,8 +496,13 @@ class _MiniPersonPainter extends CustomPainter {
     final torso = RRect.fromRectAndRadius(
         Rect.fromCenter(center: Offset(cx, h * 0.62 + breathe), width: w * 0.46, height: h * 0.38), Radius.circular(w * 0.16));
     canvas.drawRRect(torso, Paint()..color = c(agent.color));
-    // collar / badge
+    // collar / badge — CHE gets a gold lapel pin (authoritative Office Boss look)
     canvas.drawCircle(Offset(cx + w * 0.1, h * 0.55 + breathe), w * 0.03, Paint()..color = Colors.white.withValues(alpha: dim ? 0.2 : 0.8));
+    if (agent.isChe && !dim) {
+      final pin = Offset(cx - w * 0.12, h * 0.52 + breathe);
+      canvas.drawCircle(pin, w * 0.035, Paint()..color = const Color(0xFFD6A63F));
+      canvas.drawCircle(pin, w * 0.018, Paint()..color = const Color(0xFFFFF3C4));
+    }
 
     // arms by pose
     final arm = Paint()

@@ -114,11 +114,16 @@ test('builtin skill plugins when CHE_PLUGIN_CATALOG is empty', async () => {
   const token = (await (await send('/api/pair', 'POST', { code: '123456' })).json()).device_token;
   const list = await (await send('/api/plugins', 'GET', {}, token)).json();
   const ids = list.plugins.map((item) => item.id);
+  assert.ok(ids.includes('twilio_sms'));
   assert.ok(ids.includes('weather'));
   assert.ok(ids.includes('crypto-prices'));
   assert.ok(ids.includes('wikipedia'));
-  assert.equal(list.plugins[0].kind, 'skill');
-  assert.equal(list.plugins[0].toggleable, false);
+  const twilio = list.plugins.find((item) => item.id === 'twilio_sms');
+  assert.equal(twilio.kind, 'connector');
+  assert.equal(twilio.ready, false);
+  const weather = list.plugins.find((item) => item.id === 'weather');
+  assert.equal(weather.kind, 'skill');
+  assert.equal(weather.toggleable, false);
   assert.equal((await send('/api/plugins/toggle', 'POST', { id: 'weather', enabled: true }, token)).status, 400);
 });
 
@@ -156,8 +161,9 @@ test('plugin catalog is paired, opt-in, read-only and never exposes tokens', asy
   assert.equal((await send('/api/plugins')).status, 401);
   const token = (await (await send('/api/pair', 'POST', { code: '123456' })).json()).device_token;
   const list = await (await send('/api/plugins', 'GET', {}, token)).json();
-  assert.deepEqual(list.plugins.map((item) => item.id), ['weather']);
-  assert.equal(list.plugins[0].enabled, false);
+  assert.deepEqual(list.plugins.map((item) => item.id), ['twilio_sms', 'weather']);
+  const weatherPlugin = list.plugins.find((item) => item.id === 'weather');
+  assert.equal(weatherPlugin.enabled, false);
   assert.doesNotMatch(JSON.stringify(list), /secret-value|weather\.example/);
   assert.equal((await send('/api/plugins/toggle', 'POST', { id: 'unsafe', enabled: true }, token)).status, 404);
   assert.equal((await send('/api/plugins/toggle', 'POST', { id: 'weather', enabled: 'yes' }, token)).status, 400);
@@ -228,7 +234,7 @@ test('agent runtime: roster, delegated tasks, CHE review, War Room and lifecycle
       run: async (model, input) => {
         const system = input.messages[0].content;
         calls.push(system.split('\n')[0]);
-        if (system.startsWith('You are CHE reviewing')) return { response: 'APPROVED\nSolid.' };
+        if (/^You are CHE(?:, Office Boss)?,? reviewing/.test(system) || system.startsWith('You are CHE reviewing') || system.startsWith('You are CHE, Office Boss, reviewing')) return { response: 'APPROVED\nSolid.' };
         if (system.startsWith('You are CHE, chairing')) {
           return { response: '{"decisions":["Ship v1"],"conflicts":["Scope"],"recommendations":["Test"],"final_plan":"1. Nova researches"}' };
         }

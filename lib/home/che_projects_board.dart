@@ -491,7 +491,7 @@ class _CheProjectsBoardState extends State<CheProjectsBoard> {
             updateFunction: 'updateScene',
             payload: {
               'agents': [
-                {'id': 'che', 'name': 'CHE', 'role': 'PM', 'status': 'working', 'isChe': true},
+                {'id': 'che', 'name': 'CHE', 'role': 'Office Boss', 'status': 'working', 'isChe': true},
               ],
               'items': [
                 for (final i in rows.take(9))
