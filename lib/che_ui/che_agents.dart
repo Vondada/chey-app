@@ -253,9 +253,21 @@ class _CheMiniPersonState extends State<CheMiniPerson> with SingleTickerProvider
     super.dispose();
   }
 
-  Widget _paint(double t) => CustomPaint(
-        painter: _MiniPersonPainter(agent: widget.agent, t: t, desk: widget.showDesk),
+  static const String cheAvatarAsset = 'assets/avatars/che.png';
+
+  Widget _paint(double t) {
+    if (widget.agent.isChe) {
+      return _CheFemaleAvatar(
+        agent: widget.agent,
+        t: t,
+        desk: widget.showDesk,
+        size: widget.size,
       );
+    }
+    return CustomPaint(
+      painter: _MiniPersonPainter(agent: widget.agent, t: t, desk: widget.showDesk),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -291,6 +303,158 @@ class _CheMiniPersonState extends State<CheMiniPerson> with SingleTickerProvider
       ),
     );
   }
+}
+
+/// Female CHE portrait with status/desk chrome (image + fallback painter).
+class _CheFemaleAvatar extends StatelessWidget {
+  const _CheFemaleAvatar({
+    required this.agent,
+    required this.t,
+    required this.desk,
+    required this.size,
+  });
+
+  final CheAgent agent;
+  final double t;
+  final bool desk;
+  final double size;
+
+  static const _asset = 'assets/avatars/che.png';
+
+  @override
+  Widget build(BuildContext context) {
+    final dim = agent.status == CheAgentStatus.offline;
+    final breathe = math.sin(t * math.pi) * size * 0.01;
+
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        // Soft teal halo behind CHE
+        if (!dim)
+          Positioned.fill(
+            child: CustomPaint(painter: _CheHaloPainter(accent: CheColors.accent, t: t)),
+          ),
+        // Desk strip under the avatar when requested
+        if (desk)
+          Positioned(
+            left: size * 0.05,
+            right: size * 0.05,
+            bottom: size * 0.02,
+            height: size * 0.08,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xFFD2AF7F),
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+          ),
+        // Female portrait
+        Positioned(
+          top: size * 0.04 + breathe,
+          child: Opacity(
+            opacity: dim ? 0.45 : 1,
+            child: Container(
+              width: size * 0.78,
+              height: size * 0.78,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: CheColors.accent.withValues(alpha: 0.55), width: 1.5),
+                boxShadow: [
+                  BoxShadow(
+                    color: CheColors.accent.withValues(alpha: 0.25),
+                    blurRadius: size * 0.12,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+              child: ClipOval(
+                child: Image.asset(
+                  _asset,
+                  fit: BoxFit.cover,
+                  alignment: const Alignment(-0.35, -0.15),
+                  errorBuilder: (context, error, stack) => CustomPaint(
+                    size: Size(size * 0.78, size * 0.78),
+                    painter: _MiniPersonPainter(agent: agent, t: t, desk: false),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        // Status badges (waiting / done) over the portrait
+        Positioned.fill(
+          child: IgnorePointer(
+            child: CustomPaint(painter: _CheStatusChromePainter(agent: agent, t: t)),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CheHaloPainter extends CustomPainter {
+  _CheHaloPainter({required this.accent, required this.t});
+  final Color accent;
+  final double t;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = Offset(size.width / 2, size.height * 0.38);
+    final r = size.width * 0.42;
+    canvas.drawCircle(
+      c,
+      r,
+      Paint()
+        ..shader = RadialGradient(colors: [accent.withValues(alpha: 0.4), Colors.transparent])
+            .createShader(Rect.fromCircle(center: c, radius: r)),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _CheHaloPainter o) => o.t != t || o.accent != accent;
+}
+
+class _CheStatusChromePainter extends CustomPainter {
+  _CheStatusChromePainter({required this.agent, required this.t});
+  final CheAgent agent;
+  final double t;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width, h = size.height;
+    final headC = Offset(w / 2, h * 0.38);
+    final headR = w * 0.28;
+    final st = agent.status;
+
+    if (st == CheAgentStatus.waiting) {
+      for (var i = 0; i < 3; i++) {
+        final on = ((t * 3).floor() % 3) >= i;
+        canvas.drawCircle(
+          headC.translate(headR * (1.0 + i * 0.4), -headR * (0.9 + i * 0.3)),
+          headR * (0.1 + i * 0.04),
+          Paint()..color = Colors.white.withValues(alpha: on ? 0.85 : 0.25),
+        );
+      }
+    }
+    if (st == CheAgentStatus.done) {
+      final b = headC.translate(-headR * 1.2, -headR * 1.0);
+      canvas.drawCircle(b, headR * 0.35, Paint()..color = CheColors.success);
+      final p = Path()
+        ..moveTo(b.dx - headR * 0.15, b.dy)
+        ..lineTo(b.dx - headR * 0.04, b.dy + headR * 0.14)
+        ..lineTo(b.dx + headR * 0.18, b.dy - headR * 0.14);
+      canvas.drawPath(
+        p,
+        Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.6,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _CheStatusChromePainter o) => o.t != t || o.agent != agent;
 }
 
 class _MiniPersonPainter extends CustomPainter {
@@ -383,12 +547,43 @@ class _MiniPersonPainter extends CustomPainter {
       ..addArc(Rect.fromCircle(center: headC.translate(0, -headR * 0.15), radius: headR * 1.05), math.pi, math.pi);
     canvas.drawPath(hair, Paint()..color = c(agent.hair));
     if (agent.isChe) {
-      // CHE: long hair
+      // CHE (female fallback): fuller voluminous long wavy hair, no facial hair
+      final hairPaint = Paint()..color = c(agent.hair);
+      // back volume
       canvas.drawRRect(
           RRect.fromRectAndRadius(
-              Rect.fromLTWH(headC.dx - headR * 1.05, headC.dy - headR * 0.3, headR * 2.1, headR * 1.9), Radius.circular(headR)),
-          Paint()..color = c(agent.hair).withValues(alpha: 0.9));
-      canvas.drawCircle(headC.translate(0, headR * 0.12), headR * 0.86, Paint()..color = c(agent.skin));
+              Rect.fromLTWH(headC.dx - headR * 1.25, headC.dy - headR * 0.15, headR * 2.5, headR * 2.35),
+              Radius.circular(headR * 0.95)),
+          hairPaint..color = c(agent.hair).withValues(alpha: 0.95));
+      // side curls
+      canvas.drawOval(
+          Rect.fromCenter(center: headC.translate(-headR * 1.05, headR * 0.55), width: headR * 0.7, height: headR * 1.35),
+          hairPaint);
+      canvas.drawOval(
+          Rect.fromCenter(center: headC.translate(headR * 1.05, headR * 0.55), width: headR * 0.7, height: headR * 1.35),
+          hairPaint);
+      // crown / bangs
+      canvas.drawOval(
+          Rect.fromCenter(center: headC.translate(0, -headR * 0.55), width: headR * 2.15, height: headR * 1.15),
+          hairPaint);
+      canvas.drawCircle(headC.translate(0, headR * 0.1), headR * 0.9, Paint()..color = c(agent.skin));
+      // soft lashes
+      final lash = Paint()
+        ..color = const Color(0xFF14181A)
+        ..strokeWidth = 1.2
+        ..strokeCap = StrokeCap.round;
+      for (final dx in [-0.38, 0.38]) {
+        final e = headC.translate(headR * dx, headR * 0.0);
+        canvas.drawLine(e.translate(-headR * 0.08, -headR * 0.12), e.translate(headR * 0.02, -headR * 0.18), lash);
+        canvas.drawLine(e.translate(headR * 0.02, -headR * 0.18), e.translate(headR * 0.1, -headR * 0.1), lash);
+      }
+      // tiny hoop earrings
+      final hoop = Paint()
+        ..color = const Color(0xFFD6A63F)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.3;
+      canvas.drawCircle(headC.translate(-headR * 1.05, headR * 0.35), headR * 0.14, hoop);
+      canvas.drawCircle(headC.translate(headR * 1.05, headR * 0.35), headR * 0.14, hoop);
     }
     // eyes (blink)
     final blink = (t * 2 % 1.0) > 0.94;
@@ -472,7 +667,22 @@ class CheAgentChip extends StatelessWidget {
           border: Border.all(color: agent.color.withValues(alpha: 0.5)),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          ClipOval(child: SizedBox(width: 28, height: 28, child: FittedBox(child: CheMiniPerson(agent: agent, size: 28)))),
+          ClipOval(
+            child: agent.isChe
+                ? Image.asset(
+                    _CheMiniPersonState.cheAvatarAsset,
+                    width: 28,
+                    height: 28,
+                    fit: BoxFit.cover,
+                    alignment: const Alignment(-0.35, -0.15),
+                    errorBuilder: (context, error, stackTrace) => SizedBox(
+                      width: 28,
+                      height: 28,
+                      child: FittedBox(child: CheMiniPerson(agent: agent, size: 28)),
+                    ),
+                  )
+                : SizedBox(width: 28, height: 28, child: FittedBox(child: CheMiniPerson(agent: agent, size: 28))),
+          ),
           const SizedBox(width: 6),
           Text(agent.name, style: CheType.label),
           const SizedBox(width: 6),
