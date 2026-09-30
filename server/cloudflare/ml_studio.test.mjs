@@ -44,3 +44,12 @@ assert.equal(phrase?.type, 'mlJob');
 assert.equal(phrase?.kind, 'classification');
 
 console.log('ml_studio.test.mjs ok');
+
+const m2 = classificationMetrics(['a', 'a', 'b', 'b'], ['a', 'b', 'b', 'b']);
+assert.ok(m2.confusion_matrix);
+assert.match(m2.confusion_matrix.summary, /correct/);
+assert.ok('precision' in m2 && 'recall' in m2 && 'f1' in m2);
+
+const clusterPhrase = parseMlPhrase('Start clustering now', 'start clustering now');
+assert.equal(clusterPhrase?.type, 'mlJob');
+assert.equal(clusterPhrase?.kind, 'clustering');

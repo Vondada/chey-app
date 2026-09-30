@@ -64,4 +64,17 @@ void main() {
     final create = matchOfficePhrase('create a Roblox game lobby script');
     expect(create?.type, CheOfficePhrase.robloxJob);
   });
+
+  test('ML and translate phrases match', () {
+    final ml = matchOfficePhrase('Chay, run classification');
+    expect(ml?.type, CheOfficePhrase.mlJob);
+    expect(ml?.detail, 'classification');
+    final cl = matchOfficePhrase('Start clustering');
+    expect(cl?.type, CheOfficePhrase.mlJob);
+    expect(cl?.detail, 'clustering');
+    final tr = matchOfficePhrase('Translate to Spanish: good morning');
+    expect(tr?.type, CheOfficePhrase.translate);
+    final loc = matchOfficePhrase('Set my language to French');
+    expect(loc?.type, CheOfficePhrase.setLocale);
+  });
 }
