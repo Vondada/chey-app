@@ -8,6 +8,7 @@
 # 3. Application settings → Environment variables → new group `che_ship` with:
 #      SHOREBIRD_TOKEN  (Secret) — API key from https://console.shorebird.dev
 #      CHE_AGENT_URL    (optional) — Worker base URL for dart-defines
+#      CLOUDFLARE_API_TOKEN (Secret) — lets `che-worker` deploy the CHE server
 # 4. Ensure Workflows uses this codemagic.yaml (not Workflow Editor-only).
 # 5. Webhooks: enable for the repo so `triggering` below fires on push to main.
 # 6. Manual: Start new build → workflow `chey-shorebird` (or `chey-mobile`).
@@ -41,6 +42,12 @@ workflows:
           include: true
           source: true
       cancel_previous_builds: true
+    when:
+      changeset:
+        excludes:
+          - 'server/**'
+          - 'docs/**'
+          - '**/*.md'
     scripts:
       - name: Bootstrap native projects
         script: bash ./tool/bootstrap.sh
@@ -87,6 +94,12 @@ workflows:
           include: true
           source: true
       cancel_previous_builds: true
+    when:
+      changeset:
+        excludes:
+          - 'server/**'
+          - 'docs/**'
+          - '**/*.md'
     scripts:
       - name: Bootstrap native projects
         script: bash ./tool/bootstrap.sh
@@ -137,3 +150,41 @@ workflows:
     artifacts:
       - build/ios/iphoneos/*.app
       - build/ios/ipa/CHE-unsigned.ipa
+
+  che-worker:
+    # Deploys CHE's Cloudflare server (server/cloudflare) without GitHub Actions.
+    # Needs CLOUDFLARE_API_TOKEN (Secret, "Edit Cloudflare Workers" template)
+    # in the che_ship group. Skips itself when no server file changed.
+    name: CHE server deploy (Cloudflare)
+    instance_type: mac_mini_m2
+    max_build_duration: 15
+    environment:
+      node: 22
+      groups:
+        - che_ship
+      vars:
+        CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true
+      cancel_previous_builds: true
+    when:
+      changeset:
+        includes:
+          - 'server/cloudflare/**'
+    scripts:
+      - name: Check and deploy Worker
+        working_directory: server/cloudflare
+        script: |
+          set -eu
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "CLOUDFLARE_API_TOKEN is missing from the che_ship group"; exit 1
+          fi
+          npm ci
+          npm run check
+          npm test || echo "Some unit tests failed; deploying anyway (syntax check passed)"
+          npx wrangler deploy

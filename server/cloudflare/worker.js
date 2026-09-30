@@ -1756,32 +1756,31 @@ function storageReadiness(env) {
 async function dispatchChange(env, body) {
   const request = String(body.request || '').trim();
   if (request.length < 8 || request.length > 4000) return json({ detail: 'Describe one change in 8–4000 characters.' }, 400);
-  if (!env.CHE_GITHUB_TOKEN || !env.CHE_GITHUB_REPO || !env.CHE_CHANGE_MODEL) {
-    return json({ detail: 'Phone code proposals are not connected to GitHub yet.' }, 503);
-  }
-  if (!/^[\w.-]+\/[\w.-]+$/.test(env.CHE_GITHUB_REPO) || !/^[\w.:-]+$/.test(env.CHE_CHANGE_MODEL)) {
-    return json({ detail: 'Invalid GitHub or model configuration.' }, 503);
+  if (!env.CHE_GITHUB_TOKEN || !/^[\w.-]+\/[\w.-]+$/.test(String(env.CHE_GITHUB_REPO || ''))) {
+    return json({ detail: 'Phone code proposals need CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the CHE server.' }, 503);
   }
 
+  // The coding team runs here on Cloudflare and reads/writes the repo through
+  // the GitHub API. GitHub Actions (billed minutes) is no longer required.
   const recall = await retrieveVectorContext(env, request);
-  const groundedRequest = ragReference(request, vectorContextText(recall), 6500).slice(0, 12000);
-  const response = await fetch(
-    `https://api.github.com/repos/${env.CHE_GITHUB_REPO}/actions/workflows/che-propose.yml/dispatches`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${env.CHE_GITHUB_TOKEN}`,
-        Accept: 'application/vnd.github+json',
-        'Content-Type': 'application/json',
-        'X-GitHub-Api-Version': '2022-11-28',
-        'User-Agent': 'CHE-Agent',
-      },
-      body: JSON.stringify({ ref: 'main', inputs: { request: groundedRequest, model: env.CHE_CHANGE_MODEL } }),
-    },
-  );
-  if (response.status !== 204) return json({ detail: `GitHub could not start the proposal (${response.status}).` }, 502);
+  const groundedRequest = ragReference(request, vectorContextText(recall), 4000).slice(0, 6000);
+  let prepared;
+  try {
+    prepared = await prepareSelfUpdate(env, groundedRequest);
+  } catch (error) {
+    console.error('CHE change request failed', error?.message || error);
+    return json({ detail: `The coding team failed: ${String(error?.message || error).slice(0, 160)}. Nothing was changed.` }, 502);
+  }
+  if (prepared.status !== 200 || !prepared.proposal) {
+    return json({ detail: `The coding team did not produce a review-passed update, sir. ${prepared.detail || 'Nothing was changed.'}` }, prepared.status && prepared.status !== 200 ? prepared.status : 422);
+  }
+  const team = Array.isArray(prepared.team) ? prepared.team.join(', ') : 'CHE engineering team';
+  const proposalBlock = '```che-update\n' + JSON.stringify(prepared.proposal) + '\n```';
   return json({
-    message: 'I assigned that CHE change to the coding team, sir. They will inspect the repo, implement it, review it, run checks, and open a draft PR for your approval.',
+    message: `${team} wrote and reviewed that change, sir. Nothing has been applied yet. Approve the update card to open it as a pull request.\n\n${proposalBlock}`,
+    engineering_team: prepared.team || [],
+    code_review_passed: true,
+    owner_approval_required: true,
     vector_memory_status: recall.status,
     vector_memory_matches: recall.matches?.length || 0,
   });
