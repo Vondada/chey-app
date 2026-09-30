@@ -49,7 +49,7 @@ function jsonObject(text) {
 
 async function runAgent(env, role, assignment, payload, maxTokens = 2200, provider = '') {
   const answer = await env.AI.run(
-    env.CHE_STRONG_MODEL || env.CHE_FAST_MODEL || '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+    env.CHE_STRONG_MODEL || env.CHE_FAST_MODEL || '@cf/meta/llama-3.1-8b-instruct-fp8',
     {
       messages: [
         {
