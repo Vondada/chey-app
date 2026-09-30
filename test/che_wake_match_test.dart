@@ -54,4 +54,14 @@ void main() {
   test('cheOfficeRoster includes Iris', () {
     expect(cheOfficeRoster, contains('iris'));
   });
+
+  test('Roblox studio phrases match', () {
+    final weapon = matchOfficePhrase('Chay, build a Roblox weapon tool base');
+    expect(weapon?.type, CheOfficePhrase.robloxJob);
+    expect(weapon?.detail?.toLowerCase(), contains('roblox weapon'));
+    final hire = matchOfficePhrase('hire Knox for Roblox Luau clothing shirt');
+    expect(hire?.type, CheOfficePhrase.robloxJob);
+    final create = matchOfficePhrase('create a Roblox game lobby script');
+    expect(create?.type, CheOfficePhrase.robloxJob);
+  });
 }

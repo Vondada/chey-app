@@ -49,6 +49,7 @@ export function listMemoryNotes(data) {
 const RESEARCH_KINDS = new Set([
   'fiverr_scout',
   'opportunity_scout',
+  'roblox_studio',
   'research',
   'web_research',
   'scout',

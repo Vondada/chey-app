@@ -62,3 +62,10 @@ curl -sS https://chey-app.henryjavoni.workers.dev/health
 ```
 
 Flutter SDK not on this box — Dart not re-analyzed here.
+
+## 2026-09-29 (America/Chicago) — Roblox UGC line queued
+
+- Worker: `roblox_studio.js`, voice `robloxJob`, `POST /api/office/roblox`, `officeRobloxJob` creates **goal + project** (owner confirm before publish/spend).
+- Phone: Office → **Projects** board shows Roblox types; create dialog includes Roblox catalog.
+- Playbook: `docs/roblox-studio/PLAYBOOK.md`, tonight first deliverable Luau `WeaponToolBase.luau`.
+- Live Worker seed needs correct `CHE_PAIR_CODE` after deploy (local agent-app pair code did not match production).

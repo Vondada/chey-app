@@ -2,6 +2,7 @@
 // address the owner. Every line is built from the real board only.
 import { OFFICE_AGENTS } from './office_router.js';
 import { parseOpportunityScoutPhrase } from './opportunity_scout.js';
+import { parseRobloxPhrase } from './roblox_studio.js';
 
 const AGENTS = OFFICE_AGENTS;
 
@@ -18,6 +19,10 @@ export function matchOfficePhrase(raw) {
   const who = t.match(/\bwhat(?:'s|s| is) ([a-z]+) (?:doing|working on)\b/);
   if (who && AGENTS.includes(who[1])) return { type: 'agentStatus', agentId: who[1] };
   if (/^(?:office )?stand down\b|\boffice,? stand down\b/.test(t)) return { type: 'standDown' };
+
+  // Roblox / Luau catalog jobs (games, weapon, clothing/UGC, passes) — owner confirm before publish/spend.
+  const roblox = parseRobloxPhrase(original, t);
+  if (roblox) return roblox;
 
   // Hire Iris (Ad Studio core desk — rostered via ensureLaAgenciaRoster).
   if (/\bhire\s+iris\b/.test(t) || /\b(?:add|staff)\s+iris\b/.test(t) || /\biris\b.*\b(?:ad studio|join(?:s|ed)? the office)\b/.test(t)) {

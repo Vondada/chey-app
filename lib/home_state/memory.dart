@@ -540,6 +540,11 @@ extension _CheHomeMemory on _CHEHomeState {
                           DropdownMenuItem(value: 'book', child: Text('Book')),
                           DropdownMenuItem(value: 'screenplay', child: Text('Movie / screenplay')),
                           DropdownMenuItem(value: 'invention', child: Text('Invention / prototype')),
+                          DropdownMenuItem(value: 'business', child: Text('Business')),
+                          DropdownMenuItem(value: 'roblox_game', child: Text('Roblox · Game')),
+                          DropdownMenuItem(value: 'roblox_weapon', child: Text('Roblox · Weapon')),
+                          DropdownMenuItem(value: 'roblox_clothing', child: Text('Roblox · Clothing / UGC')),
+                          DropdownMenuItem(value: 'roblox_pass', child: Text('Roblox · Game Pass')),
                         ],
                         onChanged: busy
                             ? null

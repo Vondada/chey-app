@@ -25,6 +25,7 @@ enum CheOfficePhrase {
   standDown,
   hireIris,
   fiverrScout,
+  robloxJob,
   goal,
 }
 
@@ -62,6 +63,21 @@ const cheOfficeRoster = ['nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris'
   }
   if (RegExp(r'^(?:office )?stand down\b|\boffice,? stand down\b').hasMatch(t)) {
     return (type: CheOfficePhrase.standDown, agentId: null, detail: null);
+  }
+
+  // Roblox / Luau catalog (games, weapon, clothing/UGC, passes) — owner confirm before publish/spend.
+  final looksRoblox = RegExp(r'\broblox\b|\bluau\b|\bugc\b|\bgame\s*pass(?:es)?\b|\brobucks?\b').hasMatch(t) ||
+      (RegExp(r'\b(?:weapon|sword|gun|clothing|shirt|pants|hoodie|avatar|skin|accessory)\b').hasMatch(t) &&
+          RegExp(r'\b(?:roblox|luau|ugc|game)\b').hasMatch(t));
+  if (RegExp(r'\bhire\b').hasMatch(t) && looksRoblox) {
+    final from = RegExp(r'\bhire\b[\s\S]{0,80}?\b(?:for|to|as)\s+(.+)$', caseSensitive: false).firstMatch(originalSpoken);
+    final task = (from?.group(1) ?? originalSpoken).replaceAll(RegExp(r'[.!?]+$'), '').trim();
+    return (type: CheOfficePhrase.robloxJob, agentId: null, detail: task.isEmpty ? null : task);
+  }
+  if (RegExp(r'\b(?:build|make|create|design|code|develop)\b').hasMatch(t) && looksRoblox) {
+    final from = RegExp(r'\b(?:build|make|create|design|code|develop)\s+(.+)$', caseSensitive: false).firstMatch(originalSpoken);
+    final task = (from?.group(1) ?? originalSpoken).replaceAll(RegExp(r'[.!?]+$'), '').trim();
+    return (type: CheOfficePhrase.robloxJob, agentId: null, detail: task.isEmpty ? null : task);
   }
 
   if (RegExp(r'\bhire\s+iris\b').hasMatch(t) ||

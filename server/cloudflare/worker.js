@@ -36,6 +36,14 @@ import { prepareSelfUpdate } from './self_development.js';
 import { officeToday } from './office_board.js';
 import { ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
 import { matchOfficePhrase, speakGoalPlan, speakOfficeBoard } from './office_phrases.js';
+import {
+  buildRobloxJobBrief,
+  classifyRobloxCatalog,
+  robloxCapabilityNote,
+  robloxCreatorSystemAddon,
+  robloxProjectTypeFor,
+  speakRobloxJobPlan,
+} from './roblox_studio.js';
 import { assertOwnerTalksToCheOnly } from './office_router.js';
 import {
   buildFiverrFitTask,
@@ -1862,6 +1870,124 @@ export class CheState extends DurableObject {
     return { agent: iris, jobs: [], reply: speakHireIris(iris) };
   }
 
+
+  // Queue Roblox catalog work (game / weapon / clothing-UGC / pass). Specs+Luau drafts only;
+  // owner confirm before publish, upload, Robux spend, or outreach.
+  async officeRobloxJob(data, taskText = '', catalog = 'game') {
+    await this.staffOffice(data);
+    const goalId = crypto.randomUUID();
+    const cat = classifyRobloxCatalog(taskText || catalog);
+    const brief = String(taskText || `Start Roblox ${cat} studio line tonight`).replace(/\s+/g, ' ').trim().slice(0, 500);
+    const goalText = `Roblox ${cat} studio: ${brief}`;
+    const jobs = [];
+    const knox = data.team.find((a) => a.name === 'Knox' && !a.retired);
+    const nova = data.team.find((a) => a.name === 'Nova' && !a.retired);
+    const lyra = data.team.find((a) => a.name === 'Lyra' && !a.retired);
+    const steps = [];
+    if (knox) steps.push({ agent: knox, task: buildRobloxJobBrief(brief, cat), kind: 'roblox_studio' });
+    if (nova) steps.push({ agent: nova, task: `Product/listing plan for Roblox ${cat}: ${brief}. Include monetization (passes) and publish checklist. Owner confirm before upload/spend.`, kind: 'roblox_studio' });
+    if (lyra && (cat === 'clothing' || cat === 'avatar' || cat === 'ugc' || cat === 'game')) {
+      steps.push({ agent: lyra, task: `Creative/UGC brief for Roblox ${cat}: ${brief}. Mood, palette, asset list. No publish without owner confirm.`, kind: 'roblox_studio' });
+    }
+    for (const step of steps) {
+      let refused = '';
+      try {
+        assertAgentMayRun(step.agent, { task: step.task });
+      } catch (error) {
+        refused = permissionBlocker(step.agent, error);
+      }
+      const task = queueAgentTask(data, step.agent, step.task, 'roblox_studio', {
+        job_id: goalId,
+        kind: step.kind,
+        catalog: cat,
+      });
+      task.owner_confirm_required = true;
+      task.outbound_allowed = false;
+      task.auto_publish = false;
+      let blocker = refused || officeToolBlocker(this.env, step.agent);
+      if (blocker) {
+        task.status = 'blocked';
+        task.error = blocker;
+      }
+      jobs.push({ id: task.id, agent: step.agent.name, task: task.task, status: task.status, blocker });
+    }
+    data.office_goals = Array.isArray(data.office_goals) ? data.office_goals : [];
+    data.office_goals.push({
+      id: goalId,
+      goal: goalText,
+      job_ids: jobs.map((j) => j.id),
+      kind: 'roblox_studio',
+      catalog: cat,
+      owner_confirm_required: true,
+      created_at: new Date().toISOString(),
+    });
+    data.office_goals = data.office_goals.slice(-100);
+
+    // Projects board entry so phone UI shows live progress tonight.
+    data.projects = Array.isArray(data.projects) ? data.projects : [];
+    const now = new Date().toISOString();
+    const project = {
+      id: crypto.randomUUID(),
+      title: `Roblox ${cat} studio — tonight`,
+      type: robloxProjectTypeFor(brief),
+      brief: `${brief}\n\n${robloxCapabilityNote()}`,
+      content: [
+        `# Roblox ${cat} — first draft stub`,
+        '',
+        '## Owner confirm gates',
+        '- No Marketplace publish/upload',
+        '- No Robux spend',
+        '- No outreach without confirm',
+        '',
+        '## Tonight deliverables',
+        '- Experience / asset brief',
+        '- Luau stub modules (see docs/roblox-studio/)',
+        '- Listing + pass monetization notes',
+        '',
+        '## Capability',
+        robloxCapabilityNote(),
+      ].join('\n'),
+      status: jobs.some((j) => j.status === 'queued' || j.status === 'running') ? 'in_progress' : 'draft',
+      goal_id: goalId,
+      job_ids: jobs.map((j) => j.id),
+      owner_confirm_required: true,
+      created_at: now,
+      updated_at: now,
+    };
+    data.projects.unshift(project);
+    data.projects = data.projects.slice(0, 50);
+
+    const robloxNoteBody = [
+      `Roblox ${cat} studio queued for tonight.`,
+      `Task: ${brief.slice(0, 200)}.`,
+      `Project type: ${project.type}. Jobs: ${jobs.map((j) => j.agent).join(', ') || 'none'}.`,
+      'Owner confirm required before publish, upload, Robux spend, or outreach.',
+      'Luau stub: docs/roblox-studio/luau/WeaponToolBase.luau for weapon tools; see docs/roblox-studio/PLAYBOOK.md.',
+    ].join(' ');
+    writeResearchMemoryNote(data, {
+      force: true,
+      task: { kind: 'roblox_studio', task: brief, id: goalId },
+      agent: { name: 'Knox', role: 'Engineering / Codex jobs' },
+      result: robloxNoteBody,
+      sources: [],
+    });
+    addOwnerMemory(
+      data,
+      `Roblox ${cat} line queued tonight — project ${project.title}. Owner confirm before publish/spend.`,
+    );
+
+    await this.ctx.storage.put('che', data);
+    if (jobs.some((j) => j.status === 'queued')) await this.scheduleWork();
+    this.broadcastAgents(data);
+    return {
+      goal_id: goalId,
+      project_id: project.id,
+      catalog: cat,
+      jobs,
+      reply: speakRobloxJobPlan(jobs, cat, brief),
+    };
+  }
+
   // Queue a Fiverr scout shortlist for owner review — never auto-message/bid.
   async officeFiverrScout(data, query) {
     await this.staffOffice(data);
@@ -2277,6 +2403,9 @@ export class CheState extends DurableObject {
           learned_knowledge: data.learned_knowledge,
           suggestions: data.suggestions,
           projects: data.projects,
+          office_goals: Array.isArray(data.office_goals) ? data.office_goals.slice(-40) : [],
+          opportunity_scouts: Array.isArray(data.opportunity_scouts) ? data.opportunity_scouts.slice(-20) : [],
+          pipeline: pipelineSummary(data),
           vault_items: data.vault_items,
           team: data.team,
           team_tasks: data.team_tasks,
@@ -3265,7 +3394,8 @@ export class CheState extends DurableObject {
                   'For books/scripts include actual prose/scenes, not only an outline.',
                   'For inventions include concept, mechanism, feasibility assumptions, prototype and tests.',
                   'Do not claim live research or prior-art checks unless supplied.',
-                ].join('\n'),
+                  robloxCreatorSystemAddon(type),
+                ].filter(Boolean).join('\n'),
               },
               {
                 role: 'user',
@@ -3293,6 +3423,7 @@ export class CheState extends DurableObject {
           brief,
           content,
           status: content ? 'draft' : 'new',
+          owner_confirm_required: /^roblox/i.test(type),
           created_at: now,
           updated_at: now,
         };
@@ -3483,6 +3614,20 @@ export class CheState extends DurableObject {
         const plan = await this.officeGoal(data, goal);
         return json(plan);
       }
+      // Roblox / Luau studio job — creates office goal + Projects board entry.
+      // Owner confirm required before publish/upload/Robux/outreach.
+      if (path === '/api/office/roblox' && request.method === 'POST') {
+        const task = String(body.task || body.goal || body.brief || '').trim().slice(0, 2000);
+        const catalog = String(body.catalog || body.type || 'game').trim().slice(0, 40);
+        if (!task) return json({ detail: 'Roblox task required (e.g. weapon tool base).' }, 400);
+        const job = await this.officeRobloxJob(data, task, catalog);
+        return json({
+          ...job,
+          owner_confirm_required: true,
+          outbound_allowed: false,
+          auto_publish: false,
+        });
+      }
       // The owner talks only to CHE; agents report only to CHE. Anything
       // addressed around CHE is refused here, in code.
       if (path === '/api/office/messages' && request.method === 'POST') {
@@ -3526,6 +3671,18 @@ export class CheState extends DurableObject {
         if (officePhrase?.type === 'hireIris') {
           const hired = await this.officeHireIris(data, officePhrase.task || '');
           return ndjsonReply(hired.reply, { office: 'hireIris', jobs: hired.jobs.length, agent: hired.agent?.name || 'Iris' });
+        }
+        if (officePhrase?.type === 'robloxJob') {
+          const job = await this.officeRobloxJob(data, officePhrase.task || '', officePhrase.catalog || 'game');
+          return ndjsonReply(job.reply, {
+            office: 'robloxJob',
+            catalog: job.catalog,
+            jobs: job.jobs.length,
+            goal_id: job.goal_id,
+            project_id: job.project_id,
+            owner_confirm_required: true,
+            outbound_allowed: false,
+          });
         }
         if (officePhrase?.type === 'fiverrScout') {
           const scout = await this.officeFiverrScout(data, officePhrase.query);

@@ -577,7 +577,8 @@ const MEETING_ROLES = [
   { test: /market|trad|stock|crypto|futures|portfolio|price/, role: 'Market Intelligence Partner', specialty: 'markets, backtesting, risk and trading systems' },
   { test: /business|revenue|customer|sales|launch|pricing|budget|cash|advertis|marketing|campaign|media buying/, role: 'Business Operations Partner', specialty: 'planning, operations, leads, advertising, campaigns, billing and workflows' },
   { test: /design|brand|visual|video|image|music|creative|logo/, role: 'Creative Studio Partner', specialty: 'visual concepts, media production and creative assets' },
-  { test: /app|code|build|software|website|api|feature/, role: 'Build + Operations Partner', specialty: 'implementation plans, engineering trade-offs and delivery' },
+  { test: /app|code|build|software|website|api|feature|roblox|luau|ugc|game pass/, role: 'Build + Operations Partner', specialty: 'implementation plans, engineering trade-offs, delivery, and Roblox/Luau experience drafts' },
+  { test: /roblox|luau|ugc|game pass|roblox clothing|roblox weapon/, role: 'Roblox Experience Partner', specialty: 'Roblox games, weapons, clothing/UGC, avatars, passes — Luau drafts and publish checklists; owner confirm before upload/spend' },
 ];
 
 function pickParticipants(data, objective, agentIds) {
