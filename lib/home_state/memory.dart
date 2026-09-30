@@ -1284,47 +1284,6 @@ extension _CheHomeMemory on _CHEHomeState {
     );
   }
 
-  Future<void> _loadSharedScreenContext() async {
-    try {
-      final data = await Clipboard.getData(Clipboard.kTextPlain);
-      final value = data?.text?.trim();
-
-      if (value == null || value.isEmpty) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Copy the text you want C.H.E. to read, then tap this again.',
-            ),
-          ),
-        );
-        return;
-      }
-
-      _pendingScreenContext =
-          value.length > 12000 ? value.substring(0, 12000) : value;
-
-      if (!mounted) return;
-      _set(() {});
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(          content: Text(
-            'Shared screen/text context is ready for your next C.H.E. request.',
-          ),
-        ),
-      );
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'This platform did not allow clipboard access.',
-          ),
-        ),
-      );
-    }
-  }
-
   List<String> _requestedCapabilities(String message) {
     final lower = message.toLowerCase();
     final result = <String>[];
