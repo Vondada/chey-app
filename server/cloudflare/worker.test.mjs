@@ -161,7 +161,7 @@ test('plugin catalog is paired, opt-in, read-only and never exposes tokens', asy
   assert.equal((await send('/api/plugins')).status, 401);
   const token = (await (await send('/api/pair', 'POST', { code: '123456' })).json()).device_token;
   const list = await (await send('/api/plugins', 'GET', {}, token)).json();
-  assert.deepEqual(list.plugins.map((item) => item.id), ['twilio_sms', 'weather']);
+  assert.deepEqual(list.plugins.map((item) => item.id), ['stripe_payments', 'twilio_sms', 'weather']);
   const weatherPlugin = list.plugins.find((item) => item.id === 'weather');
   assert.equal(weatherPlugin.enabled, false);
   assert.doesNotMatch(JSON.stringify(list), /secret-value|weather\.example/);
