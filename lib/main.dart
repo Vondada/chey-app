@@ -362,6 +362,9 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   CheWakeWordEngine? _porcupineWake;
   bool _realtimeConnecting = false;
 
+  // Unread INCOMING mailbox messages (badge on the Chat mailbox icon).
+  int _mailboxUnread = 0;
+
   // After the paid live-voice service fails once (free-only mode), skip it
   // for a while and go straight to the free native listener: no stutter.
   DateTime _realtimeSkipUntil = DateTime.fromMillisecondsSinceEpoch(0);
@@ -1843,7 +1846,12 @@ OWNER AGENCY
               actions: [
                 IconButton(
                   tooltip: 'Mailbox and Flagstaff',
-                  icon: const Icon(Icons.markunread_mailbox_rounded),
+                  icon: _mailboxUnread > 0
+                      ? Badge(
+                          label: Text('$_mailboxUnread'),
+                          child: const Icon(Icons.markunread_mailbox_rounded),
+                        )
+                      : const Icon(Icons.markunread_mailbox_rounded),
                   onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
                     builder: (_) => CheMailboxScreen(
                       baseUrl: cheAgentBaseUrl,

@@ -376,6 +376,21 @@ extension _CheHomeSecurity on _CHEHomeState {
     return false;
   }
 
+  // Lightweight poll for the unread mailbox badge on the Chat screen.
+  Future<void> _refreshMailboxBadge() async {
+    if (_deviceToken == null || cheAgentBaseUrl.isEmpty) return;
+    try {
+      final response = await http
+          .get(Uri.parse('$cheAgentBaseUrl/api/mailbox/badge'), headers: _authHeaders)
+          .timeout(const Duration(seconds: 12));
+      if (response.statusCode != 200) return;
+      final data = jsonDecode(response.body);
+      if (data is Map && mounted) {
+        _set(() => _mailboxUnread = (data['unread'] as num?)?.toInt() ?? 0);
+      }
+    } catch (_) {}
+  }
+
   Future<void> _loadAgentState({bool silent = false}) async {
     if (_deviceToken == null || _deviceToken!.isEmpty) return;
     if (_loadingAgentState) return;
@@ -397,6 +412,7 @@ extension _CheHomeSecurity on _CHEHomeState {
 
       // Keep the phone's copy of CHE's library current for offline recall.
       unawaited(_offlineLibrary.sync(cheAgentBaseUrl, _authHeaders));
+      unawaited(_refreshMailboxBadge());
 
       final data = jsonDecode(response.body);
 
