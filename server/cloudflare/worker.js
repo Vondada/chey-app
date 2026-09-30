@@ -440,6 +440,7 @@ function pcm16ToWav(pcm, sampleRate = 24000) {
 }
 
 let lastGeminiVoiceError = '';
+let geminiVoiceCooldownUntil = 0;
 async function geminiSpeech(env, text, fetcher = fetch) {
   lastGeminiVoiceError = '';
   try {
@@ -462,6 +463,10 @@ async function geminiSpeech(env, text, fetcher = fetch) {
       const body = (await response.text().catch(() => '')).slice(0, 2000);
       console.log("CHE voice error:", response.status, body);
       lastGeminiVoiceError = `${response.status} ${body.replace(/\s+/g, ' ').slice(0, 220)}`;
+      // Quota / rate-limit: skip Gemini TTS for a while. Do not retry here.
+      if (response.status === 429 || /quota|rate.?limit|billing/i.test(body)) {
+        geminiVoiceCooldownUntil = Date.now() + 30 * 60 * 1000;
+      }
       return null;
     }
     const data = await response.json();
@@ -487,20 +492,60 @@ async function geminiSpeech(env, text, fetcher = fetch) {
 
 async function voiceSynthesisResponse(env, text) {
   const input = String(text || '').trim().slice(0, 6000);
+  const voiceFailures = [];
 
-  // First choice: Google Gemini text-to-speech on the configured free tier.
-  // If Gemini cannot produce audio, keep the existing providers as fallbacks.
-  if (env.GEMINI_API_KEY) {
-    const wav = await geminiSpeech(env, input);
-    if (wav) {
-      return new Response(wav, {
-        headers: { 'Content-Type': 'audio/wav', 'Cache-Control': 'no-store', 'X-CHE-Voice': 'gemini-tts' },
-      });
+  // Prefer free Workers AI TTS first so Gemini quota does not block spoken replies.
+  if (env.AI) {
+    try {
+      const response = await env.AI.run(
+        String(env.CHE_CLOUDFLARE_TTS_MODEL || '@cf/deepgram/aura-2-en'),
+        {
+          text: input,
+          speaker: String(env.CHE_CLOUDFLARE_TTS_VOICE || 'luna'),
+          encoding: 'mp3',
+        },
+        { returnRawResponse: true },
+      );
+      if (response && response.ok) {
+        const bytes = await response.arrayBuffer();
+        if (bytes.byteLength > 0 && bytes.byteLength <= 6 * 1024 * 1024) {
+          return new Response(bytes, {
+            headers: {
+              'Content-Type': response.headers.get('content-type') || 'audio/mpeg',
+              'Cache-Control': 'no-store',
+              'X-CHE-Voice': 'cloudflare-aura',
+            },
+          });
+        }
+        voiceFailures.push('cloudflare-aura: empty audio');
+      } else {
+        voiceFailures.push(`cloudflare-aura: ${response?.status || 'failed'}`);
+      }
+    } catch (error) {
+      voiceFailures.push(`cloudflare-aura: ${String(error?.message || error).slice(0, 120)}`);
     }
+  } else {
+    voiceFailures.push('cloudflare-aura: no AI binding');
   }
 
-  // Fallback 1: optional premium-quality CHE/Chaze voice through ElevenLabs.
-  // Credentials stay server-side.
+  // Gemini free TTS only when not cooling down after 429/quota. One attempt, no retries.
+  if (env.GEMINI_API_KEY) {
+    if (Date.now() < geminiVoiceCooldownUntil) {
+      voiceFailures.push(`gemini: cooling down after quota (${lastGeminiVoiceError || '429'})`);
+    } else {
+      const wav = await geminiSpeech(env, input);
+      if (wav) {
+        return new Response(wav, {
+          headers: { 'Content-Type': 'audio/wav', 'Cache-Control': 'no-store', 'X-CHE-Voice': 'gemini-tts' },
+        });
+      }
+      voiceFailures.push(`gemini: ${lastGeminiVoiceError || 'no audio'}`);
+    }
+  } else {
+    voiceFailures.push('gemini: no GEMINI_API_KEY');
+  }
+
+  // Premium voices only when secrets exist.
   if (env.ELEVENLABS_API_KEY && env.CHE_ELEVENLABS_VOICE_ID) {
     try {
       const voiceId = encodeURIComponent(String(env.CHE_ELEVENLABS_VOICE_ID).trim());
@@ -622,46 +667,11 @@ async function voiceSynthesisResponse(env, text) {
     }
   }
 
-  // Fallback 4: use the existing Cloudflare Workers AI
-  // binding. This keeps voice credentials out of the iPhone app and works
-  // without an ElevenLabs/OpenAI/Hugging Face voice while the Workers AI free allocation lasts.
-  if (env.AI) {
-    try {
-      const response = await env.AI.run(
-        String(env.CHE_CLOUDFLARE_TTS_MODEL || '@cf/deepgram/aura-2-en'),
-        {
-          text: input,
-          speaker: String(env.CHE_CLOUDFLARE_TTS_VOICE || 'luna'),
-          encoding: 'mp3',
-        },
-        { returnRawResponse: true },
-      );
-
-      if (response && response.ok) {
-        const bytes = await response.arrayBuffer();
-        if (bytes.byteLength > 0 && bytes.byteLength <= 6 * 1024 * 1024) {
-          return new Response(bytes, {
-            headers: {
-              'Content-Type': response.headers.get('content-type') || 'audio/mpeg',
-              'Cache-Control': 'no-store',
-              'X-CHE-Voice': 'cloudflare-aura',
-            },
-          });
-        }
-      }
-    } catch (_) {
-      // Fall through to any custom CHE voice connector below.
-    }
-  }
-
   if (!env.CHE_VOICE_URL) {
-    const reasons = [];
-    if (env.GEMINI_API_KEY) reasons.push(`gemini: ${lastGeminiVoiceError || 'no audio'}`);
-    else reasons.push('gemini: no GEMINI_API_KEY');
-    if (!env.ELEVENLABS_API_KEY) reasons.push('elevenlabs: not set up');
-    if (!env.CHE_OPENAI_API_KEY) reasons.push('openai: not set up');
-    if (!env.HF_TOKEN) reasons.push('huggingface: no HF_TOKEN');
-    return json({ detail: `No server voice worked (${reasons.join(' | ')}).` }, 503);
+    if (!env.ELEVENLABS_API_KEY) voiceFailures.push('elevenlabs: not set up');
+    if (!env.CHE_OPENAI_API_KEY) voiceFailures.push('openai: not set up');
+    if (!env.HF_TOKEN) voiceFailures.push('huggingface: no HF_TOKEN');
+    return json({ detail: `No server voice worked (${voiceFailures.join(' | ')}).` }, 503);
   }
 
   let url;
@@ -4161,7 +4171,17 @@ export class CheState extends DurableObject {
           /\b(?:che(?:'s)?|your)\b[\s\S]{0,80}\b(?:ui|interface|screen|page|layout|navigation|code|app)\b[\s\S]{0,80}\b(?:change|update|redesign|fix|move|add|remove|improve)\b/i.test(message) ||
           /\b(?:add|apply|put|install|merge)\b[\s\S]{0,100}\b(?:this|the)\s+code\b[\s\S]{0,100}\b(?:to|into)\s+(?:che|your app|yourself)\b/i.test(message);
         if (selfChangeRequest) {
-          const prepared = await prepareSelfUpdate(this.env, message);
+          let prepared;
+          try {
+            prepared = await prepareSelfUpdate(this.env, message);
+          } catch (error) {
+            // GitHub failures must never break chat/agents/voice/memory.
+            console.error('CHE self-development failed', error?.message || error);
+            prepared = {
+              status: 502,
+              detail: `GitHub self-update failed (${String(error?.message || error).slice(0, 160)}). Cloudflare cannot edit the Flutter repo.`,
+            };
+          }
           if (prepared.status === 200 && prepared.proposal) {
             const team = Array.isArray(prepared.team) ? prepared.team.join(', ') : 'CHE engineering team';
             const proposalBlock = '```che-update\\n' + JSON.stringify(prepared.proposal) + '\\n```';
@@ -4178,11 +4198,16 @@ export class CheState extends DurableObject {
               },
             );
           }
+          const ghMissing = /CHE_GITHUB|GitHub|github|Flutter repo/i.test(String(prepared.detail || ''));
           return ndjsonReply(
-            `The coding team did not produce a review-passed update, sir. ${prepared.detail || 'Nothing was changed.'}`,
+            ghMissing
+              ? `GitHub self-update is unavailable (${prepared.detail || 'missing token/repo'}). Cloudflare cannot edit the Flutter app repo. Chat, agents, voice and memory still work.`
+              : `The coding team did not produce a review-passed update, sir. ${prepared.detail || 'Nothing was changed.'}`,
             {
               source: 'che_engineering_team',
               code_review_passed: false,
+              github_failed: ghMissing,
+              cloudflare_cannot_edit_flutter_repo: true,
               owner_approval_required: true,
               vector_memory_status: vectorRecall.status,
               vector_memory_checked: Boolean(vectorRecall.checked),

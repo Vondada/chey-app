@@ -51,21 +51,6 @@ export function creations(data, media = [], origin = '') {
       about: `${v.name} ${v.kind} ${v.content}`, at: v.updated_at || v.created_at,
     });
   }
-  for (const j of data.twilio_bulk_jobs || []) {
-    if (j.status !== 'pending_owner') continue;
-    events.push({
-      at: j.created_at, who: 'CHE', kind: 'twilio_bulk', id: j.id,
-      line: `CHE needs your decision on bulk SMS to ${j.recipient_count} numbers (sample: “${String(j.sample || '').slice(0, 40)}”).`,
-    });
-  }
-  for (const m of data.twilio_inbound || []) {
-    events.push({
-      at: m.at, who: 'CHE', kind: 'twilio_inbound', id: m.id,
-      line: m.kind === 'opt_out'
-        ? `SMS opt-out from ${m.from}.`
-        : `Inbound SMS from ${m.from}: “${String(m.body || '').slice(0, 60)}”.`,
-    });
-  }
   for (const j of data.jobs || []) {
     if (!DONE.has(j.status) || !j.result) continue;
     items.push({
@@ -198,6 +183,21 @@ export function activityFeed(data, media = [], origin = '', limit = 30) {
   }
   for (const p of data.projects || []) {
     events.push({ at: p.created_at, who: 'CHE', kind: 'project', id: p.id, line: `CHE started the project ${quote(shortTitle(p.title))}.` });
+  }
+  for (const j of data.twilio_bulk_jobs || []) {
+    if (j.status !== 'pending_owner') continue;
+    events.push({
+      at: j.created_at, who: 'CHE', kind: 'twilio_bulk', id: j.id,
+      line: `CHE needs your decision on bulk SMS to ${j.recipient_count} numbers (sample: “${String(j.sample || '').slice(0, 40)}”).`,
+    });
+  }
+  for (const m of data.twilio_inbound || []) {
+    events.push({
+      at: m.at, who: 'CHE', kind: 'twilio_inbound', id: m.id,
+      line: m.kind === 'opt_out'
+        ? `SMS opt-out from ${m.from}.`
+        : `Inbound SMS from ${m.from}: “${String(m.body || '').slice(0, 60)}”.`,
+    });
   }
   return events.filter((e) => e.at).sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, limit);
 }
