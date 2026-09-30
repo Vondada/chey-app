@@ -423,7 +423,8 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
                 child: SizedBox(
                   width: size.width,
                   height: size.height,
-                  child: AnimatedBuilder(
+                  child: RepaintBoundary(
+                    child: AnimatedBuilder(
                     animation: _pulse,
                     builder: (context, _) {
                       return Stack(
@@ -467,6 +468,7 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
                         ],
                       );
                     },
+                  ),
                   ),
                 ),
               );

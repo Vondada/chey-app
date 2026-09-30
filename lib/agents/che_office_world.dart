@@ -82,15 +82,16 @@ class CheOfficeWorld extends StatefulWidget {
 class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStateMixin {
   final TransformationController _view = TransformationController();
   late final AnimationController _zoom = AnimationController(vsync: this, duration: const Duration(milliseconds: 520));
-  late final AnimationController _bob = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))..repeat();
   Animation<Matrix4>? _zoomAnim;
-  final Map<String, Offset> _spot = {};
+  /// Spot updates notify walkers without rebuilding static rooms/props.
+  final ValueNotifier<Map<String, Offset>> _spots = ValueNotifier<Map<String, Offset>>({});
   final Map<String, String> _seenAssignment = {};
   final Map<String, DateTime> _ack = {};
   final Map<String, String> _ackText = {};
   final math.Random _rng = math.Random();
   Timer? _wander;
   bool _fitted = false;
+  bool _holdingIdle = false;
   double _viewportWidth = 0;
   String _announcement = '';
   String? _focusedId;
@@ -136,6 +137,8 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
     }
     _placeAll(initial: true);
     _wander = Timer.periodic(const Duration(milliseconds: 2600), (_) => _wanderStep());
+    CheIdleLifeClock.instance.retain();
+    _holdingIdle = true;
   }
 
   @override
@@ -165,8 +168,12 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
   void dispose() {
     _wander?.cancel();
     _zoom.dispose();
-    _bob.dispose();
     _view.dispose();
+    _spots.dispose();
+    if (_holdingIdle) {
+      CheIdleLifeClock.instance.release();
+      _holdingIdle = false;
+    }
     super.dispose();
   }
 
@@ -193,33 +200,42 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
   }
 
   void _placeAll({bool initial = false}) {
+    final spot = Map<String, Offset>.of(_spots.value);
     for (var i = 0; i < widget.agents.length; i++) {
       final p = widget.agents[i];
       final room = _roomFor(p.room);
-      final current = _spot[p.agent.id];
+      final current = spot[p.agent.id];
       final inRoom = current != null && room.rect.contains(current);
       if (inRoom && !initial) continue;
-      _spot[p.agent.id] = p.room == 'office' && p.working ? _deskSpot(i) : _randomSpotIn(room);
+      spot[p.agent.id] = p.room == 'office' && p.working ? _deskSpot(i) : _randomSpotIn(room);
     }
-    _spot.putIfAbsent('che', () {
+    spot.putIfAbsent('che', () {
       final office = _roomFor('office').rect;
       return Offset(office.center.dx, office.bottom - 70);
     });
-    _spot.removeWhere((id, _) => id != 'che' && !widget.agents.any((p) => p.agent.id == id));
+    spot.removeWhere((id, _) => id != 'che' && !widget.agents.any((p) => p.agent.id == id));
+    _spots.value = spot;
   }
 
   void _wanderStep() {
     if (!mounted || CheMotion.reduced(context)) return;
-    setState(() {
-      for (var i = 0; i < widget.agents.length; i++) {
-        final p = widget.agents[i];
-        // Workers stay at their station; others stroll around their room.
-        if (p.working && p.room == 'office') continue;
-        if (_rng.nextDouble() > _energy(p.agent) * 0.6) continue;
-        _spot[p.agent.id] = _randomSpotIn(_roomFor(p.room));
-      }
-      _ack.removeWhere((_, at) => DateTime.now().difference(at) > const Duration(seconds: 4));
-    });
+    // Off-tab / background: TickerMode is false — skip wander setState storms.
+    if (!TickerMode.valuesOf(context).enabled) return;
+    final spot = Map<String, Offset>.of(_spots.value);
+    var moved = false;
+    for (var i = 0; i < widget.agents.length; i++) {
+      final p = widget.agents[i];
+      // Workers stay at their station; others stroll around their room.
+      if (p.working && p.room == 'office') continue;
+      if (_rng.nextDouble() > _energy(p.agent) * 0.6) continue;
+      spot[p.agent.id] = _randomSpotIn(_roomFor(p.room));
+      moved = true;
+    }
+    final beforeAck = _ack.length;
+    _ack.removeWhere((_, at) => DateTime.now().difference(at) > const Duration(seconds: 4));
+    if (moved) _spots.value = spot;
+    // Ack expiry needs a light rebuild for bubble removal only.
+    if (_ack.length != beforeAck && mounted) setState(() {});
   }
 
   void _fit(double viewportWidth) {
@@ -246,7 +262,7 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
   }
 
   void zoomToAgent(String id) {
-    final spot = _spot[id];
+    final spot = _spots.value[id];
     if (spot == null || _viewportWidth == 0) return;
     const s = 2.6;
     final tx = _viewportWidth / 2 - spot.dx * s;
@@ -383,65 +399,73 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
     return 'Got it!';
   }
 
-  Widget _walker(CheAgent agent, {CheAgentProfile? profile}) {
-    final spot = _spot[agent.id] ?? Offset.zero;
+  Widget _walker(CheAgent agent, Map<String, Offset> spots, {CheAgentProfile? profile}) {
+    final spot = spots[agent.id] ?? Offset.zero;
     final acked = _ack.containsKey(agent.id);
     final energy = _energy(agent);
     final label = profile == null ? 'CHE, your manager. Double tap to talk to her.' : '${_describe(profile)}. Double tap to zoom in.';
+    final phase = CheIdleLifeClock.phaseFor(agent.id);
     return AnimatedPositioned(
       key: ValueKey(agent.id),
       duration: Duration(milliseconds: (2400 / (0.6 + energy)).round()),
       curve: Curves.easeInOutSine,
       left: spot.dx - 34,
       top: spot.dy - 70,
-      child: Semantics(
-        button: true,
-        label: label,
-        child: GestureDetector(
-          onTap: () => zoomToAgent(agent.id),
-          onDoubleTap: () => widget.onOpenAgent(agent),
-          onLongPress: () => widget.onOpenAgent(agent),
-          child: AnimatedBuilder(
-            animation: _bob,
-            builder: (context, child) {
-              final t = _bob.value * 2 * math.pi;
-              final hop = acked ? -math.max(0.0, math.sin(t * 2)) * 18 : -math.max(0.0, math.sin(t)) * 3 * energy;
-              return Transform.translate(offset: Offset(0, hop), child: child);
-            },
-            child: SizedBox(
-              width: 68,
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                if (acked)
-                  Container(
-                    constraints: const BoxConstraints(maxWidth: 150),
-                    margin: const EdgeInsets.only(bottom: 4),
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(color: CheColors.accent, borderRadius: BorderRadius.circular(12)),
-                    child: Text(_ackText[agent.id] ?? 'Got it!',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: CheType.caption.copyWith(color: const Color(0xFF03120F), fontWeight: FontWeight.w700)),
+      child: RepaintBoundary(
+        child: Semantics(
+          button: true,
+          label: label,
+          child: GestureDetector(
+            onTap: () => zoomToAgent(agent.id),
+            onDoubleTap: () => widget.onOpenAgent(agent),
+            onLongPress: () => widget.onOpenAgent(agent),
+            child: AnimatedBuilder(
+              animation: CheIdleLifeClock.instance,
+              builder: (context, child) {
+                if (CheMotion.reduced(context) || !TickerMode.valuesOf(context).enabled) {
+                  return child!;
+                }
+                final t = ((CheIdleLifeClock.instance.t + phase) % 1.0) * 2 * math.pi;
+                final hop = acked
+                    ? -math.max(0.0, math.sin(t * 2)) * 18
+                    : -math.max(0.0, math.sin(t)) * 3 * energy;
+                return Transform.translate(offset: Offset(0, hop), child: child);
+              },
+              child: SizedBox(
+                width: 68,
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  if (acked)
+                    Container(
+                      constraints: const BoxConstraints(maxWidth: 150),
+                      margin: const EdgeInsets.only(bottom: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(color: CheColors.accent, borderRadius: BorderRadius.circular(12)),
+                      child: Text(_ackText[agent.id] ?? 'Got it!',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: CheType.caption.copyWith(color: const Color(0xFF03120F), fontWeight: FontWeight.w700)),
+                    ),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      boxShadow: _focusedId == agent.id
+                          ? [BoxShadow(color: agent.color.withValues(alpha: 0.6), blurRadius: 24)]
+                          : const [],
+                    ),
+                    child: CheMiniPerson(agent: agent, size: 54),
                   ),
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    boxShadow: _focusedId == agent.id
-                        ? [BoxShadow(color: agent.color.withValues(alpha: 0.6), blurRadius: 24)]
-                        : const [],
-                  ),
-                  child: CheMiniPerson(agent: agent, size: 54),
-                ),
-                Text(agent.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: CheType.caption.copyWith(color: CheColors.text, fontWeight: FontWeight.w600)),
-                if (profile != null && profile.activity != 'idle')
-                  Text(cheActivityLabel(profile.activity),
+                  Text(agent.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: CheType.caption.copyWith(fontSize: 10)),
-              ]),
+                      style: CheType.caption.copyWith(color: CheColors.text, fontWeight: FontWeight.w600)),
+                  if (profile != null && profile.activity != 'idle')
+                    Text(cheActivityLabel(profile.activity),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: CheType.caption.copyWith(fontSize: 10)),
+                ]),
+              ),
             ),
           ),
         ),
@@ -484,10 +508,24 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
                   width: world.width,
                   height: world.height,
                   child: Stack(clipBehavior: Clip.none, children: [
-                    for (final room in _rooms) _roomView(room),
-                    Positioned.fill(child: _props()),
-                    _walker(widget.che),
-                    for (final p in widget.agents) _walker(p.agent, profile: p),
+                    RepaintBoundary(
+                      child: Stack(clipBehavior: Clip.none, children: [
+                        for (final room in _rooms) _roomView(room),
+                        Positioned.fill(child: _props()),
+                      ]),
+                    ),
+                    Positioned.fill(
+                      child: ValueListenableBuilder<Map<String, Offset>>(
+                        valueListenable: _spots,
+                        builder: (context, spots, _) => Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            _walker(widget.che, spots),
+                            for (final p in widget.agents) _walker(p.agent, spots, profile: p),
+                          ],
+                        ),
+                      ),
+                    ),
                   ]),
                 ),
               ),
@@ -572,11 +610,20 @@ class CheRoomVisitors extends StatefulWidget {
 
 class _CheRoomVisitorsState extends State<CheRoomVisitors> with SingleTickerProviderStateMixin {
   late final AnimationController _walk = AnimationController(vsync: this, duration: const Duration(seconds: 14))..repeat();
+  bool _tickersOn = true;
 
   @override
   void initState() {
     super.initState();
     widget.runtime.addListener(_changed);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final on = TickerMode.valuesOf(context).enabled;
+    if (on && !_tickersOn && mounted) setState(() {});
+    _tickersOn = on;
   }
 
   @override
@@ -587,7 +634,10 @@ class _CheRoomVisitorsState extends State<CheRoomVisitors> with SingleTickerProv
   }
 
   void _changed() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    // Avoid rebuilding visitors strip when this tab's tickers are paused.
+    if (!TickerMode.valuesOf(context).enabled) return;
+    setState(() {});
   }
 
   @override
@@ -607,24 +657,26 @@ class _CheRoomVisitorsState extends State<CheRoomVisitors> with SingleTickerProv
           height: 92,
           child: LayoutBuilder(builder: (context, constraints) {
             final width = constraints.maxWidth;
-            return AnimatedBuilder(
-              animation: _walk,
-              builder: (context, _) => Stack(children: [
-                for (var i = 0; i < here.length; i++)
-                  Positioned(
-                    bottom: 0,
-                    left: reduced
-                        ? 12.0 + i * 70
-                        : (((_walk.value + i / here.length) % 1.0) * (width + 70)) - 70,
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      CheMiniPerson(agent: here[i].agent, size: 44),
-                      Text(
-                        '${here[i].agent.name} · ${cheActivityLabel(here[i].activity)}',
-                        style: CheType.caption.copyWith(fontSize: 10, color: CheColors.text),
-                      ),
-                    ]),
-                  ),
-              ]),
+            return RepaintBoundary(
+              child: AnimatedBuilder(
+                animation: _walk,
+                builder: (context, _) => Stack(children: [
+                  for (var i = 0; i < here.length; i++)
+                    Positioned(
+                      bottom: 0,
+                      left: reduced
+                          ? 12.0 + i * 70
+                          : (((_walk.value + i / here.length) % 1.0) * (width + 70)) - 70,
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        CheMiniPerson(agent: here[i].agent, size: 44),
+                        Text(
+                          '${here[i].agent.name} · ${cheActivityLabel(here[i].activity)}',
+                          style: CheType.caption.copyWith(fontSize: 10, color: CheColors.text),
+                        ),
+                      ]),
+                    ),
+                ]),
+              ),
             );
           }),
         ),

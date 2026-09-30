@@ -20,6 +20,7 @@ import 'package:flutter/services.dart';
 import 'che_agent_chat.dart' show CheAgentController;
 import 'che_log.dart';
 import 'che_models.dart';
+import 'che_agents.dart';
 import 'che_theme.dart';
 import 'che_transitions.dart';
 import 'che_widgets.dart';
@@ -820,22 +821,38 @@ class _KnowledgeGraph extends StatefulWidget {
   State<_KnowledgeGraph> createState() => _KnowledgeGraphState();
 }
 
-class _KnowledgeGraphState extends State<_KnowledgeGraph> with SingleTickerProviderStateMixin {
-  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(seconds: 6))..repeat();
+class _KnowledgeGraphState extends State<_KnowledgeGraph> {
+  bool _holding = false;
+
+  @override
+  void initState() {
+    super.initState();
+    CheIdleLifeClock.instance.retain();
+    _holding = true;
+  }
+
   @override
   void dispose() {
-    _c.dispose();
+    if (_holding) {
+      CheIdleLifeClock.instance.release();
+      _holding = false;
+    }
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final counts = {for (final k in cheKnowledgeKinds) k: widget.brain.facts.where((f) => f.kind == k).length};
-    return AnimatedBuilder(
-      animation: _c,
-      builder: (context, _) => CustomPaint(
-        painter: _GraphPainter(counts, CheMotion.reduced(context) ? 0 : _c.value),
-        child: const SizedBox.expand(),
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: CheIdleLifeClock.instance,
+        builder: (context, _) {
+          final reduced = CheMotion.reduced(context) || !TickerMode.valuesOf(context).enabled;
+          return CustomPaint(
+            painter: _GraphPainter(counts, reduced ? 0 : CheIdleLifeClock.instance.t),
+            child: const SizedBox.expand(),
+          );
+        },
       ),
     );
   }

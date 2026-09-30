@@ -40,22 +40,35 @@ class _CheWarRoomScreenState extends State<CheWarRoomScreen> {
     super.dispose();
   }
 
+  String? _fp;
+
   Future<void> _load() async {
     try {
       final results = await Future.wait([widget.client.meeting(widget.meetingId), widget.client.roster()]);
       final meeting = results[0] as CheMeeting;
       final roster = results[1] as Map<String, dynamic>;
-      _agents = {
+      final agents = {
         for (final a in (roster['agents'] as List? ?? const []))
           if (a is Map<String, dynamic>) '${a['id']}': CheAgent.fromJson(a),
       };
+      final speaking = meeting.board.isNotEmpty ? meeting.board.last.from : '';
+      final fp =
+          '${meeting.summary.status}|${meeting.summary.progress}|${meeting.board.length}|'
+          '${meeting.finalPlan.length}|${meeting.decisions.length}|${meeting.conflicts.length}|'
+          '${meeting.recommendations.length}|$speaking|${meeting.error}';
+      final changed = fp != _fp || _error != null;
+      _fp = fp;
+      _agents = agents;
       _meeting = meeting;
       _error = null;
+      if (!mounted) return;
+      // Skip full-tree rebuild (incl. 3D WebView parent) when the board did not move.
+      if (changed) setState(() {});
     } catch (e) {
       _error = '$e';
+      if (!mounted) return;
+      setState(() {});
     }
-    if (!mounted) return;
-    setState(() {});
     _timer?.cancel();
     if (_meeting?.summary.live ?? true) {
       _timer = Timer(const Duration(milliseconds: 1500), () => unawaited(_load()));
@@ -320,14 +333,16 @@ class _WarRoom3DState extends State<_WarRoom3D> {
     if (_flat) return widget.onFallbackSeats();
     return Column(
       children: [
-        Che3DRoomView(
-          assetPath: 'assets/office3d/warroom.html',
-          updateFunction: 'updateMeeting',
-          payload: _payload(),
-          height: 360,
-          semanticsLabel: '3D War Room conference table',
-          fallbackMessage: '3D War Room unavailable — showing seats.',
-          onTapId: (_) {},
+        RepaintBoundary(
+          child: Che3DRoomView(
+            assetPath: 'assets/office3d/warroom.html',
+            updateFunction: 'updateMeeting',
+            payload: _payload(),
+            height: 360,
+            semanticsLabel: '3D War Room conference table',
+            fallbackMessage: '3D War Room unavailable — showing seats.',
+            onTapId: (_) {},
+          ),
         ),
         TextButton(
           onPressed: () => setState(() => _flat = true),
