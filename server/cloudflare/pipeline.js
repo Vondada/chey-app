@@ -163,7 +163,8 @@ export function markStage(deal, stage) {
 }
 
 // Creates a one-off Stripe payment link for the agreed price.
-export async function createPaymentLink(env, deal, fetcher = fetch) {
+// Requires confirmed: true from the owner (app confirm dialog).
+export async function createPaymentLink(env, deal, fetcher = fetch, { confirmed = false } = {}) {
   if (stripeMode(env) === 'not_connected') {
     return { status: 503, detail: 'Stripe is not connected. Add STRIPE_SECRET_KEY to the CHE Worker.' };
   }
@@ -171,6 +172,9 @@ export async function createPaymentLink(env, deal, fetcher = fetch) {
     return { status: 409, detail: 'Review the finished work before requesting payment.' };
   }
   if (deal.payment?.url) return { status: 200, deal };
+  if (confirmed !== true) {
+    return { status: 400, detail: 'Confirm in the app before CHE creates a Stripe payment link.' };
+  }
   const cents = Math.round(Number(deal.price_usd) * 100);
   if (!Number.isFinite(cents) || cents < 50) return { status: 400, detail: 'This deal has no agreed price.' };
   try {

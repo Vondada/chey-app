@@ -3,6 +3,7 @@
 
 import { LA_AGENCIA_ROLES, officeToolBlocker } from './office_company.js';
 import { chicagoDayKey } from './chicago_time.js';
+import { stalledTasks } from './activity.js';
 
 const ACTIVE = new Set(['queued', 'running', 'reviewing']);
 const DONE = new Set(['complete']);
@@ -15,11 +16,20 @@ function dayKey(value, now = new Date()) {
 
 // Real per-desk status: the agent's latest job decides it, never a default
 // "Idle" when work exists.
-function deskStatus(agent, tasks, env) {
+function deskStatus(agent, tasks, env, stallById = new Map()) {
   const mine = tasks.filter((t) => t.partner_id === agent.id || t.partner_name === agent.name)
     .sort((a, b) => String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || '')));
   const active = mine.find((t) => ACTIVE.has(t.status));
   if (active) {
+    const stall = stallById.get(active.id);
+    if (stall) {
+      return {
+        state: 'stalled',
+        job: active.task,
+        job_id: active.id,
+        status: `Stalled (${stall.reason}): ${active.task}`,
+      };
+    }
     const verb = active.status === 'queued' ? 'Up next' : active.status === 'reviewing' ? 'In CHE review' : 'Working';
     return { state: active.status === 'queued' ? 'queued' : 'working', job: active.task, job_id: active.id, status: `${verb}: ${active.task}` };
   }
@@ -58,6 +68,8 @@ export function officeToday(data, stripeSummary, now = new Date(), env = null) {
     refunds = todaysSales.reduce((n, s) => n + Number(s.amount_refunded || 0), 0);
   }
 
+  const stall = stalledTasks(data);
+  const stallById = new Map(stall.map((s) => [s.id, s]));
   const roster = (Array.isArray(data?.team) ? data.team : []).filter((a) => a && !a.retired);
   const agents = roster.map((agent) => ({
     id: String(agent.name || '').toLowerCase(),
@@ -65,7 +77,7 @@ export function officeToday(data, stripeSummary, now = new Date(), env = null) {
     name: agent.name,
     role: agent.role || '',
     core: Boolean(LA_AGENCIA_ROLES[agent.name]),
-    ...deskStatus(agent, tasks, env),
+    ...deskStatus(agent, tasks, env, stallById),
   }));
 
   return {
@@ -73,10 +85,13 @@ export function officeToday(data, stripeSummary, now = new Date(), env = null) {
     started: todays.map((t) => ({ id: t.id, agent: t.partner_name, task: t.task, status: t.status })),
     shipped: finished.map((t) => ({ id: t.id, agent: t.partner_name, task: t.task })),
     blockers: blocked.map((t) => ({ id: t.id, agent: t.partner_name, task: t.task, detail: t.error || 'Blocked' })),
+    // Live stalled work (blocked, waiting on owner, or no update for 45+ min).
+    stalled: stall.map((s) => ({ id: s.id, agent: s.who, task: s.title, detail: s.reason, at: s.at })),
     started_today: todays.length,
     finished_today: finished.length,
     built_today: finished.length,
     agents_working: workingIds.size,
+    stalled_count: stall.length,
     agents,
     stripe: {
       connected: stripeConnected,

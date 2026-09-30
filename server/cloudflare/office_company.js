@@ -7,6 +7,7 @@ export const LA_AGENCIA_ROLES = {
   Knox: { role: 'Engineering / Codex jobs', specialty: 'Implementation, tests and isolated Codex work packets', provider_preference: 'openai', capability_requirements: ['coding'] },
   Sage: { role: 'Finance / Stripe reports', specialty: 'Read-only Stripe reporting and finance summaries', provider_preference: 'auto', capability_requirements: ['payments_read'] },
   Lyra: { role: 'Content / social', specialty: 'Content, social copy and campaign drafts', provider_preference: 'xai', capability_requirements: ['text'] },
+  Iris: { role: 'Ad Studio / paid-social creatives', specialty: 'Ad creatives, visual briefs, captions and same-night social packages', provider_preference: 'xai', capability_requirements: ['text'] },
 };
 
 export function ensureLaAgenciaRoster(data) {
@@ -53,8 +54,9 @@ const GOAL_ROUTES = [
   ['Sage', /\b(?:stripe|revenue|finance|money|sales|earnings|invoice|report on (?:sales|money))\b/],
   ['Nova', /\b(?:product|listing|listings|offer|pricing|price|sales page|store|shop)\b/],
   ['Mira', /\b(?:customer|support|reply|replies|email|faq|help desk|service)\b/],
+  ['Iris', /\b(?:ads?|ad studio|tonight pack|ad creatives?|flyer|banner|paid social|creative brief|caption pack)\b/],
   ['Lyra', /\b(?:social|post|posts|content|instagram|tiktok|caption|campaign|video|blog)\b/],
-  ['Atlas', /\b(?:research|competitor|competitors|find|source|compare|market|look up)\b/],
+  ['Atlas', /\b(?:research|competitor|competitors|find|source|compare|market|look up|fiverr|scout)\b/],
 ];
 
 // CHE splits one owner goal into Office jobs, one per clause, each routed to

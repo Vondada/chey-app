@@ -18,20 +18,40 @@ void main() {
     expect(commandAfterWake('what is Knox doing?'), isNull);
   });
 
-  test('all six Office phrases still match after the wake name', () {
+  test('Office phrases still match after the wake name', () {
     expect(matchOfficePhrase("Hey Chay, what's happening in the Office?")?.type, CheOfficePhrase.happening);
     expect(matchOfficePhrase('Chay what did they build today')?.type, CheOfficePhrase.builtToday);
     expect(matchOfficePhrase('CHE, how much did we make today?')?.type, CheOfficePhrase.earnedToday);
+    expect(matchOfficePhrase("Chay, what's stalled?")?.type, CheOfficePhrase.stalled);
     expect(matchOfficePhrase('Chay, read this Office to me')?.type, CheOfficePhrase.readOffice);
     final knox = matchOfficePhrase('Hey Chay, what is Knox doing?');
     expect(knox?.type, CheOfficePhrase.agentStatus);
     expect(knox?.agentId, 'knox');
     expect(matchOfficePhrase('Chay, stand down')?.type, CheOfficePhrase.standDown);
+    final iris = matchOfficePhrase('Hey Chay, what is Iris doing?');
+    expect(iris?.type, CheOfficePhrase.agentStatus);
+    expect(iris?.agentId, 'iris');
+  });
+
+  test('Iris hire, Fiverr scout, and tonight pack phrases match', () {
+    expect(matchOfficePhrase('hire Iris')?.type, CheOfficePhrase.hireIris);
+    expect(matchOfficePhrase('Chay, hire Iris for Ad Studio')?.type, CheOfficePhrase.hireIris);
+    final scout = matchOfficePhrase('scout Fiverr for AI ad buyers');
+    expect(scout?.type, CheOfficePhrase.fiverrScout);
+    expect(scout?.detail, 'AI ad buyers');
+    final pack = matchOfficePhrase('draft tonight pack for Cafe Luna');
+    expect(pack?.type, CheOfficePhrase.goal);
+    expect(pack?.detail, contains('tonight pack'));
+    expect(pack?.detail, contains('Cafe Luna'));
   });
 
   test('Office phrases also match without the wake name; others do not', () {
     expect(matchOfficePhrase('Read the Office to me')?.type, CheOfficePhrase.readOffice);
     expect(matchOfficePhrase('What is Bob doing?'), isNull);
     expect(matchOfficePhrase('Tell me a joke'), isNull);
+  });
+
+  test('cheOfficeRoster includes Iris', () {
+    expect(cheOfficeRoster, contains('iris'));
   });
 }

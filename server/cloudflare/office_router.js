@@ -1,6 +1,6 @@
 // CHE is the only voice in the Office. The owner talks only to CHE; agents
 // report only to CHE. Enforced here in code, not only in model prompts.
-export const OFFICE_AGENTS = ['nova', 'atlas', 'mira', 'knox', 'sage', 'lyra'];
+export const OFFICE_AGENTS = ['nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris'];
 const AGENTS = new Set(OFFICE_AGENTS);
 
 function refusal(message) {

@@ -67,14 +67,18 @@ function signed(payload, secret = WEBHOOK_SECRET, t = Math.floor(Date.now() / 10
   return { body, header: `t=${t},v1=${v1}` };
 }
 
-test('the six Office voice phrases are recognized', () => {
+test('Office voice phrases are recognized including Iris and Fiverr scout', () => {
   assert.deepEqual(matchOfficePhrase("What's happening in the Office?"), { type: 'happening' });
   assert.deepEqual(matchOfficePhrase('What did they build today?'), { type: 'builtToday' });
   assert.deepEqual(matchOfficePhrase('How much did we make today?'), { type: 'earnedToday' });
   assert.deepEqual(matchOfficePhrase('Read this Office to me'), { type: 'readOffice' });
   assert.deepEqual(matchOfficePhrase('What is Knox doing?'), { type: 'agentStatus', agentId: 'knox' });
+  assert.deepEqual(matchOfficePhrase('What is Iris doing?'), { type: 'agentStatus', agentId: 'iris' });
   assert.deepEqual(matchOfficePhrase('Stand down'), { type: 'standDown' });
   assert.deepEqual(matchOfficePhrase('Chay, what’s happening in the office'), { type: 'happening' });
+  assert.equal(matchOfficePhrase('hire Iris').type, 'hireIris');
+  assert.equal(matchOfficePhrase('scout Fiverr for AI ad buyers').type, 'fiverrScout');
+  assert.equal(matchOfficePhrase('draft tonight pack for Cafe Luna').type, 'goal');
   assert.equal(matchOfficePhrase('What is Bob doing?'), null, 'only the real roster has desks');
   assert.equal(matchOfficePhrase('Tell me a joke'), null);
   assert.equal(matchOfficePhrase('Tell the Office to research competitors in Houston').type, 'goal');
@@ -84,7 +88,7 @@ test('CHE speaks Office answers from the live board through /api/chat', async ()
   const o = await office();
   // Opening the Office staffs the roster; Stripe is not connected.
   const empty = await o.board();
-  assert.deepEqual(empty.agents.map((a) => a.name), ['Nova', 'Atlas', 'Mira', 'Knox', 'Sage', 'Lyra']);
+  assert.deepEqual(empty.agents.map((a) => a.name), ['Nova', 'Atlas', 'Mira', 'Knox', 'Sage', 'Lyra', 'Iris']);
   assert.equal(empty.stripe.connected, false);
 
   const happening = await o.say("What's happening in the Office?");
@@ -103,7 +107,7 @@ test('CHE speaks Office answers from the live board through /api/chat', async ()
   const full = await o.say('Read this Office to me');
   assert.match(full, /^CHE here\. Office board\./);
   assert.match(full, /Stripe not connected\. Earned today \$0\.00\./);
-  for (const name of ['Nova', 'Atlas', 'Mira', 'Knox', 'Sage', 'Lyra']) assert.match(full, new RegExp(`\\d\\. ${name}: `));
+  for (const name of ['Nova', 'Atlas', 'Mira', 'Knox', 'Sage', 'Lyra', 'Iris']) assert.match(full, new RegExp(`\\d\\. ${name}: `));
   assert.ok(!/\bIdle\b/.test(full.split('Desks:')[1]), 'blocked desks never read as Idle');
 
   const standDown = await o.say('Stand down');
@@ -116,6 +120,10 @@ test('CHE splits an owner goal into persisted jobs; missing tools are blockers',
     { agent: 'Atlas', task: 'Research competitors in Houston' },
     { agent: 'Knox', task: 'Build a landing page' },
     { agent: 'Lyra', task: 'Post it on Instagram' },
+  ]);
+
+  assert.deepEqual(splitGoal('Draft a tonight pack of ad creatives for the cafe'), [
+    { agent: 'Iris', task: 'Draft a tonight pack of ad creatives for the cafe' },
   ]);
 
   const o = await office({ XAI_API_KEY: 'xai-test' });
@@ -235,4 +243,65 @@ test('Grok calls from the Office go through CHE router with agent_id and office/
 test('spoken board never invents money', () => {
   assert.equal(speakOfficeBoard({ stripe: { connected: false, net_cents: 5000 } }, { type: 'earnedToday' }),
     'CHE here. Stripe not connected. Earned today $0.00.');
+});
+
+test('hire Iris via chat staffs Ad Studio; Fiverr scout queues shortlist-only jobs', async () => {
+  const o = await office({ XAI_API_KEY: 'xai-test' });
+  const hired = await o.say('hire Iris');
+  assert.match(hired, /Iris is hired on Ad Studio/i);
+  const board = await o.board();
+  assert.ok(board.agents.some((a) => a.name === 'Iris' && a.core === true));
+
+  const pack = await o.say('draft tonight pack for Cafe Luna');
+  assert.match(pack, /Iris:/);
+  assert.match(pack, /tonight pack/i);
+
+  const scout = await o.say('scout Fiverr for AI ad buyers');
+  assert.match(scout, /Fiverr scout queued/i);
+  assert.match(scout, /will not message, bid, or buy/i);
+  const stored = JSON.parse(o.saved.get('che'));
+  const scoutJobs = stored.team_tasks.filter((t) => t.source === 'fiverr_scout' || t.kind === 'fiverr_scout');
+  assert.ok(scoutJobs.length >= 1, JSON.stringify(scoutJobs));
+  for (const job of scoutJobs) {
+    assert.equal(job.owner_confirm_required, true);
+    assert.equal(job.outbound_allowed, false);
+  }
+  assert.ok(Array.isArray(stored.fiverr_scouts) && stored.fiverr_scouts.length >= 1);
+  assert.equal(stored.fiverr_scouts[0].outbound_allowed, false);
+  assert.equal(stored.fiverr_scouts[0].owner_confirm_required, true);
+});
+
+test('opportunity scout queues shortlist-only jobs (Pinterest); memory write-back distills notes', async () => {
+  const o = await office({ XAI_API_KEY: 'xai-test' });
+  await o.say('hire Iris');
+  const scout = await o.say('scout Pinterest for printable planners');
+  assert.match(scout, /Opportunity scout queued on pinterest/i);
+  assert.match(scout, /will not auto-message/i);
+  const stored = JSON.parse(o.saved.get('che'));
+  const jobs = stored.team_tasks.filter((t) => t.kind === 'opportunity_scout' || t.source === 'opportunity_scout');
+  assert.ok(jobs.length >= 1, JSON.stringify(jobs));
+  for (const job of jobs) {
+    assert.equal(job.owner_confirm_required, true);
+    assert.equal(job.outbound_allowed, false);
+  }
+  assert.ok(Array.isArray(stored.opportunity_scouts) && stored.opportunity_scouts.length >= 1);
+  assert.equal(stored.opportunity_scouts[0].channel, 'pinterest');
+  assert.equal(stored.opportunity_scouts[0].spend_without_confirm, false);
+
+  // Simulate completed Atlas scout → learning loop memory note
+  const { writeResearchMemoryNote } = await import('./research_memory.js');
+  const atlas = stored.team.find((a) => a.name === 'Atlas') || { name: 'Atlas', role: 'Research', memory_refs: [] };
+  const written = writeResearchMemoryNote(stored, {
+    result: [
+      'Channel: pinterest',
+      'Offer: printable planner pack',
+      'Why: board demand for wedding planners',
+      'URL: https://www.pinterest.com/search/pins/?q=planner',
+    ].join('\n'),
+    task: jobs[0],
+    agent: atlas,
+  });
+  assert.equal(written.written, true);
+  assert.ok(stored.memory_notes?.length >= 1);
+  assert.ok(stored.memories?.some((m) => /Opportunity|pinterest|planner/i.test(m)));
 });

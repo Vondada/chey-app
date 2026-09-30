@@ -62,7 +62,8 @@ its own Durable Object memory and does not yet import the encrypted Windows memo
 4. Connect the GitHub repository to Codemagic and select the `chey-mobile`
    workflow. It is configured to build on pushes to `main` and packages an
    unsigned iOS app as `CHE-unsigned.ipa`. The build and SideStore installation
-   need real device verification.
+   need real device verification. Step-by-step install notes:
+   `docs/SIDESTORE_CODEMAGIC.md`.
 
 Native Flutter changes require installing the updated IPA, not rebooting the
 phone. Updates to the cloud Agent take effect without an app rebuild. SideStore

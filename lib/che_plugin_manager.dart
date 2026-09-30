@@ -102,7 +102,7 @@ class _ChePluginManagerState extends State<ChePluginManager> {
             if (!loading && plugins.isEmpty)
               const ListTile(
                 title: Text('No plugins connected yet'),
-                subtitle: Text('Add a secure server-side plugin. Future capabilities can appear here without rebuilding the IPA.'),
+                subtitle: Text('Add CHE_PLUGIN_CATALOG on the Worker, or install Skill plugins (Weather, Crypto, Wikipedia) from the Plugins room.'),
               ),
             for (final plugin in plugins)
               Card(
@@ -112,14 +112,17 @@ class _ChePluginManagerState extends State<ChePluginManager> {
                       title: Text(plugin['name']?.toString() ?? plugin['id'].toString()),
                       subtitle: Text(
                         '${plugin['description'] ?? ''}\n'
-                        '${plugin['ready'] == true ? 'Ready' : 'Needs secure server setup'}'
+                        '${plugin['kind'] == 'skill' ? 'Builtin skill · install from Skill plugins' : (plugin['ready'] == true ? 'Ready' : 'Needs secure server setup')}'
                         ' · ${(plugin['mode'] ?? 'read').toString().toUpperCase()}'
                         '${plugin['requires_confirmation'] == true ? ' · Confirms before actions' : ''}'
                         '\n${plugin['security'] ?? 'HTTPS connector · secrets stay server-side'}',
                       ),
                       isThreeLine: true,
                       value: plugin['enabled'] == true,
-                      onChanged: plugin['ready'] == true && busyId == null
+                      onChanged: plugin['ready'] == true &&
+                              plugin['toggleable'] != false &&
+                              plugin['kind'] != 'skill' &&
+                              busyId == null
                           ? (value) => toggle(plugin['id'].toString(), value)
                           : null,
                     ),

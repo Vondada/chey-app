@@ -21,6 +21,29 @@ test('disconnected Stripe is explicit zero, never fake money',()=>{
 });
 
 test('agents cannot message owner directly',()=>{
- for(const id of ['nova','atlas','mira','knox','sage','lyra']) assert.equal(agentMayMessageOwner(id),false);
+ for(const id of ['nova','atlas','mira','knox','sage','lyra','iris']) assert.equal(agentMayMessageOwner(id),false);
  assert.equal(agentMayMessageOwner('che'),true);
+});
+
+test('stalled work appears on the board and marks the desk', () => {
+  const old = Date.now;
+  Date.now = () => Date.parse('2026-09-29T14:00:00Z');
+  try {
+    const data = {
+      team: [{ id: 'nova-id', name: 'Nova', role: 'Research', status: 'working' }],
+      team_tasks: [
+        { id: 'stale', partner_id: 'nova-id', partner_name: 'Nova', task: 'Deep research on competitors', status: 'running', created_at: '2026-09-29T10:00:00Z', updated_at: '2026-09-29T10:00:00Z' },
+        { id: 'need', partner_id: 'nova-id', partner_name: 'Nova', task: 'Pick a logo', status: 'blocked', created_at: '2026-09-29T12:00:00Z', updated_at: '2026-09-29T12:00:00Z', blocker: 'needs your decision' },
+      ],
+    };
+    const b = officeToday(data, { status: 503 }, new Date('2026-09-29T14:00:00Z'));
+    assert.ok(b.stalled.length >= 1);
+    assert.equal(b.stalled_count, b.stalled.length);
+    const nova = b.agents.find((a) => a.name === 'Nova');
+    assert.ok(nova);
+    assert.equal(nova.state, 'stalled');
+    assert.match(nova.status, /Stalled/);
+  } finally {
+    Date.now = old;
+  }
 });

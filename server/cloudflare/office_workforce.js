@@ -22,7 +22,7 @@ const SPECIALTIES = {
 export function specialtyFrom(text) {
   const lower = String(text || '').toLowerCase();
   if (/cod|program|engineer|develop|implement/.test(lower)) return 'coding';
-  if (/creativ|writ|design|story|idea/.test(lower)) return 'creative';
+  if (/creativ|writ|design|story|idea|\bad(?:s|vertis)?\b|flyer|banner|caption/.test(lower)) return 'creative';
   if (/reason|think|logic|plan|strateg/.test(lower)) return 'reasoning';
   if (/review|qa|security|audit/.test(lower)) return 'review';
   if (/analy|compar/.test(lower)) return 'analysis';

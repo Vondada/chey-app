@@ -40,10 +40,32 @@ class CheLocalAI {
   }
 }
 
+/// Native iOS voice bridge (`che/native_voice`).
+///
+/// The SideStore zip often has no Swift Runner yet. Every method channel call
+/// must tolerate [MissingPluginException] so the Flutter `speech_to_text`
+/// fallback in `lib/home_state/voice.dart` can take over without crashing.
 class CheNativeVoice {
   static const MethodChannel _methods = MethodChannel('che/native_voice');
   static const EventChannel _events = EventChannel('che/native_voice_events');
   static final CheKokoroVoice _kokoro = CheKokoroVoice(_methods);
+
+  /// True after a successful native call in this process; false when the
+  /// Swift Runner plugin is missing (expected until owner bootstraps iOS).
+  static bool bridgePresent = true;
+
+  static Future<T?> _invoke<T>(String method, [dynamic arguments]) async {
+    try {
+      final value = await _methods.invokeMethod<T>(method, arguments);
+      bridgePresent = true;
+      return value;
+    } on MissingPluginException {
+      bridgePresent = false;
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
 
   static const String _speakerKey = 'che.voice.kokoroSpeaker';
   static const String _speedKey = 'che.voice.kokoroSpeed';
@@ -137,7 +159,7 @@ class CheNativeVoice {
     );
 
     try {
-      await _methods.invokeMethod('configureVoice', {
+      await _invoke<void>('configureVoice', {
         'pitch': fallbackPitch,
         'rate': fallbackRate,
       });
@@ -152,7 +174,7 @@ class CheNativeVoice {
       pauseScale: s['pauseScale'] as double,
     );
     try {
-      await _methods.invokeMethod('configureVoice', {
+      await _invoke<void>('configureVoice', {
         'pitch': s['nativePitch'],
         'rate': s['nativeRate'],
       });
@@ -162,23 +184,21 @@ class CheNativeVoice {
   static Future<bool> start() async {
     await _applyStoredSettings();
     unawaited(_kokoro.prepare());
-    return (await _methods.invokeMethod<bool>('start')) ?? false;
+    return (await _invoke<bool>('start')) ?? false;
   }
 
-  static Future<bool> stop() async =>
-      (await _methods.invokeMethod<bool>('stop')) ?? false;
+  static Future<bool> stop() async => (await _invoke<bool>('stop')) ?? false;
 
-  static Future<bool> sleep() async =>
-      (await _methods.invokeMethod<bool>('sleep')) ?? false;
+  static Future<bool> sleep() async => (await _invoke<bool>('sleep')) ?? false;
 
   static Future<bool> wake() async {
     await _applyStoredSettings();
     unawaited(_kokoro.prepare());
-    return (await _methods.invokeMethod<bool>('wake')) ?? false;
+    return (await _invoke<bool>('wake')) ?? false;
   }
 
   static Future<void> setAssistantSpeaking(bool value) async {
-    await _methods.invokeMethod('assistantSpeaking', value);
+    await _invoke<void>('assistantSpeaking', value);
   }
 
   static Future<bool> speakText(String text) async {
@@ -190,8 +210,7 @@ class CheNativeVoice {
       if (await _kokoro.speak(clean)) return true;
     } catch (_) {}
 
-    return (await _methods.invokeMethod<bool>('speakText', {'text': clean})) ??
-        false;
+    return (await _invoke<bool>('speakText', {'text': clean})) ?? false;
   }
 
   /// Speaks with the on-device Kokoro neural voice only. Returns false (and
@@ -217,17 +236,22 @@ class CheNativeVoice {
       );
 
   static Future<bool> playAudio(Uint8List bytes) async =>
-      (await _methods.invokeMethod<bool>('playAudio', bytes)) ?? false;
+      (await _invoke<bool>('playAudio', bytes)) ?? false;
 
-  static Future<bool> stopAudio() async =>
-      (await _methods.invokeMethod<bool>('stopAudio')) ?? false;
+  static Future<bool> stopAudio() async => (await _invoke<bool>('stopAudio')) ?? false;
 
   static Future<Map<String, dynamic>> status() async {
     unawaited(_kokoro.prepare());
-    final raw = await _methods.invokeMethod<dynamic>('status');
+    final raw = await _invoke<dynamic>('status');
     final result = raw is Map
         ? Map<String, dynamic>.from(raw)
-        : <String, dynamic>{};
+        : <String, dynamic>{'native_bridge': bridgePresent ? 'present' : 'missing'};
+    if (!bridgePresent) {
+      result['native_bridge'] = 'missing';
+      result['fallback'] = 'Flutter speech_to_text / TTS until Swift che/native_voice lands';
+    } else {
+      result['native_bridge'] = 'present';
+    }
     final s = await voiceSettings();
     result['local_neural_tts'] = true;
     result['local_neural_tts_engine'] = 'kokoro';
