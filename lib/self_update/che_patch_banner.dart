@@ -74,7 +74,7 @@ class _ChePatchBannerState extends State<ChePatchBanner> {
               color: Colors.white,
             ),
             title: const Text(
-              'CHE updated. Restart to apply.',
+              'Ready, sir.',
               style: TextStyle(color: Colors.white),
             ),
             subtitle: const Text(
