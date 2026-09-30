@@ -136,7 +136,7 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
       _seenAssignment[p.agent.id] = p.assignmentId;
     }
     _placeAll(initial: true);
-    _wander = Timer.periodic(const Duration(milliseconds: 2600), (_) => _wanderStep());
+    _wander = Timer.periodic(const Duration(seconds: 1), (_) => _wanderStep());
     CheIdleLifeClock.instance.retain();
     _holdingIdle = true;
   }
@@ -185,10 +185,14 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
     return 0.7;
   }
 
-  Offset _randomSpotIn(_Room room) {
+  // A stable, evenly-spaced seat in a room (no randomness) so agents settle
+  // with purpose instead of scattering.
+  Offset _seatIn(_Room room, int index) {
     final r = room.rect.deflate(46);
-    final dx = r.left + (_rng.nextDouble() * 0.8 + 0.1) * r.width;
-    final dy = r.top + 40 + (_rng.nextDouble() * 0.75) * math.max(1.0, r.height - 40);
+    const perRow = 3;
+    final col = index % perRow, row = (index ~/ perRow) % 3;
+    final dx = r.left + (col + 0.5) * (r.width / perRow);
+    final dy = r.top + 44 + (row + 0.5) * (math.max(1.0, r.height - 60) / 3);
     return Offset(dx, dy);
   }
 
@@ -204,10 +208,14 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
     for (var i = 0; i < widget.agents.length; i++) {
       final p = widget.agents[i];
       final room = _roomFor(p.room);
+      // Purposeful placement: an Office worker sits at their own fixed desk;
+      // an agent sent to another room goes to a stable seat there. No random
+      // teleporting — a spot only changes when the agent's room changes.
+      final target = p.room == 'office' ? _deskSpot(i) : _seatIn(room, i);
       final current = spot[p.agent.id];
-      final inRoom = current != null && room.rect.contains(current);
-      if (inRoom && !initial) continue;
-      spot[p.agent.id] = p.room == 'office' && p.working ? _deskSpot(i) : _randomSpotIn(room);
+      final settledHere = current != null && (current - target).distance < 6;
+      if (settledHere && !initial) continue;
+      spot[p.agent.id] = target;
     }
     spot.putIfAbsent('che', () {
       final office = _roomFor('office').rect;
@@ -218,23 +226,13 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
   }
 
   void _wanderStep() {
-    if (!mounted || CheMotion.reduced(context)) return;
-    // Off-tab / background: TickerMode is false — skip wander setState storms.
+    if (!mounted) return;
     if (!TickerMode.valuesOf(context).enabled) return;
-    final spot = Map<String, Offset>.of(_spots.value);
-    var moved = false;
-    for (var i = 0; i < widget.agents.length; i++) {
-      final p = widget.agents[i];
-      // Workers stay at their station; others stroll around their room.
-      if (p.working && p.room == 'office') continue;
-      if (_rng.nextDouble() > _energy(p.agent) * 0.6) continue;
-      spot[p.agent.id] = _randomSpotIn(_roomFor(p.room));
-      moved = true;
-    }
+    // Agents no longer wander randomly. Each stays at their desk/seat and moves
+    // only when their assignment or room actually changes (handled elsewhere).
+    // This timer just clears expired "on it" speech bubbles.
     final beforeAck = _ack.length;
     _ack.removeWhere((_, at) => DateTime.now().difference(at) > const Duration(seconds: 4));
-    if (moved) _spots.value = spot;
-    // Ack expiry needs a light rebuild for bubble removal only.
     if (_ack.length != beforeAck && mounted) setState(() {});
   }
 
