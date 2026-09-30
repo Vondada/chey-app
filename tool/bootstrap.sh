@@ -656,10 +656,11 @@ struct CHEAppShortcuts: AppShortcutsProvider {
       return
     }
 
-    // Native recognition is wake/fallback only. Normal conversation uses
-    // Realtime Semantic VAD, so keep this fallback pause conservative.
+    // Natural end-of-turn (free, on-device): a finished sentence gets a short
+    // pause, a thought that trails off ("and…", "um…", "so…") gets a long one,
+    // everything else sits in between. Stops CHE from cutting the owner off.
     utteranceTimer = Timer.scheduledTimer(
-      withTimeInterval: 1.10,
+      withTimeInterval: endOfTurnPause(for: transcript),
       repeats: false
     ) { [weak self] _ in
       guard let self else { return }
@@ -668,6 +669,23 @@ struct CHEAppShortcuts: AppShortcutsProvider {
       guard self.latestTranscript == transcript else { return }
       self.deliverTranscript(transcript)
     }
+  }
+
+  private func endOfTurnPause(for transcript: String) -> TimeInterval {
+    let words = normalizedWords(transcript).split(separator: " ").map(String.init)
+    let last = words.last ?? ""
+    let unfinished: Set<String> = [
+      "and", "or", "but", "so", "um", "uh", "like", "because", "cause", "the", "a", "an",
+      "to", "with", "of", "if", "when", "then", "that", "which", "for", "my", "your",
+      "i", "we", "you", "is", "was", "are", "about", "into", "from", "just", "also",
+      "maybe", "gonna", "wanna", "need", "want", "can", "could", "should", "would",
+    ]
+    if unfinished.contains(last) { return 3.6 }
+    let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+    let endsSentence = trimmed.hasSuffix(".") || trimmed.hasSuffix("?") || trimmed.hasSuffix("!")
+    if endsSentence && words.count >= 4 { return 1.6 }
+    if words.count <= 2 { return 1.8 }
+    return 2.4
   }
 
   private func deliverTranscript(_ text: String) {
