@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="CHE Studio — digital products and online classes, built with AI.">
+  <meta name="theme-color" content="#030607">
+  <title>CHE Studio</title>
+  <style>
+    :root {
+      --bg: #030607;
+      --surface: #0A1214;
+      --surface-glass: rgba(16, 27, 30, 0.88);
+      --teal: #34E0B8;
+      --teal-deep: #0C9A7E;
+      --text: #EAF4F2;
+      --muted: #8FA4A1;
+      --line: rgba(52, 224, 184, 0.24);
+      --max: 1080px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 50% -10%, #0b2420 0, #06100f 28%, var(--bg) 62%),
+        var(--bg);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+    }
+
+    a { color: var(--teal); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .wrap {
+      width: min(calc(100% - 36px), var(--max));
+      margin: 0 auto;
+    }
+
+    header {
+      min-height: 68vh;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      padding: 96px 0 72px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--teal);
+      background: rgba(52, 224, 184, 0.06);
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--teal);
+      box-shadow: 0 0 18px var(--teal);
+    }
+
+    h1 {
+      margin: 22px 0 10px;
+      font-size: clamp(3.4rem, 10vw, 7rem);
+      line-height: 0.95;
+      letter-spacing: -0.065em;
+    }
+
+    .accent { color: var(--teal); }
+
+    .tagline {
+      max-width: 720px;
+      margin: 0 auto;
+      color: var(--muted);
+      font-size: clamp(1.1rem, 3vw, 1.45rem);
+    }
+
+    nav {
+      margin-top: 34px;
+      display: flex;
+      gap: 20px;
+      justify-content: center;
+      flex-wrap: wrap;
+      font-size: 0.95rem;
+    }
+
+    section { padding: 72px 0; }
+
+    .section-head {
+      max-width: 700px;
+      margin-bottom: 28px;
+    }
+
+    .section-head h2 {
+      margin: 0 0 10px;
+      font-size: clamp(2rem, 5vw, 3rem);
+      letter-spacing: -0.04em;
+    }
+
+    .section-head p,
+    .legal p {
+      color: var(--muted);
+      margin: 0;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+    }
+
+    .card,
+    .legal {
+      background: linear-gradient(180deg, var(--surface-glass), rgba(10, 18, 20, 0.9));
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 24px;
+      box-shadow:
+        0 18px 60px rgba(0, 0, 0, 0.28),
+        0 0 28px rgba(52, 224, 184, 0.05);
+    }
+
+    .card .icon {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      color: var(--teal);
+      background: rgba(52, 224, 184, 0.08);
+      border: 1px solid var(--line);
+      margin-bottom: 18px;
+      font-weight: 800;
+    }
+
+    .card h3 {
+      margin: 0 0 8px;
+      font-size: 1.15rem;
+    }
+
+    .card p {
+      color: var(--muted);
+      margin: 0;
+    }
+
+    .coming {
+      color: var(--teal);
+      font-size: 0.78rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 10px;
+    }
+
+    .contact {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      flex-wrap: wrap;
+    }
+
+    .contact strong { font-size: 1.15rem; }
+
+    .legal-stack {
+      display: grid;
+      gap: 16px;
+    }
+
+    .legal h3 { margin: 0 0 8px; }
+
+    footer {
+      border-top: 1px solid rgba(143, 164, 161, 0.14);
+      padding: 34px 0 42px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 0.9rem;
+    }
+
+    @media (max-width: 760px) {
+      header {
+        min-height: 60vh;
+        padding-top: 72px;
+      }
+
+      .grid { grid-template-columns: 1fr; }
+      section { padding: 54px 0; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <div class="eyebrow"><span class="dot"></span> Cognitive Horizon Engine</div>
+      <h1>CHE <span class="accent">Studio</span></h1>
+      <p class="tagline">Digital products and online classes, built with AI.</p>
+      <nav aria-label="Primary navigation">
+        <a href="#about">What we sell</a>
+        <a href="#products">Products</a>
+        <a href="#contact">Contact</a>
+        <a href="#policies">Policies</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section id="about">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>Built to be useful.</h2>
+          <p>CHE Studio sells digital downloads—templates, tools, and guides—and online classes. Purchases are designed for instant access by download or email.</p>
+        </div>
+
+        <div class="grid">
+          <article class="card">
+            <div class="icon">01</div>
+            <h3>Digital downloads</h3>
+            <p>Practical templates, tools, and guides made to help you move faster.</p>
+          </article>
+
+          <article class="card">
+            <div class="icon">02</div>
+            <h3>Online classes</h3>
+            <p>Focused learning experiences built around clear, usable skills.</p>
+          </article>
+
+          <article class="card">
+            <div class="icon">03</div>
+            <h3>Instant access</h3>
+            <p>Eligible purchases are delivered by direct download or email after purchase.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="products">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>Coming soon.</h2>
+          <p>The first CHE Studio releases are being prepared now.</p>
+        </div>
+
+        <div class="grid">
+          <article class="card">
+            <div class="coming">Coming soon</div>
+            <h3>Template Collection</h3>
+            <p>A practical set of editable digital templates.</p>
+          </article>
+
+          <article class="card">
+            <div class="coming">Coming soon</div>
+            <h3>AI Workflow Guide</h3>
+            <p>A straightforward guide to building smarter everyday workflows with AI.</p>
+          </article>
+
+          <article class="card">
+            <div class="coming">Coming soon</div>
+            <h3>CHE Studio Class</h3>
+            <p>An online class focused on turning useful ideas into digital products.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="contact">
+      <div class="wrap">
+        <div class="card contact">
+          <div>
+            <div class="coming">Contact</div>
+            <strong><a href="mailto:henryjavoni@gmail.com">henryjavoni@gmail.com</a></strong>
+          </div>
+          <p>Questions about products, access, or refunds? Contact us by email.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="policies">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>Policies</h2>
+          <p>Short, plain-language terms for CHE Studio.</p>
+        </div>
+
+        <div class="legal-stack">
+          <article class="legal">
+            <h3>Refund policy</h3>
+            <p>Digital products: refunds within 14 days if the product doesn't work as described. Contact us by email.</p>
+          </article>
+
+          <article class="legal">
+            <h3>Terms of Service</h3>
+            <p>CHE Studio provides digital products and online classes for personal use or other use specifically allowed with the product. Do not resell, redistribute, copy, or claim paid CHE Studio materials as your own unless the product clearly says that is permitted. Product descriptions explain what is included. You are responsible for making sure a product fits your needs before using it, and you agree not to use the site or products for unlawful purposes.</p>
+          </article>
+
+          <article class="legal">
+            <h3>Privacy Policy</h3>
+            <p>This website does not require you to create an account or submit personal information through a form. If you contact CHE Studio by email, we receive the information you choose to send. Our hosting provider may process standard technical information, such as IP address, browser details, and request logs, to deliver and protect the website. We do not claim to collect or use information beyond what is needed to operate the site and respond to you.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">© 2026 CHE Studio</div>
+  </footer>
+</body>
+</html>

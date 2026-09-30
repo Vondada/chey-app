@@ -9,7 +9,14 @@ extension _CheHomeSecurity on _CHEHomeState {
 
   Future<void> _loadSecuritySession() async {
     final prefs = await SharedPreferences.getInstance();
+    _restoreLocalSnapshotCache(prefs);
     _agentBaseUrl = prefs.getString('che_agent_base_url') ?? _defaultAgentBaseUrl;
+    _replyLanguage = prefs.getString('che_reply_language') ?? 'en';
+    _translateTarget = prefs.getString('che_translate_target') ?? 'es';
+    final savedHomeBaseUrl = (prefs.getString(_homeBaseUrlKey) ?? '').trim();
+    _homeBaseUrl = savedHomeBaseUrl.endsWith('/')
+        ? savedHomeBaseUrl.substring(0, savedHomeBaseUrl.length - 1)
+        : savedHomeBaseUrl;
     _deviceToken = prefs.getString('che_agent_device_token');
 
     if (_deviceToken != null && _deviceToken!.isNotEmpty) {
@@ -106,6 +113,7 @@ extension _CheHomeSecurity on _CHEHomeState {
   Future<bool> _showAgentServerDialog() async {
     if (kIsWeb) return true;
     final urlController = TextEditingController(text: cheAgentBaseUrl);
+    final homeBaseController = TextEditingController(text: _homeBaseUrl);
     final saved = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
@@ -125,6 +133,23 @@ extension _CheHomeSecurity on _CHEHomeState {
                   decoration: const InputDecoration(
                     labelText: 'Server URL',
                     hintText: 'https://your-che-server.example',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: homeBaseController,
+                  keyboardType: TextInputType.url,
+                  autocorrect: false,
+                  onSubmitted: (value) async {
+                    final homeBase = value.trim().replaceFirst(RegExp(r'/$'), '');
+                    final prefs = await SharedPreferences.getInstance();
+                    await prefs.setString(_homeBaseUrlKey, homeBase);
+                    _homeBaseUrl = homeBase;
+                    if (mounted) _set(() {});
+                  },
+                  decoration: const InputDecoration(
+                    labelText: 'Home base URL',
+                    hintText: 'http://192.168.x.x:8787',
                   ),
                 ),
                 if (errorText != null) Text(errorText!,
@@ -153,6 +178,7 @@ extension _CheHomeSecurity on _CHEHomeState {
                     return;
                   }
                   final address = raw.replaceFirst(RegExp(r'/$'), '');
+                  final homeBase = homeBaseController.text.trim().replaceFirst(RegExp(r'/$'), '');
                   final prefs = await SharedPreferences.getInstance();
                   if (address != cheAgentBaseUrl) {
                     await prefs.remove('che_agent_device_token');
@@ -161,7 +187,9 @@ extension _CheHomeSecurity on _CHEHomeState {
                     learnedPersonality = [];
                   }
                   await prefs.setString('che_agent_base_url', address);
+                  await prefs.setString(_homeBaseUrlKey, homeBase);
                   _agentBaseUrl = address;
+                  _homeBaseUrl = homeBase;
                   if (mounted) _set(() {});
                   if (dialogContext.mounted) Navigator.pop(dialogContext, true);
                 },
@@ -173,6 +201,7 @@ extension _CheHomeSecurity on _CHEHomeState {
       },
     );
     urlController.dispose();
+    homeBaseController.dispose();
     return saved == true;
   }
 
@@ -373,6 +402,16 @@ extension _CheHomeSecurity on _CHEHomeState {
       final knowledgeData = (data['learned_knowledge'] as List?) ?? const [];
       final suggestionData = (data['suggestions'] as List?) ?? const [];
       final projectData = (data['projects'] as List?) ?? const [];
+      final memoryNoteData = (data['memory_notes'] as List?) ?? const [];
+      final brainGraphData = (data['brain_graph'] is Map)
+          ? Map<String, dynamic>.from(data['brain_graph'] as Map)
+          : <String, dynamic>{};
+      final brainNodeData = (brainGraphData['nodes'] as List?) ?? const [];
+      final brainLinkData = (brainGraphData['links'] as List?) ?? const [];
+      final officeGoalData = (data['office_goals'] as List?) ?? const [];
+      final scoutData = (data['opportunity_scouts'] as List?) ?? const [];
+      final pipelineData = (data['pipeline'] is Map) ? Map<String, dynamic>.from(data['pipeline'] as Map) : <String, dynamic>{};
+      final dealData = (pipelineData['deals'] as List?) ?? const [];
       final vaultData = (data['vault_items'] as List?) ?? const [];
       final teamData = (data['team'] as List?) ?? const [];
       final teamTaskData = (data['team_tasks'] as List?) ?? const [];
@@ -382,6 +421,16 @@ extension _CheHomeSecurity on _CHEHomeState {
       final integrationData = (data['integrations'] as Map?) ?? const {};
 
       savedMemories = memoryData.map((e) => e.toString()).toList();
+      // Prefer brain_graph.nodes (cluster/locale metadata) when present.
+      final noteSource = brainNodeData.isNotEmpty ? brainNodeData : memoryNoteData;
+      memoryNotes = noteSource
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      brainLinks = brainLinkData
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
       learnedPersonality = personalityData
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
@@ -389,6 +438,18 @@ extension _CheHomeSecurity on _CHEHomeState {
       learnedKnowledge = knowledgeData.map((e) => e.toString()).toList();
       suggestions = suggestionData.map((e) => e.toString()).toList();
       projects = projectData
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      officeGoals = officeGoalData
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      opportunityScouts = scoutData
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      pipelineDeals = dealData
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
@@ -408,6 +469,15 @@ extension _CheHomeSecurity on _CHEHomeState {
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
+      _autonomy = data['autonomy'] != false;
+      final oldApprovalIds = _actionApprovals.map((a) => a['id']).toSet();
+      _actionApprovals = ((data['action_approvals'] as List?) ?? []).whereType<Map>().map((a) => Map<String, dynamic>.from(a)).where((a) => a['status'] == 'pending').toList();
+      if (_actionApprovals.any((a) => !oldApprovalIds.contains(a['id']))) {
+        unawaited(_statusHaptic(2));
+        final options = [for (var i = 0; i < _actionApprovals.length; i++) '${i + 1}. ${_actionApprovals[i]['query']}'].join(' ');
+        if (!_isSpeaking && !_isSending) unawaited(speakText('Approval needed. $options Say or type approve action and its number, or reject action and its number.'));
+      }
+      unawaited(_notifyFinishedJobs());
       ownerContext = ownerContextData
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
@@ -447,9 +517,34 @@ extension _CheHomeSecurity on _CHEHomeState {
         'broker': integrationData['broker'] == true,
         'prop_firm': integrationData['prop_firm'] == true,
         'business': integrationData['business'] == true,
+        'advertising': integrationData['advertising'] == true,
         'payments': integrationData['payments'] == true,
         'leads': integrationData['leads'] == true,
       };
+
+      final localSnapshot = <String, dynamic>{
+        'team': team,
+        'team_tasks': teamTasks,
+        'projects': projects,
+        'vault_items': vaultItems,
+        'jobs': backgroundJobs,
+        'meetings': const [],
+      };
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('che.local.snapshot', jsonEncode(localSnapshot));
+      _cachedSnapshot = localSnapshot;
+
+      if (_homeBaseUrl.isNotEmpty) {
+        unawaited(
+          _postSnapshotToHomeBase({
+            'team': team,
+            'team_tasks': teamTasks,
+            'projects': projects,
+            'vault_items': vaultItems,
+            'jobs': backgroundJobs,
+          }),
+        );
+      }
 
       if (mounted) _set(() {});
     } catch (_) {
@@ -463,6 +558,19 @@ extension _CheHomeSecurity on _CHEHomeState {
     } finally {
       _loadingAgentState = false;
     }
+  }
+
+  Future<void> _postSnapshotToHomeBase(Map<String, dynamic> snapshot) async {
+    if (_homeBaseUrl.isEmpty) return;
+    try {
+      await http
+          .post(
+            Uri.parse('$_homeBaseUrl/api/snapshot'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode(snapshot),
+          )
+          .timeout(const Duration(seconds: 12));
+    } catch (_) {}
   }
 
   Future<void> _openSecurityManager() async {
@@ -717,6 +825,12 @@ extension _CheHomeSecurity on _CHEHomeState {
     }
   }
 
+  /// Phone-only wake word setup (Picovoice key + "Chay" file in Keychain).
+  Future<void> _openWakeSetup() async {
+    final saved = await showCheWakeSetup(context, speak: speakText);
+    if (saved && cheSleeping) await _restartWakeListener();
+  }
+
   Future<void> _stopPorcupineWake({bool disposeEngine = false}) async {
     final wake = _porcupineWake;
     if (wake == null) {
@@ -942,6 +1056,7 @@ extension _CheHomeSecurity on _CHEHomeState {
     });
     _scrollToBottom();
 
+    unawaited(_controlAutonomy(clean));
     unawaited(_observeRealtimeTurn(clean, itemId));
   }
 
@@ -1112,3 +1227,4 @@ extension _CheHomeSecurity on _CHEHomeState {
     await ChePluginManager.open(context, cheAgentBaseUrl, _deviceToken!);
   }
 }
+

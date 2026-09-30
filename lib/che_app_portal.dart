@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'browser/che_browser.dart';
 import 'che_theme.dart';
+import 'home/che_grok_chat_screen.dart';
 
 class CheAppDefinition {
   const CheAppDefinition({
@@ -33,15 +34,111 @@ const List<CheAppDefinition> cheAppCatalog = [
   CheAppDefinition(name: 'GitHub', webUrl: 'https://github.com', icon: Icons.code, aliases: ['github', 'git hub']),
   CheAppDefinition(name: 'TradingView', webUrl: 'https://www.tradingview.com', icon: Icons.show_chart, aliases: ['tradingview', 'trading view']),
   CheAppDefinition(name: 'NinjaTrader', webUrl: 'https://ninjatrader.com', icon: Icons.candlestick_chart, aliases: ['ninjatrader', 'ninja trader']),
+  CheAppDefinition(name: 'TradeSea', webUrl: 'https://app.tradesea.ai/login?source=mobile-app&theme=dark', icon: Icons.ssid_chart, aliases: ['tradesea', 'trade sea', 'trade sea ai']),
+  // Web versions CHE can use when a phone app can't be controlled directly.
+  CheAppDefinition(name: 'Gmail', webUrl: 'https://mail.google.com', icon: Icons.mail_outline, aliases: ['gmail', 'google mail']),
+  CheAppDefinition(name: 'Outlook', webUrl: 'https://outlook.live.com/mail', icon: Icons.mark_email_unread_outlined, aliases: ['outlook', 'hotmail']),
+  CheAppDefinition(name: 'Yahoo Mail', webUrl: 'https://mail.yahoo.com', icon: Icons.mail_outline, aliases: ['yahoo mail']),
+  CheAppDefinition(name: 'Google Calendar', webUrl: 'https://calendar.google.com', icon: Icons.calendar_month_outlined, aliases: ['google calendar']),
+  CheAppDefinition(name: 'Google Drive', webUrl: 'https://drive.google.com', icon: Icons.folder_open_outlined, aliases: ['google drive', 'drive']),
+  CheAppDefinition(name: 'Google Docs', webUrl: 'https://docs.google.com', icon: Icons.description_outlined, aliases: ['google docs']),
+  CheAppDefinition(name: 'Google Maps', webUrl: 'https://www.google.com/maps', icon: Icons.map_outlined, aliases: ['google maps']),
+  CheAppDefinition(name: 'WhatsApp', webUrl: 'https://web.whatsapp.com', icon: Icons.chat_outlined, aliases: ['whatsapp', 'whats app']),
+  CheAppDefinition(name: 'Messenger', webUrl: 'https://www.messenger.com', icon: Icons.messenger_outline, aliases: ['messenger', 'facebook messenger']),
+  CheAppDefinition(name: 'Telegram', webUrl: 'https://web.telegram.org', icon: Icons.send_outlined, aliases: ['telegram']),
+  CheAppDefinition(name: 'Slack', webUrl: 'https://app.slack.com', icon: Icons.tag_outlined, aliases: ['slack']),
+  CheAppDefinition(name: 'Microsoft Teams', webUrl: 'https://teams.microsoft.com', icon: Icons.groups_2_outlined, aliases: ['teams', 'microsoft teams']),
+  CheAppDefinition(name: 'Zoom', webUrl: 'https://app.zoom.us', icon: Icons.videocam_outlined, aliases: ['zoom']),
+  CheAppDefinition(name: 'Netflix', webUrl: 'https://www.netflix.com', icon: Icons.movie_outlined, aliases: ['netflix']),
+  CheAppDefinition(name: 'Hulu', webUrl: 'https://www.hulu.com', icon: Icons.live_tv_outlined, aliases: ['hulu']),
+  CheAppDefinition(name: 'Prime Video', webUrl: 'https://www.primevideo.com', icon: Icons.ondemand_video_outlined, aliases: ['prime video', 'amazon prime video']),
+  CheAppDefinition(name: 'Disney+', webUrl: 'https://www.disneyplus.com', icon: Icons.movie_filter_outlined, aliases: ['disney plus', 'disney+']),
+  CheAppDefinition(name: 'Max', webUrl: 'https://play.max.com', icon: Icons.tv_outlined, aliases: ['hbo max', 'hbo']),
+  CheAppDefinition(name: 'Tubi', webUrl: 'https://tubitv.com', icon: Icons.tv_outlined, aliases: ['tubi']),
+  CheAppDefinition(name: 'Pluto TV', webUrl: 'https://pluto.tv', icon: Icons.tv_outlined, aliases: ['pluto', 'pluto tv']),
+  CheAppDefinition(name: 'Amazon', webUrl: 'https://www.amazon.com', icon: Icons.shopping_cart_outlined, aliases: ['amazon']),
+  CheAppDefinition(name: 'PayPal', webUrl: 'https://www.paypal.com', icon: Icons.account_balance_wallet_outlined, aliases: ['paypal', 'pay pal']),
+  CheAppDefinition(name: 'Notion', webUrl: 'https://www.notion.so', icon: Icons.notes_outlined, aliases: ['notion']),
+  CheAppDefinition(name: 'Pinterest', webUrl: 'https://www.pinterest.com', icon: Icons.push_pin_outlined, aliases: ['pinterest']),
+  CheAppDefinition(name: 'ChatGPT', webUrl: 'https://chatgpt.com', icon: Icons.smart_toy_outlined, aliases: ['chatgpt', 'chat gpt']),
+  CheAppDefinition(name: 'Grok', webUrl: 'https://grok.com', icon: Icons.smart_toy_outlined, aliases: ['grok']),
 ];
+
+/// The app's real icon (the site's own favicon), with the old symbol only as
+/// a fallback when there's no connection.
+String cheAppIconUrl(String webUrl) {
+  final host = Uri.tryParse(webUrl)?.host ?? '';
+  final domain = host.replaceFirst(RegExp(r'^(www|open|web)\.'), '');
+  return 'https://www.google.com/s2/favicons?sz=128&domain=${Uri.encodeComponent(domain)}';
+}
+
+class CheAppIcon extends StatelessWidget {
+  const CheAppIcon({super.key, required this.app, this.size = 40});
+  final CheAppDefinition app;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(size * 0.22),
+      child: Image.network(
+        cheAppIconUrl(app.webUrl),
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.high,
+        errorBuilder: (context, error, stackTrace) => Icon(app.icon, size: size * 0.7, color: CheColors.accent),
+      ),
+    );
+  }
+}
 
 CheAppDefinition? cheAppForName(String input) {
   final value = input.toLowerCase().trim();
+  // Whole-word matches only, so "netflix" never matches the "x" alias.
+  bool mentions(String alias) =>
+      value == alias || RegExp('(^|[^a-z0-9])${RegExp.escape(alias)}(\$|[^a-z0-9])').hasMatch(value);
   for (final app in cheAppCatalog) {
-    if (app.name.toLowerCase() == value ||
-        app.aliases.any((alias) => value == alias || value.contains(alias))) {
-      return app;
-    }
+    if (app.name.toLowerCase() == value) return app;
+  }
+  for (final app in cheAppCatalog) {
+    if (app.aliases.any(mentions)) return app;
+  }
+  return null;
+}
+
+/// True when [url] is on TradeSea (app.tradesea.ai or sibling tradesea.ai hosts).
+bool cheIsTradeSeaUrl(String url) {
+  final host = Uri.tryParse(url)?.host.toLowerCase() ?? '';
+  return host.contains('tradesea.ai');
+}
+
+/// TradeSea's SPA treats mobile UAs (CHE's WKWebView) as a phone browser and
+/// shows only a "download the app" sheet unless `source=mobile-app` (or
+/// `window.__webView`) is set — that is how their native WebViewBridge embeds.
+/// CHE Apps must open with that flag or sign-in never appears.
+String cheTradeSeaEmbedUrl(String url) {
+  final uri = Uri.tryParse(url);
+  if (uri == null || !cheIsTradeSeaUrl(url)) return url;
+  final next = Map<String, String>.from(uri.queryParameters);
+  if (next['source'] == 'mobile-app') return uri.toString();
+  next['source'] = 'mobile-app';
+  next.putIfAbsent('theme', () => 'dark');
+  return uri.replace(queryParameters: next).toString();
+}
+
+/// Phone apps with no usable web version. CHE says so plainly instead of
+/// pretending she can get in.
+const Map<String, String> cheAppsWithoutWeb = {
+  'imessage': 'iMessage has no web version, so I can only draft the text and open Messages for you to send.',
+  'facetime': 'FaceTime has no web version I can use, sir.',
+  'iwebtv': 'iWebTV has no web version. I can open the app itself once you say yes, or play a video page in CHE\'s Theater.',
+};
+
+String? cheNoWebVersionReason(String input) {
+  final value = input.toLowerCase();
+  for (final entry in cheAppsWithoutWeb.entries) {
+    if (value.contains(entry.key) || (entry.key == 'iwebtv' && value.contains('iweb'))) return entry.value;
   }
   return null;
 }
@@ -53,9 +150,18 @@ typedef CheLearnPageCallback = Future<void> Function(
 );
 
 class CheAppsHubTab extends StatefulWidget {
-  const CheAppsHubTab({super.key, this.onLearnPage});
+  const CheAppsHubTab({
+    super.key,
+    this.onLearnPage,
+    this.agentBaseUrl = '',
+    this.deviceToken = '',
+  });
 
   final CheLearnPageCallback? onLearnPage;
+
+  /// CHE Worker base URL + paired device token for native Grok chat.
+  final String agentBaseUrl;
+  final String deviceToken;
 
   @override
   State<CheAppsHubTab> createState() => _CheAppsHubTabState();
@@ -97,6 +203,41 @@ class _CheAppsHubTabState extends State<CheAppsHubTab> {
     );
   }
 
+  Future<void> _openEmbeddedWeb(CheAppDefinition app) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CheEmbeddedAppScreen(
+          app: app,
+          onLearnPage: widget.onLearnPage,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openCatalogApp(CheAppDefinition app) async {
+    // Grok opens the native Worker→xAI chat. Long-press (or overflow in
+    // that screen) still opens grok.com in the in-app browser.
+    if (app.name == 'Grok') {
+      await CheGrokChatScreen.open(
+        context,
+        baseUrl: widget.agentBaseUrl,
+        deviceToken: widget.deviceToken,
+        onOpenWeb: () {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => CheEmbeddedAppScreen(
+                app: app,
+                onLearnPage: widget.onLearnPage,
+              ),
+            ),
+          );
+        },
+      );
+      return;
+    }
+    await _openEmbeddedWeb(app);
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListView(
@@ -105,7 +246,7 @@ class _CheAppsHubTabState extends State<CheAppsHubTab> {
         const Text('Apps inside CHE', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
         const SizedBox(height: 4),
         const Text(
-          'Web-capable services open without leaving CHE. Native-only features use the official app when iOS or the service requires it.',
+          'Web-capable services open without leaving CHE. Tap Grok for native Worker chat (long-press for grok.com). Native-only features use the official app when iOS or the service requires it.',
           style: TextStyle(color: CheColors.textDim),
         ),
         const SizedBox(height: 16),
@@ -123,14 +264,10 @@ class _CheAppsHubTabState extends State<CheAppsHubTab> {
             final app = cheAppCatalog[index];
             return InkWell(
               borderRadius: BorderRadius.circular(16),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => CheEmbeddedAppScreen(
-                    app: app,
-                    onLearnPage: widget.onLearnPage,
-                  ),
-                ),
-              ),
+              onTap: () => _openCatalogApp(app),
+              onLongPress: app.name == 'Grok'
+                  ? () => _openEmbeddedWeb(app)
+                  : null,
               child: Container(
                 decoration: BoxDecoration(
                   color: CheColors.panel,
@@ -141,15 +278,20 @@ class _CheAppsHubTabState extends State<CheAppsHubTab> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(app.icon, size: 28, color: CheColors.accent),
+                    CheAppIcon(app: app, size: 40),
                     const SizedBox(height: 8),
                     Text(
                       app.name,
                       textAlign: TextAlign.center,
-                      maxLines: 2,
+                      maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
+                    if (app.name == 'Grok')
+                      const Text(
+                        'Native',
+                        style: TextStyle(fontSize: 10, color: CheColors.accent, fontWeight: FontWeight.w700),
+                      ),
                   ],
                 ),
               ),

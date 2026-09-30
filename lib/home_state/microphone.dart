@@ -126,44 +126,12 @@ extension _CheHomeMicrophone on _CHEHomeState {
     await _startListening();
   }
 
-  bool _isWakePhrase(String raw) {
-    final text = raw.trim().toLowerCase();
-    if (text.isEmpty) return false;
-
-    // The brand is written C.H.E.; the spoken wake name is "Chay".
-    // Accept common speech-recognition spellings of that sound.
-    if (text == 'chay' ||
-        text == 'chey' ||
-        text == 'shay' ||
-        text == 'chai' ||
-        text == 'chee' ||
-        text == 'chi' ||
-        text == 'che' ||
-        text == 'c h e' ||
-        text == 'c.h.e.' ||
-        text == 'hey chay' ||
-        text == 'hey chey' ||
-        text == 'hey shay' ||
-        text == 'hey chai' ||
-        text == 'hey chee' ||
-        text == 'hey chi' ||
-        text == 'hey che' ||
-        text == 'hey c h e' ||
-        text == 'she') {
-      return true;
-    }
-
-    final wakeMatch = RegExp(
-      r'^(?:hey\s+)?(?:chay|chey|shay|chai|chee|chi|che|she|c\.?\s*h\.?\s*e\.?)[\s,!.?]*',
-      caseSensitive: false,
-    ).firstMatch(raw.trim());
-    return wakeMatch != null && wakeMatch.end == raw.trim().length;
-  }
+  bool _isWakePhrase(String raw) => cheIsWake(raw);
 
   bool _isSleepPhrase(String raw) {
     final text = raw.trim().toLowerCase();
 
-    return text == 'stand down' ||
+    return text == 'stand by' || text == 'chay stand by' || text == 'che stand by' || text == 'stand down' ||
         text == 'chay stand down' ||
         text == 'chey stand down' ||
         text == 'shay stand down' ||
@@ -233,12 +201,18 @@ extension _CheHomeMicrophone on _CHEHomeState {
       // SLEEPING MODE:
       // Ignore everything except the wake phrase. No message is sent to the AI.
       if (cheSleeping) {
-        if (_isWakePhrase(rawSpeech)) {
+        final afterWake = cheWakeRemainder(rawSpeech);
+        if (afterWake != null) {
           _set(() {
             cheSleeping = false;
           });
 
-          await speakText('Yeah, sir?');
+          if (afterWake.isEmpty) {
+            await speakText('Yeah, sir?');
+          } else {
+            _set(() => controller.text = afterWake);
+            await sendMessage(fromVoice: true);
+          }
         } else {
           _rearmWebMicSoon();
         }
@@ -253,19 +227,11 @@ extension _CheHomeMicrophone on _CHEHomeState {
           controller.clear();
         });
 
-        await speakText('Standing by, sir.');
+        await _controlAutonomy('stand by');
         return;
       }
 
-      var spokenWords = rawSpeech
-          .replaceFirst(
-            RegExp(
-              r'^(?:hey\s+)?(?:chay|chey|shay|c\.?\s*h\.?\s*e\.?|che)[\s,.:;!?-]*',
-              caseSensitive: false,
-            ),
-            '',
-          )
-          .trim();
+      var spokenWords = cheWakeRemainder(rawSpeech) ?? rawSpeech.trim();
 
       // If the only thing said was "CHE" while already awake, acknowledge it
       // and continue listening for the actual command.
@@ -350,7 +316,8 @@ extension _CheHomeMicrophone on _CHEHomeState {
           if (wakePhraseMode && cheSleeping) {
             if (!result.finalResult) return;
 
-            if (_isWakePhrase(rawWords)) {
+            final afterWake = cheWakeRemainder(rawWords);
+            if (afterWake != null) {
               _autoSentCurrentTurn = true;
               cheSleeping = false;
 
@@ -362,7 +329,12 @@ extension _CheHomeMicrophone on _CHEHomeState {
                 isListening = false;
               });
 
-              await speakText('Yeah, sir?');
+              if (afterWake.isEmpty) {
+                await speakText('Yeah, sir?');
+              } else {
+                _set(() => controller.text = afterWake);
+                await sendMessage(fromVoice: true);
+              }
               return;
             }
 
@@ -381,15 +353,7 @@ extension _CheHomeMicrophone on _CHEHomeState {
 
           // If the owner still says "Chay" out of habit before a command,
           // strip it rather than requiring or rejecting it.
-          spokenWords = spokenWords
-              .replaceFirst(
-                RegExp(
-                  r'^(?:hey\s+)?(?:chay|chey|shay|chai|chee|chi|che|she)\b[\s,.:;!?-]*',
-                  caseSensitive: false,
-                ),
-                '',
-              )
-              .trim();
+          spokenWords = cheWakeRemainder(spokenWords) ?? spokenWords;
 
           if (spokenWords.isEmpty) {
             // They only said the wake word again while already awake —            // acknowledge it without ending the conversation.
@@ -412,8 +376,14 @@ extension _CheHomeMicrophone on _CHEHomeState {
             if (!mounted) return;
             _set(() => isListening = false);
 
-            await speakText('Standing by, sir.');
+            await _controlAutonomy('stand by');
             return;
+          }
+
+          // Speech already held from before a mid-thought pause is kept in
+          // front of what he says next, so nothing he said is lost.
+          if (_heldSpeech.isNotEmpty) {
+            spokenWords = '$_heldSpeech $spokenWords';
           }
 
           _set(() {
@@ -423,8 +393,25 @@ extension _CheHomeMicrophone on _CHEHomeState {
             );
           });
 
+          // He trailed off ("um", "and", "so...") — he is still thinking, not
+          // finished. Keep the turn open and keep listening instead of sending.
+          if (result.finalResult &&
+              !_autoSentCurrentTurn &&
+              !_isSending &&
+              cheSoundsUnfinished(spokenWords) &&
+              _heldSpeechRestarts < 3) {
+            _heldSpeech = spokenWords;
+            _heldSpeechRestarts += 1;
+            if (!kIsWeb && openConversation) {
+              _restartListeningSoon(delay: const Duration(milliseconds: 150));
+            }
+            return;
+          }
+
           if (result.finalResult && !_autoSentCurrentTurn && !_isSending) {
             _autoSentCurrentTurn = true;
+            _heldSpeech = '';
+            _heldSpeechRestarts = 0;
 
             // iPhone Safari speech recognition is intermittent. We end the
             // web turn cleanly instead of forcing an on/off restart loop.
@@ -449,8 +436,11 @@ extension _CheHomeMicrophone on _CHEHomeState {
           cancelOnError: true,
           autoPunctuation: true,
           listenMode: stt.ListenMode.dictation,
-          pauseFor: const Duration(milliseconds: 1400),
-          listenFor: const Duration(seconds: 30),
+          // End the turn after ~1.6s of silence so replies start sooner.
+          // Trailing fillers ("um", "and", "so...") still hold the turn open
+          // via cheSoundsUnfinished below; one turn can still run five minutes.
+          pauseFor: const Duration(milliseconds: 1600),
+          listenFor: const Duration(minutes: 5),
         ),
       );
 
@@ -500,3 +490,4 @@ extension _CheHomeMicrophone on _CHEHomeState {
     });
   }
 }
+

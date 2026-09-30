@@ -7,6 +7,7 @@ export 'che_backend.dart';
 export 'che_agent_chat.dart';
 export 'che_office_hub.dart';
 export 'che_plugins.dart';
+export 'che_ai_models_panel.dart';
 export 'che_log.dart';
 export 'che_brain.dart';
 export 'che_rooms.dart';

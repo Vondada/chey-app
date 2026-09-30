@@ -42,12 +42,32 @@ class CheUpdateProposal {
 
   static String stripBlocks(String text) => text.replaceAll(RegExp(r'```che-update[\s\S]*?(```|$)'), '').trim();
 
-  /// Only Dart under lib/ can ship this way (Shorebird-patchable).
-  List<String> get problems => [
-        for (final f in files)
-          if (!RegExp(r'^lib/[A-Za-z0-9_/]+\.dart$').hasMatch(f.path) || f.path.contains('..'))
-            '${f.path}: only Dart files under lib/ can be self-updated',
-      ];
+  /// Client-side checks mirroring Worker `validateUpdateFiles` (server is source of truth).
+  List<String> get problems {
+    final out = <String>[];
+    if (files.isEmpty) out.add('An update needs at least one file.');
+    if (files.length > 6) out.add('An update may change at most 6 files (keep the slice narrow).');
+    final seen = <String>{};
+    for (final f in files) {
+      if (!RegExp(r'^lib/[A-Za-z0-9_/]+\.dart$').hasMatch(f.path) || f.path.contains('..')) {
+        out.add('${f.path}: only Dart files under lib/ can be self-updated');
+        continue;
+      }
+      if (!seen.add(f.path)) out.add('${f.path} appears twice.');
+      final text = f.content;
+      if (RegExp(r'BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY').hasMatch(text) ||
+          RegExp(r'(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}').hasMatch(text) ||
+          RegExp(r'(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}').hasMatch(text) ||
+          RegExp(r'(?:CHE_GITHUB_TOKEN|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET|OLLAMA_API_KEY|CHE_OPENAI_API_KEY|XAI_API_KEY)\s*[:=]').hasMatch(text)) {
+        out.add('${f.path}: looks like a secret or private key.');
+      }
+      if (RegExp(r'<\?xml[\s\S]{0,200}<(?:plist|dict)\b', caseSensitive: false).hasMatch(text) ||
+          text.contains('CODE_SIGN_ENTITLEMENTS=')) {
+        out.add('${f.path}: self-update cannot touch native iOS entitlements or Info.plist.');
+      }
+    }
+    return out;
+  }
 }
 
 /// Remembers per-proposal state across chat rebuilds.

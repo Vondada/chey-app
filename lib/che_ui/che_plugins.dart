@@ -25,6 +25,7 @@ import 'package:flutter/services.dart';
 import 'che_theme.dart';
 import 'che_widgets.dart';
 import 'che_office_hub.dart';
+import 'che_ai_models_panel.dart';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Manifest
@@ -448,8 +449,14 @@ class ChePluginsScreen extends StatefulWidget {
     required this.onAskCheToBuild,
     this.webAppBuilder,
     this.onRunPrompt,
+    this.onOpenLearning,
+    this.loadAiOverview,
   });
   final ChePluginRegistry registry;
+
+  /// Loads CHE's AI layer overview (GET /api/ai/overview) for the
+  /// AI & Models section. Hidden when null.
+  final Future<Map<String, dynamic>> Function()? loadAiOverview;
 
   /// Opens chat with a prompt like "Build me a plugin that…".
   final VoidCallback onAskCheToBuild;
@@ -461,12 +468,17 @@ class ChePluginsScreen extends StatefulWidget {
   /// Sends a prompt to CHE (used by plugin cards / quick actions).
   final void Function(String prompt)? onRunPrompt;
 
+  /// Opens CHE's owner-approved learning/import controls.
+  final VoidCallback? onOpenLearning;
+
   @override
   State<ChePluginsScreen> createState() => _ChePluginsScreenState();
 }
 
 class _ChePluginsScreenState extends State<ChePluginsScreen> {
   Future<List<ChePlugin>>? _catalog;
+  String _section = 'discover';
+  String _query = '';
 
   ChePluginRegistry get reg => widget.registry;
 
@@ -474,6 +486,10 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
   void initState() {
     super.initState();
     if (!reg.loaded) reg.load();
+    _reloadCatalog();
+  }
+
+  void _reloadCatalog() {
     _catalog = reg.fetchCatalog();
   }
 
@@ -489,22 +505,29 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
           minLines: 3,
           maxLines: 8,
           style: CheType.mono,
-          decoration: const InputDecoration(hintText: 'Paste a link or plugin JSON', hintStyle: CheType.bodyDim),
+          decoration: const InputDecoration(
+            hintText: 'Paste a secure HTTPS link or plugin JSON',
+            hintStyle: CheType.bodyDim,
+          ),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('Next')),
+          TextButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('Review')),
         ],
       ),
     );
     if (text == null || text.trim().isEmpty || !mounted) return;
     ChePlugin? p;
     try {
-      p = text.trim().startsWith('http') ? await reg.fetchFromLink(text) : ChePlugin.tryParse(text);
+      p = text.trim().startsWith('http')
+          ? await reg.fetchFromLink(text)
+          : ChePlugin.tryParse(text);
     } catch (_) {}
     if (!mounted) return;
     if (p == null) {
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(content: Text('That isn’t a valid plugin.')));
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(content: Text('That is not a valid CHE plugin.')),
+      );
       return;
     }
     await showChePluginReview(context, reg, p);
@@ -512,8 +535,300 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
 
   void _openPlugin(ChePlugin p) {
     Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => ChePluginPage(plugin: p, webAppBuilder: widget.webAppBuilder, onRunPrompt: widget.onRunPrompt),
+      builder: (_) => ChePluginPage(
+        plugin: p,
+        webAppBuilder: widget.webAppBuilder,
+        onRunPrompt: widget.onRunPrompt,
+      ),
     ));
+  }
+
+  bool _matches(ChePlugin p) {
+    final q = _query.trim().toLowerCase();
+    if (q.isEmpty) return true;
+    return [
+      p.name,
+      p.description,
+      p.author,
+      p.instructions,
+      p.permissions.join(' '),
+      p.quickActions.join(' '),
+    ].join(' ').toLowerCase().contains(q);
+  }
+
+  void _runPrompt(String prompt) {
+    final run = widget.onRunPrompt;
+    if (run != null) run(prompt);
+  }
+
+  Widget _navChip(String id, String label, IconData icon) {
+    final selected = _section == id;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '$label section',
+      child: ChoiceChip(
+        selected: selected,
+        onSelected: (_) {
+          HapticFeedback.selectionClick();
+          setState(() => _section = id);
+        },
+        avatar: Icon(
+          icon,
+          size: 16,
+          color: selected ? const Color(0xFF03120F) : CheColors.textDim,
+        ),
+        label: Text(label),
+        labelStyle: CheType.label.copyWith(
+          color: selected ? const Color(0xFF03120F) : CheColors.text,
+        ),
+        selectedColor: CheColors.accent,
+        backgroundColor: CheColors.surface,
+        side: BorderSide(color: selected ? CheColors.accent : CheColors.stroke),
+        showCheckmark: false,
+        visualDensity: VisualDensity.compact,
+      ),
+    );
+  }
+
+  Widget _statusStrip(List<ChePlugin> installed) {
+    final enabled = installed.where((p) => reg.isEnabled(p.id)).length;
+    return Semantics(
+      label: '$enabled plugins enabled, ${installed.length} installed. Learning tools ready.',
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: CheSpace.md,
+          vertical: 12,
+        ),
+        decoration: BoxDecoration(
+          color: CheColors.surface,
+          borderRadius: BorderRadius.circular(CheRadius.md),
+          border: Border.all(color: CheColors.stroke),
+        ),
+        child: Row(children: [
+          const Icon(Icons.hub_rounded, size: 18, color: CheColors.accent),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              '$enabled enabled · ${installed.length} installed · learning ready',
+              style: CheType.label,
+            ),
+          ),
+          IconButton(
+            tooltip: 'Refresh plugin catalog',
+            onPressed: () {
+              HapticFeedback.selectionClick();
+              setState(_reloadCatalog);
+            },
+            icon: const Icon(Icons.refresh_rounded, size: 19),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _searchBox() {
+    return TextField(
+      onChanged: (value) => setState(() => _query = value),
+      style: CheType.body,
+      textInputAction: TextInputAction.search,
+      decoration: InputDecoration(
+        prefixIcon: const Icon(Icons.search_rounded, size: 20),
+        hintText: 'Search skills',
+        hintStyle: CheType.bodyDim,
+        filled: true,
+        fillColor: CheColors.surface,
+        contentPadding: const EdgeInsets.symmetric(vertical: 12),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(CheRadius.md),
+          borderSide: const BorderSide(color: CheColors.stroke),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(CheRadius.md),
+          borderSide: const BorderSide(color: CheColors.stroke),
+        ),
+      ),
+    );
+  }
+
+  Widget _learningPanel() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        CheFeatureCard(
+          icon: Icons.psychology_alt_rounded,
+          hue: CheColors.accent,
+          title: 'Learning Lab',
+          body: 'Teach CHE from files, photos, videos, shared text and browser pages you approve.',
+          onTap: widget.onOpenLearning,
+        ),
+        const SizedBox(height: CheSpace.md),
+        CheFeatureCard(
+          icon: Icons.tune_rounded,
+          hue: CheColors.accentAlt,
+          title: 'Fine-Tuning Lab',
+          body: 'Prepare clean training sets, evaluate models, and run LoRA/adapter tuning through a connected training service.',
+          onTap: widget.onRunPrompt == null
+              ? null
+              : () => _runPrompt(
+                    'Open CHE Fine-Tuning Lab. Help me choose an approved dataset, clean and split it, create an evaluation set, choose a base open model such as a Llama-family model, and prepare a LoRA or adapter fine-tuning job. Prefer my connected VMware Private AI training service when configured; otherwise prepare a Hugging Face compatible job. Never upload private data or spend money without my approval.',
+                  ),
+        ),
+        const SizedBox(height: CheSpace.md),
+        CheFeatureCard(
+          icon: Icons.dns_rounded,
+          hue: CheColors.success,
+          title: 'VMware Private AI',
+          body: 'Use a connected VMware Cloud Foundation / Private AI GPU endpoint for private model training and evaluation.',
+          onTap: widget.onRunPrompt == null
+              ? null
+              : () => _runPrompt(
+                    'Check CHE VMware fine-tuning readiness. If CHE_VMWARE_TRAINING_URL is configured, explain the available private training path and prepare a reversible training job. If it is not configured, tell me exactly what endpoint and server-side credential CHE needs. Do not claim training ran unless the connector confirms it.',
+                  ),
+        ),
+        const SizedBox(height: CheSpace.md),
+        CheFeatureCard(
+          icon: Icons.manage_search_rounded,
+          hue: CheColors.warning,
+          title: 'Review what CHE knows',
+          body: 'Group learned context into People, Projects, Decisions, Companies, Meetings, Daily and Knowledge.',
+          onTap: widget.onRunPrompt == null
+              ? null
+              : () => _runPrompt(
+                    'Review the owner context you have learned. Group it into People, Projects, Decisions, Companies, Meetings, Daily, and Knowledge. Flag uncertainty and duplicates, and tell me what should be corrected or deleted.',
+                  ),
+        ),
+        const SizedBox(height: CheSpace.md),
+        CheFeatureCard(
+          icon: Icons.auto_graph_rounded,
+          hue: CheColors.success,
+          title: 'Build reusable knowledge',
+          body: 'Turn approved source material into durable, searchable context CHE can use later.',
+          onTap: widget.onRunPrompt == null
+              ? null
+              : () => _runPrompt(
+                    'Help me build CHE knowledge from my approved sources. Ask which source I want to import, then organize only what I provide into reusable facts with provenance. Do not invent anything.',
+                  ),
+        ),
+        const SizedBox(height: CheSpace.sm),
+        Text(
+          'CHE learning uses editable memory and retrieval first. Fine-tuning changes a model only through a connected training backend, so the phone stays fast and the result can be evaluated or rolled back.',
+          style: CheType.caption,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPanel() {
+    return Column(
+      children: [
+        CheFeatureCard(
+          icon: Icons.sms_outlined,
+          hue: const Color(0xFFF22F46),
+          title: 'Twilio SMS (CHE)',
+          body: 'Connect Twilio so CHE can text. Secrets stay on the Worker (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER). Bulk needs your yes.',
+          onTap: widget.onRunPrompt == null
+              ? null
+              : () => _runPrompt(
+                    'Explain how to connect Twilio SMS for CHE using wrangler secret put for TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER. Check GET /api/twilio/status without echoing any secret values. Remind me that only CHE sends, bulk stays Owner decision pending until I confirm, and trial limits are about 5 verified numbers and 100 SMS.',
+                  ),
+        ),
+        const SizedBox(height: CheSpace.md),
+        CheFeatureCard(
+          icon: Icons.auto_awesome_rounded,
+          title: 'Ask CHE to build a plugin',
+          body: 'Describe a skill. CHE drafts it, you review permissions, then you approve installation.',
+          onTap: widget.onAskCheToBuild,
+        ),
+        const SizedBox(height: CheSpace.md),
+        CheFeatureCard(
+          icon: Icons.add_link_rounded,
+          hue: CheColors.accentAlt,
+          title: 'Add from link or JSON',
+          body: 'Import a plugin manifest, inspect its permissions, and keep rollback available.',
+          onTap: _addFromPasteOrLink,
+        ),
+      ],
+    );
+  }
+
+  Widget _installedPanel(List<ChePlugin> installed) {
+    final list = installed.where(_matches).toList();
+    if (list.isEmpty) {
+      return Text(
+        installed.isEmpty
+            ? 'No plugins installed yet.'
+            : 'No installed plugins match your search.',
+        style: CheType.bodyDim,
+      );
+    }
+    return Column(children: [
+      for (final p in list)
+        Padding(
+          padding: const EdgeInsets.only(bottom: CheSpace.md),
+          child: _installedTile(p),
+        ),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: reg.disableAll,
+          icon: const Icon(
+            Icons.shield_outlined,
+            color: CheColors.warning,
+            size: 18,
+          ),
+          label: Text(
+            'Safe mode: turn all plugins off',
+            style: CheType.label.copyWith(color: CheColors.warning),
+          ),
+        ),
+      ),
+    ]);
+  }
+
+  Widget _discoverPanel() {
+    return FutureBuilder<List<ChePlugin>>(
+      future: _catalog,
+      builder: (context, snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          return const Padding(
+            padding: EdgeInsets.all(CheSpace.md),
+            child: ThinkingShimmer(text: 'Loading skills…'),
+          );
+        }
+        final list = (snap.data ?? const [])
+            .where((p) => reg.byId(p.id)?.version != p.version)
+            .where(_matches)
+            .toList();
+        if (list.isEmpty) {
+          return Text(
+            snap.hasError
+                ? 'Skill catalog is unavailable right now.'
+                : (_query.isEmpty
+                    ? 'You have everything currently in the catalog.'
+                    : 'No skills match your search.'),
+            style: CheType.bodyDim,
+          );
+        }
+        return Column(children: [
+          for (final p in list)
+            Padding(
+              padding: const EdgeInsets.only(bottom: CheSpace.md),
+              child: Semantics(
+                button: true,
+                label: '${p.name}. ${p.description}. Review plugin.',
+                child: CheFeatureCard(
+                  icon: p.icon,
+                  hue: p.color,
+                  title: reg.byId(p.id) == null ? p.name : '${p.name} · update',
+                  body: p.description,
+                  onTap: () => showChePluginReview(context, reg, p),
+                ),
+              ),
+            ),
+        ]);
+      },
+    );
   }
 
   @override
@@ -522,112 +837,126 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
       animation: reg,
       builder: (context, _) {
         final installed = reg.installed;
-        return CheSectionPage(
-          title: 'Plugins',
-          description: 'Add new skills to CHE in one tap. Nothing installs without your approval, and every update can be rolled back.',
-          action: CheIconButton(icon: Icons.add_rounded, onTap: _addFromPasteOrLink, size: 40),
-          children: [
-            CheFeatureCard(
-              icon: Icons.auto_awesome_rounded,
-              title: 'Ask CHE to build a plugin',
-              body: 'Describe what you want. CHE writes it, you review it, tap Install.',
-              onTap: widget.onAskCheToBuild,
-            ),
-            if (installed.isNotEmpty) const Text('INSTALLED', style: CheType.overline),
-            for (final p in installed) _installedTile(p),
-            const Text('GET MORE', style: CheType.overline),
-            FutureBuilder<List<ChePlugin>>(
-              future: _catalog,
-              builder: (context, snap) {
-                if (snap.connectionState != ConnectionState.done) {
-                  return const Padding(padding: EdgeInsets.all(CheSpace.md), child: ThinkingShimmer(text: 'Loading catalog…'));
-                }
-                final list = (snap.data ?? const []).where((p) => reg.byId(p.id)?.version != p.version).toList();
-                if (list.isEmpty) {
-                  return Text(snap.hasError ? 'Catalog unavailable right now.' : 'You have everything in the catalog.',
-                      style: CheType.bodyDim);
-                }
-                return Column(children: [
-                  for (final p in list)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: CheSpace.md),
-                      child: CheFeatureCard(
-                        icon: p.icon,
-                        hue: p.color,
-                        title: reg.byId(p.id) == null ? p.name : '${p.name} — update available',
-                        body: p.description,
-                        onTap: () => showChePluginReview(context, reg, p),
-                      ),
-                    ),
-                ]);
-              },
-            ),
-            if (installed.isNotEmpty)
-              TextButton.icon(
-                onPressed: reg.disableAll,
-                icon: const Icon(Icons.shield_outlined, color: CheColors.warning, size: 18),
-                label: Text('Safe mode: turn all plugins off', style: CheType.label.copyWith(color: CheColors.warning)),
+        final media = MediaQuery.of(context);
+        final scaled = MediaQuery.textScalerOf(context).scale(1);
+        final scale = scaled.clamp(1.0, 1.35).toDouble();
+
+        return MediaQuery(
+          data: media.copyWith(textScaler: TextScaler.linear(scale)),
+          child: CheSectionPage(
+            title: 'Plugins & Learning',
+            description: 'Skills, tools, model learning and approved knowledge sources in one place.',
+            action: Semantics(
+              button: true,
+              label: 'Add plugin',
+              child: CheIconButton(
+                icon: Icons.add_rounded,
+                onTap: _addFromPasteOrLink,
+                size: 40,
               ),
-          ],
+            ),
+            children: [
+              _statusStrip(installed),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _navChip('discover', 'Discover', Icons.explore_outlined),
+                  _navChip('installed', 'Installed', Icons.extension_rounded),
+                  _navChip('learn', 'Learn', Icons.psychology_alt_outlined),
+                  _navChip('build', 'Build', Icons.add_circle_outline_rounded),
+                  if (widget.loadAiOverview != null)
+                    _navChip('models', 'AI & Models', Icons.hub_outlined),
+                ],
+              ),
+              if (_section == 'discover' || _section == 'installed')
+                _searchBox(),
+              if (_section == 'discover') _discoverPanel(),
+              if (_section == 'installed') _installedPanel(installed),
+              if (_section == 'learn') _learningPanel(),
+              if (_section == 'build') _buildPanel(),
+              if (_section == 'models' && widget.loadAiOverview != null)
+                CheAiModelsPanel(load: widget.loadAiOverview!, onRunPrompt: widget.onRunPrompt),
+            ],
+          ),
         );
       },
     );
   }
 
   Widget _installedTile(ChePlugin p) {
-    return Container(
-      padding: const EdgeInsets.all(CheSpace.md),
-      decoration: BoxDecoration(
-        color: CheColors.surface,
-        borderRadius: BorderRadius.circular(CheRadius.lg),
-        border: Border.all(color: reg.isEnabled(p.id) ? p.color.withValues(alpha: 0.5) : CheColors.stroke),
-      ),
-      child: Row(children: [
-        GestureDetector(
-          onTap: () => _openPlugin(p),
-          child: Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: p.color.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(CheRadius.sm),
-            ),
-            child: Icon(p.icon, color: p.color),
+    return Semantics(
+      label: '${p.name}, version ${p.version}, ${reg.isEnabled(p.id) ? 'enabled' : 'disabled'}',
+      child: Container(
+        padding: const EdgeInsets.all(CheSpace.md),
+        decoration: BoxDecoration(
+          color: CheColors.surface,
+          borderRadius: BorderRadius.circular(CheRadius.lg),
+          border: Border.all(
+            color: reg.isEnabled(p.id)
+                ? p.color.withValues(alpha: 0.5)
+                : CheColors.stroke,
           ),
         ),
-        const SizedBox(width: CheSpace.md),
-        Expanded(
-          child: GestureDetector(
+        child: Row(children: [
+          GestureDetector(
             onTap: () => _openPlugin(p),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(p.name, style: CheType.label, maxLines: 1, overflow: TextOverflow.ellipsis),
-              Text('v${p.version}', style: CheType.caption),
-            ]),
+            child: Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: p.color.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(CheRadius.sm),
+              ),
+              child: Icon(p.icon, color: p.color),
+            ),
           ),
-        ),
-        PopupMenuButton<String>(
-          color: CheColors.surfaceHi,
-          icon: const Icon(Icons.more_horiz_rounded, color: CheColors.textDim),
-          onSelected: (v) {
-            if (v == 'open') _openPlugin(p);
-            if (v == 'rollback') reg.rollback(p.id);
-            if (v == 'remove') reg.remove(p.id);
-          },
-          itemBuilder: (_) => [
-            const PopupMenuItem(value: 'open', child: Text('Open')),
-            if (reg.canRollback(p.id)) const PopupMenuItem(value: 'rollback', child: Text('Roll back to previous version')),
-            const PopupMenuItem(value: 'remove', child: Text('Remove')),
-          ],
-        ),
-        Switch(
-          value: reg.isEnabled(p.id),
-          activeThumbColor: p.color,
-          onChanged: (v) {
-            HapticFeedback.selectionClick();
-            reg.setEnabled(p.id, v);
-          },
-        ),
-      ]),
+          const SizedBox(width: CheSpace.md),
+          Expanded(
+            child: GestureDetector(
+              onTap: () => _openPlugin(p),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    p.name,
+                    style: CheType.label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text('v${p.version}', style: CheType.caption),
+                ],
+              ),
+            ),
+          ),
+          PopupMenuButton<String>(
+            color: CheColors.surfaceHi,
+            icon: const Icon(Icons.more_horiz_rounded, color: CheColors.textDim),
+            onSelected: (v) {
+              if (v == 'open') _openPlugin(p);
+              if (v == 'rollback') reg.rollback(p.id);
+              if (v == 'remove') reg.remove(p.id);
+            },
+            itemBuilder: (_) => [
+              const PopupMenuItem(value: 'open', child: Text('Open')),
+              if (reg.canRollback(p.id))
+                const PopupMenuItem(
+                  value: 'rollback',
+                  child: Text('Roll back to previous version'),
+                ),
+              const PopupMenuItem(value: 'remove', child: Text('Remove')),
+            ],
+          ),
+          Switch(
+            value: reg.isEnabled(p.id),
+            activeThumbColor: p.color,
+            onChanged: (v) {
+              HapticFeedback.selectionClick();
+              reg.setEnabled(p.id, v);
+            },
+          ),
+        ]),
+      ),
     );
   }
 }

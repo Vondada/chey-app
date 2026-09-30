@@ -18,86 +18,8 @@ extension _CheHomeHubRooms on _CHEHomeState {
     );
   }
 
-  Widget _hubMemoryTab() {
-    final counts = <String, int>{};
-    for (final item in ownerContext) {
-      final type = item['type']?.toString() ?? 'knowledge';
-      counts[type] = (counts[type] ?? 0) + 1;
-    }
-
-    return _hubList(
-      'Memory',
-      'Things CHE is allowed to remember for you.',
-      [
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.hub_outlined),
-            title: const Text(
-              'Personal Sources',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            subtitle: Text(
-              ownerContext.isEmpty
-                  ? 'Connect Photos, Files, shared text and CHE browser pages.'
-                  : 'People ${counts['people'] ?? 0} • Projects ${counts['projects'] ?? 0} • Decisions ${counts['decisions'] ?? 0} • Companies ${counts['companies'] ?? 0} • Meetings ${counts['meetings'] ?? 0} • Daily ${counts['daily'] ?? 0} • Knowledge ${counts['knowledge'] ?? 0}',
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-            ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => unawaited(_openPersonalSources()),
-          ),
-        ),
-        if (ownerContext.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          ...ownerContext.take(7).map(
-            (item) => Card(
-              child: ListTile(
-                leading: const Icon(Icons.account_tree_outlined),
-                title: Text(
-                  item['title']?.toString().trim().isNotEmpty == true
-                      ? item['title'].toString()
-                      : item['type']?.toString() ?? 'Knowledge',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Text(
-                  '${item['type'] ?? 'knowledge'} • ${item['owner_agent_name'] ?? 'CHE Office'}\n${item['next_responsibility'] ?? ''}',
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ),
-          ),
-        ],
-        if (savedMemories.isEmpty)
-          const Card(
-            child: ListTile(
-              leading: Icon(Icons.memory),
-              title: Text('No saved memories yet'),
-              subtitle: Text('Say “Chay, remember that…” to add one.'),
-            ),
-          )
-        else          ...savedMemories.asMap().entries.map(
-            (entry) => Card(
-              child: ListTile(
-                leading: const Icon(Icons.memory),
-                title: Text(entry.value),
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed: () async {
-                    await deleteMemory(entry.key);
-                    if (mounted) _set(() {});
-                  },
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _hubInsightsTab(bool active) {
+  /// One Brain tab: constellation map + soul/facts + log (sheets), no Map|Brain|Log split.
+  Widget _hubBrainTab(bool active) {
     return CheInsightsRoom(
       brain: _brain,
       log: _brainLog,
@@ -109,11 +31,19 @@ extension _CheHomeHubRooms on _CHEHomeState {
                   headers: () => _authHeaders,
                 ),
               )),
-      map: InsightsBrainScene(
+      map: CheMemoryBrainRoom(
         active: active,
-        learnedAboutYou: learnedPersonality,
-        learnedKnowledge: learnedKnowledge,
-        suggestions: suggestions,
+        dots: cheBuildMemoryDots(
+          savedMemories: savedMemories,
+          memoryNotes: memoryNotes,
+          learnedPersonality: learnedPersonality,
+          learnedKnowledge: learnedKnowledge,
+          brainLinks: brainLinks,
+          suggestions: suggestions,
+        ),
+        brainLinks: brainLinks,
+        onReadAloud: (t) => speakText(t, record: false),
+        onRefresh: () => _loadAgentState(silent: true),
       ),
     );
   }
@@ -240,6 +170,46 @@ extension _CheHomeHubRooms on _CHEHomeState {
           },
         ),
         _integrationCard(
+          Icons.handshake_outlined,
+          'Client Pipeline',
+          'Leads → proposals → builds → Stripe payment links. CHE drafts and builds; you approve and send.',
+          true,
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => ChePipelineRoom(
+                  baseUrl: () => cheAgentBaseUrl,
+                  headers: () => _authHeaders,
+                  onAsk: (prompt) {
+                    Navigator.of(context).pop();
+                    _runHubPrompt(prompt);
+                  },
+                ),
+              ),
+            );
+          },
+        ),
+        _integrationCard(
+          Icons.storefront_outlined,
+          'CHE Studio Store',
+          'Products and classes you approve, sold through Stripe payment links. Real sales only.',
+          integrations['payments'] == true,
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => CheStoreRoom(
+                  baseUrl: () => cheAgentBaseUrl,
+                  headers: () => _authHeaders,
+                  onAsk: (prompt) {
+                    Navigator.of(context).pop();
+                    _runHubPrompt(prompt);
+                  },
+                ),
+              ),
+            );
+          },
+        ),
+        _integrationCard(
           Icons.dashboard_customize_outlined,
           'Business Operations',
           'Plans, workflows, CRM, scheduling, fulfillment and operating systems.',
@@ -361,7 +331,23 @@ extension _CheHomeHubRooms on _CHEHomeState {
     );
   }
 
-  Widget _hubMusicTab(bool active) {
+  // Office agents who are in this room walk across the bottom of the tab.
+  Widget _withVisitors(Widget scene, Set<String> rooms) {
+    _ensureOfficeRuntime();
+    return Stack(children: [
+      Positioned.fill(child: scene),
+      Positioned(
+        left: 0,
+        right: 0,
+        bottom: 96,
+        child: CheRoomVisitors(runtime: _officeRuntime, rooms: rooms, onOpenOffice: _openOfficeFloor),
+      ),
+    ]);
+  }
+
+  Widget _hubMusicTab(bool active) => _withVisitors(_hubMusicScene(active), const {'music', 'studio'});
+
+  Widget _hubMusicScene(bool active) {
     final musicReady = integrations['music'] == true;
     final voiceReady = integrations['natural_voice'] == true;
     return CheCreatorStudio(
@@ -438,7 +424,9 @@ extension _CheHomeHubRooms on _CHEHomeState {
     );
   }
 
-  Widget _hubCreateTab(bool active) {
+  Widget _hubCreateTab(bool active) => _withVisitors(_hubCreateScene(active), const {'gallery'});
+
+  Widget _hubCreateScene(bool active) {
     return CheRoomSegments(
       labels: const ['Projects', 'Art Studio'],
       icons: const [Icons.collections_bookmark_outlined, Icons.palette_outlined],
@@ -489,6 +477,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
       MaterialPageRoute<void>(
         builder: (_) => CheOfficeFloorScreen(
           client: _agentRuntime,
+          onSpeak: speakText,
           // Tapping CHE's desk returns to the conversation.
           onTalkToChe: () => Navigator.of(context).popUntil((route) => route.isFirst),
         ),
@@ -497,18 +486,14 @@ extension _CheHomeHubRooms on _CHEHomeState {
   }
 
   Widget _hubOfficeTab(bool active) {
-    return OfficeScene(
-      active: active,
-      onOpenFloor: _openOfficeFloor,
-      team: team,
-      teamTasks: teamTasks,
-      backgroundJobs: backgroundJobs,
-      onAddPartner: () {
-        unawaited(_createPartnerDialog());
-      },
-      onOpenPartner: (partner) {
-        unawaited(_openPartner(partner));
-      },
+    // The live Office world IS the Office tab: desks, walking agents and the
+    // War Room, with read-aloud on every summary.
+    return CheOfficeFloorScreen(
+      client: _agentRuntime,
+      embedded: true,
+      onSpeak: speakText,
+      onTalkToChe: () => Navigator.of(context).popUntil((route) => route.isFirst),
     );
   }
+
 }

@@ -43,7 +43,7 @@ extension _CheHomeVoice on _CHEHomeState {
       // This is still device/browser TTS. The Agent prompt is written to make
       // the WORDING and rhythm natural. A true neural voice can replace this
       // TTS layer later without changing the agent/memory/security design.
-      await flutterTts.setLanguage('en-US');
+      await flutterTts.setLanguage(cheLanguageByCode(_replyLanguage).ttsLocale);
       await flutterTts.setSpeechRate(0.44);
       await flutterTts.setPitch(0.95);
       await flutterTts.setVolume(1.0);
@@ -157,12 +157,18 @@ extension _CheHomeVoice on _CHEHomeState {
   }
 
   Future<bool> _tryNaturalVoice(String text) async {
-    if (freeNativeVoiceMode ||
-        kIsWeb ||
-        defaultTargetPlatform != TargetPlatform.iOS ||
-        _deviceToken == null ||
+    _naturalVoiceServerErrored = false;
+    _voiceFailReason = '';
+
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) {
+      return false;
+    }
+
+    if (_deviceToken == null ||
         cheAgentBaseUrl.isEmpty ||
         integrations['natural_voice'] != true) {
+      _naturalVoiceServerErrored = true;
+      _voiceFailReason = 'server voice not connected';
       return false;
     }
 
@@ -176,29 +182,101 @@ extension _CheHomeVoice on _CHEHomeState {
           .timeout(const Duration(seconds: 25));
 
       if (response.statusCode == 401) {
+        _naturalVoiceServerErrored = true;
         await _clearSecuritySession();
         return false;
       }
 
       if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
+        _naturalVoiceServerErrored = true;
+        try {
+          final decoded = jsonDecode(response.body);
+          _voiceFailReason = decoded is Map ? '${decoded['detail'] ?? ''}' : '';
+        } catch (_) {
+          _voiceFailReason = 'server voice ${response.statusCode}';
+        }
         return false;
       }
+      _voiceFailReason = '';
 
       final contentType =
           response.headers['content-type']?.toLowerCase() ?? '';
-      if (!contentType.startsWith('audio/')) return false;
+      if (!contentType.startsWith('audio/')) {
+        _naturalVoiceServerErrored = true;
+        return false;
+      }
 
-      return await CheNativeVoice.playAudio(response.bodyBytes);
-    } catch (_) {
+      final played = await CheNativeVoice.playAudio(response.bodyBytes);
+      if (played) {
+        final engine = (response.headers['x-che-voice'] ?? '').trim();
+        if (mounted) {
+          _set(() {
+            _lastVoiceEngine = engine.isEmpty ? 'server-voice' : engine;
+          });
+        } else {
+          _lastVoiceEngine = engine.isEmpty ? 'server-voice' : engine;
+        }
+        return true;
+      }
+      // Bytes arrived but nothing audible — keep cascading to neural/native/TTS.
+      _naturalVoiceServerErrored = true;
+      _voiceFailReason = 'server voice playback failed';
+      return false;
+    } catch (e) {
+      _naturalVoiceServerErrored = true;
+      _voiceFailReason = e is TimeoutException ? 'server voice timed out' : 'server voice unreachable';
       return false;
     }
   }
 
-  Future<void> speakText(String text) async {
+  /// Routes playback to the loudspeaker (or BT if preferred) so replies are audible.
+  Future<void> _ensureAudibleOutput() async {
+    final vol = CheUiPreferences.instance.voiceVolume.clamp(0.0, 1.0);
+    try {
+      await flutterTts.setVolume(vol);
+    } catch (_) {}
+    if (kIsWeb) return;
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      try {
+        await Helper.ensureAudioSession();
+        await Helper.setAppleAudioConfiguration(
+          AppleAudioConfiguration(
+            appleAudioCategory: AppleAudioCategory.playAndRecord,
+            appleAudioCategoryOptions: const {
+              AppleAudioCategoryOption.allowBluetooth,
+              AppleAudioCategoryOption.allowBluetoothA2DP,
+              AppleAudioCategoryOption.allowAirPlay,
+              AppleAudioCategoryOption.defaultToSpeaker,
+            },
+            appleAudioMode: AppleAudioMode.voiceChat,
+          ),
+        );
+        await Helper.setSpeakerphoneOnButPreferBluetooth();
+      } catch (_) {}
+    }
+  }
+
+  /// Speaks [text]. With [record] false (the home greeting) nothing is added
+  /// to the conversation, so the voice-first home stays on screen.
+  Future<void> speakText(String text, {bool record = true}) async {
     if (text.trim().isEmpty) return;
+    if (record && mounted && (messages.isEmpty || messages.last['text'] != text)) {
+      _set(() => messages.add({'role': 'assistant', 'text': text}));
+    }
+    // Mirror the persisted UI Controls toggle (defaults ON).
+    voiceResponsesEnabled = CheUiPreferences.instance.voiceResponsesEnabled;
     if (_realtimeVoice?.connected == true) {
-      // Realtime owns both microphone and speaker during a live session.
-      return;
+      // Realtime owns the speaker while it is mid-turn. Otherwise fall through
+      // to local TTS so greetings / system prompts are not silently dropped when
+      // Realtime is connected but idle — or when its audio path failed open.
+      final phase = _voiceSnapshot.phase;
+      final realtimeBusy = phase == CheVoicePhase.speaking ||
+          phase == CheVoicePhase.thinking ||
+          phase == CheVoicePhase.userSpeaking ||
+          phase == CheVoicePhase.connecting;
+      if (realtimeBusy) {
+        return;
+      }
     }
     final speechTurn = ++_speechTurn;
 
@@ -241,6 +319,8 @@ extension _CheHomeVoice on _CHEHomeState {
       _isSpeaking = true;
       if (mounted) _set(() {});
 
+      await _ensureAudibleOutput();
+
       if (!kIsWeb &&
           defaultTargetPlatform == TargetPlatform.iOS &&
           _nativeIosVoiceActive) {
@@ -256,26 +336,41 @@ extension _CheHomeVoice on _CHEHomeState {
           await flutterTts.speak(spokenText);
         }
       } else if (defaultTargetPlatform == TargetPlatform.iOS) {
-        // Smooth voice order: CHE's local Chaze neural voice when its voice
-        // pack is ready (free, unmetered), then the smooth cloud voices
-        // (ElevenLabs / OpenAI / Cloudflare / Gemini), and only then the
-        // basic iPhone voice. The basic voice never pre-empts a smooth one.
+        // Server voice first. The iPhone voice is only a fallback when the
+        // server voice request fails, unless the owner explicitly forces
+        // free native voice mode.
         var played = false;
-        try {
-          played = await CheNativeVoice.speakNeural(spokenText);
-        } on MissingPluginException {
-          played = false;
-        } catch (_) {
-          played = false;
+        if (!freeNativeVoiceMode) {
+          played = await _tryNaturalVoice(spokenText);
+        } else {
+          _naturalVoiceServerErrored = true;
         }
 
+        // Always cascade when prior stage was silent — never leave the owner
+        // with a typed reply and no audio.
         if (!played) {
-          played = await _tryNaturalVoice(spokenText);
+          try {
+            played = await CheNativeVoice.speakNeural(spokenText);
+            if (played && mounted) {
+              _set(() {
+                _lastVoiceEngine = _voiceFailReason.isEmpty ? 'iphone-neural' : 'iphone-neural (server voice failed: $_voiceFailReason)';
+              });
+            }
+          } on MissingPluginException {
+            played = false;
+          } catch (_) {
+            played = false;
+          }
         }
 
         if (!played) {
           try {
             played = await CheNativeVoice.speakText(spokenText);
+            if (played && mounted) {
+              _set(() {
+                _lastVoiceEngine = _voiceFailReason.isEmpty ? 'iphone-voice' : 'iphone-voice (server voice failed: $_voiceFailReason)';
+              });
+            }
           } on MissingPluginException {
             played = false;
           } catch (_) {
@@ -285,7 +380,16 @@ extension _CheHomeVoice on _CHEHomeState {
 
         if (!played) {
           await flutterTts.stop();
+          await flutterTts.setVolume(CheUiPreferences.instance.voiceVolume.clamp(0.0, 1.0));
           await flutterTts.speak(spokenText);
+          if (mounted) {
+            final prior = _naturalVoiceServerErrored && _voiceFailReason.isNotEmpty
+                ? 'iphone-tts (server voice failed: $_voiceFailReason)'
+                : 'iphone-tts';
+            _set(() {
+              _lastVoiceEngine = prior;
+            });
+          }
         }
       } else {
         await flutterTts.stop();
@@ -359,13 +463,29 @@ extension _CheHomeVoice on _CHEHomeState {
     }
   }
 
+  Future<void> _fallbackSpeech(String reason) async {
+    if (_usingSpeechFallback) return;
+    _usingSpeechFallback = true;
+    debugPrint('CHE speech error: native: $reason');
+    try { await CheNativeVoice.stop(); } catch (_) {}
+    _nativeIosVoiceActive = false;
+    if (!speechAvailable) await initializeVoice();
+    if (!mounted) return;
+    if (speechAvailable) {
+      _set(() { openConversation = true; cheSleeping = false; });
+      await _startListening();
+    } else {
+      debugPrint('CHE speech error: speech_to_text unavailable');
+      await speakText('Both speech recognizers are unavailable. You can still type every request.');
+    }
+  }
+
   Future<void> _initNativeIosVoice() async {
     _nativeIosVoiceSub?.cancel();
     _nativeIosVoiceSub = CheNativeVoice.events.listen(
       _handleNativeIosVoiceEvent,
       onError: (_) {
-        _nativeIosVoiceActive = false;
-        if (mounted) _set(() {});
+        unawaited(_fallbackSpeech('Native voice event stream failed'));
       },
     );
 
@@ -384,12 +504,11 @@ extension _CheHomeVoice on _CHEHomeState {
           isListening = true;
         }
       });
+      if (!started) await _fallbackSpeech('Native recognition did not start');
     } on MissingPluginException {
-      // The native voice channel is optional until its Runner code is added.
-      // The microphone button uses speech_to_text in the meantime.
-      _nativeIosVoiceActive = false;
+      await _fallbackSpeech('Native voice bridge unavailable');
     } catch (e) {
-      _nativeIosVoiceActive = false;
+      await _fallbackSpeech(e.toString());
 
       if (mounted) {
         _set(() {});
@@ -432,7 +551,7 @@ extension _CheHomeVoice on _CHEHomeState {
         });
       }
 
-      await speakText('Standing by, sir.');
+      await _controlAutonomy('stand by');
       return;
     }
 
@@ -476,24 +595,42 @@ extension _CheHomeVoice on _CHEHomeState {
       if (_isSending) return;
 
       if (wakePhraseMode && cheSleeping) {
-        final wakeMatch = RegExp(
-          r'^(?:hey\s+)?(?:chay|chey|shay|chai|chee|chi|che|she|c\.?\s*h\.?\s*e\.?)[\s,.:;!?-]*',
-          caseSensitive: false,
-        ).firstMatch(words);
+        final afterWake = cheWakeRemainder(words);
+        if (afterWake == null) return;
 
-        if (wakeMatch == null) return;
-
-        final afterWake = words.substring(wakeMatch.end).trim();
-        await _beginRealtimeConversation(fromWake: true);
-
-        if (afterWake.isNotEmpty && _realtimeVoice?.connected == true) {
-          if (mounted) {
-            _set(() {
-              messages.add({'role': 'user', 'text': afterWake});
-            });
-            _scrollToBottom();
+        // Live (OpenAI Realtime) voice only when the server says it is set up.
+        if (integrations['openai_live_voice'] == true) {
+          await _beginRealtimeConversation(fromWake: true);
+          if (_realtimeVoice?.connected == true) {
+            if (afterWake.isNotEmpty) {
+              if (mounted) {
+                _set(() {
+                  messages.add({'role': 'user', 'text': afterWake});
+                });
+                _scrollToBottom();
+              }
+              await _realtimeVoice!.sendText(afterWake);
+            }
+            return;
           }
-          await _realtimeVoice!.sendText(afterWake);
+        }
+
+        // Standard wake: CHE is awake, answers out loud, and handles any
+        // command said in the same breath ("Chay, what's the weather?").
+        HapticFeedback.mediumImpact();
+        if (!mounted) return;
+        _set(() {
+          cheSleeping = false;
+          openConversation = true;
+        });
+        if (afterWake.isEmpty) {
+          await speakText('Yeah, sir?');
+        } else {
+          _set(() {
+            controller.text = afterWake;
+            isListening = false;
+          });
+          await sendMessage(fromVoice: true);
         }
         return;
       }
@@ -509,20 +646,12 @@ extension _CheHomeVoice on _CHEHomeState {
           await CheNativeVoice.sleep();
         } catch (_) {}
 
-        await speakText('Standing by, sir.');
+        await _controlAutonomy('stand by');
         return;
       }
 
       // If the owner still says the wake name while already awake, strip it.
-      words = words
-          .replaceFirst(
-            RegExp(
-              r'^(?:hey\s+)?(?:chay|chey|shay|chai|chee|chi|che|she|c\.?\s*h\.?\s*e\.?)[\s,.:;!?-]*',
-              caseSensitive: false,
-            ),
-            '',
-          )
-          .trim();
+      words = cheWakeRemainder(words) ?? words;
 
       if (words.isEmpty) {
         await speakText('Yeah, sir?');
@@ -547,9 +676,8 @@ extension _CheHomeVoice on _CHEHomeState {
       final message =
           event['message']?.toString() ?? 'Unknown native voice error.';
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      await _fallbackSpeech(message);
     }
   }
 }
+

@@ -1,7 +1,7 @@
 name: chey
 description: CHE — Cognitive Horizon Engine.
 publish_to: none
-version: 1.2.0+3
+version: 1.4.5+11
 
 environment:
   sdk: ^3.13.4
@@ -24,6 +24,7 @@ dependencies:
   sherpa_onnx: ^1.13.8
   path_provider: ^2.1.6
   archive: ^4.3.0
+  flutter_secure_storage: ^9.2.4
 
 dev_dependencies:
   flutter_test:
@@ -33,6 +34,10 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/office3d/
+    - assets/avatars/
+    - shorebird.yaml
 
 flutter_launcher_icons:
   # Regenerates ios/Runner/Assets.xcassets/AppIcon.appiconset from this one

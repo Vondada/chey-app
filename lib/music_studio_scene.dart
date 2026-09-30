@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'widgets/che_3d_room_view.dart';
 
 class MusicStudioScene extends StatefulWidget {
   const MusicStudioScene({
@@ -187,6 +188,27 @@ class _MusicStudioSceneState extends State<MusicStudioScene>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  Che3DRoomView(
+                    assetPath: 'assets/office3d/musicstudio.html',
+                    updateFunction: 'updateScene',
+                    payload: {
+                      'musicConnected': widget.musicConnected,
+                      'agents': [
+                        {
+                          'id': 'che',
+                          'name': 'CHE',
+                          'role': 'Producer',
+                          'status': widget.musicConnected ? 'working' : 'idle',
+                          'isChe': true,
+                        },
+                      ],
+                    },
+                    height: 320,
+                    backgroundColor: const Color(0xFF120F18),
+                    semanticsLabel: '3D Music Studio booth',
+                    onTapId: (id) => widget.onMusic(),
+                  ),
+                  const SizedBox(height: 14),
                   Row(
                     children: [
                       const Expanded(

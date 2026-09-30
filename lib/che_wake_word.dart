@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:porcupine_flutter/porcupine_error.dart';
 import 'package:porcupine_flutter/porcupine_manager.dart';
@@ -34,7 +35,39 @@ class CheWakeWordEngine {
 
   bool get running => _running;
 
+  // Phone-only setup: the owner's Picovoice AccessKey and "Chay" keyword file
+  // saved in this iPhone's Keychain, so the wake word works without a computer
+  // or the CHE server. Server config is used only when nothing is saved here.
+  static const FlutterSecureStorage _storage = FlutterSecureStorage();
+  static const String _accessKeyKey = 'che.wake.picovoiceAccessKey';
+  static const String _keywordKey = 'che.wake.keywordPpnBase64';
+
+  static Future<void> saveLocalConfig({required String accessKey, required String keywordPpnBase64}) async {
+    await _storage.write(key: _accessKeyKey, value: accessKey.trim());
+    await _storage.write(key: _keywordKey, value: keywordPpnBase64.trim());
+  }
+
+  static Future<void> clearLocalConfig() async {
+    await _storage.delete(key: _accessKeyKey);
+    await _storage.delete(key: _keywordKey);
+  }
+
+  static Future<bool> hasLocalConfig() async => (await _localConfig()) != null;
+
+  static Future<Map<String, dynamic>?> _localConfig() async {
+    try {
+      final accessKey = (await _storage.read(key: _accessKeyKey))?.trim() ?? '';
+      final keyword = (await _storage.read(key: _keywordKey))?.trim() ?? '';
+      if (accessKey.isEmpty || keyword.isEmpty) return null;
+      return {'enabled': true, 'access_key': accessKey, 'keyword_ppn_base64': keyword, 'sensitivity': 0.62};
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<Map<String, dynamic>?> _fetchConfig() async {
+    final local = await _localConfig();
+    if (local != null) return local;
     try {
       final response = await http
           .get(
@@ -78,9 +111,9 @@ class CheWakeWordEngine {
       }
 
       final keywordBytes = base64Decode(keywordBase64);
-      final dir = Directory('\${Directory.systemTemp.path}/che_wake');
+      final dir = Directory('${Directory.systemTemp.path}/che_wake');
       if (!await dir.exists()) await dir.create(recursive: true);
-      final keywordFile = File('\${dir.path}/chay_ios.ppn');
+      final keywordFile = File('${dir.path}/chay_ios.ppn');
       await keywordFile.writeAsBytes(keywordBytes, flush: true);
 
       final current = _manager;

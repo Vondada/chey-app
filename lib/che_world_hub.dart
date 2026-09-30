@@ -2,7 +2,7 @@
 // C.H.E. VIRTUAL OFFICE
 //
 // A stylized, isometric-feeling "world map" that replaces the flat tab list
-// as the front door to the CHE Hub. Every capability area (Memory, Insights,
+// as the front door to the CHE Hub. Every capability area (Brain,
 // Markets, Business, Devices, Music, Create, Office) is drawn as a glowing
 // "building" on a small campus. Tapping a building opens the exact same tab
 // content that already exists in main.dart — this screen only changes how
@@ -35,66 +35,66 @@ class CheBuilding {
 const List<CheBuilding> cheCampusBuildings = [
   CheBuilding(
     tab: 0,
-    title: 'Memory',
-    subtitle: 'What CHE remembers',
-    icon: Icons.memory_outlined,
+    title: 'Brain',
+    subtitle: 'Constellation · soul · log',
+    icon: Icons.hub_outlined,
     color: CheColors.accent,
   ),
   CheBuilding(
     tab: 1,
-    title: 'Insights',
-    subtitle: 'Learned & suggested',
-    icon: Icons.auto_awesome_outlined,
-    color: CheColors.violet,
-  ),
-  CheBuilding(
-    tab: 2,
     title: 'Markets',
     subtitle: 'Trading & data',
     icon: Icons.show_chart,
     color: CheColors.amber,
   ),
   CheBuilding(
-    tab: 3,
+    tab: 2,
     title: 'Business',
     subtitle: 'Ops & cash flow',
     icon: Icons.business_center_outlined,
     color: CheColors.rose,
   ),
   CheBuilding(
-    tab: 4,
+    tab: 3,
     title: 'Devices',
     subtitle: 'Connections',
     icon: Icons.devices_other_outlined,
     color: Color(0xFF6FB6FF),
   ),
   CheBuilding(
-    tab: 5,
+    tab: 4,
     title: 'Music',
     subtitle: 'Playlists & audio',
     icon: Icons.music_note_outlined,
     color: Color(0xFF9BFF9B),
   ),
   CheBuilding(
-    tab: 6,
+    tab: 5,
     title: 'Create',
     subtitle: 'Creator Studio',
     icon: Icons.lightbulb_outline,
     color: Color(0xFFFF9E6F),
   ),
   CheBuilding(
-    tab: 7,
+    tab: 6,
     title: 'Office',
     subtitle: 'AI coworkers',
     icon: Icons.workspaces_outline,
     color: Color(0xFFB6A0FF),
   ),
   CheBuilding(
-    tab: 8,
+    tab: 7,
     title: 'Apps',
     subtitle: 'YouTube & web apps',
     icon: Icons.apps_rounded,
     color: Color(0xFF67D8FF),
+  ),
+  CheBuilding(
+    tab: 8,
+    title: 'Theater',
+    subtitle: 'Watch together',
+    icon: Icons.theaters_outlined,
+    color: Color(0xFFFF6F91),
   ),
 ];
 
@@ -107,7 +107,7 @@ class CheWorldHubScreen extends StatelessWidget {
     this.state = CheWorldState.idle,
   });
 
-  /// Called with the tab index (matching the existing 8-tab hub order) when
+  /// Called with the tab index (matching the existing hub tab order) when
   /// a building is tapped. The caller is expected to open the same modal
   /// hub sheet it already uses today.
   final void Function(int tab) onOpenTab;
@@ -263,9 +263,8 @@ class _CheCampus extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final rows = <List<CheBuilding>>[
-      cheCampusBuildings.sublist(0, 3),
-      cheCampusBuildings.sublist(3, 6),
-      cheCampusBuildings.sublist(6, 9),
+      for (var i = 0; i < cheCampusBuildings.length; i += 3)
+        cheCampusBuildings.sublist(i, i + 3 > cheCampusBuildings.length ? cheCampusBuildings.length : i + 3),
     ];
 
     return Column(
@@ -276,7 +275,7 @@ class _CheCampus extends StatelessWidget {
             onOpenTab: onOpenTab,
             // Rows further "back" (lower index) sit smaller/dimmer to fake
             // depth-of-field, like distant buildings in a game world.
-            depthScale: 0.82 + (r * 0.09),
+            depthScale: (0.82 + (r * 0.09)).clamp(0.82, 1.0),
             stagger: r.isOdd,
           ),
           const SizedBox(height: 18),

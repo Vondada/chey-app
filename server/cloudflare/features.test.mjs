@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { buildToolUrl, planPluginCall, pluginManifests, runPluginTool } from './plugin_runtime.js';
-import { classifyUpdate, openSelfUpdatePr, rollbackLastUpdate, validateUpdateFiles } from './self_update.js';
+import { classifyUpdate, openSelfUpdatePr, rollbackLastUpdate, scanUpdateContent, validateUpdateFiles } from './self_update.js';
 import { parseStooqCsv, snapshot } from './markets.js';
 
 const weather = pluginManifests({}).find((item) => item.id === 'weather');
@@ -48,6 +48,15 @@ test('self-update accepts only complete Dart files under lib/', () => {
   assert.ok(validateUpdateFiles([{ path: 'lib/a.dart' }]).error);
   assert.equal(classifyUpdate(['lib/a.dart']).delivery, 'shorebird_patch');
   assert.equal(classifyUpdate(['ios/Podfile']).delivery, 'full_rebuild');
+});
+
+test('self-update rejects secrets, native smuggling and oversized slices', () => {
+  assert.match(scanUpdateContent('const k = "sk_live_abcdefghijklmnopqrstuvwxyz";', 'lib/a.dart') || '', /secret/);
+  assert.match(scanUpdateContent('<?xml version="1.0"?><plist><dict></dict></plist>', 'lib/a.dart') || '', /native|entitlement|Info/);
+  assert.ok(validateUpdateFiles([{ path: 'lib/a.dart', content: 'STRIPE_SECRET_KEY=sk_test_abcdefghijklmnopqrst' }]).error);
+  assert.ok(validateUpdateFiles([{ path: 'lib/a.dart', content: '<?xml version="1.0"?><plist><dict></dict></plist>' }]).error);
+  const many = Array.from({ length: 7 }, (_, i) => ({ path: `lib/f${i}.dart`, content: 'x' }));
+  assert.match(validateUpdateFiles(many).error || '', /at most 6/);
 });
 
 function fakeGitHub() {
@@ -253,8 +262,14 @@ test('AI router falls through free engines when Cloudflare quota is used up', as
   const first = await routeText(env, '@cf/meta/llama-3.2-3b-instruct', input, fetcher);
   assert.equal(first.response, 'From Gemini.');
   assert.equal(first.engine, 'gemini');
-  assert.equal(hits[0].model, 'llama-3.1-8b-instant');
+  assert.equal(hits[0].model, 'openai/gpt-oss-20b');
   assert.equal(hits[0].auth, 'Bearer g');
+  assert.deepEqual(
+    hits.map((h) => new URL(h.url).hostname),
+    ['api.groq.com', 'api.groq.com', 'generativelanguage.googleapis.com'],
+    'Groq retries once with its fast model, then Gemini is attempted',
+  );
+  assert.equal(hits[1].model, 'openai/gpt-oss-20b');
 
   // Cloudflare is skipped for the rest of the day; Groq rests after its 429.
   hits.length = 0;
@@ -262,7 +277,7 @@ test('AI router falls through free engines when Cloudflare quota is used up', as
   assert.equal(second.response, 'From Gemini.');
   assert.equal(cfCalls, 1);
   assert.deepEqual(hits.map((h) => h.url.includes('generativelanguage.googleapis.com')), [true]);
-  assert.equal(hits[0].model, 'gemini-2.5-flash');
+  assert.equal(hits[0].model, 'gemini-3.8-flash');
 
   // Images never leave Cloudflare; text with no fallback keys explains itself.
   resetRouterForTests();
@@ -303,7 +318,7 @@ test('AI router falls through free engines when Cloudflare quota is used up', as
   const noCf = { AI: { run: async () => { throw new Error('4006 neurons'); } } };
   assert.equal((await routeText(noCf, 'm', input, rotating)).response, 'from mistral');
   assert.equal((await routeText(noCf, 'm', input, rotating)).response, 'from mistral');
-  assert.deepEqual(models, ['openai', 'mistral', 'mistral'], 'rested model is not retried right away');
+  assert.deepEqual(models, ['openai', 'openai', 'mistral', 'mistral'], '429 retries once, then rested model is not retried right away');
 
   // Every free-tier key the owner adds joins the rotation in order.
   resetRouterForTests();
@@ -316,5 +331,93 @@ test('AI router falls through free engines when Cloudflare quota is used up', as
     CHE_DISABLE_KEYLESS_AI: '1',
     CEREBRAS_API_KEY: 'c', MISTRAL_API_KEY: 'm', GITHUB_MODELS_TOKEN: 'gh', SAMBANOVA_API_KEY: 's', HF_TOKEN: 'h',
   }, 'm', input, allBusy));
-  assert.deepEqual(order, ['api.cerebras.ai', 'api.mistral.ai', 'models.github.ai', 'api.sambanova.ai', 'router.huggingface.co']);
+  assert.deepEqual(order, [
+    'api.cerebras.ai', 'api.cerebras.ai',
+    'api.mistral.ai', 'api.mistral.ai',
+    'models.github.ai', 'models.github.ai',
+    'api.sambanova.ai', 'api.sambanova.ai',
+    'router.huggingface.co', 'router.huggingface.co',
+  ]);
+});
+
+
+test('AI router stores daily usage budgets and puts a fast free engine before paid fallback for casual turns', async () => {
+  resetRouterForTests();
+  const storage = memStorage();
+  const calls = [];
+  let cfCalls = 0;
+  const env = {
+    AI: { run: async () => { cfCalls += 1; throw new Error('4006 neurons'); } },
+    CHE_OPENAI_API_KEY: 'paid',
+    GROQ_API_KEY: 'free',
+    CHE_GROQ_DAILY_TOKEN_LIMIT: '10',
+  };
+  const input = { messages: [{ role: 'user', content: 'hey what\'s up' }], max_tokens: 120 };
+  const fetcher = async (url, init) => {
+    calls.push({ url, body: JSON.parse(init.body) });
+    if (url.includes('groq')) {
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: 'Doing good, sir. What do you need?' } }],
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: 'Paid fallback.' } }],
+    }), { status: 200 });
+  };
+
+  const first = await routeText(env, '@cf/meta/llama-3.2-3b-instruct', input, fetcher, storage);
+  assert.equal(first.engine, 'groq');
+  assert.equal(new URL(calls[0].url).hostname, 'api.groq.com');
+  const usage = storage.raw.get('ai_usage:groq');
+  assert.ok(usage.estimated_tokens >= 9);
+  assert.ok(usage.reset_at > Date.now());
+
+  calls.length = 0;
+  const second = await routeText(env, '@cf/meta/llama-3.2-3b-instruct', input, fetcher, storage);
+  assert.equal(second.engine, 'openai');
+  assert.equal(new URL(calls[0].url).hostname, 'api.openai.com');
+  assert.equal(cfCalls, 1, 'Cloudflare remains rested after its real quota error');
+});
+
+
+test('AI router compacts old conversation history before provider calls', async () => {
+  resetRouterForTests();
+  const sent = [];
+  const messages = [
+    { role: 'system', content: 'Keep answers concise.' },
+    ...Array.from({ length: 14 }, (_, i) => ({
+      role: i % 2 ? 'assistant' : 'user',
+      content: `message-${i} ${'x'.repeat(40)}`,
+    })),
+  ];
+  const input = { messages, max_tokens: 120 };
+  const result = await routeText(
+    { GROQ_API_KEY: 'g' },
+    '@cf/meta/llama-3.2-3b-instruct',
+    input,
+    async (_url, init) => {
+      sent.push(JSON.parse(init.body));
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 });
+    },
+  );
+  assert.equal(result.engine, 'groq');
+  const outbound = sent[0].messages;
+  assert.equal(outbound[0].role, 'system');
+  assert.match(outbound[1].content, /Earlier conversation summary/);
+  assert.equal(outbound.length, 12, 'system + one summary + last 10 conversation messages');
+  assert.equal(outbound.at(-1).content.startsWith('message-13'), true);
+  assert.ok(JSON.stringify(outbound).length < JSON.stringify(messages).length);
+});
+
+
+test('image relay falls from FLUX to Gemini and keeps the returned MIME type', async () => {
+  const storage = memStorage(); const calls = [];
+  const result = await generateImage({ GEMINI_API_KEY: 'key', AI: {run: async () => {calls.push('flux'); throw new Error('quota');}} }, storage, {prompt:'A tree'}, async (url, init) => {
+    calls.push('gemini');
+    assert.equal(init.headers['x-goog-api-key'], 'key');
+    return Response.json({candidates:[{content:{parts:[{inlineData:{data:'YQ==',mimeType:'image/png'}}]}}]});
+  });
+  assert.deepEqual(calls, ['flux', 'gemini']);
+  assert.equal(result.status, 200); assert.equal(result.item.mime_type, 'image/png');
+  assert.equal(result.item.engine, 'gemini-image');
 });

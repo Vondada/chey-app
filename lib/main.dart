@@ -18,15 +18,19 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:url_launcher/url_launcher.dart';
 import 'che_native_voice.dart';
+import 'che_speech_chunker.dart';
 import 'che_account_bridge.dart';
 import 'che_realtime_voice.dart';
+import 'che_wake_setup.dart';
 import 'che_wake_word.dart';
+import 'che_wake_match.dart';
 import 'che_voice_state.dart';
 import 'che_voice_ui.dart';
 import 'che_app_portal.dart';
@@ -34,13 +38,14 @@ import 'che_plugin_manager.dart';
 import 'che_theme.dart';
 import 'che_world_hub.dart';
 import 'che_immersive_hub_shell.dart';
-import 'insights_brain_scene.dart';
 import 'devices_hub_scene.dart';
 import 'music_studio_scene.dart';
 import 'create_gallery_scene.dart';
-import 'office_scene.dart';
 import 'agents/che_agent_runtime.dart';
 import 'agents/che_office_floor_screen.dart';
+import 'home/che_activity_feed.dart';
+import 'home/che_ui_controls_screen.dart';
+import 'agents/che_office_world.dart' show CheRoomVisitors;
 import 'home/che_live_steps.dart';
 import 'home/che_insights_room.dart';
 import 'home/che_cloud_logs_screen.dart';
@@ -51,22 +56,38 @@ import 'che_ui/che_log.dart' show CheConversationStore;
 import 'che_ui/che_plugins.dart'
     show ChePluginOfferCard, ChePluginRegistry, ChePluginsScreen, chePluginAuthoringGuide;
 import 'che_ui/che_theme.dart' as kit;
+import 'che_ui/che_ui_preferences.dart';
+import 'che_ui/che_transitions.dart';
 import 'che_ui/che_widgets.dart' as kit show CheBackground;
-import 'che_ui/che_agents.dart' show CheAgent;
+import 'che_ui/che_agents.dart' show CheAgent, CheAgentStatusLabel;
 import 'che_ui/che_agent_chat.dart' show CheOrbState;
 import 'che_ui/che_log.dart' show CheTranscriptScreen;
 import 'home/che_home_chat.dart';
+import 'home/che_grok_chat_screen.dart';
+import 'home/che_mockup_home.dart';
+import 'home/che_more_tab.dart';
+import 'home/che_projects_board.dart';
+import 'home/che_memory_brain.dart';
+import 'che_ui/che_phone_shell.dart';
+import 'che_ui/che_i18n.dart';
+import 'local_server/activity_local.dart';
 import 'plugins/che_plugin_webapp.dart';
 import 'self_update/che_patch_banner.dart';
 import 'self_update/che_update_card.dart';
 import 'rooms/che_markets_room.dart';
+import 'rooms/che_store_room.dart';
+import 'rooms/che_pipeline_room.dart';
 import 'rooms/che_creator_studio.dart';
 import 'rooms/che_art_studio.dart';
 import 'rooms/che_room_segments.dart';
+import 'rooms/che_theater_room.dart';
+import 'security/che_password_vault.dart';
+import 'security/che_vault_auth.dart';
 import 'browser/che_browser.dart' show CheBrowserActions;
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
 
+part 'home_state/connected.dart';
 part 'home_state/home_ui.dart';
 part 'home_state/hub_rooms.dart';
 part 'home_state/memory.dart';
@@ -97,19 +118,23 @@ void main() {
   runApp(const CHEApp());
 }
 
-class CHEApp extends StatelessWidget {
+class CHEApp extends StatefulWidget {
   const CHEApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'CHE',
-      debugShowCheckedModeBanner: false,
-      // iPhone-native feel: bounce scrolling everywhere, iOS swipe-back page
-      // transitions on every platform, and no Android-style ink ripples.
-      scrollBehavior: const _CheScrollBehavior(),
-      // One design system from the logo colors (lib/che_ui/che_theme.dart).
-      theme: kit.CheTheme.dark().copyWith(
+  State<CHEApp> createState() => _CHEAppState();
+}
+
+class _CHEAppState extends State<CHEApp> {
+  final CheUiPreferences _ui = CheUiPreferences.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_ui.load());
+  }
+
+  ThemeData _darkTheme() => kit.CheTheme.dark().copyWith(
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.transparent,
           surfaceTintColor: Colors.transparent,
@@ -129,8 +154,32 @@ class CHEApp extends StatelessWidget {
             borderRadius: BorderRadius.all(Radius.circular(18)),
           ),
         ),
-      ),
-      home: const CHEHome(),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: _ui,
+      builder: (context, _) {
+        return MaterialApp(
+          title: 'CHE',
+          debugShowCheckedModeBanner: false,
+          // iPhone-native feel: bounce scrolling everywhere, iOS swipe-back page
+          // transitions on every platform, and no Android-style ink ripples.
+          scrollBehavior: const _CheScrollBehavior(),
+          theme: kit.CheTheme.light(),
+          darkTheme: _darkTheme(),
+          themeMode: _ui.themeMode,
+          builder: (context, child) {
+            final mq = MediaQuery.of(context);
+            return MediaQuery(
+              data: mq.copyWith(textScaler: TextScaler.linear(_ui.textScale)),
+              child: child ?? const SizedBox.shrink(),
+            );
+          },
+          home: const CHEHome(),
+        );
+      },
     );
   }
 }
@@ -152,7 +201,107 @@ class CHEHome extends StatefulWidget {
 
 class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   /// setState for members split into lib/home_state/*.dart extensions.
-  void _set(VoidCallback fn) => setState(fn);
+  String _statusBanner = 'Ready. Type or speak a request.';
+  String _lastStatusKey = '';
+  bool _autonomy = true;
+  List<Map<String, dynamic>> _actionApprovals = [];
+  bool _approvalBusy = false;
+  // Connected world (lib/home_state/connected.dart).
+  String? _homeGreeting;
+  List<String> _homeSuggestions = const [];
+  bool _greetedThisLaunch = false;
+  String _explainLevel = 'simple';
+  Map<String, dynamic> _cachedSnapshot = {
+    'team': const <Map<String, dynamic>>[],
+    'team_tasks': const <Map<String, dynamic>>[],
+    'projects': const <Map<String, dynamic>>[],
+    'vault_items': const <Map<String, dynamic>>[],
+    'jobs': const <Map<String, dynamic>>[],
+    'meetings': const <Map<String, dynamic>>[],
+  };
+  bool _usingSpeechFallback = false;
+  Timer? _jobPollTimer;
+  final Set<String> _notifiedJobs = {};
+  void _set(VoidCallback fn) {
+    if (!mounted) return;
+    setState(fn);
+    final status = !_autonomy ? 'Standing by. Queued work is paused.'
+        : _isSending ? 'Working on your request.'
+        : _isSpeaking ? 'CHE is speaking. The reply is also in the conversation.'
+        : isListening ? 'Listening. You can also type.'
+        : cheSleeping ? 'Voice standby. Say Chay or type a request.' : 'Ready. Type or speak a request.';
+    if (status != _lastStatusKey) {
+      _lastStatusKey = status;
+      _statusBanner = status;
+      unawaited(_statusHaptic(_isSending ? 2 : 1));
+    }
+  }
+
+  Future<void> _statusHaptic(int pulses) async {
+    for (var i = 0; i < pulses; i++) {
+      await HapticFeedback.mediumImpact();
+      if (i + 1 < pulses) await Future<void>.delayed(const Duration(milliseconds: 140));
+    }
+  }
+
+  Future<bool> _controlAutonomy(String text) async {
+    final command = text.toLowerCase().trim().replaceFirst(RegExp(r'^(?:chay|chey|che)[, ]+'), '').replaceFirst(RegExp(r'[.!?]+$'), '');
+    final approval = RegExp(r'^(approve|reject) action (\d+)$').firstMatch(command);
+    if (approval != null) {
+      final index = int.parse(approval.group(2)!) - 1;
+      if (index >= 0 && index < _actionApprovals.length) {
+        await _decideAction(_actionApprovals[index], approval.group(1) == 'approve');
+      } else { await speakText('That action number is not available.'); }
+      return true;
+    }
+    if (command != 'stand by' && command != 'resume') return false;
+    final enabled = command == 'resume';
+    await speakText(enabled ? 'Resuming queued work.' : 'Pausing queued work.');
+    Map<String, dynamic>? result;
+    try { result = await _postAgentJson('/api/autonomy', {'enabled': enabled}); }
+    catch (error) { debugPrint('CHE autonomy error: $error'); }
+    if (!mounted) return true;
+    if (result == null) {
+      await speakText('I could not confirm the change. Cloud work may still be running.');
+      return true;
+    }
+    final response = result;
+    _set(() { _autonomy = response['autonomy'] == true; controller.clear(); });
+    await speakText(result['reply']?.toString() ?? 'Autonomy updated.');
+    return true;
+  }
+
+  Future<void> _decideAction(Map<String, dynamic> action, bool approve) async {
+    if (_approvalBusy) return;
+    _set(() => _approvalBusy = true);
+    try {
+      await speakText('${approve ? 'Approving' : 'Rejecting'}: ${action['query']}');
+      final result = await _postAgentJson('/api/action/approval', {'id': action['id'], 'approve': approve});
+      await speakText(result?['reply']?.toString() ?? 'The decision could not be confirmed.');
+      await _loadAgentState(silent: true);
+    } catch (error) { await speakText('The action could not be confirmed: $error'); }
+    finally { if (mounted) _set(() => _approvalBusy = false); }
+  }
+
+  Future<void> _notifyFinishedJobs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'che_job_notices_$cheAgentBaseUrl';
+    _notifiedJobs.addAll(prefs.getStringList(key) ?? []);
+    for (final job in backgroundJobs) {
+      final id = job['id']?.toString() ?? '';
+      if (id.isEmpty || !['complete', 'failed'].contains(job['status']) || !_notifiedJobs.add(id)) continue;
+      final text = job['status'] == 'complete'
+          ? 'Finished: ${job['title']}. ${job['result']}'
+          : 'Work needs attention: ${job['title']}. ${job['error']}';
+      await _statusHaptic(job['status'] == 'complete' ? 3 : 4);
+      if (!mounted) return;
+      _set(() => messages.add({'role': 'assistant', 'text': text}));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text, maxLines: 4, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 20))));
+      if (!_isSpeaking && !_isSending) await speakText(text);
+    }
+    await prefs.setStringList(key, _notifiedJobs.toList());
+  }
+
 
   final TextEditingController controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
@@ -184,6 +333,12 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   bool _isSending = false;
   bool _isSpeaking = false;
   bool _autoSentCurrentTurn = false;
+  // Words held open while the owner pauses mid-thought (see microphone.dart).
+  String _heldSpeech = '';
+  int _heldSpeechRestarts = 0;
+  String? _lastVoiceEngine;
+  String _voiceFailReason = '';
+  bool _naturalVoiceServerErrored = false;
   bool _loadingAgentState = false;
   int _speechTurn = 0;
 
@@ -204,6 +359,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   String? _deviceToken;
   String _agentBaseUrl = _defaultAgentBaseUrl;
+  String _homeBaseUrl = '';
 
   // Office agents run in the backend Agent Runtime; the app mirrors them.
   late final CheAgentRuntimeClient _agentRuntime = CheAgentRuntimeClient(
@@ -464,6 +620,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   void _runPluginPrompt(String prompt) {
     if (!mounted) return;
     Navigator.of(context).popUntil((route) => route.isFirst);
+    setState(() => _shellTab = 1);
     controller.text = prompt;
     unawaited(sendMessage());
   }
@@ -472,19 +629,57 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => Theme(
         data: kit.CheTheme.dark(),
-        child: ChePluginsScreen(
+        child: Scaffold(
+          backgroundColor: const Color(0xFF0B1118),
+          appBar: AppBar(
+            backgroundColor: const Color(0xFF0B1118),
+            elevation: 0,
+            scrolledUnderElevation: 0,
+          ),
+          body: ChePluginsScreen(
           registry: _skillPlugins,
           onAskCheToBuild: () => _runPluginPrompt('Build me a plugin that '),
           onRunPrompt: _runPluginPrompt,
+          onOpenLearning: _openPersonalSources,
+          loadAiOverview: _agentRuntime.aiOverview,
           webAppBuilder: (context, {String? html, String? url}) =>
               ChePluginWebApp(html: html, url: url, onPrompt: _runPluginPrompt),
+          ),
         ),
       ),
     ));
   }
 
+  /// Last office signature that forced a full home setState. Task-text-only
+  /// polls must not rebuild the chat/composer tree — that was a major jank
+  /// source with the live roster on home.
+  String _officeUiSig = '';
+
   void _onOfficeChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    final r = _officeRuntime;
+    final live = r.meetings.where((m) => m.live).length;
+    final roster = StringBuffer()
+      ..write(r.che.status.name)
+      ..write(':')
+      ..write(r.working)
+      ..write(':')
+      ..write(live)
+      ..write(':')
+      ..write(r.error ?? '')
+      ..write(':')
+      ..write(r.connection.name);
+    for (final p in r.agents) {
+      roster
+        ..write('|')
+        ..write(p.agent.id)
+        ..write('.')
+        ..write(p.agent.status.name);
+    }
+    final sig = roster.toString();
+    if (sig == _officeUiSig) return;
+    _officeUiSig = sig;
+    setState(() {});
   }
 
   void _ensureOfficeRuntime() {
@@ -510,10 +705,15 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   final ImagePicker _imagePicker = ImagePicker();
 
   List<String> savedMemories = [];
+  List<Map<String, dynamic>> memoryNotes = [];
+  List<Map<String, dynamic>> brainLinks = [];
   List<Map<String, dynamic>> learnedPersonality = [];
   List<String> learnedKnowledge = [];
   List<String> suggestions = [];
   List<Map<String, dynamic>> projects = [];
+  List<Map<String, dynamic>> officeGoals = [];
+  List<Map<String, dynamic>> opportunityScouts = [];
+  List<Map<String, dynamic>> pipelineDeals = [];
   List<Map<String, dynamic>> vaultItems = [];
   List<Map<String, dynamic>> team = [];
   List<Map<String, dynamic>> teamTasks = [];
@@ -558,6 +758,16 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   };
 
   int _selectedTab = 0;
+
+  /// Phone shell tab: Home | Chat | Office | Apps | More (mockups).
+  int _shellTab = 0;
+
+  /// Office sub-pane: 0 Crew, 1 Projects.
+  int _officePane = 0;
+
+  /// Owner reply / TTS language (BCP-47 base code).
+  String _replyLanguage = 'en';
+  String _translateTarget = 'es';
 
   // Home conversation. Empty = CHE's welcome state with quick actions.
   final List<Map<String, String>> messages = [];
@@ -740,6 +950,11 @@ SUPERIOR-AGENT / MODEL ROUTING
   but remain politically neutral and distinguish sourced facts from market interpretation.
 - BUSINESS MODE: when connected, help form plans, budgets, forecasts, cash-flow views,
   invoices, CRM workflows, scheduling, fulfillment and customer follow-up.
+- ADVERTISING MODE: help with campaign strategy, audience definition, channel planning,
+  ad copy, creative briefs, budget allocation, testing and performance analysis. Do not
+  target or infer sensitive personal traits. Publishing or spending requires an authorized
+  ad-platform connector and owner-approved campaign terms/budget; never claim an ad launched
+  unless the connected platform confirms it.
 - Lead generation must use lawful public/professional sources and avoid sensitive-person
   targeting. Payments may be automated only through an authorized processor and within
   owner-approved pricing/terms; never silently charge people outside agreed terms.
@@ -763,6 +978,8 @@ OWNER AGENCY
   @override
   void initState() {
     super.initState();
+    unawaited(_syncUiVoicePrefs());
+    CheUiPreferences.instance.addListener(_onUiPrefsChanged);
     WidgetsBinding.instance.addObserver(this);
     _voiceMachine.startWakeListening();
     _voiceSnapshot = _voiceMachine.snapshot;
@@ -772,6 +989,10 @@ OWNER AGENCY
     _wireBrowser();
     initializeVoice();
     _loadSecuritySession();
+    _jobPollTimer = Timer.periodic(const Duration(seconds: 15), (_) => _loadAgentState(silent: true));
+    unawaited(_loadExplainLevel());
+    // CHE greets once, in one short line, with something useful.
+    Future<void>.delayed(const Duration(milliseconds: 2600), () => _loadHomeGreeting(speak: true));
     _proactiveTimer = Timer.periodic(
       const Duration(minutes: 10),
       (_) => _checkProactiveSuggestion(),
@@ -805,6 +1026,8 @@ OWNER AGENCY
     if (kIsWeb || !mounted) return;
 
     if (state == AppLifecycleState.resumed) {
+      unawaited(_loadAgentState(silent: true));
+      unawaited(_loadHomeGreeting());
       unawaited(_consumeWakeRequest(resumeIfAwake: true));
       if (!kIsWeb &&
           defaultTargetPlatform == TargetPlatform.iOS &&
@@ -857,6 +1080,7 @@ OWNER AGENCY
 
   @override
   void dispose() {
+    CheUiPreferences.instance.removeListener(_onUiPrefsChanged);
     WidgetsBinding.instance.removeObserver(this);
     _officeRuntime
       ..removeListener(_onOfficeChanged)
@@ -869,6 +1093,7 @@ OWNER AGENCY
       ..dispose();
     _listenRestartTimer?.cancel();
     _proactiveTimer?.cancel();
+    _jobPollTimer?.cancel();
     _nativeIosVoiceSub?.cancel();
     unawaited(_stopPorcupineWake(disposeEngine: true));
     final realtime = _realtimeVoice;
@@ -894,6 +1119,666 @@ OWNER AGENCY
   // UI
   // ============================================================
 
+  void _goShellTab(int i) {
+    if (i < 0 || i > 4) return;
+    if (i == _shellTab) return;
+    HapticFeedback.selectionClick();
+    setState(() => _shellTab = i);
+  }
+
+  Future<void> _speakOfficeStatus() async {
+    final r = _officeRuntime;
+    final live = r.meetings.where((m) => m.live).length;
+    final parts = <String>[
+      if (_deviceToken == null) 'Pair to the Worker to see the live Office.',
+      if (r.error != null) 'Office note: ${r.error}.',
+      '${r.agents.length} agents, ${r.working} working.',
+      if (live > 0) '$live War Room meetings live.',
+      if (r.che.task != null && r.che.task!.trim().isNotEmpty) 'CHE: ${r.che.task}.',
+      for (final p in r.agents.take(6))
+        '${p.agent.name}: ${p.agent.task?.isNotEmpty == true ? p.agent.task : p.agent.status.label}.',
+    ];
+    await speakText(parts.join(' '), record: false);
+  }
+
+  Widget _shellStatusChrome() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const ChePatchBanner(),
+        Semantics(
+          liveRegion: true,
+          label: _statusBanner,
+          child: Container(
+            width: double.infinity,
+            color: const Color(0xFF163B36),
+            padding: const EdgeInsets.all(8),
+            child: Text(_statusBanner, style: const TextStyle(fontSize: 18, color: Colors.white)),
+          ),
+        ),
+        if (_actionApprovals.isNotEmpty)
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 150),
+            child: ListView(shrinkWrap: true, children: [
+              for (var i = 0; i < _actionApprovals.length; i++)
+                Column(children: [
+                  Text('Action ${i + 1}: ${_actionApprovals[i]['query']}', style: const TextStyle(fontSize: 20)),
+                  Wrap(children: [
+                    TextButton(onPressed: _approvalBusy ? null : () => _decideAction(_actionApprovals[i], true), child: Text('Approve action ${i + 1}')),
+                    TextButton(onPressed: _approvalBusy ? null : () => _decideAction(_actionApprovals[i], false), child: Text('Reject action ${i + 1}')),
+                  ]),
+                ]),
+            ]),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildHomeTab(List<CheAgent> agents) {
+    final listening = _realtimeVoice?.connected == true || isListening;
+    final greeting = _homeGreeting ?? (suggestions.isEmpty ? null : suggestions.first) ?? '';
+    return CheMockupHome(
+      che: _officeRuntime.che,
+      agents: agents,
+      working: _officeRuntime.working,
+      liveMeetings: _officeRuntime.meetings.where((m) => m.live).length,
+      connected: _deviceToken != null && _officeRuntime.error == null,
+      greeting: greeting,
+      listening: listening,
+      voiceRepliesOn: voiceResponsesEnabled,
+      onToggleVoiceReplies: () => unawaited(_toggleVoiceReplies()),
+      deskCompact: CheUiPreferences.instance.deskCompact,
+      onStartChat: () => _goShellTab(1),
+      onOpenOffice: () => _goShellTab(2),
+      onVoice: toggleListening,
+      onQuickTools: () {
+        setState(() {
+          _shellTab = 2;
+          _officePane = 1;
+        });
+        unawaited(_loadAgentState(silent: true));
+      },
+      onOfficeStatus: () => unawaited(_speakOfficeStatus()),
+      onFindAgent: () => _goShellTab(2),
+      onWarRoom: () {
+        _goShellTab(2);
+        // Floor screen's War Room control is on the Office tab.
+      },
+      onTapAgent: (_) => _goShellTab(2),
+    );
+  }
+
+  Widget _buildChatTab(List<CheAgent> agents, String subtitle) {
+    final proactive = suggestions.isEmpty ? null : suggestions.first;
+    return Column(
+      children: [
+        CheHomePresence(
+          orbState: _orbState,
+          subtitle: subtitle,
+          onOrbTap: toggleListening,
+        ),
+        CheConversationBar(
+          title: _chatTitle,
+          onOpen: _openConversationSheet,
+          onNew: _homeNewChat,
+        ),
+        Expanded(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 260),
+            child: messages.isEmpty
+                ? CheHomeEmptyState(
+                    key: const ValueKey('empty'),
+                    proactive: _homeGreeting ?? proactive,
+                    actions: [
+                      ..._homeSuggestions,
+                      ..._skillPlugins.quickActions().take(3),
+                      'Plan my day',
+                      'What is the Office doing?',
+                      'Make me an image',
+                    ],
+                    onPick: _runPluginPrompt,
+                    onTalk: toggleListening,
+                    listening: _realtimeVoice?.connected == true || isListening,
+                    onReadAloud: () => speakText(_homeGreeting ?? proactive ?? 'I am here. Just tell me what you need.', record: false),
+                    onActivity: () => _openActivityFeed(),
+                  )
+                : GestureDetector(
+                    key: const ValueKey('chat'),
+                    onTap: () => _composerFocus.unfocus(),
+                    child: ListView.builder(
+                      controller: _scrollController,
+                      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                      itemCount: messages.length,
+                      itemBuilder: (context, index) => Padding(
+                        padding: const EdgeInsets.only(bottom: 16),
+                        child: _homeMessage(index, agents),
+                      ),
+                    ),
+                  ),
+          ),
+        ),
+        if (_skillPlugins.quickActions().isNotEmpty && messages.isNotEmpty)
+          SizedBox(
+            height: 38,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              children: [
+                for (final action in _skillPlugins.quickActions().take(8))
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ActionChip(
+                      avatar: const Icon(Icons.bolt_rounded, size: 16, color: kit.CheColors.accent),
+                      label: Text(action, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      onPressed: _isSending ? null : () => _runPluginPrompt(action),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        SafeArea(
+          top: false,
+          bottom: false,
+          child: CheHomeComposer(
+            controller: controller,
+            focusNode: _composerFocus,
+            busy: _isSending,
+            modes: _homeModes,
+            modeIndex: _homeMode,
+            onModeChanged: (i) {
+              HapticFeedback.selectionClick();
+              setState(() => _homeMode = i);
+            },
+            onSend: () {
+              if (_isSending) return;
+              HapticFeedback.mediumImpact();
+              unawaited(sendMessage());
+            },
+            onStop: _stopReply,
+            onAttach: _openMultimodalPicker,
+            onMic: toggleListening,
+            micActive: _realtimeVoice?.connected == true || isListening || openConversation,
+            hint: _voiceSnapshot.phase == CheVoicePhase.userSpeaking ||
+                    _voiceSnapshot.phase == CheVoicePhase.listening
+                ? 'Listening…'
+                : _homeMode == 0
+                    ? 'Work Agent Mode — tell CHE what to build or do…'
+                    : 'Ask CHE anything…',
+            attachmentLabel: _pendingAttachment == null
+                ? null
+                : (_pendingAttachment!['name']?.toString() ?? 'Attachment ready'),
+            onClearAttachment: () => setState(() => _pendingAttachment = null),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _persistLanguages() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('che_reply_language', _replyLanguage);
+    await prefs.setString('che_translate_target', _translateTarget);
+  }
+
+  Future<void> _openLanguagePicker() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: kit.CheColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            children: [
+              Text('Reply language', style: kit.CheType.title),
+              const SizedBox(height: 4),
+              Text(
+                'CHE answers and speaks in this language. Translate actions use a separate target.',
+                style: kit.CheType.bodyDim,
+              ),
+              const SizedBox(height: 12),
+              for (final lang in cheLanguages)
+                ListTile(
+                  leading: Icon(
+                    lang.code == _replyLanguage ? Icons.check_circle : Icons.language,
+                    color: kit.CheColors.accent,
+                  ),
+                  title: Text(lang.name),
+                  subtitle: Text(lang.code),
+                  selected: lang.code == _replyLanguage,
+                  onTap: () => Navigator.pop(ctx, lang.code),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+    if (selected == null || !mounted) return;
+    setState(() => _replyLanguage = selected);
+    await _persistLanguages();
+    try {
+      await flutterTts.setLanguage(cheLanguageByCode(selected).ttsLocale);
+    } catch (_) {}
+    await speakText(
+      "Reply language set to ${cheLanguageByCode(selected).name}.",
+      record: false,
+    );
+  }
+
+  Future<void> _openTranslateTargetPicker() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: kit.CheColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            children: [
+              Text('Translate into', style: kit.CheType.title),
+              const SizedBox(height: 12),
+              for (final lang in cheLanguages)
+                ListTile(
+                  leading: Icon(
+                    lang.code == _translateTarget ? Icons.check_circle : Icons.translate,
+                    color: kit.CheColors.accent,
+                  ),
+                  title: Text(lang.name),
+                  onTap: () => Navigator.pop(ctx, lang.code),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+    if (selected == null || !mounted) return;
+    setState(() => _translateTarget = selected);
+    await _persistLanguages();
+  }
+
+  Future<void> _translateText(String text, {String? to}) async {
+    final target = to ?? _translateTarget;
+    final clean = text.trim();
+    if (clean.isEmpty) {
+      await speakText('Nothing to translate.', record: false);
+      return;
+    }
+    if (!await _ensurePaired()) return;
+    try {
+      final result = await _postAgentJson('/api/translate', {
+        'text': clean,
+        'target_lang': target,
+      });
+      final translation = result?['translation']?.toString() ?? '';
+      final name = result?['target_name']?.toString() ?? cheLanguageByCode(target).name;
+      if (translation.isEmpty) {
+        await speakText('Translation returned empty.', record: false);
+        return;
+      }
+      if (!mounted) return;
+      setState(() {
+        _shellTab = 1;
+        messages.add({
+          'role': 'assistant',
+          'text': 'Translation ($name):\n$translation',
+        });
+      });
+      _scrollToBottom();
+      await speakText(translation, record: false);
+    } catch (e) {
+      await speakText('Translation failed: $e', record: false);
+    }
+  }
+
+  Future<void> _runMlDemo(String kind) async {
+    if (!await _ensurePaired()) return;
+    final prompt = kind == 'clustering'
+        ? 'Run clustering on sample texts'
+        : 'Run classification evaluation on sample labels';
+    try {
+      // Prefer chat/voice phrase path so Office goal + project are created consistently.
+      setState(() {
+        _shellTab = 1;
+        controller.text = prompt;
+      });
+      await sendMessage();
+      setState(() {
+        _shellTab = 2;
+        _officePane = 1;
+      });
+    } catch (e) {
+      await speakText('ML job failed: $e', record: false);
+    }
+  }
+
+
+
+  void _openMemoryBrain() {
+    HapticFeedback.selectionClick();
+    unawaited(_loadAgentState(silent: true));
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => Theme(
+        data: kit.CheTheme.dark(),
+        child: Scaffold(
+          backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+          appBar: AppBar(
+            title: const Text('Brain'),
+            backgroundColor: Colors.transparent,
+          ),
+          body: CheInsightsRoom(
+            brain: _brain,
+            log: _brainLog,
+            onOpenCloudLogs: _deviceToken == null
+                ? null
+                : () => Navigator.of(context).push(MaterialPageRoute<void>(
+                      builder: (_) => CheCloudLogsScreen(
+                        baseUrl: () => cheAgentBaseUrl,
+                        headers: () => _authHeaders,
+                      ),
+                    )),
+            map: CheMemoryBrainRoom(
+              dots: cheBuildMemoryDots(
+                savedMemories: savedMemories,
+                memoryNotes: memoryNotes,
+                learnedPersonality: learnedPersonality,
+                learnedKnowledge: learnedKnowledge,
+                brainLinks: brainLinks,
+                suggestions: suggestions,
+              ),
+              brainLinks: brainLinks,
+              onReadAloud: (t) => speakText(t, record: false),
+              onRefresh: () => _loadAgentState(silent: true),
+            ),
+          ),
+        ),
+      ),
+    ));
+  }
+
+  List<CheBoardItem> _boardItems() => cheBuildBoardItems(
+        projects: projects,
+        officeGoals: officeGoals,
+        jobs: backgroundJobs,
+        opportunityScouts: opportunityScouts,
+        deals: pipelineDeals,
+        meetings: _officeRuntime.meetings,
+      );
+
+  Widget _buildOfficeTab() {
+    _ensureOfficeRuntime();
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: _OfficePanePill(
+                  label: 'Crew',
+                  selected: _officePane == 0,
+                  onTap: () => setState(() => _officePane = 0),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _OfficePanePill(
+                  label: 'Projects',
+                  selected: _officePane == 1,
+                  onTap: () {
+                    setState(() => _officePane = 1);
+                    unawaited(_loadAgentState(silent: true));
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: IndexedStack(
+            index: _officePane,
+            sizing: StackFit.expand,
+            children: [
+              CheOfficeFloorScreen(
+                client: _agentRuntime,
+                embedded: true,
+                onSpeak: speakText,
+                onTalkToChe: () => _goShellTab(1),
+              ),
+              CheProjectsBoard(
+                embedded: true,
+                items: _boardItems(),
+                onRefresh: () => _loadAgentState(silent: true),
+                onCreateProject: _createProjectDialog,
+                onAskChe: _runPluginPrompt,
+                onOpenWarRoom: () => setState(() => _officePane = 0),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+
+  Widget _buildAppsTab() {
+    return CheAppsHubTab(
+      onLearnPage: _learnFromBrowserPage,
+      agentBaseUrl: cheAgentBaseUrl,
+      deviceToken: _deviceToken ?? '',
+    );
+  }
+
+
+  void _onUiPrefsChanged() {
+    if (!mounted) return;
+    setState(() {
+      voiceResponsesEnabled = CheUiPreferences.instance.voiceResponsesEnabled;
+    });
+  }
+
+  Future<void> _syncUiVoicePrefs() async {
+    final ui = CheUiPreferences.instance;
+    if (!ui.isLoaded) await ui.load();
+    if (!mounted) return;
+    setState(() {
+      voiceResponsesEnabled = ui.voiceResponsesEnabled;
+    });
+  }
+
+  Future<void> _toggleVoiceReplies() async {
+    final ui = CheUiPreferences.instance;
+    final next = !ui.voiceResponsesEnabled;
+    await ui.setVoiceResponsesEnabled(next);
+    if (!mounted) return;
+    setState(() {
+      voiceResponsesEnabled = next;
+    });
+    if (!next) {
+      if (kIsWeb) {
+        try {
+          che_web_voice.stopSpeech();
+        } catch (_) {}
+      } else {
+        if (defaultTargetPlatform == TargetPlatform.iOS) {
+          try {
+            await CheNativeVoice.stopAudio();
+          } catch (_) {}
+        }
+        await flutterTts.stop();
+      }
+      _isSpeaking = false;
+      if (!kIsWeb && openConversation) {
+        _restartListeningSoon();
+      }
+    }
+  }
+
+  Future<void> _openUiControls() async {
+    await Navigator.of(context).push(
+      CheRoute(
+        builder: (_) => CheUiControlsScreen(
+          onVoiceEnabledChanged: (enabled) {
+            if (!mounted) return;
+            setState(() => voiceResponsesEnabled = enabled);
+            if (!enabled) {
+              unawaited(() async {
+                if (kIsWeb) {
+                  try { che_web_voice.stopSpeech(); } catch (_) {}
+                } else {
+                  if (defaultTargetPlatform == TargetPlatform.iOS) {
+                    try { await CheNativeVoice.stopAudio(); } catch (_) {}
+                  }
+                  await flutterTts.stop();
+                }
+                _isSpeaking = false;
+              }());
+            }
+          },
+          onVoiceVolumeChanged: (_) {
+            unawaited(flutterTts.setVolume(CheUiPreferences.instance.voiceVolume));
+          },
+        ),
+      ),
+    );
+    if (mounted) {
+      setState(() {
+        voiceResponsesEnabled = CheUiPreferences.instance.voiceResponsesEnabled;
+      });
+    }
+  }
+
+  Widget _buildMoreTab() {
+    return CheMoreTab(
+      che: _officeRuntime.che,
+      onTalkToChe: () => _goShellTab(1),
+      items: [
+        CheMoreItem(
+          icon: Icons.tune_rounded,
+          title: 'UI Controls',
+          subtitle: 'Theme, avatar, text size, voice replies',
+          onTap: () => unawaited(_openUiControls()),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: voiceResponsesEnabled ? Icons.volume_up_rounded : Icons.volume_off_rounded,
+          title: voiceResponsesEnabled ? 'Voice replies: On' : 'Voice replies: Off',
+          subtitle: 'One-tap mute / unmute CHE speaking',
+          onTap: () => unawaited(_toggleVoiceReplies()),
+          hue: voiceResponsesEnabled ? kit.CheColors.accent : kit.CheColors.warning,
+        ),
+        CheMoreItem(
+          icon: Icons.folder_special_rounded,
+          title: 'Projects & Businesses',
+          subtitle: 'Apps, websites, Roblox, live Office goals',
+          onTap: () {
+            setState(() {
+              _shellTab = 2;
+              _officePane = 1;
+            });
+            unawaited(_loadAgentState(silent: true));
+          },
+          hue: kit.CheColors.create,
+        ),
+        CheMoreItem(
+          icon: Icons.language,
+          title: 'Language & translate',
+          subtitle: "Reply language ${cheLanguageByCode(_replyLanguage).name} · translate → ${cheLanguageByCode(_translateTarget).name}",
+          onTap: () => unawaited(_openLanguagePicker()),
+          hue: kit.CheColors.accentAlt,
+        ),
+        CheMoreItem(
+          icon: Icons.translate,
+          title: 'Translate target',
+          subtitle: "Quick translate into ${cheLanguageByCode(_translateTarget).name}",
+          onTap: () => unawaited(_openTranslateTargetPicker()),
+        ),
+        CheMoreItem(
+          icon: Icons.psychology_alt_rounded,
+          title: 'ML studio',
+          subtitle: 'Classification · clustering · eval metrics',
+          onTap: () => unawaited(_runMlDemo('classification')),
+          hue: kit.CheColors.insights,
+        ),
+        CheMoreItem(
+          icon: Icons.dashboard_rounded,
+          title: 'CHE World',
+          subtitle: 'Brain, Markets, Create, Theater…',
+          onTap: _openVirtualOffice,
+          hue: kit.CheColors.office,
+        ),
+        CheMoreItem(
+          icon: Icons.hub_rounded,
+          title: 'Brain',
+          subtitle: 'Constellation · soul & facts · conversation log',
+          onTap: _openMemoryBrain,
+          hue: kit.CheColors.memory,
+        ),
+        CheMoreItem(
+          icon: Icons.memory_rounded,
+          title: 'Memory & Knowledge',
+          subtitle: 'What CHE remembers about you',
+          onTap: openMemoryManager,
+          hue: kit.CheColors.memory,
+        ),
+        CheMoreItem(
+          icon: Icons.extension_rounded,
+          title: 'Plugins',
+          subtitle: 'Skills and mini-apps',
+          onTap: () => unawaited(_openPluginManager()),
+        ),
+        CheMoreItem(
+          icon: Icons.record_voice_over_rounded,
+          title: 'Voice & Wake',
+          subtitle: 'Wake word “Chay”, diagnostics',
+          onTap: () => unawaited(_openWakeSetup()),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.tune_rounded,
+          title: 'Voice diagnostics',
+          subtitle: 'Engine, latency, fallbacks',
+          onTap: _openVoiceDiagnostics,
+        ),
+        CheMoreItem(
+          icon: Icons.account_circle_outlined,
+          title: 'Accounts + Face ID',
+          subtitle: 'Pairing and account bridge',
+          onTap: () => unawaited(_openAccountBridge()),
+        ),
+        CheMoreItem(
+          icon: Icons.cloud_outlined,
+          title: 'CHE server',
+          subtitle: 'Worker URL and pairing',
+          onTap: () => unawaited(_showAgentServerDialog()),
+        ),
+        CheMoreItem(
+          icon: Icons.security_rounded,
+          title: 'Security + memory',
+          subtitle: 'Vault, privacy, rollback',
+          onTap: () => unawaited(_openSecurityManager()),
+        ),
+        CheMoreItem(
+          icon: Icons.history_rounded,
+          title: 'Activity',
+          subtitle: 'Everything CHE and the Office did',
+          onTap: () => unawaited(_openActivityFeed()),
+        ),
+        CheMoreItem(
+          icon: Icons.undo_rounded,
+          title: 'Roll back last update',
+          subtitle: 'Undo the last self-update patch',
+          onTap: () => unawaited(_rollbackLastUpdate()),
+          hue: kit.CheColors.warning,
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     _ensureOfficeRuntime();
@@ -905,235 +1790,128 @@ OWNER AGENCY
                 ? 'Say “Chay” to wake'
                 : _voiceSnapshot.engineLabel;
     final agents = [for (final p in _officeRuntime.agents) p.agent];
-    final proactive = suggestions.isEmpty ? null : suggestions.first;
 
     return Scaffold(
       backgroundColor: kit.CheColors.bg,
       resizeToAvoidBottomInset: true,
-      appBar: AppBar(
-        backgroundColor: kit.CheColors.bg.withValues(alpha: 0.72),
-        flexibleSpace: ClipRect(
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-            child: const SizedBox.expand(),
-          ),
-        ),
-        centerTitle: true,
-        toolbarHeight: 64,
-        leading: IconButton(
-          onPressed: _openVirtualOffice,
-          icon: const Icon(Icons.dashboard_rounded, color: kit.CheColors.accent),
-          tooltip: 'CHE world',
-        ),
-        actions: [
-          IconButton(
-            onPressed: _openPluginManager,
-            icon: const Icon(Icons.extension_outlined, color: kit.CheColors.accent),
-            tooltip: 'CHE Plugins',
-          ),
-          PopupMenuButton<String>(
-            tooltip: 'CHE controls',
-            icon: const Icon(Icons.tune_rounded, color: kit.CheColors.accent),
-            onSelected: (value) async {
-              switch (value) {
-                case 'accounts':
-                  await _openAccountBridge();
-                  break;
-                case 'diagnostics':
-                  _openVoiceDiagnostics();
-                  break;
-                case 'server':
-                  await _showAgentServerDialog();
-                  break;
-                case 'screen':
-                  await _loadSharedScreenContext();
-                  break;
-                case 'security':
-                  await _openSecurityManager();
-                  break;
-                case 'rollback':
-                  await _rollbackLastUpdate();
-                  break;
-                case 'memory':
-                  openMemoryManager();
-                  break;
-              }
-            },
-            itemBuilder: (context) => const [
-              PopupMenuItem(value: 'accounts', child: Text('Accounts + Face ID')),
-              PopupMenuItem(value: 'diagnostics', child: Text('Voice diagnostics')),
-              PopupMenuItem(value: 'server', child: Text('CHE server')),
-              PopupMenuItem(value: 'screen', child: Text('Screen context')),
-              PopupMenuItem(value: 'security', child: Text('Security + memory')),
-              PopupMenuItem(value: 'memory', child: Text('Memory manager')),
-              PopupMenuItem(value: 'rollback', child: Text('Roll back last update')),
-            ],
-          ),
-          IconButton(
-            onPressed: () async {
-              setState(() {
-                voiceResponsesEnabled = !voiceResponsesEnabled;
-              });
-
-              if (!voiceResponsesEnabled) {
-                if (kIsWeb) {
-                  try {
-                    che_web_voice.stopSpeech();
-                  } catch (_) {}
-                } else {
-                  if (defaultTargetPlatform == TargetPlatform.iOS) {
-                    try {
-                      await CheNativeVoice.stopAudio();
-                    } catch (_) {}
-                  }
-                  await flutterTts.stop();
-                }
-                _isSpeaking = false;
-
-                if (!kIsWeb && openConversation) {
-                  _restartListeningSoon();
-                }
-              }
-            },
-            icon: Icon(
-              voiceResponsesEnabled ? Icons.volume_up : Icons.volume_off,
-              color: kit.CheColors.accent,
-            ),
-            tooltip: 'C.H.E. voice',
-          ),
-        ],
-        title: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ShaderMask(
-              shaderCallback: (r) => kit.CheColors.accentGradient.createShader(r),
-              child: Text(
-                'CHE',
-                style: kit.CheType.display.copyWith(fontSize: 24, color: Colors.white, letterSpacing: 4),
+      appBar: _shellTab == 1
+          ? AppBar(
+              backgroundColor: kit.CheColors.bg.withValues(alpha: 0.72),
+              flexibleSpace: ClipRect(
+                child: BackdropFilter(
+                  filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                  child: const SizedBox.expand(),
+                ),
               ),
-            ),
-            Text(
-              'COGNITIVE HORIZON ENGINE',
-              style: kit.CheType.overline.copyWith(fontSize: 8, letterSpacing: 1.6),
-            ),
-          ],
-        ),
-      ),
+              centerTitle: true,
+              toolbarHeight: 56,
+              title: ShaderMask(
+                shaderCallback: (r) => kit.CheColors.accentGradient.createShader(r),
+                child: Text(
+                  'CHE',
+                  style: kit.CheType.display.copyWith(fontSize: 22, color: Colors.white, letterSpacing: 4),
+                ),
+              ),
+              actions: [
+                IconButton(
+                  onPressed: () => unawaited(_toggleVoiceReplies()),
+                  icon: Icon(
+                    voiceResponsesEnabled ? Icons.volume_up : Icons.volume_off,
+                    color: kit.CheColors.accent,
+                  ),
+                  tooltip: voiceResponsesEnabled ? 'Mute CHE voice' : 'Unmute CHE voice',
+                ),
+              ],
+            )
+          : null,
       body: kit.CheBackground(
         child: SafeArea(
-          top: false,
+          top: _shellTab != 1,
           bottom: false,
           child: Column(
             children: [
-              const ChePatchBanner(),
-              CheHomePresence(
-                orbState: _orbState,
-                subtitle: subtitle,
-                onOrbTap: toggleListening,
-                office: CheOfficePresence(
-                  che: _officeRuntime.che,
-                  working: _officeRuntime.working,
-                  liveMeetings: _officeRuntime.meetings.where((m) => m.live).length,
-                  connected: _deviceToken != null && _officeRuntime.error == null,
-                  onTap: _openOfficeFloor,
-                ),
-              ),
-              CheConversationBar(
-                title: _chatTitle,
-                onOpen: _openConversationSheet,
-                onNew: _homeNewChat,
-              ),
-              Expanded(
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 260),
-                  child: messages.isEmpty
-                      ? CheHomeEmptyState(
-                          key: const ValueKey('empty'),
-                          proactive: proactive,
-                          actions: [
-                            ..._skillPlugins.quickActions().take(3),
-                            'Plan my week',
-                            'Analyze the markets today',
-                            'Convene the team on my top project',
-                            'Build me a plugin',
-                          ],
-                          onPick: _runPluginPrompt,
-                        )
-                      : GestureDetector(
-                          key: const ValueKey('chat'),
-                          onTap: () => _composerFocus.unfocus(),
-                          child: ListView.builder(
-                            controller: _scrollController,
-                            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                            itemCount: messages.length,
-                            itemBuilder: (context, index) => Padding(
-                              padding: const EdgeInsets.only(bottom: 16),
-                              child: _homeMessage(index, agents),
-                            ),
-                          ),
-                        ),
-                ),
-              ),
-              if (_skillPlugins.quickActions().isNotEmpty && messages.isNotEmpty)
-                SizedBox(
-                  height: 38,
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    children: [
-                      for (final action in _skillPlugins.quickActions().take(8))
-                        Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: ActionChip(
-                            avatar: const Icon(Icons.bolt_rounded, size: 16, color: kit.CheColors.accent),
-                            label: Text(action, maxLines: 1, overflow: TextOverflow.ellipsis),
-                            onPressed: _isSending ? null : () => _runPluginPrompt(action),
-                          ),
-                        ),
-                    ],
+              _shellStatusChrome(),
+              if (_lastVoiceEngine != null && _lastVoiceEngine!.isNotEmpty && _shellTab == 1)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2, bottom: 2),
+                  child: Text(
+                    _lastVoiceEngine!,
+                    style: kit.CheType.overline.copyWith(
+                      fontSize: 9,
+                      letterSpacing: 0.8,
+                      color: kit.CheColors.textDim,
+                    ),
                   ),
                 ),
-              SafeArea(
-                top: false,
-                child: CheHomeComposer(
-                  controller: controller,
-                  focusNode: _composerFocus,
-                  busy: _isSending,
-                  modes: _homeModes,
-                  modeIndex: _homeMode,
-                  onModeChanged: (i) {
-                    HapticFeedback.selectionClick();
-                    setState(() => _homeMode = i);
-                  },
-                  onSend: () {
-                    if (_isSending) return;
-                    HapticFeedback.mediumImpact();
-                    unawaited(sendMessage());
-                  },
-                  onStop: _stopReply,
-                  onAttach: _openMultimodalPicker,
-                  onMic: toggleListening,
-                  micActive: _realtimeVoice?.connected == true || isListening || openConversation,
-                  hint: _voiceSnapshot.phase == CheVoicePhase.userSpeaking ||
-                          _voiceSnapshot.phase == CheVoicePhase.listening
-                      ? 'Listening…'
-                      : _homeMode == 0
-                          ? 'Tell CHE what to build or do…'
-                          : 'Ask CHE anything…',
-                  attachmentLabel: _pendingAttachment == null
-                      ? null
-                      : (_pendingAttachment!['name']?.toString() ?? 'Attachment ready'),
-                  onClearAttachment: () => setState(() => _pendingAttachment = null),
+              Expanded(
+                child: IndexedStack(
+                  index: _shellTab,
+                  sizing: StackFit.expand,
+                  children: [
+                    _buildHomeTab(agents),
+                    _buildChatTab(agents, subtitle),
+                    _buildOfficeTab(),
+                    _buildAppsTab(),
+                    _buildMoreTab(),
+                  ],
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+      bottomNavigationBar: ChePhoneBottomNav(
+        index: _shellTab,
+        onChanged: _goShellTab,
+      ),
+    );
+  }
+
+}
+
+class _OfficePanePill extends StatelessWidget {
+  const _OfficePanePill({required this.label, required this.selected, required this.onTap});
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = kit.CheColors.accent;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '$label office pane',
+      excludeSemantics: true,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            HapticFeedback.selectionClick();
+            onTap();
+          },
+          borderRadius: BorderRadius.circular(999),
+          child: Ink(
+            height: 36,
+            decoration: BoxDecoration(
+              color: selected ? accent.withValues(alpha: 0.22) : kit.CheColors.surface,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: selected ? accent : kit.CheColors.stroke),
+            ),
+            child: Center(
+              child: Text(
+                label,
+                style: kit.CheType.label.copyWith(
+                  color: selected ? accent : kit.CheColors.textDim,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
           ),
         ),
       ),
     );
   }
-
 }
 
 class _CHEAgentException implements Exception {
@@ -1143,3 +1921,4 @@ class _CHEAgentException implements Exception {
   @override
   String toString() => message;
 }
+

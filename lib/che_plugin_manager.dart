@@ -86,6 +86,34 @@ class _ChePluginManagerState extends State<ChePluginManager> {
     }
   }
 
+  String? twilioStatusLine;
+
+  Future<void> testTwilio() async {
+    setState(() { busyId = 'twilio_sms'; error = null; twilioStatusLine = null; });
+    try {
+      final response = await http.get(
+        Uri.parse('${widget.baseUrl}/api/twilio/status'),
+        headers: headers,
+      ).timeout(const Duration(seconds: 12));
+      if (!mounted) return;
+      final data = jsonDecode(response.body);
+      if (data is! Map) throw Exception('Bad status response.');
+      final connected = data['connected'] == true;
+      final missing = (data['missing_secrets'] as List? ?? const []).map((e) => e.toString()).join(', ');
+      setState(() {
+        busyId = null;
+        twilioStatusLine = connected
+            ? 'Twilio connected for CHE (secrets present; values never shown).'
+            : 'Not connected. Set via wrangler secret put: ${missing.isEmpty ? 'TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER' : missing}. See docs/TWILIO_CHE.md.';
+      });
+    } catch (e) {
+      if (mounted) setState(() {
+        busyId = null;
+        error = e.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -95,14 +123,15 @@ class _ChePluginManagerState extends State<ChePluginManager> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            const Text('CHE capabilities live here. Enable only the services you want CHE and her agents to use.'),
+            const Text('CHE capabilities live here. Enable only the services you want CHE to use. CHE is Office Boss — only she sends SMS.'),
             const SizedBox(height: 12),
             if (error != null) Text(error!, style: const TextStyle(color: Colors.orangeAccent)),
+            if (twilioStatusLine != null) Text(twilioStatusLine!, style: const TextStyle(color: Colors.lightBlueAccent)),
             if (loading) const Center(child: CircularProgressIndicator()),
             if (!loading && plugins.isEmpty)
               const ListTile(
                 title: Text('No plugins connected yet'),
-                subtitle: Text('Add a secure server-side plugin. Future capabilities can appear here without rebuilding the IPA.'),
+                subtitle: Text('Add CHE_PLUGIN_CATALOG on the Worker, or install Skill plugins (Weather, Crypto, Wikipedia) from the Plugins room.'),
               ),
             for (final plugin in plugins)
               Card(
@@ -112,14 +141,17 @@ class _ChePluginManagerState extends State<ChePluginManager> {
                       title: Text(plugin['name']?.toString() ?? plugin['id'].toString()),
                       subtitle: Text(
                         '${plugin['description'] ?? ''}\n'
-                        '${plugin['ready'] == true ? 'Ready' : 'Needs secure server setup'}'
+                        '${plugin['kind'] == 'skill' ? 'Builtin skill · install from Skill plugins' : (plugin['ready'] == true ? 'Ready' : 'Needs secure server setup')}'
                         ' · ${(plugin['mode'] ?? 'read').toString().toUpperCase()}'
                         '${plugin['requires_confirmation'] == true ? ' · Confirms before actions' : ''}'
                         '\n${plugin['security'] ?? 'HTTPS connector · secrets stay server-side'}',
                       ),
                       isThreeLine: true,
                       value: plugin['enabled'] == true,
-                      onChanged: plugin['ready'] == true && busyId == null
+                      onChanged: plugin['ready'] == true &&
+                              plugin['toggleable'] != false &&
+                              plugin['kind'] != 'skill' &&
+                              busyId == null
                           ? (value) => toggle(plugin['id'].toString(), value)
                           : null,
                     ),
@@ -146,6 +178,24 @@ class _ChePluginManagerState extends State<ChePluginManager> {
                           label: const Text('OPEN PLUGIN UI'),
                         ),
                       ),
+                    if (plugin['id']?.toString() == 'twilio_sms') ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                        child: Text(
+                          plugin['connect_hint']?.toString() ??
+                              'Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER with wrangler secret put. Values never leave the Worker. See docs/TWILIO_CHE.md.',
+                          style: const TextStyle(fontSize: 12, color: Colors.white70),
+                        ),
+                      ),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: busyId == null ? testTwilio : null,
+                          icon: Icon(busyId == 'twilio_sms' ? Icons.hourglass_top : Icons.health_and_safety_outlined),
+                          label: Text(busyId == 'twilio_sms' ? 'TESTING…' : 'TEST CONNECTION'),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

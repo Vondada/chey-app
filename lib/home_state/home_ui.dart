@@ -48,7 +48,9 @@ extension _CheHomeUi on _CHEHomeState {
           label: const Text('Open generated video'),
         ),
     ];
-    return CheHomeAssistantMessage(
+    return MediaQuery(
+      data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(MediaQuery.textScalerOf(context).scale(1).clamp(1.35, double.infinity).toDouble())),
+      child: CheHomeAssistantMessage(
       text: display,
       streaming: isLiveReply,
       liveStart: isLiveReply ? _replyStartedAt : null,
@@ -59,7 +61,10 @@ extension _CheHomeUi on _CHEHomeState {
       extras: extras,
       onTapAgent: (_) => _openOfficeFloor(),
       onRedo: _isSending ? null : () => _redoFrom(index),
+      onReadAloud: display.trim().isEmpty ? null : () => speakText(display),
       onLongPress: () => _showMessageActions(index),
+      ),
     );
   }
 }
+

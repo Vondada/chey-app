@@ -377,7 +377,7 @@ class CheAgentController extends ChangeNotifier {
     if (s.contains('SocketException') || s.contains('HandshakeException')) {
       return 'No connection to CHE right now. Check your signal and tap retry.';
     }
-    if (e is CheBackendException) return 'CHE hit an error (${e.statusCode}). Tap retry.';
+    if (e is CheBackendException) return e.toString();
     return 'Something went wrong. Tap retry.';
   }
 

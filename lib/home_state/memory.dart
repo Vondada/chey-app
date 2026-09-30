@@ -429,7 +429,7 @@ extension _CheHomeMemory on _CHEHomeState {
                   Navigator.pop(sheetContext);
                   Future<void>.delayed(
                     const Duration(milliseconds: 150),
-                    () => _openAssistantHub(tab: 8),
+                    () => _openAssistantHub(tab: 7),
                   );
                 },
               ),
@@ -540,6 +540,11 @@ extension _CheHomeMemory on _CHEHomeState {
                           DropdownMenuItem(value: 'book', child: Text('Book')),
                           DropdownMenuItem(value: 'screenplay', child: Text('Movie / screenplay')),
                           DropdownMenuItem(value: 'invention', child: Text('Invention / prototype')),
+                          DropdownMenuItem(value: 'business', child: Text('Business')),
+                          DropdownMenuItem(value: 'roblox_game', child: Text('Roblox · Game')),
+                          DropdownMenuItem(value: 'roblox_weapon', child: Text('Roblox · Weapon')),
+                          DropdownMenuItem(value: 'roblox_clothing', child: Text('Roblox · Clothing / UGC')),
+                          DropdownMenuItem(value: 'roblox_pass', child: Text('Roblox · Game Pass')),
                         ],
                         onChanged: busy
                             ? null
@@ -1081,8 +1086,7 @@ extension _CheHomeMemory on _CHEHomeState {
             initialIndex: _selectedTab,
             onIndexChanged: (index) => _selectedTab = index,
             tabs: const [
-              Tab(icon: Icon(Icons.memory_outlined), text: 'Memory'),
-              Tab(icon: Icon(Icons.auto_awesome_outlined), text: 'Insights'),
+              Tab(icon: Icon(Icons.hub_outlined), text: 'Brain'),
               Tab(icon: Icon(Icons.show_chart), text: 'Markets'),
               Tab(icon: Icon(Icons.business_center_outlined), text: 'Business'),
               Tab(icon: Icon(Icons.devices_other_outlined), text: 'Devices'),
@@ -1090,10 +1094,10 @@ extension _CheHomeMemory on _CHEHomeState {
               Tab(icon: Icon(Icons.lightbulb_outline), text: 'Create'),
               Tab(icon: Icon(Icons.workspaces_outline), text: 'Office'),
               Tab(icon: Icon(Icons.apps_rounded), text: 'Apps'),
+              Tab(icon: Icon(Icons.theaters_outlined), text: 'Theater'),
             ],
             pages: [
-              (_) => _hubMemoryTab(),
-              (active) => _hubInsightsTab(active),
+              (active) => _hubBrainTab(active),
               (_) => _hubMarketsTab(),
               (_) => _hubBusinessTab(),
               (active) => _hubDevicesTab(active),
@@ -1101,233 +1105,27 @@ extension _CheHomeMemory on _CHEHomeState {
               (active) => _hubCreateTab(active),
               (active) => _hubOfficeTab(active),
               (_) => CheAppsHubTab(onLearnPage: _learnFromBrowserPage),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _createPartnerDialog() async {
-    if (!await _ensurePaired() || !mounted) return;
-
-    final roleController = TextEditingController();
-    final specialtyController = TextEditingController();
-    final missionController = TextEditingController();
-    var busy = false;
-    String? errorText;
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (dialogContext, setDialogState) {
-            Future<void> create() async {
-              final role = roleController.text.trim();
-              if (role.isEmpty) {
-                setDialogState(() => errorText = 'Give the partner a role.');
-                return;
-              }
-
-              setDialogState(() {
-                busy = true;
-                errorText = null;
-              });
-
-              try {
-                await _postAgentJson('/api/team/create', {
-                  'role': role,
-                  'specialty': specialtyController.text.trim(),
-                  'mission': missionController.text.trim(),
-                });
-                await _loadAgentState(silent: true);
-                if (dialogContext.mounted) Navigator.pop(dialogContext);
-              } catch (e) {
-                setDialogState(() {
-                  busy = false;
-                  errorText = e.toString();
-                });
-              }
-            }
-
-            return AlertDialog(
-              backgroundColor: const Color(0xFF162532),
-              title: const Text('ADD CHE PARTNER'),
-              content: SizedBox(
-                width: 440,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: roleController,
-                      decoration: const InputDecoration(
-                        labelText: 'Role',
-                        hintText: 'Research Partner',
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: specialtyController,
-                      decoration: const InputDecoration(
-                        labelText: 'Specialty',
-                        hintText: 'Research, verification and source gathering',
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: missionController,
-                      minLines: 3,
-                      maxLines: 6,
-                      decoration: const InputDecoration(
-                        labelText: 'Mission',
-                        alignLabelWithHint: true,
-                      ),
-                    ),
-                    if (errorText != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        errorText!,
-                        style: const TextStyle(color: Colors.redAccent),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: busy ? null : () => Navigator.pop(dialogContext),
-                  child: const Text('CANCEL'),
-                ),
-                FilledButton(
-                  onPressed: busy ? null : create,
-                  child: Text(busy ? 'ADDING...' : 'ADD PARTNER'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    roleController.dispose();
-    specialtyController.dispose();
-    missionController.dispose();
-  }
-
-  Future<void> _openPartner(Map<String, dynamic> partner) async {
-    if (!mounted) return;
-
-    if (partner['introduced'] != true) {
-      try {
-        await _postAgentJson('/api/team/introduce', {
-          'partner_id': partner['id'],
-        });
-        await _loadAgentState(silent: true);
-      } catch (_) {}
-    }
-
-    if (!mounted) return;
-    final partnerId = partner['id']?.toString();
-    final assignments = teamTasks
-        .where((item) => item['partner_id']?.toString() == partnerId)
-        .take(10)
-        .toList();
-
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF101821),
-      isScrollControlled: true,
-      builder: (sheetContext) {
-        return SafeArea(
-          child: SizedBox(
-            height: MediaQuery.of(sheetContext).size.height * 0.72,
-            child: ListView(
-              padding: const EdgeInsets.all(18),
-              children: [
-                Row(
-                  children: [
-                    const CircleAvatar(
-                      child: Icon(Icons.smart_toy_outlined),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            partner['name']?.toString() ?? 'CHE Partner',
-                            style: const TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          Text(
-                            partner['role']?.toString() ?? 'AI coworker',
-                            style: const TextStyle(color: Color(0xFF34E0B8)),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  partner['specialty']?.toString() ?? '',
-                  style: const TextStyle(color: Colors.white70),
-                ),
-                if ((partner['mission']?.toString() ?? '').isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Text(partner['mission'].toString()),
-                ],
-                const SizedBox(height: 20),
-                const Text(
-                  'RECENT ASSIGNMENTS',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                if (assignments.isEmpty)
-                  const Card(
-                    child: ListTile(
-                      title: Text('No assignments yet'),
-                      subtitle: Text(
-                        'CHE will delegate work here when this specialty is useful.',
-                      ),
-                    ),
-                  )
-                else
-                  ...assignments.map(
-                    (item) => Card(
-                      child: ListTile(
-                        leading: const Icon(Icons.task_alt_outlined),
-                        title: Text(item['task']?.toString() ?? 'Task'),
-                        subtitle: Text(
-                          (item['result']?.toString() ?? '').isNotEmpty
-                              ? '${item['status'] ?? 'complete'}\n${item['result']}'
-                              : (item['error']?.toString() ?? '').isNotEmpty
-                                  ? '${item['status'] ?? 'failed'}\n${item['error']}'
-                                  : item['status']?.toString() ?? 'assigned',
-                          maxLines: 5,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ),
-                  ),
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: () async {
-                    try {
-                      await _postAgentJson('/api/team/delete', {
-                        'partner_id': partner['id'],
-                      });
-                      await _loadAgentState(silent: true);
-                      if (sheetContext.mounted) Navigator.pop(sheetContext);
-                    } catch (_) {}
+              (_) {
+                _ensureOfficeRuntime();
+                return CheTheaterRoom(
+                  runtime: _officeRuntime,
+                  client: _agentRuntime,
+                  onOpenOffice: _openOfficeFloor,
+                  onAskAboutScene: (prompt, jpeg) async {
+                    if (jpeg != null) {
+                      _set(() => _pendingAttachment = {
+                            'name': 'theater-scene.jpg',
+                            'media_type': 'image',
+                            'base64': jpeg,
+                          });
+                    }
+                    Navigator.of(context).popUntil((route) => route.isFirst);
+                    controller.text = prompt;
+                    await sendMessage();
                   },
-                  icon: const Icon(Icons.person_remove_outlined),
-                  label: const Text('REMOVE PARTNER'),
-                ),
-              ],
-            ),
+                );
+              },
+            ],
           ),
         );
       },
@@ -1743,6 +1541,26 @@ extension _CheHomeMemory on _CHEHomeState {
     }
 
     if (hasAny([
+      'advertising',
+      'advertise',
+      'ad campaign',
+      'ad campaigns',
+      'marketing campaign',
+      'paid ads',
+      'facebook ads',
+      'instagram ads',
+      'google ads',
+      'tiktok ads',
+      'meta ads',
+      'ad copy',
+      'media buying',
+      'campaign budget',
+      'campaign performance',
+    ])) {
+      result.add('advertising');
+    }
+
+    if (hasAny([
       'find clients',
       'find customers',
       'find leads',
@@ -1815,6 +1633,59 @@ extension _CheHomeMemory on _CHEHomeState {
     }
 
     if (hasAny([
+      'change your ui',
+      'change the ui',
+      'redesign your',
+      'redesign the ui',
+      'modify your app',
+      'update your app',
+      'change your screen',
+      'move this button',
+      'move this control',
+      'proofread code',
+      'review code',
+      'write code',
+      'edit code',
+      'refactor',
+      'add it to yourself',
+      'add this to yourself',
+      'your code',
+    ])) {
+      result.add('self_development');
+    }
+
+    if (hasAny([
+      'write a book',
+      'book idea',
+      'novel',
+      'movie',
+      'film',
+      'screenplay',
+      'script',
+      'episode',
+      'scene',
+      'story',
+      'character arc',
+    ])) {
+      result.add('creative_writing');
+    }
+
+    if (hasAny([
+      'marketing',
+      'social media',
+      'instagram',
+      'tiktok',
+      'facebook',
+      'youtube content',
+      'content calendar',
+      'brand strategy',
+      'ad copy',
+      'campaign',
+    ])) {
+      result.add('marketing_social');
+    }
+
+    if (hasAny([
       'how long',
       'wait time',
       'eta',
@@ -1832,6 +1703,23 @@ extension _CheHomeMemory on _CHEHomeState {
       'quantum simulation',
     ])) {
       result.add('quantum_compute');
+    }
+
+    if (hasAny([
+      'fine tune',
+      'fine-tune',
+      'fine tuning',
+      'fine-tuning',
+      'train model',
+      'train a model',
+      'lora',
+      'adapter tuning',
+      'vmware private ai',
+      'vmware training',
+      'hugging face training',
+      'huggingface training',
+    ])) {
+      result.add('fine_tuning');
     }
 
     if (hasAny([
