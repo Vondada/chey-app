@@ -723,6 +723,18 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
     return Column(
       children: [
         CheFeatureCard(
+          icon: Icons.sms_outlined,
+          hue: const Color(0xFFF22F46),
+          title: 'Twilio SMS (CHE)',
+          body: 'Connect Twilio so CHE can text. Secrets stay on the Worker (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER). Bulk needs your yes.',
+          onTap: widget.onRunPrompt == null
+              ? null
+              : () => _runPrompt(
+                    'Explain how to connect Twilio SMS for CHE using wrangler secret put for TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER. Check GET /api/twilio/status without echoing any secret values. Remind me that only CHE sends, bulk stays Owner decision pending until I confirm, and trial limits are about 5 verified numbers and 100 SMS.',
+                  ),
+        ),
+        const SizedBox(height: CheSpace.md),
+        CheFeatureCard(
           icon: Icons.auto_awesome_rounded,
           title: 'Ask CHE to build a plugin',
           body: 'Describe a skill. CHE drafts it, you review permissions, then you approve installation.',

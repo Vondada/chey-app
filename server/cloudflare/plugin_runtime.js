@@ -87,6 +87,28 @@ export const BUILTIN_PLUGIN_MANIFESTS = [
         request: { method: 'GET', url: 'https://en.wikipedia.org/api/rest_v1/page/summary/{{title}}' },
       },
     ],
+  },,
+  {
+    id: 'twilio-sms',
+    name: 'Twilio SMS (CHE)',
+    version: '1.0.0',
+    author: 'CHE',
+    description: 'Connect Twilio so CHE can send individual and bulk one-to-one SMS. Secrets stay on the Worker (wrangler secret put). Bulk needs owner yes.',
+    icon: 'message',
+    color: '#F22F46',
+    permissions: [],
+    instructions: 'Only CHE may send SMS. If Twilio is not connected, tell the owner to set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER via wrangler secret put (see docs/TWILIO_CHE.md and Plugins → Twilio SMS). Never invent secret values. Bulk outbound stays Owner decision: pending until owner_approved. Honor STOP/HELP opt-out.',
+    quickActions: ['Is Twilio SMS connected?', 'Draft a bulk SMS for my approval'],
+    tools: [],
+    screen: {
+      type: 'cards',
+      title: 'Twilio SMS (CHE)',
+      description: 'Worker secrets only. Test via GET /api/twilio/status. Inbound: /api/twilio/sms/inbound',
+      cards: [
+        { icon: 'key', title: 'Secrets', body: 'TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER', prompt: 'How do I connect Twilio SMS for CHE?' },
+        { icon: 'message', title: 'Test', body: 'Ask CHE to check Twilio status', prompt: 'Is Twilio SMS connected?' },
+      ],
+    },
   },
 ];
 

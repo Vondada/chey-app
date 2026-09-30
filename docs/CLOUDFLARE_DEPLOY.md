@@ -50,4 +50,16 @@ Optional / not set yet (owner):
 
 Do **not** set `STRIPE_SECRET_KEY` or `STRIPE_WEBHOOK_SECRET` until the owner confirms Stripe charges.
 
+Twilio SMS (CHE) — names only; see `docs/TWILIO_CHE.md`:
+
+```bash
+# npx wrangler secret put TWILIO_ACCOUNT_SID
+# npx wrangler secret put TWILIO_AUTH_TOKEN
+# npx wrangler secret put TWILIO_FROM_NUMBER
+# optional: npx wrangler secret put TWILIO_MESSAGING_SERVICE_SID
+```
+
+Inbound webhook: `https://chey-app.henryjavoni.workers.dev/api/twilio/sms/inbound`
+
+
 Local `.dev.vars` is gitignored. Pair body field is `code` (`POST /api/pair`).

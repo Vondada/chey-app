@@ -108,7 +108,7 @@ class _CheWarRoomScreenState extends State<CheWarRoomScreen> {
                                 spacing: CheSpace.sm,
                                 runSpacing: CheSpace.sm,
                                 children: [
-                                  _Seat(agent: CheAgent.che(status: m.summary.status == 'synthesizing' ? CheAgentStatus.reviewing : CheAgentStatus.meeting), speaking: speaking == 'CHE', role: 'Chair'),
+                                  _Seat(agent: CheAgent.che(status: m.summary.status == 'synthesizing' ? CheAgentStatus.reviewing : CheAgentStatus.meeting), speaking: speaking == 'CHE', role: 'Office Boss'),
                                   for (final p in m.participants) _Seat(agent: _seat(p), speaking: speaking == p.name, role: p.role),
                                 ],
                               ),

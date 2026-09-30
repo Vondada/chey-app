@@ -87,6 +87,10 @@ import { assertAgentMayRun, permissionBlocker } from './agent_permissions.js';
 import { makeWorkPacket, savePacket, startCodexJob } from './codex_packets.js';
 import { newBlockerAnnouncements } from './blocker_speech.js';
 import { recordStripeEvent, verifyStripeSignature } from './stripe_webhooks.js';
+import {
+  twilioStatus, sendSms, sendSmsBulk, confirmBulkJob, createBulkDraft,
+  handleInboundSms, twilioConfigured, twilioMissingSecrets,
+} from './twilio_sms.js';
 import { approveProposal, proposeProduct, rejectProposal, salesSummary, storeStatus } from './stripe_store.js';
 import {
   addLead, approveProposal as approveDealProposal, buildBrief, checkPaid, createPaymentLink, draftProposal, findDeal, markStage, pipelineSummary,
@@ -1179,6 +1183,23 @@ function pluginCatalog(env) {
 }
 
 function visiblePlugins(env, state) {
+  const twilioReady = twilioConfigured(env);
+  const twilioCard = {
+    id: 'twilio_sms',
+    name: 'Twilio SMS (CHE)',
+    description: 'CHE sends individual and bulk one-to-one texts via Twilio. Bulk needs owner yes. Secrets: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER.',
+    mode: 'action',
+    capabilities: ['sms', 'messaging'],
+    ui_url: '',
+    ready: twilioReady,
+    enabled: state?.twilio_sms === true || twilioReady,
+    requires_confirmation: true,
+    toggleable: true,
+    kind: 'connector',
+    security: 'Worker secrets only • CHE sending authority • owner gate on bulk • STOP/HELP honored',
+    missing_secrets: twilioMissingSecrets(env),
+    connect_hint: 'Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER via wrangler secret put. See docs/TWILIO_CHE.md.',
+  };
   const connectors = pluginCatalog(env).map((p) => ({
     id: p.id, name: p.name, description: p.description, mode: p.mode,
     capabilities: p.capabilities,
@@ -1190,11 +1211,13 @@ function visiblePlugins(env, state) {
     kind: 'connector',
     security: 'Server allow-list • HTTPS only • secrets stay server-side',
   }));
+  // Always surface Twilio SMS for CHE (builtin connector).
+  const withTwilio = [twilioCard, ...connectors.filter((c) => c.id !== 'twilio_sms')];
   // Day-one defaults when CHE_PLUGIN_CATALOG is unset: keyless skill plugins
   // (Weather, Crypto, Wikipedia). Listed read-only; install/enable them from
   // Skill plugins on the phone — not toggled as connectors here.
-  if (connectors.length) return connectors;
-  return pluginManifests(env).map((m) => ({
+  if (connectors.length) return withTwilio;
+  return [twilioCard, ...pluginManifests(env).map((m) => ({
     id: m.id,
     name: m.name,
     description: m.description,
@@ -1207,7 +1230,7 @@ function visiblePlugins(env, state) {
     toggleable: false,
     kind: 'skill',
     security: 'Builtin skill • HTTPS GET only • install from Skill plugins • secrets stay server-side',
-  }));
+  }))];
 }
 
 function pluginRecommendations(env, state, requestedCapabilities) {
@@ -2312,6 +2335,27 @@ export class CheState extends DurableObject {
         }
         return json({ received: true, duplicate: outcome.duplicate });
       }
+
+      // Twilio SMS inbound — signature (AUTH_TOKEN) authenticates; no device pair.
+      // Public URL: https://chey-app.henryjavoni.workers.dev/api/twilio/sms/inbound
+      if (request.method === 'POST' && (path === '/api/twilio/sms/inbound' || path === '/webhooks/twilio/sms')) {
+        const raw = await request.text();
+        const publicUrl = `https://chey-app.henryjavoni.workers.dev${path === '/webhooks/twilio/sms' ? '/webhooks/twilio/sms' : '/api/twilio/sms/inbound'}`;
+        const outcome = await handleInboundSms(this.env, data, {
+          rawBody: raw,
+          signature: request.headers.get('X-Twilio-Signature'),
+          publicUrl,
+        });
+        if (outcome.status === 200) {
+          await this.ctx.storage.put('che', data);
+          this.broadcastAgents(data);
+        }
+        return new Response(outcome.twiml || '<?xml version="1.0" encoding="UTF-8"?><Response></Response>', {
+          status: outcome.status || 200,
+          headers: { 'Content-Type': 'text/xml; charset=utf-8' },
+        });
+      }
+
       const body = ['POST', 'PATCH'].includes(request.method) ? await bodyOf(request) : {};
       if (request.method === 'POST' && path === '/api/pair') {
         const secret = this.env.CHE_PAIR_CODE;
@@ -2387,7 +2431,7 @@ export class CheState extends DurableObject {
               'Sound bright, warm, confident, current and natural — like a sharp friend, not a help desk.',
               'Default to one or two short sentences. Lead with exactly what the owner needs. No preamble, recap, or extra explanation unless it is necessary or he asks for more.',
               'Understand slang, profanity, dark humor, mature and controversial topics without acting shocked, preachy or prudish. Be candid and direct while still respecting real safety, privacy, consent, security and legal limits.',
-              'CHE is the owner-facing boss and manager of every internal AI coworker. Coworkers report to CHE, never directly to the owner.',
+              'CHE is the Office Boss — the owner’s primary liaison. Specialists (Nova, Atlas, Mira, Knox, Sage, Lyra, Iris) report to CHE; CHE reports to the owner. CHE assigns, steers, accepts/rejects handoffs, and owns outcomes.',
               'Never create fake busywork. Delegate only when a specialist materially improves accuracy, execution, research, creativity, speed or verification, and only for work tied to the owner’s request, real goals, projects, responsibilities, learning, finances, business, creative work, technology or organization.',
               'When delegating, require a concrete useful deliverable, review the result, and never call a failed or unverified result complete.',
               'Use natural conversational pacing. Do not over-explain simple questions.',
@@ -2763,6 +2807,41 @@ export class CheState extends DurableObject {
       if (path === '/api/stripe/status' && request.method === 'GET') {
         return json(storeStatus(this.env, data));
       }
+
+      // ─── Twilio SMS (CHE sending authority; bulk needs owner yes) ───
+      if (path === '/api/twilio/status' && request.method === 'GET') {
+        return json(twilioStatus(this.env, data));
+      }
+      if (path === '/api/twilio/sms/send' && request.method === 'POST') {
+        const outcome = await sendSms(this.env, data, { to: body.to, body: body.body });
+        await this.ctx.storage.put('che', data);
+        return json(outcome, outcome.ok ? 200 : 400);
+      }
+      if (path === '/api/twilio/sms/bulk' && request.method === 'POST') {
+        // Without owner_approved, creates a pending draft (Owner decision: pending).
+        const outcome = await sendSmsBulk(this.env, data, {
+          numbers: body.numbers,
+          body: body.body,
+          owner_approved: body.owner_approved === true,
+          job_id: body.job_id,
+        });
+        await this.ctx.storage.put('che', data);
+        const code = outcome.ok ? 200 : (outcome.pending ? 202 : 400);
+        return json(outcome, code);
+      }
+      if (path === '/api/twilio/sms/bulk/confirm' && request.method === 'POST') {
+        const outcome = await confirmBulkJob(this.env, data, String(body.job_id || body.id || ''), {
+          owner_approved: body.owner_approved === true,
+        });
+        await this.ctx.storage.put('che', data);
+        return json(outcome, outcome.ok ? 200 : (outcome.pending ? 202 : 400));
+      }
+      if (path === '/api/twilio/sms/draft' && request.method === 'POST') {
+        const outcome = createBulkDraft(data, { numbers: body.numbers, body: body.body, sample: body.sample });
+        if (outcome.status === 200) await this.ctx.storage.put('che', data);
+        return json(outcome, outcome.status);
+      }
+
       if (path === '/api/stripe/proposals' && request.method === 'GET') {
         return json({ proposals: data.stripe_proposals || [], ...storeStatus(this.env, data) });
       }
@@ -4497,7 +4576,8 @@ export class CheState extends DurableObject {
               'SPEED MODE: minimize unnecessary serial work. Batch compatible reads, run independent tool calls concurrently, reuse trusted context, and escalate to heavier compute only when the task actually benefits from it.',
               'BACKGROUND WORK: cloud-side tasks may continue independently of the visible phone UI only when a real CHE backend job or connected service supports it. Do not claim iOS itself is running unrestricted background work.',
               'SUPPORTED-WORKAROUND MODE: when a platform, API, entitlement, permission or device limitation blocks the direct route, actively look for the fastest legitimate alternative such as an official API, App Intent, deep link, Shortcut, companion service, cloud job or approved integration. Never bypass security controls, access controls, safety rules or law, and never call an unsupported bypass a loophole.',
-              'CHE OFFICE: CHE is the owner’s primary agent, boss and manager of every internal AI coworker. Coworkers report to CHE, not the owner. Handle ordinary conversation yourself. Delegate only when specialization materially improves the result. Every delegated task must be tied to the owner’s request or real goals and must have a concrete useful deliverable. Never create busywork just to make the Office look active. Review coworker output, catch weak assumptions, and never mark failed or unverified work complete.',
+              'CHE OFFICE: CHE is the Office Boss — the owner’s primary liaison and in-charge manager of every internal AI coworker (Nova, Atlas, Mira, Knox, Sage, Lyra, Iris). Specialists report to CHE; CHE reports to the owner. CHE assigns, steers, accepts or rejects handoffs, and owns outcomes. Handle ordinary conversation yourself. Delegate only when specialization materially improves the result. Every delegated task must be tied to the owner’s request or real goals and must have a concrete useful deliverable. Never create busywork just to make the Office look active. Review coworker output, catch weak assumptions, and never mark failed or unverified work complete.',
+              'TWILIO SMS: Only CHE may call send_sms / send_sms_bulk (sending authority). Office helpers may draft message text into a pending bulk job; CHE sends after the owner explicitly confirms bulk (owner_approved). Single sends require clear owner intent via CHE and are logged. Outbound bulk stays Owner decision: pending until confirmed. If Twilio secrets are missing, say so and point to Plugins → Twilio SMS (CHE) / docs/TWILIO_CHE.md. Honor STOP/HELP; never message opted-out numbers.',
               'OFFICE EXECUTION MODEL: long work continues in the Durable Object while the phone is closed; agents may work in parallel, hand tasks to another specialist, retain persistent workspace notes, reuse owner-taught workflows, and accept owner steering while a job is underway. If a connected CHE cloud-computer endpoint is configured, computer use must stay inside explicitly owner-approved permissions.',
               'QUALITY LOOP: delegated Office work must survive CHE review. If CHE marks it NEEDS WORK, automatically send it back for a bounded repair pass instead of presenting weak output as finished. Preserve prior work and new owner corrections across repair passes.',
               'OWNER CONTEXT: classify useful imported context into People, Projects, Decisions, Companies, Meetings, Daily, or Knowledge. Keep provenance. Do not merge unlike categories just because names overlap. Each tracked item has an Office owner responsible for maintaining its next action and relationships. CHE remains the manager and decides when an Office specialist should act.',

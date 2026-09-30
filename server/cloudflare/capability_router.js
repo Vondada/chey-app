@@ -172,7 +172,7 @@ export function planPairedJob(objective, connected = [], requestedFamilies = [])
     ...researchers.map((provider) => ({ role: `${providerLabel(provider)} Researcher`, provider, capability: 'deep_reasoning', stage: 'independent' })),
     { role: 'Analyst', provider: pick('huggingface', 'ollama', 'groq', 'gemini') || '', capability: 'deep_reasoning', stage: 'compare' },
     { role: 'QA/Security Reviewer', provider: pick('anthropic', 'openai', 'xai', 'gemini') || '', capability: 'deep_reasoning', stage: 'review' },
-    { role: 'CHE Manager', provider: 'che', capability: 'synthesis', stage: 'synthesize' },
+    { role: 'CHE Office Boss', provider: 'che', capability: 'synthesis', stage: 'synthesize' },
   ];
   return {
     objective: String(objective || '').slice(0, 2000),

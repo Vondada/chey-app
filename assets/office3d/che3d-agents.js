@@ -138,6 +138,8 @@
     const torso=sphere(.60,isChe?M.white:outfitMat,.88,1.04,.65); torso.position.y=1.26; g.add(torso);
     if(isChe){
       const waist=sphere(.52,M.teal,.92,.46,.64); waist.position.y=1.00; g.add(waist);
+      // Gold lapel pin — authoritative Office Boss accent (female avatar preserved)
+      const goldLapel=sphere(.07,M.gold,1,1,.55); goldLapel.position.set(-.42,1.38,.38); g.add(goldLapel);
     }
 
     const coreMat=new THREE.MeshStandardMaterial({

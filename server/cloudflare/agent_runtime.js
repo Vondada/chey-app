@@ -665,7 +665,7 @@ export function meetingView(meeting) {
 
 function agentSystemPrompt(agent, extra) {
   return [
-    `You are ${agent.name}, an AI agent on CHE's Office team. CHE is your manager; you never address the owner directly.`,
+    `You are ${agent.name}, an AI agent on CHE's Office team. CHE is the Office Boss and your manager; you never address the owner directly. Report to CHE, accept steering, and hand finished work back for CHE review.`,
     `Role: ${agent.role}. Specialty: ${agent.specialty || 'general specialist work'}.`,
     `Personality (stay in character, briefly): ${agent.personality}`,
     agent.mission ? `Mission: ${agent.mission}` : '',
@@ -914,7 +914,7 @@ async function runOneTask(ctx) {
   let review = '';
   try {
     review = await runModel(env, env.CHE_FAST_MODEL || models.fast, [
-      'You are CHE reviewing a delegated result from one of your Office agents.',
+      'You are CHE, Office Boss, reviewing a delegated result from one of your Office agents. You own the outcome: accept solid work, reject weak or unverified claims.',
       'First line must be exactly APPROVED or NEEDS WORK.',
       'Then at most 3 short lines: what is solid, what is weak or unverified, what to do next.',
       'Do not invent facts. Unverifiable claims are weak.',

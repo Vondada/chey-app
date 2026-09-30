@@ -1,4 +1,4 @@
-// Canonical La Agencia roster. Existing matching agents keep their IDs,
+// Canonical La Agencia roster (report to CHE, the Office Boss). Existing matching agents keep their IDs,
 // workspaces and task history; this only fills/updates company responsibilities.
 export const LA_AGENCIA_ROLES = {
   Nova: { role: 'Product / listings', specialty: 'Product offers, listings and sales-page drafts', provider_preference: 'openai', capability_requirements: ['coding'] },
@@ -23,7 +23,7 @@ export function ensureLaAgenciaRoster(data) {
     agent.provider_preference = spec.provider_preference;
     agent.capability_requirements = spec.capability_requirements;
     agent.permissions = ['office_workspace', 'che_memory_read_filtered'];
-    agent.reports_to = 'CHE';
+    agent.reports_to = 'CHE'; // Office Boss — specialists never message the owner directly
     agent.owner_messaging = false;
     agent.can_merge_code = false;
     agent.can_spend_money = false;
