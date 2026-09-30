@@ -13,7 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-import '../che_app_portal.dart' show cheAppForName;
+import '../che_app_portal.dart' show cheAppForName, cheIsTradeSeaUrl;
 import '../security/che_password_vault.dart';
 import '../security/che_vault_auth.dart';
 
@@ -630,6 +630,88 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
 
   void _snack(String text) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 
+  bool get _isTradeSea => cheIsTradeSeaUrl(_tab.url);
+
+  /// Same spirit as Devices → Computer: connect the Windows/Mac companion,
+  /// then use authorized windows_action / computer use scoped to TradeSea.
+  Future<void> _showTradeSeaComputer() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xF5121C25),
+      showDragHandle: true,
+      builder: (sheet) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 6, 20, 26),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Semantics(
+                label: 'Computer companion for TradeSea',
+                child: Container(
+                  width: 58,
+                  height: 58,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withValues(alpha: .06),
+                    border: Border.all(color: Colors.white24),
+                  ),
+                  child: const Icon(Icons.laptop_mac_rounded, color: Colors.white54, size: 30),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text('Computer', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 5),
+              const Text(
+                'WINDOWS / MAC COMPANION',
+                style: TextStyle(
+                  color: Colors.white38,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.3,
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Connect your computer for authorized TradeSea actions '
+                '(companion / windows_action / computer use). Honest companion only — '
+                'no fake VNC. CHE asks before acting.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white60, height: 1.4),
+              ),
+              const SizedBox(height: 18),
+              FilledButton.icon(
+                onPressed: () {
+                  Navigator.of(sheet).pop();
+                  unawaited(_ask(
+                    'Help me connect my computer to CHE for authorized actions scoped to TradeSea '
+                    '(app.tradesea.ai). Walk me through only the required Windows or Mac companion '
+                    'setup and permissions (windows_action / use_computer). Be honest — no fake VNC.',
+                  ));
+                },
+                icon: const Icon(Icons.add_link),
+                label: const Text('CONNECT COMPUTER'),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.of(sheet).pop();
+                  unawaited(_ask(
+                    'Use my connected computer for TradeSea at app.tradesea.ai. '
+                    'Authorized companion / windows_action / computer use only, scoped to TradeSea. '
+                    'Ask for my approval before acting. No fake VNC.',
+                  ));
+                },
+                icon: const Icon(Icons.laptop_mac_rounded),
+                label: const Text('USE FOR TRADESEA'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _reader() async {
     final text = await _pageText();
     if (!mounted) return;
@@ -788,6 +870,12 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
           ),
         ),
         actions: [
+          if (_isTradeSea)
+            IconButton(
+              tooltip: 'Computer for TradeSea',
+              icon: const Icon(Icons.laptop_mac_rounded),
+              onPressed: _showTradeSeaComputer,
+            ),
           IconButton(
             tooltip: fav ? 'Remove favorite' : 'Add favorite',
             icon: Icon(fav ? Icons.star_rounded : Icons.star_border_rounded),
@@ -800,6 +888,8 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
             tooltip: 'Page actions',
             onSelected: (v) async {
               switch (v) {
+                case 'computer':
+                  await _showTradeSeaComputer();
                 case 'reader':
                   await _reader();
                 case 'summarize':
@@ -821,16 +911,18 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
                   await launchUrl(Uri.parse(_tab.url), mode: LaunchMode.externalApplication);
               }
             },
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'reader', child: ListTile(leading: Icon(Icons.chrome_reader_mode_outlined), title: Text('Reader mode'))),
-              PopupMenuItem(value: 'summarize', child: ListTile(leading: Icon(Icons.summarize_outlined), title: Text('Summarize'))),
-              PopupMenuItem(value: 'ask', child: ListTile(leading: Icon(Icons.question_answer_outlined), title: Text('Ask CHE about this page'))),
-              PopupMenuItem(value: 'teach', child: ListTile(leading: Icon(Icons.psychology_alt_outlined), title: Text('Teach CHE this page'))),
-              PopupMenuItem(value: 'project', child: ListTile(leading: Icon(Icons.folder_special_outlined), title: Text('Save to project'))),
-              PopupMenuItem(value: 'history', child: ListTile(leading: Icon(Icons.history_rounded), title: Text('History'))),
-              PopupMenuItem(value: 'favorites', child: ListTile(leading: Icon(Icons.star_outline_rounded), title: Text('Favorites'))),
-              PopupMenuItem(value: 'copy', child: ListTile(leading: Icon(Icons.link_rounded), title: Text('Copy link'))),
-              PopupMenuItem(value: 'external', child: ListTile(leading: Icon(Icons.open_in_new_rounded), title: Text('Open in official app / Safari'))),
+            itemBuilder: (_) => [
+              if (_isTradeSea)
+                const PopupMenuItem(value: 'computer', child: ListTile(leading: Icon(Icons.laptop_mac_rounded), title: Text('Computer'))),
+              const PopupMenuItem(value: 'reader', child: ListTile(leading: Icon(Icons.chrome_reader_mode_outlined), title: Text('Reader mode'))),
+              const PopupMenuItem(value: 'summarize', child: ListTile(leading: Icon(Icons.summarize_outlined), title: Text('Summarize'))),
+              const PopupMenuItem(value: 'ask', child: ListTile(leading: Icon(Icons.question_answer_outlined), title: Text('Ask CHE about this page'))),
+              const PopupMenuItem(value: 'teach', child: ListTile(leading: Icon(Icons.psychology_alt_outlined), title: Text('Teach CHE this page'))),
+              const PopupMenuItem(value: 'project', child: ListTile(leading: Icon(Icons.folder_special_outlined), title: Text('Save to project'))),
+              const PopupMenuItem(value: 'history', child: ListTile(leading: Icon(Icons.history_rounded), title: Text('History'))),
+              const PopupMenuItem(value: 'favorites', child: ListTile(leading: Icon(Icons.star_outline_rounded), title: Text('Favorites'))),
+              const PopupMenuItem(value: 'copy', child: ListTile(leading: Icon(Icons.link_rounded), title: Text('Copy link'))),
+              const PopupMenuItem(value: 'external', child: ListTile(leading: Icon(Icons.open_in_new_rounded), title: Text('Open in official app / Safari'))),
             ],
           ),
         ],
