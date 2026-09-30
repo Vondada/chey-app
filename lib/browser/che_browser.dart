@@ -15,6 +15,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../che_app_portal.dart' show cheAppForName;
 import '../security/che_password_vault.dart';
+import '../security/che_vault_auth.dart';
 
 typedef ChePageCallback = Future<void> Function(String title, String url, String pageText);
 
@@ -198,11 +199,21 @@ class _BrowserTab {
 ''';
 
   // On a sign-in page for a site CHE already has, fill the login in
-  // automatically (the owner or CHE still presses Sign in).
+  // automatically (the owner or CHE still presses Sign in). Face ID is
+  // required unless a recent vault unlock session is still valid.
   static Future<void> _autoFill(WebViewController controller, String pageUrl) async {
     try {
       final host = Uri.tryParse(pageUrl)?.host ?? '';
       if (host.isEmpty) return;
+      // Only prompt Face ID when a password field is actually present.
+      final hasLogin = await controller.runJavaScriptReturningResult(
+        r"(function(){var pw=document.querySelector('input[type=password]');return !!(pw&&!pw.value);})()",
+      );
+      if (hasLogin != true && hasLogin != 'true' && hasLogin != 1) return;
+      final unlocked = await CheVaultAuth.instance.ensureUnlocked(
+        reason: 'Unlock CHE vault with Face ID to autofill this sign-in',
+      );
+      if (!unlocked) return;
       final entry = await CheVault.instance.find(host);
       if (entry == null) return;
       final u = jsonEncode(entry.username);
@@ -373,8 +384,15 @@ return parts.slice(0,4).join(' | ');})()''');
 
   // Fills the saved username/password for this site from CHE's on-device
   // vault. Values go straight into the page, never into chat or the server.
+  // Face ID required unless the vault session TTL is still valid.
   Future<String> _signIn() async {
     final host = Uri.tryParse(_tab.url)?.host ?? '';
+    final unlocked = await CheVaultAuth.instance.ensureUnlocked(
+      reason: 'Unlock CHE vault with Face ID to sign in',
+    );
+    if (!unlocked) {
+      return 'Face ID was cancelled — I did not fill your password.';
+    }
     final entry = await CheVault.instance.find(host.isEmpty ? _title : host) ?? await CheVault.instance.find(_title);
     if (entry == null) {
       return 'I don\'t have a saved password for this site. Say "save my ${host.replaceFirst('www.', '')} password" and the password.';
