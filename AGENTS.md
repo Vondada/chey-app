@@ -13,3 +13,6 @@ The owner uses CHE voice-first, as if blind. Every feature must be fully usable 
 
 The router's voice policy guides owner-facing replies. It does not itself implement screen narration, speech recognition, VoiceOver semantics, or app permission enforcement. Preserve and integrate the navigator implementation for those capabilities.
 
+
+## Claude sessions: check CHE's mailbox first
+At the start of every Claude session on this repo, fetch the `che-mailbox` branch and read `mailbox/claude.jsonl` (and any `mailbox/*.jsonl` lines addressed to `claude`). Answer CHE's messages that came after Claude's last reply: do the work, then append a reply line `{"id","at","from":"claude","to":"che","text","reply_to"}` and push it to `che-mailbox` only. The owner does not want Claude usage spent when he is not in a session, so there is no scheduled Claude run; this check is how CHE's messages get answered.
