@@ -571,8 +571,10 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
         });
         // Busy or overloaded (429 / 5xx): try the same engine's lighter model
         // once, which usually has its own separate limit, before moving on.
+        // Gemini quota/429: skip the extra retry so we do not burn quota and lag chat.
+        const quotaLike = error?.status === 429 || [402].includes(error?.status) || /quota|rate.?limit|billing/i.test(String(error?.message || ''));
         const busy = error?.status === 429 || [500, 502, 503, 504].includes(error?.status);
-        if (busy) {
+        if (busy && !(provider.id === 'gemini' && quotaLike)) {
           try {
             if (!strongProviderModel) await new Promise((resolve) => setTimeout(resolve, 700));
             const retry = await callProvider(env, provider, false, shaped.input, fetcher, '', office);
@@ -585,10 +587,20 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
             const combinedError = `${String(error?.message || error)}; fast retry: ${String(retryError?.message || retryError)}`.slice(0, 700);
             providerLastError.set(provider.id, combinedError);
             errors.push(`${provider.id}: ${combinedError}`);
-            const rest = [401, 402, 403].includes(retryError?.status) ? 3_600_000 : 20_000;
+            const rest = [401, 402, 403].includes(retryError?.status) || (provider.id === 'gemini' && retryError?.status === 429)
+              ? 3_600_000
+              : 20_000;
             providerCooldownUntil.set(provider.id, now + rest);
             continue;
           }
+        }
+        if (provider.id === 'gemini' && quotaLike) {
+          const detail = String(error?.message || error).slice(0, 700);
+          providerLastError.set(provider.id, detail);
+          errors.push(`${provider.id}: ${detail}`);
+          providerCooldownUntil.set(provider.id, now + 3_600_000);
+          noteHealth(provider.id, { ok: false, status: error?.status || 429, quota: true, error: detail });
+          continue;
         }
         // Rest a failing engine so the next message goes straight to one that
         // works: an hour when it wants payment or a key, 20 seconds otherwise.

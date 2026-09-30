@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { activityFeed, findCreations, greeting, shortTitle, suggestions } from './activity.js';
+import { activityFeed, creations, findCreations, greeting, shortTitle, suggestions } from './activity.js';
 
 const data = {
   team: [{ id: 'a1', name: 'Mira' }, { id: 'a2', name: 'Nova' }],
@@ -43,4 +43,29 @@ test('activity feed and greeting use only real state', () => {
   const quiet = greeting({ team_tasks: [], meetings: [] }, [], { hour: 20 });
   assert.equal(quiet.kind, 'suggestion');
   assert.equal(suggestions(data, { hour: 9 }).length, 3);
+});
+
+test('creations tolerates twilio queues without throwing', () => {
+  const items = creations({
+    twilio_bulk_jobs: [{ id: 'b1', status: 'pending_owner', recipient_count: 3, sample: 'hi', created_at: '2026-09-30T00:00:00Z' }],
+    twilio_inbound: [{ id: 'i1', at: '2026-09-30T00:01:00Z', from: '+10000000000', body: 'STOP', kind: 'opt_out' }],
+    team_tasks: [],
+    projects: [],
+    vault_items: [],
+    jobs: [],
+    meetings: [],
+  }, []);
+  assert.ok(Array.isArray(items));
+});
+
+test('activityFeed includes pending twilio bulk decisions', () => {
+  const events = activityFeed({
+    twilio_bulk_jobs: [{ id: 'b1', status: 'pending_owner', recipient_count: 2, sample: 'hello', created_at: '2026-09-30T00:00:00Z' }],
+    twilio_inbound: [],
+    team_tasks: [],
+    projects: [],
+    jobs: [],
+    meetings: [],
+  }, []);
+  assert.equal(events.some((e) => e.kind === 'twilio_bulk'), true);
 });

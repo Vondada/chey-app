@@ -566,9 +566,11 @@ extension _CheHomeSend on _CHEHomeState {
 
       _scrollToBottom();
       await speakText(errorReply);
-    } catch (_) {
-      const errorReply =
-          'I could not connect to my secure Agent gateway, sir.';
+    } catch (error) {
+      final detail = error.toString().trim();
+      final errorReply = detail.isEmpty || detail == 'Exception'
+          ? 'I could not connect to my secure Agent gateway, sir.'
+          : 'I could not connect to my secure Agent gateway, sir. ($detail)';
 
       if (!mounted) return;
 

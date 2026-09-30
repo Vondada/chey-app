@@ -150,15 +150,18 @@ extension _CheHomeStreaming on _CHEHomeState {
       // research), which can take well over 8s. Only a dead connection
       // falls back to the on-device model.
       response = await request.send().timeout(const Duration(seconds: 75));
-    } catch (_) {
+    } catch (error) {
       final local = await _tryLocalOfflineResponse(
         trimmedRequest,
         history,
         onPartial: onPartial,
       );
       if (local != null) return local;
-      throw const _CHEAgentException(
-        'I could not reach my Agent gateway or the on-device fallback.',
+      final detail = error.toString().trim();
+      throw _CHEAgentException(
+        detail.isEmpty
+            ? 'I could not reach my Agent gateway or the on-device fallback.'
+            : 'I could not reach my Agent gateway or the on-device fallback. ($detail)',
       );
     }
 
