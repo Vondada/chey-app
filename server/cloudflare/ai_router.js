@@ -213,6 +213,35 @@ function summarizeOlderMessages(messages, maxChars = 1400) {
   return summary.length > maxChars ? summary.slice(summary.length - maxChars) : summary;
 }
 
+
+// Free tiers cap request size (Groq free ≈ 8k tokens/minute per model).
+// Trim oversized prompts per engine instead of letting them 413: keep the
+// start of each system message (identity + rules come first), and the most
+// recent turns, within a character budget.
+const INPUT_CHAR_BUDGET = { groq: 16000, cerebras: 22000, pollinations: 18000, sambanova: 30000, mistral: 60000, github: 24000, huggingface: 16000, openrouter: 40000 };
+
+export function fitToBudget(input, maxChars) {
+  const messages = Array.isArray(input?.messages) ? input.messages : [];
+  if (!maxChars || !messages.length) return input;
+  const size = (list) => list.reduce((n, m) => n + contentText(m?.content).length, 0);
+  if (size(messages) <= maxChars) return input;
+  const system = messages.filter((m) => m?.role === 'system');
+  let turns = messages.filter((m) => m?.role !== 'system');
+  const last = turns[turns.length - 1];
+  turns = turns.slice(0, -1);
+  while (turns.length > 2 && size([...system, ...turns, last]) > maxChars) turns = turns.slice(1);
+  const clip = (m, n) => ({ ...m, content: contentText(m.content).slice(0, Math.max(200, n)) });
+  const lastText = contentText(last?.content);
+  const lastBudget = Math.min(lastText.length, Math.floor(maxChars * 0.35));
+  const turnBudget = Math.floor(maxChars * 0.2);
+  const turnsSize = size(turns);
+  const fittedTurns = turnsSize > turnBudget ? turns.map((m) => clip(m, Math.floor(turnBudget / Math.max(1, turns.length)))) : turns;
+  const systemBudget = Math.max(1200, maxChars - lastBudget - size(fittedTurns));
+  const systemSize = Math.max(1, size(system));
+  const fittedSystem = system.map((m) => clip(m, Math.floor(systemBudget * (contentText(m.content).length / systemSize))));
+  return { ...input, messages: [...fittedSystem, ...fittedTurns, ...(last ? [clip(last, lastBudget || 200)] : [])] };
+}
+
 function compactEngineInput(input) {
   const messages = Array.isArray(input?.messages) ? input.messages : [];
   const system = messages.filter((message) => message?.role === 'system');
@@ -565,6 +594,8 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
         continue;
       }
       const shaped = inputForProvider(engineInput, provider.id, context);
+      const budget = Number(env[`CHE_${provider.id.split(':')[0].toUpperCase()}_INPUT_CHARS`]) || INPUT_CHAR_BUDGET[provider.id.split(':')[0]] || 0;
+      if (budget) shaped.input = fitToBudget(shaped.input, budget);
       const override = modelFor(provider);
       const t0 = Date.now();
       try {
@@ -586,6 +617,18 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
         // once, which usually has its own separate limit, before moving on.
         // Gemini quota/429: skip the extra retry so we do not burn quota and lag chat.
         const quotaLike = error?.status === 429 || [402].includes(error?.status) || /quota|rate.?limit|billing/i.test(String(error?.message || ''));
+        // Too large: retry once at half size on the same engine.
+        if (error?.status === 413) {
+          try {
+            const smaller = fitToBudget(shaped.input, Math.floor((budget || 16000) / 2));
+            const retry = await callProvider(env, provider, false, smaller, fetcher, '', office);
+            await addEstimatedUsage(env, usageStorage, provider.id, retry.usageTokens, now);
+            providerLastError.delete(provider.id);
+            noteHealth(provider.id, { ok: true, latencyMs: Date.now() - t0 });
+            used = shaped;
+            return retry.result;
+          } catch (_) { /* fall through to normal failure handling */ }
+        }
         const busy = error?.status === 429 || [500, 502, 503, 504].includes(error?.status);
         if (busy && !(provider.id === 'gemini' && quotaLike)) {
           try {

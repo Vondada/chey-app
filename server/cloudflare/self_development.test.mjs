@@ -129,3 +129,18 @@ test('paid AI engines stay off unless the owner opts in', async () => {
   assert.equal(paidAllowed({ CHE_OPENAI_API_KEY: 'k' }), false);
   assert.equal(paidAllowed({ CHE_ALLOW_PAID_AI: '1' }), true);
 });
+
+test('oversized prompts are trimmed to fit a free engine instead of failing', async () => {
+  const { fitToBudget } = await import('./ai_router.js');
+  const input = { messages: [
+    { role: 'system', content: 'IDENTITY: You are CHE. ' + 'rule '.repeat(20000) },
+    ...Array.from({ length: 12 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `turn ${i} ` + 'x'.repeat(3000) })),
+    { role: 'user', content: 'Good afternoon' },
+  ] };
+  const out = fitToBudget(input, 16000);
+  const total = out.messages.reduce((n, m) => n + m.content.length, 0);
+  assert.ok(total <= 17000, `trimmed to ${total}`);
+  assert.match(out.messages[0].content, /^IDENTITY: You are CHE\./);
+  assert.equal(out.messages[out.messages.length - 1].content, 'Good afternoon');
+  assert.equal(fitToBudget({ messages: [{ role: 'user', content: 'hi' }] }, 16000).messages[0].content, 'hi');
+});
