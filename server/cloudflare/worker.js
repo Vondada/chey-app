@@ -35,6 +35,7 @@ import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatu
 import { prepareSelfUpdate } from './self_development.js';
 import { KEY_PROVIDERS, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
+import { codeScoutIntent, fetchRepoFile, scoutCode, speakScout } from './code_scout.js';
 import { consultEngine, consultIntent, shareIntent, speakConsult } from './ai_consult.js';
 import { readArchive as flagstaffArchive } from './web_mailbox.js';
 import { handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
@@ -4464,6 +4465,27 @@ export class CheState extends DurableObject {
             await sendMail(this.env, { from: 'che', to: peer, text: invite }).catch(() => null);
           }
           return ndjsonReply(`Flagstaff is open, sir. I left the invite in the repo mailbox for ${share.peers.join(', ')}, so any of them connected to your GitHub will see it. For their apps, paste this to each one:\n\n${invite}`, { source: 'che_flagstaff' });
+        }
+
+        // Scout GitHub for top, reusable code that matches a need.
+        const scout = codeScoutIntent(message);
+        if (scout) {
+          const result = await scoutCode(this.env, scout.need);
+          if (result.repos?.length) {
+            await this.ctx.storage.put('code_scout_last', result.repos.map((r) => ({ full_name: r.full_name, license: r.license })));
+            for (const r of result.repos.slice(0, 3)) {
+              await fileLetter(this.ctx.storage, { tray: 'tech-scout', subject: `Reusable repo: ${r.full_name}`, body: `${r.stars} stars, ${r.license_name}. ${r.description} ${r.url}`, tag: 'free', severity: 'info' });
+            }
+          }
+          return ndjsonReply(speakScout(scout.need, result), { source: 'che_code_scout' });
+        }
+        // "study 2" → crew reads that repo and proposes a change.
+        const studyMatch = /^(?:che|chay)?[,:]?\s*study\s+(?:number\s+)?(\d{1,2})\b/i.exec(message.trim());
+        if (studyMatch) {
+          const list = (await this.ctx.storage.get('code_scout_last')) || [];
+          const pick = Array.isArray(list) ? list[Number(studyMatch[1]) - 1] : null;
+          if (!pick) return ndjsonReply('Say "find code for …" first, sir, then "study" and a number.', { source: 'che_code_scout' });
+          return ndjsonReply(`I'll have my crew study ${pick.full_name} (${pick.license}) and propose how to use its approach in your app. Say "update your code:" with what you want from it, and they'll draft it for your approval, with credit.`, { source: 'che_code_scout', repo: pick.full_name });
         }
 
         // Talk to other AIs right now: "ask Gemini and ChatGPT about …".
