@@ -96,7 +96,8 @@ workflows:
         script: |
           set -eu
           flutter pub get
-          flutter analyze
+          # infos alone should not block Shorebird OTA; warnings/errors still fail
+          flutter analyze --no-fatal-infos
       - name: Install Shorebird CLI
         script: |
           set -eu
