@@ -33,20 +33,8 @@ workflows:
         - $HOME/.pub-cache
         - $HOME/Library/Caches/CocoaPods
         - $HOME/.gradle/caches
-    triggering:
-      events:
-        - push
-      branch_patterns:
-        - pattern: main
-          include: true
-          source: true
-      cancel_previous_builds: true
-    when:
-      changeset:
-        excludes:
-          - 'server/**'
-          - 'docs/**'
-          - '**/*.md'
+    # Manual only: chey-shorebird already builds the same SideStore IPA on
+    # every push, so running both doubled the free build minutes used.
     scripts:
       - name: Bootstrap native projects
         script: bash ./tool/bootstrap.sh
