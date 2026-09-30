@@ -575,7 +575,17 @@ struct CHEAppShortcuts: AppShortcutsProvider {
 
     let inputNode = audioEngine.inputNode
     if #available(iOS 13.0, *) {
+      // Echo cancellation: CHE doesn't hear her own voice as the owner.
       try? inputNode.setVoiceProcessingEnabled(true)
+    }
+    if #available(iOS 17.0, *) {
+      // Push other phone audio (music, videos) way down while she listens,
+      // so the microphone only hears the owner.
+      inputNode.voiceProcessingOtherAudioDuckingConfiguration =
+        AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
+          enableAdvancedDucking: true,
+          duckingLevel: .max
+        )
     }
 
     let format = inputNode.outputFormat(forBus: 0)

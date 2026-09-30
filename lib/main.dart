@@ -361,6 +361,10 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   CheRealtimeVoiceEngine? _realtimeVoice;
   CheWakeWordEngine? _porcupineWake;
   bool _realtimeConnecting = false;
+
+  // After the paid live-voice service fails once (free-only mode), skip it
+  // for a while and go straight to the free native listener: no stutter.
+  DateTime _realtimeSkipUntil = DateTime.fromMillisecondsSinceEpoch(0);
   int? _realtimeAssistantIndex;
   String? _realtimePendingMediaUrl;
   String? _realtimePendingMediaType;

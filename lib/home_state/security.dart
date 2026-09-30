@@ -929,6 +929,29 @@ extension _CheHomeSecurity on _CHEHomeState {
       return;
     }
 
+    if (DateTime.now().isBefore(_realtimeSkipUntil)) {
+      // Straight to the free native listener, no failed live-voice attempt.
+      HapticFeedback.mediumImpact();
+      _listenRestartTimer?.cancel();
+      try {
+        await _stopPorcupineWake();
+        await speech.cancel();
+        if (!_nativeIosVoiceActive) {
+          _nativeIosVoiceActive = await CheNativeVoice.start();
+        } else {
+          await CheNativeVoice.wake();
+        }
+      } catch (_) {}
+      if (mounted) {
+        _set(() {
+          cheSleeping = false;
+          openConversation = _nativeIosVoiceActive;
+          isListening = _nativeIosVoiceActive;
+        });
+      }
+      return;
+    }
+
     _realtimeConnecting = true;
     if (fromWake) {
       HapticFeedback.mediumImpact();
@@ -991,6 +1014,7 @@ extension _CheHomeSecurity on _CHEHomeState {
 
       _voiceMachine.fallback(error.toString());
       _applyVoiceSnapshot(_voiceMachine.snapshot);
+      _realtimeSkipUntil = DateTime.now().add(const Duration(hours: 6));
 
       // Native recognition/TTS is a real fallback, never a second simultaneous
       // mic owner.
