@@ -28,6 +28,9 @@ class CheMockupHome extends StatelessWidget {
     required this.onFindAgent,
     required this.onWarRoom,
     this.listening = false,
+    this.voiceRepliesOn = true,
+    this.onToggleVoiceReplies,
+    this.deskCompact = false,
     this.onTapAgent,
   });
 
@@ -45,6 +48,9 @@ class CheMockupHome extends StatelessWidget {
   final VoidCallback onFindAgent;
   final VoidCallback onWarRoom;
   final bool listening;
+  final bool voiceRepliesOn;
+  final VoidCallback? onToggleVoiceReplies;
+  final bool deskCompact;
   final void Function(CheAgent agent)? onTapAgent;
 
   String get _timeGreeting {
@@ -63,7 +69,12 @@ class CheMockupHome extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.sm, CheSpace.gutter, CheSpace.xxl),
       children: [
-        _HomeHeader(connected: connected, listening: listening),
+        _HomeHeader(
+          connected: connected,
+          listening: listening,
+          voiceRepliesOn: voiceRepliesOn,
+          onToggleVoiceReplies: onToggleVoiceReplies,
+        ),
         const SizedBox(height: CheSpace.md),
         _CheHero(
           che: che,
@@ -86,6 +97,7 @@ class CheMockupHome extends StatelessWidget {
           working: working,
           liveMeetings: liveMeetings,
           connected: connected,
+          compact: deskCompact,
           onEnterOffice: onOpenOffice,
           onTapAgent: onTapAgent ?? (_) => onOpenOffice(),
         ),
@@ -124,9 +136,16 @@ class CheMockupHome extends StatelessWidget {
 }
 
 class _HomeHeader extends StatelessWidget {
-  const _HomeHeader({required this.connected, required this.listening});
+  const _HomeHeader({
+    required this.connected,
+    required this.listening,
+    this.voiceRepliesOn = true,
+    this.onToggleVoiceReplies,
+  });
   final bool connected;
   final bool listening;
+  final bool voiceRepliesOn;
+  final VoidCallback? onToggleVoiceReplies;
 
   @override
   Widget build(BuildContext context) {
@@ -142,30 +161,52 @@ class _HomeHeader extends StatelessWidget {
             : CheColors.success;
     return Row(
       children: [
-        ShaderMask(
-          shaderCallback: (r) => CheColors.accentGradient.createShader(r),
-          child: Text(
-            'CHE',
-            style: CheType.display.copyWith(fontSize: 28, color: Colors.white, letterSpacing: 4),
-          ),
-        ),
-        const Spacer(),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.14),
-            borderRadius: BorderRadius.circular(CheRadius.pill),
-            border: Border.all(color: color.withValues(alpha: 0.55)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.circle, size: 8, color: color),
-              const SizedBox(width: 6),
-              Text(status, style: CheType.caption.copyWith(color: color, fontWeight: FontWeight.w700)),
-            ],
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            status,
+            style: CheType.caption.copyWith(color: color, fontWeight: FontWeight.w600),
           ),
         ),
+        if (onToggleVoiceReplies != null)
+          ChePressable(
+            onTap: onToggleVoiceReplies,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: CheColors.surface,
+                borderRadius: BorderRadius.circular(CheRadius.pill),
+                border: Border.all(
+                  color: voiceRepliesOn
+                      ? CheColors.accent.withValues(alpha: 0.55)
+                      : CheColors.stroke,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    voiceRepliesOn ? Icons.volume_up_rounded : Icons.volume_off_rounded,
+                    size: 16,
+                    color: voiceRepliesOn ? CheColors.accent : CheColors.textDim,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    voiceRepliesOn ? 'Voice on' : 'Voice off',
+                    style: CheType.caption.copyWith(
+                      color: voiceRepliesOn ? CheColors.accent : CheColors.textDim,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
       ],
     );
   }

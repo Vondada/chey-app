@@ -171,4 +171,90 @@ class CheTheme {
       }),
     );
   }
+
+
+  /// Light companion theme — soft paper surfaces with the same teal accent.
+  static ThemeData light() {
+    const scheme = ColorScheme.light(
+      primary: CheColors.accentDeep,
+      onPrimary: Colors.white,
+      secondary: CheColors.accentAlt,
+      onSecondary: Colors.white,
+      surface: Color(0xFFFFFFFF),
+      onSurface: Color(0xFF0C1614),
+      error: CheColors.danger,
+      onError: Colors.white,
+    );
+    return ThemeData(
+      useMaterial3: true,
+      brightness: Brightness.light,
+      colorScheme: scheme,
+      scaffoldBackgroundColor: const Color(0xFFF3F7F6),
+      canvasColor: const Color(0xFFF3F7F6),
+      splashFactory: NoSplash.splashFactory,
+      highlightColor: Colors.transparent,
+      textTheme: const TextTheme(
+        headlineMedium: TextStyle(
+            fontSize: 24, fontWeight: FontWeight.w700, color: Color(0xFF0C1614), height: 1.15, letterSpacing: -0.3),
+        titleMedium: TextStyle(
+            fontSize: 17, fontWeight: FontWeight.w600, color: Color(0xFF0C1614), height: 1.25),
+        bodyLarge: TextStyle(
+            fontSize: 15.5, fontWeight: FontWeight.w400, color: Color(0xFF0C1614), height: 1.45),
+        bodyMedium: TextStyle(
+            fontSize: 15.5, fontWeight: FontWeight.w400, color: Color(0xFF0C1614), height: 1.45),
+        bodySmall: TextStyle(
+            fontSize: 11.5, fontWeight: FontWeight.w500, color: Color(0xFF55696A), height: 1.3),
+        labelLarge: TextStyle(
+            fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0C1614), letterSpacing: 0.2),
+      ),
+      textSelectionTheme: TextSelectionThemeData(
+        cursorColor: CheColors.accentDeep,
+        selectionColor: CheColors.accent.withValues(alpha: 0.3),
+        selectionHandleColor: CheColors.accentDeep,
+      ),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        foregroundColor: Color(0xFF0C1614),
+      ),
+      bottomSheetTheme: const BottomSheetThemeData(
+        backgroundColor: Color(0xFFFFFFFF),
+        modalBackgroundColor: Color(0xFFFFFFFF),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(CheRadius.xl))),
+      ),
+      snackBarTheme: SnackBarThemeData(
+        backgroundColor: const Color(0xFF0A1214),
+        contentTextStyle: CheType.label,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(CheRadius.md)),
+      ),
+      pageTransitionsTheme: const PageTransitionsTheme(builders: {
+        TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+      }),
+    );
+  }
 }
+
+bool cheIsLight(BuildContext context) =>
+    Theme.of(context).brightness == Brightness.light;
+
+Color cheBgOf(BuildContext context) =>
+    cheIsLight(context) ? const Color(0xFFF3F7F6) : CheColors.bg;
+
+Color cheBgTopOf(BuildContext context) =>
+    cheIsLight(context) ? const Color(0xFFE8F2EF) : CheColors.bgTop;
+
+Color cheSurfaceOf(BuildContext context) =>
+    cheIsLight(context) ? const Color(0xFFFFFFFF) : CheColors.surface;
+
+Color cheStrokeOf(BuildContext context) =>
+    cheIsLight(context) ? const Color(0xFFD5E2DE) : CheColors.stroke;
+
+Color cheTextOf(BuildContext context) =>
+    cheIsLight(context) ? const Color(0xFF0C1614) : CheColors.text;
+
+Color cheTextDimOf(BuildContext context) =>
+    cheIsLight(context) ? const Color(0xFF55696A) : CheColors.textDim;
