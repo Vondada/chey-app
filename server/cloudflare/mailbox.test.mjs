@@ -50,3 +50,18 @@ test('mailbox refuses to send secrets', async () => {
   const out = await sendMail(env, { to: 'chatgpt', text: 'my token is github_pat_abc123' }, fakeRepo());
   assert.equal(out.status, 400);
 });
+
+test('CHE notices new Claude replies once, and only every few minutes', async () => {
+  const { unseenReplies } = await import('./mailbox.js');
+  const fetcher = fakeRepo();
+  const mem = new Map();
+  const storage = { get: async (k) => mem.get(k), put: async (k, v) => mem.set(k, v) };
+  await sendMail(env, { from: 'claude', to: 'che', text: 'Voice fix pushed.' }, fetcher);
+  assert.deepEqual((await unseenReplies(env, storage, 'claude', fetcher)).map((m) => m.text), ['Voice fix pushed.']);
+  mem.set('mail_check_at:claude', 0);
+  assert.equal((await unseenReplies(env, storage, 'claude', fetcher)).length, 0);
+  await sendMail(env, { from: 'claude', to: 'che', text: 'Library sync live.' }, fetcher);
+  assert.equal((await unseenReplies(env, storage, 'claude', fetcher)).length, 0, 'throttled');
+  mem.set('mail_check_at:claude', 0);
+  assert.deepEqual((await unseenReplies(env, storage, 'claude', fetcher)).map((m) => m.text), ['Library sync live.']);
+});

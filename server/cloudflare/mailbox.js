@@ -141,3 +141,23 @@ export function speakThreads(threads) {
   const lines = withMail.map((t, i) => `${i + 1}. ${t.peer}: last from ${t.last.from}, "${String(t.last.text).slice(0, 220)}"`);
   return `Mailbox, sir. ${withMail.length} conversation${withMail.length === 1 ? '' : 's'}:\n${lines.join('\n')}`;
 }
+
+// New replies from an AI (default Claude) since CHE last told the owner.
+// Checked at most every 5 minutes so chat stays fast.
+export async function unseenReplies(env, storage, peer = 'claude', fetcher = fetch) {
+  if (!repoOf(env) || !storage?.get) return [];
+  const now = Date.now();
+  const checkKey = `mail_check_at:${peer}`;
+  const seenKey = `mail_seen:${peer}`;
+  const last = Number(await storage.get(checkKey)) || 0;
+  if (now - last < 5 * 60 * 1000) return [];
+  await storage.put(checkKey, now);
+  const thread = await readThread(env, peer, fetcher).catch(() => ({ messages: [] }));
+  const seen = String((await storage.get(seenKey)) || '');
+  const theirs = thread.messages.filter((m) => m.from === peer);
+  if (!theirs.length) return [];
+  const idx = seen ? theirs.findIndex((m) => m.id === seen) : -1;
+  const fresh = idx >= 0 ? theirs.slice(idx + 1) : (seen ? theirs.slice(-1) : theirs.slice(-3));
+  if (fresh.length) await storage.put(seenKey, fresh[fresh.length - 1].id);
+  return fresh;
+}
