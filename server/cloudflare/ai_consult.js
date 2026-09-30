@@ -21,13 +21,13 @@ export const FREE_ENGINES = {
   qwen: { providers: ['cerebras'], label: 'Qwen (on Cerebras)' },
 };
 
-const NAMES = ['gemini', 'grock', 'grog', 'chatgpt', 'chat gpt', 'chagpt', 'chatgbt', 'chat gbt', 'chad gpt', 'chat g p t', 'openai', 'open ai', 'gpt', 'mistral', 'groq', 'cerebras', 'qwen', 'claude', 'grok', 'codex', 'copilot', 'cursor'];
+const NAMES = ['gemini', 'grock', 'grog', 'greg', 'grack', 'chatgpt', 'chat gpt', 'chagpt', 'chatgbt', 'chat gbt', 'chad gpt', 'chat g p t', 'openai', 'open ai', 'gpt', 'mistral', 'groq', 'cerebras', 'qwen', 'claude', 'grok', 'codex', 'copilot', 'cursor'];
 const nameRe = NAMES.map((n) => n.replace(/ /g, '\\s?')).join('|');
 
 export function canonical(name) {
   const n = String(name || '').toLowerCase().replace(/\s+/g, '');
   if (/^(?:chatgpt|chagpt|chatgbt|chadgpt|chatgpt)$/.test(n)) return 'chatgpt';
-  if (/^(?:grok|grock|grog|rock)$/.test(n)) return 'grok';
+  if (/^(?:grok|grock|grog|greg|grack|rock)$/.test(n)) return 'grok';
   if (n === 'openai') return 'openai';
   return n;
 }
@@ -45,13 +45,19 @@ function namesIn(text) {
 // "what do Gemini and Mistral think about …"
 export function consultIntent(message) {
   const text = String(message || '').trim().replace(/^(?:che|chay)[,:]?\s+/i, '');
-  const later = `${nameRe}|rock`;
-  const list = `(?:${nameRe})(?:(?:\\s*,\\s*(?:and\\s+)?|\\s+and\\s+|\\s*&\\s*|\\s+)(?:${later})\\b)*`;
-  const m = new RegExp(`^(?:please\\s+)?(?:ask|talk\\s+(?:to|with)|consult|check\\s+with|what\\s+(?:do|does|would))\\s+(${list})\\s*[:,]?\\s*(?:think\\s+|say\\s+)?(?:about\\s+|on\\s+|:\\s*)?([\\s\\S]{3,})$`, 'i').exec(text);
+  // Grab everything after the ask verb, then split names from the question at
+  // the first connector word. Unknown/misheard names are simply ignored.
+  const m = /^(?:please\s+)?(?:ask|talk\s+(?:to|with)|consult|check\s+with|what\s+(?:do|does|would))\s+([\s\S]{3,})$/i.exec(text);
   if (!m) return null;
-  const peers = namesIn(m[1].replace(/\brock\b/gi, 'grok'));
-  if (!peers.length) return null;
-  return { peers, question: m[2].trim() };
+  const rest = m[1];
+  // Find where the name list ends and the question begins.
+  const split = rest.search(/\b(?:how|what|whats|what's|why|when|where|whether|if|about|to\s|on\s|for\s|think|say|:)/i);
+  const namePart = (split > 0 ? rest.slice(0, split) : rest).replace(/\brock\b/gi, 'grok');
+  let question = split > 0 ? rest.slice(split) : rest;
+  question = question.replace(/^(?:think\s+|say\s+)?(?:about\s+|on\s+|:\s*)?/i, '').trim();
+  const peers = namesIn(namePart);
+  if (!peers.length || question.length < 3) return null;
+  return { peers, question };
 }
 
 // "share the Flagstaff link with ChatGPT and Grok"
