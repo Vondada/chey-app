@@ -14,6 +14,7 @@ import 'package:flutter/services.dart';
 
 import 'che_rooms.dart';
 import 'che_theme.dart';
+import 'che_ui_preferences.dart';
 
 /// Real task states reported by the Agent Runtime.
 enum CheAgentStatus { idle, researching, building, analyzing, meeting, waiting, reviewing, talking, done, offline }
@@ -255,9 +256,9 @@ class _CheMiniPersonState extends State<CheMiniPerson> with SingleTickerProvider
 
   static const String cheAvatarAsset = 'assets/avatars/che.png';
 
-  Widget _paint(double t) {
-    if (widget.agent.isChe) {
-      return _CheFemaleAvatar(
+  Widget _paint(double t, {required bool portrait}) {
+    if (portrait && widget.agent.isChe) {
+      return _ChePortraitAvatar(
         agent: widget.agent,
         t: t,
         desk: widget.showDesk,
@@ -273,25 +274,34 @@ class _CheMiniPersonState extends State<CheMiniPerson> with SingleTickerProvider
   Widget build(BuildContext context) {
     final working = !_reduced && cheAgentIsMoving(widget.agent.status) && _work != null;
     final idleLife = !_reduced && _holdingIdle;
+    final prefs = CheUiPreferences.instance;
+
+    Widget bodyFor(double t, bool portrait) => _paint(t, portrait: portrait);
 
     late final Widget body;
     if (working) {
-      body = AnimatedBuilder(
-        animation: _work!,
-        builder: (context, _) => _paint(_work!.value),
+      body = ListenableBuilder(
+        listenable: prefs,
+        builder: (context, _) => AnimatedBuilder(
+          animation: _work!,
+          builder: (context, _) => bodyFor(_work!.value, prefs.avatarStyle == CheAvatarStyle.portrait),
+        ),
       );
     } else if (idleLife) {
-      // ListenableBuilder rebuilds only this paint; no setState on the State.
       body = ListenableBuilder(
-        listenable: CheIdleLifeClock.instance,
+        listenable: Listenable.merge([CheIdleLifeClock.instance, prefs]),
         builder: (context, _) {
-          if (!TickerMode.valuesOf(context).enabled) return _paint(0.25);
+          final portrait = prefs.avatarStyle == CheAvatarStyle.portrait;
+          if (!TickerMode.valuesOf(context).enabled) return bodyFor(0.25, portrait);
           final phase = CheIdleLifeClock.phaseFor(widget.agent.id);
-          return _paint((CheIdleLifeClock.instance.t + phase) % 1.0);
+          return bodyFor((CheIdleLifeClock.instance.t + phase) % 1.0, portrait);
         },
       );
     } else {
-      body = _paint(0.25);
+      body = ListenableBuilder(
+        listenable: prefs,
+        builder: (context, _) => bodyFor(0.25, prefs.avatarStyle == CheAvatarStyle.portrait),
+      );
     }
 
     return Semantics(
@@ -305,9 +315,10 @@ class _CheMiniPersonState extends State<CheMiniPerson> with SingleTickerProvider
   }
 }
 
-/// Female CHE portrait with status/desk chrome (image + fallback painter).
-class _CheFemaleAvatar extends StatelessWidget {
-  const _CheFemaleAvatar({
+/// Portrait image avatar for CHE when UI Controls → Avatar style = Portrait.
+/// Uses the female CHE asset with teal halo + waiting/done chrome from #55.
+class _ChePortraitAvatar extends StatelessWidget {
+  const _ChePortraitAvatar({
     required this.agent,
     required this.t,
     required this.desk,
@@ -319,8 +330,6 @@ class _CheFemaleAvatar extends StatelessWidget {
   final bool desk;
   final double size;
 
-  static const _asset = 'assets/avatars/che.png';
-
   @override
   Widget build(BuildContext context) {
     final dim = agent.status == CheAgentStatus.offline;
@@ -329,12 +338,10 @@ class _CheFemaleAvatar extends StatelessWidget {
     return Stack(
       alignment: Alignment.center,
       children: [
-        // Soft teal halo behind CHE
         if (!dim)
           Positioned.fill(
             child: CustomPaint(painter: _CheHaloPainter(accent: CheColors.accent, t: t)),
           ),
-        // Desk strip under the avatar when requested
         if (desk)
           Positioned(
             left: size * 0.05,
@@ -348,7 +355,6 @@ class _CheFemaleAvatar extends StatelessWidget {
               ),
             ),
           ),
-        // Female portrait
         Positioned(
           top: size * 0.04 + breathe,
           child: Opacity(
@@ -369,7 +375,7 @@ class _CheFemaleAvatar extends StatelessWidget {
               ),
               child: ClipOval(
                 child: Image.asset(
-                  _asset,
+                  _CheMiniPersonState.cheAvatarAsset,
                   fit: BoxFit.cover,
                   alignment: const Alignment(-0.35, -0.15),
                   errorBuilder: (context, error, stack) => CustomPaint(
@@ -381,7 +387,6 @@ class _CheFemaleAvatar extends StatelessWidget {
             ),
           ),
         ),
-        // Status badges (waiting / done) over the portrait
         Positioned.fill(
           child: IgnorePointer(
             child: CustomPaint(painter: _CheStatusChromePainter(agent: agent, t: t)),
@@ -547,43 +552,12 @@ class _MiniPersonPainter extends CustomPainter {
       ..addArc(Rect.fromCircle(center: headC.translate(0, -headR * 0.15), radius: headR * 1.05), math.pi, math.pi);
     canvas.drawPath(hair, Paint()..color = c(agent.hair));
     if (agent.isChe) {
-      // CHE (female fallback): fuller voluminous long wavy hair, no facial hair
-      final hairPaint = Paint()..color = c(agent.hair);
-      // back volume
+      // CHE: long hair
       canvas.drawRRect(
           RRect.fromRectAndRadius(
-              Rect.fromLTWH(headC.dx - headR * 1.25, headC.dy - headR * 0.15, headR * 2.5, headR * 2.35),
-              Radius.circular(headR * 0.95)),
-          hairPaint..color = c(agent.hair).withValues(alpha: 0.95));
-      // side curls
-      canvas.drawOval(
-          Rect.fromCenter(center: headC.translate(-headR * 1.05, headR * 0.55), width: headR * 0.7, height: headR * 1.35),
-          hairPaint);
-      canvas.drawOval(
-          Rect.fromCenter(center: headC.translate(headR * 1.05, headR * 0.55), width: headR * 0.7, height: headR * 1.35),
-          hairPaint);
-      // crown / bangs
-      canvas.drawOval(
-          Rect.fromCenter(center: headC.translate(0, -headR * 0.55), width: headR * 2.15, height: headR * 1.15),
-          hairPaint);
-      canvas.drawCircle(headC.translate(0, headR * 0.1), headR * 0.9, Paint()..color = c(agent.skin));
-      // soft lashes
-      final lash = Paint()
-        ..color = const Color(0xFF14181A)
-        ..strokeWidth = 1.2
-        ..strokeCap = StrokeCap.round;
-      for (final dx in [-0.38, 0.38]) {
-        final e = headC.translate(headR * dx, headR * 0.0);
-        canvas.drawLine(e.translate(-headR * 0.08, -headR * 0.12), e.translate(headR * 0.02, -headR * 0.18), lash);
-        canvas.drawLine(e.translate(headR * 0.02, -headR * 0.18), e.translate(headR * 0.1, -headR * 0.1), lash);
-      }
-      // tiny hoop earrings
-      final hoop = Paint()
-        ..color = const Color(0xFFD6A63F)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.3;
-      canvas.drawCircle(headC.translate(-headR * 1.05, headR * 0.35), headR * 0.14, hoop);
-      canvas.drawCircle(headC.translate(headR * 1.05, headR * 0.35), headR * 0.14, hoop);
+              Rect.fromLTWH(headC.dx - headR * 1.05, headC.dy - headR * 0.3, headR * 2.1, headR * 1.9), Radius.circular(headR)),
+          Paint()..color = c(agent.hair).withValues(alpha: 0.9));
+      canvas.drawCircle(headC.translate(0, headR * 0.12), headR * 0.86, Paint()..color = c(agent.skin));
     }
     // eyes (blink)
     final blink = (t * 2 % 1.0) > 0.94;
@@ -667,22 +641,7 @@ class CheAgentChip extends StatelessWidget {
           border: Border.all(color: agent.color.withValues(alpha: 0.5)),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          ClipOval(
-            child: agent.isChe
-                ? Image.asset(
-                    _CheMiniPersonState.cheAvatarAsset,
-                    width: 28,
-                    height: 28,
-                    fit: BoxFit.cover,
-                    alignment: const Alignment(-0.35, -0.15),
-                    errorBuilder: (context, error, stackTrace) => SizedBox(
-                      width: 28,
-                      height: 28,
-                      child: FittedBox(child: CheMiniPerson(agent: agent, size: 28)),
-                    ),
-                  )
-                : SizedBox(width: 28, height: 28, child: FittedBox(child: CheMiniPerson(agent: agent, size: 28))),
-          ),
+          ClipOval(child: SizedBox(width: 28, height: 28, child: FittedBox(child: CheMiniPerson(agent: agent, size: 28)))),
           const SizedBox(width: 6),
           Text(agent.name, style: CheType.label),
           const SizedBox(width: 6),
@@ -813,7 +772,7 @@ class _Desk extends StatelessWidget {
     return Semantics(
       button: true,
       label: '${agent.name}${agent.role.isNotEmpty ? ', ${agent.role}' : ''}. $line. '
-          '${agent.isChe ? 'Open CHE\'s desk. Talk or send a request.' : 'Open ${agent.name}\'s desk.'}',
+          '${agent.isChe ? 'Talk to CHE.' : 'Open ${agent.name}\'s desk.'}',
       excludeSemantics: true,
       child: GestureDetector(
         onTap: () {

@@ -18,6 +18,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -44,6 +45,7 @@ import 'create_gallery_scene.dart';
 import 'agents/che_agent_runtime.dart';
 import 'agents/che_office_floor_screen.dart';
 import 'home/che_activity_feed.dart';
+import 'home/che_ui_controls_screen.dart';
 import 'agents/che_office_world.dart' show CheRoomVisitors;
 import 'home/che_live_steps.dart';
 import 'home/che_insights_room.dart';
@@ -55,6 +57,8 @@ import 'che_ui/che_log.dart' show CheConversationStore;
 import 'che_ui/che_plugins.dart'
     show ChePluginOfferCard, ChePluginRegistry, ChePluginsScreen, chePluginAuthoringGuide;
 import 'che_ui/che_theme.dart' as kit;
+import 'che_ui/che_ui_preferences.dart';
+import 'che_ui/che_transitions.dart';
 import 'che_ui/che_widgets.dart' as kit show CheBackground;
 import 'che_ui/che_agents.dart' show CheAgent, CheAgentStatusLabel;
 import 'che_ui/che_agent_chat.dart' show CheOrbState;
@@ -114,19 +118,23 @@ void main() {
   runApp(const CHEApp());
 }
 
-class CHEApp extends StatelessWidget {
+class CHEApp extends StatefulWidget {
   const CHEApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'CHE',
-      debugShowCheckedModeBanner: false,
-      // iPhone-native feel: bounce scrolling everywhere, iOS swipe-back page
-      // transitions on every platform, and no Android-style ink ripples.
-      scrollBehavior: const _CheScrollBehavior(),
-      // One design system from the logo colors (lib/che_ui/che_theme.dart).
-      theme: kit.CheTheme.dark().copyWith(
+  State<CHEApp> createState() => _CHEAppState();
+}
+
+class _CHEAppState extends State<CHEApp> {
+  final CheUiPreferences _ui = CheUiPreferences.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_ui.load());
+  }
+
+  ThemeData _darkTheme() => kit.CheTheme.dark().copyWith(
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.transparent,
           surfaceTintColor: Colors.transparent,
@@ -146,8 +154,32 @@ class CHEApp extends StatelessWidget {
             borderRadius: BorderRadius.all(Radius.circular(18)),
           ),
         ),
-      ),
-      home: const CHEHome(),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: _ui,
+      builder: (context, _) {
+        return MaterialApp(
+          title: 'CHE',
+          debugShowCheckedModeBanner: false,
+          // iPhone-native feel: bounce scrolling everywhere, iOS swipe-back page
+          // transitions on every platform, and no Android-style ink ripples.
+          scrollBehavior: const _CheScrollBehavior(),
+          theme: kit.CheTheme.light(),
+          darkTheme: _darkTheme(),
+          themeMode: _ui.themeMode,
+          builder: (context, child) {
+            final mq = MediaQuery.of(context);
+            return MediaQuery(
+              data: mq.copyWith(textScaler: TextScaler.linear(_ui.textScale)),
+              child: child ?? const SizedBox.shrink(),
+            );
+          },
+          home: const CHEHome(),
+        );
+      },
     );
   }
 }
@@ -946,6 +978,8 @@ OWNER AGENCY
   @override
   void initState() {
     super.initState();
+    unawaited(_syncUiVoicePrefs());
+    CheUiPreferences.instance.addListener(_onUiPrefsChanged);
     WidgetsBinding.instance.addObserver(this);
     _voiceMachine.startWakeListening();
     _voiceSnapshot = _voiceMachine.snapshot;
@@ -1046,6 +1080,7 @@ OWNER AGENCY
 
   @override
   void dispose() {
+    CheUiPreferences.instance.removeListener(_onUiPrefsChanged);
     WidgetsBinding.instance.removeObserver(this);
     _officeRuntime
       ..removeListener(_onOfficeChanged)
@@ -1150,6 +1185,9 @@ OWNER AGENCY
       connected: _deviceToken != null && _officeRuntime.error == null,
       greeting: greeting,
       listening: listening,
+      voiceRepliesOn: voiceResponsesEnabled,
+      onToggleVoiceReplies: () => unawaited(_toggleVoiceReplies()),
+      deskCompact: CheUiPreferences.instance.deskCompact,
       onStartChat: () => _goShellTab(1),
       onOpenOffice: () => _goShellTab(2),
       onVoice: toggleListening,
@@ -1427,7 +1465,7 @@ OWNER AGENCY
       builder: (_) => Theme(
         data: kit.CheTheme.dark(),
         child: Scaffold(
-          backgroundColor: kit.CheColors.bg,
+          backgroundColor: Theme.of(context).scaffoldBackgroundColor,
           appBar: AppBar(
             title: const Text('Memory Brain'),
             backgroundColor: Colors.transparent,
@@ -1522,11 +1560,104 @@ OWNER AGENCY
     );
   }
 
+
+  void _onUiPrefsChanged() {
+    if (!mounted) return;
+    setState(() {
+      voiceResponsesEnabled = CheUiPreferences.instance.voiceResponsesEnabled;
+    });
+  }
+
+  Future<void> _syncUiVoicePrefs() async {
+    final ui = CheUiPreferences.instance;
+    if (!ui.isLoaded) await ui.load();
+    if (!mounted) return;
+    setState(() {
+      voiceResponsesEnabled = ui.voiceResponsesEnabled;
+    });
+  }
+
+  Future<void> _toggleVoiceReplies() async {
+    final ui = CheUiPreferences.instance;
+    final next = !ui.voiceResponsesEnabled;
+    await ui.setVoiceResponsesEnabled(next);
+    if (!mounted) return;
+    setState(() {
+      voiceResponsesEnabled = next;
+    });
+    if (!next) {
+      if (kIsWeb) {
+        try {
+          che_web_voice.stopSpeech();
+        } catch (_) {}
+      } else {
+        if (defaultTargetPlatform == TargetPlatform.iOS) {
+          try {
+            await CheNativeVoice.stopAudio();
+          } catch (_) {}
+        }
+        await flutterTts.stop();
+      }
+      _isSpeaking = false;
+      if (!kIsWeb && openConversation) {
+        _restartListeningSoon();
+      }
+    }
+  }
+
+  Future<void> _openUiControls() async {
+    await Navigator.of(context).push(
+      CheRoute(
+        builder: (_) => CheUiControlsScreen(
+          onVoiceEnabledChanged: (enabled) {
+            if (!mounted) return;
+            setState(() => voiceResponsesEnabled = enabled);
+            if (!enabled) {
+              unawaited(() async {
+                if (kIsWeb) {
+                  try { che_web_voice.stopSpeech(); } catch (_) {}
+                } else {
+                  if (defaultTargetPlatform == TargetPlatform.iOS) {
+                    try { await CheNativeVoice.stopAudio(); } catch (_) {}
+                  }
+                  await flutterTts.stop();
+                }
+                _isSpeaking = false;
+              }());
+            }
+          },
+          onVoiceVolumeChanged: (_) {
+            unawaited(flutterTts.setVolume(CheUiPreferences.instance.voiceVolume));
+          },
+        ),
+      ),
+    );
+    if (mounted) {
+      setState(() {
+        voiceResponsesEnabled = CheUiPreferences.instance.voiceResponsesEnabled;
+      });
+    }
+  }
+
   Widget _buildMoreTab() {
     return CheMoreTab(
       che: _officeRuntime.che,
       onTalkToChe: () => _goShellTab(1),
       items: [
+        CheMoreItem(
+          icon: Icons.tune_rounded,
+          title: 'UI Controls',
+          subtitle: 'Theme, avatar, text size, voice replies',
+          onTap: () => unawaited(_openUiControls()),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: voiceResponsesEnabled ? Icons.volume_up_rounded : Icons.volume_off_rounded,
+          title: voiceResponsesEnabled ? 'Voice replies: On' : 'Voice replies: Off',
+          subtitle: 'One-tap mute / unmute CHE speaking',
+          onTap: () => unawaited(_toggleVoiceReplies()),
+          hue: voiceResponsesEnabled ? kit.CheColors.accent : kit.CheColors.warning,
+        ),
         CheMoreItem(
           icon: Icons.folder_special_rounded,
           title: 'Projects & Businesses',
@@ -1670,34 +1801,12 @@ OWNER AGENCY
               ),
               actions: [
                 IconButton(
-                  onPressed: () async {
-                    setState(() {
-                      voiceResponsesEnabled = !voiceResponsesEnabled;
-                    });
-                    if (!voiceResponsesEnabled) {
-                      if (kIsWeb) {
-                        try {
-                          che_web_voice.stopSpeech();
-                        } catch (_) {}
-                      } else {
-                        if (defaultTargetPlatform == TargetPlatform.iOS) {
-                          try {
-                            await CheNativeVoice.stopAudio();
-                          } catch (_) {}
-                        }
-                        await flutterTts.stop();
-                      }
-                      _isSpeaking = false;
-                      if (!kIsWeb && openConversation) {
-                        _restartListeningSoon();
-                      }
-                    }
-                  },
+                  onPressed: () => unawaited(_toggleVoiceReplies()),
                   icon: Icon(
                     voiceResponsesEnabled ? Icons.volume_up : Icons.volume_off,
                     color: kit.CheColors.accent,
                   ),
-                  tooltip: 'C.H.E. voice',
+                  tooltip: voiceResponsesEnabled ? 'Mute CHE voice' : 'Unmute CHE voice',
                 ),
               ],
             )
