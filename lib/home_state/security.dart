@@ -11,6 +11,8 @@ extension _CheHomeSecurity on _CHEHomeState {
     final prefs = await SharedPreferences.getInstance();
     _restoreLocalSnapshotCache(prefs);
     _agentBaseUrl = prefs.getString('che_agent_base_url') ?? _defaultAgentBaseUrl;
+    _replyLanguage = prefs.getString('che_reply_language') ?? 'en';
+    _translateTarget = prefs.getString('che_translate_target') ?? 'es';
     final savedHomeBaseUrl = (prefs.getString(_homeBaseUrlKey) ?? '').trim();
     _homeBaseUrl = savedHomeBaseUrl.endsWith('/')
         ? savedHomeBaseUrl.substring(0, savedHomeBaseUrl.length - 1)
@@ -400,6 +402,11 @@ extension _CheHomeSecurity on _CHEHomeState {
       final knowledgeData = (data['learned_knowledge'] as List?) ?? const [];
       final suggestionData = (data['suggestions'] as List?) ?? const [];
       final projectData = (data['projects'] as List?) ?? const [];
+      final memoryNoteData = (data['memory_notes'] as List?) ?? const [];
+      final officeGoalData = (data['office_goals'] as List?) ?? const [];
+      final scoutData = (data['opportunity_scouts'] as List?) ?? const [];
+      final pipelineData = (data['pipeline'] is Map) ? Map<String, dynamic>.from(data['pipeline'] as Map) : <String, dynamic>{};
+      final dealData = (pipelineData['deals'] as List?) ?? const [];
       final vaultData = (data['vault_items'] as List?) ?? const [];
       final teamData = (data['team'] as List?) ?? const [];
       final teamTaskData = (data['team_tasks'] as List?) ?? const [];
@@ -409,6 +416,10 @@ extension _CheHomeSecurity on _CHEHomeState {
       final integrationData = (data['integrations'] as Map?) ?? const {};
 
       savedMemories = memoryData.map((e) => e.toString()).toList();
+      memoryNotes = memoryNoteData
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
       learnedPersonality = personalityData
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
@@ -416,6 +427,18 @@ extension _CheHomeSecurity on _CHEHomeState {
       learnedKnowledge = knowledgeData.map((e) => e.toString()).toList();
       suggestions = suggestionData.map((e) => e.toString()).toList();
       projects = projectData
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      officeGoals = officeGoalData
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      opportunityScouts = scoutData
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      pipelineDeals = dealData
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();

@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import '../che_ui/che_agents.dart';
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
+import '../che_ui/che_voice_actions.dart';
 import 'che_agent_runtime.dart';
 import 'che_office_store.dart';
 import 'che_war_room_screen.dart';
@@ -61,6 +62,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
   final CheOfficeStore _store = CheOfficeStore();
   CheOfficeToday? _lastBoard;
   Future<void> _speech = Future<void>.value();
+  String _filter = 'All'; // All | Research | Trading | Content
 
   // Built once and reused, so a runtime refresh never rebuilds the whole
   // floor; each desk listens to its own notifier.
@@ -286,11 +288,48 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
 
   List<Widget> _content(BuildContext context) {
     final r = _runtime;
+    final agents = _filteredAgents(r);
     return [
       if (!r.loaded)
         const Padding(padding: EdgeInsets.all(CheSpace.xxl), child: Center(child: CircularProgressIndicator()))
       else ...[
         if (r.error != null) _Banner(text: r.error!, color: CheColors.warning),
+        // Voice actions (mockup 05)
+        CheVoiceActionList(
+          horizontal: true,
+          actions: [
+            CheVoiceAction(
+              number: 1,
+              label: 'Office status',
+              icon: Icons.mic_rounded,
+              onTap: () => _speak('${cheOfficeBoardSpeech(r.today, r.connection)} ${_officeSummary()}'),
+              semantics: '1. Office status',
+            ),
+            CheVoiceAction(
+              number: 2,
+              label: 'Find an agent',
+              icon: Icons.groups_rounded,
+              onTap: () {
+                HapticFeedback.selectionClick();
+                // Scroll focus: agent list is below; announce count.
+                _speak(
+                  agents.isEmpty
+                      ? 'No agents match this filter.'
+                      : '${agents.length} agents in $_filter. ${agents.map((p) => p.agent.name).join(', ')}.',
+                );
+              },
+              semantics: '2. Find an agent',
+            ),
+            CheVoiceAction(
+              number: 3,
+              label: 'War Room',
+              icon: Icons.hub_rounded,
+              onTap: _warRoom,
+              semantics: '3. War Room',
+            ),
+          ],
+        ),
+        const SizedBox(height: CheSpace.md),
         _floorPlan,
         const SizedBox(height: CheSpace.sm),
         if (r.che.task != null)
@@ -301,6 +340,37 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
             ),
             _ReadAloudButton(label: 'Read CHE\'s task aloud', onPressed: () => _speak('CHE is on: ${r.che.task}')),
           ]),
+        const SizedBox(height: CheSpace.lg),
+        Text('YOUR CREW', style: CheType.overline.copyWith(color: CheColors.accent)),
+        const SizedBox(height: CheSpace.sm),
+        _FilterPills(
+          selected: _filter,
+          onChanged: (f) {
+            HapticFeedback.selectionClick();
+            setState(() => _filter = f);
+          },
+        ),
+        const SizedBox(height: CheSpace.md),
+        if (agents.isEmpty)
+          Text(
+            _filter == 'All'
+                ? 'No agents yet. Ask CHE to staff the Office.'
+                : 'No $_filter agents right now.',
+            style: CheType.bodyDim,
+          )
+        else
+          for (final p in agents)
+            Padding(
+              padding: const EdgeInsets.only(bottom: CheSpace.sm),
+              child: _AgentListCard(
+                agent: p.agent,
+                onTap: () => _openDesk(p.agent.id),
+                onReadAloud: () => _speak(
+                  '${p.agent.name}, ${p.agent.role}. ${p.agent.status.label}. '
+                  '${p.agent.task?.isNotEmpty == true ? p.agent.task : p.agent.specialty}',
+                ),
+              ),
+            ),
         const SizedBox(height: CheSpace.lg),
         Text('WAR ROOM', style: CheType.overline),
         const SizedBox(height: CheSpace.sm),
@@ -330,6 +400,21 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
         CheOfficeBoard(today: r.today, onReadAloud: () => _speak(cheOfficeBoardSpeech(r.today, r.connection))),
       ],
     ];
+  }
+
+  List<CheAgentProfile> _filteredAgents(CheAgentRuntimeController r) {
+    final all = r.agents;
+    if (_filter == 'All') return all;
+    bool match(CheAgent a) {
+      final hay = '${a.role} ${a.specialty} ${a.name}'.toLowerCase();
+      return switch (_filter) {
+        'Research' => hay.contains('research') || hay.contains('atlas') || hay.contains('sourc') || hay.contains('intel'),
+        'Trading' => hay.contains('trad') || hay.contains('financ') || hay.contains('market') || hay.contains('sage') || hay.contains('stripe'),
+        'Content' => hay.contains('content') || hay.contains('social') || hay.contains('lyra') || hay.contains('copy') || hay.contains('iris') || hay.contains('ad '),
+        _ => true,
+      };
+    }
+    return [for (final p in all) if (match(p.agent)) p];
   }
 
   /// Reports an action's real outcome: spoken, shown as a banner, and felt.
@@ -423,7 +508,18 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
                 Expanded(
                   child: Semantics(
                     header: true,
-                    child: Text('CHE Office', maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.title),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('The Office', maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.title),
+                        Text(
+                          'Your team. Real work. Real results.',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: CheType.caption,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 ..._actions(),
@@ -441,7 +537,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
         backgroundColor: CheColors.bg,
         appBar: AppBar(
           backgroundColor: Colors.transparent,
-          title: const Text('CHE Office'),
+          title: const Text('The Office'),
           actions: _actions(),
         ),
         body: SafeArea(
@@ -584,6 +680,160 @@ class _ReadAloudButton extends StatelessWidget {
         onPressed: onPressed,
         icon: const Icon(Icons.volume_up_rounded, size: 20, color: CheColors.accent),
       );
+}
+
+
+class _FilterPills extends StatelessWidget {
+  const _FilterPills({required this.selected, required this.onChanged});
+  final String selected;
+  final ValueChanged<String> onChanged;
+  static const filters = ['All', 'Research', 'Trading', 'Content'];
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (var i = 0; i < filters.length; i++) ...[
+            if (i > 0) const SizedBox(width: CheSpace.sm),
+            _FilterPill(
+              label: filters[i],
+              selected: selected == filters[i],
+              onTap: () => onChanged(filters[i]),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _FilterPill extends StatelessWidget {
+  const _FilterPill({required this.label, required this.selected, required this.onTap});
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '$label filter',
+      excludeSemantics: true,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: CheMotion.fast,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: selected ? CheColors.accent : CheColors.surface,
+            borderRadius: BorderRadius.circular(CheRadius.pill),
+            border: Border.all(
+              color: selected ? CheColors.accent : CheColors.strokeHi,
+            ),
+            boxShadow: selected
+                ? [BoxShadow(color: CheColors.accent.withValues(alpha: 0.35), blurRadius: 12)]
+                : null,
+          ),
+          child: Text(
+            label,
+            style: CheType.label.copyWith(
+              color: selected ? const Color(0xFF03120F) : CheColors.text,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Large-chibi agent row matching mockup 03 (not postage-stamp).
+class _AgentListCard extends StatelessWidget {
+  const _AgentListCard({
+    required this.agent,
+    required this.onTap,
+    required this.onReadAloud,
+  });
+  final CheAgent agent;
+  final VoidCallback onTap;
+  final VoidCallback onReadAloud;
+
+  @override
+  Widget build(BuildContext context) {
+    final working = cheAgentIsMoving(agent.status);
+    final task = agent.task?.trim();
+    return Semantics(
+      button: true,
+      label: '${agent.name}, ${agent.role}. ${agent.status.label}. Double tap to open desk.',
+      excludeSemantics: true,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          onLongPress: onReadAloud,
+          borderRadius: BorderRadius.circular(CheRadius.lg),
+          child: Ink(
+            padding: const EdgeInsets.fromLTRB(10, 10, 12, 10),
+            decoration: BoxDecoration(
+              color: CheColors.surfaceHi,
+              borderRadius: BorderRadius.circular(CheRadius.lg),
+              border: Border.all(
+                color: working
+                    ? CheColors.accent.withValues(alpha: 0.65)
+                    : CheColors.stroke,
+              ),
+              boxShadow: working
+                  ? [BoxShadow(color: CheColors.accent.withValues(alpha: 0.18), blurRadius: 16)]
+                  : null,
+            ),
+            child: Row(
+              children: [
+                CheMiniPerson(agent: agent, size: 72, showDesk: false),
+                const SizedBox(width: CheSpace.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(agent.name, style: CheType.headline, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      Text(
+                        agent.role.isEmpty ? agent.specialty : agent.role,
+                        style: CheType.caption,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        task?.isNotEmpty == true ? task! : agent.status.label,
+                        style: CheType.caption.copyWith(
+                          color: working ? CheColors.success : CheColors.textDim,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 6),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(99),
+                        child: LinearProgressIndicator(
+                          value: working ? null : (agent.status == CheAgentStatus.done ? 1 : 0.08),
+                          minHeight: 3,
+                          backgroundColor: CheColors.stroke,
+                          color: CheColors.accent,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right_rounded, color: CheColors.textFaint),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _Banner extends StatelessWidget {
