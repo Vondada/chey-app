@@ -80,3 +80,22 @@ export function splitGoal(goal) {
   });
   return jobs;
 }
+
+// Agents never merge code, spend money or open payouts. The roster flags
+// (can_merge_code / can_spend_money / can_open_payouts) are checked here in
+// code before any job runs; only the owner can grant them.
+const RESTRICTED_ACTIONS = [
+  { flag: 'can_merge_code', label: 'merge code', pattern: /\bmerg(?:e|es|ing)\b[^.]*\b(?:pr|pull request|branch|code|main)\b|\bpush(?:ing)? (?:it )?(?:straight )?to main\b/i },
+  { flag: 'can_open_payouts', label: 'open Stripe payouts or move money', pattern: /\bpayouts?\b|\b(?:transfer|withdraw|wire) (?:the )?(?:money|funds|balance)\b/i },
+  { flag: 'can_spend_money', label: 'spend money', pattern: /^(?:please )?(?:buy|purchase|pay(?: for)?|order|subscribe(?: to)?|spend|refund|renew)\b/i },
+];
+
+export function agentActionGuard(agent, text) {
+  const task = String(text || '').trim();
+  for (const action of RESTRICTED_ACTIONS) {
+    if (action.pattern.test(task) && agent?.[action.flag] !== true) {
+      return `Needs owner approval: agents cannot ${action.label}. CHE will ask the owner first.`;
+    }
+  }
+  return '';
+}

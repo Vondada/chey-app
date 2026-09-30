@@ -33,8 +33,8 @@ import { activityFeed, creations, findCreations, greeting, suggestions, stalledT
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 import { prepareSelfUpdate } from './self_development.js';
-import { officeToday } from './office_board.js';
-import { ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
+import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
+import { agentActionGuard, ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
 import {
   WORK_AGENT_MODE_POLICY,
   isWorkAgentMode,
@@ -42,6 +42,7 @@ import {
   laAgenciaPanelNeeds,
 } from './work_agent_mode.js';
 import { matchOfficePhrase, speakGoalPlan, speakOfficeBoard } from './office_phrases.js';
+import { assertOwnerTalksToCheOnly, codexWorkPacket } from './office_router.js';
 import {
   mlProjectFromResult,
   mlReadiness,
@@ -64,7 +65,6 @@ import {
   robloxProjectTypeFor,
   speakRobloxJobPlan,
 } from './roblox_studio.js';
-import { assertOwnerTalksToCheOnly } from './office_router.js';
 import {
   buildFiverrFitTask,
   buildFiverrScoutTask,
@@ -88,7 +88,6 @@ import {
   writeResearchMemoryNote,
 } from './research_memory.js';
 import { assertOwnerToCheOnly } from './che_router.js';
-import { chicagoDayKey } from './chicago_time.js';
 import { assertAgentMayRun, permissionBlocker } from './agent_permissions.js';
 import { makeWorkPacket, savePacket, startCodexJob } from './codex_packets.js';
 import { newBlockerAnnouncements } from './blocker_speech.js';
@@ -1860,8 +1859,8 @@ export class CheState extends DurableObject {
 
   async officeBoard(data) {
     await this.staffOffice(data);
-    // "Today" is the owner's Chicago day, not the UTC day.
-    const today = chicagoDayKey();
+    // "Today" is the owner's configured Chicago day, not the UTC day.
+    const today = ownerDayKey(new Date(), ownerTimeZone(this.env));
     // Webhook totals are live; the Stripe API read is only the backup.
     const stripe = data.office_stripe?.date === today ? null : await salesSummary(this.env);
     const board = officeToday(data, stripe, new Date(), this.env);
@@ -1894,7 +1893,8 @@ export class CheState extends DurableObject {
         refused = permissionBlocker(agent, error);
       }
       const task = queueAgentTask(data, agent, step.task, 'owner_goal', { job_id: goalId });
-      let blocker = refused || officeToolBlocker(this.env, agent);
+      task.work_packet = codexWorkPacket(agent, task);
+      let blocker = refused || agentActionGuard(agent, step.task) || officeToolBlocker(this.env, agent);
       // Codex desks get a real work packet: own thread id and workspace,
       // persisted here. The owner Codex token stays on the Worker.
       if (!refused && agent.provider_preference === 'openai') {
@@ -2344,7 +2344,7 @@ export class CheState extends DurableObject {
         }
         let event;
         try { event = JSON.parse(raw); } catch (_) { return json({ detail: 'Invalid JSON.' }, 400); }
-        const outcome = recordStripeEvent(data, event);
+        const outcome = recordStripeEvent(data, event, new Date(), ownerTimeZone(this.env));
         if (!outcome.duplicate) {
           await this.ctx.storage.put('che', data);
           this.broadcastAgents(data);
@@ -3213,6 +3213,18 @@ export class CheState extends DurableObject {
         return json({ detail: 'Not found.' }, 404);
       }
       // GET routes must sit above the POST-only guard below.
+      // CHE collects each agent's Codex work packets (no credentials inside).
+      if (path === '/api/office/work-packets' && request.method === 'GET') {
+        await this.staffOffice(data);
+        const packets = data.team_tasks
+          .filter((t) => ['queued', 'running', 'reviewing', 'blocked'].includes(t.status))
+          .map((t) => {
+            const agent = data.team.find((a) => a.id === t.partner_id);
+            return agent && isLaAgenciaAgent(agent) ? (t.work_packet || codexWorkPacket(agent, t)) : null;
+          })
+          .filter(Boolean);
+        return json({ packets });
+      }
       if (path === '/api/office/today' && request.method === 'GET') {
         return json({ board: await this.officeBoard(data) });
       }

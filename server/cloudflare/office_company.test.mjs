@@ -23,3 +23,13 @@ test('missing provider credentials are honest blockers',()=>{
  assert.equal(officeToolBlocker({},data.team.find(a=>a.name==='Atlas')),'');
  assert.match(officeToolBlocker({},data.team.find(a=>a.name==='Sage')),/Stripe not connected/);
 });
+
+test('agents cannot merge code, spend money or open payouts', async () => {
+  const { agentActionGuard } = await import('./office_company.js');
+  const knox = { name: 'Knox', can_merge_code: false, can_spend_money: false, can_open_payouts: false };
+  assert.match(agentActionGuard(knox, 'Merge the checkout PR into main'), /cannot merge code/);
+  assert.match(agentActionGuard(knox, 'Buy a domain for the store'), /cannot spend money/);
+  assert.match(agentActionGuard(knox, 'Open a Stripe payout to the bank'), /payouts/);
+  assert.equal(agentActionGuard(knox, 'Build a checkout page where customers buy the course'), '');
+  assert.equal(agentActionGuard(knox, 'Write tests for the store'), '');
+});

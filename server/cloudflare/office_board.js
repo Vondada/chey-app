@@ -2,16 +2,34 @@
 // Agents report to CHE; this module never creates owner-facing agent messages.
 
 import { LA_AGENCIA_ROLES, officeToolBlocker } from './office_company.js';
-import { chicagoDayKey } from './chicago_time.js';
 import { stalledTasks } from './activity.js';
 
 const ACTIVE = new Set(['queued', 'running', 'reviewing']);
 const DONE = new Set(['complete']);
 const BLOCKED = new Set(['failed', 'blocked']);
 
-// The owner's day (America/Chicago), not the UTC day.
-function dayKey(value, now = new Date()) {
-  return chicagoDayKey(value ? new Date(value) : now);
+// The owner's day runs midnight to midnight in his own time zone (Chicago by
+// default), not UTC, so "today" never resets at 7 PM Central.
+export const OWNER_TIMEZONE = 'America/Chicago';
+
+export function ownerTimeZone(env) {
+  const tz = String(env?.CHE_OWNER_TIMEZONE || '').trim();
+  if (tz) {
+    try { new Intl.DateTimeFormat('en-CA', { timeZone: tz }); return tz; } catch (_) { /* fall back */ }
+  }
+  return OWNER_TIMEZONE;
+}
+
+export function ownerDayKey(value, timeZone = OWNER_TIMEZONE) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
+  const get = (type) => parts.find((p) => p.type === type)?.value || '';
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+function dayKey(value, now = new Date(), timeZone = OWNER_TIMEZONE) {
+  return ownerDayKey(value || now, timeZone);
 }
 
 // Real per-desk status: the agent's latest job decides it, never a default
@@ -44,11 +62,13 @@ function deskStatus(agent, tasks, env, stallById = new Map()) {
 }
 
 export function officeToday(data, stripeSummary, now = new Date(), env = null) {
-  const today = dayKey(now, now);
+  const tz = ownerTimeZone(env);
+  const day = (value) => dayKey(value, now, tz);
+  const today = day(now);
   const tasks = Array.isArray(data?.team_tasks) ? data.team_tasks : [];
-  const todays = tasks.filter((t) => dayKey(t.created_at, now) === today);
-  const finished = tasks.filter((t) => DONE.has(t.status) && dayKey(t.updated_at || t.created_at, now) === today);
-  const blocked = tasks.filter((t) => BLOCKED.has(t.status) && dayKey(t.updated_at || t.created_at, now) === today);
+  const todays = tasks.filter((t) => day(t.created_at) === today);
+  const finished = tasks.filter((t) => DONE.has(t.status) && day(t.updated_at || t.created_at) === today);
+  const blocked = tasks.filter((t) => BLOCKED.has(t.status) && day(t.updated_at || t.created_at) === today);
   const workingIds = new Set(tasks.filter((t) => ACTIVE.has(t.status)).map((t) => t.partner_id));
 
   // Stripe: webhook totals in the Durable Object are live truth; the Stripe
@@ -63,7 +83,7 @@ export function officeToday(data, stripeSummary, now = new Date(), env = null) {
     refunds = Number(webhook.refunds_cents || 0);
   } else if (apiConnected) {
     const sales = Array.isArray(stripeSummary.sales) ? stripeSummary.sales : [];
-    const todaysSales = sales.filter((s) => dayKey(s.created_at, now) === today);
+    const todaysSales = sales.filter((s) => day(s.created_at) === today);
     charges = todaysSales.reduce((n, s) => n + Number(s.amount || 0), 0);
     refunds = todaysSales.reduce((n, s) => n + Number(s.amount_refunded || 0), 0);
   }
