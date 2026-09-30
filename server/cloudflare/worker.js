@@ -33,6 +33,7 @@ import { activityFeed, creations, findCreations, greeting, suggestions, stalledT
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 import { prepareSelfUpdate } from './self_development.js';
+import { KEY_PROVIDERS, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { consultEngine, consultIntent, shareIntent, speakConsult } from './ai_consult.js';
 import { handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
@@ -2893,6 +2894,28 @@ export class CheState extends DurableObject {
         return json(result, result.error && !result.candles ? 400 : 200);
       }
 
+      // ─── Resilience: keys, AI Mailbox letters, tech folders ───────────
+      if (path === '/api/keys' && request.method === 'GET') {
+        // Status only; keys themselves never leave the server.
+        const health = (await this.ctx.storage.get('key_health')) || {};
+        return json({ providers: Object.entries(KEY_PROVIDERS).map(([id, p]) => ({ id, name: p.name, page: p.page, status: health[id]?.status || 'not set up', last4: health[id]?.last4 || '' })) });
+      }
+      if (path === '/api/keys' && request.method === 'POST') {
+        if (await isLockedDown(this.ctx.storage)) return json({ detail: 'Lockdown is on; key changes are frozen.' }, 423);
+        const saved = await saveKey(this.ctx.storage, String(body.provider || ''), String(body.key || ''));
+        return json(saved.ok ? { ok: true, provider: saved.provider, last4: saved.last4, status: saved.test.status } : { detail: saved.detail }, saved.ok ? 200 : 422);
+      }
+      if (path === '/api/letters' && request.method === 'GET') {
+        return json({ letters: (await listLetters(this.ctx.storage)).slice(-200).reverse() });
+      }
+      if (path === '/api/letters' && request.method === 'POST') {
+        const done = await markLetter(this.ctx.storage, String(body.id || ''), body.delete ? { delete: true } : { read: body.read !== false });
+        return json({ ok: Boolean(done) });
+      }
+      if (path === '/api/tech' && request.method === 'GET') {
+        return json({ items: await techItems(this.ctx.storage) });
+      }
+
       // ─── Library: whole texts saved word-for-word ─────────────────────
       if (path === '/api/library' && request.method === 'GET') {
         const lib = new CheLibrary(this.ctx.storage);
@@ -4137,6 +4160,52 @@ export class CheState extends DurableObject {
           message = previousText.replace(new RegExp(`\\b${esc}\\b`, 'gi'), correction.meant);
         }
         const learnedHearing = correctionsContext(corrections);
+
+        // Resilience voice commands + lockdown gate.
+        const resil = resilienceIntent(message);
+        if (await isLockedDown(this.ctx.storage)) {
+          if (resil?.kind === 'unlock') {
+            await setLockdown(this.ctx.storage, false);
+            return ndjsonReply('Lockdown is over, sir. Remote engines and tools are back on.', { source: 'che_lockdown' });
+          }
+          // 503 → the app answers with CHE's on-phone brain instead.
+          return json({ detail: 'Lockdown is on: remote engines are paused. Say "end lockdown" to resume.' }, 503);
+        }
+        if (resil) {
+          const st = this.ctx.storage;
+          if (resil.kind === 'lockdown') {
+            await setLockdown(st, true);
+            return ndjsonReply('Lockdown is on, sir. Remote engines, key changes and outgoing AI mail are frozen. I will answer with my on-phone brain. Say "end lockdown" when you want me back.', { source: 'che_lockdown' });
+          }
+          if (resil.kind === 'unlock') return ndjsonReply('Lockdown is already off, sir.', { source: 'che_lockdown' });
+          if (resil.kind === 'keys') return ndjsonReply(speakKeyHealth(await checkAllKeys(this.env, st)), { source: 'che_keys' });
+          if (resil.kind === 'setup') return ndjsonReply(setupSteps(resil.provider), { source: 'che_keys', provider: resil.provider });
+          if (resil.kind === 'mailbox') return ndjsonReply(speakMailboxSummary(await listLetters(st)), { source: 'che_letters' });
+          if (resil.kind === 'next-letter') {
+            const letter = await nextLetter(st, { securityFirst: resil.securityFirst });
+            return ndjsonReply(letter ? `From ${letter.tray}, ${letter.severity === 'danger' ? 'marked DANGER, ' : ''}"${letter.subject}". ${letter.body}` : 'No unread letters, sir.', { source: 'che_letters' });
+          }
+          if (resil.kind === 'tech') return ndjsonReply(speakTech(await techItems(st), resil.cost), { source: 'che_tech' });
+          if (resil.kind === 'scout') {
+            const found = await runScout(st);
+            return ndjsonReply(`Scout finished, sir: ${found.free.length} new free and ${found.paid.length} new paid finds. Paid ones are only filed, never bought. Say "what's in free tech" to hear them.`, { source: 'che_tech' });
+          }
+          if (resil.kind === 'engines') {
+            const status = await engineStatus(this.env, st);
+            const up = status.engines.filter((e) => e.configured && e.last_ok_minutes_ago !== null && e.last_ok_minutes_ago < 60).map((e) => e.id.split(':')[0]);
+            return ndjsonReply(`We're online, sir. Engines that answered in the last hour: ${[...new Set(up)].join(', ') || 'none yet this hour'}. Cloudflare's free AI is ${status.cloudflare.resting_seconds ? 'resting' : 'available'}.`, { source: 'che_engines' });
+          }
+          if (resil.kind === 'uncache') {
+            await forgetAnswer(st, previousText);
+            return ndjsonReply("Done, sir. I won't reuse that answer.", { source: 'che_cache' });
+          }
+          if (resil.kind === 'identity') {
+            await st.put('signup_identity', resil.value);
+            return ndjsonReply(resil.value === 'che'
+              ? "Okay, sir. For signups that allow an assistant account, I'll use my own email. For anything that needs a real person, I'll still use your name and tell you first."
+              : "Okay, sir. I'll use your email for signups.", { source: 'che_identity' });
+          }
+        }
         // Optional provider pin from the client (e.g. native Grok chat → xai).
         // Empty / unknown values leave routing on auto. Prefer-not-strict so
         // a missing or uncredited Grok key still falls through to other engines.
@@ -4366,6 +4435,10 @@ export class CheState extends DurableObject {
           const results = await Promise.all(consult.peers.map((peer) => consultEngine(this.env, peer, consult.question, this.env.CHE_STRONG_MODEL || STRONG_MODEL)));
           await postWebMail(this.ctx.storage, { from: 'che', to: consult.peers.join(','), text: consult.question }).catch(() => null);
           for (const r of results) {
+            if (r.text && looksLikeAttack(r.text)) {
+              await fileLetter(this.ctx.storage, { tray: 'security', subject: `${r.label} tried to give me orders`, body: 'Its reply asked for secrets or to override you. I stopped and did not follow it.', tag: 'security', severity: 'danger' });
+              r.text = 'Its answer tried to get me to break your rules, so I stopped and filed a security letter. I did not give it anything.';
+            }
             if (r.text) await postWebMail(this.ctx.storage, { from: r.peer, to: 'che', text: r.text }).catch(() => null);
             if (r.mailbox) await sendMail(this.env, { from: 'che', to: r.peer, text: `From CHE on behalf of the owner: ${consult.question}` }).catch(() => null);
           }
@@ -4388,7 +4461,10 @@ export class CheState extends DurableObject {
               : recent.length ? `Latest with ${mail.peer}, sir:\n${recent.map((m, i) => `${i + 1}. ${m.from}: ${String(m.text).slice(0, 400)}`).join('\n')}`
                 : `No messages with ${mail.peer} yet, sir.`, { source: 'che_mailbox' });
           }
-          const web = (await readWebMail(this.ctx.storage, 20)).filter((m) => m.from !== 'che').slice(-5);
+          const webAll = (await readWebMail(this.ctx.storage, 20)).filter((m) => m.from !== 'che').slice(-5);
+          const traps = webAll.filter((m) => looksLikeAttack(m.text));
+          for (const m of traps) await fileLetter(this.ctx.storage, { tray: 'security', subject: `Flagstaff message from ${m.from} looks like an attack`, body: 'It asked for secrets or to override you. I did not follow it.', tag: 'security', severity: 'danger' });
+          const web = webAll.filter((m) => !looksLikeAttack(m.text));
           const webText = web.length
             ? `Flagstaff 369, latest ${web.length}:\n${web.map((m, i) => `${i + 1}. ${m.from}: ${String(m.text).slice(0, 300)}`).join('\n')}`
             : 'Flagstaff 369 has no new AI messages.';
@@ -5039,7 +5115,9 @@ export class CheState extends DurableObject {
               'BRAIN: when you learn a durable, non-sensitive fact about the owner, end your reply with a ```che-remember block, one fact per line, tagged [People]/[Projects]/[Decisions]/[Companies]/[Meetings]/[Daily]/[Knowledge]. Never save passwords, card numbers, keys or other secrets. Never repeat the same opening or catchphrase twice in a row.',
             ].filter(Boolean).join('\n');
         let answer;
-        try {
+        const reusable = officeResults.length === 0 && skillResults.length === 0 ? await cachedAnswer(this.ctx.storage, message) : null;
+        if (reusable) answer = { response: reusable, engine: 'cache' };
+        if (!answer) try {
         answer = await runChatModel(this.env, {
           model,
           systemPrompt,
@@ -5092,6 +5170,9 @@ export class CheState extends DurableObject {
         }
         let reply = String(answer.response || answer.choices?.[0]?.message?.content || '').trim();
         if (!reply) return json({ detail: 'The model did not return an answer.' }, 502);
+        if (answer.engine !== 'cache' && officeResults.length === 0 && skillResults.length === 0) {
+          await rememberAnswer(this.ctx.storage, message, reply);
+        }
         if (/\[assistant name\]/i.test(reply) ||
             (/start the conversation/i.test(reply) && /say\s+[“"'']?hey\b/i.test(reply))) {
           reply = 'I’m awake, sir. What do you need?';
@@ -5158,6 +5239,9 @@ export class CheState extends DurableObject {
 
   // Called by the nightly cron (see `scheduled` below).
   async nightly() {
+    await checkAllKeys(this.env, this.ctx.storage).catch(() => null);
+    const scoutAt = Number(await this.ctx.storage.get('scout_at')) || 0;
+    if (Date.now() - scoutAt > 6 * 86400000) await runScout(this.ctx.storage).catch(() => null);
     const data = await this.loadData();
     if (!data.autonomy) return { status: 'paused' };
     const result = await runNightlyReview(this.env, this.ctx.storage, data, this.env.CHE_STRONG_MODEL || STRONG_MODEL);
