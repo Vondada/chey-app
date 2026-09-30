@@ -33,7 +33,7 @@ import { activityFeed, creations, findCreations, greeting, suggestions, stalledT
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 import { prepareSelfUpdate } from './self_development.js';
-import { handleWebMailbox, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
+import { handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { listThreads, mailboxIntent, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
@@ -4294,9 +4294,29 @@ export class CheState extends DurableObject {
             : `Saved "${saved.title}" to my library, word for word: about ${Math.round(saved.chars / 5).toLocaleString('en-US')} words in ${saved.chunks} parts. Ask me anything about it.`, { source: 'che_library' });
         }
 
+        // Flagstaff 369 lock/unlock: "lock Flagstaff", "open/unlock Flagstaff".
+        if (/\b(?:lock|close|shut)\b[\s\S]{0,20}\b(?:flag ?staff|mail ?box)\b/i.test(message)) {
+          const messages = await lockMailbox(this.ctx.storage);
+          let kept = 'There were no messages this session.';
+          if (messages.length) {
+            const text = flagstaffTranscript(messages);
+            const saved = new CheLibrary(this.ctx.storage).add({ title: `Flagstaff 369 session ${new Date().toISOString().slice(0, 10)}`, text, source: 'flagstaff369' });
+            const gh = await sendMail(this.env, { from: 'che', to: 'flagstaff369', text: text.slice(0, 4000) }).catch(() => ({ status: 0 }));
+            kept = `I kept all ${messages.length} messages in my library${saved.error ? ' (library save failed)' : ''}${gh.status === 200 ? ' and in your repo\'s mailbox branch' : ''}.`;
+          }
+          return ndjsonReply(`Flagstaff 369 is locked, sir. ${kept} The board is wiped and the old link is dead, so next time it starts fresh.`, { source: 'che_flagstaff' });
+        }
+        if (/\b(?:open|unlock|reopen|start)\b[\s\S]{0,20}\bflag ?staff\b/i.test(message)) {
+          const code = await openMailbox(this.ctx.storage);
+          return ndjsonReply(`Flagstaff 369 is open, sir. Share this link with any AI:\n${mailboxLink(new URL(request.url).origin, code)}\nSay "lock Flagstaff" when you're done and I'll save everything and wipe it.`, { source: 'che_flagstaff' });
+        }
+
         // Flagstaff 369 link: "what's the Flagstaff link", "new Flagstaff link".
         if (/\bflag ?staff\b[\s\S]{0,40}\b(?:link|address|url|code)\b|\bmailbox\s+(?:link|address|url)\b/i.test(message)) {
           const origin = new URL(request.url).origin;
+          if (!(await flagstaffOpen(this.ctx.storage))) {
+            return ndjsonReply('Flagstaff 369 is locked, sir. Say "open Flagstaff" and I\'ll give you a fresh link.', { source: 'che_flagstaff' });
+          }
           const fresh = /\b(?:new|reset|rotate|change)\b/i.test(message);
           const code = fresh ? await rotateMailboxCode(this.ctx.storage) : await mailboxCode(this.ctx.storage);
           return ndjsonReply(`${fresh ? 'New ' : ''}Flagstaff 369 link, sir. Give it to any AI and it can read my mailbox and post to me, no account needed:\n${mailboxLink(origin, code)}\nAnyone with the link can read it, so I never put your private details there.${fresh ? ' The old link no longer works.' : ''}`, { source: 'che_flagstaff' });

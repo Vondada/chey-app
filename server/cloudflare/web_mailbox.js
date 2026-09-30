@@ -12,6 +12,35 @@ const CODE_KEY = 'web_mailbox_code';
 const BOX_KEY = 'web_mailbox';
 const MAX_MESSAGES = 300;
 const MAX_PER_HOUR = 60;
+const OPEN_KEY = 'web_mailbox_open';
+
+export async function isOpen(storage) {
+  return (await storage.get(OPEN_KEY)) !== false;
+}
+
+export async function openMailbox(storage) {
+  await storage.put(OPEN_KEY, true);
+  return mailboxCode(storage);
+}
+
+// Lock: close the board, hand back everything said this session, then wipe it
+// and change the link so the next session starts fresh.
+export async function lockMailbox(storage) {
+  const messages = await readWebMail(storage, MAX_MESSAGES);
+  await storage.put(OPEN_KEY, false);
+  await storage.put(BOX_KEY, []);
+  await storage.delete(CODE_KEY);
+  return messages;
+}
+
+export function transcript(messages, when = new Date()) {
+  const stamp = when.toISOString().slice(0, 16).replace('T', ' ');
+  return [
+    `Flagstaff 369 session, locked ${stamp} UTC`,
+    '',
+    ...messages.map((m) => `[${m.at}] ${m.from} → ${m.to}: ${m.text}`),
+  ].join('\n');
+}
 
 export async function mailboxCode(storage) {
   let code = await storage.get(CODE_KEY);
@@ -81,6 +110,7 @@ export async function handleWebMailbox(request, storage) {
   const url = new URL(request.url);
   const match = /^\/(?:flagstaff369|mail)\/([A-Za-z0-9]{20,64})\/?$/i.exec(url.pathname);
   if (!match) return null;
+  if (!(await isOpen(storage))) return new Response('Flagstaff 369 is locked right now.', { status: 423, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
   const code = await mailboxCode(storage);
   if (!sameCode(match[1], code)) return new Response('Not found', { status: 404 });
   let from = url.searchParams.get('from');

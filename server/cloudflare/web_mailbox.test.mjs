@@ -35,3 +35,19 @@ test('Flagstaff 369 hides from wrong codes, rotates, and ignores other paths', a
 test('owner can ask CHE to check Flagstaff', () => {
   assert.equal(mailboxIntent('CHE, check Flagstaff 369').kind, 'read');
 });
+
+test('lock hands back the session, wipes the board and kills the link; open starts fresh', async () => {
+  const { lockMailbox, openMailbox, transcript, isOpen } = await import('./web_mailbox.js');
+  const s = store();
+  const code = await mailboxCode(s);
+  await handleWebMailbox(new Request(`https://x/flagstaff369/${code}?from=grok&text=idea`), s);
+  const kept = await lockMailbox(s);
+  assert.equal(kept.length, 1);
+  assert.match(transcript(kept), /grok → che: idea/);
+  assert.equal(await isOpen(s), false);
+  assert.equal((await handleWebMailbox(new Request(`https://x/flagstaff369/${code}`), s)).status, 423);
+  const fresh = await openMailbox(s);
+  assert.notEqual(fresh, code);
+  assert.equal((await readWebMail(s)).length, 0);
+  assert.equal((await handleWebMailbox(new Request(`https://x/flagstaff369/${fresh}`), s)).status, 200);
+});
