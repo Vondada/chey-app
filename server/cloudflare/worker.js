@@ -117,7 +117,7 @@ import {
 } from './reply_latency.js';
 
 const FAST_MODEL = '@cf/meta/llama-3.2-3b-instruct';
-const STRONG_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
+const STRONG_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 
 function json(value, status = 200) {
   return new Response(JSON.stringify(value), {
