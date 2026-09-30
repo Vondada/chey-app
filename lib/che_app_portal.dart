@@ -34,7 +34,7 @@ const List<CheAppDefinition> cheAppCatalog = [
   CheAppDefinition(name: 'GitHub', webUrl: 'https://github.com', icon: Icons.code, aliases: ['github', 'git hub']),
   CheAppDefinition(name: 'TradingView', webUrl: 'https://www.tradingview.com', icon: Icons.show_chart, aliases: ['tradingview', 'trading view']),
   CheAppDefinition(name: 'NinjaTrader', webUrl: 'https://ninjatrader.com', icon: Icons.candlestick_chart, aliases: ['ninjatrader', 'ninja trader']),
-  CheAppDefinition(name: 'TradeSea', webUrl: 'https://app.tradesea.ai/', icon: Icons.ssid_chart, aliases: ['tradesea', 'trade sea', 'trade sea ai']),
+  CheAppDefinition(name: 'TradeSea', webUrl: 'https://app.tradesea.ai/login?source=mobile-app&theme=dark', icon: Icons.ssid_chart, aliases: ['tradesea', 'trade sea', 'trade sea ai']),
   // Web versions CHE can use when a phone app can't be controlled directly.
   CheAppDefinition(name: 'Gmail', webUrl: 'https://mail.google.com', icon: Icons.mail_outline, aliases: ['gmail', 'google mail']),
   CheAppDefinition(name: 'Outlook', webUrl: 'https://outlook.live.com/mail', icon: Icons.mark_email_unread_outlined, aliases: ['outlook', 'hotmail']),
@@ -111,6 +111,20 @@ CheAppDefinition? cheAppForName(String input) {
 bool cheIsTradeSeaUrl(String url) {
   final host = Uri.tryParse(url)?.host.toLowerCase() ?? '';
   return host.contains('tradesea.ai');
+}
+
+/// TradeSea's SPA treats mobile UAs (CHE's WKWebView) as a phone browser and
+/// shows only a "download the app" sheet unless `source=mobile-app` (or
+/// `window.__webView`) is set — that is how their native WebViewBridge embeds.
+/// CHE Apps must open with that flag or sign-in never appears.
+String cheTradeSeaEmbedUrl(String url) {
+  final uri = Uri.tryParse(url);
+  if (uri == null || !cheIsTradeSeaUrl(url)) return url;
+  final next = Map<String, String>.from(uri.queryParameters);
+  if (next['source'] == 'mobile-app') return uri.toString();
+  next['source'] = 'mobile-app';
+  next.putIfAbsent('theme', () => 'dark');
+  return uri.replace(queryParameters: next).toString();
 }
 
 /// Phone apps with no usable web version. CHE says so plainly instead of

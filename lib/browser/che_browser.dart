@@ -13,7 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-import '../che_app_portal.dart' show cheAppForName, cheIsTradeSeaUrl;
+import '../che_app_portal.dart' show cheAppForName, cheIsTradeSeaUrl, cheTradeSeaEmbedUrl;
 import '../security/che_password_vault.dart';
 import '../security/che_vault_auth.dart';
 
@@ -152,6 +152,11 @@ class _BrowserTab {
         },
         onPageStarted: (u) {
           url = u;
+          if (cheIsTradeSeaUrl(u)) {
+            unawaited(controller.runJavaScript(
+              "window.__webView=true;try{if(!new URLSearchParams(location.search).get('source')){var u=new URL(location.href);u.searchParams.set('source','mobile-app');u.searchParams.set('theme',u.searchParams.get('theme')||'dark');history.replaceState(null,'',u.toString());}}catch(e){}",
+            ));
+          }
           onChanged();
         },
         onPageFinished: (u) async {
@@ -172,12 +177,23 @@ class _BrowserTab {
             launchUrl(uri, mode: LaunchMode.externalApplication);
             return NavigationDecision.prevent;
           }
-          if (uri.scheme == 'http' || uri.scheme == 'https' || uri.scheme == 'about') return NavigationDecision.navigate;
+          if (uri.scheme == 'http' || uri.scheme == 'https' || uri.scheme == 'about') {
+            // Keep TradeSea's mobile-app embed flag across SPA/OAuth returns so
+            // the site does not replace login with the App Store / Play sheet.
+            if (uri.scheme != 'about' && cheIsTradeSeaUrl(uri.toString())) {
+              final embedded = cheTradeSeaEmbedUrl(uri.toString());
+              if (embedded != uri.toString()) {
+                unawaited(controller.loadRequest(Uri.parse(embedded)));
+                return NavigationDecision.prevent;
+              }
+            }
+            return NavigationDecision.navigate;
+          }
           launchUrl(uri, mode: LaunchMode.externalApplication);
           return NavigationDecision.prevent;
         },
       ))
-      ..loadRequest(Uri.parse(url));
+      ..loadRequest(Uri.parse(cheIsTradeSeaUrl(url) ? cheTradeSeaEmbedUrl(url) : url));
   }
 
   // Watches sign-in forms on this page and hands the login to the vault
