@@ -77,3 +77,5 @@ No Apple Developer Program purchase is required for this draft. Free Cloudflare,
 Ollama cloud, and Codemagic usage have quotas and may pause when exhausted. The
 current cloud prototype does not include the Windows Agent's automatic memory
 learning, web research, local tools, or encrypted memory import yet.
+
+<!-- Worker deploy nudge: Cloudflare Workers Builds watch path "*" only sees top-level files. -->
