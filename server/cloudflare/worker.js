@@ -35,6 +35,12 @@ import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatu
 import { prepareSelfUpdate } from './self_development.js';
 import { officeToday } from './office_board.js';
 import { ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
+import {
+  WORK_AGENT_MODE_POLICY,
+  isWorkAgentMode,
+  shouldAutoDelegateOffice,
+  laAgenciaPanelNeeds,
+} from './work_agent_mode.js';
 import { matchOfficePhrase, speakGoalPlan, speakOfficeBoard } from './office_phrases.js';
 import {
   mlProjectFromResult,
@@ -1349,14 +1355,24 @@ async function runOfficeAgents(env, team, requestedCapabilities, query, fullAgen
     },
   ];
 
-  // CHE is the manager. Generic coworkers are never run just because an
-  // "agent mode" flag is on; delegation must match a concrete capability.
+  // CHE is the manager. Chat mode: capability-matched partners only.
+  // Work Agent Mode (full): also staff La Agencia desks that match the request
+  // keywords — still never invents busywork for empty/casual turns.
   const active = [];
   for (const need of roleNeeds) {
     if (!need.match.includes('__always__') &&
         !need.match.some((cap) => requested.has(cap))) continue;
     const partner = team.find((item) => item.role === need.role);
     if (partner) active.push({ partner, focus: need.focus });
+  }
+  if (fullAgentMode) {
+    for (const need of laAgenciaPanelNeeds(query)) {
+      const partner = team.find((item) =>
+        !item.retired && (item.name === need.name || item.role === need.role));
+      if (!partner) continue;
+      if (active.some((a) => a.partner.id === partner.id || a.partner.name === partner.name)) continue;
+      active.push({ partner, focus: need.focus });
+    }
   }
 
   if (!active.length) return [];
@@ -2432,6 +2448,7 @@ export class CheState extends DurableObject {
               'Default to one or two short sentences. Lead with exactly what the owner needs. No preamble, recap, or extra explanation unless it is necessary or he asks for more.',
               'Understand slang, profanity, dark humor, mature and controversial topics without acting shocked, preachy or prudish. Be candid and direct while still respecting real safety, privacy, consent, security and legal limits.',
               'CHE is the Office Boss — the owner’s primary liaison. Specialists (Nova, Atlas, Mira, Knox, Sage, Lyra, Iris) report to CHE; CHE reports to the owner. CHE assigns, steers, accepts/rejects handoffs, and owns outcomes.',
+              WORK_AGENT_MODE_POLICY,
               'Never create fake busywork. Delegate only when a specialist materially improves accuracy, execution, research, creativity, speed or verification, and only for work tied to the owner’s request, real goals, projects, responsibilities, learning, finances, business, creative work, technology or organization.',
               'When delegating, require a concrete useful deliverable, review the result, and never call a failed or unverified result complete.',
               'Use natural conversational pacing. Do not over-explain simple questions.',
@@ -2606,6 +2623,7 @@ export class CheState extends DurableObject {
             office: true,
             office_mid_task_steering: true,
             office_handoffs: true,
+            work_agent_mode: true,
             office_skill_learning: true,
             persistent_agent_workspaces: true,
             cloud_computer: Boolean(this.env.CHE_COMPUTER_URL),
@@ -4187,6 +4205,7 @@ export class CheState extends DurableObject {
           if (learning.changed) await this.ctx.storage.put('che', data);
         }
 
+        const workAgentMode = isWorkAgentMode(body);
         const requestedCapabilities = Array.isArray(body.requested_capabilities)
           ? body.requested_capabilities.map((item) => String(item))
           : [];
@@ -4204,6 +4223,18 @@ export class CheState extends DurableObject {
         }
         if (/\b(?:marketing|social media|instagram|tiktok|facebook|youtube|campaign|content calendar|brand strategy|ad copy)\b/i.test(message)) {
           addCapability('marketing_social');
+        }
+
+        // Work Agent Mode: queue real La Agencia Durable Object jobs for actionable
+        // multi-step / specialist work (not casual chat). Continues into synthesis.
+        let workAgentOfficePlan = null;
+        if (shouldAutoDelegateOffice(message, {
+          agentMode: workAgentMode,
+          casual: isLikelyCasualChat(message, requestedCapabilities),
+          capabilities: requestedCapabilities,
+        })) {
+          await this.staffOffice(data);
+          workAgentOfficePlan = await this.officeGoal(data, message);
         }
 
         const explicitBackgroundWork =
@@ -4381,7 +4412,7 @@ export class CheState extends DurableObject {
             data.team,
             requestedCapabilities,
             message,
-            false,
+            workAgentMode,
             { items: cheContextItems, data },
           ),
           actionPanel(this.env, requestedCapabilities, message),
@@ -4577,6 +4608,13 @@ export class CheState extends DurableObject {
               'BACKGROUND WORK: cloud-side tasks may continue independently of the visible phone UI only when a real CHE backend job or connected service supports it. Do not claim iOS itself is running unrestricted background work.',
               'SUPPORTED-WORKAROUND MODE: when a platform, API, entitlement, permission or device limitation blocks the direct route, actively look for the fastest legitimate alternative such as an official API, App Intent, deep link, Shortcut, companion service, cloud job or approved integration. Never bypass security controls, access controls, safety rules or law, and never call an unsupported bypass a loophole.',
               'CHE OFFICE: CHE is the Office Boss — the owner’s primary liaison and in-charge manager of every internal AI coworker (Nova, Atlas, Mira, Knox, Sage, Lyra, Iris). Specialists report to CHE; CHE reports to the owner. CHE assigns, steers, accepts or rejects handoffs, and owns outcomes. Handle ordinary conversation yourself. Delegate only when specialization materially improves the result. Every delegated task must be tied to the owner’s request or real goals and must have a concrete useful deliverable. Never create busywork just to make the Office look active. Review coworker output, catch weak assumptions, and never mark failed or unverified work complete.',
+              WORK_AGENT_MODE_POLICY,
+              workAgentMode
+                ? 'This turn is Work Agent Mode (agent_mode=full). Prefer planning + tool use + Office delegation over chat-only answers when the owner asked for real work.'
+                : 'This turn is Chat mode. Prefer a direct CHE answer; still use tools when the request clearly needs them.',
+              workAgentOfficePlan?.jobs?.length
+                ? `WORK AGENT OFFICE JOBS QUEUED this turn: ${JSON.stringify(workAgentOfficePlan.jobs).slice(0, 4000)}. Tell the owner what you assigned and own the outcome; do not pretend jobs finished unless results are present.`
+                : '',
               'TWILIO SMS: Only CHE may call send_sms / send_sms_bulk (sending authority). Office helpers may draft message text into a pending bulk job; CHE sends after the owner explicitly confirms bulk (owner_approved). Single sends require clear owner intent via CHE and are logged. Outbound bulk stays Owner decision: pending until confirmed. If Twilio secrets are missing, say so and point to Plugins → Twilio SMS (CHE) / docs/TWILIO_CHE.md. Honor STOP/HELP; never message opted-out numbers.',
               'OFFICE EXECUTION MODEL: long work continues in the Durable Object while the phone is closed; agents may work in parallel, hand tasks to another specialist, retain persistent workspace notes, reuse owner-taught workflows, and accept owner steering while a job is underway. If a connected CHE cloud-computer endpoint is configured, computer use must stay inside explicitly owner-approved permissions.',
               'QUALITY LOOP: delegated Office work must survive CHE review. If CHE marks it NEEDS WORK, automatically send it back for a bounded repair pass instead of presenting weak output as finished. Preserve prior work and new owner corrections across repair passes.',
