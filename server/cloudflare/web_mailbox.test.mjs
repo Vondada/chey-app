@@ -62,3 +62,18 @@ test('locking keeps a private archive of the full session', async () => {
   assert.equal(archive.length, 1);
   assert.equal(archive[0].messages[0].text, 'hello che');
 });
+
+test('unread counts only incoming messages, not CHE\'s own, until marked seen', async () => {
+  const { unreadIncoming, markOwnerSeen } = await import('./web_mailbox.js');
+  const s = store();
+  const code = await mailboxCode(s);
+  await handleWebMailbox(new Request(`https://x/flagstaff/${code}?from=grok&text=one`), s);
+  await handleWebMailbox(new Request(`https://x/flagstaff/${code}?from=chatgpt&text=two`), s);
+  const { postWebMail } = await import('./web_mailbox.js');
+  await postWebMail(s, { from: 'che', to: 'grok', text: 'my own reply' });
+  assert.equal((await unreadIncoming(s)).count, 2, 'CHE\'s own message is not counted');
+  await markOwnerSeen(s);
+  assert.equal((await unreadIncoming(s)).count, 0);
+  await handleWebMailbox(new Request(`https://x/flagstaff/${code}?from=grok&text=three`), s);
+  assert.equal((await unreadIncoming(s)).count, 1);
+});

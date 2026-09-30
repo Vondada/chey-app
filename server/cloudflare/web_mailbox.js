@@ -168,3 +168,24 @@ export async function handleWebMailbox(request, storage) {
     headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex' },
   });
 }
+
+// Owner-facing unread tracker for the app badge: counts only INCOMING messages
+// (from other AIs, not CHE's own) that the owner hasn't opened yet.
+const OWNER_SEEN = 'web_mailbox_owner_seen';
+
+export async function unreadIncoming(storage) {
+  const box = await readWebMail(storage, MAX_MESSAGES);
+  const incoming = box.filter((m) => m.from !== 'che');
+  const seenId = String((await storage.get(OWNER_SEEN)) || '');
+  if (!seenId) return { count: incoming.length, latest: incoming.slice(-5) };
+  const idx = incoming.findIndex((m) => m.id === seenId);
+  const unread = idx >= 0 ? incoming.slice(idx + 1) : incoming;
+  return { count: unread.length, latest: unread.slice(-5) };
+}
+
+export async function markOwnerSeen(storage) {
+  const box = await readWebMail(storage, MAX_MESSAGES);
+  const incoming = box.filter((m) => m.from !== 'che');
+  if (incoming.length) await storage.put(OWNER_SEEN, incoming[incoming.length - 1].id);
+  return true;
+}

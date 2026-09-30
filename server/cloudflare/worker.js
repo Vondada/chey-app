@@ -35,9 +35,10 @@ import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatu
 import { prepareSelfUpdate } from './self_development.js';
 import { KEY_PROVIDERS, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
+import { usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { autoImproveScan, codeScoutIntent, fetchRepoFile, scoutCode, speakScout } from './code_scout.js';
 import { consultEngine, consultIntent, shareIntent, speakConsult } from './ai_consult.js';
-import { readArchive as flagstaffArchive } from './web_mailbox.js';
+import { markOwnerSeen, readArchive as flagstaffArchive, unreadIncoming } from './web_mailbox.js';
 import { handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { unseenReplies, relayText, listThreads, mailboxIntent, readThread, sendMail, speakThreads } from './mailbox.js';
@@ -2949,6 +2950,20 @@ export class CheState extends DurableObject {
         return json({ ok: new CheLibrary(this.ctx.storage).remove(String(id || '')) });
       }
 
+      // ─── Unread / importance badge for the app ────────────────────────
+      if (path === '/api/mailbox/badge' && request.method === 'GET') {
+        const flag = await unreadIncoming(this.ctx.storage);
+        const letters = (await listLetters(this.ctx.storage)).filter((l) => !l.read);
+        const important = letters.filter((l) => l.severity === 'danger' || l.severity === 'action').length
+          + flag.latest.filter((m) => /urgent|error|danger|failed|attack/i.test(m.text)).length;
+        return json({ unread: flag.count + letters.length, incoming: flag.count, letters_unread: letters.length, important });
+      }
+
+      // ─── Token usage tracker ──────────────────────────────────────────
+      if (path === '/api/usage/tokens' && request.method === 'GET') {
+        return json(await usageReport(this.ctx.storage));
+      }
+
       // ─── Flagstaff 369 for the owner's app: live board, link, archive ──
       if (path === '/api/flagstaff' && request.method === 'GET') {
         const origin = new URL(request.url).origin;
@@ -2956,10 +2971,12 @@ export class CheState extends DurableObject {
           open: await flagstaffOpen(this.ctx.storage),
           link: mailboxLink(origin, await mailboxCode(this.ctx.storage)),
           messages: await readWebMail(this.ctx.storage, 300),
+          unread: (await unreadIncoming(this.ctx.storage)).count,
         });
       }
       if (path === '/api/flagstaff' && request.method === 'POST') {
         const action = String(body.action || '');
+        if (action === 'mark-seen') { await markOwnerSeen(this.ctx.storage); return json({ ok: true }); }
         if (action === 'open') await openMailbox(this.ctx.storage);
         else if (action === 'lock') {
           const messages = await lockMailbox(this.ctx.storage);
@@ -4187,6 +4204,8 @@ export class CheState extends DurableObject {
         const learnedHearing = correctionsContext(corrections);
 
         // Resilience voice commands + lockdown gate.
+        const usage = usageIntent(message);
+        if (usage) return ndjsonReply(speakUsage(await usageReport(this.ctx.storage), usage.scope), { source: 'che_usage' });
         const resil = resilienceIntent(message);
         if (await isLockedDown(this.ctx.storage)) {
           if (resil?.kind === 'unlock') {
