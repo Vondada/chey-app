@@ -47,7 +47,7 @@ function jsonObject(text) {
   try { return JSON.parse(match[0]); } catch (_) { return null; }
 }
 
-async function runAgent(env, role, assignment, payload, maxTokens = 2200) {
+async function runAgent(env, role, assignment, payload, maxTokens = 2200, provider = '') {
   const answer = await env.AI.run(
     env.CHE_STRONG_MODEL || env.CHE_FAST_MODEL || '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
     {
@@ -66,6 +66,7 @@ async function runAgent(env, role, assignment, payload, maxTokens = 2200) {
       ],
       max_tokens: maxTokens,
       che_route: 'quality',
+      ...(provider ? { che_provider: provider } : {}),
     },
   );
   const text = modelText(answer);
@@ -125,6 +126,26 @@ export async function recordLesson(memory, kind, text) {
     await memory.put(LESSONS_KEY, list.slice(-50));
   } catch (_) {}
 }
+
+
+// ─── The crew: existing Office staff, paired, each pair on different engines ───
+// Different engines = different blind spots. Pairs run at the same time.
+// Engine choice is a preference; the router falls back if one is resting.
+export const CREW = {
+  planners: [
+    { name: 'Atlas', title: 'Architect (research)', provider: 'gemini' },
+    { name: 'Iris', title: 'Architect (visual/UI)', provider: 'mistral' },
+  ],
+  engineers: [
+    { name: 'Knox', title: 'Engineer', provider: 'groq' },
+    { name: 'Nova', title: 'Engineer', provider: 'cerebras' },
+  ],
+  reviewers: [
+    { name: 'Sage', title: 'Reviewer (correctness)', provider: 'gemini' },
+    { name: 'Mira', title: 'Reviewer (target + accessibility)', provider: 'github' },
+  ],
+};
+const who = (member, role) => `${member.name}, CHE Office ${member.title}, acting as ${role}`;
 
 function lessonText(lessons) {
   return lessons.map((item, i) => `${i + 1}. [${item.kind}] ${item.text}`).join('\n');
@@ -233,39 +254,58 @@ function diffView(before, after) {
   return out.join('\n').slice(0, 40000);
 }
 
-async function reviewProposal(env, request, architecture, diff, uiTask, lessons) {
+async function reviewProposal(env, request, architecture, diff, uiTask, lessons, member, chat = []) {
   const text = await runAgent(
     env,
-    uiTask ? 'CHE UI/UX + Code Review Agent' : 'CHE Code Review + QA Agent',
+    who(member, uiTask ? 'CHE UI/UX + Code Review Agent' : 'CHE Code Review + QA Agent'),
     [
       'Independently review this change against the owner request.',
       'FIRST check TARGET CORRECTNESS: does the diff change exactly the thing the owner referred to (same visible text, same screen, same widget)? If it edits a different element with a similar name, reject.',
       'Then check Dart syntax, missing imports, regressions and whether the request is fully met.',
       uiTask ? 'For UI, also check VoiceOver labels and voice-first use are preserved.' : 'Check existing behavior is preserved.',
       'Apply every team lesson; a change that repeats a listed mistake must be rejected.',
+      'Read team_chat (planners, engineers and the other reviewer). If a teammate raised a point, address it explicitly in notes.',
       'Return ONLY JSON: {"approved":true|false,"target_correct":true|false,"notes":["..."],"repair_instructions":"...","lesson":"one-sentence rule to prevent this mistake next time, or empty"}.',
     ].join('\n'),
-    { request, architecture, diff, team_lessons: lessonText(lessons) },
+    { request, architecture, diff, team_lessons: lessonText(lessons), team_chat: chat.slice(-20) },
     1500,
+    member.provider,
   );
   return jsonObject(text) || { approved: false, notes: ['Review agent returned invalid JSON.'], repair_instructions: 'Re-check the change.' };
 }
 
-async function implement(env, role, task, architecture, views, lessons, feedback) {
+async function implement(env, role, task, architecture, views, lessons, feedback, member, chat = []) {
   const text = await runAgent(
     env,
-    role,
+    who(member, role),
     [
       'Implement the change as exact search-and-replace edits on the inspected source.',
       'Return ONLY strict JSON: {"summary":"1-2 sentences","edits":[{"path":"lib/x.dart","find":"exact existing text","replace":"new text"}],"new_files":[{"path":"lib/new.dart","content":"COMPLETE FILE"}]}.',
       '"find" must be copied character-for-character from the source, WITHOUT the "123| " line-number prefixes, and must be unique in its file. Keep each find small (1-15 lines).',
       'Change only what the request needs. Preserve VoiceOver labels and voice-first behavior.',
-      'Obey every team lesson.',
+      'Obey every team lesson. Read team_chat: build on teammates\' good ideas and avoid what reviewers rejected in their work.',
     ].join('\n'),
-    { request: task, architecture, inspected: views, team_lessons: lessonText(lessons), previous_attempt_problem: feedback || '' },
+    { request: task, architecture, inspected: views, team_lessons: lessonText(lessons), previous_attempt_problem: feedback || '', team_chat: chat.slice(-20) },
     6000,
+    member.provider,
   );
   return jsonObject(text);
+}
+
+
+// When the two reviewers disagree, they talk it out once: each sees the
+// other's verdict and reasoning, then gives a final answer. Both must pass.
+async function settleReviews(env, task, architecture, diff, uiTask, lessons, reviews, chat) {
+  const pass = (r) => r?.approved === true && r?.target_correct !== false;
+  if (reviews.every(pass) || !reviews.some(pass)) return reviews;
+  const talk = [...chat, ...reviews.map((r, i) => ({
+    from: CREW.reviewers[i].name,
+    msg: `${pass(r) ? 'APPROVE' : 'REJECT'}: ${[...(r.notes || []), r.repair_instructions].filter(Boolean).join(' ')}`.slice(0, 700),
+  }))];
+  return Promise.all(CREW.reviewers.map((reviewer) => reviewProposal(
+    env, `${task}\n\nYou and the other reviewer disagreed. Read team_chat, weigh their argument honestly, and give your final verdict.`,
+    architecture, diff, uiTask, lessons, reviewer, talk,
+  ).catch(() => ({ approved: false, notes: ['Reviewer unavailable.'] }))));
 }
 
 export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = null) {
@@ -283,10 +323,10 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     }
     const uiTask = isUiTask(task);
 
-    // 1. Architect: plan + the exact strings/identifiers to hunt for.
-    const architectText = await runAgent(
+    // 1. Two architects in parallel on different engines; plans are merged.
+    const plans = await Promise.all(CREW.planners.map((member) => runAgent(
       env,
-      uiTask ? 'CHE UI/UX Architect' : 'CHE Software Architect',
+      who(member, uiTask ? 'CHE UI/UX Architect' : 'CHE Software Architect'),
       [
         'Plan the smallest change that does exactly what the owner asked.',
         'Name the exact visible text, identifiers or widget names that the code for this request must contain, so the team can search for them.',
@@ -295,8 +335,16 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       ].join('\n'),
       { request: task, dart_files: index.paths, team_lessons: lessonText(lessons) },
       1200,
-    );
-    const architecture = jsonObject(architectText) || {};
+      member.provider,
+    ).then(jsonObject).catch(() => null)));
+    const chat = [];
+    plans.forEach((p, i) => { if (p) chat.push({ from: CREW.planners[i].name, msg: `Plan: ${String(p.plan || '').slice(0, 600)} Look for: ${(p.search_terms || []).slice(0, 5).join(' / ')}` }); });
+    const good = plans.filter(Boolean);
+    const architecture = {
+      plan: good.map((p, i) => `${CREW.planners[i]?.name || 'Architect'}: ${p.plan || ''}`).join('\n'),
+      search_terms: good.flatMap((p) => (Array.isArray(p.search_terms) ? p.search_terms : [])),
+      paths: good.flatMap((p) => (Array.isArray(p.paths) ? p.paths : [])),
+    };
     const terms = [...new Set([
       ...literalTerms(task),
       ...(Array.isArray(architecture.search_terms) ? architecture.search_terms.map(String) : []),
@@ -320,31 +368,44 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     }
     if (!sources.size) return { status: 502, detail: 'The team could not read the located files.' };
 
-    // 3. Implement with exact edits; one retry with the concrete error.
+    // 3. Two engineers build at the same time; each attempt is checked by
+    //    BOTH reviewers at once (different engines). First fully-approved wins.
     const role = uiTask ? 'CHE Flutter UI Engineer' : 'CHE Flutter Implementation Agent';
+    const feedbacks = CREW.engineers.map(() => '');
     let feedback = '';
     let result = null;
     let summary = '';
-    for (let attempt = 0; attempt < 3 && !result; attempt++) {
-      const answer = await implement(env, role, task, architecture, views, lessons, feedback);
-      if (!answer) { feedback = 'Your last answer was not valid JSON.'; continue; }
-      const applied = applyEdits(sources, answer.edits);
-      if (applied.error) { feedback = applied.error; continue; }
-      for (const file of Array.isArray(answer.new_files) ? answer.new_files.slice(0, 3) : []) {
-        const path = String(file?.path || '');
-        if (/^lib\/[A-Za-z0-9_\/]+\.dart$/.test(path) && !sources.has(path) && typeof file.content === 'string') applied.sources.set(path, file.content);
-      }
-      const diff = diffView(sources, applied.sources);
-      if (!diff) { feedback = 'Your edits changed nothing.'; continue; }
-      const review = await reviewProposal(env, task, architecture, diff, uiTask, lessons);
-      if (review.approved === true && review.target_correct !== false) {
-        result = { next: applied.sources, review, diff };
-        summary = String(answer.summary || 'CHE update').slice(0, 1800);
-        break;
-      }
-      const why = [review.repair_instructions, ...(review.notes || [])].filter(Boolean).join(' ');
-      feedback = `Independent review rejected it: ${why}`.slice(0, 1500);
-      await recordLesson(memory, 'mistake', review.lesson || `For "${task.slice(0, 80)}": ${why}`);
+    for (let round = 0; round < 2 && !result; round++) {
+      const attempts = await Promise.all(CREW.engineers.map(async (member, i) => {
+        const answer = await implement(env, role, task, architecture, views, lessons, feedbacks[i], member, chat).catch(() => null);
+        if (!answer) { feedbacks[i] = 'Your last answer was not valid JSON.'; return null; }
+        const applied = applyEdits(sources, answer.edits);
+        if (applied.error) { feedbacks[i] = applied.error; return null; }
+        for (const file of Array.isArray(answer.new_files) ? answer.new_files.slice(0, 3) : []) {
+          const path = String(file?.path || '');
+          if (/^lib\/[A-Za-z0-9_\/]+\.dart$/.test(path) && !sources.has(path) && typeof file.content === 'string') applied.sources.set(path, file.content);
+        }
+        const diff = diffView(sources, applied.sources);
+        if (!diff) { feedbacks[i] = 'Your edits changed nothing.'; return null; }
+        chat.push({ from: member.name, msg: `My change: ${String(answer.summary || '').slice(0, 300)}\n${diff.slice(0, 1500)}` });
+        const first = await Promise.all(CREW.reviewers.map((reviewer) =>
+          reviewProposal(env, task, architecture, diff, uiTask, lessons, reviewer, chat).catch(() => ({ approved: false, notes: ['Reviewer unavailable.'] }))));
+        const reviews = await settleReviews(env, task, architecture, diff, uiTask, lessons, first, chat);
+        reviews.forEach((r, k) => chat.push({ from: CREW.reviewers[k].name, msg: `On ${member.name}'s change: ${r.approved === true ? 'APPROVE' : 'REJECT'} ${[...(r.notes || []), r.repair_instructions].filter(Boolean).join(' ').slice(0, 500)}` }));
+        const passed = reviews.every((r) => r.approved === true && r.target_correct !== false);
+        if (!passed) {
+          const why = reviews.filter((r) => r.approved !== true || r.target_correct === false)
+            .map((r, k) => [r.repair_instructions, ...(r.notes || [])].filter(Boolean).join(' ')).join(' | ');
+          feedbacks[i] = `Independent review rejected it: ${why}`.slice(0, 1500);
+          for (const r of reviews) if (r.lesson) await recordLesson(memory, 'mistake', r.lesson);
+          if (!reviews.some((r) => r.lesson)) await recordLesson(memory, 'mistake', `For "${task.slice(0, 80)}": ${why}`);
+          return null;
+        }
+        return { next: applied.sources, review: reviews, diff, discussion: chat.slice(-30), summary: String(answer.summary || 'CHE update').slice(0, 1800), engineer: member.name };
+      }));
+      const winner = attempts.find(Boolean);
+      if (winner) { result = winner; summary = `${winner.summary} (built by ${winner.engineer}, approved by ${CREW.reviewers.map((r) => r.name).join(' and ')})`; }
+      feedback = feedbacks.filter(Boolean).join(' || ');
     }
     if (!result) {
       if (/does not exist exactly|more than once/.test(feedback)) await recordLesson(memory, 'mistake', 'Edit "find" text must be copied exactly from the source without line-number prefixes and include enough lines to be unique.');
@@ -363,9 +424,8 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       proposal: { summary, files: checked.files },
       review: result.review,
       diff: result.diff,
-      team: uiTask
-        ? ['CHE UI/UX Architect', 'CHE Flutter UI Engineer', 'CHE UI/UX + Code Review Agent']
-        : ['CHE Software Architect', 'CHE Flutter Implementation Agent', 'CHE Code Review + QA Agent'],
+      discussion: result.discussion,
+      team: [...CREW.planners, ...CREW.engineers, ...CREW.reviewers].map((m) => m.name),
       approval_required: true,
       next: 'Present the che-update proposal to the owner. Do not write or merge anything until owner approval.',
     };

@@ -91,3 +91,35 @@ test('team edits the real Ready banner, and a wrong-target patch is rejected and
   assert.ok(saved.some((l) => l.kind === 'mistake' && /exact text/.test(l.text)));
   assert.ok(saved.some((l) => l.kind === 'location' && /lib\/main\.dart/.test(l.text)));
 });
+
+test('crew uses different engines per pair, shares a team board, and reviewers settle disagreements', async () => {
+  const seen = [];
+  let reviewCalls = 0;
+  const env = {
+    CHE_GITHUB_TOKEN: 't',
+    CHE_GITHUB_REPO: 'o/r',
+    AI: {
+      run: async (_model, input) => {
+        const system = input.messages[0].content;
+        const payload = JSON.parse(input.messages[1].content);
+        seen.push({ who: system.split(',')[0].replace('You are ', ''), provider: input.che_provider, chat: payload.team_chat?.length || 0 });
+        if (system.includes('Architect')) return { response: JSON.stringify({ plan: 'p', search_terms: ['Ready. Type or speak a request.'], paths: [] }) };
+        if (system.includes('Review')) {
+          reviewCalls++;
+          // First pass: Sage approves, Mira rejects; after talking, both approve.
+          const disagree = reviewCalls <= 2 && system.includes('Mira');
+          return { response: JSON.stringify({ approved: !disagree, target_correct: true, notes: [disagree ? 'Check voice label.' : 'Fine.'] }) };
+        }
+        return { response: JSON.stringify({ summary: 's', edits: [{ path: 'lib/main.dart', find: "'Ready. Type or speak a request.'", replace: "'Ready, sir.'" }] }) };
+      },
+    },
+  };
+  const out = await prepareSelfUpdate(env, 'make the Ready banner say Ready, sir', fakeGitHub(), memoryStore());
+  assert.equal(out.status, 200, out.detail);
+  const providerOf = (name) => seen.find((s) => s.who === name)?.provider;
+  assert.notEqual(providerOf('Knox'), providerOf('Nova'));
+  assert.ok(!['groq', 'cerebras'].includes(providerOf('Mira')));
+  assert.ok(seen.filter((s) => s.who === 'Sage' || s.who === 'Mira').some((s) => s.chat > 2), 'reviewers read the team board');
+  assert.ok(out.discussion.some((m) => /Mira/.test(m.from) && /APPROVE/.test(m.msg)));
+  assert.deepEqual(out.team, ['Atlas', 'Iris', 'Knox', 'Nova', 'Sage', 'Mira']);
+});
