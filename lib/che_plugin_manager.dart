@@ -107,10 +107,12 @@ class _ChePluginManagerState extends State<ChePluginManager> {
             : 'Not connected. Set via wrangler secret put: ${missing.isEmpty ? 'TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER' : missing}. See docs/TWILIO_CHE.md.';
       });
     } catch (e) {
-      if (mounted) setState(() {
-        busyId = null;
-        error = e.toString().replaceFirst('Exception: ', '');
-      });
+      if (mounted) {
+        setState(() {
+          busyId = null;
+          error = e.toString().replaceFirst('Exception: ', '');
+        });
+      }
     }
   }
 
