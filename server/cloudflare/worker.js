@@ -441,6 +441,20 @@ function pcm16ToWav(pcm, sampleRate = 24000) {
 
 let lastGeminiVoiceError = '';
 let geminiVoiceCooldownUntil = 0;
+/** @type {Map<string, number>} provider id → cooldown-until epoch ms */
+const voiceProviderCooldownUntil = new Map();
+const VOICE_COOLDOWN_MS = 15 * 60 * 1000;
+
+function voiceProviderCooling(id) {
+  const until = voiceProviderCooldownUntil.get(id) || 0;
+  return Date.now() < until;
+}
+
+function markVoiceProviderCooldown(id, ms = VOICE_COOLDOWN_MS) {
+  voiceProviderCooldownUntil.set(id, Date.now() + ms);
+  console.log(`CHE voice: ${id} cooldown ${Math.round(ms / 60000)}m`);
+}
+
 async function geminiSpeech(env, text, fetcher = fetch) {
   lastGeminiVoiceError = '';
   try {
@@ -466,6 +480,7 @@ async function geminiSpeech(env, text, fetcher = fetch) {
       // Quota / rate-limit: skip Gemini TTS for a while. Do not retry here.
       if (response.status === 429 || /quota|rate.?limit|billing/i.test(body)) {
         geminiVoiceCooldownUntil = Date.now() + 30 * 60 * 1000;
+        markVoiceProviderCooldown('gemini', 30 * 60 * 1000);
       }
       return null;
     }
@@ -496,33 +511,41 @@ async function voiceSynthesisResponse(env, text) {
 
   // Prefer free Workers AI TTS first so Gemini quota does not block spoken replies.
   if (env.AI) {
-    try {
-      const response = await env.AI.run(
-        String(env.CHE_CLOUDFLARE_TTS_MODEL || '@cf/deepgram/aura-2-en'),
-        {
-          text: input,
-          speaker: String(env.CHE_CLOUDFLARE_TTS_VOICE || 'luna'),
-          encoding: 'mp3',
-        },
-        { returnRawResponse: true },
-      );
-      if (response && response.ok) {
-        const bytes = await response.arrayBuffer();
-        if (bytes.byteLength > 0 && bytes.byteLength <= 6 * 1024 * 1024) {
-          return new Response(bytes, {
-            headers: {
-              'Content-Type': response.headers.get('content-type') || 'audio/mpeg',
-              'Cache-Control': 'no-store',
-              'X-CHE-Voice': 'cloudflare-aura',
-            },
-          });
+    if (voiceProviderCooling('cloudflare-aura')) {
+      voiceFailures.push('cloudflare-aura: cooling down after quota');
+    } else {
+      try {
+        const response = await env.AI.run(
+          String(env.CHE_CLOUDFLARE_TTS_MODEL || '@cf/deepgram/aura-2-en'),
+          {
+            text: input,
+            speaker: String(env.CHE_CLOUDFLARE_TTS_VOICE || 'luna'),
+            encoding: 'mp3',
+          },
+          { returnRawResponse: true },
+        );
+        if (response && response.ok) {
+          const bytes = await response.arrayBuffer();
+          if (bytes.byteLength > 0 && bytes.byteLength <= 6 * 1024 * 1024) {
+            return new Response(bytes, {
+              headers: {
+                'Content-Type': response.headers.get('content-type') || 'audio/mpeg',
+                'Cache-Control': 'no-store',
+                'X-CHE-Voice': 'cloudflare-aura',
+              },
+            });
+          }
+          voiceFailures.push('cloudflare-aura: empty audio');
+        } else {
+          const status = response?.status || 'failed';
+          if (status === 429 || status === 402) markVoiceProviderCooldown('cloudflare-aura');
+          voiceFailures.push(`cloudflare-aura: ${status}`);
         }
-        voiceFailures.push('cloudflare-aura: empty audio');
-      } else {
-        voiceFailures.push(`cloudflare-aura: ${response?.status || 'failed'}`);
+      } catch (error) {
+        const msg = String(error?.message || error);
+        if (/quota|rate.?limit|429/i.test(msg)) markVoiceProviderCooldown('cloudflare-aura');
+        voiceFailures.push(`cloudflare-aura: ${msg.slice(0, 120)}`);
       }
-    } catch (error) {
-      voiceFailures.push(`cloudflare-aura: ${String(error?.message || error).slice(0, 120)}`);
     }
   } else {
     voiceFailures.push('cloudflare-aura: no AI binding');
@@ -547,80 +570,100 @@ async function voiceSynthesisResponse(env, text) {
 
   // Premium voices only when secrets exist.
   if (env.ELEVENLABS_API_KEY && env.CHE_ELEVENLABS_VOICE_ID) {
-    try {
-      const voiceId = encodeURIComponent(String(env.CHE_ELEVENLABS_VOICE_ID).trim());
-      const response = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`,
-        {
-          method: 'POST',
-          headers: {
-            'xi-api-key': String(env.ELEVENLABS_API_KEY),
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            text: input,
-            model_id: String(env.CHE_ELEVENLABS_MODEL || 'eleven_flash_v2_5'),
-            voice_settings: {
-              stability: 0.45,
-              similarity_boost: 0.82,
-              style: 0.28,
-              use_speaker_boost: true,
-            },
-          }),
-        },
-      );
-
-      if (response.ok) {
-        const bytes = await response.arrayBuffer();
-        if (bytes.byteLength > 0 && bytes.byteLength <= 6 * 1024 * 1024) {
-          return new Response(bytes, {
+    if (voiceProviderCooling('elevenlabs')) {
+      voiceFailures.push('elevenlabs: cooling down after quota');
+    } else {
+      try {
+        const voiceId = encodeURIComponent(String(env.CHE_ELEVENLABS_VOICE_ID).trim());
+        const response = await fetch(
+          `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`,
+          {
+            method: 'POST',
             headers: {
-              'Content-Type': response.headers.get('content-type') || 'audio/mpeg',
-              'Cache-Control': 'no-store',
-              'X-CHE-Voice': 'elevenlabs-chaze',
+              'xi-api-key': String(env.ELEVENLABS_API_KEY),
+              'Content-Type': 'application/json',
             },
-          });
+            body: JSON.stringify({
+              text: input,
+              model_id: String(env.CHE_ELEVENLABS_MODEL || 'eleven_flash_v2_5'),
+              voice_settings: {
+                stability: 0.45,
+                similarity_boost: 0.82,
+                style: 0.28,
+                use_speaker_boost: true,
+              },
+            }),
+            signal: AbortSignal.timeout(8_000),
+          },
+        );
+
+        if (response.ok) {
+          const bytes = await response.arrayBuffer();
+          if (bytes.byteLength > 0 && bytes.byteLength <= 6 * 1024 * 1024) {
+            return new Response(bytes, {
+              headers: {
+                'Content-Type': response.headers.get('content-type') || 'audio/mpeg',
+                'Cache-Control': 'no-store',
+                'X-CHE-Voice': 'elevenlabs-chaze',
+              },
+            });
+          }
+        } else if (response.status === 429 || response.status === 402) {
+          markVoiceProviderCooldown('elevenlabs');
+          voiceFailures.push(`elevenlabs: ${response.status}`);
+        } else {
+          voiceFailures.push(`elevenlabs: ${response.status}`);
         }
+      } catch (error) {
+        voiceFailures.push(`elevenlabs: ${String(error?.message || error).slice(0, 80)}`);
       }
-    } catch (_) {
-      // Fall through to CHE's other voice engines.
     }
   }
 
   // Fallback 2: OpenAI neural voice using the key stored only on the server.
   // The iPhone never receives the standard API key.
   if (env.CHE_OPENAI_API_KEY) {
-    try {
-      const response = await fetch('https://api.openai.com/v1/audio/speech', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${env.CHE_OPENAI_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: String(env.CHE_OPENAI_TTS_MODEL || 'gpt-4o-mini-tts'),
-          voice: String(env.CHE_OPENAI_VOICE || 'marin'),
-          input,
-          instructions:
-            'Warm, confident, smooth, intelligent young-adult feminine voice. Natural conversational pacing. Concise and expressive, never robotic.',
-          response_format: 'mp3',
-        }),
-      });
+    if (voiceProviderCooling('openai')) {
+      voiceFailures.push('openai: cooling down after quota');
+    } else {
+      try {
+        const response = await fetch('https://api.openai.com/v1/audio/speech', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${env.CHE_OPENAI_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: String(env.CHE_OPENAI_TTS_MODEL || 'gpt-4o-mini-tts'),
+            voice: String(env.CHE_OPENAI_VOICE || 'marin'),
+            input,
+            instructions:
+              'Warm, confident, smooth, intelligent young-adult feminine voice. Natural conversational pacing. Concise and expressive, never robotic.',
+            response_format: 'mp3',
+          }),
+          signal: AbortSignal.timeout(8_000),
+        });
 
-      if (response.ok) {
-        const bytes = await response.arrayBuffer();
-        if (bytes.byteLength > 0 && bytes.byteLength <= 6 * 1024 * 1024) {
-          return new Response(bytes, {
-            headers: {
-              'Content-Type': 'audio/mpeg',
-              'Cache-Control': 'no-store',
-              'X-CHE-Voice': 'openai-neural',
-            },
-          });
+        if (response.ok) {
+          const bytes = await response.arrayBuffer();
+          if (bytes.byteLength > 0 && bytes.byteLength <= 6 * 1024 * 1024) {
+            return new Response(bytes, {
+              headers: {
+                'Content-Type': 'audio/mpeg',
+                'Cache-Control': 'no-store',
+                'X-CHE-Voice': 'openai-neural',
+              },
+            });
+          }
+        } else if (response.status === 429 || response.status === 402) {
+          markVoiceProviderCooldown('openai');
+          voiceFailures.push(`openai: ${response.status}`);
+        } else {
+          voiceFailures.push(`openai: ${response.status}`);
         }
+      } catch (error) {
+        voiceFailures.push(`openai: ${String(error?.message || error).slice(0, 80)}`);
       }
-    } catch (_) {
-      // Fall through to any custom CHE voice connector below.
     }
   }
 

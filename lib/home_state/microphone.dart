@@ -32,9 +32,11 @@ extension _CheHomeMicrophone on _CHEHomeState {
       // When CHE is in wake-word standby, tapping the mic means "wake now"
       // rather than "turn the microphone off."
       if (openConversation && cheSleeping) {
-        try {
-          await CheNativeVoice.wake();
-        } catch (_) {}
+        await _localVoice.runMicOp(() async {
+          try {
+            await CheNativeVoice.wake();
+          } catch (_) {}
+        });
 
         if (mounted) {
           _set(() {
@@ -42,11 +44,14 @@ extension _CheHomeMicrophone on _CHEHomeState {
             isListening = true;
           });
         }
+        _localVoice.goListening();
         return;
       }
 
       if (openConversation) {
-        await CheNativeVoice.stop();
+        await _localVoice.runMicOp(() async {
+          await CheNativeVoice.stop();
+        });
 
         if (mounted) {
           _set(() {
@@ -54,8 +59,12 @@ extension _CheHomeMicrophone on _CHEHomeState {
             isListening = false;
           });
         }
+        _localVoice.goIdle();
+        debugPrint('CHE voice: mic stopped');
       } else {
-        final started = await CheNativeVoice.start();
+        final started = await _localVoice.runMicOp(() async {
+          return CheNativeVoice.start();
+        });
 
         if (mounted) {
           _set(() {
@@ -64,6 +73,10 @@ extension _CheHomeMicrophone on _CHEHomeState {
             cheSleeping = !started ? cheSleeping : false;
             isListening = started;
           });
+        }
+        if (started) {
+          _localVoice.goListening();
+          debugPrint('CHE voice: mic listening');
         }
       }
       return;
@@ -287,6 +300,7 @@ extension _CheHomeMicrophone on _CHEHomeState {
       if (mounted && !_isSpeaking && isListening != true) {
         _set(() => isListening = true);
       }
+      _localVoice.goListening();
       return;
     }
 
@@ -294,11 +308,29 @@ extension _CheHomeMicrophone on _CHEHomeState {
         !openConversation ||
         _isSending ||
         _isSpeaking ||
+        speech.isListening ||
+        _localVoice.isSpeaking) {
+      return;
+    }
+
+    await _localVoice.runMicOp(() async {
+      await _startListeningUnlocked();
+    });
+  }
+
+  Future<void> _startListeningUnlocked() async {
+    if (!speechAvailable ||
+        !openConversation ||
+        _isSending ||
+        _isSpeaking ||
+        _localVoice.isSpeaking ||
         speech.isListening) {
       return;
     }
 
     _autoSentCurrentTurn = false;
+    _localVoice.goListening();
+    debugPrint('CHE voice: listening');
 
     try {
       await speech.listen(
@@ -356,7 +388,8 @@ extension _CheHomeMicrophone on _CHEHomeState {
           spokenWords = cheWakeRemainder(spokenWords) ?? spokenWords;
 
           if (spokenWords.isEmpty) {
-            // They only said the wake word again while already awake —            // acknowledge it without ending the conversation.
+            // They only said the wake word again while already awake —
+            // acknowledge it without ending the conversation.
             if (result.finalResult && !_autoSentCurrentTurn && !_isSending) {
               _autoSentCurrentTurn = true;
               if (speech.isListening) await speech.stop();
@@ -399,7 +432,7 @@ extension _CheHomeMicrophone on _CHEHomeState {
               !_autoSentCurrentTurn &&
               !_isSending &&
               cheSoundsUnfinished(spokenWords) &&
-              _heldSpeechRestarts < 3) {
+              _heldSpeechRestarts < 4) {
             _heldSpeech = spokenWords;
             _heldSpeechRestarts += 1;
             if (!kIsWeb && openConversation) {
@@ -412,6 +445,8 @@ extension _CheHomeMicrophone on _CHEHomeState {
             _autoSentCurrentTurn = true;
             _heldSpeech = '';
             _heldSpeechRestarts = 0;
+            _localVoice.goThinking();
+            debugPrint('CHE voice: thinking (final)');
 
             // iPhone Safari speech recognition is intermittent. We end the
             // web turn cleanly instead of forcing an on/off restart loop.
@@ -420,7 +455,9 @@ extension _CheHomeMicrophone on _CHEHomeState {
             }
 
             if (speech.isListening) {
-              await speech.stop();
+              await _localVoice.runMicOp(() async {
+                await speech.stop();
+              });
             }
 
             if (!mounted) return;
@@ -436,10 +473,11 @@ extension _CheHomeMicrophone on _CHEHomeState {
           cancelOnError: true,
           autoPunctuation: true,
           listenMode: stt.ListenMode.dictation,
-          // End the turn after ~1.6s of silence so replies start sooner.
+          // Longer end-of-speech tolerance so mid-thought pauses are not cut.
           // Trailing fillers ("um", "and", "so...") still hold the turn open
-          // via cheSoundsUnfinished below; one turn can still run five minutes.
-          pauseFor: const Duration(milliseconds: 1600),
+          // via cheSoundsUnfinished; one turn can still run five minutes.
+          // Partials never submit — only result.finalResult below.
+          pauseFor: const Duration(milliseconds: 2800),
           listenFor: const Duration(minutes: 5),
         ),
       );
@@ -472,6 +510,7 @@ extension _CheHomeMicrophone on _CHEHomeState {
       if (mounted && !_isSpeaking && isListening != true) {
         _set(() => isListening = true);
       }
+      _localVoice.goListening();
       return;
     }
 
@@ -480,8 +519,10 @@ extension _CheHomeMicrophone on _CHEHomeState {
     _listenRestartTimer = Timer(delay, () {
       if (!mounted ||
           !openConversation ||
+          cheSleeping ||
           _isSending ||
           _isSpeaking ||
+          _localVoice.isSpeaking ||
           speech.isListening) {
         return;
       }
