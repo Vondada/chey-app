@@ -190,6 +190,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
   private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
   private var recognitionTask: SFSpeechRecognitionTask?
   private var utteranceTimer: Timer?
+  private var keepAliveTimer: Timer?
   private var hasInputTap = false
   private var nativeVoiceRunning = false
   private var assistantSpeaking = false
@@ -522,6 +523,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
             }
 
             self.nativeVoiceRunning = true
+            self.startKeepAlive()
             do {
               try self.beginRecognitionStream()
               self.voiceStreamHandler.emit([
@@ -612,6 +614,9 @@ struct CHEAppShortcuts: AppShortcutsProvider {
 
       if error != nil && generation == self.recognitionGeneration {
         self.restartRecognitionSoon(delay: 0.35)
+      } else if result?.isFinal == true && generation == self.recognitionGeneration && !self.assistantSpeaking {
+        // Recognizer finished a segment; reopen so wake listening never stops.
+        self.restartRecognitionSoon(delay: 0.15)
       }
     }
   }
@@ -771,6 +776,19 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     }
   }
 
+  // Apple's speech recognizer stops itself after about a minute of audio, which
+  // silently kills the "Chay" wake listener. This refreshes the stream on a
+  // schedule (only while she isn't mid-reply) so the wake word keeps working
+  // the whole time the app is open. Free, no account, no Picovoice.
+  private func startKeepAlive() {
+    keepAliveTimer?.invalidate()
+    keepAliveTimer = Timer.scheduledTimer(withTimeInterval: 45, repeats: true) { [weak self] _ in
+      guard let self, self.nativeVoiceRunning else { return }
+      guard !self.assistantSpeaking else { return }
+      self.restartRecognitionSoon(delay: 0.05)
+    }
+  }
+
   private func restartRecognitionSoon(delay: TimeInterval) {
     guard nativeVoiceRunning else { return }
     recognitionGeneration += 1
@@ -793,6 +811,8 @@ struct CHEAppShortcuts: AppShortcutsProvider {
 
   private func stopNativeRecognition() {
     nativeVoiceRunning = false
+    keepAliveTimer?.invalidate()
+    keepAliveTimer = nil
     recognitionGeneration += 1
     utteranceTimer?.invalidate()
     utteranceTimer = nil
