@@ -29,17 +29,35 @@ extension _CheHomeSend on _CHEHomeState {
     final embeddedApp = cheAppForName(appName);
     if (embeddedApp != null && mounted) {
       controller.clear();
+      final isGrok = embeddedApp.name == 'Grok';
       _set(() {
         messages.add({
           'role': 'assistant',
-          'text': 'Opening ${embeddedApp.name} inside CHE, sir.',
+          'text': isGrok
+              ? 'Opening native Grok chat through CHE, sir.'
+              : 'Opening ${embeddedApp.name} inside CHE, sir.',
         });
       });
-      await Navigator.of(context).push(
-        CupertinoPageRoute<void>(
-          builder: (_) => CheEmbeddedAppScreen(app: embeddedApp),
-        ),
-      );
+      if (isGrok) {
+        await CheGrokChatScreen.open(
+          context,
+          baseUrl: cheAgentBaseUrl,
+          deviceToken: _deviceToken ?? '',
+          onOpenWeb: () {
+            Navigator.of(context).push(
+              CupertinoPageRoute<void>(
+                builder: (_) => CheEmbeddedAppScreen(app: embeddedApp),
+              ),
+            );
+          },
+        );
+      } else {
+        await Navigator.of(context).push(
+          CupertinoPageRoute<void>(
+            builder: (_) => CheEmbeddedAppScreen(app: embeddedApp),
+          ),
+        );
+      }
       return true;
     }
 
