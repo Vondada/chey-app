@@ -37,7 +37,6 @@ import 'che_plugin_manager.dart';
 import 'che_theme.dart';
 import 'che_world_hub.dart';
 import 'che_immersive_hub_shell.dart';
-import 'insights_brain_scene.dart';
 import 'devices_hub_scene.dart';
 import 'music_studio_scene.dart';
 import 'create_gallery_scene.dart';
@@ -1429,20 +1428,33 @@ OWNER AGENCY
         child: Scaffold(
           backgroundColor: kit.CheColors.bg,
           appBar: AppBar(
-            title: const Text('Memory Brain'),
+            title: const Text('Brain'),
             backgroundColor: Colors.transparent,
           ),
-          body: CheMemoryBrainRoom(
-            dots: cheBuildMemoryDots(
-              savedMemories: savedMemories,
-              memoryNotes: memoryNotes,
-              learnedPersonality: learnedPersonality,
-              learnedKnowledge: learnedKnowledge,
+          body: CheInsightsRoom(
+            brain: _brain,
+            log: _brainLog,
+            onOpenCloudLogs: _deviceToken == null
+                ? null
+                : () => Navigator.of(context).push(MaterialPageRoute<void>(
+                      builder: (_) => CheCloudLogsScreen(
+                        baseUrl: () => cheAgentBaseUrl,
+                        headers: () => _authHeaders,
+                      ),
+                    )),
+            map: CheMemoryBrainRoom(
+              dots: cheBuildMemoryDots(
+                savedMemories: savedMemories,
+                memoryNotes: memoryNotes,
+                learnedPersonality: learnedPersonality,
+                learnedKnowledge: learnedKnowledge,
+                brainLinks: brainLinks,
+                suggestions: suggestions,
+              ),
               brainLinks: brainLinks,
+              onReadAloud: (t) => speakText(t, record: false),
+              onRefresh: () => _loadAgentState(silent: true),
             ),
-            brainLinks: brainLinks,
-            onReadAloud: (t) => speakText(t, record: false),
-            onRefresh: () => _loadAgentState(silent: true),
           ),
         ),
       ),
@@ -1563,14 +1575,14 @@ OWNER AGENCY
         CheMoreItem(
           icon: Icons.dashboard_rounded,
           title: 'CHE World',
-          subtitle: 'Memory, Insights, Markets, Create, Theater…',
+          subtitle: 'Brain, Markets, Create, Theater…',
           onTap: _openVirtualOffice,
           hue: kit.CheColors.office,
         ),
         CheMoreItem(
           icon: Icons.hub_rounded,
-          title: 'Memory Brain',
-          subtitle: 'Neural constellation · unlimited thoughts',
+          title: 'Brain',
+          subtitle: 'Constellation · soul & facts · conversation log',
           onTap: _openMemoryBrain,
           hue: kit.CheColors.memory,
         ),

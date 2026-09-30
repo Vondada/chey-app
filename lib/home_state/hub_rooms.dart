@@ -18,22 +18,8 @@ extension _CheHomeHubRooms on _CHEHomeState {
     );
   }
 
-  Widget _hubMemoryTab() {
-    return CheMemoryBrainRoom(
-      dots: cheBuildMemoryDots(
-        savedMemories: savedMemories,
-        memoryNotes: memoryNotes,
-        learnedPersonality: learnedPersonality,
-        learnedKnowledge: learnedKnowledge,
-        brainLinks: brainLinks,
-      ),
-      brainLinks: brainLinks,
-      onReadAloud: (t) => speakText(t, record: false),
-      onRefresh: () => _loadAgentState(silent: true),
-    );
-  }
-
-  Widget _hubInsightsTab(bool active) {
+  /// One Brain tab: constellation map + soul/facts + log (sheets), no Map|Brain|Log split.
+  Widget _hubBrainTab(bool active) {
     return CheInsightsRoom(
       brain: _brain,
       log: _brainLog,
@@ -45,13 +31,19 @@ extension _CheHomeHubRooms on _CHEHomeState {
                   headers: () => _authHeaders,
                 ),
               )),
-      map: InsightsBrainScene(
+      map: CheMemoryBrainRoom(
         active: active,
-        learnedAboutYou: learnedPersonality,
-        learnedKnowledge: learnedKnowledge,
-        suggestions: suggestions,
-        memoryNotes: memoryNotes,
+        dots: cheBuildMemoryDots(
+          savedMemories: savedMemories,
+          memoryNotes: memoryNotes,
+          learnedPersonality: learnedPersonality,
+          learnedKnowledge: learnedKnowledge,
+          brainLinks: brainLinks,
+          suggestions: suggestions,
+        ),
         brainLinks: brainLinks,
+        onReadAloud: (t) => speakText(t, record: false),
+        onRefresh: () => _loadAgentState(silent: true),
       ),
     );
   }

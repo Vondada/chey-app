@@ -446,7 +446,8 @@ class _BrainPainter extends CustomPainter {
       Offset(345, 520),
     ];
 
-    for (final node in nodes) {
+    for (var ni = 0; ni < nodes.length; ni++) {
+      final node = nodes[ni];
       final hub = switch (node.region) {
         'Learned About You' => hubs[0],
         'Learned Knowledge' => hubs[1],
@@ -457,9 +458,12 @@ class _BrainPainter extends CustomPainter {
         _ => hubs[2],
       };
 
-      linePaint.color = node.color.withValues(
-        alpha: node.empty ? .09 : .24,
-      );
+      final breathe = (math.sin((phase + ni * 0.05) * math.pi * 2) + 1) * 0.5;
+      linePaint
+        ..color = node.color.withValues(
+          alpha: node.empty ? .09 : (.16 + .18 * breathe),
+        )
+        ..strokeWidth = node.empty ? 1.0 : (1.1 + 0.7 * breathe);
       canvas.drawLine(hub, node.position, linePaint);
 
       if (!node.empty) {
@@ -467,9 +471,9 @@ class _BrainPainter extends CustomPainter {
         final dot = Offset.lerp(hub, node.position, t)!;
         canvas.drawCircle(
           dot,
-          2.7,
+          2.2 + breathe,
           Paint()
-            ..color = node.color.withValues(alpha: .9)
+            ..color = node.color.withValues(alpha: .55 + .4 * breathe)
             ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
         );
       }
@@ -477,19 +481,34 @@ class _BrainPainter extends CustomPainter {
 
     for (var i = 0; i < nodes.length - 1; i++) {
       if (nodes[i].region != nodes[i + 1].region) continue;
-      linePaint.color = nodes[i].color.withValues(alpha: .10);
+      final breathe = (math.sin((phase + i * 0.08) * math.pi * 2) + 1) * 0.5;
+      linePaint
+        ..color = nodes[i].color.withValues(alpha: .08 + .10 * breathe)
+        ..strokeWidth = 0.8 + 0.5 * breathe;
       canvas.drawLine(nodes[i].position, nodes[i + 1].position, linePaint);
     }
 
-    // Related / cluster links (same cluster_id glow)
+    // Related / cluster links — breathe + flow
     for (var i = 0; i < nodes.length; i++) {
       final a = nodes[i];
       if (a.empty || a.clusterId == null || a.clusterId!.isEmpty) continue;
       for (var j = i + 1; j < nodes.length; j++) {
         final b = nodes[j];
         if (b.clusterId != a.clusterId) continue;
-        linePaint.color = a.color.withValues(alpha: .28);
+        final breathe = (math.sin((phase + i * 0.11 + j * 0.03) * math.pi * 2) + 1) * 0.5;
+        linePaint
+          ..color = a.color.withValues(alpha: .18 + .22 * breathe)
+          ..strokeWidth = 1.0 + 0.8 * breathe;
         canvas.drawLine(a.position, b.position, linePaint);
+        final flowT = (phase + i * 0.07) % 1.0;
+        final flow = Offset.lerp(a.position, b.position, flowT)!;
+        canvas.drawCircle(
+          flow,
+          2.0 + breathe,
+          Paint()
+            ..color = a.color.withValues(alpha: .5 + .4 * breathe)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3),
+        );
       }
     }
 

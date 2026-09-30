@@ -68,7 +68,7 @@ extension _CheHomeSend on _CHEHomeState {
       controller.clear();
       _set(() => messages.add({'role': 'assistant', 'text': noWeb}));
       await speakText(noWeb);
-      if (appName.contains('iweb')) _openAssistantHub(tab: 9);
+      if (appName.contains('iweb')) _openAssistantHub(tab: 8);
       return true;
     }
 
@@ -151,44 +151,44 @@ extension _CheHomeSend on _CHEHomeState {
   Future<bool> _handleLocalNavigation(String message) async {
     final lower = message.toLowerCase();
 
-    if (RegExp(r'\b(open|show|go to)\s+(my\s+)?memories?\b').hasMatch(lower)) {
+    if (RegExp(r'\b(open|show|go to)\s+(my\s+)?(memories?|brain|brain constellation)\b').hasMatch(lower)) {
       _openAssistantHub(tab: 0);
       return true;
     }
     if (RegExp(r'\b(open|show|go to)\s+(insights?|suggestions?|learned knowledge)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 1);
+      _openAssistantHub(tab: 0);
       return true;
     }
     if (RegExp(r'\b(open|show|go to)\s+(markets?|trading|stocks?|futures?|crypto)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 2);
+      _openAssistantHub(tab: 1);
       return true;
     }
     if (RegExp(r'\b(open|show|go to)\s+(business|cash flow|customers?|leads?|billing)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 3);
+      _openAssistantHub(tab: 2);
       return true;
     }
     if (RegExp(r'\b(open|show|go to)\s+(devices?|connections?|screen|identity)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 4);
+      _openAssistantHub(tab: 3);
       return true;
     }
     if (RegExp(r'\b(open|show|go to)\s+(music|playlists?)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 5);
+      _openAssistantHub(tab: 4);
       return true;
     }
     if (RegExp(r'\b(open|show|go to)\s+(create|innovation|creator)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 6);
+      _openAssistantHub(tab: 5);
       return true;
     }
     if (RegExp(r'\b(open|show|go to)\s+(office|team|coworkers?|partners?|workplace)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 7);
+      _openAssistantHub(tab: 6);
       return true;
     }
     if (RegExp(r'\b(open|show|go to)\s+(apps?|app portal|web apps?|services?)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 8);
+      _openAssistantHub(tab: 7);
       return true;
     }
     if (RegExp(r'\b(open|show|go to)\s+(the\s+)?(theater|theatre|cinema|movie room)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 9);
+      _openAssistantHub(tab: 8);
       return true;
     }
     if (RegExp(r'\b(set ?up|fix|open|configure)\s+(the\s+|my\s+)?wake ?word\b').hasMatch(lower)) {

@@ -429,7 +429,7 @@ extension _CheHomeMemory on _CHEHomeState {
                   Navigator.pop(sheetContext);
                   Future<void>.delayed(
                     const Duration(milliseconds: 150),
-                    () => _openAssistantHub(tab: 8),
+                    () => _openAssistantHub(tab: 7),
                   );
                 },
               ),
@@ -1074,7 +1074,7 @@ extension _CheHomeMemory on _CHEHomeState {
   }
 
   void _openAssistantHub({int tab = 0}) {
-    _selectedTab = tab < 0 ? 0 : (tab > 9 ? 9 : tab);
+    _selectedTab = tab < 0 ? 0 : (tab > 8 ? 8 : tab);
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF101821),
@@ -1086,8 +1086,7 @@ extension _CheHomeMemory on _CHEHomeState {
             initialIndex: _selectedTab,
             onIndexChanged: (index) => _selectedTab = index,
             tabs: const [
-              Tab(icon: Icon(Icons.memory_outlined), text: 'Memory'),
-              Tab(icon: Icon(Icons.auto_awesome_outlined), text: 'Insights'),
+              Tab(icon: Icon(Icons.hub_outlined), text: 'Brain'),
               Tab(icon: Icon(Icons.show_chart), text: 'Markets'),
               Tab(icon: Icon(Icons.business_center_outlined), text: 'Business'),
               Tab(icon: Icon(Icons.devices_other_outlined), text: 'Devices'),
@@ -1098,8 +1097,7 @@ extension _CheHomeMemory on _CHEHomeState {
               Tab(icon: Icon(Icons.theaters_outlined), text: 'Theater'),
             ],
             pages: [
-              (_) => _hubMemoryTab(),
-              (active) => _hubInsightsTab(active),
+              (active) => _hubBrainTab(active),
               (_) => _hubMarketsTab(),
               (_) => _hubBusinessTab(),
               (active) => _hubDevicesTab(active),
