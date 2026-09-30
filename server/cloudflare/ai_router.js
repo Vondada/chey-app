@@ -25,7 +25,6 @@ const CHE_VOICE_FIRST_POLICY = "CHE owner accessibility rule: The owner uses CHE
 // Free engines that need no account. Base URLs are OpenAI-compatible.
 export const KEYLESS_POOL = [
   { id: 'llm7', url: 'https://api.llm7.io/v1/chat/completions', modelsUrl: 'https://api.llm7.io/v1/models', defaultModel: 'default' },
-  { id: 'zerolimit', url: 'https://www.zerolimitai.com/api/v1/chat/completions', modelsUrl: '', defaultModel: 'auto' },
 ];
 const keylessModelCache = new Map();
 let keylessDiscoveredAt = 0;
@@ -63,6 +62,22 @@ export async function discoverKeylessModels(fetcher = fetch, { force = false, st
       const fast = ranked.find((id) => /flash|lite|nano|mini|small|nemo/i.test(id)) || ranked[0];
       keylessModelCache.set(engine.id, { fast, strong: ranked[0], models: ids.slice(0, 40), at: now });
     } catch (_) { /* leave the old pick in place */ }
+  }
+  // Which models Groq and Gemini offer right now (with the owner's free keys),
+  // so the extra per-model batons only include models that still exist.
+  for (const [base, url, keyName] of [
+    ['groq', 'https://api.groq.com/openai/v1/models', 'GROQ_API_KEY'],
+    ['gemini', 'https://generativelanguage.googleapis.com/v1beta/openai/models', 'GEMINI_API_KEY'],
+  ]) {
+    const key = env?.[keyName];
+    if (!key) continue;
+    try {
+      const response = await fetcher(url, { headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' }, signal: AbortSignal.timeout(4000) });
+      if (!response.ok) continue;
+      const data = await response.json();
+      const models = (Array.isArray(data?.data) ? data.data : []).map((m) => String(m?.id || '').replace(/^models\//, '')).filter(Boolean);
+      if (models.length) keylessModelCache.set(`avail:${base}`, { models, at: now });
+    } catch (_) {}
   }
   if (storage?.put) {
     try { await storage.put('keyless_models', Object.fromEntries(keylessModelCache)); } catch (_) {}
@@ -114,6 +129,9 @@ const PROVIDERS = [
     url: 'https://api.groq.com/openai/v1/chat/completions',
     fast: (env) => env.CHE_GROQ_FAST_MODEL || 'openai/gpt-oss-20b',
     strong: (env) => env.CHE_GROQ_STRONG_MODEL || 'openai/gpt-oss-120b',
+    // gpt-oss sometimes answers with a tool call or nothing; this model is
+    // the same-engine fallback for those replies.
+    alt: (env) => env.CHE_GROQ_ALT_MODEL || 'llama-3.3-70b-versatile',
   },
   {
     id: 'gemini',
@@ -122,6 +140,26 @@ const PROVIDERS = [
     fast: (env) => env.CHE_GEMINI_FAST_MODEL || 'gemini-3.5-flash-lite',
     strong: (env) => env.CHE_GEMINI_STRONG_MODEL || 'gemini-3.8-flash',
   },
+  // Extra batons: on Groq and Gemini every model has its own free limit, so
+  // each model is its own engine. Models the engine no longer lists are
+  // skipped automatically (see discoverKeylessModels).
+  ...[
+    ['groq', 'llama-3.3-70b-versatile'],
+    ['groq', 'moonshotai/kimi-k2-instruct'],
+    ['groq', 'meta-llama/llama-4-scout-17b-16e-instruct'],
+    ['groq', 'llama-3.1-8b-instant'],
+    ['gemini', 'gemini-2.5-flash'],
+    ['gemini', 'gemini-2.5-flash-lite'],
+  ].map(([base, model]) => ({
+    id: `${base}:${model.split('/').pop()}`,
+    key: base === 'groq' ? 'GROQ_API_KEY' : 'GEMINI_API_KEY',
+    url: base === 'groq'
+      ? 'https://api.groq.com/openai/v1/chat/completions'
+      : 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    extraModel: model,
+    fast: () => model,
+    strong: () => model,
+  })),
   {
     id: 'cerebras',
     key: 'CEREBRAS_API_KEY',
@@ -220,6 +258,10 @@ export function paidAllowed(env) {
 
 function providerEnabled(env, provider) {
   if (PAID_PROVIDER_IDS.has(provider.id.split(':')[0]) && !paidAllowed(env)) return false;
+  if (provider.extraModel) {
+    const listed = keylessModelCache.get(`avail:${provider.id.split(':')[0]}`)?.models;
+    if (Array.isArray(listed) && listed.length && !listed.includes(provider.extraModel)) return false;
+  }
   if (provider.keyless && provider.id.startsWith('pollinations:')) {
     const only = keylessModels(env);
     if (only && !only.includes(provider.modelName)) return false;
@@ -676,6 +718,17 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
         // once, which usually has its own separate limit, before moving on.
         // Gemini quota/429: skip the extra retry so we do not burn quota and lag chat.
         const quotaLike = error?.status === 429 || [402].includes(error?.status) || /quota|rate.?limit|billing/i.test(String(error?.message || ''));
+        // Odd reply (tool call / empty): same engine, plain chat model.
+        if (provider.alt && (error?.status === 400 || /no text|tool/i.test(String(error?.message || '')))) {
+          try {
+            const retry = await callProvider(env, provider, false, shaped.input, fetcher, provider.alt(env), office);
+            await addEstimatedUsage(env, usageStorage, provider.id, retry.usageTokens, now);
+            providerLastError.delete(provider.id);
+            noteHealth(provider.id, { ok: true, latencyMs: Date.now() - t0 });
+            used = shaped;
+            return retry.result;
+          } catch (_) { /* fall through */ }
+        }
         // Too large: retry once at half size on the same engine.
         if (error?.status === 413) {
           try {

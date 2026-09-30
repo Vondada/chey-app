@@ -276,8 +276,10 @@ test('AI router falls through free engines when Cloudflare quota is used up', as
   const second = await routeText(env, '@cf/meta/llama-3.1-8b-instruct-fp8', input, fetcher);
   assert.equal(second.response, 'From Gemini.');
   assert.equal(cfCalls, 1);
-  assert.deepEqual(hits.map((h) => h.url.includes('generativelanguage.googleapis.com')), [true]);
-  assert.equal(hits[0].model, 'gemini-3.8-flash');
+  // Resting Groq model is skipped; other Groq models (own limits) may be tried, then Gemini answers.
+  assert.ok(hits.at(-1).url.includes('generativelanguage.googleapis.com'));
+  assert.ok(!hits.some((h) => h.model === 'openai/gpt-oss-120b' || h.model === 'openai/gpt-oss-20b'));
+  assert.equal(hits.at(-1).model, 'gemini-3.8-flash');
 
   // Images never leave Cloudflare; text with no fallback keys explains itself.
   resetRouterForTests();
