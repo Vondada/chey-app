@@ -108,21 +108,6 @@ export const BUILTIN_PROVIDER_MANIFESTS = [
     streaming: true, oauth: false,
     connect_hint: 'Set CHE_OLLAMA_URL to an HTTPS URL for your own Ollama server (for example through a Cloudflare Tunnel). Optional CHE_OLLAMA_TOKEN.',
   },
-  {
-    id: 'omniroute', name: 'OmniRoute Coding', family: 'omniroute',
-    auth: { type: 'none', url_secret: 'CHE_OMNIROUTE_URL', optional_secrets: ['CHE_OMNIROUTE_KEY', 'OMNIROUTE_API_KEY'] },
-    api_base: 'env:CHE_OMNIROUTE_URL', chat_path: '/v1/chat/completions',
-    discovery: { method: 'none' }, locality: 'cloud',
-    // Deliberately advertise coding only so normal CHE chat keeps its existing
-    // router. The gateway may still be used as a last-resort fallback.
-    capabilities: ['coding'],
-    cost_class: 'free', latency_class: 'fast', context_tokens: 128000,
-    // OmniRoute can fan out to multiple upstream providers, so personal/private
-    // CHE memory is withheld by default. The owner can explicitly relax this.
-    privacy: { retention: 'provider_policy', trains_on_data: false, default_data_classes: ['public'] },
-    streaming: true, oauth: false,
-    connect_hint: 'Set CHE_OMNIROUTE_URL to an HTTPS-reachable OmniRoute server. Optional CHE_OMNIROUTE_KEY. Keep OmniRoute freeAccessPolicy=strict for CHE\'s $0 mode.',
-  },
   ...[
     ['groq', 'Groq', 'GROQ_API_KEY', 'https://api.groq.com/openai/v1', 'instant'],
     ['cerebras', 'Cerebras', 'CEREBRAS_API_KEY', 'https://api.cerebras.ai/v1', 'instant'],

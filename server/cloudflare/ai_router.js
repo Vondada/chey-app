@@ -125,27 +125,6 @@ const PROVIDERS = [
     strong: (env) => env.CHE_OLLAMA_STRONG_MODEL || env.CHE_OLLAMA_MODEL || 'llama3.3',
   },
   {
-    // OmniRoute is a coding-specialist gateway. CHE only enables it when the
-    // owner supplies an HTTPS-reachable OmniRoute endpoint; localhost cannot
-    // be reached from a Cloudflare Worker.
-    id: 'omniroute',
-    gateway: true,
-    key: 'CHE_OMNIROUTE_KEY',
-    altKeys: ['OMNIROUTE_API_KEY'],
-    urlFrom: (env) => {
-      try {
-        const url = new URL(String(env.CHE_OMNIROUTE_URL || '').trim());
-        if (url.protocol !== 'https:') return '';
-        const base = url.toString().replace(/\/+$/, '');
-        if (/\/chat\/completions$/i.test(base)) return base;
-        if (/\/v1$/i.test(base)) return `${base}/chat/completions`;
-        return `${base}/v1/chat/completions`;
-      } catch (_) { return ''; }
-    },
-    fast: (env) => env.CHE_OMNIROUTE_MODEL || 'auto',
-    strong: (env) => env.CHE_OMNIROUTE_STRONG_MODEL || 'auto/smart',
-  },
-  {
     id: 'groq',
     key: 'GROQ_API_KEY',
     url: 'https://api.groq.com/openai/v1/chat/completions',
@@ -340,7 +319,7 @@ function summarizeOlderMessages(messages, maxChars = 1400) {
 // Trim oversized prompts per engine instead of letting them 413: keep the
 // start of each system message (identity + rules come first), and the most
 // recent turns, within a character budget.
-const INPUT_CHAR_BUDGET = { groq: 8000, cerebras: 22000, pollinations: 18000, sambanova: 30000, mistral: 60000, github: 24000, huggingface: 16000, openrouter: 40000, omniroute: 60000 };
+const INPUT_CHAR_BUDGET = { groq: 8000, cerebras: 22000, pollinations: 18000, sambanova: 30000, mistral: 60000, github: 24000, huggingface: 16000, openrouter: 40000 };
 
 export function fitToBudget(input, maxChars) {
   const messages = Array.isArray(input?.messages) ? input.messages : [];
@@ -700,11 +679,6 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   const modelFor = (provider) => {
     const baseId = provider.id.split(':')[0];
     if (needs.model && needs.provider === baseId) return needs.model;
-    if (baseId === 'omniroute') {
-      if (needs.capability === 'coding') return env.CHE_OMNIROUTE_CODING_MODEL || 'auto/coding';
-      if (needs.strongest || needs.capability === 'deep_reasoning') return env.CHE_OMNIROUTE_STRONG_MODEL || 'auto/smart';
-      return env.CHE_OMNIROUTE_MODEL || 'auto';
-    }
     if (provider.keyless) return '';
     return pickCatalogModel(snapshot, baseId, needs) || '';
   };

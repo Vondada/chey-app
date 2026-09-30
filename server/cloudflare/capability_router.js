@@ -15,8 +15,8 @@ const LATENCY_RANK = { instant: 0, fast: 1, medium: 2, slow: 3 };
 // tie-breaker, never a hard-coded single-model dependency.
 const STRENGTH = {
   openai: 9, xai: 9, anthropic: 9, gemini: 8, huggingface: 6, groq: 6,
-  cerebras: 6, mistral: 6, github: 7, sambanova: 6, openrouter: 5,
-  omniroute: 10, ollama: 5, cloudflare: 3,
+  cerebras: 6, mistral: 6, github: 7, sambanova: 6, openrouter: 8,
+  ollama: 5, cloudflare: 3,
 };
 
 function contentText(content) {
@@ -184,6 +184,6 @@ export function planPairedJob(objective, connected = [], requestedFamilies = [])
 export function providerLabel(id) {
   return {
     openai: 'OpenAI', xai: 'Grok', gemini: 'Gemini', anthropic: 'Claude',
-    huggingface: 'Llama', omniroute: 'OmniRoute', ollama: 'Local', cloudflare: 'Cloudflare', groq: 'Groq',
+    huggingface: 'Llama', ollama: 'Local', cloudflare: 'Cloudflare', groq: 'Groq',
   }[id] || String(id || 'Model');
 }
