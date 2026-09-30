@@ -370,8 +370,11 @@ function isStrongModel(model) {
 }
 
 async function callProvider(env, provider, strongModel, input, fetcher, modelOverride = '', office = null) {
+  // Fail fast and hand the baton on: a slow engine gets 12s (20s for strong
+  // models) instead of 45s, so one stalled engine can't freeze a reply.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 45_000);
+  const limit = Number(env.CHE_PROVIDER_TIMEOUT_MS) || (strongModel ? 20_000 : 12_000);
+  const timer = setTimeout(() => controller.abort(), limit);
   const key = provider.keyless ? '' : providerKey(env, provider);
   try {
     const response = await fetcher(providerUrl(env, provider), {

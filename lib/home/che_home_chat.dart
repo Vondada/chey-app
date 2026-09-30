@@ -110,9 +110,13 @@ class CheConversationBar extends StatelessWidget {
 }
 
 class CheHomeUserBubble extends StatelessWidget {
-  const CheHomeUserBubble({super.key, required this.text, this.onLongPress});
+  const CheHomeUserBubble({super.key, required this.text, this.onLongPress, this.animate = true});
   final String text;
   final VoidCallback? onLongPress;
+
+  /// Pop-in only for a just-sent message, not every time an old one scrolls
+  /// back into view.
+  final bool animate;
 
   @override
   Widget build(BuildContext context) {
@@ -124,7 +128,7 @@ class CheHomeUserBubble extends StatelessWidget {
         child: ConstrainedBox(
           constraints: BoxConstraints(maxWidth: maxW),
           child: TweenAnimationBuilder<double>(
-            tween: Tween(begin: 0.92, end: 1),
+            tween: Tween(begin: animate ? 0.92 : 1, end: 1),
             duration: CheMotion.d(context, CheMotion.base),
             curve: CheMotion.spring,
             builder: (_, s, child) => Transform.scale(scale: s, alignment: Alignment.bottomRight, child: child),

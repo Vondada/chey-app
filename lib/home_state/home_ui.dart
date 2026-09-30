@@ -6,7 +6,11 @@ extension _CheHomeUi on _CHEHomeState {
     final item = messages[index];
     final text = item['text'] ?? '';
     if (item['role'] == 'user') {
-      return CheHomeUserBubble(text: text, onLongPress: () => _showMessageActions(index));
+      return CheHomeUserBubble(
+        text: text,
+        animate: index >= messages.length - 2,
+        onLongPress: () => _showMessageActions(index),
+      );
     }
     final isLiveReply = _isSending && index == messages.length - 1 && _replyStartedAt != null;
     final display = CheUpdateProposal.stripBlocks(
@@ -34,6 +38,9 @@ extension _CheHomeUi on _CHEHomeState {
               // Images CHE made on her own server need the paired-device token.
               headers: item['media_url']!.startsWith(cheAgentBaseUrl) ? _authHeaders : null,
               fit: BoxFit.cover,
+              // Decode at screen size, not full resolution, so images don't
+              // stall scrolling.
+              cacheWidth: (MediaQuery.sizeOf(context).width * MediaQuery.devicePixelRatioOf(context)).round(),
               errorBuilder: (_, _, _) => const Padding(
                 padding: EdgeInsets.all(12),
                 child: Text('Generated image could not be displayed.'),

@@ -429,7 +429,30 @@ class CheOrb extends StatefulWidget {
 }
 
 class _CheOrbState extends State<CheOrb> with SingleTickerProviderStateMixin {
-  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(seconds: 3))..repeat();
+  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(seconds: 3));
+
+  // Only a live orb (the presence orb, or one on a reply being written)
+  // animates. The small orbs beside finished messages are painted once, so a
+  // long chat doesn't run dozens of animations while scrolling.
+  bool get _animate => widget.state != null || widget.active;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_animate) _c.repeat();
+  }
+
+  @override
+  void didUpdateWidget(covariant CheOrb oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_animate && !_c.isAnimating) {
+      _c.repeat();
+    } else if (!_animate && _c.isAnimating) {
+      _c.stop();
+      _c.value = 0.25;
+    }
+  }
+
   @override
   void dispose() {
     _c.dispose();
@@ -441,13 +464,14 @@ class _CheOrbState extends State<CheOrb> with SingleTickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final s = widget.size;
-    return SizedBox(
+    return RepaintBoundary(
+      child: SizedBox(
       width: s,
       height: s,
       child: AnimatedBuilder(
         animation: _c,
         builder: (context, _) {
-          final t = CheMotion.reduced(context) ? 0.25 : _c.value;
+          final t = CheMotion.reduced(context) || !_animate ? 0.25 : _c.value;
           final st = _state;
           final base = switch (st) {
             CheOrbState.sleeping => CheColors.textFaint,
@@ -502,6 +526,7 @@ class _CheOrbState extends State<CheOrb> with SingleTickerProviderStateMixin {
             ),
           );
         },
+      ),
       ),
     );
   }
