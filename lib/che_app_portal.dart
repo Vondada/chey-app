@@ -34,6 +34,7 @@ const List<CheAppDefinition> cheAppCatalog = [
   CheAppDefinition(name: 'GitHub', webUrl: 'https://github.com', icon: Icons.code, aliases: ['github', 'git hub']),
   CheAppDefinition(name: 'TradingView', webUrl: 'https://www.tradingview.com', icon: Icons.show_chart, aliases: ['tradingview', 'trading view']),
   CheAppDefinition(name: 'NinjaTrader', webUrl: 'https://ninjatrader.com', icon: Icons.candlestick_chart, aliases: ['ninjatrader', 'ninja trader']),
+  CheAppDefinition(name: 'TradeSea', webUrl: 'https://app.tradesea.ai/', icon: Icons.ssid_chart, aliases: ['tradesea', 'trade sea', 'trade sea ai']),
   // Web versions CHE can use when a phone app can't be controlled directly.
   CheAppDefinition(name: 'Gmail', webUrl: 'https://mail.google.com', icon: Icons.mail_outline, aliases: ['gmail', 'google mail']),
   CheAppDefinition(name: 'Outlook', webUrl: 'https://outlook.live.com/mail', icon: Icons.mark_email_unread_outlined, aliases: ['outlook', 'hotmail']),
@@ -104,6 +105,12 @@ CheAppDefinition? cheAppForName(String input) {
     if (app.aliases.any(mentions)) return app;
   }
   return null;
+}
+
+/// True when [url] is on TradeSea (app.tradesea.ai or sibling tradesea.ai hosts).
+bool cheIsTradeSeaUrl(String url) {
+  final host = Uri.tryParse(url)?.host.toLowerCase() ?? '';
+  return host.contains('tradesea.ai');
 }
 
 /// Phone apps with no usable web version. CHE says so plainly instead of
