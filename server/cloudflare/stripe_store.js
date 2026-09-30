@@ -1,8 +1,12 @@
 // CHE Studio store: Stripe products, payment links and sales, owner-approved.
 //
+// Secrets (names only): STRIPE_SECRET_KEY, STRIPE_PUBLISHABLE_KEY, STRIPE_WEBHOOK_SECRET
+// Pattern matches Twilio: Worker secrets + Plugins UI; never echo secret values (sk_/whsec_).
+//
 // Safety model:
 // - Uses STRIPE_SECRET_KEY (ideally a restricted key: Products/Prices/Payment
 //   Links write, Charges/Balance/Checkout read). The key never leaves the Worker.
+// - STRIPE_PUBLISHABLE_KEY (pk_) may be returned to the paired device for client Stripe.js.
 // - Nothing is created in Stripe until the owner approves a proposal in the app.
 // - There is no refund, transfer, payout or spend code here at all.
 // - Every created item returns Stripe's own IDs and URL as a receipt; nothing
@@ -42,6 +46,26 @@ export function stripeMode(env) {
   if (/^(sk|rk)_test_/.test(key)) return 'test';
   return 'unknown';
 }
+
+/** Secret key is required for connected. Publishable + webhook are reported separately. */
+export function stripeConfigured(env) {
+  return stripeMode(env) !== 'not_connected';
+}
+
+export function stripeMissingSecrets(env) {
+  const missing = [];
+  if (!String(env?.STRIPE_SECRET_KEY || '').trim()) missing.push('STRIPE_SECRET_KEY');
+  if (!String(env?.STRIPE_PUBLISHABLE_KEY || '').trim()) missing.push('STRIPE_PUBLISHABLE_KEY');
+  if (!String(env?.STRIPE_WEBHOOK_SECRET || '').trim()) missing.push('STRIPE_WEBHOOK_SECRET');
+  return missing;
+}
+
+export const STRIPE_WEBHOOK_URL = 'https://chey-app.henryjavoni.workers.dev/api/stripe/webhook';
+export const STRIPE_SECRET_NAMES = [
+  'STRIPE_SECRET_KEY',
+  'STRIPE_PUBLISHABLE_KEY',
+  'STRIPE_WEBHOOK_SECRET',
+];
 
 // Stripe expects form encoding with bracketed nested keys.
 export function formEncode(params, prefix = '') {
@@ -110,15 +134,30 @@ function list(data) {
 
 export function storeStatus(env, data) {
   const proposals = list(data);
+  const missing = stripeMissingSecrets(env);
+  const connected = stripeConfigured(env);
+  const publishable = Boolean(String(env?.STRIPE_PUBLISHABLE_KEY || '').trim());
+  const webhook = Boolean(String(env?.STRIPE_WEBHOOK_SECRET || '').trim());
   return {
     mode: stripeMode(env),
-    connected: stripeMode(env) !== 'not_connected',
+    connected,
+    ready: connected,
+    // Publishable key is client-safe (pk_); expose only when present so Flutter/Plugins can use Stripe.js-style flows. Never expose sk_/rk_/whsec_.
+    publishable_key: publishable ? String(env.STRIPE_PUBLISHABLE_KEY).trim() : '',
+    publishable_configured: publishable,
+    webhook_configured: webhook,
+    missing_secrets: missing,
+    secret_names: STRIPE_SECRET_NAMES,
+    inbound_webhook: STRIPE_WEBHOOK_URL,
     pending: proposals.filter((p) => p.status === 'pending').length,
     live_products: proposals.filter((p) => p.status === 'approved').length,
+    connect_hint: 'Set STRIPE_SECRET_KEY, STRIPE_PUBLISHABLE_KEY, STRIPE_WEBHOOK_SECRET via wrangler secret put. Paste keys in Plugins → Stripe (CHE). See docs/STRIPE_CHE.md.',
     rules: [
+      'Set secrets with wrangler secret put (never commit values). Paste names/values only into the Worker or Plugins connect flow — never into git.',
       'Nothing is created in Stripe until you approve it.',
       'CHE cannot issue refunds, move money or spend.',
-      'Sales and balances come straight from Stripe.',
+      'Sales and balances come straight from Stripe (API + webhook).',
+      'Dashboard webhook: POST ' + STRIPE_WEBHOOK_URL + ' events charge.succeeded, charge.refunded.',
     ],
   };
 }

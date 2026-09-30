@@ -96,7 +96,7 @@ import {
   twilioStatus, sendSms, sendSmsBulk, confirmBulkJob, createBulkDraft,
   handleInboundSms, twilioConfigured, twilioMissingSecrets,
 } from './twilio_sms.js';
-import { approveProposal, proposeProduct, rejectProposal, salesSummary, storeStatus } from './stripe_store.js';
+import { approveProposal, proposeProduct, rejectProposal, salesSummary, storeStatus, stripeConfigured, stripeMissingSecrets } from './stripe_store.js';
 import {
   addLead, approveProposal as approveDealProposal, buildBrief, checkPaid, createPaymentLink, draftProposal, findDeal, markStage, pipelineSummary,
 } from './pipeline.js';
@@ -1215,6 +1215,23 @@ function visiblePlugins(env, state) {
     missing_secrets: twilioMissingSecrets(env),
     connect_hint: 'Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER via wrangler secret put. See docs/TWILIO_CHE.md.',
   };
+  const stripeReady = stripeConfigured(env);
+  const stripeCard = {
+    id: 'stripe_payments',
+    name: 'Stripe (CHE)',
+    description: 'Owner-approved products and payment links. Sage reads sales. Secrets: STRIPE_SECRET_KEY, STRIPE_PUBLISHABLE_KEY, STRIPE_WEBHOOK_SECRET.',
+    mode: 'action',
+    capabilities: ['payments', 'stripe', 'store'],
+    ui_url: '',
+    ready: stripeReady,
+    enabled: state?.stripe_payments === true || stripeReady,
+    requires_confirmation: true,
+    toggleable: true,
+    kind: 'connector',
+    security: 'Worker secrets only • owner gate on create • no refunds/payouts/transfers • webhook signed',
+    missing_secrets: stripeMissingSecrets(env),
+    connect_hint: 'Paste STRIPE_SECRET_KEY, STRIPE_PUBLISHABLE_KEY, STRIPE_WEBHOOK_SECRET via wrangler secret put. Webhook POST /api/stripe/webhook. See docs/STRIPE_CHE.md.',
+  };
   const connectors = pluginCatalog(env).map((p) => ({
     id: p.id, name: p.name, description: p.description, mode: p.mode,
     capabilities: p.capabilities,
@@ -1226,13 +1243,17 @@ function visiblePlugins(env, state) {
     kind: 'connector',
     security: 'Server allow-list • HTTPS only • secrets stay server-side',
   }));
-  // Always surface Twilio SMS for CHE (builtin connector).
-  const withTwilio = [twilioCard, ...connectors.filter((c) => c.id !== 'twilio_sms')];
+  // Always surface Stripe + Twilio SMS for CHE (builtin connectors).
+  const builtins = [stripeCard, twilioCard];
+  const withBuiltins = [
+    ...builtins,
+    ...connectors.filter((c) => c.id !== 'twilio_sms' && c.id !== 'stripe_payments'),
+  ];
   // Day-one defaults when CHE_PLUGIN_CATALOG is unset: keyless skill plugins
   // (Weather, Crypto, Wikipedia). Listed read-only; install/enable them from
   // Skill plugins on the phone — not toggled as connectors here.
-  if (connectors.length) return withTwilio;
-  return [twilioCard, ...pluginManifests(env).map((m) => ({
+  if (connectors.length) return withBuiltins;
+  return [...builtins, ...pluginManifests(env).map((m) => ({
     id: m.id,
     name: m.name,
     description: m.description,

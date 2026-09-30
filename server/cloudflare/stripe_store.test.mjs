@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  approveProposal, assertStripeCallAllowed, formEncode, proposeProduct, rejectProposal, salesSummary, storeStatus, stripeMode, validateProposal,
+  approveProposal, assertStripeCallAllowed, formEncode, proposeProduct, rejectProposal, salesSummary, storeStatus, stripeConfigured, stripeMissingSecrets, stripeMode, validateProposal,
 } from './stripe_store.js';
 
 test('stripe mode reads the key type without exposing it', () => {
@@ -10,6 +10,32 @@ test('stripe mode reads the key type without exposing it', () => {
   assert.equal(stripeMode({ STRIPE_SECRET_KEY: 'rk_live_abc' }), 'live');
   const status = storeStatus({ STRIPE_SECRET_KEY: 'rk_test_abc' }, {});
   assert.equal(JSON.stringify(status).includes('rk_test'), false);
+  assert.equal(status.connected, true);
+  assert.deepEqual(status.missing_secrets, ['STRIPE_PUBLISHABLE_KEY', 'STRIPE_WEBHOOK_SECRET']);
+  assert.equal(status.publishable_configured, false);
+  assert.equal(status.webhook_configured, false);
+  assert.match(status.inbound_webhook, /\/api\/stripe\/webhook$/);
+});
+
+test('missing secrets and publishable pk_ surface without leaking sk_/whsec_', () => {
+  assert.equal(stripeConfigured({}), false);
+  assert.deepEqual(stripeMissingSecrets({}), [
+    'STRIPE_SECRET_KEY', 'STRIPE_PUBLISHABLE_KEY', 'STRIPE_WEBHOOK_SECRET',
+  ]);
+  const env = {
+    STRIPE_SECRET_KEY: 'sk_test_secret_never_echo',
+    STRIPE_PUBLISHABLE_KEY: 'pk_test_public_ok',
+    STRIPE_WEBHOOK_SECRET: 'whsec_never_echo',
+  };
+  assert.equal(stripeConfigured(env), true);
+  assert.deepEqual(stripeMissingSecrets(env), []);
+  const status = storeStatus(env, {});
+  assert.equal(status.publishable_key, 'pk_test_public_ok');
+  assert.equal(status.publishable_configured, true);
+  assert.equal(status.webhook_configured, true);
+  const blob = JSON.stringify(status);
+  assert.equal(blob.includes('sk_test_secret_never_echo'), false);
+  assert.equal(blob.includes('whsec_never_echo'), false);
 });
 
 test('form encoding handles nested Stripe params', () => {

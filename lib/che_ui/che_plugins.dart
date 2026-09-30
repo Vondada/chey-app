@@ -723,6 +723,18 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
     return Column(
       children: [
         CheFeatureCard(
+          icon: Icons.payments_outlined,
+          hue: const Color(0xFF635BFF),
+          title: 'Stripe (CHE)',
+          body: 'Paste Stripe keys on the Worker (STRIPE_SECRET_KEY, STRIPE_PUBLISHABLE_KEY, STRIPE_WEBHOOK_SECRET). Owner-approved payment links only.',
+          onTap: widget.onRunPrompt == null
+              ? null
+              : () => _runPrompt(
+                    'Explain how to connect Stripe for CHE: paste STRIPE_SECRET_KEY, STRIPE_PUBLISHABLE_KEY, and STRIPE_WEBHOOK_SECRET with wrangler secret put. Give the Dashboard webhook URL https://chey-app.henryjavoni.workers.dev/api/stripe/webhook for charge.succeeded and charge.refunded. Check GET /api/stripe/status and report missing_secrets names only — never echo sk_/whsec_ values. Remind me nothing is created until I approve, and CHE cannot refund or payout.',
+                  ),
+        ),
+        const SizedBox(height: CheSpace.md),
+        CheFeatureCard(
           icon: Icons.sms_outlined,
           hue: const Color(0xFFF22F46),
           title: 'Twilio SMS (CHE)',

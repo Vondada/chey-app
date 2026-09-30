@@ -48,7 +48,15 @@ Optional / not set yet (owner):
 # printf '%s' 'Vondada/chey-app' | npx wrangler secret put CHE_GITHUB_REPO
 ```
 
-Do **not** set `STRIPE_SECRET_KEY` or `STRIPE_WEBHOOK_SECRET` until the owner confirms Stripe charges.
+Stripe (CHE) — names only; see `docs/STRIPE_CHE.md` (owner confirmed connect):
+
+```bash
+# npx wrangler secret put STRIPE_SECRET_KEY
+# npx wrangler secret put STRIPE_PUBLISHABLE_KEY
+# npx wrangler secret put STRIPE_WEBHOOK_SECRET
+```
+
+Webhook: `https://chey-app.henryjavoni.workers.dev/api/stripe/webhook` (`charge.succeeded`, `charge.refunded`).
 
 Twilio SMS (CHE) — names only; see `docs/TWILIO_CHE.md`:
 

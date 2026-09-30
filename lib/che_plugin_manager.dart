@@ -97,6 +97,7 @@ class _ChePluginManagerState extends State<ChePluginManager> {
   }
 
   String? twilioStatusLine;
+  String? stripeStatusLine;
 
   Future<void> testTwilio() async {
     setState(() { busyId = 'twilio_sms'; error = null; twilioStatusLine = null; });
@@ -126,6 +127,63 @@ class _ChePluginManagerState extends State<ChePluginManager> {
     }
   }
 
+  Future<void> testStripe() async {
+    setState(() { busyId = 'stripe_payments'; error = null; stripeStatusLine = null; });
+    try {
+      final response = await http.get(
+        Uri.parse('${widget.baseUrl}/api/stripe/status'),
+        headers: headers,
+      ).timeout(const Duration(seconds: 12));
+      if (!mounted) return;
+      final data = jsonDecode(response.body);
+      if (data is! Map) throw Exception('Bad status response.');
+      final connected = data['connected'] == true;
+      final missing = (data['missing_secrets'] as List? ?? const []).map((e) => e.toString()).join(', ');
+      final mode = data['mode']?.toString() ?? 'unknown';
+      final webhook = data['webhook_configured'] == true;
+      setState(() {
+        busyId = null;
+        stripeStatusLine = connected
+            ? 'Stripe connected for CHE (mode: $mode; secret values never shown). Webhook secret: ${webhook ? 'set' : 'missing — paste STRIPE_WEBHOOK_SECRET after Dashboard webhook'}.'
+            : 'Not connected. Paste via wrangler secret put: ${missing.isEmpty ? 'STRIPE_SECRET_KEY, STRIPE_PUBLISHABLE_KEY, STRIPE_WEBHOOK_SECRET' : missing}. See docs/STRIPE_CHE.md.';
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          busyId = null;
+          error = e.toString().replaceFirst('Exception: ', '');
+        });
+      }
+    }
+  }
+
+  Future<void> showStripePasteHint() async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Paste Stripe keys'),
+        content: const SingleChildScrollView(
+          child: Text(
+            'Keys stay on the Worker — never commit them.\n\n'
+            'From server/cloudflare (Node 22+):\n'
+            '  npx wrangler secret put STRIPE_SECRET_KEY\n'
+            '  npx wrangler secret put STRIPE_PUBLISHABLE_KEY\n'
+            '  npx wrangler secret put STRIPE_WEBHOOK_SECRET\n\n'
+            'Dashboard → Developers → Webhooks → Add endpoint:\n'
+            '  https://chey-app.henryjavoni.workers.dev/api/stripe/webhook\n'
+            'Events: charge.succeeded, charge.refunded\n'
+            'Copy Signing secret → STRIPE_WEBHOOK_SECRET.\n\n'
+            'Then tap Test connection. See docs/STRIPE_CHE.md.',
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK')),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -139,6 +197,7 @@ class _ChePluginManagerState extends State<ChePluginManager> {
             const SizedBox(height: 12),
             if (error != null) Text(error!, style: const TextStyle(color: Colors.orangeAccent)),
             if (twilioStatusLine != null) Text(twilioStatusLine!, style: const TextStyle(color: Colors.lightBlueAccent)),
+            if (stripeStatusLine != null) Text(stripeStatusLine!, style: const TextStyle(color: Colors.lightBlueAccent)),
             if (loading) const Center(child: CircularProgressIndicator()),
             if (!loading && plugins.isEmpty)
               const ListTile(
@@ -205,6 +264,34 @@ class _ChePluginManagerState extends State<ChePluginManager> {
                           onPressed: busyId == null ? testTwilio : null,
                           icon: Icon(busyId == 'twilio_sms' ? Icons.hourglass_top : Icons.health_and_safety_outlined),
                           label: Text(busyId == 'twilio_sms' ? 'TESTING…' : 'TEST CONNECTION'),
+                        ),
+                      ),
+                    ],
+                    if (plugin['id']?.toString() == 'stripe_payments') ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                        child: Text(
+                          plugin['connect_hint']?.toString() ??
+                              'Paste STRIPE_SECRET_KEY, STRIPE_PUBLISHABLE_KEY, STRIPE_WEBHOOK_SECRET with wrangler secret put. Values never leave the Worker. See docs/STRIPE_CHE.md.',
+                          style: const TextStyle(fontSize: 12, color: Colors.white70),
+                        ),
+                      ),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Wrap(
+                          spacing: 8,
+                          children: [
+                            TextButton.icon(
+                              onPressed: busyId == null ? showStripePasteHint : null,
+                              icon: const Icon(Icons.content_paste_go_outlined),
+                              label: const Text('PASTE KEYS'),
+                            ),
+                            TextButton.icon(
+                              onPressed: busyId == null ? testStripe : null,
+                              icon: Icon(busyId == 'stripe_payments' ? Icons.hourglass_top : Icons.health_and_safety_outlined),
+                              label: Text(busyId == 'stripe_payments' ? 'TESTING…' : 'TEST CONNECTION'),
+                            ),
+                          ],
                         ),
                       ),
                     ],
