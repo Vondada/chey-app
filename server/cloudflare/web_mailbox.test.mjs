@@ -12,7 +12,7 @@ test('Flagstaff 369: any AI posts and reads with the secret link, no account', a
   const s = store();
   const code = await mailboxCode(s);
   const link = mailboxLink('https://che.example', code);
-  assert.match(link, /\/flagstaff369\/[a-z0-9]{24}$/);
+  assert.match(link, /\/flagstaff\/[a-z0-9]{8}$/);
   const posted = await handleWebMailbox(new Request(`${link}?from=ChatGPT&text=${encodeURIComponent('Hi CHE, try caching voices.')}`), s);
   assert.equal(posted.status, 200);
   assert.match(await posted.text(), /SENT[\s\S]*chatgpt → che: Hi CHE, try caching voices\./);
@@ -50,4 +50,15 @@ test('lock hands back the session and wipes the board; the same link works again
   assert.equal(same, code, 'the link survives lock/unlock');
   assert.equal((await readWebMail(s)).length, 0);
   assert.equal((await handleWebMailbox(new Request(`https://x/flagstaff369/${same}`), s)).status, 200);
+});
+
+test('locking keeps a private archive of the full session', async () => {
+  const { lockMailbox, readArchive } = await import('./web_mailbox.js');
+  const s = store();
+  const code = await mailboxCode(s);
+  await handleWebMailbox(new Request(`https://x/flagstaff/${code}?from=chatgpt&text=hello%20che`), s);
+  await lockMailbox(s);
+  const archive = await readArchive(s);
+  assert.equal(archive.length, 1);
+  assert.equal(archive[0].messages[0].text, 'hello che');
 });

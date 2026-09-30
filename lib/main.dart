@@ -1674,8 +1674,8 @@ OWNER AGENCY
       items: [
         CheMoreItem(
           icon: Icons.markunread_mailbox_rounded,
-          title: 'Keys & Mailbox',
-          subtitle: 'Letters from your AIs · add or fix free keys',
+          title: 'Mailbox & Flagstaff',
+          subtitle: 'AI conversations · archive · letters · keys',
           onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
             builder: (_) => CheMailboxScreen(
               baseUrl: cheAgentBaseUrl,
@@ -1841,6 +1841,17 @@ OWNER AGENCY
                 ),
               ),
               actions: [
+                IconButton(
+                  tooltip: 'Mailbox and Flagstaff',
+                  icon: const Icon(Icons.markunread_mailbox_rounded),
+                  onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                    builder: (_) => CheMailboxScreen(
+                      baseUrl: cheAgentBaseUrl,
+                      headers: () => _authHeaders,
+                      onSpeak: (text) => unawaited(speakText(text, record: false)),
+                    ),
+                  )),
+                ),
                 IconButton(
                   onPressed: () => unawaited(_toggleVoiceReplies()),
                   icon: Icon(

@@ -36,6 +36,7 @@ import { prepareSelfUpdate } from './self_development.js';
 import { KEY_PROVIDERS, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { consultEngine, consultIntent, shareIntent, speakConsult } from './ai_consult.js';
+import { readArchive as flagstaffArchive } from './web_mailbox.js';
 import { handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { unseenReplies, listThreads, mailboxIntent, readThread, sendMail, speakThreads } from './mailbox.js';
@@ -2945,6 +2946,29 @@ export class CheState extends DurableObject {
       if (path === '/api/library' && request.method === 'DELETE') {
         const id = new URL(request.url).searchParams.get('id') || body.id;
         return json({ ok: new CheLibrary(this.ctx.storage).remove(String(id || '')) });
+      }
+
+      // ─── Flagstaff 369 for the owner's app: live board, link, archive ──
+      if (path === '/api/flagstaff' && request.method === 'GET') {
+        const origin = new URL(request.url).origin;
+        return json({
+          open: await flagstaffOpen(this.ctx.storage),
+          link: mailboxLink(origin, await mailboxCode(this.ctx.storage)),
+          messages: await readWebMail(this.ctx.storage, 300),
+        });
+      }
+      if (path === '/api/flagstaff' && request.method === 'POST') {
+        const action = String(body.action || '');
+        if (action === 'open') await openMailbox(this.ctx.storage);
+        else if (action === 'lock') {
+          const messages = await lockMailbox(this.ctx.storage);
+          if (messages.length) new CheLibrary(this.ctx.storage).add({ title: `Flagstaff 369 session ${new Date().toISOString().slice(0, 10)}`, text: flagstaffTranscript(messages), source: 'flagstaff369' });
+        } else if (action === 'new-link') await rotateMailboxCode(this.ctx.storage);
+        else return json({ detail: 'Use open, lock or new-link.' }, 400);
+        return json({ ok: true, open: await flagstaffOpen(this.ctx.storage), link: mailboxLink(new URL(request.url).origin, await mailboxCode(this.ctx.storage)) });
+      }
+      if (path === '/api/flagstaff/archive' && request.method === 'GET') {
+        return json({ sessions: (await flagstaffArchive(this.ctx.storage)).slice().reverse() });
       }
 
       // ─── AI mailbox (GitHub che-mailbox branch) ───────────────────────

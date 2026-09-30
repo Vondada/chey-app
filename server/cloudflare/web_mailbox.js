@@ -13,6 +13,12 @@ const BOX_KEY = 'web_mailbox';
 const MAX_MESSAGES = 300;
 const MAX_PER_HOUR = 60;
 const OPEN_KEY = 'web_mailbox_open';
+const ARCHIVE_KEY = 'web_mailbox_archive';
+
+export async function readArchive(storage) {
+  const list = (await storage.get(ARCHIVE_KEY)) || [];
+  return Array.isArray(list) ? list : [];
+}
 
 export async function isOpen(storage) {
   return (await storage.get(OPEN_KEY)) !== false;
@@ -30,6 +36,12 @@ export async function lockMailbox(storage) {
   const messages = await readWebMail(storage, MAX_MESSAGES);
   await storage.put(OPEN_KEY, false);
   await storage.put(BOX_KEY, []);
+  if (messages.length) {
+    // Private archive box: every session's full transcript, owner-only.
+    const archive = (await storage.get(ARCHIVE_KEY)) || [];
+    archive.push({ id: crypto.randomUUID(), locked_at: new Date().toISOString(), count: messages.length, messages });
+    await storage.put(ARCHIVE_KEY, archive.slice(-100));
+  }
   return messages;
 }
 
@@ -44,15 +56,18 @@ export function transcript(messages, when = new Date()) {
 
 export async function mailboxCode(storage) {
   let code = await storage.get(CODE_KEY);
-  if (typeof code === 'string' && code.length >= 20) return code;
-  const bytes = crypto.getRandomValues(new Uint8Array(18));
-  code = [...bytes].map((b) => b.toString(36).padStart(2, '0')).join('').slice(0, 24);
+  // Short, easy-to-recognize codes (8 letters/digits). Older long codes are
+  // replaced once so the link stays short.
+  if (typeof code === 'string' && code.length >= 6 && code.length <= 12) return code;
+  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  code = [...bytes].map((b) => alphabet[b % alphabet.length]).join('');
   await storage.put(CODE_KEY, code);
   return code;
 }
 
 export function mailboxLink(origin, code) {
-  return `${String(origin).replace(/\/+$/, '')}/flagstaff369/${code}`;
+  return `${String(origin).replace(/\/+$/, '')}/flagstaff/${code}`;
 }
 
 export async function rotateMailboxCode(storage) {
@@ -108,7 +123,7 @@ function page(origin, code, messages, note = '') {
 // Handles /mail/<code> before device pairing. Returns null for other paths.
 export async function handleWebMailbox(request, storage) {
   const url = new URL(request.url);
-  const match = /^\/(?:flagstaff369|mail)\/([A-Za-z0-9]{20,64})\/?$/i.exec(url.pathname);
+  const match = /^\/(?:flagstaff369|flagstaff|mail)\/([A-Za-z0-9]{6,64})\/?$/i.exec(url.pathname);
   if (!match) return null;
   if (!(await isOpen(storage))) return new Response('Flagstaff 369 is locked right now.', { status: 423, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
   const code = await mailboxCode(storage);
