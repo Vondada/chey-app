@@ -24,12 +24,12 @@ export async function openMailbox(storage) {
 }
 
 // Lock: close the board, hand back everything said this session, then wipe it
-// and change the link so the next session starts fresh.
+// so the next session starts fresh. The link stays the same; only
+// rotateMailboxCode ("new Flagstaff link") changes it.
 export async function lockMailbox(storage) {
   const messages = await readWebMail(storage, MAX_MESSAGES);
   await storage.put(OPEN_KEY, false);
   await storage.put(BOX_KEY, []);
-  await storage.delete(CODE_KEY);
   return messages;
 }
 

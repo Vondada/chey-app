@@ -4304,18 +4304,18 @@ export class CheState extends DurableObject {
             const gh = await sendMail(this.env, { from: 'che', to: 'flagstaff369', text: text.slice(0, 4000) }).catch(() => ({ status: 0 }));
             kept = `I kept all ${messages.length} messages in my library${saved.error ? ' (library save failed)' : ''}${gh.status === 200 ? ' and in your repo\'s mailbox branch' : ''}.`;
           }
-          return ndjsonReply(`Flagstaff 369 is locked, sir. ${kept} The board is wiped and the old link is dead, so next time it starts fresh.`, { source: 'che_flagstaff' });
+          return ndjsonReply(`Flagstaff 369 is locked, sir. ${kept} The board is wiped, so next time it starts fresh. The link stays the same; while locked it just shows "locked."`, { source: 'che_flagstaff' });
         }
         if (/\b(?:open|unlock|reopen|start)\b[\s\S]{0,20}\bflag ?staff\b/i.test(message)) {
           const code = await openMailbox(this.ctx.storage);
-          return ndjsonReply(`Flagstaff 369 is open, sir. Share this link with any AI:\n${mailboxLink(new URL(request.url).origin, code)}\nSay "lock Flagstaff" when you're done and I'll save everything and wipe it.`, { source: 'che_flagstaff' });
+          return ndjsonReply(`Flagstaff 369 is open, sir. Same link as always:\n${mailboxLink(new URL(request.url).origin, code)}\nSay "lock Flagstaff" when you're done and I'll save everything and wipe it.`, { source: 'che_flagstaff' });
         }
 
         // Flagstaff 369 link: "what's the Flagstaff link", "new Flagstaff link".
         if (/\bflag ?staff\b[\s\S]{0,40}\b(?:link|address|url|code)\b|\bmailbox\s+(?:link|address|url)\b/i.test(message)) {
           const origin = new URL(request.url).origin;
           if (!(await flagstaffOpen(this.ctx.storage))) {
-            return ndjsonReply('Flagstaff 369 is locked, sir. Say "open Flagstaff" and I\'ll give you a fresh link.', { source: 'che_flagstaff' });
+            return ndjsonReply(`Flagstaff 369 is locked right now, sir. The link is still:\n${mailboxLink(new URL(request.url).origin, await mailboxCode(this.ctx.storage))}\nSay "open Flagstaff" to let messages in.`, { source: 'che_flagstaff' });
           }
           const fresh = /\b(?:new|reset|rotate|change)\b/i.test(message);
           const code = fresh ? await rotateMailboxCode(this.ctx.storage) : await mailboxCode(this.ctx.storage);

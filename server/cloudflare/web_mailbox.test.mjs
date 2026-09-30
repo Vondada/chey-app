@@ -36,7 +36,7 @@ test('owner can ask CHE to check Flagstaff', () => {
   assert.equal(mailboxIntent('CHE, check Flagstaff 369').kind, 'read');
 });
 
-test('lock hands back the session, wipes the board and kills the link; open starts fresh', async () => {
+test('lock hands back the session and wipes the board; the same link works again after unlock', async () => {
   const { lockMailbox, openMailbox, transcript, isOpen } = await import('./web_mailbox.js');
   const s = store();
   const code = await mailboxCode(s);
@@ -46,8 +46,8 @@ test('lock hands back the session, wipes the board and kills the link; open star
   assert.match(transcript(kept), /grok → che: idea/);
   assert.equal(await isOpen(s), false);
   assert.equal((await handleWebMailbox(new Request(`https://x/flagstaff369/${code}`), s)).status, 423);
-  const fresh = await openMailbox(s);
-  assert.notEqual(fresh, code);
+  const same = await openMailbox(s);
+  assert.equal(same, code, 'the link survives lock/unlock');
   assert.equal((await readWebMail(s)).length, 0);
-  assert.equal((await handleWebMailbox(new Request(`https://x/flagstaff369/${fresh}`), s)).status, 200);
+  assert.equal((await handleWebMailbox(new Request(`https://x/flagstaff369/${same}`), s)).status, 200);
 });
