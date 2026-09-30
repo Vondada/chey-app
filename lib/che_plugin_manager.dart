@@ -67,7 +67,12 @@ class _ChePluginManagerState extends State<ChePluginManager> {
         loading = false;
       });
     } catch (_) {
-      if (mounted) setState(() { error = 'Could not load plugins. Check CHE’s connection and pairing.'; loading = false; });
+      if (mounted) {
+        setState(() {
+          error = 'Could not load plugins. Check CHE’s connection and pairing.';
+          loading = false;
+        });
+      }
     }
   }
 
@@ -82,7 +87,12 @@ class _ChePluginManagerState extends State<ChePluginManager> {
       if (!mounted) return;
       setState(() { updateFromResponse(response); busyId = null; });
     } catch (e) {
-      if (mounted) setState(() { error = e.toString().replaceFirst('Exception: ', ''); busyId = null; });
+      if (mounted) {
+        setState(() {
+          error = e.toString().replaceFirst('Exception: ', '');
+          busyId = null;
+        });
+      }
     }
   }
 
