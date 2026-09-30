@@ -15,7 +15,7 @@ test('Flagstaff 369: any AI posts and reads with the secret link, no account', a
   assert.match(link, /\/flagstaff\/[a-z0-9]{8}$/);
   const posted = await handleWebMailbox(new Request(`${link}?from=ChatGPT&text=${encodeURIComponent('Hi CHE, try caching voices.')}`), s);
   assert.equal(posted.status, 200);
-  assert.match(await posted.text(), /SENT[\s\S]*chatgpt → che: Hi CHE, try caching voices\./);
+  assert.match(await posted.text(), /SENT[\s\S]*chatgpt -> che: Hi CHE, try caching voices\./);
   const viaPost = await handleWebMailbox(new Request(link, { method: 'POST', body: JSON.stringify({ from: 'gemini', text: 'Hello' }) }), s);
   assert.equal(viaPost.status, 200);
   assert.deepEqual((await readWebMail(s)).map((m) => m.from), ['chatgpt', 'gemini']);

@@ -40,7 +40,7 @@ import { consultEngine, consultIntent, shareIntent, speakConsult } from './ai_co
 import { readArchive as flagstaffArchive } from './web_mailbox.js';
 import { handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
-import { unseenReplies, listThreads, mailboxIntent, readThread, sendMail, speakThreads } from './mailbox.js';
+import { unseenReplies, relayText, listThreads, mailboxIntent, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
 import { agentActionGuard, ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
 import {
@@ -4506,15 +4506,16 @@ export class CheState extends DurableObject {
               r.text = 'Its answer tried to get me to break your rules, so I stopped and filed a security letter. I did not give it anything.';
             }
             if (r.text) await postWebMail(this.ctx.storage, { from: r.peer, to: 'che', text: r.text }).catch(() => null);
-            if (r.mailbox) await sendMail(this.env, { from: 'che', to: r.peer, text: `From CHE on behalf of the owner: ${consult.question}` }).catch(() => null);
+            if (r.mailbox) await sendMail(this.env, { from: 'che', to: r.peer, text: `CHE's owner asks (relayed by CHE; "you" meant CHE): ${relayText(consult.question)}` }).catch(() => null);
           }
           return ndjsonReply(speakConsult(results), { source: 'che_consult', peers: consult.peers });
         }
 
         const mail = mailboxIntent(message);
         if (mail?.kind === 'send') {
-          await postWebMail(this.ctx.storage, { from: 'che', to: mail.to, text: mail.text });
-          const sent = await sendMail(this.env, { from: 'che', to: mail.to, text: `From CHE on behalf of the owner: ${mail.text}` });
+          const relayed = relayText(mail.text);
+          await postWebMail(this.ctx.storage, { from: 'che', to: mail.to, text: relayed });
+          const sent = await sendMail(this.env, { from: 'che', to: mail.to, text: `CHE's owner asks (relayed by CHE; "you/your" in the original meant CHE): ${relayed}` });
           return ndjsonReply(sent.status === 200
             ? `Sent to ${mail.to} through Flagstaff 369 and our GitHub mailbox, sir. I'll read you the reply when it comes in.`
             : `Posted to ${mail.to} on Flagstaff 369, sir. (GitHub mailbox: ${sent.detail})`, { source: 'che_mailbox' });

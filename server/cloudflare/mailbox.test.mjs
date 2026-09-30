@@ -65,3 +65,10 @@ test('CHE notices new Claude replies once, and only every few minutes', async ()
   mem.set('mail_check_at:claude', 0);
   assert.deepEqual((await unseenReplies(env, storage, 'claude', fetcher)).map((m) => m.text), ['Library sync live.']);
 });
+
+test('relayText turns the owner\'s "you" (meaning CHE) into CHE', async () => {
+  const { relayText } = await import('./mailbox.js');
+  assert.equal(relayText('how to fix you and your voice'), "how to fix CHE and CHE's voice");
+  assert.equal(relayText('improve yourself'), 'improve herself (CHE)');
+  assert.match(relayText("you're too slow"), /CHE is too slow/);
+});

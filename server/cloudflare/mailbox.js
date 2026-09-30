@@ -161,3 +161,16 @@ export async function unseenReplies(env, storage, peer = 'claude', fetcher = fet
   if (fresh.length) await storage.put(seenKey, fresh[fresh.length - 1].id);
   return fresh;
 }
+
+// When CHE relays the owner's words to another AI, "you" (meaning CHE) would
+// confuse the recipient. Rewrite second person → CHE so the message makes
+// sense to whoever reads it.
+export function relayText(ownerText) {
+  let t = ` ${String(ownerText || '').trim()} `;
+  t = t.replace(/\byourself\b/gi, 'herself (CHE)')
+       .replace(/\byou're\b/gi, 'CHE is')
+       .replace(/\byou are\b/gi, 'CHE is')
+       .replace(/\byour\b/gi, "CHE's")
+       .replace(/\byou\b/gi, 'CHE');
+  return t.trim();
+}
