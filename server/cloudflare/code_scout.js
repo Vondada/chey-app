@@ -78,3 +78,38 @@ export function codeScoutIntent(message) {
   if (!m) return null;
   return { need: m[1].trim().replace(/[.?!]+$/, '') };
 }
+
+// CHE's vision areas — what "the whole CHE app" is trying to be. Her scout
+// watches these for better, reusable open-source approaches.
+export const CHE_VISION_AREAS = [
+  'flutter voice assistant on-device speech',
+  'flutter smooth list scrolling performance',
+  'on-device llm inference iphone',
+  'natural text to speech flutter free',
+  'flutter isometric game characters animation',
+  'openai compatible llm router fallback',
+];
+
+// Runs weekly (or on "scout the app"): scans each vision area for top reusable
+// repos and files any new ones as Tech letters for the owner to review. Never
+// buys, never auto-merges — reference only.
+export async function autoImproveScan(env, storage, fileLetter, fileTech, fetcher = fetch) {
+  const seenRaw = (await storage.get('code_scout_seen')) || [];
+  const seen = new Set(Array.isArray(seenRaw) ? seenRaw : []);
+  const found = [];
+  for (const area of CHE_VISION_AREAS) {
+    const { repos } = await scoutCode(env, area, fetcher, { minStars: 400, limit: 3 });
+    for (const r of (repos || [])) {
+      if (seen.has(r.full_name)) continue;
+      seen.add(r.full_name);
+      found.push({ area, ...r });
+      await fileTech(storage, { name: r.full_name, improves: `${area} (${r.stars} stars)`, url: r.url, cost: 'free', cost_note: r.license_name, tags: ['code'], readiness: 'ready-to-try' }).catch(() => null);
+    }
+  }
+  await storage.put('code_scout_seen', [...seen].slice(-400));
+  await storage.put('code_scout_at', Date.now());
+  if (found.length) {
+    await fileLetter(storage, { tray: 'tech-scout', subject: `${found.length} reusable code upgrades found`, body: found.slice(0, 6).map((f) => `${f.full_name} — ${f.area}`).join('; ') + '. Say "what\'s in free tech" to review, then "update your code" to use one.', tag: 'free', severity: 'info' }).catch(() => null);
+  }
+  return found;
+}

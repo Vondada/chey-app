@@ -35,7 +35,7 @@ import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatu
 import { prepareSelfUpdate } from './self_development.js';
 import { KEY_PROVIDERS, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
-import { codeScoutIntent, fetchRepoFile, scoutCode, speakScout } from './code_scout.js';
+import { autoImproveScan, codeScoutIntent, fetchRepoFile, scoutCode, speakScout } from './code_scout.js';
 import { consultEngine, consultIntent, shareIntent, speakConsult } from './ai_consult.js';
 import { readArchive as flagstaffArchive } from './web_mailbox.js';
 import { handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
@@ -4467,6 +4467,13 @@ export class CheState extends DurableObject {
           return ndjsonReply(`Flagstaff is open, sir. I left the invite in the repo mailbox for ${share.peers.join(', ')}, so any of them connected to your GitHub will see it. For their apps, paste this to each one:\n\n${invite}`, { source: 'che_flagstaff' });
         }
 
+        // "scout the app" / "look for upgrades" → scan all vision areas now.
+        if (/\b(?:scout|check|look)\b[\s\S]{0,30}\b(?:the app|for upgrades|for improvements|our (?:code|vision))\b/i.test(message) && message.length < 90) {
+          const found = await autoImproveScan(this.env, this.ctx.storage, fileLetter, fileTech);
+          return ndjsonReply(found.length
+            ? `I scanned for upgrades to the whole app, sir, and filed ${found.length} new reusable finds under free tech: ${found.slice(0, 4).map((f) => f.full_name).join(', ')}. Say "what's in free tech" to review.`
+            : 'I scanned for app upgrades, sir. Nothing new and reusable since last time.', { source: 'che_code_scout' });
+        }
         // Scout GitHub for top, reusable code that matches a need.
         const scout = codeScoutIntent(message);
         if (scout) {
@@ -5304,6 +5311,8 @@ export class CheState extends DurableObject {
     await checkAllKeys(this.env, this.ctx.storage).catch(() => null);
     const scoutAt = Number(await this.ctx.storage.get('scout_at')) || 0;
     if (Date.now() - scoutAt > 6 * 86400000) await runScout(this.ctx.storage).catch(() => null);
+    const codeScoutAt = Number(await this.ctx.storage.get('code_scout_at')) || 0;
+    if (Date.now() - codeScoutAt > 6 * 86400000) await autoImproveScan(this.env, this.ctx.storage, fileLetter, fileTech).catch(() => null);
     const data = await this.loadData();
     if (!data.autonomy) return { status: 'paused' };
     const result = await runNightlyReview(this.env, this.ctx.storage, data, this.env.CHE_STRONG_MODEL || STRONG_MODEL);
