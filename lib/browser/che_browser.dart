@@ -62,6 +62,9 @@ class CheBrowserStore {
   List<CheBrowserEntry> favorites = [];
   bool _loaded = false;
 
+  /// Live "now playing" page for Theater TV (best-effort URL/title mirror).
+  final ValueNotifier<CheBrowserEntry?> nowPlaying = ValueNotifier<CheBrowserEntry?>(null);
+
   Future<void> load() async {
     if (_loaded) return;
     final prefs = await SharedPreferences.getInstance();
@@ -87,10 +90,12 @@ class CheBrowserStore {
 
   Future<void> visit(String url, String title) async {
     await load();
+    final entry = CheBrowserEntry(url: url, title: title, at: DateTime.now());
+    nowPlaying.value = entry;
     if (history.isNotEmpty && history.first.url == url) {
-      history[0] = CheBrowserEntry(url: url, title: title, at: DateTime.now());
+      history[0] = entry;
     } else {
-      history.insert(0, CheBrowserEntry(url: url, title: title, at: DateTime.now()));
+      history.insert(0, entry);
     }
     if (history.length > 300) history = history.sublist(0, 300);
     await _save();
