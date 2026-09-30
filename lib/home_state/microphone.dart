@@ -436,10 +436,10 @@ extension _CheHomeMicrophone on _CHEHomeState {
           cancelOnError: true,
           autoPunctuation: true,
           listenMode: stt.ListenMode.dictation,
-          // Let the owner breathe and think mid-sentence: only a real pause
-          // (about 3.5 seconds of silence) ends his turn, and one turn can
-          // run up to five minutes. Trailing fillers are held open below.
-          pauseFor: const Duration(milliseconds: 3500),
+          // End the turn after ~1.6s of silence so replies start sooner.
+          // Trailing fillers ("um", "and", "so...") still hold the turn open
+          // via cheSoundsUnfinished below; one turn can still run five minutes.
+          pauseFor: const Duration(milliseconds: 1600),
           listenFor: const Duration(minutes: 5),
         ),
       );

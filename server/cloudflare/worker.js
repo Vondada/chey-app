@@ -101,6 +101,11 @@ import {
   vectorContextText,
   vectorMemoryReadiness,
 } from './vector_memory.js';
+import {
+  chatModelAttempts,
+  isLikelyCasualChat,
+  splitReplyDeltas,
+} from './reply_latency.js';
 
 const FAST_MODEL = '@cf/meta/llama-3.2-3b-instruct';
 const STRONG_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
@@ -1715,15 +1720,20 @@ function compactChatPrompt({ clientClock, brainContext, vectorMemoryContext, off
   ].filter(Boolean).join('\n');
 }
 
-// Runs the chat model; if the full prompt fails, retries with a compact
-// prompt and recent turns, then with the strong model, before giving up.
-async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, message, maxTokens, cheContext = null, cheProvider = '' }) {
+// Runs the chat model. Ordinary turns prefer a compact prompt + fast route
+// (first token sooner). Complex turns keep the full quality prompt first.
+// Failures still fall back through compact/strong attempts.
+// cheProvider (e.g. native Grok chat) pins the engine when set.
+async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, message, maxTokens, cheContext = null, cheProvider = '', preferFast = false }) {
   const provider = String(cheProvider || '').trim().toLowerCase().slice(0, 40);
-  const attempts = [
-    { model, system: systemPrompt, turns },
-    { model, system: compactPrompt, turns: turns.slice(-4) },
-    { model: env.CHE_STRONG_MODEL || STRONG_MODEL, system: compactPrompt, turns: turns.slice(-2) },
-  ];
+  const attempts = chatModelAttempts({
+    preferFast,
+    model,
+    strongModel: env.CHE_STRONG_MODEL || STRONG_MODEL,
+    systemPrompt,
+    compactPrompt,
+    turns,
+  });
   let lastError;
   for (const attempt of attempts) {
     try {
@@ -1734,10 +1744,12 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
           { role: 'user', content: message },
         ],
         max_tokens: maxTokens,
-        che_route: 'quality',
+        // 'quality' forces strong provider models and disables casual routing.
+        // Ordinary replies use 'fast' so Groq/etc. can answer with the light model.
+        ...(attempt.route === 'quality' ? { che_route: 'quality' } : {}),
         ...(provider ? { che_provider: provider } : {}),
         ...(cheContext?.items?.length ? { che_context: cheContext } : {}),
-        che_audit: { task: String(message).slice(0, 160), agent: 'CHE', route: 'owner_chat', provider: provider || undefined },
+        che_audit: { task: String(message).slice(0, 160), agent: 'CHE', route: preferFast ? 'owner_chat_fast' : 'owner_chat', provider: provider || undefined },
       });
     } catch (error) {
       lastError = error;
@@ -4015,10 +4027,16 @@ export class CheState extends DurableObject {
           return ndjsonReply(aiIntent.reply, aiIntent.meta || { source: 'ai_layer' });
         }
 
-        // MEMORY-FIRST: every normal chat turn checks the owner's Postgres +
-        // pgvector knowledge store before CHE answers. The check is bounded so
-        // a slow database cannot make voice conversation hang.
-        const vectorRecall = await retrieveVectorContext(this.env, message);
+        // MEMORY-FIRST for non-casual turns. Short ordinary chat skips the
+        // embedding+pgvector round trip so the first token is not blocked on
+        // a store that usually returns nothing for "hey" / "thanks".
+        const earlyCaps = Array.isArray(body.requested_capabilities)
+          ? body.requested_capabilities.map((item) => String(item))
+          : [];
+        const casualChat = isLikelyCasualChat(message, earlyCaps);
+        const vectorRecall = casualChat
+          ? { status: 'skipped_casual', checked: false, matches: [], detail: 'Skipped for short casual chat latency.' }
+          : await retrieveVectorContext(this.env, message);
         const vectorMemoryContext = vectorContextText(vectorRecall);
         // CHE User Knowledge Bundle: canonical items from pgvector. The router
         // sends each engine only the data classes it is authorized for.
@@ -4647,6 +4665,10 @@ export class CheState extends DurableObject {
           cheContext,
           cheProvider,
           maxTokens: needsStrongModel ? 1000 : 360,
+          // Prefer compact+fast whenever this turn did not need specialist
+          // tools/research — even if the message was slightly longer than the
+          // early casual heuristic — so time-to-first-token stays low.
+          preferFast: !needsStrongModel,
         });
         } catch (error) {
           if (!busyError(error)) throw error;
@@ -4681,15 +4703,19 @@ export class CheState extends DurableObject {
             text: item.ok ? `✓ Used ${item.plugin} · ${item.tool}` : `${item.plugin} · ${item.tool} failed: ${item.error}`,
           })),
         ];
-        return new Response(steps.map((item) => JSON.stringify(item) + '\n').join('') +
-          JSON.stringify({ type: 'delta', delta: reply }) + '\n' +
+        // Sentence-sized deltas: the Flutter client paints/speaks the first
+        // sentence as soon as it arrives instead of waiting for one big blob.
+        const deltaLines = splitReplyDeltas(reply).map((delta) => JSON.stringify({ type: 'delta', delta }));
+        return new Response(steps.map((item) => JSON.stringify(item)).concat(deltaLines).concat([
           JSON.stringify({
             type: 'done',
             model,
+            route: needsStrongModel ? 'quality' : 'fast',
             vector_memory_status: vectorRecall.status,
             vector_memory_checked: Boolean(vectorRecall.checked),
             vector_memory_matches: vectorRecall.matches?.length || 0,
-          }) + '\n', {
+          }),
+        ]).join('\n') + '\n', {
           headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' },
         });
       }

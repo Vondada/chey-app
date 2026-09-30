@@ -457,6 +457,19 @@ extension _CheHomeSend on _CHEHomeState {
 
       _scrollToBottom();
 
+      // Speak the first finished sentence as soon as it streams in, instead of
+      // waiting for the entire reply (time-to-first-spoken).
+      final speechChunker = CheSpeechChunker();
+      var speechChain = Future<void>.value();
+      void enqueueSpoken(String chunk) {
+        final spoken = _spokenText(chunk);
+        if (spoken.isEmpty) return;
+        speechChain = speechChain.then((_) async {
+          if (!mounted || _stopRequested) return;
+          await speakText(spoken, record: false);
+        });
+      }
+
       final reply = await _streamCheResponse(
         message,
         history,
@@ -464,11 +477,16 @@ extension _CheHomeSend on _CHEHomeState {
           final index = assistantIndex;
           if (!mounted || index == null || index >= messages.length) return;
 
+          final clean = _sanitizeCheReply(partialReply);
           _set(() {
-            messages[index]['text'] = _sanitizeCheReply(partialReply);
+            messages[index]['text'] = clean;
           });
 
           _scrollToBottom();
+
+          for (final chunk in speechChunker.addCumulative(clean)) {
+            enqueueSpoken(chunk);
+          }
         },
       );
 
@@ -477,6 +495,13 @@ extension _CheHomeSend on _CHEHomeState {
       final finalReply = reply.isEmpty
           ? (stopped ? 'Stopped.' : 'I could not generate a response, sir.')
           : _sanitizeCheReply(reply);
+
+      for (final chunk in speechChunker.addCumulative(finalReply)) {
+        enqueueSpoken(chunk);
+      }
+      for (final chunk in speechChunker.flush()) {
+        enqueueSpoken(chunk);
+      }
 
       if (!mounted) return;
 
@@ -508,7 +533,7 @@ extension _CheHomeSend on _CHEHomeState {
         if (mounted) _set(() => _justCompleted = false);
       });
 
-      if (!stopped) await speakText(_spokenText(finalReply));
+      if (!stopped) await speechChain;
     } on _CHEAgentException catch (e) {
       final errorReply = e.message;
 
