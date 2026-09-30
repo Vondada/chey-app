@@ -21,8 +21,10 @@ extension _CheHomeVoice on _CHEHomeState {
           if (!kIsWeb &&
               recognitionStopped &&
               openConversation &&
+              !cheSleeping &&
               !_isSending &&
               !_isSpeaking &&
+              !_localVoice.isSpeaking &&
               !_autoSentCurrentTurn) {
             _restartListeningSoon();
           }
@@ -34,7 +36,12 @@ extension _CheHomeVoice on _CHEHomeState {
             isListening = false;
           });
 
-          if (!kIsWeb && openConversation && !_isSending && !_isSpeaking) {
+          if (!kIsWeb &&
+              openConversation &&
+              !cheSleeping &&
+              !_isSending &&
+              !_isSpeaking &&
+              !_localVoice.isSpeaking) {
             _restartListeningSoon(delay: const Duration(milliseconds: 800));
           }
         },
@@ -101,6 +108,8 @@ extension _CheHomeVoice on _CHEHomeState {
         if (mounted) _set(() {});
       });
 
+      // Native restart is owned by speakText finally so TTS completion cannot
+      // race a second mic start/stop against the same turn.
       flutterTts.setCompletionHandler(() {
         _isSpeaking = false;
         if (mounted) _set(() {});
@@ -118,8 +127,6 @@ extension _CheHomeVoice on _CHEHomeState {
               }
             },
           );
-        } else if (!kIsWeb && openConversation) {
-          _restartListeningSoon();
         }
       });
 
@@ -131,10 +138,7 @@ extension _CheHomeVoice on _CHEHomeState {
       flutterTts.setErrorHandler((message) {
         _isSpeaking = false;
         if (mounted) _set(() {});
-
-        if (!kIsWeb && openConversation) {
-          _restartListeningSoon();
-        }
+        debugPrint('CHE voice: tts error');
       });
 
       if (!mounted) return;
@@ -164,6 +168,13 @@ extension _CheHomeVoice on _CHEHomeState {
       return false;
     }
 
+    if (_localVoice.serverVoiceCoolingDown) {
+      _naturalVoiceServerErrored = true;
+      _voiceFailReason = 'server voice cooling down';
+      debugPrint('CHE voice: skip server TTS (cooldown)');
+      return false;
+    }
+
     if (_deviceToken == null ||
         cheAgentBaseUrl.isEmpty ||
         integrations['natural_voice'] != true) {
@@ -173,17 +184,26 @@ extension _CheHomeVoice on _CHEHomeState {
     }
 
     try {
+      // Fail fast so iPhone TTS can speak — never leave the owner silent.
       final response = await http
           .post(
             Uri.parse('$cheAgentBaseUrl/api/voice/synthesize'),
             headers: _authHeaders,
             body: jsonEncode({'text': text}),
           )
-          .timeout(const Duration(seconds: 25));
+          .timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 401) {
         _naturalVoiceServerErrored = true;
         await _clearSecuritySession();
+        return false;
+      }
+
+      if (response.statusCode == 429) {
+        _localVoice.markServerVoiceCooldown();
+        _naturalVoiceServerErrored = true;
+        _voiceFailReason = 'server voice 429';
+        debugPrint('CHE voice: server TTS 429 cooldown');
         return false;
       }
 
@@ -195,6 +215,14 @@ extension _CheHomeVoice on _CHEHomeState {
         } catch (_) {
           _voiceFailReason = 'server voice ${response.statusCode}';
         }
+        final detail = _voiceFailReason.toLowerCase();
+        if (response.statusCode == 503 ||
+            detail.contains('quota') ||
+            detail.contains('429') ||
+            detail.contains('cooling')) {
+          _localVoice.markServerVoiceCooldown();
+        }
+        debugPrint('CHE voice: server TTS fail ${_voiceFailReason.isEmpty ? response.statusCode : _voiceFailReason}');
         return false;
       }
       _voiceFailReason = '';
@@ -216,6 +244,7 @@ extension _CheHomeVoice on _CHEHomeState {
         } else {
           _lastVoiceEngine = engine.isEmpty ? 'server-voice' : engine;
         }
+        debugPrint('CHE voice: played $_lastVoiceEngine');
         return true;
       }
       // Bytes arrived but nothing audible — keep cascading to neural/native/TTS.
@@ -225,11 +254,15 @@ extension _CheHomeVoice on _CHEHomeState {
     } catch (e) {
       _naturalVoiceServerErrored = true;
       _voiceFailReason = e is TimeoutException ? 'server voice timed out' : 'server voice unreachable';
+      debugPrint('CHE voice: $_voiceFailReason');
       return false;
     }
   }
 
   /// Routes playback to the loudspeaker (or BT if preferred) so replies are audible.
+  ///
+  /// iOS playAndRecord is configured once. Re-applying the session on every
+  /// speak tears down recognition and causes mic on/off thrashing.
   Future<void> _ensureAudibleOutput() async {
     final vol = CheUiPreferences.instance.voiceVolume.clamp(0.0, 1.0);
     try {
@@ -238,21 +271,28 @@ extension _CheHomeVoice on _CHEHomeState {
     if (kIsWeb) return;
     if (defaultTargetPlatform == TargetPlatform.iOS) {
       try {
-        await Helper.ensureAudioSession();
-        await Helper.setAppleAudioConfiguration(
-          AppleAudioConfiguration(
-            appleAudioCategory: AppleAudioCategory.playAndRecord,
-            appleAudioCategoryOptions: const {
-              AppleAudioCategoryOption.allowBluetooth,
-              AppleAudioCategoryOption.allowBluetoothA2DP,
-              AppleAudioCategoryOption.allowAirPlay,
-              AppleAudioCategoryOption.defaultToSpeaker,
-            },
-            appleAudioMode: AppleAudioMode.voiceChat,
-          ),
-        );
+        if (_localVoice.claimAudioSessionSetup()) {
+          await Helper.ensureAudioSession();
+          await Helper.setAppleAudioConfiguration(
+            AppleAudioConfiguration(
+              appleAudioCategory: AppleAudioCategory.playAndRecord,
+              appleAudioCategoryOptions: const {
+                AppleAudioCategoryOption.allowBluetooth,
+                AppleAudioCategoryOption.allowBluetoothA2DP,
+                AppleAudioCategoryOption.allowAirPlay,
+                AppleAudioCategoryOption.defaultToSpeaker,
+              },
+              appleAudioMode: AppleAudioMode.voiceChat,
+            ),
+          );
+          debugPrint('CHE voice: audio session playAndRecord ready');
+        }
         await Helper.setSpeakerphoneOnButPreferBluetooth();
-      } catch (_) {}
+      } catch (e) {
+        // Allow a later speak to retry setup if the first attempt failed.
+        _localVoice.audioSessionReady = false;
+        debugPrint('CHE voice: audio session setup failed');
+      }
     }
   }
 
@@ -278,8 +318,6 @@ extension _CheHomeVoice on _CHEHomeState {
         return;
       }
     }
-    final speechTurn = ++_speechTurn;
-
     // CHE refers to and pronounces herself as "CHE" in normal conversation.
     // "Chay" is reserved for the spoken wake word only, so no substitution
     // happens here.
@@ -299,15 +337,26 @@ extension _CheHomeVoice on _CHEHomeState {
             }
           },
         );
-      } else if (!kIsWeb && openConversation) {
+      } else if (!kIsWeb && openConversation && !cheSleeping) {
         _restartListeningSoon();
       }
       return;
     }
 
+    // Suppress near-duplicate server+native races of the same sentence.
+    if (!_localVoice.acceptSpeak(text)) {
+      debugPrint('CHE voice: skip duplicate speak');
+      return;
+    }
+    final speechTurn = ++_speechTurn;
+    final localGen = _localVoice.goSpeaking();
+    debugPrint('CHE voice: speaking');
+
     try {
       if (speech.isListening) {
-        await speech.stop();
+        await _localVoice.runMicOp(() async {
+          await speech.stop();
+        });
       }
 
       if (mounted) {
@@ -399,7 +448,9 @@ extension _CheHomeVoice on _CHEHomeState {
       // Keep the typed response even if audio output fails. Native mode removes
       // Safari's autoplay restriction entirely.
     } finally {
-      if (speechTurn == _speechTurn) {
+      // Barge-in bumps generation / speechTurn so a cancelled speak cannot
+      // restart the mic or clear the new listening turn.
+      if (speechTurn == _speechTurn && localGen == _localVoice.speechGeneration) {
         if (!kIsWeb &&
             defaultTargetPlatform == TargetPlatform.iOS &&
             _nativeIosVoiceActive) {
@@ -409,6 +460,7 @@ extension _CheHomeVoice on _CHEHomeState {
         }
 
         _isSpeaking = false;
+        _localVoice.finishSpeakingToListening(continuous: openConversation && !cheSleeping);
         if (mounted) _set(() {});
 
         if (kIsWeb && openConversation) {
@@ -424,7 +476,8 @@ extension _CheHomeVoice on _CHEHomeState {
               }
             },
           );
-        } else if (!kIsWeb && openConversation) {
+        } else if (!kIsWeb && openConversation && !cheSleeping) {
+          // Continuous conversation: listen again without requiring wake.
           _restartListeningSoon();
         }
       }
@@ -438,7 +491,9 @@ extension _CheHomeVoice on _CHEHomeState {
       return;
     }
     ++_speechTurn;
+    _localVoice.bargeIn();
     _listenRestartTimer?.cancel();
+    debugPrint('CHE voice: barge-in stop TTS');
     if (kIsWeb) {
       try { che_web_voice.stopSpeech(); } catch (_) {}
     } else if (defaultTargetPlatform == TargetPlatform.iOS) {
@@ -451,13 +506,18 @@ extension _CheHomeVoice on _CHEHomeState {
       if (resumeListening) {
         openConversation = true;
         cheSleeping = false;
+        isListening = true;
       }
     });
     if (!resumeListening) return;
     if (kIsWeb) {
       _rearmWebMicSoon(delay: const Duration(milliseconds: 150));
     } else if (_nativeIosVoiceActive) {
-      await CheNativeVoice.start();
+      // Native recognizer stays open during CHE speech for barge-in; just
+      // clear the speaking flag — do not stop/start the mic session.
+      try {
+        await CheNativeVoice.setAssistantSpeaking(false);
+      } catch (_) {}
     } else {
       await _startListening();
     }
@@ -566,11 +626,13 @@ extension _CheHomeVoice on _CHEHomeState {
     }
 
     if (type == 'barge_in') {
-      // The native iPhone layer has already stopped CHE's audio. Advance the
-      // speech generation immediately so the cancelled response cannot resume.
+      // Native layer already stopped CHE audio. Invalidate in-flight speak so
+      // finally cannot restart TTS or mute the new listen turn.
       ++_speechTurn;
+      _localVoice.bargeIn();
       _listenRestartTimer?.cancel();
       await flutterTts.stop();
+      debugPrint('CHE voice: native barge-in');
 
       if (!mounted) return;
       _set(() {
@@ -667,6 +729,8 @@ extension _CheHomeVoice on _CHEHomeState {
         );
         isListening = false;
       });
+      _localVoice.goThinking();
+      debugPrint('CHE voice: thinking (utterance)');
 
       await sendMessage(fromVoice: true);
       return;

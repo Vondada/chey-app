@@ -32,6 +32,7 @@ import 'che_wake_setup.dart';
 import 'che_wake_word.dart';
 import 'che_wake_match.dart';
 import 'che_voice_state.dart';
+import 'che_local_voice_loop.dart';
 import 'che_voice_ui.dart';
 import 'che_app_portal.dart';
 import 'che_plugin_manager.dart';
@@ -353,6 +354,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   bool _nativeIosVoiceActive = false;
 
   final CheVoiceStateMachine _voiceMachine = CheVoiceStateMachine();
+  final CheLocalVoiceLoop _localVoice = CheLocalVoiceLoop();
   late CheVoiceSnapshot _voiceSnapshot;
   CheRealtimeVoiceEngine? _realtimeVoice;
   CheWakeWordEngine? _porcupineWake;
