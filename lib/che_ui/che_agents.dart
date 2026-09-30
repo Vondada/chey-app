@@ -550,19 +550,47 @@ class _MiniPersonPainter extends CustomPainter {
       canvas.drawRRect(tab.deflate(2), Paint()..color = c(CheColors.accentAlt).withValues(alpha: 0.5 + 0.3 * _s(1).abs()));
     }
 
+    final hairPaint = Paint()..color = c(agent.hair);
+    if (agent.isChe) {
+      // CHE: long wavy hair falling BEHIND her head to the shoulders, drawn
+      // first so it frames the face instead of covering the chin.
+      canvas.drawRRect(
+          RRect.fromRectAndRadius(
+              Rect.fromLTWH(headC.dx - headR * 1.2, headC.dy - headR * 1.1, headR * 2.4, headR * 2.55),
+              Radius.circular(headR * 1.1)),
+          hairPaint);
+      for (final side in [-1.0, 1.0]) {
+        canvas.drawCircle(headC.translate(side * headR * 1.05, headR * 1.25), headR * 0.36, hairPaint);
+      }
+    }
     // head
     canvas.drawCircle(headC, headR, Paint()..color = c(agent.skin));
     // hair (cap shape)
     final hair = Path()
       ..addArc(Rect.fromCircle(center: headC.translate(0, -headR * 0.15), radius: headR * 1.05), math.pi, math.pi);
-    canvas.drawPath(hair, Paint()..color = c(agent.hair));
+    canvas.drawPath(hair, hairPaint);
     if (agent.isChe) {
-      // CHE: long hair
-      canvas.drawRRect(
-          RRect.fromRectAndRadius(
-              Rect.fromLTWH(headC.dx - headR * 1.05, headC.dy - headR * 0.3, headR * 2.1, headR * 1.9), Radius.circular(headR)),
-          Paint()..color = c(agent.hair).withValues(alpha: 0.9));
-      canvas.drawCircle(headC.translate(0, headR * 0.12), headR * 0.86, Paint()..color = c(agent.skin));
+      // side-swept bangs
+      final bangs = Path()
+        ..moveTo(headC.dx - headR * 1.0, headC.dy - headR * 0.15)
+        ..quadraticBezierTo(headC.dx - headR * 0.2, headC.dy - headR * 0.05, headC.dx + headR * 0.55, headC.dy - headR * 0.72)
+        ..lineTo(headC.dx + headR * 0.2, headC.dy - headR * 1.05)
+        ..quadraticBezierTo(headC.dx - headR * 0.7, headC.dy - headR * 0.9, headC.dx - headR * 1.0, headC.dy - headR * 0.15)
+        ..close();
+      canvas.drawPath(bangs, hairPaint);
+      // gold hoop earrings
+      final gold = Paint()
+        ..color = c(const Color(0xFFE2B04A))
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = math.max(1.0, headR * 0.09);
+      for (final side in [-1.0, 1.0]) {
+        canvas.drawCircle(headC.translate(side * headR * 0.98, headR * 0.42), headR * 0.14, gold);
+      }
+      // soft blush
+      final blush = Paint()..color = const Color(0xFFE8788A).withValues(alpha: 0.28);
+      for (final side in [-1.0, 1.0]) {
+        canvas.drawCircle(headC.translate(side * headR * 0.52, headR * 0.3), headR * 0.14, blush);
+      }
     }
     // eyes (blink)
     final blink = (t * 2 % 1.0) > 0.94;
@@ -573,6 +601,15 @@ class _MiniPersonPainter extends CustomPainter {
         canvas.drawLine(e.translate(-headR * 0.1, 0), e.translate(headR * 0.1, 0), eye..strokeWidth = 1.4);
       } else {
         canvas.drawCircle(e, headR * 0.1, eye);
+        if (agent.isChe) {
+          // eyelashes
+          final lash = Paint()
+            ..color = const Color(0xFF14181A)
+            ..strokeWidth = math.max(1.0, headR * 0.05)
+            ..strokeCap = StrokeCap.round;
+          final outward = dx < 0 ? -1.0 : 1.0;
+          canvas.drawLine(e.translate(outward * headR * 0.08, -headR * 0.08), e.translate(outward * headR * 0.2, -headR * 0.18), lash);
+        }
       }
     }
     // mouth
@@ -584,7 +621,7 @@ class _MiniPersonPainter extends CustomPainter {
     } else {
       canvas.drawArc(Rect.fromCenter(center: mouthC.translate(0, -headR * 0.08), width: headR * 0.45, height: headR * 0.3), 0.2,
           math.pi - 0.4, false, Paint()
-            ..color = const Color(0xFF14181A)
+            ..color = agent.isChe ? const Color(0xFFB8435A) : const Color(0xFF14181A)
             ..style = PaintingStyle.stroke
             ..strokeWidth = 1.3);
     }
