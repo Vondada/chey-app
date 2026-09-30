@@ -206,7 +206,7 @@ class CHEHome extends StatefulWidget {
 
 class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   /// setState for members split into lib/home_state/*.dart extensions.
-  String _statusBanner = 'Ready. Type or speak a request.';
+  String _statusBanner = 'Ready, sir. Type or speak a request.';
   String _lastStatusKey = '';
   bool _autonomy = true;
   List<Map<String, dynamic>> _actionApprovals = [];
@@ -234,7 +234,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
         : _isSending ? 'Working on your request.'
         : _isSpeaking ? 'CHE is speaking. The reply is also in the conversation.'
         : isListening ? 'Listening. You can also type.'
-        : cheSleeping ? 'Voice standby. Say Chay or type a request.' : 'Ready. Type or speak a request.';
+        : cheSleeping ? 'Voice standby. Say Chay or type a request.' : 'Ready, sir. Type or speak a request.';
     if (status != _lastStatusKey) {
       _lastStatusKey = status;
       _statusBanner = status;
