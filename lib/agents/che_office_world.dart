@@ -88,7 +88,6 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
   final Map<String, String> _seenAssignment = {};
   final Map<String, DateTime> _ack = {};
   final Map<String, String> _ackText = {};
-  final math.Random _rng = math.Random();
   Timer? _wander;
   bool _fitted = false;
   bool _holdingIdle = false;
