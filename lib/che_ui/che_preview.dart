@@ -81,7 +81,7 @@ class _ChePreviewAppState extends State<ChePreviewApp> {
           onOpenChat: _openChat,
           sections: cheDefaultSections(
             memory: (_) => _placeholder('Memory', const []),
-            insights: (_) => _placeholder('Insights', [CheBrainCard(brain: brain, controller: chat)]),
+            insights: (_) => _placeholder('Brain', [CheBrainCard(brain: brain, controller: chat)]),
             markets: (_) => _placeholder('Markets', const []),
             business: (_) => _placeholder('Business', const []),
             devices: (_) => _placeholder('Devices', const []),

@@ -39,6 +39,7 @@ List<CheMemoryDot> cheBuildMemoryDots({
   required List<Map<String, dynamic>> learnedPersonality,
   required List<String> learnedKnowledge,
   List<Map<String, dynamic>> brainLinks = const [],
+  List<String> suggestions = const [],
 }) {
   // brainLinks are applied in CheMemoryBrainRoom via cheRelatedMemoryEdges.
 
@@ -107,6 +108,18 @@ List<CheMemoryDot> cheBuildMemoryDots({
       title: _shortTitle(t),
       body: t,
       category: 'Knowledge',
+      tokens: _tokens(t),
+    ));
+    i++;
+  }
+  for (final s in suggestions) {
+    final t = s.trim();
+    if (t.isEmpty) continue;
+    out.add(CheMemoryDot(
+      id: 'sug-$i',
+      title: _shortTitle(t),
+      body: t,
+      category: 'Suggestion',
       tokens: _tokens(t),
     ));
     i++;
@@ -183,6 +196,7 @@ class CheMemoryBrainRoom extends StatefulWidget {
     this.onReadAloud,
     this.onRefresh,
     this.embedded = true,
+    this.active = true,
   });
 
   final List<CheMemoryDot> dots;
@@ -191,6 +205,8 @@ class CheMemoryBrainRoom extends StatefulWidget {
   final Future<void> Function(String text)? onReadAloud;
   final Future<void> Function()? onRefresh;
   final bool embedded;
+  /// When false, pause the breathing / pulse AnimationController.
+  final bool active;
 
   @override
   State<CheMemoryBrainRoom> createState() => _CheMemoryBrainRoomState();
@@ -206,7 +222,18 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
   @override
   void initState() {
     super.initState();
-    _pulse = AnimationController(vsync: this, duration: const Duration(seconds: 6))..repeat();
+    _pulse = AnimationController(vsync: this, duration: const Duration(seconds: 5));
+    if (widget.active) _pulse.repeat();
+  }
+
+  @override
+  void didUpdateWidget(covariant CheMemoryBrainRoom oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && !_pulse.isAnimating) {
+      _pulse.repeat();
+    } else if (!widget.active && _pulse.isAnimating) {
+      _pulse.stop();
+    }
   }
 
   @override
@@ -247,35 +274,6 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
       map[d.id] = Offset(cx + math.cos(angle) * r * 1.05 + wobbleX, cy + math.sin(angle) * r * 0.78 + wobbleY);
     }
     return map;
-  }
-
-  List<(String, String)> _edges(List<CheMemoryDot> dots) {
-    // Connect related memories by shared tokens (cap edges per node for paint cost).
-    final edges = <(String, String)>[];
-    final byToken = <String, List<CheMemoryDot>>{};
-    for (final d in dots) {
-      for (final tok in d.tokens.take(8)) {
-        byToken.putIfAbsent(tok, () => []).add(d);
-      }
-    }
-    final seen = <String>{};
-    for (final group in byToken.values) {
-      if (group.length < 2) continue;
-      final take = group.length > 12 ? group.take(12).toList() : group;
-      for (var i = 0; i < take.length; i++) {
-        var links = 0;
-        for (var j = i + 1; j < take.length && links < 3; j++) {
-          final a = take[i].id;
-          final b = take[j].id;
-          final key = a.compareTo(b) < 0 ? '$a|$b' : '$b|$a';
-          if (seen.add(key)) {
-            edges.add((a, b));
-            links++;
-          }
-        }
-      }
-    }
-    return edges;
   }
 
   void _openDetail(CheMemoryDot dot) {
@@ -547,31 +545,49 @@ class _ConstellationPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Soft brain aura
+    // Soft brain aura — gently breathes with phase.
+    final auraAlpha = 0.08 + 0.04 * math.sin(phase * math.pi * 2).abs();
     final aura = Paint()
       ..shader = RadialGradient(
         colors: [
-          CheColors.accent.withValues(alpha: 0.10),
+          CheColors.accent.withValues(alpha: auraAlpha),
           Colors.transparent,
         ],
       ).createShader(Rect.fromCircle(center: Offset(size.width / 2, size.height / 2), radius: size.shortestSide * 0.55));
     canvas.drawRect(Offset.zero & size, aura);
 
-    final edgePaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.14 + 0.06 * math.sin(phase * math.pi * 2).abs())
-      ..strokeWidth = 1
-      ..style = PaintingStyle.stroke;
+    final edgePaint = Paint()..style = PaintingStyle.stroke;
+    final flowPaint = Paint()
+      ..style = PaintingStyle.fill
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
 
-    for (final (a, b) in edges) {
+    for (var i = 0; i < edges.length; i++) {
+      final (a, b) = edges[i];
       final pa = positions[a];
       final pb = positions[b];
       if (pa == null || pb == null) continue;
+
       final highlight = selectedId == a || selectedId == b;
-      edgePaint.color = highlight
-          ? CheColors.accent.withValues(alpha: 0.55)
-          : Colors.white.withValues(alpha: 0.12);
-      edgePaint.strokeWidth = highlight ? 1.4 : 0.9;
+      // Per-edge phase offset so links don't blink in lockstep — organic breathe.
+      final edgePhase = (phase + (i * 0.07) + ((a.hashCode ^ b.hashCode) % 100) / 100.0) % 1.0;
+      final breathe = (math.sin(edgePhase * math.pi * 2) + 1) * 0.5; // 0..1
+      final baseAlpha = highlight ? 0.42 : 0.10;
+      final alpha = (baseAlpha + 0.22 * breathe).clamp(0.06, 0.85);
+      final thickness = highlight
+          ? 1.3 + 0.9 * breathe
+          : 0.7 + 0.85 * breathe;
+
+      edgePaint
+        ..color = (highlight ? CheColors.accent : Colors.white).withValues(alpha: alpha)
+        ..strokeWidth = thickness;
       canvas.drawLine(pa, pb, edgePaint);
+
+      // Subtle energy flow along the link.
+      final flowT = (edgePhase + 0.35 * breathe) % 1.0;
+      final flow = Offset.lerp(pa, pb, flowT)!;
+      final flowAlpha = highlight ? 0.75 : (0.25 + 0.45 * breathe);
+      flowPaint.color = CheColors.accent.withValues(alpha: flowAlpha);
+      canvas.drawCircle(flow, highlight ? 2.8 : 1.8 + breathe, flowPaint);
     }
   }
 
