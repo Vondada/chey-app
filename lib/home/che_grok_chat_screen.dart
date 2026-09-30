@@ -9,7 +9,6 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../che_ui/che_theme.dart';
-import '../che_ui/che_widgets.dart';
 
 class CheGrokChatScreen extends StatefulWidget {
   const CheGrokChatScreen({
