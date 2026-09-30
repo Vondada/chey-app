@@ -1753,7 +1753,7 @@ function storageReadiness(env) {
   };
 }
 
-async function dispatchChange(env, body) {
+async function dispatchChange(env, body, memory = null) {
   const request = String(body.request || '').trim();
   if (request.length < 8 || request.length > 4000) return json({ detail: 'Describe one change in 8–4000 characters.' }, 400);
   if (!env.CHE_GITHUB_TOKEN || !/^[\w.-]+\/[\w.-]+$/.test(String(env.CHE_GITHUB_REPO || ''))) {
@@ -1766,7 +1766,7 @@ async function dispatchChange(env, body) {
   const groundedRequest = ragReference(request, vectorContextText(recall), 4000).slice(0, 6000);
   let prepared;
   try {
-    prepared = await prepareSelfUpdate(env, groundedRequest);
+    prepared = await prepareSelfUpdate(env, groundedRequest, fetch, memory);
   } catch (error) {
     console.error('CHE change request failed', error?.message || error);
     return json({ detail: `The coding team failed: ${String(error?.message || error).slice(0, 160)}. Nothing was changed.` }, 502);
@@ -4055,7 +4055,7 @@ export class CheState extends DurableObject {
         await this.ctx.storage.put('che', data);
         return json({ ok: true, to: 'che' });
       }
-      if (path === '/api/change/request') return dispatchChange(this.env, body);
+      if (path === '/api/change/request') return dispatchChange(this.env, body, this.ctx.storage);
       if (path === '/api/chat') {
         // Chat and voice both land here: the owner talks only to CHE, and an
         // agent can never use this route to reach the owner.
@@ -4236,7 +4236,7 @@ export class CheState extends DurableObject {
         if (selfChangeRequest) {
           let prepared;
           try {
-            prepared = await prepareSelfUpdate(this.env, message);
+            prepared = await prepareSelfUpdate(this.env, message, fetch, this.ctx.storage);
           } catch (error) {
             // GitHub failures must never break chat/agents/voice/memory.
             console.error('CHE self-development failed', error?.message || error);

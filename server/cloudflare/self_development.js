@@ -94,62 +94,181 @@ async function sourceIndex(env, fetcher) {
   return { base, paths };
 }
 
-async function readSources(env, base, paths, fetcher) {
-  const out = [];
-  let total = 0;
-  for (const path of [...new Set(paths)].slice(0, 6)) {
-    if (!/^lib\/[A-Za-z0-9_\/]+\.dart$/.test(path)) continue;
-    const found = await gh(env, 'GET', `/contents/${path}?ref=${encodeURIComponent(base)}`, null, fetcher);
-    if (!found.ok || !found.data?.content) {
-      out.push({ path, missing: true, content: '' });
-      continue;
-    }
-    let source = '';
-    try { source = decodeBase64Utf8(found.data.content); } catch (_) {}
-    if (!source) continue;
-    const clipped = source.slice(0, 30000);
-    total += clipped.length;
-    if (total > 110000) break;
-    out.push({ path, missing: false, content: clipped });
-  }
-  return out;
-}
-
-function proposalFrom(text) {
-  const value = jsonObject(text);
-  if (!value || !Array.isArray(value.files)) return null;
-  return {
-    summary: String(value.summary || 'CHE update').trim().slice(0, 1800),
-    files: value.files.map((file) => ({
-      path: String(file?.path || '').trim(),
-      content: typeof file?.content === 'string' ? file.content : '',
-    })),
-  };
-}
-
 function isUiTask(request) {
-  return /\b(ui|ux|screen|page|layout|button|card|navigation|nav|color|theme|font|spacing|menu|panel|interface|visual|design|redesign)\b/i.test(request);
+  return /\b(ui|ux|screen|page|layout|button|card|navigation|nav|color|theme|font|spacing|menu|panel|interface|visual|design|redesign|banner|label|text|title)\b/i.test(request);
 }
 
-async function reviewProposal(env, request, architecture, proposal, uiTask) {
+// ─── Team memory: every mistake becomes a rule, every find becomes a shortcut ───
+// Stored in the Durable Object (key below). Seeded with lessons learned by hand.
+const LESSONS_KEY = 'che_team_lessons';
+const SEED_LESSONS = [
+  { kind: 'mistake', text: 'When the owner names on-screen text (e.g. "the Ready banner"), edit the widget that shows THAT exact text. Never edit a different banner/label that merely has a similar name. PR #73 wrongly changed the Shorebird "CHE updated. Restart to apply." banner instead of the status banner.' },
+  { kind: 'location', text: 'The home status banner text ("Ready. Type or speak a request." / "Voice standby...") lives in lib/main.dart (_statusBanner and the status getter).' },
+  { kind: 'location', text: 'lib/self_update/che_patch_banner.dart is ONLY the Shorebird over-the-air update notice. Do not touch it unless the request is about update/restart notices.' },
+];
+
+export async function loadLessons(memory) {
+  let saved = [];
+  try { saved = (await memory?.get?.(LESSONS_KEY)) || []; } catch (_) {}
+  return [...SEED_LESSONS, ...(Array.isArray(saved) ? saved : [])].slice(-60);
+}
+
+export async function recordLesson(memory, kind, text) {
+  if (!memory?.get || !memory?.put) return;
+  const clean = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 400);
+  if (!clean) return;
+  try {
+    const saved = (await memory.get(LESSONS_KEY)) || [];
+    const list = Array.isArray(saved) ? saved : [];
+    if (list.some((item) => item.text === clean)) return;
+    list.push({ kind, text: clean, at: new Date().toISOString() });
+    await memory.put(LESSONS_KEY, list.slice(-50));
+  } catch (_) {}
+}
+
+function lessonText(lessons) {
+  return lessons.map((item, i) => `${i + 1}. [${item.kind}] ${item.text}`).join('\n');
+}
+
+// Literal phrases the owner quoted or clearly named, used to find the real code.
+export function literalTerms(request) {
+  const terms = new Set();
+  for (const m of String(request).matchAll(/["“']([^"”']{3,80})["”']/g)) terms.add(m[1].trim());
+  for (const m of String(request).matchAll(/\b(?:say|says|read|reads|show|shows|text|label(?:ed)?|titled?)\s+([A-Z][^.,;:!?\n]{2,60})/g)) terms.add(m[1].trim());
+  return [...terms].slice(0, 6);
+}
+
+async function searchCode(env, terms, fetcher) {
+  const repo = repoOf(env);
+  const hits = new Map();
+  if (!repo) return hits;
+  for (const term of terms.slice(0, 5)) {
+    const q = `"${String(term).replace(/"/g, '').slice(0, 80)}" repo:${repo} path:lib extension:dart`;
+    try {
+      const response = await fetcher(`https://api.github.com/search/code?per_page=10&q=${encodeURIComponent(q)}`, {
+        headers: {
+          Authorization: `Bearer ${env.CHE_GITHUB_TOKEN}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'CHE-Agent',
+        },
+      });
+      if (!response.ok) continue;
+      const data = await response.json();
+      for (const item of data?.items || []) {
+        const path = String(item?.path || '');
+        if (/^lib\/[A-Za-z0-9_\/]+\.dart$/.test(path)) hits.set(path, (hits.get(path) || 0) + 1);
+      }
+    } catch (_) {}
+  }
+  return hits;
+}
+
+async function readFull(env, base, path, fetcher) {
+  if (!/^lib\/[A-Za-z0-9_\/]+\.dart$/.test(path)) return null;
+  const found = await gh(env, 'GET', `/contents/${path}?ref=${encodeURIComponent(base)}`, null, fetcher);
+  if (!found.ok || !found.data?.content) return null;
+  try { return decodeBase64Utf8(found.data.content); } catch (_) { return null; }
+}
+
+// Big files are shown as numbered windows around the lines that matter, so the
+// model sees the real code without the file being truncated or rewritten.
+export function focusView(source, terms, maxChars = 30000) {
+  if (source.length <= maxChars) return { whole: true, text: source };
+  const lines = source.split('\n');
+  const wanted = new Set();
+  const lowered = terms.map((t) => String(t).toLowerCase()).filter((t) => t.length > 2);
+  lines.forEach((line, i) => {
+    const l = line.toLowerCase();
+    if (lowered.some((t) => l.includes(t))) for (let j = Math.max(0, i - 25); j <= Math.min(lines.length - 1, i + 25); j++) wanted.add(j);
+  });
+  if (!wanted.size) for (let j = 0; j < Math.min(lines.length, 400); j++) wanted.add(j);
+  const out = [];
+  let prev = -2;
+  for (const i of [...wanted].sort((a, b) => a - b)) {
+    if (i !== prev + 1) out.push('… (lines omitted) …');
+    out.push(`${i + 1}| ${lines[i]}`);
+    prev = i;
+    if (out.join('\n').length > maxChars) break;
+  }
+  return { whole: false, text: out.join('\n') };
+}
+
+export function applyEdits(sources, edits) {
+  const next = new Map(sources);
+  for (const edit of Array.isArray(edits) ? edits : []) {
+    const path = String(edit?.path || '').trim();
+    const find = typeof edit?.find === 'string' ? edit.find : '';
+    const replace = typeof edit?.replace === 'string' ? edit.replace : null;
+    if (!next.has(path)) return { error: `Edit targets ${path || 'a missing path'}, which was not inspected.` };
+    if (!find || replace === null) return { error: `An edit for ${path} is missing find/replace text.` };
+    const current = next.get(path);
+    const first = current.indexOf(find);
+    if (first < 0) return { error: `In ${path}, the "find" text does not exist exactly: ${JSON.stringify(find.slice(0, 120))}. Copy it character-for-character from the source (no line-number prefixes).` };
+    if (current.indexOf(find, first + find.length) >= 0) return { error: `In ${path}, the "find" text appears more than once: ${JSON.stringify(find.slice(0, 120))}. Include more surrounding lines so it is unique.` };
+    next.set(path, current.slice(0, first) + replace + current.slice(first + find.length));
+  }
+  return { sources: next };
+}
+
+function diffView(before, after) {
+  const out = [];
+  for (const [path, text] of after) {
+    const old = before.get(path) ?? '';
+    if (old === text) continue;
+    const a = old.split('\n');
+    const b = text.split('\n');
+    let top = 0;
+    while (top < a.length && top < b.length && a[top] === b[top]) top++;
+    let ea = a.length - 1;
+    let eb = b.length - 1;
+    while (ea >= top && eb >= top && a[ea] === b[eb]) { ea--; eb--; }
+    const from = Math.max(0, top - 6);
+    out.push(`--- ${path} (around line ${top + 1})`);
+    for (let i = from; i < top; i++) out.push(`  ${a[i]}`);
+    for (let i = top; i <= ea; i++) out.push(`- ${a[i]}`);
+    for (let i = top; i <= eb; i++) out.push(`+ ${b[i]}`);
+    for (let i = eb + 1; i < Math.min(b.length, eb + 7); i++) out.push(`  ${b[i]}`);
+  }
+  return out.join('\n').slice(0, 40000);
+}
+
+async function reviewProposal(env, request, architecture, diff, uiTask, lessons) {
   const text = await runAgent(
     env,
     uiTask ? 'CHE UI/UX + Code Review Agent' : 'CHE Code Review + QA Agent',
     [
-      'Independently proofread the proposal for Dart syntax problems, missing imports, regressions, incorrect assumptions and failure to meet the request.',
-      uiTask
-        ? 'Also verify navigation clarity, readable hierarchy, responsive layout, VoiceOver semantics, voice-first operation, and that large text does not destroy the layout.'
-        : 'Also verify maintainability and whether existing behavior is preserved.',
-      'Return ONLY JSON: {"approved":true|false,"notes":["..."],"repair_instructions":"..."}.',
-      'Do not rewrite the patch yourself.',
+      'Independently review this change against the owner request.',
+      'FIRST check TARGET CORRECTNESS: does the diff change exactly the thing the owner referred to (same visible text, same screen, same widget)? If it edits a different element with a similar name, reject.',
+      'Then check Dart syntax, missing imports, regressions and whether the request is fully met.',
+      uiTask ? 'For UI, also check VoiceOver labels and voice-first use are preserved.' : 'Check existing behavior is preserved.',
+      'Apply every team lesson; a change that repeats a listed mistake must be rejected.',
+      'Return ONLY JSON: {"approved":true|false,"target_correct":true|false,"notes":["..."],"repair_instructions":"...","lesson":"one-sentence rule to prevent this mistake next time, or empty"}.',
     ].join('\n'),
-    { request, architecture, proposal },
-    1800,
+    { request, architecture, diff, team_lessons: lessonText(lessons) },
+    1500,
   );
-  return jsonObject(text) || { approved: false, notes: ['Review agent returned invalid JSON.'], repair_instructions: 'Re-check the full patch.' };
+  return jsonObject(text) || { approved: false, notes: ['Review agent returned invalid JSON.'], repair_instructions: 'Re-check the change.' };
 }
 
-export async function prepareSelfUpdate(env, request, fetcher = fetch) {
+async function implement(env, role, task, architecture, views, lessons, feedback) {
+  const text = await runAgent(
+    env,
+    role,
+    [
+      'Implement the change as exact search-and-replace edits on the inspected source.',
+      'Return ONLY strict JSON: {"summary":"1-2 sentences","edits":[{"path":"lib/x.dart","find":"exact existing text","replace":"new text"}],"new_files":[{"path":"lib/new.dart","content":"COMPLETE FILE"}]}.',
+      '"find" must be copied character-for-character from the source, WITHOUT the "123| " line-number prefixes, and must be unique in its file. Keep each find small (1-15 lines).',
+      'Change only what the request needs. Preserve VoiceOver labels and voice-first behavior.',
+      'Obey every team lesson.',
+    ].join('\n'),
+    { request: task, architecture, inspected: views, team_lessons: lessonText(lessons), previous_attempt_problem: feedback || '' },
+    6000,
+  );
+  return jsonObject(text);
+}
+
+export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = null) {
   if (!repoOf(env)) {
     return { status: 503, detail: 'Self-development needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the server.' };
   }
@@ -157,95 +276,93 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch) {
   if (!task) return { status: 400, detail: 'Describe the requested app change.' };
 
   try {
+    const lessons = await loadLessons(memory);
     const index = await sourceIndex(env, fetcher);
     if (index.error || !index.paths?.length) {
       return { status: 502, detail: index.error || 'CHE could not inspect its Flutter source.' };
     }
     const uiTask = isUiTask(task);
 
-    const architectRole = uiTask ? 'CHE UI/UX Architect' : 'CHE Software Architect';
+    // 1. Architect: plan + the exact strings/identifiers to hunt for.
     const architectText = await runAgent(
       env,
-      architectRole,
+      uiTask ? 'CHE UI/UX Architect' : 'CHE Software Architect',
       [
-        'Inspect the available Flutter/Dart file index and choose the smallest existing source set required.',
-        uiTask
-          ? 'Treat direct owner UI commands as real app-change requests. Plan the requested screen/layout/navigation/style change while preserving voice-first accessibility.'
-          : 'Plan the requested code change with the smallest safe scope.',
-        'Prefer a focused helper/widget file over bloating lib/main.dart when possible.',
-        'Return ONLY JSON: {"plan":"...","paths":["lib/a.dart"],"new_files":["lib/new.dart"]}.',
-        'At most 6 existing files and 3 new Dart files under lib/.',
+        'Plan the smallest change that does exactly what the owner asked.',
+        'Name the exact visible text, identifiers or widget names that the code for this request must contain, so the team can search for them.',
+        'Use the team lessons (they include known file locations). Pick at most 5 existing files.',
+        'Return ONLY JSON: {"plan":"...","search_terms":["exact text or identifier"],"paths":["lib/a.dart"]}.',
       ].join('\n'),
-      { request: task, dart_files: index.paths },
-      1500,
+      { request: task, dart_files: index.paths, team_lessons: lessonText(lessons) },
+      1200,
     );
     const architecture = jsonObject(architectText) || {};
-    const chosen = Array.isArray(architecture.paths)
-      ? architecture.paths.map(String).filter((path) => index.paths.includes(path)).slice(0, 6)
-      : [];
-    const inspected = await readSources(env, index.base, chosen, fetcher);
+    const terms = [...new Set([
+      ...literalTerms(task),
+      ...(Array.isArray(architecture.search_terms) ? architecture.search_terms.map(String) : []),
+    ])].filter((t) => t.trim().length > 2).slice(0, 8);
 
-    const implementerText = await runAgent(
-      env,
-      uiTask ? 'CHE Flutter UI Engineer' : 'CHE Flutter Implementation Agent',
-      [
-        'Implement the change. CHE itself is not the coder; you own the patch.',
-        'Use the actual inspected source and architect plan. Preserve unrelated behavior.',
-        uiTask
-          ? 'For UI work, make every interactive control VoiceOver-labeled, usable by voice, and robust at large iOS text sizes. Never require sight-only instructions.'
-          : 'Keep behavior testable and scoped.',
-        'Return ONLY strict JSON: {"summary":"1-3 sentences","files":[{"path":"lib/x.dart","content":"COMPLETE FILE CONTENT"}]}.',
-        'Every changed file must be COMPLETE. Never return a diff, omitted section, placeholder, or "rest unchanged".',
-        'Only Dart files under lib/. Maximum 10 files.',
-      ].join('\n'),
-      { request: task, architecture, inspected_files: inspected },
-      7800,
-    );
+    // 2. Locate: real code search beats guessing from file names.
+    const hits = await searchCode(env, terms, fetcher);
+    const ranked = [...hits.entries()].sort((a, b) => b[1] - a[1]).map(([path]) => path);
+    const planned = Array.isArray(architecture.paths) ? architecture.paths.map(String).filter((p) => index.paths.includes(p)) : [];
+    const chosen = [...new Set([...ranked, ...planned])].slice(0, 5);
+    if (!chosen.length) return { status: 422, detail: 'The team could not locate the code for that request. Try naming the exact on-screen text.' };
 
-    let proposal = proposalFrom(implementerText);
-    let checked = proposal ? validateUpdateFiles(proposal.files) : { error: 'Implementation agent returned invalid patch JSON.' };
-    if (!proposal || checked.error) {
-      return { status: 422, detail: checked.error || 'Implementation agent did not return a usable patch.' };
+    const sources = new Map();
+    const views = [];
+    for (const path of chosen) {
+      const full = await readFull(env, index.base, path, fetcher);
+      if (full === null) continue;
+      sources.set(path, full);
+      const view = focusView(full, terms);
+      views.push({ path, search_hits: hits.get(path) || 0, whole_file: view.whole, source: view.text });
     }
-    proposal.files = checked.files;
+    if (!sources.size) return { status: 502, detail: 'The team could not read the located files.' };
 
-    let review = await reviewProposal(env, task, architecture, proposal, uiTask);
-    if (review.approved !== true) {
-      const repairText = await runAgent(
-        env,
-        uiTask ? 'CHE Flutter UI Repair Agent' : 'CHE Flutter Repair Agent',
-        [
-          'Repair the implementation using the independent review notes.',
-          uiTask
-            ? 'Keep the requested visual/navigation change and fix accessibility/layout regressions.'
-            : 'Fix every concrete review issue without expanding scope unnecessarily.',
-          'Return ONLY strict JSON: {"summary":"...","files":[{"path":"lib/x.dart","content":"COMPLETE FILE CONTENT"}]}.',
-          'Only complete Dart files under lib/.',
-        ].join('\n'),
-        { request: task, architecture, proposal, review },
-        7800,
-      );
-      const repaired = proposalFrom(repairText);
-      checked = repaired ? validateUpdateFiles(repaired.files) : { error: 'Repair agent returned invalid patch JSON.' };
-      if (!repaired || checked.error) {
-        return { status: 422, detail: checked.error || 'Repair agent could not produce a valid patch.' };
+    // 3. Implement with exact edits; one retry with the concrete error.
+    const role = uiTask ? 'CHE Flutter UI Engineer' : 'CHE Flutter Implementation Agent';
+    let feedback = '';
+    let result = null;
+    let summary = '';
+    for (let attempt = 0; attempt < 3 && !result; attempt++) {
+      const answer = await implement(env, role, task, architecture, views, lessons, feedback);
+      if (!answer) { feedback = 'Your last answer was not valid JSON.'; continue; }
+      const applied = applyEdits(sources, answer.edits);
+      if (applied.error) { feedback = applied.error; continue; }
+      for (const file of Array.isArray(answer.new_files) ? answer.new_files.slice(0, 3) : []) {
+        const path = String(file?.path || '');
+        if (/^lib\/[A-Za-z0-9_\/]+\.dart$/.test(path) && !sources.has(path) && typeof file.content === 'string') applied.sources.set(path, file.content);
       }
-      repaired.files = checked.files;
-      proposal = repaired;
-      review = await reviewProposal(env, task, architecture, proposal, uiTask);
-      if (review.approved !== true) {
-        return {
-          status: 422,
-          detail: 'The coding team did not pass independent review, so CHE did not offer the update for installation.',
-          review,
-        };
+      const diff = diffView(sources, applied.sources);
+      if (!diff) { feedback = 'Your edits changed nothing.'; continue; }
+      const review = await reviewProposal(env, task, architecture, diff, uiTask, lessons);
+      if (review.approved === true && review.target_correct !== false) {
+        result = { next: applied.sources, review, diff };
+        summary = String(answer.summary || 'CHE update').slice(0, 1800);
+        break;
       }
+      const why = [review.repair_instructions, ...(review.notes || [])].filter(Boolean).join(' ');
+      feedback = `Independent review rejected it: ${why}`.slice(0, 1500);
+      await recordLesson(memory, 'mistake', review.lesson || `For "${task.slice(0, 80)}": ${why}`);
     }
+    if (!result) {
+      if (/does not exist exactly|more than once/.test(feedback)) await recordLesson(memory, 'mistake', 'Edit "find" text must be copied exactly from the source without line-number prefixes and include enough lines to be unique.');
+      return { status: 422, detail: `The coding team could not produce a correct change. ${feedback}`.slice(0, 600) };
+    }
+
+    const files = [...result.next.entries()]
+      .filter(([path, content]) => sources.get(path) !== content)
+      .map(([path, content]) => ({ path, content }));
+    const checked = validateUpdateFiles(files);
+    if (checked.error) return { status: 422, detail: checked.error };
+    await recordLesson(memory, 'location', `"${task.slice(0, 90)}" was done by editing ${files.map((f) => f.path).join(', ')}.`);
 
     return {
       status: 200,
-      proposal,
-      review,
+      proposal: { summary, files: checked.files },
+      review: result.review,
+      diff: result.diff,
       team: uiTask
         ? ['CHE UI/UX Architect', 'CHE Flutter UI Engineer', 'CHE UI/UX + Code Review Agent']
         : ['CHE Software Architect', 'CHE Flutter Implementation Agent', 'CHE Code Review + QA Agent'],
