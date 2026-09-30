@@ -8,6 +8,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'che_theme.dart';
 
@@ -824,7 +825,7 @@ class CheRichText extends StatelessWidget {
       }
     }
     if (children.isEmpty && streaming) children.add(const BlinkingCursor());
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: children);
+    return SelectionArea(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: children));
   }
 
   static List<_Block> _parseBlocks(String src) {
@@ -959,7 +960,32 @@ class _Paragraphs extends StatelessWidget {
     for (final m in re.allMatches(s)) {
       if (m.start > i) spans.add(TextSpan(text: s.substring(i, m.start), style: base));
       final t = m.group(0)!;
-      if (t.startsWith('**')) {
+      if (t.startsWith('http://') || t.startsWith('https://')) {
+        var visible = t;
+        var trailing = '';
+        while (visible.isNotEmpty && '.,!?;:)'.contains(visible[visible.length - 1])) {
+          trailing = visible[visible.length - 1] + trailing;
+          visible = visible.substring(0, visible.length - 1);
+        }
+        final uri = Uri.tryParse(visible);
+        spans.add(WidgetSpan(
+          alignment: PlaceholderAlignment.baseline,
+          baseline: TextBaseline.alphabetic,
+          child: Semantics(
+            link: true,
+            label: 'Open link $visible',
+            child: GestureDetector(
+              onTap: uri == null ? null : () => launchUrl(uri, mode: LaunchMode.externalApplication),
+              child: Text(visible, style: base.copyWith(
+                color: Colors.lightBlueAccent,
+                decoration: TextDecoration.underline,
+                decorationColor: Colors.lightBlueAccent,
+              )),
+            ),
+          ),
+        ));
+        if (trailing.isNotEmpty) spans.add(TextSpan(text: trailing, style: base));
+      } else if (t.startsWith('**')) {
         spans.add(TextSpan(text: t.substring(2, t.length - 2), style: base.copyWith(fontWeight: FontWeight.w700)));
       } else {
         spans.add(TextSpan(

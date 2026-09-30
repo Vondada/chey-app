@@ -25,7 +25,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:url_launcher/url_launcher.dart';
 import 'che_native_voice.dart';
-import 'che_speech_chunker.dart';
+import 'che_stream_batcher.dart';
 import 'che_account_bridge.dart';
 import 'che_realtime_voice.dart';
 import 'che_wake_setup.dart';
@@ -74,6 +74,7 @@ import 'local_server/activity_local.dart';
 import 'plugins/che_plugin_webapp.dart';
 import 'self_update/che_patch_banner.dart';
 import 'self_update/che_update_card.dart';
+import 'self_update/che_self_update_intent.dart';
 import 'rooms/che_markets_room.dart';
 import 'rooms/che_store_room.dart';
 import 'rooms/che_pipeline_room.dart';
@@ -112,7 +113,10 @@ part 'home_state/voice.dart';
 // ============================================================
 
 const String _androidAgentBaseUrl = 'http://10.0.2.2:8787';
-const String _defaultAgentBaseUrl = String.fromEnvironment('CHE_AGENT_URL');
+const String _defaultAgentBaseUrl = String.fromEnvironment(
+  'CHE_AGENT_URL',
+  defaultValue: 'https://chey-app.henryjavoni.workers.dev',
+);
 
 void main() {
   runApp(const CHEApp());

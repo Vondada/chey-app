@@ -466,8 +466,14 @@ extension _CheHomeSend on _CHEHomeState {
 
       _scrollToBottom();
 
-      // Speak the first finished sentence as soon as it streams in, instead of
-      // waiting for the entire reply (time-to-first-spoken).
+      // Batch visual updates while speaking the first finished sentence as soon
+      // as it streams in (time-to-first-spoken).
+      final uiBatcher = CheStreamBatcher((partialReply) {
+        final index = assistantIndex;
+        if (!mounted || index == null || index >= messages.length) return;
+        _set(() => messages[index]['text'] = _sanitizeCheReply(partialReply));
+        _scrollToBottom();
+      });
       final speechChunker = CheSpeechChunker();
       var speechChain = Future<void>.value();
       void enqueueSpoken(String chunk) {
@@ -479,25 +485,23 @@ extension _CheHomeSend on _CHEHomeState {
         });
       }
 
-      final reply = await _streamCheResponse(
-        message,
-        history,
-        onPartial: (partialReply) {
-          final index = assistantIndex;
-          if (!mounted || index == null || index >= messages.length) return;
-
-          final clean = _sanitizeCheReply(partialReply);
-          _set(() {
-            messages[index]['text'] = clean;
-          });
-
-          _scrollToBottom();
-
-          for (final chunk in speechChunker.addCumulative(clean)) {
-            enqueueSpoken(chunk);
-          }
-        },
-      );
+      late final String reply;
+      try {
+        reply = await _streamCheResponse(
+          message,
+          history,
+          onPartial: (partialReply) {
+            uiBatcher.add(partialReply);
+            final clean = _sanitizeCheReply(partialReply);
+            for (final chunk in speechChunker.addCumulative(clean)) {
+              enqueueSpoken(chunk);
+            }
+          },
+        );
+        uiBatcher.flush();
+      } finally {
+        uiBatcher.dispose();
+      }
 
       final stopped = _stopRequested;
       _stopRequested = false;

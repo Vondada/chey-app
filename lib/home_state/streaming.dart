@@ -39,15 +39,7 @@ extension _CheHomeStreaming on _CHEHomeState {
 
     // Updating CHE itself is different from creating a separate owner project.
     // CHE self-code changes stay reviewable through the GitHub proposal workflow.
-    final codeRequest = RegExp(
-      r'^(?:(?:chay|chey|shay|che)[, ]+)?'
-      r'(?:(?:add|change|update|remove|fix|improve|build|redesign|modify|move|restyle)\s+.+\s+'
-      r'(?:to|in|on)\s+(?:your|che|c\.?h\.?e\.?)\s+(?:code|app|ui|interface|screen|layout)\b|'
-      r'(?:update|improve|fix|build|redesign|change|modify)\s+(?:yourself|your app|your code|your ui|your interface|your screen|your layout)\b|'
-      r'(?:proofread|review|edit|refactor)\s+(?:your\s+)?code\b|'
-      r'(?:change|move|redesign|restyle)\s+(?:this|the|your)\s+(?:screen|button|control|layout|ui|interface)\b)',
-      caseSensitive: false,
-    ).hasMatch(trimmedRequest);
+    final codeRequest = cheIsSelfUpdateRequest(trimmedRequest);
 
     final projectMatch = RegExp(
       r'\b(?:build|create|develop|write|start|make)\s+'
