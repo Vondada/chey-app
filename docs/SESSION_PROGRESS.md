@@ -1,9 +1,15 @@
 # CHE session progress — FINAL 2026-09-29 (America/Chicago)
 
 Work tree: `/workspace/chey-app-git` (Vondada/chey-app, `gh` as Vondada).  
-Prod Worker: **https://chey-app.henryjavoni.workers.dev** — `/health` → `{"ok":true,"agent":"CHE cloud"}`.  
-PR **#47** merged to `main` (merge commit `0e9e483`). Worker redeployed from `main` after merge.  
-Worker tests: `cd server/cloudflare && npm test` → **127/127 pass**.
+Prod Worker: **https://chey-app.henryjavoni.workers.dev** — `/health` → `{"ok":true,"agent":"CHE cloud"}`.
+Deployed version: `717d399e-b77b-4650-ae63-9796fe1468eb` (Office auto providers).  
+Worker tests: `cd server/cloudflare && npm test` → **128/128 pass**.
+
+---
+
+## Office providers (2026-09-29 evening)
+
+**xAI key may be present but uncredited.** Iris, Atlas, Mira, and Lyra now use `provider_preference: 'auto'` so Office work is not blocked on Grok. `routingForAgent` omits `che_provider` for `auto`, and `ai_router` falls through to Groq / Gemini / Cerebras (and other healthy free/keyed providers). Nova/Knox stay on `openai`; Sage stays `auto` + Stripe tool gate. Owner can still pin an agent to `xai` later if credits land.
 
 ---
 
@@ -15,8 +21,8 @@ Worker tests: `cd server/cloudflare && npm test` → **127/127 pass**.
 | **Forever opportunity scout** | `opportunity_scout.js` + playbook; Pinterest / dropship / middleman shortlists; Fiverr path unchanged |
 | **Research → Durable Object memory** | `research_memory.js`; write-back on scout/research complete + public research chat; visible on `GET /api/state` |
 | **AI ad business pack** | `docs/ai-ad-business/` (offer, DM script, order checklist, Fiverr scout/collab, opportunity scout) |
+| **Office auto providers** | Iris/Atlas/Mira/Lyra → `auto` (not blocked on uncredited xAI) |
 | **Deploy** | `wrangler deploy` from `server/cloudflare` → `chey-app` @ workers.dev (account `c49b395e…542c`) |
-| **PR #47** | Merged: Iris + opportunity scout + research memory + deploy docs |
 
 Prod secret **names** only (via `wrangler secret list`): `CHE_PAIR_CODE`, `GROQ_API_KEY`, `GEMINI_API_KEY`, `CEREBRAS_API_KEY`. No values recorded here.
 
@@ -27,7 +33,7 @@ Prod secret **names** only (via `wrangler secret list`): `CHE_PAIR_CODE`, `GROQ_
 | # | Goal | In tree | Remaining |
 |---|---|---|---|
 | 1 | Add to her own code when asked | `che-update` → draft PR; Actions + Shorebird docs; secret/native guards | Optional `CHE_GITHUB_TOKEN` / `CHE_GITHUB_REPO`; Shorebird merge path |
-| 2 | CHE + team always creating / helpful | Office + War Room + Iris + scout/memory loop; live Worker | Optional xAI for Iris/Atlas Grok path; models already have Groq/Gemini/Cerebras |
+| 2 | CHE + team always creating / helpful | Office + War Room + Iris + scout/memory loop; live Worker | xAI optional only; Iris/Atlas prefer auto / free providers |
 | 3 | Create/design full apps and websites | Projects vault, self-update for Flutter `lib/`, site stub | Richer `projects/` scaffolds still thin; no silent IPA for native |
 | 4 | Generate videos and pictures | Art Studio + Workers AI / image URL; video not implemented | Optional `CHE_VIDEO_GEN_URL` / upscale URL |
 | 5 | Pull from any known public source | Builtin skills, research mode, opportunity scout | Writes / spend / outreach still need owner confirm |
@@ -36,7 +42,7 @@ Prod secret **names** only (via `wrangler secret list`): `CHE_PAIR_CODE`, `GROQ_
 
 ## Still owner-only (nothing agent should invent or auto-do)
 
-1. **Optional xAI** — `XAI_API_KEY` (or `CHE_XAI_API_KEY` / `GROK_API_KEY`) so Iris/Atlas prefer Grok; free keys already on Worker.
+1. **Optional xAI credits** — key may exist; without credits Iris/Atlas/Mira/Lyra stay on `auto` fallbacks. Re-pin to `xai` only after billing works.
 2. **Fiverr seller** — owner uses scout shortlists / briefs manually; do **not** auto-message or bid.
 3. **SideStore IPA** — Codemagic → macOS IPA only if native changes (`docs/SIDESTORE_CODEMAGIC.md`); Flutter speech fallback stays.
 4. **Outreach / spend confirm** — Stripe keys unset until owner confirms; no auto purchase / DM / bid / transfer.

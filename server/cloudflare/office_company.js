@@ -2,12 +2,12 @@
 // workspaces and task history; this only fills/updates company responsibilities.
 export const LA_AGENCIA_ROLES = {
   Nova: { role: 'Product / listings', specialty: 'Product offers, listings and sales-page drafts', provider_preference: 'openai', capability_requirements: ['coding'] },
-  Atlas: { role: 'Research', specialty: 'Research, sourcing and competitive checks', provider_preference: 'xai', capability_requirements: ['deep_reasoning'] },
-  Mira: { role: 'Customer / support copy', specialty: 'Customer-facing support and service copy', provider_preference: 'xai', capability_requirements: ['text'] },
+  Atlas: { role: 'Research', specialty: 'Research, sourcing and competitive checks', provider_preference: 'auto', capability_requirements: ['deep_reasoning'] },
+  Mira: { role: 'Customer / support copy', specialty: 'Customer-facing support and service copy', provider_preference: 'auto', capability_requirements: ['text'] },
   Knox: { role: 'Engineering / Codex jobs', specialty: 'Implementation, tests and isolated Codex work packets', provider_preference: 'openai', capability_requirements: ['coding'] },
   Sage: { role: 'Finance / Stripe reports', specialty: 'Read-only Stripe reporting and finance summaries', provider_preference: 'auto', capability_requirements: ['payments_read'] },
-  Lyra: { role: 'Content / social', specialty: 'Content, social copy and campaign drafts', provider_preference: 'xai', capability_requirements: ['text'] },
-  Iris: { role: 'Ad Studio / paid-social creatives', specialty: 'Ad creatives, visual briefs, captions and same-night social packages', provider_preference: 'xai', capability_requirements: ['text'] },
+  Lyra: { role: 'Content / social', specialty: 'Content, social copy and campaign drafts', provider_preference: 'auto', capability_requirements: ['text'] },
+  Iris: { role: 'Ad Studio / paid-social creatives', specialty: 'Ad creatives, visual briefs, captions and same-night social packages', provider_preference: 'auto', capability_requirements: ['text'] },
 };
 
 export function ensureLaAgenciaRoster(data) {
