@@ -44,7 +44,7 @@ const PROVIDERS = [
     // Anthropic's OpenAI-compatible Chat Completions endpoint.
     url: 'https://api.anthropic.com/v1/chat/completions',
     fast: (env) => env.CHE_ANTHROPIC_FAST_MODEL || 'claude-haiku-4-5',
-    strong: (env) => env.CHE_ANTHROPIC_STRONG_MODEL || 'claude-sonnet-4-5',
+    strong: (env) => env.CHE_ANTHROPIC_STRONG_MODEL || 'claude-sonnet-5-5',
   },
   {
     // Owner's own local/private Ollama server (OpenAI-compatible API),
