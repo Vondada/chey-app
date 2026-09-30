@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'browser/che_browser.dart';
 import 'che_theme.dart';
+import 'home/che_grok_chat_screen.dart';
 
 class CheAppDefinition {
   const CheAppDefinition({
@@ -128,9 +129,18 @@ typedef CheLearnPageCallback = Future<void> Function(
 );
 
 class CheAppsHubTab extends StatefulWidget {
-  const CheAppsHubTab({super.key, this.onLearnPage});
+  const CheAppsHubTab({
+    super.key,
+    this.onLearnPage,
+    this.agentBaseUrl = '',
+    this.deviceToken = '',
+  });
 
   final CheLearnPageCallback? onLearnPage;
+
+  /// CHE Worker base URL + paired device token for native Grok chat.
+  final String agentBaseUrl;
+  final String deviceToken;
 
   @override
   State<CheAppsHubTab> createState() => _CheAppsHubTabState();
@@ -172,6 +182,41 @@ class _CheAppsHubTabState extends State<CheAppsHubTab> {
     );
   }
 
+  Future<void> _openEmbeddedWeb(CheAppDefinition app) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CheEmbeddedAppScreen(
+          app: app,
+          onLearnPage: widget.onLearnPage,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openCatalogApp(CheAppDefinition app) async {
+    // Grok opens the native Worker→xAI chat. Long-press (or overflow in
+    // that screen) still opens grok.com in the in-app browser.
+    if (app.name == 'Grok') {
+      await CheGrokChatScreen.open(
+        context,
+        baseUrl: widget.agentBaseUrl,
+        deviceToken: widget.deviceToken,
+        onOpenWeb: () {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => CheEmbeddedAppScreen(
+                app: app,
+                onLearnPage: widget.onLearnPage,
+              ),
+            ),
+          );
+        },
+      );
+      return;
+    }
+    await _openEmbeddedWeb(app);
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListView(
@@ -180,7 +225,7 @@ class _CheAppsHubTabState extends State<CheAppsHubTab> {
         const Text('Apps inside CHE', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
         const SizedBox(height: 4),
         const Text(
-          'Web-capable services open without leaving CHE. Native-only features use the official app when iOS or the service requires it.',
+          'Web-capable services open without leaving CHE. Tap Grok for native Worker chat (long-press for grok.com). Native-only features use the official app when iOS or the service requires it.',
           style: TextStyle(color: CheColors.textDim),
         ),
         const SizedBox(height: 16),
@@ -198,14 +243,10 @@ class _CheAppsHubTabState extends State<CheAppsHubTab> {
             final app = cheAppCatalog[index];
             return InkWell(
               borderRadius: BorderRadius.circular(16),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => CheEmbeddedAppScreen(
-                    app: app,
-                    onLearnPage: widget.onLearnPage,
-                  ),
-                ),
-              ),
+              onTap: () => _openCatalogApp(app),
+              onLongPress: app.name == 'Grok'
+                  ? () => _openEmbeddedWeb(app)
+                  : null,
               child: Container(
                 decoration: BoxDecoration(
                   color: CheColors.panel,
@@ -221,10 +262,15 @@ class _CheAppsHubTabState extends State<CheAppsHubTab> {
                     Text(
                       app.name,
                       textAlign: TextAlign.center,
-                      maxLines: 2,
+                      maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
+                    if (app.name == 'Grok')
+                      const Text(
+                        'Native',
+                        style: TextStyle(fontSize: 10, color: CheColors.accent, fontWeight: FontWeight.w700),
+                      ),
                   ],
                 ),
               ),

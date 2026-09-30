@@ -59,6 +59,7 @@ import 'che_ui/che_agents.dart' show CheAgent, CheAgentStatusLabel;
 import 'che_ui/che_agent_chat.dart' show CheOrbState;
 import 'che_ui/che_log.dart' show CheTranscriptScreen;
 import 'home/che_home_chat.dart';
+import 'home/che_grok_chat_screen.dart';
 import 'home/che_mockup_home.dart';
 import 'home/che_more_tab.dart';
 import 'home/che_projects_board.dart';
@@ -1513,7 +1514,11 @@ OWNER AGENCY
 
 
   Widget _buildAppsTab() {
-    return CheAppsHubTab(onLearnPage: _learnFromBrowserPage);
+    return CheAppsHubTab(
+      onLearnPage: _learnFromBrowserPage,
+      agentBaseUrl: cheAgentBaseUrl,
+      deviceToken: _deviceToken ?? '',
+    );
   }
 
   Widget _buildMoreTab() {

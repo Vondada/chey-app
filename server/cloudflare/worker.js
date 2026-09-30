@@ -1717,7 +1717,8 @@ function compactChatPrompt({ clientClock, brainContext, vectorMemoryContext, off
 
 // Runs the chat model; if the full prompt fails, retries with a compact
 // prompt and recent turns, then with the strong model, before giving up.
-async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, message, maxTokens, cheContext = null }) {
+async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, message, maxTokens, cheContext = null, cheProvider = '' }) {
+  const provider = String(cheProvider || '').trim().toLowerCase().slice(0, 40);
   const attempts = [
     { model, system: systemPrompt, turns },
     { model, system: compactPrompt, turns: turns.slice(-4) },
@@ -1734,8 +1735,9 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
         ],
         max_tokens: maxTokens,
         che_route: 'quality',
+        ...(provider ? { che_provider: provider } : {}),
         ...(cheContext?.items?.length ? { che_context: cheContext } : {}),
-        che_audit: { task: String(message).slice(0, 160), agent: 'CHE', route: 'owner_chat' },
+        che_audit: { task: String(message).slice(0, 160), agent: 'CHE', route: 'owner_chat', provider: provider || undefined },
       });
     } catch (error) {
       lastError = error;
@@ -3870,6 +3872,12 @@ export class CheState extends DurableObject {
         }
         const message = String(body.message || '').trim().slice(0, 5000);
         if (!message) return json({ detail: 'Message required.' }, 400);
+        // Optional provider pin from the client (e.g. native Grok chat → xai).
+        // Empty / unknown values leave routing on auto. Prefer-not-strict so
+        // a missing or uncredited Grok key still falls through to other engines.
+        const allowedProviders = new Set(['xai', 'openai', 'anthropic', 'gemini', 'groq', 'cerebras', 'mistral', 'github', 'sambanova', 'openrouter', 'ollama', 'huggingface']);
+        const rawProvider = String(body.che_provider || body.provider || '').trim().toLowerCase().slice(0, 40);
+        const cheProvider = allowedProviders.has(rawProvider) ? rawProvider : '';
 
         const control = message.toLowerCase().replace(/^(?:chay|chey|che)[, ]+/, '').replace(/[.!?]+$/, '').trim();
         if (control === 'stand by' || control === 'resume') {
@@ -4637,6 +4645,7 @@ export class CheState extends DurableObject {
           turns,
           message,
           cheContext,
+          cheProvider,
           maxTokens: needsStrongModel ? 1000 : 360,
         });
         } catch (error) {
