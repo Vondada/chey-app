@@ -7,6 +7,8 @@ test('owner phrases for talking to other AIs', () => {
   assert.deepEqual(consultIntent('talk to Mistral about my launch plan').peers, ['mistral']);
   assert.deepEqual(consultIntent('ask Claude, Gemini and Grok: is this safe?').peers, ['claude', 'gemini', 'grok']);
   assert.equal(consultIntent('ask me later'), null);
+  assert.deepEqual(consultIntent('Ask chagpt and Claude and grok how to stop you from lagging').peers, ['chatgpt', 'claude', 'grok']);
+  assert.deepEqual(consultIntent('ask chat gpt about voices').peers, ['chatgpt']);
   assert.deepEqual(shareIntent('share the Flagstaff link with ChatGPT and Grok').peers, ['chatgpt', 'grok']);
   assert.equal(shareIntent('share this photo with mom'), null);
 });

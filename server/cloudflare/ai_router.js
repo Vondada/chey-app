@@ -464,6 +464,8 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   const context = input?.che_context && typeof input.che_context === 'object' ? input.che_context : null;
   const audit = input?.che_audit && typeof input.che_audit === 'object' ? input.che_audit : null;
   const strictProvider = input?.che_provider_strict === true;
+  // Emergency = the owner must get an answer: the 10% reserve may be used.
+  const emergency = input?.che_emergency === true;
   const office = input?.che_agent_id
     ? { agent_id: String(input.che_agent_id).slice(0, 80), thread_id: String(input.che_thread_id || '').slice(0, 200) }
     : null;
@@ -490,7 +492,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   const tryCloudflare = async () => {
     if (needs.local_only) return null;
     if (env.AI && now >= cloudflareExhaustedUntil) {
-      if (await isPastDailyBudget(env, usageStorage, 'cloudflare', now)) {
+      if (!emergency && await isPastDailyBudget(env, usageStorage, 'cloudflare', now)) {
         errors.push('cloudflare: daily budget at 90%');
         return null;
       }
@@ -555,7 +557,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
         );
         continue;
       }
-      if (await isPastDailyBudget(env, usageStorage, provider.id, now)) {
+      if (!emergency && await isPastDailyBudget(env, usageStorage, provider.id, now)) {
         errors.push(`${provider.id}: daily budget at 90%`);
         continue;
       }

@@ -5039,6 +5039,22 @@ export class CheState extends DurableObject {
         });
         } catch (error) {
           if (!busyError(error)) throw error;
+          // Never leave the owner without an answer: retry once with a light
+          // prompt on the fastest engines, allowed to use the 10% reserve.
+          try {
+            const light = `You are CHE, the owner's voice-first assistant. Answer directly and briefly. ${WORK_POLICY}`;
+            const rescue = await this.env.AI.run(FAST_MODEL, {
+              messages: [{ role: 'system', content: light }, ...turns.slice(-4), { role: 'user', content: message }],
+              max_tokens: 500,
+              che_emergency: true,
+              che_audit: { task: String(message).slice(0, 160), agent: 'CHE', route: 'owner_chat_rescue' },
+            });
+            const rescued = String(rescue?.response || rescue?.choices?.[0]?.message?.content || '').trim();
+            if (rescued) answer = rescue;
+          } catch (_) { /* fall through to the saved job */ }
+        }
+        if (!answer) {
+          const error = new Error('all engines busy');
           const fresh = await this.loadData();
           const job = { id: crypto.randomUUID(), title: message.slice(0, 80), prompt: message,
             status: 'queued', retry_count: 0, retry_at: Date.now() + 5 * 60_000,

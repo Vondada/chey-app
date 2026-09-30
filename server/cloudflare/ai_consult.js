@@ -19,12 +19,14 @@ export const FREE_ENGINES = {
   qwen: { provider: 'cerebras', label: 'Qwen (on Cerebras)' },
 };
 
-const NAMES = ['gemini', 'chatgpt', 'chat gpt', 'openai', 'gpt', 'mistral', 'groq', 'cerebras', 'qwen', 'claude', 'grok', 'codex', 'copilot', 'cursor'];
-const nameRe = NAMES.map((n) => n.replace(' ', '\\s?')).join('|');
+const NAMES = ['gemini', 'chatgpt', 'chat gpt', 'chagpt', 'chatgbt', 'chat gbt', 'chad gpt', 'chat g p t', 'openai', 'open ai', 'gpt', 'mistral', 'groq', 'cerebras', 'qwen', 'claude', 'grok', 'codex', 'copilot', 'cursor'];
+const nameRe = NAMES.map((n) => n.replace(/ /g, '\\s?')).join('|');
 
 export function canonical(name) {
   const n = String(name || '').toLowerCase().replace(/\s+/g, '');
-  return n === 'chatgpt' ? 'chatgpt' : n;
+  if (/^(?:chatgpt|chagpt|chatgbt|chadgpt|chatgpt)$/.test(n)) return 'chatgpt';
+  if (n === 'openai') return 'openai';
+  return n;
 }
 
 function namesIn(text) {
