@@ -59,6 +59,7 @@ import 'che_ui/che_agents.dart' show CheAgent;
 import 'che_ui/che_agent_chat.dart' show CheOrbState;
 import 'che_ui/che_log.dart' show CheTranscriptScreen;
 import 'home/che_home_chat.dart';
+import 'home/che_office_home_stage.dart';
 import 'local_server/activity_local.dart';
 import 'plugins/che_plugin_webapp.dart';
 import 'self_update/che_patch_banner.dart';
@@ -609,8 +610,36 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     ));
   }
 
+  /// Last office signature that forced a full home setState. Task-text-only
+  /// polls must not rebuild the chat/composer tree — that was a major jank
+  /// source with the live roster on home.
+  String _officeUiSig = '';
+
   void _onOfficeChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    final r = _officeRuntime;
+    final live = r.meetings.where((m) => m.live).length;
+    final roster = StringBuffer()
+      ..write(r.che.status.name)
+      ..write(':')
+      ..write(r.working)
+      ..write(':')
+      ..write(live)
+      ..write(':')
+      ..write(r.error ?? '')
+      ..write(':')
+      ..write(r.connection.name);
+    for (final p in r.agents) {
+      roster
+        ..write('|')
+        ..write(p.agent.id)
+        ..write('.')
+        ..write(p.agent.status.name);
+    }
+    final sig = roster.toString();
+    if (sig == _officeUiSig) return;
+    _officeUiSig = sig;
+    setState(() {});
   }
 
   void _ensureOfficeRuntime() {
@@ -1196,13 +1225,17 @@ OWNER AGENCY
                 orbState: _orbState,
                 subtitle: subtitle,
                 onOrbTap: toggleListening,
-                office: CheOfficePresence(
-                  che: _officeRuntime.che,
-                  working: _officeRuntime.working,
-                  liveMeetings: _officeRuntime.meetings.where((m) => m.live).length,
-                  connected: _deviceToken != null && _officeRuntime.error == null,
-                  onTap: _openOfficeFloor,
-                ),
+              ),
+              // Office-first: live animated roster + one-tap floor (chat stays below).
+              CheOfficeHomeStage(
+                che: _officeRuntime.che,
+                agents: agents,
+                working: _officeRuntime.working,
+                liveMeetings: _officeRuntime.meetings.where((m) => m.live).length,
+                connected: _deviceToken != null && _officeRuntime.error == null,
+                compact: messages.isNotEmpty,
+                onEnterOffice: _openOfficeFloor,
+                onTapAgent: (_) => _openOfficeFloor(),
               ),
               if (_lastVoiceEngine != null && _lastVoiceEngine!.isNotEmpty)
                 Padding(

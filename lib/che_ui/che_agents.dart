@@ -6,6 +6,7 @@
 // pass a live List<CheAgent> (e.g. from GET /agents or a WebSocket to the
 // Durable Object). Never animate work that isn't happening.
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -106,7 +107,8 @@ class CheAgent {
 /// A little animated person. Pose follows the agent's REAL status:
 /// typing (building), reading (researching/analyzing/reviewing), talking
 /// (talking/meeting), thought dots (waiting), wave + check (done), dimmed
-/// (offline), gentle breathing (idle). CHE gets a glowing halo.
+/// (offline), gentle breathe/blink (idle — honors Reduce Motion). CHE gets a
+/// glowing halo.
 class CheMiniPerson extends StatefulWidget {
   const CheMiniPerson({super.key, required this.agent, this.size = 64, this.showDesk = false});
   final CheAgent agent;
@@ -116,8 +118,8 @@ class CheMiniPerson extends StatefulWidget {
   State<CheMiniPerson> createState() => _CheMiniPersonState();
 }
 
-/// Statuses that mean an agent is actually doing work right now. Only these
-/// animate; idle, waiting (up next), done and offline desks are static.
+/// Statuses that mean an agent is actively working. These use a per-widget
+/// AnimationController (usually 0–2 agents).
 bool cheAgentIsMoving(CheAgentStatus status) => const {
       CheAgentStatus.researching,
       CheAgentStatus.building,
@@ -127,13 +129,81 @@ bool cheAgentIsMoving(CheAgentStatus status) => const {
       CheAgentStatus.talking,
     }.contains(status);
 
-class _CheMiniPersonState extends State<CheMiniPerson> with SingleTickerProviderStateMixin {
-  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(seconds: 2));
+/// Soft idle life (breathe / blink / gentle wave). Offline stays frozen.
+bool cheAgentHasIdleLife(CheAgentStatus status) =>
+    status == CheAgentStatus.idle ||
+    status == CheAgentStatus.waiting ||
+    status == CheAgentStatus.done;
+
+/// One shared ~10fps clock for every idle chibi. Avoids N×60fps controllers
+/// freezing the home shell when the whole roster is breathing.
+class CheIdleLifeClock extends ChangeNotifier with WidgetsBindingObserver {
+  CheIdleLifeClock._() {
+    WidgetsBinding.instance.addObserver(this);
+  }
+  static final CheIdleLifeClock instance = CheIdleLifeClock._();
+
+  static const Duration _period = Duration(milliseconds: 120); // ~8 fps
+  static const double _step = 0.033; // ~3.6s full breathe cycle
+
+  Timer? _timer;
+  int _retainers = 0;
+  double t = 0.25;
+  bool _appResumed = true;
+
+  /// Stable 0..1 phase so neighbors don't breathe in lockstep.
+  static double phaseFor(String id) => (id.hashCode.remainder(1000).abs()) / 1000.0;
 
   @override
-  void initState() {
-    super.initState();
-    _syncMotion();
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appResumed = state == AppLifecycleState.resumed;
+    if (_appResumed) {
+      _ensureTimer();
+    } else {
+      _timer?.cancel();
+      _timer = null;
+    }
+  }
+
+  void retain() {
+    _retainers++;
+    _ensureTimer();
+  }
+
+  void release() {
+    if (_retainers <= 0) return;
+    _retainers--;
+    if (_retainers == 0) {
+      _timer?.cancel();
+      _timer = null;
+    }
+  }
+
+  void _ensureTimer() {
+    if (_retainers <= 0 || !_appResumed || _timer != null) return;
+    _timer = Timer.periodic(_period, (_) {
+      t = (t + _step) % 1.0;
+      notifyListeners();
+    });
+  }
+}
+
+class _CheMiniPersonState extends State<CheMiniPerson> with SingleTickerProviderStateMixin {
+  AnimationController? _work;
+  bool _reduced = false;
+  bool _depsReady = false;
+  bool _holdingIdle = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduced = CheMotion.reduced(context);
+    final first = !_depsReady;
+    _depsReady = true;
+    if (first || reduced != _reduced) {
+      _reduced = reduced;
+      _syncMotion();
+    }
   }
 
   @override
@@ -142,40 +212,82 @@ class _CheMiniPersonState extends State<CheMiniPerson> with SingleTickerProvider
     if (oldWidget.agent.status != widget.agent.status) _syncMotion();
   }
 
-  // Light motion only while working; a static pose otherwise, so an idle
-  // Office costs no frames.
+  void _releaseIdle() {
+    if (!_holdingIdle) return;
+    CheIdleLifeClock.instance.release();
+    _holdingIdle = false;
+  }
+
+  void _holdIdle() {
+    if (_holdingIdle) return;
+    CheIdleLifeClock.instance.retain();
+    _holdingIdle = true;
+  }
+
+  // Working = own 60fps pose loop (rare). Idle = shared 10fps clock.
+  // Offline / Reduce Motion = static (no timers).
   void _syncMotion() {
-    if (cheAgentIsMoving(widget.agent.status)) {
-      if (!_c.isAnimating) _c.repeat();
+    if (!_depsReady) return;
+    final working = !_reduced && cheAgentIsMoving(widget.agent.status);
+    final idleLife = !_reduced && cheAgentHasIdleLife(widget.agent.status);
+
+    if (working) {
+      _releaseIdle();
+      _work ??= AnimationController(vsync: this, duration: const Duration(seconds: 2));
+      if (!_work!.isAnimating) _work!.repeat();
+      return;
+    }
+
+    _work?.stop();
+    if (idleLife) {
+      _holdIdle();
     } else {
-      _c.stop();
-      _c.value = 0.25;
+      _releaseIdle();
     }
   }
 
   @override
   void dispose() {
-    _c.dispose();
+    _releaseIdle();
+    _work?.dispose();
     super.dispose();
   }
 
+  Widget _paint(double t) => CustomPaint(
+        painter: _MiniPersonPainter(agent: widget.agent, t: t, desk: widget.showDesk),
+      );
+
   @override
   Widget build(BuildContext context) {
+    final working = !_reduced && cheAgentIsMoving(widget.agent.status) && _work != null;
+    final idleLife = !_reduced && _holdingIdle;
+
+    late final Widget body;
+    if (working) {
+      body = AnimatedBuilder(
+        animation: _work!,
+        builder: (context, _) => _paint(_work!.value),
+      );
+    } else if (idleLife) {
+      // ListenableBuilder rebuilds only this paint; no setState on the State.
+      body = ListenableBuilder(
+        listenable: CheIdleLifeClock.instance,
+        builder: (context, _) {
+          if (!TickerMode.valuesOf(context).enabled) return _paint(0.25);
+          final phase = CheIdleLifeClock.phaseFor(widget.agent.id);
+          return _paint((CheIdleLifeClock.instance.t + phase) % 1.0);
+        },
+      );
+    } else {
+      body = _paint(0.25);
+    }
+
     return Semantics(
       label: '${widget.agent.name}, ${widget.agent.role}, ${widget.agent.status.label}',
       child: SizedBox(
         width: widget.size,
         height: widget.size * 1.25,
-        child: AnimatedBuilder(
-          animation: _c,
-          builder: (context, _) => CustomPaint(
-            painter: _MiniPersonPainter(
-              agent: widget.agent,
-              t: CheMotion.reduced(context) ? 0.25 : _c.value,
-              desk: widget.showDesk,
-            ),
-          ),
-        ),
+        child: RepaintBoundary(child: body),
       ),
     );
   }
