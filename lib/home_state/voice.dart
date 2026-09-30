@@ -61,33 +61,44 @@ extension _CheHomeVoice on _CHEHomeState {
         try {
           final dynamic voices = await flutterTts.getVoices;
           if (voices is List) {
+            // Smoothest free iPhone voice first: Premium, then Enhanced
+            // (both free downloads in iOS Settings), then the named voices.
             final preferredNames = <String>[
-              'Samantha',
               'Ava',
-              'Nicky',
               'Zoe',
+              'Evan',
+              'Nathan',
+              'Samantha',
+              'Nicky',
               'Serena',
             ];
-
-            Map<dynamic, dynamic>? selected;
-
-            for (final wanted in preferredNames) {
-              for (final dynamic candidate in voices) {
-                if (candidate is Map) {
-                  final name =
-                      (candidate['name'] ?? '').toString().toLowerCase();
-                  final locale =
-                      (candidate['locale'] ?? '').toString().toLowerCase();
-
-                  if (name.contains(wanted.toLowerCase()) &&
-                      locale.startsWith('en')) {
-                    selected = candidate;
-                    break;
-                  }
-                }
-              }
-              if (selected != null) break;
+            int qualityRank(Map<dynamic, dynamic> v) {
+              final q = (v['quality'] ?? '').toString().toLowerCase();
+              final n = (v['name'] ?? '').toString().toLowerCase();
+              if (q.contains('premium') || n.contains('premium')) return 3;
+              if (q.contains('enhanced') || n.contains('enhanced')) return 2;
+              return 1;
             }
+            int nameRank(Map<dynamic, dynamic> v) {
+              final n = (v['name'] ?? '').toString().toLowerCase();
+              final i = preferredNames.indexWhere((w) => n.contains(w.toLowerCase()));
+              return i < 0 ? preferredNames.length : i;
+            }
+
+            final english = voices
+                .whereType<Map<dynamic, dynamic>>()
+                .where((v) => (v['locale'] ?? '').toString().toLowerCase().startsWith('en'))
+                .toList()
+              ..sort((a, b) {
+                final byQuality = qualityRank(b).compareTo(qualityRank(a));
+                if (byQuality != 0) return byQuality;
+                final aUs = (a['locale'] ?? '').toString().toLowerCase().contains('us') ? 0 : 1;
+                final bUs = (b['locale'] ?? '').toString().toLowerCase().contains('us') ? 0 : 1;
+                if (aUs != bUs) return aUs.compareTo(bUs);
+                return nameRank(a).compareTo(nameRank(b));
+              });
+
+            final Map<dynamic, dynamic>? selected = english.isEmpty ? null : english.first;
 
             if (selected != null) {
               await flutterTts.setVoice({
