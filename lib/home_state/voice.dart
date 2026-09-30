@@ -43,7 +43,7 @@ extension _CheHomeVoice on _CHEHomeState {
       // This is still device/browser TTS. The Agent prompt is written to make
       // the WORDING and rhythm natural. A true neural voice can replace this
       // TTS layer later without changing the agent/memory/security design.
-      await flutterTts.setLanguage('en-US');
+      await flutterTts.setLanguage(cheLanguageByCode(_replyLanguage).ttsLocale);
       await flutterTts.setSpeechRate(0.44);
       await flutterTts.setPitch(0.95);
       await flutterTts.setVolume(1.0);

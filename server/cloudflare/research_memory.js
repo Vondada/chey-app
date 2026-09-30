@@ -8,7 +8,8 @@
 import { classifyItem } from './privacy_policy.js';
 
 const MAX_MEMORIES = 100;
-const MAX_NOTES = 80;
+const MAX_NOTES = Number.POSITIVE_INFINITY; // Brain room: no artificial cap on learned nodes
+const MAX_NOTES_SOFT = 50000; // Durable Object safety only
 const MAX_BULLETS = 6;
 const MAX_SOURCES = 6;
 const SENSITIVE_RE = /password|passcode|security code|social security|credit card|api[_ -]?key|private key|seed phrase|session cookie|fiverr\s+password|auth\s+token/i;
@@ -42,14 +43,18 @@ export function addOwnerMemory(data, text) {
   return { added: true, memory };
 }
 
-export function listMemoryNotes(data) {
-  return Array.isArray(data.memory_notes) ? data.memory_notes.slice(0, MAX_NOTES) : [];
+export function listMemoryNotes(data, { limit } = {}) {
+  const notes = Array.isArray(data.memory_notes) ? data.memory_notes : [];
+  if (limit != null && Number.isFinite(limit) && limit > 0) return notes.slice(0, limit);
+  return notes.slice(); // unlimited for Brain room neural map
 }
 
 const RESEARCH_KINDS = new Set([
   'fiverr_scout',
   'opportunity_scout',
   'roblox_studio',
+  'ml_eval',
+  'translate',
   'research',
   'web_research',
   'scout',
@@ -227,7 +232,9 @@ export function writeResearchMemoryNote(data, opts = {}) {
   if (dup) return { written: false, reason: 'duplicate_note', note };
 
   data.memory_notes.unshift(note);
-  data.memory_notes = data.memory_notes.slice(0, MAX_NOTES);
+  if (Number.isFinite(MAX_NOTES_SOFT) && data.memory_notes.length > MAX_NOTES_SOFT) {
+    data.memory_notes = data.memory_notes.slice(0, MAX_NOTES_SOFT);
+  }
 
   const mem = addOwnerMemory(data, memoryText);
 
@@ -248,3 +255,170 @@ export function writeResearchMemoryNote(data, opts = {}) {
     memory: mem.memory || memoryText,
   };
 }
+
+
+// ─── Brain room: neural nodes + related links ───────────────────────────────
+
+function noteTextBlob(note) {
+  const bullets = Array.isArray(note?.bullets) ? note.bullets.join(' ') : '';
+  return clip(`${note?.title || ''} ${bullets} ${note?.kind || ''} ${note?.locale || ''} ${note?.cluster_id || ''}`, 1200).toLowerCase();
+}
+
+function tokenSet(text) {
+  return new Set(String(text || '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2));
+}
+
+function jaccard(a, b) {
+  if (!a.size || !b.size) return 0;
+  let inter = 0;
+  for (const x of a) if (b.has(x)) inter += 1;
+  return inter / (a.size + b.size - inter);
+}
+
+/**
+ * Build Brain room graph: one node per memory_note (+ learned_knowledge tips),
+ * plus related links from shared kind/cluster/locale or token overlap.
+ * Phone visualizes nodes as neural dots.
+ */
+export function buildBrainGraph(data = {}, { maxLinksPerNode = 4, minSimilarity = 0.12 } = {}) {
+  const notes = listMemoryNotes(data);
+  const nodes = [];
+  const links = [];
+  const byId = new Map();
+
+  for (const note of notes) {
+    const id = String(note.id || note.title || cryptoRandomId());
+    const kind = clip(note.kind || note.source || 'knowledge', 40) || 'knowledge';
+    const cluster = note.cluster_id != null ? String(note.cluster_id) : (note.ml_cluster != null ? String(note.ml_cluster) : null);
+    const node = {
+      id,
+      title: clip(note.title || 'Memory note', 160),
+      body: clip((Array.isArray(note.bullets) ? note.bullets.join(' · ') : note.text || ''), 500),
+      kind,
+      locale: note.locale || null,
+      cluster_id: cluster,
+      metrics: note.metrics || null,
+      created_at: note.created_at || null,
+      region: kind.startsWith('ml') || kind === 'ml_eval' || kind === 'classification' || kind === 'clustering'
+        ? 'ML Learning'
+        : kind === 'translate' || kind === 'translation'
+          ? 'Translation'
+          : kind.includes('scout') || kind === 'research'
+            ? 'Research'
+            : 'Memory Notes',
+    };
+    nodes.push(node);
+    byId.set(id, { node, tokens: tokenSet(noteTextBlob(note)) });
+  }
+
+  // learned_knowledge strings as lightweight nodes (dedupe against note titles)
+  const knowledge = Array.isArray(data.learned_knowledge) ? data.learned_knowledge : [];
+  const titleSet = new Set(nodes.map((n) => n.title.toLowerCase()));
+  for (let i = 0; i < knowledge.length; i++) {
+    const text = clip(knowledge[i], 500);
+    if (!text) continue;
+    if (titleSet.has(text.toLowerCase().slice(0, 160))) continue;
+    const id = `lk-${i}-${hashShort(text)}`;
+    nodes.push({
+      id,
+      title: clip(text, 160),
+      body: text,
+      kind: 'learned_knowledge',
+      locale: null,
+      cluster_id: null,
+      metrics: null,
+      created_at: null,
+      region: 'Learned Knowledge',
+    });
+    byId.set(id, { node: nodes[nodes.length - 1], tokens: tokenSet(text) });
+  }
+
+  // Related links: same cluster_id, same kind+locale, or token Jaccard
+  const ids = [...byId.keys()];
+  const linkKey = new Set();
+  const degree = new Map(ids.map((id) => [id, 0]));
+
+  function addLink(a, b, relation, weight) {
+    if (a === b) return;
+    const [x, y] = a < b ? [a, b] : [b, a];
+    const key = `${x}|${y}|${relation}`;
+    if (linkKey.has(key)) return;
+    if ((degree.get(a) || 0) >= maxLinksPerNode || (degree.get(b) || 0) >= maxLinksPerNode) return;
+    linkKey.add(key);
+    degree.set(a, (degree.get(a) || 0) + 1);
+    degree.set(b, (degree.get(b) || 0) + 1);
+    links.push({ source: a, target: b, relation, weight: Math.round(weight * 1000) / 1000 });
+  }
+
+  for (let i = 0; i < ids.length; i++) {
+    const A = byId.get(ids[i]);
+    for (let j = i + 1; j < ids.length; j++) {
+      const B = byId.get(ids[j]);
+      if (A.node.cluster_id && A.node.cluster_id === B.node.cluster_id) {
+        addLink(ids[i], ids[j], 'cluster', 1);
+        continue;
+      }
+      if (A.node.kind && A.node.kind === B.node.kind && A.node.kind !== 'knowledge') {
+        const sim = jaccard(A.tokens, B.tokens);
+        if (sim >= minSimilarity * 0.5) addLink(ids[i], ids[j], 'kind', Math.max(sim, 0.35));
+      }
+      if (A.node.locale && A.node.locale === B.node.locale) {
+        addLink(ids[i], ids[j], 'locale', 0.4);
+      }
+      const sim = jaccard(A.tokens, B.tokens);
+      if (sim >= minSimilarity) addLink(ids[i], ids[j], 'related', sim);
+    }
+  }
+
+  // Explicit related[] on notes
+  for (const note of notes) {
+    const id = String(note.id || '');
+    if (!id || !byId.has(id)) continue;
+    for (const rel of (note.related || note.related_ids || [])) {
+      const rid = String(rel);
+      if (byId.has(rid)) addLink(id, rid, 'explicit', 1);
+    }
+  }
+
+  return {
+    nodes,
+    links,
+    counts: {
+      nodes: nodes.length,
+      links: links.length,
+      memory_notes: notes.length,
+      learned_knowledge: knowledge.length,
+    },
+  };
+}
+
+function hashShort(text) {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(36).slice(0, 8);
+}
+
+function cryptoRandomId() {
+  try {
+    return crypto.randomUUID();
+  } catch (_) {
+    return `n-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+}
+
+/** Attach cluster / related metadata onto a memory note (ML learning write-back). */
+export function enrichNoteForBrain(note, { cluster_id, related = [], metrics, locale, kind } = {}) {
+  const out = { ...(note || {}) };
+  if (cluster_id != null) out.cluster_id = String(cluster_id);
+  if (related?.length) out.related = [...new Set(related.map(String))].slice(0, 24);
+  if (metrics) out.metrics = metrics;
+  if (locale) out.locale = locale;
+  if (kind) out.kind = kind;
+  if (!out.id) out.id = cryptoRandomId();
+  return out;
+}
+
+export { MAX_NOTES_SOFT };

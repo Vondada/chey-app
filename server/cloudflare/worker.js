@@ -37,6 +37,20 @@ import { officeToday } from './office_board.js';
 import { ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
 import { matchOfficePhrase, speakGoalPlan, speakOfficeBoard } from './office_phrases.js';
 import {
+  mlProjectFromResult,
+  mlReadiness,
+  parseMlPhrase,
+  runMlJob,
+  speakMlPlan,
+} from './ml_studio.js';
+import {
+  CHE_LANGUAGES,
+  replyLanguageSystemLine,
+  speakTranslation,
+  translateText,
+  normalizeLang,
+} from './translate.js';
+import {
   buildRobloxJobBrief,
   classifyRobloxCatalog,
   robloxCapabilityNote,
@@ -61,6 +75,8 @@ import {
 } from './opportunity_scout.js';
 import {
   addOwnerMemory,
+  buildBrainGraph,
+  enrichNoteForBrain,
   isSafeMemoryText,
   listMemoryNotes,
   writeResearchMemoryNote,
@@ -1851,6 +1867,106 @@ export class CheState extends DurableObject {
   }
 
   // Ensure Iris (Ad Studio) is on the La Agencia roster; optionally queue a first task.
+
+  async officeMlJob(data, phrase = {}) {
+    await this.staffOffice(data);
+    const kind = String(phrase.kind || 'classification');
+    // Demo seed when owner only spoke the command without uploading examples yet.
+    const seedClass = [
+      { text: 'buy shoes online cart checkout', label: 'shop' },
+      { text: 'purchase phone store deal', label: 'shop' },
+      { text: 'order headphones shopping', label: 'shop' },
+      { text: 'soccer match goals score', label: 'sports' },
+      { text: 'basketball game championship', label: 'sports' },
+      { text: 'tennis tournament win', label: 'sports' },
+      { text: 'pasta recipe dinner cook', label: 'food' },
+      { text: 'bake cake kitchen ingredients', label: 'food' },
+    ];
+    const seedCluster = seedClass.map((e) => e.text);
+    const body = kind === 'clustering'
+      ? { kind: 'clustering', examples: seedCluster, k: 3, task: phrase.task }
+      : { kind: 'classification', examples: seedClass, holdout: 0.25, task: phrase.task };
+    const result = await runMlJob(this.env, body);
+    if (!result.ok) return { reply: speakMlPlan(result), kind, jobs: [], metrics: null };
+    const project = mlProjectFromResult(result, phrase.task || '');
+    data.projects = Array.isArray(data.projects) ? data.projects : [];
+    data.projects.unshift(project);
+    data.projects = data.projects.slice(0, 50);
+
+    // Persist learned nodes for Brain room (unlimited memory_notes + cluster links).
+    data.memory_notes = Array.isArray(data.memory_notes) ? data.memory_notes : [];
+    const parentNote = enrichNoteForBrain({
+      id: crypto.randomUUID(),
+      title: project.title,
+      bullets: [
+        speakMlPlan(result),
+        `learning=${result.learning}`,
+        `features=${result.feature_mode}`,
+      ],
+      created_at: new Date().toISOString(),
+    }, { kind: 'ml_eval', metrics: result.metrics });
+    data.memory_notes.unshift(parentNote);
+    if (result.kind === 'clustering' && result.metrics?.cluster_sizes) {
+      for (const [cid, size] of Object.entries(result.metrics.cluster_sizes)) {
+        data.memory_notes.unshift(enrichNoteForBrain({
+          id: crypto.randomUUID(),
+          title: `Cluster ${cid} · ${size} items`,
+          bullets: [`silhouette=${Number(result.metrics.silhouette || 0).toFixed(3)}`, `parent=${project.title}`],
+          created_at: new Date().toISOString(),
+        }, { kind: 'clustering', cluster_id: String(cid), related: [parentNote.id], metrics: { size } }));
+      }
+    }
+    writeResearchMemoryNote(data, {
+      force: true,
+      task: { kind: 'ml_eval', task: phrase.task || kind, id: parentNote.id },
+      agent: { name: 'Atlas', role: 'Research' },
+      result: speakMlPlan(result),
+      sources: [],
+    });
+
+    // Queue Atlas to retrieve prior ML notes and distill learning (not memorize-only).
+    const jobs = [];
+    const atlas = data.team.find((a) => a.name === 'Atlas' && !a.retired);
+    const goalId = crypto.randomUUID();
+    if (atlas) {
+      let refused = '';
+      try { assertAgentMayRun(atlas, { task: 'Retrieve ML metrics and distill learning notes' }); }
+      catch (error) { refused = permissionBlocker(atlas, error); }
+      const task = queueAgentTask(data, atlas,
+        `Retrieve prior ml_eval memory_notes and Brain graph links. Compare to these metrics: ${JSON.stringify(result.metrics).slice(0, 600)}. Distill what was learned (patterns, failure modes). Do not invent numbers.`,
+        'ml_eval', { job_id: goalId, kind: 'ml_eval' });
+      let blocker = refused || officeToolBlocker(this.env, atlas);
+      if (blocker) { task.status = 'blocked'; task.error = blocker; }
+      jobs.push({ id: task.id, agent: atlas.name, task: task.task, status: task.status, blocker });
+    }
+
+    data.office_goals = Array.isArray(data.office_goals) ? data.office_goals : [];
+    data.office_goals.push({
+      id: goalId,
+      goal: `ML ${kind}: ${String(phrase.task || kind).slice(0, 200)}`,
+      job_ids: jobs.map((j) => j.id),
+      kind: 'ml_eval',
+      ml_kind: kind,
+      metrics: result.metrics,
+      project_id: project.id,
+      brain_note_id: parentNote.id,
+      created_at: new Date().toISOString(),
+    });
+    data.office_goals = data.office_goals.slice(-100);
+    await this.ctx.storage.put('che', data);
+    if (jobs.some((j) => j.status === 'queued')) await this.scheduleWork();
+    this.broadcastAgents(data);
+    return {
+      reply: speakMlPlan(result),
+      kind,
+      goal_id: goalId,
+      project_id: project.id,
+      metrics: result.metrics,
+      jobs,
+      brain_note_id: parentNote.id,
+    };
+  }
+
   async officeHireIris(data, taskText = '') {
     await this.staffOffice(data);
     await this.ctx.storage.put('che', data);
@@ -2389,6 +2505,7 @@ export class CheState extends DurableObject {
         return json({
           memories: data.memories,
           memory_notes: listMemoryNotes(data),
+          brain_graph: buildBrainGraph(data),
           preference_memory: data.preference_memory,
           owner_context: data.owner_context.map(ownerContextPreview),
           personal_sources: {
@@ -2406,6 +2523,8 @@ export class CheState extends DurableObject {
           office_goals: Array.isArray(data.office_goals) ? data.office_goals.slice(-40) : [],
           opportunity_scouts: Array.isArray(data.opportunity_scouts) ? data.opportunity_scouts.slice(-20) : [],
           pipeline: pipelineSummary(data),
+          ml_studio: mlReadiness(this.env),
+          languages: CHE_LANGUAGES,
           vault_items: data.vault_items,
           team: data.team,
           team_tasks: data.team_tasks,
@@ -3372,6 +3491,101 @@ export class CheState extends DurableObject {
         return json({ ok: true });
       }
 
+      if (path === '/api/ml/run' && request.method === 'POST') {
+        const result = await runMlJob(this.env, body || {});
+        if (!result.ok) return json({ detail: result.detail || 'ML job failed.' }, result.status || 400);
+        const project = mlProjectFromResult(result, body.task || body.objective || '');
+        data.projects = Array.isArray(data.projects) ? data.projects : [];
+        data.projects.unshift(project);
+        data.projects = data.projects.slice(0, 50);
+        const goalId = crypto.randomUUID();
+        data.office_goals = Array.isArray(data.office_goals) ? data.office_goals : [];
+        data.office_goals.push({
+          id: goalId,
+          goal: `ML ${result.kind}: ${String(body.task || body.objective || result.kind).slice(0, 200)}`,
+          job_ids: [],
+          kind: 'ml_eval',
+          ml_kind: result.kind,
+          metrics: result.metrics,
+          project_id: project.id,
+          created_at: new Date().toISOString(),
+        });
+        data.office_goals = data.office_goals.slice(-100);
+        data.memory_notes = Array.isArray(data.memory_notes) ? data.memory_notes : [];
+        const mlNote = enrichNoteForBrain({
+          id: crypto.randomUUID(),
+          title: project.title,
+          bullets: [
+            `learning=${result.learning}`,
+            `features=${result.feature_mode}`,
+            `metrics=${JSON.stringify(result.metrics).slice(0, 400)}`,
+          ],
+          created_at: new Date().toISOString(),
+        }, {
+          kind: 'ml_eval',
+          metrics: result.metrics,
+          cluster_id: result.kind === 'clustering' ? 'ml-cluster-job' : null,
+          related: result.assignments
+            ? [...new Set((result.assignments || []).slice(0, 12).map((a) => `cluster:${a.cluster}`))]
+            : [],
+        });
+        // For clustering, also emit one note node per cluster for Brain links.
+        data.memory_notes = Array.isArray(data.memory_notes) ? data.memory_notes : [];
+        data.memory_notes.unshift(mlNote);
+        if (result.kind === 'clustering' && result.metrics?.cluster_sizes) {
+          for (const [cid, size] of Object.entries(result.metrics.cluster_sizes)) {
+            data.memory_notes.unshift(enrichNoteForBrain({
+              id: crypto.randomUUID(),
+              title: `Cluster ${cid} (${size} items)`,
+              bullets: [
+                `k=${result.metrics.k}`,
+                `silhouette=${Number(result.metrics.silhouette || 0).toFixed(3)}`,
+                `Related to ${project.title}`,
+              ],
+              created_at: new Date().toISOString(),
+            }, {
+              kind: 'clustering',
+              cluster_id: String(cid),
+              related: [mlNote.id],
+              metrics: { size, parent: project.id },
+            }));
+          }
+        }
+        // No artificial memory_notes cap — Brain room needs unlimited learned nodes.
+        await this.ctx.storage.put('che', data);
+        return json({
+          ok: true,
+          result,
+          project,
+          goal_id: goalId,
+          reply: speakMlPlan(result),
+          readiness: mlReadiness(this.env),
+        });
+      }
+
+      if (path === '/api/ml/readiness' && request.method === 'GET') {
+        return json(mlReadiness(this.env));
+      }
+
+      // Brain room neural map — unlimited memory_notes nodes + related links.
+      if (path === '/api/brain/graph' && request.method === 'GET') {
+        return json(buildBrainGraph(data));
+      }
+
+      if (path === '/api/translate' && request.method === 'POST') {
+        const tr = await translateText(this.env, {
+          text: body.text || body.message,
+          target_lang: body.target_lang || body.to || body.lang,
+          source_lang: body.source_lang || body.from,
+        });
+        if (!tr.ok) return json({ detail: tr.detail || 'Translate failed.' }, tr.status || 400);
+        return json(tr);
+      }
+
+      if (path === '/api/languages' && request.method === 'GET') {
+        return json({ languages: CHE_LANGUAGES });
+      }
+
       if (path === '/api/project/create') {
         const title = String(body.title || '').trim().slice(0, 120);
         const type = String(body.type || 'general').trim().slice(0, 40);
@@ -3671,6 +3885,74 @@ export class CheState extends DurableObject {
         if (officePhrase?.type === 'hireIris') {
           const hired = await this.officeHireIris(data, officePhrase.task || '');
           return ndjsonReply(hired.reply, { office: 'hireIris', jobs: hired.jobs.length, agent: hired.agent?.name || 'Iris' });
+        }
+
+        if (officePhrase?.type === 'mlJob') {
+          const ml = await this.officeMlJob(data, officePhrase);
+          return ndjsonReply(ml.reply, {
+            office: 'mlJob',
+            kind: ml.kind,
+            goal_id: ml.goal_id,
+            project_id: ml.project_id,
+            metrics: ml.metrics,
+          });
+        }
+        if (officePhrase?.type === 'setLocale') {
+          const loc = normalizeLang(officePhrase.locale || officePhrase.target_lang || 'en');
+          data.reply_language = loc;
+          await this.ctx.storage.put('che', data);
+          return ndjsonReply(`CHE here. I will prefer ${loc} for replies.`, {
+            office: 'setLocale',
+            reply_language: loc,
+          });
+        }
+        if (officePhrase?.type === 'translate') {
+          const tr = await translateText(this.env, {
+            text: officePhrase.text,
+            target_lang: officePhrase.target_lang,
+            reference: officePhrase.reference,
+          });
+          if (tr.ok) {
+            data.memory_notes = Array.isArray(data.memory_notes) ? data.memory_notes : [];
+            const note = enrichNoteForBrain({
+              id: crypto.randomUUID(),
+              title: `Translate → ${tr.target_name || tr.target_lang}`,
+              bullets: [
+                String(tr.translation || '').slice(0, 240),
+                tr.quality?.summary || 'No reference quality metrics',
+                `engine=${tr.engine}`,
+              ],
+              text: tr.translation,
+              created_at: new Date().toISOString(),
+            }, {
+              kind: 'translate',
+              locale: tr.target_lang,
+              metrics: tr.quality || null,
+            });
+            data.memory_notes.unshift(note);
+            data.projects = Array.isArray(data.projects) ? data.projects : [];
+            data.projects.unshift({
+              id: crypto.randomUUID(),
+              title: note.title,
+              type: 'translate',
+              brief: String(officePhrase.text || '').slice(0, 400),
+              content: tr.translation,
+              status: 'complete',
+              metrics: tr.quality || { available: false },
+              locale: tr.target_lang,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+            data.projects = data.projects.slice(0, 50);
+            await this.ctx.storage.put('che', data);
+          }
+          return ndjsonReply(speakTranslation(tr), {
+            office: 'translate',
+            ok: tr.ok === true,
+            target_lang: tr.target_lang,
+            translation: tr.translation || null,
+            quality: tr.quality || null,
+          });
         }
         if (officePhrase?.type === 'robloxJob') {
           const job = await this.officeRobloxJob(data, officePhrase.task || '', officePhrase.catalog || 'game');
@@ -4174,7 +4456,7 @@ export class CheState extends DurableObject {
               'Use a local-first and owner-controlled architecture: built-in CHE behavior first, CHE-hosted services second, optional provider infrastructure only when required for compute or data.',
               'PERSONALITY: bright, warm, confident, current, direct, useful and lightly playful. Default to one or two short sentences. Lead with exactly what the owner needs; no preamble, recap, disclaimers, warnings or extra suggestions unless genuinely necessary. If he asks for more detail, go deep and hold nothing useful back.',
               'OPEN CONVERSATION: understand slang, profanity, dark humor, mature, controversial, offensive or unusual topics without acting shocked, preachy, prudish or moralizing. Be candid and direct while still respecting real safety, privacy, consent, security and legal boundaries.',
-              'LANGUAGE STYLE: understand profanity, slang and mature language without acting shocked or sanitizing ordinary speech. You may swear naturally back at the adult owner when it fits his tone, but do not force profanity, imitate slurs, threaten, harass, or let edgy language reduce accuracy.',
+              'LANGUAGE STYLE: understand profanity, slang and mature language without acting shocked or sanitizing ordinary speech. ' + (replyLanguageSystemLine(body?.reply_language || data?.reply_language || 'en') ? replyLanguageSystemLine(body?.reply_language || data?.reply_language || 'en') + ' ' : '') + ' You may swear naturally back at the adult owner when it fits his tone, but do not force profanity, imitate slurs, threaten, harass, or let edgy language reduce accuracy.',
               'MATURE TOPICS: when the adult owner discusses explicit or sensitive adult topics, be direct and context-aware rather than prudish, while still respecting consent, safety, privacy, law and the system safeguards that govern the assistant.',
               'Learn from stable, useful, non-sensitive owner preferences. Never invent memories and never infer sensitive traits.',
               clientClock

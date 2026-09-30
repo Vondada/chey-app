@@ -62,7 +62,9 @@ import 'home/che_home_chat.dart';
 import 'home/che_mockup_home.dart';
 import 'home/che_more_tab.dart';
 import 'home/che_projects_board.dart';
+import 'home/che_memory_brain.dart';
 import 'che_ui/che_phone_shell.dart';
+import 'che_ui/che_i18n.dart';
 import 'local_server/activity_local.dart';
 import 'plugins/che_plugin_webapp.dart';
 import 'self_update/che_patch_banner.dart';
@@ -669,6 +671,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   final ImagePicker _imagePicker = ImagePicker();
 
   List<String> savedMemories = [];
+  List<Map<String, dynamic>> memoryNotes = [];
   List<Map<String, dynamic>> learnedPersonality = [];
   List<String> learnedKnowledge = [];
   List<String> suggestions = [];
@@ -726,6 +729,10 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   /// Office sub-pane: 0 Crew, 1 Projects.
   int _officePane = 0;
+
+  /// Owner reply / TTS language (BCP-47 base code).
+  String _replyLanguage = 'en';
+  String _translateTarget = 'es';
 
   // Home conversation. Empty = CHE's welcome state with quick actions.
   final List<Map<String, String>> messages = [];
@@ -1267,6 +1274,176 @@ OWNER AGENCY
     );
   }
 
+  Future<void> _persistLanguages() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('che_reply_language', _replyLanguage);
+    await prefs.setString('che_translate_target', _translateTarget);
+  }
+
+  Future<void> _openLanguagePicker() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: kit.CheColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            children: [
+              Text('Reply language', style: kit.CheType.title),
+              const SizedBox(height: 4),
+              Text(
+                'CHE answers and speaks in this language. Translate actions use a separate target.',
+                style: kit.CheType.bodyDim,
+              ),
+              const SizedBox(height: 12),
+              for (final lang in cheLanguages)
+                ListTile(
+                  leading: Icon(
+                    lang.code == _replyLanguage ? Icons.check_circle : Icons.language,
+                    color: kit.CheColors.accent,
+                  ),
+                  title: Text(lang.name),
+                  subtitle: Text(lang.code),
+                  selected: lang.code == _replyLanguage,
+                  onTap: () => Navigator.pop(ctx, lang.code),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+    if (selected == null || !mounted) return;
+    setState(() => _replyLanguage = selected);
+    await _persistLanguages();
+    try {
+      await flutterTts.setLanguage(cheLanguageByCode(selected).ttsLocale);
+    } catch (_) {}
+    await speakText(
+      "Reply language set to ${cheLanguageByCode(selected).name}.",
+      record: false,
+    );
+  }
+
+  Future<void> _openTranslateTargetPicker() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: kit.CheColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            children: [
+              Text('Translate into', style: kit.CheType.title),
+              const SizedBox(height: 12),
+              for (final lang in cheLanguages)
+                ListTile(
+                  leading: Icon(
+                    lang.code == _translateTarget ? Icons.check_circle : Icons.translate,
+                    color: kit.CheColors.accent,
+                  ),
+                  title: Text(lang.name),
+                  onTap: () => Navigator.pop(ctx, lang.code),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+    if (selected == null || !mounted) return;
+    setState(() => _translateTarget = selected);
+    await _persistLanguages();
+  }
+
+  Future<void> _translateText(String text, {String? to}) async {
+    final target = to ?? _translateTarget;
+    final clean = text.trim();
+    if (clean.isEmpty) {
+      await speakText('Nothing to translate.', record: false);
+      return;
+    }
+    if (!await _ensurePaired()) return;
+    try {
+      final result = await _postAgentJson('/api/translate', {
+        'text': clean,
+        'target_lang': target,
+      });
+      final translation = result?['translation']?.toString() ?? '';
+      final name = result?['target_name']?.toString() ?? cheLanguageByCode(target).name;
+      if (translation.isEmpty) {
+        await speakText('Translation returned empty.', record: false);
+        return;
+      }
+      if (!mounted) return;
+      setState(() {
+        _shellTab = 1;
+        messages.add({
+          'role': 'assistant',
+          'text': 'Translation ($name):\n$translation',
+        });
+      });
+      _scrollToBottom();
+      await speakText(translation, record: false);
+    } catch (e) {
+      await speakText('Translation failed: $e', record: false);
+    }
+  }
+
+  Future<void> _runMlDemo(String kind) async {
+    if (!await _ensurePaired()) return;
+    final prompt = kind == 'clustering'
+        ? 'Run clustering on sample texts'
+        : 'Run classification evaluation on sample labels';
+    try {
+      // Prefer chat/voice phrase path so Office goal + project are created consistently.
+      setState(() {
+        _shellTab = 1;
+        controller.text = prompt;
+      });
+      await sendMessage();
+      setState(() {
+        _shellTab = 2;
+        _officePane = 1;
+      });
+    } catch (e) {
+      await speakText('ML job failed: $e', record: false);
+    }
+  }
+
+
+
+  void _openMemoryBrain() {
+    HapticFeedback.selectionClick();
+    unawaited(_loadAgentState(silent: true));
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => Theme(
+        data: kit.CheTheme.dark(),
+        child: Scaffold(
+          backgroundColor: kit.CheColors.bg,
+          appBar: AppBar(
+            title: const Text('Memory Brain'),
+            backgroundColor: Colors.transparent,
+          ),
+          body: CheMemoryBrainRoom(
+            dots: cheBuildMemoryDots(
+              savedMemories: savedMemories,
+              memoryNotes: memoryNotes,
+              learnedPersonality: learnedPersonality,
+              learnedKnowledge: learnedKnowledge,
+            ),
+            onReadAloud: (t) => speakText(t, record: false),
+            onRefresh: () => _loadAgentState(silent: true),
+          ),
+        ),
+      ),
+    ));
+  }
+
   List<CheBoardItem> _boardItems() => cheBuildBoardItems(
         projects: projects,
         officeGoals: officeGoals,
@@ -1355,11 +1532,38 @@ OWNER AGENCY
           hue: kit.CheColors.create,
         ),
         CheMoreItem(
+          icon: Icons.language,
+          title: 'Language & translate',
+          subtitle: "Reply language ${cheLanguageByCode(_replyLanguage).name} · translate → ${cheLanguageByCode(_translateTarget).name}",
+          onTap: () => unawaited(_openLanguagePicker()),
+          hue: kit.CheColors.accentAlt,
+        ),
+        CheMoreItem(
+          icon: Icons.translate,
+          title: 'Translate target',
+          subtitle: "Quick translate into ${cheLanguageByCode(_translateTarget).name}",
+          onTap: () => unawaited(_openTranslateTargetPicker()),
+        ),
+        CheMoreItem(
+          icon: Icons.psychology_alt_rounded,
+          title: 'ML studio',
+          subtitle: 'Classification · clustering · eval metrics',
+          onTap: () => unawaited(_runMlDemo('classification')),
+          hue: kit.CheColors.insights,
+        ),
+        CheMoreItem(
           icon: Icons.dashboard_rounded,
           title: 'CHE World',
           subtitle: 'Memory, Insights, Markets, Create, Theater…',
           onTap: _openVirtualOffice,
           hue: kit.CheColors.office,
+        ),
+        CheMoreItem(
+          icon: Icons.hub_rounded,
+          title: 'Memory Brain',
+          subtitle: 'Neural constellation · unlimited thoughts',
+          onTap: _openMemoryBrain,
+          hue: kit.CheColors.memory,
         ),
         CheMoreItem(
           icon: Icons.memory_rounded,

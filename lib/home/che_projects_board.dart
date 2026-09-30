@@ -26,6 +26,7 @@ class CheBoardItem {
     this.raw = const {},
     this.tasks = const [],
     this.confirmRequired = false,
+    this.metrics,
   });
 
   final String id;
@@ -39,6 +40,7 @@ class CheBoardItem {
   final Map<String, dynamic> raw;
   final List<String> tasks;
   final bool confirmRequired;
+  final Map<String, dynamic>? metrics;
 }
 
 /// Merge projects, office goals (+ jobs), scouts, pipeline deals, meetings.
@@ -70,6 +72,7 @@ List<CheBoardItem> cheBuildBoardItems({
       url: url,
       raw: p,
       confirmRequired: type.startsWith('roblox'),
+      metrics: p['metrics'] is Map ? Map<String, dynamic>.from(p['metrics'] as Map) : null,
     ));
   }
 
@@ -100,6 +103,7 @@ List<CheBoardItem> cheBuildBoardItems({
           '${j['agent'] ?? 'Agent'}: ${j['task'] ?? j['status'] ?? ''}${j['blocker'] != null ? ' — ${j['blocker']}' : ''}',
       ],
       confirmRequired: g['owner_confirm_required'] == true || _goalLooksRoblox(goal),
+      metrics: g['metrics'] is Map ? Map<String, dynamic>.from(g['metrics'] as Map) : null,
     ));
   }
 
@@ -184,6 +188,8 @@ String _projectTypeLabel(String type) {
     'roblox_weapon' => 'Roblox · Weapon',
     'roblox_clothing' || 'roblox_ugc' || 'roblox_avatar' => 'Roblox · Clothing / UGC',
     'roblox_pass' => 'Roblox · Game Pass',
+    'ml_classification' => 'ML · Classification',
+    'ml_clustering' => 'ML · Clustering',
     _ => type.isEmpty ? 'Project' : type,
   };
 }
@@ -254,6 +260,23 @@ String? _firstUrl(String text) {
   return m.group(0)?.replaceAll(RegExp(r'[.,;]+$'), '');
 }
 
+String _formatMetrics(Map<String, dynamic> m) {
+  final task = '${m['task'] ?? ''}';
+  if (task == 'classification' || m.containsKey('accuracy')) {
+    final acc = ((m['accuracy'] as num?)?.toDouble() ?? 0) * 100;
+    final f1 = ((m['macro_f1'] as num?)?.toDouble() ?? 0) * 100;
+    final p = ((m['macro_precision'] as num?)?.toDouble() ?? 0) * 100;
+    final r = ((m['macro_recall'] as num?)?.toDouble() ?? 0) * 100;
+    return 'Accuracy ${acc.toStringAsFixed(1)}% · Macro F1 ${f1.toStringAsFixed(1)}%\n'
+        'Precision ${p.toStringAsFixed(1)}% · Recall ${r.toStringAsFixed(1)}% · n=${m['n'] ?? '?'}';
+  }
+  if (task == 'clustering' || m.containsKey('silhouette')) {
+    final sil = (m['silhouette'] as num?)?.toDouble() ?? 0;
+    return 'k=${m['k'] ?? '?'} · Silhouette ${sil.toStringAsFixed(3)} · Inertia ${m['inertia'] ?? '?'} · n=${m['n'] ?? '?'}';
+  }
+  return m.entries.take(8).map((e) => '${e.key}: ${e.value}').join('\n');
+}
+
 /// Live Projects / Businesses screen (mockup Projects + War Room active list).
 class CheProjectsBoard extends StatefulWidget {
   const CheProjectsBoard({
@@ -286,6 +309,7 @@ class _CheProjectsBoardState extends State<CheProjectsBoard> {
     'Web',
     'Business',
     'Roblox',
+    'ML',
     'Goals',
     'War Room',
   ];
@@ -298,6 +322,7 @@ class _CheProjectsBoardState extends State<CheProjectsBoard> {
         'Web' => t.contains('website') || t.contains('web'),
         'Business' => t.contains('business') || i.kind == CheBoardKind.deal || i.kind == CheBoardKind.scout,
         'Roblox' => t.contains('roblox') || t.contains('ugc') || t.contains('game pass'),
+        'ML' => t.contains('ml') || t.contains('classif') || t.contains('cluster') || (i.metrics != null && i.metrics!.isNotEmpty),
         'Goals' => i.kind == CheBoardKind.goal,
         'War Room' => i.kind == CheBoardKind.meeting,
         _ => true,
@@ -354,6 +379,12 @@ class _CheProjectsBoardState extends State<CheProjectsBoard> {
                       style: CheType.caption.copyWith(color: CheColors.warning),
                     ),
                   ),
+                ],
+                if (item.metrics != null && item.metrics!.isNotEmpty) ...[
+                  const SizedBox(height: CheSpace.lg),
+                  Text('EVAL METRICS', style: CheType.overline.copyWith(color: CheColors.accent)),
+                  const SizedBox(height: CheSpace.sm),
+                  Text(_formatMetrics(item.metrics!), style: CheType.body),
                 ],
                 if (item.tasks.isNotEmpty) ...[
                   const SizedBox(height: CheSpace.lg),
@@ -626,6 +657,15 @@ class _ProjectCard extends StatelessWidget {
                 if (item.subtitle.trim().isNotEmpty) ...[
                   const SizedBox(height: 4),
                   Text(item.subtitle, maxLines: 2, overflow: TextOverflow.ellipsis, style: CheType.caption),
+                ],
+                if (item.metrics != null && item.metrics!.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    _formatMetrics(item.metrics!).split('\n').first,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: CheType.caption.copyWith(color: CheColors.accent),
+                  ),
                 ],
                 const SizedBox(height: 10),
                 _ProgressBar(value: item.progress, label: '${(item.progress * 100).round()}%'),

@@ -3,7 +3,7 @@
 export const LA_AGENCIA_ROLES = {
   Nova: { role: 'Product / listings', specialty: 'Product offers, listings and sales-page drafts', provider_preference: 'openai', capability_requirements: ['coding'] },
   Atlas: { role: 'Research', specialty: 'Research, sourcing and competitive checks', provider_preference: 'auto', capability_requirements: ['deep_reasoning'] },
-  Mira: { role: 'Customer / support copy', specialty: 'Customer-facing support and service copy', provider_preference: 'auto', capability_requirements: ['text'] },
+  Mira: { role: 'Customer / support copy', specialty: 'Customer-facing support, service copy, and translation / multilingual drafts', provider_preference: 'auto', capability_requirements: ['text'] },
   Knox: { role: 'Engineering / Codex jobs', specialty: 'Implementation, tests, Codex packets, and Roblox/Luau experience drafts (games, weapons, UGC clothing, passes)', provider_preference: 'openai', capability_requirements: ['coding'] },
   Sage: { role: 'Finance / Stripe reports', specialty: 'Read-only Stripe reporting and finance summaries', provider_preference: 'auto', capability_requirements: ['payments_read'] },
   Lyra: { role: 'Content / social', specialty: 'Content, social copy and campaign drafts', provider_preference: 'auto', capability_requirements: ['text'] },
@@ -50,13 +50,13 @@ export function isLaAgenciaAgent(agent) {
 }
 
 const GOAL_ROUTES = [
-  ['Knox', /\b(?:code|coding|build|app|bug|fix|deploy|api|website|site|feature|test|codex|roblox|luau|ugc|game\s*pass)\b/],
+  ['Knox', /\b(?:code|coding|build|app|bug|fix|deploy|api|website|site|feature|test|codex|roblox|luau|ugc|game\s*pass|classif|cluster|k-?means|k-?nn|ml\b|machine learning)\b/],
   ['Sage', /\b(?:stripe|revenue|finance|money|sales|earnings|invoice|report on (?:sales|money))\b/],
   ['Nova', /\b(?:product|listing|listings|offer|pricing|price|sales page|store|shop|roblox\s+pass|game\s*pass|ugc)\b/],
-  ['Mira', /\b(?:customer|support|reply|replies|email|faq|help desk|service)\b/],
+  ['Mira', /\b(?:customer|support|reply|replies|email|faq|help desk|service|translat|locale|language|multilingual)\b/],
   ['Iris', /\b(?:ads?|ad studio|tonight pack|ad creatives?|flyer|banner|paid social|creative brief|caption pack)\b/],
   ['Lyra', /\b(?:social|post|posts|content|instagram|tiktok|caption|campaign|video|blog|clothing|avatar|ugc)\b/],
-  ['Atlas', /\b(?:research|competitor|competitors|find|source|compare|market|look up|fiverr|scout)\b/],
+  ['Atlas', /\b(?:research|competitor|competitors|find|source|compare|market|look up|fiverr|scout|metrics|evaluat|learning notes)\b/],
 ];
 
 // CHE splits one owner goal into Office jobs, one per clause, each routed to

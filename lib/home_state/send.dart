@@ -558,6 +558,14 @@ extension _CheHomeSend on _CHEHomeState {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.translate_rounded),
+              title: Text("Translate to ${cheLanguageByCode(_translateTarget).name}"),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                unawaited(_translateText(text));
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.copy_all_rounded),
               title: const Text('Copy whole conversation'),
               onTap: () async {
