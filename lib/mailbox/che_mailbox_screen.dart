@@ -36,6 +36,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
   List<Map<String, dynamic>> _providers = const [];
   Map<String, dynamic> _flag = const {};
   List<Map<String, dynamic>> _archive = const [];
+  List<Map<String, dynamic>> _claude = const [];
   bool _loading = true;
   String _status = '';
 
@@ -58,7 +59,9 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         http.get(Uri.parse('${widget.baseUrl}/api/keys'), headers: widget.headers()),
         http.get(Uri.parse('${widget.baseUrl}/api/flagstaff'), headers: widget.headers()),
         http.get(Uri.parse('${widget.baseUrl}/api/flagstaff/archive'), headers: widget.headers()),
+        http.get(Uri.parse('${widget.baseUrl}/api/mailbox?peer=claude'), headers: widget.headers()),
       ]).timeout(const Duration(seconds: 20));
+      final claude = jsonDecode(responses[4].body);
       final letters = jsonDecode(responses[0].body);
       final keys = jsonDecode(responses[1].body);
       final flag = jsonDecode(responses[2].body);
@@ -66,6 +69,9 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
       if (!mounted) return;
       setState(() {
         _flag = flag is Map ? Map<String, dynamic>.from(flag) : const {};
+        _claude = claude is Map && claude['messages'] is List
+            ? (claude['messages'] as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
+            : const [];
         _archive = archive is Map && archive['sessions'] is List
             ? (archive['sessions'] as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
             : const [];
@@ -294,6 +300,16 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         const Padding(padding: EdgeInsets.all(20), child: Text('No messages on the board yet.', style: CheType.bodyDim))
       else
         ...messages.map(_message),
+      const SizedBox(height: 16),
+      Semantics(
+        header: true,
+        child: const Text('CHE and Claude (repo mailbox)', style: CheType.title),
+      ),
+      const SizedBox(height: 6),
+      if (_claude.isEmpty)
+        const Text('No messages with Claude yet.', style: CheType.bodyDim)
+      else
+        ..._claude.map(_message),
     ]);
   }
 
