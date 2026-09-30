@@ -1303,7 +1303,7 @@ OWNER AGENCY
                     _voiceSnapshot.phase == CheVoicePhase.listening
                 ? 'Listening…'
                 : _homeMode == 0
-                    ? 'Tell CHE what to build or do…'
+                    ? 'Work Agent Mode — tell CHE what to build or do…'
                     : 'Ask CHE anything…',
             attachmentLabel: _pendingAttachment == null
                 ? null

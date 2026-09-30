@@ -52,5 +52,5 @@ The existing visuals are retained. Real data/actions already back projects, Offi
 1. OpenAI Realtime must prove real inbound audio before the UI may say `OpenAI Realtime`.
 2. If Realtime session creation or audio proof fails, CHE visibly enters `Native fallback`.
 3. Wake/App Intent starts Realtime instead of playing an Apple TTS acknowledgement first.
-4. CHE is the primary owner-facing manager; generic sub-agents are never spawned just because an “agent mode” flag is enabled.
-5. Office delegation must correspond to a concrete capability and useful owner work.
+4. CHE is the primary owner-facing manager. Work Agent Mode (`agent_mode=full`, composer Agent) may queue La Agencia Office jobs and panel specialists for actionable work; it still must not spawn generic busywork on casual chat.
+5. Office delegation must correspond to a concrete capability, La Agencia specialty match, or useful multi-step owner work (see `docs/CHE_WORK_AGENT_MODE.md`).
