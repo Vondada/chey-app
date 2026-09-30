@@ -6,13 +6,11 @@ name: Deploy CHE Worker
 # Workers" template). Then run this workflow from the Actions tab, or just
 # merge to main: changes under server/cloudflare deploy automatically.
 
+# Cloudflare Workers Builds owns automatic production deploys.
+# Keep this workflow as a manual emergency fallback only. This avoids relying
+# on GitHub Actions billing/minutes for normal CHE server deployments.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'server/cloudflare/**'
-      - '.github/workflows/che-worker-deploy.yml'
 
 permissions:
   contents: read
