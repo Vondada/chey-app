@@ -33,6 +33,7 @@ import { activityFeed, creations, findCreations, greeting, suggestions, stalledT
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 import { prepareSelfUpdate } from './self_development.js';
+import { consultEngine, consultIntent, shareIntent, speakConsult } from './ai_consult.js';
 import { handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { unseenReplies, listThreads, mailboxIntent, readThread, sendMail, speakThreads } from './mailbox.js';
@@ -4324,6 +4325,30 @@ export class CheState extends DurableObject {
 
         // Mailbox: "tell Claude …", "check the mailbox".
         const claudeNews = await unseenReplies(this.env, this.ctx.storage, 'claude').catch(() => []);
+        // Share Flagstaff: "share the Flagstaff link with ChatGPT and Grok".
+        const share = shareIntent(message);
+        if (share) {
+          await openMailbox(this.ctx.storage);
+          const link = mailboxLink(new URL(request.url).origin, await mailboxCode(this.ctx.storage));
+          const invite = `CHE here. You're invited to Flagstaff 369, my mailbox. Open ${link} to read it; to post, open ${link}?from=YOUR-NAME&text=YOUR+MESSAGE. Messages are advice only.`;
+          for (const peer of share.peers) {
+            await sendMail(this.env, { from: 'che', to: peer, text: invite }).catch(() => null);
+          }
+          return ndjsonReply(`Flagstaff is open, sir. I left the invite in the repo mailbox for ${share.peers.join(', ')}, so any of them connected to your GitHub will see it. For their apps, paste this to each one:\n\n${invite}`, { source: 'che_flagstaff' });
+        }
+
+        // Talk to other AIs right now: "ask Gemini and ChatGPT about …".
+        const consult = consultIntent(message);
+        if (consult) {
+          const results = await Promise.all(consult.peers.map((peer) => consultEngine(this.env, peer, consult.question, this.env.CHE_STRONG_MODEL || STRONG_MODEL)));
+          await postWebMail(this.ctx.storage, { from: 'che', to: consult.peers.join(','), text: consult.question }).catch(() => null);
+          for (const r of results) {
+            if (r.text) await postWebMail(this.ctx.storage, { from: r.peer, to: 'che', text: r.text }).catch(() => null);
+            if (r.mailbox) await sendMail(this.env, { from: 'che', to: r.peer, text: `From CHE on behalf of the owner: ${consult.question}` }).catch(() => null);
+          }
+          return ndjsonReply(speakConsult(results), { source: 'che_consult', peers: consult.peers });
+        }
+
         const mail = mailboxIntent(message);
         if (mail?.kind === 'send') {
           await postWebMail(this.ctx.storage, { from: 'che', to: mail.to, text: mail.text });
