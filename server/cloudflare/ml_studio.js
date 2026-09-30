@@ -422,8 +422,12 @@ export async function runMlJob(env, body = {}) {
 
 export function parseMlPhrase(original, normalized) {
   const o = String(original || '').trim();
-  const t = String(normalized || '').toLowerCase();
-  if (!t) return null;
+  const full = String(normalized || '').toLowerCase();
+  if (!full) return null;
+  // Only short, command-like requests start an ML job. Long messages (a
+  // pasted prompt, a plan, a question about learning) are conversation.
+  if (o.length > 160 || full.split(/\s+/).length > 25) return null;
+  const t = full;
   const wantsMl = /\b(?:ml|machine learning|learning job|model eval|ml.?eval)\b/.test(t)
     || /\b(?:classif(?:y|ication)|cluster(?:ing)?|k-?means|k-?nn|supervised|unsupervised)\b/.test(t);
   if (!wantsMl) return null;

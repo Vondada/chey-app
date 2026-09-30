@@ -4150,7 +4150,8 @@ export class CheState extends DurableObject {
         }
 
         // The Office by voice. CHE answers from the live board; agents never speak.
-        const officePhrase = matchOfficePhrase(message);
+        // Shortcut commands are short; a long pasted message is conversation.
+        const officePhrase = message.length > 400 ? null : matchOfficePhrase(message);
         if (officePhrase?.type === 'goal') {
           const plan = await this.officeGoal(data, officePhrase.goal);
           return ndjsonReply(plan.reply, { office: 'goal', jobs: plan.jobs.length });
@@ -4395,10 +4396,10 @@ export class CheState extends DurableObject {
           return ndjsonReply(`${webText}\n\n${all.error ? `GitHub mailbox unavailable: ${all.error}` : speakThreads(all.threads)}`, { source: 'che_mailbox' });
         }
 
-        const selfChangeRequest =
+        const selfChangeRequest = message.length <= 1200 && (
           /\b(?:change|update|upgrade|redesign|restyle|modify|fix|add|remove|move|rearrange|rebuild|improve|make)\b[\s\S]{0,120}\b(?:che(?:'s)?|your(?:self| app| ui| interface| code| screen| page| layout| navigation)|the che app|this (?:che )?(?:screen|page))\b/i.test(message) ||
           /\b(?:che(?:'s)?|your)\b[\s\S]{0,80}\b(?:ui|interface|screen|page|layout|navigation|code|app)\b[\s\S]{0,80}\b(?:change|update|redesign|fix|move|add|remove|improve)\b/i.test(message) ||
-          /\b(?:add|apply|put|install|merge)\b[\s\S]{0,100}\b(?:this|the)\s+code\b[\s\S]{0,100}\b(?:to|into)\s+(?:che|your app|yourself)\b/i.test(message);
+          /\b(?:add|apply|put|install|merge)\b[\s\S]{0,100}\b(?:this|the)\s+code\b[\s\S]{0,100}\b(?:to|into)\s+(?:che|your app|yourself)\b/i.test(message));
         if (selfChangeRequest) {
           let prepared;
           try {

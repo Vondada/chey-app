@@ -53,3 +53,10 @@ assert.ok('precision' in m2 && 'recall' in m2 && 'f1' in m2);
 const clusterPhrase = parseMlPhrase('Start clustering now', 'start clustering now');
 assert.equal(clusterPhrase?.type, 'mlJob');
 assert.equal(clusterPhrase?.kind, 'clustering');
+
+// A long pasted prompt that mentions learning or classification is conversation, not an ML job.
+assert.equal(parseMlPhrase(
+  'Keep everything free legal. Write me one detailed prompt for CHE to build a supervised classification of free engines, run machine learning on my voice, and learn my words.',
+  'keep everything free legal. write me one detailed prompt for che to build a supervised classification of free engines, run machine learning on my voice, and learn my words.',
+), null);
+console.log('ml_studio long-message guard ok');
