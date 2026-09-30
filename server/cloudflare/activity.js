@@ -1,3 +1,5 @@
+import { pendingBulkDecisions } from './twilio_sms.js';
+
 // CHE's connected world: one activity feed of what CHE and the Office really
 // did, a "find anything" search across every room (agent work, Art Studio
 // images, projects, vault items, background jobs, War Room plans), and a
@@ -15,6 +17,7 @@ export function shortTitle(text, maxWords = 6) {
   const words = (clause ? clause[1] : clean).split(' ').filter(Boolean);
   return words.length <= maxWords ? words.join(' ') : `${words.slice(0, maxWords).join(' ')}…`;
 }
+
 
 const DONE = new Set(['complete', 'completed', 'done', 'succeeded']);
 
@@ -46,6 +49,21 @@ export function creations(data, media = [], origin = '') {
     items.push({
       kind: 'vault', id: v.id, maker: 'CHE', title: shortTitle(v.name), text: clip(v.content, 600),
       about: `${v.name} ${v.kind} ${v.content}`, at: v.updated_at || v.created_at,
+    });
+  }
+  for (const j of data.twilio_bulk_jobs || []) {
+    if (j.status !== 'pending_owner') continue;
+    events.push({
+      at: j.created_at, who: 'CHE', kind: 'twilio_bulk', id: j.id,
+      line: `CHE needs your decision on bulk SMS to ${j.recipient_count} numbers (sample: “${String(j.sample || '').slice(0, 40)}”).`,
+    });
+  }
+  for (const m of data.twilio_inbound || []) {
+    events.push({
+      at: m.at, who: 'CHE', kind: 'twilio_inbound', id: m.id,
+      line: m.kind === 'opt_out'
+        ? `SMS opt-out from ${m.from}.`
+        : `Inbound SMS from ${m.from}: “${String(m.body || '').slice(0, 60)}”.`,
     });
   }
   for (const j of data.jobs || []) {
@@ -120,59 +138,66 @@ export function stalledTasks(data) {
 }
 
 export function decisionsNeeded(data) {
-  return stalledTasks(data).filter((s) => s.reason === 'needs your decision');
+  const fromTasks = stalledTasks(data).filter((s) => s.reason === 'needs your decision');
+  const fromSms = pendingBulkDecisions(data);
+  return [...fromSms, ...fromTasks];
 }
 
 export function nextActions(data) {
   const actions = [];
   const decide = decisionsNeeded(data)[0];
   if (decide) actions.push('Decide on "' + decide.title + '" for ' + decide.who);
-  const stall = stalledTasks(data).find((s) => s.reason !== 'needs your decision');
-  if (stall) actions.push('Check in on ' + stall.who + ' — "' + stall.title + '" is ' + stall.reason);
   const done = (data.team_tasks || []).find((t) => DONE.has(t.status));
   if (done) actions.push('Read what ' + (done.partner_name || 'the Office') + ' finished');
+  const stall = stalledTasks(data).find((s) => s.reason !== 'needs your decision');
+  if (stall) actions.push('Check in on ' + stall.who + ' — "' + stall.title + '" is ' + stall.reason);
   const project = (data.projects || [])[0];
   if (project) actions.push("What's next on " + shortTitle(project.title, 4) + '?');
   return actions.slice(0, 3);
 }
 
-// One activity feed, newest first.
+const quote = (text) => `“${text}”`;
+
+// One activity feed, newest first. Each task appears once with its real
+// state; a task that is blocked or waiting on the owner says so on its own
+// line instead of adding a duplicate "stalled" entry above the real one.
 export function activityFeed(data, media = [], origin = '', limit = 30) {
   const events = [];
-  for (const s of stalledTasks(data)) {
-    events.push({ at: s.at, who: s.who, kind: 'stalled', id: s.id, line: s.who + ' is stalled on "' + s.title + '" (' + s.reason + ').' });
-  }
+  const waiting = new Map(decisionsNeeded(data).map((s) => [s.id, s]));
   for (const t of data.team_tasks || []) {
     const who = t.partner_name || 'An agent';
-    const title = shortTitle(t.task);
+    const title = quote(shortTitle(t.task));
     let line = '';
-    if (DONE.has(t.status)) line = who + ' finished "' + title + '".';
-    else if (t.status === 'running') line = who + ' is working on "' + title + '".';
-    else if (t.status === 'queued') line = who + ' has "' + title + '" next.';
-    else if (t.status === 'failed') line = who + ' could not finish "' + title + '".';
-    if (line) events.push({ at: t.updated_at || t.created_at, who, line, kind: 'agent_task', id: t.id });
+    let kind = 'agent_task';
+    if (waiting.has(t.id)) { line = `${who} needs your decision on ${title}.`; kind = 'stalled'; }
+    else if (DONE.has(t.status)) line = `${who} finished ${title}.`;
+    else if (t.status === 'running') line = `${who} is working on ${title}.`;
+    else if (t.status === 'queued') line = `${who} has ${title} next.`;
+    else if (t.status === 'blocked' || t.status === 'waiting') { line = `${who} is blocked on ${title}.`; kind = 'stalled'; }
+    else if (t.status === 'failed') line = `${who} could not finish ${title}.`;
+    if (line) events.push({ at: t.updated_at || t.created_at, who, line, kind, id: t.id });
   }
   for (const m of data.meetings || []) {
     events.push({
       at: m.updated_at || m.created_at, who: 'War Room', kind: 'meeting', id: m.id,
       line: m.final_plan
-        ? 'The War Room made a plan for "' + shortTitle(m.objective) + '".'
-        : 'The War Room is meeting on "' + shortTitle(m.objective) + '".',
+        ? `The War Room made a plan for ${quote(shortTitle(m.objective))}.`
+        : `The War Room is meeting on ${quote(shortTitle(m.objective))}.`,
     });
   }
   for (const m of media) {
-    events.push({ at: m.created_at, who: 'Art Studio', kind: 'image', id: m.id, line: 'Art Studio made "' + shortTitle(m.title || m.prompt) + '".' });
+    events.push({ at: m.created_at, who: 'Art Studio', kind: 'image', id: m.id, line: `Art Studio made ${quote(shortTitle(m.title || m.prompt))}.` });
   }
   for (const j of data.jobs || []) {
-    const title = shortTitle(j.title || j.prompt);
+    const title = quote(shortTitle(j.title || j.prompt));
     let line = '';
-    if (DONE.has(j.status)) line = 'CHE finished "' + title + '".';
-    else if (j.status === 'queued' || j.status === 'running') line = 'CHE is working on "' + title + '".';
-    else if (j.status === 'failed') line = 'CHE could not finish "' + title + '".';
+    if (DONE.has(j.status)) line = `CHE finished ${title}.`;
+    else if (j.status === 'queued' || j.status === 'running') line = `CHE is working on ${title}.`;
+    else if (j.status === 'failed') line = `CHE could not finish ${title}.`;
     if (line) events.push({ at: j.updated_at || j.created_at, who: 'CHE', kind: 'job', id: j.id, line });
   }
   for (const p of data.projects || []) {
-    events.push({ at: p.created_at, who: 'CHE', kind: 'project', id: p.id, line: 'CHE started the project "' + shortTitle(p.title) + '".' });
+    events.push({ at: p.created_at, who: 'CHE', kind: 'project', id: p.id, line: `CHE started the project ${quote(shortTitle(p.title))}.` });
   }
   return events.filter((e) => e.at).sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, limit);
 }
@@ -199,29 +224,50 @@ export function greeting(data, media = [], { hour = 12, since = '' } = {}) {
   const h = Number.isFinite(Number(hour)) ? Math.max(0, Math.min(23, Number(hour))) : 12;
   const hello = partOfDay(h);
   const decide = decisionsNeeded(data)[0];
-  if (decide) return { line: hello + '! ' + decide.who + ' needs you on "' + decide.title + '".', kind: 'decision' };
-  const stall = stalledTasks(data)[0];
-  if (stall) return { line: hello + '! ' + stall.who + ' is stalled on "' + stall.title + '".', kind: 'stalled' };
+  if (decide) return { line: `${hello}! ${decide.who} needs you on ${quote(decide.title)}.`, kind: 'decision' };
+  // Finished work leads; a stale check-in comes after it.
   const tasks = data.team_tasks || [];
   const finished = tasks.filter((t) => DONE.has(t.status) && (!since || String(t.updated_at || '') > since));
   if (finished.length) {
     const t = finished[0];
-    const more = finished.length > 1 ? ' and ' + (finished.length - 1) + ' more' : '';
-    return { line: hello + '! ' + (t.partner_name || 'The Office') + ' finished "' + shortTitle(t.task, 5) + '"' + more + '. Want to hear it?', kind: 'finished' };
+    const more = finished.length > 1 ? ` and ${finished.length - 1} more` : '';
+    return { line: `${hello}! ${t.partner_name || 'The Office'} finished ${quote(shortTitle(t.task, 5))}${more}. Want to hear it?`, kind: 'finished' };
   }
+  const stall = stalledTasks(data)[0];
+  if (stall) return { line: `${hello}! ${stall.who} is stalled on ${quote(stall.title)}.`, kind: 'stalled' };
   const running = tasks.find((t) => t.status === 'running' || t.status === 'queued');
-  if (running) return { line: hello + '! ' + (running.partner_name || 'The Office') + ' is on "' + shortTitle(running.task, 5) + '". ' + timeSuggestion(h), kind: 'working' };
+  if (running) return { line: `${hello}! ${running.partner_name || 'The Office'} is on ${quote(shortTitle(running.task, 5))}. ${timeSuggestion(h)}`, kind: 'working' };
   const plan = (data.meetings || []).find((m) => m.final_plan && (!since || String(m.updated_at || '') > since));
-  if (plan) return { line: hello + '! The War Room has a plan for "' + shortTitle(plan.objective, 5) + '". Want it?', kind: 'plan' };
+  if (plan) return { line: `${hello}! The War Room has a plan for ${quote(shortTitle(plan.objective, 5))}. Want it?`, kind: 'plan' };
   return { line: hello + '! ' + timeSuggestion(h), kind: 'suggestion' };
 }
 
-export function suggestions(data, { hour = 12 } = {}) {
-  const out = nextActions(data);
-  if ((data.team || []).some((a) => !a.retired) && !out.some((s) => /office/i.test(s))) out.push('What is the Office doing?');
-  const fill = Number(hour) < 11
-    ? ['Plan my day', 'What is the weather today?', 'Play some music']
-    : Number(hour) < 18
+export function suggestions(data, { hour = 12, now = Date.now() } = {}) {
+  const out = [];
+  const tasks = data.team_tasks || [];
+
+  const done = tasks.find((t) => DONE.has(t.status) && t.result);
+  if (done) out.push(`Read me what ${done.partner_name || 'the Office'} finished`);
+
+  const stale = tasks.find((t) => {
+    if (t.status !== 'running' && t.status !== 'queued') return false;
+    const at = Date.parse(String(t.updated_at || t.created_at || ''));
+    return Number.isFinite(at) && now - at > 30 * 60 * 1000;
+  });
+  if (stale && out.length < 3) {
+    out.push(`Check in on ${stale.partner_name || 'the Office'} — "${shortTitle(stale.task)}" is no update in a while`);
+  }
+
+  const project = (data.projects || [])[0];
+  if (project && out.length < 3) out.push(`What's next on ${shortTitle(project.title, 4)}?`);
+  if ((data.team || []).some((a) => !a.retired) && out.length < 3) {
+    out.push('What is the Office doing?');
+  }
+
+  const h = Number(hour);
+  const fill = h < 11
+    ? ['Plan my day', 'What’s the weather today?', 'Play some music']
+    : h < 18
       ? ['Put the team on my top task', 'Make me an image', 'Research something for me']
       : ['Watch something in the Theater', 'Recap my day', 'Play some music'];
   for (const f of fill) if (out.length < 3 && !out.includes(f)) out.push(f);

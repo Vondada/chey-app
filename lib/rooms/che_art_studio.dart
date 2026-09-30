@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
+import '../widgets/che_3d_room_view.dart';
 
 class CheArtPiece {
   const CheArtPiece(this.raw);
@@ -209,6 +210,27 @@ class _CheArtStudioState extends State<CheArtStudio> {
                 padding: const EdgeInsets.only(top: CheSpace.sm),
                 child: Text(_error!, style: CheType.caption.copyWith(color: CheColors.warning)),
               ),
+            const SizedBox(height: CheSpace.md),
+            Che3DRoomView(
+              assetPath: 'assets/office3d/artstudio.html',
+              updateFunction: 'updateScene',
+              payload: {
+                'agents': [
+                  {'id': 'che', 'name': 'CHE', 'role': 'Curator', 'status': _working ? 'working' : 'idle', 'isChe': true},
+                ],
+                'pieces': [
+                  for (final p in roots.take(6))
+                    {'id': p.rootId, 'title': p.title, 'mode': p.mode},
+                ],
+              },
+              height: 340,
+              backgroundColor: const Color(0xFF1A100C),
+              semanticsLabel: '3D Art Studio gallery',
+              onTapId: (id) {
+                final match = roots.where((p) => p.rootId == id || p.id == id);
+                if (match.isNotEmpty) unawaited(_openPiece(match.first.rootId));
+              },
+            ),
             const SizedBox(height: CheSpace.md),
             Text('GALLERY WALL', style: CheType.overline.copyWith(color: _warm)),
             const SizedBox(height: CheSpace.sm),

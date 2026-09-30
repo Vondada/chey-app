@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'browser/che_browser.dart';
 import 'che_theme.dart';
+import 'home/che_grok_chat_screen.dart';
 
 class CheAppDefinition {
   const CheAppDefinition({
@@ -33,6 +34,7 @@ const List<CheAppDefinition> cheAppCatalog = [
   CheAppDefinition(name: 'GitHub', webUrl: 'https://github.com', icon: Icons.code, aliases: ['github', 'git hub']),
   CheAppDefinition(name: 'TradingView', webUrl: 'https://www.tradingview.com', icon: Icons.show_chart, aliases: ['tradingview', 'trading view']),
   CheAppDefinition(name: 'NinjaTrader', webUrl: 'https://ninjatrader.com', icon: Icons.candlestick_chart, aliases: ['ninjatrader', 'ninja trader']),
+  CheAppDefinition(name: 'TradeSea', webUrl: 'https://app.tradesea.ai/login?source=mobile-app&theme=dark', icon: Icons.ssid_chart, aliases: ['tradesea', 'trade sea', 'trade sea ai']),
   // Web versions CHE can use when a phone app can't be controlled directly.
   CheAppDefinition(name: 'Gmail', webUrl: 'https://mail.google.com', icon: Icons.mail_outline, aliases: ['gmail', 'google mail']),
   CheAppDefinition(name: 'Outlook', webUrl: 'https://outlook.live.com/mail', icon: Icons.mark_email_unread_outlined, aliases: ['outlook', 'hotmail']),
@@ -105,6 +107,26 @@ CheAppDefinition? cheAppForName(String input) {
   return null;
 }
 
+/// True when [url] is on TradeSea (app.tradesea.ai or sibling tradesea.ai hosts).
+bool cheIsTradeSeaUrl(String url) {
+  final host = Uri.tryParse(url)?.host.toLowerCase() ?? '';
+  return host.contains('tradesea.ai');
+}
+
+/// TradeSea's SPA treats mobile UAs (CHE's WKWebView) as a phone browser and
+/// shows only a "download the app" sheet unless `source=mobile-app` (or
+/// `window.__webView`) is set — that is how their native WebViewBridge embeds.
+/// CHE Apps must open with that flag or sign-in never appears.
+String cheTradeSeaEmbedUrl(String url) {
+  final uri = Uri.tryParse(url);
+  if (uri == null || !cheIsTradeSeaUrl(url)) return url;
+  final next = Map<String, String>.from(uri.queryParameters);
+  if (next['source'] == 'mobile-app') return uri.toString();
+  next['source'] = 'mobile-app';
+  next.putIfAbsent('theme', () => 'dark');
+  return uri.replace(queryParameters: next).toString();
+}
+
 /// Phone apps with no usable web version. CHE says so plainly instead of
 /// pretending she can get in.
 const Map<String, String> cheAppsWithoutWeb = {
@@ -128,9 +150,18 @@ typedef CheLearnPageCallback = Future<void> Function(
 );
 
 class CheAppsHubTab extends StatefulWidget {
-  const CheAppsHubTab({super.key, this.onLearnPage});
+  const CheAppsHubTab({
+    super.key,
+    this.onLearnPage,
+    this.agentBaseUrl = '',
+    this.deviceToken = '',
+  });
 
   final CheLearnPageCallback? onLearnPage;
+
+  /// CHE Worker base URL + paired device token for native Grok chat.
+  final String agentBaseUrl;
+  final String deviceToken;
 
   @override
   State<CheAppsHubTab> createState() => _CheAppsHubTabState();
@@ -172,6 +203,41 @@ class _CheAppsHubTabState extends State<CheAppsHubTab> {
     );
   }
 
+  Future<void> _openEmbeddedWeb(CheAppDefinition app) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CheEmbeddedAppScreen(
+          app: app,
+          onLearnPage: widget.onLearnPage,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openCatalogApp(CheAppDefinition app) async {
+    // Grok opens the native Worker→xAI chat. Long-press (or overflow in
+    // that screen) still opens grok.com in the in-app browser.
+    if (app.name == 'Grok') {
+      await CheGrokChatScreen.open(
+        context,
+        baseUrl: widget.agentBaseUrl,
+        deviceToken: widget.deviceToken,
+        onOpenWeb: () {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => CheEmbeddedAppScreen(
+                app: app,
+                onLearnPage: widget.onLearnPage,
+              ),
+            ),
+          );
+        },
+      );
+      return;
+    }
+    await _openEmbeddedWeb(app);
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListView(
@@ -180,7 +246,7 @@ class _CheAppsHubTabState extends State<CheAppsHubTab> {
         const Text('Apps inside CHE', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
         const SizedBox(height: 4),
         const Text(
-          'Web-capable services open without leaving CHE. Native-only features use the official app when iOS or the service requires it.',
+          'Web-capable services open without leaving CHE. Tap Grok for native Worker chat (long-press for grok.com). Native-only features use the official app when iOS or the service requires it.',
           style: TextStyle(color: CheColors.textDim),
         ),
         const SizedBox(height: 16),
@@ -198,14 +264,10 @@ class _CheAppsHubTabState extends State<CheAppsHubTab> {
             final app = cheAppCatalog[index];
             return InkWell(
               borderRadius: BorderRadius.circular(16),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => CheEmbeddedAppScreen(
-                    app: app,
-                    onLearnPage: widget.onLearnPage,
-                  ),
-                ),
-              ),
+              onTap: () => _openCatalogApp(app),
+              onLongPress: app.name == 'Grok'
+                  ? () => _openEmbeddedWeb(app)
+                  : null,
               child: Container(
                 decoration: BoxDecoration(
                   color: CheColors.panel,
@@ -221,10 +283,15 @@ class _CheAppsHubTabState extends State<CheAppsHubTab> {
                     Text(
                       app.name,
                       textAlign: TextAlign.center,
-                      maxLines: 2,
+                      maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
+                    if (app.name == 'Grok')
+                      const Text(
+                        'Native',
+                        style: TextStyle(fontSize: 10, color: CheColors.accent, fontWeight: FontWeight.w700),
+                      ),
                   ],
                 ),
               ),

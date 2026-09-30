@@ -29,17 +29,35 @@ extension _CheHomeSend on _CHEHomeState {
     final embeddedApp = cheAppForName(appName);
     if (embeddedApp != null && mounted) {
       controller.clear();
+      final isGrok = embeddedApp.name == 'Grok';
       _set(() {
         messages.add({
           'role': 'assistant',
-          'text': 'Opening ${embeddedApp.name} inside CHE, sir.',
+          'text': isGrok
+              ? 'Opening native Grok chat through CHE, sir.'
+              : 'Opening ${embeddedApp.name} inside CHE, sir.',
         });
       });
-      await Navigator.of(context).push(
-        CupertinoPageRoute<void>(
-          builder: (_) => CheEmbeddedAppScreen(app: embeddedApp),
-        ),
-      );
+      if (isGrok) {
+        await CheGrokChatScreen.open(
+          context,
+          baseUrl: cheAgentBaseUrl,
+          deviceToken: _deviceToken ?? '',
+          onOpenWeb: () {
+            Navigator.of(context).push(
+              CupertinoPageRoute<void>(
+                builder: (_) => CheEmbeddedAppScreen(app: embeddedApp),
+              ),
+            );
+          },
+        );
+      } else {
+        await Navigator.of(context).push(
+          CupertinoPageRoute<void>(
+            builder: (_) => CheEmbeddedAppScreen(app: embeddedApp),
+          ),
+        );
+      }
       return true;
     }
 
@@ -50,7 +68,7 @@ extension _CheHomeSend on _CHEHomeState {
       controller.clear();
       _set(() => messages.add({'role': 'assistant', 'text': noWeb}));
       await speakText(noWeb);
-      if (appName.contains('iweb')) _openAssistantHub(tab: 9);
+      if (appName.contains('iweb')) _openAssistantHub(tab: 8);
       return true;
     }
 
@@ -133,44 +151,44 @@ extension _CheHomeSend on _CHEHomeState {
   Future<bool> _handleLocalNavigation(String message) async {
     final lower = message.toLowerCase();
 
-    if (RegExp(r'\b(open|show|go to)\s+(my\s+)?memories?\b').hasMatch(lower)) {
+    if (RegExp(r'\b(open|show|go to)\s+(my\s+)?(memories?|brain|brain constellation)\b').hasMatch(lower)) {
       _openAssistantHub(tab: 0);
       return true;
     }
     if (RegExp(r'\b(open|show|go to)\s+(insights?|suggestions?|learned knowledge)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 1);
+      _openAssistantHub(tab: 0);
       return true;
     }
     if (RegExp(r'\b(open|show|go to)\s+(markets?|trading|stocks?|futures?|crypto)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 2);
+      _openAssistantHub(tab: 1);
       return true;
     }
     if (RegExp(r'\b(open|show|go to)\s+(business|cash flow|customers?|leads?|billing)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 3);
+      _openAssistantHub(tab: 2);
       return true;
     }
     if (RegExp(r'\b(open|show|go to)\s+(devices?|connections?|screen|identity)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 4);
+      _openAssistantHub(tab: 3);
       return true;
     }
     if (RegExp(r'\b(open|show|go to)\s+(music|playlists?)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 5);
+      _openAssistantHub(tab: 4);
       return true;
     }
     if (RegExp(r'\b(open|show|go to)\s+(create|innovation|creator)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 6);
+      _openAssistantHub(tab: 5);
       return true;
     }
     if (RegExp(r'\b(open|show|go to)\s+(office|team|coworkers?|partners?|workplace)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 7);
+      _openAssistantHub(tab: 6);
       return true;
     }
     if (RegExp(r'\b(open|show|go to)\s+(apps?|app portal|web apps?|services?)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 8);
+      _openAssistantHub(tab: 7);
       return true;
     }
     if (RegExp(r'\b(open|show|go to)\s+(the\s+)?(theater|theatre|cinema|movie room)\b').hasMatch(lower)) {
-      _openAssistantHub(tab: 9);
+      _openAssistantHub(tab: 8);
       return true;
     }
     if (RegExp(r'\b(set ?up|fix|open|configure)\s+(the\s+|my\s+)?wake ?word\b').hasMatch(lower)) {
@@ -212,6 +230,15 @@ extension _CheHomeSend on _CHEHomeState {
         spoken = 'Saved your ${command.site} password in CHE\'s vault on this iPhone, sir.';
         shown = spoken;
       case 'read':
+        // Face ID before speaking/showing a vault password (TTL skips re-prompt).
+        final unlocked = await CheVaultAuth.instance.ensureUnlocked(
+          reason: 'Unlock CHE vault with Face ID to show this password',
+        );
+        if (!unlocked) {
+          spoken = 'Face ID was cancelled — I did not reveal your password, sir.';
+          shown = spoken;
+          break;
+        }
         final entry = await vault.find(command.site);
         if (entry == null) {
           spoken = 'I don\'t have a ${command.site} password saved, sir.';
@@ -439,18 +466,37 @@ extension _CheHomeSend on _CHEHomeState {
 
       _scrollToBottom();
 
+      // Batch visual updates while speaking the first finished sentence as soon
+      // as it streams in (time-to-first-spoken).
       final uiBatcher = CheStreamBatcher((partialReply) {
         final index = assistantIndex;
         if (!mounted || index == null || index >= messages.length) return;
         _set(() => messages[index]['text'] = _sanitizeCheReply(partialReply));
         _scrollToBottom();
       });
+      final speechChunker = CheSpeechChunker();
+      var speechChain = Future<void>.value();
+      void enqueueSpoken(String chunk) {
+        final spoken = _spokenText(chunk);
+        if (spoken.isEmpty) return;
+        speechChain = speechChain.then((_) async {
+          if (!mounted || _stopRequested) return;
+          await speakText(spoken, record: false);
+        });
+      }
+
       late final String reply;
       try {
         reply = await _streamCheResponse(
           message,
           history,
-          onPartial: uiBatcher.add,
+          onPartial: (partialReply) {
+            uiBatcher.add(partialReply);
+            final clean = _sanitizeCheReply(partialReply);
+            for (final chunk in speechChunker.addCumulative(clean)) {
+              enqueueSpoken(chunk);
+            }
+          },
         );
         uiBatcher.flush();
       } finally {
@@ -462,6 +508,13 @@ extension _CheHomeSend on _CHEHomeState {
       final finalReply = reply.isEmpty
           ? (stopped ? 'Stopped.' : 'I could not generate a response, sir.')
           : _sanitizeCheReply(reply);
+
+      for (final chunk in speechChunker.addCumulative(finalReply)) {
+        enqueueSpoken(chunk);
+      }
+      for (final chunk in speechChunker.flush()) {
+        enqueueSpoken(chunk);
+      }
 
       if (!mounted) return;
 
@@ -493,7 +546,7 @@ extension _CheHomeSend on _CHEHomeState {
         if (mounted) _set(() => _justCompleted = false);
       });
 
-      if (!stopped) await speakText(_spokenText(finalReply));
+      if (!stopped) await speechChain;
     } on _CHEAgentException catch (e) {
       final errorReply = e.message;
 
@@ -558,6 +611,14 @@ extension _CheHomeSend on _CHEHomeState {
               onTap: () async {
                 await Clipboard.setData(ClipboardData(text: text));
                 if (sheetContext.mounted) Navigator.pop(sheetContext);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.translate_rounded),
+              title: Text("Translate to ${cheLanguageByCode(_translateTarget).name}"),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                unawaited(_translateText(text));
               },
             ),
             ListTile(

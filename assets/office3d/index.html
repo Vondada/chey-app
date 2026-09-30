@@ -56,6 +56,7 @@
 <div id="error">La Agencia could not start its 3D renderer.</div>
 
 <script src="three.min.js"></script>
+<script src="che3d-agents.js"></script>
 <script>
 (() => {
   "use strict";
@@ -453,7 +454,7 @@
 
     if(isChe){
       const waist=sphere(.52,M.teal,.92,.46,.64); waist.position.y=1.00; g.add(waist);
-      const collarL=box(.22,.07,.045,material(0xE6D9CF)); collarL.position.set(-.12,1.54,.38); collarL.rotation.z=-.34;
+      const collarL=box(.22,.07,.045,mat(0xE6D9CF)); collarL.position.set(-.12,1.54,.38); collarL.rotation.z=-.34;
       const collarR=collarL.clone(); collarR.position.x=.12; collarR.rotation.z=.34;
       g.add(collarL,collarR);
     }
@@ -482,23 +483,37 @@
     // neck
     const neck=cylinder(.17,.17,.18,skinMat,18); neck.position.y=1.82; g.add(neck);
 
-    // hair behind head
+    // hair behind head — CHE: fuller, longer, curly/voluminous female silhouette
     if(isChe){
-      const hairBack=sphere(.84,hairMat,1.05,1.28,.68); hairBack.position.set(0,2.47,-.20); g.add(hairBack);
-      const longL=sphere(.27,hairMat,.82,2.35,.74); longL.position.set(-.64,2.03,-.05); longL.rotation.z=-.17;
-      const longR=longL.clone(); longR.position.x=.64; longR.rotation.z=.17;
-      const waveL=sphere(.28,hairMat,.86,1.56,.78); waveL.position.set(-.48,1.76,-.11); waveL.rotation.z=.30;
-      const waveR=waveL.clone(); waveR.position.x=.48; waveR.rotation.z=-.30;
-      g.add(longL,longR,waveL,waveR);
+      const hairBack=sphere(.96,hairMat,1.12,1.45,.78); hairBack.position.set(0,2.42,-.28); g.add(hairBack);
+      // long cascading locks
+      const longL=sphere(.34,hairMat,.88,2.85,.82); longL.position.set(-.72,1.88,-.06); longL.rotation.z=-.22;
+      const longR=longL.clone(); longR.position.x=.72; longR.rotation.z=.22;
+      // mid waves / curls
+      const waveL=sphere(.34,hairMat,.95,1.85,.88); waveL.position.set(-.58,1.62,-.08); waveL.rotation.z=.38;
+      const waveR=waveL.clone(); waveR.position.x=.58; waveR.rotation.z=-.38;
+      const curlL=sphere(.26,hairMat,1.05,1.35,.9); curlL.position.set(-.78,2.15,.05); curlL.rotation.z=-.45;
+      const curlR=curlL.clone(); curlR.position.x=.78; curlR.rotation.z=.45;
+      const tipL=sphere(.22,hairMat,1.1,1.2,.95); tipL.position.set(-.55,1.38,-.02);
+      const tipR=tipL.clone(); tipR.position.x=.55;
+      g.add(longL,longR,waveL,waveR,curlL,curlR,tipL,tipR);
     }
 
-    // head
-    const head=sphere(.76,skinMat,1,1.04,.94); head.position.y=2.42; g.add(head);
+    // head — CHE slightly softer/rounder face; never any facial hair
+    const head=sphere(isChe?.78:.76,skinMat,1,isChe?1.08:1.04,isChe?.96:.94); head.position.y=2.42; g.add(head);
 
     if(isChe){
-      const hairTop=sphere(.79,hairMat,1.04,.80,.98); hairTop.position.set(0,2.70,-.08); g.add(hairTop);
-      const sideL=sphere(.24,hairMat,.74,1.50,.72); sideL.position.set(-.65,2.43,-.02);
-      const sideR=sideL.clone(); sideR.position.x=.65; g.add(sideL,sideR);
+      const hairTop=sphere(.88,hairMat,1.12,.92,1.05); hairTop.position.set(0,2.78,-.06); g.add(hairTop);
+      // soft bangs / fringe
+      const bang=sphere(.42,hairMat,1.35,.42,1.05); bang.position.set(0,2.72,.42); g.add(bang);
+      const bangL=sphere(.22,hairMat,1.1,.7,1.0); bangL.position.set(-.32,2.62,.48); bangL.rotation.z=.25;
+      const bangR=bangL.clone(); bangR.position.x=.32; bangR.rotation.z=-.25;
+      g.add(bangL,bangR);
+      const sideL=sphere(.30,hairMat,.82,1.75,.78); sideL.position.set(-.72,2.40,.02);
+      const sideR=sideL.clone(); sideR.position.x=.72; g.add(sideL,sideR);
+      // cheek softener (feminine roundness, no beard geometry ever)
+      const cheekL=sphere(.16,skinMat,1.15,.85,1.0); cheekL.position.set(-.42,2.28,.48);
+      const cheekR=cheekL.clone(); cheekR.position.x=.42; g.add(cheekL,cheekR);
     } else {
       // clean chibi-bot cap + small antenna, keeping faces expressive.
       const cap=sphere(.77,M.blackGlass,1.02,.38,.96); cap.position.set(0,2.78,-.05); g.add(cap);
@@ -508,21 +523,23 @@
     }
 
     // bright expressive eyes
-    const eyeL=makeEye(isChe?0x3C241F:0x23343A); eyeL.position.set(-.25,2.47,.66);
-    const eyeR=makeEye(isChe?0x3C241F:0x23343A); eyeR.position.set(.25,2.47,.66);
+    const eyeL=makeEye(isChe?0x3C241F:0x23343A); eyeL.position.set(-.25,2.47,.66); if(isChe) eyeL.scale.set(1.12,1.18,1.05);
+    const eyeR=makeEye(isChe?0x3C241F:0x23343A); eyeR.position.set(.25,2.47,.66); if(isChe) eyeR.scale.set(1.12,1.18,1.05);
     g.add(eyeL,eyeR);
 
     if(isChe){
-      // subtle eyelashes
+      // fuller eyelashes (female read)
       for(const sign of [-1,1]){
-        const lash=box(.13,.018,.018,M.ink);
-        lash.position.set(sign*.25,2.58,.705);
-        lash.rotation.z=sign*.20;
-        g.add(lash);
+        for(const [oy,oz,rz,len] of [[.12,.01,.28,.15],[.08,.02,.05,.13],[-.02,.015,-.22,.12]]){
+          const lash=box(len,.016,.016,M.ink);
+          lash.position.set(sign*.26,2.55+oy,.72+oz);
+          lash.rotation.z=sign*rz;
+          g.add(lash);
+        }
       }
-      // gold hoop earring vibe
-      const hoopL=torus(.105,.018,M.gold); hoopL.position.set(-.72,2.39,.08); hoopL.rotation.y=Math.PI/2;
-      const hoopR=hoopL.clone(); hoopR.position.x=.72;
+      // gold hoop earrings
+      const hoopL=torus(.12,.02,M.gold); hoopL.position.set(-.78,2.36,.10); hoopL.rotation.y=Math.PI/2;
+      const hoopR=hoopL.clone(); hoopR.position.x=.78;
       g.add(hoopL,hoopR);
     } else {
       // metallic ear modules / bot identity
@@ -561,7 +578,7 @@
     thought.visible=false; g.add(thought);
 
     // blocked alert diamond
-    const alert=box(.18,.18,.08,material(C.blocked,.35,.12));
+    const alert=box(.18,.18,.08,mat(C.blocked,.35,.12));
     alert.rotation.z=Math.PI/4; alert.position.set(-.68,3.08,.04); alert.visible=false; g.add(alert);
 
     // celebration crown/sparks
@@ -616,6 +633,7 @@
 
   function updateCharacter(g,agent,index){
     g.userData.status=normalizeStatus(agent.status);
+    g.userData.homeSlot=characterSlot(index);
     if(g.userData.beaconMat){
       const color=statusColor(agent.status);
       g.userData.beaconMat.color.setHex(color);
@@ -626,8 +644,11 @@
       g.userData.labelMat.map=faceLabelTexture(agent);
       g.userData.labelMat.needsUpdate=true;
     }
-    const slot=characterSlot(index);
-    g.userData.targetPosition=new THREE.Vector3(slot[0],slot[1],slot[2]);
+    if(!g.userData.targetPosition){
+      const slot=characterSlot(index);
+      g.userData.targetPosition=new THREE.Vector3(slot[0],slot[1],slot[2]);
+    }
+    g.userData.nextWanderAt = g.userData.nextWanderAt || 0;
   }
 
   window.updateAgents=function(agents){
@@ -746,19 +767,46 @@
     chars.forEach((g)=>{
       const s=g.userData.status || "idle";
       const phase=g.userData.phase || 0;
+      // Alive locomotion: idle agents wander; busy agents return to desk.
+      if(!g.userData.nextWanderAt || t >= g.userData.nextWanderAt){
+        g.userData.nextWanderAt = t + 3 + Math.random()*5;
+        const home = g.userData.homeSlot || characterSlot(0);
+        if(s==="idle" || s==="celebrating"){
+          const spot = slots[Math.floor(Math.random()*Math.min(slots.length,6))] || home;
+          g.userData.targetPosition = new THREE.Vector3(spot[0]+(Math.random()-.5)*.4, home[1], spot[2]+(Math.random()-.5)*.4);
+          g.userData.walking = true;
+        } else {
+          g.userData.targetPosition = new THREE.Vector3(home[0], home[1], home[2]);
+          g.userData.walking = true;
+        }
+      }
       const target=g.userData.targetPosition;
       if(target){
-        g.position.x+=(target.x-g.position.x)*.08;
-        g.position.z+=(target.z-g.position.z)*.08;
+        const dx=target.x-g.position.x, dz=target.z-g.position.z;
+        const dist=Math.hypot(dx,dz);
+        if(dist>0.06){
+          g.position.x+=dx*Math.min(1,.12);
+          g.position.z+=dz*Math.min(1,.12);
+          g.rotation.y += (Math.atan2(dx,dz)-g.rotation.y)*.15;
+          g.userData.walking = true;
+        } else {
+          g.userData.walking = false;
+        }
         g.userData.baseY=target.y;
       }
 
       const baseY=g.userData.baseY || .30;
       const breathe=Math.sin(t*2.0+phase)*.025;
-      g.position.y=baseY+breathe;
+      if(g.userData.walking){
+        const swing=Math.sin(t*9+phase)*.5;
+        if(g.userData.armL&&g.userData.armR){ g.userData.armL.rotation.x=-swing*.7; g.userData.armR.rotation.x=swing*.7; }
+        g.position.y=baseY+Math.abs(Math.sin(t*9+phase))*.05;
+      } else {
+        g.position.y=baseY+breathe;
+      }
 
       const armL=g.userData.armL, armR=g.userData.armR;
-      if(armL && armR){
+      if(armL && armR && !g.userData.walking){
         armL.rotation.x=0; armR.rotation.x=0;
         armL.rotation.z=-.16; armR.rotation.z=.16;
 

@@ -198,7 +198,7 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('Insights room: Map, Brain and Log views lay out on a phone', (tester) async {
+  testWidgets('Insights room: constellation primary with Soul and Log sheets', (tester) async {
     _phone(tester);
     final brain = CheBrain();
     final log = CheAgentController(backend: CheBackend.fromFuture((_) async => ''), brain: brain);
@@ -210,9 +210,15 @@ void main() {
     ));
     await tester.pump();
     expect(find.text('neural map'), findsOneWidget);
-    await tester.tap(find.text('Brain'));
+    expect(find.text('Soul & facts'), findsOneWidget);
+    expect(find.text('Log'), findsOneWidget);
+    // No Map|Brain|Log segmented split.
+    expect(find.text('Map'), findsNothing);
+    await tester.tap(find.text('Soul & facts'));
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('CHE Brain'), findsOneWidget);
+    Navigator.of(tester.element(find.text('CHE Brain'))).pop();
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.tap(find.text('Log'));
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('Cloud copies on the CHE server'), findsOneWidget);

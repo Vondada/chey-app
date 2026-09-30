@@ -96,6 +96,22 @@ class _ChePipelineRoomState extends State<ChePipelineRoom> {
     if (mounted) setState(() {});
   }
 
+  Future<bool> _confirmMoney(String title, String body) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF101821),
+        title: Text(title),
+        content: Text(body),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Confirm')),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
   Future<void> _step(String id, String step, {Map<String, dynamic>? body, String? done}) async {
     setState(() => _busy.add(id));
     try {
@@ -237,7 +253,14 @@ class _ChePipelineRoomState extends State<ChePipelineRoom> {
             'Check the finished work yourself before asking for payment.',
             style: TextStyle(color: Colors.white54, fontSize: 12),
           ),
-          btn('I checked it → create payment link', () => _step(id, 'invoice', done: 'Stripe payment link created.')),
+          btn('I checked it → create payment link', () async {
+            final ok = await _confirmMoney(
+              'Create Stripe payment link?',
+              'CHE will create a real Stripe payment link for the agreed price. Confirm only if the work is ready to invoice.',
+            );
+            if (!ok) return;
+            await _step(id, 'invoice', body: const {'confirmed': true}, done: 'Stripe payment link created.');
+          }),
         ];
       case 'invoiced':
         return [

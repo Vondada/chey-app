@@ -20,8 +20,11 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../agents/che_agent_runtime.dart';
+import '../che_ui/che_agents.dart' show CheAgentStatus;
 import '../agents/che_office_world.dart' show CheRoomVisitors;
 import '../che_ui/che_theme.dart';
+import '../browser/che_browser.dart';
+import '../widgets/che_3d_room_view.dart';
 
 enum CheTheaterVerdict { allow, blockPopup, blockRedirect, blockScheme, blockDownload }
 
@@ -453,25 +456,70 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
         const SizedBox(height: CheSpace.sm),
         Expanded(
           child: RepaintBoundary(
-            child: Container(
-              color: Colors.black,
-              child: web == null
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(CheSpace.xl),
-                        child: Text(
-                          'The Theater is ready. Free Office agents will take their seats while you watch.',
-                          textAlign: TextAlign.center,
-                          style: CheType.bodyDim,
-                        ),
-                      ),
-                    )
-                  : WebViewWidget(controller: web),
-            ),
+            child: web == null
+                ? _Theater3DStage(runtime: widget.runtime)
+                : Container(color: Colors.black, child: WebViewWidget(controller: web)),
           ),
         ),
+        if (web != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.xs, CheSpace.gutter, 0),
+            child: SizedBox(
+              height: 160,
+              child: _Theater3DStage(runtime: widget.runtime, compact: true),
+            ),
+          ),
         CheRoomVisitors(runtime: widget.runtime, rooms: const {'theater'}, onOpenOffice: widget.onOpenOffice),
       ]),
+    );
+  }
+}
+
+
+class _Theater3DStage extends StatelessWidget {
+  const _Theater3DStage({required this.runtime, this.compact = false});
+  final CheAgentRuntimeController runtime;
+  final bool compact;
+
+  Map<String, dynamic> _payload() {
+    final now = CheBrowserStore.instance.nowPlaying.value;
+    final visitors = <Map<String, dynamic>>[
+      for (final p in runtime.agents)
+        if (p.room == 'theater' || p.agent.status == CheAgentStatus.idle)
+          {
+            'id': p.agent.id,
+            'name': p.agent.name,
+            'role': p.agent.role,
+            'status': p.room == 'theater' ? 'working' : 'idle',
+            'isChe': false,
+          },
+    ];
+    if (visitors.isEmpty) {
+      visitors.add({'id': 'che', 'name': 'CHE', 'role': 'Host', 'status': 'idle', 'isChe': true});
+    }
+    return {
+      'agents': visitors,
+      'nowPlaying': now == null
+          ? null
+          : {'url': now.url, 'title': now.title},
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<CheBrowserEntry?>(
+      valueListenable: CheBrowserStore.instance.nowPlaying,
+      builder: (context, value, child) {
+        return Che3DRoomView(
+          assetPath: 'assets/office3d/theater.html',
+          updateFunction: 'updateScene',
+          payload: _payload(),
+          height: compact ? 160 : 420,
+          backgroundColor: const Color(0xFF1A1410),
+          semanticsLabel: '3D Theater with browser TV',
+          fallbackMessage: '3D Theater unavailable on this device.',
+        );
+      },
     );
   }
 }

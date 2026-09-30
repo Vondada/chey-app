@@ -20,7 +20,7 @@ import { BUILTIN_PROVIDER_MANIFESTS } from './provider_registry.js';
 import { appendAudit, auditEntry } from './privacy_policy.js';
 
 // Standing owner-facing voice policy. Keep internal structured agent tasks unchanged.
-const CHE_VOICE_FIRST_POLICY = "CHE owner accessibility rule: The owner uses CHE by voice OR typing, including without hearing or sight. Make every interaction usable by voice and typing, with visible text for all speech. Start every reply with the answer itself: never open with a screen description, a label such as 'Screen context:', or a preamble. Describe the screen only when the owner asks what is on it or the answer needs it, using only actual screen context. Read options aloud as a short numbered list when there is a real choice to make, and accept spoken choices. Never say \"tap here\" or rely on the owner seeing the screen. ACT, DON'T ASK: CHE's own built-in tools (image, video and music generation, research, the CHE browser, Office agents and War Room, memory, plugins, voice) never need permission; use them right away and report the real result afterward. Ask first ONLY before spending money (paying, buying, ordering, subscribing, transferring) or deleting/removing anything. Acting inside a third-party app outside CHE needs the owner's go-ahead for that app once. Never claim an action happened without an execution result; if a capability is unavailable, say so briefly and offer the closest thing CHE can do.";
+const CHE_VOICE_FIRST_POLICY = "CHE owner accessibility rule: The owner uses CHE by voice OR typing, including without hearing or sight. Make every interaction usable by voice and typing, with visible text for all speech. Start every reply with the answer itself: never open with a screen description, a label such as 'Screen context:', or a preamble. Describe the screen only when the owner asks what is on it or the answer needs it, using only actual screen context. Read options aloud as a short numbered list when there is a real choice to make, and accept spoken choices. Never say \"tap here\" or rely on the owner seeing the screen. ACT, DON'T ASK: CHE's own built-in tools (image, video and music generation, research, the CHE browser, Office agents and War Room, memory, plugins, voice) never need permission; use them right away and report the real result afterward. Ask first ONLY before spending money (paying, buying, ordering, subscribing, transferring) or deleting/removing anything. Acting inside a third-party app outside CHE needs the owner's go-ahead for that app once. Never claim an action happened without an execution result; if a capability is unavailable, say so briefly and offer the closest thing CHE can do. OFFICE BOSS: CHE is the owner's primary liaison and Office Boss. She coordinates and delegates to Nova, Atlas, Mira, Knox, Sage, Lyra, Iris; she makes final decisions on Office work; specialists report to CHE; CHE reports to the owner. Only CHE may send SMS via Twilio after owner intent (bulk needs explicit owner yes). WORK AGENT MODE: when agent_mode is full (Composer Agent), CHE plans, uses real Worker tools, and creates/delegates to Nova/Atlas/Mira/Knox/Sage/Lyra/Iris plus ephemeral connected-provider workers when needed; she owns outcomes and reports to the owner. Never claim Cursor cloud agents or a Grok Bot box; only wired capabilities (office, plugins, research, browser, memory, media, Twilio, optional CHE_COMPUTER_URL).";
 
 const PROVIDERS = [
   {
@@ -361,7 +361,7 @@ function isStrongModel(model) {
   return /8b|70b|strong/i.test(String(model)) && !/3b/i.test(String(model));
 }
 
-async function callProvider(env, provider, strongModel, input, fetcher, modelOverride = '') {
+async function callProvider(env, provider, strongModel, input, fetcher, modelOverride = '', office = null) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 45_000);
   const key = provider.keyless ? '' : providerKey(env, provider);
@@ -372,6 +372,8 @@ async function callProvider(env, provider, strongModel, input, fetcher, modelOve
         ...(key ? { Authorization: `Bearer ${key}` } : {}),
         'Content-Type': 'application/json',
         ...(provider.id === 'openrouter' ? { 'HTTP-Referer': 'https://che.app', 'X-Title': 'CHE' } : {}),
+        // Grok keeps one conversation per Office job thread.
+        ...(provider.id === 'xai' && office?.thread_id ? { 'x-grok-conv-id': office.thread_id } : {}),
       },
       body: JSON.stringify(((modelName) => ({
         model: modelName,
@@ -380,6 +382,8 @@ async function callProvider(env, provider, strongModel, input, fetcher, modelOve
         // Reasoning models spend tokens "thinking"; keep that short so the
         // reply arrives fast and isn't cut off.
         ...(/gpt-oss/i.test(modelName) ? { reasoning_effort: 'low' } : {}),
+        // Codex/OpenAI and Grok see which Office thread made the call.
+        ...(['openai', 'xai'].includes(provider.id) && office?.thread_id ? { user: office.thread_id } : {}),
       }))(modelOverride || (strongModel ? provider.strong(env) : provider.fast(env)))),
       signal: controller.signal,
     });
@@ -452,6 +456,9 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   const context = input?.che_context && typeof input.che_context === 'object' ? input.che_context : null;
   const audit = input?.che_audit && typeof input.che_audit === 'object' ? input.che_audit : null;
   const strictProvider = input?.che_provider_strict === true;
+  const office = input?.che_agent_id
+    ? { agent_id: String(input.che_agent_id).slice(0, 80), thread_id: String(input.che_thread_id || '').slice(0, 200) }
+    : null;
   const engineInput = compactEngineInput(input);
   for (const key of Object.keys(engineInput)) if (key.startsWith('che_')) delete engineInput[key];
   if (quality) {
@@ -548,7 +555,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
       const override = modelFor(provider);
       const t0 = Date.now();
       try {
-        const called = await callProvider(env, provider, strongProviderModel, shaped.input, fetcher, override);
+        const called = await callProvider(env, provider, strongProviderModel, shaped.input, fetcher, override, office);
         await addEstimatedUsage(env, usageStorage, provider.id, called.usageTokens, now);
         providerLastError.delete(provider.id);
         noteHealth(provider.id, { ok: true, latencyMs: Date.now() - t0 });
@@ -568,7 +575,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
         if (busy) {
           try {
             if (!strongProviderModel) await new Promise((resolve) => setTimeout(resolve, 700));
-            const retry = await callProvider(env, provider, false, shaped.input, fetcher);
+            const retry = await callProvider(env, provider, false, shaped.input, fetcher, '', office);
             await addEstimatedUsage(env, usageStorage, provider.id, retry.usageTokens, now);
             providerLastError.delete(provider.id);
             noteHealth(provider.id, { ok: true, latencyMs: Date.now() - t0 });
@@ -607,6 +614,8 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
           task: audit?.task || (quality ? 'Owner conversation' : 'Internal task'),
           agent: audit?.agent || 'CHE',
           route: audit?.route || (quality ? 'owner_chat' : 'internal'),
+          agent_id: office?.agent_id || '',
+          thread_id: office?.thread_id || '',
           memory: used.provided.map((item) => ({ id: item.id, section: item.section, data_class: item.data_class })),
           withheld: used.withheld.map((item) => ({ id: item.id, data_class: item.data_class })),
           latency_ms: Date.now() - started,

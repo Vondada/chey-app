@@ -74,6 +74,25 @@ MockClient _backend(List<http.Request> seen) => MockClient((request) async {
         body = {'task': {'id': 't2', 'status': 'queued'}};
       } else if (path == '/api/meetings/meeting-0000001') {
         body = {'meeting': _meeting};
+      } else if (path == '/api/office/goals' && request.method == 'POST') {
+        body = {
+          'goal_id': 'g1',
+          'jobs': [
+            {'id': 'j1', 'agent': 'Nova', 'task': 'Research slice', 'status': 'queued'},
+          ],
+          'reply': 'CHE here. Queued one Office job for Nova.',
+        };
+      } else if (path == '/api/office/today' && request.method == 'GET') {
+        body = {
+          'board': {
+            'started': [],
+            'shipped': [],
+            'blockers': [],
+            'agents_working': 1,
+            'agents': [],
+            'stripe': {'connected': false},
+          },
+        };
       } else {
         return http.Response(jsonEncode({'detail': 'Not found.'}), 404);
       }
@@ -115,6 +134,24 @@ void main() {
     expect(meeting.decisions, ['Ship v1']);
     expect(meeting.board.last.kind, 'synthesis');
     runtime.dispose();
+  });
+
+  test('agent(che) builds CHE desk from roster, never /api/agents/che', () async {
+    final seen = <http.Request>[];
+    final client = CheAgentRuntimeClient(
+      baseUrl: () => 'https://che.example',
+      headers: () => const {},
+      client: _backend(seen),
+    );
+    final detail = await client.agent('che');
+    expect(detail.profile.agent.isChe, isTrue);
+    expect(detail.profile.agent.name, 'CHE');
+    expect(detail.profile.agent.status, CheAgentStatus.waiting);
+    expect(detail.profile.agent.task, '1 delegated task in progress');
+    expect(detail.profile.responsibilities, isNotEmpty);
+    expect(detail.meetings, isNotEmpty);
+    expect(seen.every((r) => r.url.path == '/api/agents'), isTrue);
+    expect(seen.any((r) => r.url.path == '/api/agents/che'), isFalse);
   });
 
   test('runtime surfaces backend errors honestly', () async {
@@ -165,6 +202,47 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('CHE desk opens with Talk + request that queues an Office goal', (tester) async {
+    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+
+    var talked = false;
+    final seen = <http.Request>[];
+    final client = CheAgentRuntimeClient(
+      baseUrl: () => 'https://che.example',
+      headers: () => const {},
+      client: _backend(seen),
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: CheOfficeFloorScreen(
+        client: client,
+        onTalkToChe: () => talked = true,
+      ),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // CHE's big desk on the floor plan (not a Talk-only shortcut).
+    await tester.tap(find.bySemanticsLabel(RegExp(r"CHE.*Open to talk or send a request")));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('Talk to CHE'), findsWidgets);
+    expect(find.text('REQUEST TO CHE'), findsOneWidget);
+    expect(find.textContaining('Give CHE a request'), findsOneWidget);
+    // Desk detail came from roster, never a missing /api/agents/che route.
+    expect(seen.any((r) => r.url.path == '/api/agents/che'), isFalse);
+    expect(seen.any((r) => r.url.path == '/api/agents' && r.method == 'GET'), isTrue);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Talk to CHE'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(talked, isTrue);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('War Room shows the final plan, decisions and board', (tester) async {
     tester.view.physicalSize = const Size(1170, 2532);
     tester.view.devicePixelRatio = 3;
@@ -206,8 +284,8 @@ void main() {
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
-    expect(find.textContaining('agents ·'), findsOneWidget);
-    expect(find.text('Whole office'), findsOneWidget);
+    expect(find.text('Nova'), findsWidgets);
+    expect(find.textContaining('Agents working:'), findsOneWidget);
     await tester.tap(find.text('Read to me'));
     await tester.pump();
     expect(spoken.single, contains('Nova'));

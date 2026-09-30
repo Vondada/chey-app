@@ -23,13 +23,15 @@ class CheHomePresence extends StatelessWidget {
     required this.orbState,
     required this.subtitle,
     required this.onOrbTap,
-    required this.office,
+    this.office,
   });
 
   final CheOrbState orbState;
   final String subtitle;
   final VoidCallback onOrbTap;
-  final Widget office;
+
+  /// Optional trailing chip. Prefer [CheOfficeHomeStage] below the presence row.
+  final Widget? office;
 
   @override
   Widget build(BuildContext context) {
@@ -63,8 +65,10 @@ class CheHomePresence extends StatelessWidget {
             Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.caption),
           ]),
         ),
-        const SizedBox(width: CheSpace.sm),
-        office,
+        if (office != null) ...[
+          const SizedBox(width: CheSpace.sm),
+          office!,
+        ],
       ]),
     );
   }

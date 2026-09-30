@@ -1,0 +1,79 @@
+name: CHE Shorebird setup
+
+# Links CHE to Shorebird once, so IPAs are built as Shorebird releases and
+# CHE's self-updates can reach the phone as patches.
+#
+# Owner steps (phone is fine, no computer needed):
+#   1. Sign in at https://console.shorebird.dev and create an API key.
+#   2. Save it as the repository secret SHOREBIRD_TOKEN:
+#      https://github.com/Vondada/chey-app/settings/secrets/actions
+# Then this workflow runs `shorebird init` with that key and commits the
+# generated shorebird.yaml (app_id is public config, not a secret) plus the
+# pubspec asset entry back to the branch it ran on. It does nothing if
+# shorebird.yaml already exists or the secret is missing.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['che/**']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: che-shorebird-setup-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  link:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decide whether to link
+        id: need
+        run: |
+          if [[ -f shorebird.yaml ]]; then
+            echo "CHE is already linked to Shorebird (shorebird.yaml exists)."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          elif [[ -z "${SHOREBIRD_TOKEN}" ]]; then
+            echo "::notice::Add the SHOREBIRD_TOKEN secret (a Shorebird API key from https://console.shorebird.dev) to link CHE."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: subosito/flutter-action@v2
+        if: steps.need.outputs.run == 'true'
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Shorebird
+        if: steps.need.outputs.run == 'true'
+        run: |
+          curl --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/shorebirdtech/install/main/install.sh -sSf | bash
+          echo "$HOME/.shorebird/bin" >> "$GITHUB_PATH"
+
+      - name: Bootstrap native projects
+        if: steps.need.outputs.run == 'true'
+        run: bash ./tool/bootstrap.sh
+
+      - name: Create the CHE app on Shorebird
+        if: steps.need.outputs.run == 'true'
+        run: |
+          shorebird init --force --display-name "CHE"
+          test -f shorebird.yaml
+          grep -E '^app_id: ' shorebird.yaml
+
+      - name: Commit shorebird.yaml
+        if: steps.need.outputs.run == 'true'
+        run: |
+          git config user.name "CHE Shorebird setup"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add shorebird.yaml pubspec.yaml
+          git commit -m "Link CHE to Shorebird (shorebird init)"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

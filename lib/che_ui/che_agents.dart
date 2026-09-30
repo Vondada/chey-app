@@ -6,6 +6,7 @@
 // pass a live List<CheAgent> (e.g. from GET /agents or a WebSocket to the
 // Durable Object). Never animate work that isn't happening.
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -13,6 +14,7 @@ import 'package:flutter/services.dart';
 
 import 'che_rooms.dart';
 import 'che_theme.dart';
+import 'che_ui_preferences.dart';
 
 /// Real task states reported by the Agent Runtime.
 enum CheAgentStatus { idle, researching, building, analyzing, meeting, waiting, reviewing, talking, done, offline }
@@ -62,12 +64,12 @@ class CheAgent {
   final String? task; // current real assignment
   final bool isChe;
 
-  /// CHE herself (the manager), in her logo colors.
+  /// CHE herself (Office Boss), in her logo colors.
   static CheAgent che({CheAgentStatus status = CheAgentStatus.idle, String? task}) => CheAgent(
         id: 'che',
         name: 'CHE',
-        role: 'Manager',
-        specialty: 'Leads the team, delegates, reviews and delivers',
+        role: 'Office Boss',
+        specialty: 'Office Boss — assigns, steers, reviews handoffs, owns outcomes, reports to the owner',
         color: CheColors.accent,
         hair: const Color(0xFF1A1110),
         skin: const Color(0xFFB9825A),
@@ -106,7 +108,8 @@ class CheAgent {
 /// A little animated person. Pose follows the agent's REAL status:
 /// typing (building), reading (researching/analyzing/reviewing), talking
 /// (talking/meeting), thought dots (waiting), wave + check (done), dimmed
-/// (offline), gentle breathing (idle). CHE gets a glowing halo.
+/// (offline), gentle breathe/blink (idle — honors Reduce Motion). CHE gets a
+/// glowing halo.
 class CheMiniPerson extends StatefulWidget {
   const CheMiniPerson({super.key, required this.agent, this.size = 64, this.showDesk = false});
   final CheAgent agent;
@@ -116,34 +119,347 @@ class CheMiniPerson extends StatefulWidget {
   State<CheMiniPerson> createState() => _CheMiniPersonState();
 }
 
+/// Statuses that mean an agent is actively working. These use a per-widget
+/// AnimationController (usually 0–2 agents).
+bool cheAgentIsMoving(CheAgentStatus status) => const {
+      CheAgentStatus.researching,
+      CheAgentStatus.building,
+      CheAgentStatus.analyzing,
+      CheAgentStatus.meeting,
+      CheAgentStatus.reviewing,
+      CheAgentStatus.talking,
+    }.contains(status);
+
+/// Soft idle life (breathe / blink / gentle wave). Offline stays frozen.
+bool cheAgentHasIdleLife(CheAgentStatus status) =>
+    status == CheAgentStatus.idle ||
+    status == CheAgentStatus.waiting ||
+    status == CheAgentStatus.done;
+
+/// One shared ~10fps clock for every idle chibi. Avoids N×60fps controllers
+/// freezing the home shell when the whole roster is breathing.
+class CheIdleLifeClock extends ChangeNotifier with WidgetsBindingObserver {
+  CheIdleLifeClock._() {
+    WidgetsBinding.instance.addObserver(this);
+  }
+  static final CheIdleLifeClock instance = CheIdleLifeClock._();
+
+  static const Duration _period = Duration(milliseconds: 120); // ~8 fps
+  static const double _step = 0.033; // ~3.6s full breathe cycle
+
+  Timer? _timer;
+  int _retainers = 0;
+  double t = 0.25;
+  bool _appResumed = true;
+
+  /// Stable 0..1 phase so neighbors don't breathe in lockstep.
+  static double phaseFor(String id) => (id.hashCode.remainder(1000).abs()) / 1000.0;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appResumed = state == AppLifecycleState.resumed;
+    if (_appResumed) {
+      _ensureTimer();
+    } else {
+      _timer?.cancel();
+      _timer = null;
+    }
+  }
+
+  void retain() {
+    _retainers++;
+    _ensureTimer();
+  }
+
+  void release() {
+    if (_retainers <= 0) return;
+    _retainers--;
+    if (_retainers == 0) {
+      _timer?.cancel();
+      _timer = null;
+    }
+  }
+
+  void _ensureTimer() {
+    if (_retainers <= 0 || !_appResumed || _timer != null) return;
+    _timer = Timer.periodic(_period, (_) {
+      t = (t + _step) % 1.0;
+      notifyListeners();
+    });
+  }
+}
+
 class _CheMiniPersonState extends State<CheMiniPerson> with SingleTickerProviderStateMixin {
-  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
+  AnimationController? _work;
+  bool _reduced = false;
+  bool _depsReady = false;
+  bool _holdingIdle = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduced = CheMotion.reduced(context);
+    final first = !_depsReady;
+    _depsReady = true;
+    if (first || reduced != _reduced) {
+      _reduced = reduced;
+      _syncMotion();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant CheMiniPerson oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.agent.status != widget.agent.status) _syncMotion();
+  }
+
+  void _releaseIdle() {
+    if (!_holdingIdle) return;
+    CheIdleLifeClock.instance.release();
+    _holdingIdle = false;
+  }
+
+  void _holdIdle() {
+    if (_holdingIdle) return;
+    CheIdleLifeClock.instance.retain();
+    _holdingIdle = true;
+  }
+
+  // Working = own 60fps pose loop (rare). Idle = shared 10fps clock.
+  // Offline / Reduce Motion = static (no timers).
+  void _syncMotion() {
+    if (!_depsReady) return;
+    final working = !_reduced && cheAgentIsMoving(widget.agent.status);
+    final idleLife = !_reduced && cheAgentHasIdleLife(widget.agent.status);
+
+    if (working) {
+      _releaseIdle();
+      _work ??= AnimationController(vsync: this, duration: const Duration(seconds: 2));
+      if (!_work!.isAnimating) _work!.repeat();
+      return;
+    }
+
+    _work?.stop();
+    if (idleLife) {
+      _holdIdle();
+    } else {
+      _releaseIdle();
+    }
+  }
+
   @override
   void dispose() {
-    _c.dispose();
+    _releaseIdle();
+    _work?.dispose();
     super.dispose();
+  }
+
+  static const String cheAvatarAsset = 'assets/avatars/che.png';
+
+  Widget _paint(double t, {required bool portrait}) {
+    if (portrait && widget.agent.isChe) {
+      return _ChePortraitAvatar(
+        agent: widget.agent,
+        t: t,
+        desk: widget.showDesk,
+        size: widget.size,
+      );
+    }
+    return CustomPaint(
+      painter: _MiniPersonPainter(agent: widget.agent, t: t, desk: widget.showDesk),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final working = !_reduced && cheAgentIsMoving(widget.agent.status) && _work != null;
+    final idleLife = !_reduced && _holdingIdle;
+    final prefs = CheUiPreferences.instance;
+
+    Widget bodyFor(double t, bool portrait) => _paint(t, portrait: portrait);
+
+    late final Widget body;
+    if (working) {
+      body = ListenableBuilder(
+        listenable: prefs,
+        builder: (context, _) => AnimatedBuilder(
+          animation: _work!,
+          builder: (context, _) => bodyFor(_work!.value, prefs.avatarStyle == CheAvatarStyle.portrait),
+        ),
+      );
+    } else if (idleLife) {
+      body = ListenableBuilder(
+        listenable: Listenable.merge([CheIdleLifeClock.instance, prefs]),
+        builder: (context, _) {
+          final portrait = prefs.avatarStyle == CheAvatarStyle.portrait;
+          if (!TickerMode.valuesOf(context).enabled) return bodyFor(0.25, portrait);
+          final phase = CheIdleLifeClock.phaseFor(widget.agent.id);
+          return bodyFor((CheIdleLifeClock.instance.t + phase) % 1.0, portrait);
+        },
+      );
+    } else {
+      body = ListenableBuilder(
+        listenable: prefs,
+        builder: (context, _) => bodyFor(0.25, prefs.avatarStyle == CheAvatarStyle.portrait),
+      );
+    }
+
     return Semantics(
       label: '${widget.agent.name}, ${widget.agent.role}, ${widget.agent.status.label}',
       child: SizedBox(
         width: widget.size,
         height: widget.size * 1.25,
-        child: AnimatedBuilder(
-          animation: _c,
-          builder: (context, _) => CustomPaint(
-            painter: _MiniPersonPainter(
-              agent: widget.agent,
-              t: CheMotion.reduced(context) ? 0.25 : _c.value,
-              desk: widget.showDesk,
-            ),
-          ),
-        ),
+        child: RepaintBoundary(child: body),
       ),
     );
   }
+}
+
+/// Portrait image avatar for CHE when UI Controls → Avatar style = Portrait.
+/// Uses the female CHE asset with teal halo + waiting/done chrome from #55.
+class _ChePortraitAvatar extends StatelessWidget {
+  const _ChePortraitAvatar({
+    required this.agent,
+    required this.t,
+    required this.desk,
+    required this.size,
+  });
+
+  final CheAgent agent;
+  final double t;
+  final bool desk;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final dim = agent.status == CheAgentStatus.offline;
+    final breathe = math.sin(t * math.pi) * size * 0.01;
+
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        if (!dim)
+          Positioned.fill(
+            child: CustomPaint(painter: _CheHaloPainter(accent: CheColors.accent, t: t)),
+          ),
+        if (desk)
+          Positioned(
+            left: size * 0.05,
+            right: size * 0.05,
+            bottom: size * 0.02,
+            height: size * 0.08,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xFFD2AF7F),
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+          ),
+        Positioned(
+          top: size * 0.04 + breathe,
+          child: Opacity(
+            opacity: dim ? 0.45 : 1,
+            child: Container(
+              width: size * 0.78,
+              height: size * 0.78,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: CheColors.accent.withValues(alpha: 0.55), width: 1.5),
+                boxShadow: [
+                  BoxShadow(
+                    color: CheColors.accent.withValues(alpha: 0.25),
+                    blurRadius: size * 0.12,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+              child: ClipOval(
+                child: Image.asset(
+                  _CheMiniPersonState.cheAvatarAsset,
+                  fit: BoxFit.cover,
+                  alignment: const Alignment(-0.35, -0.15),
+                  errorBuilder: (context, error, stack) => CustomPaint(
+                    size: Size(size * 0.78, size * 0.78),
+                    painter: _MiniPersonPainter(agent: agent, t: t, desk: false),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        Positioned.fill(
+          child: IgnorePointer(
+            child: CustomPaint(painter: _CheStatusChromePainter(agent: agent, t: t)),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CheHaloPainter extends CustomPainter {
+  _CheHaloPainter({required this.accent, required this.t});
+  final Color accent;
+  final double t;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = Offset(size.width / 2, size.height * 0.38);
+    final r = size.width * 0.42;
+    canvas.drawCircle(
+      c,
+      r,
+      Paint()
+        ..shader = RadialGradient(colors: [accent.withValues(alpha: 0.4), Colors.transparent])
+            .createShader(Rect.fromCircle(center: c, radius: r)),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _CheHaloPainter o) => o.t != t || o.accent != accent;
+}
+
+class _CheStatusChromePainter extends CustomPainter {
+  _CheStatusChromePainter({required this.agent, required this.t});
+  final CheAgent agent;
+  final double t;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width, h = size.height;
+    final headC = Offset(w / 2, h * 0.38);
+    final headR = w * 0.28;
+    final st = agent.status;
+
+    if (st == CheAgentStatus.waiting) {
+      for (var i = 0; i < 3; i++) {
+        final on = ((t * 3).floor() % 3) >= i;
+        canvas.drawCircle(
+          headC.translate(headR * (1.0 + i * 0.4), -headR * (0.9 + i * 0.3)),
+          headR * (0.1 + i * 0.04),
+          Paint()..color = Colors.white.withValues(alpha: on ? 0.85 : 0.25),
+        );
+      }
+    }
+    if (st == CheAgentStatus.done) {
+      final b = headC.translate(-headR * 1.2, -headR * 1.0);
+      canvas.drawCircle(b, headR * 0.35, Paint()..color = CheColors.success);
+      final p = Path()
+        ..moveTo(b.dx - headR * 0.15, b.dy)
+        ..lineTo(b.dx - headR * 0.04, b.dy + headR * 0.14)
+        ..lineTo(b.dx + headR * 0.18, b.dy - headR * 0.14);
+      canvas.drawPath(
+        p,
+        Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.6,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _CheStatusChromePainter o) => o.t != t || o.agent != agent;
 }
 
 class _MiniPersonPainter extends CustomPainter {
@@ -180,8 +496,13 @@ class _MiniPersonPainter extends CustomPainter {
     final torso = RRect.fromRectAndRadius(
         Rect.fromCenter(center: Offset(cx, h * 0.62 + breathe), width: w * 0.46, height: h * 0.38), Radius.circular(w * 0.16));
     canvas.drawRRect(torso, Paint()..color = c(agent.color));
-    // collar / badge
+    // collar / badge — CHE gets a gold lapel pin (authoritative Office Boss look)
     canvas.drawCircle(Offset(cx + w * 0.1, h * 0.55 + breathe), w * 0.03, Paint()..color = Colors.white.withValues(alpha: dim ? 0.2 : 0.8));
+    if (agent.isChe && !dim) {
+      final pin = Offset(cx - w * 0.12, h * 0.52 + breathe);
+      canvas.drawCircle(pin, w * 0.035, Paint()..color = const Color(0xFFD6A63F));
+      canvas.drawCircle(pin, w * 0.018, Paint()..color = const Color(0xFFFFF3C4));
+    }
 
     // arms by pose
     final arm = Paint()
@@ -347,7 +668,12 @@ class CheOfficeFloor extends StatelessWidget {
     required this.agents,
     required this.onTapAgent,
     this.onConvene,
+    this.deskNotes = const {},
   });
+
+  /// Real job status per agent name from the Office board (e.g. "Blocked:
+  /// tool not configured (Codex)"), shown when the runtime status is idle.
+  final Map<String, String> deskNotes;
 
   /// CHE's own live state (manager desk, front and center).
   final CheAgent che;
@@ -399,13 +725,16 @@ class CheOfficeFloor extends StatelessWidget {
               ],
             ]),
             const SizedBox(height: CheSpace.sm),
-            Center(child: _Desk(agent: che, big: true, onTap: () => onTapAgent(che))),
+            Center(child: RepaintBoundary(child: _Desk(agent: che, big: true, onTap: () => onTapAgent(che)))),
             const SizedBox(height: CheSpace.sm),
             Wrap(
               alignment: WrapAlignment.center,
               spacing: CheSpace.sm,
               runSpacing: CheSpace.sm,
-              children: [for (final a in agents) _Desk(agent: a, onTap: () => onTapAgent(a))],
+              children: [
+                for (final a in agents)
+                  RepaintBoundary(child: _Desk(agent: a, note: deskNotes[a.name], onTap: () => onTapAgent(a))),
+              ],
             ),
             if (agents.isEmpty)
               Padding(
@@ -426,37 +755,65 @@ String _shortTask(String task) {
   return words.length <= 3 ? words.join(' ') : '${words.take(3).join(' ')}…';
 }
 
+/// What a desk shows under the name: the live task, else the board's real
+/// job status (blocked, up next, finished), else the runtime status.
+String cheDeskLine(CheAgent agent, String? note) {
+  if (agent.task?.isNotEmpty == true && agent.status != CheAgentStatus.offline) return agent.task!;
+  if (note != null && note.isNotEmpty) return note;
+  if (agent.task?.isNotEmpty == true) return agent.task!;
+  return agent.status.label;
+}
+
 class _Desk extends StatelessWidget {
-  const _Desk({required this.agent, required this.onTap, this.big = false});
+  const _Desk({required this.agent, required this.onTap, this.big = false, this.note});
   final CheAgent agent;
   final VoidCallback onTap;
   final bool big;
+  final String? note;
   @override
   Widget build(BuildContext context) {
-    final w = big ? 110.0 : 92.0;
-    return GestureDetector(
-      onTap: () {
-        HapticFeedback.selectionClick();
-        onTap();
-      },
-      child: Container(
-        width: w,
-        padding: const EdgeInsets.fromLTRB(4, 6, 4, 8),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.35),
-          borderRadius: BorderRadius.circular(CheRadius.md),
-          border: Border.all(color: agent.color.withValues(alpha: big ? 0.9 : 0.45)),
-          boxShadow: big ? [BoxShadow(color: agent.color.withValues(alpha: 0.4), blurRadius: 18)] : null,
+    final w = big ? 118.0 : 100.0;
+    final line = cheDeskLine(agent, note);
+    return Semantics(
+      button: true,
+      label: '${agent.name}${agent.role.isNotEmpty ? ', ${agent.role}' : ''}. $line. '
+          '${agent.isChe ? 'Talk to CHE.' : 'Open ${agent.name}\'s desk.'}',
+      excludeSemantics: true,
+      child: GestureDetector(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          onTap();
+        },
+        child: Container(
+          width: w,
+          padding: const EdgeInsets.fromLTRB(4, 6, 4, 8),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.35),
+            borderRadius: BorderRadius.circular(CheRadius.md),
+            border: Border.all(color: agent.color.withValues(alpha: big ? 0.9 : 0.45)),
+            boxShadow: big ? [BoxShadow(color: agent.color.withValues(alpha: 0.4), blurRadius: 18)] : null,
+          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            CheMiniPerson(agent: agent, size: big ? 70 : 56, showDesk: true),
+            const SizedBox(height: 4),
+            // Full name, never truncated: it shrinks to fit instead.
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(agent.name, maxLines: 1, style: CheType.label.copyWith(color: Colors.white)),
+            ),
+            if (agent.role.isNotEmpty)
+              Text(agent.role,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: CheType.caption.copyWith(color: Colors.white70, fontSize: 10)),
+            Text(line == agent.task ? _shortTask(line) : line,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: CheType.caption.copyWith(color: agent.color, fontSize: 10.5)),
+          ]),
         ),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          CheMiniPerson(agent: agent, size: big ? 70 : 56, showDesk: true),
-          const SizedBox(height: 4),
-          Text(agent.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label.copyWith(color: Colors.white)),
-          Text(agent.task?.isNotEmpty == true ? _shortTask(agent.task!) : agent.status.label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: CheType.caption.copyWith(color: agent.color, fontSize: 10.5)),
-        ]),
       ),
     );
   }

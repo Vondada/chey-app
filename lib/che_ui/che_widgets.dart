@@ -26,11 +26,11 @@ class CheBackground extends StatelessWidget {
   Widget build(BuildContext context) {
     final aura = auraColor ?? CheColors.accent;
     return DecoratedBox(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [CheColors.bgTop, CheColors.bg],
+          colors: [cheBgTopOf(context), cheBgOf(context)],
         ),
       ),
       child: Stack(children: [

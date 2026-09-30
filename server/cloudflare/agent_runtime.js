@@ -13,6 +13,10 @@
 // keeps going when the phone is locked.
 
 import { classifyItem, extractCandidateMemories } from './privacy_policy.js';
+import { agentActionGuard, isLaAgenciaAgent, officeToolBlocker } from './office_company.js';
+import { isResearchStyleJob, writeResearchMemoryNote } from './research_memory.js';
+import { codexThreadId } from './office_router.js';
+import { assertAgentMayRun, permissionBlocker } from './agent_permissions.js';
 
 export const AGENT_STATUSES = [
   'idle', 'researching', 'building', 'analyzing', 'meeting',
@@ -34,7 +38,7 @@ const PERSONAS = {
   Juno: 'Pragmatic builder. Prefers the smallest version that works today.',
   Rhea: 'Customer-minded. Asks who this is for and what they would actually do.',
   Cato: 'Debater. Argues the other side on purpose to stress-test the plan.',
-  Iris: 'Pattern spotter. Links people, projects and past decisions together.',
+  Iris: 'Ad-minded creative. Tight headlines, clear CTAs, honest about missing brand assets.',
 };
 
 const OUTFITS = ['5CC8FF', 'FF8A4C', '3DDC97', '8B7BFF', 'E8B04A', 'FF5C8A', '4CD4C0', 'B38CFF', '7FD35C', 'FFB85C'];
@@ -321,6 +325,9 @@ export function queueAgentTask(data, agent, task, source = 'owner', options = {}
     citations: [],
     provider_trail: [],
     job_id: clip(options.job_id, 80),
+    // Job kind (e.g. merge, spend, payout) is checked against the agent's
+    // permission flags before the job runs.
+    kind: clip(options.kind, 40),
     error: '',
     created_at: at,
     updated_at: at,
@@ -570,7 +577,8 @@ const MEETING_ROLES = [
   { test: /market|trad|stock|crypto|futures|portfolio|price/, role: 'Market Intelligence Partner', specialty: 'markets, backtesting, risk and trading systems' },
   { test: /business|revenue|customer|sales|launch|pricing|budget|cash|advertis|marketing|campaign|media buying/, role: 'Business Operations Partner', specialty: 'planning, operations, leads, advertising, campaigns, billing and workflows' },
   { test: /design|brand|visual|video|image|music|creative|logo/, role: 'Creative Studio Partner', specialty: 'visual concepts, media production and creative assets' },
-  { test: /app|code|build|software|website|api|feature/, role: 'Build + Operations Partner', specialty: 'implementation plans, engineering trade-offs and delivery' },
+  { test: /app|code|build|software|website|api|feature|roblox|luau|ugc|game pass/, role: 'Build + Operations Partner', specialty: 'implementation plans, engineering trade-offs, delivery, and Roblox/Luau experience drafts' },
+  { test: /roblox|luau|ugc|game pass|roblox clothing|roblox weapon/, role: 'Roblox Experience Partner', specialty: 'Roblox games, weapons, clothing/UGC, avatars, passes — Luau drafts and publish checklists; owner confirm before upload/spend' },
 ];
 
 function pickParticipants(data, objective, agentIds) {
@@ -657,7 +665,7 @@ export function meetingView(meeting) {
 
 function agentSystemPrompt(agent, extra) {
   return [
-    `You are ${agent.name}, an AI agent on CHE's Office team. CHE is your manager; you never address the owner directly.`,
+    `You are ${agent.name}, an AI agent on CHE's Office team. CHE is the Office Boss and your manager; you never address the owner directly. Report to CHE, accept steering, and hand finished work back for CHE review.`,
     `Role: ${agent.role}. Specialty: ${agent.specialty || 'general specialist work'}.`,
     `Personality (stay in character, briefly): ${agent.personality}`,
     agent.mission ? `Mission: ${agent.mission}` : '',
@@ -683,18 +691,32 @@ function modelFor(env, agent, models) {
 export function routingForAgent(agent, data, task = null, route = 'office') {
   const privacy = data?.ai_layer?.privacy || {};
   const permissions = Object.fromEntries(Object.entries(privacy).map(([id, value]) => [id, value?.allowed || []]));
+  // 'auto' means let ai_router pick (Groq/Gemini/Cerebras/…); do not pin a fake provider id.
+  const pref = String(agent?.provider_preference || '').trim().toLowerCase();
+  const modelPref = String(agent?.model_preference || '').trim();
+  const realProvider = pref && pref !== 'auto' ? pref : '';
+  const realModel = modelPref && modelPref.toLowerCase() !== 'auto' ? modelPref : '';
   return {
-    ...(agent?.provider_preference ? { che_provider: agent.provider_preference } : {}),
-    ...(agent?.provider_preference && agent?.model_preference ? { che_model: agent.model_preference } : {}),
+    ...(realProvider ? { che_provider: realProvider } : {}),
+    ...(realProvider && realModel ? { che_model: realModel } : {}),
     ...(agent?.capability_requirements?.[0] ? { che_capability: agent.capability_requirements[0] } : {}),
     ...(data?.ai_layer?.policy?.local_only ? { che_local_only: true } : {}),
     ...(task?.context_items?.length ? { che_context: { items: task.context_items, permissions } } : {}),
+    // Every Office model call goes through CHE's router tagged with the agent
+    // and a stable per-job thread: office/<agentId>/<jobId>.
+    ...(agent ? { che_agent_id: officeAgentId(agent) } : {}),
+    ...(agent && task ? { che_thread_id: codexThreadId(officeAgentId(agent), task.job_id || task.id) } : {}),
     che_audit: {
       task: clip(task?.task || route, 160),
       agent: agent ? `${agent.name} (${agent.role})` : 'CHE',
       route,
     },
   };
+}
+
+// La Agencia agents are addressed by their lowercase name (knox); others by id.
+export function officeAgentId(agent) {
+  return isLaAgenciaAgent(agent) ? String(agent.name).toLowerCase() : String(agent?.id || '');
 }
 
 async function runModelDetailed(env, model, system, user, maxTokens, routing = {}) {
@@ -740,6 +762,34 @@ async function runOneTask(ctx) {
     return true;
   }
   normalizeAgent(agent);
+  // Permission flags are checked before any work runs: an agent without
+  // can_merge_code / can_spend_money / can_open_payouts is refused in code.
+  try {
+    assertAgentMayRun(agent, task);
+  } catch (error) {
+    task.status = 'blocked';
+    task.error = permissionBlocker(agent, error);
+    task.updated_at = now();
+    agent.runtime_status = 'available';
+    agent.runtime_task = '';
+    agent.runtime_updated_at = now();
+    await save(data);
+    return true;
+  }
+  // A La Agencia job whose tool has no owner credential on the server stops
+  // here with an honest blocker; CHE reads it aloud from the board.
+  const blocker = agentActionGuard(agent, task.task) || (isLaAgenciaAgent(agent) ? officeToolBlocker(env, agent) : '');
+  if (blocker) {
+    task.status = 'blocked';
+    task.error = blocker;
+    task.updated_at = now();
+    agent.runtime_status = 'offline';
+    agent.runtime_task = blocker;
+    agent.runtime_updated_at = now();
+    await save(data);
+    notify();
+    return true;
+  }
   task.status = 'running';
   task.updated_at = now();
   agent.runtime_status = workingStatusFor(agent);
@@ -864,7 +914,7 @@ async function runOneTask(ctx) {
   let review = '';
   try {
     review = await runModel(env, env.CHE_FAST_MODEL || models.fast, [
-      'You are CHE reviewing a delegated result from one of your Office agents.',
+      'You are CHE, Office Boss, reviewing a delegated result from one of your Office agents. You own the outcome: accept solid work, reject weak or unverified claims.',
       'First line must be exactly APPROVED or NEEDS WORK.',
       'Then at most 3 short lines: what is solid, what is weak or unverified, what to do next.',
       'Do not invent facts. Unverifiable claims are weak.',
@@ -898,6 +948,19 @@ async function runOneTask(ctx) {
   }
 
   t2.status = 'complete';
+  // Research / opportunity scout → Durable Object memory notes (owner-visible).
+  if (isResearchStyleJob(t2, a2 || agent)) {
+    const written = writeResearchMemoryNote(data, {
+      result: t2.result || result,
+      task: t2,
+      agent: a2 || agent,
+      sources: Array.isArray(t2.citations) ? t2.citations : [],
+    });
+    if (written.written) {
+      t2.memory_note_id = written.note.id;
+      t2.memory_written = true;
+    }
+  }
   if (approved && t2.teach_as_skill) {
     const skill = teachOfficeSkill(data, {
       name: t2.teach_as_skill,
