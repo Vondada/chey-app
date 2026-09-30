@@ -33,6 +33,7 @@ import { activityFeed, creations, findCreations, greeting, suggestions, stalledT
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 import { prepareSelfUpdate } from './self_development.js';
+import { handleWebMailbox, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { listThreads, mailboxIntent, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
@@ -2408,6 +2409,9 @@ export class CheState extends DurableObject {
             kind: 'software_agent',
             created_at: new Date().toISOString(),
           };
+      // Flagstaff 369: AIs post/read with the secret link, no device token.
+      const flagstaff = await handleWebMailbox(request, this.ctx.storage);
+      if (flagstaff) return flagstaff;
       // Stripe calls this directly (no device token): the signature, checked
       // against STRIPE_WEBHOOK_SECRET on the raw body, is the authentication.
       if (request.method === 'POST' && path === '/api/stripe/webhook') {
@@ -4290,13 +4294,22 @@ export class CheState extends DurableObject {
             : `Saved "${saved.title}" to my library, word for word: about ${Math.round(saved.chars / 5).toLocaleString('en-US')} words in ${saved.chunks} parts. Ask me anything about it.`, { source: 'che_library' });
         }
 
+        // Flagstaff 369 link: "what's the Flagstaff link", "new Flagstaff link".
+        if (/\bflag ?staff\b[\s\S]{0,40}\b(?:link|address|url|code)\b|\bmailbox\s+(?:link|address|url)\b/i.test(message)) {
+          const origin = new URL(request.url).origin;
+          const fresh = /\b(?:new|reset|rotate|change)\b/i.test(message);
+          const code = fresh ? await rotateMailboxCode(this.ctx.storage) : await mailboxCode(this.ctx.storage);
+          return ndjsonReply(`${fresh ? 'New ' : ''}Flagstaff 369 link, sir. Give it to any AI and it can read my mailbox and post to me, no account needed:\n${mailboxLink(origin, code)}\nAnyone with the link can read it, so I never put your private details there.${fresh ? ' The old link no longer works.' : ''}`, { source: 'che_flagstaff' });
+        }
+
         // Mailbox: "tell Claude …", "check the mailbox".
         const mail = mailboxIntent(message);
         if (mail?.kind === 'send') {
+          await postWebMail(this.ctx.storage, { from: 'che', to: mail.to, text: mail.text });
           const sent = await sendMail(this.env, { from: 'che', to: mail.to, text: `From CHE on behalf of the owner: ${mail.text}` });
           return ndjsonReply(sent.status === 200
-            ? `Sent to ${mail.to} through our GitHub mailbox, sir. I'll read you the reply when it comes in.`
-            : `I couldn't send that, sir. ${sent.detail}`, { source: 'che_mailbox' });
+            ? `Sent to ${mail.to} through Flagstaff 369 and our GitHub mailbox, sir. I'll read you the reply when it comes in.`
+            : `Posted to ${mail.to} on Flagstaff 369, sir. (GitHub mailbox: ${sent.detail})`, { source: 'che_mailbox' });
         }
         if (mail?.kind === 'read') {
           if (mail.peer) {
@@ -4306,8 +4319,12 @@ export class CheState extends DurableObject {
               : recent.length ? `Latest with ${mail.peer}, sir:\n${recent.map((m, i) => `${i + 1}. ${m.from}: ${String(m.text).slice(0, 400)}`).join('\n')}`
                 : `No messages with ${mail.peer} yet, sir.`, { source: 'che_mailbox' });
           }
+          const web = (await readWebMail(this.ctx.storage, 20)).filter((m) => m.from !== 'che').slice(-5);
+          const webText = web.length
+            ? `Flagstaff 369, latest ${web.length}:\n${web.map((m, i) => `${i + 1}. ${m.from}: ${String(m.text).slice(0, 300)}`).join('\n')}`
+            : 'Flagstaff 369 has no new AI messages.';
           const all = await listThreads(this.env);
-          return ndjsonReply(all.error ? `I couldn't open the mailbox, sir. ${all.error}` : speakThreads(all.threads), { source: 'che_mailbox' });
+          return ndjsonReply(`${webText}\n\n${all.error ? `GitHub mailbox unavailable: ${all.error}` : speakThreads(all.threads)}`, { source: 'che_mailbox' });
         }
 
         const selfChangeRequest =

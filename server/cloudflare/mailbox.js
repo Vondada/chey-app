@@ -127,7 +127,7 @@ export function mailboxIntent(message) {
   const peers = KNOWN_PEERS.join('|');
   const send = new RegExp(`^(?:che,?\\s+)?(?:please\\s+)?(?:tell|message|ask|send(?:\\s+a\\s+message)?\\s+to|let)\\s+(${peers})\\b[,:]?\\s*(?:that\\s+|to\\s+)?([\\s\\S]{3,})$`, 'i').exec(text);
   if (send) return { kind: 'send', to: send[1].toLowerCase(), text: send[2].trim() };
-  const read = /\b(?:check|read|open)\b[\s\S]{0,20}\bmail ?box\b|\b(?:any|new)\s+(?:messages?|replies?|mail)\b/i.test(text);
+  const read = /\b(?:check|read|open)\b[\s\S]{0,20}\b(?:mail ?box|flag ?staff(?: ?369)?)\b|\b(?:any|new)\s+(?:messages?|replies?|mail)\b/i.test(text);
   if (read) {
     const from = new RegExp(`\\b(?:from|with)\\s+(${peers})\\b`, 'i').exec(text);
     return { kind: 'read', peer: from ? from[1].toLowerCase() : '' };
