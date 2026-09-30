@@ -66,6 +66,8 @@ async function runAgent(env, role, assignment, payload, maxTokens = 2200, provid
       ],
       max_tokens: maxTokens,
       che_route: 'quality',
+      // Ask engines for strict JSON so patches parse ("not valid JSON" failures).
+      response_format: { type: 'json_object' },
       ...(provider ? { che_provider: provider } : {}),
     },
   );

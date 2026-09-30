@@ -26,7 +26,8 @@ class CheUiPreferences extends ChangeNotifier {
   bool get isLoaded => _loaded;
 
   ThemeMode themeMode = ThemeMode.dark;
-  CheAvatarStyle avatarStyle = CheAvatarStyle.mini;
+  // Owner asked for CHE to appear as her female character by default.
+  CheAvatarStyle avatarStyle = CheAvatarStyle.portrait;
   CheDeskDensity deskDensity = CheDeskDensity.comfortable;
   CheTextScalePref textScalePref = CheTextScalePref.defaultScale;
   bool voiceResponsesEnabled = true;
@@ -43,9 +44,9 @@ class CheUiPreferences extends ChangeNotifier {
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
     themeMode = _parseTheme(prefs.getString(_themeKey));
-    avatarStyle = prefs.getString(_avatarKey) == CheAvatarStyle.portrait.name
-        ? CheAvatarStyle.portrait
-        : CheAvatarStyle.mini;
+    avatarStyle = prefs.getString(_avatarKey) == CheAvatarStyle.mini.name
+        ? CheAvatarStyle.mini
+        : CheAvatarStyle.portrait;
     deskDensity = prefs.getString(_densityKey) == CheDeskDensity.compact.name
         ? CheDeskDensity.compact
         : CheDeskDensity.comfortable;
