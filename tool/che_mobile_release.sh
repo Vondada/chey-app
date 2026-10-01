@@ -118,16 +118,47 @@ build_full() {
   publish_release "$shorebird_base"
 }
 
+latest_verified_release() {
+  local token="${GITHUB_TOKEN:-${GH_TOKEN:-${CM_GITHUB_TOKEN:-}}}"
+  local headers=(-H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+  if [[ -n "$token" ]]; then
+    headers+=(-H "Authorization: Bearer $token")
+  fi
+  curl -fsS "${headers[@]}"     "https://api.github.com/repos/Vondada/chey-app/releases?per_page=30" |
+    python3 -c '
+import json, re, sys
+for release in json.load(sys.stdin):
+    if release.get("draft") or release.get("prerelease"):
+        continue
+    match = re.fullmatch(r"che-ios-v(.+)-b([0-9]+)", str(release.get("tag_name", "")))
+    if not match:
+        continue
+    if not any(a.get("name") == "CHE-unsigned.ipa" and a.get("state") != "deleted" for a in release.get("assets", [])):
+        continue
+    print(match.group(1), match.group(2))
+    break
+'
+}
+
 build_fast() {
   if [[ -z "${SHOREBIRD_TOKEN:-}" || ! -f shorebird.yaml ]] || ! install_shorebird; then
     echo "Fast lane unavailable; falling back to a full IPA."
     build_full
     return
   fi
-  # A patch can only target an existing Shorebird release. If this repository
-  # has never shipped one (or the patch is incompatible), make a new full base.
-  echo "Attempting Shorebird fast update..."
-  if shorebird patch ios --no-codesign --release-version=latest --     "--dart-define=CHE_AGENT_URL=$AGENT_URL"     "--dart-define=CHE_APP_VERSION=$VERSION"     "--dart-define=CHE_BUILD_COMMIT=$COMMIT"; then
+  # Target the exact version+build installed from the last verified IPA.
+  # Shorebird patches only apply when the release and patch versions match.
+  local verified release_version release_build
+  verified="$(latest_verified_release || true)"
+  if [[ -z "$verified" ]]; then
+    echo "No verified CHE IPA base exists yet; creating the first full release."
+    build_full
+    return
+  fi
+  release_version="${verified% *}"
+  release_build="${verified#* }"
+  echo "Attempting Shorebird fast update for ${release_version}+${release_build}..."
+  if shorebird patch ios --no-codesign       --release-version="${release_version}+${release_build}" --       "--build-name=${release_version}"       "--build-number=${release_build}"       "--dart-define=CHE_AGENT_URL=$AGENT_URL"       "--dart-define=CHE_APP_VERSION=${release_version}"       "--dart-define=CHE_BUILD_NUMBER=${release_build}"       "--dart-define=CHE_BUILD_COMMIT=$COMMIT"; then
     echo "CHE fast update published through Shorebird; no new IPA is required."
     return
   fi
