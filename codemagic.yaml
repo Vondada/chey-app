@@ -42,6 +42,15 @@ workflows:
         script: bash ./tool/bootstrap.sh
       - name: Enable local AI + voice tuning bridge
         script: python3 ./tool/patch_local_runtime.py
+      - name: Validate Cloudflare Worker
+        script: |
+          set -eu
+          cd server/cloudflare
+          npm ci
+          npm run check
+          npm test
+          npx wrangler deploy --dry-run
+          cd ../..
       - name: Flutter analyze
         script: |
           set -eu
