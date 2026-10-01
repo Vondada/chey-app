@@ -32,7 +32,6 @@ import 'che_bootstrap.dart';
 import 'che_local_brain.dart';
 import 'che_account_bridge.dart';
 import 'che_realtime_voice.dart';
-import 'che_wake_setup.dart';
 import 'che_wake_word.dart';
 import 'che_wake_match.dart';
 import 'che_voice_state.dart';
@@ -1850,13 +1849,6 @@ OWNER AGENCY
           title: 'Plugins',
           subtitle: 'Skills and mini-apps',
           onTap: () => unawaited(_openPluginManager()),
-        ),
-        CheMoreItem(
-          icon: Icons.record_voice_over_rounded,
-          title: 'Voice & Wake',
-          subtitle: 'Wake word “Chay”, diagnostics',
-          onTap: () => unawaited(_openWakeSetup()),
-          hue: kit.CheColors.accent,
         ),
         CheMoreItem(
           icon: Icons.tune_rounded,
