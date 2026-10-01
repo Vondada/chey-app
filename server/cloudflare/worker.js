@@ -2016,6 +2016,7 @@ export class CheState extends DurableObject {
     data.meetings = Array.isArray(data.meetings) ? data.meetings : [];
     data.owner_context = Array.isArray(data.owner_context) ? data.owner_context : [];
     data.memories = Array.isArray(data.memories) ? data.memories : [];
+    data.memory_records = Array.isArray(data.memory_records) ? data.memory_records : [];
     return data;
   }
 
@@ -2799,6 +2800,7 @@ export class CheState extends DurableObject {
         return json({
           capability_registry: capabilityRegistry,
           memories: data.memories,
+          memory_records: data.memory_records || [],
           memory_notes: listMemoryNotes(data),
           brain_graph: buildBrainGraph(data),
           preference_memory: data.preference_memory,
@@ -3795,7 +3797,12 @@ export class CheState extends DurableObject {
         if (!isSafeMemoryText(memory)) {
           return json({ detail: 'Choose a non-sensitive memory.' }, 400);
         }
-        const added = addOwnerMemory(data, memory);
+        const added = addOwnerMemory(data, memory, {
+          source: 'explicit_memory',
+          category: 'Memory',
+          scope: 'owner',
+          confidence: 1,
+        });
         if (added.added || added.replaced?.length) await this.ctx.storage.put('che', data);
         for (const oldMemory of added.replaced || []) {
           const oldVectorId = `memory:${await digest(String(oldMemory).toLowerCase())}`;
@@ -3818,6 +3825,9 @@ export class CheState extends DurableObject {
         }
         const removed = data.memories[index];
         data.memories.splice(index, 1);
+        data.memory_records = (data.memory_records || []).filter(
+          (record) => String(record.text || '').toLowerCase() !== String(removed || '').toLowerCase(),
+        );
         await this.ctx.storage.put('che', data);
         if (removed) {
           const vectorId = `memory:${await digest(String(removed).toLowerCase())}`;
@@ -3827,6 +3837,7 @@ export class CheState extends DurableObject {
       }
       if (path === '/api/memory/clear') {
         data.memories = [];
+        data.memory_records = [];
         await this.ctx.storage.put('che', data);
         this.ctx.waitUntil?.(clearVectorMemoryKind(this.env, 'memory'));
         return json({ ok: true });
@@ -5352,11 +5363,13 @@ export class CheState extends DurableObject {
             ? 'I should not save that kind of secret, sir.'
             : 'I’ll remember that, sir.';
           if (reply.startsWith('I’ll')) {
-            if (!data.memories.some((item) => item.toLowerCase() === memory.toLowerCase())) {
-              data.memories.push(memory);
-              data.memories = data.memories.slice(-100);
-              await this.saveChatData(data);
-            }
+            const added = addOwnerMemory(data, memory, {
+              source: 'owner_chat',
+              category: 'Memory',
+              scope: 'owner',
+              confidence: 1,
+            });
+            if (added.added || added.replaced?.length) await this.saveChatData(data);
           }
           return new Response(JSON.stringify({ type: 'delta', delta: reply }) + '\n', {
             headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' },
