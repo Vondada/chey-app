@@ -295,6 +295,41 @@ async function implement(env, role, task, architecture, views, lessons, feedback
 }
 
 
+const ENGINEER_PROVIDER_ROUNDS = [
+  ['groq', 'cerebras'],
+  ['gemini', 'mistral'],
+  ['github', 'huggingface'],
+];
+
+function engineerForRound(member, index, round) {
+  const provider = ENGINEER_PROVIDER_ROUNDS[round]?.[index] || member.provider;
+  return { ...member, provider };
+}
+
+async function recoveryPlan(env, task, architecture, feedback, index, lessons, member, chat) {
+  const text = await runAgent(
+    env,
+    who(member, 'CHE Source Recovery Architect'),
+    [
+      'The previous implementation pass failed or produced no real diff. Do not repeat the same edit.',
+      'Re-locate the actual source for the owner request using the failure feedback and repository file list.',
+      'Prefer exact visible text, widget/class names and likely screen files. Name new files to inspect when the previous set was wrong or incomplete.',
+      'Return ONLY JSON: {"plan":"...","search_terms":["exact text or identifier"],"paths":["lib/a.dart"]}.',
+    ].join('\n'),
+    {
+      request: task,
+      previous_architecture: architecture,
+      previous_failure: feedback,
+      dart_files: index.paths,
+      team_lessons: lessonText(lessons),
+      team_chat: chat.slice(-24),
+    },
+    1600,
+    member.provider,
+  );
+  return jsonObject(text);
+}
+
 // When the two reviewers disagree, they talk it out once: each sees the
 // other's verdict and reasoning, then gives a final answer. Both must pass.
 async function settleReviews(env, task, architecture, diff, uiTask, lessons, reviews, chat) {
@@ -370,15 +405,27 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     }
     if (!sources.size) return { status: 502, detail: 'The team could not read the located files.' };
 
-    // 3. Two engineers build at the same time; each attempt is checked by
-    //    BOTH reviewers at once (different engines). First fully-approved wins.
+    // 3. Engineers build in parallel. If a pass fails, CHE re-inspects the
+    //    repository and changes provider pair before trying again. This prevents
+    //    a no-op or wrong-file attempt from being repeated back to the owner.
     const role = uiTask ? 'CHE Flutter UI Engineer' : 'CHE Flutter Implementation Agent';
     const feedbacks = CREW.engineers.map(() => '');
     let feedback = '';
     let result = null;
     let summary = '';
-    for (let round = 0; round < 2 && !result; round++) {
-      const attempts = await Promise.all(CREW.engineers.map(async (member, i) => {
+    const maxRounds = ENGINEER_PROVIDER_ROUNDS.length;
+
+    const refreshViews = () => {
+      views.length = 0;
+      for (const [path, full] of sources.entries()) {
+        const view = focusView(full, terms);
+        views.push({ path, search_hits: hits.get(path) || 0, whole_file: view.whole, source: view.text });
+      }
+    };
+
+    for (let round = 0; round < maxRounds && !result; round++) {
+      const roundEngineers = CREW.engineers.map((member, i) => engineerForRound(member, i, round));
+      const attempts = await Promise.all(roundEngineers.map(async (member, i) => {
         const answer = await implement(env, role, task, architecture, views, lessons, feedbacks[i], member, chat).catch(() => null);
         if (!answer) { feedbacks[i] = 'Your last answer was not valid JSON.'; return null; }
         const applied = applyEdits(sources, answer.edits);
@@ -388,8 +435,11 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
           if (/^lib\/[A-Za-z0-9_\/]+\.dart$/.test(path) && !sources.has(path) && typeof file.content === 'string') applied.sources.set(path, file.content);
         }
         const diff = diffView(sources, applied.sources);
-        if (!diff) { feedbacks[i] = 'Your edits changed nothing.'; return null; }
-        chat.push({ from: member.name, msg: `My change: ${String(answer.summary || '').slice(0, 300)}\n${diff.slice(0, 1500)}` });
+        if (!diff) {
+          feedbacks[i] = 'Your edits changed nothing. Re-inspect the source and make a real change that satisfies the owner request.';
+          return null;
+        }
+        chat.push({ from: member.name, msg: `Round ${round + 1} via ${member.provider}. My change: ${String(answer.summary || '').slice(0, 300)}\n${diff.slice(0, 1500)}` });
         const first = await Promise.all(CREW.reviewers.map((reviewer) =>
           reviewProposal(env, task, architecture, diff, uiTask, lessons, reviewer, chat).catch(() => ({ approved: false, notes: ['Reviewer unavailable.'] }))));
         const reviews = await settleReviews(env, task, architecture, diff, uiTask, lessons, first, chat);
@@ -397,7 +447,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         const passed = reviews.every((r) => r.approved === true && r.target_correct !== false);
         if (!passed) {
           const why = reviews.filter((r) => r.approved !== true || r.target_correct === false)
-            .map((r, k) => [r.repair_instructions, ...(r.notes || [])].filter(Boolean).join(' ')).join(' | ');
+            .map((r) => [r.repair_instructions, ...(r.notes || [])].filter(Boolean).join(' ')).join(' | ');
           feedbacks[i] = `Independent review rejected it: ${why}`.slice(0, 1500);
           for (const r of reviews) if (r.lesson) await recordLesson(memory, 'mistake', r.lesson);
           if (!reviews.some((r) => r.lesson)) await recordLesson(memory, 'mistake', `For "${task.slice(0, 80)}": ${why}`);
@@ -405,13 +455,65 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         }
         return { next: applied.sources, review: reviews, diff, discussion: chat.slice(-30), summary: String(answer.summary || 'CHE update').slice(0, 1800), engineer: member.name };
       }));
+
       const winner = attempts.find(Boolean);
-      if (winner) { result = winner; summary = `${winner.summary} (built by ${winner.engineer}, approved by ${CREW.reviewers.map((r) => r.name).join(' and ')})`; }
-      feedback = feedbacks.filter(Boolean).join(' || ');
+      if (winner) {
+        result = winner;
+        summary = `${winner.summary} (built by ${winner.engineer}, approved by ${CREW.reviewers.map((r) => r.name).join(' and ')})`;
+        break;
+      }
+
+      feedback = [...new Set(feedbacks.filter(Boolean))].join(' || ');
+      if (round >= maxRounds - 1) break;
+
+      // Failed pass: ask a different architect to re-locate the real source,
+      // then fetch newly suggested files before the next provider pair runs.
+      const recoveryMember = CREW.planners[(round + 1) % CREW.planners.length];
+      const recovery = await recoveryPlan(
+        env, task, architecture, feedback, index, lessons, recoveryMember, chat,
+      ).catch(() => null);
+
+      if (recovery) {
+        const recoveryTerms = [
+          ...(Array.isArray(recovery.search_terms) ? recovery.search_terms.map(String) : []),
+          ...literalTerms(task),
+        ].filter((item) => item.trim().length > 2);
+        for (const term of recoveryTerms) if (!terms.includes(term)) terms.push(term);
+
+        const recoveryPaths = Array.isArray(recovery.paths)
+          ? recovery.paths.map(String).filter((path) => index.paths.includes(path))
+          : [];
+        architecture.plan = [architecture.plan, `Recovery ${round + 1}: ${String(recovery.plan || '')}`].filter(Boolean).join('\n');
+        architecture.search_terms = [...new Set([...(architecture.search_terms || []), ...recoveryTerms])];
+        architecture.paths = [...new Set([...(architecture.paths || []), ...recoveryPaths])];
+        chat.push({
+          from: recoveryMember.name,
+          msg: `Recovery locate: ${String(recovery.plan || '').slice(0, 500)} Paths: ${recoveryPaths.join(', ') || 'search again'}`,
+        });
+
+        const moreHits = await searchCode(env, recoveryTerms, fetcher);
+        for (const [path, count] of moreHits.entries()) hits.set(path, (hits.get(path) || 0) + count);
+        const reranked = [...hits.entries()].sort((a, b) => b[1] - a[1]).map(([path]) => path);
+        const candidates = [...new Set([...recoveryPaths, ...reranked, ...(architecture.paths || [])])]
+          .filter((path) => index.paths.includes(path))
+          .slice(0, 8);
+
+        for (const path of candidates) {
+          if (sources.has(path)) continue;
+          const full = await readFull(env, index.base, path, fetcher);
+          if (full !== null) sources.set(path, full);
+        }
+        refreshViews();
+      }
     }
+
     if (!result) {
       if (/does not exist exactly|more than once/.test(feedback)) await recordLesson(memory, 'mistake', 'Edit "find" text must be copied exactly from the source without line-number prefixes and include enough lines to be unique.');
-      return { status: 422, detail: `The coding team could not produce a correct change. ${feedback}`.slice(0, 600) };
+      const blocker = [...new Set(feedbacks.filter(Boolean))].join(' | ');
+      return {
+        status: 422,
+        detail: `The coding team exhausted ${maxRounds} implementation passes and re-inspected the source but could not produce a safe reviewed change. ${blocker || 'No safe diff passed review.'}`.slice(0, 800),
+      };
     }
 
     const files = [...result.next.entries()]
