@@ -4883,6 +4883,30 @@ export class CheState extends DurableObject {
           addCapability('marketing_social');
         }
 
+        // Belt-and-suspenders routing for self-development. If the phone sends
+        // this turn as ordinary chat but identifies self_development, do the
+        // real repository inspection/engineering flow here. Never let a model
+        // narrate fake branches, PRs, SHAs, tests, or "I can't access the repo".
+        if (requestedCapabilities.includes('self_development')) {
+          const changeResponse = await dispatchChange(
+            this.env,
+            { request: message, fix_this: false },
+            this.ctx.storage,
+          );
+          let payload = {};
+          try { payload = await changeResponse.clone().json(); } catch (_) {}
+          if (changeResponse.status !== 200) return changeResponse;
+          return ndjsonReply(
+            String(payload.message || 'The coding team prepared a reviewable CHE update.'),
+            {
+              source: 'che_self_development',
+              code_review_passed: payload.code_review_passed === true,
+              owner_approval_required: payload.owner_approval_required !== false,
+              engineering_team: payload.engineering_team || [],
+            },
+          );
+        }
+
         // Work Agent Mode: queue real La Agencia Durable Object jobs for actionable
         // multi-step / specialist work (not casual chat). Continues into synthesis.
         let workAgentOfficePlan = null;
