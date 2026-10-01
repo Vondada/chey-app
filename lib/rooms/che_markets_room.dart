@@ -153,7 +153,11 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
   String _money(Object? value, [String currency = 'USD']) {
     final n = value is num ? value.toDouble() : double.tryParse('$value');
     if (n == null) return '—';
-    final symbol = currency.toUpperCase() == 'USD' ? '\
+    final symbol = currency.toUpperCase() == 'USD' ? '\$' : '${currency.toUpperCase()} ';
+    return '$symbol${n.toStringAsFixed(2)}';
+  }
+
+  Future<void> _loadCandles() async {
     final symbol = _chartSymbol;
     try {
       final j = await _get('/api/markets/candles?symbol=${Uri.encodeQueryComponent(symbol)}');
@@ -173,7 +177,6 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
     }
     if (mounted) setState(() {});
   }
-
   String _fmt(double v) => v >= 1000 ? v.toStringAsFixed(0) : v >= 1 ? v.toStringAsFixed(2) : v.toStringAsFixed(4);
 
   @override
