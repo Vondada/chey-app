@@ -1782,7 +1782,7 @@ export function fixThisNeed(text) {
 
 async function dispatchChange(env, body, memory = null) {
   const request = String(body.request || '').trim();
-  if (request.length < 8 || request.length > 4000) return json({ detail: 'Describe one change in 8–4000 characters.' }, 400);
+  if (request.length < 8 || request.length > 16000) return json({ detail: 'Describe the CHE update in 8–16000 characters.' }, 400);
   if (!env.CHE_GITHUB_TOKEN || !/^[\w.-]+\/[\w.-]+$/.test(String(env.CHE_GITHUB_REPO || ''))) {
     return json({ detail: 'Phone code proposals need CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the CHE server.' }, 503);
   }
@@ -1790,7 +1790,7 @@ async function dispatchChange(env, body, memory = null) {
   // The coding team runs here on Cloudflare and reads/writes the repo through
   // the GitHub API. GitHub Actions (billed minutes) is no longer required.
   const recall = await retrieveVectorContext(env, request);
-  let groundedRequest = ragReference(request, vectorContextText(recall), 4000).slice(0, 6000);
+  let groundedRequest = ragReference(request, vectorContextText(recall), 12000).slice(0, 16000);
   // "Fix this": look for well-built open-source code doing the same job, so
   // the crew can learn the technique (never copy it) and credit it.
   if (body.fix_this) {
@@ -4381,7 +4381,7 @@ export class CheState extends DurableObject {
         } catch (error) {
           return json({ detail: error.message }, error.status || 403);
         }
-        const rawMessage = String(body.message || '').trim().slice(0, 5000);
+        const rawMessage = String(body.message || '').trim().slice(0, 16000);
         if (!rawMessage) return json({ detail: 'Message required.' }, 400);
         // Always-on speech learning: corrections teach her how the owner's voice
         // gets misheard; learned fixes apply when the context matches.

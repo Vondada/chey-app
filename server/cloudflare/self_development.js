@@ -349,7 +349,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
   if (!repoOf(env)) {
     return { status: 503, detail: 'Self-development needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the server.' };
   }
-  const task = String(request || '').trim().slice(0, 6000);
+  const task = String(request || '').trim().slice(0, 16000);
   if (!task) return { status: 400, detail: 'Describe the requested app change.' };
 
   try {
