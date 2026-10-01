@@ -53,9 +53,13 @@ class CheCapabilityRegistry {
     CheCapability cap(String id, {bool available = true, bool networkNeeded = false, bool secret = false, bool permission = false}) {
       final up = available && (!networkNeeded || network);
       String readiness = 'can_do_now';
-      if (!up && secret) readiness = 'not_connected';
-      else if (!up && networkNeeded && !network) readiness = 'temporarily_unavailable';
-      else if (!up) readiness = 'unsupported';
+      if (!up && secret) {
+        readiness = 'not_connected';
+      } else if (!up && networkNeeded && !network) {
+        readiness = 'temporarily_unavailable';
+      } else if (!up) {
+        readiness = 'unsupported';
+      }
       return CheCapability(
         id: id,
         available: up,

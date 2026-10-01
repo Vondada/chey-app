@@ -216,6 +216,10 @@ class CHEHome extends StatefulWidget {
 }
 
 class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
+  /// Lets split-out home-state extensions request a rebuild without calling
+  /// State.setState directly from an extension.
+  void _updateHomeState(VoidCallback callback) => setState(callback);
+
   /// setState for members split into lib/home_state/*.dart extensions.
   String _statusBanner = 'Ready, sir. Type or speak a request.';
   String _lastStatusKey = '';

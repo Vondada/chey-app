@@ -155,11 +155,13 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
   }
 
   Future<void> _check({bool announce = false}) async {
-    if (mounted) setState(() {
-      _loading = true;
-      _error = '';
-      _latestAttemptFailure = '';
-    });
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = '';
+        _latestAttemptFailure = '';
+      });
+    }
     final installed = await CheInstalledBuild.read();
     UpdateStatus? patch;
     if (_shorebird.isAvailable) {

@@ -106,7 +106,7 @@ extension _CheHomeUi on _CHEHomeState {
   );
 
   List<String> _inlineLinks(String text, String? skip) {
-    final seen = <String>{if (skip != null) skip};
+    final seen = <String>{?skip};
     final out = <String>[];
     for (final m in _linkPattern.allMatches(text)) {
       final url = m.group(0)!.replaceAll(RegExp(r'[.,;:!?]+$'), '');

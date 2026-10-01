@@ -76,10 +76,9 @@ class CheLocalBrainHealth {
 
 class CheLocalBrain {
   CheLocalBrain({
-    CheLocalBrainModel model = cheDefaultLocalBrainModel,
+    this.model = cheDefaultLocalBrainModel,
     MethodChannel? channel,
-  })  : model = model,
-        _channel = channel ?? const MethodChannel('che/local_brain');
+  }) : _channel = channel ?? const MethodChannel('che/local_brain');
 
   final CheLocalBrainModel model;
   final MethodChannel _channel;

@@ -16,7 +16,7 @@ extension _CheMailboxBadge on _CHEHomeState {
       final count = (data['unread'] as num?)?.toInt() ?? 0;
       final previous = _mailboxUnread;
       if (count == previous) return;
-      setState(() => _mailboxUnread = count);
+      _updateHomeState(() => _mailboxUnread = count);
       if (!announce || count <= previous) return;
       final fresh = count - previous;
       HapticFeedback.mediumImpact();
@@ -45,7 +45,7 @@ extension _CheMailboxBadge on _CHEHomeState {
   Future<void> _loadTypingPref() async {
     final prefs = await SharedPreferences.getInstance();
     final on = prefs.getBool('che_typing_on') ?? false;
-    if (mounted && on != _typingOn) setState(() => _typingOn = on);
+    if (mounted && on != _typingOn) _updateHomeState(() => _typingOn = on);
   }
 
   /// Keyboard off: CHE is voice-first, so the text box stays hidden until the
@@ -53,7 +53,7 @@ extension _CheMailboxBadge on _CHEHomeState {
   void _toggleTyping() {
     final on = !_typingOn;
     HapticFeedback.selectionClick();
-    setState(() => _typingOn = on);
+    _updateHomeState(() => _typingOn = on);
     if (on) {
       Future<void>.delayed(const Duration(milliseconds: 60), () {
         if (mounted) _composerFocus.requestFocus();

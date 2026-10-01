@@ -38,7 +38,7 @@ extension _CheHomeStreaming on _CHEHomeState {
       onPartial(cleanBrain);
       return cleanBrain;
     }
-    final clean = local?.trim() ?? '';
+    final clean = local.trim();
     if (clean.isEmpty) return null;
     onPartial(clean);
     return clean;
