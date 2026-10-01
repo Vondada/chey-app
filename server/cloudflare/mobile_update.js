@@ -152,9 +152,13 @@ async function releases(env, fetcher = fetch) {
 async function latestMobileBuildAttempt(env, fetcher = fetch) {
   try {
     const status = await githubJson('/commits/main/status', env, fetcher);
-    const item = (status?.statuses || []).find(
-      (entry) => entry?.context === 'CHE iPhone update',
-    );
+    const item = (status?.statuses || [])
+      .filter((entry) => entry?.context === 'CHE iPhone update')
+      .sort((a, b) =>
+        String(b?.updated_at || b?.created_at || '').localeCompare(
+          String(a?.updated_at || a?.created_at || ''),
+        )
+      )[0];
     if (!item) return null;
     return {
       state: String(item.state || 'unknown'),
