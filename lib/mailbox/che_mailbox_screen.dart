@@ -36,7 +36,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
   List<Map<String, dynamic>> _providers = const [];
   Map<String, dynamic> _flag = const {};
   List<Map<String, dynamic>> _archive = const [];
-  List<Map<String, dynamic>> _claude = const [];
+  String? _openThread;
   bool _loading = true;
   String _status = '';
 
@@ -59,9 +59,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         http.get(Uri.parse('${widget.baseUrl}/api/keys'), headers: widget.headers()),
         http.get(Uri.parse('${widget.baseUrl}/api/flagstaff'), headers: widget.headers()),
         http.get(Uri.parse('${widget.baseUrl}/api/flagstaff/archive'), headers: widget.headers()),
-        http.get(Uri.parse('${widget.baseUrl}/api/mailbox?peer=claude'), headers: widget.headers()),
       ]).timeout(const Duration(seconds: 20));
-      final claude = jsonDecode(responses[4].body);
       final letters = jsonDecode(responses[0].body);
       final keys = jsonDecode(responses[1].body);
       final flag = jsonDecode(responses[2].body);
@@ -69,9 +67,6 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
       if (!mounted) return;
       setState(() {
         _flag = flag is Map ? Map<String, dynamic>.from(flag) : const {};
-        _claude = claude is Map && claude['messages'] is List
-            ? (claude['messages'] as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
-            : const [];
         _archive = archive is Map && archive['sessions'] is List
             ? (archive['sessions'] as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
             : const [];
@@ -84,9 +79,15 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         _loading = false;
       });
       final unread = _letters.where((l) => l['read'] != true).length;
-      final board = (_flag['messages'] as List?)?.length ?? 0;
-      _say('Flagstaff is ${_flag['open'] == true ? 'open' : 'locked'} with $board messages. '
-          '${_archive.length} saved sessions. ${unread == 0 ? 'No new letters.' : '$unread unread letters.'}');
+      final newMail = (_flag['unread'] as num?)?.toInt() ?? 0;
+      _say('${newMail == 0 ? 'No new messages.' : '$newMail new messages.'} '
+          '${unread == 0 ? 'No new letters.' : '$unread new letters.'}');
+      // Opening the mailbox counts as reading it, so the badge clears.
+      http.post(
+        Uri.parse('${widget.baseUrl}/api/flagstaff'),
+        headers: {...widget.headers(), 'Content-Type': 'application/json'},
+        body: jsonEncode({'action': 'mark-seen'}),
+      ).catchError((_) => http.Response('', 500));
     } catch (_) {
       if (!mounted) return;
       setState(() => _loading = false);
@@ -235,7 +236,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
             border: Border.all(color: fromChe ? CheColors.accent.withValues(alpha: 0.4) : CheColors.stroke),
           ),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('${m['from']} → ${m['to']}', style: CheType.caption),
+            Text('${fromChe ? 'CHE' : _nice('${m['from']}')} · ${_when(m['at'])}', style: CheType.caption),
             const SizedBox(height: 4),
             SelectableText('${m['text']}', style: CheType.body),
           ]),
@@ -244,72 +245,111 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
     );
   }
 
+  /// Messages grouped into one conversation per AI, newest conversation first.
+  Map<String, List<Map>> _threads(List<Map> messages) {
+    final out = <String, List<Map>>{};
+    for (final m in messages) {
+      final from = '${m['from']}';
+      final peer = from == 'che' ? '${m['to']}' : from;
+      out.putIfAbsent(peer, () => []).add(m);
+    }
+    final ordered = out.entries.toList()
+      ..sort((a, b) => '${b.value.last['at']}'.compareTo('${a.value.last['at']}'));
+    return {for (final e in ordered) e.key: e.value};
+  }
+
+  String _nice(String peer) => peer.isEmpty ? 'Unknown' : '${peer[0].toUpperCase()}${peer.substring(1)}';
+
+  String _when(Object? at) {
+    final t = DateTime.tryParse('$at')?.toLocal();
+    if (t == null) return '';
+    final now = DateTime.now();
+    final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
+    final clock = '$h:${t.minute.toString().padLeft(2, '0')} ${t.hour < 12 ? 'AM' : 'PM'}';
+    if (t.year == now.year && t.month == now.month && t.day == now.day) return clock;
+    return '${t.month}/${t.day}';
+  }
+
   Widget _flagstaffTab() {
     final open = _flag['open'] == true;
     final link = '${_flag['link'] ?? ''}';
     final messages = (_flag['messages'] as List?)?.whereType<Map>().toList() ?? const <Map>[];
-    return ListView(padding: const EdgeInsets.all(12), children: [
-      Card(
-        color: CheColors.surface,
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Icon(open ? Icons.lock_open_rounded : Icons.lock_rounded, color: open ? CheColors.success : CheColors.warning),
-              const SizedBox(width: 8),
-              Text('Flagstaff 369 is ${open ? 'OPEN' : 'LOCKED'}', style: CheType.title),
-            ]),
-            const SizedBox(height: 10),
-            SelectableText(link, style: CheType.mono),
-            const SizedBox(height: 10),
-            Wrap(spacing: 8, runSpacing: 8, children: [
-              Semantics(
-                button: true,
-                label: 'Copy the Flagstaff link',
-                child: FilledButton.icon(
-                  onPressed: link.isEmpty
-                      ? null
-                      : () {
-                          Clipboard.setData(ClipboardData(text: link));
-                          _say('Flagstaff link copied. Paste it into any AI.');
-                        },
-                  icon: const Icon(Icons.copy_rounded),
-                  label: const Text('Copy link'),
-                ),
-              ),
-              Semantics(
-                button: true,
-                label: open ? 'Lock Flagstaff and save the conversation' : 'Open Flagstaff',
-                child: OutlinedButton.icon(
-                  onPressed: () => _flagAction(open ? 'lock' : 'open'),
-                  icon: Icon(open ? Icons.lock_rounded : Icons.lock_open_rounded),
-                  label: Text(open ? 'Lock & save' : 'Open'),
-                ),
-              ),
-              Semantics(
-                button: true,
-                label: 'Make a new Flagstaff link. The old one stops working.',
-                child: TextButton(onPressed: () => _flagAction('new-link'), child: const Text('New link')),
-              ),
-            ]),
-          ]),
+    final threads = _threads(messages);
+    final thread = _openThread == null ? null : threads[_openThread];
+    if (thread != null) {
+      return Column(children: [
+        ListTile(
+          leading: IconButton(
+            tooltip: 'Back to all conversations',
+            icon: const Icon(Icons.arrow_back_rounded),
+            onPressed: () => setState(() => _openThread = null),
+          ),
+          title: Text(_nice(_openThread!), style: CheType.title),
+          trailing: IconButton(
+            tooltip: 'Read this conversation aloud',
+            icon: const Icon(Icons.volume_up_rounded),
+            onPressed: () => _say(thread.reversed.take(3).toList().reversed.map((m) => '${_nice('${m['from']}')} said: ${m['text']}').join('. ')),
+          ),
         ),
-      ),
-      const SizedBox(height: 8),
-      if (messages.isEmpty)
-        const Padding(padding: EdgeInsets.all(20), child: Text('No messages on the board yet.', style: CheType.bodyDim))
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            children: thread.map(_message).toList(),
+          ),
+        ),
+      ]);
+    }
+    return ListView(padding: const EdgeInsets.all(12), children: [
+      Row(children: [
+        Icon(open ? Icons.lock_open_rounded : Icons.lock_rounded, color: open ? CheColors.success : CheColors.warning, size: 20),
+        const SizedBox(width: 8),
+        Expanded(child: Text('Flagstaff 369 · ${open ? 'Open' : 'Locked'}', style: CheType.label)),
+        IconButton(
+          tooltip: 'Copy the Flagstaff link',
+          icon: const Icon(Icons.copy_rounded),
+          onPressed: link.isEmpty
+              ? null
+              : () {
+                  Clipboard.setData(ClipboardData(text: link));
+                  _say('Link copied. Paste it into any AI.');
+                },
+        ),
+        IconButton(
+          tooltip: open ? 'Lock Flagstaff and save the conversation' : 'Open Flagstaff',
+          icon: Icon(open ? Icons.lock_rounded : Icons.lock_open_rounded),
+          onPressed: () => _flagAction(open ? 'lock' : 'open'),
+        ),
+        PopupMenuButton<String>(
+          tooltip: 'More',
+          onSelected: _flagAction,
+          itemBuilder: (_) => const [PopupMenuItem(value: 'new-link', child: Text('Make a new link'))],
+        ),
+      ]),
+      const Divider(height: 16),
+      if (threads.isEmpty)
+        const Padding(padding: EdgeInsets.all(20), child: Text('No messages yet.', style: CheType.bodyDim))
       else
-        ...messages.map(_message),
-      const SizedBox(height: 16),
-      Semantics(
-        header: true,
-        child: const Text('CHE and Claude (repo mailbox)', style: CheType.title),
-      ),
-      const SizedBox(height: 6),
-      if (_claude.isEmpty)
-        const Text('No messages with Claude yet.', style: CheType.bodyDim)
-      else
-        ..._claude.map(_message),
+        for (final entry in threads.entries)
+          Semantics(
+            button: true,
+            label: '${_nice(entry.key)}. ${entry.value.length} messages. Last: ${entry.value.last['text']}',
+            child: ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+              leading: CircleAvatar(
+                backgroundColor: CheColors.accent.withValues(alpha: 0.18),
+                child: Text(_nice(entry.key)[0], style: CheType.label),
+              ),
+              title: Text(_nice(entry.key), style: CheType.label),
+              subtitle: Text(
+                '${entry.value.last['text']}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: CheType.caption,
+              ),
+              trailing: Text(_when(entry.value.last['at']), style: CheType.caption),
+              onTap: () => setState(() => _openThread = entry.key),
+            ),
+          ),
     ]);
   }
 

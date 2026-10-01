@@ -276,6 +276,8 @@ class CheHomeComposer extends StatelessWidget {
     super.key,
     required this.controller,
     required this.focusNode,
+    this.typingOn = true,
+    this.onToggleTyping,
     required this.busy,
     required this.modes,
     required this.modeIndex,
@@ -292,6 +294,8 @@ class CheHomeComposer extends StatelessWidget {
 
   final TextEditingController controller;
   final FocusNode focusNode;
+  final bool typingOn;
+  final VoidCallback? onToggleTyping;
   final bool busy;
   final List<String> modes;
   final int modeIndex;
@@ -333,6 +337,26 @@ class CheHomeComposer extends StatelessWidget {
                     ),
                   ),
                 ),
+              if (!typingOn)
+                Semantics(
+                  button: true,
+                  label: 'Keyboard is off. Double tap to type instead of talking.',
+                  child: ChePressable(
+                    onTap: onToggleTyping ?? () {},
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: Row(children: [
+                        Expanded(
+                          child: Text(
+                            micActive ? 'Listening…' : 'Tap the mic and talk to CHE',
+                            style: CheType.body.copyWith(color: CheColors.textFaint),
+                          ),
+                        ),
+                      ]),
+                    ),
+                  ),
+                )
+              else
               TextField(
                 controller: controller,
                 focusNode: focusNode,
@@ -376,6 +400,13 @@ class CheHomeComposer extends StatelessWidget {
                   ),
                 ),
                 const Spacer(),
+                if (onToggleTyping != null)
+                  _ComposerIcon(
+                    icon: typingOn ? Icons.keyboard_hide_rounded : Icons.keyboard_rounded,
+                    tooltip: typingOn ? 'Turn keyboard off' : 'Turn keyboard on',
+                    onTap: onToggleTyping!,
+                    highlight: typingOn,
+                  ),
                 _ComposerIcon(icon: Icons.add_photo_alternate_outlined, tooltip: 'Attach', onTap: onAttach),
                 _ComposerIcon(
                   icon: micActive ? Icons.graphic_eq_rounded : Icons.mic_none_rounded,

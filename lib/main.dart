@@ -68,6 +68,7 @@ import 'che_ui/che_agents.dart' show CheAgent, CheAgentStatusLabel;
 import 'che_ui/che_agent_chat.dart' show CheOrbState;
 import 'che_ui/che_log.dart' show CheTranscriptScreen;
 import 'home/che_home_chat.dart';
+import 'home/che_inline_preview.dart';
 import 'home/che_grok_chat_screen.dart';
 import 'home/che_mockup_home.dart';
 import 'home/che_more_tab.dart';
@@ -97,6 +98,7 @@ import 'che_web_voice_stub.dart'
 
 part 'home_state/connected.dart';
 part 'home_state/home_ui.dart';
+part 'home_state/mailbox_badge.dart';
 part 'home_state/hub_rooms.dart';
 part 'home_state/memory.dart';
 part 'home_state/microphone.dart';
@@ -368,6 +370,10 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   // Unread INCOMING mailbox messages (badge on the Chat mailbox icon).
   int _mailboxUnread = 0;
+  Timer? _mailboxBadgeTimer;
+
+  // Keyboard on/off: off by default because the owner mostly talks to CHE.
+  bool _typingOn = false;
 
   // After the paid live-voice service fails once (free-only mode), skip it
   // for a while and go straight to the free native listener: no stutter.
@@ -1014,6 +1020,9 @@ OWNER AGENCY
     initializeVoice();
     _loadSecuritySession();
     _jobPollTimer = Timer.periodic(const Duration(seconds: 15), (_) => _loadAgentState(silent: true));
+    unawaited(_loadTypingPref());
+    Future<void>.delayed(const Duration(seconds: 3), () => _refreshMailboxBadge(announce: false));
+    _mailboxBadgeTimer = Timer.periodic(const Duration(seconds: 45), (_) => _refreshMailboxBadge());
     unawaited(_loadExplainLevel());
     // CHE greets once, in one short line, with something useful.
     Future<void>.delayed(const Duration(milliseconds: 2600), () => _loadHomeGreeting(speak: true));
@@ -1051,6 +1060,7 @@ OWNER AGENCY
 
     if (state == AppLifecycleState.resumed) {
       unawaited(_loadAgentState(silent: true));
+      unawaited(_refreshMailboxBadge());
       unawaited(_loadHomeGreeting());
       unawaited(_consumeWakeRequest(resumeIfAwake: true));
       if (!kIsWeb &&
@@ -1118,6 +1128,7 @@ OWNER AGENCY
     _listenRestartTimer?.cancel();
     _proactiveTimer?.cancel();
     _jobPollTimer?.cancel();
+    _mailboxBadgeTimer?.cancel();
     _nativeIosVoiceSub?.cancel();
     unawaited(_stopPorcupineWake(disposeEngine: true));
     final realtime = _realtimeVoice;
@@ -1307,6 +1318,8 @@ OWNER AGENCY
           child: CheHomeComposer(
             controller: controller,
             focusNode: _composerFocus,
+            typingOn: _typingOn,
+            onToggleTyping: _toggleTyping,
             busy: _isSending,
             modes: _homeModes,
             modeIndex: _homeMode,
@@ -1684,28 +1697,15 @@ OWNER AGENCY
         CheMoreItem(
           icon: Icons.markunread_mailbox_rounded,
           title: 'Mailbox & Flagstaff',
-          subtitle: 'AI conversations · archive · letters · keys',
-          onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
-            builder: (_) => CheMailboxScreen(
-              baseUrl: cheAgentBaseUrl,
-              headers: () => _authHeaders,
-              onSpeak: (text) => unawaited(speakText(text, record: false)),
-            ),
-          )),
+          subtitle: _mailboxUnread > 0 ? '$_mailboxUnread unread · AI conversations · letters' : 'AI conversations · archive · letters · keys',
+          onTap: () => unawaited(_openMailbox()),
           hue: kit.CheColors.accentAlt,
         ),
         CheMoreItem(
           icon: Icons.vpn_key_rounded,
           title: 'Keys',
           subtitle: 'Create or paste an AI key · works right away',
-          onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
-            builder: (_) => CheMailboxScreen(
-              baseUrl: cheAgentBaseUrl,
-              headers: () => _authHeaders,
-              onSpeak: (text) => unawaited(speakText(text, record: false)),
-              initialTab: 3,
-            ),
-          )),
+          onTap: () => unawaited(_openMailbox(tab: 3)),
           hue: kit.CheColors.accent,
         ),
         CheMoreItem(
@@ -1872,13 +1872,7 @@ OWNER AGENCY
                           child: const Icon(Icons.markunread_mailbox_rounded),
                         )
                       : const Icon(Icons.markunread_mailbox_rounded),
-                  onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                    builder: (_) => CheMailboxScreen(
-                      baseUrl: cheAgentBaseUrl,
-                      headers: () => _authHeaders,
-                      onSpeak: (text) => unawaited(speakText(text, record: false)),
-                    ),
-                  )),
+                  onPressed: () => unawaited(_openMailbox()),
                 ),
                 IconButton(
                   onPressed: () => unawaited(_toggleVoiceReplies()),

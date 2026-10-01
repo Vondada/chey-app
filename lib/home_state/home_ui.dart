@@ -48,15 +48,39 @@ extension _CheHomeUi on _CHEHomeState {
             ),
           ),
         ),
-      if (item['media_type'] == 'video' && (item['media_url'] ?? '').startsWith('https://'))
-        TextButton.icon(
-          onPressed: () => launchUrl(Uri.parse(item['media_url']!), mode: LaunchMode.externalApplication),
-          icon: const Icon(Icons.play_circle_outline),
-          label: const Text('Open generated video'),
+      if ((item['media_type'] == 'video' || item['media_type'] == 'html' || item['media_type'] == 'page') &&
+          (item['media_url'] ?? '').startsWith('https://'))
+        CheInlinePreview(
+          url: item['media_url']!,
+          headers: item['media_url']!.startsWith(cheAgentBaseUrl) ? _authHeaders : const {},
+          label: item['media_type'] == 'video' ? 'Video' : 'Page',
         ),
+      // Anything the crew rendered and linked in the reply shows right here.
+      if (!isLiveReply)
+        for (final url in _inlineImageUrls(text, item['media_url']))
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: Image.network(
+                url,
+                headers: url.startsWith(cheAgentBaseUrl) ? _authHeaders : null,
+                fit: BoxFit.cover,
+                cacheWidth: (MediaQuery.sizeOf(context).width * MediaQuery.devicePixelRatioOf(context)).round(),
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
+              ),
+            ),
+          ),
+      if (!isLiveReply)
+        for (final url in _inlinePageUrls(text, item['media_url']))
+          CheInlinePreview(
+            url: url,
+            headers: url.startsWith(cheAgentBaseUrl) ? _authHeaders : const {},
+            label: url.contains('youtu') ? 'Video' : 'Page',
+          ),
     ];
     return MediaQuery(
-      data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(MediaQuery.textScalerOf(context).scale(1).clamp(1.35, double.infinity).toDouble())),
+      data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(MediaQuery.textScalerOf(context).scale(1).clamp(1.15, double.infinity).toDouble())),
       child: CheHomeAssistantMessage(
       text: display,
       streaming: isLiveReply,
@@ -73,5 +97,30 @@ extension _CheHomeUi on _CHEHomeState {
       ),
     );
   }
+
+  static final RegExp _linkPattern = RegExp('https://[^\\s)\\]>"\'`]+', caseSensitive: false);
+  static final RegExp _imagePattern = RegExp(r'\.(?:png|jpe?g|gif|webp)(?:\?|$)', caseSensitive: false);
+  static final RegExp _pagePattern = RegExp(
+    r'(?:youtube\.com/(?:watch|shorts)|youtu\.be/|\.pages\.dev|\.workers\.dev|/preview\b|\.html(?:\?|$)|claude\.ai/(?:public/)?artifact)',
+    caseSensitive: false,
+  );
+
+  List<String> _inlineLinks(String text, String? skip) {
+    final seen = <String>{if (skip != null) skip};
+    final out = <String>[];
+    for (final m in _linkPattern.allMatches(text)) {
+      final url = m.group(0)!.replaceAll(RegExp(r'[.,;:!?]+$'), '');
+      if (seen.add(url)) out.add(url);
+    }
+    return out;
+  }
+
+  List<String> _inlineImageUrls(String text, String? skip) =>
+      _inlineLinks(text, skip).where(_imagePattern.hasMatch).take(4).toList();
+
+  List<String> _inlinePageUrls(String text, String? skip) => _inlineLinks(text, skip)
+      .where((u) => !_imagePattern.hasMatch(u) && _pagePattern.hasMatch(u))
+      .take(2)
+      .toList();
 }
 
