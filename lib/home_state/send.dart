@@ -243,7 +243,8 @@ extension _CheHomeSend on _CHEHomeState {
       case 'read':
         // Face ID before speaking/showing a vault password (TTL skips re-prompt).
         final unlocked = await CheVaultAuth.instance.ensureUnlocked(
-          reason: 'Unlock CHE vault with Face ID to show this password',
+          reason: 'Use Face ID to show this saved password',
+          freshFaceId: true,
         );
         if (!unlocked) {
           spoken = 'Face ID was cancelled — I did not reveal your password, sir.';
@@ -259,6 +260,15 @@ extension _CheHomeSend on _CHEHomeState {
           spoken = 'Your ${entry.site} password is ${entry.password.split('').join(' ')}';
         }
       case 'import':
+        final unlocked = await CheVaultAuth.instance.ensureUnlocked(
+          reason: 'Use Face ID before importing passwords into CHE',
+          freshFaceId: true,
+        );
+        if (!unlocked) {
+          spoken = 'Face ID was cancelled — I did not import any passwords, sir.';
+          shown = spoken;
+          break;
+        }
         final picked = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['csv'], withData: true);
         final bytes = picked?.files.single.bytes;
         if (bytes == null) {
@@ -284,6 +294,15 @@ extension _CheHomeSend on _CHEHomeState {
         );
         if (sure != true) {
           spoken = 'Kept your ${command.site} password, sir.';
+          shown = spoken;
+          break;
+        }
+        final unlocked = await CheVaultAuth.instance.ensureUnlocked(
+          reason: 'Use Face ID to delete this saved password',
+          freshFaceId: true,
+        );
+        if (!unlocked) {
+          spoken = 'Face ID was cancelled — I kept that saved password, sir.';
           shown = spoken;
           break;
         }
