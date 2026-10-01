@@ -244,8 +244,12 @@ void main() {
 
     // CHE's desk remains available through the accessible flat-plan fallback.
     await tester.tap(find.bySemanticsLabel(RegExp(r"CHE.*Open to talk or send a request")));
-    await tester.pump();
-    await _pumpUntilFound(tester, find.text('REQUEST TO CHE'));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.scrollUntilVisible(
+      find.text('REQUEST TO CHE'),
+      160,
+      scrollable: find.byType(Scrollable).last,
+    );
 
     expect(find.text('Talk to CHE'), findsWidgets);
     expect(find.text('REQUEST TO CHE'), findsOneWidget);
@@ -274,11 +278,14 @@ void main() {
     );
     await tester.pumpWidget(MaterialApp(home: CheOfficeFloorScreen(client: client)));
     await _pumpUntilFound(tester, find.text('Flat floor plan'));
+    final officeScroll = find.byType(Scrollable).first;
     await tester.scrollUntilVisible(
       find.text('Plan the launch'),
       200,
-      scrollable: find.byType(Scrollable).first,
+      scrollable: officeScroll,
     );
+    await tester.drag(officeScroll, const Offset(0, -120));
+    await tester.pump();
     await tester.tap(find.text('Plan the launch'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
