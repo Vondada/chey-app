@@ -5,8 +5,6 @@ import '../agents/che_agent_runtime.dart';
 import '../che_ui/che_theme.dart';
 import '../widgets/che_3d_room_view.dart';
 
-extension _WorkshopFirst<T> on Iterable<T>{T? get firstOrNull=>isEmpty?null:first;}
-
 class CheWorkshopRoom extends StatefulWidget{
  const CheWorkshopRoom({super.key,required this.client,required this.active,this.focusAgent,this.onSpeak,this.onOpenRoom});
  final CheAgentRuntimeClient client;final bool active;final String? focusAgent;final Future<void> Function(String)? onSpeak;final void Function(int)? onOpenRoom;
