@@ -76,10 +76,13 @@ export function releaseToUpdate(release, origin) {
   if (!asset) return null;
   const tag = String(release?.tag_name || '');
   const parsed = TAG_RE.exec(tag);
+  if (!parsed) return null;
   const meta = bodyMeta(release?.body);
-  const version = String(meta.version || parsed?.[1] || '').trim();
-  const buildNumber = String(meta.build || parsed?.[2] || '').trim();
+  const version = String(meta.version || parsed[1] || '').trim();
+  const buildNumber = String(meta.build || parsed[2] || '').trim();
   if (!version || !buildNumber) return null;
+  if (meta.version && String(meta.version).trim() !== parsed[1]) return null;
+  if (meta.build && String(meta.build).trim() !== parsed[2]) return null;
   const assetDigest = String(asset.digest || '').trim();
   if (!/^sha256:[0-9a-f]{64}$/i.test(assetDigest)) return null;
   const sha = assetDigest.replace(/^sha256:/i, '').toLowerCase();
@@ -162,8 +165,7 @@ async function releases(env, fetcher = fetch) {
     ? items.filter((item) =>
         !item?.draft &&
         !item?.prerelease &&
-        TAG_RE.test(String(item?.tag_name || '')) &&
-        ipaAsset(item)
+        releaseToUpdate(item, 'https://che.invalid') != null
       )
     : [];
 }
@@ -195,7 +197,7 @@ async function releaseByTag(tag, env, fetcher = fetch) {
   if (!/^che-ios-v[A-Za-z0-9.+_-]+-b[0-9]+$/.test(tag)) return null;
   try {
     const release = await githubJson(`/releases/tags/${encodeURIComponent(tag)}`, env, fetcher);
-    return ipaAsset(release) ? release : null;
+    return releaseToUpdate(release, 'https://che.invalid') ? release : null;
   } catch (_) {
     return null;
   }
