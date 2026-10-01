@@ -84,11 +84,26 @@ extension _CheHomeHubRooms on _CHEHomeState {
     });
   }
 
+  void _openTradingApp(String name) {
+    final app = cheAppForName(name);
+    if (app == null || !mounted) return;
+    HapticFeedback.selectionClick();
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CheEmbeddedAppScreen(
+          app: app,
+          onLearnPage: _learnFromBrowserPage,
+        ),
+      ),
+    );
+  }
+
   Widget _hubMarketsTab() {
     return CheMarketsRoom(
       baseUrl: () => cheAgentBaseUrl,
       headers: () => _authHeaders,
       onAsk: _runHubPrompt,
+      onOpenTradingApp: _openTradingApp,
       actions: [
         CheDeskAction(
           icon: Icons.insights_rounded,
