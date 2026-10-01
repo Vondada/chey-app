@@ -181,20 +181,30 @@ with open(path, 'w') as f:
         "target_commitish": commit,
         "name": f"CHE iPhone {version} ({build})",
         "body": body,
-        "draft": False,
+        "draft": True,
         "prerelease": False,
     }, f)
 PY
 
   echo "Publishing verified IPA to GitHub Releases..."
-  created="$(curl -fsS -X POST     -H "Accept: application/vnd.github+json"     -H "Authorization: Bearer $token"     -H "X-GitHub-Api-Version: 2026-03-10"     -H "Content-Type: application/json"     "https://api.github.com/repos/Vondada/chey-app/releases"     --data-binary "@$release_json")"
+  created="$(curl -fsS -X POST -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $token" -H "X-GitHub-Api-Version: 2022-11-28" -H "Content-Type: application/json" "https://api.github.com/repos/Vondada/chey-app/releases" --data-binary "@$release_json")"
   release_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$created")"
   upload_url="https://uploads.github.com/repos/Vondada/chey-app/releases/${release_id}/assets"
 
-  curl -fsS -X POST     -H "Authorization: Bearer $token"     -H "Content-Type: application/octet-stream"     --data-binary "@$IPA"     "$upload_url?name=CHE-unsigned.ipa" >/dev/null
-  curl -fsS -X POST     -H "Authorization: Bearer $token"     -H "Content-Type: application/json"     --data-binary "@$META"     "$upload_url?name=CHE-update.json" >/dev/null
+  uploaded_ipa="$(curl -fsS -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/octet-stream" --data-binary "@$IPA" "$upload_url?name=CHE-unsigned.ipa")"
+  remote_digest="$(python3 -c 'import json,sys; print((json.load(sys.stdin).get("digest") or "").removeprefix("sha256:"))' <<<"$uploaded_ipa")"
+  if [[ -z "$remote_digest" || "$remote_digest" != "$sha" ]]; then
+    echo "Uploaded IPA digest did not match local SHA-256; keeping it unavailable." >&2
+    curl -fsS -X DELETE -H "Authorization: Bearer $token" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/Vondada/chey-app/releases/$release_id" >/dev/null || true
+    exit 1
+  fi
 
-  echo "Published $tag with SHA-256 $sha."
+  curl -fsS -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" --data-binary "@$META" "$upload_url?name=CHE-update.json" >/dev/null
+
+  # The Worker ignores drafts. Make this build visible only after digest verification.
+  curl -fsS -X PATCH -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $token" -H "X-GitHub-Api-Version: 2022-11-28" -H "Content-Type: application/json" "https://api.github.com/repos/Vondada/chey-app/releases/$release_id" --data-binary '{"draft":false}' >/dev/null
+
+  echo "Published $tag with verified SHA-256 $sha."
 }
 
 LANE="$(choose_lane)"
