@@ -246,6 +246,28 @@ struct CHEAppShortcuts: AppShortcutsProvider {
           ) { granted, _ in
             DispatchQueue.main.async { result(granted) }
           }
+        case "showNotification":
+          guard
+            let args = call.arguments as? [String: Any],
+            let title = args["title"] as? String,
+            let body = args["body"] as? String,
+            !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+          else {
+            result(false)
+            break
+          }
+          let content = UNMutableNotificationContent()
+          content.title = String(title.prefix(120))
+          content.body = String(body.prefix(1000))
+          content.sound = .default
+          content.badge = 1
+          let identifier = (args["id"] as? String) ?? UUID().uuidString
+          let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.2, repeats: false)
+          let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+          UNUserNotificationCenter.current().add(request) { error in
+            DispatchQueue.main.async { result(error == nil) }
+          }
         case "scheduleRefresh":
           if #available(iOS 13.0, *) {
             let request = BGAppRefreshTaskRequest(

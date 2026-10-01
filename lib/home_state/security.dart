@@ -476,8 +476,16 @@ extension _CheHomeSecurity on _CHEHomeState {
       _autonomy = data['autonomy'] != false;
       final oldApprovalIds = _actionApprovals.map((a) => a['id']).toSet();
       _actionApprovals = ((data['action_approvals'] as List?) ?? []).whereType<Map>().map((a) => Map<String, dynamic>.from(a)).where((a) => a['status'] == 'pending').toList();
-      if (_actionApprovals.any((a) => !oldApprovalIds.contains(a['id']))) {
+      final newApprovals = _actionApprovals.where((a) => !oldApprovalIds.contains(a['id'])).toList();
+      if (newApprovals.isNotEmpty) {
         unawaited(_statusHaptic(2));
+        for (final approval in newApprovals) {
+          unawaited(CheNotifications.show(
+            id: 'approval-${approval['id']}',
+            title: 'CHE needs your approval',
+            body: '${approval['query'] ?? 'A CHE action is waiting for your decision.'}',
+          ));
+        }
         final options = [for (var i = 0; i < _actionApprovals.length; i++) '${i + 1}. ${_actionApprovals[i]['query']}'].join(' ');
         if (!_isSpeaking && !_isSending) unawaited(speakText('Approval needed. $options Say or type approve action and its number, or reject action and its number.'));
       }

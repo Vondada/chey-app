@@ -25,6 +25,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:url_launcher/url_launcher.dart';
 import 'che_native_voice.dart';
+import 'che_notifications.dart';
 import 'che_stream_batcher.dart';
 import 'che_request_session.dart';
 import 'che_owner_errors.dart';
@@ -314,6 +315,16 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
       final text = job['status'] == 'complete'
           ? 'Finished: ${job['title']}. ${job['result']}'
           : 'Work needs attention: ${job['title']}. ${job['error']}';
+      final noticeBody = '${job['status'] == 'complete' ? job['result'] : job['error']}'
+          .replaceAll(RegExp(r'\\s+'), ' ')
+          .trim();
+      await CheNotifications.show(
+        id: 'job-$id',
+        title: job['status'] == 'complete'
+            ? 'CHE finished: ${job['title']}'
+            : 'CHE needs attention: ${job['title']}',
+        body: noticeBody.isEmpty ? text : noticeBody,
+      );
       await _statusHaptic(job['status'] == 'complete' ? 3 : 4);
       if (!mounted) return;
       _set(() => messages.add({'role': 'assistant', 'text': text}));
@@ -1040,6 +1051,7 @@ OWNER AGENCY
   @override
   void initState() {
     super.initState();
+    unawaited(CheNotifications.requestPermission());
     unawaited(_syncUiVoicePrefs());
     CheUiPreferences.instance.addListener(_onUiPrefsChanged);
     WidgetsBinding.instance.addObserver(this);
