@@ -235,7 +235,6 @@ class _BrowserTab {
       if (entry == null) return;
       final unlocked = await CheVaultAuth.instance.ensureUnlocked(
         reason: 'Use Face ID to fill your saved login for $host',
-        freshFaceId: true,
       );
       if (!unlocked) return;
       final u = jsonEncode(entry.username);
@@ -900,6 +899,14 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
               icon: const Icon(Icons.laptop_mac_rounded),
               onPressed: _showTradeSeaComputer,
             ),
+          IconButton(
+            tooltip: 'Face ID sign-in',
+            icon: const Icon(Icons.face_rounded),
+            onPressed: () async {
+              final result = await _signIn();
+              if (mounted) _snack(result);
+            },
+          ),
           IconButton(
             tooltip: fav ? 'Remove favorite' : 'Add favorite',
             icon: Icon(fav ? Icons.star_rounded : Icons.star_border_rounded),
