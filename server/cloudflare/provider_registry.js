@@ -69,7 +69,7 @@ export const BUILTIN_PROVIDER_MANIFESTS = [
     auth: { type: 'api_key', secrets: ['GEMINI_API_KEY'] },
     api_base: 'https://generativelanguage.googleapis.com/v1beta/openai', chat_path: '/chat/completions',
     discovery: { method: 'openai_models', path: '/models' }, locality: 'cloud',
-    capabilities: ['text', 'fast_chat', 'deep_reasoning', 'coding', 'vision', 'speech_to_text', 'text_to_speech', 'embeddings', 'tool_calling', 'long_context', 'file_analysis'],
+    capabilities: ['text', 'fast_chat', 'deep_reasoning', 'coding', 'vision', 'image_generation', 'video_generation', 'speech_to_text', 'text_to_speech', 'embeddings', 'tool_calling', 'long_context', 'file_analysis'],
     cost_class: 'free', latency_class: 'fast', context_tokens: 1000000,
     privacy: { retention: 'provider_policy', trains_on_data: true, default_data_classes: ['public'] },
     streaming: true, oauth: true,
