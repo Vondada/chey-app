@@ -32,7 +32,7 @@ function apiHeaders(env = {}) {
   const headers = {
     Accept: 'application/vnd.github+json',
     'User-Agent': 'CHE-Mobile-Update',
-    'X-GitHub-Api-Version': '2026-03-10',
+    'X-GitHub-Api-Version': '2022-11-28',
   };
   if (env.CHE_GITHUB_TOKEN) headers.Authorization = `Bearer ${env.CHE_GITHUB_TOKEN}`;
   return headers;
@@ -242,7 +242,6 @@ export async function handleMobileUpdateRequest(request, env = {}, fetcher = fet
     return json({
       ok: false,
       detail: 'CHE update delivery is temporarily unavailable. The previous working build remains available.',
-      error: String(error?.message || error).slice(0, 300),
     }, 503, 'no-store');
   }
 }
