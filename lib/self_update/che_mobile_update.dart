@@ -377,7 +377,7 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
                     'Latest full build: ${latest.version} · build ${latest.buildNumber}'),
               if (latest?.sha256.isNotEmpty == true)
                 Text(
-                  'Verified SHA-256: ${latest!.sha256.substring(0, latest.sha256.length.clamp(0, 16))}…',
+                  'Verified SHA-256: ${latest!.sha256.substring(0, (latest.sha256.length < 16 ? latest.sha256.length : 16))}…',
                   semanticsLabel: 'The latest IPA has a SHA 256 checksum.',
                 ),
               if (_error.isNotEmpty && !_loading) ...[
