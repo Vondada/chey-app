@@ -52,7 +52,9 @@ Codemagic:
 10. Publishes the Release only after verification.
 
 A failed build or failed checksum never replaces the last-known-good public
-release.
+release. Codemagic's post-publish hook records a `CHE iPhone update` commit
+status even after a failed build, so CHE can say that the newest attempt failed
+while preserving the previous verified IPA.
 
 ## Stable Worker URLs
 
@@ -94,8 +96,10 @@ Environment group `che_ship`:
 - `SHOREBIRD_TOKEN` — Secret. Enables fast OTA updates and Shorebird full
   release baselines.
 - `GITHUB_TOKEN` — Secret. Fine-grained token scoped to
-  `Vondada/chey-app`, with **Contents: Read and write**. It is used only by
-  Codemagic to create verified GitHub Releases.
+  `Vondada/chey-app`, with **Contents: Read and write** and
+  **Commit statuses: Read and write**. It is used only by Codemagic to create
+  verified GitHub Releases and report whether the newest mobile build passed
+  or failed.
 - `CHE_AGENT_URL` — optional. Defaults to the production CHE Worker.
 
 Never put these values in Flutter source, release notes, or the IPA metadata.
