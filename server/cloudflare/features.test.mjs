@@ -287,7 +287,10 @@ test('AI router falls through free engines when Cloudflare quota is used up', as
   assert.deepEqual(await wrapped.AI.run('@cf/black-forest-labs/flux-1-schnell', { prompt: 'x' }), { image: '@cf/black-forest-labs/flux-1-schnell' });
   await assert.rejects(
     routeText({ CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { throw new Error('4006 neurons'); } } }, 'm', input, fetcher),
-    (error) => error.quota === true && /GROQ_API_KEY/.test(error.message),
+    (error) => error.quota === true
+      && error.retryable === true
+      && /working free AI provider key/i.test(error.message)
+      && !/All AI engines failed/i.test(error.message),
   );
 
   // Auth-required services must never be treated as anonymous fallbacks.
