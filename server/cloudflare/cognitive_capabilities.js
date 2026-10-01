@@ -4,8 +4,9 @@
 // re-classified here so CHE can discover and use obvious capabilities without
 // making the owner know model names, tools, or magic phrases.
 
-import { buildCapabilityRegistry } from './che_maturity.js';
+import { buildCapabilityRegistry, CAPABILITY_CATALOG } from './che_maturity.js';
 import { registryView } from './provider_registry.js';
+import { vectorMemoryReadiness } from './vector_memory.js';
 
 function text(value) {
   return String(value || '').toLowerCase();
@@ -99,13 +100,19 @@ export function runtimeCapabilityRegistry(env, data = {}) {
   const hasVision = Boolean(env.CHE_MULTIMODAL_URL || env.GEMINI_API_KEY) || providerCaps.has('vision');
   const hasImage = Boolean(env.CHE_IMAGE_GEN_URL || env.AI || env.GEMINI_API_KEY || env.OPENAI_API_KEY || env.CHE_OPENAI_API_KEY) || providerCaps.has('image_generation');
   const hasVideo = Boolean(env.CHE_VIDEO_GEN_URL || env.GEMINI_API_KEY) || providerCaps.has('video_generation');
-  const hasEmbedding = providerCaps.has('embeddings') || Boolean(env.CHE_VECTOR_URL || env.CHE_POSTGRES_URL || env.DATABASE_URL);
+  const vectorReady = vectorMemoryReadiness(env);
+  const hasEmbedding = vectorReady.configured || providerCaps.has('embeddings');
 
   const runtime = {
     chat: { available: hasText, tool: 'model_router', providers: providers.filter((p) => p.capabilities.includes('text')).map((p) => p.id) },
     memory: { available: true, tool: 'durable_memory' },
     owner_memory: { available: true, tool: 'durable_memory' },
-    semantic_memory: { available: hasEmbedding, configured: hasEmbedding, tool: 'vector_rag' },
+    semantic_memory: {
+      available: hasEmbedding,
+      configured: hasEmbedding,
+      tool: 'vector_rag',
+      limitations: hasEmbedding ? '' : 'Connect CHE_PGVECTOR_REST_URL + CHE_PGVECTOR_TOKEN and a Workers AI embedding engine.',
+    },
     knowledge_graph: { available: true, tool: 'brain_graph' },
     files: { available: true, tool: 'che_library' },
     browser: { available: true, tool: 'che_browser' },
@@ -134,8 +141,19 @@ export function runtimeCapabilityRegistry(env, data = {}) {
     stripe: { available: Boolean(env.STRIPE_SECRET_KEY || env.CHE_PAYMENTS_URL), configured: Boolean(env.STRIPE_SECRET_KEY || env.CHE_PAYMENTS_URL), tool: 'stripe' },
   };
 
+  const completeRuntime = Object.fromEntries(
+    CAPABILITY_CATALOG.map((spec) => [
+      spec.id,
+      runtime[spec.id] || {
+        available: false,
+        configured: false,
+        limitations: 'No active CHE runtime path is configured for this capability.',
+      },
+    ]),
+  );
+
   return {
-    capabilities: buildCapabilityRegistry(runtime),
+    capabilities: buildCapabilityRegistry(completeRuntime),
     providers,
     automatic_selection: true,
     owner_does_not_need_model_names: true,
