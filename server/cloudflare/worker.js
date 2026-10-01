@@ -2993,23 +2993,25 @@ export class CheState extends DurableObject {
 
       // ─── Art Studio media (real images, versions, honest upscaling) ────
       if (path === '/api/media' && request.method === 'GET') {
+        const paidMedia = /^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim());
+        const imageEngine = this.env.CHE_IMAGE_GEN_URL
+          ? 'connector'
+          : (paidMedia && (this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY))
+            ? 'openai-gpt-image'
+            : this.env.AI
+              ? 'workers_ai'
+              : (paidMedia && this.env.GEMINI_API_KEY) ? 'gemini-image' : 'none';
+        const videoEngine = this.env.CHE_VIDEO_GEN_URL
+          ? 'connector'
+          : (paidMedia && this.env.GEMINI_API_KEY) ? 'gemini-omni' : 'none';
         return json({
           items: await listMedia(this.ctx.storage),
-          engine: this.env.CHE_IMAGE_GEN_URL
-            ? 'connector'
-            : (this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY)
-              ? 'openai-gpt-image'
-              : this.env.AI
-                ? 'workers_ai'
-                : this.env.GEMINI_API_KEY ? 'gemini-image' : 'none',
-          image_engine: this.env.CHE_IMAGE_GEN_URL
-            ? 'connector'
-            : (this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY)
-              ? 'openai-gpt-image'
-              : this.env.AI
-                ? 'workers_ai'
-                : this.env.GEMINI_API_KEY ? 'gemini-image' : 'none',
-          video_engine: this.env.CHE_VIDEO_GEN_URL ? 'connector' : this.env.GEMINI_API_KEY ? 'gemini-omni' : 'none',
+          engine: imageEngine,
+          image_engine: imageEngine,
+          video_engine: videoEngine,
+          paid_media_enabled: paidMedia,
+          paid_image_available: Boolean(this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY || this.env.GEMINI_API_KEY),
+          paid_video_available: Boolean(this.env.GEMINI_API_KEY),
           upscaler: Boolean(this.env.CHE_UPSCALE_URL),
         });
       }
