@@ -21,11 +21,24 @@ PY
 VERSION="${PUBSPEC_VERSION% *}"
 BASE_BUILD="${PUBSPEC_VERSION#* }"
 COMMIT="${CM_COMMIT:-${GIT_COMMIT:-$(git rev-parse HEAD)}}"
-CM_SEQ="${BUILD_NUMBER:-${CM_BUILD_NUMBER:-0}}"
+# PROJECT_BUILD_NUMBER is Codemagic's app-level monotonic counter. Prefer it
+# over workflow-local counters so SideStore versions remain unique even when
+# full and automatic workflows alternate.
+CM_SEQ="${PROJECT_BUILD_NUMBER:-${BUILD_NUMBER:-${CM_BUILD_NUMBER:-0}}}"
 if ! [[ "$CM_SEQ" =~ ^[0-9]+$ ]]; then CM_SEQ=0; fi
-# Keep every full cloud build monotonically distinct from the checked-in build.
-FULL_BUILD=$((BASE_BUILD * 100000 + CM_SEQ))
-if (( CM_SEQ == 0 )); then FULL_BUILD=$((BASE_BUILD * 100000 + 1)); fi
+if (( CM_SEQ == 0 )); then CM_SEQ=1; fi
+
+IFS='.' read -r VERSION_MAJOR VERSION_MINOR VERSION_PATCH <<<"$VERSION"
+if ! [[ "$VERSION_MAJOR" =~ ^[0-9]+$ && "$VERSION_MINOR" =~ ^[0-9]+$ && "$VERSION_PATCH" =~ ^[0-9]+$ ]]; then
+  echo "CHE pubspec version must be numeric X.Y.Z for iPhone releases." >&2
+  exit 2
+fi
+
+# SideStore's current source schema has one public version field and no separate
+# buildVersion field. Give every full IPA a unique three-part marketing version
+# that also goes into CFBundleShortVersionString, so SideStore can detect it.
+FULL_VERSION="${VERSION_MAJOR}.${VERSION_MINOR}.$((VERSION_PATCH * 1000000 + CM_SEQ))"
+FULL_BUILD=$((BASE_BUILD * 1000000 + CM_SEQ))
 AGENT_URL="${CHE_AGENT_URL:-https://chey-app.henryjavoni.workers.dev}"
 IPA="build/ios/ipa/CHE-unsigned.ipa"
 META="build/ios/ipa/CHE-update.json"
@@ -73,7 +86,7 @@ install_shorebird() {
 
 dart_defines=(
   "--dart-define=CHE_AGENT_URL=$AGENT_URL"
-  "--dart-define=CHE_APP_VERSION=$VERSION"
+  "--dart-define=CHE_APP_VERSION=$FULL_VERSION"
   "--dart-define=CHE_BUILD_NUMBER=$FULL_BUILD"
   "--dart-define=CHE_BUILD_COMMIT=$COMMIT"
 )
@@ -104,15 +117,15 @@ build_full() {
   rm -rf build/ios/ipa
   if [[ -n "${SHOREBIRD_TOKEN:-}" && -f shorebird.yaml ]] && install_shorebird; then
     echo "Creating Shorebird iOS release baseline..."
-    if shorebird release ios --no-codesign --build-name="$VERSION" --build-number="$FULL_BUILD" -- "${dart_defines[@]}"; then
+    if shorebird release ios --no-codesign --build-name="$FULL_VERSION" --build-number="$FULL_BUILD" -- "${dart_defines[@]}"; then
       shorebird_base=true
     else
       echo "Shorebird release failed; building a normal unsigned IPA instead." >&2
-      flutter build ios --release --no-codesign         "--build-name=$VERSION" "--build-number=$FULL_BUILD" "${dart_defines[@]}"
+      flutter build ios --release --no-codesign         "--build-name=$FULL_VERSION" "--build-number=$FULL_BUILD" "${dart_defines[@]}"
     fi
   else
     echo "Shorebird is not configured; building a normal unsigned IPA."
-    flutter build ios --release --no-codesign       "--build-name=$VERSION" "--build-number=$FULL_BUILD" "${dart_defines[@]}"
+    flutter build ios --release --no-codesign       "--build-name=$FULL_VERSION" "--build-number=$FULL_BUILD" "${dart_defines[@]}"
   fi
   package_ipa
   publish_release "$shorebird_base"
@@ -177,11 +190,11 @@ publish_release() {
   local sha size tag notes escaped_json release_json release_id upload_url
   sha="$(shasum -a 256 "$IPA" | awk '{print $1}')"
   size="$(stat -f%z "$IPA" 2>/dev/null || stat -c%s "$IPA")"
-  tag="che-ios-v${VERSION}-b${FULL_BUILD}"
+  tag="che-ios-v${FULL_VERSION}-b${FULL_BUILD}"
   notes="$(git log -1 --pretty=%B | head -c 3000)"
   mkdir -p "$(dirname "$META")"
 
-  python3 - "$META" "$VERSION" "$FULL_BUILD" "$COMMIT" "$sha" "$size" "$shorebird_base" "$tag" <<'PY'
+  python3 - "$META" "$FULL_VERSION" "$FULL_BUILD" "$COMMIT" "$sha" "$size" "$shorebird_base" "$tag" <<'PY'
 import json, sys
 path, version, build, commit, sha, size, shorebird, tag = sys.argv[1:]
 with open(path, 'w') as f:
@@ -205,7 +218,7 @@ PY
   fi
 
   release_json="$(mktemp)"
-  python3 - "$release_json" "$tag" "$COMMIT" "$VERSION" "$FULL_BUILD" "$sha" "$size" "$shorebird_base" "$notes" <<'PY'
+  python3 - "$release_json" "$tag" "$COMMIT" "$FULL_VERSION" "$FULL_BUILD" "$sha" "$size" "$shorebird_base" "$notes" <<'PY'
 import json, sys
 path, tag, commit, version, build, sha, size, shorebird, notes = sys.argv[1:]
 body = (notes.strip() or f"CHE iPhone build {version} ({build}).") + "\n\n" + """<!-- CHE-META
