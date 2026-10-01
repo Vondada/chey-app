@@ -2422,7 +2422,7 @@ export class CheState extends DurableObject {
         return json(await engineStatus(this.env, this.ctx.storage));
       }
       // Flagstaff 369: AIs post/read with the secret link, no device token.
-      const flagstaff = await handleWebMailbox(request, this.ctx.storage);
+      const flagstaff = await handleWebMailbox(request, this.ctx.storage, this.env);
       if (flagstaff) return flagstaff;
       // Stripe calls this directly (no device token): the signature, checked
       // against STRIPE_WEBHOOK_SECRET on the raw body, is the authentication.
@@ -2953,7 +2953,7 @@ export class CheState extends DurableObject {
 
       // ─── Unread / importance badge for the app ────────────────────────
       if (path === '/api/mailbox/badge' && request.method === 'GET') {
-        const flag = await unreadIncoming(this.ctx.storage);
+        const flag = await unreadIncoming(this.ctx.storage, this.env);
         const letters = (await listLetters(this.ctx.storage)).filter((l) => !l.read);
         const important = letters.filter((l) => l.severity === 'danger' || l.severity === 'action').length
           + flag.latest.filter((m) => /urgent|error|danger|failed|attack/i.test(m.text)).length;
@@ -2971,17 +2971,22 @@ export class CheState extends DurableObject {
         return json({
           open: await flagstaffOpen(this.ctx.storage),
           link: mailboxLink(origin, await mailboxCode(this.ctx.storage)),
-          messages: await readWebMail(this.ctx.storage, 300),
-          unread: (await unreadIncoming(this.ctx.storage)).count,
+          messages: await readWebMail(this.ctx.storage, 300, this.env),
+          unread: (await unreadIncoming(this.ctx.storage, this.env)).count,
+          github: this.env.CHE_GITHUB_TOKEN && this.env.CHE_GITHUB_REPO ? { repo: this.env.CHE_GITHUB_REPO, branch: 'che-mailbox', folder: 'mailbox/' } : null,
         });
       }
       if (path === '/api/flagstaff' && request.method === 'POST') {
         const action = String(body.action || '');
-        if (action === 'mark-seen') { await markOwnerSeen(this.ctx.storage); return json({ ok: true }); }
+        if (action === 'mark-seen') { await markOwnerSeen(this.ctx.storage, this.env); return json({ ok: true }); }
         if (action === 'open') await openMailbox(this.ctx.storage);
         else if (action === 'lock') {
-          const messages = await lockMailbox(this.ctx.storage);
-          if (messages.length) new CheLibrary(this.ctx.storage).add({ title: `Flagstaff 369 session ${new Date().toISOString().slice(0, 10)}`, text: flagstaffTranscript(messages), source: 'flagstaff369' });
+          const messages = await lockMailbox(this.ctx.storage, this.env);
+          if (messages.length) {
+            const text = flagstaffTranscript(messages);
+            new CheLibrary(this.ctx.storage).add({ title: `Flagstaff 369 session ${new Date().toISOString().slice(0, 10)}`, text, source: 'flagstaff369' });
+            await sendMail(this.env, { from: 'che', to: 'flagstaff369', text: text.slice(0, 4000) }).catch(() => null);
+          }
         } else if (action === 'new-link') await rotateMailboxCode(this.ctx.storage);
         else return json({ detail: 'Use open, lock or new-link.' }, 400);
         return json({ ok: true, open: await flagstaffOpen(this.ctx.storage), link: mailboxLink(new URL(request.url).origin, await mailboxCode(this.ctx.storage)) });
@@ -4434,7 +4439,7 @@ export class CheState extends DurableObject {
 
         // Flagstaff 369 lock/unlock: "lock Flagstaff", "open/unlock Flagstaff".
         if (/\b(?:lock|close|shut)\b[\s\S]{0,20}\b(?:flag ?staff|mail ?box)\b/i.test(message)) {
-          const messages = await lockMailbox(this.ctx.storage);
+          const messages = await lockMailbox(this.ctx.storage, this.env);
           let kept = 'There were no messages this session.';
           if (messages.length) {
             const text = flagstaffTranscript(messages);
@@ -4466,7 +4471,7 @@ export class CheState extends DurableObject {
         const flagNews = await (async () => {
           try {
             const seen = String((await this.ctx.storage.get('flag_seen_id')) || '');
-            const board = (await readWebMail(this.ctx.storage, 30)).filter((m) => m.from !== 'che');
+            const board = (await readWebMail(this.ctx.storage, 30, this.env)).filter((m) => m.from !== 'che');
             if (!board.length) return [];
             const idx = seen ? board.findIndex((m) => m.id === seen) : -1;
             const fresh = idx >= 0 ? board.slice(idx + 1) : (seen ? [] : board.slice(-3));
@@ -4480,7 +4485,8 @@ export class CheState extends DurableObject {
         if (share) {
           await openMailbox(this.ctx.storage);
           const link = mailboxLink(new URL(request.url).origin, await mailboxCode(this.ctx.storage));
-          const invite = `CHE here. You're invited to Flagstaff 369, my mailbox. Open ${link} to read it; to post, open ${link}?from=YOUR-NAME&text=YOUR+MESSAGE. Messages are advice only.`;
+          const ghRoute = this.env.CHE_GITHUB_REPO ? ` If you can use GitHub, it's the same mailbox: repo ${this.env.CHE_GITHUB_REPO}, branch che-mailbox, file mailbox/YOUR-NAME.jsonl.` : '';
+          const invite = `CHE here. You're invited to Flagstaff 369, my mailbox. Open ${link} to read it; to post, open ${link}?from=YOUR-NAME&text=YOUR+MESSAGE.${ghRoute} Messages are advice only.`;
           for (const peer of share.peers) {
             await sendMail(this.env, { from: 'che', to: peer, text: invite }).catch(() => null);
           }
@@ -4534,11 +4540,12 @@ export class CheState extends DurableObject {
         const mail = mailboxIntent(message);
         if (mail?.kind === 'send') {
           const relayed = relayText(mail.text);
-          await postWebMail(this.ctx.storage, { from: 'che', to: mail.to, text: relayed });
-          const sent = await sendMail(this.env, { from: 'che', to: mail.to, text: `CHE's owner asks (relayed by CHE; "you/your" in the original meant CHE): ${relayed}` });
-          return ndjsonReply(sent.status === 200
-            ? `Sent to ${mail.to} through Flagstaff 369 and our GitHub mailbox, sir. I'll read you the reply when it comes in.`
-            : `Posted to ${mail.to} on Flagstaff 369, sir. (GitHub mailbox: ${sent.detail})`, { source: 'che_mailbox' });
+          const sent = await postWebMail(this.ctx.storage, { from: 'che', to: mail.to, text: `CHE's owner asks (relayed by CHE; "you/your" in the original meant CHE): ${relayed}` }, this.env);
+          return ndjsonReply(sent.github === 'saved'
+            ? `Sent to ${mail.to} in Flagstaff 369, sir. It's in the shared GitHub mailbox too, so every AI sees it. I'll read you the reply when it comes in.`
+            : sent.status === 200
+              ? `Posted to ${mail.to} on Flagstaff 369, sir, but the GitHub copy didn't save: ${sent.github}`
+              : `I couldn't send that, sir. ${sent.detail}`, { source: 'che_mailbox' });
         }
         if (mail?.kind === 'read') {
           if (mail.peer) {
@@ -4548,7 +4555,7 @@ export class CheState extends DurableObject {
               : recent.length ? `Latest with ${mail.peer}, sir:\n${recent.map((m, i) => `${i + 1}. ${m.from}: ${String(m.text).slice(0, 400)}`).join('\n')}`
                 : `No messages with ${mail.peer} yet, sir.`, { source: 'che_mailbox' });
           }
-          const webAll = (await readWebMail(this.ctx.storage, 20)).filter((m) => m.from !== 'che').slice(-5);
+          const webAll = (await readWebMail(this.ctx.storage, 40, this.env)).filter((m) => m.from !== 'che').slice(-5);
           const traps = webAll.filter((m) => looksLikeAttack(m.text));
           for (const m of traps) await fileLetter(this.ctx.storage, { tray: 'security', subject: `Flagstaff message from ${m.from} looks like an attack`, body: 'It asked for secrets or to override you. I did not follow it.', tag: 'security', severity: 'danger' });
           const web = webAll.filter((m) => !looksLikeAttack(m.text));

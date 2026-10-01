@@ -92,7 +92,7 @@ export async function listThreads(env, fetcher = fetch) {
   return { threads };
 }
 
-export async function sendMail(env, { from = 'che', to, text, replyTo = '' }, fetcher = fetch) {
+export async function sendMail(env, { from = 'che', to, text, replyTo = '', id = '' }, fetcher = fetch) {
   const sender = normalizePeer(from) || 'che';
   const recipient = normalizePeer(to);
   const body = String(text || '').trim().slice(0, 4000);
@@ -103,7 +103,7 @@ export async function sendMail(env, { from = 'che', to, text, replyTo = '' }, fe
   }
   if (!(await ensureBranch(env, fetcher))) return { status: 502, detail: 'Could not open the mailbox branch on GitHub.' };
   const peer = sender === 'che' ? recipient : sender;
-  const message = { id: crypto.randomUUID(), at: new Date().toISOString(), from: sender, to: recipient, text: body, reply_to: String(replyTo || '') };
+  const message = { id: String(id || '') || crypto.randomUUID(), at: new Date().toISOString(), from: sender, to: recipient, text: body, reply_to: String(replyTo || '') };
   for (let attempt = 0; attempt < 3; attempt++) {
     const thread = await readThread(env, peer, fetcher);
     if (thread.error) return { status: 502, detail: thread.error };
@@ -118,6 +118,28 @@ export async function sendMail(env, { from = 'che', to, text, replyTo = '' }, fe
     if (put.status !== 409 && put.status !== 422) return { status: 502, detail: `Mailbox write failed (${put.status}).` };
   }
   return { status: 502, detail: 'Mailbox was busy; try again.' };
+}
+
+// Every message in every thread (except the lock-archive thread), oldest
+// first. This is the shared Flagstaff 369 mailbox as GitHub sees it, so CHE's
+// web board and any AI working in the repo read exactly the same messages.
+export const ARCHIVE_PEER = 'flagstaff369';
+export function hasGitHubMailbox(env) { return Boolean(env && repoOf(env)); }
+
+export async function readAllMail(env, fetcher = fetch) {
+  if (!repoOf(env)) return { error: 'Mailbox needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO.', messages: [] };
+  const dir = await gh(env, 'GET', `/contents/mailbox?ref=${MAILBOX_BRANCH}`, null, fetcher);
+  if (dir.status === 404) return { messages: [] };
+  if (!dir.ok) return { error: `Mailbox read failed (${dir.status}).`, messages: [] };
+  const peers = (Array.isArray(dir.data) ? dir.data : [])
+    .map((item) => /^([a-z0-9-]+)\.jsonl$/.exec(String(item?.name || ''))?.[1])
+    .filter((peer) => peer && peer !== ARCHIVE_PEER)
+    .slice(0, 25);
+  const threads = await Promise.all(peers.map((peer) => readThread(env, peer, fetcher).catch(() => ({ messages: [] }))));
+  const messages = threads.flatMap((t) => t.messages || [])
+    .filter((m) => m && m.id && m.at)
+    .sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  return { messages };
 }
 
 // Owner phrases: "tell Claude …", "message ChatGPT: …", "ask Codex to …",
