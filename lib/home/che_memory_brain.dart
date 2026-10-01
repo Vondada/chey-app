@@ -1,7 +1,7 @@
 // Memory Brain — neural constellation (mockup 01).
-// Every learned thought is a glowing teal dot. NO capacity limit on dots.
-// Related memories connect with thin lines. Tap a dot → Memory detail sheet.
-// Cheap CustomPaint + InteractiveViewer (no WebView / 3D).
+// Every learned thought is a category-colored luminous orb. NO capacity limit.
+// Related memories connect like neural branches. Tap an orb for provenance.
+// Cheap pseudo-3D CustomPaint + InteractiveViewer; no heavy WebView scene.
 
 import 'dart:math' as math;
 
@@ -43,6 +43,7 @@ class CheMemoryDot {
 /// Build unlimited dots from Worker memories / notes / learning — never capped.
 List<CheMemoryDot> cheBuildMemoryDots({
   required List<String> savedMemories,
+  List<Map<String, dynamic>> memoryRecords = const [],
   required List<Map<String, dynamic>> memoryNotes,
   required List<Map<String, dynamic>> learnedPersonality,
   required List<String> learnedKnowledge,
@@ -53,16 +54,39 @@ List<CheMemoryDot> cheBuildMemoryDots({
 
   final out = <CheMemoryDot>[];
   var i = 0;
+  final structuredTexts = <String>{};
+  for (final record in memoryRecords) {
+    if (record['active'] == false) continue;
+    final body = '${record['text'] ?? ''}'.trim();
+    if (body.isEmpty) continue;
+    structuredTexts.add(body.toLowerCase());
+    final title = '${record['title'] ?? body}'.trim();
+    out.add(CheMemoryDot(
+      id: '${record['id'] ?? 'mem-record-$i'}',
+      title: _shortTitle(title),
+      body: body,
+      category: '${record['category'] ?? 'Memory'}',
+      tokens: _tokens(body),
+      at: DateTime.tryParse('${record['created_at'] ?? ''}'),
+      source: '${record['source'] ?? 'Owner memory'}',
+      confidence: (record['confidence'] as num?)?.toDouble(),
+      lastVerifiedAt: DateTime.tryParse('${record['last_verified_at'] ?? record['created_at'] ?? ''}'),
+      scope: '${record['scope'] ?? 'owner'}',
+    ));
+    i++;
+  }
+  // Older installs stored owner memories as strings only. Keep showing those,
+  // but do not duplicate a memory that now has structured provenance.
   for (final m in savedMemories) {
     final t = m.trim();
-    if (t.isEmpty) continue;
+    if (t.isEmpty || structuredTexts.contains(t.toLowerCase())) continue;
     out.add(CheMemoryDot(
-      id: 'mem-$i',
+      id: 'legacy-mem-$i',
       title: _shortTitle(t),
       body: t,
       category: 'Memory',
       tokens: _tokens(t),
-      source: 'Owner memory',
+      source: 'Legacy owner memory',
       scope: 'owner',
     ));
     i++;
