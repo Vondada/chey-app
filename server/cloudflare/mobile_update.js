@@ -144,6 +144,24 @@ async function releases(env, fetcher = fetch) {
     : [];
 }
 
+async function latestMobileBuildAttempt(env, fetcher = fetch) {
+  try {
+    const status = await githubJson('/commits/main/status', env, fetcher);
+    const item = (status?.statuses || []).find(
+      (entry) => entry?.context === 'CHE iPhone update',
+    );
+    if (!item) return null;
+    return {
+      state: String(item.state || 'unknown'),
+      commit_sha: String(status.sha || ''),
+      updated_at: String(item.updated_at || item.created_at || ''),
+      detail: String(item.description || '').slice(0, 180),
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
 async function releaseByTag(tag, env, fetcher = fetch) {
   if (!tag || tag === 'latest') return (await releases(env, fetcher))[0] || null;
   if (!/^che-ios-v[A-Za-z0-9.+_-]+-b[0-9]+$/.test(tag)) return null;
@@ -208,14 +226,25 @@ export async function handleMobileUpdateRequest(request, env = {}, fetcher = fet
   }
   try {
     if (path === '/api/update/latest') {
-      const release = (await releases(env, fetcher))[0];
+      const [releaseList, latestAttempt] = await Promise.all([
+        releases(env, fetcher),
+        latestMobileBuildAttempt(env, fetcher),
+      ]);
+      const release = releaseList[0];
       if (!release) {
         return json({
           ok: false,
-          detail: 'No successful CHE mobile release is published yet. The installed build remains unchanged.',
+          detail: latestAttempt?.state === 'failure'
+            ? 'The newest CHE mobile build failed before a verified IPA was published. Your installed build is unchanged.'
+            : 'No successful CHE mobile release is published yet. The installed build remains unchanged.',
+          latest_attempt: latestAttempt,
         }, 503, 'no-store');
       }
-      return json({ ok: true, ...releaseToUpdate(release, url.origin) });
+      return json({
+        ok: true,
+        ...releaseToUpdate(release, url.origin),
+        latest_attempt: latestAttempt,
+      });
     }
     if (path === '/api/update/history') {
       const items = (await releases(env, fetcher))
