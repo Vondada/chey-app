@@ -14,15 +14,15 @@ class CheColors {
   CheColors._();
 
   static const Color bg = Color(0xFF030607); // kit bg
-  static const Color bgDeep = Color(0xFF030607);
+  static const Color bgDeep = Color(0xFF030607); // alias for legacy screens
   static const Color panel = Color(0xFF0A1214); // kit surface
   static const Color panelGlass = Color(0xCC101B1E);
   static const Color accent = Color(0xFF34E0B8); // logo main
   static const Color accentDim = Color(0xFF0C9A7E); // logo deep
   static const Color violet = Color(0xFF8B7BFF);
-  static const Color amber = Color(0xFFFFC876);
+  static const Color amber = Color(0xFFFFC876); // alias for legacy screens
   static const Color rose = Color(0xFFFF7E9B);
-  static const Color textPrimary = Color(0xFFEAF4F2);
+  static const Color textPrimary = Color(0xFFEAF4F2); // alias for legacy screens
   static const Color textDim = Color(0xFF8FA4A1);
 
   static const List<Color> buildingPalette = [
@@ -137,8 +137,14 @@ class _CheFloatState extends State<CheFloat>
 
   @override
   void dispose() {
-    _controller.dispose();
-    super.dispose();
+    _controller.removeListener(_listener);
+    _controller.stop();
+    _controller.value = 0;
+    superDispose: super;
+  }
+
+  void _listener() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -160,7 +166,7 @@ class _CheFloatState extends State<CheFloat>
 /// A pulsing radial glow ring, used behind the CHE presence orb to show
 /// listening/speaking/thinking energy without needing new packages.
 class ChePulse extends StatefulWidget {
-  const ChePulse({
+  const ChePulse([
     super.key,
     required this.color,
     this.size = 160,
@@ -184,8 +190,14 @@ class _ChePulseState extends State<ChePulse>
 
   @override
   void dispose() {
-    _controller.dispose();
-    super.dispose();
+    _controller.removeListener(_listener);
+    _controller.stop();
+    _controller.value = 0;
+    superDispose: super;
+  }
+
+  void _listener() {
+    if (mounted) setState(() {});
   }
 
   @override
