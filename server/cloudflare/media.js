@@ -222,7 +222,16 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
     try { generated = await engine.run(); record.engine = engine.id; break; }
     catch (error) { errors.push(`${engine.id}: ${error.message}`); console.log('CHE image error:', engine.id, error.message); }
   }
-  if (!generated) return { status: engines.length ? 502 : 503, detail: `All image engines failed (${errors.join(' | ') || 'none configured'}).` };
+  if (!generated) {
+    const paidReady = Boolean(openAiKey(env) || env.GEMINI_API_KEY) && !paidMediaEnabled(env);
+    return {
+      status: engines.length ? 502 : paidReady ? 402 : 503,
+      detail: paidReady
+        ? 'HD image generation is connected but disabled until the owner explicitly enables paid media.'
+        : `All image engines failed (${errors.join(' | ') || 'none configured'}).`,
+      requires_owner_confirmation: paidReady,
+    };
+  }
   if (generated.url) record.url = generated.url;
   else {
     record.mime_type = generated.mime_type;
