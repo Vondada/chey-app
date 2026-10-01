@@ -221,7 +221,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   void _updateHomeState(VoidCallback callback) => setState(callback);
 
   /// setState for members split into lib/home_state/*.dart extensions.
-  String _statusBanner = 'Ready, sir. Type or speak a request.';
+  String _statusBanner = 'Ready';
   String _lastStatusKey = '';
   bool _autonomy = true;
   List<Map<String, dynamic>> _actionApprovals = [];
@@ -245,11 +245,11 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   void _set(VoidCallback fn) {
     if (!mounted) return;
     setState(fn);
-    final status = !_autonomy ? 'Standing by. Queued work is paused.'
-        : _isSending ? 'Working on your request.'
-        : _isSpeaking ? 'CHE is speaking. The reply is also in the conversation.'
-        : isListening ? 'Listening. You can also type.'
-        : cheSleeping ? 'Voice standby. Say Chay or type a request.' : 'Ready, sir. Type or speak a request.';
+    final status = !_autonomy ? 'Standing by'
+        : _isSending ? 'Working'
+        : _isSpeaking ? 'Speaking'
+        : isListening ? 'Listening'
+        : cheSleeping ? 'Voice standby' : 'Ready';
     if (status != _lastStatusKey) {
       _lastStatusKey = status;
       _statusBanner = status;
@@ -381,6 +381,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   // Keyboard on/off: off by default because the owner mostly talks to CHE.
   bool _typingOn = false;
+  bool _keyboardWasVisible = false;
 
   // Voice target for “Show me Nova’s code” in the Workshop.
   String? _workshopFocusAgent;
@@ -856,6 +857,11 @@ VOICE / VIBE TARGET
 - Keep humor quick and natural while using practical common sense.
 - The actual audio voice depends on the connected speech engine. This profile
   controls wording, rhythm and personality.
+- Voice input/output state is separate from task execution. A TTS, microphone,
+  wake-word or voice-cooldown problem may limit speech, but it must never block
+  unrelated text, Office, browser, file, research or tool work.
+- Never rerun or resend an AI task because TTS failed. Preserve the real task
+  result, then use a fallback voice or stay silent.
 
 LEARNING AND GROWTH
 - Learn stable, useful, non-sensitive preferences and behavior patterns from
@@ -1066,6 +1072,25 @@ OWNER AGENCY
   // foreground again and, if that happened because of the Shortcut, jump
   // straight into an open, awake conversation instead of a silent screen.
   @override
+  void didChangeMetrics() {
+    if (!mounted || kIsWeb) return;
+    final views = WidgetsBinding.instance.platformDispatcher.views;
+    if (views.isEmpty) return;
+    final visible = views.first.viewInsets.bottom > 0;
+    if (_keyboardWasVisible && !visible && _typingOn) {
+      _typingOn = false;
+      _composerFocus.unfocus();
+      unawaited(
+        SharedPreferences.getInstance().then(
+          (prefs) => prefs.setBool('che_typing_on', false),
+        ),
+      );
+      setState(() {});
+    }
+    _keyboardWasVisible = visible;
+  }
+
+  @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (kIsWeb || !mounted) return;
 
@@ -1201,9 +1226,19 @@ OWNER AGENCY
           label: _statusBanner,
           child: Container(
             width: double.infinity,
-            color: const Color(0xFF163B36),
-            padding: const EdgeInsets.all(8),
-            child: Text(_statusBanner, style: const TextStyle(fontSize: 18, color: Colors.white)),
+            color: const Color(0xFF102D29),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+            child: Text(
+              _statusBanner,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 13,
+                height: 1.15,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
           ),
         ),
         if (_actionApprovals.isNotEmpty)
@@ -1350,7 +1385,9 @@ OWNER AGENCY
             onStop: _stopReply,
             onAttach: _openMultimodalPicker,
             onMic: toggleListening,
-            micActive: _realtimeVoice?.connected == true || isListening || openConversation,
+            micActive: _realtimeVoice?.connected == true
+                ? _voiceSnapshot.microphoneActive
+                : isListening || _nativeIosVoiceActive,
             hint: _voiceSnapshot.phase == CheVoicePhase.userSpeaking ||
                     _voiceSnapshot.phase == CheVoicePhase.listening
                 ? 'Listening…'
@@ -1914,15 +1951,22 @@ OWNER AGENCY
           child: Column(
             children: [
               _shellStatusChrome(),
-              if (_lastVoiceEngine != null && _lastVoiceEngine!.isNotEmpty && _shellTab == 1)
-                Padding(
-                  padding: const EdgeInsets.only(top: 2, bottom: 2),
-                  child: Text(
-                    _lastVoiceEngine!,
-                    style: kit.CheType.overline.copyWith(
-                      fontSize: 9,
-                      letterSpacing: 0.8,
-                      color: kit.CheColors.textDim,
+              if (_naturalVoiceServerErrored && _shellTab == 1)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Semantics(
+                    button: true,
+                    label: 'Voice fallback. Open voice diagnostics.',
+                    child: TextButton.icon(
+                      onPressed: _openVoiceDiagnostics,
+                      icon: const Icon(Icons.info_outline_rounded, size: 13),
+                      label: const Text('Voice fallback'),
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(0, 28),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                        textStyle: kit.CheType.caption.copyWith(fontSize: 11),
+                        foregroundColor: kit.CheColors.textDim,
+                      ),
                     ),
                   ),
                 ),

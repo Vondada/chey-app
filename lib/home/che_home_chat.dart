@@ -40,7 +40,11 @@ class CheHomePresence extends StatelessWidget {
       child: Row(children: [
         Semantics(
           button: true,
-          label: 'CHE, ${orbState.label}. Tap to talk.',
+          label: orbState == CheOrbState.speaking
+              ? 'CHE is speaking. Double tap to interrupt.'
+              : orbState == CheOrbState.listening
+                  ? 'CHE is listening. Double tap to stop listening.'
+                  : 'CHE, ${orbState.label}. Double tap to talk.',
           child: GestureDetector(
             onTap: () {
               HapticFeedback.mediumImpact();
@@ -312,6 +316,66 @@ class CheHomeComposer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final keyboardUp = MediaQuery.viewInsetsOf(context).bottom > 0;
+
+    if (!typingOn && attachmentLabel == null) {
+      final voiceLabel = busy
+          ? 'CHE is working. Stop the current reply.'
+          : micActive
+              ? 'CHE voice is active. Stop listening or interrupt CHE.'
+              : 'CHE voice is off. Start listening.';
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(CheSpace.md, 2, CheSpace.md, CheSpace.sm),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            if (onToggleTyping != null)
+              Semantics(
+                button: true,
+                label: 'Show keyboard.',
+                excludeSemantics: true,
+                child: _ComposerIcon(
+                  icon: Icons.keyboard_rounded,
+                  tooltip: 'Show keyboard',
+                  onTap: onToggleTyping!,
+                ),
+              ),
+            const SizedBox(width: 8),
+            Semantics(
+              button: true,
+              label: voiceLabel,
+              excludeSemantics: true,
+              child: ChePressable(
+                onTap: busy ? onStop : onMic,
+                child: AnimatedContainer(
+                  duration: CheMotion.d(context, CheMotion.fast),
+                  width: 54,
+                  height: 54,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: (micActive || busy) ? CheColors.accentGradient : null,
+                    color: (micActive || busy) ? null : CheColors.surfaceHi,
+                    border: Border.all(color: CheColors.accent.withValues(alpha: 0.55)),
+                    boxShadow: (micActive || busy)
+                        ? [BoxShadow(color: CheColors.accent.withValues(alpha: 0.35), blurRadius: 18)]
+                        : null,
+                  ),
+                  child: Icon(
+                    busy
+                        ? Icons.stop_rounded
+                        : micActive
+                            ? Icons.graphic_eq_rounded
+                            : Icons.mic_rounded,
+                    size: 25,
+                    color: (micActive || busy) ? const Color(0xFF02110E) : CheColors.accent,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Padding(
       padding: EdgeInsets.fromLTRB(CheSpace.md, CheSpace.xs, CheSpace.md, keyboardUp ? CheSpace.xs : CheSpace.sm),
       child: ListenableBuilder(

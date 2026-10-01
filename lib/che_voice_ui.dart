@@ -118,11 +118,15 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
     required this.snapshot,
     required this.serverOnline,
     required this.lastServerEvent,
+    this.playbackEngine,
+    this.fallbackReason,
   });
 
   final CheVoiceSnapshot snapshot;
   final bool serverOnline;
   final String? lastServerEvent;
+  final String? playbackEngine;
+  final String? fallbackReason;
 
   @override
   Widget build(BuildContext context) {
@@ -200,6 +204,8 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
             row('Audio verified', snapshot.audioVerified ? 'Yes' : 'No'),
             row('CHE server', serverOnline ? 'Connected' : 'Not confirmed'),
             row('Last event', lastServerEvent ?? '—'),
+            row('Playback engine', playbackEngine ?? '—'),
+            row('Fallback detail', fallbackReason ?? '—'),
             row('Last interruption', snapshot.lastInterruptionReason ?? '—'),
             row(
               'Turn latency',

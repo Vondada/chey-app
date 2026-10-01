@@ -159,7 +159,9 @@ extension _CheHomeVoice on _CHEHomeState {
 
       // Native builds can keep an open foreground conversation more reliably.
       // iPhone Safari/web still requires browser-controlled microphone sessions.
-      if (!kIsWeb && available) {
+      if (!kIsWeb &&
+          available &&
+          defaultTargetPlatform != TargetPlatform.iOS) {
         openConversation = true;
         _restartListeningSoon(delay: const Duration(milliseconds: 700));
       }
@@ -413,7 +415,7 @@ extension _CheHomeVoice on _CHEHomeState {
             played = await CheNativeVoice.speakNeural(spokenText);
             if (played && mounted) {
               _set(() {
-                _lastVoiceEngine = _voiceFailReason.isEmpty ? 'iphone-neural' : 'iphone-neural (server voice failed: $_voiceFailReason)';
+                _lastVoiceEngine = 'iphone-neural';
               });
             }
           } on MissingPluginException {
@@ -428,7 +430,7 @@ extension _CheHomeVoice on _CHEHomeState {
             played = await CheNativeVoice.speakText(spokenText);
             if (played && mounted) {
               _set(() {
-                _lastVoiceEngine = _voiceFailReason.isEmpty ? 'iphone-voice' : 'iphone-voice (server voice failed: $_voiceFailReason)';
+                _lastVoiceEngine = 'iphone-voice';
               });
             }
           } on MissingPluginException {
@@ -443,11 +445,8 @@ extension _CheHomeVoice on _CHEHomeState {
           await flutterTts.setVolume(CheUiPreferences.instance.voiceVolume.clamp(0.0, 1.0));
           await flutterTts.speak(spokenText);
           if (mounted) {
-            final prior = _naturalVoiceServerErrored && _voiceFailReason.isNotEmpty
-                ? 'iphone-tts (server voice failed: $_voiceFailReason)'
-                : 'iphone-tts';
             _set(() {
-              _lastVoiceEngine = prior;
+              _lastVoiceEngine = 'iphone-tts';
             });
           }
         }
@@ -561,6 +560,9 @@ extension _CheHomeVoice on _CHEHomeState {
     );
 
     try {
+      if (speech.isListening) {
+        await speech.cancel();
+      }
       final started = await CheNativeVoice.start();
 
       if (!mounted) return;
