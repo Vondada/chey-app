@@ -183,3 +183,22 @@ test('release metadata rejects missing or mismatched GitHub SHA-256 digests', ()
   };
   assert.equal(releaseToUpdate(mismatch, 'https://che.example'), null);
 });
+
+
+test('direct downloads reject a release whose verified metadata does not match the asset digest', async () => {
+  const bad = {
+    ...release,
+    body: release.body.replace(DIGEST, 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'),
+  };
+  const response = await handleMobileUpdateRequest(
+    new Request('https://che.example/api/update/download/che-ios-v1.4.5-b1200001'),
+    {},
+    async (url) => {
+      if (String(url).includes('/releases/tags/')) {
+        return new Response(JSON.stringify(bad), { status: 200 });
+      }
+      throw new Error('unverified IPA body should never be fetched');
+    },
+  );
+  assert.equal(response.status, 404);
+});
