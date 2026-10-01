@@ -140,7 +140,7 @@ class _CheFloatState extends State<CheFloat>
     _controller.removeListener(_listener);
     _controller.stop();
     _controller.value = 0;
-    superDispose: super;
+    super.dispose();
   }
 
   void _listener() {
@@ -166,7 +166,7 @@ class _CheFloatState extends State<CheFloat>
 /// A pulsing radial glow ring, used behind the CHE presence orb to show
 /// listening/speaking/thinking energy without needing new packages.
 class ChePulse extends StatefulWidget {
-  const ChePulse([
+  const ChePulse({
     super.key,
     required this.color,
     this.size = 160,
@@ -193,7 +193,7 @@ class _ChePulseState extends State<ChePulse>
     _controller.removeListener(_listener);
     _controller.stop();
     _controller.value = 0;
-    superDispose: super;
+    super.dispose();
   }
 
   void _listener() {
