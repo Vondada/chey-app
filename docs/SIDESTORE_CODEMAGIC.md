@@ -94,7 +94,9 @@ The existing personal Codemagic app must remain connected to
 Environment group `che_ship`:
 
 - `SHOREBIRD_TOKEN` — Secret. Enables fast OTA updates and Shorebird full
-  release baselines.
+  release baselines. Use a current Shorebird API key. Legacy `login:ci`
+  credentials were only supported through September 2026, so do not rely on an
+  older CI token.
 - `GITHUB_TOKEN` — Secret. Fine-grained token scoped to
   `Vondada/chey-app`, with **Contents: Read and write** and
   **Commit statuses: Read and write**. It is used only by Codemagic to create
