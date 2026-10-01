@@ -378,6 +378,10 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   StreamSubscription<Map<String, dynamic>>? _nativeIosVoiceSub;
   bool _nativeIosVoiceActive = false;
+  // True while native iOS recognition is taking ownership of the microphone.
+  // speech_to_text callbacks can fire during cancellation; this prevents those
+  // callbacks from scheduling a competing recognizer restart.
+  bool _nativeIosVoiceStarting = false;
 
   final CheVoiceStateMachine _voiceMachine = CheVoiceStateMachine();
   final CheLocalVoiceLoop _localVoice = CheLocalVoiceLoop();
