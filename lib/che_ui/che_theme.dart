@@ -30,6 +30,13 @@ class CheColors {
   static const Color warning = Color(0xFFFFB547);
   static const Color danger = Color(0xFFFF5C7A);
 
+  // ── ALIASES (legacy names used by older screens) ───────────────────────
+  static const Color panel = surface;
+  static const Color textPrimary = text;
+  static const Color bgDeep = bg;
+  static const Color amber = warning;
+  // ───────────────────────────────────────────────────────────────────────
+
   // Section hues for the Virtual Office tiles (kept from CHE's current look).
   static const Color memory = Color(0xFF2FD6B0);
   static const Color insights = Color(0xFF8B7BFF);
