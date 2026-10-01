@@ -151,6 +151,45 @@ extension _CheHomeSend on _CHEHomeState {
   Future<bool> _handleLocalNavigation(String message) async {
     final lower = message.toLowerCase();
 
+    final updateCommand = RegExp(
+      r'^(?:(?:chay|chey|shay|che)[, ]+)?(?:update yourself|check for (?:an |any )?updates?|check (?:my )?che update|install (?:the )?che update|download (?:the )?che update)\s*[.!?]*$',
+      caseSensitive: false,
+    );
+    if (updateCommand.hasMatch(message.trim())) {
+      await speakText('Checking CHE updates now, sir.', record: false);
+      if (!mounted) return true;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => CheMobileUpdateScreen(
+            baseUrl: cheAgentBaseUrl,
+            onSpeak: (text) => speakText(text, record: false),
+          ),
+        ),
+      );
+      return true;
+    }
+    final rollbackCommand = RegExp(
+      r'^(?:(?:chay|chey|shay|che)[, ]+)?(?:roll back|rollback|go back)(?: to)? (?:the )?(?:previous|last)(?: working)? (?:che )?build\s*[.!?]*$',
+      caseSensitive: false,
+    );
+    if (rollbackCommand.hasMatch(message.trim())) {
+      await speakText(
+        'Opening CHE previous verified builds. I will ask before SideStore opens an older build, sir.',
+        record: false,
+      );
+      if (!mounted) return true;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => CheMobileUpdateScreen(
+            baseUrl: cheAgentBaseUrl,
+            onSpeak: (text) => speakText(text, record: false),
+            showHistoryInitially: true,
+          ),
+        ),
+      );
+      return true;
+    }
+
     if (RegExp(r'\b(open|show|go to)\s+(my\s+)?(memories?|brain|brain constellation)\b').hasMatch(lower)) {
       _openAssistantHub(tab: 0);
       return true;

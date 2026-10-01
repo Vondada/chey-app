@@ -1,25 +1,21 @@
-# Codemagic free-tier CI for CHE (personal account: 500 macOS M2 min/month).
-# Replaces GitHub Actions for analyze + Shorebird patch + SideStore IPA while
-# Actions is blocked by billing. Does not use GitHub Actions.
+# CHE mobile-only iPhone delivery.
+# Normal owner flow: merge to main -> Codemagic decides fast Shorebird patch vs
+# full IPA -> successful full IPA is published to GitHub Releases -> CHE Worker
+# exposes stable SideStore URLs. No Codemagic/GitHub dashboard is needed for
+# normal installs after the one-time secret setup.
 #
-# Dashboard setup (one-time):
-# 1. Sign in at https://codemagic.io with a personal account (Teams lose free minutes).
-# 2. Add app → GitHub → install Codemagic GitHub App on Vondada → select chey-app.
-# 3. Application settings → Environment variables → new group `che_ship` with:
-#      SHOREBIRD_TOKEN  (Secret) — API key from https://console.shorebird.dev
-#      CHE_AGENT_URL    (optional) — Worker base URL for dart-defines
-# 4. Ensure Workflows uses this codemagic.yaml (not Workflow Editor-only).
-# 5. Webhooks: enable for the repo so `triggering` below fires on push to main.
-# 6. Manual: Start new build → workflow `chey-shorebird` (or `chey-mobile`).
+# One-time Codemagic group `che_ship`:
+#   SHOREBIRD_TOKEN  (Secret) — optional but required for fast OTA updates
+#   GITHUB_TOKEN     (Secret) — fine-grained token for Vondada/chey-app,
+#                              Contents: read/write + Commit statuses: read/write.
+#                              Used only to publish Releases and report build status
+#   CHE_AGENT_URL    (optional) — defaults to CHE production Worker
 #
-# Shorebird notes:
-# - patch = OTA Dart update for phones already on a Shorebird release IPA.
-# - IPA artifact below is unsigned SideStore install; for a new Shorebird base
-#   release, set CM_SHOREBIRD_MODE=release on a manual build (or change default).
+# The token never enters Flutter or a release asset.
 
 workflows:
-  chey-mobile:
-    name: CHE iPhone SideStore
+  chey-pr-ipa:
+    name: CHE draft IPA validation
     instance_type: mac_mini_m2
     max_build_duration: 60
     environment:
@@ -33,15 +29,36 @@ workflows:
         - $HOME/.pub-cache
         - $HOME/Library/Caches/CocoaPods
         - $HOME/.gradle/caches
-    # Manual only: chey-shorebird already builds the same SideStore IPA on
-    # every push, so running both doubled the free build minutes used.
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: che/mobile-update-pipeline
+          include: true
+          source: true
+      cancel_previous_builds: false
     scripts:
       - name: Bootstrap native projects
         script: bash ./tool/bootstrap.sh
       - name: Enable local AI + voice tuning bridge
         script: python3 ./tool/patch_local_runtime.py
+      - name: Validate Cloudflare Worker
+        script: |
+          set -eu
+          cd server/cloudflare
+          npm ci
+          npm run check
+          npm test
+          npx wrangler deploy --dry-run
+          cd ../..
+      - name: Flutter analyze
+        script: |
+          set -eu
+          flutter pub get
+          flutter analyze --no-fatal-infos --no-fatal-warnings
       - name: Build unsigned iOS app
         script: |
+          set -eu
           flutter build ios --release --no-codesign \
             --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
       - name: Package unsigned IPA for SideStore
@@ -56,8 +73,8 @@ workflows:
       - build/ios/iphoneos/*.app
       - build/ios/ipa/CHE-unsigned.ipa
 
-  chey-shorebird:
-    name: CHE analyze + Shorebird + SideStore IPA
+  chey-mobile:
+    name: CHE iPhone full SideStore release
     instance_type: mac_mini_m2
     max_build_duration: 90
     environment:
@@ -66,8 +83,44 @@ workflows:
       cocoapods: default
       groups:
         - che_ship
-      vars:
-        CM_SHOREBIRD_MODE: patch
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/Library/Caches/CocoaPods
+        - $HOME/.gradle/caches
+    scripts:
+      - name: Bootstrap native projects
+        script: bash ./tool/bootstrap.sh
+      - name: Enable local AI + voice tuning bridge
+        script: python3 ./tool/patch_local_runtime.py
+      - name: Flutter analyze
+        script: |
+          set -eu
+          flutter pub get
+          flutter analyze --no-fatal-infos --no-fatal-warnings
+      - name: Build, verify and publish full iPhone update
+        script: bash ./tool/che_mobile_release.sh full
+      - name: Mark mobile pipeline successful
+        script: touch "$HOME/CHE_MOBILE_SUCCESS"
+    artifacts:
+      - build/ios/iphoneos/*.app
+      - build/ios/ipa/CHE-unsigned.ipa
+      - build/ios/ipa/CHE-update.json
+    publishing:
+      scripts:
+        - name: Report CHE mobile build result
+          script: bash ./tool/report_mobile_build_status.sh
+
+  chey-shorebird:
+    name: CHE automatic mobile update
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      groups:
+        - che_ship
     cache:
       cache_paths:
         - $HOME/.pub-cache
@@ -80,12 +133,17 @@ workflows:
         - pattern: main
           include: true
           source: true
+        - pattern: che/mobile-update-pipeline
+          include: true
+          source: true
       cancel_previous_builds: false
     when:
       changeset:
         excludes:
           - 'server/**'
           - 'docs/**'
+          - 'test/**'
+          - '.github/**'
           - '**/*.md'
     scripts:
       - name: Bootstrap native projects
@@ -97,42 +155,28 @@ workflows:
           set -eu
           flutter pub get
           flutter analyze --no-fatal-infos --no-fatal-warnings
-      - name: Install Shorebird CLI
+      - name: Choose fast patch or full iPhone release
         script: |
           set -eu
-          curl --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/shorebirdtech/install/main/install.sh -sSf | bash
-          echo "$HOME/.shorebird/bin" >> "$CM_ENV"
-          export PATH="$HOME/.shorebird/bin:$PATH"
-          shorebird --version
-      - name: Shorebird patch or release
-        script: |
-          set -eu
-          export PATH="$HOME/.shorebird/bin:$PATH"
-          if [[ -z "${SHOREBIRD_TOKEN:-}" || ! -f shorebird.yaml ]]; then
-            echo "Shorebird not configured (need SHOREBIRD_TOKEN in che_ship group and shorebird.yaml). Skipping OTA step."
-            exit 0
-          fi
-          MODE="${CM_SHOREBIRD_MODE:-patch}"
-          if [[ "$MODE" == "release" ]]; then
-            shorebird release ios --no-codesign -- \
-              --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
+          if [[ "${CM_BRANCH:-}" == "main" ]]; then
+            bash ./tool/che_mobile_release.sh auto
           else
-            shorebird patch ios --no-codesign --release-version=latest -- \
+            flutter build ios --release --no-codesign \
               --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
+            mkdir -p build/ios/ipa/Payload
+            cp -R build/ios/iphoneos/Runner.app build/ios/ipa/Payload/
+            cd build/ios/ipa
+            zip -qry CHE-unsigned.ipa Payload
+            rm -r Payload
+            cd ../../..
           fi
-      - name: Build unsigned iOS app (SideStore IPA)
-        script: |
-          set -eu
-          flutter build ios --release --no-codesign \
-            --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
-      - name: Package unsigned IPA for SideStore
-        script: |
-          set -eu
-          mkdir -p build/ios/ipa/Payload
-          cp -R build/ios/iphoneos/Runner.app build/ios/ipa/Payload/
-          cd build/ios/ipa
-          zip -qry CHE-unsigned.ipa Payload
-          rm -r Payload
+      - name: Mark mobile pipeline successful
+        script: touch "$HOME/CHE_MOBILE_SUCCESS"
     artifacts:
       - build/ios/iphoneos/*.app
       - build/ios/ipa/CHE-unsigned.ipa
+      - build/ios/ipa/CHE-update.json
+    publishing:
+      scripts:
+        - name: Report CHE mobile build result
+          script: bash ./tool/report_mobile_build_status.sh

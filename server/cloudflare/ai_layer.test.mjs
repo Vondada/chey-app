@@ -134,6 +134,32 @@ test('capability routing picks by need, not fixed order', async () => {
   assert.deepEqual(ordered.map((p) => p.id).sort(), ['cloudflare', 'xai']);
 });
 
+test('CODEX_OWNER_TOKEN routes Knox through OpenAI', async () => {
+  resetRouterForTests();
+  const env = {
+    CHE_ALLOW_PAID_AI: '1',
+    CODEX_OWNER_TOKEN: 'codex-secret',
+    CHE_DISABLE_KEYLESS_AI: '1',
+  };
+  const openai = BUILTIN_PROVIDER_MANIFESTS.find((item) => item.id === 'openai');
+  assert.equal(providerConnection(env, emptyData(), openai).state, 'connected');
+  const hits = [];
+  const fetcher = async (url, init) => {
+    hits.push({ url, auth: init.headers.Authorization, body: JSON.parse(init.body) });
+    return chatReply('codex ok');
+  };
+  const out = await routeText(env, '@cf/x', {
+    che_provider: 'openai',
+    che_model: 'gpt-5.3-codex',
+    che_capability: 'coding',
+    messages: [{ role: 'user', content: 'Draft a Codex plugin spec' }],
+  }, fetcher);
+  assert.equal(out.engine, 'openai');
+  assert.equal(out.model, 'gpt-5.3-codex');
+  assert.equal(hits[0].auth, 'Bearer codex-secret');
+  assert.equal(hits[0].body.model, 'gpt-5.3-codex');
+});
+
 test('provider pinning routes to Grok and local-only never leaves local', async () => {
   resetRouterForTests();
   const env = { CHE_ALLOW_PAID_AI: '1', CHE_OPENAI_API_KEY: 'o', XAI_API_KEY: 'x', CHE_DISABLE_KEYLESS_AI: '1' };
