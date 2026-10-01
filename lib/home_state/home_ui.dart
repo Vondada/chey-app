@@ -49,7 +49,7 @@ extension _CheHomeUi on _CHEHomeState {
             constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.78),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: CheColors.surface,
+              color: CheColors.panel,
               borderRadius: BorderRadius.circular(14),
               border: Border.all(color: CheColors.accent.withValues(alpha: 0.35)),
             ),
@@ -64,7 +64,7 @@ extension _CheHomeUi on _CHEHomeState {
                           ? '$attachmentName • CHE listens'
                           : attachmentName,
                   overflow: TextOverflow.ellipsis,
-                  style: CheType.caption,
+                  style: kit.CheType.caption,
                 ),
               ),
             ]),
