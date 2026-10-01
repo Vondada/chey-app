@@ -165,7 +165,7 @@ PY
   if [[ -z "$token" ]]; then
     echo "No GitHub release token is configured. The IPA remains a Codemagic artifact, but CHE's mobile update endpoint will NOT advertise it." >&2
     echo "Add GITHUB_TOKEN as a protected secret in the Codemagic che_ship group to enable phone-only publishing." >&2
-    return 0
+    return 1
   fi
 
   release_json="$(mktemp)"
