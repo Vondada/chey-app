@@ -244,7 +244,12 @@ void main() {
 
     // CHE's desk remains available through the accessible flat-plan fallback.
     await tester.tap(find.bySemanticsLabel(RegExp(r"CHE.*Open to talk or send a request")));
-    await tester.pump(const Duration(milliseconds: 500));
+    await _pumpUntilFound(tester, find.text('Talk to CHE'));
+    await tester.scrollUntilVisible(
+      find.text('REQUEST TO CHE'),
+      160,
+      scrollable: find.byType(Scrollable).last,
+    );
 
     expect(find.text('Talk to CHE'), findsWidgets);
     expect(find.text('REQUEST TO CHE'), findsOneWidget);
@@ -290,7 +295,7 @@ void main() {
     await tester.scrollUntilVisible(
       find.text('Draft text'),
       200,
-      scrollable: find.byType(ListView).last,
+      scrollable: find.byType(Scrollable).last,
     );
     expect(find.text('Draft text'), findsOneWidget);
 
