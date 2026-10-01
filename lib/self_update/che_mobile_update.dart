@@ -143,13 +143,14 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
   String _latestAttemptFailure = '';
   bool _loading = true;
   bool _busy = false;
-  late bool _showHistory = widget.showHistoryInitially;
+  bool _showHistory = false;
 
   String get _base => widget.baseUrl.replaceFirst(RegExp(r'/+$'), '');
 
   @override
   void initState() {
     super.initState();
+    _showHistory = widget.showHistoryInitially;
     unawaited(_check(announce: true));
   }
 
