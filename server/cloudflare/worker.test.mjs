@@ -25,6 +25,25 @@ try {
   try { unlinkSync(generatedWorker); } catch (_) {}
 }
 
+test('Gemini media understanding sends video MIME and asks for audio plus visuals', async () => {
+  let sent;
+  const result = await geminiVision(
+    { GEMINI_API_KEY: 'test-key', CHE_GEMINI_VISION_MODEL: 'gemini-test' },
+    { name: 'screen-recording.mp4', mediaType: 'video', base64: 'AAAA' },
+    'Paraphrase what happens in this clip.',
+    async (_url, options) => {
+      sent = JSON.parse(options.body);
+      return new Response(JSON.stringify({
+        candidates: [{ content: { parts: [{ text: 'The clip shows a settings screen while a speaker explains the change.' }] } }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+  );
+  assert.equal(sent.contents[0].parts[0].inline_data.mime_type, 'video/mp4');
+  assert.match(sent.contents[0].parts[1].text, /listen to its audio/i);
+  assert.match(sent.contents[0].parts[1].text, /visual/i);
+  assert.match(result.summary, /settings screen/);
+});
+
 test('pairing, owner gate, memories, and revocation', async () => {
   const saved = new Map();
   const env = { CHE_PAIR_CODE: '123456', AI: { run: async () => ({ response: 'Hello, sir.' }) } };
