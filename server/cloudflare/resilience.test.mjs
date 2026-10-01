@@ -50,6 +50,11 @@ test('cache only general questions', async () => {
   assert.equal(cacheable("What's on my schedule today"), false);
   await rememberAnswer(s, 'What is the capital of France?', 'Paris.');
   assert.equal(await cachedAnswer(s, 'what is the capital of france'), 'Paris.');
+  assert.equal(
+    await cachedAnswer(s, 'what is the capital of france', { hasConversationContext: true }),
+    null,
+    'an active conversation must not be short-circuited by an old exact answer',
+  );
 });
 
 test('lockdown and attack detection', async () => {

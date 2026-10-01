@@ -551,6 +551,17 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     store: _logStore,
     brain: _brain,
   );
+  late final Future<void> _cognitionReady;
+
+  Future<void> _restoreCognition() async {
+    // The first owner turn must not race the persistent brain/log restore.
+    // Both stores already fail soft internally, so waiting here is cheap and
+    // gives CHE the same memory/context on turn one as on later turns.
+    await Future.wait<void>([
+      _brain.load(),
+      _brainLog.restore(),
+    ]);
+  }
 
   /// Private background reflection (never shown as a chat reply).
   Future<String> _brainReflect(String prompt, List<String> addons) async {
@@ -1024,8 +1035,7 @@ OWNER AGENCY
     WidgetsBinding.instance.addObserver(this);
     _voiceMachine.startWakeListening();
     _voiceSnapshot = _voiceMachine.snapshot;
-    unawaited(_brain.load());
-    unawaited(_brainLog.restore());
+    _cognitionReady = _restoreCognition();
     unawaited(_skillPlugins.load());
     _wireBrowser();
     initializeVoice();

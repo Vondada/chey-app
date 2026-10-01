@@ -1717,4 +1717,32 @@ extension _CheHomeMemory on _CHEHomeState {
 
     return result;
   }
+
+  List<String> _requestedCapabilitiesForTurn(
+    String message,
+    List<Map<String, String>> history,
+  ) {
+    final direct = _requestedCapabilities(message);
+    if (direct.isNotEmpty) return direct;
+
+    final clean = message.trim().toLowerCase();
+    final contextualFollowUp = clean.length <= 100 &&
+        RegExp(
+          r'^(?:yes|yeah|yep|ok|okay|go ahead|proceed|continue|keep going|try again|do (?:it|that)|run (?:it|that)|fix (?:it|that)|(?:make|change|use) (?:it|that|this)\b.*|that one|this one)[.! ]*
+,
+        ).hasMatch(clean);
+    if (!contextualFollowUp) return direct;
+
+    final recent = history.length > 6
+        ? history.sublist(history.length - 6)
+        : history;
+    for (final item in recent.reversed) {
+      if (item['role'] != 'user') continue;
+      final prior = (item['content'] ?? item['text'] ?? '').trim();
+      if (prior.isEmpty || prior.toLowerCase() == clean) continue;
+      final inherited = _requestedCapabilities(prior);
+      if (inherited.isNotEmpty) return inherited;
+    }
+    return direct;
+  }
 }
