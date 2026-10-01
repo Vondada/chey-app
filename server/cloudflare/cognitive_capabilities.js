@@ -98,8 +98,16 @@ export function runtimeCapabilityRegistry(env, data = {}) {
 
   const hasText = Boolean(env.AI) || providerCaps.has('text');
   const hasVision = Boolean(env.CHE_MULTIMODAL_URL || env.GEMINI_API_KEY) || providerCaps.has('vision');
-  const hasImage = Boolean(env.CHE_IMAGE_GEN_URL || env.AI || env.GEMINI_API_KEY || env.OPENAI_API_KEY || env.CHE_OPENAI_API_KEY) || providerCaps.has('image_generation');
-  const hasVideo = Boolean(env.CHE_VIDEO_GEN_URL || env.GEMINI_API_KEY) || providerCaps.has('video_generation');
+  const paidMedia = /^(?:1|true|yes|on)$/i.test(String(env.CHE_ALLOW_PAID_MEDIA || '').trim());
+  const hasImage = Boolean(
+    env.CHE_IMAGE_GEN_URL ||
+    env.AI ||
+    (paidMedia && (env.GEMINI_API_KEY || env.OPENAI_API_KEY || env.CHE_OPENAI_API_KEY))
+  ) || providerCaps.has('image_generation');
+  const hasVideo = Boolean(
+    env.CHE_VIDEO_GEN_URL ||
+    (paidMedia && env.GEMINI_API_KEY)
+  ) || providerCaps.has('video_generation');
   const vectorReady = vectorMemoryReadiness(env);
   const hasEmbedding = vectorReady.configured || providerCaps.has('embeddings');
 
@@ -124,8 +132,22 @@ export function runtimeCapabilityRegistry(env, data = {}) {
     audio_understanding: { available: Boolean(env.GEMINI_API_KEY || env.CHE_MULTIMODAL_URL), tool: 'multimodal' },
     video_understanding: { available: Boolean(env.GEMINI_API_KEY || env.CHE_MULTIMODAL_URL), tool: 'multimodal' },
     document_understanding: { available: hasVision || Boolean(env.CHE_MULTIMODAL_URL), tool: 'multimodal' },
-    image_generation: { available: hasImage, tool: 'media_generation', providers: providerIdsFor('image_generation') },
-    video_generation: { available: hasVideo, tool: 'media_generation', providers: providerIdsFor('video_generation') },
+    image_generation: {
+      available: hasImage,
+      tool: 'media_generation',
+      providers: providerIdsFor('image_generation'),
+      limitations: !hasImage && (env.GEMINI_API_KEY || env.OPENAI_API_KEY || env.CHE_OPENAI_API_KEY)
+        ? 'Paid HD provider is connected but CHE_ALLOW_PAID_MEDIA is not owner-enabled.'
+        : '',
+    },
+    video_generation: {
+      available: hasVideo,
+      tool: 'media_generation',
+      providers: providerIdsFor('video_generation'),
+      limitations: !hasVideo && env.GEMINI_API_KEY
+        ? 'Gemini Omni video is paid-tier only; enable CHE_ALLOW_PAID_MEDIA only after owner approval.'
+        : '',
+    },
     provider_routing: { available: true, tool: 'capability_router' },
     model_discovery: { available: true, tool: 'model_watcher' },
     cross_check: { available: providers.length >= 2, tool: 'model_panel', providers: providers.map((p) => p.id) },
