@@ -233,12 +233,6 @@ extension _CheHomeSend on _CHEHomeState {
       _openAssistantHub(tab: 9);
       return true;
     }
-    if (RegExp(r'\b(set ?up|fix|open|configure)\s+(the\s+|my\s+)?wake ?word\b').hasMatch(lower)) {
-      await speakText(cheWakeSetupSteps);
-      await _openWakeSetup();
-      return true;
-    }
-
     return false;
   }
 
