@@ -21,6 +21,10 @@ class CheMemoryDot {
     this.tokens = const [],
     this.at,
     this.clusterId,
+    this.source = 'CHE',
+    this.confidence,
+    this.lastVerifiedAt,
+    this.scope = 'general',
   });
 
   final String id;
@@ -30,6 +34,10 @@ class CheMemoryDot {
   final List<String> tokens;
   final DateTime? at;
   final String? clusterId;
+  final String source;
+  final double? confidence;
+  final DateTime? lastVerifiedAt;
+  final String scope;
 }
 
 /// Build unlimited dots from Worker memories / notes / learning — never capped.
@@ -54,6 +62,8 @@ List<CheMemoryDot> cheBuildMemoryDots({
       body: t,
       category: 'Memory',
       tokens: _tokens(t),
+      source: 'Owner memory',
+      scope: 'owner',
     ));
     i++;
   }
@@ -85,6 +95,10 @@ List<CheMemoryDot> cheBuildMemoryDots({
       tokens: _tokens('$title $body $kind ${n['locale'] ?? ''}'),
       at: DateTime.tryParse('${n['created_at'] ?? ''}'),
       clusterId: n['cluster_id']?.toString(),
+      source: '${n['source'] ?? n['agent'] ?? n['url'] ?? 'CHE research'}',
+      confidence: (n['confidence'] as num?)?.toDouble(),
+      lastVerifiedAt: DateTime.tryParse('${n['last_verified_at'] ?? n['verified_at'] ?? n['updated_at'] ?? n['created_at'] ?? ''}'),
+      scope: '${n['scope'] ?? n['ownership'] ?? 'general'}',
     ));
     i++;
   }
@@ -97,6 +111,11 @@ List<CheMemoryDot> cheBuildMemoryDots({
       body: text,
       category: 'About you',
       tokens: _tokens(text),
+      source: '${p['source'] ?? 'Owner interactions'}',
+      confidence: (p['confidence'] as num?)?.toDouble(),
+      at: DateTime.tryParse('${p['created_at'] ?? p['at'] ?? ''}'),
+      lastVerifiedAt: DateTime.tryParse('${p['updated_at'] ?? p['verified_at'] ?? p['created_at'] ?? ''}'),
+      scope: 'owner',
     ));
     i++;
   }
@@ -109,6 +128,8 @@ List<CheMemoryDot> cheBuildMemoryDots({
       body: t,
       category: 'Knowledge',
       tokens: _tokens(t),
+      source: 'CHE learned knowledge',
+      scope: 'general',
     ));
     i++;
   }
@@ -121,10 +142,21 @@ List<CheMemoryDot> cheBuildMemoryDots({
       body: t,
       category: 'Suggestion',
       tokens: _tokens(t),
+      source: 'CHE planning',
+      scope: 'owner',
     ));
     i++;
   }
   return out;
+}
+
+String _formatMemoryTime(DateTime? value) {
+  if (value == null) return 'Date unavailable for this older memory';
+  final t = value.toLocal();
+  final hour = t.hour % 12 == 0 ? 12 : t.hour % 12;
+  final minute = t.minute.toString().padLeft(2, '0');
+  final amPm = t.hour < 12 ? 'AM' : 'PM';
+  return '${t.month}/${t.day}/${t.year} · $hour:$minute $amPm';
 }
 
 String _shortTitle(String text) {
@@ -279,7 +311,7 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
     final cy = size.height * 0.5;
     final map = <String, Offset>{};
     if (dots.isEmpty) return map;
-    final scale = math.min(size.width, size.height) * 0.43;
+    final scale = math.min(size.width, size.height) * 0.48;
     for (var i = 0; i < dots.length; i++) {
       final d = dots[i];
       final hash = d.id.hashCode;
@@ -329,6 +361,38 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
               Text(dot.title, style: CheType.headline),
               const SizedBox(height: CheSpace.sm),
               Text(dot.body, style: CheType.bodyDim),
+              const SizedBox(height: CheSpace.md),
+              Semantics(
+                label: 'Memory metadata. Source ${dot.source}. Saved ${_formatMemoryTime(dot.at)}. '
+                    '${dot.confidence == null ? '' : 'Confidence ${(dot.confidence! * 100).round()} percent. '}'
+                    'Scope ${dot.scope}.',
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.035),
+                    borderRadius: BorderRadius.circular(CheRadius.md),
+                    border: Border.all(color: cheMemoryCategoryColor(dot.category).withValues(alpha: 0.24)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Source · ${dot.source}', style: CheType.caption),
+                      const SizedBox(height: 4),
+                      Text('Saved · ${_formatMemoryTime(dot.at)}', style: CheType.caption),
+                      if (dot.lastVerifiedAt != null) ...[
+                        const SizedBox(height: 4),
+                        Text('Last verified · ${_formatMemoryTime(dot.lastVerifiedAt)}', style: CheType.caption),
+                      ],
+                      if (dot.confidence != null) ...[
+                        const SizedBox(height: 4),
+                        Text('Confidence · ${(dot.confidence! * 100).round()}%', style: CheType.caption),
+                      ],
+                      const SizedBox(height: 4),
+                      Text('Scope · ${dot.scope == 'owner' ? 'Owner memory' : 'General knowledge'}', style: CheType.caption),
+                    ],
+                  ),
+                ),
+              ),
               const SizedBox(height: CheSpace.lg),
               CheVoiceActionList(
                 actions: [
@@ -437,8 +501,20 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
             spacing: 8,
             runSpacing: 6,
             children: [
-              for (final category in const ['Memory', 'Learning', 'ML Learning', 'Research', 'About you', 'Knowledge'])
-                Container(
+              for (final category in const ['Memory', 'Learning', 'Knowledge', 'ML Learning', 'Research', 'About you', 'Suggestion', 'Translation'])
+                Semantics(
+                  label: switch (category) {
+                    'Memory' => 'Teal means personal memories and preferences.',
+                    'Learning' => 'Cyan means learned information.',
+                    'Knowledge' => 'Blue means general knowledge.',
+                    'ML Learning' => 'Violet means machine learning and derived patterns.',
+                    'Research' => 'Gold means research.',
+                    'About you' => 'Pink means information about you.',
+                    'Suggestion' => 'Green means suggestions and plans.',
+                    'Translation' => 'Orange means translations and language.',
+                    _ => category,
+                  },
+                  child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     color: cheMemoryCategoryColor(category).withValues(alpha: 0.10),
@@ -450,6 +526,7 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
                     const SizedBox(width: 5),
                     Text(category, style: CheType.caption.copyWith(fontSize: 10)),
                   ]),
+                ),
                 ),
               Text('Pinch to zoom · tap an orb', style: CheType.caption.copyWith(fontSize: 10)),
             ],
@@ -464,7 +541,7 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
               return InteractiveViewer(
                 minScale: 0.55,
                 maxScale: 4,
-                boundaryMargin: const EdgeInsets.all(200),
+                boundaryMargin: const EdgeInsets.all(520),
                 child: SizedBox(
                   width: size.width,
                   height: size.height,
@@ -568,7 +645,7 @@ class _DotOrb extends StatelessWidget {
   Widget build(BuildContext context) {
     final pulse = 0.85 + 0.15 * math.sin(phase * math.pi * 2 + seed);
     final depthScale = 0.72 + ((depth + 1) / 2) * 0.70;
-    final size = selected ? 28.0 : (13.0 + (seed.abs() % 5) * 0.8) * depthScale;
+    final size = selected ? 25.0 : (8.0 + (seed.abs() % 5) * 0.65) * depthScale;
     final alpha = (0.55 + ((depth + 1) / 2) * 0.38).clamp(0.45, 0.95);
     return Transform.scale(
       scale: selected ? 1.08 : 1,
