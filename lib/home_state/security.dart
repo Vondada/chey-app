@@ -829,12 +829,6 @@ extension _CheHomeSecurity on _CHEHomeState {
     }
   }
 
-  /// Phone-only wake word setup (Picovoice key + "Chay" file in Keychain).
-  Future<void> _openWakeSetup() async {
-    final saved = await showCheWakeSetup(context, speak: speakText);
-    if (saved && cheSleeping) await _restartWakeListener();
-  }
-
   Future<void> _stopPorcupineWake({bool disposeEngine = false}) async {
     final wake = _porcupineWake;
     if (wake == null) {
