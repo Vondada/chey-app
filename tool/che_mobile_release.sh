@@ -135,7 +135,8 @@ for release in json.load(sys.stdin):
         continue
     if not any(a.get("name") == "CHE-unsigned.ipa" and a.get("state") != "deleted" for a in release.get("assets", [])):
         continue
-    print(match.group(1), match.group(2))
+    shorebird = bool(re.search(r"(?m)^shorebird_base=true\\s*$", str(release.get("body", ""))))
+    print(match.group(1), match.group(2), "true" if shorebird else "false")
     break
 '
 }
@@ -148,15 +149,19 @@ build_fast() {
   fi
   # Target the exact version+build installed from the last verified IPA.
   # Shorebird patches only apply when the release and patch versions match.
-  local verified release_version release_build
+  local verified release_version release_build shorebird_base
   verified="$(latest_verified_release || true)"
   if [[ -z "$verified" ]]; then
     echo "No verified CHE IPA base exists yet; creating the first full release."
     build_full
     return
   fi
-  release_version="${verified% *}"
-  release_build="${verified#* }"
+  read -r release_version release_build shorebird_base <<<"$verified"
+  if [[ "$shorebird_base" != "true" ]]; then
+    echo "The latest verified IPA is not a Shorebird release base; creating a new full base."
+    build_full
+    return
+  fi
   echo "Attempting Shorebird fast update for ${release_version}+${release_build}..."
   if shorebird patch ios --no-codesign       --release-version="${release_version}+${release_build}" --       "--build-name=${release_version}"       "--build-number=${release_build}"       "--dart-define=CHE_AGENT_URL=$AGENT_URL"       "--dart-define=CHE_APP_VERSION=${release_version}"       "--dart-define=CHE_BUILD_NUMBER=${release_build}"       "--dart-define=CHE_BUILD_COMMIT=$COMMIT"; then
     echo "CHE fast update published through Shorebird; no new IPA is required."
