@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import 'browser/che_embedded_app_shell.dart';
 import 'che_theme.dart';
 
 class CheLiveVoiceScreen extends StatefulWidget {
@@ -59,7 +60,12 @@ class _CheLiveVoiceScreenState extends State<CheLiveVoiceScreen> {
         children: [
           if (progress < 100)
             LinearProgressIndicator(value: progress / 100, minHeight: 2),
-          Expanded(child: WebViewWidget(controller: controller)),
+          Expanded(
+            child: WebViewWidget(
+              controller: controller,
+              gestureRecognizers: cheEmbeddedWebViewGestures(),
+            ),
+          ),
         ],
       ),
     );

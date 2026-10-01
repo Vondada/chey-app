@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+import '../che_app_portal.dart';
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
 
@@ -152,6 +153,20 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _openEmbedded(String name, {bool chart = false}) async {
+    final app = cheAppForName(name);
+    if (app == null) return;
+    var url = app.webUrl;
+    if (chart && name == 'TradingView') {
+      final symbol = _chartSymbol.replaceFirst('^', '').toUpperCase();
+      url = 'https://www.tradingview.com/chart/?symbol=${Uri.encodeQueryComponent(symbol)}';
+    }
+    await CheEmbeddedAppScreen.open(
+      context,
+      app: CheAppDefinition(name: app.name, webUrl: url, icon: app.icon, aliases: app.aliases),
+    );
+  }
+
   String _fmt(double v) => v >= 1000 ? v.toStringAsFixed(0) : v >= 1 ? v.toStringAsFixed(2) : v.toStringAsFixed(4);
 
   @override
@@ -244,6 +259,32 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
                     Text(_source, style: CheType.caption.copyWith(fontSize: 10)),
                   ],
                   const SizedBox(height: CheSpace.lg),
+                  Text('CHARTS INSIDE CHE', style: CheType.overline.copyWith(color: _gold)),
+                  const SizedBox(height: CheSpace.sm),
+                  const Text(
+                    'Opens in CHE. Official app or Safari only if you choose that from More.',
+                    style: CheType.caption,
+                  ),
+                  const SizedBox(height: CheSpace.sm),
+                  Wrap(
+                    spacing: CheSpace.sm,
+                    runSpacing: CheSpace.sm,
+                    children: [
+                      _EmbeddedAppChip(
+                        label: 'TradingView',
+                        onTap: () => _openEmbedded('TradingView', chart: true),
+                      ),
+                      _EmbeddedAppChip(
+                        label: 'NinjaTrader',
+                        onTap: () => _openEmbedded('NinjaTrader'),
+                      ),
+                      _EmbeddedAppChip(
+                        label: 'TradeSea',
+                        onTap: () => _openEmbedded('TradeSea'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: CheSpace.lg),
                   Text('TRADING DESK', style: CheType.overline.copyWith(color: _gold)),
                   const SizedBox(height: CheSpace.sm),
                   for (final a in widget.actions) _DeskCard(action: a),
@@ -257,6 +298,28 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _EmbeddedAppChip extends StatelessWidget {
+  const _EmbeddedAppChip({required this.label, required this.onTap});
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: 'Open $label inside CHE',
+      child: ActionChip(
+        avatar: const Icon(Icons.open_in_new_rounded, size: 16, color: Color(0xFFE8B04A)),
+        label: Text(label),
+        onPressed: () {
+          HapticFeedback.selectionClick();
+          onTap();
+        },
       ),
     );
   }

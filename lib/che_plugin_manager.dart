@@ -238,11 +238,7 @@ class _ChePluginManagerState extends State<ChePluginManager> {
                                     icon: Icons.extension,
                                     aliases: const [],
                                   );
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute<void>(
-                                      builder: (_) => CheEmbeddedAppScreen(app: app),
-                                    ),
-                                  );
+                                  CheEmbeddedAppScreen.open(context, app: app);
                                 }
                               : null,
                           icon: const Icon(Icons.open_in_new),

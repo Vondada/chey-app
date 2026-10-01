@@ -5,6 +5,8 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../browser/che_embedded_app_shell.dart';
+
 class ChePluginWebApp extends StatefulWidget {
   const ChePluginWebApp({super.key, this.html, this.url, this.onPrompt});
   final String? html;
@@ -62,6 +64,9 @@ class _ChePluginWebAppState extends State<ChePluginWebApp> {
         ),
       );
     }
-    return WebViewWidget(controller: _controller);
+    return WebViewWidget(
+      controller: _controller,
+      gestureRecognizers: cheEmbeddedWebViewGestures(),
+    );
   }
 }

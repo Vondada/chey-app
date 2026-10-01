@@ -1,11 +1,12 @@
 // Shows a page, video or site right inside the chat bubble, so the owner sees
 // what CHE or her crew rendered without leaving the conversation.
 import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../browser/che_embedded_app_shell.dart';
+import '../che_app_portal.dart';
 import '../che_ui/che_theme.dart';
 
 class CheInlinePreview extends StatefulWidget {
@@ -69,16 +70,31 @@ class _CheInlinePreviewState extends State<CheInlinePreview> {
                 height: widget.height,
                 child: WebViewWidget(
                   controller: controller,
-                  gestureRecognizers: {
-                    Factory<OneSequenceGestureRecognizer>(() => EagerGestureRecognizer()),
-                  },
+                  // Parent chat scroll wins. Do not eagerly claim the drag.
+                  gestureRecognizers: cheEmbeddedParentFriendlyGestures(),
                 ),
               ),
             ),
           TextButton.icon(
-            onPressed: () => launchUrl(Uri.parse(widget.url), mode: LaunchMode.externalApplication),
+            onPressed: () {
+              if (kIsWeb) {
+                launchUrl(Uri.parse(widget.url), mode: LaunchMode.externalApplication);
+                return;
+              }
+              final uri = Uri.tryParse(widget.url);
+              final name = uri?.host.isNotEmpty == true ? uri!.host : widget.label;
+              CheEmbeddedAppScreen.open(
+                context,
+                app: CheAppDefinition(
+                  name: name,
+                  webUrl: widget.url,
+                  icon: Icons.language,
+                  aliases: const [],
+                ),
+              );
+            },
             icon: const Icon(Icons.open_in_full_rounded, size: 18),
-            label: Text(controller == null ? 'Open ${widget.label.toLowerCase()}' : 'Full screen', style: CheType.caption),
+            label: Text(controller == null ? 'Open ${widget.label.toLowerCase()}' : 'Open inside CHE', style: CheType.caption),
           ),
         ]),
       ),
