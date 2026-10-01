@@ -28,6 +28,7 @@ import {
   accountsView, approveProviderPlugin, authorizeProvider, ensureAiState, proposeProviderPlugin,
 } from './provider_registry.js';
 import { discoverKeylessModels, engineStatus, routedEnv } from './ai_router.js';
+import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
@@ -2789,8 +2790,14 @@ export class CheState extends DurableObject {
         });
       }
 
+      if (request.method === 'GET' && path === '/api/capabilities') {
+        return json(runtimeCapabilityRegistry(this.env, data));
+      }
+
       if (request.method === 'GET' && path === '/api/state') {
+        const capabilityRegistry = runtimeCapabilityRegistry(this.env, data);
         return json({
+          capability_registry: capabilityRegistry,
           memories: data.memories,
           memory_notes: listMemoryNotes(data),
           brain_graph: buildBrainGraph(data),
@@ -4976,6 +4983,12 @@ export class CheState extends DurableObject {
         const addCapability = (name) => {
           if (!requestedCapabilities.includes(name)) requestedCapabilities.push(name);
         };
+        // The Worker is authoritative. Client hints are helpful but never
+        // required: obvious tool/media/research intent is discovered again
+        // server-side so the owner does not need magic phrases or model names.
+        for (const inferred of inferTurnCapabilities(message, body.attachment)) {
+          addCapability(inferred);
+        }
         if (/\b(?:change|redesign|modify|fix|update|rearrange|move|restyle|improve)\b[\s\S]{0,80}\b(?:your|che|the)\s+(?:ui|screen|interface|layout|app|code)\b|\b(?:proofread|review|write|edit|refactor)\b[\s\S]{0,50}\bcode\b/i.test(message)) {
           addCapability('self_development');
         }
@@ -5368,6 +5381,7 @@ export class CheState extends DurableObject {
         const explainLevel = ['simple', 'normal', 'deeper'].includes(body.explain_level) ? body.explain_level : 'simple';
         const madeAcrossRooms = creations(data, await listMedia(this.ctx.storage)).slice(0, 12)
           .map((item) => `${item.maker}: ${item.kind.replace('_', ' ')} \u201c${item.title}\u201d`).join('; ');
+        const capabilityRegistry = runtimeCapabilityRegistry(this.env, data);
         const systemPrompt = [
               'You are CHE, Cognitive Horizon Engine. Your name is spoken and referred to as "CHE" in conversation. "Chay" is only the owner\'s spoken wake word to start a hands-free conversation with you, not how you refer to yourself. Address the owner as sir naturally.',
               'This chat turn is already active. Never ask the owner to say “Hey [assistant name]”, “Ok [assistant name]”, or any generic wake phrase. If the owner says CHE/Chay, answer as CHE instead of teaching a wake phrase.',
@@ -5382,6 +5396,8 @@ export class CheState extends DurableObject {
                 ? `ONE CONNECTED WORLD: things made across CHE\u2019s rooms (newest first): ${madeAcrossRooms}. When the owner refers to something made in any room (\u201cthe song Mira made\u201d), use this list; if it is not here, say so honestly.`
                 : '',
               'CHE is the user-facing product. Never present yourself as Gemini, Cloudflare, or another provider. Models and services are replaceable internal engines behind CHE.',
+              capabilityPromptLine(capabilityRegistry),
+              'MATURE TOOL USE: infer the owner’s goal, then use the best available capability without waiting for the owner to name a model, provider, agent, or tool. Search/retrieve when knowledge may be current or missing. Use stored owner context only when relevant. For independent complex subtasks, parallelize only when it materially helps.',
               'HONESTY (highest priority): never claim an action happened unless a tool in this turn returned success, and give the receipt (link, ID or result) when it did. Label anything unverified as unverified. Say "I don\u2019t know" or "I can\u2019t do that yet" instead of guessing. Never invent plugins, settings, panels, features, services, outages, prices, sales or numbers.',
               'CONTEXT PRIORITY: current owner message > verified tool results from this turn > active conversation > explicit stored/retrieved owner context > cached/general knowledge. The newest owner correction wins conflicts. Short follow-ups continue the most recent unresolved subject/action; do not restart from scratch.',
               'COGNITION LOOP: understand the goal, recall relevant context, select the real capability/tool, act when available, verify the result, then answer. Do not repeat an earlier answer merely because it is cached. Do not call a task complete without a real result.',
