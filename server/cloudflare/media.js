@@ -81,6 +81,10 @@ function openAiKey(env) {
   return env.OPENAI_API_KEY || env.CHE_OPENAI_API_KEY || '';
 }
 
+function paidMediaEnabled(env) {
+  return /^(?:1|true|yes|on)$/i.test(String(env.CHE_ALLOW_PAID_MEDIA || '').trim());
+}
+
 async function openAiImage(env, prompt, draft, fetcher) {
   const key = openAiKey(env);
   if (!key) throw new Error('OpenAI image key is not configured.');
@@ -145,6 +149,7 @@ async function geminiVideo(env, prompt, fetcher) {
     body: JSON.stringify({
       model,
       input: String(prompt || '').slice(0, 8000),
+      response_format: { type: 'video', resolution: env.CHE_VIDEO_RESOLUTION || '1080p' },
       generation_config: { video_config: { task: 'text_to_video' } },
     }),
   });
@@ -189,13 +194,13 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
   };
   const engines = [];
   if (env.CHE_IMAGE_GEN_URL) engines.push({ id: 'Your image connector', run: async () => ({ url: await connectorImage(env, finalPrompt, fetcher) }) });
-  if (openAiKey(env)) engines.push({ id: draft ? 'openai-gpt-image-fast' : 'openai-gpt-image-hd', run: async () => openAiImage(env, finalPrompt, draft, fetcher) });
+  if (paidMediaEnabled(env) && openAiKey(env)) engines.push({ id: draft ? 'openai-gpt-image-fast' : 'openai-gpt-image-hd', run: async () => openAiImage(env, finalPrompt, draft, fetcher) });
   if (env.AI) engines.push({ id: draft ? 'CHE image engine (draft)' : 'CHE image engine', run: async () => {
     const result = await env.AI.run(IMAGE_MODEL, { prompt: finalPrompt.slice(0, 2048), steps: draft ? 4 : 8, seed: Math.floor(Math.random() * 2 ** 31) });
     if (!result?.image) throw new Error('The image model returned no image.');
     return { base64: result.image, mime_type: 'image/jpeg' };
   } });
-  if (env.GEMINI_API_KEY) engines.push({ id: 'gemini-image', run: async () => {
+  if (paidMediaEnabled(env) && env.GEMINI_API_KEY) engines.push({ id: 'gemini-image', run: async () => {
     const model = env.CHE_GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image';
     const response = await fetcher(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
       method: 'POST', signal: AbortSignal.timeout(60000),
@@ -247,7 +252,7 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
   if (env.CHE_VIDEO_GEN_URL) {
     engines.push({ id: 'Your video connector', run: async () => ({ url: await connectorVideo(env, prompt, fetcher) }) });
   }
-  if (env.GEMINI_API_KEY) {
+  if (paidMediaEnabled(env) && env.GEMINI_API_KEY) {
     engines.push({ id: 'gemini-omni-video', run: async () => geminiVideo(env, prompt, fetcher) });
   }
   const errors = [];
@@ -264,7 +269,14 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
     }
   }
   if (!generated) {
-    return { status: engines.length ? 502 : 503, detail: `All video engines failed (${errors.join(' | ') || 'none configured'}).` };
+    const paidReady = Boolean(env.GEMINI_API_KEY) && !paidMediaEnabled(env);
+    return {
+      status: engines.length ? 502 : paidReady ? 402 : 503,
+      detail: paidReady
+        ? 'HD video generation is connected but disabled until the owner explicitly enables paid media.'
+        : `All video engines failed (${errors.join(' | ') || 'none configured'}).`,
+      requires_owner_confirmation: paidReady,
+    };
   }
   if (generated.url) {
     record.url = generated.url;
