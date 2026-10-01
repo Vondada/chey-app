@@ -1727,7 +1727,7 @@ extension _CheHomeMemory on _CHEHomeState {
 
     final clean = message.trim().toLowerCase();
     final followUpMatch = RegExp(
-      r'^(?:yes|yeah|yep|ok|okay|go ahead|proceed|continue|keep going|try again|do (?:it|that)|run (?:it|that)|fix (?:it|that)|(?:make|change|use) (?:it|that|this)\\b.*|that one|this one)[.! ]*',
+      r'^(?:yes|yeah|yep|ok|okay|go ahead|proceed|continue|keep going|try again|do (?:it|that)|run (?:it|that)|fix (?:it|that)|(?:make|change|use) (?:it|that|this).*|that one|this one)[.! ]*',
     ).firstMatch(clean);
     final contextualFollowUp = clean.length <= 100 &&
         followUpMatch != null &&
