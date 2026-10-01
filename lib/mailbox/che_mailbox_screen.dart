@@ -143,7 +143,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('Add $name key', style: CheType.title),
           const SizedBox(height: 8),
-          const Text('Free. One account in your name. CHE stops for anything only you can do (captcha, codes, terms).', style: CheType.bodyDim),
+          const Text('Tap the button to create a key on the official page, then paste it here. CHE tests it and starts using it right away. One account in your name.', style: CheType.bodyDim),
           const SizedBox(height: 12),
           Semantics(
             button: true,

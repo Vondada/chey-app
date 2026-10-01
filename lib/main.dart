@@ -1695,6 +1695,20 @@ OWNER AGENCY
           hue: kit.CheColors.accentAlt,
         ),
         CheMoreItem(
+          icon: Icons.vpn_key_rounded,
+          title: 'Keys',
+          subtitle: 'Create or paste an AI key · works right away',
+          onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+            builder: (_) => CheMailboxScreen(
+              baseUrl: cheAgentBaseUrl,
+              headers: () => _authHeaders,
+              onSpeak: (text) => unawaited(speakText(text, record: false)),
+              initialTab: 3,
+            ),
+          )),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
           icon: Icons.tune_rounded,
           title: 'UI Controls',
           subtitle: 'Theme, avatar, text size, voice replies',

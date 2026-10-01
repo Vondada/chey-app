@@ -33,7 +33,7 @@ import { activityFeed, creations, findCreations, greeting, suggestions, stalledT
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 import { prepareSelfUpdate } from './self_development.js';
-import { KEY_PROVIDERS, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
+import { KEY_PROVIDERS, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { autoImproveScan, codeScoutIntent, fetchRepoFile, scoutCode, speakScout } from './code_scout.js';
@@ -1979,7 +1979,7 @@ export class CheState extends DurableObject {
       }
       const task = queueAgentTask(data, agent, step.task, 'owner_goal', { job_id: goalId });
       task.work_packet = codexWorkPacket(agent, task);
-      let blocker = refused || agentActionGuard(agent, step.task) || officeToolBlocker(this.env, agent);
+      let blocker = refused || agentActionGuard(agent, step.task) || officeToolBlocker(this.keyEnv || this.env, agent);
       // Codex desks get a real work packet: own thread id and workspace,
       // persisted here. The owner Codex token stays on the Worker.
       if (!refused && agent.provider_preference === 'openai') {
@@ -2073,7 +2073,7 @@ export class CheState extends DurableObject {
       const task = queueAgentTask(data, atlas,
         `Retrieve prior ml_eval memory_notes and Brain graph links. Compare to these metrics: ${JSON.stringify(result.metrics).slice(0, 600)}. Distill what was learned (patterns, failure modes). Do not invent numbers.`,
         'ml_eval', { job_id: goalId, kind: 'ml_eval' });
-      let blocker = refused || officeToolBlocker(this.env, atlas);
+      let blocker = refused || officeToolBlocker(this.keyEnv || this.env, atlas);
       if (blocker) { task.status = 'blocked'; task.error = blocker; }
       jobs.push({ id: task.id, agent: atlas.name, task: task.task, status: task.status, blocker });
     }
@@ -2158,7 +2158,7 @@ export class CheState extends DurableObject {
       task.owner_confirm_required = true;
       task.outbound_allowed = false;
       task.auto_publish = false;
-      let blocker = refused || officeToolBlocker(this.env, step.agent);
+      let blocker = refused || officeToolBlocker(this.keyEnv || this.env, step.agent);
       if (blocker) {
         task.status = 'blocked';
         task.error = blocker;
@@ -2266,7 +2266,7 @@ export class CheState extends DurableObject {
       });
       task.owner_confirm_required = true;
       task.outbound_allowed = false;
-      let blocker = refused || officeToolBlocker(this.env, step.agent);
+      let blocker = refused || officeToolBlocker(this.keyEnv || this.env, step.agent);
       if (blocker) {
         task.status = 'blocked';
         task.error = blocker;
@@ -2326,7 +2326,7 @@ export class CheState extends DurableObject {
       task.outbound_allowed = false;
       task.auto_message = false;
       task.auto_buy_inventory = false;
-      let blocker = refused || officeToolBlocker(this.env, step.agent);
+      let blocker = refused || officeToolBlocker(this.keyEnv || this.env, step.agent);
       if (blocker) {
         task.status = 'blocked';
         task.error = blocker;
@@ -2380,7 +2380,15 @@ export class CheState extends DurableObject {
     try { socket.close(code, 'closed'); } catch (_) { /* already closed */ }
   }
 
+  // Keys the owner saved in CHE's Keys tab count everywhere a Worker secret
+  // would, so a pasted key "just works" for the Office crew too.
+  async refreshKeyEnv() {
+    try { this.keyEnv = withStoredKeys(this.env, await storedKeys(this.ctx.storage)); } catch (_) { this.keyEnv = this.env; }
+    return this.keyEnv;
+  }
+
   async fetch(request) {
+    await this.refreshKeyEnv();
     try {
       const path = new URL(request.url).pathname;
       const data = (await this.ctx.storage.get('che')) || {
@@ -2399,7 +2407,7 @@ export class CheState extends DurableObject {
       data.meetings = Array.isArray(data.meetings) ? data.meetings : [];
       data.team.forEach(normalizeAgent);
       for (const agent of data.team) {
-        const blocker = isLaAgenciaAgent(agent) ? officeToolBlocker(this.env, agent) : '';
+        const blocker = isLaAgenciaAgent(agent) ? officeToolBlocker(this.keyEnv || this.env, agent) : '';
         if (blocker && ['waiting', 'building', 'researching', 'analyzing'].includes(agent.runtime_status)) {
           agent.runtime_status = 'offline';
           agent.runtime_task = blocker;
@@ -5364,6 +5372,7 @@ export class CheState extends DurableObject {
   }
 
   async alarm() {
+    await this.refreshKeyEnv();
     if (!(await this.loadData()).autonomy) return;
     await this.processJobs();
     await processAgentWork({
