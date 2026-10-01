@@ -363,7 +363,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         final from = '${m['from'] ?? ''}'.trim().toLowerCase();
         final to = '${m['to'] ?? ''}'.trim().toLowerCase();
         final peer = from == 'che' ? to : from;
-        if (peer.isEmpty || peer == 'che' || peer == 'chatgpt' || peer == 'openai') continue;
+        if (peer.isEmpty || peer == 'che') continue;
         counts[peer] = (counts[peer] ?? 0) + 1;
       }
     }
@@ -375,14 +375,14 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
     final total = _archive.fold<int>(0, (sum, s) => sum + ((s['messages'] as List?)?.length ?? 0));
     return Semantics(
       label: connections.isEmpty
-          ? 'Saved AI brain. ChatGPT is the center. No archived AI connections yet.'
-          : 'Saved AI brain. ChatGPT is the center, connected to ${connections.length} AIs across $total saved messages.',
+          ? 'Saved AI root network. CHE is the center. No archived AI connections yet.'
+          : 'Saved AI root network. CHE is the center, connected to ${connections.length} AIs across $total saved messages.',
       child: Card(
         color: CheColors.surface,
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('CONNECTED AI BRAIN', style: CheType.overline),
+            Text('CONNECTED AI ROOT NETWORK', style: CheType.overline),
             const SizedBox(height: 4),
             Text(
               connections.isEmpty
@@ -597,8 +597,40 @@ class _AiLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final lower = name.toLowerCase();
     final domain = _aiDomain(name);
-    final label = name.toLowerCase() == 'che' ? 'CHE' : _aiLabel(name);
+    final label = lower == 'che' ? 'CHE' : _aiLabel(name);
+    if (lower == 'che') {
+      return Semantics(
+        image: true,
+        label: 'CHE app icon, central intelligence',
+        child: Container(
+          width: size,
+          height: size,
+          padding: EdgeInsets.all(size * 0.06),
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: Colors.black,
+            border: Border.all(color: CheColors.accent.withValues(alpha: 0.82), width: 1.4),
+            boxShadow: [
+              BoxShadow(
+                color: CheColors.accent.withValues(alpha: 0.38),
+                blurRadius: size * 0.45,
+                spreadRadius: size * 0.05,
+              ),
+            ],
+          ),
+          child: ClipOval(
+            child: Image.asset(
+              'assets/avatars/che.png',
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+            ),
+          ),
+        ),
+      );
+    }
     final fallback = Container(
       width: size,
       height: size,
@@ -635,16 +667,21 @@ class _AiNeuralWeb extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final peers = connections.keys.toList()..sort();
-    final side = math.max(320.0, 300.0 + math.sqrt(math.max(1, peers.length)) * 90);
+    final side = math.max(420.0, 360.0 + math.sqrt(math.max(1, peers.length)) * 120);
     final positions = <String, Offset>{};
     final center = Offset(side / 2, side / 2);
+    // Golden-angle growth makes the network feel like roots/mycelium rather
+    // than a rigid hub-and-spoke chart. Existing peers keep stable positions.
     for (var i = 0; i < peers.length; i++) {
-      final ring = i ~/ 10;
-      final slot = i % 10;
-      final onRing = math.min(10, peers.length - ring * 10);
-      final angle = -math.pi / 2 + (2 * math.pi * slot / math.max(1, onRing));
-      final radius = 95.0 + ring * 82;
-      positions[peers[i]] = center + Offset(math.cos(angle), math.sin(angle)) * radius;
+      final hash = peers[i].hashCode & 0x7fffffff;
+      final angle = -math.pi / 2 + i * 2.399963229728653 + ((hash % 17) - 8) * 0.018;
+      final radius = 105.0 + math.sqrt(i + 1) * 54 + (hash % 23);
+      final stretchX = 1.08 + ((hash ~/ 23) % 9) * 0.012;
+      final stretchY = 0.86 + ((hash ~/ 211) % 9) * 0.014;
+      positions[peers[i]] = Offset(
+        center.dx + math.cos(angle) * radius * stretchX,
+        center.dy + math.sin(angle) * radius * stretchY,
+      );
     }
     return SizedBox(
       height: 330,
@@ -668,9 +705,9 @@ class _AiNeuralWeb extends StatelessWidget {
                 left: center.dx - 34,
                 top: center.dy - 34,
                 child: Column(children: [
-                  const _AiLogo(name: 'chatgpt', size: 68),
+                  const _AiLogo(name: 'che', size: 72),
                   const SizedBox(height: 3),
-                  Text('ChatGPT', style: CheType.caption),
+                  Text('CHE', style: CheType.caption.copyWith(color: CheColors.accent, fontWeight: FontWeight.w700)),
                 ]),
               ),
               for (final peer in peers)
@@ -678,7 +715,7 @@ class _AiNeuralWeb extends StatelessWidget {
                   left: positions[peer]!.dx - 25,
                   top: positions[peer]!.dy - 25,
                   child: Semantics(
-                    label: '${_aiLabel(peer)} connected to ChatGPT through ${connections[peer]} saved messages',
+                    label: '${_aiLabel(peer)} connected to CHE through ${connections[peer]} saved messages',
                     child: Column(children: [
                       _AiLogo(name: peer, size: 50),
                       const SizedBox(height: 2),
@@ -702,37 +739,93 @@ class _AiNeuralPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final base = Paint()..style = PaintingStyle.stroke..strokeCap = StrokeCap.round;
     for (final entry in positions.entries) {
       final count = math.max(1, weights[entry.key] ?? 1);
-      final strength = math.min(1.0, 0.25 + math.log(count + 1) / 4);
-      base
-        ..color = CheColors.accent.withValues(alpha: 0.25 + strength * 0.45)
-        ..strokeWidth = 1.0 + math.min(5.0, math.log(count + 1));
-      final path = Path()
+      final strength = math.min(1.0, 0.24 + math.log(count + 1) / 4);
+      final target = entry.value;
+      final dx = target.dx - center.dx;
+      final dy = target.dy - center.dy;
+      final bend = ((entry.key.hashCode & 0x7fffffff) % 41) - 20.0;
+      final normal = Offset(-dy, dx);
+      final normLen = math.max(1.0, normal.distance);
+      final unitNormal = normal / normLen;
+      final c1 = center + Offset(dx * 0.24, dy * 0.24) + unitNormal * bend;
+      final c2 = center + Offset(dx * 0.68, dy * 0.68) - unitNormal * (bend * 0.55);
+      final root = Path()
         ..moveTo(center.dx, center.dy)
-        ..quadraticBezierTo(
-          (center.dx + entry.value.dx) / 2 + 18,
-          (center.dy + entry.value.dy) / 2 - 18,
-          entry.value.dx,
-          entry.value.dy,
+        ..cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, target.dx, target.dy);
+
+      // A dim outer root + bright inner vein creates depth without expensive
+      // shaders or offscreen WebViews.
+      canvas.drawPath(
+        root,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..color = CheColors.accent.withValues(alpha: 0.10 + strength * 0.18)
+          ..strokeWidth = 5.0 + math.min(7.0, math.log(count + 1) * 1.8),
+      );
+      canvas.drawPath(
+        root,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..color = CheColors.accent.withValues(alpha: 0.34 + strength * 0.46)
+          ..strokeWidth = 0.9 + math.min(3.6, math.log(count + 1)),
+      );
+
+      // Fine rootlets branch near each AI. More saved interactions = denser
+      // growth, but the count is capped so painting stays cheap.
+      final rootlets = math.min(7, 2 + (math.log(count + 1) * 2).round());
+      final baseAngle = math.atan2(dy, dx);
+      for (var i = 0; i < rootlets; i++) {
+        final spread = (i - (rootlets - 1) / 2) * 0.24;
+        final length = 18.0 + strength * 22 + (i % 3) * 4;
+        final end = target + Offset(
+          math.cos(baseAngle + spread) * length,
+          math.sin(baseAngle + spread) * length,
         );
-      canvas.drawPath(path, base);
-      final beads = math.min(12, count);
+        final twig = Path()
+          ..moveTo(target.dx, target.dy)
+          ..quadraticBezierTo(
+            target.dx + math.cos(baseAngle + spread * 0.45) * length * 0.45,
+            target.dy + math.sin(baseAngle + spread * 0.45) * length * 0.45,
+            end.dx,
+            end.dy,
+          );
+        canvas.drawPath(
+          twig,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeCap = StrokeCap.round
+            ..color = CheColors.accentAlt.withValues(alpha: 0.16 + strength * 0.28)
+            ..strokeWidth = 0.7 + strength,
+        );
+      }
+
+      final beads = math.min(9, count);
       for (var i = 1; i <= beads; i++) {
         final t = i / (beads + 1);
         final p = Offset(
-          center.dx + (entry.value.dx - center.dx) * t,
-          center.dy + (entry.value.dy - center.dy) * t,
+          center.dx + dx * t,
+          center.dy + dy * t,
         );
         canvas.drawCircle(
           p,
-          1.5 + strength,
-          Paint()..color = CheColors.accentAlt.withValues(alpha: 0.35 + strength * 0.45),
+          1.2 + strength,
+          Paint()..color = CheColors.accentAlt.withValues(alpha: 0.30 + strength * 0.42),
         );
       }
     }
-    canvas.drawCircle(center, 82, Paint()..style = PaintingStyle.stroke..strokeWidth = 1.2..color = CheColors.accent.withValues(alpha: 0.18));
+
+    canvas.drawCircle(
+      center,
+      88,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.4
+        ..color = CheColors.accent.withValues(alpha: 0.22),
+    );
   }
 
   @override
