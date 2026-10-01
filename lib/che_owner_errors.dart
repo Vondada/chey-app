@@ -33,7 +33,11 @@ class CheOwnerError {
     } else if (lower.contains('voice') && lower.contains('unavail')) {
       category = 'voice_unavailable';
     }
-    if (_looksRaw(lower) || lower.contains('engines failed') || lower.contains('retry limit')) {
+    if (status != null ||
+        _looksRaw(lower) ||
+        _technical.hasMatch(raw) ||
+        lower.contains('engines failed') ||
+        lower.contains('retry limit')) {
       return CheOwnerError(
         category: category,
         message: _messageFor(category),
@@ -48,6 +52,13 @@ class CheOwnerError {
 
   static bool _looksRaw(String lower) => _raw.any(lower.contains);
 
+  // Status codes, exceptions and timeouts are engine plumbing, not something
+  // the owner should ever have to read.
+  static final RegExp _technical = RegExp(
+    r'\b(?:error|status|http)\s*\d{3}\b|exception|timed? ?out|timeout|failed|stack|null check|\{"|errno',
+    caseSensitive: false,
+  );
+
   static String _messageFor(String category) {
     switch (category) {
       case 'network_offline':
@@ -57,7 +68,7 @@ class CheOwnerError {
       case 'authentication_required':
         return "That engine needs a key on the Worker, sir. I skipped it and moved on.";
       default:
-        return "I'm having trouble reaching my cloud engines, sir. I'm switching to another route.";
+        return "One moment, sir. I'm switching to a backup engine.";
     }
   }
 }

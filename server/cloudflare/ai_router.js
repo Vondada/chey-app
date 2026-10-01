@@ -38,8 +38,11 @@ let keylessDiscoveredAt = 0;
 function currentListedModel(configured, baseId, candidates, fallback) {
   const requested = String(configured || '').trim();
   const listed = keylessModelCache.get(`avail:${baseId}`)?.models;
+  // Model IDs the providers have retired. Never send these even before
+  // discovery runs: a dead model name is a guaranteed error for the owner.
+  const retired = /^(?:llama-3\.[13]-|llama3-|gemma2-|mixtral-8x7b|gemini-(?:1\.|2\.0))/i.test(requested);
   // If discovery has not run (or failed), preserve an explicit owner setting.
-  if (!Array.isArray(listed) || !listed.length) return requested || fallback;
+  if (!Array.isArray(listed) || !listed.length) return (retired ? '' : requested) || fallback;
   // Preserve an explicit setting only while the provider still advertises it.
   if (requested && listed.includes(requested)) return requested;
   const safeListed = listed.filter((id) => !/embed|whisper|guard|tts|audio|image|live|transcrib|robotic|moderation/i.test(id));
@@ -50,7 +53,7 @@ function currentListedModel(configured, baseId, candidates, fallback) {
 // fast and a strong pick. Runs at most every 6 hours (or when forced after
 // everything failed) so CHE keeps finding working free engines on her own.
 export async function discoverKeylessModels(fetcher = fetch, { force = false, storage = null, env = {} } = {}) {
-  if (['1', 'true', 'yes'].includes(String(env?.CHE_DISABLE_KEYLESS_AI || '').toLowerCase())) return [];
+  const keylessOff = ['1', 'true', 'yes'].includes(String(env?.CHE_DISABLE_KEYLESS_AI || '').toLowerCase());
   const now = Date.now();
   if (!force && now - keylessDiscoveredAt < 6 * 3600 * 1000) return [...keylessModelCache.entries()];
   keylessDiscoveredAt = now;
@@ -61,7 +64,9 @@ export async function discoverKeylessModels(fetcher = fetch, { force = false, st
     } catch (_) {}
   }
   const prefer = [/deepseek/i, /gemini/i, /gemma/i, /mistral|nemo/i, /qwen/i, /llama/i, /gpt/i];
-  for (const engine of KEYLESS_POOL) {
+  // Keyless engines can be switched off, but the keyed model check below
+  // still runs so CHE never calls a model her own keys no longer offer.
+  for (const engine of keylessOff ? [] : KEYLESS_POOL) {
     if (!engine.modelsUrl) continue;
     try {
       const response = await fetcher(engine.modelsUrl, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(4000) });
