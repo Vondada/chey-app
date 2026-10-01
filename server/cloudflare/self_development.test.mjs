@@ -181,3 +181,72 @@ test('router replaces retired Groq models with a current advertised model', asyn
   assert.equal(out.model, 'openai/gpt-oss-120b');
   assert.deepEqual(calls, ['openai/gpt-oss-120b']);
 });
+
+
+test('no-op engineering pass re-inspects source and retries on a different provider pair', async () => {
+  const mem = memoryStore();
+  let implementCalls = 0;
+  let recoveryCalls = 0;
+  const providers = [];
+  const env = {
+    CHE_GITHUB_TOKEN: 't',
+    CHE_GITHUB_REPO: 'o/r',
+    AI: {
+      run: async (_model, input) => {
+        const system = input.messages[0].content;
+        if (system.includes('Source Recovery Architect')) {
+          recoveryCalls++;
+          return { response: JSON.stringify({
+            plan: 'The first file was wrong; inspect the real home status source.',
+            search_terms: ['Ready. Type or speak a request.'],
+            paths: ['lib/main.dart'],
+          }) };
+        }
+        if (system.includes('Architect')) {
+          return { response: JSON.stringify({
+            plan: 'Initial location guess.',
+            search_terms: ['CHE updated. Restart to apply.'],
+            paths: ['lib/self_update/che_patch_banner.dart'],
+          }) };
+        }
+        if (system.includes('Review')) {
+          return { response: JSON.stringify({
+            approved: true,
+            target_correct: true,
+            notes: [],
+            repair_instructions: '',
+            lesson: '',
+          }) };
+        }
+        implementCalls++;
+        providers.push(input.che_provider);
+        if (implementCalls <= 2) {
+          return { response: JSON.stringify({
+            summary: 'No-op first pass',
+            edits: [{
+              path: 'lib/self_update/che_patch_banner.dart',
+              find: 'CHE updated. Restart to apply.',
+              replace: 'CHE updated. Restart to apply.',
+            }],
+          }) };
+        }
+        return { response: JSON.stringify({
+          summary: 'Recovered real target',
+          edits: [{
+            path: 'lib/main.dart',
+            find: "'Ready. Type or speak a request.'",
+            replace: "'Ready, sir.'",
+          }],
+        }) };
+      },
+    },
+  };
+
+  const out = await prepareSelfUpdate(env, 'change the home status wording', fakeGitHub(), mem);
+  assert.equal(out.status, 200, out.detail);
+  assert.ok(recoveryCalls >= 1, 'CHE should re-run source location after a no-op pass');
+  assert.ok(providers.includes('groq') && providers.includes('cerebras'));
+  assert.ok(providers.includes('gemini') || providers.includes('mistral'), 'retry should use a different provider pair');
+  assert.deepEqual(out.proposal.files.map((f) => f.path), ['lib/main.dart']);
+  assert.match(out.proposal.files[0].content, /'Ready, sir\.'/);
+});
