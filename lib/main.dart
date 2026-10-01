@@ -776,6 +776,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   final ImagePicker _imagePicker = ImagePicker();
 
   List<String> savedMemories = [];
+  List<Map<String, dynamic>> memoryRecords = [];
   List<Map<String, dynamic>> memoryNotes = [];
   List<Map<String, dynamic>> brainLinks = [];
   List<Map<String, dynamic>> learnedPersonality = [];
