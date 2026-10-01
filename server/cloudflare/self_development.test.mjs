@@ -145,23 +145,39 @@ test('oversized prompts are trimmed to fit a free engine instead of failing', as
   assert.equal(fitToBudget({ messages: [{ role: 'user', content: 'hi' }] }, 16000).messages[0].content, 'hi');
 });
 
-test('when every keyed engine fails, CHE finds a free no-account engine and answers', async () => {
+test('router replaces retired Groq models with a current advertised model', async () => {
   const { routeText, resetRouterForTests, discoverKeylessModels } = await import('./ai_router.js');
   resetRouterForTests();
+  const calls = [];
   const fetcher = async (url, init = {}) => {
     const u = String(url);
-    if (u.endsWith('/v1/models')) return new Response(JSON.stringify({ data: [{ id: 'gemma4:31b' }, { id: 'deepseek-v4-flash' }, { id: 'text-embedding' }] }), { status: 200 });
-    if (u.includes('llm7')) {
-      const body = JSON.parse(init.body);
-      return new Response(JSON.stringify({ choices: [{ message: { content: `alive on ${body.model}` } }] }), { status: 200 });
+    if (u === 'https://api.groq.com/openai/v1/models') {
+      return new Response(JSON.stringify({ data: [
+        { id: 'openai/gpt-oss-20b' },
+        { id: 'openai/gpt-oss-120b' },
+        { id: 'qwen/qwen3.8-27b' },
+      ] }), { status: 200 });
     }
-    return new Response('{"error":{"message":"rate limit"}}', { status: 429 });
+    if (u.includes('api.groq.com/openai/v1/chat/completions')) {
+      const body = JSON.parse(init.body);
+      calls.push(body.model);
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'current Groq model answered' } }] }), { status: 200 });
+    }
+    return new Response('{"error":{"message":"not used"}}', { status: 500 });
   };
-  const env = { AI: { run: async () => { throw new Error('4006 neurons'); } }, GROQ_API_KEY: 'g', CHE_POLLINATIONS_MODELS: 'none' };
-  await discoverKeylessModels(fetcher, { force: true });
-  const out = await routeText(env, '@cf/meta/llama-3.1-8b-instruct-fp8', { messages: [{ role: 'user', content: 'Good afternoon' }], che_route: 'quality' }, fetcher);
-  assert.equal(out.engine, 'llm7');
-  assert.match(out.response, /alive on deepseek-v4-flash/);
-  const picks = Object.fromEntries(await discoverKeylessModels(fetcher, { force: true }));
-  assert.equal(picks.llm7.strong, 'deepseek-v4-flash');
+  const env = {
+    GROQ_API_KEY: 'g',
+    CHE_GROQ_STRONG_MODEL: 'llama-3.3-70b-versatile',
+    CHE_DISABLE_KEYLESS_AI: '1',
+  };
+  await discoverKeylessModels(fetcher, { force: true, env });
+  const out = await routeText(
+    env,
+    '@cf/meta/llama-3.1-8b-instruct-fp8',
+    { messages: [{ role: 'user', content: 'Analyze this attachment.' }], che_route: 'quality' },
+    fetcher,
+  );
+  assert.equal(out.engine, 'groq');
+  assert.equal(out.model, 'openai/gpt-oss-120b');
+  assert.deepEqual(calls, ['openai/gpt-oss-120b']);
 });
