@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../agents/che_agent_runtime.dart';
-import '../che_ui/che_theme.dart';
+import '../che_theme.dart';
 import '../widgets/che_3d_room_view.dart';
 
 T? _workshopFirstOrNull<T>(Iterable<T> values) => values.isEmpty ? null : values.first;
