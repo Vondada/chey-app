@@ -1764,6 +1764,18 @@ function storageReadiness(env) {
   };
 }
 
+// Key words of what failed, for a code search: frequent longer words from
+// the conversation, minus filler.
+export function fixThisNeed(text) {
+  const stop = new Set(['owner', 'sir', 'said', 'this', 'that', 'what', 'with', 'from', 'have', 'there', 'their', 'would', 'could', 'should', 'about', 'which', 'when', 'where', 'into', 'your', 'them', 'then', 'than', 'they', 'been', 'were', 'will', 'just', 'like', 'want', 'work', 'works', 'conversation', 'recent', 'screen', 'shell', 'something', 'thing', 'things', 'really', 'right', 'need', 'make', 'code', 'fix', 'fixed', 'cause', 'change', 'better', 'before', 'last', 'looked', 'wrong', 'failed', 'owner\'s']);
+  const counts = new Map();
+  for (const w of String(text || '').toLowerCase().match(/[a-z][a-z-]{4,}/g) || []) {
+    if (stop.has(w)) continue;
+    counts.set(w, (counts.get(w) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([w]) => w).join(' ');
+}
+
 async function dispatchChange(env, body, memory = null) {
   const request = String(body.request || '').trim();
   if (request.length < 8 || request.length > 4000) return json({ detail: 'Describe one change in 8–4000 characters.' }, 400);
@@ -1774,7 +1786,16 @@ async function dispatchChange(env, body, memory = null) {
   // The coding team runs here on Cloudflare and reads/writes the repo through
   // the GitHub API. GitHub Actions (billed minutes) is no longer required.
   const recall = await retrieveVectorContext(env, request);
-  const groundedRequest = ragReference(request, vectorContextText(recall), 4000).slice(0, 6000);
+  let groundedRequest = ragReference(request, vectorContextText(recall), 4000).slice(0, 6000);
+  // "Fix this": look for well-built open-source code doing the same job, so
+  // the crew can learn the technique (never copy it) and credit it.
+  if (body.fix_this) {
+    const need = fixThisNeed(request);
+    const found = need ? await scoutCode(env, need, fetch, { minStars: 300, limit: 3 }).catch(() => ({ repos: [] })) : { repos: [] };
+    if (found.repos?.length) {
+      groundedRequest += `\n\nREFERENCE PROJECTS (learn the approach, write CHE's own code, no copying, credit in the PR):\n${found.repos.map((r) => `- ${r.full_name} (${r.license_name}, ${r.stars} stars): ${r.description}`).join('\n')}`;
+    }
+  }
   let prepared;
   try {
     prepared = await prepareSelfUpdate(env, groundedRequest, fetch, memory);

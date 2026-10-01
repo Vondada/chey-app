@@ -63,7 +63,13 @@ extension _CheHomeStreaming on _CHEHomeState {
 
     // Updating CHE itself is different from creating a separate owner project.
     // CHE self-code changes stay reviewable through the GitHub proposal workflow.
-    final codeRequest = cheIsSelfUpdateRequest(trimmedRequest);
+    // "Fix this": CHE works out what "this" is (the screen, the last thing
+    // that went wrong) and has her crew rewrite or improve her own code.
+    final fixThis = RegExp(
+      r'^(?:(?:chay|chey|shay|che)[, ]+)?(?:please\s+)?(?:fix|repair)\s+(?:this|that|it)\b',
+      caseSensitive: false,
+    ).hasMatch(trimmedRequest);
+    final codeRequest = fixThis || cheIsSelfUpdateRequest(trimmedRequest);
 
     final projectMatch = RegExp(
       r'\b(?:build|create|develop|write|start|make)\s+'
@@ -111,7 +117,9 @@ extension _CheHomeStreaming on _CHEHomeState {
       final response = await http.post(
         Uri.parse('$cheAgentBaseUrl/api/change/request'),
         headers: _authHeaders,
-        body: jsonEncode({'request': userMessage.trim()}),
+        body: jsonEncode(fixThis
+            ? {'request': _fixThisRequest(trimmedRequest), 'fix_this': true}
+            : {'request': userMessage.trim()}),
       );
       if (response.statusCode == 401) {
         await _clearSecuritySession();
@@ -333,4 +341,30 @@ extension _CheHomeStreaming on _CHEHomeState {
     }
     return finalText;
   }
+
+  /// Turns "fix this" into a full brief for the coding crew.
+  String _fixThisRequest(String spoken) {
+    final recent = messages.length > 6 ? messages.sublist(messages.length - 6) : List.of(messages);
+    final convo = recent
+        .where((m) => (m['text'] ?? '').trim().isNotEmpty)
+        .map((m) {
+          final t = (m['text'] ?? '').trim();
+          return '${m['role'] == 'user' ? 'Owner' : 'CHE'}: ${t.length > 400 ? '${t.substring(0, 400)}…' : t}';
+        })
+        .join('\n');
+    final screen = _pendingScreenContext;
+    final brief = StringBuffer()
+      ..writeln('The owner said "$spoken". Work out what "this" is: the last thing that failed or looked wrong in the conversation below, or the screen he is on. Then fix it in CHE\'s own code.')
+      ..writeln('How: find the real cause, then rewrite or improve that code so it works better than before. If stronger approaches exist in the reference projects provided, learn their technique and write CHE\'s own version: no copy-paste, respect licenses, credit sources in the PR. Keep the change small and tested.')
+      ..writeln('Owner is on shell tab $_shellTab.');
+    if (screen != null && screen.isNotEmpty) {
+      brief.writeln('Screen: ${screen.length > 600 ? screen.substring(0, 600) : screen}');
+    }
+    brief
+      ..writeln('Recent conversation:')
+      ..writeln(convo);
+    final text = brief.toString();
+    return text.length > 3900 ? text.substring(0, 3900) : text;
+  }
 }
+
