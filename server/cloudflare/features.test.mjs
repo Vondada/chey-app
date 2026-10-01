@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { buildToolUrl, planPluginCall, pluginManifests, runPluginTool } from './plugin_runtime.js';
 import { classifyUpdate, openSelfUpdatePr, rollbackLastUpdate, scanUpdateContent, validateUpdateFiles } from './self_update.js';
-import { parseStooqCsv, snapshot } from './markets.js';
+import { accountSnapshot, parseStooqCsv, snapshot } from './markets.js';
 
 const weather = pluginManifests({}).find((item) => item.id === 'weather');
 
@@ -191,6 +191,36 @@ function memStorage() {
     raw: m,
   };
 }
+
+test('broker account snapshot is read-only and never invents a balance', async () => {
+  const disconnected = await accountSnapshot({}, async () => { throw new Error('should not fetch'); });
+  assert.equal(disconnected.connected, false);
+  assert.equal(disconnected.live, false);
+  assert.equal(disconnected.balance, undefined);
+
+  let sent;
+  const live = await accountSnapshot(
+    { CHE_BROKER_URL: 'https://broker.example/api', CHE_BROKER_TOKEN: 'secret' },
+    async (_url, init) => {
+      sent = JSON.parse(init.body);
+      return new Response(JSON.stringify({
+        account: {
+          account_name: 'Funded',
+          currency: 'USD',
+          balance: 25123.45,
+          equity: 25200,
+          buying_power: 50100,
+        },
+      }), { status: 200 });
+    },
+  );
+  assert.deepEqual(sent, { tool: 'account_snapshot', mode: 'read_only' });
+  assert.equal(live.connected, true);
+  assert.equal(live.live, true);
+  assert.equal(live.balance, 25123.45);
+  assert.equal(live.equity, 25200);
+  assert.equal(live.buying_power, 50100);
+});
 
 test('art studio: real images with versions, draft opt-in, honest upscaling', async () => {
   const storage = memStorage();
