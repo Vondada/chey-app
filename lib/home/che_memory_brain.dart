@@ -188,6 +188,18 @@ List<String> _tokens(String text) {
       .toList();
 }
 
+Color cheMemoryCategoryColor(String category) => switch (category.toLowerCase()) {
+      'memory' => const Color(0xFF39E6C5),
+      'learning' => const Color(0xFF4CC9F0),
+      'ml learning' => const Color(0xFFB17CFF),
+      'research' => const Color(0xFFFFC857),
+      'about you' => const Color(0xFFFF7EB6),
+      'knowledge' => const Color(0xFF6EA8FF),
+      'suggestion' => const Color(0xFF8DE969),
+      'translation' => const Color(0xFFFF9F68),
+      _ => CheColors.accent,
+    };
+
 class CheMemoryBrainRoom extends StatefulWidget {
   const CheMemoryBrainRoom({
     super.key,
@@ -255,23 +267,32 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
     ];
   }
 
-  /// Stable organic layout — grows with N, no artificial max.
+  double _depth(CheMemoryDot dot) {
+    final normalized = ((dot.id.hashCode & 0x7fffffff) % 1000) / 999.0;
+    return normalized * 2 - 1; // -1 far, +1 near
+  }
+
+  /// Stable pseudo-3D neural cloud. Depth changes projection, orb size and glow,
+  /// while InteractiveViewer supplies pinch-to-zoom and pan.
   Map<String, Offset> _layout(List<CheMemoryDot> dots, Size size) {
     final cx = size.width * 0.5;
-    final cy = size.height * 0.48;
+    final cy = size.height * 0.5;
     final map = <String, Offset>{};
     if (dots.isEmpty) return map;
-    // Brain-ish oval packing: golden-angle spiral scaled by sqrt(n).
-    final scale = math.min(size.width, size.height) * 0.42;
+    final scale = math.min(size.width, size.height) * 0.43;
     for (var i = 0; i < dots.length; i++) {
       final d = dots[i];
       final hash = d.id.hashCode;
-      final angle = i * 2.399963229728653; // golden angle
+      final angle = i * 2.399963229728653;
       final r = scale * math.sqrt((i + 1) / dots.length);
-      final wobbleX = ((hash % 17) - 8) * 1.8;
-      final wobbleY = (((hash ~/ 17) % 17) - 8) * 1.6;
-      // Slight vertical squash for brain silhouette.
-      map[d.id] = Offset(cx + math.cos(angle) * r * 1.05 + wobbleX, cy + math.sin(angle) * r * 0.78 + wobbleY);
+      final z = _depth(d);
+      final perspective = 0.72 + ((z + 1) / 2) * 0.48;
+      final wobbleX = ((hash % 17) - 8) * 1.4;
+      final wobbleY = (((hash ~/ 17) % 17) - 8) * 1.2;
+      map[d.id] = Offset(
+        cx + (math.cos(angle) * r * 1.08 + wobbleX) * perspective,
+        cy + (math.sin(angle) * r * 0.82 + wobbleY) * perspective,
+      );
     }
     return map;
   }
@@ -299,10 +320,10 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: CheColors.accent.withValues(alpha: 0.14),
+                  color: cheMemoryCategoryColor(dot.category).withValues(alpha: 0.16),
                   borderRadius: BorderRadius.circular(CheRadius.pill),
                 ),
-                child: Text(dot.category, style: CheType.caption.copyWith(color: CheColors.accent)),
+                child: Text(dot.category, style: CheType.caption.copyWith(color: cheMemoryCategoryColor(dot.category))),
               ),
               const SizedBox(height: CheSpace.md),
               Text(dot.title, style: CheType.headline),
@@ -410,6 +431,30 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
             ),
           ),
         ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(CheSpace.gutter, 0, CheSpace.gutter, CheSpace.sm),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              for (final category in const ['Memory', 'Learning', 'ML Learning', 'Research', 'About you', 'Knowledge'])
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: cheMemoryCategoryColor(category).withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(CheRadius.pill),
+                    border: Border.all(color: cheMemoryCategoryColor(category).withValues(alpha: 0.35)),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Container(width: 7, height: 7, decoration: BoxDecoration(shape: BoxShape.circle, color: cheMemoryCategoryColor(category))),
+                    const SizedBox(width: 5),
+                    Text(category, style: CheType.caption.copyWith(fontSize: 10)),
+                  ]),
+                ),
+              Text('Pinch to zoom · tap an orb', style: CheType.caption.copyWith(fontSize: 10)),
+            ],
+          ),
+        ),
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
@@ -446,13 +491,15 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
                                 top: pos[d.id]!.dy - 10,
                                 child: Semantics(
                                   button: true,
-                                  label: '${d.category}. ${d.title}',
+                                  label: '${d.category}. ${d.title}. Depth ${((_depth(d) + 1) * 50).round()} percent.',
                                   child: GestureDetector(
                                     onTap: () => _openDetail(d),
                                     child: _DotOrb(
                                       selected: _selected?.id == d.id,
                                       phase: _pulse.value,
                                       seed: d.id.hashCode,
+                                      color: cheMemoryCategoryColor(d.category),
+                                      depth: _depth(d),
                                     ),
                                   ),
                                 ),
@@ -498,35 +545,56 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
       ],
     );
 
-    if (!widget.embedded) return child;
-    return Material(color: CheColors.bg, child: child);
+    if (!widget.embedded) return ColoredBox(color: Colors.black, child: child);
+    return Material(color: Colors.black, child: child);
   }
 }
 
 class _DotOrb extends StatelessWidget {
-  const _DotOrb({required this.selected, required this.phase, required this.seed});
+  const _DotOrb({
+    required this.selected,
+    required this.phase,
+    required this.seed,
+    required this.color,
+    required this.depth,
+  });
   final bool selected;
   final double phase;
   final int seed;
+  final Color color;
+  final double depth;
 
   @override
   Widget build(BuildContext context) {
     final pulse = 0.85 + 0.15 * math.sin(phase * math.pi * 2 + seed);
-    final size = selected ? 22.0 : 14.0 + (seed % 5) * 0.6;
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: CheColors.accent.withValues(alpha: selected ? 1 : 0.85 * pulse),
-        boxShadow: [
-          BoxShadow(
-            color: CheColors.accent.withValues(alpha: selected ? 0.75 : 0.35 * pulse),
-            blurRadius: selected ? 18 : 10,
-            spreadRadius: selected ? 2 : 0,
+    final depthScale = 0.72 + ((depth + 1) / 2) * 0.70;
+    final size = selected ? 28.0 : (13.0 + (seed.abs() % 5) * 0.8) * depthScale;
+    final alpha = (0.55 + ((depth + 1) / 2) * 0.38).clamp(0.45, 0.95);
+    return Transform.scale(
+      scale: selected ? 1.08 : 1,
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: RadialGradient(
+            center: const Alignment(-0.35, -0.35),
+            colors: [
+              Colors.white.withValues(alpha: selected ? 0.95 : 0.72),
+              color.withValues(alpha: selected ? 1 : alpha * pulse),
+              color.withValues(alpha: 0.32),
+            ],
+            stops: const [0, 0.28, 1],
           ),
-        ],
-        border: selected ? Border.all(color: Colors.white, width: 1.5) : null,
+          boxShadow: [
+            BoxShadow(
+              color: color.withValues(alpha: selected ? 0.82 : (0.18 + 0.28 * pulse) * depthScale),
+              blurRadius: selected ? 26 : 8 + 10 * depthScale,
+              spreadRadius: selected ? 3 : depthScale - 0.7,
+            ),
+          ],
+          border: selected ? Border.all(color: Colors.white, width: 1.6) : null,
+        ),
       ),
     );
   }
