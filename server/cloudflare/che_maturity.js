@@ -12,16 +12,30 @@ export const CHE_IDENTITY = {
   office_agents: ['Nova', 'Atlas', 'Mira', 'Knox', 'Sage', 'Lyra', 'Iris'],
 };
 
-const CAPABILITY_CATALOG = [
+export const CAPABILITY_CATALOG = [
   { id: 'voice', requires_network: false },
   { id: 'speech_recognition', requires_network: false },
   { id: 'tts', requires_network: false },
   { id: 'chat', requires_network: false },
   { id: 'memory', requires_network: false },
+  { id: 'owner_memory', requires_network: false },
+  { id: 'semantic_memory', requires_network: true },
+  { id: 'knowledge_graph', requires_network: false },
   { id: 'files', requires_network: false },
   { id: 'browser', requires_network: true },
   { id: 'web', requires_network: true },
   { id: 'research', requires_network: true },
+  { id: 'live_retrieval', requires_network: true },
+  { id: 'vision', requires_network: true },
+  { id: 'multimodal', requires_network: true },
+  { id: 'audio_understanding', requires_network: true },
+  { id: 'video_understanding', requires_network: true },
+  { id: 'document_understanding', requires_network: true },
+  { id: 'image_generation', requires_network: true },
+  { id: 'video_generation', requires_network: true },
+  { id: 'provider_routing', requires_network: true },
+  { id: 'model_discovery', requires_network: true },
+  { id: 'cross_check', requires_network: true },
   { id: 'office', requires_network: true },
   { id: 'war_room', requires_network: true },
   { id: 'plugins', requires_network: false },
@@ -31,6 +45,7 @@ const CAPABILITY_CATALOG = [
   { id: 'business_tools', requires_network: true },
   { id: 'background_jobs', requires_network: true },
   { id: 'model_routing', requires_network: true },
+  { id: 'self_development', requires_network: true, requires_owner_permission: true },
   { id: 'notifications', requires_network: true },
   { id: 'sms', requires_network: true, requires_secret: true, requires_owner_permission: true },
   { id: 'stripe', requires_network: true, requires_secret: true, requires_owner_permission: true },
@@ -61,6 +76,8 @@ export function capabilityState(id, runtime = {}) {
     write_capable: runtime.write_capable !== false,
     limitations: runtime.limitations || '',
     last_success: runtime.last_success || null,
+    tool: runtime.tool || null,
+    providers: Array.isArray(runtime.providers) ? runtime.providers : [],
     readiness,
   };
 }
