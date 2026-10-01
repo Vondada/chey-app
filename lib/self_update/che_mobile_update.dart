@@ -140,6 +140,7 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
   List<CheMobileUpdateInfo> _history = const [];
   UpdateStatus? _patchStatus;
   String _error = '';
+  String _latestAttemptFailure = '';
   bool _loading = true;
   bool _busy = false;
   late bool _showHistory = widget.showHistoryInitially;
@@ -153,7 +154,11 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
   }
 
   Future<void> _check({bool announce = false}) async {
-    if (mounted) setState(() { _loading = true; _error = ''; });
+    if (mounted) setState(() {
+      _loading = true;
+      _error = '';
+      _latestAttemptFailure = '';
+    });
     final installed = await CheInstalledBuild.read();
     UpdateStatus? patch;
     if (_shorebird.isAvailable) {
@@ -164,13 +169,32 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
 
     CheMobileUpdateInfo? latest;
     var history = <CheMobileUpdateInfo>[];
+    var latestAttemptFailure = '';
     try {
-      latest = await cheLatestMobileUpdate(_base);
-      final historyResponse = await http
-          .get(Uri.parse('$_base/api/update/history'))
-          .timeout(const Duration(seconds: 15));
-      if (historyResponse.statusCode == 200) {
-        final raw = jsonDecode(historyResponse.body);
+      final responses = await Future.wait([
+        http
+            .get(Uri.parse('$_base/api/update/latest'))
+            .timeout(const Duration(seconds: 15)),
+        http
+            .get(Uri.parse('$_base/api/update/history'))
+            .timeout(const Duration(seconds: 15)),
+      ]);
+      final latestRaw = jsonDecode(responses[0].body);
+      if (latestRaw is Map) {
+        final payload = Map<String, dynamic>.from(latestRaw);
+        if (responses[0].statusCode == 200 && payload['ok'] == true) {
+          final parsed = CheMobileUpdateInfo.fromJson(payload);
+          if (parsed.valid) latest = parsed;
+        }
+        final attempt = payload['latest_attempt'];
+        if (attempt is Map && attempt['state'] == 'failure') {
+          latestAttemptFailure =
+              '${payload['detail'] ?? attempt['detail'] ?? 'The newest CHE mobile build failed.'}';
+        }
+      }
+
+      if (responses[1].statusCode == 200) {
+        final raw = jsonDecode(responses[1].body);
         final builds = raw is Map ? raw['builds'] : null;
         if (builds is List) {
           history = builds
@@ -189,14 +213,21 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
       _latest = latest;
       _history = history;
       _patchStatus = patch;
+      _latestAttemptFailure = latestAttemptFailure;
       _loading = false;
-      if (latest == null && patch != UpdateStatus.outdated) {
+      if (latestAttemptFailure.isNotEmpty) {
+        _error = latestAttemptFailure;
+      } else if (latest == null && patch != UpdateStatus.outdated) {
         _error = 'I could not find a newer verified CHE build.';
       }
     });
 
     if (!announce) return;
-    if (latest?.isNewerThan(installed) == true) {
+    if (latestAttemptFailure.isNotEmpty) {
+      await widget.onSpeak(
+        '$latestAttemptFailure Your previous verified CHE build remains available, sir.',
+      );
+    } else if (latest?.isNewerThan(installed) == true) {
       await widget.onSpeak(
         'Sir, a new native CHE update is ready. '
         'Option 1, install with SideStore. '
