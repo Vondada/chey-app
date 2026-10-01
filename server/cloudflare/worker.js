@@ -30,7 +30,7 @@ import {
 import { discoverKeylessModels, engineStatus, routedEnv } from './ai_router.js';
 import { deleteMedia, generateImage, listMedia, readBlob, upscaleImage } from './media.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
-import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
+import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
@@ -2925,6 +2925,9 @@ export class CheState extends DurableObject {
       // ─── Markets desk (real quotes only; unavailable says so) ───────────
       if (path === '/api/markets/snapshot' && request.method === 'GET') {
         return json(await marketSnapshot(this.env));
+      }
+      if (path === '/api/trading/account' && request.method === 'GET') {
+        return json(await marketAccountSnapshot(this.env));
       }
       // ─── Trading Lab: swings, entries, patterns, backtests, paper trades ──
       if (path === '/api/trading/analyze' && request.method === 'GET') {
