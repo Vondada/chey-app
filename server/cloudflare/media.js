@@ -28,18 +28,31 @@ function b64ToBytes(b64) {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
 
-async function storeBlob(env, storage, id, base64, mimeType = 'image/jpeg') {
+function extensionForMime(mimeType) {
+  if (mimeType === 'image/png') return 'png';
+  if (mimeType === 'image/webp') return 'webp';
+  if (mimeType === 'video/mp4') return 'mp4';
+  if (mimeType === 'video/webm') return 'webm';
+  return 'jpg';
+}
+
+async function storeBlob(env, storage, id, base64, mimeType = 'image/jpeg', kind = 'image') {
   if (env.CHE_DATA_BUCKET) {
-    await env.CHE_DATA_BUCKET.put(`media/${id}.jpg`, b64ToBytes(base64), { httpMetadata: { contentType: mimeType } });
-    return 'r2';
+    const key = `media/${id}.${extensionForMime(mimeType)}`;
+    await env.CHE_DATA_BUCKET.put(key, b64ToBytes(base64), { httpMetadata: { contentType: mimeType } });
+    return { blob: 'r2', blob_key: key };
+  }
+  if (kind === 'video') {
+    throw new Error('Generated video storage needs CHE_DATA_BUCKET (R2).');
   }
   await storage.put(`media:${id}`, base64);
-  return 'do';
+  return { blob: 'do' };
 }
 
 export async function readBlob(env, storage, item) {
   if (item.blob === 'r2' && env.CHE_DATA_BUCKET) {
-    const object = await env.CHE_DATA_BUCKET.get(`media/${item.id}.jpg`);
+    const key = item.blob_key || `media/${item.id}.jpg`;
+    const object = await env.CHE_DATA_BUCKET.get(key);
     return object ? new Uint8Array(await object.arrayBuffer()) : null;
   }
   const b64 = await storage.get(`media:${item.id}`);
@@ -62,6 +75,90 @@ async function connectorImage(env, prompt, fetcher) {
   const out = String(data.url || data.output_url || data.image_url || '').trim();
   if (!out.startsWith('https://')) throw new Error('Image connector returned no image URL.');
   return out;
+}
+
+function openAiKey(env) {
+  return env.OPENAI_API_KEY || env.CHE_OPENAI_API_KEY || '';
+}
+
+async function openAiImage(env, prompt, draft, fetcher) {
+  const key = openAiKey(env);
+  if (!key) throw new Error('OpenAI image key is not configured.');
+  const model = draft
+    ? (env.CHE_OPENAI_IMAGE_FAST_MODEL || 'gpt-image-2.5-flare')
+    : (env.CHE_OPENAI_IMAGE_MODEL || 'gpt-image-2.5-sunburst');
+  const response = await fetcher('https://api.openai.com/v1/images/generations', {
+    method: 'POST',
+    signal: AbortSignal.timeout(90000),
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model,
+      prompt: prompt.slice(0, 32000),
+      size: 'auto',
+      quality: draft ? 'medium' : 'high',
+      output_format: 'png',
+      n: 1,
+    }),
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(`${response.status}: ${data?.error?.message || 'OpenAI image request failed'}`);
+  }
+  const item = data?.data?.[0];
+  if (item?.b64_json) return { base64: item.b64_json, mime_type: 'image/png', model };
+  if (String(item?.url || '').startsWith('https://')) return { url: item.url, model };
+  throw new Error('OpenAI returned no image.');
+}
+
+async function connectorVideo(env, prompt, fetcher) {
+  const url = new URL(env.CHE_VIDEO_GEN_URL);
+  if (url.protocol !== 'https:') throw new Error('Video connector must use HTTPS.');
+  const response = await fetcher(url.toString(), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(env.CHE_VIDEO_GEN_TOKEN ? { Authorization: `Bearer ${env.CHE_VIDEO_GEN_TOKEN}` } : {}),
+    },
+    body: JSON.stringify({ prompt: prompt.slice(0, 5000), type: 'video', quality: 'highest' }),
+  });
+  if (!response.ok) throw new Error(`Video connector returned ${response.status}.`);
+  const data = await response.json();
+  const out = String(data.url || data.output_url || data.video_url || '').trim();
+  if (!out.startsWith('https://')) throw new Error('Video connector returned no video URL.');
+  return out;
+}
+
+async function geminiVideo(env, prompt, fetcher) {
+  if (!env.GEMINI_API_KEY) throw new Error('Gemini video key is not configured.');
+  if (!env.CHE_DATA_BUCKET) throw new Error('Gemini video generation needs CHE_DATA_BUCKET (R2) for the MP4.');
+  const model = env.CHE_GEMINI_VIDEO_MODEL || 'gemini-omni-1.1-flash';
+  const response = await fetcher('https://generativelanguage.googleapis.com/v1beta/interactions', {
+    method: 'POST',
+    signal: AbortSignal.timeout(110000),
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': env.GEMINI_API_KEY,
+    },
+    body: JSON.stringify({
+      model,
+      input: String(prompt || '').slice(0, 8000),
+      generation_config: { video_config: { task: 'text_to_video' } },
+    }),
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(`${response.status}: ${data?.error?.message || 'Gemini video request failed'}`);
+  }
+  const video = data?.output_video || data?.outputVideo || null;
+  const base64 = String(video?.data || video?.inline_data?.data || video?.inlineData?.data || '').trim();
+  const mime = String(video?.mime_type || video?.mimeType || 'video/mp4').trim();
+  if (base64) return { base64, mime_type: mime, model };
+  const out = String(video?.uri || data?.video_url || data?.url || '').trim();
+  if (out.startsWith('https://')) return { url: out, model };
+  throw new Error('Gemini returned no video.');
 }
 
 // mode: new | variation | refine. parent_id links versions of one piece.
@@ -92,6 +189,7 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
   };
   const engines = [];
   if (env.CHE_IMAGE_GEN_URL) engines.push({ id: 'Your image connector', run: async () => ({ url: await connectorImage(env, finalPrompt, fetcher) }) });
+  if (openAiKey(env)) engines.push({ id: draft ? 'openai-gpt-image-fast' : 'openai-gpt-image-hd', run: async () => openAiImage(env, finalPrompt, draft, fetcher) });
   if (env.AI) engines.push({ id: draft ? 'CHE image engine (draft)' : 'CHE image engine', run: async () => {
     const result = await env.AI.run(IMAGE_MODEL, { prompt: finalPrompt.slice(0, 2048), steps: draft ? 4 : 8, seed: Math.floor(Math.random() * 2 ** 31) });
     if (!result?.image) throw new Error('The image model returned no image.');
@@ -124,9 +222,58 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
   else {
     record.mime_type = generated.mime_type;
     // Storage failures must not invoke another billable generator.
-    try { record.blob = await storeBlob(env, storage, id, generated.base64, record.mime_type); }
+    try { Object.assign(record, await storeBlob(env, storage, id, generated.base64, record.mime_type, 'image')); }
     catch (error) { return { status: 502, detail: `Image generated but could not be saved: ${error.message}` }; }
   }
+  await saveIndex(storage, [record, ...items]);
+  return { status: 200, item: record };
+}
+
+export async function generateVideo(env, storage, body, fetcher = fetch) {
+  const prompt = String(body.prompt || '').trim().slice(0, 8000);
+  if (!prompt) return { status: 400, detail: 'Describe the video.' };
+  const id = crypto.randomUUID();
+  const record = {
+    id,
+    root_id: id,
+    parent_id: null,
+    title: String(body.title || prompt.slice(0, 60) || 'Untitled video').slice(0, 80),
+    prompt,
+    mode: 'video',
+    kind: 'video',
+    created_at: now(),
+  };
+  const engines = [];
+  if (env.CHE_VIDEO_GEN_URL) {
+    engines.push({ id: 'Your video connector', run: async () => ({ url: await connectorVideo(env, prompt, fetcher) }) });
+  }
+  if (env.GEMINI_API_KEY) {
+    engines.push({ id: 'gemini-omni-video', run: async () => geminiVideo(env, prompt, fetcher) });
+  }
+  const errors = [];
+  let generated;
+  for (const engine of engines) {
+    try {
+      generated = await engine.run();
+      record.engine = engine.id;
+      record.model = generated.model || '';
+      break;
+    } catch (error) {
+      errors.push(`${engine.id}: ${error.message}`);
+      console.log('CHE video error:', engine.id, error.message);
+    }
+  }
+  if (!generated) {
+    return { status: engines.length ? 502 : 503, detail: `All video engines failed (${errors.join(' | ') || 'none configured'}).` };
+  }
+  if (generated.url) {
+    record.url = generated.url;
+  } else {
+    record.mime_type = generated.mime_type || 'video/mp4';
+    try { Object.assign(record, await storeBlob(env, storage, id, generated.base64, record.mime_type, 'video')); }
+    catch (error) { return { status: 502, detail: `Video generated but could not be saved: ${error.message}` }; }
+  }
+  const items = await listMedia(storage);
   await saveIndex(storage, [record, ...items]);
   return { status: 200, item: record };
 }
@@ -184,7 +331,7 @@ export async function deleteMedia(env, storage, id) {
   const items = await listMedia(storage);
   const item = items.find((entry) => entry.id === id);
   if (!item) return { status: 404, detail: 'Piece not found.' };
-  if (item.blob === 'r2' && env.CHE_DATA_BUCKET) await env.CHE_DATA_BUCKET.delete(`media/${id}.jpg`);
+  if (item.blob === 'r2' && env.CHE_DATA_BUCKET) await env.CHE_DATA_BUCKET.delete(item.blob_key || `media/${id}.jpg`);
   if (item.blob === 'do') await storage.delete(`media:${id}`);
   await saveIndex(storage, items.filter((entry) => entry.id !== id));
   return { status: 200, ok: true };
