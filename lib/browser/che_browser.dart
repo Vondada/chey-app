@@ -301,6 +301,7 @@ class _CheBrowserScreenState extends State<CheBrowserScreen> {
   bool _showBrowserControls = false;
   bool _announcedOpen = false;
   bool _announcedClose = false;
+  bool _canGoBackInPage = false;
 
   _BrowserTab get _tab => _tabs[_active];
 
@@ -630,6 +631,15 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
     if (!mounted) return;
     if (!_addressFocus.hasFocus) _syncAddress();
     setState(() {});
+    unawaited(_refreshHistory());
+  }
+
+  Future<void> _refreshHistory() async {
+    if (!mounted || _tabs.isEmpty) return;
+    try {
+      final back = await _tab.controller.canGoBack();
+      if (mounted && back != _canGoBackInPage) setState(() => _canGoBackInPage = back);
+    } catch (_) {}
   }
 
   void _syncAddress() => _address.text = _tabs.isEmpty ? '' : _tab.url;
@@ -917,8 +927,14 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
   Future<void> _backInApp() async {
     if (await _tab.controller.canGoBack()) {
       await _tab.controller.goBack();
+      unawaited(_refreshHistory());
       return;
     }
+    _closeApp();
+  }
+
+  void _closeApp() {
+    FocusManager.instance.primaryFocus?.unfocus();
     if (mounted) Navigator.of(context).maybePop();
   }
 
@@ -990,6 +1006,7 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
 
   @override
   Widget build(BuildContext context) {
+    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
     final page = Column(children: [
       if (_tab.progress < 100) LinearProgressIndicator(value: _tab.progress / 100.0, minHeight: 2),
       Expanded(
@@ -1000,13 +1017,15 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
               WebViewWidget(
                 key: ObjectKey(t),
                 controller: t.controller,
-                // Empty on purpose. Eager capture trapped swipe-down and route back.
+                // Non-eager only. Eager capture trapped swipe-down and route back.
                 gestureRecognizers: cheEmbeddedWebViewGestures(),
               ),
           ],
         ),
       ),
-      if (_showBrowserControls)
+      // Hide while the keyboard is up so it cannot stick as an empty panel
+      // after the keyboard is dismissed.
+      if (_showBrowserControls && !keyboardOpen)
         SafeArea(
           top: false,
           child: SizedBox(
@@ -1098,9 +1117,9 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
       },
       child: CheEmbeddedAppShell(
         title: _appTitle,
-        onClose: () => Navigator.of(context).maybePop(),
+        onClose: _closeApp,
         onBack: _backInApp,
-        canGoBackInPage: true,
+        canGoBackInPage: _canGoBackInPage,
         onMoreSelected: (v) => unawaited(_onMore(v)),
         moreItems: _moreItems(),
         showBrowserControls: _showBrowserControls,

@@ -526,7 +526,8 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
                     color: Colors.black,
                     child: WebViewWidget(
                       controller: web,
-                      gestureRecognizers: cheEmbeddedWebViewGestures(),
+                      // In-tab player: do not claim the room sheet's dismiss drag.
+                      gestureRecognizers: cheEmbeddedParentFriendlyGestures(),
                     ),
                   ),
           ),

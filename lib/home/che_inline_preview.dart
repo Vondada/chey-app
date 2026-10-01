@@ -70,8 +70,8 @@ class _CheInlinePreviewState extends State<CheInlinePreview> {
                 height: widget.height,
                 child: WebViewWidget(
                   controller: controller,
-                  // Do not eagerly claim gestures; chat scroll and dismiss must still win.
-                  gestureRecognizers: cheEmbeddedWebViewGestures(),
+                  // Parent chat scroll wins. Do not eagerly claim the drag.
+                  gestureRecognizers: cheEmbeddedParentFriendlyGestures(),
                 ),
               ),
             ),

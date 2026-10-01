@@ -5,20 +5,37 @@
 // browser bottom nav stay hidden until the owner asks for them.
 //
 // Dismissal lives on this shell — close, back, header swipe, left-edge swipe —
-// never on the webview. [cheEmbeddedWebViewGestures] stays empty on purpose:
-// EagerGestureRecognizer wins the arena immediately and swallows those exits.
+// never on the webview. Full-screen pages use non-eager recognizers so scroll
+// and tap still work. [EagerGestureRecognizer] is never used: it wins the
+// arena immediately and swallows CHE's exit gestures.
+//
+// In-tab previews use [cheEmbeddedParentFriendlyGestures], which is empty so a
+// parent list, tab, or sheet can still dismiss.
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../che_ui/che_theme.dart';
 
-/// Gesture factories passed to an embedded web view.
+/// Gesture factories for a full-screen embedded page.
 ///
-/// Must stay empty. An [EagerGestureRecognizer] claims every pointer before
-/// CHE's header, route back, or swipe-down can see it, which trapped tabs.
-Set<Factory<OneSequenceGestureRecognizer>> cheEmbeddedWebViewGestures() => const {};
+/// Scroll, tap, long-press and pinch are claimed only after they match.
+/// Eager capture is intentionally absent so the CHE header and route can exit.
+Set<Factory<OneSequenceGestureRecognizer>> cheEmbeddedWebViewGestures() => {
+      Factory<VerticalDragGestureRecognizer>(() => VerticalDragGestureRecognizer()),
+      Factory<HorizontalDragGestureRecognizer>(() => HorizontalDragGestureRecognizer()),
+      Factory<ScaleGestureRecognizer>(() => ScaleGestureRecognizer()),
+      Factory<LongPressGestureRecognizer>(() => LongPressGestureRecognizer()),
+      Factory<TapGestureRecognizer>(() => TapGestureRecognizer()),
+    };
+
+/// Gesture factories for a web view that sits inside a scrolling tab or sheet.
+///
+/// Empty on purpose: the parent must be able to scroll and dismiss. The page
+/// still receives pointers nobody else claims.
+Set<Factory<OneSequenceGestureRecognizer>> cheEmbeddedParentFriendlyGestures() => const {};
 
 /// Spoken confirmations for open / close / browser-control toggles.
 /// Wired once from the app to CHE's voice. VoiceOver still gets labels.
@@ -139,17 +156,22 @@ class CheEmbeddedAppShell extends StatelessWidget {
                   onClose: onClose,
                   onMoreSelected: onMoreSelected,
                   moreItems: moreItems,
-                  onSwipeDown: _edgeDismiss,
                 ),
                 if (showBrowserControls && browserControls != null) browserControls!,
-                Expanded(child: child),
+                Expanded(
+                  child: MediaQuery.removeViewInsets(
+                    context: context,
+                    removeBottom: true,
+                    child: child,
+                  ),
+                ),
               ],
             ),
             Positioned(
               left: 0,
               top: 0,
               bottom: 0,
-              width: 22,
+              width: 28,
               child: GestureDetector(
                 behavior: HitTestBehavior.translucent,
                 onHorizontalDragEnd: _edgeDismiss,
@@ -163,7 +185,7 @@ class CheEmbeddedAppShell extends StatelessWidget {
   }
 }
 
-class _Header extends StatelessWidget {
+class _Header extends StatefulWidget {
   const _Header({
     required this.title,
     required this.topInset,
@@ -172,7 +194,6 @@ class _Header extends StatelessWidget {
     required this.onClose,
     required this.onMoreSelected,
     required this.moreItems,
-    required this.onSwipeDown,
   });
 
   final String title;
@@ -182,17 +203,34 @@ class _Header extends StatelessWidget {
   final VoidCallback onClose;
   final ValueChanged<String>? onMoreSelected;
   final List<PopupMenuEntry<String>> moreItems;
-  final GestureDragEndCallback onSwipeDown;
+
+  @override
+  State<_Header> createState() => _HeaderState();
+}
+
+class _HeaderState extends State<_Header> {
+  double _dragDy = 0;
+
+  void _end(DragEndDetails details) {
+    final flung = (details.primaryVelocity ?? 0) > 280;
+    final pulled = _dragDy > 72;
+    _dragDy = 0;
+    if (flung || pulled) widget.onClose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final title = widget.title;
+    final canGoBackInPage = widget.canGoBackInPage;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onVerticalDragEnd: onSwipeDown,
+      onVerticalDragUpdate: (details) => _dragDy += details.delta.dy,
+      onVerticalDragEnd: _end,
+      onVerticalDragCancel: () => _dragDy = 0,
       child: Material(
         color: const Color(0xFF0A1214),
         child: Padding(
-          padding: EdgeInsets.only(top: topInset),
+          padding: EdgeInsets.only(top: widget.topInset),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -216,8 +254,8 @@ class _Header extends StatelessWidget {
                       button: true,
                       label: canGoBackInPage ? 'Back in $title' : 'Back, close $title',
                       child: IconButton(
-                        tooltip: canGoBackInPage ? 'Back' : 'Back',
-                        onPressed: onBack ?? onClose,
+                        tooltip: 'Back',
+                        onPressed: widget.onBack ?? widget.onClose,
                         icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
                       ),
                     ),
@@ -241,9 +279,9 @@ class _Header extends StatelessWidget {
                         tooltip: 'More',
                         onSelected: (value) {
                           HapticFeedback.selectionClick();
-                          onMoreSelected?.call(value);
+                          widget.onMoreSelected?.call(value);
                         },
-                        itemBuilder: (_) => moreItems,
+                        itemBuilder: (_) => widget.moreItems,
                         icon: const Icon(Icons.more_horiz_rounded),
                       ),
                     ),
@@ -252,7 +290,7 @@ class _Header extends StatelessWidget {
                       label: 'Close $title',
                       child: IconButton(
                         tooltip: 'Close',
-                        onPressed: onClose,
+                        onPressed: widget.onClose,
                         icon: const Icon(Icons.close_rounded),
                       ),
                     ),

@@ -1079,6 +1079,8 @@ extension _CheHomeMemory on _CHEHomeState {
       context: context,
       backgroundColor: const Color(0xFF101821),
       isScrollControlled: true,
+      isDismissible: true,
+      enableDrag: true,
       builder: (context) {
         return SizedBox(
           height: MediaQuery.of(context).size.height * 0.90,

@@ -1,10 +1,16 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:chey/browser/che_embedded_app_shell.dart';
 
 void main() {
   test('embedded webview does not eagerly capture gestures', () {
-    expect(cheEmbeddedWebViewGestures(), isEmpty);
+    final gestures = cheEmbeddedWebViewGestures();
+    expect(gestures, isNotEmpty);
+    for (final factory in gestures) {
+      expect(factory(), isNot(isA<EagerGestureRecognizer>()));
+    }
+    expect(cheEmbeddedParentFriendlyGestures(), isEmpty);
   });
 
   test('embedded app route expands instead of sliding', () {
