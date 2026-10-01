@@ -44,14 +44,14 @@ export const BUILTIN_PROVIDER_MANIFESTS = [
   },
   {
     id: 'openai', name: 'OpenAI', family: 'openai',
-    auth: { type: 'api_key', secrets: ['OPENAI_API_KEY', 'CHE_OPENAI_API_KEY'] },
+    auth: { type: 'api_key', secrets: ['OPENAI_API_KEY', 'CHE_OPENAI_API_KEY', 'CODEX_OWNER_TOKEN', 'CHATGPT_CODEX_TOKEN'] },
     api_base: 'https://api.openai.com/v1', chat_path: '/chat/completions',
     discovery: { method: 'openai_models', path: '/models' }, locality: 'cloud',
     capabilities: ['text', 'fast_chat', 'deep_reasoning', 'coding', 'vision', 'image_generation', 'speech_to_text', 'text_to_speech', 'embeddings', 'tool_calling', 'file_analysis', 'long_context', 'batch'],
     cost_class: 'medium', latency_class: 'fast', context_tokens: 128000,
     privacy: { retention: 'provider_policy', trains_on_data: false, default_data_classes: HOSTED_DATA },
     streaming: true, oauth: false,
-    connect_hint: 'Add OPENAI_API_KEY (or CHE_OPENAI_API_KEY) as a Worker/GitHub secret. A ChatGPT app login is not an API credential.',
+    connect_hint: 'Add OPENAI_API_KEY, CHE_OPENAI_API_KEY, or CODEX_OWNER_TOKEN as a Worker secret. A ChatGPT app login is not an API credential.',
   },
   {
     id: 'xai', name: 'xAI Grok', family: 'xai',

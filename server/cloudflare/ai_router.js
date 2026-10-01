@@ -111,7 +111,7 @@ const PROVIDERS = [
   {
     id: 'openai',
     key: 'CHE_OPENAI_API_KEY',
-    altKeys: ['OPENAI_API_KEY'],
+    altKeys: ['OPENAI_API_KEY', 'CODEX_OWNER_TOKEN', 'CHATGPT_CODEX_TOKEN'],
     url: 'https://api.openai.com/v1/chat/completions',
     fast: (env) => env.CHE_OPENAI_FAST_MODEL || 'gpt-4.1-mini',
     strong: (env) => env.CHE_OPENAI_STRONG_MODEL || 'gpt-4.1',

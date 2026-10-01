@@ -2009,7 +2009,7 @@ export class CheState extends DurableObject {
       // Codex desks get a real work packet: own thread id and workspace,
       // persisted here. The owner Codex token stays on the Worker.
       if (!refused && agent.provider_preference === 'openai') {
-        const packet = savePacket(data, startCodexJob(this.env, makeWorkPacket({
+        const packet = savePacket(data, startCodexJob(this.keyEnv || this.env, makeWorkPacket({
           jobId: task.id, agentId: agent.name, goal: step.task,
         })));
         task.packet_id = packet.packet_id;
