@@ -99,151 +99,151 @@ workflows:
           dart analyze --format=machine > /tmp/che-analyze.log 2>&1 || true
       - name: Analyze · agents/che_agent_runtime.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/agents/che_agent_runtime.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/agents/che_agent_runtime.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · browser/che_browser.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/browser/che_browser.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/browser/che_browser.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · che_account_bridge.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/che_account_bridge.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/che_account_bridge.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · che_bootstrap.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/che_bootstrap.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/che_bootstrap.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · che_capability_registry.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/che_capability_registry.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/che_capability_registry.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · che_local_brain.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/che_local_brain.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/che_local_brain.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · che_owner_errors.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/che_owner_errors.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/che_owner_errors.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · che_request_session.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/che_request_session.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/che_request_session.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · che_world_hub.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/che_world_hub.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/che_world_hub.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · home/che_home_chat.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/home/che_home_chat.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/home/che_home_chat.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · home/che_inline_preview.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/home/che_inline_preview.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/home/che_inline_preview.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · home_state/home_ui.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/home_state/home_ui.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/home_state/home_ui.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · home_state/hub_rooms.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/home_state/hub_rooms.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/home_state/hub_rooms.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · home_state/mailbox_badge.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/home_state/mailbox_badge.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/home_state/mailbox_badge.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · home_state/memory.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/home_state/memory.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/home_state/memory.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · home_state/security.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/home_state/security.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/home_state/security.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · home_state/send.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/home_state/send.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/home_state/send.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · home_state/streaming.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/home_state/streaming.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/home_state/streaming.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · mailbox/che_mailbox_screen.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/mailbox/che_mailbox_screen.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/mailbox/che_mailbox_screen.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · main.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/main.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/main.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · memory/che_knowledge_cache.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/memory/che_knowledge_cache.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/memory/che_knowledge_cache.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · rooms/che_theater_room.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/rooms/che_theater_room.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/rooms/che_theater_room.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · rooms/che_workshop_room.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/rooms/che_workshop_room.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/rooms/che_workshop_room.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · security/che_vault_auth.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|lib/security/che_vault_auth.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/lib/security/che_vault_auth.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
       - name: Analyze · test/che_os_maturity_test.dart
         script: |
-          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '|test/che_os_maturity_test.dart|' >/dev/null; then
+          if grep '^ERROR|' /tmp/che-analyze.log | grep -F '/test/che_os_maturity_test.dart|' >/dev/null; then
             exit 1
           fi
         ignore_failure: true
