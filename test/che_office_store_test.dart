@@ -100,7 +100,7 @@ void main() {
     expect(find.text('FRONT OF THE OFFICE'), findsOneWidget);
     expect(find.text('WAR ROOM'), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp(r'^Knox, Knox role\. Blocked: tool not configured \(Codex\)\.')), findsOneWidget);
-    expect(find.bySemanticsLabel(RegExp(r'^CHE, Manager\.')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'^CHE, Office Boss\.')), findsOneWidget);
 
     await tester.tap(find.text('Knox'));
     expect(tapped, ['k']);

@@ -18,7 +18,7 @@ void main() {
     expect(ui.voiceVolume, 1.0);
     expect(ui.textScale, 1.0);
     expect(ui.deskCompact, isFalse);
-    expect(ui.avatarStyle, CheAvatarStyle.mini);
+    expect(ui.avatarStyle, CheAvatarStyle.portrait);
   });
 
   test('persists theme, text scale, voice mute, volume', () async {
@@ -46,7 +46,7 @@ void main() {
     await ui.setTextScalePref(CheTextScalePref.defaultScale);
     await ui.setVoiceResponsesEnabled(true);
     await ui.setVoiceVolume(1.0);
-    await ui.setAvatarStyle(CheAvatarStyle.mini);
+    await ui.setAvatarStyle(CheAvatarStyle.portrait);
     await ui.setDeskDensity(CheDeskDensity.comfortable);
   });
 }

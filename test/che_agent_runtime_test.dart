@@ -99,6 +99,18 @@ MockClient _backend(List<http.Request> seen) => MockClient((request) async {
       return http.Response(jsonEncode(body), 200, headers: {'content-type': 'application/json'});
     });
 
+Future<void> _pumpUntilFound(
+  WidgetTester tester,
+  Finder finder, {
+  int attempts = 30,
+}) async {
+  for (var i = 0; i < attempts; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+    if (finder.evaluate().isNotEmpty) return;
+  }
+  expect(finder, findsWidgets);
+}
+
 void main() {
   test('short summaries keep titles glanceable', () {
     expect(cheShortSummary('Find competitors'), 'Find competitors');
@@ -179,8 +191,7 @@ void main() {
       client: _backend(seen),
     );
     await tester.pumpWidget(MaterialApp(home: CheOfficeFloorScreen(client: client)));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
+    await _pumpUntilFound(tester, find.text('Nova'));
 
     expect(find.text('Nova'), findsWidgets);
     expect(find.text('1 working'), findsOneWidget);
@@ -220,10 +231,11 @@ void main() {
         onTalkToChe: () => talked = true,
       ),
     ));
+    await _pumpUntilFound(tester, find.text('Flat floor plan'));
+    await tester.tap(find.text('Flat floor plan'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
 
-    // CHE's big desk on the floor plan (not a Talk-only shortcut).
+    // CHE's desk remains available through the accessible flat-plan fallback.
     await tester.tap(find.bySemanticsLabel(RegExp(r"CHE.*Open to talk or send a request")));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
@@ -254,8 +266,7 @@ void main() {
       client: _backend([]),
     );
     await tester.pumpWidget(MaterialApp(home: CheOfficeFloorScreen(client: client)));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
+    await _pumpUntilFound(tester, find.text('Plan the launch'));
     await tester.tap(find.text('Plan the launch'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
@@ -282,8 +293,7 @@ void main() {
         body: CheOfficeFloorScreen(client: client, embedded: true, onSpeak: (t) async => spoken.add(t)),
       ),
     ));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
+    await _pumpUntilFound(tester, find.text('Nova'));
     expect(find.text('Nova'), findsWidgets);
     expect(find.textContaining('Agents working:'), findsOneWidget);
     await tester.tap(find.text('Read to me'));
