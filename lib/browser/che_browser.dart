@@ -231,12 +231,13 @@ class _BrowserTab {
         r"(function(){var pw=document.querySelector('input[type=password]');return !!(pw&&!pw.value);})()",
       );
       if (hasLogin != true && hasLogin != 'true' && hasLogin != 1) return;
-      final unlocked = await CheVaultAuth.instance.ensureUnlocked(
-        reason: 'Unlock CHE vault with Face ID to autofill this sign-in',
-      );
-      if (!unlocked) return;
       final entry = await CheVault.instance.find(host);
       if (entry == null) return;
+      final unlocked = await CheVaultAuth.instance.ensureUnlocked(
+        reason: 'Use Face ID to fill your saved login for $host',
+        freshFaceId: true,
+      );
+      if (!unlocked) return;
       final u = jsonEncode(entry.username);
       final p = jsonEncode(entry.password);
       await controller.runJavaScript('''(function(u,p){
@@ -257,6 +258,13 @@ if(user&&u&&!user.value)set(user,u);set(pw,p);})($u,$p)''');
       final site = CheVaultCommand.normalizeSite(host);
       final existing = await CheVault.instance.find(site);
       if (existing != null && existing.password == password && existing.site == site) return;
+      if (existing != null) {
+        final unlocked = await CheVaultAuth.instance.ensureUnlocked(
+          reason: 'Use Face ID to replace your saved login for $site',
+          freshFaceId: true,
+        );
+        if (!unlocked) return;
+      }
       await CheVault.instance.save(CheVaultEntry(site: site, password: password, username: '${data['username'] ?? ''}'));
     } catch (_) {
       // Never let a capture problem affect the page.
