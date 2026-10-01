@@ -140,7 +140,12 @@ export function sourceFromUpdates(updates, origin) {
 async function releases(env, fetcher = fetch) {
   const items = await githubJson('/releases?per_page=30', env, fetcher);
   return Array.isArray(items)
-    ? items.filter((item) => !item?.draft && !item?.prerelease && ipaAsset(item))
+    ? items.filter((item) =>
+        !item?.draft &&
+        !item?.prerelease &&
+        TAG_RE.test(String(item?.tag_name || '')) &&
+        ipaAsset(item)
+      )
     : [];
 }
 
