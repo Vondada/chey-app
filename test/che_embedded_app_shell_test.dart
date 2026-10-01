@@ -8,7 +8,7 @@ void main() {
     final gestures = cheEmbeddedWebViewGestures();
     expect(gestures, isNotEmpty);
     for (final factory in gestures) {
-      expect(factory(), isNot(isA<EagerGestureRecognizer>()));
+      expect(factory.constructor(), isNot(isA<EagerGestureRecognizer>()));
     }
     expect(cheEmbeddedParentFriendlyGestures(), isEmpty);
   });
