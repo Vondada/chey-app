@@ -450,10 +450,31 @@ extension _CheHomeSend on _CHEHomeState {
 
     if (!await _ensurePaired()) return;
 
-    if (_realtimeVoice?.connected == true) {
+    // Keep a lightweight visual receipt in the chat. Images stay visible in
+    // the owner's bubble; video/audio show an attachment card. The server gets
+    // the original attachment through _pendingAttachment below.
+    final attachmentForBubble = _pendingAttachment == null
+        ? null
+        : Map<String, String>.from(_pendingAttachment!);
+
+    Map<String, String> outgoingUserMessage() {
+      final item = <String, String>{'role': 'user', 'text': message};
+      final attachment = attachmentForBubble;
+      if (attachment == null) return item;
+      item['attachment_name'] = attachment['name'] ?? 'attachment';
+      item['attachment_type'] = attachment['media_type'] ?? 'document';
+      if ((attachment['media_type'] ?? '') == 'image') {
+        item['attachment_base64'] = attachment['base64'] ?? '';
+      }
+      return item;
+    }
+
+    // Realtime voice is text/audio-only. A turn with an attachment must go
+    // through the normal multimodal HTTP path so CHE actually sees/hears it.
+    if (_realtimeVoice?.connected == true && _pendingAttachment == null) {
       if (!mounted) return;
       _set(() {
-        messages.add({'role': 'user', 'text': message});
+        messages.add(outgoingUserMessage());
         controller.clear();
       });
       _scrollToBottom();
@@ -471,10 +492,7 @@ extension _CheHomeSend on _CHEHomeState {
 
     _set(() {
       isListening = false;
-      messages.add({
-        'role': 'user',
-        'text': message,
-      });
+      messages.add(outgoingUserMessage());
       controller.clear();
       _liveSteps.clear();
       _replyStartedAt = DateTime.now();
