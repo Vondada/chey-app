@@ -46,7 +46,37 @@ async function githubBoard(storage, env, fetcher) {
   return since ? messages.filter((m) => String(m.at) > since) : messages;
 }
 
+function archiveSql(storage) {
+  const sql = storage?.sql;
+  if (!sql?.exec) return null;
+  sql.exec('CREATE TABLE IF NOT EXISTS flagstaff_archive (id TEXT PRIMARY KEY, locked_at TEXT NOT NULL, body TEXT NOT NULL)');
+  return sql;
+}
+
+async function migrateLegacyArchive(storage, sql) {
+  const legacy = (await storage.get(ARCHIVE_KEY)) || [];
+  if (!Array.isArray(legacy) || !legacy.length) return;
+  for (const session of legacy) {
+    if (!session?.id) continue;
+    sql.exec(
+      'INSERT OR IGNORE INTO flagstaff_archive (id, locked_at, body) VALUES (?, ?, ?)',
+      String(session.id),
+      String(session.locked_at || ''),
+      JSON.stringify(session),
+    );
+  }
+  await storage.delete(ARCHIVE_KEY);
+}
+
 export async function readArchive(storage) {
+  const sql = archiveSql(storage);
+  if (sql) {
+    await migrateLegacyArchive(storage, sql);
+    const rows = [...sql.exec('SELECT body FROM flagstaff_archive ORDER BY locked_at ASC')];
+    return rows.map((row) => {
+      try { return JSON.parse(row.body); } catch (_) { return null; }
+    }).filter(Boolean);
+  }
   const list = (await storage.get(ARCHIVE_KEY)) || [];
   return Array.isArray(list) ? list : [];
 }
@@ -72,10 +102,23 @@ export async function lockMailbox(storage, env = null, fetcher = fetch) {
   await storage.put(SESSION_KEY, new Date().toISOString());
   await storage.delete(GH_CACHE_KEY);
   if (messages.length) {
-    // Private archive box: every session's full transcript, owner-only.
-    const archive = (await storage.get(ARCHIVE_KEY)) || [];
-    archive.push({ id: crypto.randomUUID(), locked_at: new Date().toISOString(), count: messages.length, messages });
-    await storage.put(ARCHIVE_KEY, archive.slice(-100));
+    // Private archive: SQLite keeps one row per locked session so the neural
+    // history can keep growing instead of throwing away old sessions.
+    const session = { id: crypto.randomUUID(), locked_at: new Date().toISOString(), count: messages.length, messages };
+    const sql = archiveSql(storage);
+    if (sql) {
+      await migrateLegacyArchive(storage, sql);
+      sql.exec(
+        'INSERT INTO flagstaff_archive (id, locked_at, body) VALUES (?, ?, ?)',
+        session.id,
+        session.locked_at,
+        JSON.stringify(session),
+      );
+    } else {
+      const archive = (await storage.get(ARCHIVE_KEY)) || [];
+      archive.push(session);
+      await storage.put(ARCHIVE_KEY, archive);
+    }
   }
   return messages;
 }

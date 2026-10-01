@@ -2,6 +2,7 @@
 // place to add free API keys. Keys are sent straight to CHE's server, tested
 // there, and never shown again, spoken, or kept on the phone.
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -236,7 +237,11 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
             border: Border.all(color: fromChe ? CheColors.accent.withValues(alpha: 0.4) : CheColors.stroke),
           ),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('${fromChe ? 'CHE' : _nice('${m['from']}')} · ${_when(m['at'])}', style: CheType.caption),
+            Row(children: [
+              _AiLogo(name: fromChe ? 'che' : '${m['from']}', size: 24),
+              const SizedBox(width: 7),
+              Expanded(child: Text('${fromChe ? 'CHE' : _nice('${m['from']}')} · ${_when(m['at'])}', style: CheType.caption)),
+            ]),
             const SizedBox(height: 4),
             SelectableText('${m['text']}', style: CheType.body),
           ]),
@@ -335,10 +340,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
             label: '${_nice(entry.key)}. ${entry.value.length} messages. Last: ${entry.value.last['text']}',
             child: ListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-              leading: CircleAvatar(
-                backgroundColor: CheColors.accent.withValues(alpha: 0.18),
-                child: Text(_nice(entry.key)[0], style: CheType.label),
-              ),
+              leading: _AiLogo(name: entry.key, size: 42),
               title: Text(_nice(entry.key), style: CheType.label),
               subtitle: Text(
                 '${entry.value.last['text']}',
@@ -353,38 +355,93 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
     ]);
   }
 
+  Map<String, int> _archiveConnections() {
+    final counts = <String, int>{};
+    for (final session in _archive) {
+      final messages = (session['messages'] as List?)?.whereType<Map>() ?? const <Map>[];
+      for (final m in messages) {
+        final from = '${m['from'] ?? ''}'.trim().toLowerCase();
+        final to = '${m['to'] ?? ''}'.trim().toLowerCase();
+        final peer = from == 'che' ? to : from;
+        if (peer.isEmpty || peer == 'che' || peer == 'chatgpt' || peer == 'openai') continue;
+        counts[peer] = (counts[peer] ?? 0) + 1;
+      }
+    }
+    return counts;
+  }
+
+  Widget _archiveBrain() {
+    final connections = _archiveConnections();
+    final total = _archive.fold<int>(0, (sum, s) => sum + ((s['messages'] as List?)?.length ?? 0));
+    return Semantics(
+      label: connections.isEmpty
+          ? 'Saved AI brain. ChatGPT is the center. No archived AI connections yet.'
+          : 'Saved AI brain. ChatGPT is the center, connected to ${connections.length} AIs across $total saved messages.',
+      child: Card(
+        color: CheColors.surface,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('CONNECTED AI BRAIN', style: CheType.overline),
+            const SizedBox(height: 4),
+            Text(
+              connections.isEmpty
+                  ? 'Lock a mailbox conversation and its connection grows here.'
+                  : '${connections.length} AI connections · $total saved messages',
+              style: CheType.caption,
+            ),
+            const SizedBox(height: 12),
+            _AiNeuralWeb(connections: connections),
+          ]),
+        ),
+      ),
+    );
+  }
+
   Widget _archiveTab() {
     if (_archive.isEmpty) {
-      return const Center(child: Text('No saved sessions yet. Lock Flagstaff to save one.', style: CheType.bodyDim));
-    }
-    return ListView.builder(
-      padding: const EdgeInsets.all(12),
-      itemCount: _archive.length,
-      itemBuilder: (_, i) {
-        final session = _archive[i];
-        final messages = (session['messages'] as List?)?.whereType<Map>().toList() ?? const <Map>[];
-        final when = '${session['locked_at'] ?? ''}'.replaceFirst('T', ' ');
-        final shown = when.length > 16 ? when.substring(0, 16) : when;
-        return Card(
-          color: CheColors.surface,
-          child: ExpansionTile(
-            leading: const Icon(Icons.inventory_2_rounded, color: CheColors.accentAlt),
-            title: Text('Session $shown', style: CheType.label),
-            subtitle: Text('${messages.length} messages', style: CheType.caption),
-            onExpansionChanged: (open) {
-              if (open) {
-                _say(messages.map((m) => '${m['from']} said: ${m['text']}').join('. '));
-              }
-            },
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                child: Column(children: messages.map(_message).toList()),
-              ),
-            ],
+      return ListView(
+        padding: const EdgeInsets.all(12),
+        children: [
+          _archiveBrain(),
+          const Padding(
+            padding: EdgeInsets.all(20),
+            child: Text('No saved sessions yet. Lock Flagstaff to save one.', style: CheType.bodyDim),
           ),
-        );
-      },
+        ],
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        _archiveBrain(),
+        const SizedBox(height: 8),
+        for (final session in _archive)
+          Builder(builder: (_) {
+            final messages = (session['messages'] as List?)?.whereType<Map>().toList() ?? const <Map>[];
+            final when = '${session['locked_at'] ?? ''}'.replaceFirst('T', ' ');
+            final shown = when.length > 16 ? when.substring(0, 16) : when;
+            return Card(
+              color: CheColors.surface,
+              child: ExpansionTile(
+                leading: const Icon(Icons.inventory_2_rounded, color: CheColors.accentAlt),
+                title: Text('Session $shown', style: CheType.label),
+                subtitle: Text('${messages.length} messages', style: CheType.caption),
+                onExpansionChanged: (open) {
+                  if (open) {
+                    _say(messages.map((m) => '${m['from']} said: ${m['text']}').join('. '));
+                  }
+                },
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                    child: Column(children: messages.map(_message).toList()),
+                  ),
+                ],
+              ),
+            );
+          }),
+      ],
     );
   }
 
@@ -507,4 +564,178 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
       ),
     );
   }
+}
+
+
+String _aiDomain(String raw) {
+  final name = raw.toLowerCase();
+  if (name.contains('claude') || name.contains('anthropic')) return 'claude.ai';
+  if (name.contains('grok') || name == 'xai' || name.contains('x.ai')) return 'x.ai';
+  if (name.contains('gemini') || name.contains('google')) return 'gemini.google.com';
+  if (name.contains('copilot') || name.contains('github')) return 'github.com';
+  if (name.contains('mistral')) return 'mistral.ai';
+  if (name.contains('perplexity')) return 'perplexity.ai';
+  if (name.contains('deepseek')) return 'deepseek.com';
+  if (name.contains('meta') || name.contains('llama')) return 'meta.ai';
+  if (name.contains('chatgpt') || name.contains('openai')) return 'chatgpt.com';
+  return '';
+}
+
+String _aiLabel(String raw) {
+  final value = raw.trim();
+  if (value.isEmpty) return 'AI';
+  final lower = value.toLowerCase();
+  if (lower == 'xai') return 'Grok';
+  if (lower == 'openai') return 'ChatGPT';
+  return '${value[0].toUpperCase()}${value.substring(1)}';
+}
+
+class _AiLogo extends StatelessWidget {
+  const _AiLogo({required this.name, this.size = 40});
+  final String name;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final domain = _aiDomain(name);
+    final label = name.toLowerCase() == 'che' ? 'CHE' : _aiLabel(name);
+    final fallback = Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: CheColors.surfaceHi,
+        border: Border.all(color: CheColors.accent.withValues(alpha: 0.45)),
+      ),
+      child: Text(label.substring(0, math.min(2, label.length)).toUpperCase(), style: CheType.caption),
+    );
+    return Semantics(
+      image: true,
+      label: '$label AI logo',
+      child: domain.isEmpty
+          ? fallback
+          : ClipOval(
+              child: Image.network(
+                'https://www.google.com/s2/favicons?domain=$domain&sz=128',
+                width: size,
+                height: size,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => fallback,
+              ),
+            ),
+    );
+  }
+}
+
+class _AiNeuralWeb extends StatelessWidget {
+  const _AiNeuralWeb({required this.connections});
+  final Map<String, int> connections;
+
+  @override
+  Widget build(BuildContext context) {
+    final peers = connections.keys.toList()..sort();
+    final side = math.max(320.0, 300.0 + math.sqrt(math.max(1, peers.length)) * 90);
+    final positions = <String, Offset>{};
+    final center = Offset(side / 2, side / 2);
+    for (var i = 0; i < peers.length; i++) {
+      final ring = i ~/ 10;
+      final slot = i % 10;
+      final onRing = math.min(10, peers.length - ring * 10);
+      final angle = -math.pi / 2 + (2 * math.pi * slot / math.max(1, onRing));
+      final radius = 95.0 + ring * 82;
+      positions[peers[i]] = center + Offset(math.cos(angle), math.sin(angle)) * radius;
+    }
+    return SizedBox(
+      height: 330,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: InteractiveViewer(
+          minScale: 0.45,
+          maxScale: 3.5,
+          boundaryMargin: const EdgeInsets.all(220),
+          constrained: false,
+          child: SizedBox(
+            width: side,
+            height: side,
+            child: Stack(children: [
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: _AiNeuralPainter(center: center, positions: positions, weights: connections),
+                ),
+              ),
+              Positioned(
+                left: center.dx - 34,
+                top: center.dy - 34,
+                child: Column(children: [
+                  const _AiLogo(name: 'chatgpt', size: 68),
+                  const SizedBox(height: 3),
+                  Text('ChatGPT', style: CheType.caption),
+                ]),
+              ),
+              for (final peer in peers)
+                Positioned(
+                  left: positions[peer]!.dx - 25,
+                  top: positions[peer]!.dy - 25,
+                  child: Semantics(
+                    label: '${_aiLabel(peer)} connected to ChatGPT through ${connections[peer]} saved messages',
+                    child: Column(children: [
+                      _AiLogo(name: peer, size: 50),
+                      const SizedBox(height: 2),
+                      Text(_aiLabel(peer), style: CheType.caption),
+                    ]),
+                  ),
+                ),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AiNeuralPainter extends CustomPainter {
+  const _AiNeuralPainter({required this.center, required this.positions, required this.weights});
+  final Offset center;
+  final Map<String, Offset> positions;
+  final Map<String, int> weights;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final base = Paint()..style = PaintingStyle.stroke..strokeCap = StrokeCap.round;
+    for (final entry in positions.entries) {
+      final count = math.max(1, weights[entry.key] ?? 1);
+      final strength = math.min(1.0, 0.25 + math.log(count + 1) / 4);
+      base
+        ..color = CheColors.accent.withValues(alpha: 0.25 + strength * 0.45)
+        ..strokeWidth = 1.0 + math.min(5.0, math.log(count + 1));
+      final path = Path()
+        ..moveTo(center.dx, center.dy)
+        ..quadraticBezierTo(
+          (center.dx + entry.value.dx) / 2 + 18,
+          (center.dy + entry.value.dy) / 2 - 18,
+          entry.value.dx,
+          entry.value.dy,
+        );
+      canvas.drawPath(path, base);
+      final beads = math.min(12, count);
+      for (var i = 1; i <= beads; i++) {
+        final t = i / (beads + 1);
+        final p = Offset(
+          center.dx + (entry.value.dx - center.dx) * t,
+          center.dy + (entry.value.dy - center.dy) * t,
+        );
+        canvas.drawCircle(
+          p,
+          1.5 + strength,
+          Paint()..color = CheColors.accentAlt.withValues(alpha: 0.35 + strength * 0.45),
+        );
+      }
+    }
+    canvas.drawCircle(center, 82, Paint()..style = PaintingStyle.stroke..strokeWidth = 1.2..color = CheColors.accent.withValues(alpha: 0.18));
+  }
+
+  @override
+  bool shouldRepaint(covariant _AiNeuralPainter oldDelegate) =>
+      oldDelegate.positions.length != positions.length || oldDelegate.weights.toString() != weights.toString();
 }
