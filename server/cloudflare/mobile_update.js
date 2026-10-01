@@ -8,7 +8,7 @@ const REPO = 'Vondada/chey-app';
 const IPA_NAME = 'CHE-unsigned.ipa';
 const META_NAME = 'CHE-update.json';
 const TAG_RE = /^che-ios-v(.+)-b([0-9]+)$/;
-const ICON_URL = 'https://raw.githubusercontent.com/Vondada/chey-app/main/assets/icon/icon.png';
+const ICON_URL = 'https://raw.githubusercontent.com/Vondada/chey-app/main/assets/avatars/che.png';
 
 const privacy = {
   NSMicrophoneUsageDescription: 'CHE uses your microphone when you speak to your assistant or capture audio.',
@@ -64,7 +64,11 @@ function visibleNotes(body) {
 }
 
 function ipaAsset(release) {
-  return (release?.assets || []).find((asset) => asset?.name === IPA_NAME && asset?.state !== 'deleted') || null;
+  return (release?.assets || []).find((asset) =>
+    asset?.name === IPA_NAME &&
+    asset?.state === 'uploaded' &&
+    Number(asset?.size || 0) > 0
+  ) || null;
 }
 
 export function releaseToUpdate(release, origin) {
@@ -76,7 +80,13 @@ export function releaseToUpdate(release, origin) {
   const version = String(meta.version || parsed?.[1] || '').trim();
   const buildNumber = String(meta.build || parsed?.[2] || '').trim();
   if (!version || !buildNumber) return null;
-  const sha = String(asset.digest || meta.sha256 || '').replace(/^sha256:/i, '');
+  const assetDigest = String(asset.digest || '').trim();
+  if (!/^sha256:[0-9a-f]{64}$/i.test(assetDigest)) return null;
+  const sha = assetDigest.replace(/^sha256:/i, '').toLowerCase();
+  const metaSha = String(meta.sha256 || '').trim().toLowerCase();
+  if (metaSha && metaSha !== sha) return null;
+  const metaSize = Number(meta.size || 0);
+  if (metaSize > 0 && metaSize !== Number(asset.size || 0)) return null;
   const commit = String(meta.commit || release?.target_commitish || '').trim();
   const shorebirdBase = String(meta.shorebird_base || '').toLowerCase() === 'true';
   const downloadUrl = `${origin}/api/update/download/${encodeURIComponent(tag)}`;
@@ -105,21 +115,16 @@ export function releaseToUpdate(release, origin) {
 export function sourceFromUpdates(updates, origin) {
   const versions = updates.slice(0, 12).map((item) => ({
     version: item.version,
-    buildVersion: item.build_number,
     date: item.build_date,
     localizedDescription: item.release_notes,
     downloadURL: item.download_url,
     size: item.size,
-    ...(item.sha256 ? { sha256: item.sha256 } : {}),
     minOSVersion: '16.0',
   }));
   return {
-    name: 'CHE',
-    subtitle: 'Cognitive Horizon Engine',
-    description: 'Owner builds of CHE for SideStore.',
-    website: 'https://github.com/Vondada/chey-app',
-    iconURL: ICON_URL,
-    tintColor: '#34E0B8',
+    name: 'CHE Updates',
+    identifier: 'com.cheyapp.che.source',
+    sourceURL: `${origin}/api/update/source`,
     apps: [{
       name: 'CHE',
       bundleIdentifier: 'com.cheyapp.chey',
@@ -128,12 +133,26 @@ export function sourceFromUpdates(updates, origin) {
       localizedDescription: 'Voice-first private AI assistant and Office.',
       iconURL: ICON_URL,
       tintColor: '#34E0B8',
-      category: 'utilities',
+      permissions: [
+        { type: 'microphone', usageDescription: privacy.NSMicrophoneUsageDescription },
+        { type: 'speech-recognition', usageDescription: privacy.NSSpeechRecognitionUsageDescription },
+        { type: 'camera', usageDescription: privacy.NSCameraUsageDescription },
+        { type: 'photos', usageDescription: privacy.NSPhotoLibraryUsageDescription },
+        { type: 'faceid', usageDescription: privacy.NSFaceIDUsageDescription },
+        { type: 'contacts', usageDescription: privacy.NSContactsUsageDescription },
+        { type: 'calendars', usageDescription: privacy.NSCalendarsUsageDescription },
+        { type: 'reminders', usageDescription: privacy.NSRemindersUsageDescription },
+        { type: 'bluetooth', usageDescription: privacy.NSBluetoothAlwaysUsageDescription },
+        { type: 'network', usageDescription: privacy.NSLocalNetworkUsageDescription },
+        { type: 'music', usageDescription: privacy.NSAppleMusicUsageDescription },
+        { type: 'location', usageDescription: privacy.NSLocationWhenInUseUsageDescription },
+        { type: 'background-audio', usageDescription: 'CHE keeps owner-authorized voice audio active when iOS permits it.' },
+        { type: 'background-fetch', usageDescription: 'CHE checks owner-authorized background work when iOS permits it.' },
+        { type: 'siri', usageDescription: 'CHE exposes the owner-authorized Wake CHE App Intent.' },
+      ],
       versions,
-      appPermissions: { entitlements: [], privacy },
     }],
     news: [],
-    sourceURL: `${origin}/api/update/source`,
   };
 }
 
