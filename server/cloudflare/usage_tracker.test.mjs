@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { addTokens, usageReport, usageIntent, speakUsage } from './usage_tracker.js';
+import { addTokens, usageReport, usageIntent, speakUsage, replyHijacksOwnerRequest } from './usage_tracker.js';
 
 function store() { const m = new Map(); return { get: async (k) => m.get(k), put: async (k, v) => m.set(k, v) }; }
 
@@ -20,7 +20,30 @@ test('tracks tokens by day/week/month/year', async () => {
 
 test('usage intent scopes', () => {
   assert.equal(usageIntent('how many tokens today').scope, 'today');
-  assert.equal(usageIntent('how much have you used this month').scope, 'month');
   assert.equal(usageIntent("what's my token usage").scope, 'all');
+  assert.equal(usageIntent('show me token usage this month').scope, 'month');
+  assert.equal(usageIntent('tokens today').scope, 'today');
   assert.equal(usageIntent('good afternoon'), null);
+  assert.equal(usageIntent('I need you to search GitHub for token usage code'), null);
+  assert.equal(usageIntent('find repositories that reduce token usage'), null);
+  assert.equal(usageIntent('how much have you used this month'), null);
+});
+
+test('unrelated owner requests cannot be replaced by telemetry or template scaffolding', () => {
+  assert.equal(
+    replyHijacksOwnerRequest('Search GitHub for better image galleries', 'Tokens used, sir: 811,081 today, 833,607 this week.'),
+    true,
+  );
+  assert.equal(
+    replyHijacksOwnerRequest("What's my token usage", 'Tokens used, sir: 811,081 today, 833,607 this week.'),
+    false,
+  );
+  assert.equal(
+    replyHijacksOwnerRequest('Find the best repositories', '[AWAITING INITIAL TASK]'),
+    true,
+  );
+  assert.equal(
+    replyHijacksOwnerRequest('Find the best repositories', 'Here are the repositories I found.'),
+    false,
+  );
 });

@@ -43,11 +43,40 @@ export function speakUsage(r, scope) {
 }
 
 export function usageIntent(message) {
-  const t = String(message || '').toLowerCase();
-  if (!/\b(?:tokens?|usage|how much have (?:i|you|we) used)\b/.test(t)) return null;
+  const t = String(message || '')
+    .toLowerCase()
+    .replace(/^(?:chay|chey|shay|che)[, ]+/, '')
+    .replace(/[.!?]+$/g, '')
+    .trim();
+
+  // Token totals are diagnostics, never a keyword shortcut. Only intercept
+  // a turn when the owner explicitly asks for CHE's token usage.
+  const explicit = [
+    /^how many tokens(?:\s+(?:have|did)\s+(?:i|you|we)\s+use(?:d)?)?(?:\s+(?:today|this week|this month|this year))?$/,
+    /^(?:what(?:'s| is)|show(?: me)?|tell me|give me|check)\s+(?:(?:my|your|our|che(?:'s)?)\s+)?token(?:s| usage)?(?:\s+(?:today|this week|this month|this year))?$/,
+    /^token usage(?:\s+(?:today|this week|this month|this year))?$/,
+    /^tokens(?:\s+(?:today|this week|this month|this year))$/,
+  ].some((re) => re.test(t));
+  if (!explicit) return null;
+
   if (/\btoday\b/.test(t)) return { scope: 'today' };
-  if (/\bthis week\b|\bweek\b/.test(t)) return { scope: 'week' };
-  if (/\bthis month\b|\bmonth\b/.test(t)) return { scope: 'month' };
-  if (/\bthis year\b|\byear\b/.test(t)) return { scope: 'year' };
+  if (/\bthis week\b/.test(t)) return { scope: 'week' };
+  if (/\bthis month\b/.test(t)) return { scope: 'month' };
+  if (/\bthis year\b/.test(t)) return { scope: 'year' };
   return { scope: 'all' };
+}
+
+export function replyHijacksOwnerRequest(message, reply) {
+  const text = String(reply || '').trim();
+  if (!text) return true;
+
+  const usageTelemetry =
+    /^tokens used, sir:/i.test(text) ||
+    /^you(?:'ve| have) used about [\d,]+ tokens/i.test(text) ||
+    /^about [\d,]+ tokens this (?:week|month|year),? sir/i.test(text);
+  if (usageTelemetry && !usageIntent(message)) return true;
+
+  return /\[AWAITING INITIAL TASK\]/i.test(text) ||
+    /NEXT DIRECTIVE:\s*\[[^\]]+\]/i.test(text) ||
+    /^\s*\[[^\]\n]{0,50}progress[^\]\n]*\]/im.test(text);
 }
