@@ -3683,7 +3683,11 @@ export class CheState extends DurableObject {
           return json({ detail: 'Choose a non-sensitive memory.' }, 400);
         }
         const added = addOwnerMemory(data, memory);
-        if (added.added) await this.ctx.storage.put('che', data);
+        if (added.added || added.replaced?.length) await this.ctx.storage.put('che', data);
+        for (const oldMemory of added.replaced || []) {
+          const oldVectorId = `memory:${await digest(String(oldMemory).toLowerCase())}`;
+          this.ctx.waitUntil?.(deleteVectorMemory(this.env, oldVectorId));
+        }
         const vectorId = `memory:${await digest(memory.toLowerCase())}`;
         this.ctx.waitUntil?.(storeVectorMemory(this.env, {
           external_id: vectorId,

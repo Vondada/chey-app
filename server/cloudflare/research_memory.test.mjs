@@ -74,4 +74,12 @@ test('write-back updates memories + memory_notes via shared add path', () => {
 
   assert.equal(addOwnerMemory(data, 'password is secret').added, false);
   assert.equal(addOwnerMemory(data, 'Likes concise status updates').added, true);
+
+  const firstFavorite = addOwnerMemory(data, 'Favorite drink: Cola');
+  assert.equal(firstFavorite.added, true);
+  const correctedFavorite = addOwnerMemory(data, 'My favorite drink is Sprite');
+  assert.equal(correctedFavorite.added, true);
+  assert.deepEqual(correctedFavorite.replaced, ['Favorite drink: Cola']);
+  assert.equal(data.memories.some((m) => /cola/i.test(m)), false);
+  assert.equal(data.memories.some((m) => /favorite drink is sprite/i.test(m)), true);
 });
