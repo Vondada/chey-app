@@ -80,6 +80,8 @@ workflows:
         excludes:
           - 'server/**'
           - 'docs/**'
+          - 'test/**'
+          - '.github/**'
           - '**/*.md'
     scripts:
       - name: Bootstrap native projects
