@@ -3,6 +3,9 @@
   "main": "worker.js",
   "compatibility_date": "2026-09-01",
   "ai": { "binding": "AI" },
+  // Non-secret repository target for CHE's owner-approved self-development.
+  // The write credential itself remains the encrypted CHE_GITHUB_TOKEN secret.
+  "vars": { "CHE_GITHUB_REPO": "Vondada/chey-app" },
   // Nightly review at 07:07 UTC (about 2 AM Central).
   "triggers": { "crons": ["7 7 * * *"] },
   "durable_objects": {

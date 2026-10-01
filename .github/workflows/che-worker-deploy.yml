@@ -26,6 +26,9 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
+      # Lets CHE open owner-approved branches/PRs from the phone. The token
+      # stays in GitHub Actions/Cloudflare secrets and never reaches Flutter.
+      CHE_GITHUB_TOKEN: ${{ secrets.CHE_GITHUB_TOKEN }}
       # Optional free AI engines CHE falls back to when Cloudflare's daily
       # allowance runs out. Add any of these as repository secrets.
       ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
@@ -88,7 +91,7 @@ jobs:
         run: |
           node -e '
             const out = {};
-            for (const k of ["ELEVENLABS_API_KEY", "CHE_ELEVENLABS_VOICE_ID", "CHE_OPENAI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CHE_OLLAMA_URL", "CHE_OLLAMA_TOKEN", "XAI_API_KEY", "GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GITHUB_MODELS_TOKEN", "SAMBANOVA_API_KEY", "HF_TOKEN", "CHE_PGVECTOR_REST_URL", "CHE_PGVECTOR_TOKEN", "CHE_VMWARE_TRAINING_URL", "CHE_VMWARE_TRAINING_TOKEN", "CHE_HF_TRAINING_URL", "CHE_HF_TRAINING_TOKEN", "CHE_HF_TTS_URL", "CHE_COMPUTER_URL", "CHE_COMPUTER_TOKEN", "STRIPE_SECRET_KEY", "CHE_PICOVOICE_ACCESS_KEY", "CHE_PICOVOICE_KEYWORD_PPN_B64", "CHE_PICOVOICE_SENSITIVITY"]) {
+            for (const k of ["CHE_GITHUB_TOKEN", "ELEVENLABS_API_KEY", "CHE_ELEVENLABS_VOICE_ID", "CHE_OPENAI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CHE_OLLAMA_URL", "CHE_OLLAMA_TOKEN", "XAI_API_KEY", "GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GITHUB_MODELS_TOKEN", "SAMBANOVA_API_KEY", "HF_TOKEN", "CHE_PGVECTOR_REST_URL", "CHE_PGVECTOR_TOKEN", "CHE_VMWARE_TRAINING_URL", "CHE_VMWARE_TRAINING_TOKEN", "CHE_HF_TRAINING_URL", "CHE_HF_TRAINING_TOKEN", "CHE_HF_TTS_URL", "CHE_COMPUTER_URL", "CHE_COMPUTER_TOKEN", "STRIPE_SECRET_KEY", "CHE_PICOVOICE_ACCESS_KEY", "CHE_PICOVOICE_KEYWORD_PPN_B64", "CHE_PICOVOICE_SENSITIVITY"]) {
               if (process.env[k]) out[k] = process.env[k];
             }
             require("fs").writeFileSync("/tmp/che-secrets.json", JSON.stringify(out));
