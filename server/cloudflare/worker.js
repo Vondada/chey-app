@@ -40,6 +40,7 @@ import { usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { autoImproveScan, codeScoutIntent, fetchRepoFile, scoutCode, speakScout } from './code_scout.js';
 import { consultEngine, consultIntent, shareIntent, speakConsult } from './ai_consult.js';
 import { markOwnerSeen, readArchive as flagstaffArchive, unreadIncoming } from './web_mailbox.js';
+import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
 import { handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { unseenReplies, relayText, listThreads, mailboxIntent, readThread, sendMail, speakThreads } from './mailbox.js';
@@ -2824,7 +2825,7 @@ export class CheState extends DurableObject {
         const id = String(body.conversationId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80);
         if (!id) return json({ detail: 'conversationId required.' }, 400);
         const key = `log:${id}`;
-        const log = (await this.ctx.storage.get(key)) || { id, title: '', turns: [], created_at: new Date().toISOString() };
+        const log = (await loadPackedJson(this.ctx.storage, key)) || { id, title: '', turns: [], created_at: new Date().toISOString() };
         log.title = String(body.title || log.title || 'Conversation').slice(0, 120);
         log.turns.push({
           source: body.source === 'voice' ? 'voice' : 'chat',
@@ -2835,7 +2836,7 @@ export class CheState extends DurableObject {
         });
         log.turns = log.turns.slice(-400);
         log.updated_at = new Date().toISOString();
-        await this.ctx.storage.put(key, log);
+        await savePackedJson(this.ctx.storage, key, log);
         const index = (await this.ctx.storage.get('log_index')) || [];
         const entry = {
           id,
@@ -2853,12 +2854,12 @@ export class CheState extends DurableObject {
       }
       const logMatch = /^\/api\/logs\/([A-Za-z0-9_-]{1,80})$/.exec(path);
       if (logMatch && request.method === 'GET') {
-        const log = await this.ctx.storage.get(`log:${logMatch[1]}`);
+        const log = await loadPackedJson(this.ctx.storage, `log:${logMatch[1]}`);
         if (!log) return json({ detail: 'Log not found.' }, 404);
         return json(log);
       }
       if (logMatch && request.method === 'DELETE') {
-        await this.ctx.storage.delete(`log:${logMatch[1]}`);
+        await this.ctx.storage.delete([`log:${logMatch[1]}`, `log:${logMatch[1]}:gz`]);
         const index = (await this.ctx.storage.get('log_index')) || [];
         await this.ctx.storage.put('log_index', index.filter((item) => item.id !== logMatch[1]));
         return json({ ok: true });
@@ -5100,6 +5101,7 @@ export class CheState extends DurableObject {
               'VOICE-FIRST (always): treat the owner as someone who uses CHE entirely by voice, as if he cannot see the screen. Be his eyes and navigator: when he asks what is on screen, describe it in plain spoken language; read real choices as a short numbered list; say what you did and how it went, and never say \u201ctap here\u201d or rely on him seeing something. Lead with the answer, never with a screen description or a \u201cScreen context\u201d label. Keep spoken replies short. Your own built-in tools (image/video/music generation, research, browser, Office agents) never need permission: use them and report the result. Ask first only before spending money or deleting anything. Acting inside a third-party app outside CHE needs the owner\u2019s go-ahead for that app. Inside CHE\u2019s built-in apps and browser you can read the page, scroll, search, and open or play items by name or number. You cannot see or control apps outside CHE; for those, say so and suggest iPhone Voice Control or VoiceOver (Settings \u2192 Accessibility).',
               'STORE: products are sold only through the CHE Studio Store (Business \u2192 CHE Studio Store). You may suggest product ideas, but nothing exists in Stripe until the owner approves it there, and you must never claim a product, payment link or sale exists unless the store data shows it.',
               'DATA + COMPUTE: core owner state is persisted in CHE storage. Large media, datasets, model artifacts and generated files should use CHE object storage when connected. If storage is not connected, say the item is temporary instead of pretending it was archived.',
+              'PROMPT COMPRESSION: preserve meaning exactly. Long stored prompts/logs use lossless gzip and are decompressed before use. Never drop a requirement, number, name, URL, exception, safety rule, or dependency merely to shorten text. If a semantic shortening cannot be verified equivalent, keep the original.',
               'Use a local-first and owner-controlled architecture: built-in CHE behavior first, CHE-hosted services second, optional provider infrastructure only when required for compute or data.',
               'PERSONALITY: bright, warm, confident, current, direct, useful and lightly playful. Default to one or two short sentences. Keep each sentence to one idea; do not pile clauses together with and/but/so/which. When there are three or more items, use a short list. Lead with exactly what the owner needs; no preamble, recap, disclaimers, warnings or extra suggestions unless genuinely necessary. If he asks for more detail, go deep and hold nothing useful back.',
               'OPEN CONVERSATION: understand slang, profanity, dark humor, mature, controversial, offensive or unusual topics without acting shocked, preachy, prudish or moralizing. Be candid and direct while still respecting real safety, privacy, consent, security and legal boundaries.',
