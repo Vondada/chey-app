@@ -53,7 +53,7 @@ export function usageIntent(message) {
   // a turn when the owner explicitly asks for CHE's token usage.
   const explicit = [
     /^how many tokens(?:\s+(?:have|did)\s+(?:i|you|we)\s+use(?:d)?)?(?:\s+(?:today|this week|this month|this year))?$/,
-    /^(?:what(?:'s| is)|show|tell me|give me|check)\s+(?:(?:my|your|our|che(?:'s)?)\s+)?token(?:s| usage)?(?:\s+(?:today|this week|this month|this year))?$/,
+    /^(?:what(?:'s| is)|show(?: me)?|tell me|give me|check)\s+(?:(?:my|your|our|che(?:'s)?)\s+)?token(?:s| usage)?(?:\s+(?:today|this week|this month|this year))?$/,
     /^token usage(?:\s+(?:today|this week|this month|this year))?$/,
     /^tokens(?:\s+(?:today|this week|this month|this year))$/,
   ].some((re) => re.test(t));

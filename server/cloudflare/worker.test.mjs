@@ -511,8 +511,11 @@ test('chat recovers when the model rejects the full prompt, and reports real err
 
   failAll = true;
   const bad = await send('/api/chat', { message: 'Why' }, token);
-  assert.equal(bad.status, 200);
-  assert.match(await bad.text(), /having trouble reaching my cloud engines|background job/i);
+  assert.equal(bad.status, 503);
+  const badBody = await bad.json();
+  assert.match(String(badBody.detail || ''), /having trouble reaching my cloud engines|background job/i);
+  assert.equal(badBody.retryable, true);
+  assert.equal(badBody.background_job_status, 'queued');
   const queued = JSON.parse(saved.get('che')).jobs[0];
   assert.equal(queued.status, 'queued');
   assert.equal(queued.prompt, 'Why');
