@@ -37,7 +37,7 @@ import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.j
 import { prepareSelfUpdate } from './self_development.js';
 import { KEY_PROVIDERS, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
-import { usageIntent, usageReport, speakUsage } from './usage_tracker.js';
+import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { autoImproveScan, codeScoutIntent, fetchRepoFile, scoutCode, speakScout } from './code_scout.js';
 import { consultEngine, consultIntent, shareIntent, speakConsult } from './ai_consult.js';
 import { markOwnerSeen, readArchive as flagstaffArchive, unreadIncoming } from './web_mailbox.js';
@@ -5488,10 +5488,83 @@ export class CheState extends DurableObject {
           fresh.jobs.unshift(job);
           await this.ctx.storage.put('che', fresh);
           await this.scheduleWork();
-          return ndjsonReply(BUSY_REPLY, { background_job_id: job.id, background_job_status: 'queued', autonomy: fresh.autonomy });
+          return json({
+            detail: BUSY_REPLY,
+            category: 'temporary_cloud_unavailable',
+            retryable: true,
+            background_job_id: job.id,
+            background_job_status: 'queued',
+            autonomy: fresh.autonomy,
+          }, 503);
         }
         let reply = String(answer.response || answer.choices?.[0]?.message?.content || '').trim();
         if (!reply) return json({ detail: 'The model did not return an answer.' }, 502);
+        // Reject unrelated diagnostics or model/template scaffolding before
+        // it can become the owner's answer or enter the cache.
+        if (replyHijacksOwnerRequest(message, reply)) {
+          console.warn('CHE rejected non-contextual owner reply');
+          try {
+            const repair = await this.env.AI.run(FAST_MODEL, {
+              messages: [
+                {
+                  role: 'system',
+                  content: [
+                    'You are CHE. Answer the owner\'s CURRENT question directly and in context.',
+                    'Do not output token/account usage unless the owner explicitly asked for token usage.',
+                    'Do not output templates, placeholders, NEXT DIRECTIVE, AWAITING TASK, or internal progress scaffolding.',
+                    'If verified live data is required but unavailable, say that limitation briefly instead of inventing facts.',
+                  ].join(' '),
+                },
+                ...turns.slice(-4),
+                { role: 'user', content: message },
+              ],
+              max_tokens: needsStrongModel ? 900 : 420,
+              che_emergency: true,
+              che_audit: {
+                task: String(message).slice(0, 160),
+                agent: 'CHE',
+                route: 'owner_answer_repair',
+              },
+            });
+            const repaired = String(
+              repair?.response || repair?.choices?.[0]?.message?.content || '',
+            ).trim();
+            if (repaired && !replyHijacksOwnerRequest(message, repaired)) {
+              reply = repaired;
+              answer = repair;
+            }
+          } catch (_) {
+            // The phone-side local model is the final answer path below.
+          }
+        }
+
+        if (replyHijacksOwnerRequest(message, reply)) {
+          const fresh = await this.loadData();
+          const job = {
+            id: crypto.randomUUID(),
+            title: message.slice(0, 80),
+            prompt: message,
+            status: 'queued',
+            retry_count: 0,
+            retry_at: Date.now() + 5 * 60_000,
+            chat_context: { systemPrompt, turns: turns.slice(-10) },
+            result: '',
+            error: 'Rejected non-contextual owner reply',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+          fresh.jobs.unshift(job);
+          await this.ctx.storage.put('che', fresh);
+          await this.scheduleWork();
+          return json({
+            detail: 'CHE rejected a non-contextual reply and queued the original request.',
+            category: 'temporary_cloud_unavailable',
+            retryable: true,
+            background_job_id: job.id,
+            background_job_status: 'queued',
+          }, 503);
+        }
+
         if (answer.engine !== 'cache' && officeResults.length === 0 && skillResults.length === 0) {
           await rememberAnswer(this.ctx.storage, message, reply);
         }
