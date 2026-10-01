@@ -133,6 +133,9 @@ workflows:
         - pattern: main
           include: true
           source: true
+        - pattern: che/mobile-update-pipeline
+          include: true
+          source: true
       cancel_previous_builds: false
     when:
       changeset:
@@ -153,7 +156,20 @@ workflows:
           flutter pub get
           flutter analyze --no-fatal-infos --no-fatal-warnings
       - name: Choose fast patch or full iPhone release
-        script: bash ./tool/che_mobile_release.sh auto
+        script: |
+          set -eu
+          if [[ "${CM_BRANCH:-}" == "main" ]]; then
+            bash ./tool/che_mobile_release.sh auto
+          else
+            flutter build ios --release --no-codesign \
+              --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
+            mkdir -p build/ios/ipa/Payload
+            cp -R build/ios/iphoneos/Runner.app build/ios/ipa/Payload/
+            cd build/ios/ipa
+            zip -qry CHE-unsigned.ipa Payload
+            rm -r Payload
+            cd ../../..
+          fi
       - name: Mark mobile pipeline successful
         script: touch "$HOME/CHE_MOBILE_SUCCESS"
     artifacts:
