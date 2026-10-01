@@ -43,6 +43,7 @@ import { markOwnerSeen, readArchive as flagstaffArchive, unreadIncoming } from '
 import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
 import { handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
+import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
 import { unseenReplies, relayText, listThreads, mailboxIntent, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
 import { agentActionGuard, ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
@@ -3367,6 +3368,126 @@ export class CheState extends DurableObject {
         data.theater_notes = notes;
         await this.ctx.storage.put('che', data);
         return json({ ok: true, lines: notes.lines.length });
+      }
+
+      // YouTube learning: no paid YouTube Data API key. CHE first reads the
+      // public caption track exposed to the player; live Theater captions are
+      // the fallback. A captured frame is analyzed only when an already
+      // connected free multimodal engine can actually see it.
+      if (path === '/api/youtube/learn' && request.method === 'POST') {
+        const url = String(body.url || '').trim().slice(0, 1200);
+        const videoId = youtubeVideoId(url);
+        if (!videoId) return json({ detail: 'Give CHE a YouTube video link.' }, 400);
+
+        const publicVideo = await fetchYouTubeKnowledge(url, fetch).catch((error) => ({
+          id: videoId, url, title: String(body.title || 'YouTube video'), author: '',
+          captions: [], transcript_source: 'unavailable',
+          error: String(error?.message || error).slice(0, 200),
+        }));
+        const liveCaptions = normalizeCaptionLines(body.captions);
+        const captions = mergeCaptionLines(publicVideo.captions || [], liveCaptions);
+        let visual = null;
+        const frame = String(body.frame_base64 || '');
+        if (frame.length > 1000 && frame.length < 7_200_000) {
+          visual = await optionalMultimodal(this.env, {
+            name: `youtube-${videoId}-frame.jpg`,
+            media_type: 'image',
+            base64: frame,
+          }, 'Describe only what is visibly happening in this YouTube frame. Capture readable text, objects, actions, diagrams, and demonstrations. Do not guess beyond the image.');
+        }
+
+        if (!captions.length && !visual?.summary) {
+          return json({
+            detail: 'CHE could not read captions or a visible frame from this video yet. Play it in the Theater so CHE can learn from the captions as you watch.',
+            transcript_source: publicVideo.transcript_source || 'unavailable',
+          }, 422);
+        }
+
+        const stamp = (t) => {
+          const s = Math.max(0, Math.round(Number(t) || 0));
+          const m = Math.floor(s / 60);
+          return `[${m}:${String(s % 60).padStart(2, '0')}]`;
+        };
+        const transcript = captions.map((line) => `${stamp(line.t)} ${line.text}`).join('\n');
+        const sourceTitle = String(publicVideo.title || body.title || 'YouTube video').slice(0, 200);
+        const sourceAuthor = String(publicVideo.author || '').slice(0, 160);
+        const visualText = String(visual?.summary || '').trim();
+        let study = '';
+        try {
+          const learned = await this.env.AI.run(this.env.CHE_FAST_MODEL || FAST_MODEL, {
+            messages: [
+              {
+                role: 'system',
+                content: 'You are CHE learning from a YouTube video for later recall. Produce compact study notes that preserve names, numbers, steps, claims, caveats, examples and conclusions. Separate what the captions say from what the frame visibly confirms. Do not invent missing visuals or facts.',
+              },
+              {
+                role: 'user',
+                content: [
+                  `Title: ${sourceTitle}`,
+                  sourceAuthor ? `Channel: ${sourceAuthor}` : '',
+                  `URL: ${url}`,
+                  visualText ? `VISIBLE FRAME:\n${visualText}` : '',
+                  `TIMED CAPTIONS:\n${transcript.slice(0, 60000)}`,
+                ].filter(Boolean).join('\n\n'),
+              },
+            ],
+            max_tokens: 1200,
+            che_route: 'fast',
+            che_audit: { task: `Learn YouTube: ${sourceTitle}`.slice(0, 160), agent: 'CHE', route: 'youtube_learning' },
+          });
+          study = String(learned?.response || learned?.choices?.[0]?.message?.content || '').trim().slice(0, 20000);
+        } catch (error) {
+          console.log('CHE YouTube study-note error:', String(error?.message || error).slice(0, 160));
+        }
+
+        const learnedText = [
+          `YouTube video: ${sourceTitle}`,
+          sourceAuthor ? `Channel: ${sourceAuthor}` : '',
+          `URL: ${url}`,
+          `Video ID: ${videoId}`,
+          `Transcript source: ${publicVideo.transcript_source || (liveCaptions.length ? 'theater-live-captions' : 'unknown')}`,
+          visualText ? `Visual note from an actually captured frame:\n${visualText}` : 'Visual note: no frame was readable; do not claim visual details from captions alone.',
+          study ? `CHE study notes:\n${study}` : '',
+          `Timed transcript:\n${transcript}`,
+        ].filter(Boolean).join('\n\n');
+        const saved = new CheLibrary(this.ctx.storage).add({
+          title: `YouTube · ${sourceTitle}`,
+          text: learnedText,
+          source: `youtube:${videoId}`,
+        });
+        if (saved.error) return json({ detail: saved.error }, 503);
+
+        data.youtube_learning = Array.isArray(data.youtube_learning) ? data.youtube_learning : [];
+        const learnedAt = new Date().toISOString();
+        data.youtube_learning = [
+          {
+            video_id: videoId, title: sourceTitle, author: sourceAuthor, url,
+            learned_at: learnedAt, caption_lines: captions.length,
+            transcript_source: publicVideo.transcript_source || 'theater-live-captions',
+            visual_confirmed: Boolean(visualText), library_id: saved.id,
+          },
+          ...data.youtube_learning.filter((item) => item.video_id !== videoId),
+        ].slice(0, 250);
+        await this.ctx.storage.put('che', data);
+        this.ctx.waitUntil?.(storeVectorMemory(this.env, {
+          external_id: `youtube:${videoId}`,
+          kind: 'knowledge',
+          title: `YouTube · ${sourceTitle}`,
+          content: (study || transcript).slice(0, 12000),
+          source: url,
+        }));
+        return json({
+          ok: true,
+          learned: sourceTitle,
+          caption_lines: captions.length,
+          transcript_source: publicVideo.transcript_source || 'theater-live-captions',
+          visual_confirmed: Boolean(visualText),
+          library_id: saved.id,
+          reply: `I learned ${sourceTitle}, sir. I saved ${captions.length} timed caption lines${visualText ? ' plus what I could actually see in the captured frame' : ''}.`,
+        });
+      }
+      if (path === '/api/youtube/learned' && request.method === 'GET') {
+        return json({ videos: Array.isArray(data.youtube_learning) ? data.youtube_learning : [] });
       }
 
       if (path === '/api/office/world' && request.method === 'GET') {

@@ -512,6 +512,20 @@ class CheAgentRuntimeClient {
   Future<void> saveTheaterNotes(String title, String host, List<Map<String, Object>> lines) =>
       _send('POST', '/api/theater/notes', {'title': title, 'host': host, 'lines': lines});
 
+  /// Learns a YouTube video into CHE's searchable Library. The Worker first
+  /// tries the video's public caption track; these live captions are fallback.
+  Future<Map<String, dynamic>> learnYouTube({
+    required String url,
+    required String title,
+    required List<Map<String, Object>> captions,
+    String? frameBase64,
+  }) => _send('POST', '/api/youtube/learn', {
+        'url': url,
+        'title': title,
+        'captions': captions,
+        if (frameBase64 != null && frameBase64.isNotEmpty) 'frame_base64': frameBase64,
+      });
+
   /// CHE's universal AI layer overview (providers, models, health, privacy).
   /// Contains connection states only, never credential values.
   Future<Map<String, dynamic>> aiOverview() => _send('GET', '/api/ai/overview');
