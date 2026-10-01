@@ -426,6 +426,7 @@ extension _CheHomeSend on _CHEHomeState {
       _lastUserMessage = message;
       _stopRequested = false;
     });
+    _requestGate.begin();
 
     _scrollToBottom();
 
@@ -568,9 +569,7 @@ extension _CheHomeSend on _CHEHomeState {
       await speakText(errorReply);
     } catch (error) {
       final detail = error.toString().trim();
-      final errorReply = detail.isEmpty || detail == 'Exception'
-          ? 'I could not connect to my secure Agent gateway, sir.'
-          : 'I could not connect to my secure Agent gateway, sir. ($detail)';
+      final errorReply = CheOwnerError.fromRaw(detail.isEmpty ? 'gateway unreachable' : detail).message;
 
       if (!mounted) return;
 

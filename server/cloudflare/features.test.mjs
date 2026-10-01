@@ -241,7 +241,7 @@ test('art studio prefers the owner image connector', async () => {
   assert.equal(made.item.engine, 'Your image connector');
 });
 
-import { resetRouterForTests, routeText, routedEnv } from './ai_router.js';
+import { resetRouterForTests, routeText, routedEnv, routerProviderIds } from './ai_router.js';
 
 test('AI router falls through free engines when Cloudflare quota is used up', async () => {
   resetRouterForTests();
@@ -287,40 +287,31 @@ test('AI router falls through free engines when Cloudflare quota is used up', as
   assert.deepEqual(await wrapped.AI.run('@cf/black-forest-labs/flux-1-schnell', { prompt: 'x' }), { image: '@cf/black-forest-labs/flux-1-schnell' });
   await assert.rejects(
     routeText({ CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { throw new Error('4006 neurons'); } } }, 'm', input, fetcher),
-    (error) => error.quota === true && /GROQ_API_KEY/.test(error.message),
+    (error) => error.quota === true
+      && error.retryable === true
+      && /working free AI provider key/i.test(error.message)
+      && !/All AI engines failed/i.test(error.message),
   );
 
-  // With zero keys, the keyless engine still answers (no Authorization sent).
+  // Auth-required services must never be treated as anonymous fallbacks.
   resetRouterForTests();
-  const keyless = [];
-  const answer = await routeText(
-    { AI: { run: async () => { throw new Error('4006 neurons'); } } },
-    '@cf/meta/llama-3.2-3b-instruct',
-    input,
-    async (url, init) => {
-      keyless.push({ url, headers: init.headers, body: JSON.parse(init.body) });
-      return new Response(JSON.stringify({ choices: [{ message: { content: 'Keyless hello.' } }] }), { status: 200 });
-    },
+  let anonymousCalls = 0;
+  await assert.rejects(
+    routeText(
+      { AI: { run: async () => { throw new Error('4006 neurons'); } } },
+      '@cf/meta/llama-3.2-3b-instruct',
+      input,
+      async () => {
+        anonymousCalls += 1;
+        return new Response('{"error":"should not be called"}', { status: 500 });
+      },
+    ),
+    (error) => error.retryable === true
+      && /temporarily unavailable|working free AI provider key/i.test(error.message)
+      && !/All AI engines failed|pollinations|llm7/i.test(error.message),
   );
-  assert.equal(answer.response, 'Keyless hello.');
-  assert.equal(answer.engine, 'pollinations:openai');
-  assert.equal(keyless[0].url, 'https://text.pollinations.ai/openai');
-  assert.equal(keyless[0].headers.Authorization, undefined);
-  assert.equal(keyless[0].body.model, 'openai');
-
-  // A busy keyless model is skipped for the next message; the next model answers.
-  resetRouterForTests();
-  const models = [];
-  const rotating = async (url, init) => {
-    const model = JSON.parse(init.body).model;
-    models.push(model);
-    if (model === 'openai') return new Response('{"error":"busy"}', { status: 429 });
-    return new Response(JSON.stringify({ choices: [{ message: { content: `from ${model}` } }] }), { status: 200 });
-  };
-  const noCf = { AI: { run: async () => { throw new Error('4006 neurons'); } } };
-  assert.equal((await routeText(noCf, 'm', input, rotating)).response, 'from mistral');
-  assert.equal((await routeText(noCf, 'm', input, rotating)).response, 'from mistral');
-  assert.deepEqual(models, ['openai', 'openai', 'mistral', 'mistral'], '429 retries once, then rested model is not retried right away');
+  assert.equal(anonymousCalls, 0);
+  assert.ok(!routerProviderIds().some((id) => /^pollinations:|^llm7$/.test(id)));
 
   // Every free-tier key the owner adds joins the rotation in order.
   resetRouterForTests();
