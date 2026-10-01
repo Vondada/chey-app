@@ -16,6 +16,28 @@ extension _CheHomeStreaming on _CHEHomeState {
       history: history,
       memoryContext: [...library, ..._brainContextFor(userMessage)],
     );
+    if ((local == null || local.trim().isEmpty)) {
+      final brain = CheLocalBrain();
+      final packet = CheBootstrapPacket(
+        request: userMessage,
+        capabilities: const ['chat', 'memory', 'local_inference', 'office'],
+        cloudHealth: 'down',
+        localBrainHealth: 'active',
+        currentProvider: 'local_brain',
+        currentModel: cheDefaultLocalBrainModel.modelId,
+        memory: [...library, ..._brainContextFor(userMessage)].take(8).toList(),
+      );
+      final generated = await brain.generate(
+        prompt: userMessage,
+        bootstrap: packet,
+        history: history,
+        memory: packet.memory,
+      );
+      final cleanBrain = generated?.trim() ?? '';
+      if (cleanBrain.isEmpty) return null;
+      onPartial(cleanBrain);
+      return cleanBrain;
+    }
     final clean = local?.trim() ?? '';
     if (clean.isEmpty) return null;
     onPartial(clean);
@@ -115,6 +137,7 @@ extension _CheHomeStreaming on _CHEHomeState {
     request.body = jsonEncode({
       'message': userMessage,
       'history': history,
+      'request_id': _requestGate.current.requestId,
 
       // Future-ready fields for a tool-capable CHE Agent gateway.
       'owner_mode': strictOwnerMode,
@@ -161,9 +184,7 @@ extension _CheHomeStreaming on _CHEHomeState {
       if (local != null) return local;
       final detail = error.toString().trim();
       throw _CHEAgentException(
-        detail.isEmpty
-            ? 'I could not reach my Agent gateway or the on-device fallback.'
-            : 'I could not reach my Agent gateway or the on-device fallback. ($detail)',
+        CheOwnerError.fromRaw(detail.isEmpty ? 'gateway unreachable' : detail).message,
       );
     }
 
@@ -196,7 +217,10 @@ extension _CheHomeStreaming on _CHEHomeState {
       }
 
       throw _CHEAgentException(
-        'CHE Agent error ${response.statusCode}: $body',
+        CheOwnerError.fromRaw(
+          'CHE Agent error ${response.statusCode}: $body',
+          status: response.statusCode,
+        ).message,
       );
     }
 
@@ -229,7 +253,7 @@ extension _CheHomeStreaming on _CHEHomeState {
           );
           if (local != null) return local;
         }
-        throw _CHEAgentException(message);
+        throw _CHEAgentException(CheOwnerError.fromRaw(message).message);
       }
 
       if (type == 'step') {

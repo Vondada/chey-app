@@ -26,6 +26,10 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:url_launcher/url_launcher.dart';
 import 'che_native_voice.dart';
 import 'che_stream_batcher.dart';
+import 'che_request_session.dart';
+import 'che_owner_errors.dart';
+import 'che_bootstrap.dart';
+import 'che_local_brain.dart';
 import 'che_account_bridge.dart';
 import 'che_realtime_voice.dart';
 import 'che_wake_setup.dart';
@@ -390,6 +394,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   int _homeMode = 0;
   final FocusNode _composerFocus = FocusNode();
   bool _stopRequested = false;
+  final CheRequestGate _requestGate = CheRequestGate();
   bool _justCompleted = false;
 
   String get _chatTitle {
@@ -427,6 +432,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     if (!_isSending) return;
     HapticFeedback.lightImpact();
     setState(() => _stopRequested = true);
+    _requestGate.cancelCurrent();
   }
 
   /// New chat: the finished one stays word for word in CHE's log.

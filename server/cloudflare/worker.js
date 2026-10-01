@@ -922,7 +922,7 @@ export function busyError(error) {
   return Boolean(error?.quota || error?.busy || [429, 500, 502, 503, 504].includes(error?.status) ||
     /quota|busy|overload|rate.?limit|429|\b50[234]\b|neurons|resting|cooldown|daily budget|timed? ?out|abort/i.test(String(error?.message || error)));
 }
-const BUSY_REPLY = "All my engines are busy — I saved this and I'll finish it automatically as soon as one frees up.";
+const BUSY_REPLY = "I'm having trouble reaching my cloud engines, sir. I saved this as a background job and I'll finish it when a healthy engine returns.";
 const WORK_POLICY = 'ACCESSIBILITY: support typing OR voice, numbered options, large text for all speech, visible status plus distinct haptics. Never depend on hearing or sight alone. AUTONOMY: finish authorized queued and multi-step work; stand by pauses it and Chay, resume restarts it. OWNER PERMISSION (Sep 28, 2026): CHE has the owner’s full standing permission to act, including sending messages and emails; ask first only when something costs money (paying, buying, ordering, subscribing, transferring), before deleting or removing anything, or when a decision is genuinely the owner’s. App-specific permission is still required before acting in an app. Report what was done afterward. HONESTY: never claim completion without a real result. Busy work is saved and retried every five minutes, at most 24 retries; report exhaustion honestly. Use available fallback engines, and say which capability failed only after all options fail.';
 
 function ragReference(query, vectorMemoryContext, maxChars = 9000) {
@@ -1869,6 +1869,7 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
         // 'quality' forces strong provider models and disables casual routing.
         // Ordinary replies use 'fast' so Groq/etc. can answer with the light model.
         ...(attempt.route === 'quality' ? { che_route: 'quality' } : {}),
+        che_owner_chat: true,
         ...(provider ? { che_provider: provider } : {}),
         ...(cheContext?.items?.length ? { che_context: cheContext } : {}),
         che_audit: { task: String(message).slice(0, 160), agent: 'CHE', route: preferFast ? 'owner_chat_fast' : 'owner_chat', provider: provider || undefined },
@@ -5302,9 +5303,15 @@ export class CheState extends DurableObject {
         return json({ detail: 'Invalid or oversized request.' }, 400);
       }
       // Log the real cause; tell the phone what failed without internals.
-      console.error('CHE request failed', error?.name, error?.message);
-      const reason = String(error?.message || error?.name || 'unknown error').replace(/\s+/g, ' ').slice(0, 160);
-      return json({ detail: `CHE cloud Agent is temporarily unavailable (${reason}).` }, 503);
+      console.error('CHE request failed', error?.name, error?.message, error?.diagnostic || '');
+      const safe = error?.owner_safe
+        ? String(error.message || '').slice(0, 220)
+        : "I'm having trouble reaching my cloud engines, sir. I'm switching to another route.";
+      return json({
+        detail: safe,
+        category: error?.category || 'temporary_cloud_unavailable',
+        retryable: error?.retryable !== false,
+      }, 503);
     }
   }
 
