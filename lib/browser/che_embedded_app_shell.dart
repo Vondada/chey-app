@@ -12,9 +12,9 @@
 // In-tab previews use [cheEmbeddedParentFriendlyGestures], which is empty so a
 // parent list, tab, or sheet can still dismiss.
 
+import 'package:flutter/foundation.dart' show Factory;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../che_ui/che_theme.dart';
@@ -45,7 +45,6 @@ class CheEmbeddedAppAnnouncer {
 
   static void say(BuildContext context, String message) {
     speak?.call(message);
-    SemanticsService.announce(message, Directionality.of(context));
   }
 }
 
