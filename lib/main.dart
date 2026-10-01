@@ -96,6 +96,7 @@ import 'rooms/che_workshop_room.dart';
 import 'security/che_password_vault.dart';
 import 'security/che_vault_auth.dart';
 import 'browser/che_browser.dart' show CheBrowserActions;
+import 'browser/che_embedded_app_shell.dart' show CheEmbeddedAppAnnouncer;
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
 
@@ -659,6 +660,9 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
         'brief': 'Saved from $url\n\n$text',
       });
       await _loadAgentState(silent: true);
+    };
+    CheEmbeddedAppAnnouncer.speak = (message) {
+      unawaited(speakText(message, record: false));
     };
   }
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'browser/che_browser.dart';
+import 'browser/che_embedded_app_shell.dart';
 import 'che_theme.dart';
 import 'home/che_grok_chat_screen.dart';
 
@@ -188,29 +189,23 @@ class _CheAppsHubTabState extends State<CheAppsHubTab> {
       );
       return;
     }
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => CheEmbeddedAppScreen(
-          app: CheAppDefinition(
-            name: uri.host.isEmpty ? 'Web App' : uri.host,
-            webUrl: uri.toString(),
-            icon: Icons.language,
-            aliases: const [],
-          ),
-          onLearnPage: widget.onLearnPage,
-        ),
+    await CheEmbeddedAppScreen.open(
+      context,
+      app: CheAppDefinition(
+        name: uri.host.isEmpty ? 'Web App' : uri.host,
+        webUrl: uri.toString(),
+        icon: Icons.language,
+        aliases: const [],
       ),
+      onLearnPage: widget.onLearnPage,
     );
   }
 
   Future<void> _openEmbeddedWeb(CheAppDefinition app) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => CheEmbeddedAppScreen(
-          app: app,
-          onLearnPage: widget.onLearnPage,
-        ),
-      ),
+    await CheEmbeddedAppScreen.open(
+      context,
+      app: app,
+      onLearnPage: widget.onLearnPage,
     );
   }
 
@@ -223,13 +218,10 @@ class _CheAppsHubTabState extends State<CheAppsHubTab> {
         baseUrl: widget.agentBaseUrl,
         deviceToken: widget.deviceToken,
         onOpenWeb: () {
-          Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => CheEmbeddedAppScreen(
-                app: app,
-                onLearnPage: widget.onLearnPage,
-              ),
-            ),
+          CheEmbeddedAppScreen.open(
+            context,
+            app: app,
+            onLearnPage: widget.onLearnPage,
           );
         },
       );
@@ -329,6 +321,21 @@ class CheEmbeddedAppScreen extends StatefulWidget {
   });
   final CheAppDefinition app;
   final CheLearnPageCallback? onLearnPage;
+
+  /// Shared launch for Apps, Trading, voice, and plugin UI.
+  /// Expands open inside CHE. Does not leave for Safari unless the owner asks.
+  static Future<void> open(
+    BuildContext context, {
+    required CheAppDefinition app,
+    CheLearnPageCallback? onLearnPage,
+  }) {
+    return Navigator.of(context).push<void>(
+      CheEmbeddedAppRoute<void>(
+        settings: RouteSettings(name: 'che-embedded-app', arguments: app.name),
+        builder: (_) => CheEmbeddedAppScreen(app: app, onLearnPage: onLearnPage),
+      ),
+    );
+  }
 
   @override
   State<CheEmbeddedAppScreen> createState() => _CheEmbeddedAppScreenState();

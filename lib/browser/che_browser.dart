@@ -5,8 +5,6 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show Factory;
-import 'package:flutter/gestures.dart' show EagerGestureRecognizer, OneSequenceGestureRecognizer;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,6 +14,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../che_app_portal.dart' show cheAppForName, cheIsTradeSeaUrl, cheTradeSeaEmbedUrl;
 import '../security/che_password_vault.dart';
 import '../security/che_vault_auth.dart';
+import 'che_embedded_app_shell.dart';
 
 typedef ChePageCallback = Future<void> Function(String title, String url, String pageText);
 
@@ -279,9 +278,17 @@ if(user&&u&&!user.value)set(user,u);set(pw,p);})($u,$p)''');
 }
 
 class CheBrowserScreen extends StatefulWidget {
-  const CheBrowserScreen({super.key, required this.initialUrl, this.title});
+  const CheBrowserScreen({
+    super.key,
+    required this.initialUrl,
+    this.title,
+    this.appMode = true,
+  });
   final String initialUrl;
   final String? title;
+
+  /// App cards open in app mode: CHE header only, no address bar or browser nav.
+  final bool appMode;
   @override
   State<CheBrowserScreen> createState() => _CheBrowserScreenState();
 }
@@ -291,6 +298,9 @@ class _CheBrowserScreenState extends State<CheBrowserScreen> {
   int _active = 0;
   final _address = TextEditingController();
   final _addressFocus = FocusNode();
+  bool _showBrowserControls = false;
+  bool _announcedOpen = false;
+  bool _announcedClose = false;
 
   _BrowserTab get _tab => _tabs[_active];
 
@@ -298,10 +308,18 @@ class _CheBrowserScreenState extends State<CheBrowserScreen> {
   void initState() {
     super.initState();
     unawaited(CheBrowserStore.instance.load());
+    _showBrowserControls = !widget.appMode;
     _openTab(widget.initialUrl);
     CheBrowserActions.voice = _voiceCommand;
     _addressFocus.addListener(() {
       if (!_addressFocus.hasFocus) _syncAddress();
+      if (mounted) setState(() {});
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _announcedOpen) return;
+      _announcedOpen = true;
+      final name = widget.title?.trim().isNotEmpty == true ? widget.title!.trim() : 'this app';
+      CheEmbeddedAppAnnouncer.say(context, 'Opening $name inside CHE.');
     });
   }
 
@@ -502,6 +520,14 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
     if (RegExp(r'^(close|exit|leave)( the)?( browser| app| this)?$').hasMatch(w)) {
       Navigator.of(context).maybePop();
       return 'Closed.';
+    }
+    if (RegExp(r'^(show|open)( the)? browser controls$').hasMatch(w)) {
+      _setBrowserControls(true);
+      return 'Browser controls on.';
+    }
+    if (RegExp(r'^(hide|close)( the)? browser controls$').hasMatch(w)) {
+      _setBrowserControls(false);
+      return 'Browser controls off.';
     }
     if (RegExp(r"^(read|read me)( the| this)? (page|article|screen)$").hasMatch(w)) {
       final text = await _pageText();
@@ -869,20 +895,187 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
     );
   }
 
+  String get _appTitle {
+    final given = widget.title?.trim() ?? '';
+    if (given.isNotEmpty) return given;
+    return _title;
+  }
+
+  void _setBrowserControls(bool show) {
+    if (_showBrowserControls == show) return;
+    setState(() => _showBrowserControls = show);
+    if (!show) {
+      _addressFocus.unfocus();
+      _syncAddress();
+    }
+    CheEmbeddedAppAnnouncer.say(
+      context,
+      show ? 'Browser controls on.' : 'Browser controls off.',
+    );
+  }
+
+  Future<void> _backInApp() async {
+    if (await _tab.controller.canGoBack()) {
+      await _tab.controller.goBack();
+      return;
+    }
+    if (mounted) Navigator.of(context).maybePop();
+  }
+
+  Future<void> _onMore(String v) async {
+    final store = CheBrowserStore.instance;
+    switch (v) {
+      case 'controls':
+        _setBrowserControls(!_showBrowserControls);
+      case 'computer':
+        await _showTradeSeaComputer();
+      case 'reader':
+        await _reader();
+      case 'summarize':
+        await _ask('Summarize this page for me: key points, what matters, and anything that looks wrong or unsupported.');
+      case 'ask':
+        await _askCustom();
+      case 'teach':
+        await _runPageAction(CheBrowserActions.learn, 'CHE learned this page.');
+      case 'project':
+        await _runPageAction(CheBrowserActions.saveToProject, 'Saved to a CHE project.');
+      case 'history':
+        await _showList('History', () => store.history, onClear: () => unawaited(store.clearHistory()));
+      case 'favorites':
+        await _showList('Favorites', () => store.favorites);
+      case 'copy':
+        await Clipboard.setData(ClipboardData(text: _tab.url));
+        if (mounted) _snack('Link copied.');
+      case 'refresh':
+        await _tab.controller.reload();
+      case 'external':
+        await launchUrl(Uri.parse(_tab.url), mode: LaunchMode.externalApplication);
+      case 'favorite':
+        await store.toggleFavorite(_tab.url, _title);
+        if (mounted) setState(() {});
+    }
+  }
+
+  List<PopupMenuEntry<String>> _moreItems() {
+    final fav = CheBrowserStore.instance.isFavorite(_tab.url);
+    return [
+      PopupMenuItem(
+        value: 'controls',
+        child: ListTile(
+          leading: Icon(_showBrowserControls ? Icons.web_asset_off_outlined : Icons.web_asset_outlined),
+          title: Text(_showBrowserControls ? 'Hide browser controls' : 'Show browser controls'),
+        ),
+      ),
+      if (_isTradeSea)
+        const PopupMenuItem(value: 'computer', child: ListTile(leading: Icon(Icons.laptop_mac_rounded), title: Text('Computer'))),
+      PopupMenuItem(
+        value: 'favorite',
+        child: ListTile(
+          leading: Icon(fav ? Icons.star_rounded : Icons.star_border_rounded),
+          title: Text(fav ? 'Remove favorite' : 'Add favorite'),
+        ),
+      ),
+      const PopupMenuItem(value: 'refresh', child: ListTile(leading: Icon(Icons.refresh_rounded), title: Text('Refresh'))),
+      const PopupMenuItem(value: 'reader', child: ListTile(leading: Icon(Icons.chrome_reader_mode_outlined), title: Text('Reader mode'))),
+      const PopupMenuItem(value: 'summarize', child: ListTile(leading: Icon(Icons.summarize_outlined), title: Text('Summarize'))),
+      const PopupMenuItem(value: 'ask', child: ListTile(leading: Icon(Icons.question_answer_outlined), title: Text('Ask CHE about this page'))),
+      const PopupMenuItem(value: 'teach', child: ListTile(leading: Icon(Icons.psychology_alt_outlined), title: Text('Teach CHE this page'))),
+      const PopupMenuItem(value: 'project', child: ListTile(leading: Icon(Icons.folder_special_outlined), title: Text('Save to project'))),
+      const PopupMenuItem(value: 'history', child: ListTile(leading: Icon(Icons.history_rounded), title: Text('History'))),
+      const PopupMenuItem(value: 'favorites', child: ListTile(leading: Icon(Icons.star_outline_rounded), title: Text('Favorites'))),
+      const PopupMenuItem(value: 'copy', child: ListTile(leading: Icon(Icons.link_rounded), title: Text('Copy link'))),
+      const PopupMenuItem(value: 'external', child: ListTile(leading: Icon(Icons.open_in_new_rounded), title: Text('Open in official app / Safari'))),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
-    final store = CheBrowserStore.instance;
-    final fav = store.isFavorite(_tab.url);
-    return Scaffold(
-      backgroundColor: const Color(0xFF060B11),
-      appBar: AppBar(
-        titleSpacing: 0,
-        title: TextField(
+    final page = Column(children: [
+      if (_tab.progress < 100) LinearProgressIndicator(value: _tab.progress / 100.0, minHeight: 2),
+      Expanded(
+        child: IndexedStack(
+          index: _active,
+          children: [
+            for (final t in _tabs)
+              WebViewWidget(
+                key: ObjectKey(t),
+                controller: t.controller,
+                // Empty on purpose. Eager capture trapped swipe-down and route back.
+                gestureRecognizers: cheEmbeddedWebViewGestures(),
+              ),
+          ],
+        ),
+      ),
+      if (_showBrowserControls)
+        SafeArea(
+          top: false,
+          child: SizedBox(
+            height: 48,
+            child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+              Semantics(
+                button: true,
+                label: 'Back in page',
+                child: IconButton(
+                  tooltip: 'Back',
+                  icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+                  onPressed: () async {
+                    if (await _tab.controller.canGoBack()) await _tab.controller.goBack();
+                  },
+                ),
+              ),
+              Semantics(
+                button: true,
+                label: 'Forward',
+                child: IconButton(
+                  tooltip: 'Forward',
+                  icon: const Icon(Icons.arrow_forward_ios_rounded, size: 18),
+                  onPressed: () async {
+                    if (await _tab.controller.canGoForward()) await _tab.controller.goForward();
+                  },
+                ),
+              ),
+              Semantics(
+                button: true,
+                label: 'Refresh',
+                child: IconButton(tooltip: 'Refresh', icon: const Icon(Icons.refresh_rounded), onPressed: () => _tab.controller.reload()),
+              ),
+              Semantics(
+                button: true,
+                label: 'Ask CHE',
+                child: IconButton(tooltip: 'Ask CHE', icon: const Icon(Icons.auto_awesome_rounded), onPressed: _askCustom),
+              ),
+              Semantics(
+                button: true,
+                label: 'Tabs',
+                child: IconButton(
+                  tooltip: 'Tabs',
+                  onPressed: _showTabs,
+                  icon: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                    decoration: BoxDecoration(border: Border.all(color: Colors.white70), borderRadius: BorderRadius.circular(5)),
+                    child: Text('${_tabs.length}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                  ),
+                ),
+              ),
+            ]),
+          ),
+        ),
+    ]);
+
+    final controls = Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: Semantics(
+        textField: true,
+        label: 'Address, hidden unless browser controls are on',
+        child: TextField(
           controller: _address,
           focusNode: _addressFocus,
           keyboardType: TextInputType.url,
           textInputAction: TextInputAction.go,
-          onSubmitted: _go,
+          onSubmitted: (value) {
+            _go(value);
+            _addressFocus.unfocus();
+          },
           style: const TextStyle(fontSize: 14),
           decoration: InputDecoration(
             isDense: true,
@@ -893,115 +1086,26 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
           ),
         ),
-        actions: [
-          if (_isTradeSea)
-            IconButton(
-              tooltip: 'Computer for TradeSea',
-              icon: const Icon(Icons.laptop_mac_rounded),
-              onPressed: _showTradeSeaComputer,
-            ),
-          IconButton(
-            tooltip: fav ? 'Remove favorite' : 'Add favorite',
-            icon: Icon(fav ? Icons.star_rounded : Icons.star_border_rounded),
-            onPressed: () async {
-              await store.toggleFavorite(_tab.url, _title);
-              if (mounted) setState(() {});
-            },
-          ),
-          PopupMenuButton<String>(
-            tooltip: 'Page actions',
-            onSelected: (v) async {
-              switch (v) {
-                case 'computer':
-                  await _showTradeSeaComputer();
-                case 'reader':
-                  await _reader();
-                case 'summarize':
-                  await _ask('Summarize this page for me: key points, what matters, and anything that looks wrong or unsupported.');
-                case 'ask':
-                  await _askCustom();
-                case 'teach':
-                  await _runPageAction(CheBrowserActions.learn, 'CHE learned this page.');
-                case 'project':
-                  await _runPageAction(CheBrowserActions.saveToProject, 'Saved to a CHE project.');
-                case 'history':
-                  await _showList('History', () => store.history, onClear: () => unawaited(store.clearHistory()));
-                case 'favorites':
-                  await _showList('Favorites', () => store.favorites);
-                case 'copy':
-                  await Clipboard.setData(ClipboardData(text: _tab.url));
-                  if (mounted) _snack('Link copied.');
-                case 'external':
-                  await launchUrl(Uri.parse(_tab.url), mode: LaunchMode.externalApplication);
-              }
-            },
-            itemBuilder: (_) => [
-              if (_isTradeSea)
-                const PopupMenuItem(value: 'computer', child: ListTile(leading: Icon(Icons.laptop_mac_rounded), title: Text('Computer'))),
-              const PopupMenuItem(value: 'reader', child: ListTile(leading: Icon(Icons.chrome_reader_mode_outlined), title: Text('Reader mode'))),
-              const PopupMenuItem(value: 'summarize', child: ListTile(leading: Icon(Icons.summarize_outlined), title: Text('Summarize'))),
-              const PopupMenuItem(value: 'ask', child: ListTile(leading: Icon(Icons.question_answer_outlined), title: Text('Ask CHE about this page'))),
-              const PopupMenuItem(value: 'teach', child: ListTile(leading: Icon(Icons.psychology_alt_outlined), title: Text('Teach CHE this page'))),
-              const PopupMenuItem(value: 'project', child: ListTile(leading: Icon(Icons.folder_special_outlined), title: Text('Save to project'))),
-              const PopupMenuItem(value: 'history', child: ListTile(leading: Icon(Icons.history_rounded), title: Text('History'))),
-              const PopupMenuItem(value: 'favorites', child: ListTile(leading: Icon(Icons.star_outline_rounded), title: Text('Favorites'))),
-              const PopupMenuItem(value: 'copy', child: ListTile(leading: Icon(Icons.link_rounded), title: Text('Copy link'))),
-              const PopupMenuItem(value: 'external', child: ListTile(leading: Icon(Icons.open_in_new_rounded), title: Text('Open in official app / Safari'))),
-            ],
-          ),
-        ],
       ),
-      body: Column(children: [
-        if (_tab.progress < 100) LinearProgressIndicator(value: _tab.progress / 100.0, minHeight: 2),
-        Expanded(
-          child: IndexedStack(
-            index: _active,
-            children: [
-              for (final t in _tabs)
-                WebViewWidget(
-                  key: ObjectKey(t),
-                  controller: t.controller,
-                  // Hand every touch straight to the page so iOS tells scrolls
-                  // and taps apart itself (prevents scrolling from "clicking").
-                  gestureRecognizers: {
-                    Factory<OneSequenceGestureRecognizer>(() => EagerGestureRecognizer()),
-                  },
-                ),
-            ],
-          ),
-        ),
-      ]),
-      bottomNavigationBar: SafeArea(
-        child: SizedBox(
-          height: 48,
-          child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-            IconButton(
-              tooltip: 'Back',
-              icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
-              onPressed: () async {
-                if (await _tab.controller.canGoBack()) await _tab.controller.goBack();
-              },
-            ),
-            IconButton(
-              tooltip: 'Forward',
-              icon: const Icon(Icons.arrow_forward_ios_rounded, size: 18),
-              onPressed: () async {
-                if (await _tab.controller.canGoForward()) await _tab.controller.goForward();
-              },
-            ),
-            IconButton(tooltip: 'Reload', icon: const Icon(Icons.refresh_rounded), onPressed: () => _tab.controller.reload()),
-            IconButton(tooltip: 'Ask CHE', icon: const Icon(Icons.auto_awesome_rounded), onPressed: _askCustom),
-            IconButton(
-              tooltip: 'Tabs',
-              onPressed: _showTabs,
-              icon: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                decoration: BoxDecoration(border: Border.all(color: Colors.white70), borderRadius: BorderRadius.circular(5)),
-                child: Text('${_tabs.length}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
-              ),
-            ),
-          ]),
-        ),
+    );
+
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop || _announcedClose) return;
+        _announcedClose = true;
+        CheEmbeddedAppAnnouncer.say(context, 'Closed $_appTitle.');
+      },
+      child: CheEmbeddedAppShell(
+        title: _appTitle,
+        onClose: () => Navigator.of(context).maybePop(),
+        onBack: _backInApp,
+        canGoBackInPage: true,
+        onMoreSelected: (v) => unawaited(_onMore(v)),
+        moreItems: _moreItems(),
+        showBrowserControls: _showBrowserControls,
+        browserControls: controls,
+        child: page,
       ),
     );
   }

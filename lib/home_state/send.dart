@@ -44,19 +44,11 @@ extension _CheHomeSend on _CHEHomeState {
           baseUrl: cheAgentBaseUrl,
           deviceToken: _deviceToken ?? '',
           onOpenWeb: () {
-            Navigator.of(context).push(
-              CupertinoPageRoute<void>(
-                builder: (_) => CheEmbeddedAppScreen(app: embeddedApp),
-              ),
-            );
+            CheEmbeddedAppScreen.open(context, app: embeddedApp);
           },
         );
       } else {
-        await Navigator.of(context).push(
-          CupertinoPageRoute<void>(
-            builder: (_) => CheEmbeddedAppScreen(app: embeddedApp),
-          ),
-        );
+        await CheEmbeddedAppScreen.open(context, app: embeddedApp);
       }
       return true;
     }

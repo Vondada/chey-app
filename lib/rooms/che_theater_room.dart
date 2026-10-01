@@ -24,6 +24,7 @@ import '../che_ui/che_agents.dart' show CheAgentStatus;
 import '../agents/che_office_world.dart' show CheRoomVisitors;
 import '../che_ui/che_theme.dart';
 import '../browser/che_browser.dart';
+import '../browser/che_embedded_app_shell.dart';
 import '../widgets/che_3d_room_view.dart';
 
 enum CheTheaterVerdict { allow, blockPopup, blockRedirect, blockScheme, blockDownload }
@@ -521,7 +522,13 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
           child: RepaintBoundary(
             child: web == null
                 ? _Theater3DStage(runtime: widget.runtime)
-                : Container(color: Colors.black, child: WebViewWidget(controller: web)),
+                : Container(
+                    color: Colors.black,
+                    child: WebViewWidget(
+                      controller: web,
+                      gestureRecognizers: cheEmbeddedWebViewGestures(),
+                    ),
+                  ),
           ),
         ),
         if (web != null)
