@@ -91,6 +91,11 @@ info['NSLocalNetworkUsageDescription'] = 'CHE uses the local network only to con
 info['NSAppleMusicUsageDescription'] = 'CHE accesses your media library only for owner-authorized music actions.'
 info['NSLocationWhenInUseUsageDescription'] = 'CHE uses your location only while you are using location-aware features.'
 info['CFBundleURLTypes'] = [{'CFBundleURLName': 'CHE', 'CFBundleURLSchemes': ['che']}]
+# CHE can hand a verified IPA URL directly to SideStore. This only declares
+# the URL scheme for canOpenURL; it does not grant SideStore any CHE data.
+schemes = set(info.get('LSApplicationQueriesSchemes', []))
+schemes.add('sidestore')
+info['LSApplicationQueriesSchemes'] = sorted(schemes)
 info['BGTaskSchedulerPermittedIdentifiers'] = ['com.cheyapp.che.refresh']
 info['UIBackgroundModes'] = ['audio', 'fetch']
 # Conversation logs (Documents/che_logs) show in Files → On My iPhone → CHE.
@@ -256,6 +261,15 @@ struct CHEAppShortcuts: AppShortcutsProvider {
           } else {
             result(false)
           }
+        case "appVersion":
+          result([
+            "version": Bundle.main.object(
+              forInfoDictionaryKey: "CFBundleShortVersionString"
+            ) as? String ?? "",
+            "build": Bundle.main.object(
+              forInfoDictionaryKey: "CFBundleVersion"
+            ) as? String ?? "",
+          ])
         default:
           result(FlutterMethodNotImplemented)
         }
