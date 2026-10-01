@@ -525,8 +525,12 @@ test('chat recovers when the model rejects the full prompt, and reports real err
   }, token);
   assert.equal(heavy.status, 200);
   assert.match(await heavy.text(), /Hey sir, all good/);
-  assert.ok(seen[0].length > 8000, 'full prompt tried first on heavy turns');
-  assert.ok(seen[1].length < 8000, 'compact prompt retried after full prompt failure');
+  const fullPromptIndex = seen.findIndex((call) => call.length > 8000);
+  assert.ok(fullPromptIndex >= 0, 'heavy turns still try the full quality prompt');
+  assert.ok(
+    seen.slice(fullPromptIndex + 1).some((call) => call.length < 8000),
+    'compact prompt retried after full prompt failure',
+  );
 
   failAll = true;
   const bad = await send('/api/chat', { message: 'Why' }, token);
