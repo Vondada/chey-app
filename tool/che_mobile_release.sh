@@ -79,24 +79,32 @@ dart_defines=(
 )
 
 package_ipa() {
-  test -d build/ios/iphoneos/Runner.app
-  rm -rf build/ios/ipa/Payload
-  mkdir -p build/ios/ipa/Payload
-  cp -R build/ios/iphoneos/Runner.app build/ios/ipa/Payload/
-  (
-    cd build/ios/ipa
-    rm -f CHE-unsigned.ipa
-    zip -qry CHE-unsigned.ipa Payload
-    rm -rf Payload
-  )
+  mkdir -p build/ios/ipa
+  local generated
+  generated="$(find build/ios/ipa -maxdepth 1 -type f -name '*.ipa' ! -name 'CHE-unsigned.ipa' -print -quit)"
+  if [[ -n "$generated" && -s "$generated" ]]; then
+    cp "$generated" "$IPA"
+  else
+    test -d build/ios/iphoneos/Runner.app
+    rm -rf build/ios/ipa/Payload
+    mkdir -p build/ios/ipa/Payload
+    cp -R build/ios/iphoneos/Runner.app build/ios/ipa/Payload/
+    (
+      cd build/ios/ipa
+      rm -f CHE-unsigned.ipa
+      zip -qry CHE-unsigned.ipa Payload
+      rm -rf Payload
+    )
+  fi
   test -s "$IPA"
 }
 
 build_full() {
   local shorebird_base=false
+  rm -rf build/ios/ipa
   if [[ -n "${SHOREBIRD_TOKEN:-}" && -f shorebird.yaml ]] && install_shorebird; then
     echo "Creating Shorebird iOS release baseline..."
-    if shorebird release ios --no-codesign --       "--build-name=$VERSION" "--build-number=$FULL_BUILD" "${dart_defines[@]}"; then
+    if shorebird release ios --no-codesign --build-name="$VERSION" --build-number="$FULL_BUILD" -- "${dart_defines[@]}"; then
       shorebird_base=true
     else
       echo "Shorebird release failed; building a normal unsigned IPA instead." >&2
