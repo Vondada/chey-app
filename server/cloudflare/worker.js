@@ -33,6 +33,7 @@ import { activityFeed, creations, findCreations, greeting, suggestions, stalledT
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
+import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
 import { prepareSelfUpdate } from './self_development.js';
 import { KEY_PROVIDERS, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
@@ -5725,6 +5726,12 @@ export default {
   },
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
+    // Public read-only update delivery must work from SideStore/Safari, which
+    // cannot attach CHE's paired-device bearer token. There is intentionally
+    // no public upload or mutation route.
+    if (isMobileUpdatePath(path)) {
+      return handleMobileUpdateRequest(request, env);
+    }
     if (path === '/health') return json({ ok: true, agent: 'CHE cloud' });
     if (path === '/health/engines') return env.CHE_STATE.getByName('owner').fetch(request);
     if (path === '/live-voice') return liveVoicePage();
