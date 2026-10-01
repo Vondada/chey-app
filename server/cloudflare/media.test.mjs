@@ -24,7 +24,7 @@ test('HD image generation uses current OpenAI GPT Image when a key is configured
   };
 
   const result = await generateImage(
-    { OPENAI_API_KEY: 'test-key' },
+    { OPENAI_API_KEY: 'test-key', CHE_ALLOW_PAID_MEDIA: '1' },
     storage,
     { prompt: 'A vivid cinematic CHE interface' },
     fakeFetch,
@@ -58,7 +58,7 @@ test('Gemini Omni video generation stores MP4 output in R2', async () => {
   };
 
   const result = await generateVideo(
-    { GEMINI_API_KEY: 'test-key', CHE_DATA_BUCKET: bucket },
+    { GEMINI_API_KEY: 'test-key', CHE_DATA_BUCKET: bucket, CHE_ALLOW_PAID_MEDIA: '1' },
     storage,
     { prompt: 'A short cinematic orbit around the CHE logo' },
     fakeFetch,
@@ -68,6 +68,8 @@ test('Gemini Omni video generation stores MP4 output in R2', async () => {
   assert.equal(request.url, 'https://generativelanguage.googleapis.com/v1beta/interactions');
   assert.equal(request.body.model, 'gemini-omni-1.1-flash');
   assert.equal(request.body.generation_config.video_config.task, 'text_to_video');
+  assert.equal(request.body.response_format.type, 'video');
+  assert.equal(request.body.response_format.resolution, '1080p');
   assert.equal(result.item.engine, 'gemini-omni-video');
   assert.equal(result.item.kind, 'video');
   assert.match(result.item.blob_key, /\.mp4$/);
