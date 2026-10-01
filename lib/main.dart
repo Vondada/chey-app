@@ -80,6 +80,7 @@ import 'local_server/activity_local.dart';
 import 'plugins/che_plugin_webapp.dart';
 import 'mailbox/che_mailbox_screen.dart';
 import 'memory/che_offline_library.dart';
+import 'memory/che_knowledge_cache.dart';
 import 'self_update/che_patch_banner.dart';
 import 'self_update/che_update_card.dart';
 import 'self_update/che_self_update_intent.dart';
@@ -580,6 +581,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   // Offline library: word-for-word copies of memorized texts, on the phone.
   final CheOfflineLibrary _offlineLibrary = CheOfflineLibrary();
+  final CheKnowledgeCache _knowledge = CheKnowledgeCache();
 
   // Self-development: approved che-update proposals become pull requests.
   final CheUpdateTracker _updates = CheUpdateTracker();

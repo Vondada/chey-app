@@ -128,6 +128,31 @@ extension _CheHomeStreaming on _CHEHomeState {
       return reply;
     }
 
+    // Offline knowledge first: answer from what CHE already learned (or let
+    // the on-phone brain combine saved notes) before spending cloud credits.
+    if (_pendingAttachment == null && CheKnowledgeCache.cacheable(trimmedRequest)) {
+      final saved = await _knowledge.answer(trimmedRequest);
+      if (saved != null) {
+        onPartial(saved);
+        return saved;
+      }
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+        final notes = await _knowledge.related(trimmedRequest);
+        if (notes.length >= 2 && await _knowledge.notesCover(trimmedRequest)) {
+          final combined = await CheLocalAI.respond(
+            'Answer the question using ONLY the saved notes. If the notes do not fully answer it, reply exactly UNKNOWN.\n\nQuestion: $trimmedRequest',
+            history: const [],
+            memoryContext: notes,
+          ).catchError((_) => null);
+          final clean = combined?.trim() ?? '';
+          if (clean.length > 12 && !clean.toUpperCase().contains('UNKNOWN')) {
+            onPartial(clean);
+            return clean;
+          }
+        }
+      }
+    }
+
     final request = http.Request(
       'POST',
       Uri.parse('$cheAgentBaseUrl/api/chat'),
@@ -299,8 +324,13 @@ extension _CheHomeStreaming on _CHEHomeState {
     }
 
     _pendingScreenContext = null;
+    final hadAttachment = _pendingAttachment != null;
     _pendingAttachment = null;
     if (mounted) _set(() {});
-    return complete.toString().trim();
+    final finalText = complete.toString().trim();
+    if (!hadAttachment && _streamMediaUrl == null) {
+      unawaited(_knowledge.remember(trimmedRequest, finalText));
+    }
+    return finalText;
   }
 }
