@@ -476,7 +476,7 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
                     _showHistory ? Icons.expand_less : Icons.history_rounded),
                 label: Text(_showHistory
                     ? 'Hide previous builds'
-                    : 'Previous working builds'),
+                    : 'Previous verified builds'),
               ),
               if (_showHistory)
                 for (final item in _history.where((item) =>
