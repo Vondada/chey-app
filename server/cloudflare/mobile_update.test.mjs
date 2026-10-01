@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+const DIGEST = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
 import {
   handleMobileUpdateRequest,
   releaseToUpdate,
@@ -18,14 +20,14 @@ const release = {
 version=1.4.5
 build=1200001
 commit=abc123
-sha256=feedface
+sha256=${DIGEST}
 size=3
 shorebird_base=true
 -->`,
   assets: [{
     name: 'CHE-unsigned.ipa',
     state: 'uploaded',
-    digest: 'sha256:feedface',
+    digest: `sha256:${DIGEST}`,
     size: 3,
     browser_download_url: 'https://downloads.example/CHE-unsigned.ipa',
   }],
@@ -35,7 +37,7 @@ test('release metadata produces stable Worker and SideStore URLs', () => {
   const update = releaseToUpdate(release, 'https://che.example');
   assert.equal(update.version, '1.4.5');
   assert.equal(update.build_number, '1200001');
-  assert.equal(update.sha256, 'feedface');
+  assert.equal(update.sha256, DIGEST);
   assert.equal(update.shorebird_base, true);
   assert.equal(
     update.download_url,
@@ -45,14 +47,21 @@ test('release metadata produces stable Worker and SideStore URLs', () => {
   assert.doesNotMatch(JSON.stringify(update), /token|secret/i);
 });
 
-test('SideStore source keeps verified build history', () => {
+test('SideStore source keeps verified build history with only current schema fields', () => {
   const latest = releaseToUpdate(release, 'https://che.example');
   const older = { ...latest, version: '1.4.4', build_number: '1100001' };
   const source = sourceFromUpdates([latest, older], 'https://che.example');
+  assert.deepEqual(Object.keys(source).sort(), ['apps', 'identifier', 'name', 'news', 'sourceURL'].sort());
   assert.equal(source.apps[0].bundleIdentifier, 'com.cheyapp.chey');
   assert.equal(source.apps[0].versions.length, 2);
-  assert.equal(source.apps[0].versions[0].sha256, 'feedface');
+  assert.deepEqual(
+    Object.keys(source.apps[0].versions[0]).sort(),
+    ['date', 'downloadURL', 'localizedDescription', 'minOSVersion', 'size', 'version'].sort(),
+  );
   assert.equal(source.apps[0].versions[0].minOSVersion, '16.0');
+  assert.equal('buildVersion' in source.apps[0].versions[0], false);
+  assert.equal('sha256' in source.apps[0].versions[0], false);
+  assert.ok(Array.isArray(source.apps[0].permissions));
 });
 
 test('latest and history advertise only successful releases with IPA assets', async () => {
@@ -158,4 +167,19 @@ test('latest endpoint reports a failed newest mobile attempt without hiding last
   assert.equal(body.build_number, '1200001');
   assert.equal(body.latest_attempt.state, 'failure');
   assert.equal(body.latest_attempt.commit_sha, 'newer-bad-commit');
+});
+
+
+test('release metadata rejects missing or mismatched GitHub SHA-256 digests', () => {
+  const missing = {
+    ...release,
+    assets: [{ ...release.assets[0], digest: '' }],
+  };
+  assert.equal(releaseToUpdate(missing, 'https://che.example'), null);
+
+  const mismatch = {
+    ...release,
+    body: release.body.replace(DIGEST, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
+  };
+  assert.equal(releaseToUpdate(mismatch, 'https://che.example'), null);
 });
