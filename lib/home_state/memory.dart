@@ -1087,7 +1087,7 @@ extension _CheHomeMemory on _CHEHomeState {
             onIndexChanged: (index) => _selectedTab = index,
             tabs: const [
               Tab(icon: Icon(Icons.hub_outlined), text: 'Brain'),
-              Tab(icon: Icon(Icons.show_chart), text: 'Markets'),
+              Tab(icon: Icon(Icons.show_chart), text: 'Trading'),
               Tab(icon: Icon(Icons.business_center_outlined), text: 'Business'),
               Tab(icon: Icon(Icons.devices_other_outlined), text: 'Devices'),
               Tab(icon: Icon(Icons.music_note_outlined), text: 'Music'),

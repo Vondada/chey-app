@@ -1697,6 +1697,13 @@ OWNER AGENCY
       onTalkToChe: () => _goShellTab(1),
       items: [
         CheMoreItem(
+          icon: Icons.candlestick_chart_rounded,
+          title: 'Trading Room',
+          subtitle: 'Swings · entries · backtests · paper trades',
+          onTap: () => _openAssistantHub(tab: 1),
+          hue: kit.CheColors.markets,
+        ),
+        CheMoreItem(
           icon: Icons.markunread_mailbox_rounded,
           title: 'Mailbox & Flagstaff',
           subtitle: _mailboxUnread > 0 ? '$_mailboxUnread unread · AI conversations · letters' : 'AI conversations · archive · letters · keys',

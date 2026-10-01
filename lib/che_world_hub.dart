@@ -42,8 +42,8 @@ const List<CheBuilding> cheCampusBuildings = [
   ),
   CheBuilding(
     tab: 1,
-    title: 'Markets',
-    subtitle: 'Trading & data',
+    title: 'Trading Room',
+    subtitle: 'Swings · backtests · paper trades',
     icon: Icons.show_chart,
     color: CheColors.amber,
   ),

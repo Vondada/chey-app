@@ -31,6 +31,7 @@ import { discoverKeylessModels, engineStatus, routedEnv } from './ai_router.js';
 import { deleteMedia, generateImage, listMedia, readBlob, upscaleImage } from './media.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
+import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 import { prepareSelfUpdate } from './self_development.js';
 import { KEY_PROVIDERS, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
@@ -2900,6 +2901,28 @@ export class CheState extends DurableObject {
       if (path === '/api/markets/snapshot' && request.method === 'GET') {
         return json(await marketSnapshot(this.env));
       }
+      // ─── Trading Lab: swings, entries, patterns, backtests, paper trades ──
+      if (path === '/api/trading/analyze' && request.method === 'GET') {
+        const q = new URL(request.url).searchParams;
+        const data = await loadCandles(q.get('symbol') || 'BTCUSDT', { interval: q.get('interval') || '1d' });
+        if (data.error) return json({ detail: data.error }, 422);
+        return json({ ...tradeAnalyze(data), candles: data.candles.slice(-120) });
+      }
+      if (path === '/api/trading/backtest' && request.method === 'GET') {
+        const data = await loadCandles(new URL(request.url).searchParams.get('symbol') || 'BTCUSDT');
+        if (data.error) return json({ detail: data.error }, 422);
+        const results = backtestAll(data.candles);
+        return json({ symbol: data.label, data: data.data, bars: data.candles.length, from: data.candles[0].t, to: data.candles[data.candles.length - 1].t, results });
+      }
+      if (path === '/api/trading/paper' && request.method === 'GET') {
+        const book = await readBook(this.ctx.storage);
+        return json({ ...book, summary: speakBook(book), strategies: Object.fromEntries(Object.entries(STRATEGIES).map(([id, st]) => [id, { name: st.name, about: st.about }])) });
+      }
+      if (path === '/api/trading/paper' && request.method === 'POST') {
+        if (body.action === 'watch') return json(await watchSymbol(this.ctx.storage, body.symbol));
+        if (body.action === 'tick') { const book = await paperTick(this.ctx.storage, { force: true }); return json({ ...book, summary: speakBook(book) }); }
+        return json({ detail: 'Use watch or tick.' }, 400);
+      }
       if (path === '/api/markets/candles' && request.method === 'GET') {
         const symbol = new URL(request.url).searchParams.get('symbol') || '^spx';
         const result = await marketCandles(symbol);
@@ -4545,6 +4568,27 @@ export class CheState extends DurableObject {
           return ndjsonReply(speakConsult(results), { source: 'che_consult', peers: consult.peers });
         }
 
+        // Trading Lab by voice: "how are the trades doing", "backtest bitcoin",
+        // "swing highs and entries on ETH", "paper trade Apple".
+        const trade = tradingIntent(message);
+        if (trade) {
+          if (trade.kind === 'book') {
+            const book = await paperTick(this.ctx.storage).catch(() => null) || await readBook(this.ctx.storage);
+            return ndjsonReply(speakBook(book), { source: 'che_trading' });
+          }
+          if (trade.kind === 'watch') {
+            const added = await watchSymbol(this.ctx.storage, trade.symbol);
+            return ndjsonReply(added.error ? `${added.error} Try a ticker like AAPL or a coin like bitcoin, sir.` : `Added ${added.symbol} to paper trading, sir. Paper only, no real money. I'll learn which strategy works on it first.`, { source: 'che_trading' });
+          }
+          const data = await loadCandles(trade.symbol);
+          if (data.error) return ndjsonReply(`${data.error} Try a ticker like AAPL or a coin like bitcoin, sir.`, { source: 'che_trading' });
+          if (trade.kind === 'backtest') {
+            const years = Math.max(1, Math.round((Date.parse(data.candles[data.candles.length - 1].t) - Date.parse(data.candles[0].t)) / (365.25 * 86400000)));
+            return ndjsonReply(speakBacktest(data.label, years, backtestAll(data.candles)), { source: 'che_trading' });
+          }
+          return ndjsonReply(speakAnalysis(tradeAnalyze(data)), { source: 'che_trading' });
+        }
+
         const mail = mailboxIntent(message);
         if (mail?.kind === 'send') {
           const relayed = relayText(mail.text);
@@ -5373,6 +5417,8 @@ export class CheState extends DurableObject {
 
   async alarm() {
     await this.refreshKeyEnv();
+    // Paper trading keeps learning even when autonomy is off (no money moves).
+    await paperTick(this.ctx.storage).catch(() => null);
     if (!(await this.loadData()).autonomy) return;
     await this.processJobs();
     await processAgentWork({
