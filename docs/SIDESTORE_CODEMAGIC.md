@@ -1,61 +1,135 @@
-# CHE iPhone install — Codemagic + SideStore
+# CHE iPhone updates — phone-first Codemagic + SideStore
 
-Unsigned IPA builds for SideStore. No Apple Developer Program purchase is required for this path.
+CHE uses two update lanes so the owner normally never needs a Mac, PC, Xcode,
+Terminal, Codemagic dashboard, or GitHub Actions dashboard.
 
-## What produces the IPA
+## Owner flow
 
-| Path | Trigger | Artifact |
-|---|---|---|
-| Codemagic workflow `chey-mobile` | Push/merge to `main` (when connected), or manual run | `CHE-unsigned.ipa` |
-| GitHub Actions Mac builders (if enabled) | CI on the repo | Same unsigned IPA shape |
+Say **“CHE, update yourself.”**
 
-Config file: `codemagic.yaml` at the repo root.
+CHE checks:
 
-Build steps (summary):
+- Shorebird for a compatible Dart-only patch.
+- `/api/update/latest` for the newest verified full iPhone build.
 
-1. `bash ./tool/bootstrap.sh` — generates the iOS Runner / permission strings.
-2. `python3 ./tool/patch_local_runtime.py` — local AI + voice tuning bridge.
-3. `flutter build ios --release --no-codesign` (optional `CHE_AGENT_URL` dart-define).
-4. Zip `Runner.app` into `build/ios/ipa/CHE-unsigned.ipa`.
+If a native/full build is newer, CHE reads three choices aloud:
+
+1. Install with SideStore.
+2. Read what changed.
+3. Not now.
+
+CHE uses SideStore's documented remote-install URL scheme to hand the verified
+IPA directly to SideStore. iOS/SideStore still owns the final install
+confirmation; CHE never claims it silently installed an unsigned IPA.
+
+## Two update lanes
+
+### Fast update — Shorebird
+
+Use for Dart-only application changes that Shorebird accepts.
+
+The automatic Codemagic workflow attempts `shorebird patch ios`. Shorebird
+itself checks for native and asset differences. If a safe patch cannot be
+created, CHE's build script falls back to the full IPA lane.
+
+### Full update — new IPA
+
+Use for native Swift, Info.plist, permissions, assets, Flutter engine/native
+plugin changes, or whenever the fast lane cannot safely patch.
+
+Codemagic:
+
+1. Bootstraps the generated iOS project.
+2. Runs Flutter analyze.
+3. Creates a Shorebird release baseline when Shorebird is configured, otherwise
+   a normal unsigned Flutter iOS build.
+4. Packages `CHE-unsigned.ipa`.
+5. Calculates SHA-256.
+6. Creates a **draft** GitHub Release.
+7. Uploads the IPA.
+8. Requires GitHub's uploaded-asset digest to exactly match the local SHA-256.
+9. Uploads `CHE-update.json`.
+10. Publishes the Release only after verification.
+
+A failed build or failed checksum never replaces the last-known-good public
+release.
+
+## Stable Worker URLs
+
+The phone and SideStore use the CHE Worker as the stable front door:
+
+- Latest metadata: `https://chey-app.henryjavoni.workers.dev/api/update/latest`
+- Build history: `https://chey-app.henryjavoni.workers.dev/api/update/history`
+- SideStore source: `https://chey-app.henryjavoni.workers.dev/api/update/source`
+- Latest IPA: `https://chey-app.henryjavoni.workers.dev/api/update/download/latest`
+
+The Worker routes are read-only. There is no public IPA upload endpoint.
+
+The IPA response uses:
+
+- `Content-Type: application/octet-stream`
+- `Content-Disposition: attachment; filename="CHE-unsigned.ipa"`
+- byte-range headers when the upstream supports them
+
+## SideStore one-click links
+
+CHE uses SideStore's documented URL schemes:
+
+`sidestore://install?url=[encoded IPA URL]`
+
+and:
+
+`sidestore://source?url=[encoded source URL]`
+
+Adding the CHE source once lets SideStore see the latest CHE version and older
+versions from the release history without visiting Codemagic.
 
 ## One-time Codemagic setup
 
-1. Connect the GitHub repository `Vondada/chey-app` in Codemagic.
-2. Select the **chey-mobile** workflow (name: "CHE iPhone SideStore").
-3. Confirm Flutter `stable`, latest Xcode, and that artifacts include `CHE-unsigned.ipa`.
-4. Optional: set `CHE_AGENT_URL` in Codemagic environment variables to your deployed Worker HTTPS URL so the IPA ships with a default Agent address. Secrets never go in Flutter source — only this build-time define.
-5. Prefer manual runs until GitHub Actions iOS builds are settled (see the comment in `codemagic.yaml`).
+The existing personal Codemagic app must remain connected to
+`Vondada/chey-app` and use the repository's `codemagic.yaml`.
 
-## SideStore install (phone)
+Environment group `che_ship`:
 
-1. Install [SideStore](https://sidestore.io/) on the iPhone (pairing / Anisette helper as their guide requires; a computer may be needed once for the initial pair).
-2. Download `CHE-unsigned.ipa` from the Codemagic build artifacts (or AirDrop / Files).
-3. In SideStore → My Apps → + → pick `CHE-unsigned.ipa`.
-4. Trust / enable the SideStore signing profile when iOS asks.
-5. Open CHE. Use the cloud button to paste the Worker `*.workers.dev` HTTPS URL if it was not baked in via `CHE_AGENT_URL`.
-6. Pair with the 6–12 digit `CHE_PAIR_CODE` you set as a Worker secret.
+- `SHOREBIRD_TOKEN` — Secret. Enables fast OTA updates and Shorebird full
+  release baselines.
+- `GITHUB_TOKEN` — Secret. Fine-grained token scoped to
+  `Vondada/chey-app`, with **Contents: Read and write**. It is used only by
+  Codemagic to create verified GitHub Releases.
+- `CHE_AGENT_URL` — optional. Defaults to the production CHE Worker.
 
-## Seven-day refresh
+Never put these values in Flutter source, release notes, or the IPA metadata.
 
-SideStore apps expire about every seven days. Refresh from SideStore on the phone (Wi‑Fi + VPN/pairing as SideStore requires). This refresh is **unrelated** to `CHE_PAIR_CODE`.
+If `GITHUB_TOKEN` is missing, Codemagic can still produce its build artifact,
+but the phone update API intentionally does **not** advertise that artifact.
+That prevents CHE from announcing a build the owner cannot reliably install.
 
-If refresh fails, re-pair SideStore from a computer, then reinstall or refresh the IPA.
+## Version history and rollback
 
-## What needs a new IPA vs what does not
+The Worker exposes up to the latest 12 successful CHE releases. CHE's Updates
+screen lists previous builds. Selecting one requires owner confirmation before
+CHE opens SideStore on that older verified IPA.
 
-| Change | Needs new IPA? |
-|---|---|
-| Cloudflare Worker / Durable Object / plugin catalog | No — cloud updates live after deploy |
-| Dart/UI Shorebird-eligible patches (when Shorebird is configured) | Usually no — patch download on next launch |
-| New Flutter UI, permissions, Info.plist, native plugins, `che/native_voice` Swift | Yes — rebuild + SideStore install |
-| Native voice MethodChannel Swift Runner work | Yes — keep Flutter speech fallback until Swift lands |
+Publishing a new build never deletes the prior release.
 
-## Native voice note
+## Voice-first behavior
 
-The Flutter channel is `che/native_voice`. Until the owner’s Swift Runner implementation is complete, the mic button uses the Flutter `speech_to_text` fallback. Do not remove that fallback when shipping an IPA.
+Every important update action is represented by a labeled Semantics control and
+spoken status:
 
-## Verify after install
+- update available
+- install/open SideStore
+- read release notes
+- fast-patch result
+- rollback confirmation
+- failure without replacement
 
-- Pair succeeds; Hub → Office → Enter the Office floor shows CHE’s desk and “0 working” when idle.
-- Plugins list shows either `CHE_PLUGIN_CATALOG` connectors or the builtin skill rows (Weather, Crypto, Wikipedia).
-- Say “CHE, what’s stalled?” or open the Office board and check the STALLED section.
+CHE says what is about to happen before opening SideStore and does not claim the
+install succeeded because iOS completes that action outside CHE.
+
+## Initial SideStore setup
+
+This design removes the computer from **normal CHE updates after SideStore is
+already installed and paired**. It does not bypass SideStore/iOS requirements
+for SideStore's own initial installation, pairing, signing, or periodic account
+requirements.
