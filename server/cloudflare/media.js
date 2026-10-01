@@ -190,6 +190,11 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
   const engines = [];
   if (env.CHE_IMAGE_GEN_URL) engines.push({ id: 'Your image connector', run: async () => ({ url: await connectorImage(env, finalPrompt, fetcher) }) });
   if (openAiKey(env)) engines.push({ id: draft ? 'openai-gpt-image-fast' : 'openai-gpt-image-hd', run: async () => openAiImage(env, finalPrompt, draft, fetcher) });
+  if (env.AI) engines.push({ id: draft ? 'CHE image engine (draft)' : 'CHE image engine', run: async () => {
+    const result = await env.AI.run(IMAGE_MODEL, { prompt: finalPrompt.slice(0, 2048), steps: draft ? 4 : 8, seed: Math.floor(Math.random() * 2 ** 31) });
+    if (!result?.image) throw new Error('The image model returned no image.');
+    return { base64: result.image, mime_type: 'image/jpeg' };
+  } });
   if (env.GEMINI_API_KEY) engines.push({ id: 'gemini-image', run: async () => {
     const model = env.CHE_GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image';
     const response = await fetcher(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
@@ -205,11 +210,6 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
     const mime = image.mimeType || image.mime_type;
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(mime)) throw new Error('Unsupported image format.');
     return { base64: image.data, mime_type: mime };
-  } });
-  if (env.AI) engines.push({ id: draft ? 'CHE image engine (draft)' : 'CHE image engine', run: async () => {
-    const result = await env.AI.run(IMAGE_MODEL, { prompt: finalPrompt.slice(0, 2048), steps: draft ? 4 : 8, seed: Math.floor(Math.random() * 2 ** 31) });
-    if (!result?.image) throw new Error('The image model returned no image.');
-    return { base64: result.image, mime_type: 'image/jpeg' };
   } });
   const errors = [];
   let generated;
