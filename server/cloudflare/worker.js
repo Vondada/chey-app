@@ -2872,8 +2872,15 @@ export class CheState extends DurableObject {
             car: Boolean(this.env.CHE_CAR_URL),
             smart_home: Boolean(this.env.CHE_SMART_HOME_URL),
             rendering: Boolean(this.env.CHE_RENDER_URL),
-            image_generation: Boolean(this.env.CHE_IMAGE_GEN_URL || this.env.AI || this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY),
-            video_generation: Boolean(this.env.CHE_VIDEO_GEN_URL || this.env.GEMINI_API_KEY),
+            image_generation: Boolean(
+              this.env.CHE_IMAGE_GEN_URL ||
+              this.env.AI ||
+              (/^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim()) && (this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY))
+            ),
+            video_generation: Boolean(
+              this.env.CHE_VIDEO_GEN_URL ||
+              (/^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim()) && this.env.GEMINI_API_KEY)
+            ),
             model_panel: Boolean(
               this.env.CHE_OPENAI_MODEL_URL ||
               this.env.CHE_ANTHROPIC_MODEL_URL ||
@@ -5179,7 +5186,7 @@ export class CheState extends DurableObject {
           ? await optionalMediaGeneration(this.env, 'image', message, vectorMemoryContext)
           : null;
         if (requestedCapabilities.includes('image_generation') && !this.env.CHE_IMAGE_GEN_URL &&
-            (this.env.AI || this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY)) {
+            (this.env.AI || (/^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim()) && (this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY)))) {
           const made = await generateImage(this.env, this.ctx.storage, {
             prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 6000),
             title: message.slice(0, 60),
@@ -5191,7 +5198,8 @@ export class CheState extends DurableObject {
         let videoGeneration = requestedCapabilities.includes('video_generation')
           ? await optionalMediaGeneration(this.env, 'video', message, vectorMemoryContext)
           : null;
-        if (requestedCapabilities.includes('video_generation') && !this.env.CHE_VIDEO_GEN_URL && this.env.GEMINI_API_KEY) {
+        if (requestedCapabilities.includes('video_generation') && !this.env.CHE_VIDEO_GEN_URL &&
+            /^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim()) && this.env.GEMINI_API_KEY) {
           const made = await generateVideo(this.env, this.ctx.storage, {
             prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 8000),
             title: message.slice(0, 60),
