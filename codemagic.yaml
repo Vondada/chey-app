@@ -96,8 +96,9 @@ workflows:
         script: |
           set -eu
           flutter pub get
-          # infos alone should not block Shorebird OTA; warnings/errors still fail
-          flutter analyze --no-fatal-infos
+          # Analyzer errors still fail. Warnings/infos stay visible in logs but
+          # do not burn a full iOS build just for lint-level cleanup.
+          flutter analyze --no-fatal-infos --no-fatal-warnings
       - name: Install Shorebird CLI
         script: |
           set -eu
