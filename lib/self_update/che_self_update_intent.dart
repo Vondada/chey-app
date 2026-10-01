@@ -22,7 +22,7 @@ bool cheIsSelfUpdateRequest(String raw) {
     caseSensitive: false,
   ).hasMatch(text);
   final selfTarget = RegExp(
-    r'\b(?:your|che(?:\'s)?|the)\s+(?:code|codebase|repo(?:sitory)?|flutter app|app|ui|interface|screen|chat ui)\b|'
+    r"\b(?:your|che(?:'s)?|the)\s+(?:code|codebase|repo(?:sitory)?|flutter app|app|ui|interface|screen|chat ui)\b|"
     r'\b(?:actual|real|current)\s+(?:codebase|repo(?:sitory)?|source)\b',
     caseSensitive: false,
   ).hasMatch(text);
