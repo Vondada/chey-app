@@ -7,7 +7,8 @@
 # One-time Codemagic group `che_ship`:
 #   SHOREBIRD_TOKEN  (Secret) — optional but required for fast OTA updates
 #   GITHUB_TOKEN     (Secret) — fine-grained token for Vondada/chey-app,
-#                              Contents: read/write, used only to publish Releases
+#                              Contents: read/write + Commit statuses: read/write.
+#                              Used only to publish Releases and report build status
 #   CHE_AGENT_URL    (optional) — defaults to CHE production Worker
 #
 # The token never enters Flutter or a release asset.
@@ -40,10 +41,16 @@ workflows:
           flutter analyze --no-fatal-infos
       - name: Build, verify and publish full iPhone update
         script: bash ./tool/che_mobile_release.sh full
+      - name: Mark mobile pipeline successful
+        script: touch "$HOME/CHE_MOBILE_SUCCESS"
     artifacts:
       - build/ios/iphoneos/*.app
       - build/ios/ipa/CHE-unsigned.ipa
       - build/ios/ipa/CHE-update.json
+    publishing:
+      scripts:
+        - name: Report CHE mobile build result
+          script: bash ./tool/report_mobile_build_status.sh
 
   chey-shorebird:
     name: CHE automatic mobile update
@@ -86,7 +93,13 @@ workflows:
           flutter analyze --no-fatal-infos
       - name: Choose fast patch or full iPhone release
         script: bash ./tool/che_mobile_release.sh auto
+      - name: Mark mobile pipeline successful
+        script: touch "$HOME/CHE_MOBILE_SUCCESS"
     artifacts:
       - build/ios/iphoneos/*.app
       - build/ios/ipa/CHE-unsigned.ipa
       - build/ios/ipa/CHE-update.json
+    publishing:
+      scripts:
+        - name: Report CHE mobile build result
+          script: bash ./tool/report_mobile_build_status.sh
