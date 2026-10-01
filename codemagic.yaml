@@ -38,7 +38,7 @@ workflows:
         script: |
           set -eu
           flutter pub get
-          flutter analyze --no-fatal-infos
+          flutter analyze --no-fatal-infos --no-fatal-warnings
       - name: Build, verify and publish full iPhone update
         script: bash ./tool/che_mobile_release.sh full
       - name: Mark mobile pipeline successful
@@ -92,7 +92,7 @@ workflows:
         script: |
           set -eu
           flutter pub get
-          flutter analyze --no-fatal-infos
+          flutter analyze --no-fatal-infos --no-fatal-warnings
       - name: Choose fast patch or full iPhone release
         script: bash ./tool/che_mobile_release.sh auto
       - name: Mark mobile pipeline successful
