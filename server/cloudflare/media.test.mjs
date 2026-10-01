@@ -38,6 +38,24 @@ test('HD image generation uses current OpenAI GPT Image when a key is configured
   assert.equal(result.item.mime_type, 'image/png');
 });
 
+test('paid HD image provider is gated until owner opt-in', async () => {
+  const storage = memoryStorage();
+  let called = false;
+  const result = await generateImage(
+    { OPENAI_API_KEY: 'test-key' },
+    storage,
+    { prompt: 'A cinematic CHE portrait' },
+    async () => {
+      called = true;
+      throw new Error('should not call paid provider');
+    },
+  );
+  assert.equal(called, false);
+  assert.equal(result.status, 402);
+  assert.equal(result.requires_owner_confirmation, true);
+  assert.match(result.detail, /owner explicitly enables paid media/i);
+});
+
 test('Gemini Omni video generation stores MP4 output in R2', async () => {
   const storage = memoryStorage();
   const writes = [];
