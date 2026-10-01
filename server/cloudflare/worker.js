@@ -2979,13 +2979,20 @@ export class CheState extends DurableObject {
       if (path === '/api/media' && request.method === 'GET') {
         return json({
           items: await listMedia(this.ctx.storage),
+          engine: this.env.CHE_IMAGE_GEN_URL
+            ? 'connector'
+            : (this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY)
+              ? 'openai-gpt-image'
+              : this.env.AI
+                ? 'workers_ai'
+                : this.env.GEMINI_API_KEY ? 'gemini-image' : 'none',
           image_engine: this.env.CHE_IMAGE_GEN_URL
             ? 'connector'
             : (this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY)
               ? 'openai-gpt-image'
-              : this.env.GEMINI_API_KEY
-                ? 'gemini-image'
-                : this.env.AI ? 'workers_ai' : 'none',
+              : this.env.AI
+                ? 'workers_ai'
+                : this.env.GEMINI_API_KEY ? 'gemini-image' : 'none',
           video_engine: this.env.CHE_VIDEO_GEN_URL ? 'connector' : this.env.GEMINI_API_KEY ? 'gemini-omni' : 'none',
           upscaler: Boolean(this.env.CHE_UPSCALE_URL),
         });
