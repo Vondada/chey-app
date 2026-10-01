@@ -1747,20 +1747,3 @@ extension _CheHomeMemory on _CHEHomeState {
     return direct;
   }
 }
-,
-        ).hasMatch(clean);
-    if (!contextualFollowUp) return direct;
-
-    final recent = history.length > 6
-        ? history.sublist(history.length - 6)
-        : history;
-    for (final item in recent.reversed) {
-      if (item['role'] != 'user') continue;
-      final prior = (item['content'] ?? item['text'] ?? '').trim();
-      if (prior.isEmpty || prior.toLowerCase() == clean) continue;
-      final inherited = _requestedCapabilities(prior);
-      if (inherited.isNotEmpty) return inherited;
-    }
-    return direct;
-  }
-}
