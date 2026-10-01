@@ -146,9 +146,20 @@ for release in json.load(sys.stdin):
     match = re.fullmatch(r"che-ios-v(.+)-b([0-9]+)", str(release.get("tag_name", "")))
     if not match:
         continue
-    if not any(a.get("name") == "CHE-unsigned.ipa" and a.get("state") != "deleted" for a in release.get("assets", [])):
+    asset = next((a for a in release.get("assets", [])
+                  if a.get("name") == "CHE-unsigned.ipa"
+                  and a.get("state") == "uploaded"
+                  and int(a.get("size") or 0) > 0), None)
+    if not asset:
         continue
-    shorebird = bool(re.search(r"(?m)^shorebird_base=true\\s*$", str(release.get("body", ""))))
+    digest = str(asset.get("digest") or "")
+    if not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest):
+        continue
+    body = str(release.get("body", ""))
+    meta_sha = re.search(r"(?m)^sha256=([0-9a-fA-F]{64})\\s*$", body)
+    if meta_sha and meta_sha.group(1).lower() != digest.split(":", 1)[1].lower():
+        continue
+    shorebird = bool(re.search(r"(?m)^shorebird_base=true\\s*$", body))
     print(match.group(1), match.group(2), "true" if shorebird else "false")
     break
 '
