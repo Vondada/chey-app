@@ -28,6 +28,7 @@ test('runtime registry reports only capabilities with a real configured path', (
       GEMINI_API_KEY: 'gemini-test',
       CHE_PGVECTOR_REST_URL: 'https://example.supabase.co/rest/v1',
       CHE_PGVECTOR_TOKEN: 'pg-test',
+      CHE_ALLOW_PAID_MEDIA: '1',
     },
     {},
   );
@@ -41,6 +42,13 @@ test('runtime registry reports only capabilities with a real configured path', (
   assert.equal(byId.stripe.available, false);
   assert.equal(byId.provider_routing.available, true);
   assert.equal(byId.model_discovery.available, true);
+});
+
+test('paid media providers stay unavailable until the owner opts in', () => {
+  const registry = runtimeCapabilityRegistry({ GEMINI_API_KEY: 'gemini-test' }, {});
+  const byId = Object.fromEntries(registry.capabilities.map((item) => [item.id, item]));
+  assert.equal(byId.video_generation.available, false);
+  assert.match(byId.video_generation.limitations, /owner approval|owner-enabled|paid/i);
 });
 
 test('capability prompt tells CHE to choose tools automatically', () => {
