@@ -8,9 +8,9 @@ import 'package:shorebird_code_push/shorebird_code_push.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 const _fallbackVersion =
-    String.fromEnvironment('CHE_APP_VERSION', defaultValue: '1.4.5');
+    String.fromEnvironment('CHE_APP_VERSION', defaultValue: '1.4.6');
 const _fallbackBuild =
-    String.fromEnvironment('CHE_BUILD_NUMBER', defaultValue: '12');
+    String.fromEnvironment('CHE_BUILD_NUMBER', defaultValue: '15');
 
 class CheInstalledBuild {
   const CheInstalledBuild(this.version, this.build);
