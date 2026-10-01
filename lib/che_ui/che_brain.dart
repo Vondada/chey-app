@@ -289,12 +289,31 @@ class CheBrain extends ChangeNotifier {
     } catch (_) {}
   }
 
+  static String? _supersessionSlot(String text) {
+    var value = text.trim().toLowerCase();
+    if (value.startsWith('my ')) value = value.substring(3);
+    if (!value.startsWith('favorite ')) return null;
+    final rest = value.substring('favorite '.length);
+    for (final separator in [':', ' = ', ' is ']) {
+      final index = rest.indexOf(separator);
+      if (index > 0) {
+        final key = rest.substring(0, index).trim();
+        if (key.isNotEmpty && key.length <= 40) return 'favorite:$key';
+      }
+    }
+    return null;
+  }
+
   Future<void> addFact(String text, {String source = 'you', String? kind}) async {
     final parsed = CheBrainFact.parseKind(text);
     final t = parsed.$2;
     final k = kind ?? parsed.$1;
     if (t.isEmpty) return;
     if (facts.any((f) => f.text.toLowerCase() == t.toLowerCase())) return;
+    final slot = _supersessionSlot(t);
+    if (slot != null) {
+      facts.removeWhere((f) => _supersessionSlot(f.text) == slot);
+    }
     facts.insert(
         0, CheBrainFact(id: 'f${DateTime.now().microsecondsSinceEpoch}', text: t, at: DateTime.now(), source: source, kind: k));
     if (facts.length > maxFacts) facts.removeRange(maxFacts, facts.length);

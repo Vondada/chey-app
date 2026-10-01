@@ -105,8 +105,11 @@ class CheKnowledgeCache {
   }
 
   /// A saved answer to (almost) the same question, or null.
-  Future<String?> answer(String question) async {
-    if (!cacheable(question)) return null;
+  Future<String?> answer(
+    String question, {
+    bool hasConversationContext = false,
+  }) async {
+    if (hasConversationContext || !cacheable(question)) return null;
     await _load();
     final terms = _terms(question);
     _Entry? best;

@@ -319,7 +319,8 @@ extension _CheHomeMicrophone on _CHEHomeState {
   }
 
   Future<void> _startListeningUnlocked() async {
-    if (!speechAvailable ||
+    if (_nativeIosVoiceActive ||
+        !speechAvailable ||
         !openConversation ||
         _isSending ||
         _isSpeaking ||

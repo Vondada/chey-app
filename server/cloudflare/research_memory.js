@@ -31,16 +31,43 @@ export function isSafeMemoryText(text) {
  * Push into data.memories (Durable Object). Reused by /api/memory/add and
  * research write-back so there is one owner-visible list path.
  */
+function memorySupersessionSlot(text) {
+  let value = clip(text, 500).trim().toLowerCase();
+  if (value.startsWith('my ')) value = value.slice(3);
+  if (!value.startsWith('favorite ')) return '';
+  const rest = value.slice('favorite '.length);
+  for (const separator of [':', ' = ', ' is ']) {
+    const index = rest.indexOf(separator);
+    if (index > 0) {
+      const key = rest.slice(0, index).trim();
+      if (key && key.length <= 40) return `favorite:${key}`;
+    }
+  }
+  return '';
+}
+
 export function addOwnerMemory(data, text) {
   data.memories = Array.isArray(data.memories) ? data.memories : [];
   const memory = clip(text, 500);
   if (!isSafeMemoryText(memory)) return { added: false, reason: 'rejected_sensitive_or_empty' };
-  if (data.memories.some((item) => String(item).toLowerCase() === memory.toLowerCase())) {
-    return { added: false, reason: 'duplicate', memory };
+  const lower = memory.toLowerCase();
+  if (data.memories.some((item) => String(item).toLowerCase() === lower)) {
+    return { added: false, reason: 'duplicate', memory, replaced: [] };
   }
+
+  const slot = memorySupersessionSlot(memory);
+  const replaced = [];
+  if (slot) {
+    data.memories = data.memories.filter((item) => {
+      if (memorySupersessionSlot(item) !== slot) return true;
+      replaced.push(String(item));
+      return false;
+    });
+  }
+
   data.memories.push(memory);
   data.memories = data.memories.slice(-MAX_MEMORIES);
-  return { added: true, memory };
+  return { added: true, memory, replaced };
 }
 
 export function listMemoryNotes(data, { limit } = {}) {

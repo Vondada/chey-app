@@ -49,6 +49,8 @@ extension _CheHomeStreaming on _CHEHomeState {
     List<Map<String, String>> history, {
     required void Function(String text) onPartial,
   }) async {
+    await _cognitionReady;
+
     if (!await _ensurePaired()) {
       final local = await _tryLocalOfflineResponse(
         userMessage,
@@ -60,6 +62,12 @@ extension _CheHomeStreaming on _CHEHomeState {
     }
 
     final trimmedRequest = userMessage.trim();
+    final hasConversationContext = history.any(
+      (item) => (item['content'] ?? item['text'] ?? '').trim().isNotEmpty,
+    );
+    final turnCapabilities = _homeMode == 0
+        ? _requestedCapabilitiesForTurn(trimmedRequest, history)
+        : const <String>[];
 
     // Updating CHE itself is different from creating a separate owner project.
     // CHE self-code changes stay reviewable through the GitHub proposal workflow.
@@ -138,8 +146,13 @@ extension _CheHomeStreaming on _CHEHomeState {
 
     // Offline knowledge first: answer from what CHE already learned (or let
     // the on-phone brain combine saved notes) before spending cloud credits.
-    if (_pendingAttachment == null && CheKnowledgeCache.cacheable(trimmedRequest)) {
-      final saved = await _knowledge.answer(trimmedRequest);
+    if (_pendingAttachment == null &&
+        !hasConversationContext &&
+        CheKnowledgeCache.cacheable(trimmedRequest)) {
+      final saved = await _knowledge.answer(
+        trimmedRequest,
+        hasConversationContext: hasConversationContext,
+      );
       if (saved != null) {
         onPartial(saved);
         return saved;
@@ -175,7 +188,7 @@ extension _CheHomeStreaming on _CHEHomeState {
       // Future-ready fields for a tool-capable CHE Agent gateway.
       'owner_mode': strictOwnerMode,
       'wake_phrase': 'Chay',
-      'requested_capabilities': _homeMode == 0 ? _requestedCapabilities(userMessage) : const <String>[],
+      'requested_capabilities': turnCapabilities,
       'screen_context': _pendingScreenContext,
       'attachment': _pendingAttachment,
       'client_identity_profile': _cheIdentityProfile,

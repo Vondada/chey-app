@@ -158,10 +158,14 @@ void main() {
     expect(find.descendant(of: find.byType(CheOfficeHeader), matching: find.text(r'$0.00 · Stripe not connected')), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp(r'^Office header\. Built today: 1\.')), findsOneWidget);
 
+    // The default 3D surface has a voice-accessible flat-plan fallback.
+    await tester.tap(find.text('Flat floor plan'));
+    await tester.pump();
+
     // Desks: full names, roles and the real job status (never a bare Idle).
     expect(find.bySemanticsLabel(RegExp(r'^Knox, Engineering / Codex jobs\. Blocked: tool not configured \(Codex\)\.')), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp(r'^Atlas, Research\. Up next: Research competitors in Houston\.')), findsOneWidget);
-    expect(find.bySemanticsLabel(RegExp(r'^CHE, Manager\.')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'^CHE, Office Boss\.')), findsOneWidget);
 
     // The board sits below the floor plan and action buttons; scroll to it.
     await tester.scrollUntilVisible(find.text('BLOCKERS (1)'), 200, scrollable: find.byType(Scrollable).first);

@@ -199,8 +199,8 @@ export function cacheable(question) {
   return key.length >= 8 && key.split(' ').length <= 30 && !PERSONAL_OR_LIVE.test(key);
 }
 
-export async function cachedAnswer(storage, question) {
-  if (!cacheable(question)) return null;
+export async function cachedAnswer(storage, question, { hasConversationContext = false } = {}) {
+  if (hasConversationContext || !cacheable(question)) return null;
   const cache = await get(storage, CACHE, {});
   const hit = cache?.[cacheKey(question)];
   if (!hit || Date.now() - hit.at > 7 * 86400000) return null;

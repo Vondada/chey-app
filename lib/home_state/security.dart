@@ -1217,6 +1217,8 @@ extension _CheHomeSecurity on _CHEHomeState {
         snapshot: _voiceSnapshot,
         serverOnline: _deviceToken != null,
         lastServerEvent: _realtimeVoice?.lastServerEvent,
+        playbackEngine: _lastVoiceEngine,
+        fallbackReason: _voiceFailReason.isEmpty ? null : _voiceFailReason,
       ),
     );
   }

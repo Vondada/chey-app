@@ -99,6 +99,18 @@ MockClient _backend(List<http.Request> seen) => MockClient((request) async {
       return http.Response(jsonEncode(body), 200, headers: {'content-type': 'application/json'});
     });
 
+Future<void> _pumpUntilFound(
+  WidgetTester tester,
+  Finder finder, {
+  int attempts = 30,
+}) async {
+  for (var i = 0; i < attempts; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+    if (finder.evaluate().isNotEmpty) return;
+  }
+  expect(finder, findsWidgets);
+}
+
 void main() {
   test('short summaries keep titles glanceable', () {
     expect(cheShortSummary('Find competitors'), 'Find competitors');
@@ -179,11 +191,17 @@ void main() {
       client: _backend(seen),
     );
     await tester.pumpWidget(MaterialApp(home: CheOfficeFloorScreen(client: client)));
+    await _pumpUntilFound(tester, find.text('Flat floor plan'));
+    await tester.tap(find.text('Flat floor plan'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.text('Nova'), findsWidgets);
     expect(find.text('1 working'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Plan the launch'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Plan the launch'), findsOneWidget);
 
     await tester.tap(find.text('Nova').first);
@@ -203,7 +221,7 @@ void main() {
   });
 
   testWidgets('CHE desk opens with Talk + request that queues an Office goal', (tester) async {
-    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.physicalSize = const Size(1170, 3600);
     tester.view.devicePixelRatio = 3;
     addTearDown(tester.view.reset);
 
@@ -220,13 +238,18 @@ void main() {
         onTalkToChe: () => talked = true,
       ),
     ));
+    await _pumpUntilFound(tester, find.text('Flat floor plan'));
+    await tester.tap(find.text('Flat floor plan'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
 
-    // CHE's big desk on the floor plan (not a Talk-only shortcut).
+    // CHE's desk remains available through the accessible flat-plan fallback.
     await tester.tap(find.bySemanticsLabel(RegExp(r"CHE.*Open to talk or send a request")));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
+    await _pumpUntilFound(tester, find.text('Talk to CHE'));
+    await tester.scrollUntilVisible(
+      find.text('REQUEST TO CHE'),
+      160,
+      scrollable: find.byType(Scrollable).last,
+    );
 
     expect(find.text('Talk to CHE'), findsWidgets);
     expect(find.text('REQUEST TO CHE'), findsOneWidget);
@@ -254,14 +277,26 @@ void main() {
       client: _backend([]),
     );
     await tester.pumpWidget(MaterialApp(home: CheOfficeFloorScreen(client: client)));
+    await _pumpUntilFound(tester, find.text('Flat floor plan'));
+    final officeScroll = find.byType(Scrollable).first;
+    await tester.scrollUntilVisible(
+      find.text('Plan the launch'),
+      200,
+      scrollable: officeScroll,
+    );
+    await tester.drag(officeScroll, const Offset(0, -120));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
     await tester.tap(find.text('Plan the launch'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
 
     expect(find.text('FINAL PLAN'), findsOneWidget);
     expect(find.text('• Ship v1'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Draft text'),
+      200,
+      scrollable: find.byType(Scrollable).last,
+    );
     expect(find.text('Draft text'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox());
@@ -282,8 +317,9 @@ void main() {
         body: CheOfficeFloorScreen(client: client, embedded: true, onSpeak: (t) async => spoken.add(t)),
       ),
     ));
+    await _pumpUntilFound(tester, find.text('Flat floor plan'));
+    await tester.tap(find.text('Flat floor plan'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
     expect(find.text('Nova'), findsWidgets);
     expect(find.textContaining('Agents working:'), findsOneWidget);
     await tester.tap(find.text('Read to me'));
