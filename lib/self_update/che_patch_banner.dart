@@ -1,4 +1,5 @@
 // "CHE updated, restart to apply" banner for Shorebird code-push patches.
+// Merged che/update-* delivery PRs use this phone-only fast-update lane.
 // Only Dart changes can arrive this way; native changes need a new IPA.
 // In builds not made with Shorebird the updater reports unavailable and the
 // banner never shows.
