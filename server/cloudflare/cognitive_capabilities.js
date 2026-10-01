@@ -102,12 +102,20 @@ export function runtimeCapabilityRegistry(env, data = {}) {
   const hasImage = Boolean(
     env.CHE_IMAGE_GEN_URL ||
     env.AI ||
-    (paidMedia && (env.GEMINI_API_KEY || env.OPENAI_API_KEY || env.CHE_OPENAI_API_KEY))
-  ) || providerCaps.has('image_generation');
+    (paidMedia && (
+      env.GEMINI_API_KEY ||
+      env.OPENAI_API_KEY ||
+      env.CHE_OPENAI_API_KEY ||
+      providerCaps.has('image_generation')
+    ))
+  );
   const hasVideo = Boolean(
     env.CHE_VIDEO_GEN_URL ||
-    (paidMedia && env.GEMINI_API_KEY)
-  ) || providerCaps.has('video_generation');
+    (paidMedia && (
+      env.GEMINI_API_KEY ||
+      providerCaps.has('video_generation')
+    ))
+  );
   const vectorReady = vectorMemoryReadiness(env);
   const hasEmbedding = vectorReady.configured || providerCaps.has('embeddings');
 
