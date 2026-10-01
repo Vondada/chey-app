@@ -385,6 +385,9 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
     if (nativeReady) status = 'New native update ready';
     if (!nativeReady && fastReady) status = 'Fast update ready';
     if (restartReady) status = 'Restart CHE to apply update';
+    if (_latestAttemptFailure.isNotEmpty) {
+      status = 'Newest mobile build failed — previous verified build is safe';
+    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('CHE Updates')),
