@@ -191,10 +191,17 @@ void main() {
       client: _backend(seen),
     );
     await tester.pumpWidget(MaterialApp(home: CheOfficeFloorScreen(client: client)));
-    await _pumpUntilFound(tester, find.text('Nova'));
+    await _pumpUntilFound(tester, find.text('Flat floor plan'));
+    await tester.tap(find.text('Flat floor plan'));
+    await tester.pump();
 
     expect(find.text('Nova'), findsWidgets);
     expect(find.text('1 working'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Plan the launch'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Plan the launch'), findsOneWidget);
 
     await tester.tap(find.text('Nova').first);
@@ -238,7 +245,7 @@ void main() {
     // CHE's desk remains available through the accessible flat-plan fallback.
     await tester.tap(find.bySemanticsLabel(RegExp(r"CHE.*Open to talk or send a request")));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
+    await _pumpUntilFound(tester, find.text('REQUEST TO CHE'));
 
     expect(find.text('Talk to CHE'), findsWidgets);
     expect(find.text('REQUEST TO CHE'), findsOneWidget);
@@ -266,7 +273,12 @@ void main() {
       client: _backend([]),
     );
     await tester.pumpWidget(MaterialApp(home: CheOfficeFloorScreen(client: client)));
-    await _pumpUntilFound(tester, find.text('Plan the launch'));
+    await _pumpUntilFound(tester, find.text('Flat floor plan'));
+    await tester.scrollUntilVisible(
+      find.text('Plan the launch'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.tap(find.text('Plan the launch'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
@@ -293,7 +305,9 @@ void main() {
         body: CheOfficeFloorScreen(client: client, embedded: true, onSpeak: (t) async => spoken.add(t)),
       ),
     ));
-    await _pumpUntilFound(tester, find.text('Nova'));
+    await _pumpUntilFound(tester, find.text('Flat floor plan'));
+    await tester.tap(find.text('Flat floor plan'));
+    await tester.pump();
     expect(find.text('Nova'), findsWidgets);
     expect(find.textContaining('Agents working:'), findsOneWidget);
     await tester.tap(find.text('Read to me'));
