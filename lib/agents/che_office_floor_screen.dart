@@ -151,6 +151,11 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
       builder: (_) => _AgentDeskSheet(
         client: widget.client,
         agentId: agent.id,
+        agentIds: agent.isChe
+            ? const ['che']
+            : [
+                for (final p in _runtime.agents) p.agent.id,
+              ],
         onChanged: () async {
           await _runtime.refresh();
           await _runtime.refreshBoard();
@@ -974,12 +979,14 @@ class _AgentDeskSheet extends StatefulWidget {
   const _AgentDeskSheet({
     required this.client,
     required this.agentId,
+    required this.agentIds,
     required this.onChanged,
     this.onSpeak,
     this.onTalkToChe,
   });
   final CheAgentRuntimeClient client;
   final String agentId;
+  final List<String> agentIds;
   final Future<void> Function() onChanged;
   final Future<void> Function(String text)? onSpeak;
 
@@ -994,10 +1001,15 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
   String? _error;
   bool _working = false;
   final _message = TextEditingController();
+  late String _agentId;
+  late int _agentIndex;
 
   @override
   void initState() {
     super.initState();
+    _agentId = widget.agentId;
+    _agentIndex = widget.agentIds.indexOf(_agentId);
+    if (_agentIndex < 0) _agentIndex = 0;
     _load();
   }
 
@@ -1009,7 +1021,7 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
 
   Future<void> _load() async {
     try {
-      final d = await widget.client.agent(widget.agentId);
+      final d = await widget.client.agent(_agentId);
       if (!mounted) return;
       setState(() {
         _detail = d;
@@ -1080,7 +1092,45 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
     if (ok == true) await _run(() => widget.client.patchAgent(p.agent.id, {'action': 'retire'}), close: true);
   }
 
-  bool get _isChe => widget.agentId == 'che';
+  bool get _isChe => _agentId == 'che';
+
+  Future<void> _switchAgent(int delta) async {
+    if (widget.agentIds.length < 2 || _working) return;
+    final next = (_agentIndex + delta).clamp(0, widget.agentIds.length - 1);
+    if (next == _agentIndex) return;
+    HapticFeedback.selectionClick();
+    setState(() {
+      _agentIndex = next;
+      _agentId = widget.agentIds[next];
+      _detail = null;
+      _error = null;
+      _message.clear();
+    });
+    await _load();
+  }
+
+  double _workflowProgress(CheAgentDetail detail) {
+    final status = detail.profile.assignmentStatus.toLowerCase();
+    if (status.contains('complete') || status.contains('done')) return 1;
+    if (status.contains('review')) return 0.82;
+    if (status.contains('running') || detail.profile.working) return 0.55;
+    if (status.contains('queued') || status.contains('waiting')) return 0.22;
+    if (status.contains('fail') || status.contains('block')) return 0.08;
+    if (detail.history.isNotEmpty) {
+      final latest = detail.history.first.status.toLowerCase();
+      if (latest == 'complete') return 1;
+      if (latest == 'reviewing') return 0.82;
+      if (latest == 'running') return 0.55;
+      if (latest == 'queued') return 0.22;
+    }
+    return 0;
+  }
+
+  String _verifiedOutputLine(CheAgentDetail detail) {
+    final verified = detail.history.where((task) => task.verifiedByChe).length;
+    final finished = detail.history.where((task) => ['complete', 'failed', 'cancelled'].contains(task.status)).length;
+    return 'Verified outputs: $verified · Finished tasks: $finished · History: ${detail.history.length}';
+  }
 
   Future<void> _sendRequest(CheAgent a) async {
     final t = _message.text.trim();
@@ -1117,11 +1167,47 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
         }
         final p = d.profile;
         final a = p.agent;
-        return ListView(
+        final progress = _workflowProgress(d);
+        return GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onHorizontalDragEnd: (details) {
+            final velocity = details.primaryVelocity ?? 0;
+            if (velocity < -220) {
+              unawaited(_switchAgent(1));
+            } else if (velocity > 220) {
+              unawaited(_switchAgent(-1));
+            }
+          },
+          child: ListView(
           controller: scroll,
           padding: EdgeInsets.fromLTRB(
               CheSpace.gutter, CheSpace.lg, CheSpace.gutter, CheSpace.xl + MediaQuery.viewInsetsOf(context).bottom),
           children: [
+            if (widget.agentIds.length > 1) ...[
+              Semantics(
+                label: 'Employee ${_agentIndex + 1} of ${widget.agentIds.length}. Swipe left or right to move through employee cards.',
+                child: Row(children: [
+                  IconButton(
+                    tooltip: 'Previous employee',
+                    onPressed: _agentIndex > 0 ? () => unawaited(_switchAgent(-1)) : null,
+                    icon: const Icon(Icons.chevron_left_rounded),
+                  ),
+                  Expanded(
+                    child: Text(
+                      'EMPLOYEE ${_agentIndex + 1} OF ${widget.agentIds.length} · SWIPE TO REVIEW',
+                      textAlign: TextAlign.center,
+                      style: CheType.overline.copyWith(color: CheColors.accent),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Next employee',
+                    onPressed: _agentIndex < widget.agentIds.length - 1 ? () => unawaited(_switchAgent(1)) : null,
+                    icon: const Icon(Icons.chevron_right_rounded),
+                  ),
+                ]),
+              ),
+              const SizedBox(height: CheSpace.sm),
+            ],
             ClipRRect(
               borderRadius: BorderRadius.circular(CheRadius.lg),
               child: CheRoomBackdrop(
@@ -1164,6 +1250,34 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
               ),
             ),
             if (_error != null) Padding(padding: const EdgeInsets.only(top: CheSpace.sm), child: _Banner(text: _error!, color: CheColors.warning)),
+            const SizedBox(height: CheSpace.md),
+            Semantics(
+              label: 'Verified productivity for ${a.name}. ${_verifiedOutputLine(d)}. Current workflow progress ${(progress * 100).round()} percent.',
+              child: Container(
+                padding: const EdgeInsets.all(CheSpace.md),
+                decoration: BoxDecoration(
+                  color: CheColors.surfaceHi,
+                  borderRadius: BorderRadius.circular(CheRadius.md),
+                  border: Border.all(color: CheColors.strokeHi),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('VERIFIED PRODUCTIVITY', style: CheType.overline.copyWith(color: CheColors.accent)),
+                  const SizedBox(height: 6),
+                  LinearProgressIndicator(
+                    value: progress,
+                    minHeight: 7,
+                    color: a.color,
+                    backgroundColor: CheColors.stroke,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                  const SizedBox(height: 6),
+                  Text('${(progress * 100).round()}% current workflow stage', style: CheType.label),
+                  Text(_verifiedOutputLine(d), style: CheType.caption),
+                  Text('Progress is based on real queued / working / review / completed states, not a guessed performance score.',
+                      style: CheType.caption.copyWith(color: CheColors.textFaint)),
+                ]),
+              ),
+            ),
             const SizedBox(height: CheSpace.md),
             if (a.specialty.isNotEmpty) _Section('SPECIALTY', a.specialty),
             if (a.personality.isNotEmpty) _Section('PERSONALITY', a.personality),
@@ -1245,6 +1359,7 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
                 ),
               ),
           ],
+        ),
         );
       },
     );
