@@ -191,6 +191,17 @@ extension _CheHomeSend on _CHEHomeState {
       _openAssistantHub(tab: 8);
       return true;
     }
+    final codeFocus = RegExp(r"\bshow\s+me\s+([a-z0-9_-]+)(?:'s|’s)\s+code\b", caseSensitive: false).firstMatch(message);
+    if (codeFocus != null) {
+      _workshopFocusAgent = codeFocus.group(1);
+      _openAssistantHub(tab: 9);
+      return true;
+    }
+    if (RegExp(r'\b(open|show|go to)\s+(the\s+)?(workshop|build room|code workshop)\b').hasMatch(lower)) {
+      _workshopFocusAgent = null;
+      _openAssistantHub(tab: 9);
+      return true;
+    }
     if (RegExp(r'\b(set ?up|fix|open|configure)\s+(the\s+|my\s+)?wake ?word\b').hasMatch(lower)) {
       await speakText(cheWakeSetupSteps);
       await _openWakeSetup();

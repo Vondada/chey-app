@@ -41,6 +41,7 @@ import { autoImproveScan, codeScoutIntent, fetchRepoFile, scoutCode, speakScout 
 import { consultEngine, consultIntent, shareIntent, speakConsult } from './ai_consult.js';
 import { markOwnerSeen, readArchive as flagstaffArchive, unreadIncoming } from './web_mailbox.js';
 import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
+import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSnapshot } from './workshop.js';
 import { handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
@@ -3490,6 +3491,17 @@ export class CheState extends DurableObject {
         return json({ videos: Array.isArray(data.youtube_learning) ? data.youtube_learning : [] });
       }
 
+      if (path === '/api/office/workshop' && request.method === 'GET') {
+        const github = await githubWorkshopPieces(this.env, fetch);
+        return json(workshopSnapshot(data, github));
+      }
+      if (path === '/api/office/workshop/avatar' && request.method === 'POST') {
+        const saved = workshopAvatar(data, body.agent_id || body.agent || 'che', body.appearance || body);
+        if (saved.error) return json({ detail: saved.error }, 400);
+        await this.ctx.storage.put('che', data);
+        this.broadcastAgents(data);
+        return json(saved);
+      }
       if (path === '/api/office/world' && request.method === 'GET') {
         return json({ level: Number(data.office_world?.level || 1), max_level: 3 });
       }
@@ -4709,6 +4721,14 @@ export class CheState extends DurableObject {
             if (r.mailbox) await sendMail(this.env, { from: 'che', to: r.peer, text: `CHE's owner asks (relayed by CHE; "you" meant CHE): ${relayText(consult.question)}` }).catch(() => null);
           }
           return ndjsonReply(speakConsult(results), { source: 'che_consult', peers: consult.peers });
+        }
+
+        const lookChange = workshopAvatarIntent(message, data);
+        if (lookChange) {
+          if (lookChange.error) return ndjsonReply(lookChange.error, { source: 'che_workshop' });
+          await this.ctx.storage.put('che', data);
+          this.broadcastAgents(data);
+          return ndjsonReply(lookChange.reply, { source: 'che_workshop', appearance: lookChange.saved?.appearance });
         }
 
         // Trading Lab by voice: "how are the trades doing", "backtest bitcoin",

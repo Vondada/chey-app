@@ -91,6 +91,7 @@ import 'rooms/che_creator_studio.dart';
 import 'rooms/che_art_studio.dart';
 import 'rooms/che_room_segments.dart';
 import 'rooms/che_theater_room.dart';
+import 'rooms/che_workshop_room.dart';
 import 'security/che_password_vault.dart';
 import 'security/che_vault_auth.dart';
 import 'browser/che_browser.dart' show CheBrowserActions;
@@ -375,6 +376,9 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   // Keyboard on/off: off by default because the owner mostly talks to CHE.
   bool _typingOn = false;
+
+  // Voice target for “Show me Nova’s code” in the Workshop.
+  String? _workshopFocusAgent;
 
   // After the paid live-voice service fails once (free-only mode), skip it
   // for a while and go straight to the free native listener: no stutter.

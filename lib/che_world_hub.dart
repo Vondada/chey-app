@@ -96,6 +96,13 @@ const List<CheBuilding> cheCampusBuildings = [
     icon: Icons.theaters_outlined,
     color: Color(0xFFFF6F91),
   ),
+  CheBuilding(
+    tab: 9,
+    title: 'Workshop',
+    subtitle: 'Watch real work form',
+    icon: Icons.construction_rounded,
+    color: Color(0xFF34E0B8),
+  ),
 ];
 
 enum CheWorldState { asleep, listening, thinking, speaking, idle }

@@ -526,6 +526,12 @@ class CheAgentRuntimeClient {
         if (frameBase64 != null && frameBase64.isNotEmpty) 'frame_base64': frameBase64,
       });
 
+  /// Real Workshop world: live Office work, trophies and saved character looks.
+  Future<Map<String, dynamic>> workshop() => _send('GET', '/api/office/workshop');
+
+  Future<Map<String, dynamic>> saveWorkshopAvatar(String agentId, Map<String, String> appearance) =>
+      _send('POST', '/api/office/workshop/avatar', {'agent_id': agentId, 'appearance': appearance});
+
   /// CHE's universal AI layer overview (providers, models, health, privacy).
   /// Contains connection states only, never credential values.
   Future<Map<String, dynamic>> aiOverview() => _send('GET', '/api/ai/overview');
