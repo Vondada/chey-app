@@ -1320,7 +1320,10 @@ OWNER AGENCY
 
   Widget _buildChatTab(List<CheAgent> agents, String subtitle) {
     final proactive = suggestions.isEmpty ? null : suggestions.first;
-    return Column(
+    final keyboardUp = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final panelHeight = keyboardUp ? 0.84 : 0.72;
+
+    final chat = Column(
       children: [
         CheHomePresence(
           orbState: _orbState,
@@ -1349,7 +1352,10 @@ OWNER AGENCY
                     onPick: _runPluginPrompt,
                     onTalk: toggleListening,
                     listening: _realtimeVoice?.connected == true || isListening,
-                    onReadAloud: () => speakText(_homeGreeting ?? proactive ?? 'I am here. Just tell me what you need.', record: false),
+                    onReadAloud: () => speakText(
+                      _homeGreeting ?? proactive ?? 'I am here. Just tell me what you need.',
+                      record: false,
+                    ),
                     onActivity: () => _openActivityFeed(),
                   )
                 : GestureDetector(
@@ -1423,6 +1429,86 @@ OWNER AGENCY
                 ? null
                 : (_pendingAttachment!['name']?.toString() ?? 'Attachment ready'),
             onClearAttachment: () => setState(() => _pendingAttachment = null),
+          ),
+        ),
+      ],
+    );
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // Keep CHE's home visible behind the conversation so Chat feels like
+        // a docked assistant instead of a separate full-screen destination.
+        IgnorePointer(
+          child: ExcludeSemantics(
+            child: Opacity(
+              opacity: 0.42,
+              child: _buildHomeTab(agents),
+            ),
+          ),
+        ),
+        Align(
+          alignment: Alignment.bottomCenter,
+          child: FractionallySizedBox(
+            widthFactor: 1,
+            heightFactor: panelHeight,
+            child: Semantics(
+              container: true,
+              label: 'CHE chat panel. Home remains visible above it.',
+              child: Container(
+                decoration: BoxDecoration(
+                  color: kit.CheColors.bg.withValues(alpha: 0.97),
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
+                  border: Border(
+                    top: BorderSide(color: kit.CheColors.accent.withValues(alpha: 0.28)),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.35),
+                      blurRadius: 28,
+                      offset: const Offset(0, -8),
+                    ),
+                  ],
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  children: [
+                    SizedBox(
+                      height: 34,
+                      child: Row(
+                        children: [
+                          const SizedBox(width: 44),
+                          Expanded(
+                            child: Center(
+                              child: Container(
+                                width: 44,
+                                height: 4,
+                                decoration: BoxDecoration(
+                                  color: kit.CheColors.textFaint.withValues(alpha: 0.45),
+                                  borderRadius: BorderRadius.circular(99),
+                                ),
+                              ),
+                            ),
+                          ),
+                          Semantics(
+                            button: true,
+                            label: 'Minimize chat and return to Home.',
+                            child: IconButton(
+                              tooltip: 'Minimize chat',
+                              onPressed: () => _goShellTab(0),
+                              icon: const Icon(Icons.keyboard_arrow_down_rounded),
+                              color: kit.CheColors.textDim,
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(child: chat),
+                  ],
+                ),
+              ),
+            ),
           ),
         ),
       ],
