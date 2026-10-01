@@ -63,7 +63,13 @@ extension _CheHomeStreaming on _CHEHomeState {
 
     // Updating CHE itself is different from creating a separate owner project.
     // CHE self-code changes stay reviewable through the GitHub proposal workflow.
-    final codeRequest = cheIsSelfUpdateRequest(trimmedRequest);
+    // "Fix this": CHE works out what "this" is (the screen, the last thing
+    // that went wrong) and has her crew rewrite or improve her own code.
+    final fixThis = RegExp(
+      r'^(?:(?:chay|chey|shay|che)[, ]+)?(?:please\s+)?(?:fix|repair)\s+(?:this|that|it)\b',
+      caseSensitive: false,
+    ).hasMatch(trimmedRequest);
+    final codeRequest = fixThis || cheIsSelfUpdateRequest(trimmedRequest);
 
     final projectMatch = RegExp(
       r'\b(?:build|create|develop|write|start|make)\s+'
@@ -111,7 +117,9 @@ extension _CheHomeStreaming on _CHEHomeState {
       final response = await http.post(
         Uri.parse('$cheAgentBaseUrl/api/change/request'),
         headers: _authHeaders,
-        body: jsonEncode({'request': userMessage.trim()}),
+        body: jsonEncode(fixThis
+            ? {'request': _fixThisRequest(trimmedRequest), 'fix_this': true}
+            : {'request': userMessage.trim()}),
       );
       if (response.statusCode == 401) {
         await _clearSecuritySession();
@@ -126,6 +134,31 @@ extension _CheHomeStreaming on _CHEHomeState {
       final reply = result['message']?.toString() ?? 'Proposal started.';
       onPartial(reply);
       return reply;
+    }
+
+    // Offline knowledge first: answer from what CHE already learned (or let
+    // the on-phone brain combine saved notes) before spending cloud credits.
+    if (_pendingAttachment == null && CheKnowledgeCache.cacheable(trimmedRequest)) {
+      final saved = await _knowledge.answer(trimmedRequest);
+      if (saved != null) {
+        onPartial(saved);
+        return saved;
+      }
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+        final notes = await _knowledge.related(trimmedRequest);
+        if (notes.length >= 2 && await _knowledge.notesCover(trimmedRequest)) {
+          final combined = await CheLocalAI.respond(
+            'Answer the question using ONLY the saved notes. If the notes do not fully answer it, reply exactly UNKNOWN.\n\nQuestion: $trimmedRequest',
+            history: const [],
+            memoryContext: notes,
+          ).catchError((_) => null);
+          final clean = combined?.trim() ?? '';
+          if (clean.length > 12 && !clean.toUpperCase().contains('UNKNOWN')) {
+            onPartial(clean);
+            return clean;
+          }
+        }
+      }
     }
 
     final request = http.Request(
@@ -299,8 +332,39 @@ extension _CheHomeStreaming on _CHEHomeState {
     }
 
     _pendingScreenContext = null;
+    final hadAttachment = _pendingAttachment != null;
     _pendingAttachment = null;
     if (mounted) _set(() {});
-    return complete.toString().trim();
+    final finalText = complete.toString().trim();
+    if (!hadAttachment && _streamMediaUrl == null) {
+      unawaited(_knowledge.remember(trimmedRequest, finalText));
+    }
+    return finalText;
+  }
+
+  /// Turns "fix this" into a full brief for the coding crew.
+  String _fixThisRequest(String spoken) {
+    final recent = messages.length > 6 ? messages.sublist(messages.length - 6) : List.of(messages);
+    final convo = recent
+        .where((m) => (m['text'] ?? '').trim().isNotEmpty)
+        .map((m) {
+          final t = (m['text'] ?? '').trim();
+          return '${m['role'] == 'user' ? 'Owner' : 'CHE'}: ${t.length > 400 ? '${t.substring(0, 400)}…' : t}';
+        })
+        .join('\n');
+    final screen = _pendingScreenContext;
+    final brief = StringBuffer()
+      ..writeln('The owner said "$spoken". Work out what "this" is: the last thing that failed or looked wrong in the conversation below, or the screen he is on. Then fix it in CHE\'s own code.')
+      ..writeln('How: find the real cause, then rewrite or improve that code so it works better than before. If stronger approaches exist in the reference projects provided, learn their technique and write CHE\'s own version: no copy-paste, respect licenses, credit sources in the PR. Keep the change small and tested.')
+      ..writeln('Owner is on shell tab $_shellTab.');
+    if (screen != null && screen.isNotEmpty) {
+      brief.writeln('Screen: ${screen.length > 600 ? screen.substring(0, 600) : screen}');
+    }
+    brief
+      ..writeln('Recent conversation:')
+      ..writeln(convo);
+    final text = brief.toString();
+    return text.length > 3900 ? text.substring(0, 3900) : text;
   }
 }
+

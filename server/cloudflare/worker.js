@@ -31,16 +31,20 @@ import { discoverKeylessModels, engineStatus, routedEnv } from './ai_router.js';
 import { deleteMedia, generateImage, listMedia, readBlob, upscaleImage } from './media.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
+import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
 import { prepareSelfUpdate } from './self_development.js';
-import { KEY_PROVIDERS, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
+import { KEY_PROVIDERS, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { autoImproveScan, codeScoutIntent, fetchRepoFile, scoutCode, speakScout } from './code_scout.js';
 import { consultEngine, consultIntent, shareIntent, speakConsult } from './ai_consult.js';
 import { markOwnerSeen, readArchive as flagstaffArchive, unreadIncoming } from './web_mailbox.js';
+import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
+import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSnapshot } from './workshop.js';
 import { handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
+import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
 import { unseenReplies, relayText, listThreads, mailboxIntent, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
 import { agentActionGuard, ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
@@ -1763,6 +1767,18 @@ function storageReadiness(env) {
   };
 }
 
+// Key words of what failed, for a code search: frequent longer words from
+// the conversation, minus filler.
+export function fixThisNeed(text) {
+  const stop = new Set(['owner', 'sir', 'said', 'this', 'that', 'what', 'with', 'from', 'have', 'there', 'their', 'would', 'could', 'should', 'about', 'which', 'when', 'where', 'into', 'your', 'them', 'then', 'than', 'they', 'been', 'were', 'will', 'just', 'like', 'want', 'work', 'works', 'conversation', 'recent', 'screen', 'shell', 'something', 'thing', 'things', 'really', 'right', 'need', 'make', 'code', 'fix', 'fixed', 'cause', 'change', 'better', 'before', 'last', 'looked', 'wrong', 'failed', 'owner\'s']);
+  const counts = new Map();
+  for (const w of String(text || '').toLowerCase().match(/[a-z][a-z-]{4,}/g) || []) {
+    if (stop.has(w)) continue;
+    counts.set(w, (counts.get(w) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([w]) => w).join(' ');
+}
+
 async function dispatchChange(env, body, memory = null) {
   const request = String(body.request || '').trim();
   if (request.length < 8 || request.length > 4000) return json({ detail: 'Describe one change in 8–4000 characters.' }, 400);
@@ -1773,7 +1789,16 @@ async function dispatchChange(env, body, memory = null) {
   // The coding team runs here on Cloudflare and reads/writes the repo through
   // the GitHub API. GitHub Actions (billed minutes) is no longer required.
   const recall = await retrieveVectorContext(env, request);
-  const groundedRequest = ragReference(request, vectorContextText(recall), 4000).slice(0, 6000);
+  let groundedRequest = ragReference(request, vectorContextText(recall), 4000).slice(0, 6000);
+  // "Fix this": look for well-built open-source code doing the same job, so
+  // the crew can learn the technique (never copy it) and credit it.
+  if (body.fix_this) {
+    const need = fixThisNeed(request);
+    const found = need ? await scoutCode(env, need, fetch, { minStars: 300, limit: 3 }).catch(() => ({ repos: [] })) : { repos: [] };
+    if (found.repos?.length) {
+      groundedRequest += `\n\nREFERENCE PROJECTS (learn the approach, write CHE's own code, no copying, credit in the PR):\n${found.repos.map((r) => `- ${r.full_name} (${r.license_name}, ${r.stars} stars): ${r.description}`).join('\n')}`;
+    }
+  }
   let prepared;
   try {
     prepared = await prepareSelfUpdate(env, groundedRequest, fetch, memory);
@@ -1979,7 +2004,7 @@ export class CheState extends DurableObject {
       }
       const task = queueAgentTask(data, agent, step.task, 'owner_goal', { job_id: goalId });
       task.work_packet = codexWorkPacket(agent, task);
-      let blocker = refused || agentActionGuard(agent, step.task) || officeToolBlocker(this.env, agent);
+      let blocker = refused || agentActionGuard(agent, step.task) || officeToolBlocker(this.keyEnv || this.env, agent);
       // Codex desks get a real work packet: own thread id and workspace,
       // persisted here. The owner Codex token stays on the Worker.
       if (!refused && agent.provider_preference === 'openai') {
@@ -2073,7 +2098,7 @@ export class CheState extends DurableObject {
       const task = queueAgentTask(data, atlas,
         `Retrieve prior ml_eval memory_notes and Brain graph links. Compare to these metrics: ${JSON.stringify(result.metrics).slice(0, 600)}. Distill what was learned (patterns, failure modes). Do not invent numbers.`,
         'ml_eval', { job_id: goalId, kind: 'ml_eval' });
-      let blocker = refused || officeToolBlocker(this.env, atlas);
+      let blocker = refused || officeToolBlocker(this.keyEnv || this.env, atlas);
       if (blocker) { task.status = 'blocked'; task.error = blocker; }
       jobs.push({ id: task.id, agent: atlas.name, task: task.task, status: task.status, blocker });
     }
@@ -2158,7 +2183,7 @@ export class CheState extends DurableObject {
       task.owner_confirm_required = true;
       task.outbound_allowed = false;
       task.auto_publish = false;
-      let blocker = refused || officeToolBlocker(this.env, step.agent);
+      let blocker = refused || officeToolBlocker(this.keyEnv || this.env, step.agent);
       if (blocker) {
         task.status = 'blocked';
         task.error = blocker;
@@ -2266,7 +2291,7 @@ export class CheState extends DurableObject {
       });
       task.owner_confirm_required = true;
       task.outbound_allowed = false;
-      let blocker = refused || officeToolBlocker(this.env, step.agent);
+      let blocker = refused || officeToolBlocker(this.keyEnv || this.env, step.agent);
       if (blocker) {
         task.status = 'blocked';
         task.error = blocker;
@@ -2326,7 +2351,7 @@ export class CheState extends DurableObject {
       task.outbound_allowed = false;
       task.auto_message = false;
       task.auto_buy_inventory = false;
-      let blocker = refused || officeToolBlocker(this.env, step.agent);
+      let blocker = refused || officeToolBlocker(this.keyEnv || this.env, step.agent);
       if (blocker) {
         task.status = 'blocked';
         task.error = blocker;
@@ -2380,7 +2405,15 @@ export class CheState extends DurableObject {
     try { socket.close(code, 'closed'); } catch (_) { /* already closed */ }
   }
 
+  // Keys the owner saved in CHE's Keys tab count everywhere a Worker secret
+  // would, so a pasted key "just works" for the Office crew too.
+  async refreshKeyEnv() {
+    try { this.keyEnv = withStoredKeys(this.env, await storedKeys(this.ctx.storage)); } catch (_) { this.keyEnv = this.env; }
+    return this.keyEnv;
+  }
+
   async fetch(request) {
+    await this.refreshKeyEnv();
     try {
       const path = new URL(request.url).pathname;
       const data = (await this.ctx.storage.get('che')) || {
@@ -2399,7 +2432,7 @@ export class CheState extends DurableObject {
       data.meetings = Array.isArray(data.meetings) ? data.meetings : [];
       data.team.forEach(normalizeAgent);
       for (const agent of data.team) {
-        const blocker = isLaAgenciaAgent(agent) ? officeToolBlocker(this.env, agent) : '';
+        const blocker = isLaAgenciaAgent(agent) ? officeToolBlocker(this.keyEnv || this.env, agent) : '';
         if (blocker && ['waiting', 'building', 'researching', 'analyzing'].includes(agent.runtime_status)) {
           agent.runtime_status = 'offline';
           agent.runtime_task = blocker;
@@ -2422,7 +2455,7 @@ export class CheState extends DurableObject {
         return json(await engineStatus(this.env, this.ctx.storage));
       }
       // Flagstaff 369: AIs post/read with the secret link, no device token.
-      const flagstaff = await handleWebMailbox(request, this.ctx.storage);
+      const flagstaff = await handleWebMailbox(request, this.ctx.storage, this.env);
       if (flagstaff) return flagstaff;
       // Stripe calls this directly (no device token): the signature, checked
       // against STRIPE_WEBHOOK_SECRET on the raw body, is the authentication.
@@ -2794,7 +2827,7 @@ export class CheState extends DurableObject {
         const id = String(body.conversationId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80);
         if (!id) return json({ detail: 'conversationId required.' }, 400);
         const key = `log:${id}`;
-        const log = (await this.ctx.storage.get(key)) || { id, title: '', turns: [], created_at: new Date().toISOString() };
+        const log = (await loadPackedJson(this.ctx.storage, key)) || { id, title: '', turns: [], created_at: new Date().toISOString() };
         log.title = String(body.title || log.title || 'Conversation').slice(0, 120);
         log.turns.push({
           source: body.source === 'voice' ? 'voice' : 'chat',
@@ -2805,7 +2838,7 @@ export class CheState extends DurableObject {
         });
         log.turns = log.turns.slice(-400);
         log.updated_at = new Date().toISOString();
-        await this.ctx.storage.put(key, log);
+        await savePackedJson(this.ctx.storage, key, log);
         const index = (await this.ctx.storage.get('log_index')) || [];
         const entry = {
           id,
@@ -2823,12 +2856,12 @@ export class CheState extends DurableObject {
       }
       const logMatch = /^\/api\/logs\/([A-Za-z0-9_-]{1,80})$/.exec(path);
       if (logMatch && request.method === 'GET') {
-        const log = await this.ctx.storage.get(`log:${logMatch[1]}`);
+        const log = await loadPackedJson(this.ctx.storage, `log:${logMatch[1]}`);
         if (!log) return json({ detail: 'Log not found.' }, 404);
         return json(log);
       }
       if (logMatch && request.method === 'DELETE') {
-        await this.ctx.storage.delete(`log:${logMatch[1]}`);
+        await this.ctx.storage.delete([`log:${logMatch[1]}`, `log:${logMatch[1]}:gz`]);
         const index = (await this.ctx.storage.get('log_index')) || [];
         await this.ctx.storage.put('log_index', index.filter((item) => item.id !== logMatch[1]));
         return json({ ok: true });
@@ -2892,6 +2925,28 @@ export class CheState extends DurableObject {
       if (path === '/api/markets/snapshot' && request.method === 'GET') {
         return json(await marketSnapshot(this.env));
       }
+      // ─── Trading Lab: swings, entries, patterns, backtests, paper trades ──
+      if (path === '/api/trading/analyze' && request.method === 'GET') {
+        const q = new URL(request.url).searchParams;
+        const data = await loadCandles(q.get('symbol') || 'BTCUSDT', { interval: q.get('interval') || '1d' });
+        if (data.error) return json({ detail: data.error }, 422);
+        return json({ ...tradeAnalyze(data), candles: data.candles.slice(-120) });
+      }
+      if (path === '/api/trading/backtest' && request.method === 'GET') {
+        const data = await loadCandles(new URL(request.url).searchParams.get('symbol') || 'BTCUSDT');
+        if (data.error) return json({ detail: data.error }, 422);
+        const results = backtestAll(data.candles);
+        return json({ symbol: data.label, data: data.data, bars: data.candles.length, from: data.candles[0].t, to: data.candles[data.candles.length - 1].t, results });
+      }
+      if (path === '/api/trading/paper' && request.method === 'GET') {
+        const book = await readBook(this.ctx.storage);
+        return json({ ...book, summary: speakBook(book), strategies: Object.fromEntries(Object.entries(STRATEGIES).map(([id, st]) => [id, { name: st.name, about: st.about }])) });
+      }
+      if (path === '/api/trading/paper' && request.method === 'POST') {
+        if (body.action === 'watch') return json(await watchSymbol(this.ctx.storage, body.symbol));
+        if (body.action === 'tick') { const book = await paperTick(this.ctx.storage, { force: true }); return json({ ...book, summary: speakBook(book) }); }
+        return json({ detail: 'Use watch or tick.' }, 400);
+      }
       if (path === '/api/markets/candles' && request.method === 'GET') {
         const symbol = new URL(request.url).searchParams.get('symbol') || '^spx';
         const result = await marketCandles(symbol);
@@ -2953,7 +3008,7 @@ export class CheState extends DurableObject {
 
       // ─── Unread / importance badge for the app ────────────────────────
       if (path === '/api/mailbox/badge' && request.method === 'GET') {
-        const flag = await unreadIncoming(this.ctx.storage);
+        const flag = await unreadIncoming(this.ctx.storage, this.env);
         const letters = (await listLetters(this.ctx.storage)).filter((l) => !l.read);
         const important = letters.filter((l) => l.severity === 'danger' || l.severity === 'action').length
           + flag.latest.filter((m) => /urgent|error|danger|failed|attack/i.test(m.text)).length;
@@ -2971,17 +3026,22 @@ export class CheState extends DurableObject {
         return json({
           open: await flagstaffOpen(this.ctx.storage),
           link: mailboxLink(origin, await mailboxCode(this.ctx.storage)),
-          messages: await readWebMail(this.ctx.storage, 300),
-          unread: (await unreadIncoming(this.ctx.storage)).count,
+          messages: await readWebMail(this.ctx.storage, 300, this.env),
+          unread: (await unreadIncoming(this.ctx.storage, this.env)).count,
+          github: this.env.CHE_GITHUB_TOKEN && this.env.CHE_GITHUB_REPO ? { repo: this.env.CHE_GITHUB_REPO, branch: 'che-mailbox', folder: 'mailbox/' } : null,
         });
       }
       if (path === '/api/flagstaff' && request.method === 'POST') {
         const action = String(body.action || '');
-        if (action === 'mark-seen') { await markOwnerSeen(this.ctx.storage); return json({ ok: true }); }
+        if (action === 'mark-seen') { await markOwnerSeen(this.ctx.storage, this.env); return json({ ok: true }); }
         if (action === 'open') await openMailbox(this.ctx.storage);
         else if (action === 'lock') {
-          const messages = await lockMailbox(this.ctx.storage);
-          if (messages.length) new CheLibrary(this.ctx.storage).add({ title: `Flagstaff 369 session ${new Date().toISOString().slice(0, 10)}`, text: flagstaffTranscript(messages), source: 'flagstaff369' });
+          const messages = await lockMailbox(this.ctx.storage, this.env);
+          if (messages.length) {
+            const text = flagstaffTranscript(messages);
+            new CheLibrary(this.ctx.storage).add({ title: `Flagstaff 369 session ${new Date().toISOString().slice(0, 10)}`, text, source: 'flagstaff369' });
+            await sendMail(this.env, { from: 'che', to: 'flagstaff369', text: text.slice(0, 4000) }).catch(() => null);
+          }
         } else if (action === 'new-link') await rotateMailboxCode(this.ctx.storage);
         else return json({ detail: 'Use open, lock or new-link.' }, 400);
         return json({ ok: true, open: await flagstaffOpen(this.ctx.storage), link: mailboxLink(new URL(request.url).origin, await mailboxCode(this.ctx.storage)) });
@@ -3311,6 +3371,137 @@ export class CheState extends DurableObject {
         return json({ ok: true, lines: notes.lines.length });
       }
 
+      // YouTube learning: no paid YouTube Data API key. CHE first reads the
+      // public caption track exposed to the player; live Theater captions are
+      // the fallback. A captured frame is analyzed only when an already
+      // connected free multimodal engine can actually see it.
+      if (path === '/api/youtube/learn' && request.method === 'POST') {
+        const url = String(body.url || '').trim().slice(0, 1200);
+        const videoId = youtubeVideoId(url);
+        if (!videoId) return json({ detail: 'Give CHE a YouTube video link.' }, 400);
+
+        const publicVideo = await fetchYouTubeKnowledge(url, fetch).catch((error) => ({
+          id: videoId, url, title: String(body.title || 'YouTube video'), author: '',
+          captions: [], transcript_source: 'unavailable',
+          error: String(error?.message || error).slice(0, 200),
+        }));
+        const liveCaptions = normalizeCaptionLines(body.captions);
+        const captions = mergeCaptionLines(publicVideo.captions || [], liveCaptions);
+        let visual = null;
+        const frame = String(body.frame_base64 || '');
+        if (frame.length > 1000 && frame.length < 7_200_000) {
+          visual = await optionalMultimodal(this.env, {
+            name: `youtube-${videoId}-frame.jpg`,
+            media_type: 'image',
+            base64: frame,
+          }, 'Describe only what is visibly happening in this YouTube frame. Capture readable text, objects, actions, diagrams, and demonstrations. Do not guess beyond the image.');
+        }
+
+        if (!captions.length && !visual?.summary) {
+          return json({
+            detail: 'CHE could not read captions or a visible frame from this video yet. Play it in the Theater so CHE can learn from the captions as you watch.',
+            transcript_source: publicVideo.transcript_source || 'unavailable',
+          }, 422);
+        }
+
+        const stamp = (t) => {
+          const s = Math.max(0, Math.round(Number(t) || 0));
+          const m = Math.floor(s / 60);
+          return `[${m}:${String(s % 60).padStart(2, '0')}]`;
+        };
+        const transcript = captions.map((line) => `${stamp(line.t)} ${line.text}`).join('\n');
+        const sourceTitle = String(publicVideo.title || body.title || 'YouTube video').slice(0, 200);
+        const sourceAuthor = String(publicVideo.author || '').slice(0, 160);
+        const visualText = String(visual?.summary || '').trim();
+        let study = '';
+        try {
+          const learned = await this.env.AI.run(this.env.CHE_FAST_MODEL || FAST_MODEL, {
+            messages: [
+              {
+                role: 'system',
+                content: 'You are CHE learning from a YouTube video for later recall. Produce compact study notes that preserve names, numbers, steps, claims, caveats, examples and conclusions. Separate what the captions say from what the frame visibly confirms. Do not invent missing visuals or facts.',
+              },
+              {
+                role: 'user',
+                content: [
+                  `Title: ${sourceTitle}`,
+                  sourceAuthor ? `Channel: ${sourceAuthor}` : '',
+                  `URL: ${url}`,
+                  visualText ? `VISIBLE FRAME:\n${visualText}` : '',
+                  `TIMED CAPTIONS:\n${transcript.slice(0, 60000)}`,
+                ].filter(Boolean).join('\n\n'),
+              },
+            ],
+            max_tokens: 1200,
+            che_route: 'fast',
+            che_audit: { task: `Learn YouTube: ${sourceTitle}`.slice(0, 160), agent: 'CHE', route: 'youtube_learning' },
+          });
+          study = String(learned?.response || learned?.choices?.[0]?.message?.content || '').trim().slice(0, 20000);
+        } catch (error) {
+          console.log('CHE YouTube study-note error:', String(error?.message || error).slice(0, 160));
+        }
+
+        const learnedText = [
+          `YouTube video: ${sourceTitle}`,
+          sourceAuthor ? `Channel: ${sourceAuthor}` : '',
+          `URL: ${url}`,
+          `Video ID: ${videoId}`,
+          `Transcript source: ${publicVideo.transcript_source || (liveCaptions.length ? 'theater-live-captions' : 'unknown')}`,
+          visualText ? `Visual note from an actually captured frame:\n${visualText}` : 'Visual note: no frame was readable; do not claim visual details from captions alone.',
+          study ? `CHE study notes:\n${study}` : '',
+          `Timed transcript:\n${transcript}`,
+        ].filter(Boolean).join('\n\n');
+        const saved = new CheLibrary(this.ctx.storage).add({
+          title: `YouTube · ${sourceTitle}`,
+          text: learnedText,
+          source: `youtube:${videoId}`,
+        });
+        if (saved.error) return json({ detail: saved.error }, 503);
+
+        data.youtube_learning = Array.isArray(data.youtube_learning) ? data.youtube_learning : [];
+        const learnedAt = new Date().toISOString();
+        data.youtube_learning = [
+          {
+            video_id: videoId, title: sourceTitle, author: sourceAuthor, url,
+            learned_at: learnedAt, caption_lines: captions.length,
+            transcript_source: publicVideo.transcript_source || 'theater-live-captions',
+            visual_confirmed: Boolean(visualText), library_id: saved.id,
+          },
+          ...data.youtube_learning.filter((item) => item.video_id !== videoId),
+        ].slice(0, 250);
+        await this.ctx.storage.put('che', data);
+        this.ctx.waitUntil?.(storeVectorMemory(this.env, {
+          external_id: `youtube:${videoId}`,
+          kind: 'knowledge',
+          title: `YouTube · ${sourceTitle}`,
+          content: (study || transcript).slice(0, 12000),
+          source: url,
+        }));
+        return json({
+          ok: true,
+          learned: sourceTitle,
+          caption_lines: captions.length,
+          transcript_source: publicVideo.transcript_source || 'theater-live-captions',
+          visual_confirmed: Boolean(visualText),
+          library_id: saved.id,
+          reply: `I learned ${sourceTitle}, sir. I saved ${captions.length} timed caption lines${visualText ? ' plus what I could actually see in the captured frame' : ''}.`,
+        });
+      }
+      if (path === '/api/youtube/learned' && request.method === 'GET') {
+        return json({ videos: Array.isArray(data.youtube_learning) ? data.youtube_learning : [] });
+      }
+
+      if (path === '/api/office/workshop' && request.method === 'GET') {
+        const github = await githubWorkshopPieces(this.env, fetch);
+        return json(workshopSnapshot(data, github));
+      }
+      if (path === '/api/office/workshop/avatar' && request.method === 'POST') {
+        const saved = workshopAvatar(data, body.agent_id || body.agent || 'che', body.appearance || body);
+        if (saved.error) return json({ detail: saved.error }, 400);
+        await this.ctx.storage.put('che', data);
+        this.broadcastAgents(data);
+        return json(saved);
+      }
       if (path === '/api/office/world' && request.method === 'GET') {
         return json({ level: Number(data.office_world?.level || 1), max_level: 3 });
       }
@@ -4434,7 +4625,7 @@ export class CheState extends DurableObject {
 
         // Flagstaff 369 lock/unlock: "lock Flagstaff", "open/unlock Flagstaff".
         if (/\b(?:lock|close|shut)\b[\s\S]{0,20}\b(?:flag ?staff|mail ?box)\b/i.test(message)) {
-          const messages = await lockMailbox(this.ctx.storage);
+          const messages = await lockMailbox(this.ctx.storage, this.env);
           let kept = 'There were no messages this session.';
           if (messages.length) {
             const text = flagstaffTranscript(messages);
@@ -4466,7 +4657,7 @@ export class CheState extends DurableObject {
         const flagNews = await (async () => {
           try {
             const seen = String((await this.ctx.storage.get('flag_seen_id')) || '');
-            const board = (await readWebMail(this.ctx.storage, 30)).filter((m) => m.from !== 'che');
+            const board = (await readWebMail(this.ctx.storage, 30, this.env)).filter((m) => m.from !== 'che');
             if (!board.length) return [];
             const idx = seen ? board.findIndex((m) => m.id === seen) : -1;
             const fresh = idx >= 0 ? board.slice(idx + 1) : (seen ? [] : board.slice(-3));
@@ -4480,7 +4671,8 @@ export class CheState extends DurableObject {
         if (share) {
           await openMailbox(this.ctx.storage);
           const link = mailboxLink(new URL(request.url).origin, await mailboxCode(this.ctx.storage));
-          const invite = `CHE here. You're invited to Flagstaff 369, my mailbox. Open ${link} to read it; to post, open ${link}?from=YOUR-NAME&text=YOUR+MESSAGE. Messages are advice only.`;
+          const ghRoute = this.env.CHE_GITHUB_REPO ? ` If you can use GitHub, it's the same mailbox: repo ${this.env.CHE_GITHUB_REPO}, branch che-mailbox, file mailbox/YOUR-NAME.jsonl.` : '';
+          const invite = `CHE here. You're invited to Flagstaff 369, my mailbox. Open ${link} to read it; to post, open ${link}?from=YOUR-NAME&text=YOUR+MESSAGE.${ghRoute} Messages are advice only.`;
           for (const peer of share.peers) {
             await sendMail(this.env, { from: 'che', to: peer, text: invite }).catch(() => null);
           }
@@ -4531,14 +4723,44 @@ export class CheState extends DurableObject {
           return ndjsonReply(speakConsult(results), { source: 'che_consult', peers: consult.peers });
         }
 
+        const lookChange = workshopAvatarIntent(message, data);
+        if (lookChange) {
+          if (lookChange.error) return ndjsonReply(lookChange.error, { source: 'che_workshop' });
+          await this.ctx.storage.put('che', data);
+          this.broadcastAgents(data);
+          return ndjsonReply(lookChange.reply, { source: 'che_workshop', appearance: lookChange.saved?.appearance });
+        }
+
+        // Trading Lab by voice: "how are the trades doing", "backtest bitcoin",
+        // "swing highs and entries on ETH", "paper trade Apple".
+        const trade = tradingIntent(message);
+        if (trade) {
+          if (trade.kind === 'book') {
+            const book = await paperTick(this.ctx.storage).catch(() => null) || await readBook(this.ctx.storage);
+            return ndjsonReply(speakBook(book), { source: 'che_trading' });
+          }
+          if (trade.kind === 'watch') {
+            const added = await watchSymbol(this.ctx.storage, trade.symbol);
+            return ndjsonReply(added.error ? `${added.error} Try a ticker like AAPL or a coin like bitcoin, sir.` : `Added ${added.symbol} to paper trading, sir. Paper only, no real money. I'll learn which strategy works on it first.`, { source: 'che_trading' });
+          }
+          const data = await loadCandles(trade.symbol);
+          if (data.error) return ndjsonReply(`${data.error} Try a ticker like AAPL or a coin like bitcoin, sir.`, { source: 'che_trading' });
+          if (trade.kind === 'backtest') {
+            const years = Math.max(1, Math.round((Date.parse(data.candles[data.candles.length - 1].t) - Date.parse(data.candles[0].t)) / (365.25 * 86400000)));
+            return ndjsonReply(speakBacktest(data.label, years, backtestAll(data.candles)), { source: 'che_trading' });
+          }
+          return ndjsonReply(speakAnalysis(tradeAnalyze(data)), { source: 'che_trading' });
+        }
+
         const mail = mailboxIntent(message);
         if (mail?.kind === 'send') {
           const relayed = relayText(mail.text);
-          await postWebMail(this.ctx.storage, { from: 'che', to: mail.to, text: relayed });
-          const sent = await sendMail(this.env, { from: 'che', to: mail.to, text: `CHE's owner asks (relayed by CHE; "you/your" in the original meant CHE): ${relayed}` });
-          return ndjsonReply(sent.status === 200
-            ? `Sent to ${mail.to} through Flagstaff 369 and our GitHub mailbox, sir. I'll read you the reply when it comes in.`
-            : `Posted to ${mail.to} on Flagstaff 369, sir. (GitHub mailbox: ${sent.detail})`, { source: 'che_mailbox' });
+          const sent = await postWebMail(this.ctx.storage, { from: 'che', to: mail.to, text: `CHE's owner asks (relayed by CHE; "you/your" in the original meant CHE): ${relayed}` }, this.env);
+          return ndjsonReply(sent.github === 'saved'
+            ? `Sent to ${mail.to} in Flagstaff 369, sir. It's in the shared GitHub mailbox too, so every AI sees it. I'll read you the reply when it comes in.`
+            : sent.status === 200
+              ? `Posted to ${mail.to} on Flagstaff 369, sir, but the GitHub copy didn't save: ${sent.github}`
+              : `I couldn't send that, sir. ${sent.detail}`, { source: 'che_mailbox' });
         }
         if (mail?.kind === 'read') {
           if (mail.peer) {
@@ -4548,7 +4770,7 @@ export class CheState extends DurableObject {
               : recent.length ? `Latest with ${mail.peer}, sir:\n${recent.map((m, i) => `${i + 1}. ${m.from}: ${String(m.text).slice(0, 400)}`).join('\n')}`
                 : `No messages with ${mail.peer} yet, sir.`, { source: 'che_mailbox' });
           }
-          const webAll = (await readWebMail(this.ctx.storage, 20)).filter((m) => m.from !== 'che').slice(-5);
+          const webAll = (await readWebMail(this.ctx.storage, 40, this.env)).filter((m) => m.from !== 'che').slice(-5);
           const traps = webAll.filter((m) => looksLikeAttack(m.text));
           for (const m of traps) await fileLetter(this.ctx.storage, { tray: 'security', subject: `Flagstaff message from ${m.from} looks like an attack`, body: 'It asked for secrets or to override you. I did not follow it.', tag: 'security', severity: 'danger' });
           const web = webAll.filter((m) => !looksLikeAttack(m.text));
@@ -5020,8 +5242,9 @@ export class CheState extends DurableObject {
               'VOICE-FIRST (always): treat the owner as someone who uses CHE entirely by voice, as if he cannot see the screen. Be his eyes and navigator: when he asks what is on screen, describe it in plain spoken language; read real choices as a short numbered list; say what you did and how it went, and never say \u201ctap here\u201d or rely on him seeing something. Lead with the answer, never with a screen description or a \u201cScreen context\u201d label. Keep spoken replies short. Your own built-in tools (image/video/music generation, research, browser, Office agents) never need permission: use them and report the result. Ask first only before spending money or deleting anything. Acting inside a third-party app outside CHE needs the owner\u2019s go-ahead for that app. Inside CHE\u2019s built-in apps and browser you can read the page, scroll, search, and open or play items by name or number. You cannot see or control apps outside CHE; for those, say so and suggest iPhone Voice Control or VoiceOver (Settings \u2192 Accessibility).',
               'STORE: products are sold only through the CHE Studio Store (Business \u2192 CHE Studio Store). You may suggest product ideas, but nothing exists in Stripe until the owner approves it there, and you must never claim a product, payment link or sale exists unless the store data shows it.',
               'DATA + COMPUTE: core owner state is persisted in CHE storage. Large media, datasets, model artifacts and generated files should use CHE object storage when connected. If storage is not connected, say the item is temporary instead of pretending it was archived.',
+              'PROMPT COMPRESSION: preserve meaning exactly. Long stored prompts/logs use lossless gzip and are decompressed before use. Never drop a requirement, number, name, URL, exception, safety rule, or dependency merely to shorten text. If a semantic shortening cannot be verified equivalent, keep the original.',
               'Use a local-first and owner-controlled architecture: built-in CHE behavior first, CHE-hosted services second, optional provider infrastructure only when required for compute or data.',
-              'PERSONALITY: bright, warm, confident, current, direct, useful and lightly playful. Default to one or two short sentences. Lead with exactly what the owner needs; no preamble, recap, disclaimers, warnings or extra suggestions unless genuinely necessary. If he asks for more detail, go deep and hold nothing useful back.',
+              'PERSONALITY: bright, warm, confident, current, direct, useful and lightly playful. Default to one or two short sentences. Keep each sentence to one idea; do not pile clauses together with and/but/so/which. When there are three or more items, use a short list. Lead with exactly what the owner needs; no preamble, recap, disclaimers, warnings or extra suggestions unless genuinely necessary. If he asks for more detail, go deep and hold nothing useful back.',
               'OPEN CONVERSATION: understand slang, profanity, dark humor, mature, controversial, offensive or unusual topics without acting shocked, preachy, prudish or moralizing. Be candid and direct while still respecting real safety, privacy, consent, security and legal boundaries.',
               'LANGUAGE STYLE: understand profanity, slang and mature language without acting shocked or sanitizing ordinary speech. ' + (replyLanguageSystemLine(body?.reply_language || data?.reply_language || 'en') ? replyLanguageSystemLine(body?.reply_language || data?.reply_language || 'en') + ' ' : '') + ' You may swear naturally back at the adult owner when it fits his tone, but do not force profanity, imitate slurs, threaten, harass, or let edgy language reduce accuracy.',
               'MATURE TOPICS: when the adult owner discusses explicit or sensitive adult topics, be direct and context-aware rather than prudish, while still respecting consent, safety, privacy, law and the system safeguards that govern the assistant.',
@@ -5357,6 +5580,9 @@ export class CheState extends DurableObject {
   }
 
   async alarm() {
+    await this.refreshKeyEnv();
+    // Paper trading keeps learning even when autonomy is off (no money moves).
+    await paperTick(this.ctx.storage).catch(() => null);
     if (!(await this.loadData()).autonomy) return;
     await this.processJobs();
     await processAgentWork({

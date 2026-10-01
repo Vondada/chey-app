@@ -42,8 +42,8 @@ const List<CheBuilding> cheCampusBuildings = [
   ),
   CheBuilding(
     tab: 1,
-    title: 'Markets',
-    subtitle: 'Trading & data',
+    title: 'Trading Room',
+    subtitle: 'Swings · backtests · paper trades',
     icon: Icons.show_chart,
     color: CheColors.amber,
   ),
@@ -95,6 +95,13 @@ const List<CheBuilding> cheCampusBuildings = [
     subtitle: 'Watch together',
     icon: Icons.theaters_outlined,
     color: Color(0xFFFF6F91),
+  ),
+  CheBuilding(
+    tab: 9,
+    title: 'Workshop',
+    subtitle: 'Watch real work form',
+    icon: Icons.construction_rounded,
+    color: Color(0xFF34E0B8),
   ),
 ];
 

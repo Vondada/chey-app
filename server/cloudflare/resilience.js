@@ -14,6 +14,8 @@ export const KEY_PROVIDERS = {
   openrouter: { name: 'OpenRouter', env: 'OPENROUTER_API_KEY', page: 'https://openrouter.ai/keys', test: 'https://openrouter.ai/api/v1/key', accounts: 'one account per person' },
   github: { name: 'GitHub Models', env: 'GITHUB_MODELS_TOKEN', page: 'https://github.com/settings/personal-access-tokens/new', test: 'https://models.github.ai/catalog/models', accounts: 'uses your GitHub account' },
   sambanova: { name: 'SambaNova', env: 'SAMBANOVA_API_KEY', page: 'https://cloud.sambanova.ai/apis', test: 'https://api.sambanova.ai/v1/models', accounts: 'one account per person' },
+  openai: { name: 'OpenAI (Codex)', env: 'CHE_OPENAI_API_KEY', page: 'https://platform.openai.com/api-keys', test: 'https://api.openai.com/v1/models', accounts: 'uses your OpenAI account (paid, separate from a ChatGPT subscription)' },
+  xai: { name: 'xAI (Grok)', env: 'XAI_API_KEY', page: 'https://console.x.ai', test: 'https://api.x.ai/v1/models', accounts: 'uses your X/xAI account' },
   huggingface: { name: 'Hugging Face', env: 'HF_TOKEN', page: 'https://huggingface.co/settings/tokens', test: 'https://huggingface.co/api/whoami-v2', accounts: 'one account per person' },
 };
 
@@ -38,6 +40,8 @@ export function providerByName(text) {
   if (/\bgithub\b/.test(t)) return 'github';
   if (/\bsamba ?nova\b/.test(t)) return 'sambanova';
   if (/\bhugging ?face\b/.test(t)) return 'huggingface';
+  if (/\b(?:codex|openai|open ai|chat ?gpt)\b/.test(t)) return 'openai';
+  if (/\b(?:grok|x\.?ai)\b/.test(t)) return 'xai';
   return null;
 }
 

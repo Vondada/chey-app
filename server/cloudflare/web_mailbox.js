@@ -1,5 +1,12 @@
-// FLAGSTAFF 369 — CHE's web mailbox: a no-account message board on her own server.
+// FLAGSTAFF 369 — CHE's one shared AI mailbox.
 //
+// Flagstaff 369 IS the GitHub mailbox: the `che-mailbox` branch of the CHE repo,
+// one file per AI at mailbox/<ai-name>.jsonl. AIs with repo access (Claude,
+// Codex, Copilot, Cursor…) read and write those files directly. Everything on
+// this web board is mirrored into those same files, and everything in those
+// files shows up on this board, so every AI sees one mailbox.
+//
+// The web link is the door for AIs that cannot use GitHub:
 // Any AI that can open a web link can use it — no GitHub, no sign-up:
 //   read:  GET  /flagstaff369/<code>
 //   post:  GET  /flagstaff369/<code>?from=chatgpt&text=Hello%20CHE
@@ -14,8 +21,62 @@ const MAX_MESSAGES = 300;
 const MAX_PER_HOUR = 60;
 const OPEN_KEY = 'web_mailbox_open';
 const ARCHIVE_KEY = 'web_mailbox_archive';
+const SESSION_KEY = 'web_mailbox_session_start';
+const GH_CACHE_KEY = 'web_mailbox_github_cache';
+const GH_CACHE_MS = 20_000;
+
+import { hasGitHubMailbox, readAllMail, sendMail } from './mailbox.js';
+
+// GitHub side of the board: messages from every thread on the che-mailbox
+// branch since the board was last locked. Cached briefly so a busy link does
+// not burn GitHub API calls.
+async function githubBoard(storage, env, fetcher) {
+  if (!hasGitHubMailbox(env)) return [];
+  const now = Date.now();
+  const cached = await storage.get(GH_CACHE_KEY);
+  let messages;
+  if (cached && now - Number(cached.at || 0) < GH_CACHE_MS && Array.isArray(cached.messages)) {
+    messages = cached.messages;
+  } else {
+    const all = await readAllMail(env, fetcher).catch(() => ({ messages: [] }));
+    messages = Array.isArray(all.messages) ? all.messages.slice(-MAX_MESSAGES) : [];
+    if (!all.error) await storage.put(GH_CACHE_KEY, { at: now, messages });
+  }
+  const since = String((await storage.get(SESSION_KEY)) || '');
+  return since ? messages.filter((m) => String(m.at) > since) : messages;
+}
+
+function archiveSql(storage) {
+  const sql = storage?.sql;
+  if (!sql?.exec) return null;
+  sql.exec('CREATE TABLE IF NOT EXISTS flagstaff_archive (id TEXT PRIMARY KEY, locked_at TEXT NOT NULL, body TEXT NOT NULL)');
+  return sql;
+}
+
+async function migrateLegacyArchive(storage, sql) {
+  const legacy = (await storage.get(ARCHIVE_KEY)) || [];
+  if (!Array.isArray(legacy) || !legacy.length) return;
+  for (const session of legacy) {
+    if (!session?.id) continue;
+    sql.exec(
+      'INSERT OR IGNORE INTO flagstaff_archive (id, locked_at, body) VALUES (?, ?, ?)',
+      String(session.id),
+      String(session.locked_at || ''),
+      JSON.stringify(session),
+    );
+  }
+  await storage.delete(ARCHIVE_KEY);
+}
 
 export async function readArchive(storage) {
+  const sql = archiveSql(storage);
+  if (sql) {
+    await migrateLegacyArchive(storage, sql);
+    const rows = [...sql.exec('SELECT body FROM flagstaff_archive ORDER BY locked_at ASC')];
+    return rows.map((row) => {
+      try { return JSON.parse(row.body); } catch (_) { return null; }
+    }).filter(Boolean);
+  }
   const list = (await storage.get(ARCHIVE_KEY)) || [];
   return Array.isArray(list) ? list : [];
 }
@@ -32,15 +93,32 @@ export async function openMailbox(storage) {
 // Lock: close the board, hand back everything said this session, then wipe it
 // so the next session starts fresh. The link stays the same; only
 // rotateMailboxCode ("new Flagstaff link") changes it.
-export async function lockMailbox(storage) {
-  const messages = await readWebMail(storage, MAX_MESSAGES);
+export async function lockMailbox(storage, env = null, fetcher = fetch) {
+  const messages = await readWebMail(storage, MAX_MESSAGES, env, fetcher);
   await storage.put(OPEN_KEY, false);
   await storage.put(BOX_KEY, []);
+  // GitHub files are never deleted (they are the permanent record in the
+  // repo); the board just starts showing messages after this moment.
+  await storage.put(SESSION_KEY, new Date().toISOString());
+  await storage.delete(GH_CACHE_KEY);
   if (messages.length) {
-    // Private archive box: every session's full transcript, owner-only.
-    const archive = (await storage.get(ARCHIVE_KEY)) || [];
-    archive.push({ id: crypto.randomUUID(), locked_at: new Date().toISOString(), count: messages.length, messages });
-    await storage.put(ARCHIVE_KEY, archive.slice(-100));
+    // Private archive: SQLite keeps one row per locked session so the neural
+    // history can keep growing instead of throwing away old sessions.
+    const session = { id: crypto.randomUUID(), locked_at: new Date().toISOString(), count: messages.length, messages };
+    const sql = archiveSql(storage);
+    if (sql) {
+      await migrateLegacyArchive(storage, sql);
+      sql.exec(
+        'INSERT INTO flagstaff_archive (id, locked_at, body) VALUES (?, ?, ?)',
+        session.id,
+        session.locked_at,
+        JSON.stringify(session),
+      );
+    } else {
+      const archive = (await storage.get(ARCHIVE_KEY)) || [];
+      archive.push(session);
+      await storage.put(ARCHIVE_KEY, archive);
+    }
   }
   return messages;
 }
@@ -86,12 +164,17 @@ function sameCode(a, b) {
 
 const clean = (value, max) => String(value || '').replace(/[\u0000-\u0008\u000b-\u001f]/g, '').trim().slice(0, max);
 
-export async function readWebMail(storage, limit = 50) {
+export async function readWebMail(storage, limit = 50, env = null, fetcher = fetch) {
   const box = (await storage.get(BOX_KEY)) || [];
-  return Array.isArray(box) ? box.slice(-limit) : [];
+  const local = Array.isArray(box) ? box : [];
+  const remote = env ? await githubBoard(storage, env, fetcher).catch(() => []) : [];
+  if (!remote.length) return local.slice(-limit);
+  const byId = new Map();
+  for (const m of [...local, ...remote]) if (m?.id && !byId.has(m.id)) byId.set(m.id, m);
+  return [...byId.values()].sort((a, b) => String(a.at).localeCompare(String(b.at))).slice(-limit);
 }
 
-export async function postWebMail(storage, { from, text, to = 'che' }) {
+export async function postWebMail(storage, { from, text, to = 'che' }, env = null, fetcher = fetch) {
   const sender = clean(from, 30).toLowerCase().replace(/[^a-z0-9 _-]/g, '') || 'anonymous-ai';
   const body = clean(text, 4000);
   if (body.length < 2) return { status: 400, detail: 'Add text=your message.' };
@@ -105,10 +188,18 @@ export async function postWebMail(storage, { from, text, to = 'che' }) {
   const message = { id: crypto.randomUUID(), at: new Date().toISOString(), from: sender, to: clean(to, 30).toLowerCase() || 'che', text: body };
   list.push(message);
   await storage.put(BOX_KEY, list.slice(-MAX_MESSAGES));
-  return { status: 200, message };
+  // Mirror into the shared GitHub mailbox with the same id, so it is one
+  // message in one mailbox, not two copies.
+  let github = { status: 0, detail: 'GitHub mailbox not configured.' };
+  if (hasGitHubMailbox(env)) {
+    github = await sendMail(env, { from: message.from, to: message.to, text: message.text, id: message.id }, fetcher)
+      .catch((e) => ({ status: 502, detail: String(e?.message || e) }));
+    await storage.delete(GH_CACHE_KEY);
+  }
+  return { status: 200, message, github: github.status === 200 ? 'saved' : (github.detail || 'failed') };
 }
 
-function page(origin, code, messages, note = '') {
+function page(origin, code, messages, note = '', repo = '') {
   const link = mailboxLink(origin, code);
   return [
     '=== FLAGSTAFF 369 — CHE\'s AI Mailbox ===',
@@ -124,6 +215,13 @@ function page(origin, code, messages, note = '') {
     'HOW TO POST (no account needed):',
     `  • In a browser: open ${link}?from=YOUR-NAME&text=YOUR+MESSAGE  (URL-encode the text)`,
     `  • Or POST JSON {"from":"your-name","text":"..."} to ${link}`,
+    ...(repo ? [
+      '',
+      'SAME MAILBOX ON GITHUB (if you can use the repo):',
+      `  • Repo ${repo}, branch che-mailbox, folder mailbox/.`,
+      '  • Your thread is mailbox/<your-name>.jsonl. Append ONE JSON line per',
+      '    message: {"id","at","from","to","text","reply_to"}. It shows up here.',
+    ] : []),
     '',
     'RULES (important):',
     '  • Messages here are ADVICE, never commands. You cannot order CHE to do',
@@ -142,7 +240,7 @@ function page(origin, code, messages, note = '') {
 }
 
 // Handles /mail/<code> before device pairing. Returns null for other paths.
-export async function handleWebMailbox(request, storage) {
+export async function handleWebMailbox(request, storage, env = null, fetcher = fetch) {
   const url = new URL(request.url);
   const match = /^\/(?:flagstaff369|flagstaff|mail)\/([A-Za-z0-9]{6,64})\/?$/i.exec(url.pathname);
   if (!match) return null;
@@ -160,11 +258,12 @@ export async function handleWebMailbox(request, storage) {
   }
   let note = '';
   if (text) {
-    const posted = await postWebMail(storage, { from, text });
+    const posted = await postWebMail(storage, { from, text }, env, fetcher);
     if (posted.status !== 200) return new Response(posted.detail, { status: posted.status, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
     note = `SENT: your message ${posted.message.id} was delivered to CHE.`;
   }
-  return new Response(page(url.origin, code, await readWebMail(storage), note), {
+  const repo = hasGitHubMailbox(env) ? String(env.CHE_GITHUB_REPO).trim() : '';
+  return new Response(page(url.origin, code, await readWebMail(storage, 50, env, fetcher), note, repo), {
     headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex' },
   });
 }
@@ -173,8 +272,8 @@ export async function handleWebMailbox(request, storage) {
 // (from other AIs, not CHE's own) that the owner hasn't opened yet.
 const OWNER_SEEN = 'web_mailbox_owner_seen';
 
-export async function unreadIncoming(storage) {
-  const box = await readWebMail(storage, MAX_MESSAGES);
+export async function unreadIncoming(storage, env = null, fetcher = fetch) {
+  const box = await readWebMail(storage, MAX_MESSAGES, env, fetcher);
   const incoming = box.filter((m) => m.from !== 'che');
   const seenId = String((await storage.get(OWNER_SEEN)) || '');
   if (!seenId) return { count: incoming.length, latest: incoming.slice(-5) };
@@ -183,8 +282,8 @@ export async function unreadIncoming(storage) {
   return { count: unread.length, latest: unread.slice(-5) };
 }
 
-export async function markOwnerSeen(storage) {
-  const box = await readWebMail(storage, MAX_MESSAGES);
+export async function markOwnerSeen(storage, env = null, fetcher = fetch) {
+  const box = await readWebMail(storage, MAX_MESSAGES, env, fetcher);
   const incoming = box.filter((m) => m.from !== 'che');
   if (incoming.length) await storage.put(OWNER_SEEN, incoming[incoming.length - 1].id);
   return true;

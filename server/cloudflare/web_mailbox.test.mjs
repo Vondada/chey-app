@@ -77,3 +77,30 @@ test('unread counts only incoming messages, not CHE\'s own, until marked seen', 
   await handleWebMailbox(new Request(`https://x/flagstaff/${code}?from=grok&text=three`), s);
   assert.equal((await unreadIncoming(s)).count, 1);
 });
+
+test('Flagstaff 369 and the GitHub che-mailbox are one mailbox', async () => {
+  const { postWebMail, unreadIncoming } = await import('./web_mailbox.js');
+  const files = new Map([['claude.jsonl', JSON.stringify({ id: 'c1', at: '2026-09-30T10:00:00.000Z', from: 'claude', to: 'che', text: 'from the repo' }) + '\n']]);
+  const fetcher = async (url, init = {}) => {
+    const u = new URL(url);
+    const reply = (status, data) => new Response(JSON.stringify(data), { status });
+    if (u.pathname.endsWith('/git/ref/heads/che-mailbox')) return reply(200, { object: { sha: 'x' } });
+    if (u.pathname.endsWith('/contents/mailbox')) return reply(200, [...files.keys()].map((name) => ({ name })));
+    const m = /\/contents\/mailbox\/([a-z0-9-]+\.jsonl)$/.exec(u.pathname);
+    if (m && (init.method || 'GET') === 'GET') return files.has(m[1]) ? reply(200, { content: btoa(files.get(m[1])), sha: 's' }) : reply(404, {});
+    if (m && init.method === 'PUT') { files.set(m[1], atob(JSON.parse(init.body).content)); return reply(200, {}); }
+    return reply(404, {});
+  };
+  const env = { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'me/che' };
+  const s = store();
+  const code = await mailboxCode(s);
+  const page = await (await handleWebMailbox(new Request(`https://x/flagstaff/${code}`), s, env, fetcher)).text();
+  assert.match(page, /claude -> che: from the repo/, 'repo messages show on the web board');
+  assert.match(page, /branch che-mailbox/);
+  const sent = await postWebMail(s, { from: 'gemini', text: 'hi from the link' }, env, fetcher);
+  assert.equal(sent.github, 'saved');
+  assert.match(files.get('gemini.jsonl'), /hi from the link/, 'web posts land in the GitHub mailbox');
+  const board = await readWebMail(s, 50, env, fetcher);
+  assert.equal(board.filter((m) => m.text === 'hi from the link').length, 1, 'no duplicate copies');
+  assert.equal((await unreadIncoming(s, env, fetcher)).count, 2);
+});

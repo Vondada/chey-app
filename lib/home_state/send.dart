@@ -191,6 +191,17 @@ extension _CheHomeSend on _CHEHomeState {
       _openAssistantHub(tab: 8);
       return true;
     }
+    final codeFocus = RegExp(r"\bshow\s+me\s+([a-z0-9_-]+)(?:'s|’s)\s+code\b", caseSensitive: false).firstMatch(message);
+    if (codeFocus != null) {
+      _workshopFocusAgent = codeFocus.group(1);
+      _openAssistantHub(tab: 9);
+      return true;
+    }
+    if (RegExp(r'\b(open|show|go to)\s+(the\s+)?(workshop|build room|code workshop)\b').hasMatch(lower)) {
+      _workshopFocusAgent = null;
+      _openAssistantHub(tab: 9);
+      return true;
+    }
     if (RegExp(r'\b(set ?up|fix|open|configure)\s+(the\s+|my\s+)?wake ?word\b').hasMatch(lower)) {
       await speakText(cheWakeSetupSteps);
       await _openWakeSetup();
@@ -232,7 +243,8 @@ extension _CheHomeSend on _CHEHomeState {
       case 'read':
         // Face ID before speaking/showing a vault password (TTL skips re-prompt).
         final unlocked = await CheVaultAuth.instance.ensureUnlocked(
-          reason: 'Unlock CHE vault with Face ID to show this password',
+          reason: 'Use Face ID to show this saved password',
+          freshFaceId: true,
         );
         if (!unlocked) {
           spoken = 'Face ID was cancelled — I did not reveal your password, sir.';
@@ -248,6 +260,15 @@ extension _CheHomeSend on _CHEHomeState {
           spoken = 'Your ${entry.site} password is ${entry.password.split('').join(' ')}';
         }
       case 'import':
+        final unlocked = await CheVaultAuth.instance.ensureUnlocked(
+          reason: 'Use Face ID before importing passwords into CHE',
+          freshFaceId: true,
+        );
+        if (!unlocked) {
+          spoken = 'Face ID was cancelled — I did not import any passwords, sir.';
+          shown = spoken;
+          break;
+        }
         final picked = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['csv'], withData: true);
         final bytes = picked?.files.single.bytes;
         if (bytes == null) {
@@ -273,6 +294,15 @@ extension _CheHomeSend on _CHEHomeState {
         );
         if (sure != true) {
           spoken = 'Kept your ${command.site} password, sir.';
+          shown = spoken;
+          break;
+        }
+        final unlocked = await CheVaultAuth.instance.ensureUnlocked(
+          reason: 'Use Face ID to delete this saved password',
+          freshFaceId: true,
+        );
+        if (!unlocked) {
+          spoken = 'Face ID was cancelled — I kept that saved password, sir.';
           shown = spoken;
           break;
         }

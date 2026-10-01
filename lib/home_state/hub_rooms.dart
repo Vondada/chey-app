@@ -91,6 +91,30 @@ extension _CheHomeHubRooms on _CHEHomeState {
       onAsk: _runHubPrompt,
       actions: [
         CheDeskAction(
+          icon: Icons.insights_rounded,
+          title: 'Swings + Entry Points',
+          body: 'Swing highs and lows, trend, candlestick patterns and rule-based entries. Free live crypto, daily stocks.',
+          connected: true,
+          connectorName: '',
+          onRun: () => _runHubPrompt('Find the swing highs, swing lows and entry points on bitcoin'),
+        ),
+        CheDeskAction(
+          icon: Icons.history_rounded,
+          title: 'Backtest (years of data)',
+          body: 'Every strategy on the full history. Last 30% kept unseen as the honest test.',
+          connected: true,
+          connectorName: '',
+          onRun: () => _runHubPrompt('Backtest bitcoin'),
+        ),
+        CheDeskAction(
+          icon: Icons.receipt_long_rounded,
+          title: 'Paper Trades',
+          body: 'Simulated trades only. The crew journals every trade and learns what works.',
+          connected: true,
+          connectorName: '',
+          onRun: () => _runHubPrompt('How are the trades doing?'),
+        ),
+        CheDeskAction(
           icon: Icons.candlestick_chart,
           title: 'Analyze Markets',
           body: 'Stocks, futures and crypto structure, catalysts, volatility and risk.',

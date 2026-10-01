@@ -1,9 +1,10 @@
 // Face ID gate for CHE's on-device password vault.
 //
 // Before vault secrets are filled into a page or spoken/shown, the owner must
-// pass LocalAuthentication via CheAccountBridge.authenticate. A short in-memory
-// session TTL avoids re-prompting on every tap. Passwords never leave the
-// device; this module only unlocks local use.
+// pass Apple's LocalAuthentication via CheAccountBridge.authenticate. Ordinary
+// account-vault browsing may reuse a short in-memory session, but password
+// reveal/fill/delete/import callers can force a fresh Face ID check each time.
+// Face templates never enter Flutter or leave the iPhone.
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
@@ -47,12 +48,18 @@ class CheVaultAuth {
     _unlockedUntil = until;
   }
 
-  /// Ensures Face ID (or device passcode via LocalAuthentication) has been
-  /// granted for this session. Returns false on fail/cancel — caller must
-  /// not fill or reveal secrets.
-  Future<bool> ensureUnlocked({String reason = defaultReason}) async {
-    if (isSessionValid) return true;
-    final ok = await CheAccountBridge.authenticate(reason: reason);
+  /// Ensures the owner is authenticated. Set [freshFaceId] for any password
+  /// reveal/fill/delete/import so a valid session never skips the Face ID UI.
+  /// Returns false on fail/cancel; callers must not expose or change secrets.
+  Future<bool> ensureUnlocked({
+    String reason = defaultReason,
+    bool freshFaceId = false,
+  }) async {
+    if (!freshFaceId && isSessionValid) return true;
+    final ok = await CheAccountBridge.authenticate(
+      reason: reason,
+      requireFaceId: freshFaceId,
+    );
     if (ok) {
       _unlockedUntil = DateTime.now().add(sessionTtl);
     }

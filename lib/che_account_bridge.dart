@@ -8,9 +8,16 @@ import 'che_theme.dart';
 class CheAccountBridge {
   static const MethodChannel _channel = MethodChannel('che/account_bridge');
 
-  static Future<bool> authenticate({String reason = 'Unlock CHE accounts'}) async {
+  static Future<bool> authenticate({
+    String reason = 'Unlock CHE accounts',
+    bool requireFaceId = false,
+  }) async {
     try {
-      return (await _channel.invokeMethod<bool>('authenticate', {'reason': reason})) ?? false;
+      return (await _channel.invokeMethod<bool>('authenticate', {
+            'reason': reason,
+            'requireFaceId': requireFaceId,
+          })) ??
+          false;
     } catch (_) {
       return false;
     }

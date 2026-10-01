@@ -25,6 +25,12 @@
     {skin:0xC78D69,hair:0x5A3425,outfit:C.blue,accent:C.mustard}
   ];
 
+  // Original procedural Workshop skins: no copied game character assets.
+  const SKIN={deep:0x5B382D,brown:0x80533E,warm:0xB97A5C,tan:0xC98967,golden:0xD6A078,light:0xE0B18D};
+  const HAIR={close:0x201917,fade:0x171311,waves:0x2B1C1B,curls:0x30221F,braids:0x211715,locs:0x1A1413,bun:0x3E251E,bald:0x5B382D};
+  const EYES={dark:0x201917,brown:0x3C241F,hazel:0x6B532B,green:0x385B45,blue:0x315A78};
+  const OUTFIT={che:C.teal,suit:0x26333C,"jacket-red":0xA53D3D,"jacket-teal":C.teal,hoodie:0x59656D,studio:C.lavender,tech:C.blue};
+
   function mat(color, roughness=.77, metalness=.02, extra={}) {
     return new THREE.MeshStandardMaterial({color,roughness,metalness,...extra});
   }
@@ -103,10 +109,13 @@
 
   function chibiBot(agent,index){
     const isChe=String(agent.id).toLowerCase()==="che" || agent.isChe===true;
-    const p=palettes[index%palettes.length];
-    const skinMat=mat(isChe?C.cheSkin:p.skin,.83);
-    const hairMat=mat(isChe?C.cheHair:p.hair,.68);
-    const outfitMat=mat(isChe?C.teal:p.outfit,.70);
+    const p=palettes[index%palettes.length],look=agent.appearance||{};
+    const skin=SKIN[look.skin_tone]||(isChe?C.cheSkin:p.skin);
+    const hair=HAIR[look.hair]||(isChe?C.cheHair:p.hair);
+    const outfit=OUTFIT[look.outfit]||(isChe?C.teal:p.outfit);
+    const skinMat=mat(skin,.83);
+    const hairMat=mat(hair,.68);
+    const outfitMat=mat(outfit,.70);
     const accentMat=mat(isChe?C.teal:p.accent,.44,.18);
     const g=new THREE.Group();
 
@@ -177,8 +186,9 @@
       g.add(antenna,antennaTip);
     }
 
-    const eyeL=makeEye(isChe?0x3C241F:0x23343A); eyeL.position.set(-.25,2.47,.66);
-    const eyeR=makeEye(isChe?0x3C241F:0x23343A); eyeR.position.set(.25,2.47,.66);
+    const eyeColor=EYES[look.eyes]||(isChe?0x3C241F:0x23343A);
+    const eyeL=makeEye(eyeColor); eyeL.position.set(-.25,2.47,.66);
+    const eyeR=makeEye(eyeColor); eyeR.position.set(.25,2.47,.66);
     g.add(eyeL,eyeR);
 
     const smile=torus(.18,.025,M.ink);
@@ -206,6 +216,14 @@
     g.userData.beaconMat=dotMat; g.userData.highlight=highlight;
     g.userData.eyeL=eyeL; g.userData.eyeR=eyeR;
 
+    if(look.accessory==="glasses"){const gl=torus(.16,.025,M.ink);gl.position.set(-.25,2.47,.72);gl.rotation.x=Math.PI/2;const gr=gl.clone();gr.position.x=.25;g.add(gl,gr);}
+    else if(look.accessory==="headset"){const band=torus(.72,.045,M.blackGlass);band.position.set(0,2.52,0);band.rotation.x=Math.PI/2;g.add(band);}
+    else if(look.accessory==="chain"){const chain=torus(.31,.025,M.gold);chain.position.set(0,1.52,.43);chain.rotation.x=Math.PI/2;g.add(chain);}
+    else if(look.accessory==="hat"){const brim=cylinder(.58,.58,.08,M.blackGlass,28);brim.position.set(0,3.05,.02);g.add(brim);}
+    if(["curls","braids","locs","bun"].includes(look.hair)){const extra=sphere(look.hair==="bun"?.34:.72,hairMat,1,look.hair==="locs"?1.15:.55,.9);extra.position.set(0,look.hair==="bun"?3.22:2.88,-.08);g.add(extra);}
+    if(look.face==="oval")head.scale.y*=1.10;if(look.face==="square")head.scale.set(1.05,.94,.98);
+    if(look.body_type==="compact")g.scale.set(.92,.92,.92);if(look.body_type==="tall")g.scale.set(.96,1.08,.96);
+    g.userData.appearance=JSON.stringify(look);
     g.traverse(o=>{ if(o.isMesh || o.isSprite) o.userData.agentRoot=g; });
     return g;
   }
@@ -284,10 +302,13 @@
         status: normalizeStatus(raw.status),
         speaking: raw.speaking === true,
         isChe: raw.isChe === true || String(raw.id).toLowerCase() === "che",
-        task: String(raw.task || "")
+        task: String(raw.task || ""),
+        appearance: raw.appearance || null
       };
       incoming.add(agent.id);
       let g = this.chars.get(agent.id);
+      const lookJson=JSON.stringify(agent.appearance || {});
+      if(g && g.userData.appearance!==lookJson){ this.remove(agent.id); g=null; }
       if (!g) {
         g = chibiBot(agent, index);
         const home = this._pickHome(index);

@@ -1074,7 +1074,7 @@ extension _CheHomeMemory on _CHEHomeState {
   }
 
   void _openAssistantHub({int tab = 0}) {
-    _selectedTab = tab < 0 ? 0 : (tab > 8 ? 8 : tab);
+    _selectedTab = tab < 0 ? 0 : (tab > 9 ? 9 : tab);
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF101821),
@@ -1087,7 +1087,7 @@ extension _CheHomeMemory on _CHEHomeState {
             onIndexChanged: (index) => _selectedTab = index,
             tabs: const [
               Tab(icon: Icon(Icons.hub_outlined), text: 'Brain'),
-              Tab(icon: Icon(Icons.show_chart), text: 'Markets'),
+              Tab(icon: Icon(Icons.show_chart), text: 'Trading'),
               Tab(icon: Icon(Icons.business_center_outlined), text: 'Business'),
               Tab(icon: Icon(Icons.devices_other_outlined), text: 'Devices'),
               Tab(icon: Icon(Icons.music_note_outlined), text: 'Music'),
@@ -1095,6 +1095,7 @@ extension _CheHomeMemory on _CHEHomeState {
               Tab(icon: Icon(Icons.workspaces_outline), text: 'Office'),
               Tab(icon: Icon(Icons.apps_rounded), text: 'Apps'),
               Tab(icon: Icon(Icons.theaters_outlined), text: 'Theater'),
+              Tab(icon: Icon(Icons.construction_rounded), text: 'Workshop'),
             ],
             pages: [
               (active) => _hubBrainTab(active),
@@ -1125,6 +1126,16 @@ extension _CheHomeMemory on _CHEHomeState {
                   },
                 );
               },
+              (active) => CheWorkshopRoom(
+                client: _agentRuntime,
+                active: active,
+                focusAgent: _workshopFocusAgent,
+                onSpeak: speakText,
+                onOpenRoom: (room) {
+                  Navigator.of(context).pop();
+                  Future<void>.delayed(const Duration(milliseconds: 180), () => _openAssistantHub(tab: room));
+                },
+              ),
             ],
           ),
         );

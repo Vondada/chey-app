@@ -118,6 +118,8 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
   Timer? _captionFlush;
   String _pageTitle = '';
   int _captionCount = 0;
+  final List<Map<String, Object>> _learningCaptions = [];
+  bool _learningVideo = false;
 
   // Reads captions (text tracks, or on-screen subtitle text) with the video
   // time, every 1.5 seconds, and hands them to CHE's Theater notes.
@@ -173,7 +175,10 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
       if (j is! Map) return;
       final text = '${j['text'] ?? ''}'.trim();
       if (text.isEmpty) return;
-      _captionBuffer.add({'t': (j['t'] as num?)?.round() ?? 0, 'text': text});
+      final line = {'t': (j['t'] as num?)?.round() ?? 0, 'text': text};
+      _captionBuffer.add(line);
+      _learningCaptions.add(line);
+      if (_learningCaptions.length > 1600) _learningCaptions.removeRange(0, _learningCaptions.length - 1600);
       _captionCount += 1;
       _captionFlush ??= Timer(const Duration(seconds: 20), _flushCaptions);
     } catch (_) {}
@@ -217,6 +222,46 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
           : 'Talk with me about the scene I\'m watching right now, using the Theater notes (captions only, no picture).',
       hasImage ? result : null,
     );
+  }
+
+  bool get _isYouTube {
+    final host = Uri.tryParse(_address.text.contains('://') ? _address.text : 'https://${_address.text}')?.host.toLowerCase() ?? '';
+    return host == 'youtu.be' || host.endsWith('youtube.com');
+  }
+
+  Future<void> _learnCurrentVideo({bool quiet = false}) async {
+    if (!_isYouTube || _learningVideo) return;
+    final url = _address.text.trim();
+    if (url.isEmpty) return;
+    setState(() {
+      _learningVideo = true;
+      if (!quiet) _status = 'Learning this YouTube video from captions and any readable frame…';
+    });
+    await _flushCaptions();
+    String? frame;
+    final web = _web;
+    if (web != null) {
+      try {
+        final raw = await web.runJavaScriptReturningResult(_frameJs);
+        final result = raw.toString().replaceAll('"', '');
+        if (result.length > 1000) frame = result;
+      } catch (_) {}
+    }
+    try {
+      final result = await widget.client.learnYouTube(
+        url: url,
+        title: _pageTitle.isEmpty ? 'YouTube video' : _pageTitle,
+        captions: List<Map<String, Object>>.from(_learningCaptions),
+        frameBase64: frame,
+      );
+      if (!mounted) return;
+      setState(() => _status = '${result['reply'] ?? 'I learned this YouTube video, sir.'}');
+    } catch (error) {
+      if (!mounted || quiet) return;
+      setState(() => _status = 'I could not save this video to my learning library yet: $error');
+    } finally {
+      if (mounted) setState(() => _learningVideo = false);
+    }
   }
 
   @override
@@ -307,6 +352,9 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
       _web = web;
       _status = 'Playing ${uri.host}. Pop-ups, app jumps and downloads are blocked.';
       _blockedUrl = null;
+      _learningCaptions.clear();
+      _captionCount = 0;
+      _pageTitle = '';
     });
     HapticFeedback.mediumImpact();
     await web.loadRequest(uri);
@@ -322,6 +370,7 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
   }
 
   Future<void> _stop() async {
+    if (_isYouTube) await _learnCurrentVideo(quiet: true);
     await _web?.loadHtmlString('<html><body style="background:#000"></body></html>');
     setState(() {
       _web = null;
@@ -432,6 +481,20 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
                 excludeSemantics: true,
                 onTap: _askAboutScene,
                 child: FilledButton.icon(onPressed: _askAboutScene, icon: const Icon(Icons.forum_outlined, size: 18), label: const Text('Talk about this scene')),
+              ),
+            if (web != null && _isYouTube)
+              Semantics(
+                button: true,
+                label: 'Learn this YouTube video. CHE saves its timed captions and only records visual details she could actually see.',
+                excludeSemantics: true,
+                onTap: _learningVideo ? null : _learnCurrentVideo,
+                child: OutlinedButton.icon(
+                  onPressed: _learningVideo ? null : _learnCurrentVideo,
+                  icon: _learningVideo
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.school_outlined, size: 18),
+                  label: Text(_learningVideo ? 'Learning…' : 'Learn video'),
+                ),
               ),
             if (_blockedUrl != null)
               Semantics(

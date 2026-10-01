@@ -275,7 +275,12 @@ struct CHEAppShortcuts: AppShortcutsProvider {
         case "authenticate":
           let args = call.arguments as? [String: Any]
           let reason = (args?["reason"] as? String) ?? "Unlock CHE"
-          self.authenticateOwner(reason: reason, result: result)
+          let requireFaceId = (args?["requireFaceId"] as? Bool) ?? false
+          self.authenticateOwner(
+            reason: reason,
+            requireFaceId: requireFaceId,
+            result: result
+          )
 
         case "secureSet":
           guard
@@ -397,19 +402,38 @@ struct CHEAppShortcuts: AppShortcutsProvider {
 
   private func authenticateOwner(
     reason: String,
+    requireFaceId: Bool,
     result: @escaping FlutterResult
   ) {
     let context = LAContext()
     context.localizedCancelTitle = "Cancel"
+    context.localizedFallbackTitle = requireFaceId ? "" : "Use Passcode"
     var error: NSError?
 
-    guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
-      result(false)
-      return
+    let policy: LAPolicy
+    if requireFaceId {
+      guard context.canEvaluatePolicy(
+        .deviceOwnerAuthenticationWithBiometrics,
+        error: &error
+      ) else {
+        result(false)
+        return
+      }
+      guard context.biometryType == .faceID else {
+        result(false)
+        return
+      }
+      policy = .deviceOwnerAuthenticationWithBiometrics
+    } else {
+      guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
+        result(false)
+        return
+      }
+      policy = .deviceOwnerAuthentication
     }
 
     context.evaluatePolicy(
-      .deviceOwnerAuthentication,
+      policy,
       localizedReason: reason
     ) { success, _ in
       DispatchQueue.main.async {
