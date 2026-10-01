@@ -126,3 +126,36 @@ test('failed build state never replaces the last known good release', async () =
   const body = await response.json();
   assert.match(body.detail, /No successful CHE mobile release/);
 });
+
+
+test('latest endpoint reports a failed newest mobile attempt without hiding last good IPA', async () => {
+  const fetcher = async (url) => {
+    const value = String(url);
+    if (value.includes('/commits/main/status')) {
+      return new Response(JSON.stringify({
+        sha: 'newer-bad-commit',
+        statuses: [{
+          context: 'CHE iPhone update',
+          state: 'failure',
+          description: 'CHE mobile build failed; previous verified IPA remains available.',
+          updated_at: '2026-10-01T06:00:00Z',
+        }],
+      }), { status: 200 });
+    }
+    if (value.includes('/releases?')) {
+      return new Response(JSON.stringify([release]), { status: 200 });
+    }
+    throw new Error('unexpected URL ' + value);
+  };
+
+  const response = await handleMobileUpdateRequest(
+    new Request('https://che.example/api/update/latest'),
+    {},
+    fetcher,
+  );
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.build_number, '1200001');
+  assert.equal(body.latest_attempt.state, 'failure');
+  assert.equal(body.latest_attempt.commit_sha, 'newer-bad-commit');
+});
