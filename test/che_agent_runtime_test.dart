@@ -221,7 +221,7 @@ void main() {
   });
 
   testWidgets('CHE desk opens with Talk + request that queues an Office goal', (tester) async {
-    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.physicalSize = const Size(1170, 3600);
     tester.view.devicePixelRatio = 3;
     addTearDown(tester.view.reset);
 
@@ -245,11 +245,6 @@ void main() {
     // CHE's desk remains available through the accessible flat-plan fallback.
     await tester.tap(find.bySemanticsLabel(RegExp(r"CHE.*Open to talk or send a request")));
     await tester.pump(const Duration(milliseconds: 500));
-    await tester.scrollUntilVisible(
-      find.text('REQUEST TO CHE'),
-      160,
-      scrollable: find.byType(Scrollable).last,
-    );
 
     expect(find.text('Talk to CHE'), findsWidgets);
     expect(find.text('REQUEST TO CHE'), findsOneWidget);
@@ -292,6 +287,11 @@ void main() {
 
     expect(find.text('FINAL PLAN'), findsOneWidget);
     expect(find.text('• Ship v1'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Draft text'),
+      200,
+      scrollable: find.byType(ListView).last,
+    );
     expect(find.text('Draft text'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox());
