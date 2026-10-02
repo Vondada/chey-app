@@ -2837,7 +2837,7 @@ export class CheState extends DurableObject {
         che_route: 'quality',
         che_audit: { task: incoming.slice(0, 160), agent: 'CHE', route: 'flagstaff_live_reply', peer: sender },
       });
-      const reply = modelText(answer).slice(0, 3900);
+      const reply = String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim().slice(0, 3900);
       if (!reply) throw new Error('CHE returned no Flagstaff reply.');
       const posted = await postWebMail(this.ctx.storage, {
         from: 'che',
