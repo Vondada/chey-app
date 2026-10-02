@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mailboxIntent, readThread, sendMail, listThreads } from './mailbox.js';
+import { mailboxHead, mailboxIntent, readThread, sendMail, listThreads } from './mailbox.js';
 
 function fakeRepo() {
   const files = new Map();
@@ -71,4 +71,12 @@ test('relayText turns the owner\'s "you" (meaning CHE) into CHE', async () => {
   assert.equal(relayText('how to fix you and your voice'), "how to fix CHE and CHE's voice");
   assert.equal(relayText('improve yourself'), 'improve herself (CHE)');
   assert.match(relayText("you're too slow"), /CHE is too slow/);
+});
+
+
+test('mailboxHead resolves the live che-mailbox branch ref', async () => {
+  const fetcher = fakeRepo();
+  await sendMail(env, { from: 'chatgpt', to: 'che', text: 'wake up' }, fetcher);
+  const head = await mailboxHead(env, fetcher);
+  assert.equal(head.head, 'm');
 });
