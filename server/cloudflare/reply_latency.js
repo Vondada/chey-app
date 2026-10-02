@@ -82,7 +82,7 @@ export function replyNeedsContinuation(answer, reply) {
   ).toLowerCase();
   if (['length', 'max_tokens', 'max_output_tokens'].includes(reason)) return true;
 
-  if (text.length < 120) return false;
+  if (text.length < 60) return false;
 
   // Unclosed fenced code is always incomplete.
   const fences = (text.match(/```/g) || []).length;
