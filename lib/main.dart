@@ -1331,11 +1331,7 @@ OWNER AGENCY
     );
   }
 
-  Widget _buildChatTab(List<CheAgent> agents, String subtitle) {
-    final proactive = suggestions.isEmpty ? null : suggestions.first;
-    final keyboardUp = MediaQuery.viewInsetsOf(context).bottom > 0;
-    final panelHeight = keyboardUp ? 0.84 : 0.72;
-
+  Widget _buildChatTab(List<CheAgent> agents) {
     final chat = Column(
       children: [
         Expanded(
@@ -1433,85 +1429,7 @@ OWNER AGENCY
       ],
     );
 
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        // Keep CHE's home visible behind the conversation so Chat feels like
-        // a docked assistant instead of a separate full-screen destination.
-        IgnorePointer(
-          child: ExcludeSemantics(
-            child: Opacity(
-              opacity: 0.42,
-              child: _buildHomeTab(agents),
-            ),
-          ),
-        ),
-        Align(
-          alignment: Alignment.bottomCenter,
-          child: FractionallySizedBox(
-            widthFactor: 1,
-            heightFactor: panelHeight,
-            child: Semantics(
-              container: true,
-              label: 'CHE chat panel. Home remains visible above it.',
-              child: Container(
-                decoration: BoxDecoration(
-                  color: kit.CheColors.bg.withValues(alpha: 0.97),
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
-                  border: Border(
-                    top: BorderSide(color: kit.CheColors.accent.withValues(alpha: 0.28)),
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.35),
-                      blurRadius: 28,
-                      offset: const Offset(0, -8),
-                    ),
-                  ],
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: Column(
-                  children: [
-                    SizedBox(
-                      height: 34,
-                      child: Row(
-                        children: [
-                          const SizedBox(width: 44),
-                          Expanded(
-                            child: Center(
-                              child: Container(
-                                width: 44,
-                                height: 4,
-                                decoration: BoxDecoration(
-                                  color: kit.CheColors.textFaint.withValues(alpha: 0.45),
-                                  borderRadius: BorderRadius.circular(99),
-                                ),
-                              ),
-                            ),
-                          ),
-                          Semantics(
-                            button: true,
-                            label: 'Minimize chat and return to Home.',
-                            child: IconButton(
-                              tooltip: 'Minimize chat',
-                              onPressed: () => _goShellTab(0),
-                              icon: const Icon(Icons.keyboard_arrow_down_rounded),
-                              color: kit.CheColors.textDim,
-                              visualDensity: VisualDensity.compact,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Expanded(child: chat),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
+    return chat;
   }
 
   Future<void> _persistLanguages() async {
@@ -1995,13 +1913,6 @@ OWNER AGENCY
   @override
   Widget build(BuildContext context) {
     _ensureOfficeRuntime();
-    final subtitle = _deviceToken == null
-        ? 'Security pairing required'
-        : _voiceSnapshot.engine == CheVoiceEngine.realtime
-            ? 'Realtime voice • interrupt anytime'
-            : cheSleeping
-                ? 'Say “Chay” to wake'
-                : _voiceSnapshot.engineLabel;
     final agents = [for (final p in _officeRuntime.agents) p.agent];
 
     return Scaffold(
@@ -2068,7 +1979,7 @@ OWNER AGENCY
                   sizing: StackFit.expand,
                   children: [
                     _buildHomeTab(agents),
-                    _buildChatTab(agents, subtitle),
+                    _buildChatTab(agents),
                     _buildOfficeTab(),
                     _buildAppsTab(),
                     _buildMoreTab(),
