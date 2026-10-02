@@ -5968,7 +5968,7 @@ export class CheState extends DurableObject {
           message,
           cheContext,
           cheProvider,
-          maxTokens: needsStrongModel ? 1800 : 900,
+          maxTokens: needsStrongModel ? 1800 : 500,
           // Prefer compact+fast whenever this turn did not need specialist
           // tools/research — even if the message was slightly longer than the
           // early casual heuristic — so time-to-first-token stays low.
