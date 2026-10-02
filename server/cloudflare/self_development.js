@@ -396,7 +396,14 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     const ranked = [...hits.entries()].sort((a, b) => b[1] - a[1]).map(([path]) => path);
     const planned = Array.isArray(architecture.paths) ? architecture.paths.map(String).filter((p) => index.paths.includes(p)) : [];
     const chosen = [...new Set([...ranked, ...planned])].slice(0, 5);
-    if (!chosen.length) return { status: 422, detail: 'The team could not locate the code for that request. Try naming the exact on-screen text.' };
+    if (!chosen.length) {
+      return {
+        status: 422,
+        detail: uiTask
+          ? 'The team could not locate the UI source for that request. Name the exact visible text or screen only if the request is actually about a UI element.'
+          : 'The team could not map this broad engineering request to a safe source file. Repository research and architecture discovery must run before source patching; do not ask the owner for on-screen text.',
+      };
+    }
 
     const sources = new Map();
     const views = [];
