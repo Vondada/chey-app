@@ -550,20 +550,6 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       const attempts = await Promise.all(roundEngineers.map(async (member, i) => {
         const answer = await implement(env, role, task, architecture, views, lessons, feedbacks[i], member, chat).catch(() => null);
         if (!answer) { feedbacks[i] = 'Your last answer was not valid JSON.'; return null; }
-        const fingerprint = attemptFingerprint(answer);
-        if (seenAttempts.has(fingerprint)) {
-          feedbacks[i] =
-            'This exact implementation strategy was already attempted. ' +
-            'Re-read current source and choose a materially different path, anchor, or implementation.';
-          attemptHistory.push({
-            round: round + 1,
-            engineer: member.name,
-            provider: member.provider,
-            outcome: 'duplicate_strategy',
-          });
-          return null;
-        }
-        seenAttempts.add(fingerprint);
         if (answer.no_change === true) {
           const evidence = (Array.isArray(answer.evidence) ? answer.evidence : [])
             .map(String).map((item) => item.trim()).filter(Boolean).slice(0, 8);
@@ -578,6 +564,20 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
           });
           return { no_change: true, summary: noChangeSummary, evidence, engineer: member.name, provider: member.provider };
         }
+        const fingerprint = attemptFingerprint(answer);
+        if (seenAttempts.has(fingerprint)) {
+          feedbacks[i] =
+            'This exact implementation strategy was already attempted. ' +
+            'Re-read current source and choose a materially different path, anchor, or implementation.';
+          attemptHistory.push({
+            round: round + 1,
+            engineer: member.name,
+            provider: member.provider,
+            outcome: 'duplicate_strategy',
+          });
+          return null;
+        }
+        seenAttempts.add(fingerprint);
         const requestedEdits = Array.isArray(answer.edits) ? answer.edits : [];
         const protectedEdit = requestedEdits.find((edit) => !isSelfUpdateEditablePath(String(edit?.path || '')));
         if (protectedEdit) {
