@@ -3162,6 +3162,25 @@ export class CheState extends DurableObject {
         return json({ device_token: raw });
       }
 
+      // A signed-by-possession, short-lived, single-use enrollment is public by
+      // necessity. It can only mint a device for the tenant/access scope already
+      // fixed by an owner-created invite; it cannot choose another tenant.
+      if (request.method === 'POST' && path === '/api/enroll') {
+        const consumed = consumeEnrollment(data, body.enrollment_token, body.device_name);
+        if (consumed.error) return json({ detail: 'Enrollment invitation is invalid or expired.' }, 403);
+        const raw = Array.from(crypto.getRandomValues(new Uint8Array(48)),
+          (b) => b.toString(16).padStart(2, '0')).join('');
+        const enrolledHash = await digest(raw);
+        data.devices[enrolledHash] = consumed.device_name;
+        registerPairedDevice(data, enrolledHash, {
+          name: consumed.device_name,
+          access: consumed.invite.access,
+          tenantId: consumed.invite.tenant_id,
+        });
+        await this.ctx.storage.put('che', data);
+        return json({ device_token: raw, access: consumed.invite.access, tenant_id: consumed.invite.tenant_id }, 201);
+      }
+
       const authorization = request.headers.get('Authorization') || '';
       const match = /^Bearer ([A-Za-z0-9_-]{40,160})$/.exec(authorization);
       const tokenHash = match ? await digest(match[1]) : '';
