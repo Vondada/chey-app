@@ -49,4 +49,39 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 1));
   });
+  testWidgets('Chat is full screen and omits status and developer chrome', (tester) async {
+    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    SharedPreferences.setMockInitialValues({});
+
+    await tester.pumpWidget(const CHEApp());
+    for (var i = 0; i < 15; i++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+
+    await tester.tap(find.text('Chat'));
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('What can I help with?'), findsOneWidget);
+    expect(find.byTooltip('Conversations'), findsOneWidget);
+    expect(find.byTooltip('New chat'), findsOneWidget);
+    expect(find.byTooltip('Minimize chat'), findsNothing);
+
+    for (final hidden in [
+      'Ready',
+      'Online',
+      'Voice off',
+      'SLEEPING',
+      'AWAKE',
+      'Wake listener',
+      'Voice fallback',
+    ]) {
+      expect(find.text(hidden), findsNothing, reason: '$hidden should not render in normal Chat');
+    }
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 1));
+  });
+
 }
