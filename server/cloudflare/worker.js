@@ -1874,6 +1874,13 @@ export function fixThisNeed(text) {
 const PENDING_SELF_UPDATE_KEY = 'pending_self_update';
 const LAST_SELF_UPDATE_PR_KEY = 'last_self_update_pr';
 
+export function selfImprovementLesson(review) {
+  if (!review || typeof review !== 'object') return '';
+  const lessons = Array.isArray(review.lessons) ? review.lessons.map(String) : [];
+  const reliability = /\b(?:bug|error|fail|failure|broken|cut off|truncate|crash|glitch|lag|slow|timeout|routing|wrong route|permission|github|pull request|voice|microphone|audio|regression|test|code|ui|screen|accessibility)\b/i;
+  return lessons.find((lesson) => reliability.test(lesson))?.trim().slice(0, 500) || '';
+}
+
 export function selfUpdateChatIntent(message) {
   const text = String(message || '').trim();
   if (!text) return null;
@@ -6306,6 +6313,36 @@ export class CheState extends DurableObject {
     const data = await this.loadData();
     if (!data.autonomy) return { status: 'paused' };
     const result = await runNightlyReview(this.env, this.ctx.storage, data, this.env.CHE_STRONG_MODEL || STRONG_MODEL);
+
+    // Continuous self-improvement stays reviewable: when CHE identifies a real
+    // reliability/code lesson from her own transcript, the coding crew may
+    // prepare one reviewed proposal in the background. It never writes a branch,
+    // merges, deploys, or spends money here. The owner can later say
+    // "create the PR" to send that reviewed proposal to GitHub.
+    const lesson = selfImprovementLesson(result.review);
+    const lastSelfImproveAt = Number(await this.ctx.storage.get('self_improve_at')) || 0;
+    const pendingSelfUpdate = await this.ctx.storage.get(PENDING_SELF_UPDATE_KEY).catch(() => null);
+    if (lesson && !pendingSelfUpdate?.proposal && Date.now() - lastSelfImproveAt > 3 * 86400000) {
+      await this.ctx.storage.put('self_improve_at', Date.now());
+      const maintenanceRequest = [
+        'CHE autonomous maintenance under the owner’s standing permission to keep improving herself.',
+        `Verified nightly lesson: ${lesson}`,
+        'Inspect the latest repository. Make only a narrow, evidence-based reliability improvement.',
+        'Preserve existing behavior, voice-first accessibility, secrets, permissions, and owner approval boundaries.',
+        'Do not alter GitHub workflows, signing, secrets, entitlements, or dependency/deployment control files.',
+      ].join('\n');
+      const prepared = await prepareSelfUpdate(this.env, maintenanceRequest, fetch, this.ctx.storage).catch(() => null);
+      if (prepared?.status === 200 && prepared.proposal) {
+        await this.ctx.storage.put(PENDING_SELF_UPDATE_KEY, {
+          proposal: prepared.proposal,
+          request: maintenanceRequest,
+          team: prepared.team || [],
+          automatic: true,
+          reviewed_at: new Date().toISOString(),
+        });
+      }
+    }
+
     const fresh = await this.loadData();
     Object.assign(fresh, {
       nightly_reviews: data.nightly_reviews,
