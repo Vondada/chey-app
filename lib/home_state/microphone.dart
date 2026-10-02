@@ -398,7 +398,11 @@ extension _CheHomeMicrophone on _CHEHomeState {
             // acknowledge it without ending the conversation.
             if (result.finalResult && !_autoSentCurrentTurn && !_isSending) {
               _autoSentCurrentTurn = true;
-              if (speech.isListening) await speech.stop();
+              if (speech.isListening) {
+                await _localVoice.runMicOp(() async {
+                  await speech.stop();
+                });
+              }
               if (!mounted) return;
               _set(() => isListening = false);
               await speakText('Yeah, sir?');
@@ -411,7 +415,11 @@ extension _CheHomeMicrophone on _CHEHomeState {
             cheSleeping = true;
             controller.clear();
 
-            if (speech.isListening) await speech.stop();
+            if (speech.isListening) {
+              await _localVoice.runMicOp(() async {
+                await speech.stop();
+              });
+            }
             if (!mounted) return;
             _set(() => isListening = false);
 
