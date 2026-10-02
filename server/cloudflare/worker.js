@@ -5116,13 +5116,18 @@ export class CheState extends DurableObject {
           }
           return ndjsonReply(speakScout(scout.need, result), { source: 'che_code_scout' });
         }
-        // "study 2" → crew reads that repo and proposes a change.
-        const studyMatch = /^(?:che|chay)?[,:]?\s*study\s+(?:number\s+)?(\d{1,2})\b/i.exec(message.trim());
-        if (studyMatch) {
-          const list = (await this.ctx.storage.get('code_scout_last')) || [];
-          const pick = Array.isArray(list) ? list[Number(studyMatch[1]) - 1] : null;
-          if (!pick) return ndjsonReply('Say "find code for …" first, sir, then "study" and a number.', { source: 'che_code_scout' });
-          return ndjsonReply(`I'll have my crew study ${pick.full_name} (${pick.license}) and propose how to use its approach in your app. Say "update your code:" with what you want from it, and they'll draft it for your approval, with credit.`, { source: 'che_code_scout', repo: pick.full_name });
+        // Multi-repository study selection feeds the next upgrade request.
+        const studySelection = studySelectionIntent(message);
+        if (studySelection) {
+          const selected = await selectStudyRepos(this.ctx.storage, studySelection);
+          if (selected.error) {
+            return ndjsonReply(selected.error, { source: 'che_code_scout' });
+          }
+          const names = selected.repos.map((repo) => repo.full_name);
+          return ndjsonReply(
+            `Saved Study ${studySelection.numbers.join(' and ')}, sir: ${names.join(', ')}. Your next substantial CHE upgrade will compare these references with the current code before proposing changes.`,
+            { source: 'che_code_scout', repos: names },
+          );
         }
 
         // Talk to other AIs right now: "ask Gemini and ChatGPT about …".
