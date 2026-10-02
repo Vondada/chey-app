@@ -2047,6 +2047,38 @@ async function dispatchChange(env, body, memory = null) {
     console.error('CHE change request failed', error?.message || error);
     return json({ detail: `The coding team failed: ${String(error?.message || error).slice(0, 160)}. Nothing was changed.` }, 502);
   }
+  if (prepared.status === 200 && prepared.already_satisfied) {
+    if (memory?.put && inspiration?.references?.length) {
+      let ledger = [];
+      try { ledger = (await memory.get('inspiration_upgrade_ledger')) || []; } catch (_) {}
+      if (!Array.isArray(ledger)) ledger = [];
+      ledger.push({
+        request: request.slice(0, 1000),
+        references: inspiration.references.map((ref) => ({
+          full_name: ref.full_name,
+          license: ref.license || '',
+          reusable: Boolean(ref.reusable && !ref.error),
+        })),
+        result: 'already-satisfied',
+        files: [],
+        summary: prepared.summary || '',
+        evidence: prepared.evidence || [],
+        at: new Date().toISOString(),
+      });
+      await memory.put('inspiration_upgrade_ledger', ledger.slice(-80)).catch(() => null);
+    }
+    const team = Array.isArray(prepared.team) ? prepared.team.join(', ') : 'CHE engineering team';
+    return json({
+      message: `${team} compared the request against the inspected CHE source and independently verified that there is no useful code delta to apply, sir. I did not manufacture a no-op edit or fake a PR. ${String(prepared.summary || '').trim()} ${Array.isArray(prepared.evidence) && prepared.evidence.length ? `Evidence: ${prepared.evidence.join(' | ')}` : ''}`.trim(),
+      already_satisfied: true,
+      engineering_team: prepared.team || [],
+      code_review_passed: true,
+      owner_approval_required: false,
+      evidence: prepared.evidence || [],
+      vector_memory_status: recall.status,
+      vector_memory_matches: recall.matches?.length || 0,
+    });
+  }
   if (prepared.status !== 200 || !prepared.proposal) {
     await sendMail(env, { from: 'che', to: 'claude', text: `My coding crew failed on: "${request.slice(0, 300)}". Reason: ${String(prepared.detail || 'unknown').slice(0, 800)}` }).catch(() => null);
     return json({ detail: `The coding team did not produce a review-passed update, sir. ${prepared.detail || 'Nothing was changed.'}` }, prepared.status && prepared.status !== 200 ? prepared.status : 422);
