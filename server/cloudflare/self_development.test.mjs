@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyEdits, focusView, jsonObject, literalTerms, loadLessons, prepareSelfUpdate, recordLesson } from './self_development.js';
+import { applyEdits, attemptFingerprint, diagnoseNoOp, focusView, jsonObject, literalTerms, loadLessons, prepareSelfUpdate, recordLesson } from './self_development.js';
 
 const MAIN = `class Home {\n  String _statusBanner = 'Ready. Type or speak a request.';\n}\n`;
 const PATCH = `const t = Text('CHE updated. Restart to apply.');\n`;
@@ -412,4 +412,143 @@ test('broad architecture work can inspect and update Worker source', async () =>
   assert.equal(out.status, 200, out.detail);
   assert.deepEqual(out.proposal.files.map((file) => file.path), ['server/cloudflare/code_scout.js']);
   assert.match(out.proposal.files[0].content, /compare-delta/);
+});
+
+
+test('three-pass hard stop never repeats an identical no-op strategy', async () => {
+  let implementationCalls = 0;
+  let recoveryCalls = 0;
+  let reviewCalls = 0;
+  const env = {
+    CHE_GITHUB_TOKEN: 't',
+    CHE_GITHUB_REPO: 'o/r',
+    AI: {
+      run: async (_model, input) => {
+        const system = input.messages[0].content;
+        if (system.includes('Source Recovery Architect')) {
+          recoveryCalls++;
+          return { response: JSON.stringify({
+            plan: 'Re-read the same verified target and choose a different strategy.',
+            search_terms: ['Ready. Type or speak a request.'],
+            paths: ['lib/main.dart'],
+          }) };
+        }
+        if (system.includes('Architect')) {
+          return { response: JSON.stringify({
+            plan: 'Inspect the home status.',
+            search_terms: ['Ready. Type or speak a request.'],
+            paths: ['lib/main.dart'],
+          }) };
+        }
+        if (system.includes('Review')) {
+          reviewCalls++;
+          return { response: JSON.stringify({ approved: true, target_correct: true, notes: [] }) };
+        }
+        implementationCalls++;
+        return { response: JSON.stringify({
+          summary: 'Identical no-op',
+          edits: [{
+            path: 'lib/main.dart',
+            find: "'Ready. Type or speak a request.'",
+            replace: "'Ready. Type or speak a request.'",
+          }],
+        }) };
+      },
+    },
+  };
+
+  const out = await prepareSelfUpdate(env, 'change the home status wording', fakeGitHub(), memoryStore());
+  assert.equal(out.status, 422);
+  assert.match(out.detail, /exact implementation strategy was already attempted/i);
+  assert.equal(recoveryCalls, 2, 'only the two boundaries between three rounds run recovery');
+  assert.equal(reviewCalls, 0, 'empty diffs never reach review');
+  assert.equal(implementationCalls, 6, 'three bounded rounds with two engineers each');
+});
+
+test('recovery re-fetches an already-inspected target before retrying', async () => {
+  let mainReads = 0;
+  let recoveryCalls = 0;
+  const files = {
+    'lib/main.dart': MAIN,
+  };
+  const fetcher = async (url) => {
+    const u = String(url);
+    const ok = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (u.includes('/search/code')) return ok({ items: [{ path: 'lib/main.dart' }] });
+    if (u.endsWith('/o/r')) return ok({ default_branch: 'main' });
+    if (u.includes('/git/ref/')) return ok({ object: { sha: 'abc' } });
+    if (u.includes('/git/trees/')) return ok({ tree: [{ type: 'blob', path: 'lib/main.dart' }] });
+    if (u.includes('/contents/lib/main.dart?ref=')) {
+      mainReads++;
+      const source = mainReads === 1
+        ? MAIN
+        : "class Home {\n  String _statusBanner = 'Fresh from GitHub';\n}\n";
+      return ok({ content: btoa(source) });
+    }
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const env = {
+    CHE_GITHUB_TOKEN: 't',
+    CHE_GITHUB_REPO: 'o/r',
+    AI: {
+      run: async (_model, input) => {
+        const system = input.messages[0].content;
+        const payload = JSON.parse(input.messages[1].content);
+        if (system.includes('Source Recovery Architect')) {
+          recoveryCalls++;
+          return { response: JSON.stringify({
+            plan: 'Re-read the already-inspected home source.',
+            search_terms: ['Fresh from GitHub'],
+            paths: ['lib/main.dart'],
+          }) };
+        }
+        if (system.includes('Architect')) {
+          return { response: JSON.stringify({
+            plan: 'Inspect home status.',
+            search_terms: ['Ready. Type or speak a request.'],
+            paths: ['lib/main.dart'],
+          }) };
+        }
+        if (system.includes('Review')) {
+          return { response: JSON.stringify({
+            approved: true,
+            target_correct: true,
+            notes: [],
+            repair_instructions: '',
+          }) };
+        }
+        const inspected = JSON.stringify(payload.inspected || []);
+        if (inspected.includes('Fresh from GitHub')) {
+          return { response: JSON.stringify({
+            summary: 'Edit freshly re-fetched source',
+            edits: [{
+              path: 'lib/main.dart',
+              find: "'Fresh from GitHub'",
+              replace: "'Recovered, sir.'",
+            }],
+          }) };
+        }
+        return { response: JSON.stringify({
+          summary: 'Force first-pass no-op',
+          edits: [{
+            path: 'lib/main.dart',
+            find: "'Ready. Type or speak a request.'",
+            replace: "'Ready. Type or speak a request.'",
+          }],
+        }) };
+      },
+    },
+  };
+
+  const out = await prepareSelfUpdate(env, 'change the home status wording', fetcher, memoryStore());
+  assert.equal(out.status, 200, out.detail);
+  assert.equal(recoveryCalls, 1);
+  assert.ok(mainReads >= 2, 'recovery must fetch an already-inspected file again');
+  assert.match(out.proposal.files[0].content, /Recovered, sir/);
+});
+
+test('no-op helpers fingerprint exact strategies and diagnose identical replacements', () => {
+  const answer = { edits: [{ path: 'lib/a.dart', find: 'x', replace: 'x' }] };
+  assert.equal(attemptFingerprint(answer), attemptFingerprint(structuredClone(answer)));
+  assert.match(diagnoseNoOp(new Map([['lib/a.dart', 'x']]), answer), /identical/i);
 });
