@@ -41,10 +41,22 @@ function modelText(answer) {
   return String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim();
 }
 
-function jsonObject(text) {
-  const match = /\{[\s\S]*\}/.exec(String(text || ''));
-  if (!match) return null;
-  try { return JSON.parse(match[0]); } catch (_) { return null; }
+export function jsonObject(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  const candidates = [raw];
+  const fenced = /^\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`$/i.exec(raw);
+  if (fenced) candidates.push(fenced[1].trim());
+  const first = raw.indexOf('{');
+  const last = raw.lastIndexOf('}');
+  if (first >= 0 && last > first) candidates.push(raw.slice(first, last + 1));
+  for (const candidate of [...new Set(candidates)]) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+    } catch (_) {}
+  }
+  return null;
 }
 
 async function runAgent(env, role, assignment, payload, maxTokens = 2200, provider = '') {
@@ -428,13 +440,39 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     const hits = await searchCode(env, terms, fetcher);
     const ranked = [...hits.entries()].sort((a, b) => b[1] - a[1]).map(([path]) => path);
     const planned = Array.isArray(architecture.paths) ? architecture.paths.map(String).filter((p) => index.paths.includes(p)) : [];
-    const chosen = [...new Set([...ranked, ...planned])].slice(0, 5);
+    let chosen = [...new Set([...ranked, ...planned])].slice(0, 5);
+    if (!chosen.length) {
+      const recoveryMember = CREW.planners[1];
+      const recovery = await recoveryPlan(
+        env,
+        task,
+        architecture,
+        'Initial discovery returned no verified source paths. Broaden discovery from the repository tree; use visible text, identifiers, widgets/classes/functions, routes, imports, callers/callees and likely feature directories.',
+        index,
+        lessons,
+        recoveryMember,
+        chat,
+      ).catch(() => null);
+      if (recovery) {
+        const recoveryTerms = (Array.isArray(recovery.search_terms) ? recovery.search_terms : [])
+          .map(String).filter((item) => item.trim().length > 2);
+        for (const term of recoveryTerms) if (!terms.includes(term)) terms.push(term);
+        const recoveryPaths = (Array.isArray(recovery.paths) ? recovery.paths : [])
+          .map(String).filter((path) => index.paths.includes(path));
+        const moreHits = await searchCode(env, recoveryTerms, fetcher);
+        for (const [path, count] of moreHits.entries()) hits.set(path, (hits.get(path) || 0) + count);
+        const reranked = [...hits.entries()].sort((a, b) => b[1] - a[1]).map(([path]) => path);
+        chosen = [...new Set([...recoveryPaths, ...reranked])].filter((path) => index.paths.includes(path)).slice(0, 5);
+        architecture.plan = [architecture.plan, `Initial recovery: ${String(recovery.plan || '')}`].filter(Boolean).join('\n');
+        architecture.search_terms = [...new Set([...(architecture.search_terms || []), ...recoveryTerms])];
+        architecture.paths = [...new Set([...(architecture.paths || []), ...recoveryPaths])];
+        chat.push({ from: recoveryMember.name, msg: `Initial recovery locate: ${String(recovery.plan || '').slice(0, 500)} Paths: ${recoveryPaths.join(', ') || 'search again'}` });
+      }
+    }
     if (!chosen.length) {
       return {
         status: 422,
-        detail: uiTask
-          ? 'The first discovery pass could not locate the UI source. CHE must broaden repository discovery using visible terms, widget names, routes, imports and callers before asking the owner for source text.'
-          : 'The team could not map this broad engineering request to a safe source file. Repository research and architecture discovery must run before source patching; do not ask the owner for on-screen text.',
+        detail: 'CHE exhausted automatic repository discovery without finding a verified editable source path. No owner source text is required; retry only with new repository evidence or an external limitation resolved.',
       };
     }
 
