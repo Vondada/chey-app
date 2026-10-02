@@ -65,7 +65,7 @@ import 'che_ui/che_ui_preferences.dart';
 import 'che_ui/che_transitions.dart';
 import 'che_ui/che_widgets.dart' as kit show CheBackground;
 import 'che_ui/che_agents.dart' show CheAgent, CheAgentStatusLabel;
-import 'che_ui/che_agent_chat.dart' show CheOrb, CheOrbState;
+import 'che_ui/che_agent_chat.dart' show CheOrb, CheOrbState, CheOrbStateLabel;
 import 'che_ui/che_log.dart' show CheTranscriptScreen;
 import 'home/che_home_chat.dart';
 import 'home/che_inline_preview.dart';
@@ -443,6 +443,9 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
       return CheOrbState.thinking;
     }
     if (phase == CheVoicePhase.thinking || phase == CheVoicePhase.connecting) return CheOrbState.thinking;
+    // Keep fallback diagnostics visual-only in normal Chat: warning-colored orb,
+    // no provider/fallback text clutter.
+    if (_naturalVoiceServerErrored && !_isSpeaking) return CheOrbState.waiting;
     if (_justCompleted) return CheOrbState.completed;
     if (_officeRuntime.busy) return CheOrbState.waiting;
     if (cheSleeping || phase == CheVoicePhase.sleeping || phase == CheVoicePhase.wakeListening) {
@@ -1318,6 +1321,8 @@ OWNER AGENCY
   }
 
   Widget _buildChatTab(List<CheAgent> agents) {
+    final postReplyActions =
+        _homeSuggestions.isNotEmpty ? _homeSuggestions : _skillPlugins.quickActions();
     final chat = Column(
       children: [
         Expanded(
@@ -1350,7 +1355,7 @@ OWNER AGENCY
                   ),
           ),
         ),
-        if (_skillPlugins.quickActions().isNotEmpty &&
+        if (postReplyActions.isNotEmpty &&
             messages.isNotEmpty &&
             messages.last['role'] == 'assistant' &&
             !_isSending)
@@ -1361,7 +1366,7 @@ OWNER AGENCY
                 spacing: 8,
                 runSpacing: 6,
                 children: [
-                  for (final action in _skillPlugins.quickActions().take(3))
+                  for (final action in postReplyActions.take(3))
                     ConstrainedBox(
                       constraints: BoxConstraints(maxWidth: constraints.maxWidth),
                       child: ActionChip(
