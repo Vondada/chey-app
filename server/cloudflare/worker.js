@@ -1935,6 +1935,24 @@ async function dispatchChange(env, body, memory = null) {
     await sendMail(env, { from: 'che', to: 'claude', text: `My coding crew failed on: "${request.slice(0, 300)}". Reason: ${String(prepared.detail || 'unknown').slice(0, 800)}` }).catch(() => null);
     return json({ detail: `The coding team did not produce a review-passed update, sir. ${prepared.detail || 'Nothing was changed.'}` }, prepared.status && prepared.status !== 200 ? prepared.status : 422);
   }
+  if (memory?.put && inspiration?.references?.length) {
+    let ledger = [];
+    try { ledger = (await memory.get('inspiration_upgrade_ledger')) || []; } catch (_) {}
+    if (!Array.isArray(ledger)) ledger = [];
+    ledger.push({
+      request: request.slice(0, 1000),
+      references: inspiration.references.map((ref) => ({
+        full_name: ref.full_name,
+        license: ref.license || '',
+        reusable: Boolean(ref.reusable && !ref.error),
+      })),
+      result: 'review-passed-proposal',
+      files: prepared.proposal.files.map((file) => file.path),
+      summary: prepared.proposal.summary,
+      at: new Date().toISOString(),
+    });
+    await memory.put('inspiration_upgrade_ledger', ledger.slice(-80)).catch(() => null);
+  }
   const team = Array.isArray(prepared.team) ? prepared.team.join(', ') : 'CHE engineering team';
   const proposalBlock = '```che-update\n' + JSON.stringify(prepared.proposal) + '\n```';
   return json({
