@@ -39,7 +39,7 @@ import { prepareSelfUpdate } from './self_development.js';
 import { KEY_PROVIDERS, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
-import { autoImproveScan, codeScoutIntent, fetchRepoFile, scoutCode, speakScout } from './code_scout.js';
+import { autoImproveScan, codeScoutIntent, fetchRepoFile, listOwnerStarredRepos, scoutCode, speakScout, speakStarredRepos, starredRepoIntent } from './code_scout.js';
 import { consultEngine, consultIntent, shareIntent, speakConsult } from './ai_consult.js';
 import { markOwnerSeen, readArchive as flagstaffArchive, unreadIncoming } from './web_mailbox.js';
 import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
@@ -1873,6 +1873,35 @@ async function dispatchChange(env, body, memory = null) {
   if (request.length < 8 || request.length > 16000) return json({ detail: 'Describe the CHE update in 8–16000 characters.' }, 400);
   if (!env.CHE_GITHUB_TOKEN || !/^[\w.-]+\/[\w.-]+$/.test(String(env.CHE_GITHUB_REPO || ''))) {
     return json({ detail: 'Phone code proposals need CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the CHE server.' }, 503);
+  }
+
+  // Broad starred-repository jobs are discovery first, not exact source edits.
+  // Handle them here too because older app builds may still send them to the
+  // self-update endpoint. This keeps them out of the on-screen-text locator.
+  const starredResearch = starredRepoIntent(request);
+  if (starredResearch) {
+    const result = await listOwnerStarredRepos(env, fetch, {
+      limit: 300,
+      focus: starredResearch.focus,
+    });
+    if (!result.error && memory?.put) {
+      const studyList = (result.candidates || [])
+        .filter((repo) => repo.reusable)
+        .map((repo) => ({ full_name: repo.full_name, license: repo.license }));
+      await memory.put('code_scout_last', studyList).catch(() => null);
+      await memory.put('code_scout_starred_last', {
+        checked: result.checked,
+        candidates: result.candidates || [],
+        at: new Date().toISOString(),
+      }).catch(() => null);
+    }
+    return json({
+      message: speakStarredRepos(starredResearch, result),
+      repository_research: true,
+      code_review_passed: false,
+      owner_approval_required: false,
+      next: result.error ? 'Fix the reported GitHub access problem.' : 'Study a reusable candidate before proposing code.',
+    }, 200);
   }
 
   // The coding team runs here on Cloudflare and reads/writes the repo through
@@ -5043,6 +5072,31 @@ export class CheState extends DurableObject {
             ? `I scanned for upgrades to the whole app, sir, and filed ${found.length} new reusable finds under free tech: ${found.slice(0, 4).map((f) => f.full_name).join(', ')}. Say "what's in free tech" to review.`
             : 'I scanned for app upgrades, sir. Nothing new and reusable since last time.', { source: 'che_code_scout' });
         }
+        // Owner's starred GitHub library / Inspirations: inspect first, then
+        // let the existing "study N" flow hand a reusable candidate to the crew.
+        const starredResearch = starredRepoIntent(message);
+        if (starredResearch) {
+          const result = await listOwnerStarredRepos(this.env, fetch, {
+            limit: 300,
+            focus: starredResearch.focus,
+          });
+          if (!result.error) {
+            const studyList = (result.candidates || [])
+              .filter((repo) => repo.reusable)
+              .map((repo) => ({ full_name: repo.full_name, license: repo.license }));
+            await this.ctx.storage.put('code_scout_last', studyList);
+            await this.ctx.storage.put('code_scout_starred_last', {
+              checked: result.checked,
+              candidates: result.candidates || [],
+              at: new Date().toISOString(),
+            });
+          }
+          return ndjsonReply(speakStarredRepos(starredResearch, result), {
+            source: 'che_code_scout',
+            repository_research: true,
+          });
+        }
+
         // Scout GitHub for top, reusable code that matches a need.
         const scout = codeScoutIntent(message);
         if (scout) {
