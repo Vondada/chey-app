@@ -2518,8 +2518,13 @@ export class CheState extends DurableObject {
     const key = `flagstaff_auto_reply:${id}`;
     const prior = await this.ctx.storage.get(key);
     const priorAt = Number(prior?.at || 0);
-    if (prior?.status === 'replied' || prior?.status === 'blocked') return { skipped: true, status: prior.status };
+    if (prior?.status === 'replied' || prior?.status === 'blocked' || prior?.status === 'failed') {
+      return { skipped: true, status: prior.status };
+    }
     if (prior?.status === 'processing' && Date.now() - priorAt < 120_000) return { processing: true };
+    if (prior?.status === 'retry' && Number(prior.retry_at || 0) > Date.now()) {
+      return { queued: true, status: 'retry', retry_at: Number(prior.retry_at) };
+    }
 
     if (looksLikeAttack(incoming)) {
       await this.ctx.storage.put(key, { status: 'blocked', at: Date.now(), sender });
@@ -2533,7 +2538,12 @@ export class CheState extends DurableObject {
       return { skipped: true, status: 'blocked' };
     }
 
-    await this.ctx.storage.put(key, { status: 'processing', at: Date.now(), sender });
+    await this.ctx.storage.put(key, {
+      status: 'processing',
+      at: Date.now(),
+      sender,
+      retry_count: Number(prior?.retry_count || 0),
+    });
     try {
       const recall = await retrieveVectorContext(this.env, incoming).catch(() => ({ matches: [], status: 'unavailable' }));
       const rag = vectorContextText(recall);
@@ -2578,28 +2588,64 @@ export class CheState extends DurableObject {
       });
       return { replied: true, reply_id: posted.message.id };
     } catch (error) {
+      const retryCount = Number(prior?.retry_count || 0) + 1;
+      const retryable = busyError(error) && retryCount <= 24;
+      const retryAt = retryable ? Date.now() + 30_000 : 0;
       await this.ctx.storage.put(key, {
-        status: 'retry',
+        status: retryable ? 'retry' : 'failed',
         at: Date.now(),
         sender,
+        retry_count: retryCount,
+        retry_at: retryAt,
         error: String(error?.message || error).slice(0, 500),
       });
+      if (retryable) {
+        // The normal open-Flagstaff watcher runs every 30 seconds, but setting
+        // the alarm here also makes the retry durable if this was the only work.
+        await this.ctx.storage.setAlarm(retryAt);
+        return { queued: true, status: 'retry', retry_at: retryAt };
+      }
       throw error;
     }
   }
 
+  async retryFlagstaffReplies() {
+    const all = await readAllMail(this.env).catch(() => ({ error: 'Mailbox read failed.', messages: [] }));
+    if (all.error) return { replied: 0, queued: 0 };
+    const incoming = (all.messages || [])
+      .filter((m) => m?.id && m.from !== 'che' && String(m.to || 'che').toLowerCase() === 'che')
+      .slice(-40);
+    let replied = 0;
+    let queued = 0;
+    for (const message of incoming) {
+      const prior = await this.ctx.storage.get(`flagstaff_auto_reply:${String(message.id)}`);
+      if (prior?.status !== 'retry' || Number(prior.retry_at || 0) > Date.now()) continue;
+      try {
+        const result = await this.replyToFlagstaffMessage(message);
+        if (result?.replied) replied += 1;
+        else if (result?.queued) queued += 1;
+      } catch (error) {
+        console.error('Flagstaff retry failed:', message?.id, error?.message || error);
+      }
+    }
+    return { replied, queued };
+  }
+
   async processFlagstaffInbox({ force = false, messageId = '' } = {}) {
     if (!(await flagstaffOpen(this.ctx.storage))) return { checked: false, replied: 0 };
+    // Retry due engine-outage replies even when GitHub's mailbox head did not
+    // change. Otherwise one temporary 503 could permanently strand a message.
+    const retryResult = await this.retryFlagstaffReplies();
     const headState = await mailboxHead(this.env).catch(() => ({ head: '' }));
     const previousHead = String((await this.ctx.storage.get('flagstaff_mailbox_head')) || '');
     if (!force && headState.head && !previousHead) {
       // First watcher pass establishes a baseline. Never replay old mailbox
       // history as if it just arrived.
       await this.ctx.storage.put('flagstaff_mailbox_head', headState.head);
-      return { checked: true, replied: 0, initialized: true };
+      return { checked: true, replied: retryResult.replied, queued: retryResult.queued, initialized: true };
     }
     if (!force && headState.head && previousHead === headState.head) {
-      return { checked: true, replied: 0, unchanged: true };
+      return { checked: true, replied: retryResult.replied, queued: retryResult.queued, unchanged: true };
     }
 
     const targetId = String(messageId || '').trim();
@@ -2620,7 +2666,11 @@ export class CheState extends DurableObject {
 
     const finalHead = await mailboxHead(this.env).catch(() => ({ head: headState.head || '' }));
     if (finalHead.head) await this.ctx.storage.put('flagstaff_mailbox_head', finalHead.head);
-    return { checked: true, replied };
+    return {
+      checked: true,
+      replied: replied + retryResult.replied,
+      queued: retryResult.queued,
+    };
   }
 
   async fetch(request) {
@@ -2707,6 +2757,8 @@ export class CheState extends DurableObject {
           replied: Boolean(result?.replied),
           reply_id: result?.reply_id || '',
           processing: Boolean(result?.processing),
+          queued: Boolean(result?.queued),
+          retry_at: Number(result?.retry_at || 0),
           skipped: Boolean(result?.skipped),
           reply_status: result?.status || '',
         });
