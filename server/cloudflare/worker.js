@@ -2042,7 +2042,7 @@ async function dispatchChange(env, body, memory = null) {
   }
   let prepared;
   try {
-    prepared = await prepareSelfUpdate(env, groundedRequest, fetch, memory);
+    prepared = await prepareSelfUpdate(env, groundedRequest, fetch, memory, { intentRequest: request });
   } catch (error) {
     console.error('CHE change request failed', error?.message || error);
     return json({ detail: `The coding team failed: ${String(error?.message || error).slice(0, 160)}. Nothing was changed.` }, 502);
