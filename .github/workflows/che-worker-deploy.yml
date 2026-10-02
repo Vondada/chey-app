@@ -11,6 +11,12 @@ name: Deploy CHE Worker
 # on GitHub Actions billing/minutes for normal CHE server deployments.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "server/cloudflare/**"
+      - ".github/workflows/che-worker-deploy.yml"
 
 permissions:
   contents: read
@@ -21,6 +27,9 @@ concurrency:
 
 jobs:
   deploy:
+    # Cloudflare Workers Builds remains the normal path. A main push only uses
+    # this emergency deploy when the commit explicitly includes [worker-deploy].
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[worker-deploy]')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
