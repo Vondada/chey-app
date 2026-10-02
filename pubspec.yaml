@@ -1,7 +1,7 @@
 name: chey
 description: CHE — Cognitive Horizon Engine.
 publish_to: none
-version: 1.4.8+17
+version: 1.4.9+18
 
 environment:
   sdk: ^3.13.4
