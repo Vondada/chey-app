@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { codeScoutIntent, inspirationUpgradeContext, listOwnerStarredRepos, reusableLicense, scoutCode, selectStudyRepos, shouldUseInspirationWorkflow, speakScout, speakStarredRepos, starredRepoIntent, studySelectionIntent } from './code_scout.js';
+import { codeScoutIntent, inspirationUpgradeContext, listOwnerStarredRepos, repositoryImplementationIntent, reusableLicense, scoutCode, selectStudyRepos, shouldUseInspirationWorkflow, speakScout, speakStarredRepos, starredRepoIntent, studySelectionIntent } from './code_scout.js';
 
 test('intent parses code-scout phrasings', () => {
   assert.deepEqual(codeScoutIntent('find code for offline speech to text'), { need: 'offline speech to text' });
@@ -30,11 +30,14 @@ test('empty when nothing reusable matched', async () => {
 });
 
 
-test('starred GitHub and Inspirations requests are repository research', () => {
-  const intent = starredRepoIntent('Go through my GitHub starred repositories and my Inspirations tab and find agency agents to integrate into CHE.');
+test('starred GitHub intent distinguishes research from implementation', () => {
+  const implementationText = 'Update your code: use my starred GitHub repositories and Inspirations, compare them with CHE, implement the useful delta, run tests, and create a draft PR.';
+  const intent = starredRepoIntent(implementationText);
   assert.ok(intent);
   assert.equal(intent.integrate, true);
-  assert.ok(intent.focus.includes('agent'));
+  assert.equal(repositoryImplementationIntent(implementationText), true);
+  assert.equal(repositoryImplementationIntent('Inspect my starred GitHub repos for agent and RAG systems.'), false);
+  assert.ok(intent.focus.includes('agent') || intent.focus.includes('ai'));
   assert.equal(starredRepoIntent('change the text on my home screen'), null);
 });
 
