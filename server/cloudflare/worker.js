@@ -1908,6 +1908,13 @@ async function dispatchChange(env, body, memory = null) {
   // the GitHub API. GitHub Actions (billed minutes) is no longer required.
   const recall = await retrieveVectorContext(env, request);
   let groundedRequest = ragReference(request, vectorContextText(recall), 12000).slice(0, 16000);
+
+  const inspiration = await inspirationUpgradeContext(env, memory, request, fetch)
+    .catch(() => ({ text: '', references: [] }));
+  if (inspiration.text) {
+    groundedRequest = `${groundedRequest}\n\n${inspiration.text}`.slice(0, 42000);
+  }
+
   // "Fix this": look for well-built open-source code doing the same job, so
   // the crew can learn the technique (never copy it) and credit it.
   if (body.fix_this) {
