@@ -59,18 +59,23 @@ const READABLE_EXTRA_PATHS = [
   /^android\/[A-Za-z0-9_./-]+\.(?:xml|gradle|kts|properties)$/,
 ];
 
-const BLOCKED_WRITE_PATH = /^(?:\.github\/|\.git\/)|(?:^|\/)(?:\.env|secrets?\b|credentials?\b)|\.(?:pem|p12|mobileprovision|key|keystore|jks)$/i;
+const SENSITIVE_PATH = /(?:^|\/)(?:\.env(?:\.|$)|secrets?\b|credentials?\b)|\.(?:pem|p12|mobileprovision|key|keystore|jks)$/i;
+const PROTECTED_WRITE_PATH = /^(?:\.github\/|\.git\/)/i;
+const READABLE_TEXT_PATH = /\.(?:dart|js|mjs|cjs|ts|tsx|jsx|py|sh|bash|ps1|swift|m|mm|h|hpp|c|cc|cpp|java|kt|kts|gradle|xml|plist|pbxproj|xcconfig|ya?ml|jsonc?|toml|md|txt|html|css|sql|graphql|lock|properties)$/i;
 
 export function isSelfUpdateEditablePath(path) {
   const value = String(path || '').trim();
-  if (!value || value.includes('..') || value.includes('//') || BLOCKED_WRITE_PATH.test(value)) return false;
+  if (!value || value.includes('..') || value.includes('//') || SENSITIVE_PATH.test(value) || PROTECTED_WRITE_PATH.test(value)) return false;
   return EDITABLE_PATHS.some((re) => re.test(value));
 }
 
 export function isSelfUpdateReadablePath(path) {
   const value = String(path || '').trim();
-  if (!value || value.includes('..') || value.includes('//') || BLOCKED_WRITE_PATH.test(value)) return false;
-  return isSelfUpdateEditablePath(value) || READABLE_EXTRA_PATHS.some((re) => re.test(value));
+  if (!value || value.includes('..') || value.includes('//') || SENSITIVE_PATH.test(value)) return false;
+  return isSelfUpdateEditablePath(value)
+    || READABLE_EXTRA_PATHS.some((re) => re.test(value))
+    || READABLE_TEXT_PATH.test(value)
+    || /^(?:README|LICENSE|CHANGELOG|CODEOWNERS)(?:\.[A-Za-z0-9_-]+)?$/i.test(value);
 }
 
 export function scanUpdateContent(content, path = '') {
