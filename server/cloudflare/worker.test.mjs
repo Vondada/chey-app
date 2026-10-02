@@ -866,3 +866,17 @@ test('Flagstaff unsafe mail gets a visible refusal instead of silent blocking', 
   assert.equal(visible.at(-1).reply_to, message.id);
   assert.match(visible.at(-1).text, /will not follow requests for secrets/i);
 });
+
+
+test('Flagstaff retry hard-stops after three failed attempts', async () => {
+  const source = await import('node:fs/promises').then((fs) => fs.readFile(new URL('./worker.js', import.meta.url), 'utf8'));
+  assert.match(source, /const retryable = retryCount <= 3;/);
+  assert.doesNotMatch(source, /const retryable = retryCount <= 24;/);
+});
+
+test('Flagstaff retry scanner is driven by pending retry records, not newest-40 history', async () => {
+  const source = await import('node:fs/promises').then((fs) => fs.readFile(new URL('./worker.js', import.meta.url), 'utf8'));
+  assert.match(source, /list\(\{ prefix: 'flagstaff_auto_reply:' \}\)/);
+  assert.match(source, /pendingIds\.has\(String\(m\.id\)\)/);
+  assert.doesNotMatch(source, /\.slice\(-40\);\n    let replied = 0;\n    let queued = 0;\n    for \(const message of incoming\)/);
+});
