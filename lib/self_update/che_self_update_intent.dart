@@ -3,6 +3,28 @@
 /// eventually wants the useful parts integrated into CHE.
 bool cheIsRepositoryResearchRequest(String raw) {
   final text = raw.trim();
+
+  // Explicit implementation requests that use Inspirations/starred repos as
+  // references belong to the coding lane, not the research-only lane.
+  final explicitCodeUpdate = RegExp(
+    r'^(?:(?:chay|chey|shay|che)[, ]+)?update\s+your\s+code\s*:',
+    caseSensitive: false,
+  ).hasMatch(text);
+  final implementation = RegExp(
+    r'\b(?:implement|integrate|adapt|apply|install|add|upgrade|improve|rewrite|refactor|build|change|modify|patch)\b',
+    caseSensitive: false,
+  ).hasMatch(text);
+  final target = RegExp(
+    r"\b(?:your|che(?:'s)?)\s+(?:code|codebase|repo(?:sitory)?|app|office|agents?|system|workflow|architecture)\b|"
+    r'\b(?:into|inside|to)\s+che\b',
+    caseSensitive: false,
+  ).hasMatch(text);
+  final receipts = RegExp(
+    r'\b(?:draft\s+pr|pull\s+request|commit\s+sha|files\s+changed|run\s+tests?|implement\s+now|do\s+the\s+implementation)\b',
+    caseSensitive: false,
+  ).hasMatch(text);
+  if (explicitCodeUpdate || (implementation && (target || receipts))) return false;
+
   final collection = RegExp(
     r'\b(?:starred(?:\s+github)?\s+(?:repos?|repositories)|'
     r'github\s+starred\s+(?:repos?|repositories)|'
