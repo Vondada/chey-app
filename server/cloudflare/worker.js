@@ -33,7 +33,7 @@ import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscale
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
-import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateStatus } from './self_update.js';
+import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus } from './self_update.js';
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
 import { prepareSelfUpdate } from './self_development.js';
 import { KEY_PROVIDERS, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
@@ -1870,6 +1870,120 @@ export function fixThisNeed(text) {
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([w]) => w).join(' ');
 }
 
+
+const PENDING_SELF_UPDATE_KEY = 'pending_self_update';
+const LAST_SELF_UPDATE_PR_KEY = 'last_self_update_pr';
+
+export function selfImprovementLesson(review) {
+  if (!review || typeof review !== 'object') return '';
+  const lessons = Array.isArray(review.lessons) ? review.lessons.map(String) : [];
+  const reliability = /\b(?:bug|error|fail|failure|broken|cut off|truncate|crash|glitch|lag|slow|timeout|routing|wrong route|permission|github|pull request|voice|microphone|audio|regression|test|code|ui|screen|accessibility)\b/i;
+  return lessons.find((lesson) => reliability.test(lesson))?.trim().slice(0, 500) || '';
+}
+
+export function selfUpdateChatIntent(message) {
+  const text = String(message || '').trim();
+  if (!text) return null;
+  if (
+    /\b(?:can|do)\s+(?:you|che)\b[\s\S]{0,50}\b(?:create|open|write|push|read)\b[\s\S]{0,35}\b(?:github|repo(?:sitory)?|pr|pull request)\b/i.test(text)
+    || /\b(?:github|repo(?:sitory)?)\b[\s\S]{0,35}\b(?:access|permission|write access|read access)\b/i.test(text)
+  ) return { kind: 'access' };
+
+  if (
+    /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+)?(?:create|open|make|draft|send|push)\s+(?:(?:the|a|that|latest)\s+)?(?:pr|pull request)\b/i.test(text)
+    || /\bapprove\s+(?:(?:the|that|latest)\s+)?(?:code\s+)?update\b/i.test(text)
+  ) return { kind: 'open-pr' };
+
+  if (
+    /\b(?:check|show|what(?:'s| is)|give me)\b[\s\S]{0,35}\b(?:pr|pull request)\b[\s\S]{0,20}\b(?:status|state|checks?)?\b/i.test(text)
+    || /\b(?:pr|pull request)\s+(?:status|state|checks?)\b/i.test(text)
+  ) return { kind: 'status' };
+
+  if (/\b(?:pending|waiting)\b[\s\S]{0,25}\b(?:code|update|change|pr)\b/i.test(text)) return { kind: 'pending' };
+  return null;
+}
+
+async function handleSelfUpdateChatAction(env, storage, intent) {
+  if (intent.kind === 'access') {
+    const access = await selfUpdateGitHubAccess(env);
+    if (access.status !== 200) return { ok: false, message: access.detail, access };
+    const writeNote = access.can_push_reported === true
+      ? 'GitHub reports branch-write access.'
+      : access.can_push_reported === false
+        ? 'GitHub currently reports this token as read-only; I will not pretend otherwise.'
+        : 'GitHub did not report the token’s write scope; the first real branch write will verify it.';
+    return {
+      ok: true,
+      access,
+      message: `GitHub self-development is connected to ${access.repository}, sir. I can read the current repo and prepare reviewed code. When you approve/create a PR, I use the real branch/PR API and return its receipt; I never push directly to main. ${writeNote}`,
+    };
+  }
+
+  if (intent.kind === 'pending') {
+    const pending = await storage.get(PENDING_SELF_UPDATE_KEY).catch(() => null);
+    if (!pending?.proposal) return { ok: true, message: 'There is no reviewed CHE update waiting for approval right now, sir.' };
+    return {
+      ok: true,
+      message: `A reviewed update is waiting, sir: ${pending.proposal.summary}. Say "create the PR" to open the real draft pull request.`,
+    };
+  }
+
+  if (intent.kind === 'status') {
+    const last = await storage.get(LAST_SELF_UPDATE_PR_KEY).catch(() => null);
+    if (!last?.number) return { ok: true, message: 'I do not have a recent CHE self-update PR to check yet, sir.' };
+    const status = await selfUpdateStatus(env, last.number);
+    if (status.status !== 200) return { ok: false, message: status.detail, status };
+    return {
+      ok: true,
+      status,
+      message: `PR #${status.number} is ${status.state}; CI is ${status.ci}, sir. ${status.url}`,
+    };
+  }
+
+  if (intent.kind === 'open-pr') {
+    const pending = await storage.get(PENDING_SELF_UPDATE_KEY).catch(() => null);
+    if (!pending?.proposal) {
+      const last = await storage.get(LAST_SELF_UPDATE_PR_KEY).catch(() => null);
+      if (last?.number) {
+        return {
+          ok: true,
+          message: `There is no new reviewed update waiting, sir. The latest real CHE PR is #${last.number}: ${last.url}`,
+        };
+      }
+      return {
+        ok: false,
+        message: 'There is no reviewed update waiting to send to GitHub, sir. Tell me the code change first with “update your code:” and I will build/review it, then “create the PR” will open it.',
+      };
+    }
+    const opened = await openSelfUpdatePr(env, pending.proposal);
+    if (opened.status !== 200) {
+      return {
+        ok: false,
+        opened,
+        message: `GitHub did not create the PR. ${opened.detail || `GitHub returned ${opened.status}.`}`,
+      };
+    }
+    const receipt = {
+      number: opened.number,
+      url: opened.url,
+      branch: opened.branch,
+      commit_sha: opened.commit_sha || '',
+      base: opened.base || 'main',
+      delivery: opened.delivery,
+      summary: pending.proposal.summary,
+      opened_at: new Date().toISOString(),
+    };
+    await storage.put(LAST_SELF_UPDATE_PR_KEY, receipt);
+    await storage.delete?.(PENDING_SELF_UPDATE_KEY);
+    return {
+      ok: true,
+      opened,
+      message: `Real draft PR #${opened.number} is open, sir. Branch: ${opened.branch}. Commit: ${opened.commit_sha || 'GitHub did not return the commit SHA'}. ${opened.url}`,
+    };
+  }
+  return { ok: false, message: 'Unknown self-update action.' };
+}
+
 async function dispatchChange(env, body, memory = null) {
   const request = String(body.request || '').trim();
   if (request.length < 8 || request.length > 16000) return json({ detail: 'Describe the CHE update in 8–16000 characters.' }, 400);
@@ -1955,10 +2069,18 @@ async function dispatchChange(env, body, memory = null) {
     });
     await memory.put('inspiration_upgrade_ledger', ledger.slice(-80)).catch(() => null);
   }
+  if (memory?.put) {
+    await memory.put(PENDING_SELF_UPDATE_KEY, {
+      proposal: prepared.proposal,
+      request: request.slice(0, 16000),
+      team: prepared.team || [],
+      reviewed_at: new Date().toISOString(),
+    }).catch(() => null);
+  }
   const team = Array.isArray(prepared.team) ? prepared.team.join(', ') : 'CHE engineering team';
   const proposalBlock = '```che-update\n' + JSON.stringify(prepared.proposal) + '\n```';
   return json({
-    message: `${team} wrote and reviewed that change, sir. Nothing has been applied yet. Approve the update card to open it as a pull request.\n\n${proposalBlock}`,
+    message: `${team} wrote and reviewed that change, sir. Nothing has been applied yet. Say "create the PR" by voice/text or approve the update card; either route opens the same real draft pull request.\n\n${proposalBlock}`,
     engineering_team: prepared.team || [],
     code_review_passed: true,
     owner_approval_required: true,
@@ -3491,7 +3613,21 @@ export class CheState extends DurableObject {
 
       // ─── Self-development: owner-approved PRs, never direct pushes ─────
       if (path === '/api/self-update' && request.method === 'POST') {
-        const { status, ...rest } = await openSelfUpdatePr(this.env, body);
+        const outcome = await openSelfUpdatePr(this.env, body);
+        const { status, ...rest } = outcome;
+        if (status === 200) {
+          await this.ctx.storage.put(LAST_SELF_UPDATE_PR_KEY, {
+            number: rest.number,
+            url: rest.url,
+            branch: rest.branch,
+            commit_sha: rest.commit_sha || '',
+            base: rest.base || 'main',
+            delivery: rest.delivery,
+            summary: String(body.summary || ''),
+            opened_at: new Date().toISOString(),
+          });
+          await this.ctx.storage.delete?.(PENDING_SELF_UPDATE_KEY);
+        }
         return json(rest, status);
       }
       const updateMatch = /^\/api\/self-update\/(\d{1,7})$/.exec(path);
@@ -4837,6 +4973,24 @@ export class CheState extends DurableObject {
         }
         const learnedHearing = correctionsContext(corrections);
 
+        // GitHub/self-development commands are real tool actions, never generic
+        // model guesses about credentials. "Create the PR" works by voice/text.
+        const selfUpdateAction = selfUpdateChatIntent(message);
+        if (selfUpdateAction) {
+          const result = await handleSelfUpdateChatAction(this.env, this.ctx.storage, selfUpdateAction);
+          return ndjsonReply(result.message, {
+            source: 'che_self_update',
+            self_update_action: selfUpdateAction.kind,
+            ok: result.ok,
+            ...(result.opened ? {
+              pr_number: result.opened.number,
+              pr_url: result.opened.url,
+              branch: result.opened.branch,
+              commit_sha: result.opened.commit_sha || '',
+            } : {}),
+          });
+        }
+
         // Resilience voice commands + lockdown gate.
         const usage = usageIntent(message);
         if (usage) return ndjsonReply(speakUsage(await usageReport(this.ctx.storage), usage.scope), { source: 'che_usage' });
@@ -6161,6 +6315,36 @@ export class CheState extends DurableObject {
     const data = await this.loadData();
     if (!data.autonomy) return { status: 'paused' };
     const result = await runNightlyReview(this.env, this.ctx.storage, data, this.env.CHE_STRONG_MODEL || STRONG_MODEL);
+
+    // Continuous self-improvement stays reviewable: when CHE identifies a real
+    // reliability/code lesson from her own transcript, the coding crew may
+    // prepare one reviewed proposal in the background. It never writes a branch,
+    // merges, deploys, or spends money here. The owner can later say
+    // "create the PR" to send that reviewed proposal to GitHub.
+    const lesson = selfImprovementLesson(result.review);
+    const lastSelfImproveAt = Number(await this.ctx.storage.get('self_improve_at')) || 0;
+    const pendingSelfUpdate = await this.ctx.storage.get(PENDING_SELF_UPDATE_KEY).catch(() => null);
+    if (lesson && !pendingSelfUpdate?.proposal && Date.now() - lastSelfImproveAt > 3 * 86400000) {
+      await this.ctx.storage.put('self_improve_at', Date.now());
+      const maintenanceRequest = [
+        'CHE autonomous maintenance under the owner’s standing permission to keep improving herself.',
+        `Verified nightly lesson: ${lesson}`,
+        'Inspect the latest repository. Make only a narrow, evidence-based reliability improvement.',
+        'Preserve existing behavior, voice-first accessibility, secrets, permissions, and owner approval boundaries.',
+        'Do not alter GitHub workflows, signing, secrets, entitlements, or dependency/deployment control files.',
+      ].join('\n');
+      const prepared = await prepareSelfUpdate(this.env, maintenanceRequest, fetch, this.ctx.storage).catch(() => null);
+      if (prepared?.status === 200 && prepared.proposal) {
+        await this.ctx.storage.put(PENDING_SELF_UPDATE_KEY, {
+          proposal: prepared.proposal,
+          request: maintenanceRequest,
+          team: prepared.team || [],
+          automatic: true,
+          reviewed_at: new Date().toISOString(),
+        });
+      }
+    }
+
     const fresh = await this.loadData();
     Object.assign(fresh, {
       nightly_reviews: data.nightly_reviews,

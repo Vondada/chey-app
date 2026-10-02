@@ -46,13 +46,26 @@ class CheUpdateProposal {
   List<String> get problems {
     final out = <String>[];
     if (files.isEmpty) out.add('An update needs at least one file.');
-    if (files.length > 8) out.add('An update may change at most 8 files (keep the slice narrow).');
+    if (files.length > 12) out.add('An update may change at most 12 files (keep the slice narrow).');
     final seen = <String>{};
     for (final f in files) {
-      final dartPath = RegExp(r'^lib/[A-Za-z0-9_/]+\.dart$').hasMatch(f.path);
-      final workerPath = RegExp(r'^server/cloudflare/[A-Za-z0-9_./-]+\.(?:js|mjs)$').hasMatch(f.path);
-      if ((!dartPath && !workerPath) || f.path.contains('..') || f.path.contains('//')) {
-        out.add('${f.path}: only Flutter Dart under lib/ or Worker JS under server/cloudflare/ can be self-updated');
+      final editable = RegExp(
+        r'^(?:'
+        r'lib/[A-Za-z0-9_./-]+\.dart|'
+        r'(?:test|integration_test)/[A-Za-z0-9_./-]+\.dart|'
+        r'server/cloudflare/[A-Za-z0-9_./-]+\.(?:js|mjs)|'
+        r'assets/office3d/[A-Za-z0-9_./-]+\.(?:html|js|css|json)|'
+        r'web/[A-Za-z0-9_./-]+\.(?:html|js|css|json)|'
+        r'docs/[A-Za-z0-9_./ -]+\.(?:md|txt)|'
+        r'ios/Runner/[A-Za-z0-9_./-]+\.(?:swift|m|mm|h)|'
+        r'android/app/src/main/(?:kotlin|java)/[A-Za-z0-9_./-]+\.(?:kt|java)'
+        r')$',
+      ).hasMatch(f.path);
+      final protected = f.path.startsWith('.github/') ||
+          RegExp(r'(?:^|/)(?:\.env|secrets?\b|credentials?\b)', caseSensitive: false).hasMatch(f.path) ||
+          RegExp(r'\.(?:pem|p12|mobileprovision|key|keystore|jks)$', caseSensitive: false).hasMatch(f.path);
+      if (!editable || protected || f.path.contains('..') || f.path.contains('//')) {
+        out.add('${f.path}: this path is protected or outside CHE’s owner-approved self-update lane');
         continue;
       }
       if (!seen.add(f.path)) out.add('${f.path} appears twice.');
