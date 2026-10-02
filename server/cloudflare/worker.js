@@ -1907,13 +1907,15 @@ async function handleSelfUpdateChatAction(env, storage, intent) {
   if (intent.kind === 'access') {
     const access = await selfUpdateGitHubAccess(env);
     if (access.status !== 200) return { ok: false, message: access.detail, access };
-    const push = access.can_push_reported === false
-      ? ' GitHub currently reports this token as read-only; a real branch write will return the exact API error.'
-      : '';
+    const writeNote = access.can_push_reported === true
+      ? 'GitHub reports branch-write access.'
+      : access.can_push_reported === false
+        ? 'GitHub currently reports this token as read-only; I will not pretend otherwise.'
+        : 'GitHub did not report the token’s write scope; the first real branch write will verify it.';
     return {
       ok: true,
       access,
-      message: `GitHub self-development is connected to ${access.repository}, sir. I can read the current repo, prepare reviewed code, and create real draft PRs on separate branches; I never push directly to main. ${push}`.trim(),
+      message: `GitHub self-development is connected to ${access.repository}, sir. I can read the current repo and prepare reviewed code. When you approve/create a PR, I use the real branch/PR API and return its receipt; I never push directly to main. ${writeNote}`,
     };
   }
 
