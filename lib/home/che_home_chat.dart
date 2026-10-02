@@ -222,57 +222,11 @@ class CheHomeAssistantMessage extends StatelessWidget {
               ),
             if (text.isNotEmpty) CheRichText(text: text, streaming: streaming),
             ...extras,
-            if (!streaming && !live && text.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Wrap(spacing: 6, runSpacing: 6, children: [
-                _Chip(
-                  icon: Icons.copy_rounded,
-                  label: 'Copy',
-                  onTap: () {
-                    Clipboard.setData(ClipboardData(text: text));
-                    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-                      const SnackBar(content: Text('Copied'), duration: Duration(milliseconds: 900)),
-                    );
-                  },
-                ),
-                if (onReadAloud != null) _Chip(icon: Icons.volume_up_rounded, label: 'Read', onTap: onReadAloud!),
-                if (onRedo != null) _Chip(icon: Icons.refresh_rounded, label: 'Redo', onTap: onRedo!),
-              ]),
-            ],
           ]),
         ),
       ]),
     );
   }
-}
-
-class _Chip extends StatelessWidget {
-  const _Chip({required this.icon, required this.label, required this.onTap});
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  @override
-  Widget build(BuildContext context) => Semantics(
-        button: true,
-        label: label == 'Read' ? 'Read this reply aloud' : label,
-        excludeSemantics: true,
-        child: ChePressable(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: CheColors.surface,
-            borderRadius: BorderRadius.circular(CheRadius.pill),
-            border: Border.all(color: CheColors.stroke),
-          ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(icon, size: 14, color: CheColors.textDim),
-            const SizedBox(width: 4),
-            Text(label, style: CheType.caption),
-          ]),
-        ),
-      ),
-      );
 }
 
 class CheHomeComposer extends StatelessWidget {
