@@ -28,10 +28,14 @@ void main() {
     expect(cheIsSelfUpdateRequest('what does pull request mean?'), isFalse);
   });
 
-  test('starred repository discovery routes to GitHub research, not exact patching', () {
-    const research = 'Go through my GitHub starred repositories and my Inspirations list, inspect the agent systems, and integrate useful capabilities into CHE with a draft PR.';
-    expect(cheIsRepositoryResearchRequest(research), isTrue);
-    expect(cheIsSelfUpdateRequest(research), isFalse);
+  test('starred repository research stays research, implementation routes to self-update', () {
+    const implementation = 'Go through my GitHub starred repositories and my Inspirations list, inspect the agent systems, and integrate useful capabilities into CHE with a draft PR.';
+    expect(cheIsRepositoryResearchRequest(implementation), isFalse);
+    expect(cheIsSelfUpdateRequest(implementation), isTrue);
+
+    const explicitUpdate = 'Update your code: use Study 1 and 2 as references, compare them with CHE, implement only the useful delta, run tests, and prepare a draft PR.';
+    expect(cheIsRepositoryResearchRequest(explicitUpdate), isFalse);
+    expect(cheIsSelfUpdateRequest(explicitUpdate), isTrue);
 
     expect(
       cheIsRepositoryResearchRequest('Inspect the repos I have starred and find useful voice and RAG code.'),
