@@ -26,6 +26,8 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:url_launcher/url_launcher.dart';
 import 'che_native_voice.dart';
 import 'che_notifications.dart';
+import 'platform/che_platform_client.dart';
+import 'platform/che_platform_screens.dart';
 import 'che_stream_batcher.dart';
 import 'che_request_session.dart';
 import 'che_owner_errors.dart';
@@ -1245,6 +1247,10 @@ OWNER AGENCY
       mainAxisSize: MainAxisSize.min,
       children: [
         const ChePatchBanner(),
+        ChePriorityNotificationBanner(
+          gateway: chePlatformGateway(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders),
+          onOpen: () => unawaited(_openPlatformNotifications()),
+        ),
         CheMobileUpdateNotice(
           baseUrl: cheAgentBaseUrl,
           onSpeak: (text) => speakText(text, record: false),
@@ -1567,6 +1573,36 @@ OWNER AGENCY
 
 
 
+  CheHttpPlatformGateway _platformGateway() =>
+      chePlatformGateway(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders);
+
+  Future<void> _openPlatformNotifications() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheNotificationsScreen(
+        gateway: _platformGateway(),
+        onReadAloud: (text) => speakText(text, record: false),
+      ),
+    ));
+  }
+
+  Future<void> _openCoreRoom() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheCoreRoomScreen(
+        gateway: _platformGateway(),
+        onReadAloud: (text) => speakText(text, record: false),
+      ),
+    ));
+  }
+
+  Future<void> _openPlatformDevices() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => ChePlatformDevicesScreen(gateway: _platformGateway()),
+    ));
+  }
+
   void _openMemoryBrain() {
     HapticFeedback.selectionClick();
     unawaited(_loadAgentState(silent: true));
@@ -1576,10 +1612,11 @@ OWNER AGENCY
         child: Scaffold(
           backgroundColor: Theme.of(context).scaffoldBackgroundColor,
           appBar: AppBar(
-            title: const Text('Brain'),
+            title: const Text('CHE Brain'),
             backgroundColor: Colors.transparent,
           ),
-          body: CheInsightsRoom(
+          body: CheTwoBrainsView(
+            live: CheInsightsRoom(
             brain: _brain,
             log: _brainLog,
             onOpenCloudLogs: _deviceToken == null
@@ -1603,6 +1640,8 @@ OWNER AGENCY
               onReadAloud: (t) => speakText(t, record: false),
               onRefresh: () => _loadAgentState(silent: true),
             ),
+            ),
+            offline: const CheOfflineBrainPanel(),
           ),
         ),
       ),
@@ -1844,9 +1883,30 @@ OWNER AGENCY
         CheMoreItem(
           icon: Icons.hub_rounded,
           title: 'Brain',
-          subtitle: 'Constellation · soul & facts · conversation log',
+          subtitle: 'CHE Brain — Live and CHE Brain — Offline',
           onTap: _openMemoryBrain,
           hue: kit.CheColors.memory,
+        ),
+        CheMoreItem(
+          icon: Icons.notifications_active_outlined,
+          title: 'Notifications',
+          subtitle: 'Newest first · priority banners only when live',
+          onTap: () => unawaited(_openPlatformNotifications()),
+          hue: kit.CheColors.warning,
+        ),
+        CheMoreItem(
+          icon: Icons.blur_circular_rounded,
+          title: 'CHE Core',
+          subtitle: 'Rules and Core requests',
+          onTap: () => unawaited(_openCoreRoom()),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.devices_rounded,
+          title: 'Devices & share',
+          subtitle: 'Live device list and owner enrollment',
+          onTap: () => unawaited(_openPlatformDevices()),
+          hue: kit.CheColors.devices,
         ),
         CheMoreItem(
           icon: Icons.memory_rounded,

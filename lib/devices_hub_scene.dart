@@ -10,6 +10,7 @@ class DevicesHubScene extends StatefulWidget {
     required this.onPrompt,
     required this.onVault,
     required this.onMultimodal,
+    this.onOpenShare,
   });
 
   final bool active;
@@ -18,6 +19,7 @@ class DevicesHubScene extends StatefulWidget {
   final void Function(String prompt) onPrompt;
   final VoidCallback onVault;
   final VoidCallback onMultimodal;
+  final VoidCallback? onOpenShare;
 
   @override
   State<DevicesHubScene> createState() => _DevicesHubSceneState();
@@ -131,6 +133,13 @@ class _DevicesHubSceneState extends State<DevicesHubScene>
       ];
 
   List<_SystemModule> _systemModules() => [
+        _SystemModule(
+          'Share devices',
+          Icons.devices_rounded,
+          widget.onOpenShare != null,
+          'Owner enrollment and live device list. No invented devices.',
+          widget.onOpenShare,
+        ),
         _SystemModule(
           'Parallel Work Engine',
           Icons.bolt_outlined,

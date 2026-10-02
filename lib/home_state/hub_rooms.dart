@@ -20,7 +20,8 @@ extension _CheHomeHubRooms on _CHEHomeState {
 
   /// One Brain tab: constellation map + soul/facts + log (sheets), no Map|Brain|Log split.
   Widget _hubBrainTab(bool active) {
-    return CheInsightsRoom(
+    return CheTwoBrainsView(
+      live: CheInsightsRoom(
       brain: _brain,
       log: _brainLog,
       onOpenCloudLogs: _deviceToken == null
@@ -46,6 +47,8 @@ extension _CheHomeHubRooms on _CHEHomeState {
         onReadAloud: (t) => speakText(t, record: false),
         onRefresh: () => _loadAgentState(silent: true),
       ),
+      ),
+      offline: const CheOfflineBrainPanel(),
     );
   }
 
@@ -295,6 +298,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
       onMultimodal: () {
         unawaited(_openMultimodalPicker());
       },
+      onOpenShare: () => unawaited(_openPlatformDevices()),
     );
   }
 

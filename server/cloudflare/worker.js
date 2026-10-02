@@ -126,6 +126,12 @@ import {
   vectorMemoryReadiness,
 } from './vector_memory.js';
 import {
+  OWNER_TENANT_ID, ensurePlatform, registerPairedDevice, tenantForDevice, touchDevice,
+  createPersonalTenant, createEnrollment, consumeEnrollment, addNotification,
+  notificationsFor, markNotificationRead, createCoreRequest, coreRequestsFor,
+  coreRules, platformView,
+} from './che_platform.js';
+import {
   chatModelAttempts,
   isLikelyCasualChat,
   mergeReplyContinuation,
@@ -3008,6 +3014,7 @@ export class CheState extends DurableObject {
       data.team_tasks = Array.isArray(data.team_tasks) ? data.team_tasks : [];
       data.office_skills = Array.isArray(data.office_skills) ? data.office_skills : [];
       data.jobs = Array.isArray(data.jobs) ? data.jobs : [];
+      ensurePlatform(data);
     data.autonomy = data.autonomy !== false;
       data.meetings = Array.isArray(data.meetings) ? data.meetings : [];
       data.team.forEach(normalizeAgent);
@@ -3147,16 +3154,85 @@ export class CheState extends DurableObject {
         }
         const raw = Array.from(crypto.getRandomValues(new Uint8Array(48)),
           (b) => b.toString(16).padStart(2, '0')).join('');
-        data.devices[await digest(raw)] = String(body.device_name || 'CHE phone').slice(0, 80);
+        const pairedHash = await digest(raw);
+        data.devices[pairedHash] = String(body.device_name || 'CHE phone').slice(0, 80);
+        registerPairedDevice(data, pairedHash, { name: body.device_name || 'CHE phone', access: 'full', tenantId: OWNER_TENANT_ID });
         delete data.failures[ip];
         await this.ctx.storage.put('che', data);
         return json({ device_token: raw });
+      }
+
+      // A signed-by-possession, short-lived, single-use enrollment is public by
+      // necessity. It can only mint a device for the tenant/access scope already
+      // fixed by an owner-created invite; it cannot choose another tenant.
+      if (request.method === 'POST' && path === '/api/enroll') {
+        const consumed = consumeEnrollment(data, body.enrollment_token, body.device_name);
+        if (consumed.error) return json({ detail: 'Enrollment invitation is invalid or expired.' }, 403);
+        const raw = Array.from(crypto.getRandomValues(new Uint8Array(48)),
+          (b) => b.toString(16).padStart(2, '0')).join('');
+        const enrolledHash = await digest(raw);
+        data.devices[enrolledHash] = consumed.device_name;
+        registerPairedDevice(data, enrolledHash, {
+          name: consumed.device_name,
+          access: consumed.invite.access,
+          tenantId: consumed.invite.tenant_id,
+        });
+        await this.ctx.storage.put('che', data);
+        return json({ device_token: raw, access: consumed.invite.access, tenant_id: consumed.invite.tenant_id }, 201);
       }
 
       const authorization = request.headers.get('Authorization') || '';
       const match = /^Bearer ([A-Za-z0-9_-]{40,160})$/.exec(authorization);
       const tokenHash = match ? await digest(match[1]) : '';
       if (!Object.hasOwn(data.devices, tokenHash)) return json({ detail: 'Pair your phone to CHE.' }, 401);
+      const platformDevice = touchDevice(data, tokenHash);
+      if (platformDevice?.revoked_at) return json({ detail: 'This CHE device was revoked.' }, 401);
+      const activeTenant = tenantForDevice(data, tokenHash);
+
+      // CHE Home platform: tenant-scoped identity, devices, notifications and Core.
+      if (request.method === 'GET' && path === '/api/platform') {
+        return json(platformView(data, activeTenant.id, tokenHash));
+      }
+      if (request.method === 'POST' && path === '/api/platform/tenants') {
+        if (activeTenant.role !== 'owner') return json({ detail: 'Only the CHE owner can create another personal CHE.' }, 403);
+        const tenant = createPersonalTenant(data, { name: body.name, role: body.role });
+        await this.ctx.storage.put('che', data);
+        return json({ tenant }, 201);
+      }
+      if (request.method === 'POST' && path === '/api/platform/enrollments') {
+        if (activeTenant.role !== 'owner') return json({ detail: 'Only the CHE owner can create enrollment invitations.' }, 403);
+        const made = createEnrollment(data, { tenantId: body.tenant_id || activeTenant.id, access: body.access, ttlMinutes: body.ttl_minutes, singleUse: true });
+        if (made.error) return json({ detail: made.error }, 404);
+        await this.ctx.storage.put('che', data);
+        return json({ enrollment: { ...made.invite, token: made.token } }, 201);
+      }
+      if (request.method === 'GET' && path === '/api/notifications') {
+        return json({ notifications: notificationsFor(data, activeTenant.id, { unreadOnly: new URL(request.url).searchParams.get('unread') === '1' }) });
+      }
+      if (request.method === 'POST' && path === '/api/notifications') {
+        const notification = addNotification(data, { tenantId: activeTenant.id, source: body.source, title: body.title, body: body.body, priority: body.priority, target: body.target });
+        await this.ctx.storage.put('che', data);
+        return json({ notification }, 201);
+      }
+      const notificationRead = /^\/api\/notifications\/([^/]+)\/read$/.exec(path);
+      if (request.method === 'POST' && notificationRead) {
+        const notification = markNotificationRead(data, activeTenant.id, notificationRead[1]);
+        if (!notification) return json({ detail: 'Notification not found.' }, 404);
+        await this.ctx.storage.put('che', data);
+        return json({ notification });
+      }
+      if (request.method === 'GET' && path === '/api/core/rules') {
+        return json({ rules: coreRules() });
+      }
+      if (request.method === 'GET' && path === '/api/core/requests') {
+        return json({ requests: coreRequestsFor(data, activeTenant.id) });
+      }
+      if (request.method === 'POST' && path === '/api/core/requests') {
+        const made = createCoreRequest(data, activeTenant.id, body);
+        if (made.error) return json({ detail: 'Describe the Core request.' }, 400);
+        await this.ctx.storage.put('che', data);
+        return json(made, 201);
+      }
 
       if (request.method === 'GET' && path === '/api/plugins/manifests') {
         return json({ plugins: pluginManifests(this.env) });
