@@ -667,66 +667,99 @@ class _AiNeuralWeb extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final peers = connections.keys.toList()..sort();
-    final side = math.max(420.0, 360.0 + math.sqrt(math.max(1, peers.length)) * 120);
-    final positions = <String, Offset>{};
-    final center = Offset(side / 2, side / 2);
-    // Golden-angle growth makes the network feel like roots/mycelium rather
-    // than a rigid hub-and-spoke chart. Existing peers keep stable positions.
-    for (var i = 0; i < peers.length; i++) {
-      final hash = peers[i].hashCode & 0x7fffffff;
-      final angle = -math.pi / 2 + i * 2.399963229728653 + ((hash % 17) - 8) * 0.018;
-      final radius = 105.0 + math.sqrt(i + 1) * 54 + (hash % 23);
-      final stretchX = 1.08 + ((hash ~/ 23) % 9) * 0.012;
-      final stretchY = 0.86 + ((hash ~/ 211) % 9) * 0.014;
-      positions[peers[i]] = Offset(
-        center.dx + math.cos(angle) * radius * stretchX,
-        center.dy + math.sin(angle) * radius * stretchY,
-      );
-    }
-    return SizedBox(
-      height: 330,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(18),
-        child: InteractiveViewer(
-          minScale: 0.45,
-          maxScale: 3.5,
-          boundaryMargin: const EdgeInsets.all(220),
-          constrained: false,
-          child: SizedBox(
-            width: side,
-            height: side,
-            child: Stack(children: [
-              Positioned.fill(
-                child: CustomPaint(
-                  painter: _AiNeuralPainter(center: center, positions: positions, weights: connections),
-                ),
-              ),
-              Positioned(
-                left: center.dx - 34,
-                top: center.dy - 34,
-                child: Column(children: [
-                  const _AiLogo(name: 'che', size: 72),
-                  const SizedBox(height: 3),
-                  Text('CHE', style: CheType.caption.copyWith(color: CheColors.accent, fontWeight: FontWeight.w700)),
-                ]),
-              ),
-              for (final peer in peers)
-                Positioned(
-                  left: positions[peer]!.dx - 25,
-                  top: positions[peer]!.dy - 25,
-                  child: Semantics(
-                    label: '${_aiLabel(peer)} connected to CHE through ${connections[peer]} saved messages',
-                    child: Column(children: [
-                      _AiLogo(name: peer, size: 50),
-                      const SizedBox(height: 2),
-                      Text(_aiLabel(peer), style: CheType.caption),
-                    ]),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : MediaQuery.sizeOf(context).width - 48;
+        final height = math.max(260.0, math.min(360.0, width * 0.82));
+        final center = Offset(width / 2, height / 2);
+        const edgeInset = 42.0;
+        final radiusX = math.max(44.0, width / 2 - edgeInset);
+        final radiusY = math.max(44.0, height / 2 - edgeInset);
+        final positions = <String, Offset>{};
+
+        for (var i = 0; i < peers.length; i++) {
+          final hash = peers[i].hashCode & 0x7fffffff;
+          final angle =
+              -math.pi / 2 + i * 2.399963229728653 + ((hash % 17) - 8) * 0.018;
+          final density = peers.length <= 6
+              ? 0.80
+              : 0.62 + 0.20 * ((i % 3) / 2);
+          positions[peers[i]] = Offset(
+            center.dx + math.cos(angle) * radiusX * density,
+            center.dy + math.sin(angle) * radiusY * density,
+          );
+        }
+
+        return SizedBox(
+          height: height,
+          width: double.infinity,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: Stack(
+              clipBehavior: Clip.hardEdge,
+              children: [
+                Positioned.fill(
+                  child: CustomPaint(
+                    painter: _AiNeuralPainter(
+                      center: center,
+                      positions: positions,
+                      weights: connections,
+                    ),
                   ),
                 ),
-            ]),
+                Positioned(
+                  left: center.dx - 36,
+                  top: center.dy - 43,
+                  child: Semantics(
+                    image: true,
+                    label: 'CHE at the center of the saved AI root network',
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const _AiLogo(name: 'che', size: 72),
+                        const SizedBox(height: 3),
+                        Text(
+                          'CHE',
+                          style: CheType.caption.copyWith(
+                            color: CheColors.accent,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                for (final peer in peers)
+                  Positioned(
+                    left: positions[peer]!.dx - 28,
+                    top: positions[peer]!.dy - 31,
+                    width: 56,
+                    child: Semantics(
+                      label:
+                          '${_aiLabel(peer)} connected to CHE through ${connections[peer]} saved messages',
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _AiLogo(name: peer, size: 50),
+                          const SizedBox(height: 2),
+                          Text(
+                            _aiLabel(peer),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: CheType.caption,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
