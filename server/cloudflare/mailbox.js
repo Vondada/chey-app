@@ -67,6 +67,14 @@ async function ensureBranch(env, fetcher) {
   return made.ok || made.status === 422;
 }
 
+export async function mailboxHead(env, fetcher = fetch) {
+  if (!repoOf(env)) return { error: 'Mailbox needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO.', head: '' };
+  if (!(await ensureBranch(env, fetcher))) return { error: 'Could not open the mailbox branch on GitHub.', head: '' };
+  const found = await gh(env, 'GET', `/git/ref/heads/${MAILBOX_BRANCH}`, null, fetcher);
+  if (!found.ok) return { error: `Mailbox head read failed (${found.status}).`, head: '' };
+  return { head: String(found.data?.object?.sha || '') };
+}
+
 export async function readThread(env, peer, fetcher = fetch) {
   const who = normalizePeer(peer);
   if (!repoOf(env)) return { error: 'Mailbox needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO.', messages: [] };
