@@ -2588,18 +2588,26 @@ export class CheState extends DurableObject {
     }
   }
 
-  async processFlagstaffInbox({ force = false } = {}) {
+  async processFlagstaffInbox({ force = false, messageId = '' } = {}) {
     if (!(await flagstaffOpen(this.ctx.storage))) return { checked: false, replied: 0 };
     const headState = await mailboxHead(this.env).catch(() => ({ head: '' }));
     const previousHead = String((await this.ctx.storage.get('flagstaff_mailbox_head')) || '');
+    if (!force && headState.head && !previousHead) {
+      // First watcher pass establishes a baseline. Never replay old mailbox
+      // history as if it just arrived.
+      await this.ctx.storage.put('flagstaff_mailbox_head', headState.head);
+      return { checked: true, replied: 0, initialized: true };
+    }
     if (!force && headState.head && previousHead === headState.head) {
       return { checked: true, replied: 0, unchanged: true };
     }
 
+    const targetId = String(messageId || '').trim();
     const board = await readWebMail(this.ctx.storage, 300, this.env);
     const incoming = board
       .filter((m) => m?.id && m.from !== 'che' && String(m.to || 'che').toLowerCase() === 'che')
-      .slice(-40);
+      .filter((m) => !targetId || String(m.id) === targetId)
+      .slice(targetId ? -1 : -40);
     let replied = 0;
     for (const message of incoming) {
       try {
@@ -2660,6 +2668,27 @@ export class CheState extends DurableObject {
       // Flagstaff 369: AIs post/read with the secret link, no device token.
       const flagstaff = await handleWebMailbox(request, this.ctx.storage, this.env, fetch, (message) => this.replyToFlagstaffMessage(message));
       if (flagstaff) return flagstaff;
+
+      // GitHub Actions calls this when the che-mailbox branch changes. It does
+      // not carry a secret: CHE verifies the supplied SHA is the live mailbox
+      // branch head, then processes only that exact message id. Repeated calls
+      // are harmless because replyToFlagstaffMessage deduplicates by message id.
+      if (request.method === 'POST' && path === '/api/flagstaff/wake') {
+        let wake = {};
+        try { wake = await request.json(); } catch (_) { return json({ detail: 'Invalid JSON.' }, 400); }
+        const requestedHead = String(wake.head_sha || '').trim();
+        const messageId = String(wake.message_id || '').trim().slice(0, 160);
+        if (!/^[0-9a-f]{40}$/i.test(requestedHead) || !messageId) {
+          return json({ detail: 'head_sha and message_id are required.' }, 400);
+        }
+        const live = await mailboxHead(this.env).catch(() => ({ error: 'Mailbox head lookup failed.', head: '' }));
+        if (live.error || !live.head) return json({ detail: live.error || 'Mailbox head unavailable.' }, 503);
+        if (live.head !== requestedHead) return json({ detail: 'Mailbox head moved; retry with the current head.' }, 409);
+        const result = await this.processFlagstaffInbox({ force: true, messageId });
+        await this.scheduleWork();
+        return json({ ok: true, head_sha: live.head, message_id: messageId, ...result });
+      }
+
       // Stripe calls this directly (no device token): the signature, checked
       // against STRIPE_WEBHOOK_SECRET on the raw body, is the authentication.
       if (request.method === 'POST' && path === '/api/stripe/webhook') {
