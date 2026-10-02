@@ -128,6 +128,8 @@ import {
 import {
   chatModelAttempts,
   isLikelyCasualChat,
+  mergeReplyContinuation,
+  replyNeedsContinuation,
   splitReplyDeltas,
 } from './reply_latency.js';
 
@@ -2027,21 +2029,50 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
   let lastError;
   for (const attempt of attempts) {
     try {
-      return await env.AI.run(attempt.model, {
-        messages: [
-          { role: 'system', content: attempt.system },
-          ...attempt.turns,
-          { role: 'user', content: message },
-        ],
-        max_tokens: maxTokens,
-        // 'quality' forces strong provider models and disables casual routing.
-        // Ordinary replies use 'fast' so Groq/etc. can answer with the light model.
+      const baseMessages = [
+        { role: 'system', content: attempt.system },
+        ...attempt.turns,
+        { role: 'user', content: message },
+      ];
+      const routeFields = {
         ...(attempt.route === 'quality' ? { che_route: 'quality' } : {}),
         che_owner_chat: true,
         ...(provider ? { che_provider: provider } : {}),
         ...(cheContext?.items?.length ? { che_context: cheContext } : {}),
+      };
+      let answer = await env.AI.run(attempt.model, {
+        messages: baseMessages,
+        max_tokens: maxTokens,
+        ...routeFields,
         che_audit: { task: String(message).slice(0, 160), agent: 'CHE', route: preferFast ? 'owner_chat_fast' : 'owner_chat', provider: provider || undefined },
       });
+
+      let reply = String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim();
+      // Some reasoning/free-tier engines spend most of a small completion
+      // budget thinking and then stop mid-sentence. Finish the reply
+      // automatically instead of showing the owner a dangling "However".
+      for (let continuationPass = 0;
+           continuationPass < 2 && replyNeedsContinuation(answer, reply);
+           continuationPass++) {
+        const continued = await env.AI.run(attempt.model, {
+          messages: [
+            ...baseMessages,
+            { role: 'assistant', content: reply },
+            {
+              role: 'user',
+              content: 'Continue exactly where your previous reply stopped. Do not restart, summarize, apologize, or repeat earlier text. Finish the answer naturally and completely.',
+            },
+          ],
+          max_tokens: Math.max(900, maxTokens),
+          ...routeFields,
+          che_audit: { task: String(message).slice(0, 160), agent: 'CHE', route: 'owner_chat_continue', provider: provider || undefined },
+        });
+        const more = String(continued?.response || continued?.choices?.[0]?.message?.content || '').trim();
+        if (!more) break;
+        reply = mergeReplyContinuation(reply, more);
+        answer = { ...continued, response: reply };
+      }
+      return { ...answer, response: reply };
     } catch (error) {
       lastError = error;
       console.error('CHE chat model attempt failed', attempt.model, attempt.system.length, error?.message);
@@ -5937,7 +5968,7 @@ export class CheState extends DurableObject {
           message,
           cheContext,
           cheProvider,
-          maxTokens: needsStrongModel ? 1000 : 360,
+          maxTokens: needsStrongModel ? 1800 : 360,
           // Prefer compact+fast whenever this turn did not need specialist
           // tools/research — even if the message was slightly longer than the
           // early casual heuristic — so time-to-first-token stays low.
@@ -5951,7 +5982,7 @@ export class CheState extends DurableObject {
             const light = `You are CHE, the owner's voice-first assistant. Answer directly and briefly. ${WORK_POLICY}`;
             const rescue = await this.env.AI.run(FAST_MODEL, {
               messages: [{ role: 'system', content: light }, ...turns.slice(-4), { role: 'user', content: message }],
-              max_tokens: 500,
+              max_tokens: 900,
               che_emergency: true,
               che_audit: { task: String(message).slice(0, 160), agent: 'CHE', route: 'owner_chat_rescue' },
             });

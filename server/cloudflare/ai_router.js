@@ -592,6 +592,7 @@ async function callProvider(env, provider, strongModel, input, fetcher, modelOve
         response: text,
         engine: provider.id,
         model: modelOverride || (strongModel ? provider.strong(env) : provider.fast(env)),
+        finish_reason: String(data?.choices?.[0]?.finish_reason || ''),
       },
       usageTokens: Number.isFinite(reportedTokens) && reportedTokens > 0
         ? reportedTokens

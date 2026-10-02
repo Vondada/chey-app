@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { chatModelAttempts, isLikelyCasualChat, splitReplyDeltas } from './reply_latency.js';
+import { chatModelAttempts, isLikelyCasualChat, mergeReplyContinuation, replyNeedsContinuation, splitReplyDeltas } from './reply_latency.js';
 
 test('casual chat heuristic skips heavy and capability-backed turns', () => {
   assert.equal(isLikelyCasualChat('hey'), true);
@@ -45,4 +45,22 @@ test('reply deltas split on sentences and rejoin to the original', () => {
   assert.equal(parts.join(''), reply);
   assert.deepEqual(splitReplyDeltas('One line'), ['One line']);
   assert.deepEqual(splitReplyDeltas(''), []);
+});
+
+
+test('detects provider output-limit truncation and obvious dangling prose', () => {
+  assert.equal(replyNeedsContinuation({ finish_reason: 'length' }, 'Complete sentence.'), true);
+  assert.equal(replyNeedsContinuation({}, 'This is a long enough answer that explains the situation clearly. However'), true);
+  assert.equal(replyNeedsContinuation({}, 'This is a complete answer with enough context to be useful.'), false);
+  assert.equal(replyNeedsContinuation({}, 'Short however'), false);
+});
+
+test('merges continuation without repeating the overlap', () => {
+  assert.equal(
+    mergeReplyContinuation(
+      'The first part ends with the same bridge words',
+      'the same bridge words and then finishes the answer.',
+    ),
+    'The first part ends with the same bridge words and then finishes the answer.',
+  );
 });
