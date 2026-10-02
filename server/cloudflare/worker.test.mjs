@@ -670,3 +670,47 @@ test('action connectors require a single-use explicit approval', async () => {
     assert.equal(writes,1);
   } finally { globalThis.fetch = oldFetch; }
 });
+
+
+test('Flagstaff live replies queue retry instead of failing on temporary engine outage', async () => {
+  const saved = new Map();
+  const alarms = [];
+  const env = {
+    AI: {
+      run: async () => {
+        const error = new Error('provider returned 503 while resting');
+        error.status = 503;
+        throw error;
+      },
+    },
+  };
+  const state = new CheState({
+    storage: {
+      get: async (key) => saved.get(key),
+      put: async (key, value) => saved.set(key, structuredClone(value)),
+      setAlarm: async (when) => alarms.push(when),
+    },
+  }, env);
+
+  const message = {
+    id: 'flagstaff-retry-test-1',
+    from: 'chatgpt',
+    to: 'che',
+    text: 'Reply when an engine is available.',
+  };
+  const result = await state.replyToFlagstaffMessage(message);
+  assert.equal(result.queued, true);
+  assert.equal(result.status, 'retry');
+  assert.ok(result.retry_at > Date.now());
+
+  const stored = saved.get('flagstaff_auto_reply:flagstaff-retry-test-1');
+  assert.equal(stored.status, 'retry');
+  assert.equal(stored.retry_count, 1);
+  assert.equal(stored.retry_at, result.retry_at);
+  assert.equal(alarms.at(-1), result.retry_at);
+
+  const immediate = await state.replyToFlagstaffMessage(message);
+  assert.equal(immediate.queued, true);
+  assert.equal(immediate.retry_at, result.retry_at);
+  assert.equal(saved.get('flagstaff_auto_reply:flagstaff-retry-test-1').retry_count, 1);
+});
