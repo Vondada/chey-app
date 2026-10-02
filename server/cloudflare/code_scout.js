@@ -67,7 +67,7 @@ function starredScore(repo, focus = []) {
 // like "find this on-screen text" edits.
 export function starredRepoIntent(message) {
   const text = String(message || '').trim().replace(/^(?:che|chay|chey|shay)[,:]?\s+/i, '');
-  const collection = /\b(?:starred(?:\s+github)?\s+(?:repos?|repositories)|github\s+stars?|(?:repos?|repositories)\s+(?:i\s+)?(?:have\s+)?starred|inspirations?(?:\s+(?:list|tab|collection))?)\b/i.test(text);
+  const collection = /\b(?:starred(?:\s+github)?\s+(?:repos?|repositories)|github\s+starred\s+(?:repos?|repositories)|github\s+stars?|(?:repos?|repositories)\s+(?:i\s+)?(?:have\s+)?starred|inspirations?(?:\s+(?:list|tab|collection))?)\b/i.test(text);
   const action = /\b(?:inspect|scan|review|research|analy[sz]e|go\s+through|look\s+through|check|find|study|use|integrate|adapt|take\s+code)\b/i.test(text);
   if (!collection || !action) return null;
 
