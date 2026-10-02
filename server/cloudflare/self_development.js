@@ -325,8 +325,8 @@ async function recoveryPlan(env, task, architecture, feedback, index, lessons, m
       request: task,
       previous_architecture: architecture,
       previous_failure: feedback,
-      readable_source_files: index.paths,
       editable_source_files: index.editable_paths,
+      readable_source_files: index.paths,
       team_lessons: lessonText(lessons),
       team_chat: chat.slice(-24),
     },
@@ -376,7 +376,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         'Use the team lessons (they include known file locations). You may inspect read-only control files for context, but edits must stay inside editable_source_files. Pick at most 6 existing files.',
         'Return ONLY JSON: {"plan":"...","search_terms":["exact text or identifier"],"paths":["an actual repository path"]}.',
       ].join('\n'),
-      { request: task, readable_source_files: index.paths, editable_source_files: index.editable_paths, team_lessons: lessonText(lessons) },
+      { request: task, editable_source_files: index.editable_paths, readable_source_files: index.paths, team_lessons: lessonText(lessons) },
       1200,
       member.provider,
     ).then(jsonObject).catch(() => null)));
