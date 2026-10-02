@@ -25,4 +25,19 @@ void main() {
     expect(cheIsSelfUpdateRequest('how do I make a GitHub token?'), isFalse);
     expect(cheIsSelfUpdateRequest('what does pull request mean?'), isFalse);
   });
+
+  test('starred repository discovery routes to GitHub research, not exact patching', () {
+    const research = 'Go through my GitHub starred repositories and my Inspirations list, inspect the agent systems, and integrate useful capabilities into CHE with a draft PR.';
+    expect(cheIsRepositoryResearchRequest(research), isTrue);
+    expect(cheIsSelfUpdateRequest(research), isFalse);
+
+    expect(
+      cheIsRepositoryResearchRequest('Inspect the repos I have starred and find useful voice and RAG code.'),
+      isTrue,
+    );
+    expect(
+      cheIsSelfUpdateRequest('Integrate owner/specific-agent-repo into your code and create a draft PR.'),
+      isTrue,
+    );
+  });
 }
