@@ -390,6 +390,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   CheRealtimeVoiceEngine? _realtimeVoice;
   CheWakeWordEngine? _porcupineWake;
   bool _realtimeConnecting = false;
+  bool _wakeListenerStarting = false;
 
   // Unread INCOMING mailbox messages (badge on the Chat mailbox icon).
   int _mailboxUnread = 0;
