@@ -286,7 +286,8 @@ async function implement(env, role, task, architecture, views, lessons, feedback
     who(member, role),
     [
       'Implement the change as exact search-and-replace edits on the inspected source.',
-      'Return ONLY strict JSON: {"summary":"1-2 sentences","edits":[{"path":"existing/source.file","find":"exact existing text","replace":"new text"}],"new_files":[{"path":"allowed/new.file","content":"COMPLETE FILE"}]}.',
+      'Return ONLY strict JSON. Normal change: {"summary":"1-2 sentences","edits":[{"path":"existing/source.file","find":"exact existing text","replace":"new text"}],"new_files":[{"path":"allowed/new.file","content":"COMPLETE FILE"}]}.',
+      'If and only if the inspected code already satisfies the owner request and a real change would be duplicate, worse, unsafe, or unnecessary, return {"no_change":true,"summary":"why no delta is justified","evidence":["concrete file/function/capability evidence"]}. Never manufacture a no-op edit just to create a diff.',
       '"find" must be copied character-for-character from the source, WITHOUT the "123| " line-number prefixes, and must be unique in its file. Keep each find small (1-15 lines).',
       'Only edit files CHE is allowed to write. Read-only workflow/signing/dependency/config files may be inspected for context but must never appear in edits/new_files.',
       'Change only what the request needs. Preserve VoiceOver labels and voice-first behavior.',
@@ -349,6 +350,30 @@ async function settleReviews(env, task, architecture, diff, uiTask, lessons, rev
     env, `${task}\n\nYou and the other reviewer disagreed. Read team_chat, weigh their argument honestly, and give your final verdict.`,
     architecture, diff, uiTask, lessons, reviewer, talk,
   ).catch(() => ({ approved: false, notes: ['Reviewer unavailable.'] }))));
+}
+
+async function reviewNoChange(env, request, architecture, claims, lessons, member, chat = []) {
+  const text = await runAgent(
+    env,
+    who(member, 'CHE No-Change Verification Agent'),
+    [
+      'Independently verify the engineers\' claim that no code delta is justified.',
+      'Approve ONLY if the inspected source already satisfies the owner request or the referenced capability would be duplicate, worse, unsafe, incompatible, or unnecessary.',
+      'Reject if there is still a concrete missing capability or if the evidence is vague.',
+      'A no-change approval is a reviewed engineering conclusion, not permission to skip requested work.',
+      'Return ONLY JSON: {"approved":true|false,"notes":["..."],"repair_instructions":"..."}.',
+    ].join('\n'),
+    {
+      request,
+      architecture,
+      no_change_claims: claims,
+      team_lessons: lessonText(lessons),
+      team_chat: chat.slice(-20),
+    },
+    1200,
+    member.provider,
+  );
+  return jsonObject(text) || { approved: false, notes: ['No-change reviewer returned invalid JSON.'] };
 }
 
 export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = null) {
@@ -444,6 +469,20 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       const attempts = await Promise.all(roundEngineers.map(async (member, i) => {
         const answer = await implement(env, role, task, architecture, views, lessons, feedbacks[i], member, chat).catch(() => null);
         if (!answer) { feedbacks[i] = 'Your last answer was not valid JSON.'; return null; }
+        if (answer.no_change === true) {
+          const evidence = (Array.isArray(answer.evidence) ? answer.evidence : [])
+            .map(String).map((item) => item.trim()).filter(Boolean).slice(0, 8);
+          if (!evidence.length) {
+            feedbacks[i] = 'A no-change conclusion needs concrete file/function/capability evidence from the inspected source.';
+            return null;
+          }
+          const noChangeSummary = String(answer.summary || 'No code delta is justified.').trim().slice(0, 1200);
+          chat.push({
+            from: member.name,
+            msg: `Round ${round + 1} via ${member.provider}. NO CHANGE: ${noChangeSummary} Evidence: ${evidence.join(' | ').slice(0, 1200)}`,
+          });
+          return { no_change: true, summary: noChangeSummary, evidence, engineer: member.name, provider: member.provider };
+        }
         const requestedEdits = Array.isArray(answer.edits) ? answer.edits : [];
         const protectedEdit = requestedEdits.find((edit) => !isSelfUpdateEditablePath(String(edit?.path || '')));
         if (protectedEdit) {
@@ -478,11 +517,41 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         return { next: applied.sources, review: reviews, diff, discussion: chat.slice(-30), summary: String(answer.summary || 'CHE update').slice(0, 1800), engineer: member.name };
       }));
 
-      const winner = attempts.find(Boolean);
+      const winner = attempts.find((attempt) => attempt && !attempt.no_change);
       if (winner) {
         result = winner;
         summary = `${winner.summary} (built by ${winner.engineer}, approved by ${CREW.reviewers.map((r) => r.name).join(' and ')})`;
         break;
+      }
+
+      const noChangeClaims = attempts.filter((attempt) => attempt?.no_change);
+      if (noChangeClaims.length === roundEngineers.length) {
+        const noChangeReviews = await Promise.all(CREW.reviewers.map((reviewer) =>
+          reviewNoChange(env, task, architecture, noChangeClaims, lessons, reviewer, chat)
+            .catch(() => ({ approved: false, notes: ['Reviewer unavailable.'] }))));
+        noChangeReviews.forEach((review, k) => chat.push({
+          from: CREW.reviewers[k].name,
+          msg: `On no-change conclusion: ${review.approved === true ? 'APPROVE' : 'REJECT'} ${[...(review.notes || []), review.repair_instructions].filter(Boolean).join(' ').slice(0, 500)}`,
+        }));
+        if (noChangeReviews.every((review) => review.approved === true)) {
+          const evidence = [...new Set(noChangeClaims.flatMap((claim) => claim.evidence))].slice(0, 12);
+          return {
+            status: 200,
+            already_satisfied: true,
+            summary: noChangeClaims.map((claim) => claim.summary).join(' | ').slice(0, 1800),
+            evidence,
+            review: noChangeReviews,
+            discussion: chat.slice(-30),
+            team: [...CREW.planners, ...CREW.engineers, ...CREW.reviewers].map((m) => m.name),
+            approval_required: false,
+            next: 'No PR is needed because both engineers and both independent reviewers verified that no useful code delta is justified.',
+          };
+        }
+        const rejection = noChangeReviews
+          .flatMap((review) => [...(review.notes || []), review.repair_instructions])
+          .filter(Boolean).join(' | ').slice(0, 1200);
+        feedbacks[0] = `No-change review rejected: ${rejection || 'insufficient evidence'}`;
+        feedbacks[1] = feedbacks[0];
       }
 
       feedback = [...new Set(feedbacks.filter(Boolean))].join(' || ');
