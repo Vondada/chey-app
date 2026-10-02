@@ -2,8 +2,8 @@ import { checkDartFiles } from './dart_check.js';
 // CHE self-development: controlled engineering, not uncontrolled
 // self-modification.
 //
-// Flow: CHE writes a ```che-update block (summary + complete Dart files under
-// lib/) → the app shows an "Update ready" card → the owner taps Approve →
+// Flow: CHE writes a ```che-update block (summary + complete safe source files
+// under lib/ or server/cloudflare/) → the app shows an "Update ready" card → the owner taps Approve →
 // POST /api/self-update opens a pull request in the owner's repo on a new
 // branch (main is never touched) → CI runs → the owner merges → the Shorebird
 // workflow patches Dart-only changes; anything native needs a full IPA.
@@ -12,13 +12,13 @@ import { checkDartFiles } from './dart_check.js';
 // The GitHub token is a Worker secret (CHE_GITHUB_TOKEN). It never reaches
 // the phone.
 
-const MAX_FILES = 6;
+const MAX_FILES = 8;
 const MAX_FILE_BYTES = 200_000;
 const BRANCH_PREFIX = 'che/update-';
 
-// Dart files under lib/ only. Everything else (pubspec, ios/, native code,
-// entitlements, Info.plist, workflows) is outside the self-update lane.
-// Content is scanned so a "Dart" file cannot smuggle secrets or native config.
+// Controlled source files only: Flutter Dart under lib/ and Worker JavaScript
+// under server/cloudflare/. Native iOS/config/workflows stay outside this lane.
+// Content is scanned so source files cannot smuggle secrets or native config.
 const SECRET_CONTENT = [
   /\bBEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY\b/,
   /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b/,
@@ -58,8 +58,10 @@ export function validateUpdateFiles(files) {
   for (const file of files) {
     const path = String(file?.path || '').trim();
     const content = typeof file?.content === 'string' ? file.content : null;
-    if (!/^lib\/[A-Za-z0-9_\/]+\.dart$/.test(path) || path.includes('..') || path.includes('//')) {
-      return { error: `Only Dart files under lib/ can be self-updated (${path || 'missing path'}).` };
+    const dartPath = /^lib\/[A-Za-z0-9_\/]+\.dart$/.test(path);
+    const workerPath = /^server\/cloudflare\/[A-Za-z0-9_./-]+\.(?:js|mjs)$/.test(path);
+    if ((!dartPath && !workerPath) || path.includes('..') || path.includes('//')) {
+      return { error: `Only Flutter Dart under lib/ or Worker JS under server/cloudflare/ can be self-updated (${path || 'missing path'}).` };
     }
     if (content === null) return { error: `${path} has no content.` };
     const bytes = new TextEncoder().encode(content).length;
@@ -68,8 +70,10 @@ export function validateUpdateFiles(files) {
     if (totalBytes > MAX_FILE_BYTES * 3) return { error: 'Update is too large overall; split into a narrower change.' };
     const smuggle = scanUpdateContent(content, path);
     if (smuggle) return { error: smuggle };
-    const dartErr = checkDartFiles([{ path, content }]);
-    if (dartErr) return { error: dartErr };
+    if (dartPath) {
+      const dartErr = checkDartFiles([{ path, content }]);
+      if (dartErr) return { error: dartErr };
+    }
     if (seen.has(path)) return { error: `${path} appears twice.` };
     seen.add(path);
     out.push({ path, content });
@@ -77,12 +81,14 @@ export function validateUpdateFiles(files) {
   return { files: out };
 }
 
-// Shorebird can patch Dart code only. Anything else needs a full rebuild.
+// Flutter-only proposals can use Shorebird. Worker-only proposals deploy through
+// the Cloudflare Worker pipeline after merge. Mixed safe-source proposals use both.
 export function classifyUpdate(paths) {
   const dartOnly = paths.every((path) => /^lib\/.+\.dart$/.test(path));
-  return dartOnly
-    ? { delivery: 'shorebird_patch', note: 'Dart-only change: eligible for a Shorebird patch after merge.' }
-    : { delivery: 'full_rebuild', note: 'Touches native/config files: needs a new IPA build and SideStore install.' };
+  const workerOnly = paths.every((path) => /^server\/cloudflare\/.+\.(?:js|mjs)$/.test(path));
+  if (dartOnly) return { delivery: 'shorebird_patch', note: 'Dart-only change: eligible for a Shorebird patch after merge.' };
+  if (workerOnly) return { delivery: 'worker_deploy', note: 'Worker-only change: deploy through the Cloudflare Worker pipeline after merge.' };
+  return { delivery: 'worker_and_shorebird', note: 'Mixed Flutter + Worker change: run both the app patch/build checks and Worker deployment after merge.' };
 }
 
 function base64Utf8(text) {
@@ -161,6 +167,7 @@ export async function openSelfUpdatePr(env, body, fetcher = fetch) {
     title: `CHE update: ${summary.split('\n')[0].slice(0, 80)}`,
     head: branch,
     base,
+    draft: true,
     body: [
       summary,
       '',
@@ -242,4 +249,4 @@ export async function rollbackLastUpdate(env, fetcher = fetch) {
   return { status: 200, number: pr.number, url: pr.url, rolls_back: last.number };
 }
 
-export const CHE_UPDATE_GUIDE = `SELF-DEVELOPMENT RULE: CHE manages code changes but does not author them in owner-facing chat. Explicit requests to change CHE's code, UI, screens, layout, navigation, styling, or Flutter behavior must be delegated to the internal engineering team: architect/UI architect → implementation agent → independent code/UX reviewer → repair agent if needed. The team must inspect real repository source before changing existing files. The resulting complete Dart files under lib/ are returned as one che-update proposal for the owner's explicit approval. Never fabricate a che-update block yourself. Nothing is written until the owner approves the card; then the server opens a branch/PR, CI validates it, and merge/deploy stays reviewable and rollback-capable. Native iOS changes, entitlements, Info.plist, or new native packages require a full rebuild rather than a Shorebird-only patch.`;
+export const CHE_UPDATE_GUIDE = `SELF-DEVELOPMENT RULE: CHE manages code changes but does not author them in owner-facing chat. Explicit requests to change CHE's Flutter or Worker code must be delegated to the internal engineering team: architect/UI architect → implementation agent → independent code/UX reviewer → repair agent if needed. The team must inspect real repository source before changing existing files. Safe complete source files under lib/ or server/cloudflare/ are returned as one che-update proposal for the owner's explicit approval. Never fabricate a che-update block yourself. Nothing is written until the owner approves the card; then the server opens a DRAFT branch/PR, CI validates it, and merge/deploy stays reviewable and rollback-capable. Native iOS changes, entitlements, Info.plist, workflows, or new native packages stay outside this lane.`;
