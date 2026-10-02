@@ -1,5 +1,5 @@
-// "Update ready" card for CHE's self-development. CHE proposes complete Dart
-// files in a ```che-update block; nothing happens until the owner taps
+// "Update ready" card for CHE's self-development. CHE proposes complete safe
+// source files in a ```che-update block; nothing happens until the owner taps
 // Approve. Approve opens a pull request (never a direct push), then the card
 // follows CI and the merge.
 
@@ -46,11 +46,13 @@ class CheUpdateProposal {
   List<String> get problems {
     final out = <String>[];
     if (files.isEmpty) out.add('An update needs at least one file.');
-    if (files.length > 6) out.add('An update may change at most 6 files (keep the slice narrow).');
+    if (files.length > 8) out.add('An update may change at most 8 files (keep the slice narrow).');
     final seen = <String>{};
     for (final f in files) {
-      if (!RegExp(r'^lib/[A-Za-z0-9_/]+\.dart$').hasMatch(f.path) || f.path.contains('..')) {
-        out.add('${f.path}: only Dart files under lib/ can be self-updated');
+      final dartPath = RegExp(r'^lib/[A-Za-z0-9_/]+\.dart$').hasMatch(f.path);
+      final workerPath = RegExp(r'^server/cloudflare/[A-Za-z0-9_./-]+\.(?:js|mjs)$').hasMatch(f.path);
+      if ((!dartPath && !workerPath) || f.path.contains('..') || f.path.contains('//')) {
+        out.add('${f.path}: only Flutter Dart under lib/ or Worker JS under server/cloudflare/ can be self-updated');
         continue;
       }
       if (!seen.add(f.path)) out.add('${f.path} appears twice.');
@@ -192,7 +194,7 @@ class _CheUpdateCardState extends State<CheUpdateCard> {
     final statusLine = pr == null
         ? null
         : prState == 'merged'
-            ? 'Merged. The next build or Shorebird patch delivers it.'
+            ? 'Merged. The appropriate app/Worker delivery pipeline can apply it.'
             : prState == 'closed'
                 ? 'Pull request closed without merging.'
                 : switch (ci) {

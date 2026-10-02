@@ -39,7 +39,7 @@ import { prepareSelfUpdate } from './self_development.js';
 import { KEY_PROVIDERS, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
-import { autoImproveScan, codeScoutIntent, fetchRepoFile, listOwnerStarredRepos, scoutCode, speakScout, speakStarredRepos, starredRepoIntent } from './code_scout.js';
+import { autoImproveScan, codeScoutIntent, fetchRepoFile, inspirationUpgradeContext, listOwnerStarredRepos, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, studySelectionIntent } from './code_scout.js';
 import { consultEngine, consultIntent, shareIntent, speakConsult } from './ai_consult.js';
 import { markOwnerSeen, readArchive as flagstaffArchive, unreadIncoming } from './web_mailbox.js';
 import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
@@ -1908,6 +1908,13 @@ async function dispatchChange(env, body, memory = null) {
   // the GitHub API. GitHub Actions (billed minutes) is no longer required.
   const recall = await retrieveVectorContext(env, request);
   let groundedRequest = ragReference(request, vectorContextText(recall), 12000).slice(0, 16000);
+
+  const inspiration = await inspirationUpgradeContext(env, memory, request, fetch)
+    .catch(() => ({ text: '', references: [] }));
+  if (inspiration.text) {
+    groundedRequest = `${groundedRequest}\n\n${inspiration.text}`.slice(0, 42000);
+  }
+
   // "Fix this": look for well-built open-source code doing the same job, so
   // the crew can learn the technique (never copy it) and credit it.
   if (body.fix_this) {
@@ -1927,6 +1934,24 @@ async function dispatchChange(env, body, memory = null) {
   if (prepared.status !== 200 || !prepared.proposal) {
     await sendMail(env, { from: 'che', to: 'claude', text: `My coding crew failed on: "${request.slice(0, 300)}". Reason: ${String(prepared.detail || 'unknown').slice(0, 800)}` }).catch(() => null);
     return json({ detail: `The coding team did not produce a review-passed update, sir. ${prepared.detail || 'Nothing was changed.'}` }, prepared.status && prepared.status !== 200 ? prepared.status : 422);
+  }
+  if (memory?.put && inspiration?.references?.length) {
+    let ledger = [];
+    try { ledger = (await memory.get('inspiration_upgrade_ledger')) || []; } catch (_) {}
+    if (!Array.isArray(ledger)) ledger = [];
+    ledger.push({
+      request: request.slice(0, 1000),
+      references: inspiration.references.map((ref) => ({
+        full_name: ref.full_name,
+        license: ref.license || '',
+        reusable: Boolean(ref.reusable && !ref.error),
+      })),
+      result: 'review-passed-proposal',
+      files: prepared.proposal.files.map((file) => file.path),
+      summary: prepared.proposal.summary,
+      at: new Date().toISOString(),
+    });
+    await memory.put('inspiration_upgrade_ledger', ledger.slice(-80)).catch(() => null);
   }
   const team = Array.isArray(prepared.team) ? prepared.team.join(', ') : 'CHE engineering team';
   const proposalBlock = '```che-update\n' + JSON.stringify(prepared.proposal) + '\n```';
@@ -5109,13 +5134,18 @@ export class CheState extends DurableObject {
           }
           return ndjsonReply(speakScout(scout.need, result), { source: 'che_code_scout' });
         }
-        // "study 2" → crew reads that repo and proposes a change.
-        const studyMatch = /^(?:che|chay)?[,:]?\s*study\s+(?:number\s+)?(\d{1,2})\b/i.exec(message.trim());
-        if (studyMatch) {
-          const list = (await this.ctx.storage.get('code_scout_last')) || [];
-          const pick = Array.isArray(list) ? list[Number(studyMatch[1]) - 1] : null;
-          if (!pick) return ndjsonReply('Say "find code for …" first, sir, then "study" and a number.', { source: 'che_code_scout' });
-          return ndjsonReply(`I'll have my crew study ${pick.full_name} (${pick.license}) and propose how to use its approach in your app. Say "update your code:" with what you want from it, and they'll draft it for your approval, with credit.`, { source: 'che_code_scout', repo: pick.full_name });
+        // Multi-repository study selection feeds the next upgrade request.
+        const studySelection = studySelectionIntent(message);
+        if (studySelection) {
+          const selected = await selectStudyRepos(this.ctx.storage, studySelection);
+          if (selected.error) {
+            return ndjsonReply(selected.error, { source: 'che_code_scout' });
+          }
+          const names = selected.repos.map((repo) => repo.full_name);
+          return ndjsonReply(
+            `Saved Study ${studySelection.numbers.join(' and ')}, sir: ${names.join(', ')}. Your next substantial CHE upgrade will compare these references with the current code before proposing changes.`,
+            { source: 'che_code_scout', repos: names },
+          );
         }
 
         // Talk to other AIs right now: "ask Gemini and ChatGPT about …".

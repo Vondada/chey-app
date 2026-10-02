@@ -7,6 +7,8 @@
 
 import { validateUpdateFiles } from './self_update.js';
 
+const SAFE_SOURCE_PATH = /^(?:lib\/[A-Za-z0-9_\/]+\.dart|server\/cloudflare\/[A-Za-z0-9_./-]+\.(?:js|mjs))$/;
+
 function repoOf(env) {
   const repo = String(env.CHE_GITHUB_REPO || '').trim();
   if (!env.CHE_GITHUB_TOKEN || !/^[\w.-]+\/[\w.-]+$/.test(repo)) return null;
@@ -91,9 +93,9 @@ async function sourceIndex(env, fetcher) {
   );
   if (!tree.ok) return { error: `Could not inspect source tree (${tree.status}).` };
   const paths = (Array.isArray(tree.data?.tree) ? tree.data.tree : [])
-    .filter((item) => item?.type === 'blob' && /^lib\/[A-Za-z0-9_\/]+\.dart$/.test(String(item.path || '')))
+    .filter((item) => item?.type === 'blob' && SAFE_SOURCE_PATH.test(String(item.path || '')))
     .map((item) => String(item.path))
-    .slice(0, 1600);
+    .slice(0, 2400);
   return { base, paths };
 }
 
@@ -166,7 +168,7 @@ async function searchCode(env, terms, fetcher) {
   const hits = new Map();
   if (!repo) return hits;
   const batches = await Promise.all(terms.slice(0, 5).map(async (term) => {
-    const q = `"${String(term).replace(/"/g, '').slice(0, 80)}" repo:${repo} path:lib extension:dart`;
+    const q = `"${String(term).replace(/"/g, '').slice(0, 80)}" repo:${repo}`;
     try {
       const response = await fetcher(`https://api.github.com/search/code?per_page=10&q=${encodeURIComponent(q)}`, {
         headers: {
@@ -180,7 +182,7 @@ async function searchCode(env, terms, fetcher) {
       const data = await response.json();
       return (data?.items || [])
         .map((item) => String(item?.path || ''))
-        .filter((path) => /^lib\/[A-Za-z0-9_\/]+\.dart$/.test(path));
+        .filter((path) => SAFE_SOURCE_PATH.test(path));
     } catch (_) {
       return [];
     }
@@ -192,7 +194,7 @@ async function searchCode(env, terms, fetcher) {
 }
 
 async function readFull(env, base, path, fetcher) {
-  if (!/^lib\/[A-Za-z0-9_\/]+\.dart$/.test(path)) return null;
+  if (!SAFE_SOURCE_PATH.test(path)) return null;
   const found = await gh(env, 'GET', `/contents/${path}?ref=${encodeURIComponent(base)}`, null, fetcher);
   if (!found.ok || !found.data?.content) return null;
   try { return decodeBase64Utf8(found.data.content); } catch (_) { return null; }
@@ -267,7 +269,7 @@ async function reviewProposal(env, request, architecture, diff, uiTask, lessons,
     [
       'Independently review this change against the owner request.',
       'FIRST check TARGET CORRECTNESS: does the diff change exactly the thing the owner referred to (same visible text, same screen, same widget)? If it edits a different element with a similar name, reject.',
-      'Then check Dart syntax, missing imports, regressions and whether the request is fully met.',
+      'Then check Dart or JavaScript syntax, missing imports, regressions and whether the request is fully met.',
       uiTask ? 'For UI, also check VoiceOver labels and voice-first use are preserved.' : 'Check existing behavior is preserved.',
       'Apply every team lesson; a change that repeats a listed mistake must be rejected.',
       'Read team_chat (planners, engineers and the other reviewer). If a teammate raised a point, address it explicitly in notes.',
@@ -286,7 +288,7 @@ async function implement(env, role, task, architecture, views, lessons, feedback
     who(member, role),
     [
       'Implement the change as exact search-and-replace edits on the inspected source.',
-      'Return ONLY strict JSON: {"summary":"1-2 sentences","edits":[{"path":"lib/x.dart","find":"exact existing text","replace":"new text"}],"new_files":[{"path":"lib/new.dart","content":"COMPLETE FILE"}]}.',
+      'Return ONLY strict JSON: {"summary":"1-2 sentences","edits":[{"path":"existing/source.file","find":"exact existing text","replace":"new text"}],"new_files":[{"path":"allowed/new.file","content":"COMPLETE FILE"}]}.',
       '"find" must be copied character-for-character from the source, WITHOUT the "123| " line-number prefixes, and must be unique in its file. Keep each find small (1-15 lines).',
       'Change only what the request needs. Preserve VoiceOver labels and voice-first behavior.',
       'Obey every team lesson. Read team_chat: build on teammates\' good ideas and avoid what reviewers rejected in their work.',
@@ -317,14 +319,14 @@ async function recoveryPlan(env, task, architecture, feedback, index, lessons, m
     [
       'The previous implementation pass failed or produced no real diff. Do not repeat the same edit.',
       'Re-locate the actual source for the owner request using the failure feedback and repository file list.',
-      'Prefer exact visible text, widget/class names and likely screen files. Name new files to inspect when the previous set was wrong or incomplete.',
-      'Return ONLY JSON: {"plan":"...","search_terms":["exact text or identifier"],"paths":["lib/a.dart"]}.',
+      'Prefer exact visible text for UI requests; for architecture/repository work, use module names, exported functions and likely server or Flutter files. Name new files to inspect when the previous set was wrong or incomplete.',
+      'Return ONLY JSON: {"plan":"...","search_terms":["exact text or identifier"],"paths":["lib/a.dart or server/cloudflare/a.js"]}.',
     ].join('\n'),
     {
       request: task,
       previous_architecture: architecture,
       previous_failure: feedback,
-      dart_files: index.paths,
+      source_files: index.paths,
       team_lessons: lessonText(lessons),
       team_chat: chat.slice(-24),
     },
@@ -360,7 +362,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     const lessons = await loadLessons(memory);
     const index = await sourceIndex(env, fetcher);
     if (index.error || !index.paths?.length) {
-      return { status: 502, detail: index.error || 'CHE could not inspect its Flutter source.' };
+      return { status: 502, detail: index.error || 'CHE could not inspect its source.' };
     }
     const uiTask = isUiTask(task);
 
@@ -370,11 +372,11 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       who(member, uiTask ? 'CHE UI/UX Architect' : 'CHE Software Architect'),
       [
         'Plan the smallest change that does exactly what the owner asked.',
-        'Name the exact visible text, identifiers or widget names that the code for this request must contain, so the team can search for them.',
+        'For UI requests, name exact visible text or widget identifiers. For architecture/repository work, name concrete modules, functions, routes or server files that implement the capability.',
         'Use the team lessons (they include known file locations). Pick at most 5 existing files.',
-        'Return ONLY JSON: {"plan":"...","search_terms":["exact text or identifier"],"paths":["lib/a.dart"]}.',
+        'Return ONLY JSON: {"plan":"...","search_terms":["exact text or identifier"],"paths":["lib/a.dart or server/cloudflare/a.js"]}.',
       ].join('\n'),
-      { request: task, dart_files: index.paths, team_lessons: lessonText(lessons) },
+      { request: task, source_files: index.paths, team_lessons: lessonText(lessons) },
       1200,
       member.provider,
     ).then(jsonObject).catch(() => null)));
@@ -446,7 +448,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         if (applied.error) { feedbacks[i] = applied.error; return null; }
         for (const file of Array.isArray(answer.new_files) ? answer.new_files.slice(0, 3) : []) {
           const path = String(file?.path || '');
-          if (/^lib\/[A-Za-z0-9_\/]+\.dart$/.test(path) && !sources.has(path) && typeof file.content === 'string') applied.sources.set(path, file.content);
+          if (SAFE_SOURCE_PATH.test(path) && !sources.has(path) && typeof file.content === 'string') applied.sources.set(path, file.content);
         }
         const diff = diffView(sources, applied.sources);
         if (!diff) {

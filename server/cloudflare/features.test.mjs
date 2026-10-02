@@ -39,15 +39,18 @@ test('plugin runner returns capped data, blocks redirects, and plans at most one
   assert.equal(none, null);
 });
 
-test('self-update accepts only complete Dart files under lib/', () => {
+test('self-update accepts reviewed Flutter and Worker source only', () => {
   assert.ok(validateUpdateFiles([{ path: 'lib/a/b.dart', content: 'x' }]).files);
+  assert.ok(validateUpdateFiles([{ path: 'server/cloudflare/code_scout.js', content: 'export const x = 1;' }]).files);
+  assert.ok(validateUpdateFiles([{ path: 'server/cloudflare/code_scout.test.mjs', content: 'const x = 1;' }]).files);
   for (const path of ['pubspec.yaml', 'ios/Runner/Info.plist', 'lib/../x.dart', 'lib/a.js', '.github/workflows/x.yml']) {
     assert.ok(validateUpdateFiles([{ path, content: 'x' }]).error, path);
   }
   assert.ok(validateUpdateFiles([]).error);
   assert.ok(validateUpdateFiles([{ path: 'lib/a.dart' }]).error);
   assert.equal(classifyUpdate(['lib/a.dart']).delivery, 'shorebird_patch');
-  assert.equal(classifyUpdate(['ios/Podfile']).delivery, 'full_rebuild');
+  assert.equal(classifyUpdate(['server/cloudflare/a.js']).delivery, 'worker_deploy');
+  assert.equal(classifyUpdate(['lib/a.dart', 'server/cloudflare/a.js']).delivery, 'worker_and_shorebird');
 });
 
 test('self-update rejects secrets, native smuggling and oversized slices', () => {
@@ -55,8 +58,8 @@ test('self-update rejects secrets, native smuggling and oversized slices', () =>
   assert.match(scanUpdateContent('<?xml version="1.0"?><plist><dict></dict></plist>', 'lib/a.dart') || '', /native|entitlement|Info/);
   assert.ok(validateUpdateFiles([{ path: 'lib/a.dart', content: 'STRIPE_SECRET_KEY=sk_test_abcdefghijklmnopqrst' }]).error);
   assert.ok(validateUpdateFiles([{ path: 'lib/a.dart', content: '<?xml version="1.0"?><plist><dict></dict></plist>' }]).error);
-  const many = Array.from({ length: 7 }, (_, i) => ({ path: `lib/f${i}.dart`, content: 'x' }));
-  assert.match(validateUpdateFiles(many).error || '', /at most 6/);
+  const many = Array.from({ length: 9 }, (_, i) => ({ path: `lib/f${i}.dart`, content: 'x' }));
+  assert.match(validateUpdateFiles(many).error || '', /at most 8/);
 });
 
 function fakeGitHub() {
@@ -111,6 +114,7 @@ test('self-update opens a PR on a new branch and never touches main', async () =
   const pr = calls.find((c) => c.method === 'POST' && c.path === '/pulls');
   assert.equal(pr.body.base, 'main');
   assert.equal(pr.body.head, result.branch);
+  assert.equal(pr.body.draft, true);
 });
 
 test('rollback is a real revert of only the last CHE update', async () => {

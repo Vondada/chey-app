@@ -250,3 +250,71 @@ test('no-op engineering pass re-inspects source and retries on a different provi
   assert.deepEqual(out.proposal.files.map((f) => f.path), ['lib/main.dart']);
   assert.match(out.proposal.files[0].content, /'Ready, sir\.'/);
 });
+
+
+test('broad architecture work can inspect and update Worker source', async () => {
+  const files = {
+    'lib/main.dart': MAIN,
+    'server/cloudflare/code_scout.js': "export function oldFlow() { return 'old'; }\n",
+  };
+  const fetcher = async (url) => {
+    const u = String(url);
+    const ok = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (u.includes('/search/code')) {
+      const q = decodeURIComponent(u.split('q=')[1] || '');
+      const term = q.split('"')[1] || '';
+      const items = Object.entries(files)
+        .filter(([, src]) => src.includes(term))
+        .map(([path]) => ({ path }));
+      return ok({ items });
+    }
+    if (u.endsWith('/o/r')) return ok({ default_branch: 'main' });
+    if (u.includes('/git/ref/')) return ok({ object: { sha: 'abc' } });
+    if (u.includes('/git/trees/')) return ok({ tree: Object.keys(files).map((path) => ({ type: 'blob', path })) });
+    const m = /\/contents\/(.+)\?ref=/.exec(u);
+    if (m && files[m[1]] != null) return ok({ content: btoa(files[m[1]]) });
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const env = {
+    CHE_GITHUB_TOKEN: 't',
+    CHE_GITHUB_REPO: 'o/r',
+    AI: {
+      run: async (_model, input) => {
+        const system = input.messages[0].content;
+        if (system.includes('Architect')) {
+          return { response: JSON.stringify({
+            plan: 'Improve the repository research workflow in the Worker.',
+            search_terms: ['oldFlow'],
+            paths: ['server/cloudflare/code_scout.js'],
+          }) };
+        }
+        if (system.includes('Review')) {
+          return { response: JSON.stringify({
+            approved: true,
+            target_correct: true,
+            notes: [],
+            repair_instructions: '',
+            lesson: '',
+          }) };
+        }
+        return { response: JSON.stringify({
+          summary: 'Upgrade repository research workflow',
+          edits: [{
+            path: 'server/cloudflare/code_scout.js',
+            find: "export function oldFlow() { return 'old'; }",
+            replace: "export function oldFlow() { return 'compare-delta'; }",
+          }],
+        }) };
+      },
+    },
+  };
+  const out = await prepareSelfUpdate(
+    env,
+    'Update your code: improve the repository research architecture using compare delta integrate.',
+    fetcher,
+    memoryStore(),
+  );
+  assert.equal(out.status, 200, out.detail);
+  assert.deepEqual(out.proposal.files.map((file) => file.path), ['server/cloudflare/code_scout.js']);
+  assert.match(out.proposal.files[0].content, /compare-delta/);
+});
