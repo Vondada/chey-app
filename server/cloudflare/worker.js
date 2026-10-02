@@ -2040,7 +2040,8 @@ export class CheState extends DurableObject {
     }
     // While Flagstaff is open, do one cheap GitHub-head check every 30 seconds.
     // The AI only runs when a genuinely new message addressed to CHE appears.
-    if (await flagstaffOpen(this.ctx.storage)) times.push(Date.now() + 30_000);
+    const flagstaffInitialized = Boolean(await this.ctx.storage.get('web_mailbox_code'));
+    if (flagstaffInitialized && await flagstaffOpen(this.ctx.storage)) times.push(Date.now() + 30_000);
     if (times.length) await this.ctx.storage.setAlarm(Math.min(...times));
   }
 
@@ -3260,10 +3261,11 @@ export class CheState extends DurableObject {
       // ─── Flagstaff 369 for the owner's app: live board, link, archive ──
       if (path === '/api/flagstaff' && request.method === 'GET') {
         const origin = new URL(request.url).origin;
+        const flagCode = await mailboxCode(this.ctx.storage);
         await this.scheduleWork();
         return json({
           open: await flagstaffOpen(this.ctx.storage),
-          link: mailboxLink(origin, await mailboxCode(this.ctx.storage)),
+          link: mailboxLink(origin, flagCode),
           messages: await readWebMail(this.ctx.storage, 300, this.env),
           unread: (await unreadIncoming(this.ctx.storage, this.env)).count,
           github: this.env.CHE_GITHUB_TOKEN && this.env.CHE_GITHUB_REPO ? { repo: this.env.CHE_GITHUB_REPO, branch: 'che-mailbox', folder: 'mailbox/' } : null,
