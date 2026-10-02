@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyEdits, focusView, literalTerms, loadLessons, prepareSelfUpdate, recordLesson } from './self_development.js';
+import { applyEdits, focusView, isUiTask, literalTerms, loadLessons, prepareSelfUpdate, rankSourcePaths, recordLesson } from './self_development.js';
 
 const MAIN = `class Home {\n  String _statusBanner = 'Ready. Type or speak a request.';\n}\n`;
 const PATCH = `const t = Text('CHE updated. Restart to apply.');\n`;
@@ -31,6 +31,31 @@ function fakeGitHub() {
 
 test('literalTerms pulls quoted on-screen text', () => {
   assert.deepEqual(literalTerms('make the banner "Ready. Type or speak" say hi'), ['Ready. Type or speak']);
+});
+
+test('UI classification uses the owner intent, not generic architecture/reference words', () => {
+  assert.equal(isUiTask('Change the Ready banner text on the home screen.'), true);
+  assert.equal(isUiTask('Redesign the agent architecture and workflow; reference docs mention UI screen design and text labels.'), true);
+  assert.equal(isUiTask('Improve agent architecture, delegation, memory, research, retries, review, and workflow state management.'), false);
+});
+
+test('broad architecture requests infer real CHE source modules when code search has no exact phrase', () => {
+  const paths = [
+    'server/cloudflare/agent_runtime.js',
+    'server/cloudflare/code_scout.js',
+    'server/cloudflare/self_development.js',
+    'server/cloudflare/self_update.js',
+    'server/cloudflare/worker.js',
+    'lib/rooms/che_theater_room.dart',
+  ];
+  const ranked = rankSourcePaths(
+    paths,
+    'Improve agent delegation, handoffs, parallel planning, memory RAG, research, coding review, retries and workflow reliability.',
+    6,
+  );
+  assert.ok(ranked.includes('server/cloudflare/agent_runtime.js'));
+  assert.ok(ranked.includes('server/cloudflare/self_development.js'));
+  assert.ok(ranked.includes('server/cloudflare/code_scout.js'));
 });
 
 test('applyEdits requires exact, unique find text', () => {
