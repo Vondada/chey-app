@@ -28,9 +28,9 @@ bool cheIsSelfUpdateRequest(String raw) {
   if (cheIsRepositoryResearchRequest(text)) return false;
   final direct = RegExp(
     r'^(?:(?:chay|chey|shay|che)[, ]+)?'
-    r'(?:(?:add|change|update|remove|fix|improve|build|redesign|modify|move|restyle)\s+.+\s+'
-    r'(?:to|in|on)\s+(?:your|che|c\.?h\.?e\.?)\s+(?:code|app|ui|interface|screen|layout)\b|'
-    r'(?:update|improve|fix|build|redesign|change|modify)\s+(?:yourself|your app|your code|your ui|your interface|your screen|your layout)\b|'
+    r'(?:(?:add|change|update|remove|fix|repair|improve|upgrade|build|redesign|modify|move|restyle)\s+.+\s+'
+    r'(?:to|in|on|inside)\s+(?:your|che|c\.?h\.?e\.?)\s+(?:code|codebase|repo(?:sitory)?|app|ui|interface|screen|layout)?\b|'
+    r'(?:update|improve|fix|repair|upgrade|build|redesign|change|modify|work on)\s+(?:yourself|your own code|your app|your code|your codebase|your repo(?:sitory)?|your ui|your interface|your screen|your layout)\b|'
     r'(?:proofread|review|edit|refactor)\s+(?:your\s+)?code\b|'
     r'(?:change|move|redesign|restyle)\s+(?:this|the|your)\s+(?:screen|button|control|layout|ui|interface)\b)',
     caseSensitive: false,
@@ -41,7 +41,7 @@ bool cheIsSelfUpdateRequest(String raw) {
   // planning", "execute the change") before they mention CHE's code. Route
   // those to the controlled self-update lane instead of generic chat.
   final implementationVerb = RegExp(
-    r'\b(?:implement|code|rewrite|patch|refactor|modify|fix|repair|build|add|change|update|execute the change)\b',
+    r'\b(?:implement|code|rewrite|patch|refactor|modify|fix|repair|build|add|change|update|upgrade|improve|work on|execute the change)\b',
     caseSensitive: false,
   ).hasMatch(text);
   final selfTarget = RegExp(
