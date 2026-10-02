@@ -165,7 +165,7 @@ async function searchCode(env, terms, fetcher) {
   const repo = repoOf(env);
   const hits = new Map();
   if (!repo) return hits;
-  for (const term of terms.slice(0, 5)) {
+  const batches = await Promise.all(terms.slice(0, 5).map(async (term) => {
     const q = `"${String(term).replace(/"/g, '').slice(0, 80)}" repo:${repo} path:lib extension:dart`;
     try {
       const response = await fetcher(`https://api.github.com/search/code?per_page=10&q=${encodeURIComponent(q)}`, {
@@ -176,13 +176,17 @@ async function searchCode(env, terms, fetcher) {
           'User-Agent': 'CHE-Agent',
         },
       });
-      if (!response.ok) continue;
+      if (!response.ok) return [];
       const data = await response.json();
-      for (const item of data?.items || []) {
-        const path = String(item?.path || '');
-        if (/^lib\/[A-Za-z0-9_\/]+\.dart$/.test(path)) hits.set(path, (hits.get(path) || 0) + 1);
-      }
-    } catch (_) {}
+      return (data?.items || [])
+        .map((item) => String(item?.path || ''))
+        .filter((path) => /^lib\/[A-Za-z0-9_\/]+\.dart$/.test(path));
+    } catch (_) {
+      return [];
+    }
+  }));
+  for (const paths of batches) {
+    for (const path of paths) hits.set(path, (hits.get(path) || 0) + 1);
   }
   return hits;
 }
@@ -396,8 +400,11 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
 
     const sources = new Map();
     const views = [];
-    for (const path of chosen) {
-      const full = await readFull(env, index.base, path, fetcher);
+    const initialReads = await Promise.all(chosen.map(async (path) => ({
+      path,
+      full: await readFull(env, index.base, path, fetcher),
+    })));
+    for (const { path, full } of initialReads) {
       if (full === null) continue;
       sources.set(path, full);
       const view = focusView(full, terms);
@@ -498,9 +505,12 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
           .filter((path) => index.paths.includes(path))
           .slice(0, 8);
 
-        for (const path of candidates) {
-          if (sources.has(path)) continue;
-          const full = await readFull(env, index.base, path, fetcher);
+        const missing = candidates.filter((path) => !sources.has(path));
+        const recoveryReads = await Promise.all(missing.map(async (path) => ({
+          path,
+          full: await readFull(env, index.base, path, fetcher),
+        })));
+        for (const { path, full } of recoveryReads) {
           if (full !== null) sources.set(path, full);
         }
         refreshViews();

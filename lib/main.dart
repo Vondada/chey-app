@@ -65,7 +65,7 @@ import 'che_ui/che_ui_preferences.dart';
 import 'che_ui/che_transitions.dart';
 import 'che_ui/che_widgets.dart' as kit show CheBackground;
 import 'che_ui/che_agents.dart' show CheAgent, CheAgentStatusLabel;
-import 'che_ui/che_agent_chat.dart' show CheOrbState;
+import 'che_ui/che_agent_chat.dart' show CheOrb, CheOrbState, CheOrbStateLabel;
 import 'che_ui/che_log.dart' show CheTranscriptScreen;
 import 'home/che_home_chat.dart';
 import 'home/che_inline_preview.dart';
@@ -390,6 +390,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   CheRealtimeVoiceEngine? _realtimeVoice;
   CheWakeWordEngine? _porcupineWake;
   bool _realtimeConnecting = false;
+  bool _wakeListenerStarting = false;
 
   // Unread INCOMING mailbox messages (badge on the Chat mailbox icon).
   int _mailboxUnread = 0;
@@ -430,16 +431,6 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   final CheRequestGate _requestGate = CheRequestGate();
   bool _justCompleted = false;
 
-  String get _chatTitle {
-    for (final m in messages) {
-      if (m['role'] == 'user' && (m['text'] ?? '').trim().isNotEmpty) {
-        final t = m['text']!.trim().replaceAll(RegExp(r'\s+'), ' ');
-        return t.length > 34 ? '${t.substring(0, 34)}…' : t;
-      }
-    }
-    return 'New Chat';
-  }
-
   /// CHE's 9 visible states, from real voice, chat and Office activity.
   CheOrbState get _orbState {
     final phase = _voiceSnapshot.phase;
@@ -453,6 +444,9 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
       return CheOrbState.thinking;
     }
     if (phase == CheVoicePhase.thinking || phase == CheVoicePhase.connecting) return CheOrbState.thinking;
+    // Keep fallback diagnostics visual-only in normal Chat: warning-colored orb,
+    // no provider/fallback text clutter.
+    if (_naturalVoiceServerErrored && !_isSpeaking) return CheOrbState.waiting;
     if (_justCompleted) return CheOrbState.completed;
     if (_officeRuntime.busy) return CheOrbState.waiting;
     if (cheSleeping || phase == CheVoicePhase.sleeping || phase == CheVoicePhase.wakeListening) {
@@ -1085,10 +1079,6 @@ OWNER AGENCY
       },
     );
 
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
-      _initNativeIosVoice();
-    }
-
     // Cold launch from the "Wake CHE" Shortcut: give speech init a moment,
     // then honour the wake request.
     if (!kIsWeb) {
@@ -1331,45 +1321,24 @@ OWNER AGENCY
     );
   }
 
-  Widget _buildChatTab(List<CheAgent> agents, String subtitle) {
-    final proactive = suggestions.isEmpty ? null : suggestions.first;
-    final keyboardUp = MediaQuery.viewInsetsOf(context).bottom > 0;
-    final panelHeight = keyboardUp ? 0.84 : 0.72;
-
+  Widget _buildChatTab(List<CheAgent> agents) {
+    final postReplyActions =
+        _homeSuggestions.isNotEmpty ? _homeSuggestions : _skillPlugins.quickActions();
     final chat = Column(
       children: [
-        CheHomePresence(
-          orbState: _orbState,
-          subtitle: subtitle,
-          onOrbTap: toggleListening,
-        ),
-        CheConversationBar(
-          title: _chatTitle,
-          onOpen: _openConversationSheet,
-          onNew: _homeNewChat,
-        ),
         Expanded(
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 260),
             child: messages.isEmpty
-                ? CheHomeEmptyState(
+                ? Center(
                     key: const ValueKey('empty'),
-                    proactive: _homeGreeting ?? proactive,
-                    actions: [
-                      ..._homeSuggestions,
-                      ..._skillPlugins.quickActions().take(3),
-                      'Plan my day',
-                      'What is the Office doing?',
-                      'Make me an image',
-                    ],
-                    onPick: _runPluginPrompt,
-                    onTalk: toggleListening,
-                    listening: _realtimeVoice?.connected == true || isListening,
-                    onReadAloud: () => speakText(
-                      _homeGreeting ?? proactive ?? 'I am here. Just tell me what you need.',
-                      record: false,
+                    child: Semantics(
+                      label: 'Empty Chat. Type a message or use the Talk button to speak with CHE.',
+                      child: Text(
+                        'What can I help with?',
+                        style: kit.CheType.title.copyWith(color: kit.CheColors.textDim),
+                      ),
                     ),
-                    onActivity: () => _openActivityFeed(),
                   )
                 : GestureDetector(
                     key: const ValueKey('chat'),
@@ -1387,23 +1356,28 @@ OWNER AGENCY
                   ),
           ),
         ),
-        if (_skillPlugins.quickActions().isNotEmpty && messages.isNotEmpty)
-          SizedBox(
-            height: 38,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              children: [
-                for (final action in _skillPlugins.quickActions().take(8))
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: ActionChip(
-                      avatar: const Icon(Icons.bolt_rounded, size: 16, color: kit.CheColors.accent),
-                      label: Text(action, maxLines: 1, overflow: TextOverflow.ellipsis),
-                      onPressed: _isSending ? null : () => _runPluginPrompt(action),
+        if (postReplyActions.isNotEmpty &&
+            messages.isNotEmpty &&
+            messages.last['role'] == 'assistant' &&
+            !_isSending)
+          LayoutBuilder(
+            builder: (context, constraints) => Padding(
+              padding: const EdgeInsets.fromLTRB(14, 2, 14, 6),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  for (final action in postReplyActions.take(3))
+                    ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: constraints.maxWidth),
+                      child: ActionChip(
+                        avatar: const Icon(Icons.bolt_rounded, size: 16, color: kit.CheColors.accent),
+                        label: Text(action, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        onPressed: () => _runPluginPrompt(action),
+                      ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
         SafeArea(
@@ -1447,85 +1421,7 @@ OWNER AGENCY
       ],
     );
 
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        // Keep CHE's home visible behind the conversation so Chat feels like
-        // a docked assistant instead of a separate full-screen destination.
-        IgnorePointer(
-          child: ExcludeSemantics(
-            child: Opacity(
-              opacity: 0.42,
-              child: _buildHomeTab(agents),
-            ),
-          ),
-        ),
-        Align(
-          alignment: Alignment.bottomCenter,
-          child: FractionallySizedBox(
-            widthFactor: 1,
-            heightFactor: panelHeight,
-            child: Semantics(
-              container: true,
-              label: 'CHE chat panel. Home remains visible above it.',
-              child: Container(
-                decoration: BoxDecoration(
-                  color: kit.CheColors.bg.withValues(alpha: 0.97),
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
-                  border: Border(
-                    top: BorderSide(color: kit.CheColors.accent.withValues(alpha: 0.28)),
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.35),
-                      blurRadius: 28,
-                      offset: const Offset(0, -8),
-                    ),
-                  ],
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: Column(
-                  children: [
-                    SizedBox(
-                      height: 34,
-                      child: Row(
-                        children: [
-                          const SizedBox(width: 44),
-                          Expanded(
-                            child: Center(
-                              child: Container(
-                                width: 44,
-                                height: 4,
-                                decoration: BoxDecoration(
-                                  color: kit.CheColors.textFaint.withValues(alpha: 0.45),
-                                  borderRadius: BorderRadius.circular(99),
-                                ),
-                              ),
-                            ),
-                          ),
-                          Semantics(
-                            button: true,
-                            label: 'Minimize chat and return to Home.',
-                            child: IconButton(
-                              tooltip: 'Minimize chat',
-                              onPressed: () => _goShellTab(0),
-                              icon: const Icon(Icons.keyboard_arrow_down_rounded),
-                              color: kit.CheColors.textDim,
-                              visualDensity: VisualDensity.compact,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Expanded(child: chat),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
+    return chat;
   }
 
   Future<void> _persistLanguages() async {
@@ -2009,13 +1905,6 @@ OWNER AGENCY
   @override
   Widget build(BuildContext context) {
     _ensureOfficeRuntime();
-    final subtitle = _deviceToken == null
-        ? 'Security pairing required'
-        : _voiceSnapshot.engine == CheVoiceEngine.realtime
-            ? 'Realtime voice • interrupt anytime'
-            : cheSleeping
-                ? 'Say “Chay” to wake'
-                : _voiceSnapshot.engineLabel;
     final agents = [for (final p in _officeRuntime.agents) p.agent];
 
     return Scaffold(
@@ -2032,14 +1921,30 @@ OWNER AGENCY
               ),
               centerTitle: true,
               toolbarHeight: 56,
-              title: ShaderMask(
-                shaderCallback: (r) => kit.CheColors.accentGradient.createShader(r),
-                child: Text(
-                  'CHE',
-                  style: kit.CheType.display.copyWith(fontSize: 22, color: Colors.white, letterSpacing: 4),
+              leading: Semantics(
+                button: true,
+                label: 'CHE, ${_orbState.label}. Talk to CHE.',
+                child: IconButton(
+                  tooltip: 'Talk to CHE',
+                  onPressed: toggleListening,
+                  icon: CheOrb(size: 30, state: _orbState),
                 ),
               ),
+              title: Text(
+                'Chat',
+                style: kit.CheType.title.copyWith(fontSize: 22, fontWeight: FontWeight.w800),
+              ),
               actions: [
+                IconButton(
+                  tooltip: 'Conversations',
+                  icon: const Icon(Icons.history_rounded),
+                  onPressed: _openConversationSheet,
+                ),
+                IconButton(
+                  tooltip: 'New chat',
+                  icon: const Icon(Icons.add_rounded),
+                  onPressed: _isSending ? null : _homeNewChat,
+                ),
                 IconButton(
                   tooltip: 'Mailbox and Flagstaff',
                   icon: _mailboxUnread > 0
@@ -2050,14 +1955,6 @@ OWNER AGENCY
                       : const Icon(Icons.markunread_mailbox_rounded),
                   onPressed: () => unawaited(_openMailbox()),
                 ),
-                IconButton(
-                  onPressed: () => unawaited(_toggleVoiceReplies()),
-                  icon: Icon(
-                    voiceResponsesEnabled ? Icons.volume_up : Icons.volume_off,
-                    color: kit.CheColors.accent,
-                  ),
-                  tooltip: voiceResponsesEnabled ? 'Mute CHE voice' : 'Unmute CHE voice',
-                ),
               ],
             )
           : null,
@@ -2067,33 +1964,14 @@ OWNER AGENCY
           bottom: false,
           child: Column(
             children: [
-              _shellStatusChrome(),
-              if (_naturalVoiceServerErrored && _shellTab == 1)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Semantics(
-                    button: true,
-                    label: 'Voice fallback. Open voice diagnostics.',
-                    child: TextButton.icon(
-                      onPressed: _openVoiceDiagnostics,
-                      icon: const Icon(Icons.info_outline_rounded, size: 13),
-                      label: const Text('Voice fallback'),
-                      style: TextButton.styleFrom(
-                        minimumSize: const Size(0, 28),
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-                        textStyle: kit.CheType.caption.copyWith(fontSize: 11),
-                        foregroundColor: kit.CheColors.textDim,
-                      ),
-                    ),
-                  ),
-                ),
+              if (_shellTab != 1) _shellStatusChrome(),
               Expanded(
                 child: IndexedStack(
                   index: _shellTab,
                   sizing: StackFit.expand,
                   children: [
                     _buildHomeTab(agents),
-                    _buildChatTab(agents, subtitle),
+                    _buildChatTab(agents),
                     _buildOfficeTab(),
                     _buildAppsTab(),
                     _buildMoreTab(),

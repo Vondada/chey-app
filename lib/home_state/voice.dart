@@ -541,7 +541,11 @@ extension _CheHomeVoice on _CHEHomeState {
     if (_usingSpeechFallback) return;
     _usingSpeechFallback = true;
     debugPrint('CHE speech error: native: $reason');
-    try { await CheNativeVoice.stop(); } catch (_) {}
+    await _localVoice.runMicOp(() async {
+      try {
+        await CheNativeVoice.stop();
+      } catch (_) {}
+    });
     _nativeIosVoiceActive = false;
     _nativeIosVoiceStarting = false;
     if (!speechAvailable) await initializeVoice();
@@ -568,27 +572,17 @@ extension _CheHomeVoice on _CHEHomeState {
     );
 
     try {
-      // Cancelling speech_to_text emits done/notListening. The
-      // _nativeIosVoiceStarting guard above keeps that callback from starting
-      // the Flutter recognizer again while the native bridge takes the mic.
-      if (speech.isListening) {
-        await speech.cancel();
-      }
-      final started = await CheNativeVoice.start();
-
-      if (!mounted) return;
-
-      // The native iPhone bridge now owns hands-free speech recognition
-      // when it starts successfully. It keeps listening during CHE speech
-      // so the owner can interrupt naturally (barge-in).
-      _set(() {
-        _nativeIosVoiceActive = started;
-        if (started) {
-          openConversation = true;
-          isListening = true;
+      // Security/session state is loaded before this runs. Release any Flutter
+      // recognizer once, then let the shared wake-stack selector choose exactly
+      // one iPhone microphone owner (Porcupine, native, or speech fallback).
+      await _localVoice.runMicOp(() async {
+        if (speech.isListening) {
+          await speech.cancel();
         }
       });
-      if (!started) await _fallbackSpeech('Native recognition did not start');
+      await _restartWakeListener();
+
+      if (!mounted) return;
     } on MissingPluginException {
       await _fallbackSpeech('Native voice bridge unavailable');
     } catch (e) {

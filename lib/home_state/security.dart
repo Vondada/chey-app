@@ -21,9 +21,6 @@ extension _CheHomeSecurity on _CHEHomeState {
 
     if (_deviceToken != null && _deviceToken!.isNotEmpty) {
       await _loadAgentState(silent: true);
-      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
-        unawaited(_restartWakeListener());
-      }
       unawaited(
         Future.delayed(
           const Duration(seconds: 3),
@@ -37,6 +34,10 @@ extension _CheHomeSecurity on _CHEHomeState {
           delay: const Duration(milliseconds: 900),
         );
       }
+    }
+
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+      unawaited(_initNativeIosVoice());
     }
 
     if (mounted) _set(() {});
@@ -830,7 +831,7 @@ extension _CheHomeSecurity on _CHEHomeState {
     _applyVoiceSnapshot(_voiceMachine.snapshot);
 
     try {
-      final started = await CheNativeVoice.start();
+      final started = await _localVoice.runMicOp(() => CheNativeVoice.start());
       _nativeIosVoiceActive = started;
       if (!started) {
         _voiceMachine.disconnected(reason ?? 'Voice engines unavailable.');
@@ -897,9 +898,11 @@ extension _CheHomeSecurity on _CHEHomeState {
 
     final started = await wake.start();
     if (started) {
-      try {
-        await CheNativeVoice.stop();
-      } catch (_) {}
+      await _localVoice.runMicOp(() async {
+        try {
+          await CheNativeVoice.stop();
+        } catch (_) {}
+      });
       _nativeIosVoiceActive = false;
       _voiceMachine.startWakeListening();
       _applyVoiceSnapshot(_voiceMachine.snapshot);
@@ -909,24 +912,33 @@ extension _CheHomeSecurity on _CHEHomeState {
 
   Future<void> _restartWakeListener() async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return;
-    if (_realtimeVoice?.connected == true || _realtimeConnecting) return;
+    if (_realtimeVoice?.connected == true ||
+        _realtimeConnecting ||
+        _wakeListenerStarting) {
+      return;
+    }
 
-    // Production wake stack:
-    // 1) Apple Vocal Shortcuts/App Intent gets CHE foregrounded at iPhone level.
-    // 2) Porcupine listens locally while CHE is active/asleep.
-    // 3) OpenAI Realtime/WebRTC exclusively owns the mic after wake.
-    if (await _startPorcupineWake()) return;
-
+    _wakeListenerStarting = true;
     try {
-      final started = await CheNativeVoice.start();
+      // Production wake stack:
+      // 1) Apple Vocal Shortcuts/App Intent gets CHE foregrounded at iPhone level.
+      // 2) Porcupine listens locally while CHE is active/asleep.
+      // 3) OpenAI Realtime/WebRTC exclusively owns the mic after wake.
+      if (await _startPorcupineWake()) return;
+
+      final started = await _localVoice.runMicOp(() => CheNativeVoice.start());
       _nativeIosVoiceActive = started;
       if (started) {
         _voiceMachine.startWakeListening();
         _applyVoiceSnapshot(_voiceMachine.snapshot);
+      } else {
+        await _fallbackSpeech('Native recognition did not start');
       }
     } catch (error) {
       _voiceMachine.disconnected(error.toString());
       _applyVoiceSnapshot(_voiceMachine.snapshot);
+    } finally {
+      _wakeListenerStarting = false;
     }
   }
 
@@ -943,12 +955,14 @@ extension _CheHomeSecurity on _CHEHomeState {
       _listenRestartTimer?.cancel();
       try {
         await _stopPorcupineWake();
-        await speech.cancel();
-        if (!_nativeIosVoiceActive) {
-          _nativeIosVoiceActive = await CheNativeVoice.start();
-        } else {
-          await CheNativeVoice.wake();
-        }
+        await _localVoice.runMicOp(() async {
+          await speech.cancel();
+          if (!_nativeIosVoiceActive) {
+            _nativeIosVoiceActive = await CheNativeVoice.start();
+          } else {
+            await CheNativeVoice.wake();
+          }
+        });
       } catch (_) {}
       if (mounted) {
         _set(() {
@@ -978,13 +992,15 @@ extension _CheHomeSecurity on _CHEHomeState {
 
       // Realtime is the only microphone owner once CHE wakes.
       await _stopPorcupineWake();
-      await speech.cancel();
+      await _localVoice.runMicOp(() async {
+        await speech.cancel();
+        try {
+          await CheNativeVoice.stop();
+        } catch (_) {}
+      });
       await flutterTts.stop();
       try {
         await CheNativeVoice.stopAudio();
-      } catch (_) {}
-      try {
-        await CheNativeVoice.stop();
       } catch (_) {}
       _nativeIosVoiceActive = false;
 
@@ -1027,7 +1043,7 @@ extension _CheHomeSecurity on _CHEHomeState {
       // Native recognition/TTS is a real fallback, never a second simultaneous
       // mic owner.
       try {
-        final started = await CheNativeVoice.start();
+        final started = await _localVoice.runMicOp(() => CheNativeVoice.start());
         _nativeIosVoiceActive = started;
         if (mounted) {
           _set(() {
