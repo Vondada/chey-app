@@ -12,13 +12,14 @@ import { checkDartFiles } from './dart_check.js';
 // The GitHub token is a Worker secret (CHE_GITHUB_TOKEN). It never reaches
 // the phone.
 
-const MAX_FILES = 8;
+const MAX_FILES = 12;
 const MAX_FILE_BYTES = 200_000;
 const BRANCH_PREFIX = 'che/update-';
 
-// Controlled source files only: Flutter Dart under lib/ and Worker JavaScript
-// under server/cloudflare/. Native iOS/config/workflows stay outside this lane.
-// Content is scanned so source files cannot smuggle secrets or native config.
+// Owner-authorized self-development can edit normal application/source/test/docs
+// files on a review branch. High-risk control planes stay read-only: GitHub
+// workflows, signing/entitlements, secret files, dependency manifests and
+// deployment credentials are never auto-written by CHE.
 const SECRET_CONTENT = [
   /\bBEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY\b/,
   /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b/,
@@ -37,6 +38,40 @@ const NATIVE_SMUGGLE = [
   /CODE_SIGN_ENTITLEMENTS\s*=/,
   /\.entitlements['"]\s*:/,
 ];
+
+
+const EDITABLE_PATHS = [
+  /^lib\/[A-Za-z0-9_./-]+\.dart$/,
+  /^(?:test|integration_test)\/[A-Za-z0-9_./-]+\.dart$/,
+  /^server\/cloudflare\/[A-Za-z0-9_./-]+\.(?:js|mjs)$/,
+  /^assets\/office3d\/[A-Za-z0-9_./-]+\.(?:html|js|css|json)$/,
+  /^web\/[A-Za-z0-9_./-]+\.(?:html|js|css|json)$/,
+  /^docs\/[A-Za-z0-9_./ -]+\.(?:md|txt)$/,
+  /^ios\/Runner\/[A-Za-z0-9_./-]+\.(?:swift|m|mm|h)$/,
+  /^android\/app\/src\/main\/(?:kotlin|java)\/[A-Za-z0-9_./-]+\.(?:kt|java)$/,
+];
+
+const READABLE_EXTRA_PATHS = [
+  /^(?:pubspec\.yaml|pubspec\.lock|analysis_options\.yaml)$/,
+  /^\.github\/workflows\/[A-Za-z0-9_./-]+\.ya?ml$/,
+  /^server\/cloudflare\/(?:wrangler\.jsonc|package(?:-lock)?\.json)$/,
+  /^ios\/[A-Za-z0-9_./-]+\.(?:plist|pbxproj|xcconfig|entitlements)$/,
+  /^android\/[A-Za-z0-9_./-]+\.(?:xml|gradle|kts|properties)$/,
+];
+
+const BLOCKED_WRITE_PATH = /^(?:\.github\/|\.git\/)|(?:^|\/)(?:\.env|secrets?\b|credentials?\b)|\.(?:pem|p12|mobileprovision|key|keystore|jks)$/i;
+
+export function isSelfUpdateEditablePath(path) {
+  const value = String(path || '').trim();
+  if (!value || value.includes('..') || value.includes('//') || BLOCKED_WRITE_PATH.test(value)) return false;
+  return EDITABLE_PATHS.some((re) => re.test(value));
+}
+
+export function isSelfUpdateReadablePath(path) {
+  const value = String(path || '').trim();
+  if (!value || value.includes('..') || value.includes('//') || BLOCKED_WRITE_PATH.test(value)) return false;
+  return isSelfUpdateEditablePath(value) || READABLE_EXTRA_PATHS.some((re) => re.test(value));
+}
 
 export function scanUpdateContent(content, path = '') {
   const text = String(content || '');
@@ -58,10 +93,9 @@ export function validateUpdateFiles(files) {
   for (const file of files) {
     const path = String(file?.path || '').trim();
     const content = typeof file?.content === 'string' ? file.content : null;
-    const dartPath = /^lib\/[A-Za-z0-9_\/]+\.dart$/.test(path);
-    const workerPath = /^server\/cloudflare\/[A-Za-z0-9_./-]+\.(?:js|mjs)$/.test(path);
-    if ((!dartPath && !workerPath) || path.includes('..') || path.includes('//')) {
-      return { error: `Only Flutter Dart under lib/ or Worker JS under server/cloudflare/ can be self-updated (${path || 'missing path'}).` };
+    const dartPath = /^(?:lib|test|integration_test)\/[A-Za-z0-9_./-]+\.dart$/.test(path);
+    if (!isSelfUpdateEditablePath(path)) {
+      return { error: `CHE may edit normal app/source/test/docs files on a review branch, but this path is protected or unsupported: ${path || 'missing path'}.` };
     }
     if (content === null) return { error: `${path} has no content.` };
     const bytes = new TextEncoder().encode(content).length;
@@ -81,14 +115,22 @@ export function validateUpdateFiles(files) {
   return { files: out };
 }
 
-// Flutter-only proposals can use Shorebird. Worker-only proposals deploy through
-// the Cloudflare Worker pipeline after merge. Mixed safe-source proposals use both.
+// Delivery is based on runtime files, not tests/docs that happen to ride in the PR.
 export function classifyUpdate(paths) {
-  const dartOnly = paths.every((path) => /^lib\/.+\.dart$/.test(path));
-  const workerOnly = paths.every((path) => /^server\/cloudflare\/.+\.(?:js|mjs)$/.test(path));
-  if (dartOnly) return { delivery: 'shorebird_patch', note: 'Dart-only change: eligible for a Shorebird patch after merge.' };
-  if (workerOnly) return { delivery: 'worker_deploy', note: 'Worker-only change: deploy through the Cloudflare Worker pipeline after merge.' };
-  return { delivery: 'worker_and_shorebird', note: 'Mixed Flutter + Worker change: run both the app patch/build checks and Worker deployment after merge.' };
+  const values = (Array.isArray(paths) ? paths : []).map(String);
+  const flutterRuntime = values.some((path) => /^lib\/.+\.dart$/.test(path));
+  const workerRuntime = values.some((path) => /^server\/cloudflare\/.+\.js$/.test(path) && !/\.test\.m?js$/.test(path));
+  const needsFullRebuild = values.some((path) =>
+    /^(?:assets\/|web\/|ios\/|android\/)/.test(path),
+  );
+  if (needsFullRebuild && workerRuntime) {
+    return { delivery: 'worker_and_full_rebuild', note: 'Touches Worker plus bundled/native app files: deploy the Worker and build a new IPA after merge.' };
+  }
+  if (needsFullRebuild) return { delivery: 'full_rebuild', note: 'Touches bundled/native app files: needs a new IPA build after merge.' };
+  if (workerRuntime && flutterRuntime) return { delivery: 'worker_and_shorebird', note: 'Mixed Flutter + Worker change: deploy the Worker and use Shorebird for eligible Dart changes after merge.' };
+  if (workerRuntime) return { delivery: 'worker_deploy', note: 'Worker change: deploy through the Cloudflare Worker pipeline after merge.' };
+  if (flutterRuntime) return { delivery: 'shorebird_patch', note: 'Dart-only runtime change: eligible for a Shorebird patch after merge.' };
+  return { delivery: 'source_only', note: 'Tests/docs only: no runtime deployment is required after merge.' };
 }
 
 function base64Utf8(text) {
@@ -123,6 +165,42 @@ async function gh(env, method, path, body, fetcher = fetch) {
   return { status: response.status, ok: response.ok, data };
 }
 
+function ghReason(result) {
+  return String(result?.data?.message || result?.data?.errors?.[0]?.message || '').trim();
+}
+
+export async function selfUpdateGitHubAccess(env, fetcher = fetch) {
+  const configured = repoOf(env);
+  if (!configured) {
+    return {
+      status: 503,
+      connected: false,
+      detail: 'Self-update needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the CHE server.',
+    };
+  }
+  const repo = await gh(env, 'GET', '', null, fetcher);
+  if (!repo.ok) {
+    const reason = ghReason(repo);
+    return {
+      status: repo.status || 502,
+      connected: false,
+      repository: configured,
+      detail: `GitHub repository access failed (${repo.status})${reason ? `: ${reason}` : '.'}`,
+    };
+  }
+  const permissions = repo.data?.permissions || {};
+  return {
+    status: 200,
+    connected: true,
+    repository: configured,
+    default_branch: String(repo.data?.default_branch || 'main'),
+    can_read: true,
+    can_push_reported: permissions.push === true ? true : permissions.push === false ? false : null,
+    can_create_draft_pr: true,
+    policy: 'read latest repo; write only owner-approved review branches; draft PR only; never push main directly',
+  };
+}
+
 async function baseBranch(env, fetcher) {
   const repo = await gh(env, 'GET', '', null, fetcher);
   return repo.ok ? String(repo.data?.default_branch || 'main') : 'main';
@@ -130,10 +208,10 @@ async function baseBranch(env, fetcher) {
 
 async function createBranch(env, name, fromBranch, fetcher) {
   const ref = await gh(env, 'GET', `/git/ref/heads/${encodeURIComponent(fromBranch)}`, null, fetcher);
-  if (!ref.ok) return { error: `Could not read ${fromBranch} (${ref.status}).` };
+  if (!ref.ok) return { error: `Could not read ${fromBranch} (${ref.status})${ghReason(ref) ? `: ${ghReason(ref)}` : '.'}` };
   const sha = ref.data?.object?.sha;
   const made = await gh(env, 'POST', '/git/refs', { ref: `refs/heads/${name}`, sha }, fetcher);
-  if (!made.ok) return { error: `Could not create branch (${made.status}).` };
+  if (!made.ok) return { error: `Could not create branch (${made.status})${ghReason(made) ? `: ${ghReason(made)}` : '.'}` };
   return { sha };
 }
 
@@ -145,7 +223,9 @@ async function putFile(env, branch, path, content, message, fetcher) {
     branch,
     ...(existing.ok && existing.data?.sha ? { sha: existing.data.sha } : {}),
   }, fetcher);
-  return put.ok ? {} : { error: `Could not write ${path} (${put.status}).` };
+  return put.ok
+    ? { commit_sha: String(put.data?.commit?.sha || '') }
+    : { error: `Could not write ${path} (${put.status})${ghReason(put) ? `: ${ghReason(put)}` : '.'}` };
 }
 
 export async function openSelfUpdatePr(env, body, fetcher = fetch) {
@@ -158,9 +238,11 @@ export async function openSelfUpdatePr(env, body, fetcher = fetch) {
   const branch = `${BRANCH_PREFIX}${Date.now().toString(36)}`;
   const made = await createBranch(env, branch, base, fetcher);
   if (made.error) return { status: 502, detail: made.error };
+  let commitSha = '';
   for (const file of checked.files) {
     const wrote = await putFile(env, branch, file.path, file.content, `CHE update: ${file.path}`, fetcher);
     if (wrote.error) return { status: 502, detail: wrote.error };
+    if (wrote.commit_sha) commitSha = wrote.commit_sha;
   }
   const delivery = classifyUpdate(checked.files.map((file) => file.path));
   const pr = await gh(env, 'POST', '/pulls', {
@@ -180,12 +262,14 @@ export async function openSelfUpdatePr(env, body, fetcher = fetch) {
       'Approved in the CHE app by the owner. Merge only after CI passes.',
     ].join('\n'),
   }, fetcher);
-  if (!pr.ok) return { status: 502, detail: `Could not open the pull request (${pr.status}).` };
+  if (!pr.ok) return { status: 502, detail: `Could not open the pull request (${pr.status})${ghReason(pr) ? `: ${ghReason(pr)}` : '.'}` };
   return {
     status: 200,
     number: pr.data.number,
     url: pr.data.html_url,
     branch,
+    commit_sha: String(pr.data?.head?.sha || commitSha || ''),
+    base,
     delivery: delivery.delivery,
     note: delivery.note,
   };
@@ -249,4 +333,4 @@ export async function rollbackLastUpdate(env, fetcher = fetch) {
   return { status: 200, number: pr.number, url: pr.url, rolls_back: last.number };
 }
 
-export const CHE_UPDATE_GUIDE = `SELF-DEVELOPMENT RULE: CHE manages code changes but does not author them in owner-facing chat. Explicit requests to change CHE's Flutter or Worker code must be delegated to the internal engineering team: architect/UI architect → implementation agent → independent code/UX reviewer → repair agent if needed. The team must inspect real repository source before changing existing files. Safe complete source files under lib/ or server/cloudflare/ are returned as one che-update proposal for the owner's explicit approval. Never fabricate a che-update block yourself. Nothing is written until the owner approves the card; then the server opens a DRAFT branch/PR, CI validates it, and merge/deploy stays reviewable and rollback-capable. Native iOS changes, entitlements, Info.plist, workflows, or new native packages stay outside this lane.`;
+export const CHE_UPDATE_GUIDE = `SELF-DEVELOPMENT RULE: CHE has a real GitHub self-development toolchain. For owner-requested engineering, read the latest repository, delegate to the internal engineering team, inspect real source, implement, independently review, and present a reviewable proposal. CHE may edit normal Flutter/Worker/test/docs/office3d/web/native-source files on a dedicated branch after owner approval. Never write credentials, signing material, entitlements, secret files, GitHub workflows, or dependency/deployment control files automatically. Never push directly to main. Owner-approved changes open a REAL DRAFT PR through CHE_GITHUB_TOKEN; report the real PR number, URL, branch and commit SHA returned by GitHub. If GitHub rejects an operation, report the exact API status/message instead of guessing that access is missing. Merge/deploy still requires the owner's explicit instruction and CI. CHE may continually research and prepare improvements, but may not silently merge them.`;
