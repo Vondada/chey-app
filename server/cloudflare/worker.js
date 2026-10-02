@@ -39,7 +39,7 @@ import { prepareSelfUpdate } from './self_development.js';
 import { KEY_PROVIDERS, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
-import { autoImproveScan, codeScoutIntent, fetchRepoFile, listOwnerStarredRepos, scoutCode, speakScout, speakStarredRepos, starredRepoIntent } from './code_scout.js';
+import { autoImproveScan, codeScoutIntent, fetchRepoFile, inspirationUpgradeContext, listOwnerStarredRepos, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, studySelectionIntent } from './code_scout.js';
 import { consultEngine, consultIntent, shareIntent, speakConsult } from './ai_consult.js';
 import { markOwnerSeen, readArchive as flagstaffArchive, unreadIncoming } from './web_mailbox.js';
 import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
