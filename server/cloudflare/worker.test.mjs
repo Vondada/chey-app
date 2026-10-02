@@ -18,13 +18,23 @@ let CheState;
 let publicResearch;
 let geminiVision;
 let selfUpdateChatIntent;
+let selfImprovementLesson;
 try {
-  ({ default: worker, CheState, publicResearch, geminiVision, selfUpdateChatIntent } = await import(
+  ({ default: worker, CheState, publicResearch, geminiVision, selfUpdateChatIntent, selfImprovementLesson } = await import(
     generatedWorker.href + '?test=' + Date.now(),
   ));
 } finally {
   try { unlinkSync(generatedWorker); } catch (_) {}
 }
+
+test('nightly self-improvement only selects concrete reliability lessons', () => {
+  assert.match(
+    selfImprovementLesson({ lessons: ['Be friendlier.', 'Fix chat replies that cut off during long answers.'] }),
+    /cut off/,
+  );
+  assert.equal(selfImprovementLesson({ lessons: ['Use a warmer greeting.', 'Remember the owner likes concise replies.'] }), '');
+  assert.equal(selfImprovementLesson(null), '');
+});
 
 test('self-update chat commands route to real GitHub tools, not generic model guesses', () => {
   assert.equal(selfUpdateChatIntent('Create the pr')?.kind, 'open-pr');
