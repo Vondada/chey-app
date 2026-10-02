@@ -174,7 +174,7 @@ export async function readWebMail(storage, limit = 50, env = null, fetcher = fet
   return [...byId.values()].sort((a, b) => String(a.at).localeCompare(String(b.at))).slice(-limit);
 }
 
-export async function postWebMail(storage, { from, text, to = 'che' }, env = null, fetcher = fetch) {
+export async function postWebMail(storage, { from, text, to = 'che', reply_to = '' }, env = null, fetcher = fetch) {
   const sender = clean(from, 30).toLowerCase().replace(/[^a-z0-9 _-]/g, '') || 'anonymous-ai';
   const body = clean(text, 4000);
   if (body.length < 2) return { status: 400, detail: 'Add text=your message.' };
@@ -185,14 +185,14 @@ export async function postWebMail(storage, { from, text, to = 'che' }, env = nul
   if (list.filter((m) => Date.parse(m.at) > hourAgo && m.from !== 'che').length >= MAX_PER_HOUR && sender !== 'che') {
     return { status: 429, detail: 'Mailbox is busy; try again later.' };
   }
-  const message = { id: crypto.randomUUID(), at: new Date().toISOString(), from: sender, to: clean(to, 30).toLowerCase() || 'che', text: body };
+  const message = { id: crypto.randomUUID(), at: new Date().toISOString(), from: sender, to: clean(to, 30).toLowerCase() || 'che', text: body, reply_to: clean(reply_to, 160) };
   list.push(message);
   await storage.put(BOX_KEY, list.slice(-MAX_MESSAGES));
   // Mirror into the shared GitHub mailbox with the same id, so it is one
   // message in one mailbox, not two copies.
   let github = { status: 0, detail: 'GitHub mailbox not configured.' };
   if (hasGitHubMailbox(env)) {
-    github = await sendMail(env, { from: message.from, to: message.to, text: message.text, id: message.id }, fetcher)
+    github = await sendMail(env, { from: message.from, to: message.to, text: message.text, replyTo: message.reply_to, id: message.id }, fetcher)
       .catch((e) => ({ status: 502, detail: String(e?.message || e) }));
     await storage.delete(GH_CACHE_KEY);
   }
@@ -240,7 +240,7 @@ function page(origin, code, messages, note = '', repo = '') {
 }
 
 // Handles /mail/<code> before device pairing. Returns null for other paths.
-export async function handleWebMailbox(request, storage, env = null, fetcher = fetch) {
+export async function handleWebMailbox(request, storage, env = null, fetcher = fetch, onDelivered = null) {
   const url = new URL(request.url);
   const match = /^\/(?:flagstaff369|flagstaff|mail)\/([A-Za-z0-9]{6,64})\/?$/i.exec(url.pathname);
   if (!match) return null;
@@ -261,6 +261,16 @@ export async function handleWebMailbox(request, storage, env = null, fetcher = f
     const posted = await postWebMail(storage, { from, text }, env, fetcher);
     if (posted.status !== 200) return new Response(posted.detail, { status: posted.status, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
     note = `SENT: your message ${posted.message.id} was delivered to CHE.`;
+    if (typeof onDelivered === 'function' && posted.message?.to === 'che' && posted.message?.from !== 'che') {
+      try {
+        const handled = await onDelivered(posted.message);
+        if (handled?.replied) note += ` CHE replied as message ${handled.reply_id || 'sent'}.`;
+        else if (handled?.processing) note += ' CHE is already processing this message.';
+      } catch (error) {
+        console.error('Flagstaff live reply failed:', error?.message || error);
+        note += ' CHE received it; the background mailbox watcher will retry.';
+      }
+    }
   }
   const repo = hasGitHubMailbox(env) ? String(env.CHE_GITHUB_REPO).trim() : '';
   return new Response(page(url.origin, code, await readWebMail(storage, 50, env, fetcher), note, repo), {

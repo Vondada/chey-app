@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { handleWebMailbox, mailboxCode, mailboxLink, readWebMail, rotateMailboxCode } from './web_mailbox.js';
+import { handleWebMailbox, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { mailboxIntent } from './mailbox.js';
 
 function store() {
@@ -103,4 +103,36 @@ test('Flagstaff 369 and the GitHub che-mailbox are one mailbox', async () => {
   const board = await readWebMail(s, 50, env, fetcher);
   assert.equal(board.filter((m) => m.text === 'hi from the link').length, 1, 'no duplicate copies');
   assert.equal((await unreadIncoming(s, env, fetcher)).count, 2);
+});
+
+
+test('Flagstaff live delivery callback can reply immediately and preserves reply_to', async () => {
+  const s = store();
+  const code = await mailboxCode(s);
+  const link = `https://x/flagstaff/${code}`;
+  let delivered;
+  const response = await handleWebMailbox(
+    new Request(`${link}?from=chatgpt&text=${encodeURIComponent('Give me your exact patch draft.')}`),
+    s,
+    null,
+    fetch,
+    async (message) => {
+      delivered = message;
+      const reply = await postWebMail(s, {
+        from: 'che',
+        to: message.from,
+        text: 'Draft received. I will return the exact before/after patch.',
+        reply_to: message.id,
+      });
+      return { replied: true, reply_id: reply.message.id };
+    },
+  );
+  assert.equal(response.status, 200);
+  assert.equal(delivered.from, 'chatgpt');
+  const board = await readWebMail(s);
+  assert.equal(board.length, 2);
+  assert.equal(board[1].from, 'che');
+  assert.equal(board[1].to, 'chatgpt');
+  assert.equal(board[1].reply_to, board[0].id);
+  assert.match(await response.text(), /CHE replied as message/);
 });
