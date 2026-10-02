@@ -201,7 +201,7 @@ export async function selfUpdateGitHubAccess(env, fetcher = fetch) {
     default_branch: String(repo.data?.default_branch || 'main'),
     can_read: true,
     can_push_reported: permissions.push === true ? true : permissions.push === false ? false : null,
-    can_create_draft_pr: true,
+    can_create_draft_pr: permissions.push === true ? true : permissions.push === false ? false : null,
     policy: 'read latest repo; write only owner-approved review branches; draft PR only; never push main directly',
   };
 }
