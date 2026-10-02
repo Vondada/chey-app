@@ -225,14 +225,20 @@ export function applyEdits(sources, edits) {
   const next = new Map(sources);
   for (const edit of Array.isArray(edits) ? edits : []) {
     const path = String(edit?.path || '').trim();
-    const find = typeof edit?.find === 'string' ? edit.find : '';
+    const requestedFind = typeof edit?.find === 'string' ? edit.find : '';
     const replace = typeof edit?.replace === 'string' ? edit.replace : null;
     if (!next.has(path)) return { error: `Edit targets ${path || 'a missing path'}, which was not inspected.` };
-    if (!find || replace === null) return { error: `An edit for ${path} is missing find/replace text.` };
+    if (!requestedFind || replace === null) return { error: `An edit for ${path} is missing find/replace text.` };
     const current = next.get(path);
+    const unnumbered = requestedFind.split('\n')
+      .map((line) => line.replace(/^\s*\d+\|\s?/, ''))
+      .join('\n');
+    const find = current.includes(requestedFind)
+      ? requestedFind
+      : (unnumbered !== requestedFind && current.includes(unnumbered) ? unnumbered : requestedFind);
     const first = current.indexOf(find);
-    if (first < 0) return { error: `In ${path}, the "find" text does not exist exactly: ${JSON.stringify(find.slice(0, 120))}. Copy it character-for-character from the source (no line-number prefixes).` };
-    if (current.indexOf(find, first + find.length) >= 0) return { error: `In ${path}, the "find" text appears more than once: ${JSON.stringify(find.slice(0, 120))}. Include more surrounding lines so it is unique.` };
+    if (first < 0) return { error: `In ${path}, the "find" text does not exist exactly in current source. Re-read this file and regenerate the edit from the inspected source; do not ask the owner to copy source text.` };
+    if (current.indexOf(find, first + find.length) >= 0) return { error: `In ${path}, the proposed edit is ambiguous because it matches more than once. Re-read the surrounding function or widget and regenerate a uniquely anchored edit.` };
     next.set(path, current.slice(0, first) + replace + current.slice(first + find.length));
   }
   return { sources: next };
@@ -427,7 +433,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       return {
         status: 422,
         detail: uiTask
-          ? 'The team could not locate the UI source for that request. Name the exact visible text or screen only if the request is actually about a UI element.'
+          ? 'The first discovery pass could not locate the UI source. CHE must broaden repository discovery using visible terms, widget names, routes, imports and callers before asking the owner for source text.'
           : 'The team could not map this broad engineering request to a safe source file. Repository research and architecture discovery must run before source patching; do not ask the owner for on-screen text.',
       };
     }
