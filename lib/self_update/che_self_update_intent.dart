@@ -63,7 +63,7 @@ bool cheIsSelfUpdateRequest(String raw) {
   // planning", "execute the change") before they mention CHE's code. Route
   // those to the controlled self-update lane instead of generic chat.
   final implementationVerb = RegExp(
-    r'\b(?:implement|code|rewrite|patch|refactor|modify|fix|repair|build|add|change|update|upgrade|improve|work on|execute the change)\b',
+    r'\b(?:implement|integrate|adapt|apply|install|code|rewrite|patch|refactor|modify|fix|repair|build|add|change|update|upgrade|improve|work on|execute the change)\b',
     caseSensitive: false,
   ).hasMatch(text);
   final selfTarget = RegExp(
