@@ -53,12 +53,13 @@ its own Durable Object memory and does not yet import the encrypted Windows memo
    and persistent storage class are declared in `wrangler.jsonc`; there is no
    separate database ID to create. Set `CHE_PAIR_CODE` as a **secret** containing
    6–12 digits. Enter the deployed HTTPS `workers.dev` URL in CHE's cloud button.
-3. For voice code proposals, add server secrets `CHE_GITHUB_TOKEN` (a token
-   restricted to this repository with Actions workflow dispatch permission),
-   `CHE_GITHUB_REPO=Vondada/chey-app`, and `CHE_CHANGE_MODEL` (a model supported
-   by your Ollama cloud free account). Add `OLLAMA_API_KEY` as a GitHub Actions
-   secret. The GitHub repository must allow Actions to create pull requests.
-   The model API key and GitHub token must never be put in Flutter source.
+3. For voice/self-development code proposals, add server secret `CHE_GITHUB_TOKEN`
+   restricted to this repository with **Contents: read/write** and **Pull requests:
+   read/write**, plus `CHE_GITHUB_REPO=Vondada/chey-app`. CHE reads the latest repo,
+   writes only to review branches, and opens real draft PRs through the GitHub API;
+   it never pushes directly to `main`. Give Actions permission only when a workflow
+   feature actually needs it. Model/API keys and the GitHub token must never be put
+   in Flutter source.
 4. Connect the GitHub repository to Codemagic and select the `chey-mobile`
    workflow. It is configured to build on pushes to `main` and packages an
    unsigned iOS app as `CHE-unsigned.ipa`. The build and SideStore installation
