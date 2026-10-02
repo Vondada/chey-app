@@ -880,3 +880,51 @@ test('Flagstaff retry scanner is driven by pending retry records, not newest-40 
   assert.match(source, /pendingIds\.has\(String\(m\.id\)\)/);
   assert.doesNotMatch(source, /\.slice\(-40\);\n    let replied = 0;\n    let queued = 0;\n    for \(const message of incoming\)/);
 });
+
+test('CHE platform API creates isolated personal tenant, enrollment, notifications and Core request', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', AI: { run: async () => ({ response: 'ok' }) } };
+  const state = new CheState({ storage: {
+    get: (key) => saved.get(key),
+    put: (key, value) => saved.set(key, value),
+    setAlarm: async () => {},
+  } }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, method = 'GET', body = {}, token = '') => worker.fetch(new Request(`https://che.example${path}`, {
+    method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
+  }), env);
+
+  const ownerToken = (await (await send('/api/pair', 'POST', { code: '123456', device_name: 'Owner phone' })).json()).device_token;
+  const platform = await (await send('/api/platform', 'GET', {}, ownerToken)).json();
+  assert.equal(platform.tenant.flagstaff, '369');
+
+  const tenantResponse = await send('/api/platform/tenants', 'POST', { name: 'Family CHE', role: 'parental_guidance' }, ownerToken);
+  assert.equal(tenantResponse.status, 201);
+  const tenant = (await tenantResponse.json()).tenant;
+  assert.notEqual(tenant.flagstaff, '369');
+
+  const inviteResponse = await send('/api/platform/enrollments', 'POST', { tenant_id: tenant.id, access: 'private', ttl_minutes: 10 }, ownerToken);
+  assert.equal(inviteResponse.status, 201);
+  const invite = (await inviteResponse.json()).enrollment;
+  const enrolled = await send('/api/enroll', 'POST', { enrollment_token: invite.token, device_name: 'Family phone' });
+  assert.equal(enrolled.status, 201);
+  const familyToken = (await enrolled.json()).device_token;
+  assert.equal((await send('/api/enroll', 'POST', { enrollment_token: invite.token, device_name: 'Replay' })).status, 403);
+
+  const familyPlatform = await (await send('/api/platform', 'GET', {}, familyToken)).json();
+  assert.equal(familyPlatform.tenant.id, tenant.id);
+  assert.equal(familyPlatform.device.access, 'private');
+
+  await send('/api/notifications', 'POST', { title: 'Family update', body: 'Ready', priority: 'high' }, familyToken);
+  const ownerNotices = await (await send('/api/notifications', 'GET', {}, ownerToken)).json();
+  const familyNotices = await (await send('/api/notifications', 'GET', {}, familyToken)).json();
+  assert.equal(ownerNotices.notifications.length, 0);
+  assert.equal(familyNotices.notifications[0].title, 'Family update');
+
+  const core = await send('/api/core/requests', 'POST', { request: 'Add a study room', priority: true, paid_priority_authorized: true }, familyToken);
+  assert.equal(core.status, 201);
+  const coreList = await (await send('/api/core/requests', 'GET', {}, familyToken)).json();
+  assert.equal(coreList.requests[0].status, 'submitted');
+  assert.equal(coreList.requests[0].decision, null);
+});
