@@ -47,7 +47,7 @@ import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSna
 import { handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
-import { unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readThread, sendMail, speakThreads } from './mailbox.js';
+import { unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
 import { agentActionGuard, ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
 import {
@@ -2684,9 +2684,32 @@ export class CheState extends DurableObject {
         const live = await mailboxHead(this.env).catch(() => ({ error: 'Mailbox head lookup failed.', head: '' }));
         if (live.error || !live.head) return json({ detail: live.error || 'Mailbox head unavailable.' }, 503);
         if (live.head !== requestedHead) return json({ detail: 'Mailbox head moved; retry with the current head.' }, 409);
-        const result = await this.processFlagstaffInbox({ force: true, messageId });
+        if (!(await flagstaffOpen(this.ctx.storage))) {
+          return json({ detail: 'Flagstaff is locked.', checked: false, replied: 0 }, 423);
+        }
+
+        // GitHub push notifications must bypass the web-board cache/session
+        // window. Read the live mailbox branch directly and resolve this exact
+        // message id across all AI threads.
+        const all = await readAllMail(this.env).catch(() => ({ error: 'Mailbox read failed.', messages: [] }));
+        if (all.error) return json({ detail: all.error }, 503);
+        const message = (all.messages || []).find((item) => String(item?.id || '') === messageId);
+        if (!message) return json({ detail: 'Mailbox message not found at the verified head.' }, 404);
+
+        const result = await this.replyToFlagstaffMessage(message);
+        await this.ctx.storage.put('flagstaff_mailbox_head', live.head);
         await this.scheduleWork();
-        return json({ ok: true, head_sha: live.head, message_id: messageId, ...result });
+        return json({
+          ok: true,
+          head_sha: live.head,
+          message_id: messageId,
+          checked: true,
+          replied: Boolean(result?.replied),
+          reply_id: result?.reply_id || '',
+          processing: Boolean(result?.processing),
+          skipped: Boolean(result?.skipped),
+          reply_status: result?.status || '',
+        });
       }
 
       // Stripe calls this directly (no device token): the signature, checked
