@@ -241,6 +241,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     'meetings': const <Map<String, dynamic>>[],
   };
   bool _usingSpeechFallback = false;
+  bool _appForeground = true;
   Timer? _jobPollTimer;
   final Set<String> _notifiedJobs = {};
   void _set(VoidCallback fn) {
@@ -378,6 +379,10 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   StreamSubscription<Map<String, dynamic>>? _nativeIosVoiceSub;
   bool _nativeIosVoiceActive = false;
+  // True while native iOS recognition is taking ownership of the microphone.
+  // speech_to_text callbacks can fire during cancellation; this prevents those
+  // callbacks from scheduling a competing recognizer restart.
+  bool _nativeIosVoiceStarting = false;
 
   final CheVoiceStateMachine _voiceMachine = CheVoiceStateMachine();
   final CheLocalVoiceLoop _localVoice = CheLocalVoiceLoop();
@@ -772,6 +777,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   final ImagePicker _imagePicker = ImagePicker();
 
   List<String> savedMemories = [];
+  List<Map<String, dynamic>> memoryRecords = [];
   List<Map<String, dynamic>> memoryNotes = [];
   List<Map<String, dynamic>> brainLinks = [];
   List<Map<String, dynamic>> learnedPersonality = [];
@@ -1061,16 +1067,22 @@ OWNER AGENCY
     _wireBrowser();
     initializeVoice();
     _loadSecuritySession();
-    _jobPollTimer = Timer.periodic(const Duration(seconds: 15), (_) => _loadAgentState(silent: true));
+    _jobPollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (_appForeground) unawaited(_loadAgentState(silent: true));
+    });
     unawaited(_loadTypingPref());
     Future<void>.delayed(const Duration(seconds: 3), () => _refreshMailboxBadge(announce: false));
-    _mailboxBadgeTimer = Timer.periodic(const Duration(seconds: 45), (_) => _refreshMailboxBadge());
+    _mailboxBadgeTimer = Timer.periodic(const Duration(seconds: 45), (_) {
+      if (_appForeground) unawaited(_refreshMailboxBadge());
+    });
     unawaited(_loadExplainLevel());
     // CHE greets once, in one short line, with something useful.
     Future<void>.delayed(const Duration(milliseconds: 2600), () => _loadHomeGreeting(speak: true));
     _proactiveTimer = Timer.periodic(
       const Duration(minutes: 10),
-      (_) => _checkProactiveSuggestion(),
+      (_) {
+        if (_appForeground) unawaited(_checkProactiveSuggestion());
+      },
     );
 
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
@@ -1119,6 +1131,7 @@ OWNER AGENCY
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (kIsWeb || !mounted) return;
 
+    _appForeground = state == AppLifecycleState.resumed;
     if (state == AppLifecycleState.resumed) {
       unawaited(_loadAgentState(silent: true));
       unawaited(_refreshMailboxBadge());

@@ -402,6 +402,7 @@ extension _CheHomeSecurity on _CHEHomeState {
       final data = jsonDecode(response.body);
 
       final memoryData = (data['memories'] as List?) ?? const [];
+      final memoryRecordData = (data['memory_records'] as List?) ?? const [];
       final personalityData = (data['personality'] as List?) ?? const [];
       final knowledgeData = (data['learned_knowledge'] as List?) ?? const [];
       final suggestionData = (data['suggestions'] as List?) ?? const [];
@@ -425,6 +426,10 @@ extension _CheHomeSecurity on _CHEHomeState {
       final integrationData = (data['integrations'] as Map?) ?? const {};
 
       savedMemories = memoryData.map((e) => e.toString()).toList();
+      memoryRecords = memoryRecordData
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
       // Prefer brain_graph.nodes (cluster/locale metadata) when present.
       final noteSource = brainNodeData.isNotEmpty ? brainNodeData : memoryNoteData;
       memoryNotes = noteSource

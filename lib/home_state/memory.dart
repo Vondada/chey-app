@@ -1161,14 +1161,14 @@ extension _CheHomeMemory on _CHEHomeState {
     String name,
     List<int> bytes,
   ) async {
-    const maxBytes = 5 * 1024 * 1024;
+    const maxBytes = 12 * 1024 * 1024;
     if (bytes.isEmpty) return;
 
     if (bytes.length > maxBytes) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Keep multimodal attachments under 5 MB for now.'),
+          content: Text('Keep photos, short videos and audio under 12 MB for inline analysis.'),
         ),
       );
       return;
@@ -1218,9 +1218,11 @@ extension _CheHomeMemory on _CHEHomeState {
     await _setMultimodalAttachment(file.name, await file.readAsBytes());
   }
 
-  Future<void> _captureMultimodalVideo() async {
+  Future<void> _pickMultimodalVideo({
+    required ImageSource source,
+  }) async {
     final file = await _imagePicker.pickVideo(
-      source: ImageSource.camera,
+      source: source,
       maxDuration: const Duration(minutes: 2),
     );
     if (file == null) return;
@@ -1266,11 +1268,20 @@ extension _CheHomeMemory on _CHEHomeState {
                 },
               ),
               ListTile(
+                leading: const Icon(Icons.video_library_outlined),
+                title: const Text('Choose video'),
+                subtitle: const Text('CHE watches the picture and listens to the audio.'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickMultimodalVideo(source: ImageSource.gallery);
+                },
+              ),
+              ListTile(
                 leading: const Icon(Icons.videocam_outlined),
                 title: const Text('Record video'),
                 onTap: () {
                   Navigator.pop(context);
-                  _captureMultimodalVideo();
+                  _pickMultimodalVideo(source: ImageSource.camera);
                 },
               ),
               ListTile(

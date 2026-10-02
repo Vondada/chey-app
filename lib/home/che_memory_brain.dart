@@ -1,7 +1,7 @@
 // Memory Brain — neural constellation (mockup 01).
-// Every learned thought is a glowing teal dot. NO capacity limit on dots.
-// Related memories connect with thin lines. Tap a dot → Memory detail sheet.
-// Cheap CustomPaint + InteractiveViewer (no WebView / 3D).
+// Every learned thought is a category-colored luminous orb. NO capacity limit.
+// Related memories connect like neural branches. Tap an orb for provenance.
+// Cheap pseudo-3D CustomPaint + InteractiveViewer; no heavy WebView scene.
 
 import 'dart:math' as math;
 
@@ -21,6 +21,10 @@ class CheMemoryDot {
     this.tokens = const [],
     this.at,
     this.clusterId,
+    this.source = 'CHE',
+    this.confidence,
+    this.lastVerifiedAt,
+    this.scope = 'general',
   });
 
   final String id;
@@ -30,11 +34,16 @@ class CheMemoryDot {
   final List<String> tokens;
   final DateTime? at;
   final String? clusterId;
+  final String source;
+  final double? confidence;
+  final DateTime? lastVerifiedAt;
+  final String scope;
 }
 
 /// Build unlimited dots from Worker memories / notes / learning — never capped.
 List<CheMemoryDot> cheBuildMemoryDots({
   required List<String> savedMemories,
+  List<Map<String, dynamic>> memoryRecords = const [],
   required List<Map<String, dynamic>> memoryNotes,
   required List<Map<String, dynamic>> learnedPersonality,
   required List<String> learnedKnowledge,
@@ -45,15 +54,40 @@ List<CheMemoryDot> cheBuildMemoryDots({
 
   final out = <CheMemoryDot>[];
   var i = 0;
+  final structuredTexts = <String>{};
+  for (final record in memoryRecords) {
+    if (record['active'] == false) continue;
+    final body = '${record['text'] ?? ''}'.trim();
+    if (body.isEmpty) continue;
+    structuredTexts.add(body.toLowerCase());
+    final title = '${record['title'] ?? body}'.trim();
+    out.add(CheMemoryDot(
+      id: '${record['id'] ?? 'mem-record-$i'}',
+      title: _shortTitle(title),
+      body: body,
+      category: '${record['category'] ?? 'Memory'}',
+      tokens: _tokens(body),
+      at: DateTime.tryParse('${record['created_at'] ?? ''}'),
+      source: '${record['source'] ?? 'Owner memory'}',
+      confidence: (record['confidence'] as num?)?.toDouble(),
+      lastVerifiedAt: DateTime.tryParse('${record['last_verified_at'] ?? record['created_at'] ?? ''}'),
+      scope: '${record['scope'] ?? 'owner'}',
+    ));
+    i++;
+  }
+  // Older installs stored owner memories as strings only. Keep showing those,
+  // but do not duplicate a memory that now has structured provenance.
   for (final m in savedMemories) {
     final t = m.trim();
-    if (t.isEmpty) continue;
+    if (t.isEmpty || structuredTexts.contains(t.toLowerCase())) continue;
     out.add(CheMemoryDot(
-      id: 'mem-$i',
+      id: 'legacy-mem-$i',
       title: _shortTitle(t),
       body: t,
       category: 'Memory',
       tokens: _tokens(t),
+      source: 'Legacy owner memory',
+      scope: 'owner',
     ));
     i++;
   }
@@ -85,6 +119,10 @@ List<CheMemoryDot> cheBuildMemoryDots({
       tokens: _tokens('$title $body $kind ${n['locale'] ?? ''}'),
       at: DateTime.tryParse('${n['created_at'] ?? ''}'),
       clusterId: n['cluster_id']?.toString(),
+      source: '${n['source'] ?? n['agent'] ?? n['url'] ?? 'CHE research'}',
+      confidence: (n['confidence'] as num?)?.toDouble(),
+      lastVerifiedAt: DateTime.tryParse('${n['last_verified_at'] ?? n['verified_at'] ?? n['updated_at'] ?? n['created_at'] ?? ''}'),
+      scope: '${n['scope'] ?? n['ownership'] ?? 'general'}',
     ));
     i++;
   }
@@ -97,6 +135,11 @@ List<CheMemoryDot> cheBuildMemoryDots({
       body: text,
       category: 'About you',
       tokens: _tokens(text),
+      source: '${p['source'] ?? 'Owner interactions'}',
+      confidence: (p['confidence'] as num?)?.toDouble(),
+      at: DateTime.tryParse('${p['created_at'] ?? p['at'] ?? ''}'),
+      lastVerifiedAt: DateTime.tryParse('${p['updated_at'] ?? p['verified_at'] ?? p['created_at'] ?? ''}'),
+      scope: 'owner',
     ));
     i++;
   }
@@ -109,6 +152,8 @@ List<CheMemoryDot> cheBuildMemoryDots({
       body: t,
       category: 'Knowledge',
       tokens: _tokens(t),
+      source: 'CHE learned knowledge',
+      scope: 'general',
     ));
     i++;
   }
@@ -121,10 +166,21 @@ List<CheMemoryDot> cheBuildMemoryDots({
       body: t,
       category: 'Suggestion',
       tokens: _tokens(t),
+      source: 'CHE planning',
+      scope: 'owner',
     ));
     i++;
   }
   return out;
+}
+
+String _formatMemoryTime(DateTime? value) {
+  if (value == null) return 'Date unavailable for this older memory';
+  final t = value.toLocal();
+  final hour = t.hour % 12 == 0 ? 12 : t.hour % 12;
+  final minute = t.minute.toString().padLeft(2, '0');
+  final amPm = t.hour < 12 ? 'AM' : 'PM';
+  return '${t.month}/${t.day}/${t.year} · $hour:$minute $amPm';
 }
 
 String _shortTitle(String text) {
@@ -187,6 +243,18 @@ List<String> _tokens(String text) {
       .take(24)
       .toList();
 }
+
+Color cheMemoryCategoryColor(String category) => switch (category.toLowerCase()) {
+      'memory' => const Color(0xFF39E6C5),
+      'learning' => const Color(0xFF4CC9F0),
+      'ml learning' => const Color(0xFFB17CFF),
+      'research' => const Color(0xFFFFC857),
+      'about you' => const Color(0xFFFF7EB6),
+      'knowledge' => const Color(0xFF6EA8FF),
+      'suggestion' => const Color(0xFF8DE969),
+      'translation' => const Color(0xFFFF9F68),
+      _ => CheColors.accent,
+    };
 
 class CheMemoryBrainRoom extends StatefulWidget {
   const CheMemoryBrainRoom({
@@ -255,23 +323,32 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
     ];
   }
 
-  /// Stable organic layout — grows with N, no artificial max.
+  double _depth(CheMemoryDot dot) {
+    final normalized = ((dot.id.hashCode & 0x7fffffff) % 1000) / 999.0;
+    return normalized * 2 - 1; // -1 far, +1 near
+  }
+
+  /// Stable pseudo-3D neural cloud. Depth changes projection, orb size and glow,
+  /// while InteractiveViewer supplies pinch-to-zoom and pan.
   Map<String, Offset> _layout(List<CheMemoryDot> dots, Size size) {
     final cx = size.width * 0.5;
-    final cy = size.height * 0.48;
+    final cy = size.height * 0.5;
     final map = <String, Offset>{};
     if (dots.isEmpty) return map;
-    // Brain-ish oval packing: golden-angle spiral scaled by sqrt(n).
-    final scale = math.min(size.width, size.height) * 0.42;
+    final scale = math.min(size.width, size.height) * 0.48;
     for (var i = 0; i < dots.length; i++) {
       final d = dots[i];
       final hash = d.id.hashCode;
-      final angle = i * 2.399963229728653; // golden angle
+      final angle = i * 2.399963229728653;
       final r = scale * math.sqrt((i + 1) / dots.length);
-      final wobbleX = ((hash % 17) - 8) * 1.8;
-      final wobbleY = (((hash ~/ 17) % 17) - 8) * 1.6;
-      // Slight vertical squash for brain silhouette.
-      map[d.id] = Offset(cx + math.cos(angle) * r * 1.05 + wobbleX, cy + math.sin(angle) * r * 0.78 + wobbleY);
+      final z = _depth(d);
+      final perspective = 0.72 + ((z + 1) / 2) * 0.48;
+      final wobbleX = ((hash % 17) - 8) * 1.4;
+      final wobbleY = (((hash ~/ 17) % 17) - 8) * 1.2;
+      map[d.id] = Offset(
+        cx + (math.cos(angle) * r * 1.08 + wobbleX) * perspective,
+        cy + (math.sin(angle) * r * 0.82 + wobbleY) * perspective,
+      );
     }
     return map;
   }
@@ -299,15 +376,47 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: CheColors.accent.withValues(alpha: 0.14),
+                  color: cheMemoryCategoryColor(dot.category).withValues(alpha: 0.16),
                   borderRadius: BorderRadius.circular(CheRadius.pill),
                 ),
-                child: Text(dot.category, style: CheType.caption.copyWith(color: CheColors.accent)),
+                child: Text(dot.category, style: CheType.caption.copyWith(color: cheMemoryCategoryColor(dot.category))),
               ),
               const SizedBox(height: CheSpace.md),
               Text(dot.title, style: CheType.headline),
               const SizedBox(height: CheSpace.sm),
               Text(dot.body, style: CheType.bodyDim),
+              const SizedBox(height: CheSpace.md),
+              Semantics(
+                label: 'Memory metadata. Source ${dot.source}. Saved ${_formatMemoryTime(dot.at)}. '
+                    '${dot.confidence == null ? '' : 'Confidence ${(dot.confidence! * 100).round()} percent. '}'
+                    'Scope ${dot.scope}.',
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.035),
+                    borderRadius: BorderRadius.circular(CheRadius.md),
+                    border: Border.all(color: cheMemoryCategoryColor(dot.category).withValues(alpha: 0.24)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Source · ${dot.source}', style: CheType.caption),
+                      const SizedBox(height: 4),
+                      Text('Saved · ${_formatMemoryTime(dot.at)}', style: CheType.caption),
+                      if (dot.lastVerifiedAt != null) ...[
+                        const SizedBox(height: 4),
+                        Text('Last verified · ${_formatMemoryTime(dot.lastVerifiedAt)}', style: CheType.caption),
+                      ],
+                      if (dot.confidence != null) ...[
+                        const SizedBox(height: 4),
+                        Text('Confidence · ${(dot.confidence! * 100).round()}%', style: CheType.caption),
+                      ],
+                      const SizedBox(height: 4),
+                      Text('Scope · ${dot.scope == 'owner' ? 'Owner memory' : 'General knowledge'}', style: CheType.caption),
+                    ],
+                  ),
+                ),
+              ),
               const SizedBox(height: CheSpace.lg),
               CheVoiceActionList(
                 actions: [
@@ -410,6 +519,43 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
             ),
           ),
         ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(CheSpace.gutter, 0, CheSpace.gutter, CheSpace.sm),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              for (final category in const ['Memory', 'Learning', 'Knowledge', 'ML Learning', 'Research', 'About you', 'Suggestion', 'Translation'])
+                Semantics(
+                  label: switch (category) {
+                    'Memory' => 'Teal means personal memories and preferences.',
+                    'Learning' => 'Cyan means learned information.',
+                    'Knowledge' => 'Blue means general knowledge.',
+                    'ML Learning' => 'Violet means machine learning and derived patterns.',
+                    'Research' => 'Gold means research.',
+                    'About you' => 'Pink means information about you.',
+                    'Suggestion' => 'Green means suggestions and plans.',
+                    'Translation' => 'Orange means translations and language.',
+                    _ => category,
+                  },
+                  child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: cheMemoryCategoryColor(category).withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(CheRadius.pill),
+                    border: Border.all(color: cheMemoryCategoryColor(category).withValues(alpha: 0.35)),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Container(width: 7, height: 7, decoration: BoxDecoration(shape: BoxShape.circle, color: cheMemoryCategoryColor(category))),
+                    const SizedBox(width: 5),
+                    Text(category, style: CheType.caption.copyWith(fontSize: 10)),
+                  ]),
+                ),
+                ),
+              Text('Pinch to zoom · tap an orb', style: CheType.caption.copyWith(fontSize: 10)),
+            ],
+          ),
+        ),
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
@@ -419,7 +565,7 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
               return InteractiveViewer(
                 minScale: 0.55,
                 maxScale: 4,
-                boundaryMargin: const EdgeInsets.all(200),
+                boundaryMargin: const EdgeInsets.all(520),
                 child: SizedBox(
                   width: size.width,
                   height: size.height,
@@ -446,13 +592,15 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
                                 top: pos[d.id]!.dy - 10,
                                 child: Semantics(
                                   button: true,
-                                  label: '${d.category}. ${d.title}',
+                                  label: '${d.category}. ${d.title}. Depth ${((_depth(d) + 1) * 50).round()} percent.',
                                   child: GestureDetector(
                                     onTap: () => _openDetail(d),
                                     child: _DotOrb(
                                       selected: _selected?.id == d.id,
                                       phase: _pulse.value,
                                       seed: d.id.hashCode,
+                                      color: cheMemoryCategoryColor(d.category),
+                                      depth: _depth(d),
                                     ),
                                   ),
                                 ),
@@ -498,35 +646,56 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
       ],
     );
 
-    if (!widget.embedded) return child;
-    return Material(color: CheColors.bg, child: child);
+    if (!widget.embedded) return ColoredBox(color: Colors.black, child: child);
+    return Material(color: Colors.black, child: child);
   }
 }
 
 class _DotOrb extends StatelessWidget {
-  const _DotOrb({required this.selected, required this.phase, required this.seed});
+  const _DotOrb({
+    required this.selected,
+    required this.phase,
+    required this.seed,
+    required this.color,
+    required this.depth,
+  });
   final bool selected;
   final double phase;
   final int seed;
+  final Color color;
+  final double depth;
 
   @override
   Widget build(BuildContext context) {
     final pulse = 0.85 + 0.15 * math.sin(phase * math.pi * 2 + seed);
-    final size = selected ? 22.0 : 14.0 + (seed % 5) * 0.6;
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: CheColors.accent.withValues(alpha: selected ? 1 : 0.85 * pulse),
-        boxShadow: [
-          BoxShadow(
-            color: CheColors.accent.withValues(alpha: selected ? 0.75 : 0.35 * pulse),
-            blurRadius: selected ? 18 : 10,
-            spreadRadius: selected ? 2 : 0,
+    final depthScale = 0.72 + ((depth + 1) / 2) * 0.70;
+    final size = selected ? 25.0 : (8.0 + (seed.abs() % 5) * 0.65) * depthScale;
+    final alpha = (0.55 + ((depth + 1) / 2) * 0.38).clamp(0.45, 0.95);
+    return Transform.scale(
+      scale: selected ? 1.08 : 1,
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: RadialGradient(
+            center: const Alignment(-0.35, -0.35),
+            colors: [
+              Colors.white.withValues(alpha: selected ? 0.95 : 0.72),
+              color.withValues(alpha: selected ? 1 : alpha * pulse),
+              color.withValues(alpha: 0.32),
+            ],
+            stops: const [0, 0.28, 1],
           ),
-        ],
-        border: selected ? Border.all(color: Colors.white, width: 1.5) : null,
+          boxShadow: [
+            BoxShadow(
+              color: color.withValues(alpha: selected ? 0.82 : (0.18 + 0.28 * pulse) * depthScale),
+              blurRadius: selected ? 26 : 8 + 10 * depthScale,
+              spreadRadius: selected ? 3 : depthScale - 0.7,
+            ),
+          ],
+          border: selected ? Border.all(color: Colors.white, width: 1.6) : null,
+        ),
       ),
     );
   }

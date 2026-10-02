@@ -46,8 +46,9 @@ function memorySupersessionSlot(text) {
   return '';
 }
 
-export function addOwnerMemory(data, text) {
+export function addOwnerMemory(data, text, opts = {}) {
   data.memories = Array.isArray(data.memories) ? data.memories : [];
+  data.memory_records = Array.isArray(data.memory_records) ? data.memory_records : [];
   const memory = clip(text, 500);
   if (!isSafeMemoryText(memory)) return { added: false, reason: 'rejected_sensitive_or_empty' };
   const lower = memory.toLowerCase();
@@ -63,11 +64,42 @@ export function addOwnerMemory(data, text) {
       replaced.push(String(item));
       return false;
     });
+    for (const record of data.memory_records) {
+      if (record.active === false) continue;
+      if (memorySupersessionSlot(record.text || '') !== slot) continue;
+      record.active = false;
+      record.superseded_at = new Date().toISOString();
+      record.superseded_by = memory;
+    }
   }
+
+  const now = new Date().toISOString();
+  const confidence = Number.isFinite(Number(opts.confidence))
+    ? Math.max(0, Math.min(1, Number(opts.confidence)))
+    : 1;
+  const record = {
+    id: cryptoRandomId(),
+    text: memory,
+    title: clip(opts.title || memory, 160),
+    category: clip(opts.category || 'Memory', 60) || 'Memory',
+    source: clip(opts.source || 'owner', 220) || 'owner',
+    scope: opts.scope === 'general' ? 'general' : 'owner',
+    confidence,
+    created_at: now,
+    last_verified_at: clip(opts.last_verified_at || now, 64),
+    active: true,
+    relationships: Array.isArray(opts.relationships)
+      ? [...new Set(opts.relationships.map((item) => clip(item, 120)).filter(Boolean))].slice(0, 24)
+      : [],
+  };
 
   data.memories.push(memory);
   data.memories = data.memories.slice(-MAX_MEMORIES);
-  return { added: true, memory, replaced };
+  data.memory_records.push(record);
+  // Keep detailed history bounded independently from the active short-memory
+  // list. Superseded records stay available as provenance/history.
+  data.memory_records = data.memory_records.slice(-Math.max(MAX_MEMORIES * 4, 400));
+  return { added: true, memory, replaced, record };
 }
 
 export function listMemoryNotes(data, { limit } = {}) {

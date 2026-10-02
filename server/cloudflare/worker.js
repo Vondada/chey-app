@@ -28,7 +28,8 @@ import {
   accountsView, approveProviderPlugin, authorizeProvider, ensureAiState, proposeProviderPlugin,
 } from './provider_registry.js';
 import { discoverKeylessModels, engineStatus, routedEnv } from './ai_router.js';
-import { deleteMedia, generateImage, listMedia, readBlob, upscaleImage } from './media.js';
+import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
+import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
@@ -148,9 +149,9 @@ async function digest(value) {
 }
 
 async function bodyOf(request) {
-  if (Number(request.headers.get('content-length') || 0) > 8_000_000) throw new Error('too_large');
+  if (Number(request.headers.get('content-length') || 0) > 20_000_000) throw new Error('too_large');
   const raw = await request.text();
-  if (raw.length > 8_000_000) throw new Error('too_large');
+  if (raw.length > 20_000_000) throw new Error('too_large');
   const body = JSON.parse(raw);
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('invalid_json');
   return body;
@@ -943,36 +944,114 @@ function ragReference(query, vectorMemoryContext, maxChars = 9000) {
   ].join('\n');
 }
 
-// Built-in image/PDF understanding through Gemini (free tier) when no
-// separate multimodal connector is configured.
+// Built-in media understanding. Gemini handles images, video (visual + audio),
+// audio and PDFs; OpenAI vision is a second image-understanding path.
 function guessMime(name, mediaType) {
   const ext = String(name).toLowerCase().split('.').pop();
-  const byExt = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', heic: 'image/heic', heif: 'image/heif', webp: 'image/webp', gif: 'image/gif', pdf: 'application/pdf' };
+  const byExt = {
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', heic: 'image/heic',
+    heif: 'image/heif', webp: 'image/webp', gif: 'image/gif',
+    mp4: 'video/mp4', mov: 'video/quicktime', m4v: 'video/x-m4v', webm: 'video/webm',
+    mp3: 'audio/mpeg', m4a: 'audio/mp4', wav: 'audio/wav', aac: 'audio/aac',
+    flac: 'audio/flac', ogg: 'audio/ogg',
+    pdf: 'application/pdf',
+  };
   if (byExt[ext]) return byExt[ext];
+  if (/video/i.test(mediaType)) return 'video/mp4';
+  if (/audio/i.test(mediaType)) return 'audio/mpeg';
   if (/image|photo|screenshot/i.test(mediaType)) return 'image/jpeg';
   if (/pdf|document/i.test(mediaType)) return 'application/pdf';
-  return 'image/jpeg';
+  return 'application/octet-stream';
+}
+
+function mediaUnderstandingPrompt(mediaType, query) {
+  const owner = String(query || '').slice(0, 3000);
+  if (/video/i.test(mediaType)) {
+    return [
+      `The owner attached a video and said: "${owner}".`,
+      'Watch the whole clip and listen to its audio. Use BOTH the visual stream and spoken/sound content.',
+      'Describe the important visual events, readable text, UI changes, errors and actions. Summarize or paraphrase speech when requested.',
+      'Include useful timestamps for important moments. Do not guess beyond what is actually present.',
+    ].join(' ');
+  }
+  if (/audio/i.test(mediaType)) {
+    return [
+      `The owner attached audio and said: "${owner}".`,
+      'Listen carefully. Transcribe, summarize or paraphrase the spoken content as the owner requests.',
+      'Identify speakers or timestamps when useful. Do not invent words that are not audible.',
+    ].join(' ');
+  }
+  if (/pdf|document/i.test(mediaType)) {
+    return `The owner attached a document and said: "${owner}". Read it carefully, extract the relevant facts/text, and answer the owner's request without guessing.`;
+  }
+  return `The owner attached an image and said: "${owner}". Describe exactly what is visible, including readable text, buttons, errors and layout, then answer what is relevant to the owner's message. Do not guess beyond what is shown.`;
+}
+
+function openAiMediaKey(env) {
+  return env.OPENAI_API_KEY || env.CHE_OPENAI_API_KEY || '';
+}
+
+export async function openAiVision(env, { name, mediaType, base64 }, query, fetcher = fetch) {
+  const key = openAiMediaKey(env);
+  const mime = guessMime(name, mediaType);
+  if (!key || !mime.startsWith('image/')) return { error: 'OpenAI vision is available for image attachments only.' };
+  try {
+    const response = await fetcher('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      signal: AbortSignal.timeout(60000),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: env.CHE_OPENAI_VISION_MODEL || 'gpt-5.6-sol',
+        input: [{
+          role: 'user',
+          content: [
+            { type: 'input_text', text: mediaUnderstandingPrompt(mediaType, query) },
+            { type: 'input_image', image_url: `data:${mime};base64,${base64}`, detail: 'high' },
+          ],
+        }],
+        max_output_tokens: 1200,
+      }),
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) return { error: `OpenAI vision failed (${response.status}: ${String(data?.error?.message || '').slice(0, 180)}).` };
+    const summary = String(data?.output_text || '')
+      || (data?.output || []).flatMap((item) => item?.content || []).map((part) => part?.text || part?.output_text || '').join('');
+    const clean = String(summary || '').trim().slice(0, 16000);
+    return clean
+      ? { summary: clean, media_type: mediaType, name, engine: 'openai-vision' }
+      : { error: 'OpenAI vision returned no usable analysis.' };
+  } catch (error) {
+    return { error: `OpenAI vision was unavailable: ${String(error?.message || error).slice(0, 180)}` };
+  }
 }
 
 export async function geminiVision(env, { name, mediaType, base64 }, query, fetcher = fetch) {
-  const models = [...new Set([...(env.CHE_GEMINI_VISION_MODELS || '').split(',').filter(Boolean), env.CHE_GEMINI_VISION_MODEL || 'gemini-3.5-flash-lite', 'gemini-3.8-flash'])];
+  const richMedia = /video|audio/i.test(mediaType);
+  const configured = (env.CHE_GEMINI_VISION_MODELS || '').split(',').map((v) => v.trim()).filter(Boolean);
+  const models = [...new Set([
+    ...configured,
+    richMedia ? (env.CHE_GEMINI_VISION_MODEL || 'gemini-3.8-flash') : (env.CHE_GEMINI_VISION_MODEL || 'gemini-3.5-flash-lite'),
+    'gemini-3.8-flash',
+  ])];
   let lastError = 'no answer';
   const errors = [];
+  const mime = guessMime(name, mediaType);
   for (const model of models) {
     try {
       const response = await fetcher(
         `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
         {
           method: 'POST',
+          signal: AbortSignal.timeout(richMedia ? 90000 : 60000),
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
           body: JSON.stringify({
             contents: [{
               parts: [
-                { inline_data: { mime_type: guessMime(name, mediaType), data: base64 } },
-                { text: `The owner attached this and said: "${String(query || '').slice(0, 2000)}". Describe exactly what is visible (all readable text, buttons, errors, layout) and what is relevant to the owner's message. Do not guess beyond what is shown.` },
+                { inline_data: { mime_type: mime, data: base64 } },
+                { text: mediaUnderstandingPrompt(mediaType, query) },
               ],
             }],
-            generationConfig: { maxOutputTokens: 900 },
+            generationConfig: { maxOutputTokens: richMedia ? 1600 : 1000 },
           }),
         },
       );
@@ -980,29 +1059,35 @@ export async function geminiVision(env, { name, mediaType, base64 }, query, fetc
       if (!response.ok) {
         lastError = `${response.status} ${String(data?.error?.message || '').slice(0, 160)}`;
         errors.push(`${model}: ${lastError}`);
-      console.log('CHE vision error:', model, lastError);
+        console.log('CHE media understanding error:', model, lastError);
         continue;
       }
-      const summary = (data?.candidates?.[0]?.content?.parts || []).map((part) => part?.text || '').join('').trim().slice(0, 16000);
-      if (summary) return { summary, media_type: mediaType, name, engine: `gemini-vision:${model}` };
+      const summary = (data?.candidates?.[0]?.content?.parts || [])
+        .map((part) => part?.text || '').join('').trim().slice(0, 16000);
+      if (summary) return { summary, media_type: mediaType, name, engine: `gemini-media:${model}` };
       lastError = 'empty answer';
       errors.push(`${model}: ${lastError}`);
-      console.log('CHE vision error:', model, lastError);
     } catch (error) {
       lastError = String(error?.message || error).slice(0, 160);
       errors.push(`${model}: ${lastError}`);
-      console.log('CHE vision error:', model, lastError);
+      console.log('CHE media understanding error:', model, lastError);
     }
   }
-  return { error: `Image understanding failed (${errors.join(' | ')}).` };
+  return { error: `Media understanding failed (${errors.join(' | ')}).` };
 }
 
 async function optionalMultimodal(env, attachment, query) {
   const result = await connectorMultimodal(env, attachment, query);
-  if (!result?.error || !env.GEMINI_API_KEY || !env.CHE_MULTIMODAL_URL) return result;
-  console.log('CHE vision error: connector:', result.error);
-  if (!attachment?.base64 || String(attachment.base64).length > 7_200_000) return result;
-  return geminiVision(env, { name: attachment.name, mediaType: attachment.media_type, base64: attachment.base64 }, query);
+  if (!result?.error || !env.CHE_MULTIMODAL_URL) return result;
+  console.log('CHE media understanding connector error:', result.error);
+  if (!attachment?.base64 || String(attachment.base64).length > 17_000_000) return result;
+  if (env.GEMINI_API_KEY) {
+    return geminiVision(env, { name: attachment.name, mediaType: attachment.media_type, base64: attachment.base64 }, query);
+  }
+  if (openAiMediaKey(env) && /image/i.test(String(attachment.media_type || ''))) {
+    return openAiVision(env, { name: attachment.name, mediaType: attachment.media_type, base64: attachment.base64 }, query);
+  }
+  return result;
 }
 
 async function connectorMultimodal(env, attachment, query) {
@@ -1010,13 +1095,16 @@ async function connectorMultimodal(env, attachment, query) {
   const name = String(attachment.name || 'attachment').slice(0, 160);
   const mediaType = String(attachment.media_type || 'document').slice(0, 32);
   const base64 = String(attachment.base64 || '');
-  if (!base64 || base64.length > 7_200_000) {
+  if (!base64 || base64.length > 17_000_000) {
     return { error: 'Attachment is empty or too large.' };
   }
 
   if (!env.CHE_MULTIMODAL_URL) {
     if (env.GEMINI_API_KEY) return geminiVision(env, { name, mediaType, base64 }, query);
-    return { error: 'Multimodal analyzer is not connected yet.' };
+    if (openAiMediaKey(env) && /image/i.test(mediaType)) {
+      return openAiVision(env, { name, mediaType, base64 }, query);
+    }
+    return { error: 'Media understanding is not connected yet.' };
   }
 
   let url;
@@ -1928,6 +2016,7 @@ export class CheState extends DurableObject {
     data.meetings = Array.isArray(data.meetings) ? data.meetings : [];
     data.owner_context = Array.isArray(data.owner_context) ? data.owner_context : [];
     data.memories = Array.isArray(data.memories) ? data.memories : [];
+    data.memory_records = Array.isArray(data.memory_records) ? data.memory_records : [];
     return data;
   }
 
@@ -2702,9 +2791,16 @@ export class CheState extends DurableObject {
         });
       }
 
+      if (request.method === 'GET' && path === '/api/capabilities') {
+        return json(runtimeCapabilityRegistry(this.env, data));
+      }
+
       if (request.method === 'GET' && path === '/api/state') {
+        const capabilityRegistry = runtimeCapabilityRegistry(this.env, data);
         return json({
+          capability_registry: capabilityRegistry,
           memories: data.memories,
+          memory_records: data.memory_records || [],
           memory_notes: listMemoryNotes(data),
           brain_graph: buildBrainGraph(data),
           preference_memory: data.preference_memory,
@@ -2776,8 +2872,15 @@ export class CheState extends DurableObject {
             car: Boolean(this.env.CHE_CAR_URL),
             smart_home: Boolean(this.env.CHE_SMART_HOME_URL),
             rendering: Boolean(this.env.CHE_RENDER_URL),
-            image_generation: Boolean(this.env.CHE_IMAGE_GEN_URL),
-            video_generation: Boolean(this.env.CHE_VIDEO_GEN_URL),
+            image_generation: Boolean(
+              this.env.CHE_IMAGE_GEN_URL ||
+              this.env.AI ||
+              (/^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim()) && (this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY))
+            ),
+            video_generation: Boolean(
+              this.env.CHE_VIDEO_GEN_URL ||
+              (/^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim()) && this.env.GEMINI_API_KEY)
+            ),
             model_panel: Boolean(
               this.env.CHE_OPENAI_MODEL_URL ||
               this.env.CHE_ANTHROPIC_MODEL_URL ||
@@ -2788,7 +2891,7 @@ export class CheState extends DurableObject {
             screen_capture: Boolean(this.env.CHE_SCREEN_URL),
             face_verify: Boolean(this.env.CHE_FACE_VERIFY_URL),
             data_recognition: Boolean(this.env.CHE_DATA_RECOGNITION_URL),
-            multimodal: Boolean(this.env.CHE_MULTIMODAL_URL),
+            multimodal: Boolean(this.env.CHE_MULTIMODAL_URL || this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY),
             market_data: Boolean(this.env.CHE_MARKET_DATA_URL),
             backtesting: Boolean(this.env.CHE_BACKTEST_URL),
             broker: Boolean(this.env.CHE_BROKER_URL),
@@ -2890,26 +2993,47 @@ export class CheState extends DurableObject {
 
       // ─── Art Studio media (real images, versions, honest upscaling) ────
       if (path === '/api/media' && request.method === 'GET') {
+        const paidMedia = /^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim());
+        const imageEngine = this.env.CHE_IMAGE_GEN_URL
+          ? 'connector'
+          : (paidMedia && (this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY))
+            ? 'openai-gpt-image'
+            : this.env.AI
+              ? 'workers_ai'
+              : (paidMedia && this.env.GEMINI_API_KEY) ? 'gemini-image' : 'none';
+        const videoEngine = this.env.CHE_VIDEO_GEN_URL
+          ? 'connector'
+          : (paidMedia && this.env.GEMINI_API_KEY) ? 'gemini-omni' : 'none';
         return json({
           items: await listMedia(this.ctx.storage),
-          engine: this.env.CHE_IMAGE_GEN_URL ? 'connector' : this.env.AI ? 'workers_ai' : 'none',
+          engine: imageEngine,
+          image_engine: imageEngine,
+          video_engine: videoEngine,
+          paid_media_enabled: paidMedia,
+          paid_image_available: Boolean(this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY || this.env.GEMINI_API_KEY),
+          paid_video_available: Boolean(this.env.GEMINI_API_KEY),
           upscaler: Boolean(this.env.CHE_UPSCALE_URL),
         });
       }
       if (path === '/api/media/generate' && request.method === 'POST') {
-        const { status, ...rest } = await generateImage(this.env, this.ctx.storage, body);
+        const mediaType = String(body.type || body.kind || 'image').toLowerCase();
+        const result = mediaType === 'video'
+          ? await generateVideo(this.env, this.ctx.storage, body)
+          : await generateImage(this.env, this.ctx.storage, body);
+        const { status, ...rest } = result;
         return json(rest, status);
       }
-      const mediaMatch = /^\/api\/media\/([A-Za-z0-9-]{8,64})(\/image|\/upscale)?$/.exec(path);
+      const mediaMatch = /^\/api\/media\/([A-Za-z0-9-]{8,64})(\/image|\/video|\/upscale)?$/.exec(path);
       if (mediaMatch) {
         const [, mediaId, action] = mediaMatch;
-        if (action === '/image' && request.method === 'GET') {
+        if ((action === '/image' || action === '/video') && request.method === 'GET') {
           const item = (await listMedia(this.ctx.storage)).find((entry) => entry.id === mediaId);
           if (!item) return json({ detail: 'Piece not found.' }, 404);
           if (item.url) return Response.redirect(item.url, 302);
           const bytes = await readBlob(this.env, this.ctx.storage, item);
-          if (!bytes) return json({ detail: 'Image data missing.' }, 404);
-          return new Response(bytes, { headers: { 'Content-Type': item.mime_type || 'image/jpeg', 'Cache-Control': 'private, max-age=86400' } });
+          if (!bytes) return json({ detail: 'Media data missing.' }, 404);
+          const fallbackType = action === '/video' ? 'video/mp4' : 'image/jpeg';
+          return new Response(bytes, { headers: { 'Content-Type': item.mime_type || fallbackType, 'Cache-Control': 'private, max-age=86400' } });
         }
         if (action === '/upscale' && request.method === 'POST') {
           const { status, ...rest } = await upscaleImage(this.env, this.ctx.storage, mediaId);
@@ -3682,7 +3806,12 @@ export class CheState extends DurableObject {
         if (!isSafeMemoryText(memory)) {
           return json({ detail: 'Choose a non-sensitive memory.' }, 400);
         }
-        const added = addOwnerMemory(data, memory);
+        const added = addOwnerMemory(data, memory, {
+          source: 'explicit_memory',
+          category: 'Memory',
+          scope: 'owner',
+          confidence: 1,
+        });
         if (added.added || added.replaced?.length) await this.ctx.storage.put('che', data);
         for (const oldMemory of added.replaced || []) {
           const oldVectorId = `memory:${await digest(String(oldMemory).toLowerCase())}`;
@@ -3705,6 +3834,9 @@ export class CheState extends DurableObject {
         }
         const removed = data.memories[index];
         data.memories.splice(index, 1);
+        data.memory_records = (data.memory_records || []).filter(
+          (record) => String(record.text || '').toLowerCase() !== String(removed || '').toLowerCase(),
+        );
         await this.ctx.storage.put('che', data);
         if (removed) {
           const vectorId = `memory:${await digest(String(removed).toLowerCase())}`;
@@ -3714,6 +3846,7 @@ export class CheState extends DurableObject {
       }
       if (path === '/api/memory/clear') {
         data.memories = [];
+        data.memory_records = [];
         await this.ctx.storage.put('che', data);
         this.ctx.waitUntil?.(clearVectorMemoryKind(this.env, 'memory'));
         return json({ ok: true });
@@ -4870,6 +5003,12 @@ export class CheState extends DurableObject {
         const addCapability = (name) => {
           if (!requestedCapabilities.includes(name)) requestedCapabilities.push(name);
         };
+        // The Worker is authoritative. Client hints are helpful but never
+        // required: obvious tool/media/research intent is discovered again
+        // server-side so the owner does not need magic phrases or model names.
+        for (const inferred of inferTurnCapabilities(message, body.attachment)) {
+          addCapability(inferred);
+        }
         if (/\b(?:change|redesign|modify|fix|update|rearrange|move|restyle|improve)\b[\s\S]{0,80}\b(?:your|che|the)\s+(?:ui|screen|interface|layout|app|code)\b|\b(?:proofread|review|write|edit|refactor)\b[\s\S]{0,50}\bcode\b/i.test(message)) {
           addCapability('self_development');
         }
@@ -5048,7 +5187,8 @@ export class CheState extends DurableObject {
         let imageGeneration = requestedCapabilities.includes('image_generation')
           ? await optionalMediaGeneration(this.env, 'image', message, vectorMemoryContext)
           : null;
-        if (requestedCapabilities.includes('image_generation') && !this.env.CHE_IMAGE_GEN_URL && this.env.AI) {
+        if (requestedCapabilities.includes('image_generation') && !this.env.CHE_IMAGE_GEN_URL &&
+            (this.env.AI || (/^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim()) && (this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY)))) {
           const made = await generateImage(this.env, this.ctx.storage, {
             prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 6000),
             title: message.slice(0, 60),
@@ -5057,9 +5197,19 @@ export class CheState extends DurableObject {
             ? { url: `${new URL(request.url).origin}/api/media/${made.item.id}/image` }
             : { error: made.detail };
         }
-        const videoGeneration = requestedCapabilities.includes('video_generation')
+        let videoGeneration = requestedCapabilities.includes('video_generation')
           ? await optionalMediaGeneration(this.env, 'video', message, vectorMemoryContext)
           : null;
+        if (requestedCapabilities.includes('video_generation') && !this.env.CHE_VIDEO_GEN_URL &&
+            /^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim()) && this.env.GEMINI_API_KEY) {
+          const made = await generateVideo(this.env, this.ctx.storage, {
+            prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 8000),
+            title: message.slice(0, 60),
+          });
+          videoGeneration = made.item
+            ? { url: `${new URL(request.url).origin}/api/media/${made.item.id}/video` }
+            : { error: made.detail };
+        }
 
         if (imageGeneration?.url) {
           return ndjsonReply(
@@ -5223,11 +5373,13 @@ export class CheState extends DurableObject {
             ? 'I should not save that kind of secret, sir.'
             : 'I’ll remember that, sir.';
           if (reply.startsWith('I’ll')) {
-            if (!data.memories.some((item) => item.toLowerCase() === memory.toLowerCase())) {
-              data.memories.push(memory);
-              data.memories = data.memories.slice(-100);
-              await this.saveChatData(data);
-            }
+            const added = addOwnerMemory(data, memory, {
+              source: 'owner_chat',
+              category: 'Memory',
+              scope: 'owner',
+              confidence: 1,
+            });
+            if (added.added || added.replaced?.length) await this.saveChatData(data);
           }
           return new Response(JSON.stringify({ type: 'delta', delta: reply }) + '\n', {
             headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' },
@@ -5252,6 +5404,7 @@ export class CheState extends DurableObject {
         const explainLevel = ['simple', 'normal', 'deeper'].includes(body.explain_level) ? body.explain_level : 'simple';
         const madeAcrossRooms = creations(data, await listMedia(this.ctx.storage)).slice(0, 12)
           .map((item) => `${item.maker}: ${item.kind.replace('_', ' ')} \u201c${item.title}\u201d`).join('; ');
+        const capabilityRegistry = runtimeCapabilityRegistry(this.env, data);
         const systemPrompt = [
               'You are CHE, Cognitive Horizon Engine. Your name is spoken and referred to as "CHE" in conversation. "Chay" is only the owner\'s spoken wake word to start a hands-free conversation with you, not how you refer to yourself. Address the owner as sir naturally.',
               'This chat turn is already active. Never ask the owner to say “Hey [assistant name]”, “Ok [assistant name]”, or any generic wake phrase. If the owner says CHE/Chay, answer as CHE instead of teaching a wake phrase.',
@@ -5266,6 +5419,8 @@ export class CheState extends DurableObject {
                 ? `ONE CONNECTED WORLD: things made across CHE\u2019s rooms (newest first): ${madeAcrossRooms}. When the owner refers to something made in any room (\u201cthe song Mira made\u201d), use this list; if it is not here, say so honestly.`
                 : '',
               'CHE is the user-facing product. Never present yourself as Gemini, Cloudflare, or another provider. Models and services are replaceable internal engines behind CHE.',
+              capabilityPromptLine(capabilityRegistry),
+              'MATURE TOOL USE: infer the owner’s goal, then use the best available capability without waiting for the owner to name a model, provider, agent, or tool. Search/retrieve when knowledge may be current or missing. Use stored owner context only when relevant. For independent complex subtasks, parallelize only when it materially helps.',
               'HONESTY (highest priority): never claim an action happened unless a tool in this turn returned success, and give the receipt (link, ID or result) when it did. Label anything unverified as unverified. Say "I don\u2019t know" or "I can\u2019t do that yet" instead of guessing. Never invent plugins, settings, panels, features, services, outages, prices, sales or numbers.',
               'CONTEXT PRIORITY: current owner message > verified tool results from this turn > active conversation > explicit stored/retrieved owner context > cached/general knowledge. The newest owner correction wins conflicts. Short follow-ups continue the most recent unresolved subject/action; do not restart from scratch.',
               'COGNITION LOOP: understand the goal, recall relevant context, select the real capability/tool, act when available, verify the result, then answer. Do not repeat an earlier answer merely because it is cached. Do not call a task complete without a real result.',
@@ -5339,8 +5494,8 @@ export class CheState extends DurableObject {
                 web_research: true,
                 public_records: Boolean(this.env.CHE_PUBLIC_RECORDS_URL),
                 rendering: Boolean(this.env.CHE_RENDER_URL),
-                image_generation: Boolean(this.env.CHE_IMAGE_GEN_URL),
-                video_generation: Boolean(this.env.CHE_VIDEO_GEN_URL),
+                image_generation: Boolean(this.env.CHE_IMAGE_GEN_URL || this.env.AI || this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY),
+                video_generation: Boolean(this.env.CHE_VIDEO_GEN_URL || this.env.GEMINI_API_KEY),
                 model_panel: Boolean(
                   this.env.CHE_OPENAI_MODEL_URL ||
                   this.env.CHE_ANTHROPIC_MODEL_URL ||
@@ -5351,7 +5506,7 @@ export class CheState extends DurableObject {
                 screen_capture: Boolean(this.env.CHE_SCREEN_URL),
                 face_verify: Boolean(this.env.CHE_FACE_VERIFY_URL),
                 data_recognition: Boolean(this.env.CHE_DATA_RECOGNITION_URL),
-                multimodal: Boolean(this.env.CHE_MULTIMODAL_URL),
+                multimodal: Boolean(this.env.CHE_MULTIMODAL_URL || this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY),
                 market_data: Boolean(this.env.CHE_MARKET_DATA_URL),
                 backtesting: Boolean(this.env.CHE_BACKTEST_URL),
                 broker: Boolean(this.env.CHE_BROKER_URL),

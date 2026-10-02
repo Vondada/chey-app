@@ -6,10 +6,79 @@ extension _CheHomeUi on _CHEHomeState {
     final item = messages[index];
     final text = item['text'] ?? '';
     if (item['role'] == 'user') {
-      return CheHomeUserBubble(
+      final bubble = CheHomeUserBubble(
         text: text,
         animate: index >= messages.length - 2,
         onLongPress: () => _showMessageActions(index),
+      );
+      final attachmentName = item['attachment_name'];
+      final attachmentType = item['attachment_type'] ?? '';
+      if (attachmentName == null || attachmentName.isEmpty) return bubble;
+
+      Widget attachmentPreview;
+      final encoded = item['attachment_base64'] ?? '';
+      if (attachmentType == 'image' && encoded.isNotEmpty) {
+        try {
+          final bytes = base64Decode(encoded);
+          attachmentPreview = Semantics(
+            image: true,
+            label: 'Photo you sent: $attachmentName',
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: Image.memory(
+                bytes,
+                width: MediaQuery.sizeOf(context).width * 0.72,
+                fit: BoxFit.cover,
+                cacheWidth: 1200,
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
+              ),
+            ),
+          );
+        } catch (_) {
+          attachmentPreview = const SizedBox.shrink();
+        }
+      } else {
+        final icon = attachmentType == 'video'
+            ? Icons.videocam_rounded
+            : attachmentType == 'audio'
+                ? Icons.graphic_eq_rounded
+                : Icons.attach_file_rounded;
+        attachmentPreview = Semantics(
+          label: '$attachmentType attachment you sent: $attachmentName',
+          child: Container(
+            constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.78),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: CheColors.panel,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: CheColors.accent.withValues(alpha: 0.35)),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(icon, color: CheColors.accent),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  attachmentType == 'video'
+                      ? '$attachmentName • CHE watches + listens'
+                      : attachmentType == 'audio'
+                          ? '$attachmentName • CHE listens'
+                          : attachmentName,
+                  overflow: TextOverflow.ellipsis,
+                  style: kit.CheType.caption,
+                ),
+              ),
+            ]),
+          ),
+        );
+      }
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Align(alignment: Alignment.centerRight, child: attachmentPreview),
+          const SizedBox(height: 6),
+          bubble,
+        ],
       );
     }
     final isLiveReply = _isSending && index == messages.length - 1 && _replyStartedAt != null;

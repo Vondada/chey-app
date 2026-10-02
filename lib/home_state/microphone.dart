@@ -296,7 +296,7 @@ extension _CheHomeMicrophone on _CHEHomeState {
   Future<void> _startListening() async {
     // Native iPhone voice already owns the microphone and keeps it open for
     // interruption detection. Never start the Flutter recognizer on top of it.
-    if (_nativeIosVoiceActive) {
+    if (_nativeIosVoiceStarting || _nativeIosVoiceActive) {
       if (mounted && !_isSpeaking && isListening != true) {
         _set(() => isListening = true);
       }
@@ -319,7 +319,8 @@ extension _CheHomeMicrophone on _CHEHomeState {
   }
 
   Future<void> _startListeningUnlocked() async {
-    if (_nativeIosVoiceActive ||
+    if (_nativeIosVoiceStarting ||
+        _nativeIosVoiceActive ||
         !speechAvailable ||
         !openConversation ||
         _isSending ||
@@ -507,7 +508,7 @@ extension _CheHomeMicrophone on _CHEHomeState {
 
     // Native iPhone recognition is continuous and already listening while CHE
     // talks. Starting speech_to_text here would fight for the same microphone.
-    if (_nativeIosVoiceActive) {
+    if (_nativeIosVoiceStarting || _nativeIosVoiceActive) {
       if (mounted && !_isSpeaking && isListening != true) {
         _set(() => isListening = true);
       }

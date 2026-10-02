@@ -19,6 +19,8 @@ extension _CheHomeVoice on _CHEHomeState {
               status == 'done' || status == 'notListening';
 
           if (!kIsWeb &&
+              !_nativeIosVoiceStarting &&
+              !_nativeIosVoiceActive &&
               recognitionStopped &&
               openConversation &&
               !cheSleeping &&
@@ -37,6 +39,8 @@ extension _CheHomeVoice on _CHEHomeState {
           });
 
           if (!kIsWeb &&
+              !_nativeIosVoiceStarting &&
+              !_nativeIosVoiceActive &&
               openConversation &&
               !cheSleeping &&
               !_isSending &&
@@ -539,6 +543,7 @@ extension _CheHomeVoice on _CHEHomeState {
     debugPrint('CHE speech error: native: $reason');
     try { await CheNativeVoice.stop(); } catch (_) {}
     _nativeIosVoiceActive = false;
+    _nativeIosVoiceStarting = false;
     if (!speechAvailable) await initializeVoice();
     if (!mounted) return;
     if (speechAvailable) {
@@ -551,6 +556,9 @@ extension _CheHomeVoice on _CHEHomeState {
   }
 
   Future<void> _initNativeIosVoice() async {
+    if (_nativeIosVoiceStarting) return;
+    _nativeIosVoiceStarting = true;
+    _listenRestartTimer?.cancel();
     _nativeIosVoiceSub?.cancel();
     _nativeIosVoiceSub = CheNativeVoice.events.listen(
       _handleNativeIosVoiceEvent,
@@ -560,6 +568,9 @@ extension _CheHomeVoice on _CHEHomeState {
     );
 
     try {
+      // Cancelling speech_to_text emits done/notListening. The
+      // _nativeIosVoiceStarting guard above keeps that callback from starting
+      // the Flutter recognizer again while the native bridge takes the mic.
       if (speech.isListening) {
         await speech.cancel();
       }
@@ -594,6 +605,8 @@ extension _CheHomeVoice on _CHEHomeState {
           ),
         );
       }
+    } finally {
+      _nativeIosVoiceStarting = false;
     }
   }
 

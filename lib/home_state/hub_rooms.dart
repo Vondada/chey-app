@@ -35,6 +35,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
         active: active,
         dots: cheBuildMemoryDots(
           savedMemories: savedMemories,
+          memoryRecords: memoryRecords,
           memoryNotes: memoryNotes,
           learnedPersonality: learnedPersonality,
           learnedKnowledge: learnedKnowledge,
