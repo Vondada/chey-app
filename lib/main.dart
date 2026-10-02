@@ -1075,10 +1075,6 @@ OWNER AGENCY
       },
     );
 
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
-      _initNativeIosVoice();
-    }
-
     // Cold launch from the "Wake CHE" Shortcut: give speech init a moment,
     // then honour the wake request.
     if (!kIsWeb) {
