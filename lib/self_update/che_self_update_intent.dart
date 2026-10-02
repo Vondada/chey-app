@@ -5,6 +5,7 @@ bool cheIsRepositoryResearchRequest(String raw) {
   final text = raw.trim();
   final collection = RegExp(
     r'\b(?:starred(?:\s+github)?\s+(?:repos?|repositories)|'
+    r'github\s+starred\s+(?:repos?|repositories)|'
     r'github\s+stars?|'
     r'(?:repos?|repositories)\s+(?:i\s+)?(?:have\s+)?starred|'
     r'inspirations?(?:\s+(?:list|tab|collection))?)\b',
