@@ -912,15 +912,20 @@ extension _CheHomeSecurity on _CHEHomeState {
 
   Future<void> _restartWakeListener() async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return;
-    if (_realtimeVoice?.connected == true || _realtimeConnecting) return;
+    if (_realtimeVoice?.connected == true ||
+        _realtimeConnecting ||
+        _wakeListenerStarting) {
+      return;
+    }
 
-    // Production wake stack:
-    // 1) Apple Vocal Shortcuts/App Intent gets CHE foregrounded at iPhone level.
-    // 2) Porcupine listens locally while CHE is active/asleep.
-    // 3) OpenAI Realtime/WebRTC exclusively owns the mic after wake.
-    if (await _startPorcupineWake()) return;
-
+    _wakeListenerStarting = true;
     try {
+      // Production wake stack:
+      // 1) Apple Vocal Shortcuts/App Intent gets CHE foregrounded at iPhone level.
+      // 2) Porcupine listens locally while CHE is active/asleep.
+      // 3) OpenAI Realtime/WebRTC exclusively owns the mic after wake.
+      if (await _startPorcupineWake()) return;
+
       final started = await _localVoice.runMicOp(() => CheNativeVoice.start());
       _nativeIosVoiceActive = started;
       if (started) {
@@ -932,6 +937,8 @@ extension _CheHomeSecurity on _CHEHomeState {
     } catch (error) {
       _voiceMachine.disconnected(error.toString());
       _applyVoiceSnapshot(_voiceMachine.snapshot);
+    } finally {
+      _wakeListenerStarting = false;
     }
   }
 
