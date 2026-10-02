@@ -2857,7 +2857,7 @@ export class CheState extends DurableObject {
       return { replied: true, reply_id: posted.message.id };
     } catch (error) {
       const retryCount = Number(prior?.retry_count || 0) + 1;
-      const retryable = retryCount <= 24;
+      const retryable = retryCount <= 3;
       const retryAt = retryable ? Date.now() + (busyError(error) ? 30_000 : 60_000) : 0;
       let fallbackReplyId = String(prior?.fallback_reply_id || '');
 
@@ -2906,20 +2906,37 @@ export class CheState extends DurableObject {
   }
 
   async retryFlagstaffReplies() {
-    const all = await readAllMail(this.env).catch(() => ({ error: 'Mailbox read failed.', messages: [] }));
-    if (all.error) return { replied: 0, queued: 0 };
-    const incoming = (all.messages || [])
-      .filter((m) => m?.id && m.from !== 'che' && String(m.to || 'che').toLowerCase() === 'che')
-      .slice(-40);
-    let replied = 0;
-    let queued = 0;
-    for (const message of incoming) {
-      const prior = await this.ctx.storage.get(`flagstaff_auto_reply:${String(message.id)}`);
-      const now = Date.now();
+    // Only inspect messages that Durable Object state says actually need
+    // recovery. This avoids polling every retained mailbox message forever.
+    let records;
+    try {
+      records = this.ctx.storage.list
+        ? await this.ctx.storage.list({ prefix: 'flagstaff_auto_reply:' })
+        : new Map();
+    } catch (_) {
+      records = new Map();
+    }
+    const pendingIds = new Set();
+    const now = Date.now();
+    for (const [key, prior] of records.entries()) {
+      const id = String(key).slice('flagstaff_auto_reply:'.length);
       const dueRetry = prior?.status === 'retry' && Number(prior.retry_at || 0) <= now;
       const staleProcessing = prior?.status === 'processing' && now - Number(prior.at || 0) >= 45_000;
       const invisibleTerminal = ['blocked', 'failed'].includes(prior?.status) && !prior?.reply_id;
-      if (!dueRetry && !staleProcessing && !invisibleTerminal) continue;
+      if (id && (dueRetry || staleProcessing || invisibleTerminal)) pendingIds.add(id);
+    }
+    if (!pendingIds.size) return { replied: 0, queued: 0 };
+
+    const all = await readAllMail(this.env).catch(() => ({ error: 'Mailbox read failed.', messages: [] }));
+    if (all.error) {
+      await this.ctx.storage.setAlarm(Date.now() + 30_000).catch(() => null);
+      return { replied: 0, queued: pendingIds.size };
+    }
+    const incoming = (all.messages || [])
+      .filter((m) => m?.id && pendingIds.has(String(m.id)) && m.from !== 'che' && String(m.to || 'che').toLowerCase() === 'che');
+    let replied = 0;
+    let queued = 0;
+    for (const message of incoming) {
       try {
         const result = await this.replyToFlagstaffMessage(message);
         if (result?.replied) replied += 1;
