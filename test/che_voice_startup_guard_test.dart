@@ -19,6 +19,8 @@ void main() {
     expect(loadBody, contains('_initNativeIosVoice()'));
 
     expect(security, contains('_localVoice.runMicOp(() => CheNativeVoice.start())'));
+    expect(security, contains('_wakeListenerStarting'));
+    expect(security, contains('finally {'));
     expect(voice, contains('await _restartWakeListener();'));
     expect(voice, contains('_localVoice.runMicOp(() async'));
   });
