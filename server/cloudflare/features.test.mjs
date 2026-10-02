@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { buildToolUrl, planPluginCall, pluginManifests, runPluginTool } from './plugin_runtime.js';
-import { classifyUpdate, openSelfUpdatePr, rollbackLastUpdate, scanUpdateContent, validateUpdateFiles } from './self_update.js';
+import { classifyUpdate, isSelfUpdateEditablePath, isSelfUpdateReadablePath, openSelfUpdatePr, rollbackLastUpdate, scanUpdateContent, selfUpdateGitHubAccess, validateUpdateFiles } from './self_update.js';
 import { parseStooqCsv, snapshot } from './markets.js';
 
 const weather = pluginManifests({}).find((item) => item.id === 'weather');
@@ -39,18 +39,37 @@ test('plugin runner returns capped data, blocks redirects, and plans at most one
   assert.equal(none, null);
 });
 
-test('self-update accepts reviewed Flutter and Worker source only', () => {
-  assert.ok(validateUpdateFiles([{ path: 'lib/a/b.dart', content: 'x' }]).files);
-  assert.ok(validateUpdateFiles([{ path: 'server/cloudflare/code_scout.js', content: 'export const x = 1;' }]).files);
-  assert.ok(validateUpdateFiles([{ path: 'server/cloudflare/code_scout.test.mjs', content: 'const x = 1;' }]).files);
-  for (const path of ['pubspec.yaml', 'ios/Runner/Info.plist', 'lib/../x.dart', 'lib/a.js', '.github/workflows/x.yml']) {
+test('self-update reads broadly but writes only owner-approved source lanes', () => {
+  for (const path of [
+    'lib/a/b.dart',
+    'test/a_test.dart',
+    'integration_test/flow_test.dart',
+    'server/cloudflare/code_scout.js',
+    'server/cloudflare/code_scout.test.mjs',
+    'assets/office3d/office.html',
+    'web/index.html',
+    'docs/SELF_UPDATE.md',
+    'ios/Runner/AppDelegate.swift',
+    'android/app/src/main/kotlin/com/example/MainActivity.kt',
+  ]) {
+    assert.equal(isSelfUpdateEditablePath(path), true, path);
+    assert.ok(validateUpdateFiles([{ path, content: path.endsWith('.dart') ? 'void main() {}' : 'x' }]).files, path);
+  }
+  for (const path of ['pubspec.yaml', 'ios/Runner/Info.plist', '.github/workflows/x.yml']) {
+    assert.equal(isSelfUpdateReadablePath(path), true, path);
+    assert.equal(isSelfUpdateEditablePath(path), false, path);
     assert.ok(validateUpdateFiles([{ path, content: 'x' }]).error, path);
+  }
+  for (const path of ['lib/../x.dart', 'lib/a.js', '.env', 'keys/private.pem']) {
+    assert.equal(isSelfUpdateEditablePath(path), false, path);
   }
   assert.ok(validateUpdateFiles([]).error);
   assert.ok(validateUpdateFiles([{ path: 'lib/a.dart' }]).error);
   assert.equal(classifyUpdate(['lib/a.dart']).delivery, 'shorebird_patch');
   assert.equal(classifyUpdate(['server/cloudflare/a.js']).delivery, 'worker_deploy');
   assert.equal(classifyUpdate(['lib/a.dart', 'server/cloudflare/a.js']).delivery, 'worker_and_shorebird');
+  assert.equal(classifyUpdate(['assets/office3d/office.html']).delivery, 'full_rebuild');
+  assert.equal(classifyUpdate(['test/a_test.dart', 'docs/a.md']).delivery, 'source_only');
 });
 
 test('self-update rejects secrets, native smuggling and oversized slices', () => {
@@ -58,8 +77,8 @@ test('self-update rejects secrets, native smuggling and oversized slices', () =>
   assert.match(scanUpdateContent('<?xml version="1.0"?><plist><dict></dict></plist>', 'lib/a.dart') || '', /native|entitlement|Info/);
   assert.ok(validateUpdateFiles([{ path: 'lib/a.dart', content: 'STRIPE_SECRET_KEY=sk_test_abcdefghijklmnopqrst' }]).error);
   assert.ok(validateUpdateFiles([{ path: 'lib/a.dart', content: '<?xml version="1.0"?><plist><dict></dict></plist>' }]).error);
-  const many = Array.from({ length: 9 }, (_, i) => ({ path: `lib/f${i}.dart`, content: 'x' }));
-  assert.match(validateUpdateFiles(many).error || '', /at most 8/);
+  const many = Array.from({ length: 13 }, (_, i) => ({ path: `lib/f${i}.dart`, content: 'void main() {}' }));
+  assert.match(validateUpdateFiles(many).error || '', /at most 12/);
 });
 
 function fakeGitHub() {
@@ -70,7 +89,7 @@ function fakeGitHub() {
     const body = init.body ? JSON.parse(init.body) : null;
     calls.push({ method, path, body });
     const reply = (data, status = 200) => new Response(JSON.stringify(data), { status });
-    if (method === 'GET' && path === '') return reply({ default_branch: 'main' });
+    if (method === 'GET' && path === '') return reply({ default_branch: 'main', permissions: { pull: true, push: true } });
     if (method === 'GET' && path.startsWith('/git/ref/heads/')) return reply({ object: { sha: 'base123' } });
     if (method === 'POST' && path === '/git/refs') return reply({}, 201);
     if (method === 'GET' && path.startsWith('/contents/lib/existing.dart?ref=base9')) {
@@ -79,9 +98,9 @@ function fakeGitHub() {
     if (method === 'GET' && path.startsWith('/contents/lib/existing.dart')) return reply({ sha: 's1' });
     if (method === 'GET' && path.startsWith('/contents/lib/new.dart?ref=che%2Frollback-')) return reply({ sha: 's-new' });
     if (method === 'GET' && path.startsWith('/contents/')) return reply({ message: 'Not Found' }, 404);
-    if (method === 'PUT' && path.startsWith('/contents/')) return reply({}, 201);
+    if (method === 'PUT' && path.startsWith('/contents/')) return reply({ commit: { sha: `commit-${calls.length}` } }, 201);
     if (method === 'DELETE' && path.startsWith('/contents/')) return reply({}, 200);
-    if (method === 'POST' && path === '/pulls') return reply({ number: 7, html_url: 'https://github.com/o/r/pull/7' }, 201);
+    if (method === 'POST' && path === '/pulls') return reply({ number: 7, html_url: 'https://github.com/o/r/pull/7', head: { sha: 'pr-head' } }, 201);
     if (method === 'GET' && path.startsWith('/pulls?state=closed')) {
       return reply([{ number: 5, merged_at: '2026-01-01', head: { ref: 'che/update-abc' }, base: { sha: 'base9' } }]);
     }
@@ -104,6 +123,8 @@ test('self-update opens a PR on a new branch and never touches main', async () =
   assert.equal(result.status, 200);
   assert.equal(result.number, 7);
   assert.equal(result.delivery, 'shorebird_patch');
+  assert.equal(result.commit_sha, 'pr-head');
+  assert.equal(result.base, 'main');
   assert.match(result.branch, /^che\/update-/);
   const puts = calls.filter((c) => c.method === 'PUT');
   assert.equal(puts.length, 2);
@@ -115,6 +136,21 @@ test('self-update opens a PR on a new branch and never touches main', async () =
   assert.equal(pr.body.base, 'main');
   assert.equal(pr.body.head, result.branch);
   assert.equal(pr.body.draft, true);
+});
+
+test('GitHub self-update access reports the real configured repository', async () => {
+  const env = { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' };
+  const ok = await selfUpdateGitHubAccess(env, async () =>
+    new Response(JSON.stringify({ default_branch: 'main', permissions: { pull: true, push: true } }), { status: 200 }));
+  assert.equal(ok.status, 200);
+  assert.equal(ok.connected, true);
+  assert.equal(ok.repository, 'o/r');
+  assert.equal(ok.can_push_reported, true);
+
+  const denied = await selfUpdateGitHubAccess(env, async () =>
+    new Response(JSON.stringify({ message: 'Resource not accessible by personal access token' }), { status: 403 }));
+  assert.equal(denied.status, 403);
+  assert.match(denied.detail, /Resource not accessible/);
 });
 
 test('rollback is a real revert of only the last CHE update', async () => {
