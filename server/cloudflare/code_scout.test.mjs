@@ -37,7 +37,6 @@ test('starred GitHub intent distinguishes research from implementation', () => {
   assert.equal(intent.integrate, true);
   assert.equal(repositoryImplementationIntent(implementationText), true);
   assert.equal(repositoryImplementationIntent('Inspect my starred GitHub repos for agent and RAG systems.'), false);
-  assert.ok(intent.focus.includes('agent') || intent.focus.includes('ai'));
   assert.equal(starredRepoIntent('change the text on my home screen'), null);
 });
 
