@@ -1,8 +1,30 @@
+/// Repository-library discovery must happen before CHE tries to patch herself.
+/// These requests belong to the GitHub research/scout lane, even when the owner
+/// eventually wants the useful parts integrated into CHE.
+bool cheIsRepositoryResearchRequest(String raw) {
+  final text = raw.trim();
+  final collection = RegExp(
+    r'\b(?:starred(?:\s+github)?\s+(?:repos?|repositories)|'
+    r'github\s+stars?|'
+    r'(?:repos?|repositories)\s+(?:i\s+)?(?:have\s+)?starred|'
+    r'inspirations?(?:\s+(?:list|tab|collection))?)\b',
+    caseSensitive: false,
+  ).hasMatch(text);
+  if (!collection) return false;
+
+  return RegExp(
+    r'\b(?:inspect|scan|review|research|analy[sz]e|go\s+through|'
+    r'look\s+through|check|find|study|use|integrate|adapt|take\s+code)\b',
+    caseSensitive: false,
+  ).hasMatch(text);
+}
+
 /// Pure classifier for owner requests that change CHE itself.
 /// Kept outside UI code so routing is testable and never falls through to
 /// generic model advice about creating GitHub tokens.
 bool cheIsSelfUpdateRequest(String raw) {
   final text = raw.trim();
+  if (cheIsRepositoryResearchRequest(text)) return false;
   final direct = RegExp(
     r'^(?:(?:chay|chey|shay|che)[, ]+)?'
     r'(?:(?:add|change|update|remove|fix|improve|build|redesign|modify|move|restyle)\s+.+\s+'
