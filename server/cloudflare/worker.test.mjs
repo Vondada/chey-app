@@ -17,13 +17,84 @@ let worker;
 let CheState;
 let publicResearch;
 let geminiVision;
+let selfUpdateChatIntent;
 try {
-  ({ default: worker, CheState, publicResearch, geminiVision } = await import(
+  ({ default: worker, CheState, publicResearch, geminiVision, selfUpdateChatIntent } = await import(
     generatedWorker.href + '?test=' + Date.now(),
   ));
 } finally {
   try { unlinkSync(generatedWorker); } catch (_) {}
 }
+
+test('self-update chat commands route to real GitHub tools, not generic model guesses', () => {
+  assert.equal(selfUpdateChatIntent('Create the pr')?.kind, 'open-pr');
+  assert.equal(selfUpdateChatIntent('CHE, open the pull request')?.kind, 'open-pr');
+  assert.equal(selfUpdateChatIntent('Can you create a real GitHub pull request?')?.kind, 'access');
+  assert.equal(selfUpdateChatIntent('What is the PR status?')?.kind, 'status');
+  assert.equal(selfUpdateChatIntent('Tell me a joke'), null);
+});
+
+test('create the PR opens the saved reviewed proposal and returns a real receipt', async () => {
+  const saved = new Map();
+  const storage = {
+    get: async (key) => saved.get(key),
+    put: async (key, value) => saved.set(key, value),
+    delete: async (key) => saved.delete(key),
+    setAlarm: async () => {},
+  };
+  const env = {
+    CHE_PAIR_CODE: '123456',
+    CHE_GITHUB_TOKEN: 't',
+    CHE_GITHUB_REPO: 'o/r',
+    AI: { run: async () => ({ response: 'MODEL SHOULD NOT HANDLE THIS' }) },
+  };
+  const state = new CheState({ storage }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, body, token = '') => worker.fetch(new Request(`https://che.example${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(body),
+  }), env);
+  const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
+  saved.set('pending_self_update', {
+    proposal: {
+      summary: 'Fix the chat router',
+      files: [{ path: 'server/cloudflare/example.js', content: 'export const fixed = true;\n' }],
+    },
+  });
+
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const method = init.method || 'GET';
+    const path = String(url).replace('https://api.github.com/repos/o/r', '');
+    calls.push({ method, path });
+    const reply = (data, status = 200) => new Response(JSON.stringify(data), { status });
+    if (method === 'GET' && path === '') return reply({ default_branch: 'main', permissions: { push: true } });
+    if (method === 'GET' && path.startsWith('/git/ref/heads/')) return reply({ object: { sha: 'base-sha' } });
+    if (method === 'POST' && path === '/git/refs') return reply({}, 201);
+    if (method === 'GET' && path.startsWith('/contents/')) return reply({ message: 'Not Found' }, 404);
+    if (method === 'PUT' && path.startsWith('/contents/')) return reply({ commit: { sha: 'write-sha' } }, 201);
+    if (method === 'POST' && path === '/pulls') return reply({
+      number: 321,
+      html_url: 'https://github.com/o/r/pull/321',
+      head: { sha: 'pr-sha' },
+    }, 201);
+    return reply({ message: `unexpected ${method} ${path}` }, 500);
+  };
+  try {
+    const response = await send('/api/chat', { message: 'Create the pr' }, token);
+    const body = await response.text();
+    assert.equal(response.status, 200);
+    assert.match(body, /Real draft PR #321 is open/);
+    assert.match(body, /pr-sha/);
+    assert.equal(saved.get('last_self_update_pr').number, 321);
+    assert.equal(saved.has('pending_self_update'), false);
+    assert.ok(calls.some((call) => call.method === 'POST' && call.path === '/pulls'));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test('Gemini media understanding sends video MIME and asks for audio plus visuals', async () => {
   let sent;
