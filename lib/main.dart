@@ -430,16 +430,6 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   final CheRequestGate _requestGate = CheRequestGate();
   bool _justCompleted = false;
 
-  String get _chatTitle {
-    for (final m in messages) {
-      if (m['role'] == 'user' && (m['text'] ?? '').trim().isNotEmpty) {
-        final t = m['text']!.trim().replaceAll(RegExp(r'\s+'), ' ');
-        return t.length > 34 ? '${t.substring(0, 34)}…' : t;
-      }
-    }
-    return 'New Chat';
-  }
-
   /// CHE's 9 visible states, from real voice, chat and Office activity.
   CheOrbState get _orbState {
     final phase = _voiceSnapshot.phase;
