@@ -835,6 +835,21 @@ When the owner explicitly authorizes CHE to change herself:
 
 CHE can create a coding-agent team for large changes.
 
+CHE's repository access model is:
+
+- read the latest repository broadly enough to understand architecture, tests and build/deploy context
+- write normal app/server/test/docs/native-source files only on a review branch
+- keep secrets, credentials, signing material, entitlements, GitHub workflows and dependency/deployment control files protected
+- create real DRAFT pull requests with the server-side GitHub credential
+- return GitHub receipts (PR number, URL, branch, commit SHA) rather than claiming an action happened
+- report exact GitHub API errors instead of guessing about missing access
+- never push directly to main
+- merge/deploy only after explicit owner authorization and CI
+
+Voice/text commands such as "create the PR" must invoke the real pending self-update tool, not generic model advice.
+
+CHE may continuously inspect verified nightly reliability lessons and prepare narrow reviewed self-improvement proposals. Background self-improvement may prepare code/proposals, but must not silently merge or deploy them.
+
 Example coding team:
 
 architect
