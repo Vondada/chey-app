@@ -2725,24 +2725,53 @@ export class CheState extends DurableObject {
     const key = `flagstaff_auto_reply:${id}`;
     const prior = await this.ctx.storage.get(key);
     const priorAt = Number(prior?.at || 0);
-    if (prior?.status === 'replied' || prior?.status === 'blocked' || prior?.status === 'failed') {
-      return { skipped: true, status: prior.status };
+    if (
+      (prior?.status === 'replied' || prior?.status === 'blocked' || prior?.status === 'failed')
+      && prior?.reply_id
+    ) {
+      return { skipped: true, status: prior.status, reply_id: prior.reply_id };
     }
-    if (prior?.status === 'processing' && Date.now() - priorAt < 120_000) return { processing: true };
+    if (prior?.status === 'processing' && Date.now() - priorAt < 45_000) {
+      const retryAt = priorAt + 45_000;
+      await this.ctx.storage.setAlarm(retryAt).catch(() => null);
+      return { processing: true, queued: true, retry_at: retryAt };
+    }
     if (prior?.status === 'retry' && Number(prior.retry_at || 0) > Date.now()) {
-      return { queued: true, status: 'retry', retry_at: Number(prior.retry_at) };
+      return {
+        queued: true,
+        status: 'retry',
+        retry_at: Number(prior.retry_at),
+        reply_id: prior.fallback_reply_id || '',
+      };
     }
 
     if (looksLikeAttack(incoming)) {
-      await this.ctx.storage.put(key, { status: 'blocked', at: Date.now(), sender });
+      const refusal = await postWebMail(this.ctx.storage, {
+        from: 'che',
+        to: sender,
+        text: 'I received your Flagstaff message, but I will not follow requests for secrets, private owner data, permission overrides, or instructions that conflict with the owner. You can send a safe engineering or review request instead.',
+        reply_to: id,
+      }, this.env).catch(() => ({ status: 502 }));
+      const replyId = refusal?.status === 200 ? String(refusal.message?.id || '') : '';
+      await this.ctx.storage.put(key, {
+        status: replyId ? 'blocked' : 'retry',
+        at: Date.now(),
+        sender,
+        reply_id: replyId,
+        retry_count: Number(prior?.retry_count || 0),
+        retry_at: replyId ? 0 : Date.now() + 30_000,
+      });
       await fileLetter(this.ctx.storage, {
         tray: 'security',
         subject: `Flagstaff auto-reply blocked message from ${sender}`,
-        body: 'The message looked like an attempt to obtain secrets or override owner rules. CHE did not follow it.',
+        body: 'The message looked like an attempt to obtain secrets or override owner rules. CHE refused it and kept the refusal visible in the sender thread.',
         tag: 'security',
         severity: 'danger',
       }).catch(() => null);
-      return { skipped: true, status: 'blocked' };
+      if (!replyId) await this.ctx.storage.setAlarm(Date.now() + 30_000).catch(() => null);
+      return replyId
+        ? { replied: true, reply_id: replyId, status: 'blocked' }
+        : { queued: true, status: 'retry', retry_at: Date.now() + 30_000 };
     }
 
     await this.ctx.storage.put(key, {
@@ -2796,23 +2825,51 @@ export class CheState extends DurableObject {
       return { replied: true, reply_id: posted.message.id };
     } catch (error) {
       const retryCount = Number(prior?.retry_count || 0) + 1;
-      const retryable = busyError(error) && retryCount <= 24;
-      const retryAt = retryable ? Date.now() + 30_000 : 0;
+      const retryable = retryCount <= 24;
+      const retryAt = retryable ? Date.now() + (busyError(error) ? 30_000 : 60_000) : 0;
+      let fallbackReplyId = String(prior?.fallback_reply_id || '');
+
+      // Never leave a sender thread visually unanswered. If the detailed reply
+      // hits an engine/tool failure, post one visible receipt and keep retrying
+      // the substantive answer in the background.
+      if (!fallbackReplyId) {
+        const fallback = await postWebMail(this.ctx.storage, {
+          from: 'che',
+          to: sender,
+          text: retryable
+            ? 'I received your Flagstaff message. My reply engine hit a temporary problem, so I saved it and I am retrying automatically.'
+            : 'I received your Flagstaff message, but I could not complete the detailed reply after repeated attempts. The owner can see this failure and the message is preserved.',
+          reply_to: id,
+        }, this.env).catch(() => ({ status: 502 }));
+        if (fallback?.status === 200) fallbackReplyId = String(fallback.message?.id || '');
+      }
+
       await this.ctx.storage.put(key, {
         status: retryable ? 'retry' : 'failed',
         at: Date.now(),
         sender,
         retry_count: retryCount,
         retry_at: retryAt,
+        fallback_reply_id: fallbackReplyId,
+        reply_id: retryable ? '' : fallbackReplyId,
         error: String(error?.message || error).slice(0, 500),
       });
       if (retryable) {
-        // The normal open-Flagstaff watcher runs every 30 seconds, but setting
-        // the alarm here also makes the retry durable if this was the only work.
-        await this.ctx.storage.setAlarm(retryAt);
-        return { queued: true, status: 'retry', retry_at: retryAt };
+        await this.ctx.storage.setAlarm(retryAt).catch(() => null);
+        return {
+          queued: true,
+          status: 'retry',
+          retry_at: retryAt,
+          acknowledged: Boolean(fallbackReplyId),
+          reply_id: fallbackReplyId,
+        };
       }
-      throw error;
+      return {
+        replied: Boolean(fallbackReplyId),
+        status: 'failed',
+        reply_id: fallbackReplyId,
+        fallback: true,
+      };
     }
   }
 
@@ -2826,11 +2883,15 @@ export class CheState extends DurableObject {
     let queued = 0;
     for (const message of incoming) {
       const prior = await this.ctx.storage.get(`flagstaff_auto_reply:${String(message.id)}`);
-      if (prior?.status !== 'retry' || Number(prior.retry_at || 0) > Date.now()) continue;
+      const now = Date.now();
+      const dueRetry = prior?.status === 'retry' && Number(prior.retry_at || 0) <= now;
+      const staleProcessing = prior?.status === 'processing' && now - Number(prior.at || 0) >= 45_000;
+      const invisibleTerminal = ['blocked', 'failed'].includes(prior?.status) && !prior?.reply_id;
+      if (!dueRetry && !staleProcessing && !invisibleTerminal) continue;
       try {
         const result = await this.replyToFlagstaffMessage(message);
         if (result?.replied) replied += 1;
-        else if (result?.queued) queued += 1;
+        else if (result?.queued || result?.processing) queued += 1;
       } catch (error) {
         console.error('Flagstaff retry failed:', message?.id, error?.message || error);
       }
@@ -2839,8 +2900,10 @@ export class CheState extends DurableObject {
   }
 
   async processFlagstaffInbox({ force = false, messageId = '' } = {}) {
-    if (!(await flagstaffOpen(this.ctx.storage))) return { checked: false, replied: 0 };
-    // Retry due engine-outage replies even when GitHub's mailbox head did not
+    // GitHub AI mail stays responsive even when the public Flagstaff web board
+    // is locked. Locking closes the share link/session; it must not silence
+    // replies to authenticated repo mailbox messages.
+    // Retry due engine/tool outages even when GitHub's mailbox head did not
     // change. Otherwise one temporary 503 could permanently strand a message.
     const retryResult = await this.retryFlagstaffReplies();
     const headState = await mailboxHead(this.env).catch(() => ({ head: '' }));
@@ -2941,9 +3004,8 @@ export class CheState extends DurableObject {
         const live = await mailboxHead(this.env).catch(() => ({ error: 'Mailbox head lookup failed.', head: '' }));
         if (live.error || !live.head) return json({ detail: live.error || 'Mailbox head unavailable.' }, 503);
         if (live.head !== requestedHead) return json({ detail: 'Mailbox head moved; retry with the current head.' }, 409);
-        if (!(await flagstaffOpen(this.ctx.storage))) {
-          return json({ detail: 'Flagstaff is locked.', checked: false, replied: 0 }, 423);
-        }
+        // The public Flagstaff board may be locked, but GitHub mailbox peers
+        // still get replies. The verified mailbox commit is the wake signal.
 
         // GitHub push notifications must bypass the web-board cache/session
         // window. Read the live mailbox branch directly and resolve this exact
@@ -2954,7 +3016,17 @@ export class CheState extends DurableObject {
         if (!message) return json({ detail: 'Mailbox message not found at the verified head.' }, 404);
 
         const result = await this.replyToFlagstaffMessage(message);
-        await this.ctx.storage.put('flagstaff_mailbox_head', live.head);
+        // Do not advance the processed mailbox head while another invocation is
+        // still working or a retry is queued. Advancing it early is what used
+        // to strand messages forever after a processing race.
+        const terminal = Boolean(result?.replied)
+          || (Boolean(result?.skipped) && ['replied', 'blocked', 'failed'].includes(String(result?.status || '')));
+        if (terminal) {
+          await this.ctx.storage.put('flagstaff_mailbox_head', live.head);
+        } else {
+          const wakeAt = Number(result?.retry_at || 0) || (Date.now() + 30_000);
+          await this.ctx.storage.setAlarm(wakeAt).catch(() => null);
+        }
         await this.scheduleWork();
         return json({
           ok: true,
