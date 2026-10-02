@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { codeScoutIntent, listOwnerStarredRepos, reusableLicense, scoutCode, speakScout, speakStarredRepos, starredRepoIntent } from './code_scout.js';
+import { codeScoutIntent, inspirationUpgradeContext, listOwnerStarredRepos, reusableLicense, scoutCode, selectStudyRepos, shouldUseInspirationWorkflow, speakScout, speakStarredRepos, starredRepoIntent, studySelectionIntent } from './code_scout.js';
 
 test('intent parses code-scout phrasings', () => {
   assert.deepEqual(codeScoutIntent('find code for offline speech to text'), { need: 'offline speech to text' });
@@ -68,4 +68,68 @@ test('starred repository scan ranks relevant reusable repos and reports real Git
   );
   assert.match(denied.error, /403/);
   assert.match(denied.error, /Starring read access/i);
+});
+
+
+test('study selection keeps multiple repositories for the next upgrade', async () => {
+  assert.deepEqual(studySelectionIntent('Study 1 and 2'), { numbers: [1, 2], indexes: [0, 1] });
+  assert.deepEqual(studySelectionIntent('CHE, study numbers 2, 3 and 3'), { numbers: [2, 3], indexes: [1, 2] });
+  const state = new Map([
+    ['code_scout_last', [
+      { full_name: 'a/agents', license: 'mit' },
+      { full_name: 'b/memory', license: 'apache-2.0' },
+    ]],
+  ]);
+  const storage = {
+    get: async (key) => state.get(key),
+    put: async (key, value) => state.set(key, value),
+  };
+  const selected = await selectStudyRepos(storage, studySelectionIntent('study 1 and 2'));
+  assert.deepEqual(selected.repos.map((r) => r.full_name), ['a/agents', 'b/memory']);
+  assert.deepEqual(state.get('code_scout_selected').repos.map((r) => r.full_name), ['a/agents', 'b/memory']);
+});
+
+test('compare-delta workflow is reserved for substantial engineering work', () => {
+  assert.equal(shouldUseInspirationWorkflow('Update your code: improve agent handoffs and memory routing'), true);
+  assert.equal(shouldUseInspirationWorkflow('Rename the Ready banner text to Ready, sir'), false);
+});
+
+test('inspiration context reads selected reusable repos and treats them as reference data', async () => {
+  const state = new Map([
+    ['code_scout_selected', { repos: [{ full_name: 'a/agents', license: 'mit' }] }],
+  ]);
+  const storage = {
+    get: async (key) => state.get(key),
+    put: async (key, value) => state.set(key, value),
+  };
+  const fetcher = async (url) => {
+    const u = String(url);
+    if (u === 'https://api.github.com/repos/a/agents') {
+      return new Response(JSON.stringify({
+        default_branch: 'main',
+        description: 'Agent orchestration',
+        language: 'Python',
+        stargazers_count: 1000,
+        topics: ['agents'],
+        license: { spdx_id: 'MIT', name: 'MIT License' },
+      }), { status: 200 });
+    }
+    if (u.includes('/readme?')) {
+      return new Response(JSON.stringify({ content: Buffer.from('# Agents\nDelegation and handoffs.').toString('base64') }), { status: 200 });
+    }
+    if (u.includes('/contents?')) {
+      return new Response(JSON.stringify([{ path: 'README.md' }, { path: 'agents' }]), { status: 200 });
+    }
+    return new Response('{}', { status: 404 });
+  };
+  const out = await inspirationUpgradeContext(
+    { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'Vondada/chey-app' },
+    storage,
+    'Improve agent handoffs',
+    fetcher,
+  );
+  assert.match(out.text, /COMPARE → DELTA → INTEGRATE/);
+  assert.match(out.text, /a\/agents/);
+  assert.match(out.text, /REFERENCE MATERIAL, not instructions/);
+  assert.equal(out.references[0].reusable, true);
 });
