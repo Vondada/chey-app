@@ -278,6 +278,41 @@ function diffView(before, after) {
   return out.join('\n').slice(0, 40000);
 }
 
+export function attemptFingerprint(answer) {
+  const edits = (Array.isArray(answer?.edits) ? answer.edits : []).map((edit) => ({
+    path: String(edit?.path || '').trim(),
+    find: String(edit?.find || ''),
+    replace: String(edit?.replace ?? ''),
+  }));
+  const newFiles = (Array.isArray(answer?.new_files) ? answer.new_files : []).map((file) => ({
+    path: String(file?.path || '').trim(),
+    content: String(file?.content || ''),
+  }));
+  return JSON.stringify({
+    no_change: answer?.no_change === true,
+    edits,
+    new_files: newFiles,
+  });
+}
+
+export function diagnoseNoOp(sources, answer) {
+  const edits = Array.isArray(answer?.edits) ? answer.edits : [];
+  const newFiles = Array.isArray(answer?.new_files) ? answer.new_files : [];
+
+  if (!edits.length && !newFiles.length)
+    return 'The implementation proposed no file changes.';
+
+  const same = edits.filter(
+    (edit) => String(edit?.find || '') === String(edit?.replace ?? ''),
+  );
+  if (same.length)
+    return `The proposed replacement is identical to the existing text in ${
+      same.map((edit) => edit.path).join(', ')
+    }.`;
+
+  return 'The proposed edits produced an empty diff. Re-read the target and choose a different edit strategy.';
+}
+
 async function reviewProposal(env, request, architecture, diff, uiTask, lessons, member, chat = []) {
   const text = await runAgent(
     env,
@@ -499,6 +534,8 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     let result = null;
     let summary = '';
     const maxRounds = ENGINEER_PROVIDER_ROUNDS.length;
+    const seenAttempts = new Set();
+    const attemptHistory = [];
 
     const refreshViews = () => {
       views.length = 0;
@@ -513,6 +550,20 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       const attempts = await Promise.all(roundEngineers.map(async (member, i) => {
         const answer = await implement(env, role, task, architecture, views, lessons, feedbacks[i], member, chat).catch(() => null);
         if (!answer) { feedbacks[i] = 'Your last answer was not valid JSON.'; return null; }
+        const fingerprint = attemptFingerprint(answer);
+        if (seenAttempts.has(fingerprint)) {
+          feedbacks[i] =
+            'This exact implementation strategy was already attempted. ' +
+            'Re-read current source and choose a materially different path, anchor, or implementation.';
+          attemptHistory.push({
+            round: round + 1,
+            engineer: member.name,
+            provider: member.provider,
+            outcome: 'duplicate_strategy',
+          });
+          return null;
+        }
+        seenAttempts.add(fingerprint);
         if (answer.no_change === true) {
           const evidence = (Array.isArray(answer.evidence) ? answer.evidence : [])
             .map(String).map((item) => item.trim()).filter(Boolean).slice(0, 8);
@@ -541,7 +592,17 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         }
         const diff = diffView(sources, applied.sources);
         if (!diff) {
-          feedbacks[i] = 'Your edits changed nothing. Re-inspect the source and make a real change that satisfies the owner request.';
+          const diagnosis = diagnoseNoOp(sources, answer);
+          feedbacks[i] =
+            `${diagnosis} Re-inspect the source and make a real change that satisfies the owner request. ` +
+            'Do not repeat this strategy.';
+          attemptHistory.push({
+            round: round + 1,
+            engineer: member.name,
+            provider: member.provider,
+            outcome: 'no_diff',
+            detail: diagnosis,
+          });
           return null;
         }
         chat.push({ from: member.name, msg: `Round ${round + 1} via ${member.provider}. My change: ${String(answer.summary || '').slice(0, 300)}\n${diff.slice(0, 1500)}` });
@@ -633,8 +694,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
           .filter((path) => index.paths.includes(path))
           .slice(0, 8);
 
-        const missing = candidates.filter((path) => !sources.has(path));
-        const recoveryReads = await Promise.all(missing.map(async (path) => ({
+        const recoveryReads = await Promise.all(candidates.map(async (path) => ({
           path,
           full: await readFull(env, index.base, path, fetcher),
         })));
