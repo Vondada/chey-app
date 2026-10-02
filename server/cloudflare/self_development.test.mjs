@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyEdits, focusView, literalTerms, loadLessons, prepareSelfUpdate, recordLesson } from './self_development.js';
+import { applyEdits, focusView, jsonObject, literalTerms, loadLessons, prepareSelfUpdate, recordLesson } from './self_development.js';
 
 const MAIN = `class Home {\n  String _statusBanner = 'Ready. Type or speak a request.';\n}\n`;
 const PATCH = `const t = Text('CHE updated. Restart to apply.');\n`;
@@ -38,6 +38,58 @@ test('applyEdits requires exact, unique find text', () => {
   assert.match(applyEdits(src, [{ path: 'lib/a.dart', find: 'x', replace: 'z' }]).error, /more than once/);
   assert.match(applyEdits(src, [{ path: 'lib/a.dart', find: 'nope', replace: 'z' }]).error, /does not exist/);
   assert.equal(applyEdits(src, [{ path: 'lib/a.dart', find: 'y', replace: 'Y' }]).sources.get('lib/a.dart'), 'x\nY\nx\n');
+});
+
+
+test('jsonObject accepts strict, fenced, and harmlessly wrapped JSON', () => {
+  assert.deepEqual(jsonObject('{"ok":true}'), { ok: true });
+  assert.deepEqual(jsonObject('\`\`\`json\\n{"ok":true}\\n\`\`\`'), { ok: true });
+  assert.deepEqual(jsonObject('Result follows: {"ok":true} done'), { ok: true });
+  assert.equal(jsonObject('not json'), null);
+});
+
+test('applyEdits accepts numbered source excerpts but still rejects stale and ambiguous edits', () => {
+  const src = new Map([['lib/a.dart', 'alpha\\nbeta\\ngamma\\nalpha\\n']]);
+  const numbered = applyEdits(src, [{ path: 'lib/a.dart', find: '2| beta\\n3| gamma', replace: 'B\\nG' }]);
+  assert.equal(numbered.sources.get('lib/a.dart'), 'alpha\\nB\\nG\\nalpha\\n');
+  assert.match(applyEdits(src, [{ path: 'lib/a.dart', find: 'stale', replace: 'x' }]).error, /does not exist exactly/);
+  assert.match(applyEdits(src, [{ path: 'lib/a.dart', find: 'alpha', replace: 'x' }]).error, /ambiguous/);
+  assert.match(applyEdits(src, [{ path: 'lib/missing.dart', find: 'x', replace: 'y' }]).error, /not inspected/);
+});
+
+test('failed initial discovery automatically broadens and continues without owner source text', async () => {
+  let recoveryCalls = 0;
+  const env = {
+    CHE_GITHUB_TOKEN: 't',
+    CHE_GITHUB_REPO: 'o/r',
+    AI: {
+      run: async (_model, input) => {
+        const system = input.messages[0].content;
+        if (system.includes('Source Recovery Architect')) {
+          recoveryCalls++;
+          return { response: '\`\`\`json\\n' + JSON.stringify({
+            plan: 'Find the home widget from repository structure.',
+            search_terms: ['Ready. Type or speak a request.'],
+            paths: ['lib/main.dart'],
+          }) + '\\n\`\`\`' };
+        }
+        if (system.includes('Architect')) {
+          return { response: JSON.stringify({ plan: 'bad first guess', search_terms: ['missing-widget-token'], paths: ['lib/not_real.dart'] }) };
+        }
+        if (system.includes('Review')) {
+          return { response: JSON.stringify({ approved: true, target_correct: true, notes: [], repair_instructions: '', lesson: '' }) };
+        }
+        return { response: JSON.stringify({
+          summary: 'Recovered source and changed it',
+          edits: [{ path: 'lib/main.dart', find: "'Ready. Type or speak a request.'", replace: "'Ready, sir.'" }],
+        }) };
+      },
+    },
+  };
+  const out = await prepareSelfUpdate(env, 'change the home interface wording', fakeGitHub(), memoryStore());
+  assert.equal(out.status, 200, out.detail);
+  assert.equal(recoveryCalls, 1);
+  assert.deepEqual(out.proposal.files.map((file) => file.path), ['lib/main.dart']);
 });
 
 test('focusView shows numbered windows around hits in big files', () => {
