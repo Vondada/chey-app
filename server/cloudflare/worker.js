@@ -39,7 +39,7 @@ import { prepareSelfUpdate } from './self_development.js';
 import { KEY_PROVIDERS, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
-import { autoImproveScan, codeScoutIntent, fetchRepoFile, inspirationUpgradeContext, listOwnerStarredRepos, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, studySelectionIntent } from './code_scout.js';
+import { autoImproveScan, codeScoutIntent, fetchRepoFile, inspirationUpgradeContext, listOwnerStarredRepos, repositoryImplementationIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, studySelectionIntent } from './code_scout.js';
 import { consultEngine, consultIntent, shareIntent, speakConsult } from './ai_consult.js';
 import { markOwnerSeen, readArchive as flagstaffArchive, unreadIncoming } from './web_mailbox.js';
 import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
@@ -1995,7 +1995,7 @@ async function dispatchChange(env, body, memory = null) {
   // Handle them here too because older app builds may still send them to the
   // self-update endpoint. This keeps them out of the on-screen-text locator.
   const starredResearch = starredRepoIntent(request);
-  if (starredResearch) {
+  if (starredResearch && !repositoryImplementationIntent(request)) {
     const result = await listOwnerStarredRepos(env, fetch, {
       limit: 300,
       focus: starredResearch.focus,
@@ -5282,8 +5282,26 @@ export class CheState extends DurableObject {
             ? `I scanned for upgrades to the whole app, sir, and filed ${found.length} new reusable finds under free tech: ${found.slice(0, 4).map((f) => f.full_name).join(', ')}. Say "what's in free tech" to review.`
             : 'I scanned for app upgrades, sir. Nothing new and reusable since last time.', { source: 'che_code_scout' });
         }
-        // Owner's starred GitHub library / Inspirations: inspect first, then
-        // let the existing "study N" flow hand a reusable candidate to the crew.
+        // Explicit implementation requests win over repository discovery. This
+        // is what lets "Update your code: use Study 1 and 2..." actually build
+        // and save a reviewed proposal instead of stopping at research.
+        if (repositoryImplementationIntent(message)) {
+          const changeResponse = await dispatchChange(this.env, { request: message }, this.ctx.storage);
+          let payload = {};
+          try { payload = await changeResponse.json(); } catch (_) {}
+          return ndjsonReply(
+            String(payload.message || payload.detail || 'The coding workflow did not return a usable result.'),
+            {
+              source: 'che_self_update',
+              code_review_passed: Boolean(payload.code_review_passed),
+              owner_approval_required: Boolean(payload.owner_approval_required),
+              repository_research: Boolean(payload.repository_research),
+            },
+          );
+        }
+
+        // Owner's starred GitHub library / Inspirations: pure research requests
+        // inspect first, then let the "study N" flow hand candidates to the crew.
         const starredResearch = starredRepoIntent(message);
         if (starredResearch) {
           const result = await listOwnerStarredRepos(this.env, fetch, {

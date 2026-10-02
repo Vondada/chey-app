@@ -65,6 +65,18 @@ function starredScore(repo, focus = []) {
 // Repository-library requests must be researched before they are sent to the
 // exact source-patch lane. This prevents broad GitHub jobs from being treated
 // like "find this on-screen text" edits.
+export function repositoryImplementationIntent(message) {
+  const text = String(message || '').trim();
+  if (!text) return false;
+  if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?update\s+your\s+code\s*:/i.test(text)) return true;
+
+  const implementation = /\b(?:implement|integrate|adapt|apply|install|add|upgrade|improve|rewrite|refactor|build|change|modify|patch)\b/i.test(text);
+  const target = /\b(?:che(?:'s)?|your)\s+(?:code|codebase|repo(?:sitory)?|app|office|agents?|system|workflow|architecture)\b/i.test(text)
+    || /\b(?:into|inside|to)\s+che\b/i.test(text);
+  const receipts = /\b(?:draft\s+pr|pull\s+request|commit\s+sha|files\s+changed|run\s+tests?|implement\s+now|do\s+the\s+implementation)\b/i.test(text);
+  return implementation && (target || receipts);
+}
+
 export function starredRepoIntent(message) {
   const text = String(message || '').trim().replace(/^(?:che|chay|chey|shay)[,:]?\s+/i, '');
   const collection = /\b(?:starred(?:\s+github)?\s+(?:repos?|repositories)|github\s+starred\s+(?:repos?|repositories)|github\s+stars?|(?:repos?|repositories)\s+(?:i\s+)?(?:have\s+)?starred|inspirations?(?:\s+(?:list|tab|collection))?)\b/i.test(text);
@@ -82,7 +94,8 @@ export function starredRepoIntent(message) {
   }
   return {
     focus,
-    integrate: /\b(?:integrate|adapt|add|bring|put|use)\b[\s\S]{0,80}\b(?:che|your\s+(?:app|code|repo))\b/i.test(text),
+    integrate: repositoryImplementationIntent(message)
+      || /\b(?:integrate|adapt|add|bring|put|use)\b[\s\S]{0,80}\b(?:che|your\s+(?:app|code|repo))\b/i.test(text),
   };
 }
 
