@@ -252,6 +252,49 @@ test('no-op engineering pass re-inspects source and retries on a different provi
 });
 
 
+test('already-satisfied engineering request succeeds without fake no-op edits', async () => {
+  const env = {
+    CHE_GITHUB_TOKEN: 't',
+    CHE_GITHUB_REPO: 'o/r',
+    AI: {
+      run: async (_model, input) => {
+        const system = input.messages[0].content;
+        if (system.includes('No-Change Verification Agent')) {
+          return { response: JSON.stringify({
+            approved: true,
+            notes: ['The inspected source already has the requested compare-delta workflow.'],
+            repair_instructions: '',
+          }) };
+        }
+        if (system.includes('Architect')) {
+          return { response: JSON.stringify({
+            plan: 'Verify existing repository research flow before changing it.',
+            search_terms: ['Ready. Type or speak a request.'],
+            paths: ['lib/main.dart'],
+          }) };
+        }
+        return { response: JSON.stringify({
+          no_change: true,
+          summary: 'The requested capability is already present; changing it would duplicate working behavior.',
+          evidence: ['lib/main.dart already contains the inspected capability path.'],
+        }) };
+      },
+    },
+  };
+  const out = await prepareSelfUpdate(
+    env,
+    'Update your code: compare the current implementation and keep it when it is already equal or better.',
+    fakeGitHub(),
+    memoryStore(),
+  );
+  assert.equal(out.status, 200, out.detail);
+  assert.equal(out.already_satisfied, true);
+  assert.equal(out.approval_required, false);
+  assert.ok(!out.proposal);
+  assert.match(out.summary, /already present|duplicate/i);
+  assert.ok(out.evidence.length >= 1);
+});
+
 test('broad architecture work can inspect and update Worker source', async () => {
   const files = {
     'lib/main.dart': MAIN,
