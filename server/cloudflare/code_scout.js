@@ -16,6 +16,158 @@ function ghHeaders(env) {
   };
 }
 
+
+function githubOwner(env) {
+  return String(env.CHE_GITHUB_REPO || '').trim().split('/')[0] || '';
+}
+
+function starredRepoRecord(r) {
+  const license = String(r?.license?.spdx_id || '').toLowerCase();
+  return {
+    full_name: String(r?.full_name || ''),
+    stars: Number(r?.stargazers_count || 0),
+    description: String(r?.description || '').slice(0, 240),
+    url: String(r?.html_url || ''),
+    license,
+    license_name: String(r?.license?.name || 'No license detected'),
+    language: String(r?.language || ''),
+    archived: Boolean(r?.archived),
+    pushed_at: String(r?.pushed_at || ''),
+    topics: Array.isArray(r?.topics) ? r.topics.map(String).slice(0, 20) : [],
+    reusable: REUSABLE.has(license),
+  };
+}
+
+function starredScore(repo, focus = []) {
+  const defaultTerms = [
+    'agent', 'agency', 'multi-agent', 'orchestration', 'llm', 'ai', 'rag',
+    'memory', 'voice', 'speech', 'browser', 'automation', 'flutter',
+    'offline', 'coding', 'assistant',
+  ];
+  const terms = focus.length ? focus : defaultTerms;
+  const haystack = [
+    repo.full_name,
+    repo.description,
+    repo.language,
+    ...(repo.topics || []),
+  ].join(' ').toLowerCase();
+  let score = 0;
+  for (const term of terms) {
+    const t = String(term || '').toLowerCase().trim();
+    if (t && haystack.includes(t)) score += t.includes('-') ? 4 : 2;
+  }
+  if (repo.reusable) score += 2;
+  if (repo.archived) score -= 8;
+  score += Math.min(3, Math.log10(Math.max(1, repo.stars)));
+  return score;
+}
+
+// Repository-library requests must be researched before they are sent to the
+// exact source-patch lane. This prevents broad GitHub jobs from being treated
+// like "find this on-screen text" edits.
+export function starredRepoIntent(message) {
+  const text = String(message || '').trim().replace(/^(?:che|chay|chey|shay)[,:]?\s+/i, '');
+  const collection = /\b(?:starred(?:\s+github)?\s+(?:repos?|repositories)|github\s+stars?|repos?(?:itories)?\s+(?:i\s+)?(?:have\s+)?starred|inspirations?(?:\s+(?:list|tab|collection))?)\b/i.test(text);
+  const action = /\b(?:inspect|scan|review|research|analy[sz]e|go\s+through|look\s+through|check|find|study|use|integrate|adapt|take\s+code)\b/i.test(text);
+  if (!collection || !action) return null;
+
+  const focus = [];
+  const focusWords = [
+    'agent', 'agency', 'multi-agent', 'orchestration', 'rag', 'memory',
+    'voice', 'speech', 'browser', 'automation', 'flutter', 'offline',
+    'coding', 'llm', 'ai', 'assistant',
+  ];
+  for (const word of focusWords) {
+    if (text.toLowerCase().includes(word) && !focus.includes(word)) focus.push(word);
+  }
+  return {
+    focus,
+    integrate: /\b(?:integrate|adapt|add|bring|put|use)\b[\s\S]{0,80}\b(?:che|your\s+(?:app|code|repo))\b/i.test(text),
+  };
+}
+
+export async function listOwnerStarredRepos(
+  env,
+  fetcher = fetch,
+  { limit = 300, focus = [] } = {},
+) {
+  const owner = githubOwner(env);
+  if (!owner) {
+    return { error: 'CHE_GITHUB_REPO is missing, so I cannot determine which GitHub stars belong to the owner.', repos: [], candidates: [], checked: 0 };
+  }
+
+  const cap = Math.max(1, Math.min(Number(limit) || 300, 300));
+  const repos = [];
+  let page = 1;
+  let truncated = false;
+
+  while (repos.length < cap) {
+    const perPage = Math.min(100, cap - repos.length);
+    let response;
+    try {
+      response = await fetcher(
+        `https://api.github.com/users/${encodeURIComponent(owner)}/starred?per_page=${perPage}&page=${page}`,
+        { headers: ghHeaders(env), signal: AbortSignal.timeout(10000) },
+      );
+    } catch (error) {
+      return { error: `GitHub starred-repository lookup failed: ${String(error?.message || error).slice(0, 140)}`, repos: [], candidates: [], checked: 0 };
+    }
+
+    if (!response.ok) {
+      const permission = response.status === 401 || response.status === 403
+        ? ' Check the GitHub token/rate limit; Starring read access may be required for authenticated access.'
+        : '';
+      return { error: `GitHub could not read ${owner}'s starred repositories (${response.status}).${permission}`, repos: [], candidates: [], checked: 0 };
+    }
+
+    let batch = [];
+    try { batch = await response.json(); } catch (_) { batch = []; }
+    if (!Array.isArray(batch)) batch = [];
+    repos.push(...batch.map(starredRepoRecord).filter((r) => r.full_name));
+    if (batch.length < perPage) break;
+    if (repos.length >= cap) {
+      truncated = true;
+      break;
+    }
+    page += 1;
+  }
+
+  const live = repos.filter((r) => !r.archived);
+  const ranked = [...live]
+    .map((repo) => ({ ...repo, relevance: starredScore(repo, focus) }))
+    .sort((a, b) => b.relevance - a.relevance || b.stars - a.stars);
+  const positive = ranked.filter((r) => r.relevance > 2.5);
+  const candidates = (positive.length ? positive : ranked).slice(0, 16);
+
+  return {
+    owner,
+    repos: live,
+    candidates,
+    checked: repos.length,
+    reusable_count: live.filter((r) => r.reusable).length,
+    truncated,
+  };
+}
+
+export function speakStarredRepos(intent, result) {
+  if (result?.error) return `I couldn't inspect your GitHub stars, sir: ${result.error}`;
+  const checked = Number(result?.checked || 0);
+  const picks = Array.isArray(result?.candidates) ? result.candidates : [];
+  const scope = result?.truncated ? `the first ${checked}` : String(checked);
+  if (!picks.length) {
+    return `I inspected ${scope} starred GitHub repositories, sir, but I didn't find a strong reusable match yet. GitHub's normal stars feed does not label custom lists such as Inspirations, so I scan the starred library itself instead of pretending I can see a list label that the API did not return.`;
+  }
+  const lines = picks.slice(0, 8).map((r, i) => {
+    const license = r.reusable ? r.license_name : `${r.license_name} — study only until reuse rights are verified`;
+    return `${i + 1}. ${r.full_name} — ${license}. ${r.description || 'No description.'}`;
+  });
+  const focus = intent?.focus?.length ? ` for ${intent.focus.join(', ')}` : '';
+  const next = intent?.integrate
+    ? 'I treated this as research first, not an exact-text patch. I will not blind-copy repositories; reusable pieces must be studied, adapted to CHE, reviewed, and proposed in a draft PR.'
+    : 'Say "study" and a number to inspect one safely before any code change.';
+  return `I inspected ${scope} repositories from your GitHub stars${focus}, sir. GitHub's normal stars feed does not label custom lists such as Inspirations, so this covers the starred library itself. Best matches:\n${lines.join('\n')}\n${next}`;
+}
+
 // Search public repos by need, best-starred first, permissive-license only.
 export async function scoutCode(env, need, fetcher = fetch, { minStars = 200, limit = 6 } = {}) {
   const q = String(need || '').trim().slice(0, 120);
