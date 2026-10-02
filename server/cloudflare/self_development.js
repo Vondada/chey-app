@@ -97,8 +97,61 @@ async function sourceIndex(env, fetcher) {
   return { base, paths, editable_paths: paths.filter(isSelfUpdateEditablePath) };
 }
 
-function isUiTask(request) {
-  return /\b(ui|ux|screen|page|layout|button|card|navigation|nav|color|theme|font|spacing|menu|panel|interface|visual|design|redesign|banner|label|text|title)\b/i.test(request);
+export function isUiTask(request) {
+  const text = String(request || '');
+  // Classify the owner's request, not appended RAG/README/reference material.
+  // A broad architecture prompt often contains words like "UI", "design" or
+  // "text" inside reference docs; those must not turn the whole job into UI work.
+  if (/\b(?:ui|ux|screen|page|layout|navigation|menu|panel|interface|widget)\b/i.test(text)) return true;
+  const visibleElement = /\b(?:button|card|banner|label|title|font|color|theme|spacing|visible text)\b/i.test(text);
+  const changeVerb = /\b(?:change|rename|redesign|restyle|move|rearrange|add|remove|hide|show|fix|improve|update|make)\b/i.test(text);
+  return visibleElement && changeVerb;
+}
+
+const SOURCE_TERM_STOP = new Set([
+  'about','after','again','against','already','also','and','anything','apply','before','being','better','codebase',
+  'compare','current','does','everything','from','give','into','just','latest','make','more','only','owner','project',
+  'request','should','source','study','than','that','their','them','then','there','these','they','this','through','use',
+  'using','what','when','where','which','with','would','your','che',
+]);
+
+export function rankSourcePaths(paths, request, limit = 6) {
+  const words = [...new Set(
+    (String(request || '').toLowerCase().match(/[a-z][a-z0-9_-]{2,}/g) || [])
+      .filter((word) => word.length >= 4 && !SOURCE_TERM_STOP.has(word)),
+  )];
+  const alias = new Map([
+    ['agent', ['agent','office','team','delegate','handoff','orchestrat']],
+    ['agents', ['agent','office','team','delegate','handoff','orchestrat']],
+    ['delegation', ['agent','delegate','handoff','office']],
+    ['handoffs', ['handoff','agent','office']],
+    ['memory', ['memory','vector','rag','context','brain']],
+    ['context', ['context','memory','rag','vector']],
+    ['research', ['research','scout','inspiration']],
+    ['inspirations', ['scout','inspiration','research']],
+    ['starred', ['scout','inspiration']],
+    ['coding', ['self_development','self_update','code','develop']],
+    ['review', ['review','test','self_development']],
+    ['workflow', ['workflow','pipeline','runtime','state','orchestrat']],
+    ['retries', ['retry','resilience']],
+    ['recovery', ['retry','resilience','recover']],
+    ['reliability', ['resilience','retry','health']],
+    ['parallel', ['agent','runtime','orchestrat','team']],
+    ['planning', ['plan','agent','office']],
+  ]);
+  const needles = new Set(words);
+  for (const word of words) for (const extra of alias.get(word) || []) needles.add(extra);
+  const ranked = (Array.isArray(paths) ? paths : []).map((path) => {
+    const lower = String(path).toLowerCase();
+    let score = 0;
+    for (const needle of needles) {
+      if (lower.includes(needle)) score += needle.length >= 7 ? 3 : 1;
+    }
+    if (/server\/cloudflare\/(?:self_development|self_update|code_scout|agent_runtime|worker)\./.test(lower)) score += 1;
+    return { path: String(path), score };
+  }).filter((item) => item.score > 0);
+  ranked.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+  return ranked.slice(0, Math.max(1, limit)).map((item) => item.path);
 }
 
 // ─── Team memory: every mistake becomes a rule, every find becomes a shortcut ───
@@ -376,12 +429,13 @@ async function reviewNoChange(env, request, architecture, claims, lessons, membe
   return jsonObject(text) || { approved: false, notes: ['No-change reviewer returned invalid JSON.'] };
 }
 
-export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = null) {
+export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = null, options = {}) {
   if (!repoOf(env)) {
     return { status: 503, detail: 'Self-development needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the server.' };
   }
-  const task = String(request || '').trim().slice(0, 16000);
-  if (!task) return { status: 400, detail: 'Describe the requested app change.' };
+  const task = String(request || '').trim().slice(0, 42000);
+  const ownerIntent = String(options?.intentRequest || request || '').trim().slice(0, 16000);
+  if (!task || !ownerIntent) return { status: 400, detail: 'Describe the requested app change.' };
 
   try {
     const lessons = await loadLessons(memory);
@@ -389,7 +443,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     if (index.error || !index.paths?.length) {
       return { status: 502, detail: index.error || 'CHE could not inspect its source.' };
     }
-    const uiTask = isUiTask(task);
+    const uiTask = isUiTask(ownerIntent);
 
     // 1. Two architects in parallel on different engines; plans are merged.
     const plans = await Promise.all(CREW.planners.map((member) => runAgent(
@@ -401,7 +455,13 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         'Use the team lessons (they include known file locations). You may inspect read-only control files for context, but edits must stay inside editable_source_files. Pick at most 6 existing files.',
         'Return ONLY JSON: {"plan":"...","search_terms":["exact text or identifier"],"paths":["an actual repository path"]}.',
       ].join('\n'),
-      { request: task, editable_source_files: index.editable_paths, readable_source_files: index.paths, team_lessons: lessonText(lessons) },
+      {
+        owner_request: ownerIntent,
+        engineering_context: task,
+        editable_source_files: index.editable_paths,
+        readable_source_files: index.paths,
+        team_lessons: lessonText(lessons),
+      },
       1200,
       member.provider,
     ).then(jsonObject).catch(() => null)));
@@ -414,7 +474,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       paths: good.flatMap((p) => (Array.isArray(p.paths) ? p.paths : [])),
     };
     const terms = [...new Set([
-      ...literalTerms(task),
+      ...literalTerms(ownerIntent),
       ...(Array.isArray(architecture.search_terms) ? architecture.search_terms.map(String) : []),
     ])].filter((t) => t.trim().length > 2).slice(0, 8);
 
@@ -422,13 +482,14 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     const hits = await searchCode(env, terms, fetcher);
     const ranked = [...hits.entries()].sort((a, b) => b[1] - a[1]).map(([path]) => path);
     const planned = Array.isArray(architecture.paths) ? architecture.paths.map(String).filter((p) => index.paths.includes(p)) : [];
-    const chosen = [...new Set([...ranked, ...planned])].slice(0, 5);
+    const inferred = rankSourcePaths(index.editable_paths, ownerIntent, 6);
+    const chosen = [...new Set([...ranked, ...planned, ...inferred])].slice(0, 6);
     if (!chosen.length) {
       return {
         status: 422,
         detail: uiTask
-          ? 'The team could not locate the UI source for that request. Name the exact visible text or screen only if the request is actually about a UI element.'
-          : 'The team could not map this broad engineering request to a safe source file. Repository research and architecture discovery must run before source patching; do not ask the owner for on-screen text.',
+          ? 'The team could not locate the UI source for the owner’s actual UI request. Name the exact visible text or screen.'
+          : 'The team could not map the owner’s engineering request to a safe source file after architecture planning and path inference. Do not ask for on-screen text unless the owner actually requested UI work.',
       };
     }
 
