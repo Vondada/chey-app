@@ -5,9 +5,7 @@
 // che-update approval card must still be approved by the owner before a PR is
 // opened, and CI still has to pass before merge/deploy.
 
-import { validateUpdateFiles } from './self_update.js';
-
-const SAFE_SOURCE_PATH = /^(?:lib\/[A-Za-z0-9_\/]+\.dart|server\/cloudflare\/[A-Za-z0-9_./-]+\.(?:js|mjs))$/;
+import { isSelfUpdateEditablePath, isSelfUpdateReadablePath, validateUpdateFiles } from './self_update.js';
 
 function repoOf(env) {
   const repo = String(env.CHE_GITHUB_REPO || '').trim();
@@ -93,10 +91,10 @@ async function sourceIndex(env, fetcher) {
   );
   if (!tree.ok) return { error: `Could not inspect source tree (${tree.status}).` };
   const paths = (Array.isArray(tree.data?.tree) ? tree.data.tree : [])
-    .filter((item) => item?.type === 'blob' && SAFE_SOURCE_PATH.test(String(item.path || '')))
+    .filter((item) => item?.type === 'blob' && isSelfUpdateReadablePath(String(item.path || '')))
     .map((item) => String(item.path))
-    .slice(0, 2400);
-  return { base, paths };
+    .slice(0, 4000);
+  return { base, paths, editable_paths: paths.filter(isSelfUpdateEditablePath) };
 }
 
 function isUiTask(request) {
@@ -182,7 +180,7 @@ async function searchCode(env, terms, fetcher) {
       const data = await response.json();
       return (data?.items || [])
         .map((item) => String(item?.path || ''))
-        .filter((path) => SAFE_SOURCE_PATH.test(path));
+        .filter((path) => isSelfUpdateReadablePath(path));
     } catch (_) {
       return [];
     }
@@ -194,7 +192,7 @@ async function searchCode(env, terms, fetcher) {
 }
 
 async function readFull(env, base, path, fetcher) {
-  if (!SAFE_SOURCE_PATH.test(path)) return null;
+  if (!isSelfUpdateReadablePath(path)) return null;
   const found = await gh(env, 'GET', `/contents/${path}?ref=${encodeURIComponent(base)}`, null, fetcher);
   if (!found.ok || !found.data?.content) return null;
   try { return decodeBase64Utf8(found.data.content); } catch (_) { return null; }
@@ -290,6 +288,7 @@ async function implement(env, role, task, architecture, views, lessons, feedback
       'Implement the change as exact search-and-replace edits on the inspected source.',
       'Return ONLY strict JSON: {"summary":"1-2 sentences","edits":[{"path":"existing/source.file","find":"exact existing text","replace":"new text"}],"new_files":[{"path":"allowed/new.file","content":"COMPLETE FILE"}]}.',
       '"find" must be copied character-for-character from the source, WITHOUT the "123| " line-number prefixes, and must be unique in its file. Keep each find small (1-15 lines).',
+      'Only edit files CHE is allowed to write. Read-only workflow/signing/dependency/config files may be inspected for context but must never appear in edits/new_files.',
       'Change only what the request needs. Preserve VoiceOver labels and voice-first behavior.',
       'Obey every team lesson. Read team_chat: build on teammates\' good ideas and avoid what reviewers rejected in their work.',
     ].join('\n'),
@@ -320,13 +319,14 @@ async function recoveryPlan(env, task, architecture, feedback, index, lessons, m
       'The previous implementation pass failed or produced no real diff. Do not repeat the same edit.',
       'Re-locate the actual source for the owner request using the failure feedback and repository file list.',
       'Prefer exact visible text for UI requests; for architecture/repository work, use module names, exported functions and likely server or Flutter files. Name new files to inspect when the previous set was wrong or incomplete.',
-      'Return ONLY JSON: {"plan":"...","search_terms":["exact text or identifier"],"paths":["lib/a.dart or server/cloudflare/a.js"]}.',
+      'Return ONLY JSON: {"plan":"...","search_terms":["exact text or identifier"],"paths":["an actual repository path"]}.',
     ].join('\n'),
     {
       request: task,
       previous_architecture: architecture,
       previous_failure: feedback,
-      source_files: index.paths,
+      readable_source_files: index.paths,
+      editable_source_files: index.editable_paths,
       team_lessons: lessonText(lessons),
       team_chat: chat.slice(-24),
     },
@@ -373,10 +373,10 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       [
         'Plan the smallest change that does exactly what the owner asked.',
         'For UI requests, name exact visible text or widget identifiers. For architecture/repository work, name concrete modules, functions, routes or server files that implement the capability.',
-        'Use the team lessons (they include known file locations). Pick at most 5 existing files.',
-        'Return ONLY JSON: {"plan":"...","search_terms":["exact text or identifier"],"paths":["lib/a.dart or server/cloudflare/a.js"]}.',
+        'Use the team lessons (they include known file locations). You may inspect read-only control files for context, but edits must stay inside editable_source_files. Pick at most 6 existing files.',
+        'Return ONLY JSON: {"plan":"...","search_terms":["exact text or identifier"],"paths":["an actual repository path"]}.',
       ].join('\n'),
-      { request: task, source_files: index.paths, team_lessons: lessonText(lessons) },
+      { request: task, readable_source_files: index.paths, editable_source_files: index.editable_paths, team_lessons: lessonText(lessons) },
       1200,
       member.provider,
     ).then(jsonObject).catch(() => null)));
@@ -444,11 +444,17 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       const attempts = await Promise.all(roundEngineers.map(async (member, i) => {
         const answer = await implement(env, role, task, architecture, views, lessons, feedbacks[i], member, chat).catch(() => null);
         if (!answer) { feedbacks[i] = 'Your last answer was not valid JSON.'; return null; }
-        const applied = applyEdits(sources, answer.edits);
+        const requestedEdits = Array.isArray(answer.edits) ? answer.edits : [];
+        const protectedEdit = requestedEdits.find((edit) => !isSelfUpdateEditablePath(String(edit?.path || '')));
+        if (protectedEdit) {
+          feedbacks[i] = `That edit targets a protected/read-only path: ${String(protectedEdit?.path || 'missing path')}. Keep the control plane read-only and implement through normal source instead.`;
+          return null;
+        }
+        const applied = applyEdits(sources, requestedEdits);
         if (applied.error) { feedbacks[i] = applied.error; return null; }
-        for (const file of Array.isArray(answer.new_files) ? answer.new_files.slice(0, 3) : []) {
+        for (const file of Array.isArray(answer.new_files) ? answer.new_files.slice(0, 4) : []) {
           const path = String(file?.path || '');
-          if (SAFE_SOURCE_PATH.test(path) && !sources.has(path) && typeof file.content === 'string') applied.sources.set(path, file.content);
+          if (isSelfUpdateEditablePath(path) && !sources.has(path) && typeof file.content === 'string') applied.sources.set(path, file.content);
         }
         const diff = diffView(sources, applied.sources);
         if (!diff) {
