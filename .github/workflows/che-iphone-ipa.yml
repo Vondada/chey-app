@@ -9,7 +9,7 @@ jobs:
   build-ios:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[ios-build]')
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       CHE_AGENT_URL: ${{ secrets.CHE_AGENT_URL }}
     steps:
@@ -39,6 +39,12 @@ jobs:
 
       - name: Flutter analyze
         run: flutter analyze
+
+      - name: Preinstall CocoaPods dependencies
+        working-directory: ios
+        run: |
+          pod repo update
+          pod install --repo-update --verbose
 
       # A Shorebird release is what lets CHE upgrade herself later: Dart-only
       # changes then arrive as patches, with no new IPA. Without Shorebird set
