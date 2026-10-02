@@ -5,6 +5,8 @@ void main() {
   test('update your code routes to controlled self-update', () {
     expect(cheIsSelfUpdateRequest('CHE, update your code so voice responds faster'), isTrue);
     expect(cheIsSelfUpdateRequest('update yourself'), isTrue);
+    expect(cheIsSelfUpdateRequest('Fix everything inside CHE so you can keep improving yourself'), isTrue);
+    expect(cheIsSelfUpdateRequest('Work on your own code and improve your repository'), isTrue);
   });
   test('long engineering briefs route to controlled self-update', () {
     expect(
