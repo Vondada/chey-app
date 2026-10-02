@@ -2611,10 +2611,26 @@ export class CheState extends DurableObject {
 
   async retryFlagstaffReplies() {
     const all = await readAllMail(this.env).catch(() => ({ error: 'Mailbox read failed.', messages: [] }));
-    if (all.error) return { replied: 0, queued: 0 };
+    if (all.error) {
+      // A transient GitHub read failure must not consume the only alarm for a
+      // queued reply. Only reschedule when Durable Object state proves a retry
+      // is still pending, so an unconfigured mailbox cannot create a poll loop.
+      let pending = 0;
+      try {
+        const records = this.ctx.storage.list
+          ? await this.ctx.storage.list({ prefix: 'flagstaff_auto_reply:' })
+          : new Map();
+        for (const value of records.values()) {
+          if (value?.status === 'retry') pending += 1;
+        }
+      } catch (_) {}
+      if (pending) await this.ctx.storage.setAlarm(Date.now() + 30_000);
+      return { replied: 0, queued: pending };
+    }
+    // Scan every retained incoming mailbox message. A retry can be older than
+    // the newest 40 messages after a provider outage and must remain reachable.
     const incoming = (all.messages || [])
-      .filter((m) => m?.id && m.from !== 'che' && String(m.to || 'che').toLowerCase() === 'che')
-      .slice(-40);
+      .filter((m) => m?.id && m.from !== 'che' && String(m.to || 'che').toLowerCase() === 'che');
     let replied = 0;
     let queued = 0;
     for (const message of incoming) {
