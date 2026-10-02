@@ -49,9 +49,9 @@ test('jsonObject accepts strict, fenced, and harmlessly wrapped JSON', () => {
 });
 
 test('applyEdits accepts numbered source excerpts but still rejects stale and ambiguous edits', () => {
-  const src = new Map([['lib/a.dart', 'alpha\\nbeta\\ngamma\\nalpha\\n']]);
-  const numbered = applyEdits(src, [{ path: 'lib/a.dart', find: '2| beta\\n3| gamma', replace: 'B\\nG' }]);
-  assert.equal(numbered.sources.get('lib/a.dart'), 'alpha\\nB\\nG\\nalpha\\n');
+  const src = new Map([['lib/a.dart', 'alpha\nbeta\ngamma\nalpha\n']]);
+  const numbered = applyEdits(src, [{ path: 'lib/a.dart', find: '2| beta\n3| gamma', replace: 'B\nG' }]);
+  assert.equal(numbered.sources.get('lib/a.dart'), 'alpha\nB\nG\nalpha\n');
   assert.match(applyEdits(src, [{ path: 'lib/a.dart', find: 'stale', replace: 'x' }]).error, /does not exist exactly/);
   assert.match(applyEdits(src, [{ path: 'lib/a.dart', find: 'alpha', replace: 'x' }]).error, /ambiguous/);
   assert.match(applyEdits(src, [{ path: 'lib/missing.dart', find: 'x', replace: 'y' }]).error, /not inspected/);
