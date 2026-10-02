@@ -122,7 +122,9 @@ extension _CheHomeMicrophone on _CHEHomeState {
       _autoSentCurrentTurn = false;
 
       if (speech.isListening) {
-        await speech.stop();
+        await _localVoice.runMicOp(() async {
+          await speech.stop();
+        });
       }
 
       if (!mounted) return;
@@ -356,7 +358,9 @@ extension _CheHomeMicrophone on _CHEHomeState {
               cheSleeping = false;
 
               if (speech.isListening) {
-                await speech.stop();
+                await _localVoice.runMicOp(() async {
+                  await speech.stop();
+                });
               }
               if (!mounted) return;
               _set(() {
