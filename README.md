@@ -80,3 +80,4 @@ current cloud prototype does not include the Windows Agent's automatic memory
 learning, web research, local tools, or encrypted memory import yet.
 
 <!-- Worker deploy nudge: Cloudflare Workers Builds watch path "*" only sees top-level files. -->
+CHE autopilot end-to-end test passed on 2026-10-03.
