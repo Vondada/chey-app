@@ -2025,7 +2025,7 @@ export function shouldHandleSelfUpdateAction(message, intent) {
   if (intent.kind !== 'access') return false;
   // Pure capability/access questions are tool reads. Requests to CHANGE CHE's
   // code so she gains that capability must continue into self-development.
-  return !/\b(?:update|change|modify|fix|add|implement|build|make|edit|rewrite|upgrade)\b[\s\S]{0,60}\b(?:your\s+)?(?:code|app|worker)\b/i.test(String(message || ''));
+  return !/\b(?:update|change|modify|fix|add|implement|build|make|edit|rewrite|upgrade)\b[\s\S]{0,80}\b(?:yourself|che(?:'s)?|your\s+(?:code|app|worker|system|software|ui|interface))\b/i.test(String(message || ''));
 }
 
 const LAST_SELF_UPDATE_DEPLOY_KEY = 'last_self_update_deploy';
