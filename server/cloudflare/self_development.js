@@ -525,17 +525,35 @@ export function substantiveChange(beforeMap, files) {
 }
 
 export function wantsDocsOnly(request) {
-  const text = String(request || '');
-  const docs = /\b(?:doc(?:s|umentation)?|readme|comments?|changelog|notes?)\b/i;
+  const text = String(request || '').trim();
+  const docs = /\b(?:doc(?:s|umentation)?|readme|comments?|changelog|notes?|guide|docstrings?)\b/i;
   if (!docs.test(text)) return false;
-  const action = /\b(?:fix|update|add|create|write|edit|improve|change|correct|refresh|document|build|rebuild|redesign|implement)\b/i.exec(text);
-  if (!action) return !/\b(?:code|logic|behavior|functionality|runtime|widget|screen|ui|worker|feature)\b/i.test(text);
-  const tail = text.slice(action.index + action[0].length);
-  const docsIndex = tail.search(docs);
-  const functionalIndex = tail.search(/\b(?:code|logic|behavior|functionality|runtime|widget|screen|ui|worker|feature|brain\s+room)\b/i);
-  const mixed = /\b(?:and|plus|also|along with|as well as)\b/i.test(tail)
-    && functionalIndex >= 0 && docsIndex >= 0;
-  return docsIndex >= 0 && (functionalIndex < 0 || docsIndex < functionalIndex) && !mixed;
+
+  const functionalAction = /\b(?:build|rebuild|redesign|implement|make|upgrade|refactor|develop|ship|fix|update|add|create|edit|improve|change)\b/i;
+  const docsAction = /\b(?:fix|update|add|create|write|edit|improve|change|correct|refresh|document)\b/i;
+  const clauses = text
+    .split(/\b(?:and|plus|also|along\s+with|as\s+well\s+as|then)\b|[;.!?]+/i)
+    .map((clause) => clause.trim())
+    .filter(Boolean);
+
+  let sawDocsTarget = false;
+  for (const clause of clauses) {
+    const docMatch = docs.exec(clause);
+    const action = functionalAction.exec(clause);
+    if (!action) {
+      if (docMatch) sawDocsTarget = true;
+      continue;
+    }
+    const verb = action[0];
+    if (!docsAction.test(verb) || !docMatch) return false;
+    const from = Math.min(action.index + verb.length, docMatch.index);
+    const to = Math.max(action.index + verb.length, docMatch.index);
+    const between = clause.slice(from, to);
+    // README/docs used merely as reference do not make a feature request docs-only.
+    if (/\b(?:according\s+to|based\s+on|using|per)\b/i.test(between)) return false;
+    sawDocsTarget = true;
+  }
+  return sawDocsTarget;
 }
 
 // 0-based line numbers that differ between two versions (in the new version).
