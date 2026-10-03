@@ -19,7 +19,7 @@ void main() {
 
   test('speech chunker groups sentences into long fluent chunks', () {
     final c = CheSpeechChunker(targetChars: 60);
-    final text = 'First one. ' + List.filled(6, 'This is a normal spoken sentence.').join(' ');
+    final text = "First one. ${List.filled(6, 'This is a normal spoken sentence.').join(' ')}";
     final chunks = [...c.addCumulative(text), ...c.flush()];
     expect(chunks.first, 'First one.');
     expect(chunks.length, lessThan(5));
