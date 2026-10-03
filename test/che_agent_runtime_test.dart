@@ -119,6 +119,11 @@ Future<void> _pumpUntilFound(
   expect(finder, findsWidgets);
 }
 
+/// The desk sheet's own list (a TextField also contains a Scrollable).
+final _deskList = find
+    .descendant(of: find.byType(DraggableScrollableSheet), matching: find.byType(Scrollable))
+    .first;
+
 void main() {
   test('short summaries keep titles glanceable', () {
     expect(cheShortSummary('Find competitors'), 'Find competitors');
@@ -243,14 +248,14 @@ void main() {
     await tester.scrollUntilVisible(
       find.text('Approved by CHE'),
       160,
-      scrollable: find.byType(Scrollable).last,
+      scrollable: _deskList,
     );
     expect(find.text('Approved by CHE'), findsOneWidget);
 
     await tester.scrollUntilVisible(
       find.byTooltip('Send task'),
       160,
-      scrollable: find.byType(Scrollable).last,
+      scrollable: _deskList,
     );
     await tester.pump();
     await tester.enterText(find.byType(TextField).first, 'Check pricing');
@@ -292,13 +297,13 @@ void main() {
     await tester.scrollUntilVisible(
       find.text('Talk to CHE'),
       160,
-      scrollable: find.byType(Scrollable).last,
+      scrollable: _deskList,
     );
     await tester.pump();
     await tester.scrollUntilVisible(
       find.text('REQUEST TO CHE'),
       160,
-      scrollable: find.byType(Scrollable).last,
+      scrollable: _deskList,
     );
 
     expect(find.text('Talk to CHE'), findsWidgets);
