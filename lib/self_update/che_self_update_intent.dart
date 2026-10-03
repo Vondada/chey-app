@@ -78,11 +78,10 @@ bool cheIsSelfUpdateRequest(String raw) {
   if (direct) return true;
 
   // Natural owner requests can name a CHE surface without saying "your app".
-  // If they both target a CHE UI surface and request an implementation action,
-  // route them to self-development instead of generic chat.
+  // Require both a CHE surface and an implementation action so questions stay chat.
   final cheSurfaceChange = RegExp(
     r'\b(?:find\s+where|locate|inspect|change|update|fix|repair|improve|upgrade|redesign|modify|restyle|adjust)\b'
-    r'[\\s\\S]{0,180}\b(?:office|chat|home|brain|war\s+room|theater|apps?|screen|ui|interface|agent\s+status|status\s+badge|button|layout)\b',
+    r'[\s\S]{0,180}\b(?:office|chat|home|brain|war\s+room|theater|apps?|screen|ui|interface|agent\s+status|status\s+badge|button|layout)\b',
     caseSensitive: false,
   ).hasMatch(text);
   final implementationAction = RegExp(
