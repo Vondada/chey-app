@@ -162,6 +162,19 @@ export async function listOwnerStarredRepos(
   };
 }
 
+// The exact numbered list the owner hears (same order, same length), so
+// "study 1 and 2" always maps to the repositories that were read out.
+export function starredStudyList(result) {
+  return (Array.isArray(result?.candidates) ? result.candidates : []).slice(0, 8).map((repo) => ({
+    full_name: repo.full_name,
+    license: repo.license,
+    license_name: repo.license_name,
+    description: repo.description,
+    stars: repo.stars,
+    reusable: Boolean(repo.reusable),
+  }));
+}
+
 export function speakStarredRepos(intent, result) {
   if (result?.error) return `I couldn't inspect your GitHub stars, sir: ${result.error}`;
   const checked = Number(result?.checked || 0);
@@ -209,15 +222,17 @@ export async function selectStudyRepos(storage, selection) {
       license_name: String(repo.license_name || repo.license || ''),
       description: String(repo.description || ''),
       stars: Number(repo.stars || 0),
+      reusable: repo.reusable !== false && Boolean(repo.license) && !/^(?:none|noassertion|other)?$/i.test(String(repo.license || '')),
     }));
-  if (!repos.length) return { error: 'Those study numbers were not in the saved GitHub list.', repos: [] };
+  const missing = (selection?.numbers || []).filter((n) => !list[n - 1]?.full_name);
+  if (!repos.length) return { error: 'Those study numbers were not in the saved GitHub list.', repos: [], missing };
   if (storage?.put) {
     await storage.put('code_scout_selected', {
       repos,
       selected_at: new Date().toISOString(),
     });
   }
-  return { repos };
+  return { repos, missing };
 }
 
 function decodeBase64Utf8(value) {
@@ -229,7 +244,7 @@ function decodeBase64Utf8(value) {
   }
 }
 
-export async function inspectReferenceRepo(env, ref, fetcher = fetch) {
+export async function inspectReferenceRepo(env, ref, fetcher = fetch, { allowStudyOnly = false } = {}) {
   const fullName = String(ref?.full_name || ref || '').trim();
   if (!/^[\w.-]+\/[\w.-]+$/.test(fullName)) return { error: 'Invalid repository name.', full_name: fullName };
   const metaResponse = await fetcher(`https://api.github.com/repos/${fullName}`, {
@@ -239,7 +254,8 @@ export async function inspectReferenceRepo(env, ref, fetcher = fetch) {
   if (!metaResponse?.ok) return { error: `Could not inspect ${fullName} (${metaResponse?.status || 'network error'}).`, full_name: fullName };
   const meta = await metaResponse.json().catch(() => ({}));
   const license = String(meta?.license?.spdx_id || ref?.license || '').toLowerCase();
-  if (!reusableLicense(license)) {
+  const reusable = reusableLicense(license);
+  if (!reusable && !allowStudyOnly) {
     return {
       error: `${fullName} is study-only until reuse rights are verified (${meta?.license?.spdx_id || ref?.license_name || 'no reusable license'}).`,
       full_name: fullName,
@@ -269,7 +285,8 @@ export async function inspectReferenceRepo(env, ref, fetcher = fetch) {
     full_name: fullName,
     license,
     license_name: String(meta?.license?.name || ref?.license_name || license),
-    reusable: true,
+    // Study-only repos may be read for ideas; their code is never copied.
+    reusable,
     description: String(meta?.description || ref?.description || '').slice(0, 300),
     topics: Array.isArray(meta?.topics) ? meta.topics.map(String).slice(0, 20) : [],
     language: String(meta?.language || ''),
