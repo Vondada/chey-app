@@ -21,7 +21,19 @@ jobs:
           channel: stable
       - run: bash tool/bootstrap.sh
       - run: flutter analyze
-      - run: flutter test --reporter github
+      - name: flutter test
+        run: |
+          set +e
+          flutter test --reporter json > test-results.jsonl
+          code=$?
+          node -e '
+            const lines=require("fs").readFileSync("test-results.jsonl","utf8").split("\n").filter(Boolean).map(l=>{try{return JSON.parse(l)}catch{return null}}).filter(Boolean);
+            const names={},errs={};
+            for(const e of lines){ if(e.type==="testStart") names[e.test.id]=e.test.name+" ("+(e.test.url||e.test.root_url||"").split("/").pop()+")";
+              if(e.type==="error") (errs[e.testID]??=[]).push(String(e.error).slice(0,600)); }
+            for(const [id,m] of Object.entries(errs)) console.log("::error title="+(names[id]||id).replace(/[\n:,]/g," ").slice(0,200)+"::"+m.join(" | ").replace(/%/g,"%25").replace(/\r?\n/g,"%0A"));
+          '
+          exit $code
       - run: for f in server/cloudflare/*.js; do node --check "$f"; done
       - run: node --test server/cloudflare/*.test.mjs
 
