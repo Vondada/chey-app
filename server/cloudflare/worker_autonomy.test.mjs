@@ -11,7 +11,7 @@ writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), '
 ), 'utf8');
 let mod;
 try { mod = await import(generated.href + '?t=' + Date.now()); } finally { try { unlinkSync(generated); } catch (_) {} }
-const { default: worker, CheState, busyError, enqueueJob, selfUpdateChatIntent, isExistingChangeCommand, selectReadyJobs, MAX_JOB_ATTEMPTS } = mod;
+const { default: worker, CheState, busyError, enqueueJob, selfUpdateChatIntent, isExistingChangeCommand, selectReadyJobs, shouldHandleSelfUpdateAction, MAX_JOB_ATTEMPTS } = mod;
 
 function storageFor(saved, alarms = []) {
   return {
@@ -477,4 +477,23 @@ test('existing-change shortcut excludes a genuine coding request about PR suppor
   const accessFeature = selfUpdateChatIntent('Can you update your code so you can create a PR?');
   assert.equal(accessFeature?.kind, 'access');
   assert.equal(isExistingChangeCommand(accessFeature), false);
+});
+
+
+test('running skill import blocks next import while unrelated work stays parallel', () => {
+  const jobs = [
+    { id: 'skill-running', kind: 'office_skill_import', status: 'running', retry_at: 0 },
+    { id: 'skill-next', kind: 'office_skill_import', status: 'queued', retry_at: 0 },
+    { id: 'chat-a', kind: 'chat', status: 'queued', retry_at: 0 },
+    { id: 'study-a', kind: 'repo_study', status: 'queued', retry_at: 0 },
+  ];
+  assert.deepEqual(selectReadyJobs(jobs, Date.now(), 4).map((job) => job.id), ['chat-a', 'study-a']);
+});
+
+test('chat distinguishes access questions from requests to add PR capability', () => {
+  const question = selfUpdateChatIntent('Do you have GitHub write access?');
+  assert.equal(shouldHandleSelfUpdateAction('Do you have GitHub write access?', question), true);
+  const coding = selfUpdateChatIntent('Can you update your code so you can create a PR?');
+  assert.equal(coding?.kind, 'access');
+  assert.equal(shouldHandleSelfUpdateAction('Can you update your code so you can create a PR?', coding), false);
 });
