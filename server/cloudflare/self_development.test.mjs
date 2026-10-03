@@ -689,3 +689,13 @@ test('docs-only intent accepts normal action verbs without hiding mixed code wor
   assert.equal(wantsDocsOnly('rebuild the Brain room and update the README'), false);
   assert.equal(wantsDocsOnly('fix the feature according to the README'), false);
 });
+
+
+test('docs-only classifier rejects mixed feature requests with arbitrary nouns', () => {
+  assert.equal(wantsDocsOnly('fix login and update docs'), false);
+  assert.equal(wantsDocsOnly('add dark mode and update README'), false);
+  assert.equal(wantsDocsOnly('update docs and fix onboarding'), false);
+  assert.equal(wantsDocsOnly('fix login according to the README'), false);
+  assert.equal(wantsDocsOnly('fix the README typo'), true);
+  assert.equal(wantsDocsOnly('create setup documentation'), true);
+});
