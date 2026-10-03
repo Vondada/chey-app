@@ -135,7 +135,25 @@ jobs:
           HAS_ANTHROPIC: ${{ secrets.ANTHROPIC_API_KEY != '' }}
           HAS_MISTRAL: ${{ secrets.MISTRAL_API_KEY != '' }}
           HAS_CEREBRAS: ${{ secrets.CEREBRAS_API_KEY != '' }}
+          K_GOOGLE: ${{ secrets.GEMINI_API_KEY }}
+          K_ANTHROPIC: ${{ secrets.ANTHROPIC_API_KEY }}
+          K_OPENAI: ${{ secrets.OPENAI_API_KEY }}
+          K_OPENROUTER: ${{ secrets.OPENROUTER_API_KEY }}
+          K_GROQ: ${{ secrets.GROQ_API_KEY }}
+          K_MISTRAL: ${{ secrets.MISTRAL_API_KEY }}
+          K_CEREBRAS: ${{ secrets.CEREBRAS_API_KEY }}
         run: |
+          # OpenCode lists a provider's models only when that provider's key is
+          # visible, so expose exactly one key for exactly one listing call.
+          list_models() {
+            local p=$1 var key
+            case $p in google) var=GEMINI_API_KEY; key=$K_GOOGLE;; anthropic) var=ANTHROPIC_API_KEY; key=$K_ANTHROPIC;; openai) var=OPENAI_API_KEY; key=$K_OPENAI;; openrouter) var=OPENROUTER_API_KEY; key=$K_OPENROUTER;; groq) var=GROQ_API_KEY; key=$K_GROQ;; mistral) var=MISTRAL_API_KEY; key=$K_MISTRAL;; cerebras) var=CEREBRAS_API_KEY; key=$K_CEREBRAS;; *) return 0;; esac
+            if [ "$p" = google ]; then env -u K_GOOGLE "$var=$key" "GOOGLE_GENERATIVE_AI_API_KEY=$key" opencode models "$p" 2>/dev/null || true
+            else env "$var=$key" opencode models "$p" 2>/dev/null || true; fi
+          }
+          keyed=""
+          for p in GOOGLE ANTHROPIC OPENAI OPENROUTER GROQ MISTRAL CEREBRAS; do v=K_$p; [ -n "${!v}" ] && keyed="$keyed ${p,,}"; done
+          echo "Providers with a GitHub Actions key:${keyed:- none}"
           # "auto": first provider with a configured key, strongest coding
           # model OpenCode lists for it. Only that provider's key is exposed.
           model="$REQUESTED"
@@ -144,13 +162,13 @@ jobs:
             for p in google:HAS_GOOGLE anthropic:HAS_ANTHROPIC openai:HAS_OPENAI openrouter:HAS_OPENROUTER groq:HAS_GROQ mistral:HAS_MISTRAL cerebras:HAS_CEREBRAS; do
               prov=${p%%:*}; flag=${p##*:}
               [ "${!flag}" = true ] || continue
-              list=$(opencode models "$prov" 2>/dev/null | grep -E "^$prov/" | grep -viE "tts|image|audio|embed|vision|guard|lite|nano|mini|8b" || true)
+              list=$(list_models "$prov" | grep -E "^$prov/" | grep -viE "tts|image|audio|embed|vision|guard|lite|nano|mini|8b" || true)
               cand=$(echo "$list" | grep -iE "pro|sonnet|opus|gpt-5|coder|qwen3|large|70b" | sort -rV | head -1 || true)
               [ -n "$cand" ] || cand=$(echo "$list" | head -1)
               if [ -n "$cand" ]; then model="$cand"; break; fi
             done
           fi
-          if [ -z "$model" ]; then echo "::error::No AI provider key is configured for the OpenCode runner."; exit 1; fi
+          if [ -z "$model" ]; then echo "::error::No usable AI model for the OpenCode runner. Providers with a key:${keyed:- none}. Add one provider key (e.g. OPENROUTER_API_KEY or GEMINI_API_KEY) as a GitHub Actions secret."; exit 1; fi
           echo "Using model $model"
           echo "model=$model" >> "$GITHUB_OUTPUT"
 
