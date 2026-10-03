@@ -46,4 +46,13 @@ void main() {
       isTrue,
     );
   });
+
+  test('commands about an existing change never start a new coding job', () {
+    for (final command in ['Show me the code', 'show me the code please', 'Create the PR', 'merge it', 'Merge and deploy', 'PR status', 'is it deployed']) {
+      expect(cheIsSelfUpdateCommand(command), isTrue, reason: command);
+      expect(cheIsSelfUpdateRequest(command), isFalse, reason: command);
+    }
+    expect(cheIsSelfUpdateRequest('Merge the search feature into your code'), isTrue);
+    expect(cheIsSelfUpdateRequest('Update your code: show the code view in a bigger font'), isTrue);
+  });
 }
