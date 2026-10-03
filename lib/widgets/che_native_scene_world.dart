@@ -155,7 +155,8 @@ class CheNativeSceneWorld extends StatefulWidget {
 }
 
 class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
-  final Scene _scene = Scene();
+  late Scene _scene;
+  bool _sceneCreated = false;
   final Map<String, Node> _entityNodes = {};
   final Map<String, vm.Vector3> _basePositions = {};
   final List<PhysicallyBasedMaterial> _brainLinkMaterials = [];
@@ -180,17 +181,18 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
   @override
   void didUpdateWidget(covariant CheNativeSceneWorld oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.mode != widget.mode ||
-        oldWidget.quality != widget.quality ||
-        _fingerprint(oldWidget.entities, oldWidget.links) !=
-            _fingerprint(widget.entities, widget.links)) {
+    if (_ready &&
+        (oldWidget.mode != widget.mode ||
+            oldWidget.quality != widget.quality ||
+            _fingerprint(oldWidget.entities, oldWidget.links) !=
+                _fingerprint(widget.entities, widget.links))) {
       _rebuild();
     }
   }
 
   @override
   void dispose() {
-    _scene.removeAll();
+    if (_sceneCreated) _scene.removeAll();
     super.dispose();
   }
 
@@ -213,6 +215,8 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
     try {
       await Scene.initializeStaticResources();
       if (!mounted) return;
+      _scene = Scene();
+      _sceneCreated = true;
       await _rebuild();
       if (!mounted) return;
       setState(() {
