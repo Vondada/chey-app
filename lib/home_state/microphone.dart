@@ -261,12 +261,10 @@ extension _CheHomeMicrophone on _CHEHomeState {
 
       if (!mounted) return;
 
-      _set(() {
-        controller.text = spokenWords;
-        controller.selection = TextSelection.collapsed(
-          offset: controller.text.length,
-        );
-      });
+      controller.value = TextEditingValue(
+        text: spokenWords,
+        selection: TextSelection.collapsed(offset: spokenWords.length),
+      );
 
       if (spokenWords.isEmpty) {
         _rearmWebMicSoon();

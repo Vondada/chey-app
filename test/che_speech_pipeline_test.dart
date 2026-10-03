@@ -81,17 +81,22 @@ void main() {
     for (final t in ['a', 'b', 'c', 'd']) {
       h.pipeline.add(t);
     }
-    await _flush();
-    for (final t in ['a', 'b', 'c', 'd']) {
-      h.synth[t]!.complete('X$t');
-    }
     for (final t in ['a', 'b', 'c']) {
+      await _flush();
+      // At most two chunks are fetched ahead of the one playing.
+      for (final e in h.synth.entries) {
+        if (!e.value.isCompleted) e.value.complete('X${e.key}');
+      }
       await _flush();
       h.plays['X$t']!.complete(true);
       await _flush();
       expect(h.completes, 0, reason: 'no mic resume between chunks');
     }
     h.pipeline.close();
+    await _flush();
+    for (final e in h.synth.entries) {
+      if (!e.value.isCompleted) e.value.complete('X${e.key}');
+    }
     await _flush();
     h.plays['Xd']!.complete(true);
     await h.pipeline.done;
