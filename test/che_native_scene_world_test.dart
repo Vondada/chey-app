@@ -46,6 +46,7 @@ void main() {
       importance: 4,
       modelAsset: 'assets/models/atlas.glb',
       modelScale: 1.2,
+      appearance: {'skin_tone': 'deep', 'hair': 'locs', 'outfit': 'che'},
     );
 
     expect(entity.id, 'atlas');
@@ -53,5 +54,8 @@ void main() {
     expect(entity.importance, 4);
     expect(entity.modelAsset, 'assets/models/atlas.glb');
     expect(entity.modelScale, 1.2);
+    expect(entity.appearance['skin_tone'], 'deep');
+    expect(entity.appearance['hair'], 'locs');
+    expect(entity.appearance['outfit'], 'che');
   });
 }
