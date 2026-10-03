@@ -380,3 +380,28 @@ test('skills: "give your office agents skills from agency-agents" runs a real li
     assert.ok(saved.get('che').team.find((a) => a.name === 'Knox').skill_ids.length >= 1);
   } finally { globalThis.fetch = original; }
 });
+
+test('the engineering playbook is built into every coding-team agent and readable on request', async () => {
+  const { ENGINEERING_PLAYBOOK, playbookIntent } = await import('./engineering_playbook.js');
+  const { prepareSelfUpdate } = await import('./self_development.js');
+  const systems = [];
+  const env = { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async (_m, input) => { systems.push(input.messages[0].content); return { response: '{}' }; } } };
+  await prepareSelfUpdate(env, 'improve the banner', async () => new Response('{}', { status: 503 }), null).catch(() => null);
+  const fetcher = async (url) => {
+    const u = String(url);
+    const ok = (d) => new Response(JSON.stringify(d), { status: 200 });
+    if (u.endsWith('/o/r')) return ok({ default_branch: 'main' });
+    if (u.includes('/git/ref/')) return ok({ object: { sha: 'a' } });
+    if (u.includes('/git/trees/')) return ok({ tree: [{ type: 'blob', path: 'lib/main.dart' }] });
+    if (u.includes('/contents/')) return ok({ sha: 'b', content: Buffer.from("class A { String s = 'Ready'; }\n").toString('base64') });
+    return ok({ items: [] });
+  };
+  await prepareSelfUpdate(env, 'improve the banner', fetcher, null);
+  assert.ok(systems.length > 0 && systems.every((system) => system.includes(ENGINEERING_PLAYBOOK)), 'every agent call carries the playbook');
+  assert.equal(playbookIntent("What's your engineering playbook?"), true);
+  assert.equal(playbookIntent('Read me the coding handoff'), true);
+  const { chat, aiCalls } = await setup();
+  const out = await chat("What's your engineering playbook?");
+  assert.match(out.text, /I read my real code on GitHub first/);
+  assert.equal(aiCalls.length, 0);
+});
