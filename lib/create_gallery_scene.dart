@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'widgets/che_3d_room_view.dart';
+import 'widgets/che_native_scene_world.dart';
 
 class CreateGalleryScene extends StatefulWidget {
   const CreateGalleryScene({
@@ -139,30 +139,40 @@ class _CreateGallerySceneState extends State<CreateGalleryScene>
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                  child: Che3DRoomView(
-                    assetPath: 'assets/office3d/projects.html',
-                    updateFunction: 'updateScene',
-                    payload: {
-                      'agents': [
-                        {'id': 'che', 'name': 'CHE', 'role': 'Curator', 'status': 'idle', 'isChe': true},
-                      ],
-                      'items': [
-                        for (final proj in widget.projects.take(9))
-                          {
-                            'id': '${proj['id']}',
-                            'title': '${proj['title'] ?? 'Project'}',
-                            'progress': 0.4,
-                          },
-                      ],
-                    },
-                    height: 260,
-                    semanticsLabel: '3D Projects gallery',
-                    onTapId: (id) {
-                      final match = widget.projects.where((proj) => '${proj['id']}' == id);
-                      if (match.isNotEmpty) {
-                        unawaited(widget.onOpenProject(match.first));
-                      }
-                    },
+                  child: ValueListenableBuilder<CheSceneQuality>(
+                    valueListenable: CheSceneQualityStore.value,
+                    builder: (context, quality, _) => TickerMode(
+                      enabled: widget.active,
+                      child: CheNativeSceneWorld(
+                        mode: CheSceneMode.projects,
+                        quality: quality,
+                        entities: [
+                          const CheSceneEntity(
+                            id: 'che',
+                            label: 'CHE',
+                            description: 'Gallery curator',
+                            color: _teal,
+                          ),
+                          for (final project in widget.projects.take(12))
+                            CheSceneEntity(
+                              id: '${project['id']}',
+                              label: '${project['title'] ?? 'Project'}',
+                              description: '${project['status'] ?? 'Project in the CHE gallery'}',
+                              color: const Color(0xFF8E86FF),
+                              state: '${project['status'] ?? 'idle'}',
+                            ),
+                        ],
+                        height: 260,
+                        semanticsLabel: 'Immersive native Projects gallery',
+                        onEntityTap: (id) {
+                          final match = widget.projects
+                              .where((project) => '${project['id']}' == id);
+                          if (match.isNotEmpty) {
+                            unawaited(widget.onOpenProject(match.first));
+                          }
+                        },
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 8),
