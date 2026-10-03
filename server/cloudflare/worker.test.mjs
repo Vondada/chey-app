@@ -44,6 +44,15 @@ test('self-update chat commands route to real GitHub tools, not generic model gu
   assert.equal(selfUpdateChatIntent('Tell me a joke'), null);
 });
 
+test('explicit engineering commands are never hijacked by PR/status shortcuts', () => {
+  const long = 'Discard that change.\n\nUpdate your code: modify the existing selfUpdateChatIntent() and routing order in server/cloudflare/worker.js. Incidental words like PR, GitHub, status, check, or deploy must not be hijacked by shortcut intents. Run the Worker checks and prepare the reviewed change. Do not merge or deploy.';
+  assert.equal(selfUpdateChatIntent(long), null);
+  assert.equal(selfUpdateChatIntent('Fix your code so the PR status check works'), null);
+  assert.equal(selfUpdateChatIntent('Repair the deploy status check'), null);
+  assert.equal(selfUpdateChatIntent('Discard that change')?.kind, 'discard');
+  assert.equal(selfUpdateChatIntent('Is it deployed?')?.kind, 'deploy-status');
+});
+
 test('create the PR opens the saved reviewed proposal and returns a real receipt', async () => {
   const saved = new Map();
   const storage = {

@@ -2005,6 +2005,14 @@ export function selfImprovementLesson(review) {
 export function selfUpdateChatIntent(message) {
   const text = String(message || '').trim();
   if (!text) return null;
+  // Explicit engineering commands ("Update your code: ...", "Fix your code",
+  // "Repair ...", "Implement ...") always go to the coding path, even when a
+  // short lead-in like "Discard that change." comes first or the body mentions
+  // PR, GitHub, status, check or deploy in passing.
+  if (/(?:^|[.!?\n]\s*)(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:ok(?:ay)?|now|please)[,]?\s+)*(?:update|fix|change|modify|repair|rewrite|patch)\s+(?:your|che'?s|the)\s+(?:code|worker|router|app)\b|(?:^|[.!?\n]\s*)(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+)?(?:repair|implement)\b/i.test(text)) return null;
+  // Long messages are instructions, not quick shortcut questions.
+  const shortcutSized = text.length < 160;
+  if (!shortcutSized) return null;
   if (
     /\b(?:can|do)\s+(?:you|che)\b[\s\S]{0,50}\b(?:create|open|write|push|read)\b[\s\S]{0,35}\b(?:github|repo(?:sitory)?|pr|pull request)\b/i.test(text)
     || /\b(?:github|repo(?:sitory)?)\b[\s\S]{0,35}\b(?:access|permission|write access|read access)\b/i.test(text)
