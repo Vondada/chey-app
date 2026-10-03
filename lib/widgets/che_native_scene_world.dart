@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -175,6 +176,13 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
   @override
   void initState() {
     super.initState();
+    // Widget tests have no Flutter GPU/Impeller backend. Show the accessible
+    // text fallback there instead of starting the renderer, whose asset and
+    // shader loading would surface background errors in every room test.
+    if (Platform.environment.containsKey('FLUTTER_TEST')) {
+      _error = 'Native 3D is unavailable.';
+      return;
+    }
     _initialize();
   }
 
