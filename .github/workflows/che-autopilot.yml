@@ -219,7 +219,7 @@ jobs:
             [ "${!flag}" = true ] || continue
             [ "$provider" != "$implementer_provider" ] || continue
             list=$(opencode models "$provider" 2>/dev/null | grep -E "^$provider/" | grep -viE "tts|image|audio|embed|vision|guard|lite|nano|mini|8b" || true)
-            candidate=$(printf '%s\n' "$list" | grep -iE "pro|sonnet|opus|gpt-5|coder|qwen3|large|70b" | sort -rV | head -1)
+            candidate=$(printf '%s\n' "$list" | grep -iE "pro|sonnet|opus|gpt-5|coder|qwen3|large|70b" | sort -rV | head -1 || true)
             [ -n "$candidate" ] || candidate=$(printf '%s\n' "$list" | head -1)
             if [ -n "$candidate" ] && [ "$candidate" != "$IMPLEMENTER_MODEL" ]; then
               model="$candidate"
