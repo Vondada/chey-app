@@ -106,7 +106,7 @@ async function sourceIndex(env, fetcher) {
     .filter((item) => item?.type === 'blob' && isSelfUpdateReadablePath(String(item.path || '')))
     .map((item) => String(item.path))
     .slice(0, 4000);
-  return { base, paths, editable_paths: paths.filter(isSelfUpdateEditablePath) };
+  return { base, head_sha: String(ref.data.object.sha), paths, editable_paths: paths.filter(isSelfUpdateEditablePath) };
 }
 
 function isUiTask(request) {
@@ -762,7 +762,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
 
     return {
       status: 200,
-      proposal: { summary, files: checked.files },
+      proposal: { summary, files: checked.files, expected_base_sha: index.head_sha || '' },
       review: result.review,
       diff: result.diff,
       discussion: result.discussion,
