@@ -10,7 +10,20 @@ import 'package:vector_math/vector_math.dart' as vm;
 /// This path uses Flutter Scene on Flutter GPU/Impeller. The legacy Three.js
 /// WebView remains available elsewhere only as a temporary fallback while
 /// native scenes roll out to every room.
-enum CheSceneMode { office, brain, warRoom }
+enum CheSceneMode {
+  office,
+  brain,
+  warRoom,
+  theater,
+  artStudio,
+  musicStudio,
+  workshop,
+  projects,
+  markets,
+  pipeline,
+  store,
+  creator,
+}
 
 enum CheSceneQuality { performance, balanced, realistic }
 
@@ -116,6 +129,8 @@ class CheNativeSceneWorld extends StatefulWidget {
     this.quality = CheSceneQuality.realistic,
     this.height = 420,
     this.onEntityTap,
+    this.onPrimarySurfaceTap,
+    this.primarySurfaceLabel,
     this.semanticsLabel = 'CHE 3D world',
     this.fallback,
   });
@@ -126,6 +141,8 @@ class CheNativeSceneWorld extends StatefulWidget {
   final CheSceneQuality quality;
   final double height;
   final ValueChanged<String>? onEntityTap;
+  final VoidCallback? onPrimarySurfaceTap;
+  final String? primarySurfaceLabel;
   final String semanticsLabel;
   final Widget? fallback;
 
@@ -253,65 +270,315 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
     if (mounted && _ready) setState(() {});
   }
 
+  Color get _roomAccent => switch (widget.mode) {
+        CheSceneMode.warRoom => const Color(0xFFE8B04A),
+        CheSceneMode.theater => const Color(0xFFB98A62),
+        CheSceneMode.artStudio => const Color(0xFFE4D8C8),
+        CheSceneMode.musicStudio => const Color(0xFFFF3D8B),
+        CheSceneMode.workshop => const Color(0xFF34E0B8),
+        CheSceneMode.projects => const Color(0xFF8E86FF),
+        CheSceneMode.markets => const Color(0xFFE8B04A),
+        CheSceneMode.pipeline => const Color(0xFF4EA4FF),
+        CheSceneMode.store => const Color(0xFF34E0B8),
+        CheSceneMode.creator => const Color(0xFFFF3D8B),
+        _ => const Color(0xFF34E0B8),
+      };
+
   void _addRoomShell() {
     final realistic = widget.quality == CheSceneQuality.realistic;
+    final wallColor = switch (widget.mode) {
+      CheSceneMode.theater => const Color(0xFF1B1411),
+      CheSceneMode.artStudio => const Color(0xFF25231F),
+      CheSceneMode.musicStudio || CheSceneMode.creator => const Color(0xFF140D18),
+      CheSceneMode.markets => const Color(0xFF081013),
+      CheSceneMode.store => const Color(0xFF0C1715),
+      _ => const Color(0xFF0D171A),
+    };
+    final floorColor = switch (widget.mode) {
+      CheSceneMode.theater => const Color(0xFF201713),
+      CheSceneMode.artStudio => const Color(0xFF2A2823),
+      CheSceneMode.musicStudio || CheSceneMode.creator => const Color(0xFF160E1A),
+      _ => const Color(0xFF11191C),
+    };
+
     _scene.add(
       Node(
         mesh: Mesh(
           CuboidGeometry(vm.Vector3(13, .18, 9)),
           _pbr(
-            const Color(0xFF11191C),
+            floorColor,
             roughness: realistic ? .16 : .42,
-            metallic: realistic ? .32 : .08,
+            metallic: realistic ? .28 : .06,
           ),
         ),
         localTransform: vm.Matrix4.translation(vm.Vector3(0, -.16, 0)),
       ),
     );
 
-    _scene.add(
-      Node(
-        mesh: Mesh(
-          CuboidGeometry(vm.Vector3(13, 4.8, .16)),
-          _pbr(const Color(0xFF0D171A), roughness: .55),
-        ),
-        localTransform: vm.Matrix4.translation(vm.Vector3(0, 2.25, -4.45)),
-      ),
-    );
-
-    _scene.add(
-      Node(
-        localTransform: vm.Matrix4.translation(vm.Vector3(0, 4.2, 1.5)),
-      )..addComponent(
-          PointLightComponent(
-            PointLight(
-              color: vm.Vector3(.10, .92, .82),
-              intensity: realistic ? 18 : 11,
-              range: 11,
-            ),
-          ),
-        ),
-    );
-
-    if (widget.mode == CheSceneMode.warRoom) {
+    // Back, side walls and ceiling create an actual room rather than a
+    // floating diorama. The front remains open to the camera.
+    for (final wall in <(vm.Vector3, vm.Vector3)>[
+      (vm.Vector3(13, 4.8, .16), vm.Vector3(0, 2.25, -4.45)),
+      (vm.Vector3(.16, 4.8, 9), vm.Vector3(-6.45, 2.25, 0)),
+      (vm.Vector3(.16, 4.8, 9), vm.Vector3(6.45, 2.25, 0)),
+      (vm.Vector3(13, .12, 9), vm.Vector3(0, 4.62, 0)),
+    ]) {
       _scene.add(
         Node(
           mesh: Mesh(
-            CylinderGeometry(
-              bottomRadius: 2.55,
-              topRadius: 2.55,
-              height: .18,
-              radialSegments: realistic ? 48 : 24,
-            ),
-            _pbr(
-              const Color(0xFF18272C),
-              roughness: realistic ? .12 : .34,
-              metallic: realistic ? .62 : .22,
-            ),
+            CuboidGeometry(wall.$1),
+            _pbr(wallColor, roughness: realistic ? .38 : .62),
           ),
-          localTransform: vm.Matrix4.translation(vm.Vector3(0, .55, 0)),
+          localTransform: vm.Matrix4.translation(wall.$2),
         ),
       );
+    }
+
+    final accent = _roomAccent;
+    _scene.add(
+      Node(
+        localTransform: vm.Matrix4.translation(vm.Vector3(0, 4.05, 1.2)),
+      )..addComponent(
+          PointLightComponent(
+            PointLight(
+              color: vm.Vector3(accent.r, accent.g, accent.b),
+              intensity: realistic ? 20 : 12,
+              range: 12,
+            ),
+          ),
+        ),
+    );
+
+    switch (widget.mode) {
+      case CheSceneMode.warRoom:
+        _addWarRoomFurniture(realistic);
+      case CheSceneMode.theater:
+        _addTheaterFurniture(realistic);
+      case CheSceneMode.musicStudio:
+      case CheSceneMode.creator:
+        _addStudioFurniture(realistic);
+      case CheSceneMode.artStudio:
+      case CheSceneMode.projects:
+        _addGalleryFurniture(realistic);
+      case CheSceneMode.workshop:
+        _addWorkshopFurniture(realistic);
+      case CheSceneMode.markets:
+        _addMarketsFurniture(realistic);
+      case CheSceneMode.pipeline:
+      case CheSceneMode.store:
+        _addBusinessFurniture(realistic);
+      case CheSceneMode.office:
+        _addOfficeFurniture(realistic);
+      case CheSceneMode.brain:
+        break;
+    }
+  }
+
+  void _addBox(
+    vm.Vector3 size,
+    vm.Vector3 position,
+    Color color, {
+    double roughness = .45,
+    double metallic = .05,
+    String? name,
+    VoidCallback? onTap,
+    String? semanticsLabel,
+  }) {
+    final node = Node(
+      name: name ?? '',
+      mesh: Mesh(
+        CuboidGeometry(size),
+        _pbr(color, roughness: roughness, metallic: metallic),
+      ),
+      localTransform: vm.Matrix4.translation(position),
+    );
+    if (onTap != null || semanticsLabel != null) {
+      node.addComponent(
+        SemanticsComponent(
+          label: semanticsLabel ?? 'Interactive room object',
+          hint: onTap == null ? null : 'Activate',
+          button: onTap != null,
+          onTap: onTap,
+        ),
+      );
+    }
+    _scene.add(node);
+  }
+
+  void _addWarRoomFurniture(bool realistic) {
+    _scene.add(
+      Node(
+        mesh: Mesh(
+          CylinderGeometry(
+            bottomRadius: 2.55,
+            topRadius: 2.55,
+            height: .18,
+            radialSegments: realistic ? 48 : 24,
+          ),
+          _pbr(
+            const Color(0xFF18272C),
+            roughness: realistic ? .12 : .34,
+            metallic: realistic ? .62 : .22,
+          ),
+        ),
+        localTransform: vm.Matrix4.translation(vm.Vector3(0, .62, 0)),
+      ),
+    );
+    for (var i = 0; i < 8; i++) {
+      final angle = i / 8 * math.pi * 2;
+      _addBox(
+        vm.Vector3(.72, .18, .72),
+        vm.Vector3(math.sin(angle) * 3.35, .42, math.cos(angle) * 3.35),
+        const Color(0xFF171A1D),
+        roughness: .35,
+        metallic: .18,
+      );
+    }
+    _addBox(
+      vm.Vector3(5.8, 1.9, .10),
+      vm.Vector3(0, 2.55, -4.28),
+      const Color(0xFF101A1D),
+      roughness: .12,
+      metallic: .45,
+    );
+  }
+
+  void _addTheaterFurniture(bool realistic) {
+    // Large native 3D TV. This is the primary Theater interaction.
+    final screen = Node(
+      name: 'prop:primary',
+      mesh: Mesh(
+        CuboidGeometry(vm.Vector3(5.9, 3.15, .12)),
+        _pbr(
+          const Color(0xFF050708),
+          roughness: realistic ? .08 : .24,
+          metallic: realistic ? .55 : .18,
+        ),
+      ),
+      localTransform: vm.Matrix4.translation(vm.Vector3(0, 2.35, -4.24)),
+    );
+    screen.addComponent(
+      SemanticsComponent(
+        label: widget.primarySurfaceLabel ??
+            'Theater screen. Activate to watch inside CHE.',
+        hint: widget.onPrimarySurfaceTap == null
+            ? null
+            : 'Activate to open the in-app Theater player',
+        button: widget.onPrimarySurfaceTap != null,
+        onTap: widget.onPrimarySurfaceTap,
+      ),
+    );
+    _scene.add(screen);
+
+    for (final x in const [-4.35, 4.35]) {
+      _addBox(
+        vm.Vector3(.8, 2.5, .8),
+        vm.Vector3(x, 1.25, -3.85),
+        const Color(0xFF111214),
+        roughness: .32,
+      );
+    }
+    for (var row = 0; row < 2; row++) {
+      for (var col = 0; col < 3; col++) {
+        _addBox(
+          vm.Vector3(1.45, .62, .92),
+          vm.Vector3((col - 1) * 2.0, .36, 1.4 + row * 1.35),
+          const Color(0xFF37261E),
+          roughness: realistic ? .62 : .75,
+        );
+      }
+    }
+  }
+
+  void _addStudioFurniture(bool realistic) {
+    _addBox(
+      vm.Vector3(5.5, .75, 1.55),
+      vm.Vector3(0, .45, -2.0),
+      const Color(0xFF20232A),
+      roughness: realistic ? .18 : .42,
+      metallic: realistic ? .38 : .12,
+    );
+    for (final x in const [-4.0, 4.0]) {
+      _addBox(
+        vm.Vector3(1.1, 2.4, 1.0),
+        vm.Vector3(x, 1.2, -2.9),
+        const Color(0xFF111216),
+        roughness: .45,
+      );
+    }
+  }
+
+  void _addGalleryFurniture(bool realistic) {
+    for (var i = 0; i < 5; i++) {
+      _addBox(
+        vm.Vector3(1.65, 1.8, .12),
+        vm.Vector3((i - 2) * 2.25, 2.15, -4.25),
+        i.isEven ? const Color(0xFFDBD3C6) : const Color(0xFF8E86FF),
+        roughness: realistic ? .28 : .5,
+      );
+    }
+    _addBox(
+      vm.Vector3(4.8, .22, 1.0),
+      vm.Vector3(0, .45, 1.5),
+      const Color(0xFF342F28),
+      roughness: .62,
+    );
+  }
+
+  void _addWorkshopFurniture(bool realistic) {
+    for (final x in const [-3.7, 0.0, 3.7]) {
+      _addBox(
+        vm.Vector3(2.55, .85, 1.15),
+        vm.Vector3(x, .48, -1.2),
+        const Color(0xFF172025),
+        roughness: realistic ? .24 : .48,
+        metallic: realistic ? .32 : .12,
+      );
+    }
+  }
+
+  void _addMarketsFurniture(bool realistic) {
+    _addBox(
+      vm.Vector3(7.8, .72, 1.25),
+      vm.Vector3(0, .42, -.6),
+      const Color(0xFF11181C),
+      roughness: .24,
+      metallic: realistic ? .42 : .16,
+    );
+    for (var i = 0; i < 4; i++) {
+      _addBox(
+        vm.Vector3(1.65, 1.05, .10),
+        vm.Vector3((i - 1.5) * 2.05, 1.55, -1.18),
+        const Color(0xFF081014),
+        roughness: .10,
+        metallic: .35,
+      );
+    }
+  }
+
+  void _addBusinessFurniture(bool realistic) {
+    for (var i = 0; i < 4; i++) {
+      _addBox(
+        vm.Vector3(2.1, .8, 1.15),
+        vm.Vector3((i - 1.5) * 2.65, .45, -.8),
+        const Color(0xFF152025),
+        roughness: realistic ? .25 : .48,
+        metallic: .16,
+      );
+    }
+  }
+
+  void _addOfficeFurniture(bool realistic) {
+    for (var row = 0; row < 2; row++) {
+      for (var col = 0; col < 4; col++) {
+        _addBox(
+          vm.Vector3(1.55, .72, .92),
+          vm.Vector3((col - 1.5) * 2.25, .38, (row - .55) * 2.25),
+          const Color(0xFF172126),
+          roughness: realistic ? .24 : .46,
+          metallic: realistic ? .28 : .10,
+        );
+      }
     }
   }
 
@@ -547,7 +814,15 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
         math.cos(angle) * 3.25,
       );
     }
-    if (widget.mode == CheSceneMode.office) {
+    if (widget.mode == CheSceneMode.office ||
+        widget.mode == CheSceneMode.workshop ||
+        widget.mode == CheSceneMode.markets ||
+        widget.mode == CheSceneMode.pipeline ||
+        widget.mode == CheSceneMode.store ||
+        widget.mode == CheSceneMode.creator ||
+        widget.mode == CheSceneMode.musicStudio ||
+        widget.mode == CheSceneMode.artStudio ||
+        widget.mode == CheSceneMode.projects) {
       const cols = 4;
       final row = index ~/ cols;
       final col = index % cols;
@@ -556,6 +831,12 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
         .35,
         (row - .65) * 2.25,
       );
+    }
+
+    if (widget.mode == CheSceneMode.theater) {
+      final col = index % 3;
+      final row = index ~/ 3;
+      return vm.Vector3((col - 1) * 2.0, .35, 1.4 + row * 1.35);
     }
 
     final count = math.max(1, total);
@@ -650,6 +931,11 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
       if (name.startsWith('entity:')) {
         HapticFeedback.selectionClick();
         widget.onEntityTap?.call(name.substring('entity:'.length));
+        return;
+      }
+      if (name == 'prop:primary' && widget.onPrimarySurfaceTap != null) {
+        HapticFeedback.selectionClick();
+        widget.onPrimarySurfaceTap!();
         return;
       }
     }
