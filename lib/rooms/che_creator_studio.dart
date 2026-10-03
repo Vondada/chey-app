@@ -98,12 +98,37 @@ class _CheCreatorStudioState extends State<CheCreatorStudio> with SingleTickerPr
               },
             ),
           ),
-          Expanded(child: _view == 1 ? widget.musicScene : _studio(context)),
+          Expanded(child: _view == 1 ? _music(context) : _studio(context)),
         ]),
       ),
     );
   }
 
+  Widget _music(BuildContext context) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(CheSpace.gutter, 0, CheSpace.gutter, CheSpace.sm),
+          child: CheNativeRoomStage(
+            mode: CheSceneMode.musicStudio,
+            height: 250,
+            semanticsLabel: 'Immersive native Music Studio.',
+            entities: [
+              CheSceneEntity(
+                id: 'che',
+                label: 'CHE',
+                description: 'Music room host',
+                color: _cyan,
+                state: widget.speaking ? 'talking' : 'idle',
+                speaking: widget.speaking,
+              ),
+            ],
+          ),
+        ),
+        Expanded(child: widget.musicScene),
+      ],
+    );
+  }
   Widget _studio(BuildContext context) {
     final onAir = widget.speaking || _rendering;
     final reduced = CheMotion.reduced(context);
