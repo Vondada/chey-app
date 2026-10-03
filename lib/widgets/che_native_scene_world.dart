@@ -878,8 +878,14 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
   }
 
   void _addBrainLinks(Set<String> visibleIds) {
+    final linkLimit = switch (widget.quality) {
+      CheSceneQuality.performance => 500,
+      CheSceneQuality.balanced => 2200,
+      CheSceneQuality.realistic => 5000,
+    };
     var index = 0;
     for (final link in widget.links) {
+      if (index >= linkLimit) break;
       if (!visibleIds.contains(link.from) || !visibleIds.contains(link.to)) {
         continue;
       }
