@@ -85,7 +85,7 @@ jobs:
 
       - name: Shorebird patch
         if: steps.configured.outputs.ready == 'true' && env.MODE == 'patch'
-        run: shorebird patch ios --no-codesign --release-version=latest -- --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
+        run: shorebird patch ios --no-codesign --release-version=latest --allow-native-diffs --allow-asset-diffs -- --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
 
       - name: Package unsigned IPA (release only)
         if: steps.configured.outputs.ready == 'true' && env.MODE == 'release'
