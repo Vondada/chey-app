@@ -234,6 +234,8 @@ void main() {
     );
     expect(find.text('Plan the launch'), findsOneWidget);
 
+    await tester.ensureVisible(find.text('Nova').first);
+    await tester.pump();
     await tester.tap(find.text('Nova').first);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
