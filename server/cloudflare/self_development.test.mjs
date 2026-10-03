@@ -699,3 +699,20 @@ test('docs-only classifier rejects mixed feature requests with arbitrary nouns',
   assert.equal(wantsDocsOnly('fix the README typo'), true);
   assert.equal(wantsDocsOnly('create setup documentation'), true);
 });
+
+
+test('docs-only classifier treats comma ampersand and while as mixed-clause separators', () => {
+  assert.equal(wantsDocsOnly('fix login, update docs'), false);
+  assert.equal(wantsDocsOnly('add dark mode & update README'), false);
+  assert.equal(wantsDocsOnly('fix onboarding while updating documentation'), false);
+  assert.equal(wantsDocsOnly('update README, comments, and setup notes'), true);
+});
+
+test('substance check keeps CSS https URLs as executable style content', () => {
+  const before = '.hero { background-image: url(https://cdn.example.com/old.png); }\n';
+  const after = '.hero { background-image: url(https://cdn.example.com/new.png); }\n';
+  assert.equal(substantiveChange(new Map([['web/site.css', before]]), [{ path: 'web/site.css', content: after }]), true);
+  const commentOnly = '.hero {\n  /* old note */\n  background: black;\n}\n';
+  const commentOnlyAfter = '.hero {\n  /* new note */\n  background: black;\n}\n';
+  assert.equal(substantiveChange(new Map([['web/site.css', commentOnly]]), [{ path: 'web/site.css', content: commentOnlyAfter }]), false);
+});
