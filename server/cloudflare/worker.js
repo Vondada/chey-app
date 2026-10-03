@@ -2027,7 +2027,7 @@ export function shouldHandleSelfUpdateAction(message, intent) {
   // Pure capability/access questions are tool reads. Requests to CHANGE CHE's
   // implementation or add a new GitHub/PR capability continue into coding.
   const explicitSelfChange =
-    /\b(?:update|change|modify|fix|add|implement|build|make|edit|rewrite|upgrade)\b[\s\S]{0,80}\b(?:yourself|che(?:'s)?|your\s+(?:code|app|worker|system|software|ui|interface))\b/i.test(text);
+    /\b(?:update|change|modify|fix|add|implement|build|make|edit|rewrite|upgrade|improve|refactor|develop)\b[\s\S]{0,80}\b(?:yourself|che(?:'s)?|your\s+(?:code|app|worker|system|software|ui|interface))\b/i.test(text);
   const capabilityCreation =
     /\b(?:add|build|implement|enable|create|develop)\b[\s\S]{0,40}\b(?:ability|capability|feature|support|way)\b[\s\S]{0,80}\b(?:github|repo(?:sitory)?|pr|pull request)\b/i.test(text);
   return !(explicitSelfChange || capabilityCreation);
