@@ -6710,6 +6710,8 @@ export class CheState extends DurableObject {
       if (outcome.step_results) { job.step_results = outcome.step_results; job.step_index = outcome.step_index; }
       job.retry_count = outcome.retry_count ?? job.retry_count ?? 0;
       job.retry_at = outcome.retry_at || null;
+      job.dead_letter = outcome.dead_letter ?? job.dead_letter ?? false;
+      job.dead_letter_at = outcome.dead_letter_at || null;
       job.status = outcome.status;
       job.result = outcome.result;
       job.error = outcome.error;
