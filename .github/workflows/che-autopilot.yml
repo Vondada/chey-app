@@ -342,7 +342,7 @@ jobs:
           set +e
           review=$(timeout --signal=TERM --kill-after=15s 480s \
             env OPENCODE_CONFIG=/tmp/che-review-config.json \
-            opencode run --standalone --auto --agent plan --model "$REVIEW_MODEL" --dir /tmp/che-review-agent \
+            opencode run --auto --agent plan --model "$REVIEW_MODEL" --dir /tmp/che-review-agent \
             "$(head -c 90000 /tmp/che-review-prompt.txt)" 2>/tmp/che-review.err)
           code=$?
           set -e

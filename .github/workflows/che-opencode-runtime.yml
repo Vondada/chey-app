@@ -36,7 +36,7 @@ concurrency:
 jobs:
   runtime:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 22
     steps:
       - name: Checkout current default branch
         uses: actions/checkout@v4
@@ -201,7 +201,13 @@ jobs:
           set +e
           prompt=$(cat /tmp/che-runtime-prompt.txt)
           code=1; used=""; tried=""
+          start=$(date +%s)
+          redact() { sed -E 's/(AIza|sk-|gsk_|csk-|hf_|sk-or-)[A-Za-z0-9_-]{8,}/[key]/g' | tr '\n"' '  ' | cut -c1-350; }
           for m in $CANDIDATES; do
+            # Total coding budget 14 min so the job never hits its hard limit.
+            left=$(( 840 - ($(date +%s) - start) ))
+            [ "$left" -ge 90 ] || { echo "::warning::Coding time budget used up before trying $m."; break; }
+            [ "$left" -le 300 ] || left=300
             case ${m%%/*} in
               google|gemini) kv=("GEMINI_API_KEY=$K_GOOGLE" "GOOGLE_GENERATIVE_AI_API_KEY=$K_GOOGLE");;
               anthropic) kv=("ANTHROPIC_API_KEY=$K_ANTHROPIC");; openai) kv=("OPENAI_API_KEY=$K_OPENAI");;
@@ -212,18 +218,19 @@ jobs:
             used=$m; tried="$tried $m"
             echo "Trying $m"
             env -u K_GOOGLE -u K_ANTHROPIC -u K_OPENAI -u K_OPENROUTER -u K_GROQ -u K_MISTRAL -u K_CEREBRAS -u K_HF "${kv[@]}" \
-              timeout --signal=TERM --kill-after=15s 720s \
+              timeout --signal=TERM --kill-after=15s "${left}s" \
               opencode run --format json --auto --model "$m" "$prompt" \
               >/tmp/opencode-events.jsonl 2>/tmp/opencode-stderr.log
             code=$?
             [ "$code" = 0 ] && break
             # A model that already edited files is not retried on another model.
             [ -z "$(git status --porcelain)" ] || break
-            echo "::warning::$m failed (exit $code); trying the next model."
+            why=$( { tail -c 4000 /tmp/opencode-stderr.log; grep -iE 'error|quota|rate|denied|invalid|not found' /tmp/opencode-events.jsonl | tail -2; } 2>/dev/null | redact)
+            [ "$code" = 124 ] && why="timed out after ${left}s. $why"
+            echo "::warning::$m failed (exit $code): ${why:-no error text}"
           done
           # Short, key-free error for CHE's status record.
-          err=$( { grep -ihE '"error"|error|quota|rate|denied|not found|invalid' /tmp/opencode-stderr.log /tmp/opencode-events.jsonl 2>/dev/null || true; } | tail -3 \
-            | sed -E 's/(AIza|sk-|gsk_|csk-|hf_)[A-Za-z0-9_-]{8,}/[key]/g' | tr '\n"' '  ' | cut -c1-400)
+          err=$( { tail -c 4000 /tmp/opencode-stderr.log; grep -iE 'error|quota|rate|denied|invalid|not found' /tmp/opencode-events.jsonl | tail -2; } 2>/dev/null | redact)
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           echo "model=$used" >> "$GITHUB_OUTPUT"
           echo "tried=$tried" >> "$GITHUB_OUTPUT"
