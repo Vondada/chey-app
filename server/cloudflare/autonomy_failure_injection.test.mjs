@@ -544,3 +544,24 @@ test('deployment is only "deployed" when the workflow succeeded and the live ver
   const pending = await workerDeploymentStatus(E, 'merge123456789', fakeRepo({ runs: [] }).fetcher, {});
   assert.equal(pending.workflow, 'not_started');
 });
+
+test('a comments/docs-only change is never accepted as an implementation', async () => {
+  const { substantiveChange, wantsDocsOnly } = await import('./self_development.js');
+  const before = new Map([['lib/main.dart', MAIN]]);
+  assert.equal(substantiveChange(before, [{ path: 'lib/main.dart', content: MAIN.replace('class Home {', '// Brain room renders a starfield\nclass Home {') }]), false);
+  assert.equal(substantiveChange(before, [{ path: 'docs/brain.md', content: '# Brain\n- colors' }]), false);
+  assert.equal(substantiveChange(before, [{ path: 'lib/main.dart', content: MAIN.replace('Ready. Type', 'Ready now. Type') }]), true);
+  assert.equal(wantsDocsOnly('update the README for the brain room'), true);
+  assert.equal(wantsDocsOnly('rebuild the Brain room to match this design'), false);
+
+  let n = 0;
+  const ai = scriptedAI({
+    engineer: () => json(n++ === 0
+      ? { summary: 'Brain room', edits: [{ path: 'lib/main.dart', find: 'class Home {', replace: '// The Brain room renders a neural starfield.\nclass Home {' }] }
+      : GOOD_EDIT),
+  });
+  const out = await prepareSelfUpdate(env(ai), 'rebuild the home banner to match the new design', fakeGitHub(), memoryStore());
+  assert.equal(out.status, 200, out.detail);
+  assert.ok(out.diagnostics.outcomes.some((o) => o.outcome === 'no_substance'));
+  assert.match(out.proposal.files[0].content, /Ready when you are/);
+});

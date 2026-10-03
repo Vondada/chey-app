@@ -332,3 +332,51 @@ test('one mailbox: a legacy local board message that never reached GitHub is mov
   assert.equal(saved.get('web_mailbox'), undefined);
   assert.ok(githubMailbox(log).some((m) => m.id === 'old-1'));
 });
+
+test('skills: the report says exactly which agent has which skill — or that none were given', async () => {
+  const { chat, saved } = await setup();
+  const none = await chat('Which skills did you give your office agents? How did you implement the agency-agents repo?');
+  assert.match(none.text, /I have not implemented msitarzewski\/agency-agents/);
+  assert.match(none.text, /I have not given any Office agent a skill yet/);
+  assert.match(none.text, /Knox/);
+  const data = saved.get('che');
+  data.office_skills = [{ id: 's1', name: 'Frontend build checklist', trigger: 'building UI', steps: ['plan', 'build'], assigned_agents: ['Knox'], source: { repo: 'msitarzewski/agency-agents', path: 'engineering/engineering-frontend-developer.md', license: 'MIT' } }];
+  data.team.find((a) => a.name === 'Knox').skill_ids = ['s1'];
+  saved.set('che', data);
+  const some = await chat('Which skills did you give your agents from the agency-agents repo?');
+  assert.match(some.text, /Knox: Frontend build checklist/);
+  assert.match(some.text, /Knox \(Engineering \/ Codex jobs\): assigned Frontend build checklist/);
+  assert.match(some.text, /have no skills yet/);
+});
+
+test('skills: "give your office agents skills from agency-agents" runs a real license-checked import with per-agent skills', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    const ok = (d) => new Response(JSON.stringify(d), { status: 200 });
+    if (u === 'https://api.github.com/repos/msitarzewski/agency-agents') return ok({ default_branch: 'main', license: { spdx_id: 'MIT' } });
+    if (u.includes('/git/trees/')) return ok({ tree: [
+      { type: 'blob', path: 'engineering/engineering-frontend-developer.md' },
+      { type: 'blob', path: 'marketing/marketing-growth-hacker.md' },
+      { type: 'blob', path: 'README.md' },
+    ] });
+    const m = /\/contents\/(.+)\?ref=/.exec(u);
+    if (m) return ok({ content: Buffer.from(`# ${decodeURIComponent(m[1])}\n## Process\n- Understand the goal clearly\n- Build the first version carefully\n## When to activate\n- New UI work\n`).toString('base64') });
+    return new Response('{}', { status: 404 });
+  };
+  try {
+    const { chat, saved, state } = await setup({ aiReply: 'not json' });
+    const out = await chat('Give your office agents skills from the agency-agents repo');
+    const job = saved.get('che').jobs.find((j) => j.kind === 'office_skill_import');
+    assert.ok(job && out.text.includes(job.id.slice(0, 8)));
+    job.retry_at = 0; const d = saved.get('che'); d.jobs = d.jobs.map((j) => (j.id === job.id ? job : j)); saved.set('che', d);
+    await state.processJobs();
+    const done = saved.get('che').jobs.find((j) => j.id === job.id);
+    assert.equal(done.status, 'complete', done.error);
+    assert.match(done.owner_message, /Knox got/);
+    assert.match(done.owner_message, /Lyra got/);
+    const skills = saved.get('che').office_skills;
+    assert.ok(skills.every((s) => s.source?.repo === 'msitarzewski/agency-agents' && s.source.license === 'MIT'));
+    assert.ok(saved.get('che').team.find((a) => a.name === 'Knox').skill_ids.length >= 1);
+  } finally { globalThis.fetch = original; }
+});

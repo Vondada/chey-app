@@ -434,3 +434,25 @@ test('"Show me the code" sent to the coding route shows the saved change instead
   assert.equal(saved.get('che_last_engineering_request').request, 'rebuild the Brain room', 'the real request is kept');
   assert.ok(saved.get('pending_self_update'), 'the reviewed change is still waiting');
 });
+
+test('"create the PR" refuses a saved comment-only change and starts a real rebuild instead', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => ({ response: 'x' }) } };
+  const { chat } = await pairedChat(env, saved);
+  saved.set('pending_self_update', {
+    proposal: { summary: 'Brain room', files: [{ path: 'lib/agents/che_office_world.dart', content: 'x' }] },
+    request: 'rebuild the Brain room to match the design',
+    diff: '--- lib/agents/che_office_world.dart (around line 11)\n  // the room\n+ //\n+ // The Brain room renders a black starfield.\n--- docs/memory-brain/README.md\n- - Every learned thought is a glowing teal dot\n+ - Neural network constellation',
+  });
+  const original = globalThis.fetch;
+  let githubWrites = 0;
+  globalThis.fetch = async (url, init = {}) => { if ((init.method || 'GET') !== 'GET') githubWrites += 1; return new Response('{}', { status: 404 }); };
+  try {
+    const text = await (await chat('Create the PR')).text();
+    assert.match(text, /only edits comments and documentation/);
+    assert.equal(githubWrites, 0, 'nothing was written to GitHub');
+    assert.equal(saved.has('pending_self_update'), false);
+    const job = saved.get('che').jobs.find((j) => j.kind === 'self_development');
+    assert.ok(job && text.includes(job.id.slice(0, 8)));
+  } finally { globalThis.fetch = original; }
+});

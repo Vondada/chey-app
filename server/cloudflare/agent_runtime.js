@@ -365,6 +365,9 @@ export function teachOfficeSkill(data, body = {}) {
   const id = clip(body.id, 80) || crypto.randomUUID();
   const existing = store.find((item) => item.id === id || item.name.toLowerCase() === name.toLowerCase());
   const skill = existing || { id, created_at: now() };
+  const assigned = Array.isArray(body.assigned_agents)
+    ? [...new Set(body.assigned_agents.map((item) => clip(item, 40)).filter(Boolean))].slice(0, 8)
+    : (Array.isArray(skill.assigned_agents) ? skill.assigned_agents : []);
   Object.assign(skill, {
     name,
     trigger,
@@ -372,6 +375,10 @@ export function teachOfficeSkill(data, body = {}) {
     capabilities,
     provider_neutral: true,
     notes: clip(body.notes, 1200),
+    assigned_agents: assigned,
+    source: body.source && typeof body.source === 'object'
+      ? { repo: clip(body.source.repo, 120), path: clip(body.source.path, 240), license: clip(body.source.license, 40) }
+      : (skill.source || null),
     updated_at: now(),
     uses: Number(skill.uses || 0),
   });
@@ -389,6 +396,8 @@ export function officeSkillsView(data) {
     capabilities: Array.isArray(skill.capabilities) ? skill.capabilities : [],
     provider_neutral: skill.provider_neutral !== false,
     notes: skill.notes || '',
+    assigned_agents: Array.isArray(skill.assigned_agents) ? skill.assigned_agents : [],
+    source: skill.source || null,
     uses: Number(skill.uses || 0),
     created_at: skill.created_at,
     updated_at: skill.updated_at,
@@ -411,13 +420,15 @@ function inferSkillCapabilities(text) {
   return caps.length ? caps : ['text'];
 }
 
-function matchedOfficeSkills(data, task, max = 3) {
+function matchedOfficeSkills(data, task, max = 3, agent = null) {
   const text = String(task || '').toLowerCase();
   const words = new Set(text.split(/[^a-z0-9]+/).filter((item) => item.length > 2));
   const scored = ensureSkillStore(data).map((skill) => {
-    const hay = `${skill.name} ${skill.trigger}`.toLowerCase();
+    const hay = `${skill.name} ${skill.trigger} ${(skill.steps || []).join(' ')}`.toLowerCase();
     let score = text.includes(String(skill.trigger || '').toLowerCase()) ? 8 : 0;
     for (const word of words) if (hay.includes(word)) score += 1;
+    // Skills assigned to this agent are its own playbook: preferred.
+    if (score > 0 && agent && (skill.assigned_agents || []).includes(agent.name)) score += 4;
     return { skill, score };
   }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, max);
   return scored.map((item) => item.skill);
@@ -802,7 +813,7 @@ async function runOneTask(ctx) {
   let error = '';
   let retryable = false;
   const startSteeringVersion = Number(task.steering_version || 0);
-  const skills = matchedOfficeSkills(data, task.task);
+  const skills = matchedOfficeSkills(data, task.task, 3, agent);
   for (const skill of skills) {
     skill.uses = Number(skill.uses || 0) + 1;
     skill.updated_at = now();
@@ -1156,3 +1167,25 @@ export function recoverStaleWork(data, maxAgeMs = 5 * 60_000) {
   return changed;
 }
 
+
+
+// Exact, data-backed answer to "which skills does each Office agent have?".
+// Reads only stored skills and assignments; never infers.
+export function officeSkillsReport(data) {
+  const skills = ensureSkillStore(data);
+  const byId = new Map(skills.map((skill) => [skill.id, skill]));
+  const agents = (Array.isArray(data.team) ? data.team : []).filter((agent) => agent && !agent.retired);
+  const rows = agents.map((agent) => {
+    const assigned = skills.filter((skill) => (skill.assigned_agents || []).includes(agent.name));
+    const used = (Array.isArray(agent.skill_ids) ? agent.skill_ids : []).map((id) => byId.get(id)).filter(Boolean)
+      .filter((skill) => !assigned.includes(skill));
+    return {
+      agent: agent.name,
+      role: agent.role || '',
+      assigned: assigned.map((skill) => ({ name: skill.name, source: skill.source || null })),
+      picked_up: used.map((skill) => ({ name: skill.name, source: skill.source || null })),
+    };
+  });
+  const unassigned = skills.filter((skill) => !(skill.assigned_agents || []).length && !agents.some((agent) => (agent.skill_ids || []).includes(skill.id)));
+  return { rows, total_skills: skills.length, unassigned: unassigned.map((skill) => skill.name) };
+}
