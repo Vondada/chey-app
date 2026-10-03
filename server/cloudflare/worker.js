@@ -45,7 +45,7 @@ import { autoImproveScan, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, 
 import { guardOwnerReply, loadReceipts, recordReceipt, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
-import { describeTopicStudyStart, matchTopicSections, namedRepoStudyIntent, readTutorial, readmeSections, sectionTutorials, topicBuildRequest, topicTitles } from './topic_study.js';
+import { describeTopicStudyStart, matchTopicSections, namedRepoStudyIntent, readTutorial, readmeSections, sectionTutorials, studyBatchIntent, topicBuildRequest, topicTitles, wantsSerialStudy } from './topic_study.js';
 import { buildCollaborationPacket, collaborationIntent, collaborationSessionId, parallelPreference, planParallelLanes, statusIntent } from './collaboration.js';
 import { consultEngine, consultIntent, shareIntent, speakConsult } from './ai_consult.js';
 import { markOwnerSeen, readArchive as flagstaffArchive, unreadIncoming } from './web_mailbox.js';
@@ -1988,6 +1988,11 @@ export function fixThisNeed(text) {
 const PENDING_SELF_UPDATE_KEY = 'pending_self_update';
 // Builds lined up by topic studies, started one at a time (see advanceStudyBuilds).
 const STUDY_BUILD_QUEUE_KEY = 'study_build_queue';
+// Study sessions the owner asked to run together ("batch them").
+const STUDY_BATCH_SESSIONS_KEY = 'study_batch_sessions';
+// Reviewed changes waiting behind the one in the approval slot.
+const READY_PROPOSALS_KEY = 'ready_self_updates';
+const MAX_PARALLEL_STUDY_BUILDS = 3;
 const LAST_SELF_UPDATE_PR_KEY = 'last_self_update_pr';
 
 export function selfImprovementLesson(review) {
@@ -2312,6 +2317,10 @@ async function dispatchChange(env, body, memory = null, options = {}) {
     const started = await options.topicStudy(namedStudy, request);
     return json({ message: started.message, repository_research: true, background_job_ids: started.job_ids || [], code_review_passed: false, owner_approval_required: false });
   }
+  if (options.batchStudies && studyBatchIntent(request)) {
+    const batched = await options.batchStudies();
+    if (batched) return json({ message: batched, repository_research: true, code_review_passed: false, owner_approval_required: false });
+  }
   if (request.length < 8 || request.length > 16000) return json({ detail: 'Describe the CHE update in 8–16000 characters.' }, 400);
   if (!env.CHE_GITHUB_TOKEN || !/^[\w.-]+\/[\w.-]+$/.test(String(env.CHE_GITHUB_REPO || ''))) {
     return json({ detail: 'Phone code proposals need CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the CHE server.' }, 503);
@@ -2458,6 +2467,15 @@ async function dispatchChange(env, body, memory = null, options = {}) {
     await memory.put('inspiration_upgrade_ledger', ledger.slice(-80)).catch(() => null);
   }
   if (memory?.put) {
+    // The owner's newest direct request takes the approval slot; a reviewed
+    // change from background work that was waiting there goes first in line
+    // behind it instead of being lost.
+    const displaced = await Promise.resolve().then(() => memory.get(PENDING_SELF_UPDATE_KEY)).catch(() => null);
+    if (displaced?.proposal && displaced.from_job && Date.now() - Date.parse(displaced.reviewed_at || 0) < 24 * 3600_000) {
+      const readyStored = await Promise.resolve().then(() => memory.get(READY_PROPOSALS_KEY)).catch(() => null);
+      const ready = Array.isArray(readyStored) ? readyStored : [];
+      await memory.put(READY_PROPOSALS_KEY, [{ pending: displaced, topic: '', at: displaced.reviewed_at }, ...ready].slice(0, 10)).catch(() => null);
+    }
     await memory.put(PENDING_SELF_UPDATE_KEY, {
       proposal: prepared.proposal,
       request: request.slice(0, 16000),
@@ -5543,6 +5561,7 @@ export class CheState extends DurableObject {
         queue: (args) => this.queueSelfDevelopment(args),
         topicStudy: (intent, text) => this.startTopicStudy(intent, text),
         advanceStudyBuilds: () => this.advanceStudyBuilds(),
+        batchStudies: () => this.batchStudies(),
         ops: { queueJob: async (fields) => { const fresh = await this.loadData(); const queued = enqueueJob(fresh, fields); await this.ctx.storage.put('che', fresh); await this.scheduleWork(); return queued; } },
       });
       if (path === '/api/chat') {
@@ -5584,6 +5603,12 @@ export class CheState extends DurableObject {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can start a repository study.', { source: 'che_topic_study', ok: false });
           const started = await this.startTopicStudy(namedStudy, message);
           return ndjsonReply(started.message, { source: 'che_topic_study', repository_research: true, background_job_ids: started.job_ids || [] });
+        }
+        // "Batch them": the studies and builds already lined up run together.
+        // Without lined-up study work this falls through to the usual routes.
+        if (ownerDevice && studyBatchIntent(message)) {
+          const batched = await this.batchStudies();
+          if (batched) return ndjsonReply(batched, { source: 'che_topic_study', batch: true });
         }
         const selfUpdateAction = selfUpdateChatIntent(message);
         if (selfUpdateAction && !ownerDevice && ['open-pr', 'merge'].includes(selfUpdateAction.kind)) {
@@ -7261,6 +7286,8 @@ export class CheState extends DurableObject {
       };
     }
     const session = stableHash(`${repo}:${message.toLowerCase().replace(/\s+/g, ' ').trim()}`);
+    const serial = wantsSerialStudy(message);
+    if (!serial) await this.markBatchSessions([session]);
     const data = await this.loadData();
     const jobs = [];
     topics.forEach((topic, i) => {
@@ -7273,8 +7300,7 @@ export class CheState extends DurableObject {
         owner_request: message.slice(0, 4000),
         implement_after: Boolean(intent.implement),
         study_session: session,
-        lane: `study:${session}`,
-        lane_order: i + 1,
+        ...(serial ? { lane: `study:${session}`, lane_order: i + 1 } : {}),
         idempotency_key: idempotencyKey('job:topic_study', `${session}:${topic.title}`),
       });
       jobs.push(queued.job);
@@ -7285,7 +7311,7 @@ export class CheState extends DurableObject {
       await recordReceipt(this.ctx.storage, { kind: 'study_started', key: `study_started:${job.id}`, job_id: job.id, repos: [repo], topic: job.topic?.title || '' });
     }
     return {
-      message: describeTopicStudyStart({ repo, topics, implement: intent.implement, readOnly: !inspected.reusable }),
+      message: describeTopicStudyStart({ repo, topics, implement: intent.implement, readOnly: !inspected.reusable, batch: !serial }),
       job_ids: jobs.map((job) => job.id),
     };
   }
@@ -7417,13 +7443,68 @@ export class CheState extends DurableObject {
     };
   }
 
-  // Study builds run one at a time and never while a reviewed change is
-  // waiting for the owner, because there is one approval slot. Returns a
-  // sentence for the owner when a build was started.
+  async markBatchSessions(sessions) {
+    const stored = await Promise.resolve().then(() => this.ctx.storage.get(STUDY_BATCH_SESSIONS_KEY)).catch(() => null);
+    const list = Array.isArray(stored) ? stored : [];
+    const merged = [...list.filter((id) => !sessions.includes(id)), ...sessions.filter(Boolean)].slice(-20);
+    await this.ctx.storage.put(STUDY_BATCH_SESSIONS_KEY, merged);
+    return new Set(merged);
+  }
+
+  // "Batch them": studies still waiting in a one-at-a-time lane are released
+  // to run together, and their builds may run in parallel. Returns null when
+  // there is no study work to batch, so the message is handled normally.
+  async batchStudies() {
+    const data = await this.loadData();
+    const studies = data.jobs.filter((job) => job.kind === 'repo_study' && job.topic && ['queued', 'running'].includes(job.status) && !job.dead_letter);
+    const stored = await Promise.resolve().then(() => this.ctx.storage.get(STUDY_BUILD_QUEUE_KEY)).catch(() => null);
+    const queue = Array.isArray(stored) ? stored : [];
+    const openBuilds = queue.filter((item) => item.status === 'waiting' || item.status === 'building');
+    if (!studies.length && !openBuilds.length) return null;
+    let released = 0;
+    for (const job of studies) {
+      if (job.status === 'queued' && job.lane) {
+        delete job.lane;
+        delete job.lane_order;
+        released += 1;
+      }
+    }
+    await this.ctx.storage.put('che', data);
+    await this.markBatchSessions([...new Set([...studies.map((job) => job.study_session), ...openBuilds.map((item) => item.session)])]);
+    await this.scheduleWork();
+    const started = await this.advanceStudyBuilds();
+    const running = studies.filter((job) => job.status === 'running').length;
+    const queued = studies.filter((job) => job.status === 'queued').length;
+    return [
+      studies.length
+        ? `Batched, sir. ${queued ? `${queued} ${queued === 1 ? 'study' : 'studies'} now run together instead of one by one` : 'No study was still waiting'}${running ? `, alongside ${running} already running` : ''}.`
+        : 'Batched, sir. The studies are already finished.',
+      `My coding team now builds up to ${MAX_PARALLEL_STUDY_BUILDS} topics at the same time, each with the same checks: real code only, nothing copied, no unused code, and independent review.`,
+      'Reviewed changes come to you one at a time for approval, and nothing is merged without you.',
+      started || '',
+    ].filter(Boolean).join(' ');
+  }
+
+  // Starts study builds (one at a time, or up to three for batched studies)
+  // and moves the next reviewed change into the approval slot when it is
+  // free. Returns a sentence for the owner when something started or is ready.
   async advanceStudyBuilds() {
     const stored = await Promise.resolve().then(() => this.ctx.storage.get(STUDY_BUILD_QUEUE_KEY)).catch(() => null);
     const queue = Array.isArray(stored) ? stored : [];
-    if (!queue.length) return null;
+    const messages = [];
+    // 1. A free approval slot takes the next reviewed change.
+    let pending = await Promise.resolve().then(() => this.ctx.storage.get(PENDING_SELF_UPDATE_KEY)).catch(() => null);
+    const readyStored = await Promise.resolve().then(() => this.ctx.storage.get(READY_PROPOSALS_KEY)).catch(() => null);
+    const ready = Array.isArray(readyStored) ? readyStored : [];
+    if (!pending?.proposal && ready.length) {
+      const [next, ...rest] = ready;
+      await this.ctx.storage.put(PENDING_SELF_UPDATE_KEY, next.pending);
+      await this.ctx.storage.put(READY_PROPOSALS_KEY, rest);
+      pending = next.pending;
+      messages.push(`The next reviewed change is ready, sir${next.topic ? `, for ${next.topic}` : ''}: ${String(next.pending?.proposal?.summary || 'a code change').slice(0, 300)}. Say "create the PR" to open it, or "discard that change".${rest.length ? ` ${rest.length} more ${rest.length === 1 ? 'is' : 'are'} waiting after it.` : ''}`);
+    }
+    if (!queue.length) return messages.join(' ') || null;
+    // 2. Settle builds whose job ended.
     const data = await this.loadData();
     let changed = false;
     for (const item of queue) {
@@ -7434,33 +7515,47 @@ export class CheState extends DurableObject {
       item.result = job?.status || 'missing';
       changed = true;
     }
-    const pending = await Promise.resolve().then(() => this.ctx.storage.get(PENDING_SELF_UPDATE_KEY)).catch(() => null);
-    let message = null;
-    if (!queue.some((item) => item.status === 'building') && !pending?.proposal) {
-      const next = queue
-        .filter((item) => item.status === 'waiting')
-        .sort((a, b) => String(a.at).localeCompare(String(b.at)) || a.order - b.order)[0];
-      if (next) {
-        const { job } = enqueueJob(data, {
-          kind: 'self_development',
-          title: `Build ${next.topic} from study`,
-          prompt: next.request,
-          request: next.request,
-          study_build: next.id,
-          idempotency_key: idempotencyKey('job:study_build', next.id),
-        });
-        await this.ctx.storage.put('che', data);
-        await this.scheduleWork();
-        Object.assign(next, { status: 'building', job_id: job.id, started_at: new Date().toISOString() });
-        changed = true;
-        await recordReceipt(this.ctx.storage, { kind: 'job_started', key: `job:${job.id}`, job_id: job.id, job_kind: 'self_development', topic: next.topic });
-        await this.notifyOwner(`Building ${next.topic}`, `My coding team started building ${next.topic} from your study list (job ${job.id.slice(0, 8)}). The change comes to you for approval before any pull request.`);
-        const left = queue.filter((item) => item.status === 'waiting').length;
-        message = `Next, my coding team started building ${next.topic} from your study list (job ${job.id.slice(0, 8)}).${left ? ` ${left} more ${left === 1 ? 'topic is' : 'topics are'} waiting after it.` : ''}`;
+    // 3. Start builds. Batched sessions run up to three at once and do not
+    // wait on the approval slot (finished changes queue behind it); others
+    // run one at a time and only while no reviewed change is waiting.
+    const batchStored = await Promise.resolve().then(() => this.ctx.storage.get(STUDY_BATCH_SESSIONS_KEY)).catch(() => null);
+    const batchSessions = new Set(Array.isArray(batchStored) ? batchStored : []);
+    const waiting = queue
+      .filter((item) => item.status === 'waiting')
+      .sort((a, b) => String(a.at).localeCompare(String(b.at)) || a.order - b.order);
+    const started = [];
+    for (const item of waiting) {
+      const batch = batchSessions.has(item.session);
+      const building = queue.filter((other) => other.status === 'building').length;
+      if (building >= (batch ? MAX_PARALLEL_STUDY_BUILDS : 1)) break;
+      if (!batch && (pending?.proposal || ready.length)) break;
+      const { job } = enqueueJob(data, {
+        kind: 'self_development',
+        title: `Build ${item.topic} from study`,
+        prompt: item.request,
+        request: item.request,
+        study_build: item.id,
+        study_topic: item.topic,
+        idempotency_key: idempotencyKey('job:study_build', item.id),
+      });
+      Object.assign(item, { status: 'building', job_id: job.id, started_at: new Date().toISOString() });
+      started.push(item);
+      changed = true;
+    }
+    if (started.length) {
+      await this.ctx.storage.put('che', data);
+      await this.scheduleWork();
+      for (const item of started) {
+        await recordReceipt(this.ctx.storage, { kind: 'job_started', key: `job:${item.job_id}`, job_id: item.job_id, job_kind: 'self_development', topic: item.topic });
       }
+      const names = started.map((item) => item.topic);
+      const named = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+      await this.notifyOwner(`Building ${named}`, `My coding team started building ${named} from your study list. Each change comes to you for approval before any pull request.`);
+      const left = queue.filter((item) => item.status === 'waiting').length;
+      messages.push(`My coding team started building ${named} from your study list${started.length > 1 ? ' at the same time' : ''} (job${started.length > 1 ? 's' : ''} ${started.map((item) => item.job_id.slice(0, 8)).join(', ')}).${left ? ` ${left} more ${left === 1 ? 'topic is' : 'topics are'} waiting after ${started.length > 1 ? 'them' : 'it'}.` : ''}`);
     }
     if (changed) await this.ctx.storage.put(STUDY_BUILD_QUEUE_KEY, queue.filter((item) => item.status !== 'done' || Date.now() - Date.parse(item.at || 0) < 7 * 24 * 3600_000).slice(-30));
-    return message;
+    return messages.join(' ') || null;
   }
 
   // "Work with Claude" / "use the other AIs" / "batch it fast": real packets
@@ -7561,6 +7656,7 @@ export class CheState extends DurableObject {
       queue: (args) => this.queueSelfDevelopment(args),
       topicStudy: (intent, text) => this.startTopicStudy(intent, text),
       advanceStudyBuilds: () => this.advanceStudyBuilds(),
+      batchStudies: () => this.batchStudies(),
     });
     let payload = {};
     try { payload = await response.json(); } catch (_) {}
@@ -7830,14 +7926,32 @@ export class CheState extends DurableObject {
     const prepared = await prepareSelfUpdate(this.env, prompt, fetch, this.ctx.storage, { ownerInitiated: true });
     if (prepared.status === 200 && prepared.proposal) {
       await recordReceipt(this.ctx.storage, { kind: 'proposal_ready', key: `proposal:${job.id}`, job_id: job.id, files: prepared.proposal.files.map((f) => f.path) });
-      await this.ctx.storage.put(PENDING_SELF_UPDATE_KEY, {
+      const reviewed = {
         proposal: prepared.proposal,
         request: String(job.request || job.prompt).slice(0, 16000),
         team: prepared.team || [],
         diff: String(prepared.diff || '').slice(0, 20000),
         reviewed_at: new Date().toISOString(),
         from_job: job.id,
-      });
+      };
+      // One approval slot: a change the owner has not decided on yet is never
+      // overwritten by a later one; the later one waits behind it.
+      const current = await Promise.resolve().then(() => this.ctx.storage.get(PENDING_SELF_UPDATE_KEY)).catch(() => null);
+      const occupied = current?.proposal && current.from_job !== job.id && Date.now() - Date.parse(current.reviewed_at || 0) < 24 * 3600_000;
+      if (occupied) {
+        const readyStored = await Promise.resolve().then(() => this.ctx.storage.get(READY_PROPOSALS_KEY)).catch(() => null);
+        const ready = (Array.isArray(readyStored) ? readyStored : []).filter((item) => item.pending?.from_job !== job.id);
+        ready.push({ pending: reviewed, topic: job.study_topic || '', at: reviewed.reviewed_at });
+        await this.ctx.storage.put(READY_PROPOSALS_KEY, ready.slice(-10));
+        return {
+          id: job.id,
+          status: 'complete',
+          result: proposalSummaryMessage(prepared.proposal, 'The coding job I saved finished, sir.'),
+          owner_message: `${job.study_topic ? `The ${job.study_topic} build` : 'Another coding job'} finished and passed review, sir. It waits behind the change you have not decided on yet, so nothing is overwritten.`,
+          error: '',
+        };
+      }
+      await this.ctx.storage.put(PENDING_SELF_UPDATE_KEY, reviewed);
       return {
         id: job.id,
         status: 'complete',

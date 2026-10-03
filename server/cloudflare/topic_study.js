@@ -233,13 +233,33 @@ export function topicBuildRequest({ ownerRequest = '', repo = '', topic = {}, re
   ].filter(Boolean).join('\n').slice(0, 16000);
 }
 
-export function describeTopicStudyStart({ repo, topics, implement, readOnly }) {
+// "Batch them", "do them all at once", "run them in parallel": the owner
+// wants the topics worked together instead of one by one.
+export function studyBatchIntent(message) {
+  const text = String(message || '').trim();
+  if (!text || text.length > 400 || /\b(?:don'?t|do\s+not|never)\s+(?:batch|parallel)/i.test(text)) return false;
+  return /\b(?:batch(?:es|ed)?|in\s+parallel|parallel|all\s+at\s+once|at\s+the\s+same\s+time|simultaneously|all\s+together|speed\s+(?:it|them|this|that)\s+up)\b/i.test(text)
+    || /\b(?:don'?t|do\s+not|stop)\s+(?:do(?:ing)?|go(?:ing)?|work(?:ing)?\s+on)\s+(?:them|it|the\s+topics)\s+one\s+(?:by\s+one|at\s+a\s+time)\b/i.test(text);
+}
+
+// "One topic at a time", "one by one", "in that order": the owner asked for
+// the slow, ordered way. Anything else runs the topics together.
+export function wantsSerialStudy(message) {
+  const text = String(message || '');
+  return /\bone\s+(?:topic\s+)?(?:at\s+a\s+time|by\s+one)\b|\bin\s+(?:that|this|the\s+same)\s+order\b|\bsequential(?:ly)?\b/i.test(text)
+    && !studyBatchIntent(text);
+}
+
+export function describeTopicStudyStart({ repo, topics, implement, readOnly, batch = false }) {
   const list = topics.map((topic, i) => `${i + 1}, ${topic.title}${topic.tutorials.length ? '' : ' (no readable tutorial links)'}`).join('. ');
+  const many = topics.length > 1;
   return [
     `I read the ${repo} README, sir, and found ${topics.length === 1 ? 'your topic' : `your ${topics.length} topics`}: ${list}.`,
-    `I started ${topics.length === 1 ? 'a study job' : `${topics.length} study jobs`}${topics.length > 1 ? ', one at a time in that order' : ''}: each reads up to three of that topic's tutorials and works out what would make me better.`,
+    `I started ${topics.length === 1 ? 'a study job' : `${topics.length} study jobs`}${many ? (batch ? ' that run together' : ', one at a time in that order') : ''}: each reads up to three of that topic's tutorials and works out what would make me better.`,
     implement
-      ? 'Because you asked me to implement them, each useful topic then goes to my coding team, one build at a time. Every change comes to you for approval before it is opened as a pull request, and the next build starts after you decide on the previous one.'
+      ? (batch && many
+        ? 'Because you asked me to implement them, my coding team builds the useful ones in parallel, up to three at a time, each with the same checks and independent review. The reviewed changes come to you one at a time for approval before any is opened as a pull request.'
+        : 'Because you asked me to implement them, each useful topic then goes to my coding team, one build at a time. Every change comes to you for approval before it is opened as a pull request, and the next build starts after you decide on the previous one.')
       : 'You did not ask me to implement them, so I will only report what I learn.',
     readOnly ? 'That repository has no reuse license, so I learn the ideas and write my own code; nothing is copied.' : '',
     'Nothing in the app has changed yet.',
