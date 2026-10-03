@@ -247,7 +247,11 @@ void main() {
     );
     expect(find.text('Approved by CHE'), findsOneWidget);
 
+    await tester.ensureVisible(find.byType(TextField, skipOffstage: false).first);
+    await tester.pump();
     await tester.enterText(find.byType(TextField).first, 'Check pricing');
+    await tester.ensureVisible(find.byTooltip('Send task', skipOffstage: false));
+    await tester.pump();
     await tester.tap(find.byTooltip('Send task'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
@@ -298,6 +302,9 @@ void main() {
     expect(seen.any((r) => r.url.path == '/api/agents/che'), isFalse);
     expect(seen.any((r) => r.url.path == '/api/agents' && r.method == 'GET'), isTrue);
 
+    final talk = find.widgetWithText(FilledButton, 'Talk to CHE', skipOffstage: false);
+    await tester.ensureVisible(talk);
+    await tester.pump();
     await tester.tap(find.widgetWithText(FilledButton, 'Talk to CHE'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
