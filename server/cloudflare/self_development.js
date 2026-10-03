@@ -338,7 +338,7 @@ export function diagnoseNoOp(sources, answer) {
   return 'The proposed edits produced an empty diff. Re-read the target and choose a different edit strategy.';
 }
 
-async function reviewProposal(env, request, architecture, diff, uiTask, lessons, member, chat = []) {
+async function reviewProposal(env, request, architecture, diff, uiTask, lessons, member, chat = [], inspected = []) {
   const text = await runAgent(
     env,
     who(member, uiTask ? 'CHE UI/UX + Code Review Agent' : 'CHE Code Review + QA Agent'),
@@ -349,9 +349,10 @@ async function reviewProposal(env, request, architecture, diff, uiTask, lessons,
       uiTask ? 'For UI, also check VoiceOver labels and voice-first use are preserved.' : 'Check existing behavior is preserved.',
       'Apply every team lesson; a change that repeats a listed mistake must be rejected.',
       'Read team_chat (planners, engineers and the other reviewer). If a teammate raised a point, address it explicitly in notes.',
+      'The inspected_source payload contains verified repository source CHE fetched for this job. Review against it directly; never ask the owner to provide repository source or engineering details.',
       'Return ONLY JSON: {"approved":true|false,"target_correct":true|false,"notes":["..."],"repair_instructions":"...","lesson":"one-sentence rule to prevent this mistake next time, or empty"}.',
     ].join('\n'),
-    { request, architecture, diff, team_lessons: lessonText(lessons), team_chat: chat.slice(-20) },
+    { request, architecture, diff, inspected_source: inspected, team_lessons: lessonText(lessons), team_chat: chat.slice(-20) },
     1500,
     member.provider,
   );
@@ -417,7 +418,7 @@ async function recoveryPlan(env, task, architecture, feedback, index, lessons, m
 
 // When the two reviewers disagree, they talk it out once: each sees the
 // other's verdict and reasoning, then gives a final answer. Both must pass.
-async function settleReviews(env, task, architecture, diff, uiTask, lessons, reviews, chat) {
+async function settleReviews(env, task, architecture, diff, uiTask, lessons, reviews, chat, inspected = []) {
   const pass = (r) => r?.approved === true && r?.target_correct !== false;
   if (reviews.every(pass) || !reviews.some(pass)) return reviews;
   const talk = [...chat, ...reviews.map((r, i) => ({
@@ -426,11 +427,11 @@ async function settleReviews(env, task, architecture, diff, uiTask, lessons, rev
   }))];
   return Promise.all(CREW.reviewers.map((reviewer) => reviewProposal(
     env, `${task}\n\nYou and the other reviewer disagreed. Read team_chat, weigh their argument honestly, and give your final verdict.`,
-    architecture, diff, uiTask, lessons, reviewer, talk,
+    architecture, diff, uiTask, lessons, reviewer, talk, inspected,
   ).catch(() => ({ approved: false, notes: ['Reviewer unavailable.'] }))));
 }
 
-async function reviewNoChange(env, request, architecture, claims, lessons, member, chat = []) {
+async function reviewNoChange(env, request, architecture, claims, lessons, member, chat = [], inspected = []) {
   const text = await runAgent(
     env,
     who(member, 'CHE No-Change Verification Agent'),
@@ -439,12 +440,14 @@ async function reviewNoChange(env, request, architecture, claims, lessons, membe
       'Approve ONLY if the inspected source already satisfies the owner request or the referenced capability would be duplicate, worse, unsafe, incompatible, or unnecessary.',
       'Reject if there is still a concrete missing capability or if the evidence is vague.',
       'A no-change approval is a reviewed engineering conclusion, not permission to skip requested work.',
+      'The inspected_source payload contains repository source CHE already fetched. Use it directly; never ask the owner to provide source, filenames, line numbers, or exact text.',
       'Return ONLY JSON: {"approved":true|false,"notes":["..."],"repair_instructions":"..."}.',
     ].join('\n'),
     {
       request,
       architecture,
       no_change_claims: claims,
+      inspected_source: inspected,
       team_lessons: lessonText(lessons),
       team_chat: chat.slice(-20),
     },
@@ -646,8 +649,8 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         }
         chat.push({ from: member.name, msg: `Round ${round + 1} via ${member.provider}. My change: ${String(answer.summary || '').slice(0, 300)}\n${diff.slice(0, 1500)}` });
         const first = await Promise.all(CREW.reviewers.map((reviewer) =>
-          reviewProposal(env, task, architecture, diff, uiTask, lessons, reviewer, chat).catch(() => ({ approved: false, notes: ['Reviewer unavailable.'] }))));
-        const reviews = await settleReviews(env, task, architecture, diff, uiTask, lessons, first, chat);
+          reviewProposal(env, task, architecture, diff, uiTask, lessons, reviewer, chat, views).catch(() => ({ approved: false, notes: ['Reviewer unavailable.'] }))));
+        const reviews = await settleReviews(env, task, architecture, diff, uiTask, lessons, first, chat, views);
         reviews.forEach((r, k) => chat.push({ from: CREW.reviewers[k].name, msg: `On ${member.name}'s change: ${r.approved === true ? 'APPROVE' : 'REJECT'} ${[...(r.notes || []), r.repair_instructions].filter(Boolean).join(' ').slice(0, 500)}` }));
         const passed = reviews.every((r) => r.approved === true && r.target_correct !== false);
         if (!passed) {
@@ -671,7 +674,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       const noChangeClaims = attempts.filter((attempt) => attempt?.no_change);
       if (noChangeClaims.length === roundEngineers.length) {
         const noChangeReviews = await Promise.all(CREW.reviewers.map((reviewer) =>
-          reviewNoChange(env, task, architecture, noChangeClaims, lessons, reviewer, chat)
+          reviewNoChange(env, task, architecture, noChangeClaims, lessons, reviewer, chat, views)
             .catch(() => ({ approved: false, notes: ['Reviewer unavailable.'] }))));
         noChangeReviews.forEach((review, k) => chat.push({
           from: CREW.reviewers[k].name,
