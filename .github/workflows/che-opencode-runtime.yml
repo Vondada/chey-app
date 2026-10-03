@@ -157,18 +157,27 @@ jobs:
           # "auto": first provider with a configured key, strongest coding
           # model OpenCode lists for it. Only that provider's key is exposed.
           model="$REQUESTED"
+          candidates="$model"
           if [ "$model" = auto ]; then
-            model=""
+            # Ranked fallbacks across every keyed provider: strong stable models
+            # first, then strong previews, then the rest (free-tier keys often
+            # cannot use Pro models, so a cheaper model must still be tried).
+            candidates=""
             for p in google:HAS_GOOGLE anthropic:HAS_ANTHROPIC openai:HAS_OPENAI openrouter:HAS_OPENROUTER groq:HAS_GROQ mistral:HAS_MISTRAL cerebras:HAS_CEREBRAS; do
               prov=${p%%:*}; flag=${p##*:}
               [ "${!flag}" = true ] || continue
-              list=$(list_models "$prov" | grep -E "^$prov/" | grep -iE "gemini|claude|gpt|qwen|deepseek|llama|mistral|codestral|devstral|kimi|glm|grok" | grep -viE "tts|image|audio|embed|vision|guard|[-_.]lite|[-_.]nano|[-_.]mini|[-_]8b|lyria|veo|imagen|live|robotics|computer-use|learnlm|aqa|search|transcribe|realtime|moderation" || true)
-              cand=$(echo "$list" | grep -iE "coder|codestral|devstral|pro|sonnet|opus|gpt-5|large|70b" | sort -rV | head -1 || true)
-              [ -n "$cand" ] || cand=$(echo "$list" | head -1)
-              if [ -n "$cand" ]; then model="$cand"; break; fi
+              list=$(list_models "$prov" | grep -E "^$prov/" | grep -iE "gemini|claude|gpt|qwen|deepseek|llama|mistral|codestral|devstral|kimi|glm|grok" | grep -viE "tts|image|audio|embed|vision|guard|[-_.]lite|[-_.]nano|[-_.]mini|[-_]8b|lyria|veo|imagen|live|robotics|computer-use|customtools|learnlm|aqa|search|transcribe|realtime|moderation" || true)
+              [ -n "$list" ] || continue
+              strong=$(echo "$list" | grep -iE "coder|codestral|devstral|pro|sonnet|opus|gpt-5|large|70b" || true)
+              ranked=$( { echo "$strong" | grep -viE "preview|exp" | sort -rV || true; echo "$strong" | sort -rV; echo "$list" | sort -rV; } | awk 'NF && !seen[$0]++' | head -3)
+              candidates="$candidates $(echo $ranked)"
             done
+            candidates=$(echo $candidates | tr ' ' '\n' | awk 'NF' | head -5 | tr '\n' ' ')
+            model=$(echo $candidates | cut -d' ' -f1)
           fi
           if [ -z "$model" ]; then echo "::error::No usable AI model for the OpenCode runner. Providers with a key:${keyed:- none}. Add one provider key (e.g. OPENROUTER_API_KEY or GEMINI_API_KEY) as a GitHub Actions secret."; exit 1; fi
+          echo "Model candidates: $candidates"
+          echo "candidates=$candidates" >> "$GITHUB_OUTPUT"
           echo "Using model $model"
           echo "model=$model" >> "$GITHUB_OUTPUT"
 
@@ -177,26 +186,48 @@ jobs:
         shell: bash
         env:
           OPENCODE_CONFIG: /tmp/che-opencode-config.json
-          OPENCODE_MODEL: ${{ steps.model.outputs.model }}
-          # Expose only the credential for the selected provider, not every key
-          # configured in the repository.
-          OPENAI_API_KEY: ${{ startsWith(steps.model.outputs.model, 'openai/') && secrets.OPENAI_API_KEY || '' }}
-          ANTHROPIC_API_KEY: ${{ startsWith(steps.model.outputs.model, 'anthropic/') && secrets.ANTHROPIC_API_KEY || '' }}
-          GROQ_API_KEY: ${{ startsWith(steps.model.outputs.model, 'groq/') && secrets.GROQ_API_KEY || '' }}
-          GEMINI_API_KEY: ${{ (startsWith(steps.model.outputs.model, 'google/') || startsWith(steps.model.outputs.model, 'gemini/')) && secrets.GEMINI_API_KEY || '' }}
-          GOOGLE_GENERATIVE_AI_API_KEY: ${{ (startsWith(steps.model.outputs.model, 'google/') || startsWith(steps.model.outputs.model, 'gemini/')) && secrets.GEMINI_API_KEY || '' }}
-          OPENROUTER_API_KEY: ${{ startsWith(steps.model.outputs.model, 'openrouter/') && secrets.OPENROUTER_API_KEY || '' }}
-          CEREBRAS_API_KEY: ${{ startsWith(steps.model.outputs.model, 'cerebras/') && secrets.CEREBRAS_API_KEY || '' }}
-          MISTRAL_API_KEY: ${{ startsWith(steps.model.outputs.model, 'mistral/') && secrets.MISTRAL_API_KEY || '' }}
-          HF_TOKEN: ${{ startsWith(steps.model.outputs.model, 'huggingface/') && secrets.HF_TOKEN || '' }}
+          CANDIDATES: ${{ steps.model.outputs.candidates }}
+          # Keys are held under private names; each attempt exposes only the
+          # selected provider's key under the name OpenCode reads.
+          K_GOOGLE: ${{ secrets.GEMINI_API_KEY }}
+          K_ANTHROPIC: ${{ secrets.ANTHROPIC_API_KEY }}
+          K_OPENAI: ${{ secrets.OPENAI_API_KEY }}
+          K_OPENROUTER: ${{ secrets.OPENROUTER_API_KEY }}
+          K_GROQ: ${{ secrets.GROQ_API_KEY }}
+          K_MISTRAL: ${{ secrets.MISTRAL_API_KEY }}
+          K_CEREBRAS: ${{ secrets.CEREBRAS_API_KEY }}
+          K_HF: ${{ secrets.HF_TOKEN }}
         run: |
           set +e
-          timeout --signal=TERM --kill-after=15s 720s \
-            opencode run --format json --auto --model "$OPENCODE_MODEL" "$(cat /tmp/che-runtime-prompt.txt)" \
-            >/tmp/opencode-events.jsonl 2>/tmp/opencode-stderr.log
-          code=$?
-          set -e
+          prompt=$(cat /tmp/che-runtime-prompt.txt)
+          code=1; used=""; tried=""
+          for m in $CANDIDATES; do
+            case ${m%%/*} in
+              google|gemini) kv=("GEMINI_API_KEY=$K_GOOGLE" "GOOGLE_GENERATIVE_AI_API_KEY=$K_GOOGLE");;
+              anthropic) kv=("ANTHROPIC_API_KEY=$K_ANTHROPIC");; openai) kv=("OPENAI_API_KEY=$K_OPENAI");;
+              openrouter) kv=("OPENROUTER_API_KEY=$K_OPENROUTER");; groq) kv=("GROQ_API_KEY=$K_GROQ");;
+              mistral) kv=("MISTRAL_API_KEY=$K_MISTRAL");; cerebras) kv=("CEREBRAS_API_KEY=$K_CEREBRAS");;
+              huggingface) kv=("HF_TOKEN=$K_HF");; *) kv=();;
+            esac
+            used=$m; tried="$tried $m"
+            echo "Trying $m"
+            env -u K_GOOGLE -u K_ANTHROPIC -u K_OPENAI -u K_OPENROUTER -u K_GROQ -u K_MISTRAL -u K_CEREBRAS -u K_HF "${kv[@]}" \
+              timeout --signal=TERM --kill-after=15s 720s \
+              opencode run --format json --auto --model "$m" "$prompt" \
+              >/tmp/opencode-events.jsonl 2>/tmp/opencode-stderr.log
+            code=$?
+            [ "$code" = 0 ] && break
+            # A model that already edited files is not retried on another model.
+            [ -z "$(git status --porcelain)" ] || break
+            echo "::warning::$m failed (exit $code); trying the next model."
+          done
+          # Short, key-free error for CHE's status record.
+          err=$( { grep -ihE '"error"|error|quota|rate|denied|not found|invalid' /tmp/opencode-stderr.log /tmp/opencode-events.jsonl 2>/dev/null || true; } | tail -3 \
+            | sed -E 's/(AIza|sk-|gsk_|csk-|hf_)[A-Za-z0-9_-]{8,}/[key]/g' | tr '\n"' '  ' | cut -c1-400)
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          echo "model=$used" >> "$GITHUB_OUTPUT"
+          echo "tried=$tried" >> "$GITHUB_OUTPUT"
+          [ "$code" = 0 ] || echo "error=$err" >> "$GITHUB_OUTPUT"
           rm -f /tmp/che-runtime-prompt.txt /tmp/che-opencode-config.json
 
       - name: Build compact result and patch
@@ -209,7 +240,9 @@ jobs:
           JOB_ID: ${{ inputs.job_id }}
           BASE_SHA: ${{ inputs.base_sha }}
           TARGET_BRANCH: ${{ inputs.target_branch }}
-          MODEL: ${{ steps.model.outputs.model || inputs.model }}
+          MODEL: ${{ steps.opencode.outputs.model || inputs.model }}
+          TRIED: ${{ steps.opencode.outputs.tried }}
+          OPENCODE_ERROR: ${{ steps.opencode.outputs.error }}
           RUN_ID: ${{ github.run_id }}
         run: |
           node <<'NODE'
@@ -260,6 +293,8 @@ jobs:
             opencode_exit_code: exitCode,
             patch_artifact: patch ? artifactName : null,
             failure: unsafe.length ? 'unsafe_files' : (process.env.PREFLIGHT_FAILURE || (exitCode !== 0 ? 'opencode_failed' : null)),
+            models_tried: String(process.env.TRIED || '').trim().split(/\s+/).filter(Boolean).slice(0, 5),
+            error: exitCode !== 0 ? String(process.env.OPENCODE_ERROR || '').slice(0, 400) : null,
           };
           fs.writeFileSync('/tmp/che-runtime-result.json', JSON.stringify(result));
           if (patch) fs.writeFileSync('/tmp/che-runtime.patch', patch);
