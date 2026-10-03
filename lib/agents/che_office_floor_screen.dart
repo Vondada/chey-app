@@ -287,6 +287,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
               '${agent.role}. ${agent.task?.isNotEmpty == true ? agent.task : agent.status.label}.',
           color: agent.color,
           state: agent.status.name,
+          appearance: agent.appearance,
         );
     return [
       entity(_runtime.che),
@@ -1134,6 +1135,9 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
                               context,
                               '${a.name}, ${a.role}. ${a.status.label}.'
                               '${a.task != null ? ' Working on: ${a.task}.' : ''}'
+                              '${a.personality.isNotEmpty ? ' Personality: ${a.personality}.' : ''}'
+                              '${p.strengths.isNotEmpty ? ' Strong points: ${p.strengths.join('; ')}.' : ''}'
+                              '${p.limitations.isNotEmpty ? ' Limitations: ${p.limitations.join('; ')}.' : ''}'
                               '${p.responsibilities.isNotEmpty ? ' Responsible for: ${p.responsibilities.join('; ')}.' : ''}',
                               widget.onSpeak,
                             ),
@@ -1147,10 +1151,56 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
             ),
             if (_error != null) Padding(padding: const EdgeInsets.only(top: CheSpace.sm), child: _Banner(text: _error!, color: CheColors.warning)),
             const SizedBox(height: CheSpace.md),
-            if (a.specialty.isNotEmpty) _Section('SPECIALTY', a.specialty),
+            _Section(
+              'CURRENT JOB',
+              a.task?.trim().isNotEmpty == true
+                  ? a.task!
+                  : (p.assignmentTask.trim().isNotEmpty
+                      ? p.assignmentTask
+                      : 'No active job right now. Status: ${a.status.label}.'),
+            ),
             if (a.personality.isNotEmpty) _Section('PERSONALITY', a.personality),
+            if (a.specialty.isNotEmpty) _Section('JOB / SPECIALTY', a.specialty),
             if (p.mission.isNotEmpty) _Section('MISSION', p.mission),
-            _Section('RESPONSIBILITIES', p.responsibilities.isEmpty ? 'None assigned yet.' : p.responsibilities.map((s) => '• $s').join('\n')),
+            _Section(
+              'CAPABILITIES',
+              p.capabilityRequirements.isEmpty
+                  ? 'No extra capability requirement is registered.'
+                  : p.capabilityRequirements
+                      .map((x) => '• ${x.replaceAll('_', ' ')}')
+                      .join('\n'),
+            ),
+            _Section(
+              'SKILLS',
+              d.skills.isEmpty
+                  ? 'No learned workflow skills are assigned yet.'
+                  : d.skills.map((skill) {
+                      final source = skill.sourceRepo.isEmpty
+                          ? ''
+                          : ' — ${skill.sourceRepo}'
+                              '${skill.sourcePath.isEmpty ? '' : '/${skill.sourcePath}'}'
+                              '${skill.sourceLicense.isEmpty ? '' : ' · ${skill.sourceLicense}'}';
+                      return '• ${skill.name}$source';
+                    }).join('\n'),
+            ),
+            _Section(
+              'STRONG POINTS',
+              p.strengths.isEmpty
+                  ? 'No role-specific strengths are registered yet.'
+                  : p.strengths.map((x) => '• $x').join('\n'),
+            ),
+            _Section(
+              'WEAK POINTS / LIMITATIONS',
+              p.limitations.isEmpty
+                  ? 'No role-specific limitations are registered yet.'
+                  : p.limitations.map((x) => '• $x').join('\n'),
+            ),
+            _Section(
+              'RESPONSIBILITIES',
+              p.responsibilities.isEmpty
+                  ? 'None assigned yet.'
+                  : p.responsibilities.map((x) => '• $x').join('\n'),
+            ),
             const SizedBox(height: CheSpace.sm),
             if (_isChe && widget.onTalkToChe != null) ...[
               FilledButton.icon(
