@@ -17,7 +17,7 @@ test('runtime is feature flagged off by default', async () => {
   assert.equal(codingRuntimeEnabled({}), false);
   let called = false;
   const runtime = new CheCodingRuntime({}, { fetcher: async () => { called = true; return response(500); } });
-  const out = await runtime.createSession({ ownerRequest: 'Fix the voice bug safely.', baseSha: 'abcdef1', targetBranch: 'che/test' });
+  const out = await runtime.createSession({ ownerRequest: 'Fix the voice bug safely.', baseSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', targetBranch: 'che/test' });
   assert.equal(out.disabled, true);
   assert.equal(called, false);
 });
@@ -37,12 +37,12 @@ test('createSession dispatches the pinned workflow with compact inputs', async (
     request = { url, init, body: JSON.parse(init.body) };
     return response(204);
   } });
-  const out = await runtime.createSession({ jobId: 'job-1', ownerRequest: 'Fix the voice bug in the current app.', baseSha: 'abcdef1234567', targetBranch: 'claude/che-coding-runtime' });
+  const out = await runtime.createSession({ jobId: 'job-1', ownerRequest: 'Fix the voice bug in the current app.', baseSha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', targetBranch: 'claude/che-coding-runtime' });
   assert.equal(out.status, 202);
   assert.equal(out.state, 'queued');
   assert.match(request.url, /actions\/workflows\/che-opencode-runtime\.yml\/dispatches$/);
   assert.equal(request.body.inputs.job_id, out.session_id);
-  assert.equal(request.body.inputs.base_sha, 'abcdef1234567');
+  assert.equal(request.body.inputs.base_sha, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
   assert.equal(request.body.inputs.target_branch, 'claude/che-coding-runtime');
   assert.equal(request.body.inputs.model, env.CHE_OPENCODE_MODEL);
   assert.equal(Buffer.from(request.body.inputs.request_b64, 'base64').toString('utf8'), 'Fix the voice bug in the current app.');
