@@ -789,7 +789,10 @@ function agentSystemPrompt(agent, extra) {
     agent.workspace?.notes?.length ? `Persistent workspace notes: ${agent.workspace.notes.slice(-8).join(' | ')}` : '',
     agent.messages?.length ? `Recent Office messages: ${agent.messages.slice(-8).map((m) => `${m.from}: ${m.text}`).join(' | ')}` : '',
     'Deliver concrete, useful work: findings, decisions, risks, next actions. No filler.',
-    'Never claim you searched the web, ran code, traded, paid, or contacted anyone. You only have your own reasoning here; label assumptions.',
+    'Use verified prior results as evidence when they are relevant. Compare patterns, combine compatible lessons, and explain why the combination makes sense.',
+    'Never promote an unverified prior result, memory, estimate or hypothesis into a fact.',
+    'If a task asks for a backtest, benchmark, live quote, account number or measured result, use only supplied tool/connector output. If none exists, give the test method and label it UNTESTED instead of inventing numbers.',
+    'Never claim you searched the web, ran code, traded, paid, or contacted anyone. You only have your own reasoning here unless a connected result is included; label assumptions.',
     extra || '',
   ].filter(Boolean).join('\n');
 }
@@ -943,10 +946,15 @@ async function runOneTask(ctx) {
     }
   }
   const steeringText = (task.steering || []).map((item) => item.text).filter(Boolean).join('\n- ');
+  const verifiedHistory = (data.team_tasks || [])
+    .filter((item) => item.id !== task.id && item.partner_id === agent.id && item.verified_by_che === true && item.result)
+    .slice(0, 6)
+    .map((item) => ({ task: clip(item.task, 220), result: clip(item.result, 1200) }));
   const workContext = [
     task.prior_result ? `PRIOR WORK TO PRESERVE OR IMPROVE:\n${task.prior_result}` : '',
     task.review_feedback ? `CHE REVIEW FEEDBACK TO FIX:\n${task.review_feedback}` : '',
     steeringText ? `OWNER STEERING RECEIVED:\n- ${steeringText}` : '',
+    verifiedHistory.length ? `VERIFIED PAST RESULTS — use only when relevant; compare and recombine proven patterns, never copy blindly:\n${verifiedHistory.map((item) => `- ${item.task}: ${item.result}`).join('\n')}` : '',
     skills.length ? `REUSABLE OFFICE SKILLS:\n${skills.map((skill) => `${skill.name}: ${skill.steps.join(' -> ')}`).join('\n')}` : '',
     computer ? `CONNECTED COMPUTER RESULT:\n${JSON.stringify(computer).slice(0, 16000)}` : '',
   ].filter(Boolean).join('\n\n');
@@ -1092,8 +1100,10 @@ async function runOneTask(ctx) {
   }
   if (a2) {
     a2.workspace.notes = Array.isArray(a2.workspace?.notes) ? a2.workspace.notes : [];
-    a2.workspace.notes.push(clip(`Completed: ${task.task} | ${result}`, 700));
-    a2.workspace.notes = a2.workspace.notes.slice(-30);
+    if (approved) {
+      a2.workspace.notes.push(clip(`CHE-VERIFIED: ${task.task} | ${result}`, 700));
+      a2.workspace.notes = a2.workspace.notes.slice(-30);
+    }
     a2.workspace.updated_at = now();
     a2.runtime_status = 'done';
     a2.runtime_task = clip(task.task, 80);

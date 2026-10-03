@@ -68,6 +68,7 @@ class CheMarketsRoom extends StatefulWidget {
     required this.headers,
     required this.actions,
     required this.onAsk,
+    this.onOpenTradingApp,
     this.client,
   });
 
@@ -77,6 +78,9 @@ class CheMarketsRoom extends StatefulWidget {
 
   /// Sends a prompt to CHE (e.g. "Analyze S&P 500 structure").
   final void Function(String prompt) onAsk;
+
+  /// Opens a supported trading website inside CHE's persistent in-app browser.
+  final void Function(String appName)? onOpenTradingApp;
   final http.Client? client;
 
   @override
@@ -96,19 +100,24 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
   String _chartName = 'S&P 500';
   List<CheCandle> _candles = const [];
   String? _chartNote;
+  Map<String, dynamic>? _account;
   Timer? _timer;
+  Timer? _accountTimer;
 
   @override
   void initState() {
     super.initState();
     unawaited(_load());
     unawaited(_loadCandles());
+    unawaited(_loadAccount());
     _timer = Timer.periodic(const Duration(seconds: 60), (_) => unawaited(_load()));
+    _accountTimer = Timer.periodic(const Duration(seconds: 10), (_) => unawaited(_loadAccount()));
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _accountTimer?.cancel();
     super.dispose();
   }
 
@@ -131,6 +140,459 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
       _error = '$e'.replaceFirst('Exception: ', '');
     }
     if (mounted) setState(() {});
+  }
+
+  Future<void> _loadAccount() async {
+    try {
+      final j = await _get('/api/trading/account');
+      _account = j;
+    } catch (_) {
+      _account = null;
+    }
+    if (mounted) setState(() {});
+  }
+
+  String _money(Object? value, [String currency = 'USD']) {
+    final n = value is num ? value.toDouble() : double.tryParse('$value');
+    if (n == null) return '—';
+    final symbol = currency.toUpperCase() == 'USD' ? '\$' : '${currency.toUpperCase()} ';
+    return '$symbol${n.toStringAsFixed(2)}';
+  }
+
+  Future<void> _loadCandles() async {
+    final symbol = _chartSymbol;
+    try {
+      final j = await _get('/api/markets/candles?symbol=${Uri.encodeQueryComponent(symbol)}');
+      // A slower response for an index the owner already left is discarded.
+      if (symbol != _chartSymbol) return;
+      _candles = [
+        for (final c in (j['candles'] as List? ?? const []))
+          if (c is Map)
+            CheCandle('${c['date']}', (c['open'] as num).toDouble(), (c['high'] as num).toDouble(), (c['low'] as num).toDouble(),
+                (c['close'] as num).toDouble()),
+      ];
+      _chartNote = j['error']?.toString() ?? j['source']?.toString();
+    } catch (e) {
+      if (symbol != _chartSymbol) return;
+      _candles = const [];
+      _chartNote = '$e'.replaceFirst('Exception: ', '');
+    }
+    if (mounted) setState(() {});
+  }
+  String _fmt(double v) => v >= 1000 ? v.toStringAsFixed(0) : v >= 1 ? v.toStringAsFixed(2) : v.toStringAsFixed(4);
+
+  @override
+  Widget build(BuildContext context) {
+    return Theme(
+      data: CheTheme.dark(),
+      child: Material(
+        color: const Color(0xFF05080A),
+        child: RefreshIndicator(
+          onRefresh: () async {
+            await Future.wait([_load(), _loadCandles(), _loadAccount()]);
+          },
+          child: ListView(
+            padding: const EdgeInsets.only(bottom: CheSpace.xxl),
+            children: [
+              _TickerTape(quotes: _quotes, fmt: _fmt),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  if (_error != null)
+                    Text('Market data: $_error', style: CheType.caption.copyWith(color: CheColors.warning)),
+                  _LiveAccountCard(
+                    account: _account,
+                    money: _money,
+                    onOpenNinjaTrader: widget.onOpenTradingApp == null ? null : () => widget.onOpenTradingApp!('NinjaTrader'),
+                  ),
+                  const SizedBox(height: CheSpace.md),
+                  if (widget.onOpenTradingApp != null) ...[
+                    _TradingApps(onOpen: widget.onOpenTradingApp!),
+                    const SizedBox(height: CheSpace.md),
+                  ],
+                  SizedBox(
+                    height: 84,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _quotes.length,
+                      separatorBuilder: (_, _) => const SizedBox(width: CheSpace.sm),
+                      itemBuilder: (context, i) => _IndexPanel(
+                        quote: _quotes[i],
+                        fmt: _fmt,
+                        selected: _quotes[i].symbol == _chartSymbol,
+                        onTap: _quotes[i].symbol.startsWith('^')
+                            ? () {
+                                HapticFeedback.selectionClick();
+                                setState(() {
+                                  _chartSymbol = _quotes[i].symbol;
+                                  _chartName = _quotes[i].name;
+                                  _candles = const [];
+                                });
+                                unawaited(_loadCandles());
+                              }
+                            : () => widget.onAsk('Give me a quick structure read on ${_quotes[i].name} (${_quotes[i].symbol}) using live data if connected: trend, key levels, catalysts and risk.'),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: CheSpace.md),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(CheRadius.lg),
+                    child: CheRoomBackdrop(
+                      room: CheRoom.markets,
+                      scrim: 0.6,
+                      child: Padding(
+                        padding: const EdgeInsets.all(CheSpace.md),
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                          Row(children: [
+                            Expanded(
+                              child: Text('$_chartName · daily',
+                                  maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label.copyWith(color: Colors.white)),
+                            ),
+                            TextButton.icon(
+                              style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                              onPressed: () => widget.onAsk(
+                                  'Analyze $_chartName: structure, VWAP context, order blocks, catalysts, volatility, invalidation and risk. Separate live facts from assumptions.'),
+                              icon: const Icon(Icons.auto_awesome_rounded, size: 16, color: _gold),
+                              label: Text('Ask CHE', style: CheType.label.copyWith(color: _gold)),
+                            ),
+                          ]),
+                          const SizedBox(height: CheSpace.sm),
+                          SizedBox(
+                            height: 180,
+                            child: _candles.isEmpty
+                                ? Center(
+                                    child: Text(_chartNote ?? 'Loading…',
+                                        textAlign: TextAlign.center, style: CheType.caption.copyWith(color: Colors.white60)),
+                                  )
+                                : CustomPaint(painter: _CandlePainter(_candles, up: _up, down: _down)),
+                          ),
+                          if (_candles.isNotEmpty && _chartNote != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: CheSpace.xs),
+                              child: Text('${_chartNote!} · last ${_candles.last.date}',
+                                  style: CheType.caption.copyWith(color: Colors.white54, fontSize: 10)),
+                            ),
+                        ]),
+                      ),
+                    ),
+                  ),
+                  if (_source.isNotEmpty) ...[
+                    const SizedBox(height: CheSpace.xs),
+                    Text(_source, style: CheType.caption.copyWith(fontSize: 10)),
+                  ],
+                  const SizedBox(height: CheSpace.lg),
+                  Text('TRADING DESK', style: CheType.overline.copyWith(color: _gold)),
+                  const SizedBox(height: CheSpace.sm),
+                  for (final a in widget.actions) _DeskCard(action: a),
+                  const SizedBox(height: CheSpace.sm),
+                  Text(
+                    'CHE never claims an order executed unless the broker confirms it. Trading needs a connected account, your authorization and risk limits.',
+                    style: CheType.caption,
+                  ),
+                ]),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LiveAccountCard extends StatelessWidget {
+  const _LiveAccountCard({
+    required this.account,
+    required this.money,
+    this.onOpenNinjaTrader,
+  });
+
+  final Map<String, dynamic>? account;
+  final String Function(Object? value, [String currency]) money;
+  final VoidCallback? onOpenNinjaTrader;
+
+  @override
+  Widget build(BuildContext context) {
+    final a = account;
+    final connected = a?['connected'] == true;
+    final live = a?['live'] == true;
+    final currency = '${a?['currency'] ?? 'USD'}';
+    final primary = a?['equity'] ?? a?['balance'];
+    final accountName = '${a?['account_name'] ?? ''}'.trim();
+    final detail = '${a?['detail'] ?? ''}'.trim();
+
+    return Semantics(
+      container: true,
+      label: live
+          ? 'Live trading account. ${accountName.isEmpty ? '' : '$accountName. '}Equity ${money(primary, currency)}.'
+          : 'Live trading account is not connected.',
+      child: Container(
+        padding: const EdgeInsets.all(CheSpace.lg),
+        decoration: BoxDecoration(
+          color: const Color(0xFF090F12),
+          borderRadius: BorderRadius.circular(CheRadius.lg),
+          border: Border.all(color: live ? const Color(0xFF3DDC97) : CheColors.strokeHi),
+          boxShadow: live
+              ? [BoxShadow(color: const Color(0xFF3DDC97).withValues(alpha: 0.12), blurRadius: 24)]
+              : null,
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Text('LIVE ACCOUNT', style: CheType.overline.copyWith(color: live ? const Color(0xFF3DDC97) : CheColors.textDim)),
+            const Spacer(),
+            Text(live ? 'LIVE' : connected ? 'CONNECTOR OFFLINE' : 'NOT CONNECTED',
+                style: CheType.caption.copyWith(color: live ? const Color(0xFF3DDC97) : CheColors.warning, fontWeight: FontWeight.w700)),
+          ]),
+          const SizedBox(height: 6),
+          Text(
+            live ? money(primary, currency) : '—',
+            style: CheType.display.copyWith(fontSize: 38, color: Colors.white, fontWeight: FontWeight.w800),
+          ),
+          if (accountName.isNotEmpty) Text(accountName, style: CheType.bodyDim),
+          if (live) ...[
+            const SizedBox(height: CheSpace.sm),
+            Wrap(spacing: 18, runSpacing: 6, children: [
+              Text('Balance ${money(a?['balance'], currency)}', style: CheType.caption),
+              Text('Buying power ${money(a?['buying_power'], currency)}', style: CheType.caption),
+            ]),
+          ] else ...[
+            const SizedBox(height: 4),
+            Text(
+              detail.isNotEmpty
+                  ? detail
+                  : 'Sign in can stay inside CHE. A real balance appears here only when an authorized broker connector supplies it.',
+              style: CheType.caption,
+            ),
+          ],
+          if (onOpenNinjaTrader != null) ...[
+            const SizedBox(height: CheSpace.md),
+            OutlinedButton.icon(
+              onPressed: onOpenNinjaTrader,
+              icon: const Icon(Icons.candlestick_chart_rounded, size: 18),
+              label: const Text('Open NinjaTrader inside CHE'),
+            ),
+          ],
+        ]),
+      ),
+    );
+  }
+}
+
+class _TradingApps extends StatelessWidget {
+  const _TradingApps({required this.onOpen});
+  final void Function(String appName) onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    const apps = [
+      ('NinjaTrader', Icons.candlestick_chart_rounded),
+      ('TradingView', Icons.show_chart_rounded),
+      ('TradeSea', Icons.ssid_chart_rounded),
+    ];
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('TRADING APPS', style: CheType.overline.copyWith(color: const Color(0xFFE8B04A))),
+      const SizedBox(height: CheSpace.xs),
+      SizedBox(
+        height: 44,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: apps.length,
+          separatorBuilder: (_, _) => const SizedBox(width: CheSpace.sm),
+          itemBuilder: (_, i) {
+            final (name, icon) = apps[i];
+            return Semantics(
+              button: true,
+              label: 'Open $name inside CHE Trading Room',
+              child: OutlinedButton.icon(
+                onPressed: () => onOpen(name),
+                icon: Icon(icon, size: 17),
+                label: Text(name),
+              ),
+            );
+          },
+        ),
+      ),
+    ]);
+  }
+}
+
+class _TickerTape extends StatefulWidget {
+  const _TickerTape({required this.quotes, required this.fmt});
+  final List<CheQuote> quotes;
+  final String Function(double) fmt;
+  @override
+  State<_TickerTape> createState() => _TickerTapeState();
+}
+
+class _TickerTapeState extends State<_TickerTape> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(seconds: 30))..repeat();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final items = widget.quotes.where((q) => q.available).toList();
+    final text = items.isEmpty
+        ? 'Waiting for market data…'
+        : items
+            .map((q) =>
+                '${q.name} ${widget.fmt(q.price!)} ${q.changePct == null ? '' : '${q.changePct! >= 0 ? '▲' : '▼'}${q.changePct!.abs().toStringAsFixed(2)}%'}')
+            .join('     •     ');
+    final reduced = CheMotion.reduced(context);
+    return Container(
+      height: 30,
+      color: const Color(0xFF0B1014),
+      child: ClipRect(
+        child: LayoutBuilder(builder: (context, constraints) {
+          return AnimatedBuilder(
+            animation: _c,
+            builder: (context, _) {
+              final shift = reduced ? 0.0 : -_c.value * (text.length * 7.0 + constraints.maxWidth);
+              return OverflowBox(
+                maxWidth: double.infinity,
+                alignment: Alignment.centerLeft,
+                child: Transform.translate(
+                  offset: Offset(reduced ? CheSpace.gutter : constraints.maxWidth + shift, 0),
+                  child: Text(text,
+                      maxLines: 1,
+                      softWrap: false,
+                      style: const TextStyle(color: Color(0xFFE8B04A), fontSize: 12, fontWeight: FontWeight.w600)),
+                ),
+              );
+            },
+          );
+        }),
+      ),
+    );
+  }
+}
+
+class _IndexPanel extends StatelessWidget {
+  const _IndexPanel({required this.quote, required this.fmt, required this.selected, required this.onTap});
+  final CheQuote quote;
+  final String Function(double) fmt;
+  final bool selected;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) {
+    final change = quote.changePct;
+    final color = change == null ? CheColors.textDim : (change >= 0 ? const Color(0xFF3DDC97) : const Color(0xFFFF5C7A));
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 118,
+        padding: const EdgeInsets.all(CheSpace.sm),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0E1418),
+          borderRadius: BorderRadius.circular(CheRadius.md),
+          border: Border.all(color: selected ? const Color(0xFFE8B04A) : CheColors.stroke),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          Text(quote.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.caption),
+          Text(quote.available ? fmt(quote.price!) : 'Unavailable',
+              maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label.copyWith(fontSize: 15)),
+          Row(children: [
+            if (change != null) Icon(change >= 0 ? Icons.arrow_drop_up_rounded : Icons.arrow_drop_down_rounded, color: color, size: 18),
+            Flexible(
+              child: Text(
+                change != null ? '${change.abs().toStringAsFixed(2)}% · ${quote.status}' : (quote.note ?? quote.status),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: CheType.caption.copyWith(color: color, fontSize: 10.5),
+              ),
+            ),
+          ]),
+        ]),
+      ),
+    );
+  }
+}
+
+class _DeskCard extends StatelessWidget {
+  const _DeskCard({required this.action});
+  final CheDeskAction action;
+  @override
+  Widget build(BuildContext context) {
+    final a = action;
+    return Card(
+      color: const Color(0xFF0E1418),
+      margin: const EdgeInsets.only(bottom: CheSpace.sm),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(CheRadius.md),
+        side: const BorderSide(color: CheColors.stroke),
+      ),
+      child: ListTile(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          a.onRun();
+        },
+        leading: Icon(a.icon, color: const Color(0xFFE8B04A)),
+        title: Text(a.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label),
+        subtitle: Text(
+          a.connected ? a.body : '${a.body}\nNeeds: ${a.connectorName} (not connected). CHE can still plan it with you.',
+          style: CheType.caption,
+        ),
+        isThreeLine: !a.connected,
+        trailing: Text(
+          a.connected ? 'CONNECTED' : 'CONNECT',
+          style: TextStyle(color: a.connected ? const Color(0xFF3DDC97) : CheColors.warning, fontSize: 10, fontWeight: FontWeight.w700),
+        ),
+      ),
+    );
+  }
+}
+
+class _CandlePainter extends CustomPainter {
+  _CandlePainter(this.candles, {required this.up, required this.down});
+  final List<CheCandle> candles;
+  final Color up;
+  final Color down;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Dark grid
+    final grid = Paint()
+      ..color = Colors.white.withValues(alpha: 0.06)
+      ..strokeWidth = 1;
+    for (var i = 1; i < 4; i++) {
+      final y = size.height * i / 4;
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+    }
+    if (candles.isEmpty) return;
+    final hi = candles.map((c) => c.high).reduce(math.max);
+    final lo = candles.map((c) => c.low).reduce(math.min);
+    final range = (hi - lo) == 0 ? 1 : hi - lo;
+    double y(double v) => size.height - (v - lo) / range * size.height;
+    final step = size.width / candles.length;
+    final body = math.max(2.0, step * 0.6);
+    for (var i = 0; i < candles.length; i++) {
+      final c = candles[i];
+      final color = c.close >= c.open ? up : down;
+      final x = step * i + step / 2;
+      final p = Paint()
+        ..color = color
+        ..strokeWidth = 1.2;
+      canvas.drawLine(Offset(x, y(c.high)), Offset(x, y(c.low)), p);
+      final top = y(math.max(c.open, c.close));
+      final bottom = y(math.min(c.open, c.close));
+      canvas.drawRect(Rect.fromLTRB(x - body / 2, top, x + body / 2, math.max(bottom, top + 1.5)), p);
+    }
+    // Last price line
+    final last = y(candles.last.close);
+    canvas.drawLine(Offset(0, last), Offset(size.width, last), Paint()
+      ..color = const Color(0xFFE8B04A).withValues(alpha: 0.5)
+      ..strokeWidth = 1);
+  }
+
+  @override
+  bool shouldRepaint(covariant _CandlePainter old) => old.candles != candles;
+}
+ : '${currency.toUpperCase()} ';
+    final digits = n.abs() >= 1000 ? 2 : 2;
+    return '$symbol${n.toStringAsFixed(digits)}';
   }
 
   Future<void> _loadCandles() async {
