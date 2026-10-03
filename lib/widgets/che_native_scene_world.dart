@@ -818,10 +818,10 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
         Node(
           mesh: Mesh(
             TorusGeometry(
-              majorRadius: .20,
-              minorRadius: .025,
-              majorSegments: math.max(12, segments),
-              minorSegments: 6,
+              radius: .20,
+              tubeRadius: .025,
+              radialSegments: math.max(12, segments),
+              tubularSegments: 6,
             ),
             _pbr(
               const Color(0xFFD8A72D),
