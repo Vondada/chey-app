@@ -716,3 +716,26 @@ test('substance check keeps CSS https URLs as executable style content', () => {
   const commentOnlyAfter = '.hero {\n  /* new note */\n  background: black;\n}\n';
   assert.equal(substantiveChange(new Map([['web/site.css', commentOnly]]), [{ path: 'web/site.css', content: commentOnlyAfter }]), false);
 });
+
+
+test('docs-only classifier treats shared verbs with non-doc targets as mixed implementation', () => {
+  assert.equal(wantsDocsOnly('update README and login flow'), false);
+  assert.equal(wantsDocsOnly('fix docs and dark mode'), false);
+  assert.equal(wantsDocsOnly('update README and comments'), true);
+});
+
+test('HTML substance strips script comments but preserves URL changes', () => {
+  const commentBefore = '<script>\n// old note\nconst ready = true;\n</script>\n';
+  const commentAfter = '<script>\n// new note\nconst ready = true;\n</script>\n';
+  assert.equal(substantiveChange(
+    new Map([['assets/office3d/view.html', commentBefore]]),
+    [{ path: 'assets/office3d/view.html', content: commentAfter }],
+  ), false);
+
+  const urlBefore = '<img src="https://cdn.example.com/old.png">\n';
+  const urlAfter = '<img src="https://cdn.example.com/new.png">\n';
+  assert.equal(substantiveChange(
+    new Map([['assets/office3d/view.html', urlBefore]]),
+    [{ path: 'assets/office3d/view.html', content: urlAfter }],
+  ), true);
+});
