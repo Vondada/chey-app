@@ -661,7 +661,7 @@ test('study builds wait while a reviewed change awaits the owner, then the next 
   assert.equal(saved.get('study_build_queue')[0].status, 'done');
   saved.delete('pending_self_update');
   const message = await state.advanceStudyBuilds();
-  assert.match(message, /^Next, my coding team started building Database from your study list \(job [0-9a-f]{8}\)\.$/);
+  assert.match(message, /^My coding team started building Database from your study list \(job [0-9a-f]{8}\)\.$/);
   const build = saved.get('che').jobs.find((job) => job.study_build === 's:2');
   assert.equal(build.prompt, 'Topic 2: Database build');
   assert.equal(await state.advanceStudyBuilds(), null, 'only one build at a time');
@@ -695,7 +695,100 @@ test('"Discard that change" removes the saved change and starts the next study b
   saved.set('study_build_queue', [{ id: 's:1', order: 1, topic: 'Search Engine', request: 'Topic 1 of 6: Search Engine build', status: 'waiting', at: new Date().toISOString() }]);
   const text = await (await chat('Discard that change')).text();
   assert.match(text, /Discarded, sir\. The saved change to lib\/agents\/che_office_store\.dart is gone and nothing from it was merged\./);
-  assert.match(text, /Next, my coding team started building Search Engine/);
+  assert.match(text, /My coding team started building Search Engine/);
   assert.equal(saved.has('pending_self_update'), false);
   assert.ok(saved.get('che').jobs.some((job) => job.study_build === 's:1'));
+});
+
+
+// ── Batching: "batch them" and parallel builds without losing a change ──
+const BATCH_PROMPT = BYOX_PROMPT.replace(' one topic at a time:', ' and batch them so you work on them together:');
+
+test('a study prompt without "one at a time" runs its topics together', async () => {
+  const saved = new Map();
+  const { chat } = await pairedChat(topicEnv(ADD_ANALYSIS), saved);
+  const original = globalThis.fetch;
+  globalThis.fetch = topicStudyFetch();
+  try {
+    const text = await (await chat(BATCH_PROMPT)).text();
+    assert.match(text, /6 study jobs that run together/);
+    assert.match(text, /builds the useful ones in parallel, up to three at a time/);
+    const studies = saved.get('che').jobs.filter((job) => job.kind === 'repo_study');
+    assert.equal(studies.length, 6);
+    assert.ok(studies.every((job) => !job.lane));
+    assert.equal(selectReadyJobs(saved.get('che').jobs, Date.now(), 4).length, 4, 'four studies start at once');
+  } finally { globalThis.fetch = original; }
+});
+
+test('"Batch them" releases one-at-a-time studies already lined up, and only then', async () => {
+  const saved = new Map();
+  const { chat } = await pairedChat(topicEnv(ADD_ANALYSIS), saved);
+  const original = globalThis.fetch;
+  globalThis.fetch = topicStudyFetch();
+  try {
+    await (await chat(BYOX_PROMPT)).text();
+    assert.equal(selectReadyJobs(saved.get('che').jobs, Date.now(), 4).length, 1, 'serial before batching');
+    const text = await (await chat('Batch them and do them fast')).text();
+    assert.match(text, /Batched, sir\. 6 studies now run together instead of one by one\./);
+    assert.match(text, /up to 3 topics at the same time/);
+    assert.match(text, /nothing is merged without you/);
+    assert.equal(selectReadyJobs(saved.get('che').jobs, Date.now(), 4).length, 4);
+    assert.equal(saved.get('che').jobs.filter((job) => job.kind === 'self_development').length, 0, 'batching starts no blind coding job');
+  } finally { globalThis.fetch = original; }
+  // With no study work lined up, "batch them" is not hijacked.
+  const fresh = new Map();
+  const state = new CheState({ storage: storageFor(fresh) }, topicEnv(ADD_ANALYSIS));
+  assert.equal(await state.batchStudies(), null);
+});
+
+test('batched study builds run up to three at once even while a change awaits the owner', async () => {
+  const saved = new Map();
+  const state = new CheState({ storage: storageFor(saved) }, { CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'x' }) } });
+  saved.set('che', { jobs: [], devices: {}, memories: [] });
+  saved.set('study_batch_sessions', ['s']);
+  saved.set('study_build_queue', ['Search Engine', 'Database', 'Bot', 'Git'].map((topic, i) => ({ id: `s:${i + 1}`, session: 's', order: i + 1, topic, request: `build ${topic}`, status: 'waiting', at: `2026-10-03T07:0${i}:00.000Z` })));
+  saved.set('pending_self_update', { proposal: { summary: 'earlier', files: [] }, reviewed_at: new Date().toISOString() });
+  const message = await state.advanceStudyBuilds();
+  assert.match(message, /^My coding team started building Search Engine, Database and Bot from your study list at the same time \(jobs [0-9a-f]{8}, [0-9a-f]{8}, [0-9a-f]{8}\)\. 1 more topic is waiting after them\.$/);
+  assert.equal(saved.get('che').jobs.filter((job) => job.study_build).length, 3);
+  assert.equal(await state.advanceStudyBuilds(), null, 'never more than three at once');
+});
+
+test('a reviewed change never overwrites one the owner has not decided on; it waits and comes next', async () => {
+  const saved = new Map();
+  const files = { 'lib/main.dart': "class A {\n  String s = 'Ready. Type or speak a request.';\n}\n" };
+  const env = {
+    CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_DISABLE_KEYLESS_AI: '1',
+    AI: {
+      run: async (_m, input) => {
+        const system = String(input.messages?.[0]?.content || '');
+        if (system.includes('Architect')) return { response: JSON.stringify({ plan: 'banner', search_terms: ['Ready. Type or speak a request.'], paths: ['lib/main.dart'] }) };
+        if (system.includes('Review')) return { response: JSON.stringify({ approved: true, target_correct: true, notes: [] }) };
+        if (system.includes('Engineer') || system.includes('Implementation')) return { response: JSON.stringify({ summary: 'Friendlier banner', edits: [{ path: 'lib/main.dart', find: "'Ready. Type or speak a request.'", replace: "'Ready when you are.'" }] }) };
+        return { response: 'ok' };
+      },
+    },
+  };
+  const { chat, state } = await pairedChat(env, saved);
+  const first = { proposal: { summary: 'Search ranking', files: [{ path: 'server/cloudflare/brain_graph.js', content: 'x' }] }, request: 'search', reviewed_at: new Date().toISOString(), from_job: 'build-1' };
+  saved.set('pending_self_update', first);
+  const data = saved.get('che') || { jobs: [], devices: {}, memories: [] };
+  data.jobs.unshift({ id: 'build-2', kind: 'self_development', status: 'queued', prompt: 'Change your code: improve the ready banner', request: 'banner', study_build: 's:2', study_topic: 'Database', created_at: new Date().toISOString(), attempts: 0 });
+  saved.set('che', data);
+  const original = globalThis.fetch;
+  globalThis.fetch = GITHUB_OK(files);
+  try {
+    await state.processJobs();
+    const job = saved.get('che').jobs.find((item) => item.id === 'build-2');
+    assert.equal(job.status, 'complete');
+    assert.match(job.owner_message, /The Database build finished and passed review, sir\. It waits behind the change you have not decided on yet/);
+    assert.equal(saved.get('pending_self_update').from_job, 'build-1', 'the first change is untouched');
+    assert.equal(saved.get('ready_self_updates').length, 1);
+    const text = await (await chat('Discard that change')).text();
+    assert.match(text, /Discarded, sir\./);
+    assert.match(text, /The next reviewed change is ready, sir, for Database: Friendlier banner/);
+    assert.match(text, /create the PR\\?" to open it/);
+    assert.equal(saved.get('pending_self_update').from_job, 'build-2');
+    assert.equal(saved.get('ready_self_updates').length, 0);
+  } finally { globalThis.fetch = original; }
 });
