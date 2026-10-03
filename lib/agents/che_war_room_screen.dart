@@ -342,8 +342,9 @@ class _WarRoom3DState extends State<_WarRoom3D> {
             ),
           ),
         ),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.end,
+        Wrap(
+          alignment: WrapAlignment.end,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             const CheSceneQualityButton(),
             TextButton(

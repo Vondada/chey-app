@@ -208,6 +208,11 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('Curious and fast.'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Approved by CHE'),
+      160,
+      scrollable: find.byType(Scrollable).last,
+    );
     expect(find.text('Approved by CHE'), findsOneWidget);
 
     await tester.enterText(find.byType(TextField).first, 'Check pricing');
@@ -244,7 +249,13 @@ void main() {
 
     // CHE's desk remains available through the accessible flat-plan fallback.
     await tester.tap(find.bySemanticsLabel(RegExp(r"CHE.*Open to talk or send a request")));
-    await _pumpUntilFound(tester, find.text('Talk to CHE'));
+    await _pumpUntilFound(tester, find.text('CURRENT JOB'));
+    // The desk sheet now lists job, capabilities, skills and limits first.
+    await tester.scrollUntilVisible(
+      find.text('Talk to CHE'),
+      160,
+      scrollable: find.byType(Scrollable).last,
+    );
     await tester.scrollUntilVisible(
       find.text('REQUEST TO CHE'),
       160,
