@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyEdits, attemptFingerprint, diagnoseNoOp, focusView, jsonObject, literalTerms, loadLessons, prepareSelfUpdate, recordLesson } from './self_development.js';
+import { applyEdits, attemptFingerprint, diagnoseNoOp, fallbackTreeCandidates, focusView, jsonObject, literalTerms, loadLessons, prepareSelfUpdate, recordLesson } from './self_development.js';
 
 const MAIN = `class Home {\n  String _statusBanner = 'Ready. Type or speak a request.';\n}\n`;
 const PATCH = `const t = Text('CHE updated. Restart to apply.');\n`;
@@ -551,4 +551,74 @@ test('no-op helpers fingerprint exact strategies and diagnose identical replacem
   const answer = { edits: [{ path: 'lib/a.dart', find: 'x', replace: 'x' }] };
   assert.equal(attemptFingerprint(answer), attemptFingerprint(structuredClone(answer)));
   assert.match(diagnoseNoOp(new Map([['lib/a.dart', 'x']]), answer), /identical/i);
+});
+
+
+test('self-development proposals retain the inspected GitHub base SHA', async () => {
+  const env = {
+    CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r',
+    AI: { run: async (_model, input) => {
+      const system = input.messages[0].content;
+      if (system.includes('Architect')) return { response: JSON.stringify({ plan: 'status', search_terms: ['Ready. Type or speak a request.'], paths: ['lib/main.dart'] }) };
+      if (system.includes('Review')) return { response: JSON.stringify({ approved: true, target_correct: true, notes: [] }) };
+      return { response: JSON.stringify({ summary: 'change status', edits: [{ path: 'lib/main.dart', find: "'Ready. Type or speak a request.'", replace: "'Ready, sir.'" }] }) };
+    } },
+  };
+  const out = await prepareSelfUpdate(env, 'change the home status wording', fakeGitHub(), memoryStore());
+  assert.equal(out.status, 200, out.detail);
+  assert.equal(out.proposal.expected_base_sha, 'abc');
+});
+
+test('deterministic tree fallback selects editable app source when search and planners miss', () => {
+  const index = {
+    editable_paths: [
+      'server/cloudflare/worker.js',
+      'lib/settings/account.dart',
+      'lib/main.dart',
+      'lib/chat/che_chat_screen.dart',
+    ],
+  };
+  const picked = fallbackTreeCandidates('make a small improvement to the chat screen', index, [], 3);
+  assert.equal(picked[0], 'lib/chat/che_chat_screen.dart');
+  assert.ok(picked.includes('lib/main.dart'));
+});
+
+test('generic autonomous request falls back to real editable source instead of discovery 422', async () => {
+  let implementationCalls = 0;
+  const env = {
+    CHE_GITHUB_TOKEN: 't',
+    CHE_GITHUB_REPO: 'o/r',
+    AI: {
+      run: async (_model, input) => {
+        const system = input.messages[0].content;
+        const payload = JSON.parse(input.messages[1].content);
+        if (system.includes('Source Recovery Architect')) {
+          return { response: JSON.stringify({ plan: 'No confident path.', search_terms: ['not-present-anywhere'], paths: [] }) };
+        }
+        if (system.includes('Architect')) {
+          return { response: JSON.stringify({ plan: 'Inspect repository.', search_terms: ['also-not-present'], paths: [] }) };
+        }
+        if (system.includes('Review')) {
+          return { response: JSON.stringify({ approved: true, target_correct: true, notes: [], repair_instructions: '' }) };
+        }
+        implementationCalls++;
+        const inspected = payload.inspected || [];
+        assert.ok(inspected.some((item) => item.path === 'lib/main.dart'), 'fallback must inspect a real editable source file');
+        return { response: JSON.stringify({
+          summary: 'Small real improvement',
+          edits: [{ path: 'lib/main.dart', find: "'Ready. Type or speak a request.'", replace: "'Ready and listening, sir.'" }],
+        }) };
+      },
+    },
+  };
+
+  const out = await prepareSelfUpdate(
+    env,
+    'make one small real improvement to the app',
+    fakeGitHub(),
+    memoryStore(),
+  );
+  assert.equal(out.status, 200, out.detail);
+  assert.ok(implementationCalls >= 1);
+  assert.deepEqual(out.proposal.files.map((file) => file.path), ['lib/main.dart']);
 });

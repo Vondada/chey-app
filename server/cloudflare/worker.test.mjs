@@ -671,7 +671,7 @@ test('voice falls back to free Gemini speech (WAV) when Cloudflare voice is out 
 });
 
 
-test('quota jobs retry at five minutes, pause durably, resume and stop after 24 retries', async () => {
+test('quota jobs use bounded exponential backoff and dead-letter after three retries', async () => {
   const saved = new Map(); let alarmAt; let calls = 0;
   const state = new CheState({ storage: {
     get: async key => saved.has(key) ? structuredClone(saved.get(key)) : undefined,
@@ -927,4 +927,33 @@ test('CHE platform API creates isolated personal tenant, enrollment, notificatio
   const coreList = await (await send('/api/core/requests', 'GET', {}, familyToken)).json();
   assert.equal(coreList.requests[0].status, 'submitted');
   assert.equal(coreList.requests[0].decision, null);
+});
+
+
+test('self-update rejects a proposal when main changed after source inspection', async () => {
+  const { openSelfUpdatePr } = await import('./self_update.js');
+  let writes = 0;
+  const fetcher = async (url, options = {}) => {
+    const u = String(url);
+    const method = options.method || 'GET';
+    const reply = (data, status = 200) => new Response(JSON.stringify(data), {
+      status, headers: { 'Content-Type': 'application/json' },
+    });
+    if (method === 'GET' && /api\.github\.com\/repos\/[^/]+\/[^/]+$/.test(u)) return reply({ default_branch: 'main' });
+    if (method === 'GET' && u.includes('/git/ref/heads/main')) return reply({ object: { sha: 'new-main-sha' } });
+    if (method !== 'GET') writes++;
+    return reply({}, 404);
+  };
+  const out = await openSelfUpdatePr(
+    { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' },
+    {
+      summary: 'Safe update',
+      expected_base_sha: 'old-main-sha',
+      files: [{ path: 'lib/main.dart', content: "void main() {}\n" }],
+    },
+    fetcher,
+  );
+  assert.equal(out.status, 409);
+  assert.equal(out.stale_source, true);
+  assert.equal(writes, 0, 'stale proposal must not create a branch or write files');
 });

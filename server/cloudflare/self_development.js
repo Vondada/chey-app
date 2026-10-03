@@ -106,7 +106,7 @@ async function sourceIndex(env, fetcher) {
     .filter((item) => item?.type === 'blob' && isSelfUpdateReadablePath(String(item.path || '')))
     .map((item) => String(item.path))
     .slice(0, 4000);
-  return { base, paths, editable_paths: paths.filter(isSelfUpdateEditablePath) };
+  return { base, head_sha: String(ref.data.object.sha), paths, editable_paths: paths.filter(isSelfUpdateEditablePath) };
 }
 
 function isUiTask(request) {
@@ -201,6 +201,31 @@ async function searchCode(env, terms, fetcher) {
     for (const path of paths) hits.set(path, (hits.get(path) || 0) + 1);
   }
   return hits;
+}
+
+export function fallbackTreeCandidates(request, index, terms = [], limit = 6) {
+  const task = String(request || '').toLowerCase();
+  const words = [...new Set([
+    ...(String(request || '').toLowerCase().match(/[a-z][a-z0-9_]{2,}/g) || []),
+    ...terms.flatMap((term) => String(term).toLowerCase().match(/[a-z][a-z0-9_]{2,}/g) || []),
+  ])].filter((word) => !['the', 'and', 'for', 'with', 'this', 'that', 'make', 'change', 'code', 'app'].includes(word));
+
+  const scored = (index?.editable_paths || []).map((path) => {
+    const lower = path.toLowerCase();
+    let score = 0;
+    for (const word of words) if (lower.includes(word)) score += 8;
+    if (/\b(ui|screen|page|button|layout|visual|interface|home|chat|voice)\b/.test(task) && lower.startsWith('lib/')) score += 10;
+    if (/\b(worker|server|api|route|cloudflare|backend)\b/.test(task) && lower.startsWith('server/cloudflare/')) score += 10;
+    if (lower === 'lib/main.dart') score += 4;
+    if (lower === 'server/cloudflare/worker.js') score += 3;
+    if (/\/(main|home|chat|app|worker|router|service)[._/-]/.test(lower)) score += 2;
+    return { path, score };
+  });
+
+  return scored
+    .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
+    .slice(0, Math.max(1, limit))
+    .map((item) => item.path);
 }
 
 async function readFull(env, base, path, fetcher) {
@@ -505,9 +530,23 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       }
     }
     if (!chosen.length) {
+      chosen = fallbackTreeCandidates(task, index, terms, 6);
+      if (chosen.length) {
+        architecture.plan = [
+          architecture.plan,
+          'Deterministic tree fallback: inspect the highest-signal editable source candidates directly because model/search discovery returned no verified path.',
+        ].filter(Boolean).join('\n');
+        architecture.paths = [...new Set([...(architecture.paths || []), ...chosen])];
+        chat.push({
+          from: 'CHE',
+          msg: `Deterministic repository fallback selected: ${chosen.join(', ')}`,
+        });
+      }
+    }
+    if (!chosen.length) {
       return {
         status: 422,
-        detail: 'CHE exhausted automatic repository discovery without finding a verified editable source path. No owner source text is required; retry only with new repository evidence or an external limitation resolved.',
+        detail: 'CHE inspected the repository tree but it contains no editable source paths. This is a repository or permissions limitation, not an owner source-text request.',
       };
     }
 
@@ -723,7 +762,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
 
     return {
       status: 200,
-      proposal: { summary, files: checked.files },
+      proposal: { summary, files: checked.files, expected_base_sha: index.head_sha || '' },
       review: result.review,
       diff: result.diff,
       discussion: result.discussion,
