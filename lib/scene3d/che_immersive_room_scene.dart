@@ -71,6 +71,7 @@ class _CheImmersiveRoomSceneState extends State<CheImmersiveRoomScene> {
   int _generation = 0;
 
   final List<Node> _animated = [];
+  final Map<Node, double> _animatedBaseY = {};
   double _azimuth = 0.52;
   double _elevation = 0.26;
   double _radius = 15.5;
@@ -111,6 +112,7 @@ class _CheImmersiveRoomSceneState extends State<CheImmersiveRoomScene> {
       final scene = Scene();
       _configureScene(scene);
       _animated.clear();
+      _animatedBaseY.clear();
       _buildRoom(scene);
       _addAgents(scene);
       if (!mounted || generation != _generation) {
@@ -247,23 +249,32 @@ class _CheImmersiveRoomSceneState extends State<CheImmersiveRoomScene> {
     switch (widget.kind) {
       case CheImmersiveRoomKind.theater:
         _buildTheater(scene);
+        break;
       case CheImmersiveRoomKind.warRoom:
         _buildWarRoom(scene);
+        break;
       case CheImmersiveRoomKind.office:
         _buildOffice(scene);
+        break;
       case CheImmersiveRoomKind.art:
         _buildArt(scene);
+        break;
       case CheImmersiveRoomKind.music:
       case CheImmersiveRoomKind.creator:
         _buildStudio(scene);
+        break;
       case CheImmersiveRoomKind.workshop:
         _buildWorkshop(scene);
+        break;
       case CheImmersiveRoomKind.markets:
         _buildMarkets(scene);
+        break;
       case CheImmersiveRoomKind.pipeline:
         _buildPipeline(scene);
+        break;
       case CheImmersiveRoomKind.store:
         _buildStore(scene);
+        break;
     }
   }
 
@@ -441,6 +452,7 @@ class _CheImmersiveRoomSceneState extends State<CheImmersiveRoomScene> {
         );
       scene.add(root);
       _animated.add(root);
+      _animatedBaseY[root] = placement.y;
     }
   }
 
@@ -499,7 +511,7 @@ class _CheImmersiveRoomSceneState extends State<CheImmersiveRoomScene> {
     for (var i = 0; i < _animated.length; i++) {
       final node = _animated[i];
       final base = node.position;
-      final y = 0.1 + math.sin(t * 1.6 + i * 0.7) * 0.025;
+      final y = (_animatedBaseY[node] ?? base.y) + math.sin(t * 1.6 + i * 0.7) * 0.025;
       node.position = vm.Vector3(base.x, y, base.z);
     }
   }
