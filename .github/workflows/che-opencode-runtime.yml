@@ -350,6 +350,15 @@ jobs:
         with:
           name: che-opencode-${{ inputs.job_id }}
           path: /tmp/che-patch
+      - name: Require CHE_GITHUB_TOKEN
+        if: steps.patch.outcome == 'success'
+        env:
+          HAS_TOKEN: ${{ secrets.CHE_GITHUB_TOKEN != '' }}
+        run: |
+          if [ "$HAS_TOKEN" != true ]; then
+            echo "::error::CHE_GITHUB_TOKEN is not set as a GitHub Actions secret, so CHE cannot push her branch or open the PR."
+            exit 1
+          fi
       - name: Checkout exact base
         if: steps.patch.outcome == 'success'
         uses: actions/checkout@v4
@@ -426,6 +435,7 @@ jobs:
         env:
           JOB_ID: ${{ inputs.job_id }}
           PR_NUMBER: ${{ needs.deliver.outputs.pr_number }}
+          DELIVER_RESULT: ${{ needs.deliver.result }}
         with:
           github-token: ${{ github.token }}
           script: |
@@ -435,6 +445,11 @@ jobs:
             const result = JSON.parse(fs.readFileSync('/tmp/che-runtime-result/che-runtime-result.json', 'utf8'));
             const pr = Number(process.env.PR_NUMBER || 0);
             if (pr && result.state === 'implemented') Object.assign(result, { state: 'pr_open', pr_number: pr });
+            if (!pr && result.state === 'implemented' && process.env.DELIVER_RESULT === 'failure') {
+              // The code change exists but no PR could be opened; never leave
+              // CHE reporting progress that is not happening.
+              Object.assign(result, { state: 'blocked', failure: 'deliver_failed', error: 'Code change was made but the PR could not be opened. Check the CHE_GITHUB_TOKEN GitHub Actions secret (needs contents, pull requests and workflows write on this repo).' });
+            }
             const content = JSON.stringify(result);
             let sha;
             try {
