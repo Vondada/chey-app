@@ -578,3 +578,18 @@ test('a change that adds code nothing calls is sent back, not proposed', async (
   assert.ok(out.diagnostics.outcomes.some((o) => o.outcome === 'dead_code'), 'the unused method was caught deterministically');
   assert.doesNotMatch(out.proposal.files[0].content, /cachedBanner/);
 });
+
+test('budget stops after more than 3 identical errors and after the time limit', () => {
+  let t = 0;
+  const budget = new AgentBudget({ maxElapsedMs: 1000, now: () => t });
+  for (let i = 0; i < 3; i += 1) budget.recordError('engineer:groq:temporary_external:timeout');
+  assert.equal(budget.canSpend('engineer', 10), true);
+  budget.recordError('engineer:groq:temporary_external:timeout');
+  assert.equal(budget.canSpend('engineer', 10), false);
+  assert.throws(() => budget.spend('engineer', 10), (e) => e.budget_exhausted === true);
+  assert.match(budget.snapshot().stopped_on_repeated_error, /timeout/);
+
+  const timed = new AgentBudget({ maxElapsedMs: 1000, now: () => t });
+  t = 1001;
+  assert.equal(timed.canSpend('planner', 10), false);
+});

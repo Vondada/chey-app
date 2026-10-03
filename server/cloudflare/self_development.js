@@ -236,6 +236,7 @@ async function runAgent(ctx, { stage, role, assignment, payload, maxTokens = 220
     );
   } catch (error) {
     const { failure_class: failureClass, kind } = classifyFailure(error);
+    if (!error?.budget_exhausted) ctx.budget.recordError(`${stage}:${provider || 'auto'}:${failureClass}:${kind}`);
     note(ctx, { stage, role: role.split(',')[0], provider, failure_class: failureClass, kind, error: String(error?.diagnostic || error?.message || error).slice(0, 300) });
     const wrapped = new Error(String(error?.message || error));
     wrapped.failure_class = error?.budget_exhausted ? FAILURE_CLASS.INTERNAL : failureClass;
