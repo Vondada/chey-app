@@ -162,8 +162,8 @@ jobs:
             for p in google:HAS_GOOGLE anthropic:HAS_ANTHROPIC openai:HAS_OPENAI openrouter:HAS_OPENROUTER groq:HAS_GROQ mistral:HAS_MISTRAL cerebras:HAS_CEREBRAS; do
               prov=${p%%:*}; flag=${p##*:}
               [ "${!flag}" = true ] || continue
-              list=$(list_models "$prov" | grep -E "^$prov/" | grep -viE "tts|image|audio|embed|vision|guard|lite|nano|mini|8b" || true)
-              cand=$(echo "$list" | grep -iE "pro|sonnet|opus|gpt-5|coder|qwen3|large|70b" | sort -rV | head -1 || true)
+              list=$(list_models "$prov" | grep -E "^$prov/" | grep -iE "gemini|claude|gpt|qwen|deepseek|llama|mistral|codestral|devstral|kimi|glm|grok" | grep -viE "tts|image|audio|embed|vision|guard|[-_.]lite|[-_.]nano|[-_.]mini|[-_]8b|lyria|veo|imagen|live|robotics|computer-use|learnlm|aqa|search|transcribe|realtime|moderation" || true)
+              cand=$(echo "$list" | grep -iE "coder|codestral|devstral|pro|sonnet|opus|gpt-5|large|70b" | sort -rV | head -1 || true)
               [ -n "$cand" ] || cand=$(echo "$list" | head -1)
               if [ -n "$cand" ]; then model="$cand"; break; fi
             done
