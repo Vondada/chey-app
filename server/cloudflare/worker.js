@@ -1995,7 +1995,12 @@ function runtimeVersion(env) {
 
 function ownerPrFailure(result, action) {
   const cls = result?.failure_class || classifyFailure(result).failure_class;
-  if (cls === FAILURE_CLASS.PERMANENT_EXTERNAL) return `GitHub refused to ${action}, sir: the CHE GitHub token or repository permission needs fixing on GitHub's side. Nothing else changed.`;
+  if (cls === FAILURE_CLASS.PERMANENT_EXTERNAL) {
+    // Say what GitHub actually said, so the one fix needed is clear.
+    const reason = /:\s*([^:]{4,160})$/.exec(String(result?.detail || ''))?.[1]?.trim() || '';
+    console.error('CHE GitHub refusal', action, result?.status, result?.detail);
+    return `GitHub refused to ${action}, sir${reason ? `. GitHub said: "${reason.replace(/\.$/, '')}"` : ''}. The CHE GitHub token stored on the Worker needs permission for that. Nothing else changed.`;
+  }
   if (cls === FAILURE_CLASS.TEMPORARY_EXTERNAL) return `GitHub is temporarily unavailable, so I could not ${action} yet, sir. Nothing was half-written; it is safe to retry.`;
   return `I could not ${action}, sir. ${stripOwnerHomework(String(result?.detail || '')).slice(0, 220)}`.trim();
 }
