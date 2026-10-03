@@ -154,7 +154,7 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
   final Scene _scene = Scene();
   final Map<String, Node> _entityNodes = {};
   final Map<String, vm.Vector3> _basePositions = {};
-  final List<PolylineGeometry> _lines = [];
+  final List<PhysicallyBasedMaterial> _brainLinkMaterials = [];
 
   bool _ready = false;
   String? _error;
@@ -238,7 +238,7 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
     _scene.removeAll();
     _entityNodes.clear();
     _basePositions.clear();
-    _lines.clear();
+    _brainLinkMaterials.clear();
 
     final realistic = widget.quality == CheSceneQuality.realistic;
     final balanced = widget.quality == CheSceneQuality.balanced;
@@ -769,8 +769,7 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
   }
 
   void _addBrainLinks(Set<String> visibleIds) {
-    final material = UnlitMaterial()
-      ..baseColorFactor = vm.Vector4(.05, .72, .68, .42);
+    var index = 0;
     for (final link in widget.links) {
       if (!visibleIds.contains(link.from) || !visibleIds.contains(link.to)) {
         continue;
@@ -778,13 +777,60 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
       final a = _basePositions[link.from];
       final b = _basePositions[link.to];
       if (a == null || b == null) continue;
-      final line = PolylineGeometry(
-        [a, b],
-        width: .018,
-        widthMode: PolylineWidthMode.worldUnits,
+
+      final delta = b - a;
+      if (delta.length2 < 0.0001) continue;
+      var sideways = delta.cross(vm.Vector3(0, 1, 0));
+      if (sideways.length2 < 0.0001) {
+        sideways = delta.cross(vm.Vector3(1, 0, 0));
+      }
+      if (sideways.length2 > 0.0001) sideways.normalize();
+      final bend = .12 + (index % 7) * .025;
+      final midpoint = (a + b) * .5 +
+          sideways * bend +
+          vm.Vector3(0, math.sin(index * .91) * .10, 0);
+      final path = CatmullRomPath([a, midpoint, b]);
+
+      final material = PhysicallyBasedMaterial()
+        ..baseColorFactor = vm.Vector4(.018, .26, .25, 1)
+        ..metallicFactor = .08
+        ..roughnessFactor = .42
+        ..emissiveFactor = vm.Vector4(.03, .86, .78, 1)
+        ..emissiveStrength =
+            widget.quality == CheSceneQuality.realistic ? 1.8 : 1.35;
+      _brainLinkMaterials.add(material);
+
+      final radius = switch (widget.quality) {
+        CheSceneQuality.performance => .010,
+        CheSceneQuality.balanced => .014,
+        CheSceneQuality.realistic => .018,
+      };
+      final radialSegments = switch (widget.quality) {
+        CheSceneQuality.performance => 4,
+        CheSceneQuality.balanced => 6,
+        CheSceneQuality.realistic => 8,
+      };
+      final stations = switch (widget.quality) {
+        CheSceneQuality.performance => 8,
+        CheSceneQuality.balanced => 12,
+        CheSceneQuality.realistic => 18,
+      };
+      _scene.add(
+        Node(
+          name: 'brain-link:' + link.from + ':' + link.to,
+          mesh: Mesh(
+            TubeGeometry(
+              path,
+              radius: radius,
+              radialSegments: radialSegments,
+              stations: stations,
+              caps: true,
+            ),
+            material,
+          ),
+        ),
       );
-      _lines.add(line);
-      _scene.add(Node(mesh: Mesh(line, material)));
+      index++;
     }
   }
 
@@ -868,13 +914,6 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
   }
 
   void _tick(double deltaSeconds) {
-    final camera = _lastCamera;
-    if (camera != null && !_viewSize.isEmpty) {
-      for (final line in _lines) {
-        line.updateForCamera(camera, _viewSize);
-      }
-    }
-
     final media = MediaQuery.maybeOf(context);
     if (media?.disableAnimations == true ||
         media?.accessibleNavigation == true) {
@@ -882,6 +921,13 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
     }
 
     _elapsed += deltaSeconds;
+    for (var i = 0; i < _brainLinkMaterials.length; i++) {
+      final wave = .5 + .5 * math.sin(_elapsed * 2.15 + i * .37);
+      _brainLinkMaterials[i].emissiveStrength =
+          (widget.quality == CheSceneQuality.realistic ? 1.45 : 1.05) +
+              wave * (widget.quality == CheSceneQuality.realistic ? 1.35 : .9);
+    }
+
     var index = 0;
     for (final entry in _entityNodes.entries) {
       final base = _basePositions[entry.key];
