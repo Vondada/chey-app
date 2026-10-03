@@ -73,7 +73,7 @@ jobs:
           if (!/^ocr-[0-9a-f]{8}$/.test(jobId)) fail('invalid_job_id', 'CHE runtime job id failed validation.');
           if (!/^[0-9a-f]{40}$/.test(baseSha)) fail('invalid_base_sha', 'CHE runtime base SHA must be the exact 40-character commit id.');
           if (!targetBranch || targetBranch.length > 160 || targetBranch.includes('..') || targetBranch.startsWith('/') || targetBranch.endsWith('/') || !/^[A-Za-z0-9._\/-]+$/.test(targetBranch)) fail('invalid_target_branch', 'CHE runtime target branch failed validation.');
-          if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._:@\/-]+$/.test(model)) fail('invalid_model', 'CHE runtime model must be provider/model.');
+          if (model !== 'auto' && !/^[A-Za-z0-9._-]+\/[A-Za-z0-9._:@\/-]+$/.test(model)) fail('invalid_model', 'CHE runtime model must be provider/model.');
           const checkedOut = cp.execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim().toLowerCase();
           if (checkedOut !== baseSha) fail('stale_base_sha', 'CHE runtime refused stale source: main changed after inspection.');
           const encoded = String(process.env.REQUEST_B64 || '');
@@ -119,24 +119,58 @@ jobs:
 
       - name: Install pinned OpenCode
         run: npm install --global opencode-ai@1.18.34
+      - name: Build code context (graphify code map, opensrc)
+        if: hashFiles('.github/actions/che-code-context/action.yml') != ''
+        uses: ./.github/actions/che-code-context
+        continue-on-error: true
+      - name: Resolve model
+        id: model
+        shell: bash
+        env:
+          REQUESTED: ${{ inputs.model }}
+          HAS_GOOGLE: ${{ secrets.GEMINI_API_KEY != '' }}
+          HAS_OPENROUTER: ${{ secrets.OPENROUTER_API_KEY != '' }}
+          HAS_GROQ: ${{ secrets.GROQ_API_KEY != '' }}
+          HAS_OPENAI: ${{ secrets.OPENAI_API_KEY != '' }}
+          HAS_ANTHROPIC: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          HAS_MISTRAL: ${{ secrets.MISTRAL_API_KEY != '' }}
+          HAS_CEREBRAS: ${{ secrets.CEREBRAS_API_KEY != '' }}
+        run: |
+          # "auto": first provider with a configured key, strongest coding
+          # model OpenCode lists for it. Only that provider's key is exposed.
+          model="$REQUESTED"
+          if [ "$model" = auto ]; then
+            model=""
+            for p in google:HAS_GOOGLE anthropic:HAS_ANTHROPIC openai:HAS_OPENAI openrouter:HAS_OPENROUTER groq:HAS_GROQ mistral:HAS_MISTRAL cerebras:HAS_CEREBRAS; do
+              prov=${p%%:*}; flag=${p##*:}
+              [ "${!flag}" = true ] || continue
+              list=$(opencode models "$prov" 2>/dev/null | grep -E "^$prov/" | grep -viE "tts|image|audio|embed|vision|guard|lite|nano|mini|8b" || true)
+              cand=$(echo "$list" | grep -iE "pro|sonnet|opus|gpt-5|coder|qwen3|large|70b" | sort -rV | head -1)
+              [ -z "$cand" ] && cand=$(echo "$list" | head -1)
+              if [ -n "$cand" ]; then model="$cand"; break; fi
+            done
+          fi
+          if [ -z "$model" ]; then echo "::error::No AI provider key is configured for the OpenCode runner."; exit 1; fi
+          echo "Using model $model"
+          echo "model=$model" >> "$GITHUB_OUTPUT"
 
       - name: Run OpenCode in the isolated checkout
         id: opencode
         shell: bash
         env:
           OPENCODE_CONFIG: /tmp/che-opencode-config.json
-          OPENCODE_MODEL: ${{ inputs.model }}
+          OPENCODE_MODEL: ${{ steps.model.outputs.model }}
           # Expose only the credential for the selected provider, not every key
           # configured in the repository.
-          OPENAI_API_KEY: ${{ startsWith(inputs.model, 'openai/') && secrets.OPENAI_API_KEY || '' }}
-          ANTHROPIC_API_KEY: ${{ startsWith(inputs.model, 'anthropic/') && secrets.ANTHROPIC_API_KEY || '' }}
-          GROQ_API_KEY: ${{ startsWith(inputs.model, 'groq/') && secrets.GROQ_API_KEY || '' }}
-          GEMINI_API_KEY: ${{ (startsWith(inputs.model, 'google/') || startsWith(inputs.model, 'gemini/')) && secrets.GEMINI_API_KEY || '' }}
-          GOOGLE_GENERATIVE_AI_API_KEY: ${{ (startsWith(inputs.model, 'google/') || startsWith(inputs.model, 'gemini/')) && secrets.GEMINI_API_KEY || '' }}
-          OPENROUTER_API_KEY: ${{ startsWith(inputs.model, 'openrouter/') && secrets.OPENROUTER_API_KEY || '' }}
-          CEREBRAS_API_KEY: ${{ startsWith(inputs.model, 'cerebras/') && secrets.CEREBRAS_API_KEY || '' }}
-          MISTRAL_API_KEY: ${{ startsWith(inputs.model, 'mistral/') && secrets.MISTRAL_API_KEY || '' }}
-          HF_TOKEN: ${{ startsWith(inputs.model, 'huggingface/') && secrets.HF_TOKEN || '' }}
+          OPENAI_API_KEY: ${{ startsWith(steps.model.outputs.model, 'openai/') && secrets.OPENAI_API_KEY || '' }}
+          ANTHROPIC_API_KEY: ${{ startsWith(steps.model.outputs.model, 'anthropic/') && secrets.ANTHROPIC_API_KEY || '' }}
+          GROQ_API_KEY: ${{ startsWith(steps.model.outputs.model, 'groq/') && secrets.GROQ_API_KEY || '' }}
+          GEMINI_API_KEY: ${{ (startsWith(steps.model.outputs.model, 'google/') || startsWith(steps.model.outputs.model, 'gemini/')) && secrets.GEMINI_API_KEY || '' }}
+          GOOGLE_GENERATIVE_AI_API_KEY: ${{ (startsWith(steps.model.outputs.model, 'google/') || startsWith(steps.model.outputs.model, 'gemini/')) && secrets.GEMINI_API_KEY || '' }}
+          OPENROUTER_API_KEY: ${{ startsWith(steps.model.outputs.model, 'openrouter/') && secrets.OPENROUTER_API_KEY || '' }}
+          CEREBRAS_API_KEY: ${{ startsWith(steps.model.outputs.model, 'cerebras/') && secrets.CEREBRAS_API_KEY || '' }}
+          MISTRAL_API_KEY: ${{ startsWith(steps.model.outputs.model, 'mistral/') && secrets.MISTRAL_API_KEY || '' }}
+          HF_TOKEN: ${{ startsWith(steps.model.outputs.model, 'huggingface/') && secrets.HF_TOKEN || '' }}
         run: |
           set +e
           timeout --signal=TERM --kill-after=15s 720s \
@@ -157,7 +191,7 @@ jobs:
           JOB_ID: ${{ inputs.job_id }}
           BASE_SHA: ${{ inputs.base_sha }}
           TARGET_BRANCH: ${{ inputs.target_branch }}
-          MODEL: ${{ inputs.model }}
+          MODEL: ${{ steps.model.outputs.model || inputs.model }}
           RUN_ID: ${{ github.run_id }}
         run: |
           node <<'NODE'
@@ -235,8 +269,48 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  publish:
+  deliver:
+    # Turns a safe patch into a reviewable PR. Uses CHE_GITHUB_TOKEN (not the
+    # default token) so the PR's CI runs and che-autopilot can review/merge it.
     needs: runtime
+    if: needs.runtime.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      pr_number: ${{ steps.pr.outputs.pr_number }}
+    steps:
+      - name: Download patch
+        id: patch
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: che-opencode-${{ inputs.job_id }}
+          path: /tmp/che-patch
+      - name: Checkout exact base
+        if: steps.patch.outcome == 'success'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.base_sha }}
+          fetch-depth: 1
+          token: ${{ secrets.CHE_GITHUB_TOKEN }}
+      - name: Commit, push and open PR
+        id: pr
+        if: steps.patch.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.CHE_GITHUB_TOKEN }}
+          JOB_ID: ${{ inputs.job_id }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+          REQUEST_B64: ${{ inputs.request_b64 }}
+        run: |
+          git apply --index /tmp/che-patch/che-runtime.patch
+          git -c user.name="CHE" -c user.email="che-autopilot@users.noreply.github.com" commit -qm "che-auto: ${JOB_ID}" -m "Automated change by CHE's OpenCode runner. [che-auto]"
+          git push -q origin "HEAD:refs/heads/${TARGET_BRANCH}"
+          title="CHE: $(echo "$REQUEST_B64" | base64 -d | head -c 90 | tr '\n' ' ')"
+          url=$(gh pr create --base main --head "$TARGET_BRANCH" --title "$title" --body "Automated change by CHE's OpenCode runner (session ${JOB_ID}). che-autopilot reviews and merges it when CI passes." --label che-auto 2>/dev/null || gh pr create --base main --head "$TARGET_BRANCH" --title "$title" --body "Automated change by CHE's OpenCode runner (session ${JOB_ID}).")
+          echo "pr_number=${url##*/}" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: [runtime, deliver]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -287,13 +361,17 @@ jobs:
         uses: actions/github-script@v7
         env:
           JOB_ID: ${{ inputs.job_id }}
+          PR_NUMBER: ${{ needs.deliver.outputs.pr_number }}
         with:
           github-token: ${{ github.token }}
           script: |
             const fs = require('fs');
             const branch = 'che-mailbox';
             const path = `mailbox/runtime/${process.env.JOB_ID}.json`;
-            const content = fs.readFileSync('/tmp/che-runtime-result/che-runtime-result.json', 'utf8');
+            const result = JSON.parse(fs.readFileSync('/tmp/che-runtime-result/che-runtime-result.json', 'utf8'));
+            const pr = Number(process.env.PR_NUMBER || 0);
+            if (pr && result.state === 'implemented') Object.assign(result, { state: 'pr_open', pr_number: pr });
+            const content = JSON.stringify(result);
             let sha;
             try {
               const current = await github.rest.repos.getContent({ ...context.repo, path, ref: branch });
