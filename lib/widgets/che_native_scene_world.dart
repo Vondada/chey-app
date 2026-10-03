@@ -630,15 +630,16 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
       }
     }
 
+    final actionable = widget.onEntityTap != null;
     root.addComponent(
       SemanticsComponent(
         label: entity.description.isEmpty
             ? entity.label
             : entity.label + '. ' + entity.description,
-        hint: 'Activate to open this item',
-        button: true,
+        hint: actionable ? 'Activate to open this item' : null,
+        button: actionable,
         sortOrder: index.toDouble(),
-        onTap: () => widget.onEntityTap?.call(entity.id),
+        onTap: actionable ? () => widget.onEntityTap!(entity.id) : null,
       ),
     );
     return root;
