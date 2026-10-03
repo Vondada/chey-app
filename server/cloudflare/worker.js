@@ -2385,7 +2385,7 @@ async function dispatchChange(env, body, memory = null, options = {}) {
   if (memory?.put) await memory.put(LAST_ENGINEERING_REQUEST_KEY, { request: request.slice(0, 4000), integrate: true, at: new Date().toISOString() }).catch(() => null);
   let prepared;
   try {
-    prepared = await prepareSelfUpdate(env, groundedRequest, fetch, memory, { ownerInitiated: true });
+    prepared = await prepareSelfUpdate(env, groundedRequest, fetch, memory, { ownerInitiated: true, intentRequest: request });
   } catch (error) {
     console.error('CHE change request failed', error?.message || error);
     const { failure_class: failureClass, kind } = classifyFailure(error);
