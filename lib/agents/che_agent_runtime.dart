@@ -517,7 +517,7 @@ class CheAgentRuntimeClient {
   }
 
   /// Reads the latest OpenCode job state through the Worker's deterministic
-  /// "coding status" route. That route reads mailbox/runtime/<session>.json;
+  /// "coding status" route. That route reads `mailbox/runtime/<session>.json`;
   /// this client never derives progress from timers, filenames, or UI guesses.
   Future<CheCodingJobStatus?> codingStatus() async {
     final request = http.Request('POST', _u('/api/chat'))
