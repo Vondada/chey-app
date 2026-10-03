@@ -69,6 +69,7 @@ class CheMarketsRoom extends StatefulWidget {
     required this.actions,
     required this.onAsk,
     this.client,
+    this.onOpenTradingApp,
   });
 
   final String Function() baseUrl;
@@ -78,6 +79,9 @@ class CheMarketsRoom extends StatefulWidget {
   /// Sends a prompt to CHE (e.g. "Analyze S&P 500 structure").
   final void Function(String prompt) onAsk;
   final http.Client? client;
+
+  /// Opens a supported trading website inside CHE's in-app browser.
+  final void Function(String appName)? onOpenTradingApp;
 
   @override
   State<CheMarketsRoom> createState() => _CheMarketsRoomState();
@@ -259,7 +263,13 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
                 child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                   if (_error != null)
                     Text('Market data: $_error', style: CheType.caption.copyWith(color: CheColors.warning)),
-                  _LiveAccountCard(account: _account, money: _money),
+                  _LiveAccountCard(
+                    account: _account,
+                    money: _money,
+                    onOpenNinjaTrader: widget.onOpenTradingApp == null
+                        ? null
+                        : () => widget.onOpenTradingApp!('NinjaTrader'),
+                  ),
                   const SizedBox(height: CheSpace.md),
                   SizedBox(
                     height: 84,
