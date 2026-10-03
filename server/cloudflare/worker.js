@@ -54,7 +54,7 @@ import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSna
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
-import { unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
+import { handoffIntent, latestHandoff, unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
 import { LA_AGENCIA_ROLES, agentActionGuard, ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
 import {
@@ -5962,6 +5962,22 @@ export class CheState extends DurableObject {
           return ndjsonReply(found.length
             ? `I scanned for upgrades to the whole app, sir, and filed ${found.length} new reusable finds under free tech: ${found.slice(0, 4).map((f) => f.full_name).join(', ')}. Say "what's in free tech" to review.`
             : 'I scanned for app upgrades, sir. Nothing new and reusable since last time.', { source: 'che_code_scout' });
+        }
+        // "CHE, do Claude's handoff": turn the latest handoff an AI left in the
+        // GitHub mailbox into a real reviewed coding job. Owner-only, and each
+        // handoff message id launches at most once (no duplicate job cycles).
+        const handoff = handoffIntent(message);
+        if (handoff) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can start a handoff.', { source: 'che_handoff', ok: false });
+          const thread = await readThread(this.env, handoff.peer).catch(() => ({ messages: [] }));
+          const latest = latestHandoff(thread.messages, handoff.peer);
+          if (!latest) return ndjsonReply(`I have no handoff from ${handoff.peer} in the mailbox yet, sir.`, { source: 'che_handoff', ok: false });
+          const doneKey = `mail_handoff_done:${handoff.peer}:${latest.id}`;
+          if (await this.ctx.storage.get(doneKey)) {
+            return ndjsonReply(`I already started ${handoff.peer}'s latest handoff, sir, so I will not run it twice. Ask for the job status to hear how it is going.`, { source: 'che_handoff', ok: true, deduplicated: true, handoff_id: latest.id });
+          }
+          await this.ctx.storage.put(doneKey, new Date().toISOString());
+          return this.selfDevelopmentReply(`Update your code: ${String(latest.text).slice(0, 6000)}`, { vectorRecall });
         }
         // Explicit implementation requests win over repository discovery. This
         // is what lets "Update your code: use Study 1 and 2..." actually build
