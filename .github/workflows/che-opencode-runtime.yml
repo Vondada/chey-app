@@ -1,0 +1,292 @@
+name: CHE OpenCode coding runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: Stable CHE coding-session id
+        required: true
+        type: string
+      request_b64:
+        description: UTF-8 owner request encoded as base64
+        required: true
+        type: string
+      base_sha:
+        description: Exact repository commit CHE inspected
+        required: true
+        type: string
+      target_branch:
+        description: Review branch the orchestrator will reconcile into
+        required: true
+        type: string
+      model:
+        description: OpenCode model in provider/model form
+        required: true
+        type: string
+
+# The coding process itself only receives read access. A separate publisher job
+# gets contents:write solely to place compact status JSON on che-mailbox.
+permissions:
+  contents: read
+
+concurrency:
+  group: che-opencode-${{ inputs.job_id }}
+  cancel-in-progress: false
+
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout inspected source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.base_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Decode and guard task
+        env:
+          REQUEST_B64: ${{ inputs.request_b64 }}
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const encoded = String(process.env.REQUEST_B64 || '');
+          let request = '';
+          try { request = Buffer.from(encoded, 'base64').toString('utf8').trim(); } catch (_) { process.exit(2); }
+          if (request.length < 8 || request.length > 16000) {
+            console.error('::error::CHE runtime request failed length validation.');
+            process.exit(2);
+          }
+          const secretLike = [
+            /BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY/i,
+            /(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/,
+            /(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}/,
+            /sk-[A-Za-z0-9_-]{20,}/,
+            /AIza[0-9A-Za-z_-]{20,}/,
+            /xai-[A-Za-z0-9]{20,}/,
+          ];
+          if (secretLike.some((re) => re.test(request))) {
+            console.error('::error::CHE runtime request looks like it contains a secret; refusing to send it to OpenCode.');
+            process.exit(2);
+          }
+          const preamble = [
+            'You are a coding worker inside CHE. Work only in this isolated checkout.',
+            'Inspect real source before editing. Make the smallest complete change that satisfies the owner request.',
+            'Do not push, open or merge pull requests, deploy, alter workflows, signing files, secrets, dependency manifests, or production credentials.',
+            'Leave any source edits only in the working tree. Do not print secrets. If no safe change is needed, leave the tree unchanged.',
+            '',
+            'OWNER REQUEST:',
+            request,
+          ].join('\n');
+          fs.writeFileSync('/tmp/che-runtime-prompt.txt', preamble, { mode: 0o600 });
+          // Defense in depth: deny outbound helper tools and git push inside the
+          // coding agent. This is not treated as a sandbox; the hosted runner is
+          // still the isolation boundary and receives no writable Git credential.
+          fs.writeFileSync('/tmp/che-opencode-config.json', JSON.stringify({
+            $schema: 'https://opencode.ai/config.json',
+            permission: {
+              webfetch: 'deny',
+              bash: {
+                '*': 'allow',
+                'git push*': 'deny',
+                'gh *': 'deny',
+                'curl *': 'deny',
+                'wget *': 'deny',
+              },
+            },
+          }), { mode: 0o600 });
+          NODE
+
+      - name: Install pinned OpenCode
+        run: npm install --global opencode-ai@1.18.34
+
+      - name: Run OpenCode in the isolated checkout
+        id: opencode
+        shell: bash
+        env:
+          OPENCODE_CONFIG: /tmp/che-opencode-config.json
+          OPENCODE_MODEL: ${{ inputs.model }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set +e
+          timeout --signal=TERM --kill-after=15s 720s \
+            opencode run --format json --auto --model "$OPENCODE_MODEL" "$(cat /tmp/che-runtime-prompt.txt)" \
+            >/tmp/opencode-events.jsonl 2>/tmp/opencode-stderr.log
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          rm -f /tmp/che-runtime-prompt.txt /tmp/che-opencode-config.json
+
+      - name: Build compact result and patch
+        id: result
+        if: always()
+        env:
+          EXIT_CODE: ${{ steps.opencode.outputs.exit_code }}
+          OPENCODE_OUTCOME: ${{ steps.opencode.outcome }}
+          JOB_ID: ${{ inputs.job_id }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+          MODEL: ${{ inputs.model }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const cp = require('child_process');
+          const git = (...args) => cp.execFileSync('git', args, { encoding: 'utf8' });
+          // Intent-to-add makes untracked source files visible to git diff without
+          // staging their contents or committing anything.
+          try { git('add', '-N', '--', '.'); } catch (_) { /* diff still reports tracked edits */ }
+          const files = git('diff', '--name-only', '--diff-filter=ACMRD').trim().split('\n').filter(Boolean);
+          const unsafe = files.filter((path) =>
+            /^(?:\.github\/|\.git\/)/i.test(path)
+            || /(?:^|\/)(?:\.env(?:\.|$)|secrets?\b|credentials?\b)/i.test(path)
+            || /\.(?:pem|p12|mobileprovision|key|keystore|jks)$/i.test(path)
+            || /^(?:pubspec\.ya?ml|pubspec\.lock|server\/cloudflare\/(?:package(?:-lock)?\.json|wrangler\.jsonc))$/i.test(path)
+            || /^ios\/.*\.(?:plist|pbxproj|xcconfig|entitlements)$/i.test(path)
+            || /^android\/.*\.(?:gradle|kts|properties)$/i.test(path)
+          );
+          const rawExit = String(process.env.EXIT_CODE || '').trim();
+          const exitCode = /^\d+$/.test(rawExit) ? Number(rawExit) : 1;
+          const patch = unsafe.length ? '' : git('diff', '--binary');
+          const numstat = git('diff', '--numstat').trim().split('\n').filter(Boolean);
+          let additions = 0;
+          let deletions = 0;
+          for (const row of numstat) {
+            const [a, d] = row.split('\t');
+            if (/^\d+$/.test(a)) additions += Number(a);
+            if (/^\d+$/.test(d)) deletions += Number(d);
+          }
+          const state = unsafe.length || exitCode !== 0 || process.env.OPENCODE_OUTCOME !== 'success'
+            ? 'blocked'
+            : files.length ? 'implemented' : 'no_change';
+          const artifactName = `che-opencode-${process.env.JOB_ID}`;
+          const result = {
+            session_id: process.env.JOB_ID,
+            runtime: 'opencode',
+            runtime_version: 'opencode-ai@1.18.34',
+            state,
+            run_id: Number(process.env.RUN_ID),
+            base_sha: process.env.BASE_SHA,
+            target_branch: process.env.TARGET_BRANCH,
+            model: process.env.MODEL,
+            changed_files: files.length,
+            additions,
+            deletions,
+            files: files.slice(0, 40),
+            unsafe_files: unsafe.slice(0, 20),
+            opencode_exit_code: exitCode,
+            patch_artifact: patch ? artifactName : null,
+          };
+          fs.writeFileSync('/tmp/che-runtime-result.json', JSON.stringify(result));
+          if (patch) fs.writeFileSync('/tmp/che-runtime.patch', patch);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `safe=${unsafe.length ? 'false' : 'true'}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `has_patch=${patch ? 'true' : 'false'}\n`);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `CHE OpenCode runtime: ${state}; ${files.length} file(s) changed; +${additions}/-${deletions}.\n`);
+          NODE
+          rm -f /tmp/opencode-events.jsonl /tmp/opencode-stderr.log
+
+      - name: Upload compact runtime result
+        if: always() && steps.result.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: che-opencode-result-${{ inputs.job_id }}
+          path: /tmp/che-runtime-result.json
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Upload patch handoff
+        if: steps.result.outputs.safe == 'true' && steps.result.outputs.has_patch == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: che-opencode-${{ inputs.job_id }}
+          path: /tmp/che-runtime.patch
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    needs: runtime
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Download compact result
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: che-opencode-result-${{ inputs.job_id }}
+          path: /tmp/che-runtime-result
+
+      - name: Ensure a compact terminal result exists
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+          MODEL: ${{ inputs.model }}
+          RUN_ID: ${{ github.run_id }}
+          RUNTIME_RESULT: ${{ needs.runtime.result }}
+        run: |
+          mkdir -p /tmp/che-runtime-result
+          if [[ ! -s /tmp/che-runtime-result/che-runtime-result.json ]]; then
+            node <<'NODE'
+            const fs = require('fs');
+            fs.writeFileSync('/tmp/che-runtime-result/che-runtime-result.json', JSON.stringify({
+              session_id: process.env.JOB_ID,
+              runtime: 'opencode',
+              runtime_version: 'opencode-ai@1.18.34',
+              state: 'blocked',
+              run_id: Number(process.env.RUN_ID),
+              base_sha: process.env.BASE_SHA,
+              target_branch: process.env.TARGET_BRANCH,
+              model: process.env.MODEL,
+              changed_files: 0,
+              files: [],
+              unsafe_files: [],
+              opencode_exit_code: null,
+              patch_artifact: null,
+              failure: `runtime_job_${process.env.RUNTIME_RESULT || 'unknown'}`,
+            }));
+            NODE
+          fi
+
+      - name: Post compact result to CHE mailbox branch
+        uses: actions/github-script@v7
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fs = require('fs');
+            const branch = 'che-mailbox';
+            const path = `mailbox/runtime/${process.env.JOB_ID}.json`;
+            const content = fs.readFileSync('/tmp/che-runtime-result/che-runtime-result.json', 'utf8');
+            let sha;
+            try {
+              const current = await github.rest.repos.getContent({ ...context.repo, path, ref: branch });
+              sha = current.data.sha;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            await github.rest.repos.createOrUpdateFileContents({
+              ...context.repo,
+              path,
+              branch,
+              message: `runtime: ${process.env.JOB_ID}`,
+              content: Buffer.from(content).toString('base64'),
+              ...(sha ? { sha } : {}),
+            });
