@@ -66,3 +66,29 @@ test('computer work is permission-scoped and explicit in task metadata', () => {
   assert.deepEqual(task.computer_permissions, ['browser:crm.example', 'filesystem:/workspace']);
   assert.equal(task.teach_as_skill, 'CRM update');
 });
+
+
+test('same-named imported skills keep separate agent assignments and provenance', () => {
+  const data = state();
+  const first = teachOfficeSkill(data, {
+    name: 'Review checklist',
+    trigger: 'review work',
+    steps: ['Check the requested behavior'],
+    assigned_agents: ['Knox'],
+    source: { repo: 'owner/reference', path: 'engineering/review.md', license: 'MIT' },
+  }).skill;
+  const second = teachOfficeSkill(data, {
+    name: 'Review checklist',
+    trigger: 'review work',
+    steps: ['Check the audience and message'],
+    assigned_agents: ['Lyra'],
+    source: { repo: 'owner/reference', path: 'marketing/review.md', license: 'MIT' },
+  }).skill;
+  assert.notEqual(first.id, second.id);
+  const view = officeSkillsView(data);
+  assert.equal(view.length, 2);
+  assert.deepEqual(view.find((skill) => skill.id === first.id).assigned_agents, ['Knox']);
+  assert.equal(view.find((skill) => skill.id === first.id).source.path, 'engineering/review.md');
+  assert.deepEqual(view.find((skill) => skill.id === second.id).assigned_agents, ['Lyra']);
+  assert.equal(view.find((skill) => skill.id === second.id).source.path, 'marketing/review.md');
+});
