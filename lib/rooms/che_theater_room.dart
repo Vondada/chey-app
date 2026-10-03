@@ -111,7 +111,7 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
   final CheTheaterGuard _guard = CheTheaterGuard();
   final TextEditingController _address = TextEditingController();
   WebViewController? _web;
-  String _status = 'Say or type a video page address, or activate the Theater TV.';
+  String _status = 'Say or type a video page address, or activate the CHE iWeb TV screen.';
   String? _blockedUrl;
   int _blockedCount = 0;
   bool _watching = false;
@@ -397,16 +397,16 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Theater TV', style: CheType.title),
+              Text('CHE iWeb TV', style: CheType.title),
               const SizedBox(height: CheSpace.xs),
               Text(
-                'Play a video page inside CHE. This stays in the Theater instead of opening another app.',
+                'Play a video page on CHE’s in-app TV. It stays inside CHE. The separate iWebTV iPhone app only opens from the explicit Open iWebTV button.',
                 style: CheType.caption,
               ),
               const SizedBox(height: CheSpace.md),
               Semantics(
                 textField: true,
-                label: 'Video page address for the Theater TV',
+                label: 'Video page address for CHE iWeb TV',
                 child: TextField(
                   controller: input,
                   autofocus: true,
@@ -664,7 +664,7 @@ class _Theater3DStage extends StatelessWidget {
             height: compact ? 160 : 420,
             semanticsLabel: 'Immersive Theater with in-CHE TV',
             primarySurfaceLabel:
-                'Theater TV. Activate to play a video page inside CHE.',
+                'CHE iWeb TV screen. Activate to play a video page inside CHE without leaving the app.',
             onPrimarySurfaceTap: () => unawaited(onScreenTap()),
           ),
         );
