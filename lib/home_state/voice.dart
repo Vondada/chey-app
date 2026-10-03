@@ -8,12 +8,8 @@ extension _CheHomeVoice on _CHEHomeState {
         onStatus: (status) {
           if (!mounted) return;
 
-          final listeningNow = speech.isListening;
-          if (isListening != listeningNow) {
-            _set(() {
-              isListening = listeningNow;
-            });
-          }
+          debugPrint('CHE mic STT_STATUS: $status');
+          _setListening(speech.isListening, 'stt status $status');
 
           final recognitionStopped =
               status == 'done' || status == 'notListening';
@@ -28,15 +24,13 @@ extension _CheHomeVoice on _CHEHomeState {
               !_isSpeaking &&
               !_localVoice.isSpeaking &&
               !_autoSentCurrentTurn) {
-            _restartListeningSoon();
+            _restartListeningSoon(reason: 'stt $status');
           }
         },
         onError: (error) {
           if (!mounted) return;
-
-          _set(() {
-            isListening = false;
-          });
+          debugPrint('CHE mic STT_STATUS: error ${error.errorMsg}');
+          _setListening(false, 'stt error ${error.errorMsg}');
 
           if (!kIsWeb &&
               !_nativeIosVoiceStarting &&
@@ -46,7 +40,10 @@ extension _CheHomeVoice on _CHEHomeState {
               !_isSending &&
               !_isSpeaking &&
               !_localVoice.isSpeaking) {
-            _restartListeningSoon(delay: const Duration(milliseconds: 800));
+            _restartListeningSoon(
+              delay: const Duration(milliseconds: 800),
+              reason: 'stt error ${error.errorMsg}',
+            );
           }
         },
       );
@@ -126,6 +123,8 @@ extension _CheHomeVoice on _CHEHomeState {
       // Native restart is owned by speakText finally so TTS completion cannot
       // race a second mic start/stop against the same turn.
       flutterTts.setCompletionHandler(() {
+        // A pipeline turn ends in _finishSpeechTurn, not per chunk.
+        if (_activeSpeech != null) return;
         _isSpeaking = false;
         if (mounted) _set(() {});
 
@@ -177,19 +176,25 @@ extension _CheHomeVoice on _CHEHomeState {
     }
   }
 
-  Future<bool> _tryNaturalVoice(String text) async {
+  /// Server TTS only: returns the clip, or null so the caller falls back to
+  /// the iPhone voice. Safe to call ahead of playback (prefetch).
+  Future<CheVoiceClip?> _synthesizeServerVoice(String text) async {
+    if (freeNativeVoiceMode) {
+      _naturalVoiceServerErrored = true;
+      return null;
+    }
     _naturalVoiceServerErrored = false;
     _voiceFailReason = '';
 
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) {
-      return false;
+      return null;
     }
 
     if (_localVoice.serverVoiceCoolingDown) {
       _naturalVoiceServerErrored = true;
       _voiceFailReason = 'server voice cooling down';
       debugPrint('CHE voice: skip server TTS (cooldown)');
-      return false;
+      return null;
     }
 
     if (_deviceToken == null ||
@@ -197,7 +202,7 @@ extension _CheHomeVoice on _CHEHomeState {
         integrations['natural_voice'] != true) {
       _naturalVoiceServerErrored = true;
       _voiceFailReason = 'server voice not connected';
-      return false;
+      return null;
     }
 
     try {
@@ -213,7 +218,7 @@ extension _CheHomeVoice on _CHEHomeState {
       if (response.statusCode == 401) {
         _naturalVoiceServerErrored = true;
         await _clearSecuritySession();
-        return false;
+        return null;
       }
 
       if (response.statusCode == 429) {
@@ -221,7 +226,7 @@ extension _CheHomeVoice on _CHEHomeState {
         _naturalVoiceServerErrored = true;
         _voiceFailReason = 'server voice 429';
         debugPrint('CHE voice: server TTS 429 cooldown');
-        return false;
+        return null;
       }
 
       if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
@@ -240,7 +245,7 @@ extension _CheHomeVoice on _CHEHomeState {
           _localVoice.markServerVoiceCooldown();
         }
         debugPrint('CHE voice: server TTS fail ${_voiceFailReason.isEmpty ? response.statusCode : _voiceFailReason}');
-        return false;
+        return null;
       }
       _voiceFailReason = '';
 
@@ -248,32 +253,32 @@ extension _CheHomeVoice on _CHEHomeState {
           response.headers['content-type']?.toLowerCase() ?? '';
       if (!contentType.startsWith('audio/')) {
         _naturalVoiceServerErrored = true;
-        return false;
+        return null;
       }
 
-      final played = await CheNativeVoice.playAudio(response.bodyBytes);
-      if (played) {
-        final engine = (response.headers['x-che-voice'] ?? '').trim();
-        if (mounted) {
-          _set(() {
-            _lastVoiceEngine = engine.isEmpty ? 'server-voice' : engine;
-          });
-        } else {
-          _lastVoiceEngine = engine.isEmpty ? 'server-voice' : engine;
-        }
-        debugPrint('CHE voice: played $_lastVoiceEngine');
-        return true;
-      }
-      // Bytes arrived but nothing audible — keep cascading to neural/native/TTS.
-      _naturalVoiceServerErrored = true;
-      _voiceFailReason = 'server voice playback failed';
-      return false;
+      return CheVoiceClip(response.bodyBytes, (response.headers['x-che-voice'] ?? '').trim());
     } catch (e) {
       _naturalVoiceServerErrored = true;
       _voiceFailReason = e is TimeoutException ? 'server voice timed out' : 'server voice unreachable';
       debugPrint('CHE voice: $_voiceFailReason');
-      return false;
+      return null;
     }
+  }
+
+
+  Future<bool> _playServerVoice(CheVoiceClip clip) async {
+    final played = await CheNativeVoice.playAudio(clip.bytes);
+    if (played) {
+      final engine = clip.engine.isEmpty ? 'server-voice' : clip.engine;
+      if (_lastVoiceEngine != engine) {
+        _lastVoiceEngine = engine;
+        if (mounted) _set(() {});
+      }
+      return true;
+    }
+    _naturalVoiceServerErrored = true;
+    _voiceFailReason = 'server voice playback failed';
+    return false;
   }
 
   /// Routes playback to the loudspeaker (or BT if preferred) so replies are audible.
@@ -320,181 +325,161 @@ extension _CheHomeVoice on _CHEHomeState {
     if (record && mounted && (messages.isEmpty || messages.last['text'] != text)) {
       _set(() => messages.add({'role': 'assistant', 'text': text}));
     }
-    // Mirror the persisted UI Controls toggle (defaults ON).
-    voiceResponsesEnabled = CheUiPreferences.instance.voiceResponsesEnabled;
-    if (_realtimeVoice?.connected == true) {
-      // Realtime owns the speaker while it is mid-turn. Otherwise fall through
-      // to local TTS so greetings / system prompts are not silently dropped when
-      // Realtime is connected but idle — or when its audio path failed open.
-      final phase = _voiceSnapshot.phase;
-      final realtimeBusy = phase == CheVoicePhase.speaking ||
-          phase == CheVoicePhase.thinking ||
-          phase == CheVoicePhase.userSpeaking ||
-          phase == CheVoicePhase.connecting;
-      if (realtimeBusy) {
-        return;
-      }
-    }
-    // CHE refers to and pronounces herself as "CHE" in normal conversation.
-    // "Chay" is reserved for the spoken wake word only, so no substitution
-    // happens here.
-    final spokenText = text;
-
-    if (!voiceResponsesEnabled) {
-      if (kIsWeb && openConversation) {
-        Future.delayed(
-          const Duration(milliseconds: 300),
-          () {
-            if (mounted &&
-                openConversation &&
-                !_isSending &&
-                !_isSpeaking &&
-                !isListening) {
-              _captureWebSpeech();
-            }
-          },
-        );
-      } else if (!kIsWeb && openConversation && !cheSleeping) {
-        _restartListeningSoon();
-      }
-      return;
-    }
-
     // Suppress near-duplicate server+native races of the same sentence.
     if (!_localVoice.acceptSpeak(text)) {
       debugPrint('CHE voice: skip duplicate speak');
       return;
     }
+    final turn = _openSpeechTurn();
+    if (turn == null) return;
+    // CHE refers to and pronounces herself as "CHE"; "Chay" is only the wake
+    // word, so no substitution happens here.
+    turn.add(text);
+    turn.close();
+    await turn.done;
+  }
+
+  /// Starts one spoken assistant turn. Chunks added to the returned pipeline
+  /// are synthesized ahead of playback and played back to back; the mic is
+  /// suppressed once at the start and resumed once at the end of the turn.
+  CheSpeechPipeline<CheVoiceClip>? _openSpeechTurn() {
+    // Mirror the persisted UI Controls toggle (defaults ON).
+    voiceResponsesEnabled = CheUiPreferences.instance.voiceResponsesEnabled;
+    if (_realtimeVoice?.connected == true) {
+      // Realtime owns the speaker while it is mid-turn. Otherwise fall through
+      // to local TTS so greetings / system prompts are not silently dropped.
+      final phase = _voiceSnapshot.phase;
+      if (phase == CheVoicePhase.speaking ||
+          phase == CheVoicePhase.thinking ||
+          phase == CheVoicePhase.userSpeaking ||
+          phase == CheVoicePhase.connecting) {
+        return null;
+      }
+    }
+    if (!voiceResponsesEnabled) {
+      if (kIsWeb && openConversation) {
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted && openConversation && !_isSending && !_isSpeaking && !isListening) {
+            _captureWebSpeech();
+          }
+        });
+      } else if (!kIsWeb && openConversation && !cheSleeping) {
+        _restartListeningSoon(reason: 'voice replies off');
+      }
+      return null;
+    }
+
+    _activeSpeech?.cancel();
     final speechTurn = ++_speechTurn;
     final localGen = _localVoice.goSpeaking();
-    debugPrint('CHE voice: speaking');
+    _mic.invalidate('TTS_START');
+    _isSpeaking = true;
+    debugPrint('CHE voice: TTS_START turn $speechTurn');
+    late final CheSpeechPipeline<CheVoiceClip> turn;
+    turn = CheSpeechPipeline<CheVoiceClip>(
+      ready: _prepareSpeechOutput(),
+      synthesize: (text) async {
+        if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return null;
+        return _synthesizeServerVoice(text);
+      },
+      play: _playServerVoice,
+      fallback: _speakFallbackChunk,
+      log: (m) => debugPrint('CHE voice timing: $m'),
+      onComplete: (cancelled) => _finishSpeechTurn(turn, speechTurn, localGen),
+    );
+    _activeSpeech = turn;
+    if (mounted) _set(() => isListening = false);
+    return turn;
+  }
 
+  /// Once per turn: stop the Flutter recognizer, route audio, and tell the
+  /// native recognizer CHE is talking (it stays open for barge-in).
+  Future<void> _prepareSpeechOutput() async {
     try {
       if (speech.isListening) {
         await _localVoice.runMicOp(() async {
+          debugPrint('CHE mic MIC_STOP_REQUEST: TTS start');
           await speech.stop();
+          debugPrint('CHE mic MIC_STOPPED: TTS start');
         });
       }
-
-      if (mounted) {
-        _set(() {
-          isListening = false;
-        });
-      }
-
-      _isSpeaking = true;
-      if (mounted) _set(() {});
-
       await _ensureAudibleOutput();
-
-      if (!kIsWeb &&
-          defaultTargetPlatform == TargetPlatform.iOS &&
-          _nativeIosVoiceActive) {
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS && _nativeIosVoiceActive) {
         try {
           await CheNativeVoice.setAssistantSpeaking(true);
         } catch (_) {}
       }
+    } catch (_) {}
+  }
 
+  /// iPhone/device voice for one chunk, used only when server TTS failed.
+  Future<bool> _speakFallbackChunk(String text) async {
+    try {
       if (kIsWeb) {
-        final played = await che_web_voice.speakText(spokenText);
-        if (!played) {
-          await flutterTts.stop();
-          await flutterTts.speak(spokenText);
-        }
-      } else if (defaultTargetPlatform == TargetPlatform.iOS) {
-        // Server voice first. The iPhone voice is only a fallback when the
-        // server voice request fails, unless the owner explicitly forces
-        // free native voice mode.
-        var played = false;
-        if (!freeNativeVoiceMode) {
-          played = await _tryNaturalVoice(spokenText);
-        } else {
-          _naturalVoiceServerErrored = true;
-        }
-
-        // Always cascade when prior stage was silent — never leave the owner
-        // with a typed reply and no audio.
-        if (!played) {
-          try {
-            played = await CheNativeVoice.speakNeural(spokenText);
-            if (played && mounted) {
-              _set(() {
-                _lastVoiceEngine = 'iphone-neural';
-              });
-            }
-          } on MissingPluginException {
-            played = false;
-          } catch (_) {
-            played = false;
-          }
-        }
-
-        if (!played) {
-          try {
-            played = await CheNativeVoice.speakText(spokenText);
-            if (played && mounted) {
-              _set(() {
-                _lastVoiceEngine = 'iphone-voice';
-              });
-            }
-          } on MissingPluginException {
-            played = false;
-          } catch (_) {
-            played = false;
-          }
-        }
-
-        if (!played) {
-          await flutterTts.stop();
-          await flutterTts.setVolume(CheUiPreferences.instance.voiceVolume.clamp(0.0, 1.0));
-          await flutterTts.speak(spokenText);
-          if (mounted) {
-            _set(() {
-              _lastVoiceEngine = 'iphone-tts';
-            });
-          }
-        }
-      } else {
+        if (await che_web_voice.speakText(text)) return true;
         await flutterTts.stop();
-        await flutterTts.speak(spokenText);
+        await flutterTts.speak(text);
+        return true;
       }
-    } catch (_) {
-      // Keep the typed response even if audio output fails. Native mode removes
-      // Safari's autoplay restriction entirely.
-    } finally {
-      // Barge-in bumps generation / speechTurn so a cancelled speak cannot
-      // restart the mic or clear the new listening turn.
-      if (speechTurn == _speechTurn && localGen == _localVoice.speechGeneration) {
-        if (!kIsWeb &&
-            defaultTargetPlatform == TargetPlatform.iOS &&
-            _nativeIosVoiceActive) {
+      if (defaultTargetPlatform == TargetPlatform.iOS) {
+        for (final (engine, speak) in [
+          ('iphone-neural', CheNativeVoice.speakNeural),
+          ('iphone-voice', CheNativeVoice.speakText),
+        ]) {
           try {
-            await CheNativeVoice.setAssistantSpeaking(false);
+            if (await speak(text)) {
+              if (_lastVoiceEngine != engine) {
+                _lastVoiceEngine = engine;
+                if (mounted) _set(() {});
+              }
+              return true;
+            }
+          } on MissingPluginException {
+            // Fall through to the next engine.
           } catch (_) {}
         }
-
-        _isSpeaking = false;
-        _localVoice.finishSpeakingToListening(continuous: openConversation && !cheSleeping);
-        if (mounted) _set(() {});
-
-        if (kIsWeb && openConversation) {
-          Future.delayed(
-            const Duration(milliseconds: 450),
-            () {
-              if (mounted &&
-                  openConversation &&
-                  !_isSending &&
-                  !_isSpeaking &&
-                  !isListening) {
-                _captureWebSpeech();
-              }
-            },
-          );
-        } else if (!kIsWeb && openConversation && !cheSleeping) {
-          // Continuous conversation: listen again without requiring wake.
-          _restartListeningSoon();
-        }
+        await flutterTts.stop();
+        await flutterTts.setVolume(CheUiPreferences.instance.voiceVolume.clamp(0.0, 1.0));
+        await flutterTts.speak(text);
+        _lastVoiceEngine = 'iphone-tts';
+        return true;
       }
+      await flutterTts.stop();
+      await flutterTts.speak(text);
+      return true;
+    } catch (_) {
+      // Keep the typed response even if audio output fails.
+      return false;
+    }
+  }
+
+  /// Runs once when a whole spoken turn ends. Barge-in bumps the generation /
+  /// speechTurn, so a cancelled turn cannot restart the mic.
+  Future<void> _finishSpeechTurn(
+    CheSpeechPipeline<CheVoiceClip> turn,
+    int speechTurn,
+    int localGen,
+  ) async {
+    if (identical(_activeSpeech, turn)) _activeSpeech = null;
+    if (speechTurn != _speechTurn || localGen != _localVoice.speechGeneration) return;
+    debugPrint('CHE voice: TTS_END turn $speechTurn');
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS && _nativeIosVoiceActive) {
+      try {
+        await CheNativeVoice.setAssistantSpeaking(false);
+      } catch (_) {}
+    }
+    _isSpeaking = false;
+    _localVoice.finishSpeakingToListening(continuous: openConversation && !cheSleeping);
+    if (mounted) _set(() {});
+    if (kIsWeb && openConversation) {
+      Future.delayed(const Duration(milliseconds: 450), () {
+        if (mounted && openConversation && !_isSending && !_isSpeaking && !isListening) {
+          _captureWebSpeech();
+        }
+      });
+    } else if (!kIsWeb && openConversation && !cheSleeping) {
+      // Continuous conversation: listen again once, after the whole reply.
+      _restartListeningSoon(reason: 'TTS_END');
     }
   }
 
@@ -505,8 +490,10 @@ extension _CheHomeVoice on _CHEHomeState {
       return;
     }
     ++_speechTurn;
+    _activeSpeech?.cancel();
+    _activeSpeech = null;
     _localVoice.bargeIn();
-    _listenRestartTimer?.cancel();
+    _mic.cancelRestart('voice state change');
     debugPrint('CHE voice: barge-in stop TTS');
     if (kIsWeb) {
       try { che_web_voice.stopSpeech(); } catch (_) {}
@@ -562,7 +549,7 @@ extension _CheHomeVoice on _CHEHomeState {
   Future<void> _initNativeIosVoice() async {
     if (_nativeIosVoiceStarting) return;
     _nativeIosVoiceStarting = true;
-    _listenRestartTimer?.cancel();
+    _mic.cancelRestart('voice state change');
     _nativeIosVoiceSub?.cancel();
     _nativeIosVoiceSub = CheNativeVoice.events.listen(
       _handleNativeIosVoiceEvent,
@@ -650,7 +637,7 @@ extension _CheHomeVoice on _CHEHomeState {
       // finally cannot restart TTS or mute the new listen turn.
       ++_speechTurn;
       _localVoice.bargeIn();
-      _listenRestartTimer?.cancel();
+      _mic.cancelRestart('voice state change');
       await flutterTts.stop();
       debugPrint('CHE voice: native barge-in');
 
