@@ -38,10 +38,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout inspected source
+      - name: Checkout current default branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.base_sha }}
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -50,18 +50,36 @@ jobs:
           node-version: 22
 
       - name: Decode and guard task
+        id: guard
         env:
           REQUEST_B64: ${{ inputs.request_b64 }}
+          JOB_ID: ${{ inputs.job_id }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+          MODEL: ${{ inputs.model }}
         run: |
           node <<'NODE'
           const fs = require('fs');
+          const cp = require('child_process');
+          const fail = (kind, message) => {
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `failure=${kind}\n`);
+            console.error(`::error::${message}`);
+            process.exit(2);
+          };
+          const jobId = String(process.env.JOB_ID || '').trim();
+          const baseSha = String(process.env.BASE_SHA || '').trim().toLowerCase();
+          const targetBranch = String(process.env.TARGET_BRANCH || '').trim();
+          const model = String(process.env.MODEL || '').trim();
+          if (!/^ocr-[0-9a-f]{8}$/.test(jobId)) fail('invalid_job_id', 'CHE runtime job id failed validation.');
+          if (!/^[0-9a-f]{40}$/.test(baseSha)) fail('invalid_base_sha', 'CHE runtime base SHA must be the exact 40-character commit id.');
+          if (!targetBranch || targetBranch.length > 160 || targetBranch.includes('..') || targetBranch.startsWith('/') || targetBranch.endsWith('/') || !/^[A-Za-z0-9._\/-]+$/.test(targetBranch)) fail('invalid_target_branch', 'CHE runtime target branch failed validation.');
+          if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._:@\/-]+$/.test(model)) fail('invalid_model', 'CHE runtime model must be provider/model.');
+          const checkedOut = cp.execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim().toLowerCase();
+          if (checkedOut !== baseSha) fail('stale_base_sha', 'CHE runtime refused stale source: main changed after inspection.');
           const encoded = String(process.env.REQUEST_B64 || '');
           let request = '';
-          try { request = Buffer.from(encoded, 'base64').toString('utf8').trim(); } catch (_) { process.exit(2); }
-          if (request.length < 8 || request.length > 16000) {
-            console.error('::error::CHE runtime request failed length validation.');
-            process.exit(2);
-          }
+          try { request = Buffer.from(encoded, 'base64').toString('utf8').trim(); } catch (_) { fail('invalid_request_encoding', 'CHE runtime request is not valid base64.'); }
+          if (request.length < 8 || request.length > 16000) fail('invalid_request_length', 'CHE runtime request failed length validation.');
           const secretLike = [
             /BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY/i,
             /(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/,
@@ -70,10 +88,7 @@ jobs:
             /AIza[0-9A-Za-z_-]{20,}/,
             /xai-[A-Za-z0-9]{20,}/,
           ];
-          if (secretLike.some((re) => re.test(request))) {
-            console.error('::error::CHE runtime request looks like it contains a secret; refusing to send it to OpenCode.');
-            process.exit(2);
-          }
+          if (secretLike.some((re) => re.test(request))) fail('secret_like_request', 'CHE runtime request looks like it contains a secret; refusing to send it to OpenCode.');
           const preamble = [
             'You are a coding worker inside CHE. Work only in this isolated checkout.',
             'Inspect real source before editing. Make the smallest complete change that satisfies the owner request.',
@@ -138,6 +153,7 @@ jobs:
         env:
           EXIT_CODE: ${{ steps.opencode.outputs.exit_code }}
           OPENCODE_OUTCOME: ${{ steps.opencode.outcome }}
+          PREFLIGHT_FAILURE: ${{ steps.guard.outputs.failure }}
           JOB_ID: ${{ inputs.job_id }}
           BASE_SHA: ${{ inputs.base_sha }}
           TARGET_BRANCH: ${{ inputs.target_branch }}
@@ -191,6 +207,7 @@ jobs:
             unsafe_files: unsafe.slice(0, 20),
             opencode_exit_code: exitCode,
             patch_artifact: patch ? artifactName : null,
+            failure: unsafe.length ? 'unsafe_files' : (process.env.PREFLIGHT_FAILURE || (exitCode !== 0 ? 'opencode_failed' : null)),
           };
           fs.writeFileSync('/tmp/che-runtime-result.json', JSON.stringify(result));
           if (patch) fs.writeFileSync('/tmp/che-runtime.patch', patch);
