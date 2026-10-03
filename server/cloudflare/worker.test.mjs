@@ -928,3 +928,32 @@ test('CHE platform API creates isolated personal tenant, enrollment, notificatio
   assert.equal(coreList.requests[0].status, 'submitted');
   assert.equal(coreList.requests[0].decision, null);
 });
+
+
+test('self-update rejects a proposal when main changed after source inspection', async () => {
+  const { openSelfUpdatePr } = await import('./self_update.js');
+  let writes = 0;
+  const fetcher = async (url, options = {}) => {
+    const u = String(url);
+    const method = options.method || 'GET';
+    const reply = (data, status = 200) => new Response(JSON.stringify(data), {
+      status, headers: { 'Content-Type': 'application/json' },
+    });
+    if (method === 'GET' && /api\.github\.com\/repos\/[^/]+\/[^/]+$/.test(u)) return reply({ default_branch: 'main' });
+    if (method === 'GET' && u.includes('/git/ref/heads/main')) return reply({ object: { sha: 'new-main-sha' } });
+    if (method !== 'GET') writes++;
+    return reply({}, 404);
+  };
+  const out = await openSelfUpdatePr(
+    { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' },
+    {
+      summary: 'Safe update',
+      expected_base_sha: 'old-main-sha',
+      files: [{ path: 'lib/main.dart', content: "void main() {}\n" }],
+    },
+    fetcher,
+  );
+  assert.equal(out.status, 409);
+  assert.equal(out.stale_source, true);
+  assert.equal(writes, 0, 'stale proposal must not create a branch or write files');
+});
