@@ -850,3 +850,26 @@ test('overrides, lifecycle methods, tests and named requests are not flagged as 
   const routeAfter = "import { formatSpokenTime } from './util.js';\nconst reply = formatSpokenTime(new Date());";
   assert.deepEqual(unusedNewCode(new Map([[js, ''], [route, '']]), new Map([[js, jsAfter], [route, routeAfter]]), [{ path: js, content: jsAfter }, { path: route, content: routeAfter }]), []);
 });
+
+test('content scan finds source by text and identifiers without any model call', async () => {
+  const { identifierVariants, scoreSourceContent, contentScan } = await import('./self_development.js');
+  assert.deepEqual(identifierVariants('voice button'), ['voiceButton', 'VoiceButton', 'voice_button']);
+  assert.equal(scoreSourceContent("Text('Ready to talk')", ['Ready to talk']), 5);
+  assert.equal(scoreSourceContent("Text('READY TO TALK')", ['Ready to talk']), 3);
+  assert.equal(scoreSourceContent('class VoiceButton extends StatelessWidget {}', ['voice button']), 2);
+  assert.equal(scoreSourceContent('nothing here', ['voice button']), 0);
+
+  const files = {
+    'lib/home/che_home_chat.dart': "Semantics(label: 'Talk to CHE')",
+    'lib/main.dart': 'void main() {}',
+  };
+  const fetcher = async (url) => {
+    const path = decodeURIComponent(new URL(url).pathname.split('/contents/')[1] || '');
+    if (!(path in files)) return new Response('{}', { status: 404 });
+    return new Response(JSON.stringify({ content: Buffer.from(files[path]).toString('base64'), sha: 'x' }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const ctx = { env: { CHE_GITHUB_REPO: 'o/r', CHE_GITHUB_TOKEN: 't' }, diagnostics: [] };
+  const index = { head_sha: 'abc', paths: Object.keys(files), editable_paths: Object.keys(files) };
+  const hits = await contentScan(ctx, index, 'fix the talk to che button on chat', ['Talk to CHE'], fetcher);
+  assert.deepEqual([...hits.keys()], ['lib/home/che_home_chat.dart']);
+});

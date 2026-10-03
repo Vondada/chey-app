@@ -406,6 +406,50 @@ async function searchCode(ctx, terms, fetcher) {
   return hits;
 }
 
+// Identifier variants for a phrase: "voice button" -> voiceButton,
+// VoiceButton, voice_button. Lets the content scan find widgets, classes and
+// functions named after what the owner said, not only visible text.
+export function identifierVariants(term) {
+  const words = String(term || '').toLowerCase().match(/[a-z0-9]+/g) || [];
+  if (words.length < 2) return [];
+  const pascal = words.map((w) => w[0].toUpperCase() + w.slice(1)).join('');
+  return [pascal[0].toLowerCase() + pascal.slice(1), pascal, words.join('_')];
+}
+
+// Scores files by what their CONTENT contains: exact text (5), case-insensitive
+// text (3), identifier variants (2). Pure function, zero model tokens.
+export function scoreSourceContent(text, terms) {
+  const body = String(text || '');
+  const lower = body.toLowerCase();
+  let score = 0;
+  for (const term of terms) {
+    const t = String(term || '').trim();
+    if (t.length < 3) continue;
+    if (body.includes(t)) score += 5;
+    else if (lower.includes(t.toLowerCase())) score += 3;
+    for (const id of identifierVariants(t)) if (body.includes(id)) { score += 2; break; }
+  }
+  return score;
+}
+
+// Deterministic discovery stage that runs BEFORE any model is asked to guess:
+// read the highest-signal tree candidates at the inspected commit and grep
+// their contents. Fixes "could not locate the source" when GitHub code search
+// returns nothing (it is rate-limited and does not index every file).
+export async function contentScan(ctx, index, task, terms, fetcher, { limit = 16 } = {}) {
+  const hits = new Map();
+  const candidates = fallbackTreeCandidates(task, index, terms, limit)
+    .filter((path) => CODE_FILE.test(path));
+  const files = await Promise.all(candidates.map(async (path) => [path, await readFile(ctx.env, index.head_sha, path, fetcher)]));
+  for (const [path, file] of files) {
+    if (!file?.text) continue;
+    const score = scoreSourceContent(file.text, terms);
+    if (score > 0) hits.set(path, score);
+  }
+  note(ctx, { stage: 'search', kind: 'content_scan', scanned: candidates.length, matched: hits.size });
+  return hits;
+}
+
 export function fallbackTreeCandidates(request, index, terms = [], limit = 6) {
   const task = String(request || '').toLowerCase();
   const words = [...new Set([
@@ -992,6 +1036,12 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     const ranked = [...hits.entries()].sort((a, b) => b[1] - a[1]).map(([path]) => path);
     const planned = architecture.paths.filter((p) => index.paths.includes(p));
     let chosen = [...new Set([...ranked, ...planned])].filter((path) => index.paths.includes(path)).slice(0, 5);
+    if (!chosen.length && terms.length) {
+      const scanned = await contentScan(ctx, index, task, terms, fetcher);
+      for (const [path, score] of scanned.entries()) hits.set(path, (hits.get(path) || 0) + score);
+      chosen = [...scanned.entries()].sort((a, b) => b[1] - a[1]).map(([path]) => path).slice(0, 5);
+      if (chosen.length) chat.push({ from: 'CHE', msg: `Content scan found the source: ${chosen.join(', ')}` });
+    }
     if (!chosen.length) {
       const recoveryMember = CREW.planners[1];
       const recovery = await recoveryPlan(ctx, {
