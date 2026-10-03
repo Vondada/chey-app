@@ -506,13 +506,22 @@ function codeWithoutComments(source, { lineComments = true, htmlComments = false
   return out;
 }
 
+function htmlWithoutComments(source) {
+  let text = String(source || '').replace(/<!--[\s\S]*?-->/g, '');
+  text = text.replace(/(<script\b[^>]*>)([\s\S]*?)(<\/script\s*>)/gi, (_match, open, body, close) =>
+    open + codeWithoutComments(body, { lineComments: true, htmlComments: false }) + close);
+  text = text.replace(/(<style\b[^>]*>)([\s\S]*?)(<\/style\s*>)/gi, (_match, open, body, close) =>
+    open + codeWithoutComments(body, { lineComments: false, htmlComments: false }) + close);
+  return text;
+}
+
 function normalizedExecutableSource(source, path = '') {
   const isCss = /\.css$/i.test(String(path || ''));
   const isHtml = /\.html$/i.test(String(path || ''));
-  return codeWithoutComments(source, {
-    lineComments: !isCss && !isHtml,
-    htmlComments: isHtml,
-  })
+  const stripped = isHtml
+    ? htmlWithoutComments(source)
+    : codeWithoutComments(source, { lineComments: !isCss, htmlComments: false });
+  return stripped
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
@@ -546,7 +555,8 @@ export function wantsDocsOnly(request) {
     const docMatch = docs.exec(clause);
     const action = functionalAction.exec(clause);
     if (!action) {
-      if (docMatch) sawDocsTarget = true;
+      if (!docMatch) return false;
+      sawDocsTarget = true;
       continue;
     }
     const verb = action[0];
