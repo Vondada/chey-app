@@ -739,3 +739,12 @@ test('HTML substance strips script comments but preserves URL changes', () => {
     [{ path: 'assets/office3d/view.html', content: urlAfter }],
   ), true);
 });
+
+
+test('docs-only classifier recognizes document verbs and documentation filenames', () => {
+  assert.equal(wantsDocsOnly('document the API'), true);
+  assert.equal(wantsDocsOnly('fix README.md typo'), true);
+  assert.equal(wantsDocsOnly('update docs/setup.md'), true);
+  assert.equal(wantsDocsOnly('update README.md and login flow'), false);
+  assert.equal(wantsDocsOnly('update docs/setup.md. Fix login'), false);
+});
