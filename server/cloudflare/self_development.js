@@ -454,6 +454,36 @@ export function applyEdits(sources, edits) {
   return { sources: next };
 }
 
+// A change "implements" something only if it touches real code: lines that
+// are not blank and not comments, in a source file. Comment-only or
+// docs-only edits are not an implementation (unless docs were requested).
+const CODE_FILE = /\.(?:dart|m?js|cjs|ts|tsx|jsx|swift|kt|java|m|mm|h|html|css)$/i;
+function isCommentOrBlank(line) {
+  const t = String(line || '').trim();
+  return !t || /^(?:\/\/|\/\*|\*|\*\/|#(?!include)|<!--)/.test(t);
+}
+export function substantiveChange(beforeMap, files) {
+  for (const file of files) {
+    if (!CODE_FILE.test(file.path)) continue;
+    const before = String(beforeMap.get(file.path) ?? '').split('\n');
+    const after = String(file.content || '').split('\n');
+    const counts = new Map();
+    for (const line of before) counts.set(line, (counts.get(line) || 0) + 1);
+    const added = [];
+    for (const line of after) {
+      const left = counts.get(line) || 0;
+      if (left > 0) counts.set(line, left - 1); else added.push(line);
+    }
+    const removed = [...counts.entries()].flatMap(([line, n]) => Array(n).fill(line));
+    if ([...added, ...removed].some((line) => !isCommentOrBlank(line))) return true;
+  }
+  return false;
+}
+export function wantsDocsOnly(request) {
+  return /\b(?:doc(?:s|umentation)?|readme|comments?|changelog|notes?)\b/i.test(String(request || ''))
+    && !/\b(?:build|implement|rebuild|redesign|add|create|make|fix|feature)\b/i.test(String(request || ''));
+}
+
 // 0-based line numbers that differ between two versions (in the new version).
 function changedLines(before, after) {
   const a = String(before ?? '').split('\n');
@@ -1012,6 +1042,11 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       if (checked.error) {
         feedbacks[i] = `Deterministic validation rejected the change: ${checked.error} Fix it in a new edit.`;
         failStrategy('validation_failed', checked.error);
+        return null;
+      }
+      if (!wantsDocsOnly(task) && !substantiveChange(sources, changedFiles)) {
+        feedbacks[i] = 'That change only edits comments or documentation; it does not implement anything. Change the real code (widgets, logic, data) that delivers the request.';
+        failStrategy('no_substance', 'comment/docs-only change');
         return null;
       }
       chat.push({ from: member.name, msg: `Round ${round + 1} via ${member.provider}. My change: ${String(answer.summary || '').slice(0, 300)}\n${diff.slice(0, 1500)}` });
