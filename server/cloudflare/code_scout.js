@@ -244,7 +244,7 @@ function decodeBase64Utf8(value) {
   }
 }
 
-export async function inspectReferenceRepo(env, ref, fetcher = fetch, { allowStudyOnly = false } = {}) {
+export async function inspectReferenceRepo(env, ref, fetcher = fetch, { allowStudyOnly = false, readmeChars = 9000 } = {}) {
   const fullName = String(ref?.full_name || ref || '').trim();
   if (!/^[\w.-]+\/[\w.-]+$/.test(fullName)) return { error: 'Invalid repository name.', full_name: fullName };
   const metaResponse = await fetcher(`https://api.github.com/repos/${fullName}`, {
@@ -276,7 +276,7 @@ export async function inspectReferenceRepo(env, ref, fetcher = fetch, { allowStu
   ]);
   const readmeJson = readmeResponse?.ok ? await readmeResponse.json().catch(() => null) : null;
   const rootJson = rootResponse?.ok ? await rootResponse.json().catch(() => []) : [];
-  const readme = decodeBase64Utf8(readmeJson?.content).replace(/\0/g, '').slice(0, 9000);
+  const readme = decodeBase64Utf8(readmeJson?.content).replace(/\0/g, '').slice(0, readmeChars);
   const files = (Array.isArray(rootJson) ? rootJson : [])
     .map((item) => String(item?.path || item?.name || ''))
     .filter(Boolean)
