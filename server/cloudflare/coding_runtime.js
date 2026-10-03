@@ -112,8 +112,9 @@ export class CheCodingRuntime {
     if (!repo) return { status: 503, detail: 'OpenCode runtime needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the Worker.' };
     const request = validateRuntimeRequest(ownerRequest);
     if (request.error) return { status: 400, detail: request.error };
-    const resolvedModel = String(model || this.env.CHE_OPENCODE_MODEL || '').trim();
-    if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._:@\/-]+$/.test(resolvedModel)) {
+    // "auto" lets the runner pick the first provider whose key is configured.
+    const resolvedModel = String(model || this.env.CHE_OPENCODE_MODEL || 'auto').trim();
+    if (resolvedModel !== 'auto' && !/^[A-Za-z0-9._-]+\/[A-Za-z0-9._:@\/-]+$/.test(resolvedModel)) {
       return { status: 503, detail: 'OpenCode runtime needs CHE_OPENCODE_MODEL in provider/model form.' };
     }
     const head = validSha(baseSha);
@@ -149,6 +150,12 @@ export class CheCodingRuntime {
     };
   }
 
+  // Exact commit of the default branch, so the runner refuses stale source.
+  async headSha(branch = 'main') {
+    const found = await gh(this.env, 'GET', `/commits/${encodeURIComponent(branch)}`, null, this.fetcher);
+    return found.ok ? validSha(found.data?.sha) : '';
+  }
+
   async getStatus(sessionId) {
     const id = String(sessionId || '').trim();
     if (!/^ocr-[0-9a-f]{8}$/.test(id)) return { status: 400, detail: 'Invalid coding runtime session id.' };
@@ -164,4 +171,27 @@ export class CheCodingRuntime {
       return { status: 502, detail: 'OpenCode runtime result is not valid compact JSON.' };
     }
   }
+}
+
+// Short spoken summary of a runtime session: found, changed, tests, review,
+// what remains. Never reads logs aloud.
+export function speakRuntimeStatus(result = {}) {
+  const state = String(result.state || 'queued');
+  const files = Number(result.changed_files || 0);
+  const changed = files ? `changed ${files} file${files === 1 ? '' : 's'} (+${Number(result.additions || 0)}/-${Number(result.deletions || 0)})` : 'no files changed yet';
+  const parts = [];
+  switch (state) {
+    case 'queued': parts.push('The coding job is queued on my OpenCode runner.'); break;
+    case 'implemented': parts.push(`My coding runner ${changed}.`); break;
+    case 'pr_open': parts.push(`I ${changed} and opened pull request ${result.pr_number || ''}. Tests are running.`); break;
+    case 'reviewing': parts.push(`Tests passed. My reviewer is checking pull request ${result.pr_number || ''}.`); break;
+    case 'merged': parts.push(`Done. I ${changed}, tests passed, my reviewer approved, and I merged pull request ${result.pr_number || ''}.`); break;
+    case 'review_rejected': parts.push(`Tests passed but my reviewer rejected it: ${String(result.review || '').slice(0, 200)}. I did not merge.`); break;
+    case 'tests_failed': parts.push(`Tests failed on pull request ${result.pr_number || ''}, so I did not merge it.`); break;
+    case 'rolled_back': parts.push('A merged change broke main, so I rolled it back automatically.'); break;
+    case 'no_change': parts.push('My runner found nothing that needed changing.'); break;
+    default: parts.push(`The coding job stopped: ${String(result.failure || state).replace(/_/g, ' ')}.`);
+  }
+  if (result.remaining) parts.push(`Still remaining: ${String(result.remaining).slice(0, 200)}.`);
+  return parts.join(' ');
 }

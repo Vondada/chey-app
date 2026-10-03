@@ -411,6 +411,80 @@ String cheOfficeBoardSpeech(CheOfficeToday? today, CheOfficeConnection connectio
       '${t.agentsWorking} working. $money $blockers $stalled${desks.isEmpty ? '' : ' Desks: $desks.'} Connection ${connection.label}.';
 }
 
+const _codingJobStates = <String>{
+  'queued',
+  'implemented',
+  'pr_open',
+  'reviewing',
+  'merged',
+  'review_rejected',
+  'tests_failed',
+  'rolled_back',
+  'no_change',
+  'blocked',
+};
+
+/// Latest CHE self-coding state, read from the Worker's compact runtime JSON.
+///
+/// Unknown strings are intentionally ignored so the Office never invents or
+/// guesses a progress state that the coding runtime did not report.
+class CheCodingJobStatus {
+  const CheCodingJobStatus({
+    required this.sessionId,
+    required this.state,
+    required this.speech,
+  });
+
+  final String sessionId;
+  final String state;
+  final String speech;
+
+  bool get active => const {'queued', 'implemented', 'pr_open', 'reviewing'}.contains(state);
+
+  String get label => switch (state) {
+        'queued' => 'Queued',
+        'implemented' => 'Implemented',
+        'pr_open' => 'PR open',
+        'reviewing' => 'Reviewing',
+        'merged' => 'Merged',
+        'review_rejected' => 'Review rejected',
+        'tests_failed' => 'Tests failed',
+        'rolled_back' => 'Rolled back',
+        'no_change' => 'No change',
+        'blocked' => 'Blocked',
+        _ => '',
+      };
+
+  static CheCodingJobStatus? fromNdjson(String body) {
+    final speech = StringBuffer();
+    Map<String, dynamic>? done;
+    for (final raw in const LineSplitter().convert(body)) {
+      final line = raw.trim();
+      if (line.isEmpty) continue;
+      try {
+        final decoded = jsonDecode(line);
+        if (decoded is! Map) continue;
+        if (decoded['type'] == 'delta') {
+          speech.write(decoded['delta']?.toString() ?? '');
+        } else if (decoded['type'] == 'done') {
+          done = Map<String, dynamic>.from(decoded);
+        }
+      } catch (_) {
+        // A malformed line cannot become owner-facing state.
+      }
+    }
+    final sessionId = done?['session_id']?.toString().trim() ?? '';
+    final state = done?['state']?.toString().trim() ?? '';
+    if (sessionId.isEmpty || !_codingJobStates.contains(state)) return null;
+    final spoken = speech.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
+    return CheCodingJobStatus(
+      sessionId: sessionId,
+      state: state,
+      speech: spoken.isEmpty ? 'Coding job: ${state.replaceAll('_', ' ')}.' : spoken,
+    );
+  }
+}
+
 /// Thin HTTP client over the Worker's Agent Runtime API.
 class CheAgentRuntimeClient {
   CheAgentRuntimeClient({required this.baseUrl, required this.headers, http.Client? client})
@@ -440,6 +514,31 @@ class CheAgentRuntimeClient {
       throw CheAgentRuntimeException('${decoded['detail'] ?? 'CHE Agent Runtime error ${response.statusCode}.'}');
     }
     return decoded;
+  }
+
+  /// Reads the latest OpenCode job state through the Worker's deterministic
+  /// "coding status" route. That route reads `mailbox/runtime/<session>.json`;
+  /// this client never derives progress from timers, filenames, or UI guesses.
+  Future<CheCodingJobStatus?> codingStatus() async {
+    final request = http.Request('POST', _u('/api/chat'))
+      ..headers.addAll(headers())
+      ..body = jsonEncode({
+        'message': 'coding status',
+        'history': const <Object>[],
+        'owner_mode': true,
+        'agent_mode': 'chat',
+        'client': const {'platform': 'flutter', 'voice_enabled': false},
+      });
+    final response = await http.Response.fromStream(
+      await _http.send(request).timeout(const Duration(seconds: 20)),
+    );
+    if (response.statusCode == 401) {
+      throw const CheAgentRuntimeException('Pair this phone with CHE to see coding status.');
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw CheAgentRuntimeException('CHE coding status error ${response.statusCode}.');
+    }
+    return CheCodingJobStatus.fromNdjson(response.body);
   }
 
   Future<Map<String, dynamic>> roster() => _send('GET', '/api/agents');
@@ -611,6 +710,7 @@ class CheAgentRuntimeController extends ChangeNotifier {
   List<CheMeetingSummary> meetings = const [];
   int working = 0;
   CheOfficeToday? today;
+  CheCodingJobStatus? codingJob;
   String? error;
   bool loaded = false;
   int _failures = 0;
@@ -624,6 +724,7 @@ class CheAgentRuntimeController extends ChangeNotifier {
 
   Timer? _timer;
   Timer? _boardTimer;
+  Timer? _codingTimer;
   bool _disposed = false;
 
   bool get busy => working > 0 || che.status != CheAgentStatus.idle || meetings.any((m) => m.live);
@@ -632,8 +733,13 @@ class CheAgentRuntimeController extends ChangeNotifier {
     if (_timer != null) return;
     unawaited(refresh());
     unawaited(refreshBoard());
+    unawaited(refreshCodingStatus());
     // Stripe webhooks update the server immediately; this poll is the backup.
     _boardTimer = Timer.periodic(const Duration(seconds: 45), (_) => unawaited(refreshBoard()));
+    // Coding state is cheap/deterministic and changes during CI/review, so keep
+    // it fresher than the money/board snapshot while the Office is open
+    // (each poll is one GitHub read in the Worker, so not faster than 20s).
+    _codingTimer = Timer.periodic(const Duration(seconds: 20), (_) => unawaited(refreshCodingStatus()));
   }
 
   void stop() {
@@ -641,6 +747,8 @@ class CheAgentRuntimeController extends ChangeNotifier {
     _timer = null;
     _boardTimer?.cancel();
     _boardTimer = null;
+    _codingTimer?.cancel();
+    _codingTimer = null;
   }
 
   void _schedule() {
@@ -684,6 +792,21 @@ class CheAgentRuntimeController extends ChangeNotifier {
       if (!_disposed) notifyListeners();
     } catch (_) {
       // Board/Stripe is supplemental. Never let it take the live roster down.
+    }
+  }
+
+  Future<void> refreshCodingStatus() async {
+    try {
+      final next = await client.codingStatus();
+      if (_disposed) return;
+      final changed = next?.sessionId != codingJob?.sessionId ||
+          next?.state != codingJob?.state ||
+          next?.speech != codingJob?.speech;
+      codingJob = next;
+      if (changed) notifyListeners();
+    } catch (_) {
+      // Coding status is supplemental. Keep the last verified state instead of
+      // replacing it with an invented "offline" or "failed" status.
     }
   }
 

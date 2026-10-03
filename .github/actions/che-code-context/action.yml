@@ -1,0 +1,44 @@
+name: CHE code context
+description: Build local code context for OpenCode without spending model tokens.
+
+outputs:
+  hint:
+    description: One-paragraph guidance for using Graphify and opensrc before broad file reads.
+    value: ${{ steps.context.outputs.hint }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build deterministic code context
+      id: context
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Keep Graphify's generated knowledge graph available to the coding
+        # agent while guaranteeing it never becomes part of the source diff.
+        mkdir -p .git/info
+        if ! grep -qxF 'graphify-out/' .git/info/exclude 2>/dev/null; then
+          printf '%s\n' 'graphify-out/' >> .git/info/exclude
+        fi
+
+        # Graphify's code-only extractor is local tree-sitter analysis: no LLM
+        # call or provider key is needed for this stage.
+        if ! command -v pipx >/dev/null 2>&1; then
+          python3 -m pip install --user pipx
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          python3 -m pipx install graphifyy
+        elif ! command -v graphify >/dev/null 2>&1; then
+          pipx install graphifyy
+        fi
+
+        graphify extract . --code-only
+
+        # opensrc lets the coding agent inspect the exact implementation of a
+        # dependency instead of guessing from docs or type declarations.
+        npm install --global opensrc
+
+        hint='Use graphify query before reading broad source files so the local graph narrows the relevant files and call paths; when behavior comes from a dependency, run opensrc path <pkg> and inspect that fetched source instead of guessing from documentation or types.'
+        echo "hint=$hint" >> "$GITHUB_OUTPUT"
+        echo "$hint" >> "$GITHUB_STEP_SUMMARY"

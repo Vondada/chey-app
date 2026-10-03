@@ -54,6 +54,7 @@ import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSna
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
+import { CheCodingRuntime, codingRuntimeEnabled, speakRuntimeStatus } from './coding_runtime.js';
 import { handoffIntent, latestHandoff, unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
 import { LA_AGENCIA_ROLES, agentActionGuard, ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
@@ -5966,6 +5967,13 @@ export class CheState extends DurableObject {
         // "CHE, do Claude's handoff": turn the latest handoff an AI left in the
         // GitHub mailbox into a real reviewed coding job. Owner-only, and each
         // handoff message id launches at most once (no duplicate job cycles).
+        // "coding status": short spoken summary of the latest OpenCode session.
+        if (/^\s*(?:che[,:]?\s*)?(?:what(?:'s| is) the\s+)?coding (?:job )?status\??\s*$|^\s*how(?:'s| is) (?:the|my) coding job( going)?\??\s*$/i.test(message)) {
+          const id = await this.ctx.storage.get('che_runtime_last_session');
+          if (!id) return ndjsonReply('No OpenCode coding job has started yet, sir.', { source: 'che_coding_status' });
+          const status = await new CheCodingRuntime(this.env).getStatus(id);
+          return ndjsonReply(status.status === 200 ? speakRuntimeStatus(status) : String(status.detail || 'I could not read the coding job status.'), { source: 'che_coding_status', session_id: id, state: status.state || null });
+        }
         const handoff = handoffIntent(message);
         if (handoff) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can start a handoff.', { source: 'che_handoff', ok: false });
@@ -7676,6 +7684,17 @@ export class CheState extends DurableObject {
   // Owner chat reply for a coding request. Proposal → short summary;
   // failures → one human-level sentence (diagnostics stay on the Worker).
   async selfDevelopmentReply(message, { vectorRecall = {} } = {}) {
+    // OpenCode runtime first when it is switched on; the built-in coding team
+    // is the automatic fallback whenever the runner cannot start.
+    if (codingRuntimeEnabled(this.env)) {
+      const started = await this.startOpenCodeSession(message).catch((error) => ({ status: 0, detail: String(error?.message || error) }));
+      if (started.status === 202) {
+        return ndjsonReply(`I handed this to my OpenCode coding runner, sir. It will change the code, open a pull request, run the tests, have my reviewer check it, and merge it if everything passes. Ask "coding status" anytime.`, {
+          source: 'che_self_development', runtime: 'opencode', session_id: started.session_id,
+        });
+      }
+      await this.ctx.storage.put('che_runtime_last_fallback', { at: new Date().toISOString(), detail: String(started.detail || '').slice(0, 300) });
+    }
     const response = await dispatchChange(this.env, { request: message }, this.ctx.storage, {
       queue: (args) => this.queueSelfDevelopment(args),
       topicStudy: (intent, text) => this.startTopicStudy(intent, text),
@@ -7698,6 +7717,22 @@ export class CheState extends DurableObject {
       vector_memory_checked: Boolean(vectorRecall.checked),
       vector_memory_matches: vectorRecall.matches?.length || 0,
     });
+  }
+
+  async startOpenCodeSession(message) {
+    const runtime = new CheCodingRuntime(this.env);
+    const baseSha = await runtime.headSha('main');
+    const jobId = crypto.randomUUID();
+    const started = await runtime.createSession({
+      jobId,
+      ownerRequest: String(message || '').replace(/^\s*update your code\s*:?\s*/i, ''),
+      baseSha,
+      targetBranch: `che/auto/${jobId.slice(0, 8)}`,
+    });
+    if (started.status === 202) {
+      await this.ctx.storage.put('che_runtime_last_session', started.session_id);
+    }
+    return started;
   }
 
   async processJobs() {

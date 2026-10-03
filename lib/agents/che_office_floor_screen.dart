@@ -343,6 +343,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
           ? 'The Office is empty. Ask CHE to build a team.'
           : '${r.agents.length} agents, $working working.',
       if (r.che.task != null) 'CHE: ${r.che.task}.',
+      if (r.codingJob != null) 'Coding job: ${r.codingJob!.speech}',
       for (final p in r.agents)
         '${p.agent.name}, ${p.agent.role}: ${p.agent.task?.isNotEmpty == true ? p.agent.task : p.agent.status.label}.',
       if (r.meetings.isNotEmpty) '${r.meetings.length} War Room meetings.',
@@ -396,6 +397,13 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
         const SizedBox(height: CheSpace.md),
         _officeStage(),
         const SizedBox(height: CheSpace.sm),
+        if (r.codingJob != null) ...[
+          CheCodingJobCard(
+            status: r.codingJob!,
+            onReadAloud: () => _speak(r.codingJob!.speech),
+          ),
+          const SizedBox(height: CheSpace.sm),
+        ],
         if (r.che.task != null)
           Row(children: [
             Expanded(
@@ -610,6 +618,66 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
             CheOfficeHeader(today: r.today, connection: r.connection),
             Expanded(child: list),
           ]),
+        ),
+      ),
+    );
+  }
+}
+
+/// Visible, VoiceOver-live mirror of the real OpenCode runtime state.
+class CheCodingJobCard extends StatelessWidget {
+  const CheCodingJobCard({
+    super.key,
+    required this.status,
+    required this.onReadAloud,
+  });
+
+  final CheCodingJobStatus status;
+  final VoidCallback onReadAloud;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (status.state) {
+      'merged' || 'no_change' => CheColors.success,
+      'review_rejected' || 'tests_failed' || 'rolled_back' || 'blocked' => CheColors.danger,
+      'reviewing' || 'pr_open' => CheColors.accent,
+      _ => CheColors.warning,
+    };
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label: 'CHE coding job. ${status.label}. ${status.speech}',
+      excludeSemantics: true,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(CheSpace.md),
+        decoration: BoxDecoration(
+          color: CheColors.surface,
+          borderRadius: BorderRadius.circular(CheRadius.md),
+          border: Border.all(color: color.withValues(alpha: 0.65)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.code_rounded, color: color),
+            const SizedBox(width: CheSpace.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('CHE CODING · ${status.label.toUpperCase()}',
+                      style: CheType.overline.copyWith(color: color)),
+                  const SizedBox(height: 2),
+                  Text(status.speech, style: CheType.caption),
+                ],
+              ),
+            ),
+            IconButton(
+              tooltip: 'Read coding status',
+              onPressed: onReadAloud,
+              icon: const Icon(Icons.volume_up_rounded),
+            ),
+          ],
         ),
       ),
     );

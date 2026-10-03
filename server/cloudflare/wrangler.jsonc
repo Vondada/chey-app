@@ -8,7 +8,7 @@
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
   // Non-secret repository target for CHE's owner-approved self-development.
   // The write credential itself remains the encrypted CHE_GITHUB_TOKEN secret.
-  "vars": { "CHE_GITHUB_REPO": "Vondada/chey-app" },
+  "vars": { "CHE_GITHUB_REPO": "Vondada/chey-app", "CHE_CODING_RUNTIME": "opencode", "CHE_OPENCODE_MODEL": "auto" },
   // Nightly review at 07:07 UTC (about 2 AM Central).
   "triggers": { "crons": ["7 7 * * *"] },
   "durable_objects": {

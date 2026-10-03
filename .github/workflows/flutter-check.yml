@@ -20,7 +20,19 @@ jobs:
         with:
           channel: stable
       - run: bash tool/bootstrap.sh
-      - run: flutter analyze
+      - name: flutter analyze
+        run: |
+          set +e
+          dart analyze --fatal-infos --format=machine > analyze.txt 2>&1
+          code=$?
+          # Surface each issue as a GitHub annotation so the exact file/line is
+          # readable from the PR (and by CHE/autopilot) without raw log access.
+          grep -E '^(ERROR|WARNING|INFO)\|' analyze.txt | while IFS='|' read -r sev type rule file line col len msg; do
+            lvl=error; [ "$sev" = INFO ] && lvl=notice; [ "$sev" = WARNING ] && lvl=warning
+            echo "::$lvl file=${file#"$PWD/"},line=$line,col=$col,title=$rule::$msg"
+          done
+          cat analyze.txt
+          exit $code
       - name: flutter test
         run: |
           set +e
