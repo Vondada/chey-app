@@ -80,3 +80,17 @@ test('mailboxHead resolves the live che-mailbox branch ref', async () => {
   const head = await mailboxHead(env, fetcher);
   assert.equal(head.head, 'm');
 });
+
+test('handoff intent and latest handoff pick the right message', async () => {
+  const { handoffIntent, latestHandoff } = await import('./mailbox.js');
+  assert.deepEqual(handoffIntent("CHE, do Claude's handoff"), { peer: 'claude' });
+  assert.deepEqual(handoffIntent('continue the ChatGPT handoff'), { peer: 'chatgpt' });
+  assert.equal(handoffIntent('what is a handoff in football'), null);
+  const msgs = [
+    { id: '1', from: 'claude', to: 'che', text: 'old' },
+    { id: '2', from: 'che', to: 'claude', text: 'ok' },
+    { id: '3', from: 'claude', to: 'che', text: 'new work' },
+  ];
+  assert.equal(latestHandoff(msgs, 'claude').id, '3');
+  assert.equal(latestHandoff(msgs, 'grok'), null);
+});

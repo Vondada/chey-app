@@ -204,3 +204,22 @@ export function relayText(ownerText) {
        .replace(/\byou\b/gi, 'CHE');
   return t.trim();
 }
+
+// "CHE, do Claude's handoff" / "continue ChatGPT's handoff": the owner tells
+// CHE to act on the latest handoff another AI left her. Short commands only.
+export function handoffIntent(text) {
+  const t = String(text || '').trim();
+  if (t.length > 120) return null;
+  const m = t.match(/\b(?:do|start|run|work on|continue|pick up|take|finish)\b[\s\S]{0,25}?\b(claude|chatgpt|codex|gemini|cursor|copilot|grok)(?:'s|s)?\s+(?:handoff|hand-off|work split|split|brief|task)\b/i);
+  return m ? { peer: m[1].toLowerCase() } : null;
+}
+
+// Latest message that peer addressed to CHE, or null.
+export function latestHandoff(messages, peer) {
+  const list = Array.isArray(messages) ? messages : [];
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const m = list[i];
+    if (m?.from === peer && m?.to === 'che' && m?.id && String(m.text || '').trim()) return m;
+  }
+  return null;
+}

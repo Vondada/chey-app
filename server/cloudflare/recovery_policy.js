@@ -120,9 +120,14 @@ export function strategyFingerprint(answer) {
 // Per-job AI budget: call ceiling, per-stage ceilings and an estimated token
 // ceiling. Exhaustion is a hard stop, never a silent extra loop.
 export class AgentBudget {
-  constructor({ maxCalls = 32, maxTokens = 160_000, stageLimits = {} } = {}) {
+  constructor({ maxCalls = 32, maxTokens = 160_000, stageLimits = {}, maxElapsedMs = 15 * 60_000, maxIdenticalErrors = 3, now = () => Date.now() } = {}) {
     this.maxCalls = maxCalls;
     this.maxTokens = maxTokens;
+    this.maxElapsedMs = maxElapsedMs;
+    this.maxIdenticalErrors = maxIdenticalErrors;
+    this.now = now;
+    this.startedAt = now();
+    this.errorCounts = {};
     this.stageLimits = { planner: 2, engineer: 6, reviewer: 16, recovery: 3, ...stageLimits };
     this.calls = 0;
     this.tokens = 0;
@@ -133,6 +138,8 @@ export class AgentBudget {
     const used = this.byStage[stage] || 0;
     const limit = this.stageLimits[stage];
     if (this.calls >= this.maxCalls) return false;
+    if (this.now() - this.startedAt > this.maxElapsedMs) return false;
+    if (this.repeatedError()) return false;
     if (Number.isFinite(limit) && used >= limit) return false;
     if (this.tokens + Math.max(0, estimatedTokens) > this.maxTokens) return false;
     return true;
@@ -150,12 +157,30 @@ export class AgentBudget {
     this.byStage[stage] = (this.byStage[stage] || 0) + 1;
   }
 
+  // Same provider + failure kind more than maxIdenticalErrors times means the
+  // approach is not working: stop instead of paying for another identical try.
+  recordError(signature) {
+    const key = String(signature || 'unknown').slice(0, 200);
+    this.errorCounts[key] = (this.errorCounts[key] || 0) + 1;
+    return this.errorCounts[key];
+  }
+
+  repeatedError() {
+    return Object.entries(this.errorCounts).find(([, n]) => n > this.maxIdenticalErrors)?.[0] || '';
+  }
+
   addOutput(tokens) {
     this.tokens += Math.max(0, Math.ceil(Number(tokens) || 0));
   }
 
   snapshot() {
-    return { calls: this.calls, tokens_estimated: this.tokens, by_stage: { ...this.byStage } };
+    return {
+      calls: this.calls,
+      tokens_estimated: this.tokens,
+      by_stage: { ...this.byStage },
+      elapsed_ms: this.now() - this.startedAt,
+      ...(this.repeatedError() ? { stopped_on_repeated_error: this.repeatedError() } : {}),
+    };
   }
 }
 
