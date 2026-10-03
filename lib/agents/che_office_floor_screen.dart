@@ -395,15 +395,15 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
           ],
         ),
         const SizedBox(height: CheSpace.md),
+        _officeStage(),
+        const SizedBox(height: CheSpace.sm),
         if (r.codingJob != null) ...[
           CheCodingJobCard(
             status: r.codingJob!,
             onReadAloud: () => _speak(r.codingJob!.speech),
           ),
-          const SizedBox(height: CheSpace.md),
+          const SizedBox(height: CheSpace.sm),
         ],
-        _officeStage(),
-        const SizedBox(height: CheSpace.sm),
         if (r.che.task != null)
           Row(children: [
             Expanded(

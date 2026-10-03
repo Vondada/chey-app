@@ -737,8 +737,9 @@ class CheAgentRuntimeController extends ChangeNotifier {
     // Stripe webhooks update the server immediately; this poll is the backup.
     _boardTimer = Timer.periodic(const Duration(seconds: 45), (_) => unawaited(refreshBoard()));
     // Coding state is cheap/deterministic and changes during CI/review, so keep
-    // it fresher than the money/board snapshot while the Office is open.
-    _codingTimer = Timer.periodic(const Duration(seconds: 6), (_) => unawaited(refreshCodingStatus()));
+    // it fresher than the money/board snapshot while the Office is open
+    // (each poll is one GitHub read in the Worker, so not faster than 20s).
+    _codingTimer = Timer.periodic(const Duration(seconds: 20), (_) => unawaited(refreshCodingStatus()));
   }
 
   void stop() {
