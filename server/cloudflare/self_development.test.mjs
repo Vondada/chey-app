@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyEdits, attemptFingerprint, diagnoseNoOp, fallbackTreeCandidates, focusView, jsonObject, literalTerms, loadLessons, prepareSelfUpdate, recordLesson } from './self_development.js';
+import { applyEdits, attemptFingerprint, diagnoseNoOp, fallbackTreeCandidates, focusView, jsonObject, literalTerms, loadLessons, prepareSelfUpdate, recordLesson, substantiveChange, wantsDocsOnly } from './self_development.js';
 
 const MAIN = `class Home {\n  String _statusBanner = 'Ready. Type or speak a request.';\n}\n`;
 const PATCH = `const t = Text('CHE updated. Restart to apply.');\n`;
@@ -669,4 +669,23 @@ test('review pipeline receives fetched source and never asks owner to supply rep
   assert.equal(reviewerSawSource, true);
   assert.equal(out.approval_required, true);
   assert.deepEqual(out.proposal.files.map((file) => file.path), ['lib/main.dart']);
+});
+
+
+test('substance check ignores multiline and HTML comment-only edits', () => {
+  const dartBefore = 'class A {\n  /*\n  old explanation\n  */\n  int value = 1;\n}\n';
+  const dartAfter = 'class A {\n  /*\n  new explanation\n  */\n  int value = 1;\n}\n';
+  const htmlBefore = '<div>real</div>\n<!--\nold note\n-->\n';
+  const htmlAfter = '<div>real</div>\n<!--\nnew note\n-->\n';
+  assert.equal(substantiveChange(new Map([['lib/a.dart', dartBefore]]), [{ path: 'lib/a.dart', content: dartAfter }]), false);
+  assert.equal(substantiveChange(new Map([['web/a.html', htmlBefore]]), [{ path: 'web/a.html', content: htmlAfter }]), false);
+  assert.equal(substantiveChange(new Map([['lib/a.dart', dartBefore]]), [{ path: 'lib/a.dart', content: dartAfter.replace('int value = 1;', 'int value = 2;') }]), true);
+});
+
+test('docs-only intent accepts normal action verbs without hiding mixed code work', () => {
+  for (const request of ['fix the README typo', 'create setup documentation', 'add comments explaining setup', 'update docs for the API route']) {
+    assert.equal(wantsDocsOnly(request), true, request);
+  }
+  assert.equal(wantsDocsOnly('rebuild the Brain room and update the README'), false);
+  assert.equal(wantsDocsOnly('fix the feature according to the README'), false);
 });
