@@ -748,3 +748,47 @@ test('docs-only classifier recognizes document verbs and documentation filenames
   assert.equal(wantsDocsOnly('update README.md and login flow'), false);
   assert.equal(wantsDocsOnly('update docs/setup.md. Fix login'), false);
 });
+
+
+test('Copilot: HTML comments do not alter script/style strings and script comments stay non-substantive', () => {
+  const before = [
+    '<div data-note="<!-- literal -->">x</div>',
+    '<script>',
+    'const marker = "<!-- literal -->";',
+    '// old explanation',
+    'const url = "https://cdn.example.com/a.js";',
+    '</script>',
+    '<style>',
+    '.x::after { content: "<!-- literal -->"; }',
+    '</style>',
+  ].join('\n');
+  const commentOnly = before.replace('// old explanation', '// new explanation');
+  const realStringChange = before.replace('<!-- literal -->";', '<!-- changed -->";');
+  assert.equal(substantiveChange(new Map([['web/a.html', before]]), [{ path: 'web/a.html', content: commentOnly }]), false);
+  assert.equal(substantiveChange(new Map([['web/a.html', before]]), [{ path: 'web/a.html', content: realStringChange }]), true);
+});
+
+test('Copilot: executable string whitespace changes remain substantive', () => {
+  const before = 'const label = "hello world";\n';
+  const after = 'const label = "hello  world";\n';
+  assert.equal(substantiveChange(new Map([['server/a.js', before]]), [{ path: 'server/a.js', content: after }]), true);
+});
+
+test('Copilot: docs-only classification checks every mutation action', () => {
+  assert.equal(wantsDocsOnly('fix README and enable login'), false);
+  assert.equal(wantsDocsOnly('update docs, support OAuth'), false);
+  assert.equal(wantsDocsOnly('create setup documentation and configure login'), false);
+  assert.equal(wantsDocsOnly('fix README typo and update docs/setup.md'), true);
+});
+
+test('Copilot: feature mutation verbs around docs references never count as docs-only', () => {
+  for (const request of [
+    'enable login according to the README',
+    'support OAuth per documentation',
+    'configure login based on the guide',
+    'wire login using the docs',
+    'connect OAuth per README',
+  ]) {
+    assert.equal(wantsDocsOnly(request), false, request);
+  }
+});
