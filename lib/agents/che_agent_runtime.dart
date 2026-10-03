@@ -70,6 +70,9 @@ class CheAgentProfile {
     this.assignmentTask = '',
     this.assignmentStatus = '',
     this.provider = 'auto',
+    this.strengths = const [],
+    this.limitations = const [],
+    this.capabilityRequirements = const [],
   });
 
   final CheAgent agent;
@@ -93,6 +96,9 @@ class CheAgentProfile {
 
   /// Provider family this employee prefers (xai, openai, … or auto).
   final String provider;
+  final List<String> strengths;
+  final List<String> limitations;
+  final List<String> capabilityRequirements;
 
   static CheAgentProfile fromJson(Map<String, dynamic> j) {
     final loc = j['location'] is Map ? j['location'] as Map : const {};
@@ -110,15 +116,62 @@ class CheAgentProfile {
       assignmentTask: '${latest['task'] ?? ''}',
       assignmentStatus: '${latest['status'] ?? ''}',
       provider: '${j['provider_preference'] ?? 'auto'}',
+      strengths: [for (final x in (j['strengths'] as List? ?? const [])) '$x'],
+      limitations: [for (final x in (j['limitations'] as List? ?? const [])) '$x'],
+      capabilityRequirements: [
+        for (final x in (j['capability_requirements'] as List? ?? const [])) '$x'
+      ],
+    );
+  }
+}
+
+class CheAgentSkill {
+  const CheAgentSkill({
+    required this.id,
+    required this.name,
+    this.trigger = '',
+    this.capabilities = const [],
+    this.sourceRepo = '',
+    this.sourcePath = '',
+    this.sourceLicense = '',
+    this.uses = 0,
+  });
+
+  final String id;
+  final String name;
+  final String trigger;
+  final List<String> capabilities;
+  final String sourceRepo;
+  final String sourcePath;
+  final String sourceLicense;
+  final int uses;
+
+  static CheAgentSkill fromJson(Map<String, dynamic> j) {
+    final source = j['source'] is Map ? j['source'] as Map : const {};
+    return CheAgentSkill(
+      id: '${j['id'] ?? ''}',
+      name: '${j['name'] ?? 'Skill'}',
+      trigger: '${j['trigger'] ?? ''}',
+      capabilities: [for (final x in (j['capabilities'] as List? ?? const [])) '$x'],
+      sourceRepo: '${source['repo'] ?? ''}',
+      sourcePath: '${source['path'] ?? ''}',
+      sourceLicense: '${source['license'] ?? ''}',
+      uses: (j['uses'] as num?)?.toInt() ?? 0,
     );
   }
 }
 
 class CheAgentDetail {
-  const CheAgentDetail({required this.profile, required this.history, required this.meetings});
+  const CheAgentDetail({
+    required this.profile,
+    required this.history,
+    required this.meetings,
+    this.skills = const [],
+  });
   final CheAgentProfile profile;
   final List<CheAgentTask> history;
   final List<CheMeetingSummary> meetings;
+  final List<CheAgentSkill> skills;
 }
 
 class CheMeetingSummary {
@@ -421,6 +474,10 @@ class CheAgentRuntimeClient {
       meetings: [
         for (final m in (j['meetings'] as List? ?? const []))
           if (m is Map<String, dynamic>) CheMeetingSummary.fromJson(m),
+      ],
+      skills: [
+        for (final skill in (j['skills'] as List? ?? const []))
+          if (skill is Map<String, dynamic>) CheAgentSkill.fromJson(skill),
       ],
     );
   }
