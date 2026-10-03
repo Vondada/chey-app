@@ -25,7 +25,7 @@ import '../agents/che_office_world.dart' show CheRoomVisitors;
 import '../che_ui/che_theme.dart';
 import '../browser/che_browser.dart';
 import '../browser/che_embedded_app_shell.dart';
-import '../widgets/che_3d_room_view.dart';
+import '../widgets/che_native_scene_world.dart';
 
 enum CheTheaterVerdict { allow, blockPopup, blockRedirect, blockScheme, blockDownload }
 
@@ -370,6 +370,72 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
     await _web?.loadRequest(Uri.parse(url));
   }
 
+  Future<void> _openTheaterScreen() async {
+    final typed = _address.text.trim();
+    final now = CheBrowserStore.instance.nowPlaying.value;
+    final existing = typed.isNotEmpty ? typed : (now?.url ?? '').trim();
+    if (existing.isNotEmpty) {
+      _address.text = existing;
+      await _open(existing);
+      return;
+    }
+
+    final input = TextEditingController();
+    final raw = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: CheColors.surface,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            CheSpace.gutter,
+            CheSpace.md,
+            CheSpace.gutter,
+            CheSpace.lg + MediaQuery.viewInsetsOf(sheetContext).bottom,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Theater TV', style: CheType.title),
+              const SizedBox(height: CheSpace.xs),
+              Text(
+                'Play a video page inside CHE. This stays in the Theater instead of opening another app.',
+                style: CheType.caption,
+              ),
+              const SizedBox(height: CheSpace.md),
+              Semantics(
+                textField: true,
+                label: 'Video page address for the Theater TV',
+                child: TextField(
+                  controller: input,
+                  autofocus: true,
+                  keyboardType: TextInputType.url,
+                  textInputAction: TextInputAction.go,
+                  onSubmitted: (value) => Navigator.pop(sheetContext, value),
+                  decoration: const InputDecoration(
+                    labelText: 'Video page address',
+                    hintText: 'https://…',
+                  ),
+                ),
+              ),
+              const SizedBox(height: CheSpace.md),
+              FilledButton.icon(
+                onPressed: () => Navigator.pop(sheetContext, input.text),
+                icon: const Icon(Icons.live_tv_rounded),
+                label: const Text('Play inside CHE'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    final value = raw?.trim() ?? '';
+    if (value.isEmpty) return;
+    _address.text = value;
+    await _open(value);
+  }
+
   Future<void> _stop() async {
     if (_isYouTube) await _learnCurrentVideo(quiet: true);
     await _web?.loadHtmlString('<html><body style="background:#000"></body></html>');
@@ -521,7 +587,7 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
         Expanded(
           child: RepaintBoundary(
             child: web == null
-                ? _Theater3DStage(runtime: widget.runtime)
+                ? _Theater3DStage(runtime: widget.runtime, onScreenTap: _openTheaterScreen)
                 : Container(
                     color: Colors.black,
                     child: WebViewWidget(
@@ -537,7 +603,7 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
             padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.xs, CheSpace.gutter, 0),
             child: SizedBox(
               height: 160,
-              child: _Theater3DStage(runtime: widget.runtime, compact: true),
+              child: _Theater3DStage(runtime: widget.runtime, compact: true, onScreenTap: _openTheaterScreen),
             ),
           ),
         CheRoomVisitors(runtime: widget.runtime, rooms: const {'theater'}, onOpenOffice: widget.onOpenOffice),
@@ -548,32 +614,40 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
 
 
 class _Theater3DStage extends StatelessWidget {
-  const _Theater3DStage({required this.runtime, this.compact = false});
+  const _Theater3DStage({
+    required this.runtime,
+    required this.onScreenTap,
+    this.compact = false,
+  });
+
   final CheAgentRuntimeController runtime;
+  final Future<void> Function() onScreenTap;
   final bool compact;
 
-  Map<String, dynamic> _payload() {
-    final now = CheBrowserStore.instance.nowPlaying.value;
-    final visitors = <Map<String, dynamic>>[
+  List<CheSceneEntity> _visitors() {
+    final visitors = <CheSceneEntity>[
       for (final p in runtime.agents)
         if (p.room == 'theater' || p.agent.status == CheAgentStatus.idle)
-          {
-            'id': p.agent.id,
-            'name': p.agent.name,
-            'role': p.agent.role,
-            'status': p.room == 'theater' ? 'working' : 'idle',
-            'isChe': false,
-          },
+          CheSceneEntity(
+            id: p.agent.id,
+            label: p.agent.name,
+            description:
+                p.room == 'theater' ? 'Watching in the Theater' : 'Available seat visitor',
+            color: p.agent.color,
+            state: p.room == 'theater' ? 'working' : 'idle',
+          ),
     ];
     if (visitors.isEmpty) {
-      visitors.add({'id': 'che', 'name': 'CHE', 'role': 'Host', 'status': 'idle', 'isChe': true});
+      visitors.add(
+        const CheSceneEntity(
+          id: 'che',
+          label: 'CHE',
+          description: 'Theater host',
+          color: CheColors.accent,
+        ),
+      );
     }
-    return {
-      'agents': visitors,
-      'nowPlaying': now == null
-          ? null
-          : {'url': now.url, 'title': now.title},
-    };
+    return visitors;
   }
 
   @override
@@ -581,14 +655,18 @@ class _Theater3DStage extends StatelessWidget {
     return ValueListenableBuilder<CheBrowserEntry?>(
       valueListenable: CheBrowserStore.instance.nowPlaying,
       builder: (context, value, child) {
-        return Che3DRoomView(
-          assetPath: 'assets/office3d/theater.html',
-          updateFunction: 'updateScene',
-          payload: _payload(),
-          height: compact ? 160 : 420,
-          backgroundColor: const Color(0xFF1A1410),
-          semanticsLabel: '3D Theater with browser TV',
-          fallbackMessage: '3D Theater unavailable on this device.',
+        return ValueListenableBuilder<CheSceneQuality>(
+          valueListenable: CheSceneQualityStore.value,
+          builder: (context, quality, _) => CheNativeSceneWorld(
+            mode: CheSceneMode.theater,
+            quality: quality,
+            entities: _visitors(),
+            height: compact ? 160 : 420,
+            semanticsLabel: 'Immersive Theater with in-CHE TV',
+            primarySurfaceLabel:
+                'Theater TV. Activate to play a video page inside CHE.',
+            onPrimarySurfaceTap: () => unawaited(onScreenTap()),
+          ),
         );
       },
     );
