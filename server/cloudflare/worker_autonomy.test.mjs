@@ -380,3 +380,35 @@ test('voice text is made fluent: no code, bullets, dashes, ellipses or line brea
   const out = fluentSpeechText('Sure, sir...\n\n- First — the banner\n- Second (the card)\n```js\nconst x = 1;\n```\nDone!');
   assert.equal(out, 'Sure, sir First the banner Second the card Done!');
 });
+
+test('a GitHub permission refusal tells the owner exactly what GitHub said', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => ({ response: 'ok' }) } };
+  const { chat } = await pairedChat(env, saved);
+  saved.set('pending_self_update', { proposal: { summary: 'Tweak', files: [{ path: 'docs/a.md', content: 'hi\n' }] }, request: 'tweak' });
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    const path = String(url).replace('https://api.github.com/repos/o/r', '');
+    const method = init.method || 'GET';
+    const reply = (d, s = 200) => new Response(JSON.stringify(d), { status: s });
+    if (method === 'GET' && path === '') return reply({ default_branch: 'main' });
+    if (path.startsWith('/git/ref/heads/main')) return reply({ object: { sha: 'b1' } });
+    if (path.startsWith('/git/ref/heads/che')) return reply({}, 404);
+    if (path.startsWith('/contents/')) return reply({}, 404);
+    if (path.startsWith('/git/commits/')) return reply({ tree: { sha: 't' } });
+    if (method === 'POST' && path === '/git/trees') return reply({ sha: 't2' }, 201);
+    if (method === 'POST' && path === '/git/commits') return reply({ sha: 'c2' }, 201);
+    if (method === 'POST' && path === '/git/refs') return reply({}, 201);
+    if (method === 'POST' && path === '/pulls') return reply({ message: 'Resource not accessible by personal access token' }, 403);
+    return reply({}, 404);
+  };
+  try {
+    const text = await (await chat('Create the PR')).text();
+    assert.match(text, /Resource not accessible by personal access token/);
+  } finally { globalThis.fetch = original; }
+});
+
+test('GitHub secondary rate limits are temporary, not a permissions problem', async () => {
+  const { classifyFailure } = await import('./recovery_policy.js');
+  assert.equal(classifyFailure({ status: 403, detail: 'You have exceeded a secondary rate limit' }).failure_class, 'B');
+});

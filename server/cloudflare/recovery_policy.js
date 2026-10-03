@@ -65,6 +65,8 @@ export function classifyFailure(input) {
   if (input?.owner_authorization_required || /\bowner (?:approval|authorization) (?:is )?required\b/i.test(text)) {
     return { failure_class: FAILURE_CLASS.AUTHORIZATION, kind: 'owner_authorization' };
   }
+  // GitHub answers abuse/secondary rate limits with 403; that is temporary.
+  if (/secondary rate limit|abuse detection|retry-after/i.test(text)) return { failure_class: FAILURE_CLASS.TEMPORARY_EXTERNAL, kind: 'rate_limited' };
   if (status === 401 || AUTH_PATTERN.test(text)) return { failure_class: FAILURE_CLASS.PERMANENT_EXTERNAL, kind: 'authentication' };
   if (status === 402 || status === 403 || PERMISSION_PATTERN.test(text)) return { failure_class: FAILURE_CLASS.PERMANENT_EXTERNAL, kind: 'permission_or_billing' };
   if ([408, 425, 429, 500, 502, 503, 504].includes(status)) return { failure_class: FAILURE_CLASS.TEMPORARY_EXTERNAL, kind: 'provider_or_service' };
