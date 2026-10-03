@@ -23,7 +23,7 @@ jobs:
       - name: flutter analyze
         run: |
           set +e
-          flutter analyze --format=machine > analyze.txt 2>&1
+          dart analyze --fatal-infos --format=machine > analyze.txt 2>&1
           code=$?
           # Surface each issue as a GitHub annotation so the exact file/line is
           # readable from the PR (and by CHE/autopilot) without raw log access.
