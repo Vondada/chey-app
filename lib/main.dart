@@ -542,8 +542,14 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   }
 
   /// Spoken replies skip code, plugin, update and brain blocks.
-  String _spokenText(String reply) =>
-      reply.replaceAll(RegExp(r'```[\s\S]*?(```|$)'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+  // What the voice reads: no code, no markdown symbols, no line breaks or
+  // list bullets (each of those made the voice stop and restart).
+  String _spokenText(String reply) => reply
+      .replaceAll(RegExp(r'```[\s\S]*?(```|$)'), ' ')
+      .replaceAll(RegExp(r'^\s*(?:[-•*]|\d+[.)])\s+', multiLine: true), '')
+      .replaceAll(RegExp(r'[*#>`]+'), '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
 
   // Live step lines for the reply being produced ("✓ Nova delivered").
   final List<CheLiveStep> _liveSteps = [];
