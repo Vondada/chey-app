@@ -549,14 +549,19 @@ extension _CheHomeSend on _CHEHomeState {
         _scrollToBottom();
       });
       final speechChunker = CheSpeechChunker();
-      var speechChain = Future<void>.value();
+      // One spoken turn for the whole reply: each chunk's audio is requested
+      // the moment the chunk streams in (while earlier chunks still play),
+      // and the mic is resumed once after the last chunk, not per sentence.
+      CheSpeechPipeline<CheVoiceClip>? replySpeech;
+      var replySpeechOpened = false;
       void enqueueSpoken(String chunk) {
         final spoken = _spokenText(chunk);
-        if (spoken.isEmpty) return;
-        speechChain = speechChain.then((_) async {
-          if (!mounted || _stopRequested) return;
-          await speakText(spoken, record: false);
-        });
+        if (spoken.isEmpty || !mounted || _stopRequested) return;
+        if (!replySpeechOpened) {
+          replySpeechOpened = true;
+          replySpeech = _openSpeechTurn();
+        }
+        replySpeech?.add(spoken);
       }
 
       late final String reply;
@@ -620,7 +625,12 @@ extension _CheHomeSend on _CHEHomeState {
         if (mounted) _set(() => _justCompleted = false);
       });
 
-      if (!stopped) await speechChain;
+      if (stopped) {
+        replySpeech?.cancel();
+      } else {
+        replySpeech?.close();
+        await replySpeech?.done;
+      }
     } on _CHEAgentException catch (e) {
       final errorReply = e.message;
 

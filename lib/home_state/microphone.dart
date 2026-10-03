@@ -49,6 +49,7 @@ extension _CheHomeMicrophone on _CHEHomeState {
       }
 
       if (openConversation) {
+        _mic.ownerOff('mic button (native)');
         await _localVoice.runMicOp(() async {
           await CheNativeVoice.stop();
         });
@@ -62,6 +63,7 @@ extension _CheHomeMicrophone on _CHEHomeState {
         _localVoice.goIdle();
         debugPrint('CHE voice: mic stopped');
       } else {
+        _mic.ownerOn('mic button (native)');
         final started = await _localVoice.runMicOp(() async {
           return CheNativeVoice.start();
         });
@@ -91,6 +93,7 @@ extension _CheHomeMicrophone on _CHEHomeState {
 
       if (isListening || openConversation) {
         openConversation = false;
+        _mic.ownerOff('mic button (web)');
         if (mounted) {
           _set(() {
             isListening = false;
@@ -118,7 +121,7 @@ extension _CheHomeMicrophone on _CHEHomeState {
 
     if (openConversation || speech.isListening) {
       openConversation = false;
-      _listenRestartTimer?.cancel();
+      _mic.ownerOff('mic button');
       _autoSentCurrentTurn = false;
 
       if (speech.isListening) {
@@ -135,10 +138,11 @@ extension _CheHomeMicrophone on _CHEHomeState {
     }
 
     openConversation = true;
+    _mic.ownerOn('mic button');
     // An explicit tap on the mic is already the "wake me up" action.
     cheSleeping = false;
     if (mounted) _set(() {});
-    await _startListening();
+    await _mic.runStart('mic button', _startListening);
   }
 
   bool _isWakePhrase(String raw) => cheIsWake(raw);
@@ -225,7 +229,7 @@ extension _CheHomeMicrophone on _CHEHomeState {
           if (afterWake.isEmpty) {
             await speakText('Yeah, sir?');
           } else {
-            _set(() => controller.text = afterWake);
+            controller.text = afterWake;
             await sendMessage(fromVoice: true);
           }
         } else {
@@ -257,12 +261,10 @@ extension _CheHomeMicrophone on _CHEHomeState {
 
       if (!mounted) return;
 
-      _set(() {
-        controller.text = spokenWords;
-        controller.selection = TextSelection.collapsed(
-          offset: controller.text.length,
-        );
-      });
+      controller.value = TextEditingValue(
+        text: spokenWords,
+        selection: TextSelection.collapsed(offset: spokenWords.length),
+      );
 
       if (spokenWords.isEmpty) {
         _rearmWebMicSoon();
@@ -370,7 +372,7 @@ extension _CheHomeMicrophone on _CHEHomeState {
               if (afterWake.isEmpty) {
                 await speakText('Yeah, sir?');
               } else {
-                _set(() => controller.text = afterWake);
+                controller.text = afterWake;
                 await sendMessage(fromVoice: true);
               }
               return;
@@ -433,12 +435,11 @@ extension _CheHomeMicrophone on _CHEHomeState {
             spokenWords = '$_heldSpeech $spokenWords';
           }
 
-          _set(() {
-            controller.text = spokenWords;
-            controller.selection = TextSelection.collapsed(
-              offset: controller.text.length,
-            );
-          });
+          // The composer listens to [controller]; no home-screen rebuild per partial.
+          controller.value = TextEditingValue(
+            text: spokenWords,
+            selection: TextSelection.collapsed(offset: spokenWords.length),
+          );
 
           // He trailed off ("um", "and", "so...") — he is still thinking, not
           // finished. Keep the turn open and keep listening instead of sending.
@@ -497,30 +498,45 @@ extension _CheHomeMicrophone on _CHEHomeState {
       );
 
       if (!mounted) return;
-      _set(() {
-        isListening = speech.isListening;
-      });
+      _setListening(speech.isListening, 'listen returned');
+      debugPrint('CHE mic MIC_STARTED: listening=${speech.isListening}');
     } catch (_) {
       if (!mounted) return;
-
-      _set(() {
-        isListening = false;
-      });
-
+      _setListening(false, 'listen failed');
       if (!kIsWeb && openConversation && !_isSending && !_isSpeaking) {
-        _restartListeningSoon(delay: const Duration(milliseconds: 800));
+        _restartListeningSoon(
+          delay: const Duration(milliseconds: 800),
+          reason: 'listen failed',
+        );
       }
     }
   }
 
+  /// The visible mic state only changes on real transitions. A recognizer
+  /// session ending while the owner's mic is on (and a restart is coming) is
+  /// not one, so the icon, status banner and haptic stay steady.
+  void _setListening(bool value, String reason) {
+    final keepOn = !value &&
+        openConversation &&
+        !cheSleeping &&
+        !_isSending &&
+        !_isSpeaking;
+    final next = keepOn ? true : value;
+    if (isListening == next) return;
+    debugPrint('CHE mic state: listening=$next ($reason)');
+    _set(() => isListening = next);
+  }
+
   void _restartListeningSoon({
     Duration delay = const Duration(milliseconds: 450),
+    String reason = 'auto',
   }) {
     if (kIsWeb) return;
 
     // Native iPhone recognition is continuous and already listening while CHE
     // talks. Starting speech_to_text here would fight for the same microphone.
     if (_nativeIosVoiceStarting || _nativeIosVoiceActive) {
+      debugPrint('CHE mic NATIVE_VOICE_STATE: owns mic, no STT restart ($reason)');
       if (mounted && !_isSpeaking && isListening != true) {
         _set(() => isListening = true);
       }
@@ -528,21 +544,24 @@ extension _CheHomeMicrophone on _CHEHomeState {
       return;
     }
 
-    _listenRestartTimer?.cancel();
-
-    _listenRestartTimer = Timer(delay, () {
-      if (!mounted ||
-          !openConversation ||
-          cheSleeping ||
-          _isSending ||
-          _isSpeaking ||
-          _localVoice.isSpeaking ||
-          speech.isListening) {
-        return;
-      }
-
-      _startListening();
-    });
+    if (!openConversation || cheSleeping) {
+      _mic.cancelRestart('mic not wanted: $reason');
+      return;
+    }
+    _mic.ownerWantsMic = true;
+    _mic.scheduleRestart(
+      reason: reason,
+      delay: delay,
+      canStart: () =>
+          mounted &&
+          openConversation &&
+          !cheSleeping &&
+          !_isSending &&
+          !_isSpeaking &&
+          _activeSpeech == null &&
+          !_localVoice.isSpeaking &&
+          !speech.isListening,
+      start: _startListening,
+    );
   }
 }
-

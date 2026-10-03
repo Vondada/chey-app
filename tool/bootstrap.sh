@@ -541,6 +541,13 @@ struct CHEAppShortcuts: AppShortcutsProvider {
 
   private func configureAudioSession() {
     let session = AVAudioSession.sharedInstance()
+    // Re-applying an unchanged category/mode for every clip interrupts
+    // recognition and adds a route change between sentences; only set it
+    // when it actually differs, and keep the session active for the turn.
+    if session.category == .playAndRecord && session.mode == .voiceChat {
+      try? session.setActive(true)
+      return
+    }
     do {
       try session.setCategory(
         .playAndRecord,

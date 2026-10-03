@@ -24,7 +24,9 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:url_launcher/url_launcher.dart';
+import 'che_mic_supervisor.dart';
 import 'che_native_voice.dart';
+import 'che_speech_pipeline.dart';
 import 'che_notifications.dart';
 import 'platform/che_platform_client.dart';
 import 'platform/che_platform_screens.dart';
@@ -376,7 +378,12 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   bool _loadingAgentState = false;
   int _speechTurn = 0;
 
-  Timer? _listenRestartTimer;
+  // Single authority for automatic mic restarts (see che_mic_supervisor.dart).
+  final CheMicSupervisor _mic = CheMicSupervisor(
+    log: (event, reason) => debugPrint('CHE mic $event: $reason'),
+  );
+  // The assistant turn currently being spoken (gapless, prefetched TTS).
+  CheSpeechPipeline<CheVoiceClip>? _activeSpeech;
   Timer? _proactiveTimer;
 
   StreamSubscription<Map<String, dynamic>>? _nativeIosVoiceSub;
@@ -1142,7 +1149,7 @@ OWNER AGENCY
         unawaited(_restartWakeListener());
       }
     } else if (state == AppLifecycleState.paused) {
-      _listenRestartTimer?.cancel();
+      _mic.cancelRestart('state change');
       unawaited(_stopPorcupineWake());
       if (_realtimeVoice?.connected == true) {
         unawaited(_returnToWakeStandby(restartWakeListener: false));
@@ -1188,6 +1195,8 @@ OWNER AGENCY
   void dispose() {
     CheUiPreferences.instance.removeListener(_onUiPrefsChanged);
     WidgetsBinding.instance.removeObserver(this);
+    _mic.dispose();
+    _activeSpeech?.cancel();
     _officeRuntime
       ..removeListener(_onOfficeChanged)
       ..dispose();
@@ -1197,7 +1206,7 @@ OWNER AGENCY
     _skillPlugins
       ..removeListener(_onOfficeChanged)
       ..dispose();
-    _listenRestartTimer?.cancel();
+    _mic.cancelRestart('state change');
     _proactiveTimer?.cancel();
     _jobPollTimer?.cancel();
     _mailboxBadgeTimer?.cancel();

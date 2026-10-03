@@ -952,7 +952,7 @@ extension _CheHomeSecurity on _CHEHomeState {
     if (DateTime.now().isBefore(_realtimeSkipUntil)) {
       // Straight to the free native listener, no failed live-voice attempt.
       HapticFeedback.mediumImpact();
-      _listenRestartTimer?.cancel();
+      _mic.cancelRestart('state change');
       try {
         await _stopPorcupineWake();
         await _localVoice.runMicOp(() async {
@@ -988,7 +988,7 @@ extension _CheHomeSecurity on _CHEHomeState {
     }
 
     try {
-      _listenRestartTimer?.cancel();
+      _mic.cancelRestart('state change');
 
       // Realtime is the only microphone owner once CHE wakes.
       await _stopPorcupineWake();
