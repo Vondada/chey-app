@@ -89,7 +89,7 @@ function validBranch(value) {
 
 function validSha(value) {
   const sha = String(value || '').trim().toLowerCase();
-  return /^[0-9a-f]{7,40}$/.test(sha) ? sha : '';
+  return /^[0-9a-f]{40}$/.test(sha) ? sha : '';
 }
 
 export class CheCodingRuntime {
