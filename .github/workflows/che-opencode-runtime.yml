@@ -111,15 +111,17 @@ jobs:
         env:
           OPENCODE_CONFIG: /tmp/che-opencode-config.json
           OPENCODE_MODEL: ${{ inputs.model }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
-          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          # Expose only the credential for the selected provider, not every key
+          # configured in the repository.
+          OPENAI_API_KEY: ${{ startsWith(inputs.model, 'openai/') && secrets.OPENAI_API_KEY || '' }}
+          ANTHROPIC_API_KEY: ${{ startsWith(inputs.model, 'anthropic/') && secrets.ANTHROPIC_API_KEY || '' }}
+          GROQ_API_KEY: ${{ startsWith(inputs.model, 'groq/') && secrets.GROQ_API_KEY || '' }}
+          GEMINI_API_KEY: ${{ (startsWith(inputs.model, 'google/') || startsWith(inputs.model, 'gemini/')) && secrets.GEMINI_API_KEY || '' }}
+          GOOGLE_GENERATIVE_AI_API_KEY: ${{ (startsWith(inputs.model, 'google/') || startsWith(inputs.model, 'gemini/')) && secrets.GEMINI_API_KEY || '' }}
+          OPENROUTER_API_KEY: ${{ startsWith(inputs.model, 'openrouter/') && secrets.OPENROUTER_API_KEY || '' }}
+          CEREBRAS_API_KEY: ${{ startsWith(inputs.model, 'cerebras/') && secrets.CEREBRAS_API_KEY || '' }}
+          MISTRAL_API_KEY: ${{ startsWith(inputs.model, 'mistral/') && secrets.MISTRAL_API_KEY || '' }}
+          HF_TOKEN: ${{ startsWith(inputs.model, 'huggingface/') && secrets.HF_TOKEN || '' }}
         run: |
           set +e
           timeout --signal=TERM --kill-after=15s 720s \
