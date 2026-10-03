@@ -5552,6 +5552,14 @@ export class CheState extends DurableObject {
             } : {}),
           });
         }
+        if (selfUpdateAction?.kind === 'access') {
+          // The access detector also recognizes questions about GitHub/PR
+          // capability. If the wording is a request to ADD that capability,
+          // run the real coding pipeline now instead of falling into chat.
+          return ownerDevice
+            ? this.selfDevelopmentReply(message, { vectorRecall })
+            : ndjsonReply('Only the CHE owner can ask me to change my code.', { source: 'che_self_development', ok: false });
+        }
 
         // Office skills: give them for real, and report them from stored data.
         const skillImport = skillImportIntent(message);
