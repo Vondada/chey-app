@@ -1011,10 +1011,14 @@ export function enqueueJob(data, fields) {
 // Keep independent background work parallel, but serialize skill imports.
 // Two imports both update office_skills/team and must never race snapshots.
 export function selectReadyJobs(jobs, now = Date.now(), limit = 4) {
-  const ready = (Array.isArray(jobs) ? jobs : [])
+  const all = Array.isArray(jobs) ? jobs : [];
+  const ready = all
     .filter((job) => job.status === 'queued' && !job.dead_letter && (!job.retry_at || job.retry_at <= now));
   const selected = [];
-  let officeSkillImportTaken = false;
+  // A running import occupies the serialized slot across later alarms /
+  // concurrent processJobs invocations. Unrelated work can still run.
+  let officeSkillImportTaken = all.some((job) =>
+    job.kind === 'office_skill_import' && job.status === 'running' && !job.dead_letter);
   for (const job of ready) {
     if (job.kind === 'office_skill_import') {
       if (officeSkillImportTaken) continue;
@@ -2013,6 +2017,15 @@ const EXISTING_SELF_UPDATE_COMMANDS = new Set([
 ]);
 export function isExistingChangeCommand(intent) {
   return Boolean(intent && EXISTING_SELF_UPDATE_COMMANDS.has(intent.kind));
+}
+
+export function shouldHandleSelfUpdateAction(message, intent) {
+  if (!intent) return false;
+  if (isExistingChangeCommand(intent)) return true;
+  if (intent.kind !== 'access') return false;
+  // Pure capability/access questions are tool reads. Requests to CHANGE CHE's
+  // code so she gains that capability must continue into self-development.
+  return !/\b(?:update|change|modify|fix|add|implement|build|make|edit|rewrite|upgrade)\b[\s\S]{0,60}\b(?:your\s+)?(?:code|app|worker)\b/i.test(String(message || ''));
 }
 
 const LAST_SELF_UPDATE_DEPLOY_KEY = 'last_self_update_deploy';
@@ -5512,7 +5525,7 @@ export class CheState extends DurableObject {
         if (selfUpdateAction && !ownerDevice && ['open-pr', 'merge'].includes(selfUpdateAction.kind)) {
           return ndjsonReply('Only the CHE owner can open, merge or deploy code changes.', { source: 'che_self_update', ok: false });
         }
-        if (selfUpdateAction) {
+        if (shouldHandleSelfUpdateAction(message, selfUpdateAction)) {
           const result = await handleSelfUpdateChatAction(this.env, this.ctx.storage, selfUpdateAction, {
             queueJob: async (fields) => {
               const fresh = await this.loadData();
