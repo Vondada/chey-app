@@ -458,30 +458,84 @@ export function applyEdits(sources, edits) {
 // are not blank and not comments, in a source file. Comment-only or
 // docs-only edits are not an implementation (unless docs were requested).
 const CODE_FILE = /\.(?:dart|m?js|cjs|ts|tsx|jsx|swift|kt|java|m|mm|h|html|css)$/i;
-function isCommentOrBlank(line) {
-  const t = String(line || '').trim();
-  return !t || /^(?:\/\/|\/\*|\*|\*\/|#(?!include)|<!--)/.test(t);
+
+function codeWithoutComments(source) {
+  const text = String(source || '');
+  let out = '';
+  let i = 0;
+  let state = 'code';
+  let quote = '';
+  while (i < text.length) {
+    const ch = text[i];
+    const next = text[i + 1];
+    if (state === 'line') {
+      if (ch === '\n') { out += '\n'; state = 'code'; }
+      i += 1;
+      continue;
+    }
+    if (state === 'block') {
+      if (ch === '*' && next === '/') { state = 'code'; i += 2; continue; }
+      if (ch === '\n') out += '\n';
+      i += 1;
+      continue;
+    }
+    if (state === 'html') {
+      if (text.startsWith('-->', i)) { state = 'code'; i += 3; continue; }
+      if (ch === '\n') out += '\n';
+      i += 1;
+      continue;
+    }
+    if (quote) {
+      out += ch;
+      if (ch === '\\' && i + 1 < text.length) {
+        out += text[i + 1];
+        i += 2;
+        continue;
+      }
+      if (ch === quote) quote = '';
+      i += 1;
+      continue;
+    }
+    if (text.startsWith('<!--', i)) { state = 'html'; i += 4; continue; }
+    if (ch === '/' && next === '/') { state = 'line'; i += 2; continue; }
+    if (ch === '/' && next === '*') { state = 'block'; i += 2; continue; }
+    if (ch === "'" || ch === '"' || ch === '`') { quote = ch; out += ch; i += 1; continue; }
+    out += ch;
+    i += 1;
+  }
+  return out;
 }
+
+function normalizedExecutableSource(source) {
+  return codeWithoutComments(source)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
 export function substantiveChange(beforeMap, files) {
   for (const file of files) {
     if (!CODE_FILE.test(file.path)) continue;
-    const before = String(beforeMap.get(file.path) ?? '').split('\n');
-    const after = String(file.content || '').split('\n');
-    const counts = new Map();
-    for (const line of before) counts.set(line, (counts.get(line) || 0) + 1);
-    const added = [];
-    for (const line of after) {
-      const left = counts.get(line) || 0;
-      if (left > 0) counts.set(line, left - 1); else added.push(line);
-    }
-    const removed = [...counts.entries()].flatMap(([line, n]) => Array(n).fill(line));
-    if ([...added, ...removed].some((line) => !isCommentOrBlank(line))) return true;
+    const before = normalizedExecutableSource(beforeMap.get(file.path) ?? '');
+    const after = normalizedExecutableSource(file.content || '');
+    if (before !== after) return true;
   }
   return false;
 }
+
 export function wantsDocsOnly(request) {
-  return /\b(?:doc(?:s|umentation)?|readme|comments?|changelog|notes?)\b/i.test(String(request || ''))
-    && !/\b(?:build|implement|rebuild|redesign|add|create|make|fix|feature)\b/i.test(String(request || ''));
+  const text = String(request || '');
+  const docs = /\b(?:doc(?:s|umentation)?|readme|comments?|changelog|notes?)\b/i;
+  if (!docs.test(text)) return false;
+  const action = /\b(?:fix|update|add|create|write|edit|improve|change|correct|refresh|document)\b/i.exec(text);
+  if (!action) return !/\b(?:code|logic|behavior|functionality|runtime|widget|screen|ui|worker)\b/i.test(text);
+  const tail = text.slice(action.index + action[0].length);
+  const docsIndex = tail.search(docs);
+  const functionalIndex = tail.search(/\b(?:code|logic|behavior|functionality|runtime|widget|screen|ui|worker|brain\s+room)\b/i);
+  const mixed = /\b(?:and|plus|also|along with|as well as)\b/i.test(tail)
+    && functionalIndex >= 0 && docsIndex >= 0;
+  return docsIndex >= 0 && (functionalIndex < 0 || docsIndex < functionalIndex) && !mixed;
 }
 
 // 0-based line numbers that differ between two versions (in the new version).
