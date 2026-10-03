@@ -379,7 +379,12 @@ jobs:
           git -c user.name="CHE" -c user.email="che-autopilot@users.noreply.github.com" commit -qm "che-auto: ${JOB_ID}" -m "Automated change by CHE's OpenCode runner. [che-auto]"
           git push -q origin "HEAD:refs/heads/${TARGET_BRANCH}"
           title="CHE: $(echo "$REQUEST_B64" | base64 -d | head -c 90 | tr '\n' ' ')"
-          url=$(gh pr create --base main --head "$TARGET_BRANCH" --title "$title" --body "Automated change by CHE's OpenCode runner (session ${JOB_ID}). che-autopilot reviews and merges it when CI passes." --label che-auto 2>/dev/null || gh pr create --base main --head "$TARGET_BRANCH" --title "$title" --body "Automated change by CHE's OpenCode runner (session ${JOB_ID}).")
+          body="Automated change by CHE's OpenCode runner (session ${JOB_ID}). che-autopilot reviews and merges it when CI passes."
+          if ! url=$(gh pr create --base main --head "$TARGET_BRANCH" --title "$title" --body "$body" --label che-auto 2>/tmp/pr-err.txt) \
+             && ! url=$(gh pr create --base main --head "$TARGET_BRANCH" --title "$title" --body "$body" 2>/tmp/pr-err.txt); then
+            echo "::error::Branch ${TARGET_BRANCH} was pushed but GitHub refused to open the PR: $(tr '\n' ' ' </tmp/pr-err.txt | cut -c1-300). CHE_GITHUB_TOKEN needs Pull requests: Read and write."
+            exit 1
+          fi
           echo "pr_number=${url##*/}" >> "$GITHUB_OUTPUT"
 
   publish:
