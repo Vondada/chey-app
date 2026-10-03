@@ -47,7 +47,7 @@ import { consultEngine, consultIntent, shareIntent, speakConsult } from './ai_co
 import { markOwnerSeen, readArchive as flagstaffArchive, unreadIncoming } from './web_mailbox.js';
 import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
 import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSnapshot } from './workshop.js';
-import { handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
+import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
 import { unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
@@ -1990,6 +1990,11 @@ export function selfUpdateChatIntent(message) {
 
 const LAST_SELF_UPDATE_DEPLOY_KEY = 'last_self_update_deploy';
 const LAST_ENGINEERING_REQUEST_KEY = 'che_last_engineering_request';
+// A mailbox post was accepted: delivered, or queued in the outbox with a real
+// id that will be delivered automatically (never posted twice).
+function mailAccepted(result) {
+  return (result?.status === 200 || result?.status === 202) && Boolean(result?.message?.id);
+}
 const COLLAB_KEY = 'che_collaboration_sessions';
 function normalizePeerKey(name) {
   const value = String(name || '').toLowerCase().replace(/\s+/g, '');
@@ -2515,6 +2520,8 @@ export class CheState extends DurableObject {
     // The AI only runs when a genuinely new message addressed to CHE appears.
     const flagstaffInitialized = Boolean(await this.ctx.storage.get('web_mailbox_code'));
     if (flagstaffInitialized && await flagstaffOpen(this.ctx.storage)) times.push(Date.now() + 30_000);
+    const outboxPending = await Promise.resolve().then(() => this.ctx.storage.get('web_mailbox_outbox')).catch(() => null);
+    if (Array.isArray(outboxPending) && outboxPending.some((m) => m.state !== 'failed')) times.push(Date.now() + 60_000);
     if (times.length) await this.ctx.storage.setAlarm(Math.min(...times));
   }
 
@@ -3009,7 +3016,7 @@ export class CheState extends DurableObject {
         }, this.env).catch(() => ({ status: 502 }));
         await this.ctx.storage.put(key, {
           ...prior,
-          reply_id: receipt?.status === 200 ? String(receipt.message?.id || '') : '',
+          reply_id: mailAccepted(receipt) ? String(receipt.message.id) : '',
           receipt_attempts: Number(prior?.receipt_attempts || 0) + 1,
         });
       }
@@ -3042,7 +3049,7 @@ export class CheState extends DurableObject {
         text: 'I received your Flagstaff message, but I will not follow requests for secrets, private owner data, permission overrides, or instructions that conflict with the owner. You can send a safe engineering or review request instead.',
         reply_to: id,
       }, this.env).catch(() => ({ status: 502 }));
-      const replyId = refusal?.status === 200 ? String(refusal.message?.id || '') : '';
+      const replyId = mailAccepted(refusal) ? String(refusal.message.id) : '';
       const refusalTries = Number(prior?.retry_count || 0) + 1;
       const stillRetry = !replyId && refusalTries < 3;
       await this.ctx.storage.put(key, {
@@ -3108,7 +3115,7 @@ export class CheState extends DurableObject {
         text: reply,
         reply_to: id,
       }, this.env);
-      if (posted.status !== 200) throw new Error(posted.detail || 'Flagstaff reply could not be saved.');
+      if (!mailAccepted(posted)) throw new Error(posted.detail || 'Flagstaff reply could not be saved.');
       await this.ctx.storage.put(key, {
         status: 'replied',
         at: Date.now(),
@@ -3136,7 +3143,7 @@ export class CheState extends DurableObject {
             : 'I received your Flagstaff message, but I could not complete the detailed reply after repeated attempts. The owner can see this failure and the message is preserved.',
           reply_to: id,
         }, this.env).catch(() => ({ status: 502 }));
-        if (fallback?.status === 200) fallbackReplyId = String(fallback.message?.id || '');
+        if (mailAccepted(fallback)) fallbackReplyId = String(fallback.message.id);
       }
 
       await this.ctx.storage.put(key, {
@@ -3214,6 +3221,8 @@ export class CheState extends DurableObject {
   }
 
   async processFlagstaffInbox({ force = false, messageId = '' } = {}) {
+    // One mailbox: deliver anything still waiting for GitHub first.
+    await flushOutbox(this.ctx.storage, this.env).catch(() => null);
     // GitHub AI mail stays responsive even when the public Flagstaff web board
     // is locked. Locking closes the share link/session; it must not silence
     // replies to authenticated repo mailbox messages.
@@ -5839,13 +5848,13 @@ export class CheState extends DurableObject {
         const consult = consultIntent(message);
         if (consult) {
           const results = await Promise.all(consult.peers.map((peer) => consultEngine(this.env, peer, consult.question, this.env.CHE_STRONG_MODEL || STRONG_MODEL)));
-          await postWebMail(this.ctx.storage, { from: 'che', to: consult.peers.join(','), text: consult.question }).catch(() => null);
+          await postWebMail(this.ctx.storage, { from: 'che', to: consult.peers.join(','), text: consult.question }, this.env).catch(() => null);
           for (const r of results) {
             if (r.text && looksLikeAttack(r.text)) {
               await fileLetter(this.ctx.storage, { tray: 'security', subject: `${r.label} tried to give me orders`, body: 'Its reply asked for secrets or to override you. I stopped and did not follow it.', tag: 'security', severity: 'danger' });
               r.text = 'Its answer tried to get me to break your rules, so I stopped and filed a security letter. I did not give it anything.';
             }
-            if (r.text) await postWebMail(this.ctx.storage, { from: r.peer, to: 'che', text: r.text }).catch(() => null);
+            if (r.text) await postWebMail(this.ctx.storage, { from: r.peer, to: 'che', text: r.text }, this.env).catch(() => null);
             if (r.mailbox) await sendMail(this.env, { from: 'che', to: r.peer, text: `CHE's owner asks (relayed by CHE; "you" meant CHE): ${relayText(consult.question)}` }).catch(() => null);
           }
           return ndjsonReply(speakConsult(results), { source: 'che_consult', peers: consult.peers });
@@ -5884,13 +5893,13 @@ export class CheState extends DurableObject {
         if (mail?.kind === 'send') {
           const relayed = relayText(mail.text);
           const sent = await postWebMail(this.ctx.storage, { from: 'che', to: mail.to, text: `CHE's owner asks (relayed by CHE; "you/your" in the original meant CHE): ${relayed}` }, this.env);
-          if (sent.status === 200 && sent.message?.id) {
+          if (sent.status === 200 && sent.delivered && sent.message?.id) {
             await recordReceipt(this.ctx.storage, { kind: 'mail_sent', key: `mail_sent:${sent.message.id}`, peer: normalizePeerKey(mail.to), message_id: sent.message.id, github: sent.github || '' });
           }
-          return ndjsonReply(sent.github === 'saved'
-            ? `Sent to ${mail.to} in Flagstaff 369, sir. It's in the shared GitHub mailbox too, so every AI sees it. I'll read you the reply when it comes in.`
-            : sent.status === 200
-              ? `Posted to ${mail.to} on Flagstaff 369, sir, but the GitHub copy didn't save: ${sent.github}`
+          return ndjsonReply(sent.status === 200
+            ? `Sent to ${mail.to}, sir, message ${sent.message.id.slice(0, 8)}. It's in CHE's mailbox, where every AI reads. I'll tell you if a reply comes in.`
+            : sent.status === 202
+              ? `I could not deliver that to ${mail.to} yet, sir: the mailbox on GitHub did not accept it. It is queued and will send automatically; it has not been sent.`
               : `I couldn't send that, sir. ${sent.detail}`, { source: 'che_mailbox' });
         }
         if (mail?.kind === 'read') {
@@ -6987,10 +6996,10 @@ export class CheState extends DurableObject {
     const results = [];
     for (const peer of peers) results.push(await (async () => {
       const sent = await postWebMail(this.ctx.storage, { from: 'che', to: peer, text: packet }, this.env).catch((error) => ({ status: 502, detail: String(error?.message || error) }));
-      if (sent.status === 200 && sent.message?.id) {
+      if (sent.status === 200 && sent.delivered && sent.message?.id) {
         await recordReceipt(this.ctx.storage, { kind: 'mail_sent', key: `mail_sent:${sent.message.id}`, peer, message_id: sent.message.id, session: sessionId, github: sent.github || '' });
       }
-      return { peer, ok: sent.status === 200, id: sent.message?.id || '', github: sent.github || '', detail: sent.detail || '' };
+      return { peer, ok: sent.status === 200, queued: sent.status === 202, id: sent.message?.id || '', github: sent.github || '', detail: sent.detail || '' };
     })());
     sessions[sessionId] = {
       request: request.slice(0, 4000),
@@ -7005,8 +7014,10 @@ export class CheState extends DurableObject {
     await this.ctx.storage.put(COLLAB_KEY, Object.fromEntries(keep));
     const label = (p) => ({ chatgpt: 'ChatGPT', claude: 'Claude' }[p] || p.charAt(0).toUpperCase() + p.slice(1));
     const sentLines = results.map((r) => (r.ok
-      ? `Sent to ${label(r.peer)}, message ${r.id.slice(0, 8)}${r.github === 'saved' ? '' : ' (board only; the GitHub copy did not save)'}.`
-      : `I could not send it to ${label(r.peer)}: ${String(r.detail || 'mailbox error').slice(0, 120)}.`));
+      ? `Sent to ${label(r.peer)}, message ${r.id.slice(0, 8)}.`
+      : r.queued
+        ? `Not sent to ${label(r.peer)} yet: the mailbox did not accept it, so it is queued and will send automatically.`
+        : `I could not send it to ${label(r.peer)}: ${String(r.detail || 'mailbox error').slice(0, 120)}.`));
     const replyState = results.some((r) => r.ok) ? `No reply from ${results.filter((r) => r.ok).map((r) => label(r.peer)).join(' or ')} yet; they answer when their sessions open.` : '';
     const lanes = batch ? ` Batch ${sessionId.slice(-8)}: my crew handles discovery and implementation with independent review in parallel${results.some((r) => r.ok) ? ', and the peers above review in parallel' : ''}.` : '';
     return ndjsonReply(
