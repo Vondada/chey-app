@@ -671,7 +671,7 @@ test('voice falls back to free Gemini speech (WAV) when Cloudflare voice is out 
 });
 
 
-test('quota jobs retry at five minutes, pause durably, resume and stop after 24 retries', async () => {
+test('quota jobs use bounded exponential backoff and dead-letter after three retries', async () => {
   const saved = new Map(); let alarmAt; let calls = 0;
   const state = new CheState({ storage: {
     get: async key => saved.has(key) ? structuredClone(saved.get(key)) : undefined,
