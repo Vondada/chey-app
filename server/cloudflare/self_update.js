@@ -240,6 +240,23 @@ export async function openSelfUpdatePr(env, body, fetcher = fetch) {
   const checked = validateUpdateFiles(body.files);
   if (checked.error) return { status: 400, detail: checked.error };
   const base = await baseBranch(env, fetcher);
+  const expectedBaseSha = String(body.expected_base_sha || '').trim();
+  if (expectedBaseSha) {
+    const liveRef = await gh(env, 'GET', `/git/ref/heads/${encodeURIComponent(base)}`, null, fetcher);
+    const liveSha = String(liveRef.data?.object?.sha || '');
+    if (!liveRef.ok || !liveSha) {
+      return { status: 502, detail: `Could not verify current ${base} before writing the update.` };
+    }
+    if (liveSha !== expectedBaseSha) {
+      return {
+        status: 409,
+        stale_source: true,
+        detail: `${base} changed after CHE inspected the source. Re-read current GitHub source and regenerate the proposal before writing.`,
+        expected_base_sha: expectedBaseSha,
+        current_base_sha: liveSha,
+      };
+    }
+  }
   const branch = `${BRANCH_PREFIX}${Date.now().toString(36)}`;
   const made = await createBranch(env, branch, base, fetcher);
   if (made.error) return { status: 502, detail: made.error };
