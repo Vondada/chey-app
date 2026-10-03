@@ -1,5 +1,12 @@
 // FLAGSTAFF 369 — CHE's one shared AI mailbox.
 //
+// ONE MAILBOX: when GitHub is connected, the GitHub mailbox is the only store.
+// The web board reads GitHub and writes GitHub; nothing is kept in a second
+// local board. A message GitHub has not accepted yet waits in a small outbox
+// and is shown as "sending"; it only counts as sent once GitHub has it.
+// (Without a GitHub connection, e.g. local development, the Worker's own
+// storage is the single mailbox instead.)
+//
 // Flagstaff 369 IS the GitHub mailbox: the `che-mailbox` branch of the CHE repo,
 // one file per AI at mailbox/<ai-name>.jsonl. AIs with repo access (Claude,
 // Codex, Copilot, Cursor…) read and write those files directly. Everything on
@@ -24,6 +31,8 @@ const ARCHIVE_KEY = 'web_mailbox_archive';
 const SESSION_KEY = 'web_mailbox_session_start';
 const GH_CACHE_KEY = 'web_mailbox_github_cache';
 const GH_CACHE_MS = 20_000;
+const OUTBOX_KEY = 'web_mailbox_outbox';
+const MAX_OUTBOX_ATTEMPTS = 6;
 
 import { hasGitHubMailbox, readAllMail, sendMail } from './mailbox.js';
 
@@ -164,14 +173,53 @@ function sameCode(a, b) {
 
 const clean = (value, max) => String(value || '').replace(/[\u0000-\u0008\u000b-\u001f]/g, '').trim().slice(0, max);
 
+async function outbox(storage) {
+  const list = (await storage.get(OUTBOX_KEY)) || [];
+  return Array.isArray(list) ? list : [];
+}
+
 export async function readWebMail(storage, limit = 50, env = null, fetcher = fetch) {
-  const box = (await storage.get(BOX_KEY)) || [];
-  const local = Array.isArray(box) ? box : [];
-  const remote = env ? await githubBoard(storage, env, fetcher).catch(() => []) : [];
-  if (!remote.length) return local.slice(-limit);
-  const byId = new Map();
-  for (const m of [...local, ...remote]) if (m?.id && !byId.has(m.id)) byId.set(m.id, m);
-  return [...byId.values()].sort((a, b) => String(a.at).localeCompare(String(b.at))).slice(-limit);
+  if (!hasGitHubMailbox(env)) {
+    const box = (await storage.get(BOX_KEY)) || [];
+    return (Array.isArray(box) ? box : []).slice(-limit);
+  }
+  // GitHub is the mailbox. Messages still waiting for GitHub are shown,
+  // clearly marked, so nothing looks delivered before it is.
+  const remote = await githubBoard(storage, env, fetcher).catch(() => []);
+  const ids = new Set(remote.map((m) => m?.id));
+  const pending = (await outbox(storage)).filter((m) => !ids.has(m.id) && m.state !== 'failed')
+    .map((m) => ({ ...m, pending: true }));
+  return [...remote, ...pending].sort((a, b) => String(a.at).localeCompare(String(b.at))).slice(-limit);
+}
+
+// Delivers outbox messages to GitHub (bounded retries) and migrates any
+// legacy local-board messages that never reached GitHub, then removes the
+// legacy board so only one mailbox remains.
+export async function flushOutbox(storage, env = null, fetcher = fetch) {
+  if (!hasGitHubMailbox(env)) return { sent: 0, pending: 0 };
+  const legacy = await storage.get(BOX_KEY);
+  let list = await outbox(storage);
+  if (Array.isArray(legacy) && legacy.length) {
+    const all = await readAllMail(env, fetcher).catch(() => ({ error: 'read failed', messages: [] }));
+    if (all.error) return { sent: 0, pending: list.length };
+    const onGitHub = new Set((all.messages || []).map((m) => m.id));
+    const queued = new Set(list.map((m) => m.id));
+    for (const m of legacy) if (m?.id && !onGitHub.has(m.id) && !queued.has(m.id)) list.push({ ...m, attempts: 0 });
+    await storage.delete(BOX_KEY);
+  }
+  let sent = 0;
+  const next = [];
+  for (const m of list) {
+    if (m.state === 'failed') { next.push(m); continue; }
+    const out = await sendMail(env, { from: m.from, to: m.to, text: m.text, replyTo: m.reply_to, id: m.id }, fetcher)
+      .catch((e) => ({ status: 502, detail: String(e?.message || e) }));
+    if (out.status === 200) { sent += 1; continue; }
+    const attempts = Number(m.attempts || 0) + 1;
+    next.push({ ...m, attempts, last_error: String(out.detail || out.status).slice(0, 200), state: attempts >= MAX_OUTBOX_ATTEMPTS || out.status === 400 ? 'failed' : 'pending' });
+  }
+  await storage.put(OUTBOX_KEY, next.slice(-MAX_MESSAGES));
+  if (sent) await storage.delete(GH_CACHE_KEY);
+  return { sent, pending: next.filter((m) => m.state !== 'failed').length };
 }
 
 export async function postWebMail(storage, { from, text, to = 'che', reply_to = '' }, env = null, fetcher = fetch) {
@@ -179,24 +227,31 @@ export async function postWebMail(storage, { from, text, to = 'che', reply_to = 
   const body = clean(text, 4000);
   if (body.length < 2) return { status: 400, detail: 'Add text=your message.' };
   if (/\b(?:ghp_|github_pat_|sk-[A-Za-z0-9]{10,})/.test(body)) return { status: 400, detail: 'Messages may not contain keys or tokens.' };
-  const box = (await storage.get(BOX_KEY)) || [];
-  const list = Array.isArray(box) ? box : [];
   const hourAgo = Date.now() - 3_600_000;
-  if (list.filter((m) => Date.parse(m.at) > hourAgo && m.from !== 'che').length >= MAX_PER_HOUR && sender !== 'che') {
+  const recent = hasGitHubMailbox(env) ? await readWebMail(storage, MAX_MESSAGES, env, fetcher) : ((await storage.get(BOX_KEY)) || []);
+  if ((Array.isArray(recent) ? recent : []).filter((m) => Date.parse(m.at) > hourAgo && m.from !== 'che').length >= MAX_PER_HOUR && sender !== 'che') {
     return { status: 429, detail: 'Mailbox is busy; try again later.' };
   }
   const message = { id: crypto.randomUUID(), at: new Date().toISOString(), from: sender, to: clean(to, 30).toLowerCase() || 'che', text: body, reply_to: clean(reply_to, 160) };
-  list.push(message);
-  await storage.put(BOX_KEY, list.slice(-MAX_MESSAGES));
-  // Mirror into the shared GitHub mailbox with the same id, so it is one
-  // message in one mailbox, not two copies.
-  let github = { status: 0, detail: 'GitHub mailbox not configured.' };
-  if (hasGitHubMailbox(env)) {
-    github = await sendMail(env, { from: message.from, to: message.to, text: message.text, replyTo: message.reply_to, id: message.id }, fetcher)
-      .catch((e) => ({ status: 502, detail: String(e?.message || e) }));
-    await storage.delete(GH_CACHE_KEY);
+  if (!hasGitHubMailbox(env)) {
+    // No GitHub connection: the Worker's storage is the one mailbox.
+    const box = (await storage.get(BOX_KEY)) || [];
+    const list = Array.isArray(box) ? box : [];
+    list.push(message);
+    await storage.put(BOX_KEY, list.slice(-MAX_MESSAGES));
+    return { status: 200, message, github: 'not connected', delivered: true };
   }
-  return { status: 200, message, github: github.status === 200 ? 'saved' : (github.detail || 'failed') };
+  // GitHub is the mailbox: the message exists once GitHub has it.
+  const github = await sendMail(env, { from: message.from, to: message.to, text: message.text, replyTo: message.reply_to, id: message.id }, fetcher)
+    .catch((e) => ({ status: 502, detail: String(e?.message || e) }));
+  await storage.delete(GH_CACHE_KEY);
+  if (github.status === 200) return { status: 200, message, github: 'saved', delivered: true };
+  if (github.status === 400) return { status: 400, detail: github.detail };
+  // Not delivered yet: queue for automatic retry; it is NOT sent.
+  const list = await outbox(storage);
+  list.push({ ...message, attempts: 1, state: 'pending', last_error: String(github.detail || github.status).slice(0, 200) });
+  await storage.put(OUTBOX_KEY, list.slice(-MAX_MESSAGES));
+  return { status: 202, message, github: github.detail || 'failed', delivered: false, queued: true };
 }
 
 function page(origin, code, messages, note = '', repo = '') {
@@ -259,8 +314,10 @@ export async function handleWebMailbox(request, storage, env = null, fetcher = f
   let note = '';
   if (text) {
     const posted = await postWebMail(storage, { from, text }, env, fetcher);
-    if (posted.status !== 200) return new Response(posted.detail, { status: posted.status, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
-    note = `SENT: your message ${posted.message.id} was delivered to CHE.`;
+    if (posted.status !== 200 && posted.status !== 202) return new Response(posted.detail, { status: posted.status, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+    note = posted.delivered
+      ? `SENT: your message ${posted.message.id} was delivered to CHE.`
+      : `QUEUED: your message ${posted.message.id} is waiting for the mailbox and will be delivered automatically; it is not delivered yet.`;
     if (typeof onDelivered === 'function' && posted.message?.to === 'che' && posted.message?.from !== 'che') {
       try {
         const handled = await onDelivered(posted.message);

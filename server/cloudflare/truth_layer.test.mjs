@@ -106,6 +106,7 @@ function fakeGitHub(log) {
     if (method === 'GET' && path === '') return reply({ default_branch: 'main', permissions: { push: true } });
     if (path.startsWith('/git/ref/heads/main')) return reply({ object: { sha: 'mainsha1234567' } });
     if (path.startsWith('/git/ref/heads/che-mailbox')) return reply({ object: { sha: 'mb' } });
+    if (method === 'GET' && path.startsWith('/contents/mailbox?ref=')) return reply([...threads.keys()].map((peer) => ({ name: `${peer}.jsonl` })));
     const thread = /^\/contents\/mailbox\/(\w+)\.jsonl/.exec(path);
     if (thread && method === 'GET') {
       const body = threads.get(thread[1]);
@@ -152,6 +153,13 @@ async function setup({ aiReply = 'Sure, sir.' } = {}) {
     return { text: lines.filter((l) => l.type === 'delta').map((l) => l.delta).join('') || raw, meta: lines.find((l) => l.type === 'done') || {} };
   };
   return { saved, state, chat, aiCalls };
+}
+
+// The ONE mailbox is GitHub: read what the fake GitHub mailbox holds.
+function githubMailbox(log) {
+  const latest = new Map();
+  for (const entry of log) latest.set(entry.peer, entry.content);
+  return [...latest.values()].flatMap((content) => content.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)));
 }
 
 const STARRED = [
@@ -222,7 +230,8 @@ test('6 + 7 + 11 + incident: "work with Claude" sends a real packet, says "no re
     const { saved, chat, state } = await setup();
     saved.set('che_last_engineering_request', { request: 'find the two repos and implement them into yourself', integrate: true });
     const out = await chat("Work with Claude who is already working in the repo and compare progress without stumbling over each other's work then tell me when you are ready");
-    const box = saved.get('web_mailbox') || [];
+    assert.equal(saved.get('web_mailbox'), undefined, 'no second local mailbox');
+    const box = githubMailbox(log);
     const packet = box.find((m) => m.from === 'che' && m.to === 'claude');
     assert.ok(packet, 'a real message to Claude exists');
     assert.match(packet.text, /Owner request \(verbatim\): find the two repos and implement them into yourself/);
@@ -236,7 +245,7 @@ test('6 + 7 + 11 + incident: "work with Claude" sends a real packet, says "no re
 
     // 11: the same request again does not resend.
     const again = await chat("Work with Claude who is already working in the repo and compare progress without stumbling over each other's work then tell me when you are ready");
-    assert.equal((saved.get('web_mailbox') || []).filter((m) => m.from === 'che' && m.to === 'claude').length, 1);
+    assert.equal(githubMailbox(log).filter((m) => m.from === 'che' && m.to === 'claude').length, 1);
     assert.match(again.text, /did not send it again/);
 
     // Before any reply: status is "sent, no reply yet".
@@ -249,13 +258,14 @@ test('6 + 7 + 11 + incident: "work with Claude" sends a real packet, says "no re
 });
 
 test('10: "batch it fast and use the other AIs" creates a real batch: packets to Claude and ChatGPT plus CHE\'s own job', async () => {
+  const log = [];
   const original = globalThis.fetch;
-  globalThis.fetch = fakeGitHub([]);
+  globalThis.fetch = fakeGitHub(log);
   try {
     const { saved, chat } = await setup();
     saved.set('che_last_engineering_request', { request: 'speed up Office task hand-off', integrate: true });
     const out = await chat('Batch it fast and use the other AIs');
-    const box = saved.get('web_mailbox') || [];
+    const box = githubMailbox(log);
     assert.ok(box.some((m) => m.to === 'claude') && box.some((m) => m.to === 'chatgpt'));
     assert.match(out.text, /Batch [0-9a-f]{8}/);
     const session = Object.values(saved.get('che_collaboration_sessions'))[0];
@@ -284,4 +294,41 @@ test('16 + 17: voice-first and money/delete authorization rules are still in for
   assert.match(router, /Ask first ONLY before spending money/);
   const workerSource = readFileSync(new URL('./worker.js', import.meta.url), 'utf8');
   assert.match(workerSource, /ask first only when something costs money/);
+});
+
+test('one mailbox: Flagstaff and GitHub are the same store; undelivered mail is queued, never claimed sent', async () => {
+  const { postWebMail, readWebMail, flushOutbox } = await import('./web_mailbox.js');
+  const saved = new Map();
+  const storage = storageFor(saved);
+  const env = { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'Vondada/chey-app' };
+  const log = [];
+  let githubDown = true;
+  const gh = fakeGitHub(log);
+  const fetcher = async (url, init = {}) => (githubDown && (init.method || 'GET') === 'PUT' ? new Response('{}', { status: 503 }) : gh(url, init));
+  const queued = await postWebMail(storage, { from: 'che', to: 'claude', text: 'Packet one' }, env, fetcher);
+  assert.equal(queued.status, 202);
+  assert.equal(queued.delivered, false);
+  assert.equal(saved.get('web_mailbox'), undefined, 'no local copy that could become a second mailbox');
+  const board = await readWebMail(storage, 50, env, fetcher);
+  assert.equal(board.find((m) => m.id === queued.message.id)?.pending, true, 'shown as still sending');
+  githubDown = false;
+  assert.deepEqual(await flushOutbox(storage, env, fetcher), { sent: 1, pending: 0 });
+  const after = await readWebMail(storage, 50, env, fetcher);
+  const delivered = after.filter((m) => m.id === queued.message.id);
+  assert.equal(delivered.length, 1, 'exactly one copy, now in GitHub');
+  assert.equal(delivered[0].pending, undefined);
+  // Messages posted straight into GitHub by an AI are on the board too.
+  const direct = await postWebMail(storage, { from: 'grok', to: 'che', text: 'Hello from the web link' }, env, fetcher);
+  assert.equal(direct.status, 200);
+  assert.ok(githubMailbox(log).some((m) => m.id === direct.message.id));
+});
+
+test('one mailbox: a legacy local board message that never reached GitHub is moved there, then the local board is removed', async () => {
+  const { flushOutbox } = await import('./web_mailbox.js');
+  const saved = new Map([['web_mailbox', [{ id: 'old-1', at: new Date().toISOString(), from: 'chatgpt', to: 'che', text: 'Only on the old board', reply_to: '' }]]]);
+  const log = [];
+  const out = await flushOutbox(storageFor(saved), { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'Vondada/chey-app' }, fakeGitHub(log));
+  assert.equal(out.sent, 1);
+  assert.equal(saved.get('web_mailbox'), undefined);
+  assert.ok(githubMailbox(log).some((m) => m.id === 'old-1'));
 });
