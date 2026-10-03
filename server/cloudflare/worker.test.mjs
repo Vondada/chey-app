@@ -689,9 +689,12 @@ test('quota jobs use bounded exponential backoff and dead-letter after three ret
   job.retry_at = 0; saved.get('che').jobs[0] = job;
   await state.alarm(); assert.equal(calls, attempts);
   await state.setAutonomy(true); assert.ok(alarmAt);
-  saved.get('che').jobs[0].retry_count = 24;
+  saved.get('che').jobs[0].retry_count = 3;
+  saved.get('che').jobs[0].retry_at = 0;
   await state.processJobs();
   job = saved.get('che').jobs[0]; assert.equal(job.status, 'failed');
+  assert.equal(job.dead_letter, true);
+  assert.ok(job.dead_letter_at);
   assert.match(job.error, /Retry limit reached/);
 });
 
