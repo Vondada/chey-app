@@ -14,6 +14,7 @@ import 'package:http/http.dart' as http;
 import '../che_app_portal.dart';
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
+import '../widgets/che_native_scene_world.dart';
 
 class CheQuote {
   const CheQuote({required this.symbol, required this.name, this.price, this.changePct, required this.status, this.note});
@@ -183,6 +184,54 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
             padding: const EdgeInsets.only(bottom: CheSpace.xxl),
             children: [
               _TickerTape(quotes: _quotes, fmt: _fmt),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  CheSpace.gutter,
+                  CheSpace.md,
+                  CheSpace.gutter,
+                  0,
+                ),
+                child: ValueListenableBuilder<CheSceneQuality>(
+                  valueListenable: CheSceneQualityStore.value,
+                  builder: (context, quality, _) => CheNativeSceneWorld(
+                    mode: CheSceneMode.markets,
+                    quality: quality,
+                    height: 250,
+                    semanticsLabel: 'Immersive Markets Room',
+                    entities: [
+                      for (final quote in _quotes.take(12))
+                        CheSceneEntity(
+                          id: quote.symbol,
+                          label: quote.name,
+                          description: quote.available
+                              ? '${_fmt(quote.price!)}. ${quote.changePct == null ? quote.status : '${quote.changePct!.toStringAsFixed(2)} percent. ${quote.status}'}'
+                              : (quote.note ?? quote.status),
+                          color: quote.changePct == null
+                              ? _gold
+                              : (quote.changePct! >= 0 ? _up : _down),
+                          state: quote.status,
+                        ),
+                    ],
+                    onEntityTap: (id) {
+                      final matches = _quotes.where((q) => q.symbol == id);
+                      if (matches.isEmpty) return;
+                      final quote = matches.first;
+                      if (quote.symbol.startsWith('^')) {
+                        setState(() {
+                          _chartSymbol = quote.symbol;
+                          _chartName = quote.name;
+                          _candles = const [];
+                        });
+                        unawaited(_loadCandles());
+                      } else {
+                        widget.onAsk(
+                          'Give me a quick structure read on ${quote.name} (${quote.symbol}) using live data if connected: trend, key levels, catalysts and risk.',
+                        );
+                      }
+                    },
+                  ),
+                ),
+              ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
