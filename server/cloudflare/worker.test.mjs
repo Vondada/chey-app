@@ -969,3 +969,104 @@ test('self-update rejects a proposal when main changed after source inspection',
   assert.equal(out.stale_source, true);
   assert.equal(writes, 0, 'stale proposal must not create a branch or write files');
 });
+
+test('Flagstaff retries remain discoverable beyond newest 40 messages', async () => {
+  const saved = new Map([
+    ['flagstaff_auto_reply:old-retry', {
+      status: 'retry',
+      at: 0,
+      retry_count: 1,
+      retry_at: 0,
+    }],
+  ]);
+  const alarms = [];
+  let aiRuns = 0;
+  const base = Date.parse('2026-10-02T00:00:00Z');
+  const messages = Array.from({ length: 41 }, (_, index) => ({
+    id: index === 0 ? 'old-retry' : `new-${index}`,
+    at: new Date(base + index * 1000).toISOString(),
+    from: 'chatgpt',
+    to: 'che',
+    text: `message ${index}`,
+    reply_to: '',
+  }));
+  const threadContent = Buffer.from(
+    messages.map((message) => JSON.stringify(message)).join('\n') + '\n',
+    'utf8',
+  ).toString('base64');
+
+  const oldFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const method = String(options.method || 'GET').toUpperCase();
+    if (String(url).includes('/contents/mailbox?ref=che-mailbox')) {
+      return Response.json([{ name: 'chatgpt.jsonl' }]);
+    }
+    if (String(url).includes('/contents/mailbox/chatgpt.jsonl?ref=che-mailbox') && method === 'GET') {
+      return Response.json({ content: threadContent, sha: 'thread-sha' });
+    }
+    if (String(url).includes('/contents/mailbox/chatgpt.jsonl') && method === 'PUT') {
+      return Response.json({ content: { sha: 'updated-thread-sha' } });
+    }
+    throw new Error(`Unexpected GitHub request: ${method} ${url}`);
+  };
+
+  try {
+    const env = {
+      CHE_GITHUB_TOKEN: 'test-token',
+      CHE_GITHUB_REPO: 'Vondada/chey-app',
+      AI: {
+        run: async () => {
+          aiRuns += 1;
+          return { response: 'Recovered reply.' };
+        },
+      },
+    };
+    const state = new CheState({
+      storage: {
+        get: async (key) => saved.get(key),
+        put: async (key, value) => saved.set(key, structuredClone(value)),
+        delete: async (key) => saved.delete(key),
+        setAlarm: async (when) => alarms.push(when),
+        list: async ({ prefix } = {}) => new Map(
+          [...saved].filter(([key]) => !prefix || key.startsWith(prefix)),
+        ),
+      },
+    }, env);
+
+    const result = await state.retryFlagstaffReplies();
+    assert.equal(result.replied, 1);
+    assert.equal(aiRuns, 1);
+    assert.equal(saved.get('flagstaff_auto_reply:old-retry').status, 'replied');
+  } finally {
+    globalThis.fetch = oldFetch;
+  }
+});
+
+test('Flagstaff mailbox read failure preserves a pending retry alarm', async () => {
+  const saved = new Map([
+    ['flagstaff_auto_reply:retry-after-read-failure', {
+      status: 'retry',
+      at: Date.now() - 60_000,
+      retry_count: 2,
+      retry_at: Date.now() - 1,
+    }],
+  ]);
+  const alarms = [];
+  const state = new CheState({
+    storage: {
+      get: async (key) => saved.get(key),
+      put: async (key, value) => saved.set(key, structuredClone(value)),
+      setAlarm: async (when) => alarms.push(when),
+      list: async ({ prefix } = {}) => new Map(
+        [...saved].filter(([key]) => !prefix || key.startsWith(prefix)),
+      ),
+    },
+  }, {});
+
+  const before = Date.now();
+  const result = await state.retryFlagstaffReplies();
+  assert.equal(result.replied, 0);
+  assert.equal(result.queued, 1);
+  assert.equal(alarms.length, 1);
+  assert.ok(alarms[0] >= before + 29_000);
+});
