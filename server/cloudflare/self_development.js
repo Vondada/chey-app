@@ -11,6 +11,7 @@
 // permission problems are class C; owner approval is class D.
 
 import { isSelfUpdateEditablePath, isSelfUpdateReadablePath, validateUpdateFiles } from './self_update.js';
+import { ENGINEERING_PLAYBOOK } from './engineering_playbook.js';
 import {
   AgentBudget,
   FAILURE_CLASS,
@@ -207,6 +208,7 @@ async function runAgent(ctx, { stage, role, assignment, payload, maxTokens = 220
     'All repository evidence available to you is in this request. If something you need is missing, say exactly which path or identifier CHE should fetch in your notes; never ask the owner for source, filenames, line numbers, diffs or exact text.',
     'Never expose or place credentials, tokens, private keys, passwords, or signing material in code.',
     'Never claim you inspected a file unless its actual source is included in your task.',
+    ENGINEERING_PLAYBOOK,
   ].join('\n');
   const user = typeof payload === 'function' ? fitPayload(payload, ctx.inputChars) : JSON.stringify(payload);
   ctx.budget.spend(stage, Math.ceil((system.length + user.length) / 4));

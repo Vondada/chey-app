@@ -43,6 +43,7 @@ import { applyCorrections, correctionsContext, detectCorrection, learnCorrection
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { autoImproveScan, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, repositoryImplementationIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { guardOwnerReply, loadReceipts, recordReceipt, verifiedState, verifiedStatusText } from './truth_layer.js';
+import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
 import { buildCollaborationPacket, collaborationIntent, collaborationSessionId, parallelPreference, planParallelLanes, statusIntent } from './collaboration.js';
 import { consultEngine, consultIntent, shareIntent, speakConsult } from './ai_consult.js';
@@ -5526,6 +5527,9 @@ export class CheState extends DurableObject {
 
         // GitHub/self-development commands are real tool actions, never generic
         // model guesses about credentials. "Create the PR" works by voice/text.
+        if (playbookIntent(message)) {
+          return ndjsonReply(ENGINEERING_PLAYBOOK_SPOKEN, { source: 'che_engineering_playbook' });
+        }
         const selfUpdateAction = selfUpdateChatIntent(message);
         if (selfUpdateAction && !ownerDevice && ['open-pr', 'merge'].includes(selfUpdateAction.kind)) {
           return ndjsonReply('Only the CHE owner can open, merge or deploy code changes.', { source: 'che_self_update', ok: false });
