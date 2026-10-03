@@ -206,7 +206,7 @@ async function searchCode(env, terms, fetcher) {
 export function fallbackTreeCandidates(request, index, terms = [], limit = 6) {
   const task = String(request || '').toLowerCase();
   const words = [...new Set([
-    ...String(request || '').toLowerCase().match(/[a-z][a-z0-9_]{2,}/g) || [],
+    ...(String(request || '').toLowerCase().match(/[a-z][a-z0-9_]{2,}/g) || []),
     ...terms.flatMap((term) => String(term).toLowerCase().match(/[a-z][a-z0-9_]{2,}/g) || []),
   ])].filter((word) => !['the', 'and', 'for', 'with', 'this', 'that', 'make', 'change', 'code', 'app'].includes(word));
 
