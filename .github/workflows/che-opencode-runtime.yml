@@ -145,8 +145,8 @@ jobs:
               prov=${p%%:*}; flag=${p##*:}
               [ "${!flag}" = true ] || continue
               list=$(opencode models "$prov" 2>/dev/null | grep -E "^$prov/" | grep -viE "tts|image|audio|embed|vision|guard|lite|nano|mini|8b" || true)
-              cand=$(echo "$list" | grep -iE "pro|sonnet|opus|gpt-5|coder|qwen3|large|70b" | sort -rV | head -1)
-              [ -z "$cand" ] && cand=$(echo "$list" | head -1)
+              cand=$(echo "$list" | grep -iE "pro|sonnet|opus|gpt-5|coder|qwen3|large|70b" | sort -rV | head -1 || true)
+              [ -n "$cand" ] || cand=$(echo "$list" | head -1)
               if [ -n "$cand" ]; then model="$cand"; break; fi
             done
           fi
@@ -354,7 +354,7 @@ jobs:
               patch_artifact: null,
               failure: `runtime_job_${process.env.RUNTIME_RESULT || 'unknown'}`,
             }));
-            NODE
+          NODE
           fi
 
       - name: Post compact result to CHE mailbox branch
