@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyEdits, attemptFingerprint, diagnoseNoOp, fallbackTreeCandidates, focusView, jsonObject, literalTerms, loadLessons, prepareSelfUpdate, recordLesson, substantiveChange, wantsDocsOnly } from './self_development.js';
+import { applyEdits, attemptFingerprint, diagnoseNoOp, fallbackTreeCandidates, focusView, jsonObject, literalTerms, loadLessons, prepareSelfUpdate, recordLesson, substantiveChange, unusedNewCode, wantsDocsOnly } from './self_development.js';
 
 const MAIN = `class Home {\n  String _statusBanner = 'Ready. Type or speak a request.';\n}\n`;
 const PATCH = `const t = Text('CHE updated. Restart to apply.');\n`;
@@ -791,4 +791,62 @@ test('Copilot: feature mutation verbs around docs references never count as docs
   ]) {
     assert.equal(wantsDocsOnly(request), false, request);
   }
+});
+
+// The change CHE built on Oct 3 from a pasted explanation: a cache and two
+// methods nothing ever calls. It compiled and passed review; it delivered nothing.
+const OFFICE_STORE_BEFORE = [
+  "import 'package:flutter/foundation.dart';",
+  'class CheOfficeStore extends ChangeNotifier {',
+  '  CheOfficeStore();',
+  "  static const cheId = 'che';",
+  '  List<CheAgent> get agents => _agents;',
+  '}',
+].join('\n');
+const OFFICE_STORE_DEAD = OFFICE_STORE_BEFORE
+  .replace('class CheOfficeStore extends', [
+    'extension CheOfficeStoreIndex on CheOfficeStore {',
+    '  void updateAgentCache(List<CheAgent> agents) {',
+    '    _agentCache.clear();',
+    '    for (final agent in agents) {',
+    '      _agentCache[agent.id] = agent;',
+    '    }',
+    '  }',
+    '',
+    '  CheAgent? getAgent(String id) => _agentCache[id];',
+    '}',
+    '',
+    'class CheOfficeStore extends',
+  ].join('\n'))
+  .replace('  CheOfficeStore();', '  final Map<String, CheAgent> _agentCache = {};\n  CheOfficeStore();');
+
+test('new code that nothing calls is not an implementation', () => {
+  const path = 'lib/agents/che_office_store.dart';
+  const before = new Map([[path, OFFICE_STORE_BEFORE]]);
+  const after = new Map([[path, OFFICE_STORE_DEAD]]);
+  assert.deepEqual(unusedNewCode(before, after, [{ path, content: OFFICE_STORE_DEAD }]).map((u) => u.name), ['updateAgentCache', 'getAgent']);
+
+  // Wired in: the same methods called from the real flow pass.
+  const screen = 'lib/agents/che_office_screen.dart';
+  const caller = "void refresh(CheOfficeStore store) { store.updateAgentCache(store.agents); final che = store.getAgent('che'); }";
+  const wired = new Map([[path, OFFICE_STORE_DEAD], [screen, caller]]);
+  const callerBefore = new Map([[path, OFFICE_STORE_BEFORE], [screen, "void refresh(CheOfficeStore store) { }"]]);
+  assert.deepEqual(unusedNewCode(callerBefore, wired, [{ path, content: OFFICE_STORE_DEAD }, { path: screen, content: caller }]), []);
+});
+
+test('overrides, lifecycle methods, tests and named requests are not flagged as dead code', () => {
+  const path = 'lib/ui/panel.dart';
+  const before = 'class Panel extends StatelessWidget {\n}';
+  const after = 'class Panel extends StatelessWidget {\n  @override\n  Widget build(BuildContext context) {\n    return const SizedBox();\n  }\n  void initState() {\n  }\n}';
+  assert.deepEqual(unusedNewCode(new Map([[path, before]]), new Map([[path, after]]), [{ path, content: after }]), []);
+  const testPath = 'server/cloudflare/x.test.mjs';
+  const testFile = "function helperOnlyHere() {\n  return 1;\n}";
+  assert.deepEqual(unusedNewCode(new Map(), new Map([[testPath, testFile]]), [{ path: testPath, content: testFile }]), []);
+  const js = 'server/cloudflare/util.js';
+  const jsAfter = 'export function formatSpokenTime(date) {\n  return String(date);\n}';
+  assert.deepEqual(unusedNewCode(new Map([[js, '']]), new Map([[js, jsAfter]]), [{ path: js, content: jsAfter }]).map((u) => u.name), ['formatSpokenTime']);
+  assert.deepEqual(unusedNewCode(new Map([[js, '']]), new Map([[js, jsAfter]]), [{ path: js, content: jsAfter }], 'Add an exported formatSpokenTime helper'), [], 'the owner asked for that exact helper');
+  const route = 'server/cloudflare/worker.js';
+  const routeAfter = "import { formatSpokenTime } from './util.js';\nconst reply = formatSpokenTime(new Date());";
+  assert.deepEqual(unusedNewCode(new Map([[js, ''], [route, '']]), new Map([[js, jsAfter], [route, routeAfter]]), [{ path: js, content: jsAfter }, { path: route, content: routeAfter }]), []);
 });

@@ -680,3 +680,22 @@ test('lane jobs run one at a time in order; other work stays parallel', () => {
   // A backing-off head keeps its place: later topics do not jump ahead.
   assert.deepEqual(selectReadyJobs([{ ...jobs[1], retry_at: now + 60_000 }, jobs[0]], now, 4).map((job) => job.id), []);
 });
+
+test('"Discard that change" removes the saved change and starts the next study build', async () => {
+  for (const phrase of ['Discard that change', 'CHE, scrap the update', "I don't want that change", 'throw that change away', 'Reject the code']) {
+    assert.equal(selfUpdateChatIntent(phrase)?.kind, 'discard', phrase);
+  }
+  for (const phrase of ['Delete it', 'Cancel my 3pm meeting', "Don't merge", 'discard the email draft', 'Can you discard changes to a file in git?']) {
+    assert.notEqual(selfUpdateChatIntent(phrase)?.kind, 'discard', phrase);
+  }
+  const saved = new Map();
+  const { chat } = await pairedChat({ CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'x' }) } }, saved);
+  assert.match(await (await chat('Discard that change')).text(), /no saved change waiting/);
+  saved.set('pending_self_update', { proposal: { summary: 'Agent cache', files: [{ path: 'lib/agents/che_office_store.dart', content: 'x' }] }, request: 'r', from_job: 'j1' });
+  saved.set('study_build_queue', [{ id: 's:1', order: 1, topic: 'Search Engine', request: 'Topic 1 of 6: Search Engine build', status: 'waiting', at: new Date().toISOString() }]);
+  const text = await (await chat('Discard that change')).text();
+  assert.match(text, /Discarded, sir\. The saved change to lib\/agents\/che_office_store\.dart is gone and nothing from it was merged\./);
+  assert.match(text, /Next, my coding team started building Search Engine/);
+  assert.equal(saved.has('pending_self_update'), false);
+  assert.ok(saved.get('che').jobs.some((job) => job.study_build === 's:1'));
+});

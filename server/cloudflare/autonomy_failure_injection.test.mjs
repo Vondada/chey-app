@@ -565,3 +565,16 @@ test('a comments/docs-only change is never accepted as an implementation', async
   assert.ok(out.diagnostics.outcomes.some((o) => o.outcome === 'no_substance'));
   assert.match(out.proposal.files[0].content, /Ready when you are/);
 });
+
+test('a change that adds code nothing calls is sent back, not proposed', async () => {
+  let n = 0;
+  const ai = scriptedAI({
+    engineer: () => json(n++ === 0
+      ? { summary: 'Indexing cache', edits: [{ path: 'lib/main.dart', find: 'class Home {', replace: "extension HomeIndex on Home {\n  String? cachedBanner(String id) => null;\n}\n\nclass Home {" }] }
+      : GOOD_EDIT),
+  });
+  const out = await prepareSelfUpdate(env(ai), 'rebuild the home banner to match the new design', fakeGitHub(), memoryStore());
+  assert.equal(out.status, 200, out.detail);
+  assert.ok(out.diagnostics.outcomes.some((o) => o.outcome === 'dead_code'), 'the unused method was caught deterministically');
+  assert.doesNotMatch(out.proposal.files[0].content, /cachedBanner/);
+});

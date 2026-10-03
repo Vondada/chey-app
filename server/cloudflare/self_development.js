@@ -588,6 +588,56 @@ export function substantiveChange(beforeMap, files) {
   return false;
 }
 
+// Names a change newly declares (functions, methods, getters, classes) that
+// nothing calls. "Add a cache and a getAgent() nobody uses" compiles and can
+// fool a reviewer, but it delivers nothing, so it is not an implementation.
+const DECL_SKIP = new Set([
+  'if', 'for', 'while', 'switch', 'catch', 'return', 'await', 'function', 'new', 'else', 'do', 'try', 'with',
+  'build', 'initState', 'dispose', 'didChangeDependencies', 'didUpdateWidget', 'createState', 'main',
+  'toString', 'noSuchMethod', 'constructor', 'fetch', 'alarm', 'scheduled', 'queue', 'webSocketMessage', 'webSocketClose',
+]);
+
+function declaredNames(source, path) {
+  const names = [];
+  const lines = String(source || '').split('\n');
+  const dart = /\.dart$/i.test(path);
+  lines.forEach((line, index) => {
+    const previous = index > 0 ? lines[index - 1] : '';
+    if (/@override/.test(line) || /@override\s*$/.test(previous)) return;
+    const found = [];
+    const type = /^\s*(?:export\s+)?(?:(?:abstract|final|sealed|base|interface)\s+)*(?:class|mixin|enum)\s+([A-Za-z_$][\w$]*)/.exec(line);
+    if (type) found.push(type[1]);
+    const getter = dart ? /\bget\s+([A-Za-z_]\w*)\s*(?:=>|\{)/.exec(line) : null;
+    if (getter) found.push(getter[1]);
+    const jsFunction = !dart ? /\bfunction\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(/.exec(line) : null;
+    if (jsFunction) found.push(jsFunction[1]);
+    const jsArrow = !dart ? /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?:\([^()]*\)|[A-Za-z_$][\w$]*)\s*=>/.exec(line) : null;
+    if (jsArrow) found.push(jsArrow[1]);
+    const method = /^\s*(?:(?:static|external|async|export|public|private|protected|late|final)\s+)*(?:[A-Za-z_$][\w$<>?,\[\]. ]*?\s+)?([A-Za-z_$][\w$]*)\s*(?:<[^<>()]*>)?\s*\((?:[^()]|\([^()]*\))*\)\s*(?:async\*?|sync\*)?\s*(?:\{|=>)/.exec(line);
+    if (method && !/^\s*(?:return|await|new|throw|else|case)\b/.test(line)) found.push(method[1]);
+    for (const name of found) if (!DECL_SKIP.has(name) && !names.includes(name)) names.push(name);
+  });
+  return names;
+}
+
+export function unusedNewCode(beforeMap, afterMap, files, request = '') {
+  const unused = [];
+  const corpus = [...afterMap.values()].map((text) => String(text || ''));
+  for (const file of files) {
+    if (!/\.(?:dart|m?js)$/i.test(file.path) || /(?:^|\/)test\/|\.test\.|_test\./i.test(file.path)) continue;
+    const before = new Set(declaredNames(beforeMap.get(file.path) ?? '', file.path));
+    const declaredNow = declaredNames(file.content, file.path);
+    for (const name of declaredNow.filter((n) => !before.has(n))) {
+      if (String(request).includes(name)) continue;
+      const pattern = new RegExp(`(?<![\\w$])${name.replace(/\$/g, '\\$')}(?![\\w$])`, 'g');
+      const uses = corpus.reduce((sum, text) => sum + (text.match(pattern) || []).length, 0);
+      const declarations = corpus.reduce((sum, text) => sum + declaredNames(text, file.path).filter((n) => n === name).length, 0);
+      if (uses - declarations <= 0) unused.push({ name, path: file.path });
+    }
+  }
+  return unused;
+}
+
 export function wantsDocsOnly(request) {
   const text = String(request || '').trim();
   const docs = /\b(?:doc(?:s|ument(?:s|ation)?)?|readme|comments?|changelog|notes?|guide|docstrings?)\b/i;
@@ -1204,6 +1254,12 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       if (!wantsDocsOnly(task) && !substantiveChange(sources, changedFiles)) {
         feedbacks[i] = 'That change only edits comments or documentation; it does not implement anything. Change the real code (widgets, logic, data) that delivers the request.';
         failStrategy('no_substance', 'comment/docs-only change');
+        return null;
+      }
+      const unused = unusedNewCode(sources, applied.sources, changedFiles, task);
+      if (unused.length) {
+        feedbacks[i] = `The new code is never called: ${unused.map((u) => `${u.name} in ${u.path}`).join(', ')}. Code nothing calls delivers nothing. Call it from the real flow that delivers the request (ask for that file if you need it), or do not add it.`;
+        failStrategy('dead_code', unused.map((u) => u.name).join(','));
         return null;
       }
       chat.push({ from: member.name, msg: `Round ${round + 1} via ${member.provider}. My change: ${String(answer.summary || '').slice(0, 300)}\n${diff.slice(0, 1500)}` });
