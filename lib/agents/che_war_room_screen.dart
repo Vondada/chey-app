@@ -10,7 +10,7 @@ import '../che_ui/che_agents.dart';
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
 import 'che_agent_runtime.dart';
-import '../widgets/che_3d_room_view.dart';
+import '../widgets/che_native_scene_world.dart';
 
 class CheWarRoomScreen extends StatefulWidget {
   const CheWarRoomScreen({super.key, required this.client, required this.meetingId});
@@ -287,10 +287,12 @@ class _WarRoom3D extends StatefulWidget {
     required this.speaking,
     required this.onFallbackSeats,
   });
+
   final CheMeeting meeting;
   final Map<String, CheAgent> agents;
   final String? speaking;
   final Widget Function() onFallbackSeats;
+
   @override
   State<_WarRoom3D> createState() => _WarRoom3DState();
 }
@@ -298,34 +300,28 @@ class _WarRoom3D extends StatefulWidget {
 class _WarRoom3DState extends State<_WarRoom3D> {
   bool _flat = false;
 
-  Map<String, dynamic> _payload() {
+  List<CheSceneEntity> _entities() {
     final m = widget.meeting;
     final speaking = widget.speaking;
-    final agents = <Map<String, dynamic>>[
-      {
-        'id': 'che',
-        'name': 'CHE',
-        'role': 'Chair',
-        'status': m.summary.status == 'synthesizing' ? 'thinking' : 'working',
-        'isChe': true,
-        'speaking': speaking == 'CHE',
-      },
+    return [
+      CheSceneEntity(
+        id: 'che',
+        label: 'CHE',
+        description: 'Office Boss and War Room chair',
+        color: CheColors.accent,
+        state: m.summary.status == 'synthesizing' ? 'thinking' : 'working',
+        speaking: speaking == 'CHE',
+      ),
       for (final p in m.participants)
-        {
-          'id': p.agentId,
-          'name': p.name,
-          'role': p.role,
-          'status': speaking == p.name ? 'talking' : 'working',
-          'speaking': speaking == p.name,
-          'isChe': false,
-        },
+        CheSceneEntity(
+          id: p.agentId,
+          label: p.name,
+          description: '${p.role}. ${p.responsibility}',
+          color: widget.agents[p.agentId]?.color ?? CheColors.office,
+          state: speaking == p.name ? 'talking' : 'working',
+          speaking: speaking == p.name,
+        ),
     ];
-    return {
-      'objective': m.summary.objective,
-      'status': m.summary.status,
-      'progress': m.summary.progress,
-      'agents': agents,
-    };
   }
 
   @override
@@ -333,20 +329,28 @@ class _WarRoom3DState extends State<_WarRoom3D> {
     if (_flat) return widget.onFallbackSeats();
     return Column(
       children: [
-        RepaintBoundary(
-          child: Che3DRoomView(
-            assetPath: 'assets/office3d/warroom.html',
-            updateFunction: 'updateMeeting',
-            payload: _payload(),
-            height: 360,
-            semanticsLabel: '3D War Room conference table',
-            fallbackMessage: '3D War Room unavailable — showing seats.',
-            onTapId: (_) {},
+        ValueListenableBuilder<CheSceneQuality>(
+          valueListenable: CheSceneQualityStore.value,
+          builder: (context, quality, _) => RepaintBoundary(
+            child: CheNativeSceneWorld(
+              mode: CheSceneMode.warRoom,
+              quality: quality,
+              entities: _entities(),
+              height: 360,
+              semanticsLabel:
+                  'Immersive War Room. Real participants around the conference table.',
+            ),
           ),
         ),
-        TextButton(
-          onPressed: () => setState(() => _flat = true),
-          child: const Text('Flat seats'),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            const CheSceneQualityButton(),
+            TextButton(
+              onPressed: () => setState(() => _flat = true),
+              child: const Text('Flat seats'),
+            ),
+          ],
         ),
       ],
     );
