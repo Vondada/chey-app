@@ -251,11 +251,8 @@ void main() {
     await tester.tap(find.bySemanticsLabel(RegExp(r"CHE.*Open to talk or send a request")));
     await _pumpUntilFound(tester, find.text('CURRENT JOB'));
     // The desk sheet now lists job, capabilities, skills and limits first.
-    await tester.scrollUntilVisible(
-      find.text('Talk to CHE'),
-      160,
-      scrollable: find.byType(Scrollable).last,
-    );
+    await tester.ensureVisible(find.text('Talk to CHE', skipOffstage: false));
+    await tester.pump();
     await tester.scrollUntilVisible(
       find.text('REQUEST TO CHE'),
       160,
