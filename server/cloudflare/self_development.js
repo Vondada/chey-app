@@ -459,7 +459,7 @@ export function applyEdits(sources, edits) {
 // docs-only edits are not an implementation (unless docs were requested).
 const CODE_FILE = /\.(?:dart|m?js|cjs|ts|tsx|jsx|swift|kt|java|m|mm|h|html|css)$/i;
 
-function codeWithoutComments(source) {
+function codeWithoutComments(source, { lineComments = true, htmlComments = false } = {}) {
   const text = String(source || '');
   let out = '';
   let i = 0;
@@ -496,8 +496,8 @@ function codeWithoutComments(source) {
       i += 1;
       continue;
     }
-    if (text.startsWith('<!--', i)) { state = 'html'; i += 4; continue; }
-    if (ch === '/' && next === '/') { state = 'line'; i += 2; continue; }
+    if (htmlComments && text.startsWith('<!--', i)) { state = 'html'; i += 4; continue; }
+    if (lineComments && ch === '/' && next === '/') { state = 'line'; i += 2; continue; }
     if (ch === '/' && next === '*') { state = 'block'; i += 2; continue; }
     if (ch === "'" || ch === '"' || ch === '`') { quote = ch; out += ch; i += 1; continue; }
     out += ch;
@@ -506,8 +506,13 @@ function codeWithoutComments(source) {
   return out;
 }
 
-function normalizedExecutableSource(source) {
-  return codeWithoutComments(source)
+function normalizedExecutableSource(source, path = '') {
+  const isCss = /\.css$/i.test(String(path || ''));
+  const isHtml = /\.html$/i.test(String(path || ''));
+  return codeWithoutComments(source, {
+    lineComments: !isCss && !isHtml,
+    htmlComments: isHtml,
+  })
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
@@ -517,8 +522,8 @@ function normalizedExecutableSource(source) {
 export function substantiveChange(beforeMap, files) {
   for (const file of files) {
     if (!CODE_FILE.test(file.path)) continue;
-    const before = normalizedExecutableSource(beforeMap.get(file.path) ?? '');
-    const after = normalizedExecutableSource(file.content || '');
+    const before = normalizedExecutableSource(beforeMap.get(file.path) ?? '', file.path);
+    const after = normalizedExecutableSource(file.content || '', file.path);
     if (before !== after) return true;
   }
   return false;
@@ -532,7 +537,7 @@ export function wantsDocsOnly(request) {
   const functionalAction = /\b(?:build|rebuild|redesign|implement|make|upgrade|refactor|develop|ship|fix|update|add|create|edit|improve|change)\b/i;
   const docsAction = /\b(?:fix|update|add|create|write|edit|improve|change|correct|refresh|document)\b/i;
   const clauses = text
-    .split(/\b(?:and|plus|also|along\s+with|as\s+well\s+as|then)\b|[;.!?]+/i)
+    .split(/\b(?:and|plus|also|along\s+with|as\s+well\s+as|then|while|whereas)\b|[,;&]|[;.!?]+/i)
     .map((clause) => clause.trim())
     .filter(Boolean);
 
