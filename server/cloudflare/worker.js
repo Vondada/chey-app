@@ -6686,13 +6686,16 @@ export class CheState extends DurableObject {
             error: result ? '' : 'Background model returned no result.',
           };
         } catch (error) {
-          const retry = busyError(error) && (job.retry_count || 0) < 24;
+          const retryCount = Number(job.retry_count || 0);
+          const retry = busyError(error) && retryCount < 3;
           console.log('CHE background error:', job.id, String(error.message || error));
           return {
             id: job.id, status: retry ? 'queued' : 'failed', result: '',
-            retry_count: (job.retry_count || 0) + (retry ? 1 : 0),
-            retry_at: retry ? Date.now() + 5 * 60_000 : null,
-            error: `${busyError(error) && !retry ? 'Retry limit reached. ' : ''}${String(error.message || error).slice(0, 1000)}`,
+            retry_count: retryCount + (retry ? 1 : 0),
+            retry_at: retry ? Date.now() + (5 * 60_000 * (2 ** retryCount)) : null,
+            dead_letter: busyError(error) && !retry,
+            dead_letter_at: busyError(error) && !retry ? new Date().toISOString() : null,
+            error: `${busyError(error) && !retry ? 'Retry limit reached; job moved to terminal dead-letter state. ' : ''}${String(error.message || error).slice(0, 1000)}`,
           };
         }
       }),
