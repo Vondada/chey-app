@@ -172,7 +172,8 @@ test('chat: engines down during a coding request → saved background job and a 
   globalThis.fetch = GITHUB_OK({ 'lib/main.dart': "class A { String s = 'Ready'; }\n" });
   try {
     const res = await chat('Update your code: make the ready banner friendlier');
-    const text = await res.text();
+    // Only the words the owner sees/hears (the metadata carries a random job id).
+    const text = (await res.text()).trim().split('\n').map((l) => JSON.parse(l)).filter((l) => l.type === 'delta').map((l) => l.delta).join('');
     assert.equal(res.status, 200);
     assert.doesNotMatch(text, /429|503|groq|gemini|diagnostic|token|provide the source|filename/i);
     assert.match(text, /saved the coding job|continue/i);
