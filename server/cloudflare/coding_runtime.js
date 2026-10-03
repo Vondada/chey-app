@@ -47,13 +47,14 @@ export function validateRuntimeRequest(value) {
   return { text };
 }
 
-export function runtimeSessionId({ repo = '', baseSha = '', targetBranch = '', ownerRequest = '', jobId = '' } = {}) {
+export function runtimeSessionId({ repo = '', baseSha = '', targetBranch = '', ownerRequest = '', jobId = '', model = '' } = {}) {
   const fingerprint = stableHash(JSON.stringify({
     repo: String(repo).toLowerCase(),
     base_sha: String(baseSha).toLowerCase(),
     target_branch: String(targetBranch).toLowerCase(),
     request: String(ownerRequest).replace(/\s+/g, ' ').trim(),
     job_id: String(jobId).trim(),
+    model: String(model).trim().toLowerCase(),
   }));
   return `ocr-${fingerprint}`;
 }
@@ -121,7 +122,7 @@ export class CheCodingRuntime {
     const branch = validBranch(targetBranch);
     if (!branch) return { status: 400, detail: 'OpenCode runtime needs a safe target branch name.' };
     const dispatchRef = validBranch(workflowRef) || 'main';
-    const sessionId = runtimeSessionId({ repo, baseSha: head, targetBranch: branch, ownerRequest: request.text, jobId });
+    const sessionId = runtimeSessionId({ repo, baseSha: head, targetBranch: branch, ownerRequest: request.text, jobId, model: resolvedModel });
     const sent = await gh(this.env, 'POST', `/actions/workflows/${encodeURIComponent(this.workflow)}/dispatches`, {
       ref: dispatchRef,
       inputs: {
