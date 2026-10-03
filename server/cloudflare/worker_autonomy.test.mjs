@@ -513,3 +513,170 @@ test('Copilot: improve-your-code capability request routes to self-development',
   assert.equal(intent?.kind, 'access');
   assert.equal(shouldHandleSelfUpdateAction(message, intent), false);
 });
+
+// ── Topic study: "Study build-your-own-x: these topics, then implement" ──
+const { OWNER_PROMPT: BYOX_PROMPT, README: BYOX_README } = await import('./topic_study.fixtures.mjs');
+const BYOX = 'codecrafters-io/build-your-own-x';
+
+function topicStudyFetch({ tutorial = (u) => new Response(`<article><h1>${u}</h1>${'<p>An inverted index maps each word to its documents; rank results with TF-IDF.</p>'.repeat(10)}</article>`, { status: 200, headers: { 'content-type': 'text/html' } }) } = {}) {
+  const calls = [];
+  const fn = async (url, init = {}) => {
+    const u = String(url);
+    calls.push(`${init.method || 'GET'} ${u}`);
+    const ok = (data) => new Response(JSON.stringify(data), { status: 200 });
+    if (u === `https://api.github.com/repos/${BYOX}`) return ok({ default_branch: 'master', license: null, description: 'Master programming by recreating your favorite technologies from scratch.', stargazers_count: 551000 });
+    if (u.startsWith(`https://api.github.com/repos/${BYOX}/readme`)) return ok({ content: Buffer.from(BYOX_README).toString('base64') });
+    if (u.startsWith(`https://api.github.com/repos/${BYOX}/contents`)) return ok([{ path: 'README.md' }]);
+    if (u.includes('/git/trees/HEAD')) return ok({ tree: [{ path: 'server/cloudflare/brain_graph.js' }, { path: 'lib/brain/che_brain_room.dart' }] });
+    if (u.startsWith('https://api.github.com')) return new Response('{}', { status: 404 });
+    return tutorial(u);
+  };
+  fn.calls = calls;
+  return fn;
+}
+
+function topicEnv(analysis, counter = { ai: 0 }) {
+  return {
+    CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_DISABLE_KEYLESS_AI: '1',
+    AI: { run: async () => { counter.ai += 1; return { response: JSON.stringify(analysis) }; } },
+  };
+}
+
+const ADD_ANALYSIS = { lessons: ['An inverted index maps words to documents', 'TF-IDF ranks results'], verdict: 'ADD', why: 'my memory search has no relevance ranking.', che_area: 'Brain room memory search (server/cloudflare/brain_graph.js)', implementation_request: 'Add TF-IDF ranking to Brain room memory search.' };
+
+test('the owner build-your-own-x prompt starts one study per named topic, in order, and no coding yet', async () => {
+  const saved = new Map();
+  const counter = { ai: 0 };
+  const env = topicEnv(ADD_ANALYSIS, counter);
+  const { chat } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  globalThis.fetch = topicStudyFetch();
+  try {
+    const text = await (await chat(BYOX_PROMPT)).text();
+    assert.match(text, /found your 6 topics: 1, Search Engine\. 2, Database\. 3, Bot\. 4, Neural Network\. 5, Visual Recognition System\. 6, Git\./);
+    assert.match(text, /no reuse license/);
+    assert.match(text, /Nothing in the app has changed yet\./);
+    assert.equal(counter.ai, 0, 'starting the study spends no AI');
+    const jobs = saved.get('che').jobs;
+    const studies = jobs.filter((job) => job.kind === 'repo_study');
+    assert.equal(studies.length, 6);
+    assert.equal(jobs.filter((job) => job.kind === 'self_development').length, 0, 'nothing is built before it is studied');
+    assert.equal(new Set(studies.map((job) => job.lane)).size, 1);
+    assert.deepEqual(studies.map((job) => job.lane_order).sort(), [1, 2, 3, 4, 5, 6]);
+    assert.ok(studies.every((job) => job.implement_after === true && job.topic.tutorials.length >= 1));
+    assert.deepEqual(selectReadyJobs(jobs, Date.now(), 4).map((job) => job.topic.title), ['Search Engine'], 'one topic at a time, first one first');
+    await (await chat(BYOX_PROMPT)).text();
+    assert.equal(saved.get('che').jobs.filter((job) => job.kind === 'repo_study').length, 6, 'saying it twice does not double the work');
+  } finally { globalThis.fetch = original; }
+});
+
+test('the same prompt sent by the app to the coding endpoint is studied first, not coded blind', async () => {
+  const saved = new Map();
+  const counter = { ai: 0 };
+  const env = topicEnv(ADD_ANALYSIS, counter);
+  const state = new CheState({ storage: storageFor(saved) }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, body, token = '') => worker.fetch(new Request(`https://che.example${path}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body),
+  }), env);
+  const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
+  const original = globalThis.fetch;
+  globalThis.fetch = topicStudyFetch();
+  try {
+    const body = await (await send('/api/change/request', { request: BYOX_PROMPT }, token)).json();
+    assert.match(body.message, /found your 6 topics/);
+    assert.equal(body.background_job_ids.length, 6);
+    assert.equal(counter.ai, 0);
+    assert.equal(saved.get('che').jobs.filter((job) => job.kind === 'self_development').length, 0);
+  } finally { globalThis.fetch = original; }
+});
+
+test('a topic study reads real tutorials, reports them truthfully and lines up exactly one build', async () => {
+  const saved = new Map();
+  const env = topicEnv(ADD_ANALYSIS);
+  const { chat, state } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  const fetcher = topicStudyFetch();
+  globalThis.fetch = fetcher;
+  try {
+    await (await chat(BYOX_PROMPT)).text();
+    await state.processJobs();
+    const jobs = saved.get('che').jobs;
+    const first = jobs.find((job) => job.topic?.title === 'Search Engine');
+    assert.equal(first.status, 'complete');
+    assert.match(first.owner_message, /^Topic 1 of 6, Search Engine, studied, sir\. I read 3 tutorials: Search engine in JS \(JavaScript\); Building a search engine using Redis and redis-py \(Python\); A search engine in CSS \(CSS\)\./);
+    assert.match(first.owner_message, /lined up for my coding team/);
+    assert.equal(jobs.find((job) => job.topic?.title === 'Database').status, 'queued', 'topic 2 waits for topic 1');
+    assert.ok(fetcher.calls.includes('GET https://example.dev/js-search'), 'the tutorial was really fetched');
+    assert.ok(!fetcher.calls.some((call) => call.includes('youtube')));
+    const builds = jobs.filter((job) => job.kind === 'self_development');
+    assert.equal(builds.length, 1);
+    assert.match(builds[0].prompt, /Topic 1 of 6: Search Engine/);
+    assert.match(builds[0].prompt, /https:\/\/example\.dev\/js-search/);
+    assert.match(builds[0].prompt, /never copy/);
+    assert.match(builds[0].prompt, /Add TF-IDF ranking to Brain room memory search\./);
+    const queue = saved.get('study_build_queue');
+    assert.equal(queue.length, 1);
+    assert.equal(queue[0].status, 'building');
+    assert.equal(queue[0].job_id, builds[0].id);
+    assert.ok(saved.get('topic_study_reports').some((report) => report.topic === 'Search Engine' && report.read.length === 3));
+  } finally { globalThis.fetch = original; }
+});
+
+test('a topic that does not fit, or whose tutorials cannot be read, builds nothing and says so', async () => {
+  for (const scenario of ['skip', 'unreadable']) {
+    const saved = new Map();
+    const counter = { ai: 0 };
+    const env = topicEnv({ lessons: ['x'], verdict: 'SKIP', why: 'it is about desktop rendering.', che_area: '', implementation_request: '' }, counter);
+    const { chat, state } = await pairedChat(env, saved);
+    const original = globalThis.fetch;
+    globalThis.fetch = topicStudyFetch(scenario === 'unreadable' ? { tutorial: () => new Response('gone', { status: 404 }) } : {});
+    try {
+      await (await chat(BYOX_PROMPT)).text();
+      await state.processJobs();
+      const first = saved.get('che').jobs.find((job) => job.topic?.title === 'Search Engine');
+      assert.equal(first.status, 'complete');
+      if (scenario === 'skip') assert.match(first.owner_message, /It does not fit me: it is about desktop rendering\. I am not building anything for it\./);
+      else {
+        assert.match(first.owner_message, /could not read any of its tutorials \(HTTP 404; HTTP 404; HTTP 404\)/);
+        assert.equal(counter.ai, 0, 'nothing was learned, so no AI was asked to pretend');
+      }
+      assert.equal(saved.get('che').jobs.filter((job) => job.kind === 'self_development').length, 0);
+      assert.equal(saved.has('study_build_queue'), false);
+    } finally { globalThis.fetch = original; }
+  }
+});
+
+test('study builds wait while a reviewed change awaits the owner, then the next topic starts', async () => {
+  const saved = new Map();
+  const state = new CheState({ storage: storageFor(saved) }, { CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'x' }) } });
+  saved.set('che', { jobs: [{ id: 'build-1', kind: 'self_development', status: 'complete', study_build: 's:1', prompt: 'p', created_at: new Date().toISOString() }], devices: {}, memories: [] });
+  saved.set('study_build_queue', [
+    { id: 's:1', order: 1, topic: 'Search Engine', request: 'Topic 1', status: 'building', job_id: 'build-1', at: '2026-10-03T06:00:00.000Z' },
+    { id: 's:2', order: 2, topic: 'Database', request: 'Topic 2: Database build', status: 'waiting', at: '2026-10-03T06:05:00.000Z' },
+  ]);
+  saved.set('pending_self_update', { proposal: { summary: 'Search ranking', files: [{ path: 'a.js', content: 'x' }] }, request: 'Topic 1' });
+  assert.equal(await state.advanceStudyBuilds(), null, 'one approval slot: Database waits for the owner');
+  assert.equal(saved.get('che').jobs.filter((job) => job.kind === 'self_development').length, 1);
+  assert.equal(saved.get('study_build_queue')[0].status, 'done');
+  saved.delete('pending_self_update');
+  const message = await state.advanceStudyBuilds();
+  assert.match(message, /^Next, my coding team started building Database from your study list \(job [0-9a-f]{8}\)\.$/);
+  const build = saved.get('che').jobs.find((job) => job.study_build === 's:2');
+  assert.equal(build.prompt, 'Topic 2: Database build');
+  assert.equal(await state.advanceStudyBuilds(), null, 'only one build at a time');
+});
+
+test('lane jobs run one at a time in order; other work stays parallel', () => {
+  const now = Date.now();
+  const jobs = [
+    { id: 't3', kind: 'repo_study', status: 'queued', lane: 'study:a', lane_order: 3 },
+    { id: 't2', kind: 'repo_study', status: 'queued', lane: 'study:a', lane_order: 2 },
+    { id: 'chat', kind: 'chat', status: 'queued' },
+    { id: 'other', kind: 'repo_study', status: 'queued', lane: 'study:b', lane_order: 1 },
+  ];
+  assert.deepEqual(selectReadyJobs(jobs, now, 4).map((job) => job.id), ['t2', 'chat', 'other']);
+  assert.deepEqual(selectReadyJobs([{ id: 't1', status: 'running', lane: 'study:a', lane_order: 1 }, ...jobs], now, 4).map((job) => job.id), ['chat', 'other']);
+  // A backing-off head keeps its place: later topics do not jump ahead.
+  assert.deepEqual(selectReadyJobs([{ ...jobs[1], retry_at: now + 60_000 }, jobs[0]], now, 4).map((job) => job.id), []);
+});
