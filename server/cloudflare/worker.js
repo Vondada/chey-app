@@ -2023,9 +2023,14 @@ export function shouldHandleSelfUpdateAction(message, intent) {
   if (!intent) return false;
   if (isExistingChangeCommand(intent)) return true;
   if (intent.kind !== 'access') return false;
+  const text = String(message || '');
   // Pure capability/access questions are tool reads. Requests to CHANGE CHE's
-  // code so she gains that capability must continue into self-development.
-  return !/\b(?:update|change|modify|fix|add|implement|build|make|edit|rewrite|upgrade)\b[\s\S]{0,80}\b(?:yourself|che(?:'s)?|your\s+(?:code|app|worker|system|software|ui|interface))\b/i.test(String(message || ''));
+  // implementation or add a new GitHub/PR capability continue into coding.
+  const explicitSelfChange =
+    /\b(?:update|change|modify|fix|add|implement|build|make|edit|rewrite|upgrade)\b[\s\S]{0,80}\b(?:yourself|che(?:'s)?|your\s+(?:code|app|worker|system|software|ui|interface))\b/i.test(text);
+  const capabilityCreation =
+    /\b(?:add|build|implement|enable|create|develop)\b[\s\S]{0,40}\b(?:ability|capability|feature|support|way)\b[\s\S]{0,80}\b(?:github|repo(?:sitory)?|pr|pull request)\b/i.test(text);
+  return !(explicitSelfChange || capabilityCreation);
 }
 
 const LAST_SELF_UPDATE_DEPLOY_KEY = 'last_self_update_deploy';
@@ -2259,7 +2264,7 @@ async function dispatchChange(env, body, memory = null, options = {}) {
   // build routes them here. Running the coding team on "show me the code"
   // produced a bogus failed job and overwrote the real request.
   const command = selfUpdateChatIntent(request);
-  if (isExistingChangeCommand(command) && memory) {
+  if (shouldHandleSelfUpdateAction(request, command) && memory) {
     const handled = await handleSelfUpdateChatAction(env, memory, command, options.ops || {});
     return json({ message: handled.message, code_review_passed: false, owner_approval_required: false, self_update_action: command.kind });
   }
