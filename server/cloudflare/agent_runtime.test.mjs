@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  agentDetail,
   createAgent,
   handoffAgentTask,
   officeSkillsView,
@@ -91,4 +92,40 @@ test('same-named imported skills keep separate agent assignments and provenance'
   assert.equal(view.find((skill) => skill.id === first.id).source.path, 'engineering/review.md');
   assert.deepEqual(view.find((skill) => skill.id === second.id).assigned_agents, ['Lyra']);
   assert.equal(view.find((skill) => skill.id === second.id).source.path, 'marketing/review.md');
+});
+
+
+test('agent detail exposes stable identity, saved appearance, and only assigned real skills', () => {
+  const data = state();
+  data.workshop_avatars = {};
+  const nova = createAgent(data, {
+    name: 'Nova',
+    role: 'Product / listings',
+    specialty: 'Product offers and listings',
+  }).agent;
+  data.workshop_avatars[nova.id] = { hair: 'braids', accessory: 'glasses' };
+  const assigned = teachOfficeSkill(data, {
+    name: 'Listing review',
+    trigger: 'review a product listing',
+    steps: ['Check the offer', 'Check the buyer promise'],
+    capabilities: ['text'],
+    assigned_agents: ['Nova'],
+    source: { repo: 'owner/reference', path: 'product/listing.md', license: 'MIT' },
+  }).skill;
+  teachOfficeSkill(data, {
+    name: 'Engineering review',
+    trigger: 'review code',
+    steps: ['Run tests'],
+    assigned_agents: ['Knox'],
+  });
+  nova.skill_ids = [assigned.id];
+
+  const detail = agentDetail(data, nova);
+  assert.ok(detail.agent.strengths.includes('Product framing'));
+  assert.ok(detail.agent.limitations.length >= 1);
+  assert.equal(detail.agent.appearance.hair, 'braids');
+  assert.equal(detail.agent.appearance.accessory, 'glasses');
+  assert.equal(detail.skills.length, 1);
+  assert.equal(detail.skills[0].name, 'Listing review');
+  assert.equal(detail.skills[0].source.repo, 'owner/reference');
 });
