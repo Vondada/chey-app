@@ -2194,6 +2194,15 @@ async function handleSelfUpdateChatAction(env, storage, intent, ops = {}) {
 
 async function dispatchChange(env, body, memory = null, options = {}) {
   const request = String(body.request || '').trim();
+  // Commands about an existing change ("show me the code", "create the PR",
+  // "merge it", "PR status") are never new coding requests, even when an app
+  // build routes them here. Running the coding team on "show me the code"
+  // produced a bogus failed job and overwrote the real request.
+  const command = selfUpdateChatIntent(request);
+  if (command && memory) {
+    const handled = await handleSelfUpdateChatAction(env, memory, command, options.ops || {});
+    return json({ message: handled.message, code_review_passed: false, owner_approval_required: false, self_update_action: command.kind });
+  }
   if (request.length < 8 || request.length > 16000) return json({ detail: 'Describe the CHE update in 8–16000 characters.' }, 400);
   if (!env.CHE_GITHUB_TOKEN || !/^[\w.-]+\/[\w.-]+$/.test(String(env.CHE_GITHUB_REPO || ''))) {
     return json({ detail: 'Phone code proposals need CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the CHE server.' }, 503);
@@ -5419,7 +5428,10 @@ export class CheState extends DurableObject {
         return json({ ok: true, to: 'che' });
       }
       if (path === '/api/change/request' && !ownerDevice) return ownerOnly();
-      if (path === '/api/change/request') return dispatchChange(this.env, body, this.ctx.storage, { queue: (args) => this.queueSelfDevelopment(args) });
+      if (path === '/api/change/request') return dispatchChange(this.env, body, this.ctx.storage, {
+        queue: (args) => this.queueSelfDevelopment(args),
+        ops: { queueJob: async (fields) => { const fresh = await this.loadData(); const queued = enqueueJob(fresh, fields); await this.ctx.storage.put('che', fresh); await this.scheduleWork(); return queued; } },
+      });
       if (path === '/api/chat') {
         // Chat and voice both land here: the owner talks only to CHE, and an
         // agent can never use this route to reach the owner.

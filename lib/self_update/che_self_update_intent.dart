@@ -45,9 +45,27 @@ bool cheIsRepositoryResearchRequest(String raw) {
 /// Pure classifier for owner requests that change CHE itself.
 /// Kept outside UI code so routing is testable and never falls through to
 /// generic model advice about creating GitHub tokens.
+/// "show me the code", "create the PR", "merge it", "PR status": actions on
+/// an already-reviewed change, handled by chat, never a new coding job.
+bool cheIsSelfUpdateCommand(String raw) {
+  final text = raw.trim();
+  return RegExp(
+    r'^(?:(?:chay|chey|shay|che)[, ]+)?(?:please\s+)?(?:'
+    r'(?:show|read|let me see|display)\b.{0,25}\b(?:code|diff|changes?)|'
+    r'(?:create|open|make|draft|send|push)\s+(?:the\s+|a\s+|that\s+)?(?:pr|pull request)|'
+    r'(?:merge|ship)(?:\s+(?:it|that|this|the\s+(?:pr|pull request|update|change)))?(?:\s+(?:and|then)\s+deploy(?:\s+it)?)?|'
+    r'(?:what(?:.s| is)\s+the\s+)?(?:pr|pull request)\s+(?:status|state|checks?)|'
+    r'is\s+it\s+deployed'
+    r')(?:\s+please)?[.!?]?\s*$',
+    caseSensitive: false,
+  ).hasMatch(text);
+}
+
 bool cheIsSelfUpdateRequest(String raw) {
   final text = raw.trim();
   if (cheIsRepositoryResearchRequest(text)) return false;
+  // Commands about an existing change are not new coding requests.
+  if (cheIsSelfUpdateCommand(text)) return false;
   final direct = RegExp(
     r'^(?:(?:chay|chey|shay|che)[, ]+)?'
     r'(?:(?:add|change|update|remove|fix|repair|improve|upgrade|build|redesign|modify|move|restyle)\s+.+\s+'

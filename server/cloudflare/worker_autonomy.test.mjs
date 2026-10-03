@@ -413,3 +413,24 @@ test('GitHub secondary rate limits are temporary, not a permissions problem', as
   const { classifyFailure } = await import('./recovery_policy.js');
   assert.equal(classifyFailure({ status: 403, detail: 'You have exceeded a secondary rate limit' }).failure_class, 'B');
 });
+
+test('"Show me the code" sent to the coding route shows the saved change instead of starting a new coding job', async () => {
+  const saved = new Map();
+  let aiCalls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => { aiCalls += 1; return { response: 'x' }; } } };
+  const state = new CheState({ storage: storageFor(saved) }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, body, token = '') => worker.fetch(new Request(`https://che.example${path}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body),
+  }), env);
+  const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
+  saved.set('pending_self_update', { proposal: { summary: 'Brain room', files: [{ path: 'lib/brain.dart', content: 'x' }] }, request: 'rebuild the Brain room', diff: '--- lib/brain.dart\n+ new brain' });
+  saved.set('che_last_engineering_request', { request: 'rebuild the Brain room', integrate: true });
+  const res = await send('/api/change/request', { request: 'Show me the code' }, token);
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.match(body.message, /```diff[\s\S]*new brain/);
+  assert.equal(aiCalls, 0, 'no coding job was run');
+  assert.equal(saved.get('che_last_engineering_request').request, 'rebuild the Brain room', 'the real request is kept');
+  assert.ok(saved.get('pending_self_update'), 'the reviewed change is still waiting');
+});
