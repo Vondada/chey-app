@@ -1,4 +1,5 @@
-import { checkDartFiles } from './dart_check.js';
+import { staticRegression } from './dart_check.js';
+import { classifyFailure, FAILURE_CLASS, stableHash } from './recovery_policy.js';
 // CHE self-development: controlled engineering, not uncontrolled
 // self-modification.
 //
@@ -89,16 +90,19 @@ export function scanUpdateContent(content, path = '') {
   return null;
 }
 
-export function validateUpdateFiles(files) {
+// `baseline` (optional) maps path → current source on the base branch. Static
+// checks are baseline-relative: an edit is rejected only for a problem it
+// introduces, never for a pre-existing quirk in a file it touches.
+export function validateUpdateFiles(files, { baseline = null } = {}) {
   if (!Array.isArray(files) || !files.length) return { error: 'An update needs at least one file.' };
   if (files.length > MAX_FILES) return { error: `An update may change at most ${MAX_FILES} files (keep the slice narrow).` };
   const out = [];
   const seen = new Set();
   let totalBytes = 0;
+  const before = (path) => (baseline instanceof Map ? baseline.get(path) : baseline?.[path]);
   for (const file of files) {
     const path = String(file?.path || '').trim();
     const content = typeof file?.content === 'string' ? file.content : null;
-    const dartPath = /^(?:lib|test|integration_test)\/[A-Za-z0-9_./-]+\.dart$/.test(path);
     if (!isSelfUpdateEditablePath(path)) {
       return { error: `CHE may edit normal app/source/test/docs files on a review branch, but this path is protected or unsupported: ${path || 'missing path'}.` };
     }
@@ -109,10 +113,8 @@ export function validateUpdateFiles(files) {
     if (totalBytes > MAX_FILE_BYTES * 3) return { error: 'Update is too large overall; split into a narrower change.' };
     const smuggle = scanUpdateContent(content, path);
     if (smuggle) return { error: smuggle };
-    if (dartPath) {
-      const dartErr = checkDartFiles([{ path, content }]);
-      if (dartErr) return { error: dartErr };
-    }
+    const staticError = staticRegression(path, before(path), content);
+    if (staticError) return { error: staticError, static_check_failed: true };
     if (seen.has(path)) return { error: `${path} appears twice.` };
     seen.add(path);
     out.push({ path, content });
@@ -154,17 +156,23 @@ function repoOf(env) {
 }
 
 async function gh(env, method, path, body, fetcher = fetch) {
-  const response = await fetcher(`https://api.github.com/repos/${repoOf(env)}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${env.CHE_GITHUB_TOKEN}`,
-      Accept: 'application/vnd.github+json',
-      'Content-Type': 'application/json',
-      'X-GitHub-Api-Version': '2022-11-28',
-      'User-Agent': 'CHE-Agent',
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
+  let response;
+  try {
+    response = await fetcher(`https://api.github.com/repos/${repoOf(env)}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${env.CHE_GITHUB_TOKEN}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'CHE-Agent',
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+  } catch (error) {
+    // Network failure is a temporary external condition, not a crash.
+    return { status: 0, ok: false, data: { message: String(error?.message || error).slice(0, 200) } };
+  }
   let data = null;
   try { data = await response.json(); } catch (_) { data = null; }
   return { status: response.status, ok: response.ok, data };
@@ -211,62 +219,160 @@ async function baseBranch(env, fetcher) {
   return repo.ok ? String(repo.data?.default_branch || 'main') : 'main';
 }
 
-async function createBranch(env, name, fromBranch, fetcher) {
-  const ref = await gh(env, 'GET', `/git/ref/heads/${encodeURIComponent(fromBranch)}`, null, fetcher);
-  if (!ref.ok) return { error: `Could not read ${fromBranch} (${ref.status})${ghReason(ref) ? `: ${ghReason(ref)}` : '.'}` };
-  const sha = ref.data?.object?.sha;
-  const made = await gh(env, 'POST', '/git/refs', { ref: `refs/heads/${name}`, sha }, fetcher);
-  if (!made.ok) return { error: `Could not create branch (${made.status})${ghReason(made) ? `: ${ghReason(made)}` : '.'}` };
-  return { sha };
+function decodeContent(value) {
+  const binary = atob(String(value || '').replace(/\s+/g, ''));
+  return new TextDecoder().decode(Uint8Array.from(binary, (ch) => ch.charCodeAt(0)));
 }
 
-async function putFile(env, branch, path, content, message, fetcher) {
-  const existing = await gh(env, 'GET', `/contents/${path}?ref=${encodeURIComponent(branch)}`, null, fetcher);
-  const put = await gh(env, 'PUT', `/contents/${path}`, {
-    message,
-    content: base64Utf8(content),
+// Live identity of the files an update touches on the base commit:
+// { path: { sha, content } } (sha null when the file does not exist yet).
+async function liveFiles(env, ref, paths, fetcher) {
+  const out = {};
+  for (const path of paths) {
+    const found = await gh(env, 'GET', `/contents/${path}?ref=${encodeURIComponent(ref)}`, null, fetcher);
+    if (found.status === 404) { out[path] = { sha: null, content: null }; continue; }
+    if (!found.ok) return { error: found };
+    let content = null;
+    try { content = found.data?.content ? decodeContent(found.data.content) : null; } catch (_) { content = null; }
+    out[path] = { sha: String(found.data?.sha || '') || null, content };
+  }
+  return { files: out };
+}
+
+// Idempotency: the same approved proposal always maps to the same branch, so
+// a double tap, a retried request or a replayed approval reuses one PR.
+export function updateBranchName(summary, files) {
+  const digest = stableHash(JSON.stringify({
+    summary: String(summary || '').trim(),
+    files: (files || []).map((file) => [file.path, stableHash(file.content || '')]),
+  }));
+  return `${BRANCH_PREFIX}${digest}`;
+}
+
+async function existingPrFor(env, branch, fetcher) {
+  const owner = String(repoOf(env) || '').split('/')[0];
+  const found = await gh(env, 'GET', `/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}&per_page=5`, null, fetcher);
+  const list = Array.isArray(found.data) ? found.data : [];
+  return list.find((pr) => pr?.head?.ref === branch) || null;
+}
+
+function prReceipt(pr, branch, base, delivery, reused = false) {
+  return {
+    status: 200,
+    number: pr.number,
+    url: pr.html_url,
     branch,
-    ...(existing.ok && existing.data?.sha ? { sha: existing.data.sha } : {}),
-  }, fetcher);
-  return put.ok
-    ? { commit_sha: String(put.data?.commit?.sha || '') }
-    : { error: `Could not write ${path} (${put.status})${ghReason(put) ? `: ${ghReason(put)}` : '.'}` };
+    commit_sha: String(pr?.head?.sha || ''),
+    base,
+    delivery: delivery.delivery,
+    note: delivery.note,
+    ...(reused ? { reused: true } : {}),
+  };
 }
 
+function failed(result, detail) {
+  const reason = ghReason(result);
+  const code = Number(result?.status || 0);
+  const text = `${detail} (${code || 'network'})${reason ? `: ${reason}` : '.'}`;
+  const { failure_class: failureClass, kind } = classifyFailure({ status: code, detail: text });
+  const temporary = failureClass === FAILURE_CLASS.TEMPORARY_EXTERNAL || !code;
+  return {
+    status: temporary ? 503 : [401, 403].includes(code) ? code : 502,
+    detail: text,
+    failure_class: temporary ? FAILURE_CLASS.TEMPORARY_EXTERNAL : failureClass,
+    failure_kind: kind,
+    retryable: temporary,
+  };
+}
+
+// Opens the owner-approved draft PR.
+//
+// Safety properties:
+// - never writes the default branch; the branch is created from the exact base
+//   commit that was verified, so a racing main cannot slip in unverified code;
+// - the whole update lands as ONE commit (Git Data API), so a failure part-way
+//   cannot leave a half-written branch;
+// - stale source is detected per file: if main moved but none of the touched
+//   files changed, the approved contents are still exactly what the owner
+//   approved and are applied on the new base; if a touched file changed, the
+//   write is refused (409) so the proposal is rebuilt and re-approved;
+// - idempotent: replays return the existing PR instead of opening another.
 export async function openSelfUpdatePr(env, body, fetcher = fetch) {
   if (!repoOf(env)) return { status: 503, detail: 'Self-update needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the CHE server.' };
   const summary = String(body.summary || '').trim().slice(0, 2000);
   if (summary.length < 4) return { status: 400, detail: 'Describe the update in a short summary.' };
-  const checked = validateUpdateFiles(body.files);
-  if (checked.error) return { status: 400, detail: checked.error };
+  const shape = validateUpdateFiles(body.files);
+  if (shape.error && !shape.static_check_failed) return { status: 400, detail: shape.error };
+  const paths = (body.files || []).map((file) => String(file?.path || '').trim());
+
   const base = await baseBranch(env, fetcher);
+  const liveRef = await gh(env, 'GET', `/git/ref/heads/${encodeURIComponent(base)}`, null, fetcher);
+  const liveSha = String(liveRef.data?.object?.sha || '');
+  if (!liveRef.ok || !liveSha) return failed(liveRef, `Could not verify current ${base} before writing the update`);
+
   const expectedBaseSha = String(body.expected_base_sha || '').trim();
-  if (expectedBaseSha) {
-    const liveRef = await gh(env, 'GET', `/git/ref/heads/${encodeURIComponent(base)}`, null, fetcher);
-    const liveSha = String(liveRef.data?.object?.sha || '');
-    if (!liveRef.ok || !liveSha) {
-      return { status: 502, detail: `Could not verify current ${base} before writing the update.` };
-    }
-    if (liveSha !== expectedBaseSha) {
+  const baseFiles = body.base_files && typeof body.base_files === 'object' ? body.base_files : null;
+  let live = null;
+  if (expectedBaseSha && liveSha !== expectedBaseSha) {
+    if (!baseFiles) {
       return {
         status: 409,
         stale_source: true,
-        detail: `${base} changed after CHE inspected the source. Re-read current GitHub source and regenerate the proposal before writing.`,
+        detail: `${base} changed after CHE inspected the source.`,
+        expected_base_sha: expectedBaseSha,
+        current_base_sha: liveSha,
+      };
+    }
+    const read = await liveFiles(env, liveSha, paths, fetcher);
+    if (read.error) return failed(read.error, 'Could not re-check the touched files on the current base');
+    live = read.files;
+    const changed = paths.filter((path) => (live[path]?.sha || null) !== (baseFiles[path] ?? null));
+    if (changed.length) {
+      return {
+        status: 409,
+        stale_source: true,
+        changed_files: changed,
+        detail: `${base} changed ${changed.join(', ')} after CHE inspected it.`,
         expected_base_sha: expectedBaseSha,
         current_base_sha: liveSha,
       };
     }
   }
-  const branch = `${BRANCH_PREFIX}${Date.now().toString(36)}`;
-  const made = await createBranch(env, branch, base, fetcher);
-  if (made.error) return { status: 502, detail: made.error };
-  let commitSha = '';
-  for (const file of checked.files) {
-    const wrote = await putFile(env, branch, file.path, file.content, `CHE update: ${file.path}`, fetcher);
-    if (wrote.error) return { status: 502, detail: wrote.error };
-    if (wrote.commit_sha) commitSha = wrote.commit_sha;
+
+  if (!live) {
+    const read = await liveFiles(env, liveSha, paths, fetcher);
+    if (read.error) return failed(read.error, 'Could not read the current versions of the touched files');
+    live = read.files;
   }
+  const baseline = Object.fromEntries(paths.map((path) => [path, live[path]?.content ?? null]));
+  const checked = validateUpdateFiles(body.files, { baseline });
+  if (checked.error) return { status: 400, detail: checked.error, failure_class: FAILURE_CLASS.INTERNAL };
+
   const delivery = classifyUpdate(checked.files.map((file) => file.path));
+  const branch = updateBranchName(summary, checked.files);
+  const priorRef = await gh(env, 'GET', `/git/ref/heads/${encodeURIComponent(branch)}`, null, fetcher);
+  if (priorRef.ok && priorRef.data?.object?.sha) {
+    const prior = await existingPrFor(env, branch, fetcher);
+    if (prior) return prReceipt(prior, branch, base, delivery, true);
+  } else {
+    const baseCommit = await gh(env, 'GET', `/git/commits/${encodeURIComponent(liveSha)}`, null, fetcher);
+    const baseTree = String(baseCommit.data?.tree?.sha || '');
+    if (!baseCommit.ok || !baseTree) return failed(baseCommit, `Could not read the ${base} commit`);
+    const tree = await gh(env, 'POST', '/git/trees', {
+      base_tree: baseTree,
+      tree: checked.files.map((file) => ({ path: file.path, mode: '100644', type: 'blob', content: file.content })),
+    }, fetcher);
+    if (!tree.ok || !tree.data?.sha) return failed(tree, 'Could not stage the update');
+    const commit = await gh(env, 'POST', '/git/commits', {
+      message: `CHE update: ${summary.split('\n')[0].slice(0, 72)}`,
+      tree: tree.data.sha,
+      parents: [liveSha],
+    }, fetcher);
+    if (!commit.ok || !commit.data?.sha) return failed(commit, 'Could not commit the update');
+    const made = await gh(env, 'POST', '/git/refs', { ref: `refs/heads/${branch}`, sha: commit.data.sha }, fetcher);
+    if (!made.ok && made.status !== 422) return failed(made, 'Could not create the update branch');
+  }
+
   const pr = await gh(env, 'POST', '/pulls', {
     title: `CHE update: ${summary.split('\n')[0].slice(0, 80)}`,
     head: branch,
@@ -279,39 +385,152 @@ export async function openSelfUpdatePr(env, body, fetcher = fetch) {
       ...checked.files.map((file) => `- \`${file.path}\``),
       '',
       `**Delivery:** ${delivery.note}`,
-      `**Rollback point:** \`${made.sha}\` on \`${base}\`.`,
+      `**Rollback point:** \`${liveSha}\` on \`${base}\`.`,
       '',
       'Approved in the CHE app by the owner. Merge only after CI passes.',
     ].join('\n'),
   }, fetcher);
-  if (!pr.ok) return { status: 502, detail: `Could not open the pull request (${pr.status})${ghReason(pr) ? `: ${ghReason(pr)}` : '.'}` };
-  return {
-    status: 200,
-    number: pr.data.number,
-    url: pr.data.html_url,
-    branch,
-    commit_sha: String(pr.data?.head?.sha || commitSha || ''),
-    base,
-    delivery: delivery.delivery,
-    note: delivery.note,
-  };
+  if (!pr.ok) {
+    if (pr.status === 422) {
+      const prior = await existingPrFor(env, branch, fetcher);
+      if (prior) return prReceipt(prior, branch, base, delivery, true);
+    }
+    return failed(pr, 'Could not open the pull request');
+  }
+  return prReceipt(pr.data, branch, base, delivery);
 }
+
+// CI checks are classified, not just counted. A check that also fails on the
+// base commit is a pre-existing/external failure, not something this change
+// broke, and must not be reported as "your change failed CI".
+export function classifyCheck(run) {
+  const name = String(run?.name || run?.context || '').toLowerCase();
+  const text = `${name} ${String(run?.output?.title || '')} ${String(run?.output?.summary || '')}`.toLowerCase();
+  if (/workers builds|cloudflare|wrangler|deploy|preview/.test(name)) return 'deployment';
+  if (/secret|token|credential|unauthori[sz]ed|authentication/.test(text)) return 'authentication';
+  if (/analy[sz]e|lint|static/.test(name)) return 'static_analysis';
+  if (/test|check|ci\b/.test(name)) return 'tests';
+  return 'other';
+}
+
+async function checkRuns(env, sha, fetcher) {
+  const checks = await gh(env, 'GET', `/commits/${encodeURIComponent(sha)}/check-runs?per_page=100`, null, fetcher);
+  return { ok: checks.ok, runs: Array.isArray(checks.data?.check_runs) ? checks.data.check_runs : [] };
+}
+
+const FAILED = ['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure'];
 
 export async function selfUpdateStatus(env, number, fetcher = fetch) {
   if (!repoOf(env)) return { status: 503, detail: 'Self-update is not connected to GitHub.' };
   const pr = await gh(env, 'GET', `/pulls/${Number(number)}`, null, fetcher);
-  if (!pr.ok) return { status: 404, detail: 'Update pull request not found.' };
-  const checks = await gh(env, 'GET', `/commits/${pr.data.head.sha}/check-runs`, null, fetcher);
-  const runs = Array.isArray(checks.data?.check_runs) ? checks.data.check_runs : [];
-  const failed = runs.filter((run) => ['failure', 'cancelled', 'timed_out'].includes(run.conclusion));
+  if (!pr.ok) return pr.status === 404 ? { status: 404, detail: 'Update pull request not found.' } : failed(pr, 'Could not read the pull request');
+  const head = await checkRuns(env, pr.data.head.sha, fetcher);
+  const runs = head.runs;
+  const failedRuns = runs.filter((run) => FAILED.includes(run.conclusion));
   const pending = runs.filter((run) => run.status !== 'completed');
+  let preexisting = [];
+  if (failedRuns.length && pr.data?.base?.sha) {
+    const base = await checkRuns(env, pr.data.base.sha, fetcher);
+    const baseFailed = new Set(base.runs.filter((run) => FAILED.includes(run.conclusion)).map((run) => run.name));
+    preexisting = failedRuns.filter((run) => baseFailed.has(run.name));
+  }
+  const blocking = failedRuns.filter((run) => !preexisting.includes(run));
+  const ci = !runs.length ? 'none' : blocking.length ? 'failed' : pending.length ? 'running' : 'passed';
   return {
     status: 200,
     number: pr.data.number,
     url: pr.data.html_url,
     state: pr.data.merged ? 'merged' : pr.data.state,
-    ci: !runs.length ? 'none' : failed.length ? 'failed' : pending.length ? 'running' : 'passed',
-    failed_checks: failed.map((run) => run.name),
+    draft: pr.data.draft === true,
+    head_sha: String(pr.data.head?.sha || ''),
+    merge_commit_sha: pr.data.merged ? String(pr.data.merge_commit_sha || '') : '',
+    mergeable: pr.data.mergeable ?? null,
+    mergeable_state: String(pr.data.mergeable_state || ''),
+    ci,
+    failed_checks: blocking.map((run) => run.name),
+    failure_classes: [...new Set(blocking.map(classifyCheck))],
+    preexisting_failed_checks: preexisting.map((run) => run.name),
+    pending_checks: pending.map((run) => run.name),
+  };
+}
+
+// Owner-authorized merge. Refuses unless the PR is a CHE update branch, CI has
+// no blocking failures and nothing is pending, GitHub reports it mergeable,
+// and the head is exactly the commit CHE checked (no race with a new push).
+// Worker changes carry [worker-deploy] so the repository's deploy workflow
+// runs; deployment truth is then verified separately.
+export async function mergeSelfUpdatePr(env, number, fetcher = fetch) {
+  const status = await selfUpdateStatus(env, number, fetcher);
+  if (status.status !== 200) return status;
+  if (status.state === 'merged') return { status: 200, already_merged: true, number: status.number, merge_commit_sha: status.merge_commit_sha, url: status.url };
+  if (status.state !== 'open') return { status: 409, detail: `PR #${status.number} is ${status.state}.`, failure_class: FAILURE_CLASS.PERMANENT_EXTERNAL };
+  const pr = await gh(env, 'GET', `/pulls/${Number(number)}`, null, fetcher);
+  const branch = String(pr.data?.head?.ref || '');
+  if (!branch.startsWith(BRANCH_PREFIX)) return { status: 403, detail: 'CHE only merges her own owner-approved update branches.', failure_class: FAILURE_CLASS.AUTHORIZATION };
+  if (status.ci === 'failed') return { status: 409, detail: `CI failed: ${status.failed_checks.join(', ')}.`, ci: status, failure_class: FAILURE_CLASS.INTERNAL };
+  if (status.ci === 'running') return { status: 409, detail: 'CI is still running.', ci: status, retryable: true, failure_class: FAILURE_CLASS.TEMPORARY_EXTERNAL };
+  if (status.mergeable === false || status.mergeable_state === 'dirty') {
+    return { status: 409, detail: 'The pull request has a merge conflict with the base branch.', merge_conflict: true, failure_class: FAILURE_CLASS.INTERNAL };
+  }
+  if (status.draft) {
+    const ready = await fetcher('https://api.github.com/graphql', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.CHE_GITHUB_TOKEN}`, 'Content-Type': 'application/json', 'User-Agent': 'CHE-Agent' },
+      body: JSON.stringify({
+        query: 'mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }',
+        variables: { id: pr.data?.node_id },
+      }),
+    }).catch(() => null);
+    if (!ready?.ok) return { status: 502, detail: 'GitHub did not mark the draft ready for merge.', retryable: true, failure_class: FAILURE_CLASS.TEMPORARY_EXTERNAL };
+  }
+  const files = await gh(env, 'GET', `/pulls/${Number(number)}/files?per_page=100`, null, fetcher);
+  if (!files.ok) return failed(files, 'Could not read the pull request files');
+  const route = classifyUpdate((Array.isArray(files.data) ? files.data : []).map((file) => String(file.filename || '')));
+  const workerDeploy = /worker/.test(route.delivery);
+  const merged = await gh(env, 'PUT', `/pulls/${Number(number)}/merge`, {
+    sha: status.head_sha,
+    merge_method: 'squash',
+    commit_title: `${String(pr.data?.title || `CHE update #${number}`).slice(0, 200)}${workerDeploy ? ' [worker-deploy]' : ''}`,
+  }, fetcher);
+  if (!merged.ok) {
+    if (merged.status === 409) return { status: 409, detail: 'The pull request changed after CHE checked it; re-checking is required.', failure_class: FAILURE_CLASS.INTERNAL };
+    return failed(merged, 'GitHub did not merge the pull request');
+  }
+  return {
+    status: 200,
+    number: Number(number),
+    url: status.url,
+    merge_commit_sha: String(merged.data?.sha || ''),
+    delivery: route.delivery,
+    worker_deploy: workerDeploy,
+  };
+}
+
+// Deployment truth for a merged Worker change: the deploy workflow run for the
+// merge commit, plus the version the running Worker reports about itself.
+export async function workerDeploymentStatus(env, mergeSha, fetcher = fetch, runtime = {}) {
+  if (!repoOf(env)) return { status: 503, detail: 'Self-update is not connected to GitHub.' };
+  const sha = String(mergeSha || '');
+  const runs = await gh(env, 'GET', `/actions/runs?head_sha=${encodeURIComponent(sha)}&per_page=20`, null, fetcher);
+  const list = (Array.isArray(runs.data?.workflow_runs) ? runs.data.workflow_runs : [])
+    .filter((run) => /deploy che worker|che-worker-deploy/i.test(`${run.name} ${run.path || ''}`));
+  const run = list[0] || null;
+  const workflow = !runs.ok ? 'unknown'
+    : !run ? 'not_started'
+      : run.status !== 'completed' ? 'running'
+        : run.conclusion === 'success' ? 'succeeded'
+          : 'failed';
+  const runningTag = String(runtime?.version_tag || '');
+  const live = Boolean(runningTag && sha && (sha.startsWith(runningTag) || runningTag.startsWith(sha.slice(0, 7))));
+  return {
+    status: 200,
+    merge_commit_sha: sha,
+    workflow,
+    workflow_url: run?.html_url || '',
+    running_version_tag: runningTag,
+    running_version_id: String(runtime?.version_id || ''),
+    production_matches_merge: live,
+    deployed: workflow === 'succeeded' && (live || !runningTag),
   };
 }
 

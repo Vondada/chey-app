@@ -651,6 +651,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   const context = input?.che_context && typeof input.che_context === 'object' ? input.che_context : null;
   const audit = input?.che_audit && typeof input.che_audit === 'object' ? input.che_audit : null;
   const strictProvider = input?.che_provider_strict === true;
+  const minInputChars = Math.max(0, Number(input?.che_min_input_chars) || 0);
   // Emergency = the owner must get an answer: the reserve may be used.
   const emergency = input?.che_emergency === true || ownerChat;
   const office = input?.che_agent_id
@@ -762,6 +763,13 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
       }
       const shaped = inputForProvider(engineInput, provider.id, context);
       const budget = Number(env[`CHE_${provider.id.split(':')[0].toUpperCase()}_INPUT_CHARS`]) || INPUT_CHAR_BUDGET[provider.id.split(':')[0]] || 0;
+      // Evidence-bearing engineering calls must not be clipped: an engine
+      // whose context budget is too small is skipped, not fed a truncated
+      // request (that is how agents ended up claiming "source not provided").
+      if (budget && minInputChars && budget < minInputChars) {
+        errors.push(`${provider.id}: context budget ${budget} below required ${minInputChars}`);
+        continue;
+      }
       if (budget) shaped.input = fitToBudget(shaped.input, budget);
       const override = modelFor(provider);
       const attemptedModel = override || (strongProviderModel ? provider.strong(env) : provider.fast(env));
@@ -814,7 +822,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
           } catch (_) { /* fall through */ }
         }
         // Too large: retry once at half size on the same engine.
-        if (error?.status === 413) {
+        if (error?.status === 413 && !minInputChars) {
           try {
             const smaller = fitToBudget(shaped.input, Math.floor((budget || 16000) / 2));
             const retry = await callProvider(env, provider, false, smaller, fetcher, '', office);

@@ -622,3 +622,51 @@ test('generic autonomous request falls back to real editable source instead of d
   assert.ok(implementationCalls >= 1);
   assert.deepEqual(out.proposal.files.map((file) => file.path), ['lib/main.dart']);
 });
+
+
+test('review pipeline receives fetched source and never asks owner to supply repository code', async () => {
+  let reviewerSawSource = false;
+  const env = {
+    CHE_GITHUB_TOKEN: 't',
+    CHE_GITHUB_REPO: 'o/r',
+    AI: {
+      run: async (_model, input) => {
+        const system = input.messages[0].content;
+        const payload = JSON.parse(input.messages[1].content);
+        if (system.includes('Architect')) {
+          return { response: JSON.stringify({ plan: 'Improve current status wording.', search_terms: ['Ready. Type or speak a request.'], paths: ['lib/main.dart'] }) };
+        }
+        if (system.includes('Review')) {
+          const inspected = payload.inspected_source || [];
+          reviewerSawSource = reviewerSawSource || inspected.some((item) =>
+            item.path === 'lib/main.dart' && String(item.source || '').includes('Ready. Type or speak a request.')
+          );
+          if (!inspected.length) {
+            return { response: JSON.stringify({
+              approved: false,
+              target_correct: false,
+              notes: ['Unable to inspect the current repository because source code was not provided.'],
+              repair_instructions: 'Provide source code.',
+            }) };
+          }
+          return { response: JSON.stringify({ approved: true, target_correct: true, notes: ['Verified against fetched source.'], repair_instructions: '' }) };
+        }
+        return { response: JSON.stringify({
+          summary: 'Small real improvement',
+          edits: [{ path: 'lib/main.dart', find: "'Ready. Type or speak a request.'", replace: "'Ready and listening, sir.'" }],
+        }) };
+      },
+    },
+  };
+
+  const out = await prepareSelfUpdate(
+    env,
+    'make one small real improvement to the app',
+    fakeGitHub(),
+    memoryStore(),
+  );
+  assert.equal(out.status, 200, out.detail);
+  assert.equal(reviewerSawSource, true);
+  assert.equal(out.approval_required, true);
+  assert.deepEqual(out.proposal.files.map((file) => file.path), ['lib/main.dart']);
+});

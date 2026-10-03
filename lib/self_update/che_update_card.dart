@@ -13,9 +13,20 @@ import 'package:url_launcher/url_launcher.dart';
 import '../che_ui/che_theme.dart';
 
 class CheUpdateProposal {
-  const CheUpdateProposal({required this.summary, required this.files});
+  const CheUpdateProposal({
+    required this.summary,
+    required this.files,
+    this.expectedBaseSha,
+    this.baseFiles,
+  });
   final String summary;
   final List<({String path, String content})> files;
+
+  /// GitHub commit and per-file blob identity the reviewed proposal was built
+  /// from. Sent back on approval so the Worker refuses to write over source
+  /// that changed after review.
+  final String? expectedBaseSha;
+  final Map<String, dynamic>? baseFiles;
 
   /// Stable key so an approved/dismissed card stays that way on rebuild.
   String get key => '${summary.hashCode}:${files.map((f) => f.path).join(',')}';
@@ -34,7 +45,12 @@ class CheUpdateProposal {
               (path: f['path'] as String, content: f['content'] as String),
         ];
         if (files.isEmpty) continue;
-        out.add(CheUpdateProposal(summary: '${j['summary'] ?? 'CHE update'}', files: files));
+        out.add(CheUpdateProposal(
+          summary: '${j['summary'] ?? 'CHE update'}',
+          files: files,
+          expectedBaseSha: j['expected_base_sha'] is String ? j['expected_base_sha'] as String : null,
+          baseFiles: j['base_files'] is Map ? Map<String, dynamic>.from(j['base_files'] as Map) : null,
+        ));
       } catch (_) {}
     }
     return out;
@@ -180,10 +196,18 @@ class _CheUpdateCardState extends State<CheUpdateCard> {
             body: jsonEncode({
               'summary': widget.proposal.summary,
               'files': [for (final f in widget.proposal.files) {'path': f.path, 'content': f.content}],
+              if (widget.proposal.expectedBaseSha != null) 'expected_base_sha': widget.proposal.expectedBaseSha,
+              if (widget.proposal.baseFiles != null) 'base_files': widget.proposal.baseFiles,
             }),
           )
           .timeout(const Duration(seconds: 60));
       final j = jsonDecode(r.body);
+      if (r.statusCode == 409 && j is Map && j['stale_source'] == true) {
+        throw Exception(
+          'The code changed on GitHub after this update was reviewed, so nothing was written. '
+          'Ask CHE to "create the PR" and she will rebuild it against the current code for your approval.',
+        );
+      }
       if (r.statusCode != 200 || j is! Map) {
         throw Exception(j is Map ? '${j['detail'] ?? 'Update failed.'}' : 'Update failed (${r.statusCode}).');
       }

@@ -90,8 +90,15 @@ function fakeGitHub() {
     calls.push({ method, path, body });
     const reply = (data, status = 200) => new Response(JSON.stringify(data), { status });
     if (method === 'GET' && path === '') return reply({ default_branch: 'main', permissions: { pull: true, push: true } });
+    if (method === 'GET' && path.startsWith('/git/ref/heads/che')) return reply({ message: 'Not Found' }, 404);
     if (method === 'GET' && path.startsWith('/git/ref/heads/')) return reply({ object: { sha: 'base123' } });
-    if (method === 'POST' && path === '/git/refs') return reply({}, 201);
+    if (method === 'POST' && path === '/git/refs') return reply({ ref: body.ref, object: { sha: body.sha } }, 201);
+    if (method === 'GET' && path === '/git/commits/base123') return reply({ sha: 'base123', tree: { sha: 'tree-base' } });
+    if (method === 'POST' && path === '/git/trees') return reply({ sha: 'tree-new' }, 201);
+    if (method === 'POST' && path === '/git/commits') return reply({ sha: 'commit-new' }, 201);
+    if (method === 'GET' && path.startsWith('/contents/lib/existing.dart?ref=base123')) {
+      return reply({ sha: 's1', content: Buffer.from('old code ✓').toString('base64') });
+    }
     if (method === 'GET' && path.startsWith('/contents/lib/existing.dart?ref=base9')) {
       return reply({ sha: 's-old', content: Buffer.from('old code ✓').toString('base64') });
     }
@@ -120,18 +127,24 @@ test('self-update opens a PR on a new branch and never touches main', async () =
     summary: 'Add a settings toggle',
     files: [{ path: 'lib/existing.dart', content: 'new ✓' }, { path: 'lib/new.dart', content: 'x' }],
   }, fetcher);
-  assert.equal(result.status, 200);
+  assert.equal(result.status, 200, result.detail);
   assert.equal(result.number, 7);
   assert.equal(result.delivery, 'shorebird_patch');
   assert.equal(result.commit_sha, 'pr-head');
   assert.equal(result.base, 'main');
   assert.match(result.branch, /^che\/update-/);
-  const puts = calls.filter((c) => c.method === 'PUT');
-  assert.equal(puts.length, 2);
-  assert.ok(puts.every((c) => c.body.branch === result.branch));
-  assert.equal(puts[0].body.sha, 's1');
-  assert.equal(Buffer.from(puts[0].body.content, 'base64').toString(), 'new ✓');
-  assert.ok(!calls.some((c) => c.body?.branch === 'main'));
+  // One atomic commit on top of the verified base; no per-file writes.
+  assert.equal(calls.filter((c) => c.method === 'PUT').length, 0);
+  const tree = calls.find((c) => c.method === 'POST' && c.path === '/git/trees');
+  assert.equal(tree.body.base_tree, 'tree-base');
+  assert.deepEqual(tree.body.tree.map((item) => item.path), ['lib/existing.dart', 'lib/new.dart']);
+  assert.equal(tree.body.tree[0].content, 'new ✓');
+  const commit = calls.find((c) => c.method === 'POST' && c.path === '/git/commits');
+  assert.deepEqual(commit.body.parents, ['base123']);
+  const ref = calls.find((c) => c.method === 'POST' && c.path === '/git/refs');
+  assert.equal(ref.body.ref, `refs/heads/${result.branch}`);
+  assert.equal(ref.body.sha, 'commit-new');
+  assert.ok(!calls.some((c) => c.body?.branch === 'main' || c.body?.ref === 'refs/heads/main'));
   const pr = calls.find((c) => c.method === 'POST' && c.path === '/pulls');
   assert.equal(pr.body.base, 'main');
   assert.equal(pr.body.head, result.branch);

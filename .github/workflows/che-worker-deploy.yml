@@ -93,7 +93,9 @@ jobs:
 
       - name: Deploy
         working-directory: server/cloudflare
-        run: npx --yes wrangler@4 deploy
+        # Tag the version with its commit so /health (CF_VERSION_METADATA)
+        # proves which code production is actually running.
+        run: npx --yes wrangler@4 deploy --tag "${GITHUB_SHA::12}" --message "deploy ${GITHUB_SHA::12}"
 
       - name: Sync AI engine keys to the Worker
         working-directory: server/cloudflare
