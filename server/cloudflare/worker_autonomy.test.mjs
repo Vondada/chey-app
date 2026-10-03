@@ -11,7 +11,7 @@ writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), '
 ), 'utf8');
 let mod;
 try { mod = await import(generated.href + '?t=' + Date.now()); } finally { try { unlinkSync(generated); } catch (_) {} }
-const { default: worker, CheState, busyError, enqueueJob, selfUpdateChatIntent, MAX_JOB_ATTEMPTS } = mod;
+const { default: worker, CheState, busyError, enqueueJob, selfUpdateChatIntent, isExistingChangeCommand, selectReadyJobs, MAX_JOB_ATTEMPTS } = mod;
 
 function storageFor(saved, alarms = []) {
   return {
@@ -455,4 +455,26 @@ test('"create the PR" refuses a saved comment-only change and starts a real rebu
     const job = saved.get('che').jobs.find((j) => j.kind === 'self_development');
     assert.ok(job && text.includes(job.id.slice(0, 8)));
   } finally { globalThis.fetch = original; }
+});
+
+
+test('ready-job selection serializes Office skill imports', () => {
+  const jobs = [
+    { id: 'skill-a', kind: 'office_skill_import', status: 'queued', retry_at: 0 },
+    { id: 'skill-b', kind: 'office_skill_import', status: 'queued', retry_at: 0 },
+    { id: 'chat-a', kind: 'chat', status: 'queued', retry_at: 0 },
+    { id: 'study-a', kind: 'repo_study', status: 'queued', retry_at: 0 },
+    { id: 'chat-b', kind: 'chat', status: 'queued', retry_at: 0 },
+  ];
+  const selected = selectReadyJobs(jobs, Date.now(), 4);
+  assert.equal(selected.filter((job) => job.kind === 'office_skill_import').length, 1);
+  assert.deepEqual(selected.map((job) => job.id), ['skill-a', 'chat-a', 'study-a', 'chat-b']);
+});
+
+test('existing-change shortcut excludes a genuine coding request about PR support', () => {
+  assert.equal(isExistingChangeCommand(selfUpdateChatIntent('Show me the code')), true);
+  assert.equal(isExistingChangeCommand(selfUpdateChatIntent('Create the PR')), true);
+  const accessFeature = selfUpdateChatIntent('Can you update your code so you can create a PR?');
+  assert.equal(accessFeature?.kind, 'access');
+  assert.equal(isExistingChangeCommand(accessFeature), false);
 });
