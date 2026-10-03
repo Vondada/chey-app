@@ -2015,6 +2015,12 @@ export function selfUpdateChatIntent(message) {
     || /\b(?:pr|pull request)\s+(?:status|state|checks?)\b/i.test(text)
   ) return { kind: 'status' };
 
+  // "Discard that change" / "throw it away": the owner rejects the reviewed
+  // change waiting for approval. Short commands only; negations never match.
+  if (text.length < 120 && (
+    /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:ok(?:ay)?|yes|no)[,!.]?\s+)?(?:please\s+)?(?:(?:discard|drop|scrap|reject|cancel|delete|trash|toss|throw\s+(?:away|out))\s+(?:the|that|this)\s+(?:(?:saved|pending|waiting|last|new)\s+)?(?:change|update|code|proposal)\b|throw\s+(?:the|that|this)\s+(?:change|update|code)\s+(?:away|out)\b)/i.test(text)
+    || /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:i\s+)?(?:don'?t|do\s+not)\s+(?:want|use|keep)\s+(?:that|this|the)\s+(?:(?:saved|pending|last|new)\s+)?(?:change|update|code|proposal)\b/i.test(text)
+  )) return { kind: 'discard' };
   if (/\b(?:show|read|let me see|display)\b[\s\S]{0,25}\b(?:the\s+)?(?:code|diff|changes?)\b/i.test(text) && text.length < 120) return { kind: 'show-code' };
   if (/\b(?:pending|waiting)\b[\s\S]{0,25}\b(?:code|update|change|pr)\b/i.test(text)) return { kind: 'pending' };
 
@@ -2030,7 +2036,7 @@ export function selfUpdateChatIntent(message) {
 }
 
 const EXISTING_SELF_UPDATE_COMMANDS = new Set([
-  'open-pr', 'status', 'show-code', 'pending', 'merge', 'deploy-status',
+  'open-pr', 'status', 'show-code', 'pending', 'merge', 'deploy-status', 'discard',
 ]);
 export function isExistingChangeCommand(intent) {
   return Boolean(intent && EXISTING_SELF_UPDATE_COMMANDS.has(intent.kind));
@@ -2109,6 +2115,18 @@ async function handleSelfUpdateChatAction(env, storage, intent, ops = {}) {
       ok: true,
       access,
       message: `GitHub self-development is connected to ${access.repository}, sir. I can read the current repo and prepare reviewed code. When you approve/create a PR, I use the real branch/PR API and return its receipt; I never push directly to main. ${writeNote}`,
+    };
+  }
+
+  if (intent.kind === 'discard') {
+    const pending = await storage.get(PENDING_SELF_UPDATE_KEY).catch(() => null);
+    if (!pending?.proposal) return { ok: true, message: 'There is no saved change waiting, sir, so there was nothing to discard.' };
+    await storage.delete?.(PENDING_SELF_UPDATE_KEY);
+    await recordReceipt(storage, { kind: 'proposal_discarded', key: `discarded:${pending.from_job || pending.reviewed_at || Date.now()}`, files: (pending.proposal.files || []).map((f) => f.path) }).catch(() => null);
+    return {
+      ok: true,
+      discarded: true,
+      message: `Discarded, sir. The saved change to ${(pending.proposal.files || []).map((f) => f.path).join(', ') || 'my code'} is gone and nothing from it was merged.`,
     };
   }
 
@@ -2283,7 +2301,7 @@ async function dispatchChange(env, body, memory = null, options = {}) {
   const command = selfUpdateChatIntent(request);
   if (shouldHandleSelfUpdateAction(request, command) && memory) {
     const handled = await handleSelfUpdateChatAction(env, memory, command, options.ops || {});
-    const next = handled.ok && handled.opened && options.advanceStudyBuilds ? await options.advanceStudyBuilds().catch(() => null) : null;
+    const next = handled.ok && (handled.opened || handled.discarded) && options.advanceStudyBuilds ? await options.advanceStudyBuilds().catch(() => null) : null;
     return json({ message: `${handled.message}${next ? ` ${next}` : ''}`, code_review_passed: false, owner_approval_required: false, self_update_action: command.kind });
   }
   // "Study <repo>: topics…, then implement them" is research first: the app
@@ -5581,7 +5599,7 @@ export class CheState extends DurableObject {
               return queued;
             },
           });
-          const nextBuild = result.ok && result.opened ? await this.advanceStudyBuilds().catch(() => null) : null;
+          const nextBuild = result.ok && (result.opened || result.discarded) ? await this.advanceStudyBuilds().catch(() => null) : null;
           return ndjsonReply(`${result.message}${nextBuild ? ` ${nextBuild}` : ''}`, {
             source: 'che_self_update',
             self_update_action: selfUpdateAction.kind,
