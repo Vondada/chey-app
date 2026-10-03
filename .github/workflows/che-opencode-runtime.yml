@@ -128,6 +128,7 @@ jobs:
         shell: bash
         env:
           REQUESTED: ${{ inputs.model }}
+          CHE_ALLOW_PAID_MODELS: ${{ vars.CHE_ALLOW_PAID_MODELS }}
           HAS_GOOGLE: ${{ secrets.GEMINI_API_KEY != '' }}
           HAS_OPENROUTER: ${{ secrets.OPENROUTER_API_KEY != '' }}
           HAS_GROQ: ${{ secrets.GROQ_API_KEY != '' }}
@@ -163,10 +164,13 @@ jobs:
             # first, then strong previews, then the rest (free-tier keys often
             # cannot use Pro models, so a cheaper model must still be tried).
             candidates=""
-            for p in google:HAS_GOOGLE anthropic:HAS_ANTHROPIC openai:HAS_OPENAI openrouter:HAS_OPENROUTER groq:HAS_GROQ mistral:HAS_MISTRAL cerebras:HAS_CEREBRAS; do
+            for p in openrouter:HAS_OPENROUTER google:HAS_GOOGLE anthropic:HAS_ANTHROPIC openai:HAS_OPENAI groq:HAS_GROQ mistral:HAS_MISTRAL cerebras:HAS_CEREBRAS; do
               prov=${p%%:*}; flag=${p##*:}
               [ "${!flag}" = true ] || continue
               list=$(list_models "$prov" | grep -E "^$prov/" | grep -iE "gemini|claude|gpt|qwen|deepseek|llama|mistral|codestral|devstral|kimi|glm|grok" | grep -viE "tts|image|audio|embed|vision|guard|[-_.]lite|[-_.]nano|[-_.]mini|[-_]8b|lyria|veo|imagen|live|robotics|computer-use|customtools|learnlm|aqa|search|transcribe|realtime|moderation" || true)
+              # OpenRouter: free (":free") models only unless the owner sets the repo
+              # variable CHE_ALLOW_PAID_MODELS=true, so the $10 credit is never spent.
+              if [ "$prov" = openrouter ] && [ "${CHE_ALLOW_PAID_MODELS:-}" != true ]; then list=$(printf '%s\n' "$list" | grep -E ":free$" || true); fi
               [ -n "$list" ] || continue
               strong=$(echo "$list" | grep -iE "coder|codestral|devstral|pro|sonnet|opus|gpt-5|large|70b" || true)
               ranked=$( { echo "$strong" | grep -viE "preview|exp" | sort -rV || true; echo "$strong" | sort -rV; echo "$list" | sort -rV; } | awk 'NF && !seen[$0]++' | head -3)

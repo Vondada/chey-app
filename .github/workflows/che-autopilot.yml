@@ -209,6 +209,7 @@ jobs:
           HAS_ANTHROPIC: ${{ secrets.ANTHROPIC_API_KEY != '' }}
           HAS_MISTRAL: ${{ secrets.MISTRAL_API_KEY != '' }}
           HAS_CEREBRAS: ${{ secrets.CEREBRAS_API_KEY != '' }}
+          CHE_ALLOW_PAID_MODELS: ${{ vars.CHE_ALLOW_PAID_MODELS }}
           K_GOOGLE: ${{ secrets.GEMINI_API_KEY }}
           K_ANTHROPIC: ${{ secrets.ANTHROPIC_API_KEY }}
           K_OPENAI: ${{ secrets.OPENAI_API_KEY }}
@@ -231,18 +232,24 @@ jobs:
           echo "Providers with a GitHub Actions key:${keyed:- none}"
           implementer_provider=$(printf '%s' "$IMPLEMENTER_MODEL" | cut -d/ -f1)
           model=""
-          for pair in google:HAS_GOOGLE anthropic:HAS_ANTHROPIC openai:HAS_OPENAI openrouter:HAS_OPENROUTER groq:HAS_GROQ mistral:HAS_MISTRAL cerebras:HAS_CEREBRAS; do
-            provider=${pair%%:*}
-            flag=${pair##*:}
-            [ "${!flag}" = true ] || continue
-            [ "$provider" != "$implementer_provider" ] || continue
-            list=$(list_models "$provider" | grep -E "^$provider/" | grep -iE "gemini|claude|gpt|qwen|deepseek|llama|mistral|codestral|devstral|kimi|glm|grok" | grep -viE "tts|image|audio|embed|vision|guard|[-_.]lite|[-_.]nano|[-_.]mini|[-_]8b|lyria|veo|imagen|live|robotics|computer-use|learnlm|aqa|search|transcribe|realtime|moderation" || true)
-            candidate=$(printf '%s\n' "$list" | grep -iE "coder|codestral|devstral|pro|sonnet|opus|gpt-5|large|70b" | sort -rV | head -1 || true)
-            [ -n "$candidate" ] || candidate=$(printf '%s\n' "$list" | head -1)
-            if [ -n "$candidate" ] && [ "$candidate" != "$IMPLEMENTER_MODEL" ]; then
-              model="$candidate"
-              break
-            fi
+          # Prefer a different provider than the implementer; if only one
+          # provider works, fall back to a different model on the same one.
+          for pass in other same; do
+            for pair in openrouter:HAS_OPENROUTER google:HAS_GOOGLE anthropic:HAS_ANTHROPIC openai:HAS_OPENAI groq:HAS_GROQ mistral:HAS_MISTRAL cerebras:HAS_CEREBRAS; do
+              provider=${pair%%:*}
+              flag=${pair##*:}
+              [ "${!flag}" = true ] || continue
+              if [ "$pass" = other ]; then [ "$provider" != "$implementer_provider" ] || continue
+              else [ "$provider" = "$implementer_provider" ] || continue; fi
+              list=$(list_models "$provider" | grep -E "^$provider/" | grep -iE "gemini|claude|gpt|qwen|deepseek|llama|mistral|codestral|devstral|kimi|glm|grok" | grep -viE "tts|image|audio|embed|vision|guard|[-_.]lite|[-_.]nano|[-_.]mini|[-_]8b|lyria|veo|imagen|live|robotics|computer-use|customtools|learnlm|aqa|search|transcribe|realtime|moderation" || true)
+              # OpenRouter: free (":free") models only unless the owner sets the repo
+              # variable CHE_ALLOW_PAID_MODELS=true, so the $10 credit is never spent.
+              if [ "$provider" = openrouter ] && [ "${CHE_ALLOW_PAID_MODELS:-}" != true ]; then list=$(printf '%s\n' "$list" | grep -E ":free$" || true); fi
+              list=$(printf '%s\n' "$list" | grep -vxF "$IMPLEMENTER_MODEL" || true)
+              candidate=$(printf '%s\n' "$list" | grep -iE "coder|codestral|devstral|pro|sonnet|opus|gpt-5|large|70b" | sort -rV | head -1 || true)
+              [ -n "$candidate" ] || candidate=$(printf '%s\n' "$list" | awk 'NF' | head -1)
+              if [ -n "$candidate" ]; then model="$candidate"; break 2; fi
+            done
           done
           echo "model=$model" >> "$GITHUB_OUTPUT"
 
