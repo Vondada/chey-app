@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyEdits, attemptFingerprint, diagnoseNoOp, fallbackTreeCandidates, focusView, jsonObject, literalTerms, loadLessons, prepareSelfUpdate, recordLesson } from './self_development.js';
+import { applyEdits, attemptFingerprint, diagnoseNoOp, fallbackTreeCandidates, focusView, jsonObject, literalTerms, loadLessons, prepareSelfUpdate, recordLesson, substantiveChange, wantsDocsOnly } from './self_development.js';
 
 const MAIN = `class Home {\n  String _statusBanner = 'Ready. Type or speak a request.';\n}\n`;
 const PATCH = `const t = Text('CHE updated. Restart to apply.');\n`;
@@ -669,4 +669,126 @@ test('review pipeline receives fetched source and never asks owner to supply rep
   assert.equal(reviewerSawSource, true);
   assert.equal(out.approval_required, true);
   assert.deepEqual(out.proposal.files.map((file) => file.path), ['lib/main.dart']);
+});
+
+
+test('substance check ignores multiline and HTML comment-only edits', () => {
+  const dartBefore = 'class A {\n  /*\n  old explanation\n  */\n  int value = 1;\n}\n';
+  const dartAfter = 'class A {\n  /*\n  new explanation\n  */\n  int value = 1;\n}\n';
+  const htmlBefore = '<div>real</div>\n<!--\nold note\n-->\n';
+  const htmlAfter = '<div>real</div>\n<!--\nnew note\n-->\n';
+  assert.equal(substantiveChange(new Map([['lib/a.dart', dartBefore]]), [{ path: 'lib/a.dart', content: dartAfter }]), false);
+  assert.equal(substantiveChange(new Map([['web/a.html', htmlBefore]]), [{ path: 'web/a.html', content: htmlAfter }]), false);
+  assert.equal(substantiveChange(new Map([['lib/a.dart', dartBefore]]), [{ path: 'lib/a.dart', content: dartAfter.replace('int value = 1;', 'int value = 2;') }]), true);
+});
+
+test('docs-only intent accepts normal action verbs without hiding mixed code work', () => {
+  for (const request of ['fix the README typo', 'create setup documentation', 'add comments explaining setup', 'update docs for the API route']) {
+    assert.equal(wantsDocsOnly(request), true, request);
+  }
+  assert.equal(wantsDocsOnly('rebuild the Brain room and update the README'), false);
+  assert.equal(wantsDocsOnly('fix the feature according to the README'), false);
+});
+
+
+test('docs-only classifier rejects mixed feature requests with arbitrary nouns', () => {
+  assert.equal(wantsDocsOnly('fix login and update docs'), false);
+  assert.equal(wantsDocsOnly('add dark mode and update README'), false);
+  assert.equal(wantsDocsOnly('update docs and fix onboarding'), false);
+  assert.equal(wantsDocsOnly('fix login according to the README'), false);
+  assert.equal(wantsDocsOnly('fix the README typo'), true);
+  assert.equal(wantsDocsOnly('create setup documentation'), true);
+});
+
+
+test('docs-only classifier treats comma ampersand and while as mixed-clause separators', () => {
+  assert.equal(wantsDocsOnly('fix login, update docs'), false);
+  assert.equal(wantsDocsOnly('add dark mode & update README'), false);
+  assert.equal(wantsDocsOnly('fix onboarding while updating documentation'), false);
+  assert.equal(wantsDocsOnly('update README, comments, and setup notes'), true);
+});
+
+test('substance check keeps CSS https URLs as executable style content', () => {
+  const before = '.hero { background-image: url(https://cdn.example.com/old.png); }\n';
+  const after = '.hero { background-image: url(https://cdn.example.com/new.png); }\n';
+  assert.equal(substantiveChange(new Map([['web/site.css', before]]), [{ path: 'web/site.css', content: after }]), true);
+  const commentOnly = '.hero {\n  /* old note */\n  background: black;\n}\n';
+  const commentOnlyAfter = '.hero {\n  /* new note */\n  background: black;\n}\n';
+  assert.equal(substantiveChange(new Map([['web/site.css', commentOnly]]), [{ path: 'web/site.css', content: commentOnlyAfter }]), false);
+});
+
+
+test('docs-only classifier treats shared verbs with non-doc targets as mixed implementation', () => {
+  assert.equal(wantsDocsOnly('update README and login flow'), false);
+  assert.equal(wantsDocsOnly('fix docs and dark mode'), false);
+  assert.equal(wantsDocsOnly('update README and comments'), true);
+});
+
+test('HTML substance strips script comments but preserves URL changes', () => {
+  const commentBefore = '<script>\n// old note\nconst ready = true;\n</script>\n';
+  const commentAfter = '<script>\n// new note\nconst ready = true;\n</script>\n';
+  assert.equal(substantiveChange(
+    new Map([['assets/office3d/view.html', commentBefore]]),
+    [{ path: 'assets/office3d/view.html', content: commentAfter }],
+  ), false);
+
+  const urlBefore = '<img src="https://cdn.example.com/old.png">\n';
+  const urlAfter = '<img src="https://cdn.example.com/new.png">\n';
+  assert.equal(substantiveChange(
+    new Map([['assets/office3d/view.html', urlBefore]]),
+    [{ path: 'assets/office3d/view.html', content: urlAfter }],
+  ), true);
+});
+
+
+test('docs-only classifier recognizes document verbs and documentation filenames', () => {
+  assert.equal(wantsDocsOnly('document the API'), true);
+  assert.equal(wantsDocsOnly('fix README.md typo'), true);
+  assert.equal(wantsDocsOnly('update docs/setup.md'), true);
+  assert.equal(wantsDocsOnly('update README.md and login flow'), false);
+  assert.equal(wantsDocsOnly('update docs/setup.md. Fix login'), false);
+});
+
+
+test('Copilot: HTML comments do not alter script/style strings and script comments stay non-substantive', () => {
+  const before = [
+    '<div data-note="<!-- literal -->">x</div>',
+    '<script>',
+    'const marker = "<!-- literal -->";',
+    '// old explanation',
+    'const url = "https://cdn.example.com/a.js";',
+    '</script>',
+    '<style>',
+    '.x::after { content: "<!-- literal -->"; }',
+    '</style>',
+  ].join('\n');
+  const commentOnly = before.replace('// old explanation', '// new explanation');
+  const realStringChange = before.replace('<!-- literal -->";', '<!-- changed -->";');
+  assert.equal(substantiveChange(new Map([['web/a.html', before]]), [{ path: 'web/a.html', content: commentOnly }]), false);
+  assert.equal(substantiveChange(new Map([['web/a.html', before]]), [{ path: 'web/a.html', content: realStringChange }]), true);
+});
+
+test('Copilot: executable string whitespace changes remain substantive', () => {
+  const before = 'const label = "hello world";\n';
+  const after = 'const label = "hello  world";\n';
+  assert.equal(substantiveChange(new Map([['server/a.js', before]]), [{ path: 'server/a.js', content: after }]), true);
+});
+
+test('Copilot: docs-only classification checks every mutation action', () => {
+  assert.equal(wantsDocsOnly('fix README and enable login'), false);
+  assert.equal(wantsDocsOnly('update docs, support OAuth'), false);
+  assert.equal(wantsDocsOnly('create setup documentation and configure login'), false);
+  assert.equal(wantsDocsOnly('fix README typo and update docs/setup.md'), true);
+});
+
+test('Copilot: feature mutation verbs around docs references never count as docs-only', () => {
+  for (const request of [
+    'enable login according to the README',
+    'support OAuth per documentation',
+    'configure login based on the guide',
+    'wire login using the docs',
+    'connect OAuth per README',
+  ]) {
+    assert.equal(wantsDocsOnly(request), false, request);
+  }
 });

@@ -363,10 +363,31 @@ export function teachOfficeSkill(data, body = {}) {
     : inferSkillCapabilities(`${name} ${trigger} ${steps.join(' ')}`);
   const store = ensureSkillStore(data);
   const id = clip(body.id, 80) || crypto.randomUUID();
-  const existing = store.find((item) => item.id === id || item.name.toLowerCase() === name.toLowerCase());
-  const skill = existing || { id, created_at: now() };
-  const assigned = Array.isArray(body.assigned_agents)
+  const hasAssignedAgents = Array.isArray(body.assigned_agents);
+  const requestedAssigned = hasAssignedAgents
     ? [...new Set(body.assigned_agents.map((item) => clip(item, 40)).filter(Boolean))].slice(0, 8)
+    : [];
+  const requestedSource = body.source && typeof body.source === 'object'
+    ? { repo: clip(body.source.repo, 120), path: clip(body.source.path, 240), license: clip(body.source.license, 40) }
+    : null;
+  const importedIdentity = Boolean(requestedSource?.repo && requestedSource?.path);
+  const existing = store.find((item) => {
+    if (item.id === id) return true;
+    if (String(item.name || '').toLowerCase() !== name.toLowerCase()) return false;
+    // Manual/local skills keep the historical name-based update behavior.
+    if (!importedIdentity) return true;
+    // Imported skills are distinct by source + assigned agent set so two
+    // agents can legitimately have same-named workflows without overwriting
+    // each other's provenance or assignment.
+    if (item.source?.repo !== requestedSource.repo || item.source?.path !== requestedSource.path) return false;
+    const currentAssigned = Array.isArray(item.assigned_agents) ? [...item.assigned_agents].sort() : [];
+    const nextAssigned = [...requestedAssigned].sort();
+    return currentAssigned.length === nextAssigned.length
+      && currentAssigned.every((value, index) => value === nextAssigned[index]);
+  });
+  const skill = existing || { id, created_at: now() };
+  const assigned = hasAssignedAgents
+    ? requestedAssigned
     : (Array.isArray(skill.assigned_agents) ? skill.assigned_agents : []);
   Object.assign(skill, {
     name,
@@ -376,9 +397,7 @@ export function teachOfficeSkill(data, body = {}) {
     provider_neutral: true,
     notes: clip(body.notes, 1200),
     assigned_agents: assigned,
-    source: body.source && typeof body.source === 'object'
-      ? { repo: clip(body.source.repo, 120), path: clip(body.source.path, 240), license: clip(body.source.license, 40) }
-      : (skill.source || null),
+    source: requestedSource || skill.source || null,
     updated_at: now(),
     uses: Number(skill.uses || 0),
   });

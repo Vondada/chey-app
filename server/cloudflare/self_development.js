@@ -458,32 +458,187 @@ export function applyEdits(sources, edits) {
 // are not blank and not comments, in a source file. Comment-only or
 // docs-only edits are not an implementation (unless docs were requested).
 const CODE_FILE = /\.(?:dart|m?js|cjs|ts|tsx|jsx|swift|kt|java|m|mm|h|html|css)$/i;
-function isCommentOrBlank(line) {
-  const t = String(line || '').trim();
-  return !t || /^(?:\/\/|\/\*|\*|\*\/|#(?!include)|<!--)/.test(t);
+
+function codeWithoutComments(source, { lineComments = true } = {}) {
+  const text = String(source || '');
+  let out = '';
+  let i = 0;
+  let state = 'code';
+  let quote = '';
+  while (i < text.length) {
+    const ch = text[i];
+    const next = text[i + 1];
+    if (state === 'line') {
+      if (ch === '\n') { out += '\n'; state = 'code'; }
+      i += 1;
+      continue;
+    }
+    if (state === 'block') {
+      if (ch === '*' && next === '/') { state = 'code'; i += 2; continue; }
+      if (ch === '\n') out += '\n';
+      i += 1;
+      continue;
+    }
+    if (quote) {
+      out += ch;
+      if (ch === '\\' && i + 1 < text.length) {
+        out += text[i + 1];
+        i += 2;
+        continue;
+      }
+      if (ch === quote) quote = '';
+      i += 1;
+      continue;
+    }
+    if (lineComments && ch === '/' && next === '/') { state = 'line'; i += 2; continue; }
+    if (ch === '/' && next === '*') { state = 'block'; i += 2; continue; }
+    if (ch === "'" || ch === '"' || ch === '`') { quote = ch; out += ch; i += 1; continue; }
+    out += ch;
+    i += 1;
+  }
+  return out;
 }
+
+function stripHtmlCommentsOutsideQuotedText(source) {
+  const text = String(source || '');
+  let out = '';
+  let i = 0;
+  let quote = '';
+  while (i < text.length) {
+    const ch = text[i];
+    if (quote) {
+      out += ch;
+      if (ch === '\\' && i + 1 < text.length) {
+        out += text[i + 1];
+        i += 2;
+        continue;
+      }
+      if (ch === quote) quote = '';
+      i += 1;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      out += ch;
+      i += 1;
+      continue;
+    }
+    if (text.startsWith('<!--', i)) {
+      const close = text.indexOf('-->', i + 4);
+      const finish = close < 0 ? text.length : close + 3;
+      // Preserve line structure so removing a comment cannot join tokens.
+      for (const c of text.slice(i, finish)) if (c === '\n') out += '\n';
+      i = finish;
+      continue;
+    }
+    out += ch;
+    i += 1;
+  }
+  return out;
+}
+
+function htmlWithoutComments(source) {
+  const text = String(source || '');
+  const block = /<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
+  let out = '';
+  let last = 0;
+  let match;
+  while ((match = block.exec(text))) {
+    out += stripHtmlCommentsOutsideQuotedText(text.slice(last, match.index));
+    const whole = match[0];
+    const tag = String(match[1] || '').toLowerCase();
+    const openEnd = whole.indexOf('>') + 1;
+    const closeMatch = /<\/(?:script|style)\s*>/i.exec(whole.slice(openEnd));
+    const closeStart = closeMatch ? openEnd + closeMatch.index : whole.length;
+    const open = whole.slice(0, openEnd);
+    const body = whole.slice(openEnd, closeStart);
+    const close = whole.slice(closeStart);
+    out += open
+      + codeWithoutComments(body, { lineComments: tag === 'script' })
+      + close;
+    last = match.index + whole.length;
+  }
+  out += stripHtmlCommentsOutsideQuotedText(text.slice(last));
+  return out;
+}
+
+function normalizedExecutableSource(source, path = '') {
+  const isCss = /\.css$/i.test(String(path || ''));
+  const isHtml = /\.html$/i.test(String(path || ''));
+  const stripped = isHtml
+    ? htmlWithoutComments(source)
+    : codeWithoutComments(source, { lineComments: !isCss });
+  // Drop only lines made empty by comment removal. Preserve every character
+  // on executable lines so whitespace changes inside strings remain visible.
+  return stripped
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .join('\n');
+}
+
 export function substantiveChange(beforeMap, files) {
   for (const file of files) {
     if (!CODE_FILE.test(file.path)) continue;
-    const before = String(beforeMap.get(file.path) ?? '').split('\n');
-    const after = String(file.content || '').split('\n');
-    const counts = new Map();
-    for (const line of before) counts.set(line, (counts.get(line) || 0) + 1);
-    const added = [];
-    for (const line of after) {
-      const left = counts.get(line) || 0;
-      if (left > 0) counts.set(line, left - 1); else added.push(line);
-    }
-    const removed = [...counts.entries()].flatMap(([line, n]) => Array(n).fill(line));
-    if ([...added, ...removed].some((line) => !isCommentOrBlank(line))) return true;
+    const before = normalizedExecutableSource(beforeMap.get(file.path) ?? '', file.path);
+    const after = normalizedExecutableSource(file.content || '', file.path);
+    if (before !== after) return true;
   }
   return false;
 }
-export function wantsDocsOnly(request) {
-  return /\b(?:doc(?:s|umentation)?|readme|comments?|changelog|notes?)\b/i.test(String(request || ''))
-    && !/\b(?:build|implement|rebuild|redesign|add|create|make|fix|feature)\b/i.test(String(request || ''));
-}
 
+export function wantsDocsOnly(request) {
+  const text = String(request || '').trim();
+  const docs = /\b(?:doc(?:s|ument(?:s|ation)?)?|readme|comments?|changelog|notes?|guide|docstrings?)\b/i;
+  if (!docs.test(text)) return false;
+
+  const allMutationActions = /\b(?:build|rebuild|redesign|implement|make|upgrade|refactor|develop|ship|fix|update|add|create|edit|improve|change|write|correct|refresh|document|enable|support|configure|wire|route|connect|allow|expose|remove|delete|replace|rename|move|convert|migrate|integrate|install|set|turn|switch)\b/gi;
+  const docsActions = new Set([
+    'fix', 'update', 'add', 'create', 'edit', 'improve', 'change', 'write',
+    'correct', 'refresh', 'document', 'remove', 'delete', 'replace', 'rename', 'move',
+  ]);
+  const referenceUse = /\b(?:according\s+to|based\s+on|using|per)\b/i;
+
+  // Protect dots inside filenames/paths (README.md, docs/setup.md) before
+  // treating punctuation as a sentence boundary.
+  const protectedText = text.replace(/(?<=[\w/-])\.(?=[\w/-])/g, '\u0000');
+  const clauses = protectedText
+    .split(/\b(?:and|plus|also|along\s+with|as\s+well\s+as|then|while|whereas)\b|[,;&]|[;.!?]+/i)
+    .map((clause) => clause.replace(/\u0000/g, '.').trim())
+    .filter(Boolean);
+
+  let sawDocsTarget = false;
+  for (const clause of clauses) {
+    const docMatch = docs.exec(clause);
+    const actions = [...clause.matchAll(allMutationActions)];
+    if (referenceUse.test(clause)) return false;
+
+    // An actionless continuation such as "update README and login flow" means
+    // mixed work, not a documentation-only request.
+    if (!actions.length) {
+      if (!docMatch) return false;
+      sawDocsTarget = true;
+      continue;
+    }
+
+    // Inspect every action, not just the first. Unknown feature mutations such
+    // as enable/support/configure must never be excused merely because docs are
+    // mentioned somewhere in the same clause.
+    // Only words in verb position count ("update docs for the API route":
+    // "route" is a noun). A verb leads the clause or follows to/please/also/
+    // can/should/must/will/then, so "update docs to enable X" still counts.
+    actions.forEach((action, index) => {
+      const before = clause.slice(0, action.index).trim().split(/\s+/).pop()?.toLowerCase() || '';
+      action.isVerb = index === 0 || ['to', 'please', 'also', 'can', 'should', 'must', 'will', 'then', 'and'].includes(before);
+    });
+    for (const action of actions.filter((item) => item.isVerb)) {
+      const verb = String(action[0] || '').toLowerCase();
+      if (!docsActions.has(verb)) return false;
+    }
+    if (!docMatch) return false;
+    sawDocsTarget = true;
+  }
+  return sawDocsTarget;
+}
 // 0-based line numbers that differ between two versions (in the new version).
 function changedLines(before, after) {
   const a = String(before ?? '').split('\n');

@@ -1007,6 +1007,28 @@ export function enqueueJob(data, fields) {
   data.jobs = [...data.jobs.filter((j) => ['queued', 'running'].includes(j.status)), ...data.jobs.filter((j) => !['queued', 'running'].includes(j.status)).slice(0, 80)];
   return { job, deduplicated: false };
 }
+
+// Keep independent background work parallel, but serialize skill imports.
+// Two imports both update office_skills/team and must never race snapshots.
+export function selectReadyJobs(jobs, now = Date.now(), limit = 4) {
+  const all = Array.isArray(jobs) ? jobs : [];
+  const ready = all
+    .filter((job) => job.status === 'queued' && !job.dead_letter && (!job.retry_at || job.retry_at <= now));
+  const selected = [];
+  // A running import occupies the serialized slot across later alarms /
+  // concurrent processJobs invocations. Unrelated work can still run.
+  let officeSkillImportTaken = all.some((job) =>
+    job.kind === 'office_skill_import' && job.status === 'running' && !job.dead_letter);
+  for (const job of ready) {
+    if (job.kind === 'office_skill_import') {
+      if (officeSkillImportTaken) continue;
+      officeSkillImportTaken = true;
+    }
+    selected.push(job);
+    if (selected.length >= limit) break;
+  }
+  return selected;
+}
 const BUSY_REPLY = "I'm having trouble reaching my cloud engines, sir. I saved this as a background job and I'll finish it when a healthy engine returns.";
 const WORK_POLICY = 'ACCESSIBILITY: support typing OR voice, numbered options, large text for all speech, visible status plus distinct haptics. Never depend on hearing or sight alone. AUTONOMY: finish authorized queued and multi-step work; stand by pauses it and Chay, resume restarts it. OWNER PERMISSION (Sep 28, 2026): CHE has the owner’s full standing permission to act, including sending messages and emails; ask first only when something costs money (paying, buying, ordering, subscribing, transferring), before deleting or removing anything, or when a decision is genuinely the owner’s. App-specific permission is still required before acting in an app. Report what was done afterward. HONESTY: never claim completion without a real result. Busy work is saved and retried with exponential backoff (5, 10, then 20 minutes; at most 3 retries) and then moved to a terminal dead-letter state; report exhaustion honestly. Use available fallback engines, and say which capability failed only after all options fail.';
 
@@ -1990,6 +2012,27 @@ export function selfUpdateChatIntent(message) {
   return null;
 }
 
+const EXISTING_SELF_UPDATE_COMMANDS = new Set([
+  'open-pr', 'status', 'show-code', 'pending', 'merge', 'deploy-status',
+]);
+export function isExistingChangeCommand(intent) {
+  return Boolean(intent && EXISTING_SELF_UPDATE_COMMANDS.has(intent.kind));
+}
+
+export function shouldHandleSelfUpdateAction(message, intent) {
+  if (!intent) return false;
+  if (isExistingChangeCommand(intent)) return true;
+  if (intent.kind !== 'access') return false;
+  const text = String(message || '');
+  // Pure capability/access questions are tool reads. Requests to CHANGE CHE's
+  // implementation or add a new GitHub/PR capability continue into coding.
+  const explicitSelfChange =
+    /\b(?:update|change|modify|fix|add|implement|build|make|edit|rewrite|upgrade|improve|refactor|develop)\b[\s\S]{0,80}\b(?:yourself|che(?:'s)?|your\s+(?:code|app|worker|system|software|ui|interface))\b/i.test(text);
+  const capabilityCreation =
+    /\b(?:add|build|implement|enable|create|develop)\b[\s\S]{0,40}\b(?:ability|capability|feature|support|way)\b[\s\S]{0,80}\b(?:github|repo(?:sitory)?|pr|pull request)\b/i.test(text);
+  return !(explicitSelfChange || capabilityCreation);
+}
+
 const LAST_SELF_UPDATE_DEPLOY_KEY = 'last_self_update_deploy';
 const LAST_ENGINEERING_REQUEST_KEY = 'che_last_engineering_request';
 // True when a stored diff view changes at least one real (non-comment) line.
@@ -2221,7 +2264,7 @@ async function dispatchChange(env, body, memory = null, options = {}) {
   // build routes them here. Running the coding team on "show me the code"
   // produced a bogus failed job and overwrote the real request.
   const command = selfUpdateChatIntent(request);
-  if (command && memory) {
+  if (shouldHandleSelfUpdateAction(request, command) && memory) {
     const handled = await handleSelfUpdateChatAction(env, memory, command, options.ops || {});
     return json({ message: handled.message, code_review_passed: false, owner_approval_required: false, self_update_action: command.kind });
   }
@@ -5487,7 +5530,7 @@ export class CheState extends DurableObject {
         if (selfUpdateAction && !ownerDevice && ['open-pr', 'merge'].includes(selfUpdateAction.kind)) {
           return ndjsonReply('Only the CHE owner can open, merge or deploy code changes.', { source: 'che_self_update', ok: false });
         }
-        if (selfUpdateAction) {
+        if (shouldHandleSelfUpdateAction(message, selfUpdateAction)) {
           const result = await handleSelfUpdateChatAction(this.env, this.ctx.storage, selfUpdateAction, {
             queueJob: async (fields) => {
               const fresh = await this.loadData();
@@ -5508,6 +5551,14 @@ export class CheState extends DurableObject {
               commit_sha: result.opened.commit_sha || '',
             } : {}),
           });
+        }
+        if (selfUpdateAction?.kind === 'access') {
+          // The access detector also recognizes questions about GitHub/PR
+          // capability. If the wording is a request to ADD that capability,
+          // run the real coding pipeline now instead of falling into chat.
+          return ownerDevice
+            ? this.selfDevelopmentReply(message, { vectorRecall })
+            : ndjsonReply('Only the CHE owner can ask me to change my code.', { source: 'che_self_development', ok: false });
         }
 
         // Office skills: give them for real, and report them from stored data.
@@ -7254,9 +7305,7 @@ export class CheState extends DurableObject {
         }
       }
     }
-    const queued = data.jobs
-      .filter((job) => job.status === 'queued' && !job.dead_letter && (!job.retry_at || job.retry_at <= now))
-      .slice(0, 4);
+    const queued = selectReadyJobs(data.jobs, now, 4);
     if (!queued.length) { await this.ctx.storage.put('che', data); await this.scheduleWork(); return false; }
 
     const startedAt = new Date().toISOString();
