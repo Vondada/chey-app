@@ -55,9 +55,8 @@ class CheSceneQualityButton extends StatelessWidget {
       valueListenable: CheSceneQualityStore.value,
       builder: (context, quality, _) => Semantics(
         button: true,
-        label: '3D quality ' +
-            cheSceneQualityLabel(quality) +
-            '. Activate to change rendering quality.',
+        label:
+            '3D quality ${cheSceneQualityLabel(quality)}. Activate to change rendering quality.',
         child: PopupMenuButton<CheSceneQuality>(
           tooltip: '3D quality',
           initialValue: quality,
@@ -76,7 +75,7 @@ class CheSceneQualityButton extends StatelessWidget {
               children: [
                 const Icon(Icons.view_in_ar_rounded, size: 18),
                 const SizedBox(width: 6),
-                Text('3D · ' + cheSceneQualityLabel(quality)),
+                Text('3D · ${cheSceneQualityLabel(quality)}'),
               ],
             ),
           ),
@@ -202,24 +201,12 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
     final entityPart = entities
         .map(
           (e) =>
-              e.id +
-              '|' +
-              e.label +
-              '|' +
-              e.state +
-              '|' +
-              e.importance.toString() +
-              '|' +
-              e.speaking.toString() +
-              '|' +
-              (e.modelAsset ?? '') +
-              '|' +
-              e.appearance.toString(),
+              '${e.id}|${e.label}|${e.state}|${e.importance}|'
+              '${e.speaking}|${e.modelAsset ?? ''}|${e.appearance}',
         )
         .join(';');
-    final linkPart =
-        links.map((e) => e.from + '>' + e.to).join(';');
-    return entityPart + '#' + linkPart;
+    final linkPart = links.map((e) => '${e.from}>${e.to}').join(';');
+    return '$entityPart#$linkPart';
   }
 
   Future<void> _initialize() async {
@@ -612,7 +599,7 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
     vm.Vector3 position,
   ) async {
     final root = Node(
-      name: 'entity:' + entity.id,
+      name: 'entity:${entity.id}',
       localTransform: vm.Matrix4.translation(position),
     );
 
@@ -642,7 +629,7 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
       SemanticsComponent(
         label: entity.description.isEmpty
             ? entity.label
-            : entity.label + '. ' + entity.description,
+            : '${entity.label}. ${entity.description}',
         hint: actionable ? 'Activate to open this item' : null,
         button: actionable,
         sortOrder: index.toDouble(),
@@ -932,7 +919,7 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
       };
       _scene.add(
         Node(
-          name: 'brain-link:' + link.from + ':' + link.to,
+          name: 'brain-link:${link.from}:${link.to}',
           mesh: Mesh(
             TubeGeometry(
               path,
@@ -1117,12 +1104,12 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
       return SizedBox(height: widget.height, child: fallback);
     }
 
-    if (!TickerMode.of(context)) {
+    if (!TickerMode.valuesOf(context).enabled) {
       return SizedBox(
         height: widget.height,
         child: Semantics(
-          label: widget.semanticsLabel +
-              '. 3D rendering paused while this room is off screen.',
+          label:
+              '${widget.semanticsLabel}. 3D rendering paused while this room is off screen.',
           child: const ColoredBox(color: Color(0xFF050708)),
         ),
       );
@@ -1130,10 +1117,9 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
 
     return Semantics(
       container: true,
-      label: widget.semanticsLabel +
-          '. ' +
-          widget.entities.length.toString() +
-          ' real data items. Drag to orbit and pinch to zoom. Each entity is available to VoiceOver.',
+      label:
+          '${widget.semanticsLabel}. ${widget.entities.length} real data items. '
+          'Drag to orbit and pinch to zoom. Each entity is available to VoiceOver.',
       child: ClipRRect(
         borderRadius: BorderRadius.circular(24),
         child: SizedBox(
