@@ -9,6 +9,14 @@
 const CHUNK_CHARS = 1400;
 const MAX_DOC_CHARS = 3_000_000;
 
+/**
+ * KnowledgeEntry Schema Registry
+ * id, type, title, topic, capability, summary, detailed_notes, tags,
+ * assigned_agents, source_repo, source_path, source_commit, source_url,
+ * license, rights_class, learned_at, last_verified_at, confidence,
+ * content_hash, upstream_hash, read_status, implementation_status
+ */
+
 export function chunkText(text, size = CHUNK_CHARS) {
   const clean = String(text || '').replace(/\r/g, '').replace(/\u0000/g, '').trim();
   const out = [];

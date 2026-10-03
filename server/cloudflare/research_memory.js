@@ -14,6 +14,20 @@ const MAX_BULLETS = 6;
 const MAX_SOURCES = 6;
 const SENSITIVE_RE = /password|passcode|security code|social security|credit card|api[_ -]?key|private key|seed phrase|session cookie|fiverr\s+password|auth\s+token/i;
 
+export const KAS_REPOSITORIES = {
+  'build-your-own-x': { owner: 'codecrafters-io', repo: 'build-your-own-x', license: 'MIT' },
+  'awesome': { owner: 'sindresorhus', repo: 'awesome', license: 'CC0-1.0' },
+  'public-apis': { owner: 'public-apis', repo: 'public-apis', license: 'MIT' },
+  'freeCodeCamp': { owner: 'freeCodeCamp', repo: 'freeCodeCamp', license: 'BSD-3-Clause' },
+  'free-programming-books': { owner: 'EbookFoundation', repo: 'free-programming-books', license: 'CC-BY-4.0' },
+  'openclaw': { owner: 'openclaw', repo: 'openclaw', license: 'GPL-3.0' },
+  'system-design-primer': { owner: 'donnemartin', repo: 'system-design-primer', license: 'CC-BY-4.0' },
+  'developer-roadmap': { owner: 'kamranahmedse', repo: 'developer-roadmap', license: 'CC-BY-4.0' },
+  'coding-interview-university': { owner: 'jwasham', repo: 'coding-interview-university', license: 'CC-BY-SA-3.0' },
+  'awesome-python': { owner: 'vinta', repo: 'awesome-python', license: 'CC0-1.0' },
+  'ponytail': { owner: 'DietrichGebert', repo: 'ponytail', license: 'MIT' }
+};
+
 function clip(value, max) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 }
