@@ -497,3 +497,11 @@ test('chat distinguishes access questions from requests to add PR capability', (
   assert.equal(coding?.kind, 'access');
   assert.equal(shouldHandleSelfUpdateAction('Can you update your code so you can create a PR?', coding), false);
 });
+
+
+test('update-yourself PR capability wording reaches self-development instead of access status', () => {
+  const message = 'Can you update yourself so you can create a PR?';
+  const intent = selfUpdateChatIntent(message);
+  assert.equal(intent?.kind, 'access');
+  assert.equal(shouldHandleSelfUpdateAction(message, intent), false);
+});
