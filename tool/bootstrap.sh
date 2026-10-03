@@ -74,6 +74,8 @@ path = Path('ios/Runner/Info.plist')
 with path.open('rb') as stream:
     info = plistlib.load(stream)
 info['CFBundleDisplayName'] = 'CHE'
+# Flutter Scene renders natively through Flutter GPU / Impeller.
+info['FLTEnableFlutterGPU'] = True
 info['CFBundleName'] = 'CHE'
 info['NSMicrophoneUsageDescription'] = 'CHE uses your microphone when you speak to your assistant or capture audio.'
 info['NSSpeechRecognitionUsageDescription'] = 'CHE converts your speech to text when you use voice chat.'
