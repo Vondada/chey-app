@@ -623,7 +623,14 @@ export function wantsDocsOnly(request) {
     // Inspect every action, not just the first. Unknown feature mutations such
     // as enable/support/configure must never be excused merely because docs are
     // mentioned somewhere in the same clause.
-    for (const action of actions) {
+    // Only words in verb position count ("update docs for the API route":
+    // "route" is a noun). A verb leads the clause or follows to/please/also/
+    // can/should/must/will/then, so "update docs to enable X" still counts.
+    actions.forEach((action, index) => {
+      const before = clause.slice(0, action.index).trim().split(/\s+/).pop()?.toLowerCase() || '';
+      action.isVerb = index === 0 || ['to', 'please', 'also', 'can', 'should', 'must', 'will', 'then', 'and'].includes(before);
+    });
+    for (const action of actions.filter((item) => item.isVerb)) {
       const verb = String(action[0] || '').toLowerCase();
       if (!docsActions.has(verb)) return false;
     }
