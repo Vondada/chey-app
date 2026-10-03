@@ -538,7 +538,7 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
                       CheSceneEntity(
                         id: d.id,
                         label: d.title,
-                        description: d.category + '. ' + d.body,
+                        description: '${d.category}. ${d.body}',
                         color: cheMemoryCategoryColor(d.category),
                         importance: d.importance,
                       ),
