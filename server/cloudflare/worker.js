@@ -33,7 +33,8 @@ import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscale
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
-import { CHE_UPDATE_GUIDE, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus } from './self_update.js';
+import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
+import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stripOwnerHomework } from './recovery_policy.js';
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
 import { prepareSelfUpdate } from './self_development.js';
 import { KEY_PROVIDERS, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
@@ -933,11 +934,56 @@ export async function publicResearch(query, fetcher = fetch) {
 }
 
 export function busyError(error) {
+  // Structured router errors (all engines failed) carry a category; their
+  // owner-safe message does not contain "busy", so honour the category too.
   return Boolean(error?.quota || error?.busy || [429, 500, 502, 503, 504].includes(error?.status) ||
+    ['temporary_cloud_unavailable', 'retryable_provider_error'].includes(error?.category) ||
     /quota|busy|overload|rate.?limit|429|\b50[234]\b|neurons|resting|cooldown|daily budget|timed? ?out|abort/i.test(String(error?.message || error)));
 }
+
+// Background job ceilings. Every start counts as an attempt (including starts
+// that were interrupted by a Worker restart), so a job that keeps crashing the
+// isolate cannot be re-run forever.
+export const MAX_JOB_ATTEMPTS = 4;
+export const MAX_JOB_RETRIES = 3;
+const JOB_DEDUPE_MS = 30 * 60_000;
+
+// Adds a job unless an equivalent one is already queued/running (idempotency:
+// a retried request or a double-queued owner message reuses the first job).
+export function enqueueJob(data, fields) {
+  const now = new Date().toISOString();
+  const kind = String(fields.kind || 'chat');
+  const key = fields.idempotency_key || idempotencyKey(`job:${kind}`, fields.prompt || fields.title || '');
+  const existing = (data.jobs || []).find((job) =>
+    job.idempotency_key === key
+    && ['queued', 'running'].includes(job.status)
+    && Date.now() - Date.parse(job.created_at || 0) < JOB_DEDUPE_MS);
+  if (existing) return { job: existing, deduplicated: true };
+  const job = {
+    id: crypto.randomUUID(),
+    kind,
+    title: String(fields.title || fields.prompt || 'CHE background job').slice(0, 100),
+    prompt: String(fields.prompt || ''),
+    status: 'queued',
+    attempts: 0,
+    retry_count: 0,
+    retry_at: fields.retry_at || 0,
+    result: '',
+    error: fields.error || '',
+    dead_letter: false,
+    dead_letter_at: null,
+    idempotency_key: key,
+    created_at: now,
+    updated_at: now,
+    ...Object.fromEntries(Object.entries(fields).filter(([k]) => !['kind', 'title', 'prompt', 'retry_at', 'error', 'idempotency_key'].includes(k))),
+  };
+  data.jobs.unshift(job);
+  // Never silently discard pending owner work.
+  data.jobs = [...data.jobs.filter((j) => ['queued', 'running'].includes(j.status)), ...data.jobs.filter((j) => !['queued', 'running'].includes(j.status)).slice(0, 80)];
+  return { job, deduplicated: false };
+}
 const BUSY_REPLY = "I'm having trouble reaching my cloud engines, sir. I saved this as a background job and I'll finish it when a healthy engine returns.";
-const WORK_POLICY = 'ACCESSIBILITY: support typing OR voice, numbered options, large text for all speech, visible status plus distinct haptics. Never depend on hearing or sight alone. AUTONOMY: finish authorized queued and multi-step work; stand by pauses it and Chay, resume restarts it. OWNER PERMISSION (Sep 28, 2026): CHE has the owner’s full standing permission to act, including sending messages and emails; ask first only when something costs money (paying, buying, ordering, subscribing, transferring), before deleting or removing anything, or when a decision is genuinely the owner’s. App-specific permission is still required before acting in an app. Report what was done afterward. HONESTY: never claim completion without a real result. Busy work is saved and retried every five minutes, at most 24 retries; report exhaustion honestly. Use available fallback engines, and say which capability failed only after all options fail.';
+const WORK_POLICY = 'ACCESSIBILITY: support typing OR voice, numbered options, large text for all speech, visible status plus distinct haptics. Never depend on hearing or sight alone. AUTONOMY: finish authorized queued and multi-step work; stand by pauses it and Chay, resume restarts it. OWNER PERMISSION (Sep 28, 2026): CHE has the owner’s full standing permission to act, including sending messages and emails; ask first only when something costs money (paying, buying, ordering, subscribing, transferring), before deleting or removing anything, or when a decision is genuinely the owner’s. App-specific permission is still required before acting in an app. Report what was done afterward. HONESTY: never claim completion without a real result. Busy work is saved and retried with exponential backoff (5, 10, then 20 minutes; at most 3 retries) and then moved to a terminal dead-letter state; report exhaustion honestly. Use available fallback engines, and say which capability failed only after all options fail.';
 
 function ragReference(query, vectorMemoryContext, maxChars = 9000) {
   const base = String(query || '').trim();
@@ -1906,10 +1952,33 @@ export function selfUpdateChatIntent(message) {
   ) return { kind: 'status' };
 
   if (/\b(?:pending|waiting)\b[\s\S]{0,25}\b(?:code|update|change|pr)\b/i.test(text)) return { kind: 'pending' };
+
+  // Explicit owner authorization to merge (and therefore deploy). Negations
+  // ("don't merge") never match because the verb must lead the command.
+  if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:ok(?:ay)?|yes|yeah|go ahead)[,!.]?\s+)?(?:please\s+)?(?:(?:go ahead and|now)\s+)?(?:merge|ship)\b(?:\s+(?:(?:it|that|this|the|latest|pr|pull request|update|change|code)\b\s*)*)?(?:\s*(?:and|then|&)\s*deploy(?:\s+it)?)?[.!]?\s*$/i.test(text)) {
+    return { kind: 'merge' };
+  }
+  if (/\b(?:is|did|was|has)\b[\s\S]{0,30}\b(?:deploy(?:ed|ment)?|live|in production)\b|\b(?:deploy(?:ment)?|production)\s+(?:status|check|health)\b|\bverify\s+(?:the\s+)?deploy(?:ment)?\b/i.test(text)) {
+    return { kind: 'deploy-status' };
+  }
   return null;
 }
 
-async function handleSelfUpdateChatAction(env, storage, intent) {
+const LAST_SELF_UPDATE_DEPLOY_KEY = 'last_self_update_deploy';
+
+function runtimeVersion(env) {
+  const meta = env?.CF_VERSION_METADATA || {};
+  return { version_id: String(meta.id || ''), version_tag: String(meta.tag || '') };
+}
+
+function ownerPrFailure(result, action) {
+  const cls = result?.failure_class || classifyFailure(result).failure_class;
+  if (cls === FAILURE_CLASS.PERMANENT_EXTERNAL) return `GitHub refused to ${action}, sir: the CHE GitHub token or repository permission needs fixing on GitHub's side. Nothing else changed.`;
+  if (cls === FAILURE_CLASS.TEMPORARY_EXTERNAL) return `GitHub is temporarily unavailable, so I could not ${action} yet, sir. Nothing was half-written; it is safe to retry.`;
+  return `I could not ${action}, sir. ${stripOwnerHomework(String(result?.detail || '')).slice(0, 220)}`.trim();
+}
+
+async function handleSelfUpdateChatAction(env, storage, intent, ops = {}) {
   if (intent.kind === 'access') {
     const access = await selfUpdateGitHubAccess(env);
     if (access.status !== 200) return { ok: false, message: access.detail, access };
@@ -1961,13 +2030,29 @@ async function handleSelfUpdateChatAction(env, storage, intent) {
         message: 'There is no reviewed update waiting to send to GitHub, sir. Tell me the code change first with “update your code:” and I will build/review it, then “create the PR” will open it.',
       };
     }
-    const opened = await openSelfUpdatePr(env, pending.proposal);
+    let opened = await openSelfUpdatePr(env, pending.proposal);
+    if (opened.retryable) opened = await openSelfUpdatePr(env, pending.proposal);
+    if (opened.status === 409 && opened.stale_source) {
+      // A touched file changed on main after review. The approved contents
+      // are no longer what would land, so CHE rebuilds against current source
+      // and asks for approval again (the authorization boundary is kept).
+      if (!pending.request) {
+        await storage.delete?.(PENDING_SELF_UPDATE_KEY);
+        return { ok: false, opened, message: `${(opened.changed_files || []).join(', ') || 'The source'} changed on GitHub after that update was reviewed, sir, so I did not write it. Tell me the change again and I will rebuild it against the current code.` };
+      }
+      const rebuilt = await prepareSelfUpdate(env, pending.request, fetch, storage, { ownerInitiated: true }).catch(() => null);
+      if (rebuilt?.status === 200 && rebuilt.proposal) {
+        await storage.put(PENDING_SELF_UPDATE_KEY, { ...pending, proposal: rebuilt.proposal, reviewed_at: new Date().toISOString(), rebuilt_from_stale: true });
+        return {
+          ok: false,
+          rebuilt: true,
+          message: `The code changed on GitHub after I prepared that update, sir (${(opened.changed_files || []).join(', ') || 'main moved'}), so I did not write the old version. My team rebuilt and re-reviewed it against the current source. Because the change is different now, it needs your approval again: say "create the PR" or approve the new card.\n\n\`\`\`che-update\n${JSON.stringify(rebuilt.proposal)}\n\`\`\``,
+        };
+      }
+      return { ok: false, opened, message: rebuilt?.owner_message || ownerEngineeringMessage(rebuilt?.failure_class || FAILURE_CLASS.INTERNAL) };
+    }
     if (opened.status !== 200) {
-      return {
-        ok: false,
-        opened,
-        message: `GitHub did not create the PR. ${opened.detail || `GitHub returned ${opened.status}.`}`,
-      };
+      return { ok: false, opened, message: ownerPrFailure(opened, 'open the pull request') };
     }
     const receipt = {
       number: opened.number,
@@ -1977,6 +2062,7 @@ async function handleSelfUpdateChatAction(env, storage, intent) {
       base: opened.base || 'main',
       delivery: opened.delivery,
       summary: pending.proposal.summary,
+      request: String(pending.request || '').slice(0, 4000),
       opened_at: new Date().toISOString(),
     };
     await storage.put(LAST_SELF_UPDATE_PR_KEY, receipt);
@@ -1987,10 +2073,62 @@ async function handleSelfUpdateChatAction(env, storage, intent) {
       message: `Real draft PR #${opened.number} is open, sir. Branch: ${opened.branch}. Commit: ${opened.commit_sha || 'GitHub did not return the commit SHA'}. ${opened.url}`,
     };
   }
+  if (intent.kind === 'merge') {
+    const last = await storage.get(LAST_SELF_UPDATE_PR_KEY).catch(() => null);
+    if (!last?.number) return { ok: false, message: 'There is no CHE pull request to merge yet, sir.' };
+    const merged = await mergeSelfUpdatePr(env, last.number);
+    if (merged.status === 200) {
+      const receipt = { ...last, merged_at: new Date().toISOString(), merge_commit_sha: merged.merge_commit_sha, delivery: merged.delivery || last.delivery };
+      await storage.put(LAST_SELF_UPDATE_PR_KEY, receipt);
+      if (merged.worker_deploy && merged.merge_commit_sha) {
+        await storage.put(LAST_SELF_UPDATE_DEPLOY_KEY, { number: last.number, merge_commit_sha: merged.merge_commit_sha, started_at: new Date().toISOString(), state: 'deploying' });
+        await ops.queueJob?.({ kind: 'verify_deploy', title: `Verify deploy of PR #${last.number}`, prompt: merged.merge_commit_sha, merge_commit_sha: merged.merge_commit_sha, pr_number: last.number, idempotency_key: `verify_deploy:${merged.merge_commit_sha}`, retry_at: Date.now() + 60_000 });
+        return { ok: true, merged, message: `PR #${last.number} is merged, sir (commit ${merged.merge_commit_sha.slice(0, 7)}). The Worker deploy is running; I will verify the live server myself and only call it deployed once that check passes.` };
+      }
+      return { ok: true, merged, message: `PR #${last.number} is merged, sir (commit ${String(merged.merge_commit_sha || '').slice(0, 7)}). ${merged.already_merged ? 'It was already merged.' : ''}`.trim() };
+    }
+    if (merged.retryable && /CI is still running/.test(String(merged.detail || ''))) {
+      await ops.queueJob?.({ kind: 'merge_pr', title: `Merge PR #${last.number} when CI passes`, prompt: String(last.number), pr_number: last.number, idempotency_key: `merge_pr:${last.number}`, retry_at: Date.now() + 2 * 60_000 });
+      return { ok: true, message: `CI is still running on PR #${last.number}, sir. You authorized the merge, so I will merge it the moment every required check passes, and tell you if one fails.` };
+    }
+    // CI failure caused by the change, or a merge conflict: CHE starts the
+    // repair herself. The repaired change is a new proposal, so it comes back
+    // for the owner's approval; nothing is merged in the meantime.
+    const repair = async (reason) => {
+      const request = [
+        last.request ? `Original owner request: ${String(last.request).slice(0, 4000)}` : `Original change: ${String(last.summary || '').slice(0, 1000)}`,
+        `Repair needed for PR #${last.number}: ${reason}`,
+        'Rebuild the change against the current main branch so it passes CI and merges cleanly.',
+      ].join('\n');
+      return ops.queueJob?.({ kind: 'self_development', title: `Repair PR #${last.number}`, prompt: request, request, idempotency_key: `repair:${last.number}:${reason.slice(0, 60)}`, retry_at: Date.now() });
+    };
+    if (merged.status === 409 && merged.ci) {
+      await repair(`these CI checks failed: ${merged.ci.failed_checks.join(', ')}`);
+      return { ok: false, message: `I did not merge PR #${last.number}, sir: ${merged.ci.failed_checks.join(', ')} failed because of this change. My team is already repairing it; the fixed version will come back to you for approval.` };
+    }
+    if (merged.merge_conflict) {
+      await repair('it conflicts with newer code on main');
+      return { ok: false, message: `PR #${last.number} now conflicts with newer code on main, sir, so I did not merge it. My team is rebuilding it on the current code; the new version will come back to you for approval.` };
+    }
+    return { ok: false, message: ownerPrFailure(merged, 'merge the pull request') };
+  }
+
+  if (intent.kind === 'deploy-status') {
+    const deploy = await storage.get(LAST_SELF_UPDATE_DEPLOY_KEY).catch(() => null);
+    if (!deploy?.merge_commit_sha) return { ok: true, message: 'No CHE Worker deployment is in progress or recorded, sir.' };
+    const status = await workerDeploymentStatus(env, deploy.merge_commit_sha, fetch, runtimeVersion(env));
+    if (status.status !== 200) return { ok: false, message: ownerPrFailure(status, 'check the deployment') };
+    const text = status.deployed
+      ? `PR #${deploy.number} is deployed, sir: the deploy workflow succeeded${status.production_matches_merge ? ' and the live Worker is running that commit' : ''}.`
+      : status.workflow === 'failed'
+        ? `The deploy for PR #${deploy.number} failed, sir. The merged code is safe on main; the deployment step itself needs attention.`
+        : `The deploy for PR #${deploy.number} is still ${status.workflow === 'not_started' ? 'waiting to start' : 'running'}, sir.`;
+    return { ok: status.deployed, deploy: status, message: text };
+  }
   return { ok: false, message: 'Unknown self-update action.' };
 }
 
-async function dispatchChange(env, body, memory = null) {
+async function dispatchChange(env, body, memory = null, options = {}) {
   const request = String(body.request || '').trim();
   if (request.length < 8 || request.length > 16000) return json({ detail: 'Describe the CHE update in 8–16000 characters.' }, 400);
   if (!env.CHE_GITHUB_TOKEN || !/^[\w.-]+\/[\w.-]+$/.test(String(env.CHE_GITHUB_REPO || ''))) {
@@ -2048,11 +2186,13 @@ async function dispatchChange(env, body, memory = null) {
   }
   let prepared;
   try {
-    prepared = await prepareSelfUpdate(env, groundedRequest, fetch, memory);
+    prepared = await prepareSelfUpdate(env, groundedRequest, fetch, memory, { ownerInitiated: true });
   } catch (error) {
     console.error('CHE change request failed', error?.message || error);
-    return json({ detail: `The coding team failed: ${String(error?.message || error).slice(0, 160)}. Nothing was changed.` }, 502);
+    const { failure_class: failureClass, kind } = classifyFailure(error);
+    prepared = { status: 502, failure_class: failureClass, detail: String(error?.message || error).slice(0, 500), owner_message: ownerEngineeringMessage(failureClass, kind) };
   }
+  if (prepared?.diagnostics) console.log('CHE engineering diagnostics', JSON.stringify(prepared.diagnostics).slice(0, 3000));
   if (prepared.status === 200 && prepared.already_satisfied) {
     if (memory?.put && inspiration?.references?.length) {
       let ledger = [];
@@ -2086,8 +2226,37 @@ async function dispatchChange(env, body, memory = null) {
     });
   }
   if (prepared.status !== 200 || !prepared.proposal) {
-    await sendMail(env, { from: 'che', to: 'claude', text: `My coding crew failed on: "${request.slice(0, 300)}". Reason: ${String(prepared.detail || 'unknown').slice(0, 800)}` }).catch(() => null);
-    return json({ detail: `The coding team did not produce a review-passed update, sir. ${prepared.detail || 'Nothing was changed.'}` }, prepared.status && prepared.status !== 200 ? prepared.status : 422);
+    // Temporary outage (class B): checkpoint the request as an idempotent
+    // background job with bounded exponential backoff instead of failing.
+    if (prepared.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL && options.queue) {
+      const queued = await options.queue({ request, groundedRequest }).catch(() => null);
+      if (queued?.job) {
+        return json({
+          message: queued.deduplicated
+            ? 'That coding job is already saved and will continue automatically when my engines recover, sir. Nothing was changed yet.'
+            : ownerEngineeringMessage(FAILURE_CLASS.TEMPORARY_EXTERNAL),
+          background_job_id: queued.job.id,
+          background_job_status: queued.job.status,
+          failure_class: FAILURE_CLASS.TEMPORARY_EXTERNAL,
+          code_review_passed: false,
+          owner_approval_required: false,
+          // 200: the request was accepted and checkpointed; existing app
+          // builds treat any non-200 as a failure to start.
+        }, 200);
+      }
+    }
+    // Engineering diagnostics go to the engineering mailbox, never to owner chat.
+    if (prepared.failure_class !== FAILURE_CLASS.TEMPORARY_EXTERNAL) {
+      await sendMail(env, { from: 'che', to: 'claude', text: `My coding crew stopped on: "${request.slice(0, 300)}". Class ${prepared.failure_class || 'A'}. Engineering record: ${String(prepared.detail || 'unknown').slice(0, 800)}` }).catch(() => null);
+    }
+    const ownerText = stripOwnerHomework(prepared.owner_message || ownerEngineeringMessage(prepared.failure_class || FAILURE_CLASS.INTERNAL))
+      || ownerEngineeringMessage(FAILURE_CLASS.INTERNAL);
+    return json({
+      detail: ownerText,
+      failure_class: prepared.failure_class || FAILURE_CLASS.INTERNAL,
+      code_review_passed: false,
+      owner_approval_required: false,
+    }, prepared.status && prepared.status !== 200 ? prepared.status : 422);
   }
   if (memory?.put && inspiration?.references?.length) {
     let ledger = [];
@@ -2763,11 +2932,32 @@ export class CheState extends DurableObject {
     const key = `flagstaff_auto_reply:${id}`;
     const prior = await this.ctx.storage.get(key);
     const priorAt = Number(prior?.at || 0);
-    if (
-      (prior?.status === 'replied' || prior?.status === 'blocked' || prior?.status === 'failed')
-      && prior?.reply_id
-    ) {
-      return { skipped: true, status: prior.status, reply_id: prior.reply_id };
+    if (prior?.status === 'replied' || prior?.status === 'blocked' || prior?.status === 'failed') {
+      // Terminal: never spend AI on this packet again (duplicate delivery,
+      // replayed mailbox head, alarm). If the visible receipt could not be
+      // posted, only the receipt is retried, a bounded number of times.
+      if (!prior?.reply_id && Number(prior?.receipt_attempts || 0) < 3) {
+        const receipt = await postWebMail(this.ctx.storage, {
+          from: 'che',
+          to: sender,
+          text: prior.status === 'blocked'
+            ? 'I received your Flagstaff message, but I will not follow requests for secrets, private owner data, permission overrides, or instructions that conflict with the owner.'
+            : 'I received your Flagstaff message, but I could not complete the detailed reply after repeated attempts. The owner can see this failure and the message is preserved.',
+          reply_to: id,
+        }, this.env).catch(() => ({ status: 502 }));
+        await this.ctx.storage.put(key, {
+          ...prior,
+          reply_id: receipt?.status === 200 ? String(receipt.message?.id || '') : '',
+          receipt_attempts: Number(prior?.receipt_attempts || 0) + 1,
+        });
+      }
+      return { skipped: true, status: prior.status, reply_id: prior.reply_id || '' };
+    }
+    const priorAttempts = Number(prior?.attempts || 0);
+    if (priorAttempts >= 4) {
+      // Interrupted repeatedly (e.g. the Worker restarted mid-reply): stop.
+      await this.ctx.storage.put(key, { ...prior, status: 'failed', at: Date.now(), error: 'Attempt ceiling reached after interrupted replies.' });
+      return { skipped: true, status: 'failed', reply_id: prior?.fallback_reply_id || '' };
     }
     if (prior?.status === 'processing' && Date.now() - priorAt < 45_000) {
       const retryAt = priorAt + 45_000;
@@ -2791,24 +2981,27 @@ export class CheState extends DurableObject {
         reply_to: id,
       }, this.env).catch(() => ({ status: 502 }));
       const replyId = refusal?.status === 200 ? String(refusal.message?.id || '') : '';
+      const refusalTries = Number(prior?.retry_count || 0) + 1;
+      const stillRetry = !replyId && refusalTries < 3;
       await this.ctx.storage.put(key, {
-        status: replyId ? 'blocked' : 'retry',
+        status: stillRetry ? 'retry' : 'blocked',
         at: Date.now(),
         sender,
         reply_id: replyId,
-        retry_count: Number(prior?.retry_count || 0),
-        retry_at: replyId ? 0 : Date.now() + 30_000,
+        retry_count: refusalTries,
+        receipt_attempts: replyId ? 0 : 3,
+        retry_at: stillRetry ? Date.now() + 30_000 : 0,
       });
-      await fileLetter(this.ctx.storage, {
+      if (!prior) await fileLetter(this.ctx.storage, {
         tray: 'security',
         subject: `Flagstaff auto-reply blocked message from ${sender}`,
         body: 'The message looked like an attempt to obtain secrets or override owner rules. CHE refused it and kept the refusal visible in the sender thread.',
         tag: 'security',
         severity: 'danger',
       }).catch(() => null);
-      if (!replyId) await this.ctx.storage.setAlarm(Date.now() + 30_000).catch(() => null);
-      return replyId
-        ? { replied: true, reply_id: replyId, status: 'blocked' }
+      if (stillRetry) await this.ctx.storage.setAlarm(Date.now() + 30_000).catch(() => null);
+      return !stillRetry
+        ? { replied: Boolean(replyId), reply_id: replyId, status: 'blocked' }
         : { queued: true, status: 'retry', retry_at: Date.now() + 30_000 };
     }
 
@@ -2817,6 +3010,8 @@ export class CheState extends DurableObject {
       at: Date.now(),
       sender,
       retry_count: Number(prior?.retry_count || 0),
+      attempts: priorAttempts + 1,
+      fallback_reply_id: String(prior?.fallback_reply_id || ''),
     });
     try {
       const recall = await retrieveVectorContext(this.env, incoming).catch(() => ({ matches: [], status: 'unavailable' }));
@@ -2886,6 +3081,7 @@ export class CheState extends DurableObject {
         status: retryable ? 'retry' : 'failed',
         at: Date.now(),
         sender,
+        attempts: priorAttempts + 1,
         retry_count: retryCount,
         retry_at: retryAt,
         fallback_reply_id: fallbackReplyId,
@@ -2928,7 +3124,8 @@ export class CheState extends DurableObject {
       const id = String(key).slice('flagstaff_auto_reply:'.length);
       const dueRetry = prior?.status === 'retry' && Number(prior.retry_at || 0) <= now;
       const staleProcessing = prior?.status === 'processing' && now - Number(prior.at || 0) >= 45_000;
-      const invisibleTerminal = ['blocked', 'failed'].includes(prior?.status) && !prior?.reply_id;
+      const invisibleTerminal = ['blocked', 'failed'].includes(prior?.status) && !prior?.reply_id
+        && Number(prior?.receipt_attempts || 0) < 3;
       if (id && (dueRetry || staleProcessing || invisibleTerminal)) pendingIds.add(id);
     }
     if (!pendingIds.size) return { replied: 0, queued: 0 };
@@ -3188,6 +3385,11 @@ export class CheState extends DurableObject {
       const platformDevice = touchDevice(data, tokenHash);
       if (platformDevice?.revoked_at) return json({ detail: 'This CHE device was revoked.' }, 401);
       const activeTenant = tenantForDevice(data, tokenHash);
+      // Repository writes, merges, deploys and rollbacks are the owner's
+      // consequential actions. Family/guest tenants (and anything they relay)
+      // can never authorize them.
+      const ownerDevice = activeTenant?.role === 'owner';
+      const ownerOnly = () => json({ detail: 'Only the CHE owner can change, merge or deploy CHE’s code.' }, 403);
 
       // CHE Home platform: tenant-scoped identity, devices, notifications and Core.
       if (request.method === 'GET' && path === '/api/platform') {
@@ -3809,8 +4011,18 @@ export class CheState extends DurableObject {
       }
 
       // ─── Self-development: owner-approved PRs, never direct pushes ─────
+      if (path.startsWith('/api/self-update') && request.method === 'POST' && !ownerDevice) return ownerOnly();
       if (path === '/api/self-update' && request.method === 'POST') {
-        const outcome = await openSelfUpdatePr(this.env, body);
+        // Older app builds drop the base identity from the approval card. If
+        // the approved files are exactly the reviewed pending proposal, use
+        // its inspected base so stale-source protection still applies.
+        const pendingForCard = await this.ctx.storage.get(PENDING_SELF_UPDATE_KEY).catch(() => null);
+        const sameFiles = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length
+          && a.every((file, i) => file?.path === b[i]?.path && file?.content === b[i]?.content);
+        const approved = !body.expected_base_sha && pendingForCard?.proposal && sameFiles(body.files, pendingForCard.proposal.files)
+          ? { ...body, expected_base_sha: pendingForCard.proposal.expected_base_sha, base_files: pendingForCard.proposal.base_files }
+          : body;
+        const outcome = await openSelfUpdatePr(this.env, approved);
         const { status, ...rest } = outcome;
         if (status === 200) {
           await this.ctx.storage.put(LAST_SELF_UPDATE_PR_KEY, {
@@ -3821,6 +4033,7 @@ export class CheState extends DurableObject {
             base: rest.base || 'main',
             delivery: rest.delivery,
             summary: String(body.summary || ''),
+            request: String(pendingForCard?.request || '').slice(0, 4000),
             opened_at: new Date().toISOString(),
           });
           await this.ctx.storage.delete?.(PENDING_SELF_UPDATE_KEY);
@@ -4642,25 +4855,16 @@ export class CheState extends DurableObject {
           .slice(0, 100);
         if (!prompt) return json({ detail: 'Background job prompt required.' }, 400);
 
-        const now = new Date().toISOString();
-        const job = {
-          id: crypto.randomUUID(),
+        const { job, deduplicated } = enqueueJob(data, {
           title,
           prompt,
           steps: Array.isArray(body.steps) ? body.steps.filter(s => typeof s === 'string' && s.trim()).slice(0, 24).map(s => s.slice(0, 4000)) : [],
           step_index: 0, step_results: [],
-          status: 'queued',
-          result: '',
-          error: '',
-          created_at: now,
-          updated_at: now,
-        };
-        data.jobs.unshift(job);
-        // Never silently discard pending owner work.
-        data.jobs = [...data.jobs.filter(j => ['queued', 'running'].includes(j.status)), ...data.jobs.filter(j => !['queued', 'running'].includes(j.status)).slice(0, 80)];
+          ...(body.idempotency_key ? { idempotency_key: `client:${String(body.idempotency_key).slice(0, 120)}` } : {}),
+        });
         await this.ctx.storage.put('che', data);
         await this.scheduleWork();
-        return json({ job });
+        return json({ job, deduplicated });
       }
 
       if (path === '/api/job/cancel') {
@@ -5142,7 +5346,8 @@ export class CheState extends DurableObject {
         await this.ctx.storage.put('che', data);
         return json({ ok: true, to: 'che' });
       }
-      if (path === '/api/change/request') return dispatchChange(this.env, body, this.ctx.storage);
+      if (path === '/api/change/request' && !ownerDevice) return ownerOnly();
+      if (path === '/api/change/request') return dispatchChange(this.env, body, this.ctx.storage, { queue: (args) => this.queueSelfDevelopment(args) });
       if (path === '/api/chat') {
         // Chat and voice both land here: the owner talks only to CHE, and an
         // agent can never use this route to reach the owner.
@@ -5173,8 +5378,19 @@ export class CheState extends DurableObject {
         // GitHub/self-development commands are real tool actions, never generic
         // model guesses about credentials. "Create the PR" works by voice/text.
         const selfUpdateAction = selfUpdateChatIntent(message);
+        if (selfUpdateAction && !ownerDevice && ['open-pr', 'merge'].includes(selfUpdateAction.kind)) {
+          return ndjsonReply('Only the CHE owner can open, merge or deploy code changes.', { source: 'che_self_update', ok: false });
+        }
         if (selfUpdateAction) {
-          const result = await handleSelfUpdateChatAction(this.env, this.ctx.storage, selfUpdateAction);
+          const result = await handleSelfUpdateChatAction(this.env, this.ctx.storage, selfUpdateAction, {
+            queueJob: async (fields) => {
+              const fresh = await this.loadData();
+              const queued = enqueueJob(fresh, fields);
+              await this.ctx.storage.put('che', fresh);
+              await this.scheduleWork();
+              return queued;
+            },
+          });
           return ndjsonReply(result.message, {
             source: 'che_self_update',
             self_update_action: selfUpdateAction.kind,
@@ -5483,18 +5699,9 @@ export class CheState extends DurableObject {
         // is what lets "Update your code: use Study 1 and 2..." actually build
         // and save a reviewed proposal instead of stopping at research.
         if (repositoryImplementationIntent(message)) {
-          const changeResponse = await dispatchChange(this.env, { request: message }, this.ctx.storage);
-          let payload = {};
-          try { payload = await changeResponse.json(); } catch (_) {}
-          return ndjsonReply(
-            String(payload.message || payload.detail || 'The coding workflow did not return a usable result.'),
-            {
-              source: 'che_self_update',
-              code_review_passed: Boolean(payload.code_review_passed),
-              owner_approval_required: Boolean(payload.owner_approval_required),
-              repository_research: Boolean(payload.repository_research),
-            },
-          );
+          return ownerDevice
+            ? this.selfDevelopmentReply(message, { vectorRecall })
+            : ndjsonReply('Only the CHE owner can ask me to change my code.', { source: 'che_self_development', ok: false });
         }
 
         // Owner's starred GitHub library / Inspirations: pure research requests
@@ -5627,49 +5834,12 @@ export class CheState extends DurableObject {
           /\b(?:che(?:'s)?|your)\b[\s\S]{0,80}\b(?:ui|interface|screen|page|layout|navigation|code|app)\b[\s\S]{0,80}\b(?:change|update|redesign|fix|move|add|remove|improve)\b/i.test(message) ||
           /\b(?:add|apply|put|install|merge)\b[\s\S]{0,100}\b(?:this|the)\s+code\b[\s\S]{0,100}\b(?:to|into)\s+(?:che|your app|yourself)\b/i.test(message));
         if (selfChangeRequest) {
-          let prepared;
-          try {
-            prepared = await prepareSelfUpdate(this.env, message, fetch, this.ctx.storage);
-          } catch (error) {
-            // GitHub failures must never break chat/agents/voice/memory.
-            console.error('CHE self-development failed', error?.message || error);
-            prepared = {
-              status: 502,
-              detail: `GitHub self-update failed (${String(error?.message || error).slice(0, 160)}). Cloudflare cannot edit the Flutter repo.`,
-            };
-          }
-          if (prepared.status === 200 && prepared.proposal) {
-            const team = Array.isArray(prepared.team) ? prepared.team.join(', ') : 'CHE engineering team';
-            const proposalBlock = '```che-update\\n' + JSON.stringify(prepared.proposal) + '\\n```';
-            return ndjsonReply(
-              `I delegated that to ${team}, sir. The code was independently reviewed. Nothing has been added yet—approve the update card if you want it applied.\n\n${proposalBlock}`,
-              {
-                source: 'che_engineering_team',
-                engineering_team: prepared.team || [],
-                code_review_passed: true,
-                owner_approval_required: true,
-                vector_memory_status: vectorRecall.status,
-                vector_memory_checked: Boolean(vectorRecall.checked),
-                vector_memory_matches: vectorRecall.matches?.length || 0,
-              },
-            );
-          }
-          await sendMail(this.env, { from: 'che', to: 'claude', text: `My coding crew failed on: "${message.slice(0, 300)}". Reason: ${String(prepared.detail || 'unknown').slice(0, 800)}` }).catch(() => null);
-          const ghMissing = /CHE_GITHUB|GitHub|github|Flutter repo/i.test(String(prepared.detail || ''));
-          return ndjsonReply(
-            ghMissing
-              ? `GitHub self-update is unavailable (${prepared.detail || 'missing token/repo'}). Cloudflare cannot edit the Flutter app repo. Chat, agents, voice and memory still work.`
-              : `The coding team did not produce a review-passed update, sir. ${prepared.detail || 'Nothing was changed.'}`,
-            {
-              source: 'che_engineering_team',
-              code_review_passed: false,
-              github_failed: ghMissing,
-              cloudflare_cannot_edit_flutter_repo: true,
-              owner_approval_required: true,
-              vector_memory_status: vectorRecall.status,
-              vector_memory_checked: Boolean(vectorRecall.checked),
-            },
-          );
+          // Same reviewed pipeline as every other coding route: the proposal
+          // is saved for "create the PR", rendered as a real che-update card,
+          // and failures are classified instead of dumped into chat.
+          return ownerDevice
+            ? this.selfDevelopmentReply(message, { vectorRecall })
+            : ndjsonReply('Only the CHE owner can ask me to change my code.', { source: 'che_self_development', ok: false });
         }
 
         const clientClock = formatClientTime(body.client_time);
@@ -5730,23 +5900,9 @@ export class CheState extends DurableObject {
         // real repository inspection/engineering flow here. Never let a model
         // narrate fake branches, PRs, SHAs, tests, or "I can't access the repo".
         if (requestedCapabilities.includes('self_development')) {
-          const changeResponse = await dispatchChange(
-            this.env,
-            { request: message, fix_this: false },
-            this.ctx.storage,
-          );
-          let payload = {};
-          try { payload = await changeResponse.clone().json(); } catch (_) {}
-          if (changeResponse.status !== 200) return changeResponse;
-          return ndjsonReply(
-            String(payload.message || 'The coding team prepared a reviewable CHE update.'),
-            {
-              source: 'che_self_development',
-              code_review_passed: payload.code_review_passed === true,
-              owner_approval_required: payload.owner_approval_required !== false,
-              engineering_team: payload.engineering_team || [],
-            },
-          );
+          return ownerDevice
+            ? this.selfDevelopmentReply(message, { vectorRecall })
+            : ndjsonReply('Only the CHE owner can ask me to change my code.', { source: 'che_self_development', ok: false });
         }
 
         // Work Agent Mode: queue real La Agencia Durable Object jobs for actionable
@@ -5766,20 +5922,7 @@ export class CheState extends DurableObject {
           /\b(?:in the background|background task|behind[- ]the[- ]scenes|while i(?:'m| am)?|while we|keep working on)\b/i.test(message);
 
         if (explicitBackgroundWork) {
-          const now = new Date().toISOString();
-          const job = {
-            id: crypto.randomUUID(),
-            title: message.slice(0, 80),
-            prompt: message,
-            status: 'queued',
-            result: '',
-            error: '',
-            created_at: now,
-            updated_at: now,
-          };
-          data.jobs.unshift(job);
-          // Never silently discard pending owner work.
-        data.jobs = [...data.jobs.filter(j => ['queued', 'running'].includes(j.status)), ...data.jobs.filter(j => !['queued', 'running'].includes(j.status)).slice(0, 80)];
+          const { job } = enqueueJob(data, { title: message.slice(0, 80), prompt: message });
           await this.ctx.storage.put('che', data);
           await this.scheduleWork();
           return ndjsonReply(
@@ -6362,12 +6505,10 @@ export class CheState extends DurableObject {
         if (!answer) {
           const error = new Error('all engines busy');
           const fresh = await this.loadData();
-          const job = { id: crypto.randomUUID(), title: message.slice(0, 80), prompt: message,
-            status: 'queued', retry_count: 0, retry_at: Date.now() + 5 * 60_000,
+          const { job } = enqueueJob(fresh, { title: message.slice(0, 80), prompt: message,
+            retry_at: Date.now() + 5 * 60_000,
             chat_context: { systemPrompt, turns: turns.slice(-10) },
-            result: '', error: String(error.message || error).slice(0, 1000),
-            created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
-          fresh.jobs.unshift(job);
+            error: String(error.message || error).slice(0, 1000) });
           await this.ctx.storage.put('che', fresh);
           await this.scheduleWork();
           return json({
@@ -6422,20 +6563,13 @@ export class CheState extends DurableObject {
 
         if (replyHijacksOwnerRequest(message, reply)) {
           const fresh = await this.loadData();
-          const job = {
-            id: crypto.randomUUID(),
+          const { job } = enqueueJob(fresh, {
             title: message.slice(0, 80),
             prompt: message,
-            status: 'queued',
-            retry_count: 0,
             retry_at: Date.now() + 5 * 60_000,
             chat_context: { systemPrompt, turns: turns.slice(-10) },
-            result: '',
             error: 'Rejected non-contextual owner reply',
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          };
-          fresh.jobs.unshift(job);
+          });
           await this.ctx.storage.put('che', fresh);
           await this.scheduleWork();
           return json({
@@ -6548,7 +6682,7 @@ export class CheState extends DurableObject {
         'Preserve existing behavior, voice-first accessibility, secrets, permissions, and owner approval boundaries.',
         'Do not alter GitHub workflows, signing, secrets, entitlements, or dependency/deployment control files.',
       ].join('\n');
-      const prepared = await prepareSelfUpdate(this.env, maintenanceRequest, fetch, this.ctx.storage).catch(() => null);
+      const prepared = await prepareSelfUpdate(this.env, maintenanceRequest, fetch, this.ctx.storage, { ownerInitiated: false }).catch(() => null);
       if (prepared?.status === 200 && prepared.proposal) {
         await this.ctx.storage.put(PENDING_SELF_UPDATE_KEY, {
           proposal: prepared.proposal,
@@ -6597,24 +6731,81 @@ export class CheState extends DurableObject {
     await this.scheduleWork();
   }
 
+  // Saves an owner coding request as an idempotent background job when the
+  // engines/GitHub are temporarily unavailable (class B).
+  async queueSelfDevelopment({ request, groundedRequest }) {
+    const data = await this.loadData();
+    const { job, deduplicated } = enqueueJob(data, {
+      kind: 'self_development',
+      title: `Code: ${String(request).slice(0, 80)}`,
+      prompt: String(groundedRequest || request).slice(0, 16000),
+      request: String(request).slice(0, 16000),
+      idempotency_key: idempotencyKey('job:self_development', request),
+      retry_at: Date.now() + backoffMs(0, 5 * 60_000),
+    });
+    await this.ctx.storage.put('che', data);
+    await this.scheduleWork();
+    return { job, deduplicated, paused: !data.autonomy };
+  }
+
+  // Owner chat reply for a coding request. Proposal → che-update card;
+  // failures → one human-level sentence (diagnostics stay on the Worker).
+  async selfDevelopmentReply(message, { vectorRecall = {} } = {}) {
+    const response = await dispatchChange(this.env, { request: message }, this.ctx.storage, {
+      queue: (args) => this.queueSelfDevelopment(args),
+    });
+    let payload = {};
+    try { payload = await response.json(); } catch (_) {}
+    const text = String(payload.message || payload.detail || ownerEngineeringMessage(FAILURE_CLASS.INTERNAL));
+    return ndjsonReply(text, {
+      source: 'che_self_development',
+      code_review_passed: payload.code_review_passed === true,
+      owner_approval_required: payload.owner_approval_required === true,
+      engineering_team: payload.engineering_team || [],
+      ...(payload.failure_class ? { failure_class: payload.failure_class } : {}),
+      ...(payload.background_job_id ? { background_job_id: payload.background_job_id, background_job_status: payload.background_job_status } : {}),
+      ...(payload.already_satisfied ? { already_satisfied: true } : {}),
+      repository_research: Boolean(payload.repository_research),
+      vector_memory_status: vectorRecall.status,
+      vector_memory_checked: Boolean(vectorRecall.checked),
+      vector_memory_matches: vectorRecall.matches?.length || 0,
+    });
+  }
+
   async processJobs() {
     const data = await this.loadData();
     if (!data.autonomy) return false;
+    const now = Date.now();
     for (const job of data.jobs) {
-      if (job.status === 'running' && Date.parse(job.updated_at) <= Date.now() - 300000) {
-        job.status = 'queued'; job.retry_at = 0;
+      // A job left "running" for 5 minutes was interrupted (Worker restart,
+      // isolate eviction, CPU limit). It is requeued only while it still has
+      // attempts left; otherwise it is dead-lettered instead of looping.
+      if (job.status === 'running' && Date.parse(job.updated_at) <= now - 300000) {
+        const attempts = Number(job.attempts || 0);
+        if (attempts >= MAX_JOB_ATTEMPTS) {
+          Object.assign(job, {
+            status: 'failed', dead_letter: true, dead_letter_at: new Date().toISOString(), retry_at: null,
+            error: 'Retry limit reached; job moved to terminal dead-letter state after repeated interrupted runs.',
+          });
+        } else {
+          job.status = 'queued';
+          job.retry_at = now + backoffMs(attempts, 60_000, 15 * 60_000);
+        }
       }
     }
     const queued = data.jobs
-      .filter((job) => job.status === 'queued' && (!job.retry_at || job.retry_at <= Date.now()))
+      .filter((job) => job.status === 'queued' && !job.dead_letter && (!job.retry_at || job.retry_at <= now))
       .slice(0, 4);
-    if (!queued.length) { await this.scheduleWork(); return false; }
+    if (!queued.length) { await this.ctx.storage.put('che', data); await this.scheduleWork(); return false; }
 
     const startedAt = new Date().toISOString();
     for (const job of queued) {
       job.status = 'running';
+      job.attempts = Number(job.attempts || 0) + 1;
       job.updated_at = startedAt;
     }
+    // Durable checkpoint BEFORE any AI is spent: a crash from here on still
+    // counts against the job's attempt ceiling.
     await this.ctx.storage.put('che', data);
 
     await this.ctx.storage.setAlarm(Date.now() + 300000);
@@ -6622,6 +6813,9 @@ export class CheState extends DurableObject {
     const results = await Promise.all(
       queued.map(async (job) => {
         try {
+          if (job.kind === 'self_development') return await this.runSelfDevelopmentJob(job);
+          if (job.kind === 'merge_pr') return await this.runMergeJob(job);
+          if (job.kind === 'verify_deploy') return await this.runVerifyDeployJob(job);
           if (!job.steps?.length && /\b(then|multi.step|step.by.step|end.to.end)\b/i.test(job.prompt)) {
             const plan = await this.env.AI.run(this.env.CHE_FAST_MODEL || FAST_MODEL, {
               messages: [
@@ -6682,21 +6876,13 @@ export class CheState extends DurableObject {
             id: job.id,
             status: result ? (moreSteps ? 'queued' : 'complete') : 'failed',
             step_results: stepResults, step_index: stepIndex,
+            // A finished step is progress, not a failed attempt.
+            ...(moreSteps ? { attempts: 0 } : {}),
             result: stepResults ? stepResults.join('\n\n') : result,
             error: result ? '' : 'Background model returned no result.',
           };
         } catch (error) {
-          const retryCount = Number(job.retry_count || 0);
-          const retry = busyError(error) && retryCount < 3;
-          console.log('CHE background error:', job.id, String(error.message || error));
-          return {
-            id: job.id, status: retry ? 'queued' : 'failed', result: '',
-            retry_count: retryCount + (retry ? 1 : 0),
-            retry_at: retry ? Date.now() + (5 * 60_000 * (2 ** retryCount)) : null,
-            dead_letter: busyError(error) && !retry,
-            dead_letter_at: busyError(error) && !retry ? new Date().toISOString() : null,
-            error: `${busyError(error) && !retry ? 'Retry limit reached; job moved to terminal dead-letter state. ' : ''}${String(error.message || error).slice(0, 1000)}`,
-          };
+          return this.jobFailureOutcome(job, error);
         }
       }),
     );
@@ -6708,18 +6894,142 @@ export class CheState extends DurableObject {
       const job = fresh.jobs.find((item) => item.id === outcome.id);
       if (!job || job.status === 'cancelled') continue;
       if (outcome.step_results) { job.step_results = outcome.step_results; job.step_index = outcome.step_index; }
+      if (outcome.attempts !== undefined) job.attempts = outcome.attempts;
       job.retry_count = outcome.retry_count ?? job.retry_count ?? 0;
       job.retry_at = outcome.retry_at || null;
-      job.dead_letter = outcome.dead_letter ?? job.dead_letter ?? false;
-      job.dead_letter_at = outcome.dead_letter_at || null;
+      job.dead_letter = outcome.dead_letter === true;
+      job.dead_letter_at = job.dead_letter ? (outcome.dead_letter_at || job.dead_letter_at || finishedAt) : null;
       job.status = outcome.status;
       job.result = outcome.result;
       job.error = outcome.error;
+      if (outcome.owner_message !== undefined) job.owner_message = outcome.owner_message;
+      if (outcome.failure_class !== undefined) job.failure_class = outcome.failure_class;
       job.updated_at = finishedAt;
     }
     await this.ctx.storage.put('che', fresh);
     await this.scheduleWork();
     return fresh.jobs.some((job) => job.status === 'queued');
+  }
+
+  // One consistent retry policy for background jobs: temporary external
+  // failures back off exponentially (5, 10, 20 min) up to MAX_JOB_RETRIES and
+  // then dead-letter; everything else is terminal immediately.
+  jobFailureOutcome(job, error) {
+    const retryCount = Number(job.retry_count || 0);
+    const temporary = busyError(error) || error?.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL;
+    const retry = temporary && retryCount < MAX_JOB_RETRIES && Number(job.attempts || 0) < MAX_JOB_ATTEMPTS;
+    console.log('CHE background error:', job.id, String(error?.diagnostic || error?.message || error).slice(0, 300));
+    const deadLetter = temporary && !retry;
+    return {
+      id: job.id,
+      status: retry ? 'queued' : 'failed',
+      result: '',
+      retry_count: retryCount + (retry ? 1 : 0),
+      retry_at: retry ? Date.now() + backoffMs(retryCount, 5 * 60_000, 60 * 60_000) : null,
+      dead_letter: deadLetter,
+      dead_letter_at: deadLetter ? new Date().toISOString() : null,
+      error: `${deadLetter ? 'Retry limit reached; job moved to terminal dead-letter state. ' : ''}${String(error?.message || error).slice(0, 1000)}`,
+    };
+  }
+
+  // Polling jobs spend no AI. While waiting they reset their attempt count
+  // (waiting is not failing) but are bounded by wall-clock age.
+  waitOutcome(job, delayMs, note) {
+    return { id: job.id, status: 'queued', attempts: 0, retry_at: Date.now() + delayMs, result: '', error: note || '' };
+  }
+
+  async notifyOwner(subject, body, severity = 'info') {
+    await fileLetter(this.ctx.storage, { tray: 'che-system', subject, body, tag: 'self-update', severity }).catch(() => null);
+  }
+
+  // Owner already authorized this merge; it runs only once required CI passes.
+  async runMergeJob(job) {
+    const number = Number(job.pr_number || job.prompt);
+    if (Date.now() - Date.parse(job.created_at || 0) > 3 * 3600_000) {
+      await this.notifyOwner(`PR #${number} not merged`, 'CI did not finish within three hours, so I stopped waiting. Nothing was merged.', 'warning');
+      return { id: job.id, status: 'failed', result: '', error: 'CI did not finish within the merge window.', owner_message: `CI on PR #${number} did not finish within three hours, so I did not merge it, sir.` };
+    }
+    const merged = await mergeSelfUpdatePr(this.env, number);
+    if (merged.status === 200) {
+      const last = (await this.ctx.storage.get(LAST_SELF_UPDATE_PR_KEY).catch(() => null)) || {};
+      await this.ctx.storage.put(LAST_SELF_UPDATE_PR_KEY, { ...last, number, merged_at: new Date().toISOString(), merge_commit_sha: merged.merge_commit_sha });
+      if (merged.worker_deploy && merged.merge_commit_sha) {
+        await this.ctx.storage.put(LAST_SELF_UPDATE_DEPLOY_KEY, { number, merge_commit_sha: merged.merge_commit_sha, started_at: new Date().toISOString(), state: 'deploying' });
+        const data = await this.loadData();
+        enqueueJob(data, { kind: 'verify_deploy', title: `Verify deploy of PR #${number}`, prompt: merged.merge_commit_sha, merge_commit_sha: merged.merge_commit_sha, pr_number: number, idempotency_key: `verify_deploy:${merged.merge_commit_sha}`, retry_at: Date.now() + 60_000 });
+        await this.ctx.storage.put('che', data);
+      }
+      await this.notifyOwner(`PR #${number} merged`, `CI passed and I merged it as you authorized (commit ${String(merged.merge_commit_sha).slice(0, 7)}).${merged.worker_deploy ? ' Verifying the Worker deployment now.' : ''}`);
+      return { id: job.id, status: 'complete', result: `Merged as ${merged.merge_commit_sha}.`, error: '', owner_message: `PR #${number} passed CI and is merged, sir.` };
+    }
+    if (merged.retryable) return this.waitOutcome(job, 2 * 60_000, String(merged.detail || 'waiting'));
+    await this.notifyOwner(`PR #${number} not merged`, stripOwnerHomework(String(merged.detail || 'Merge refused.')), 'warning');
+    return { id: job.id, status: 'failed', result: '', error: String(merged.detail || 'Merge refused.').slice(0, 500), failure_class: merged.failure_class || FAILURE_CLASS.INTERNAL, owner_message: `I did not merge PR #${number}, sir: ${stripOwnerHomework(String(merged.detail || 'GitHub refused the merge.'))}` };
+  }
+
+  // Deployment truth: the deploy workflow for the merge commit must succeed,
+  // and when the live Worker reports a version tag it must be that commit.
+  async runVerifyDeployJob(job) {
+    const sha = String(job.merge_commit_sha || job.prompt);
+    const status = await workerDeploymentStatus(this.env, sha, fetch, runtimeVersion(this.env));
+    const record = async (state) => {
+      const prior = (await this.ctx.storage.get(LAST_SELF_UPDATE_DEPLOY_KEY).catch(() => null)) || {};
+      await this.ctx.storage.put(LAST_SELF_UPDATE_DEPLOY_KEY, { ...prior, merge_commit_sha: sha, state, checked_at: new Date().toISOString(), workflow_url: status.workflow_url || '' });
+    };
+    if (status.deployed) {
+      await record('deployed');
+      await this.notifyOwner(`PR #${job.pr_number} deployed`, `The Worker deploy for ${sha.slice(0, 7)} succeeded${status.production_matches_merge ? ' and production is running it' : ''}.`);
+      return { id: job.id, status: 'complete', result: `Deployed ${sha}.`, error: '', owner_message: `PR #${job.pr_number} is deployed and verified, sir.` };
+    }
+    if (status.workflow === 'failed') {
+      await record('failed');
+      await this.notifyOwner(`PR #${job.pr_number} deploy failed`, 'The merged code is safe on main, but the Worker deployment step failed. Production keeps running the previous version.', 'danger');
+      return { id: job.id, status: 'failed', result: '', error: 'Deploy workflow failed.', failure_class: FAILURE_CLASS.PERMANENT_EXTERNAL, owner_message: `The deploy for PR #${job.pr_number} failed, sir. Production is still on the previous version.` };
+    }
+    if (Date.now() - Date.parse(job.created_at || 0) > 45 * 60_000) {
+      await record('unverified');
+      return { id: job.id, status: 'failed', result: '', error: 'Deployment not verified within 45 minutes.', owner_message: `I could not verify the deploy for PR #${job.pr_number} within 45 minutes, sir, so I am not calling it deployed.` };
+    }
+    return this.waitOutcome(job, 90_000, `deploy ${status.workflow}`);
+  }
+
+  // Background continuation of an owner coding request that hit a temporary
+  // external failure. The result is the same reviewed proposal the chat path
+  // produces; nothing is written to GitHub without owner approval.
+  async runSelfDevelopmentJob(job) {
+    const prepared = await prepareSelfUpdate(this.env, job.prompt, fetch, this.ctx.storage, { ownerInitiated: true });
+    if (prepared.status === 200 && prepared.proposal) {
+      await this.ctx.storage.put(PENDING_SELF_UPDATE_KEY, {
+        proposal: prepared.proposal,
+        request: String(job.request || job.prompt).slice(0, 16000),
+        team: prepared.team || [],
+        reviewed_at: new Date().toISOString(),
+        from_job: job.id,
+      });
+      return {
+        id: job.id,
+        status: 'complete',
+        result: `${prepared.proposal.summary}\n\n\`\`\`che-update\n${JSON.stringify(prepared.proposal)}\n\`\`\``,
+        owner_message: 'The coding job I saved finished, sir. The change was built and independently reviewed; say "create the PR" or approve the update card to open it.',
+        error: '',
+      };
+    }
+    if (prepared.status === 200 && prepared.already_satisfied) {
+      return { id: job.id, status: 'complete', result: String(prepared.summary || ''), owner_message: 'The coding job finished, sir: the team verified the app already does that, so no change was needed.', error: '' };
+    }
+    if (prepared.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL) {
+      const error = new Error(prepared.detail || 'Temporary engineering outage.');
+      error.failure_class = FAILURE_CLASS.TEMPORARY_EXTERNAL;
+      throw error;
+    }
+    return {
+      id: job.id,
+      status: 'failed',
+      result: '',
+      failure_class: prepared.failure_class || FAILURE_CLASS.INTERNAL,
+      owner_message: prepared.owner_message || ownerEngineeringMessage(prepared.failure_class || FAILURE_CLASS.INTERNAL),
+      error: String(prepared.detail || 'Coding job failed.').slice(0, 1000),
+    };
   }
 }
 
@@ -6736,7 +7046,7 @@ export default {
     if (isMobileUpdatePath(path)) {
       return handleMobileUpdateRequest(request, env);
     }
-    if (path === '/health') return json({ ok: true, agent: 'CHE cloud' });
+    if (path === '/health') return json({ ok: true, agent: 'CHE cloud', ...runtimeVersion(env) });
     if (path === '/health/engines') return env.CHE_STATE.getByName('owner').fetch(request);
     if (path === '/live-voice') return liveVoicePage();
     return env.CHE_STATE.getByName('owner').fetch(request);
