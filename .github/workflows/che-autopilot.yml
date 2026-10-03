@@ -209,8 +209,26 @@ jobs:
           HAS_ANTHROPIC: ${{ secrets.ANTHROPIC_API_KEY != '' }}
           HAS_MISTRAL: ${{ secrets.MISTRAL_API_KEY != '' }}
           HAS_CEREBRAS: ${{ secrets.CEREBRAS_API_KEY != '' }}
+          K_GOOGLE: ${{ secrets.GEMINI_API_KEY }}
+          K_ANTHROPIC: ${{ secrets.ANTHROPIC_API_KEY }}
+          K_OPENAI: ${{ secrets.OPENAI_API_KEY }}
+          K_OPENROUTER: ${{ secrets.OPENROUTER_API_KEY }}
+          K_GROQ: ${{ secrets.GROQ_API_KEY }}
+          K_MISTRAL: ${{ secrets.MISTRAL_API_KEY }}
+          K_CEREBRAS: ${{ secrets.CEREBRAS_API_KEY }}
         run: |
           set -euo pipefail
+          # OpenCode lists a provider's models only when that provider's key is
+          # visible, so expose exactly one key for exactly one listing call.
+          list_models() {
+            local p=$1 var key
+            case $p in google) var=GEMINI_API_KEY; key=$K_GOOGLE;; anthropic) var=ANTHROPIC_API_KEY; key=$K_ANTHROPIC;; openai) var=OPENAI_API_KEY; key=$K_OPENAI;; openrouter) var=OPENROUTER_API_KEY; key=$K_OPENROUTER;; groq) var=GROQ_API_KEY; key=$K_GROQ;; mistral) var=MISTRAL_API_KEY; key=$K_MISTRAL;; cerebras) var=CEREBRAS_API_KEY; key=$K_CEREBRAS;; *) return 0;; esac
+            if [ "$p" = google ]; then env -u K_GOOGLE "$var=$key" "GOOGLE_GENERATIVE_AI_API_KEY=$key" opencode models "$p" 2>/dev/null || true
+            else env "$var=$key" opencode models "$p" 2>/dev/null || true; fi
+          }
+          keyed=""
+          for p in GOOGLE ANTHROPIC OPENAI OPENROUTER GROQ MISTRAL CEREBRAS; do v=K_$p; [ -n "${!v}" ] && keyed="$keyed ${p,,}"; done
+          echo "Providers with a GitHub Actions key:${keyed:- none}"
           implementer_provider=$(printf '%s' "$IMPLEMENTER_MODEL" | cut -d/ -f1)
           model=""
           for pair in google:HAS_GOOGLE anthropic:HAS_ANTHROPIC openai:HAS_OPENAI openrouter:HAS_OPENROUTER groq:HAS_GROQ mistral:HAS_MISTRAL cerebras:HAS_CEREBRAS; do
@@ -218,7 +236,7 @@ jobs:
             flag=${pair##*:}
             [ "${!flag}" = true ] || continue
             [ "$provider" != "$implementer_provider" ] || continue
-            list=$(opencode models "$provider" 2>/dev/null | grep -E "^$provider/" | grep -viE "tts|image|audio|embed|vision|guard|lite|nano|mini|8b" || true)
+            list=$(list_models "$provider" | grep -E "^$provider/" | grep -viE "tts|image|audio|embed|vision|guard|lite|nano|mini|8b" || true)
             candidate=$(printf '%s\n' "$list" | grep -iE "pro|sonnet|opus|gpt-5|coder|qwen3|large|70b" | sort -rV | head -1 || true)
             [ -n "$candidate" ] || candidate=$(printf '%s\n' "$list" | head -1)
             if [ -n "$candidate" ] && [ "$candidate" != "$IMPLEMENTER_MODEL" ]; then
