@@ -47,6 +47,14 @@ const _meeting = {
 MockClient _backend(List<http.Request> seen) => MockClient((request) async {
       seen.add(request);
       final path = request.url.path;
+      if (path == '/api/chat' && request.method == 'POST') {
+        return http.Response(
+          '{"type":"delta","delta":"Coding job ocr-1234abcd is in independent review, sir."}\n'
+          '{"type":"done","source":"che_coding_status","session_id":"ocr-1234abcd","state":"reviewing"}\n',
+          200,
+          headers: {'content-type': 'application/x-ndjson'},
+        );
+      }
       Object body;
       if (path == '/api/agents' && request.method == 'GET') {
         body = {
@@ -145,7 +153,29 @@ void main() {
     final meeting = await client.meeting('meeting-0000001');
     expect(meeting.decisions, ['Ship v1']);
     expect(meeting.board.last.kind, 'synthesis');
+
+    final coding = await client.codingStatus();
+    expect(coding, isNotNull);
+    expect(coding!.sessionId, 'ocr-1234abcd');
+    expect(coding.state, 'reviewing');
+    expect(coding.label, 'Reviewing');
+    expect(coding.speech, contains('independent review'));
+    final statusRequest = seen.lastWhere((r) => r.url.path == '/api/chat');
+    expect(jsonDecode(statusRequest.body)['message'], 'coding status');
     runtime.dispose();
+  });
+
+  test('coding status ignores states not reported by the runtime contract', () async {
+    final client = CheAgentRuntimeClient(
+      baseUrl: () => 'https://che.example',
+      headers: () => const {},
+      client: MockClient((_) async => http.Response(
+            '{"type":"delta","delta":"Doing something"}\n'
+            '{"type":"done","session_id":"ocr-1234abcd","state":"almost_done"}\n',
+            200,
+          )),
+    );
+    expect(await client.codingStatus(), isNull);
   });
 
   test('agent(che) builds CHE desk from roster, never /api/agents/che', () async {
@@ -330,9 +360,11 @@ void main() {
     await tester.pump();
     expect(find.text('Nova'), findsWidgets);
     expect(find.textContaining('Agents working:'), findsOneWidget);
+    expect(find.text('CHE CODING · REVIEWING'), findsOneWidget);
     await tester.tap(find.text('Read to me'));
     await tester.pump();
     expect(spoken.single, contains('Nova'));
+    expect(spoken.single, contains('independent review'));
     await tester.pumpWidget(const SizedBox());
   });
 
