@@ -1158,3 +1158,61 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
     );
   }
 }
+
+
+/// Small shared shell so room screens do not duplicate quality wiring.
+class CheNativeRoomStage extends StatelessWidget {
+  const CheNativeRoomStage({
+    super.key,
+    required this.mode,
+    this.entities = const [],
+    this.links = const [],
+    this.height = 340,
+    this.onEntityTap,
+    this.onPrimarySurfaceTap,
+    this.primarySurfaceLabel,
+    this.semanticsLabel = 'CHE immersive 3D room',
+    this.fallback,
+    this.showQualityButton = true,
+  });
+
+  final CheSceneMode mode;
+  final List<CheSceneEntity> entities;
+  final List<CheSceneLink> links;
+  final double height;
+  final ValueChanged<String>? onEntityTap;
+  final VoidCallback? onPrimarySurfaceTap;
+  final String? primarySurfaceLabel;
+  final String semanticsLabel;
+  final Widget? fallback;
+  final bool showQualityButton;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ValueListenableBuilder<CheSceneQuality>(
+          valueListenable: CheSceneQualityStore.value,
+          builder: (context, quality, _) => CheNativeSceneWorld(
+            mode: mode,
+            quality: quality,
+            entities: entities,
+            links: links,
+            height: height,
+            onEntityTap: onEntityTap,
+            onPrimarySurfaceTap: onPrimarySurfaceTap,
+            primarySurfaceLabel: primarySurfaceLabel,
+            semanticsLabel: semanticsLabel,
+            fallback: fallback,
+          ),
+        ),
+        if (showQualityButton)
+          const Align(
+            alignment: Alignment.centerRight,
+            child: CheSceneQualityButton(),
+          ),
+      ],
+    );
+  }
+}
