@@ -554,6 +554,21 @@ test('no-op helpers fingerprint exact strategies and diagnose identical replacem
 });
 
 
+test('self-development proposals retain the inspected GitHub base SHA', async () => {
+  const env = {
+    CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r',
+    AI: { run: async (_model, input) => {
+      const system = input.messages[0].content;
+      if (system.includes('Architect')) return { response: JSON.stringify({ plan: 'status', search_terms: ['Ready. Type or speak a request.'], paths: ['lib/main.dart'] }) };
+      if (system.includes('Review')) return { response: JSON.stringify({ approved: true, target_correct: true, notes: [] }) };
+      return { response: JSON.stringify({ summary: 'change status', edits: [{ path: 'lib/main.dart', find: "'Ready. Type or speak a request.'", replace: "'Ready, sir.'" }] }) };
+    } },
+  };
+  const out = await prepareSelfUpdate(env, 'change the home status wording', fakeGitHub(), memoryStore());
+  assert.equal(out.status, 200, out.detail);
+  assert.equal(out.proposal.expected_base_sha, 'abc');
+});
+
 test('deterministic tree fallback selects editable app source when search and planners miss', () => {
   const index = {
     editable_paths: [
