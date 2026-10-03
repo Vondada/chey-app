@@ -3,14 +3,13 @@
 // Related memories connect like neural branches. Tap an orb for provenance.
 // Cheap pseudo-3D CustomPaint + InteractiveViewer; no heavy WebView scene.
 
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_voice_actions.dart';
 import '../che_ui/che_widgets.dart';
+import '../widgets/che_native_scene_world.dart';
 
 class CheMemoryDot {
   const CheMemoryDot({
@@ -25,6 +24,7 @@ class CheMemoryDot {
     this.confidence,
     this.lastVerifiedAt,
     this.scope = 'general',
+    this.importance = 3,
   });
 
   final String id;
@@ -38,6 +38,7 @@ class CheMemoryDot {
   final double? confidence;
   final DateTime? lastVerifiedAt;
   final String scope;
+  final int importance;
 }
 
 /// Build unlimited dots from Worker memories / notes / learning — never capped.
@@ -72,6 +73,7 @@ List<CheMemoryDot> cheBuildMemoryDots({
       confidence: (record['confidence'] as num?)?.toDouble(),
       lastVerifiedAt: DateTime.tryParse('${record['last_verified_at'] ?? record['created_at'] ?? ''}'),
       scope: '${record['scope'] ?? 'owner'}',
+      importance: ((record['importance'] as num?)?.round() ?? 3).clamp(1, 5),
     ));
     i++;
   }
@@ -123,6 +125,7 @@ List<CheMemoryDot> cheBuildMemoryDots({
       confidence: (n['confidence'] as num?)?.toDouble(),
       lastVerifiedAt: DateTime.tryParse('${n['last_verified_at'] ?? n['verified_at'] ?? n['updated_at'] ?? n['created_at'] ?? ''}'),
       scope: '${n['scope'] ?? n['ownership'] ?? 'general'}',
+      importance: ((n['importance'] as num?)?.round() ?? 3).clamp(1, 5),
     ));
     i++;
   }
@@ -280,33 +283,13 @@ class CheMemoryBrainRoom extends StatefulWidget {
   State<CheMemoryBrainRoom> createState() => _CheMemoryBrainRoomState();
 }
 
-class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _pulse;
+class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
   String _query = '';
   CheMemoryDot? _selected;
   final _search = TextEditingController();
 
   @override
-  void initState() {
-    super.initState();
-    _pulse = AnimationController(vsync: this, duration: const Duration(seconds: 5));
-    if (widget.active) _pulse.repeat();
-  }
-
-  @override
-  void didUpdateWidget(covariant CheMemoryBrainRoom oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.active && !_pulse.isAnimating) {
-      _pulse.repeat();
-    } else if (!widget.active && _pulse.isAnimating) {
-      _pulse.stop();
-    }
-  }
-
-  @override
   void dispose() {
-    _pulse.dispose();
     _search.dispose();
     super.dispose();
   }
@@ -321,36 +304,6 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
             d.category.toLowerCase().contains(q))
           d,
     ];
-  }
-
-  double _depth(CheMemoryDot dot) {
-    final normalized = ((dot.id.hashCode & 0x7fffffff) % 1000) / 999.0;
-    return normalized * 2 - 1; // -1 far, +1 near
-  }
-
-  /// Stable pseudo-3D neural cloud. Depth changes projection, orb size and glow,
-  /// while InteractiveViewer supplies pinch-to-zoom and pan.
-  Map<String, Offset> _layout(List<CheMemoryDot> dots, Size size) {
-    final cx = size.width * 0.5;
-    final cy = size.height * 0.5;
-    final map = <String, Offset>{};
-    if (dots.isEmpty) return map;
-    final scale = math.min(size.width, size.height) * 0.48;
-    for (var i = 0; i < dots.length; i++) {
-      final d = dots[i];
-      final hash = d.id.hashCode;
-      final angle = i * 2.399963229728653;
-      final r = scale * math.sqrt((i + 1) / dots.length);
-      final z = _depth(d);
-      final perspective = 0.72 + ((z + 1) / 2) * 0.48;
-      final wobbleX = ((hash % 17) - 8) * 1.4;
-      final wobbleY = (((hash ~/ 17) % 17) - 8) * 1.2;
-      map[d.id] = Offset(
-        cx + (math.cos(angle) * r * 1.08 + wobbleX) * perspective,
-        cy + (math.sin(angle) * r * 0.82 + wobbleY) * perspective,
-      );
-    }
-    return map;
   }
 
   void _openDetail(CheMemoryDot dot) {
@@ -495,6 +448,7 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
                   onTap: () => widget.onRefresh!(),
                   tooltip: 'Refresh memories',
                 ),
+              const CheSceneQualityButton(),
             ],
           ),
         ),
@@ -557,70 +511,49 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
           ),
         ),
         Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final size = Size(math.max(constraints.maxWidth, 360), math.max(constraints.maxHeight, 420));
-              final pos = _layout(dots, size);
-              final edges = cheRelatedMemoryEdges(dots, brainLinks: widget.brainLinks);
-              return InteractiveViewer(
-                minScale: 0.55,
-                maxScale: 4,
-                boundaryMargin: const EdgeInsets.all(520),
-                child: SizedBox(
-                  width: size.width,
-                  height: size.height,
-                  child: RepaintBoundary(
-                    child: AnimatedBuilder(
-                    animation: _pulse,
-                    builder: (context, _) {
-                      return Stack(
-                        children: [
-                          Positioned.fill(
-                            child: CustomPaint(
-                              painter: _ConstellationPainter(
-                                positions: pos,
-                                edges: edges,
-                                phase: _pulse.value,
-                                selectedId: _selected?.id,
-                              ),
-                            ),
-                          ),
-                          for (final d in dots)
-                            if (pos[d.id] != null)
-                              Positioned(
-                                left: pos[d.id]!.dx - 10,
-                                top: pos[d.id]!.dy - 10,
-                                child: Semantics(
-                                  button: true,
-                                  label: '${d.category}. ${d.title}. Depth ${((_depth(d) + 1) * 50).round()} percent.',
-                                  child: GestureDetector(
-                                    onTap: () => _openDetail(d),
-                                    child: _DotOrb(
-                                      selected: _selected?.id == d.id,
-                                      phase: _pulse.value,
-                                      seed: d.id.hashCode,
-                                      color: cheMemoryCategoryColor(d.category),
-                                      depth: _depth(d),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          if (dots.isEmpty)
-                            const Center(
-                              child: Text(
-                                'No memories yet.\nSay “remember that …” or let learning notes land.',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(color: Colors.white54),
-                              ),
-                            ),
-                        ],
-                      );
-                    },
-                  ),
-                  ),
-                ),
-              );
-            },
+          child: TickerMode(
+            enabled: widget.active,
+            child: ValueListenableBuilder<CheSceneQuality>(
+              valueListenable: CheSceneQualityStore.value,
+              builder: (context, quality, _) {
+                final edges =
+                    cheRelatedMemoryEdges(dots, brainLinks: widget.brainLinks);
+                if (dots.isEmpty) {
+                  return const Center(
+                    child: Text(
+                      'No memories yet.\nSay “remember that …” or let learning notes land.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white54),
+                    ),
+                  );
+                }
+                return CheNativeSceneWorld(
+                  mode: CheSceneMode.brain,
+                  quality: quality,
+                  height: double.infinity,
+                  semanticsLabel:
+                      'Native 3D Brain constellation. Real stored memories only.',
+                  entities: [
+                    for (final d in dots)
+                      CheSceneEntity(
+                        id: d.id,
+                        label: d.title,
+                        description: '${d.category}. ${d.body}',
+                        color: cheMemoryCategoryColor(d.category),
+                        importance: d.importance,
+                      ),
+                  ],
+                  links: [
+                    for (final edge in edges)
+                      CheSceneLink(edge.$1, edge.$2),
+                  ],
+                  onEntityTap: (id) {
+                    final matches = dots.where((d) => d.id == id);
+                    if (matches.isNotEmpty) _openDetail(matches.first);
+                  },
+                );
+              },
+            ),
           ),
         ),
         Padding(
@@ -649,120 +582,4 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom>
     if (!widget.embedded) return ColoredBox(color: Colors.black, child: child);
     return Material(color: Colors.black, child: child);
   }
-}
-
-class _DotOrb extends StatelessWidget {
-  const _DotOrb({
-    required this.selected,
-    required this.phase,
-    required this.seed,
-    required this.color,
-    required this.depth,
-  });
-  final bool selected;
-  final double phase;
-  final int seed;
-  final Color color;
-  final double depth;
-
-  @override
-  Widget build(BuildContext context) {
-    final pulse = 0.85 + 0.15 * math.sin(phase * math.pi * 2 + seed);
-    final depthScale = 0.72 + ((depth + 1) / 2) * 0.70;
-    final size = selected ? 25.0 : (8.0 + (seed.abs() % 5) * 0.65) * depthScale;
-    final alpha = (0.55 + ((depth + 1) / 2) * 0.38).clamp(0.45, 0.95);
-    return Transform.scale(
-      scale: selected ? 1.08 : 1,
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: RadialGradient(
-            center: const Alignment(-0.35, -0.35),
-            colors: [
-              Colors.white.withValues(alpha: selected ? 0.95 : 0.72),
-              color.withValues(alpha: selected ? 1 : alpha * pulse),
-              color.withValues(alpha: 0.32),
-            ],
-            stops: const [0, 0.28, 1],
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: color.withValues(alpha: selected ? 0.82 : (0.18 + 0.28 * pulse) * depthScale),
-              blurRadius: selected ? 26 : 8 + 10 * depthScale,
-              spreadRadius: selected ? 3 : depthScale - 0.7,
-            ),
-          ],
-          border: selected ? Border.all(color: Colors.white, width: 1.6) : null,
-        ),
-      ),
-    );
-  }
-}
-
-class _ConstellationPainter extends CustomPainter {
-  _ConstellationPainter({
-    required this.positions,
-    required this.edges,
-    required this.phase,
-    this.selectedId,
-  });
-
-  final Map<String, Offset> positions;
-  final List<(String, String)> edges;
-  final double phase;
-  final String? selectedId;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    // Soft brain aura — gently breathes with phase.
-    final auraAlpha = 0.08 + 0.04 * math.sin(phase * math.pi * 2).abs();
-    final aura = Paint()
-      ..shader = RadialGradient(
-        colors: [
-          CheColors.accent.withValues(alpha: auraAlpha),
-          Colors.transparent,
-        ],
-      ).createShader(Rect.fromCircle(center: Offset(size.width / 2, size.height / 2), radius: size.shortestSide * 0.55));
-    canvas.drawRect(Offset.zero & size, aura);
-
-    final edgePaint = Paint()..style = PaintingStyle.stroke;
-    final flowPaint = Paint()
-      ..style = PaintingStyle.fill
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
-
-    for (var i = 0; i < edges.length; i++) {
-      final (a, b) = edges[i];
-      final pa = positions[a];
-      final pb = positions[b];
-      if (pa == null || pb == null) continue;
-
-      final highlight = selectedId == a || selectedId == b;
-      // Per-edge phase offset so links don't blink in lockstep — organic breathe.
-      final edgePhase = (phase + (i * 0.07) + ((a.hashCode ^ b.hashCode) % 100) / 100.0) % 1.0;
-      final breathe = (math.sin(edgePhase * math.pi * 2) + 1) * 0.5; // 0..1
-      final baseAlpha = highlight ? 0.42 : 0.10;
-      final alpha = (baseAlpha + 0.22 * breathe).clamp(0.06, 0.85);
-      final thickness = highlight
-          ? 1.3 + 0.9 * breathe
-          : 0.7 + 0.85 * breathe;
-
-      edgePaint
-        ..color = (highlight ? CheColors.accent : Colors.white).withValues(alpha: alpha)
-        ..strokeWidth = thickness;
-      canvas.drawLine(pa, pb, edgePaint);
-
-      // Subtle energy flow along the link.
-      final flowT = (edgePhase + 0.35 * breathe) % 1.0;
-      final flow = Offset.lerp(pa, pb, flowT)!;
-      final flowAlpha = highlight ? 0.75 : (0.25 + 0.45 * breathe);
-      flowPaint.color = CheColors.accent.withValues(alpha: flowAlpha);
-      canvas.drawCircle(flow, highlight ? 2.8 : 1.8 + breathe, flowPaint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _ConstellationPainter old) =>
-      old.phase != phase || old.selectedId != selectedId || old.positions != positions || old.edges.length != edges.length;
 }

@@ -116,8 +116,12 @@ void main() {
     expect(find.text('Unavailable'), findsOneWidget);
     expect(find.textContaining('Stooq (delayed)'), findsOneWidget);
     expect(find.textContaining('Needs: Backtest engine'), findsOneWidget);
+    await tester.ensureVisible(find.text('Backtesting Lab'));
+    await tester.pump();
     await tester.tap(find.text('Backtesting Lab'));
     expect(ran, isTrue);
+    await tester.ensureVisible(find.text('Ask CHE'));
+    await tester.pump();
     await tester.tap(find.text('Ask CHE'));
     expect(asked.single, contains('S&P 500'));
     await tester.pumpWidget(const SizedBox());

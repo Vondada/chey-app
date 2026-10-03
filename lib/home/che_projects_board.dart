@@ -10,7 +10,7 @@ import '../agents/che_agent_runtime.dart' show CheMeetingSummary;
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_voice_actions.dart';
 import '../che_ui/che_widgets.dart';
-import '../widgets/che_3d_room_view.dart';
+import '../widgets/che_native_scene_world.dart';
 
 enum CheBoardKind { project, goal, scout, deal, meeting }
 
@@ -486,30 +486,43 @@ class _CheProjectsBoardState extends State<CheProjectsBoard> {
         ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: CheSpace.gutter),
-          child: Che3DRoomView(
-            assetPath: 'assets/office3d/projects.html',
-            updateFunction: 'updateScene',
-            payload: {
-              'agents': [
-                {'id': 'che', 'name': 'CHE', 'role': 'Office Boss', 'status': 'working', 'isChe': true},
+          child: ValueListenableBuilder<CheSceneQuality>(
+            valueListenable: CheSceneQualityStore.value,
+            builder: (context, quality, _) => CheNativeSceneWorld(
+              mode: CheSceneMode.projects,
+              quality: quality,
+              entities: [
+                const CheSceneEntity(
+                  id: 'che',
+                  label: 'CHE',
+                  description: 'Office Boss on the project floor',
+                  color: CheColors.accent,
+                  state: 'working',
+                ),
+                for (final item in rows.take(12))
+                  CheSceneEntity(
+                    id: item.id,
+                    label: item.title,
+                    description:
+                        '${item.typeLabel}. ${item.statusLabel}. ${(item.progress * 100).round()} percent.',
+                    color: item.progress >= 1
+                        ? CheColors.success
+                        : (item.progress > .05
+                            ? CheColors.accent
+                            : CheColors.textDim),
+                    state: item.statusLabel,
+                    importance:
+                        (1 + (item.progress.clamp(0.0, 1.0) * 4).round())
+                            .clamp(1, 5),
+                  ),
               ],
-              'items': [
-                for (final i in rows.take(9))
-                  {
-                    'id': i.id,
-                    'title': i.title,
-                    'kind': i.kind.name,
-                    'progress': i.progress,
-                    'status': i.statusLabel,
-                  },
-              ],
-            },
-            height: 300,
-            semanticsLabel: '3D Projects build floor',
-            onTapId: (id) {
-              final match = rows.where((i) => i.id == id);
-              if (match.isNotEmpty) _openDetail(match.first);
-            },
+              height: 300,
+              semanticsLabel: 'Immersive native Projects build floor',
+              onEntityTap: (id) {
+                final match = rows.where((item) => item.id == id);
+                if (match.isNotEmpty) _openDetail(match.first);
+              },
+            ),
           ),
         ),
         const SizedBox(height: CheSpace.sm),

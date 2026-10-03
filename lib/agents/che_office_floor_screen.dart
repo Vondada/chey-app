@@ -18,7 +18,7 @@ import '../che_ui/che_voice_actions.dart';
 import 'che_agent_runtime.dart';
 import 'che_office_store.dart';
 import 'che_war_room_screen.dart';
-import '../widgets/office_3d_view.dart';
+import '../widgets/che_native_scene_world.dart';
 
 /// Short, glanceable version of an agent's task or a meeting objective: the
 /// first clause, cut at a word boundary. The full text stays one tap (or one
@@ -74,11 +74,6 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
     onWarRoom: _warRoom,
   );
   bool _useFlatPlan = false;
-
-  /// Stable 3D payload list so runtime polls do not rebuild Office3DView with a
-  /// fresh List identity when agent rows are unchanged.
-  List<Map<String, dynamic>> _agents3d = const [];
-  String? _agents3dFp;
 
   @override
   void initState() {
@@ -284,68 +279,57 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
   }
 
 
-  List<Map<String, dynamic>> _agentsFor3d() {
-    final r = _runtime;
-    String statusOf(CheAgent a) {
-      final s = a.status.name;
-      if (const {'researching', 'building', 'meeting', 'talking'}.contains(s)) return 'working';
-      if (const {'analyzing', 'reviewing'}.contains(s)) return 'thinking';
-      if (s == 'done') return 'celebrating';
-      if (const {'waiting', 'offline'}.contains(s)) return 'blocked';
-      return 'idle';
-    }
-    Map<String, dynamic> row(CheAgent a) => {
-          'id': a.id,
-          'name': a.name,
-          'role': a.role,
-          'status': statusOf(a),
-          'task': a.task ?? '',
-          'isChe': a.isChe,
-        };
+  List<CheSceneEntity> _officeSceneEntities() {
+    CheSceneEntity entity(CheAgent agent) => CheSceneEntity(
+          id: agent.id,
+          label: agent.name,
+          description:
+              '${agent.role}. ${agent.task?.isNotEmpty == true ? agent.task : agent.status.label}.',
+          color: agent.color,
+          state: agent.status.name,
+          appearance: agent.appearance,
+        );
     return [
-      row(r.che),
-      for (final p in r.agents) row(p.agent),
+      entity(_runtime.che),
+      for (final p in _runtime.agents) entity(p.agent),
     ];
   }
 
-  List<Map<String, dynamic>> _agentsFor3dStable() {
-    final next = _agentsFor3d();
-    final fp = next
-        .map((a) => '${a['id']}|${a['status']}|${a['task']}|${a['name']}|${a['role']}')
-        .join(';');
-    if (fp == _agents3dFp) return _agents3d;
-    _agents3dFp = fp;
-    _agents3d = next;
-    return _agents3d;
-  }
-
   Widget _officeStage() {
-    if (_useFlatPlan || !_runtime.loaded) {
-      return _floorPlan;
-    }
+    if (_useFlatPlan || !_runtime.loaded) return _floorPlan;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Office3DView(
-          agents: _agentsFor3dStable(),
-          height: 420,
-          onAgentTap: (id) {
-            if (id.toLowerCase() == 'che') {
-              if (widget.onTalkToChe != null) {
-                if (!widget.embedded) Navigator.of(context).pop();
-                widget.onTalkToChe!();
+        ValueListenableBuilder<CheSceneQuality>(
+          valueListenable: CheSceneQualityStore.value,
+          builder: (context, quality, _) => CheNativeSceneWorld(
+            mode: CheSceneMode.office,
+            quality: quality,
+            entities: _officeSceneEntities(),
+            height: 420,
+            semanticsLabel: 'Immersive Office. Real agent state only.',
+            onEntityTap: (id) {
+              if (id.toLowerCase() == 'che') {
+                if (widget.onTalkToChe != null) {
+                  if (!widget.embedded) Navigator.of(context).pop();
+                  widget.onTalkToChe!();
+                }
+                return;
               }
-              return;
-            }
-            _openDesk(id);
-          },
-        ),
-        Align(
-          alignment: Alignment.centerRight,
-          child: TextButton(
-            onPressed: () => setState(() => _useFlatPlan = true),
-            child: const Text('Flat floor plan'),
+              _openDesk(id);
+            },
           ),
+        ),
+        Wrap(
+          alignment: WrapAlignment.end,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            const CheSceneQualityButton(),
+            TextButton(
+              onPressed: () => setState(() => _useFlatPlan = true),
+              child: const Text('Flat floor plan'),
+            ),
+          ],
         ),
       ],
     );
@@ -1152,6 +1136,9 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
                               context,
                               '${a.name}, ${a.role}. ${a.status.label}.'
                               '${a.task != null ? ' Working on: ${a.task}.' : ''}'
+                              '${a.personality.isNotEmpty ? ' Personality: ${a.personality}.' : ''}'
+                              '${p.strengths.isNotEmpty ? ' Strong points: ${p.strengths.join('; ')}.' : ''}'
+                              '${p.limitations.isNotEmpty ? ' Limitations: ${p.limitations.join('; ')}.' : ''}'
                               '${p.responsibilities.isNotEmpty ? ' Responsible for: ${p.responsibilities.join('; ')}.' : ''}',
                               widget.onSpeak,
                             ),
@@ -1165,10 +1152,56 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
             ),
             if (_error != null) Padding(padding: const EdgeInsets.only(top: CheSpace.sm), child: _Banner(text: _error!, color: CheColors.warning)),
             const SizedBox(height: CheSpace.md),
-            if (a.specialty.isNotEmpty) _Section('SPECIALTY', a.specialty),
+            _Section(
+              'CURRENT JOB',
+              a.task?.trim().isNotEmpty == true
+                  ? a.task!
+                  : (p.assignmentTask.trim().isNotEmpty
+                      ? p.assignmentTask
+                      : 'No active job right now. Status: ${a.status.label}.'),
+            ),
             if (a.personality.isNotEmpty) _Section('PERSONALITY', a.personality),
+            if (a.specialty.isNotEmpty) _Section('JOB / SPECIALTY', a.specialty),
             if (p.mission.isNotEmpty) _Section('MISSION', p.mission),
-            _Section('RESPONSIBILITIES', p.responsibilities.isEmpty ? 'None assigned yet.' : p.responsibilities.map((s) => '• $s').join('\n')),
+            _Section(
+              'CAPABILITIES',
+              p.capabilityRequirements.isEmpty
+                  ? 'No extra capability requirement is registered.'
+                  : p.capabilityRequirements
+                      .map((x) => '• ${x.replaceAll('_', ' ')}')
+                      .join('\n'),
+            ),
+            _Section(
+              'SKILLS',
+              d.skills.isEmpty
+                  ? 'No learned workflow skills are assigned yet.'
+                  : d.skills.map((skill) {
+                      final source = skill.sourceRepo.isEmpty
+                          ? ''
+                          : ' — ${skill.sourceRepo}'
+                              '${skill.sourcePath.isEmpty ? '' : '/${skill.sourcePath}'}'
+                              '${skill.sourceLicense.isEmpty ? '' : ' · ${skill.sourceLicense}'}';
+                      return '• ${skill.name}$source';
+                    }).join('\n'),
+            ),
+            _Section(
+              'STRONG POINTS',
+              p.strengths.isEmpty
+                  ? 'No role-specific strengths are registered yet.'
+                  : p.strengths.map((x) => '• $x').join('\n'),
+            ),
+            _Section(
+              'WEAK POINTS / LIMITATIONS',
+              p.limitations.isEmpty
+                  ? 'No role-specific limitations are registered yet.'
+                  : p.limitations.map((x) => '• $x').join('\n'),
+            ),
+            _Section(
+              'RESPONSIBILITIES',
+              p.responsibilities.isEmpty
+                  ? 'None assigned yet.'
+                  : p.responsibilities.map((x) => '• $x').join('\n'),
+            ),
             const SizedBox(height: CheSpace.sm),
             if (_isChe && widget.onTalkToChe != null) ...[
               FilledButton.icon(

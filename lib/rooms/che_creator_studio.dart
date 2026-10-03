@@ -13,6 +13,7 @@ import 'package:flutter/services.dart';
 
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
+import '../widgets/che_native_scene_world.dart';
 
 class CheStudioAction {
   const CheStudioAction({
@@ -97,18 +98,78 @@ class _CheCreatorStudioState extends State<CheCreatorStudio> with SingleTickerPr
               },
             ),
           ),
-          Expanded(child: _view == 1 ? widget.musicScene : _studio(context)),
+          Expanded(child: _view == 1 ? _music(context) : _studio(context)),
         ]),
       ),
     );
   }
 
+  Widget _music(BuildContext context) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(CheSpace.gutter, 0, CheSpace.gutter, CheSpace.sm),
+          child: CheNativeRoomStage(
+            mode: CheSceneMode.musicStudio,
+            height: 250,
+            semanticsLabel: 'Immersive native Music Studio.',
+            entities: [
+              CheSceneEntity(
+                id: 'che',
+                label: 'CHE',
+                description: 'Music room host',
+                color: _cyan,
+                state: widget.speaking ? 'talking' : 'idle',
+                speaking: widget.speaking,
+              ),
+            ],
+          ),
+        ),
+        Expanded(child: widget.musicScene),
+      ],
+    );
+  }
   Widget _studio(BuildContext context) {
     final onAir = widget.speaking || _rendering;
     final reduced = CheMotion.reduced(context);
     return ListView(
       padding: const EdgeInsets.fromLTRB(CheSpace.gutter, 0, CheSpace.gutter, CheSpace.xxl),
       children: [
+        ValueListenableBuilder<CheSceneQuality>(
+          valueListenable: CheSceneQualityStore.value,
+          builder: (context, quality, _) => CheNativeSceneWorld(
+            mode: CheSceneMode.creator,
+            quality: quality,
+            height: 250,
+            semanticsLabel: 'Immersive Creator Studio',
+            entities: [
+              CheSceneEntity(
+                id: 'che',
+                label: 'CHE',
+                description: widget.speaking
+                    ? 'Speaking in the Creator Studio'
+                    : (_rendering ? 'Managing active render jobs' : 'Studio ready'),
+                color: _cyan,
+                state: onAir ? 'working' : 'idle',
+              ),
+              for (final job in widget.jobs.take(8))
+                CheSceneEntity(
+                  id: '${job['id'] ?? job['title']}',
+                  label: '${job['title'] ?? 'Render job'}',
+                  description: '${job['status'] ?? 'queued'}',
+                  color: _magenta,
+                  state: '${job['status'] ?? 'queued'}',
+                ),
+            ],
+            onEntityTap: (id) {
+              final matches = widget.jobs.where(
+                (job) => '${job['id'] ?? job['title']}' == id,
+              );
+              if (matches.isNotEmpty) widget.onOpenJob(matches.first);
+            },
+          ),
+        ),
+        const SizedBox(height: CheSpace.md),
         ClipRRect(
           borderRadius: BorderRadius.circular(CheRadius.lg),
           child: CheRoomBackdrop(

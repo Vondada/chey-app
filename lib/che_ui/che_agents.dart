@@ -50,6 +50,7 @@ class CheAgent {
     this.status = CheAgentStatus.idle,
     this.task,
     this.isChe = false,
+    this.appearance = const {},
   });
 
   final String id;
@@ -63,6 +64,7 @@ class CheAgent {
   final CheAgentStatus status;
   final String? task; // current real assignment
   final bool isChe;
+  final Map<String, dynamic> appearance;
 
   /// CHE herself (Office Boss), in her logo colors.
   static CheAgent che({CheAgentStatus status = CheAgentStatus.idle, String? task}) => CheAgent(
@@ -97,6 +99,9 @@ class CheAgent {
       status: CheAgentStatusLabel.parse(j['status']?.toString()),
       task: j['task']?.toString(),
       isChe: j['id'] == 'che',
+      appearance: j['appearance'] is Map
+          ? Map<String, dynamic>.from(j['appearance'] as Map)
+          : const {},
     );
   }
 }

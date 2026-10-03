@@ -41,6 +41,44 @@ const PERSONAS = {
   Iris: 'Ad-minded creative. Tight headlines, clear CTAs, honest about missing brand assets.',
 };
 
+const CORE_AGENT_PROFILES = {
+  Nova: {
+    strengths: ['Product framing', 'Offer clarity', 'Listings and sales-page structure'],
+    limitations: ['Not the primary research verifier', 'Not the primary finance reviewer'],
+    appearance: { body_type: 'standard', face: 'oval', skin_tone: 'warm', hair: 'waves', eyes: 'hazel', outfit: 'jacket-teal', accessory: 'chain', animation: 'confident' },
+  },
+  Atlas: {
+    strengths: ['Research depth', 'Source comparison', 'Competitive checks'],
+    limitations: ['Slower when evidence is thin', 'Not the primary visual creative'],
+    appearance: { body_type: 'tall', face: 'square', skin_tone: 'deep', hair: 'close', eyes: 'brown', outfit: 'suit', accessory: 'glasses', animation: 'focused' },
+  },
+  Mira: {
+    strengths: ['Customer empathy', 'Support copy', 'Translation and multilingual drafts'],
+    limitations: ['Not the primary implementation engineer', 'Needs verified facts for policy-sensitive replies'],
+    appearance: { body_type: 'compact', face: 'round', skin_tone: 'golden', hair: 'curls', eyes: 'green', outfit: 'jacket-red', accessory: 'none', animation: 'calm' },
+  },
+  Knox: {
+    strengths: ['Implementation', 'Testing and debugging', 'Failure-mode and security review'],
+    limitations: ['Can over-focus on failure cases', 'Not the primary brand or social writer'],
+    appearance: { body_type: 'tall', face: 'square', skin_tone: 'brown', hair: 'locs', eyes: 'dark', outfit: 'tech', accessory: 'headset', animation: 'focused' },
+  },
+  Sage: {
+    strengths: ['Financial summaries', 'Read-only Stripe reporting', 'Claim and goal verification'],
+    limitations: ['Read-only money access', 'Cannot spend, transfer, or open payouts'],
+    appearance: { body_type: 'standard', face: 'oval', skin_tone: 'tan', hair: 'bun', eyes: 'brown', outfit: 'suit', accessory: 'glasses', animation: 'calm' },
+  },
+  Lyra: {
+    strengths: ['Clear writing', 'Social content', 'Turning rough notes into human language'],
+    limitations: ['Not the primary finance analyst', 'Needs source facts before making factual claims'],
+    appearance: { body_type: 'compact', face: 'round', skin_tone: 'light', hair: 'braids', eyes: 'blue', outfit: 'studio', accessory: 'none', animation: 'confident' },
+  },
+  Iris: {
+    strengths: ['Ad concepts', 'Headlines and CTAs', 'Paid-social creative packages'],
+    limitations: ['Needs brand assets for exact visual matching', 'Not the primary code reviewer'],
+    appearance: { body_type: 'standard', face: 'oval', skin_tone: 'golden', hair: 'curls', eyes: 'hazel', outfit: 'jacket-red', accessory: 'hat', animation: 'confident' },
+  },
+};
+
 const OUTFITS = ['5CC8FF', 'FF8A4C', '3DDC97', '8B7BFF', 'E8B04A', 'FF5C8A', '4CD4C0', 'B38CFF', '7FD35C', 'FFB85C'];
 const HAIR = ['2B1D14', '7A3B1D', '14110F', 'C9A36B', '3B2A1E', '5A2D0C', 'D9D2C5'];
 const SKIN = ['C68B59', 'E0B08A', '8D5A3B', 'F1C9A5', 'A86B45', '6B4428'];
@@ -52,6 +90,40 @@ function hashOf(value) {
     h = Math.imul(h, 16777619) >>> 0;
   }
   return h;
+}
+
+function agentProfileTraits(agent) {
+  const core = CORE_AGENT_PROFILES[agent.name];
+  if (core) return core;
+  const role = `${agent.role || ''} ${agent.specialty || ''}`.toLowerCase();
+  const strengths = [];
+  if (/research|source|intel/.test(role)) strengths.push('Research and source comparison');
+  if (/code|engineer|build|implement|test/.test(role)) strengths.push('Implementation and technical problem solving');
+  if (/write|copy|content|support|social/.test(role)) strengths.push('Clear communication and audience-focused writing');
+  if (/finance|stripe|market|quant/.test(role)) strengths.push('Numerical analysis and reporting');
+  if (!strengths.length) strengths.push('Focused execution in the assigned specialty');
+  return {
+    strengths,
+    limitations: ['Best used inside the assigned specialty', 'Owner-gated actions remain unavailable without approval'],
+    appearance: null,
+  };
+}
+
+function agentAppearance(data, agent) {
+  const core = agentProfileTraits(agent).appearance;
+  const h = hashOf(agent.id || agent.name);
+  const fallback = {
+    body_type: ['compact', 'standard', 'tall'][h % 3],
+    face: ['round', 'oval', 'square'][(h >>> 3) % 3],
+    skin_tone: ['deep', 'brown', 'warm', 'tan', 'golden', 'light'][(h >>> 6) % 6],
+    hair: ['close', 'fade', 'waves', 'curls', 'braids', 'locs', 'bun', 'bald'][(h >>> 9) % 8],
+    eyes: ['dark', 'brown', 'hazel', 'green', 'blue'][(h >>> 12) % 5],
+    outfit: ['suit', 'jacket-red', 'jacket-teal', 'hoodie', 'studio', 'tech'][(h >>> 15) % 6],
+    accessory: ['none', 'glasses', 'headset', 'chain', 'hat'][(h >>> 18) % 5],
+    animation: ['calm', 'focused', 'confident', 'walking'][(h >>> 21) % 4],
+  };
+  const saved = data?.workshop_avatars?.[agent.id];
+  return { ...(core || fallback), ...(saved && typeof saved === 'object' ? saved : {}) };
 }
 
 function now() {
@@ -198,6 +270,9 @@ export function agentView(agent, data) {
     specialty: agent.specialty || '',
     mission: agent.mission || '',
     personality: agent.personality,
+    strengths: agentProfileTraits(agent).strengths,
+    limitations: agentProfileTraits(agent).limitations,
+    appearance: agentAppearance(data, agent),
     color: agent.look.color,
     hair: agent.look.hair,
     skin: agent.look.skin,
@@ -271,6 +346,17 @@ export function runtimeSnapshot(data) {
 export function agentDetail(data, agent) {
   return {
     agent: agentView(agent, data),
+    skills: ensureSkillStore(data)
+      .filter((skill) => agent.skill_ids.includes(skill.id) || (skill.assigned_agents || []).includes(agent.name))
+      .slice(0, 40)
+      .map((skill) => ({
+        id: skill.id,
+        name: skill.name,
+        trigger: skill.trigger || '',
+        capabilities: Array.isArray(skill.capabilities) ? skill.capabilities : [],
+        source: skill.source || null,
+        uses: Number(skill.uses || 0),
+      })),
     history: data.team_tasks
       .filter((item) => item.partner_id === agent.id)
       .slice(0, 30)
