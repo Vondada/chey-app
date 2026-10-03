@@ -557,8 +557,9 @@ export function wantsDocsOnly(request) {
   for (const clause of clauses) {
     const docMatch = docs.exec(clause);
     const action = functionalAction.exec(clause);
+    const isReference = /\b(?:according\s+to|based\s+on|using|per)\b/i.test(clause);
     if (!action) {
-      if (!docMatch) return false;
+      if (!docMatch || isReference) return false;
       sawDocsTarget = true;
       continue;
     }
