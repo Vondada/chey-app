@@ -4,6 +4,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import '../widgets/che_native_scene_world.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -364,6 +365,26 @@ class _ChePipelineRoomState extends State<ChePipelineRoom> {
             if (_loading) const LinearProgressIndicator(),
             if (_error != null)
               Card(child: ListTile(leading: const Icon(Icons.error_outline), title: const Text('Pipeline unavailable'), subtitle: Text(_error!))),
+            ValueListenableBuilder<CheSceneQuality>(
+              valueListenable: CheSceneQualityStore.value,
+              builder: (context, quality, _) => CheNativeSceneWorld(
+                mode: CheSceneMode.pipeline,
+                quality: quality,
+                height: 240,
+                semanticsLabel: 'Immersive Client Pipeline room',
+                entities: [
+                  for (final deal in active.take(12))
+                    CheSceneEntity(
+                      id: '${deal['id']}',
+                      label: '${deal['client_name'] ?? deal['client'] ?? 'Deal'}',
+                      description: '${deal['stage'] ?? 'lead'}. ${deal['need'] ?? ''}',
+                      color: const Color(0xFF4EA4FF),
+                      state: '${deal['stage'] ?? 'lead'}',
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
             const Text(
               'CHE drafts and builds. You approve prices, send messages and check work before anyone pays.',
               style: TextStyle(color: Colors.white54),
