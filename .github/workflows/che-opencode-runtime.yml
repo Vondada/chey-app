@@ -56,8 +56,16 @@ jobs:
         with:
           github-token: ${{ github.token }}
           script: |
+            const jobId = String(process.env.JOB_ID || '').trim();
+            const baseSha = String(process.env.BASE_SHA || '').trim().toLowerCase();
+            const targetBranch = String(process.env.TARGET_BRANCH || '').trim();
+            const model = String(process.env.MODEL || '').trim();
+            if (!/^ocr-[0-9a-f]{8}$/.test(jobId)) throw new Error('Invalid CHE runtime job id.');
+            if (!/^[0-9a-f]{40}$/.test(baseSha)) throw new Error('Invalid CHE runtime base SHA.');
+            if (!targetBranch || targetBranch.length > 160 || targetBranch.includes('..') || targetBranch.startsWith('/') || targetBranch.endsWith('/') || !/^[A-Za-z0-9._\/-]+$/.test(targetBranch)) throw new Error('Invalid CHE runtime target branch.');
+            if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._:@\/-]+$/.test(model)) throw new Error('Invalid CHE runtime model.');
             const branch = 'che-mailbox';
-            const path = `mailbox/runtime/${process.env.JOB_ID}.json`;
+            const path = `mailbox/runtime/${jobId}.json`;
             let sha;
             let prior = null;
             try {
