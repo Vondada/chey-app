@@ -208,7 +208,11 @@ test('chat: a successful coding request renders a real che-update card and saves
     const res = await chat('Change your code: improve the home screen ready banner');
     const lines = (await res.text()).trim().split('\n').map((line) => JSON.parse(line));
     const reply = lines.filter((l) => l.type === 'delta').map((l) => l.delta).join('');
-    assert.match(reply, /```che-update\n\{/, 'card block uses a real newline so the app can parse it');
+    assert.doesNotMatch(reply, /```|class A|che-update/, 'no code in chat unless the owner asks');
+    assert.match(reply, /create the PR/);
+    const shown = (await (await chat('show me the code')).text());
+    assert.match(shown, /```diff/);
+    assert.match(shown, /Ready when you are/);
     const pending = saved.get('pending_self_update');
     assert.ok(pending?.proposal?.expected_base_sha);
     assert.equal(pending.proposal.base_files['lib/main.dart'], 'blob1');
@@ -284,7 +288,8 @@ test('end-to-end: "make one small real improvement" → recover → review → a
   try {
     // 1. Vague owner request, no filename or guidance.
     const proposal = await replyOf(await chat('CHE, make one small real improvement to your code.'));
-    assert.match(proposal, /```che-update\n/, proposal);
+    assert.match(proposal, /Say "create the PR"/, proposal);
+    assert.doesNotMatch(proposal, /```|export default/);
     assert.doesNotMatch(proposal, /provide|paste|filename|not provided|cannot inspect|503/i);
     // 2. Owner authorization step.
     const opened = await replyOf(await chat('Create the PR'));
@@ -368,4 +373,10 @@ test('merge with a change-caused CI failure is refused and CHE starts the repair
   } finally {
     globalThis.fetch = original;
   }
+});
+
+test('voice text is made fluent: no code, bullets, dashes, ellipses or line breaks', async () => {
+  const { fluentSpeechText } = mod;
+  const out = fluentSpeechText('Sure, sir...\n\n- First — the banner\n- Second (the card)\n```js\nconst x = 1;\n```\nDone!');
+  assert.equal(out, 'Sure, sir First the banner Second the card Done!');
 });

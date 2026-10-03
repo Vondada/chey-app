@@ -6,8 +6,9 @@ void main() {
     final c = CheSpeechChunker();
     expect(c.addCumulative('Hello'), isEmpty);
     expect(c.addCumulative('Hello there. Next'), ['Hello there.']);
-    expect(c.addCumulative('Hello there. Next sentence!'), ['Next sentence!']);
-    expect(c.flush(), isEmpty);
+    // Later sentences are grouped so the voice reads them in one breath.
+    expect(c.addCumulative('Hello there. Next sentence!'), isEmpty);
+    expect(c.flush(), ['Next sentence!']);
   });
 
   test('speech chunker flushes unfinished tail', () {

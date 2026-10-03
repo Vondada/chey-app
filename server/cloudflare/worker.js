@@ -530,8 +530,27 @@ async function geminiSpeech(env, text, fetcher = fetch) {
   }
 }
 
+// Text the voice engines read in one breath: no code, markdown, line breaks,
+// bullets, dashes, ellipses or brackets. Each of those made the voice stop
+// and restart mid-reply.
+export function fluentSpeechText(text) {
+  return String(text || '')
+    .replace(/```[\s\S]*?(?:```|$)/g, ' ')
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/^\s*(?:[-•*]|\d+[.)])\s+/gm, '')
+    .replace(/[*#>`_~|]+/g, ' ')
+    .replace(/\s*(?:\.\.\.|…)\s*/g, ' ')
+    .replace(/\s+[—–]\s+|[—–]/g, ' ')
+    .replace(/[()[\]{}]/g, ' ')
+    .replace(/\s*([,;:])(?:\s*[,;:])+/g, '$1')
+    .replace(/\s+([,.!?;:])/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 async function voiceSynthesisResponse(env, text) {
-  const input = String(text || '').trim().slice(0, 6000);
+  const input = fluentSpeechText(text).slice(0, 6000);
+  if (!input) return json({ detail: 'Nothing speakable in that text.' }, 400);
   const voiceFailures = [];
 
   // Prefer free Workers AI TTS first so Gemini quota does not block spoken replies.
@@ -611,11 +630,13 @@ async function voiceSynthesisResponse(env, text) {
             body: JSON.stringify({
               text: input,
               model_id: String(env.CHE_ELEVENLABS_MODEL || 'eleven_flash_v2_5'),
+              // Steadier, slightly quicker delivery: fewer dramatic pauses.
               voice_settings: {
-                stability: 0.45,
+                stability: 0.6,
                 similarity_boost: 0.82,
-                style: 0.28,
+                style: 0.15,
                 use_speaker_boost: true,
+                speed: Number(env.CHE_VOICE_SPEED) || 1.06,
               },
             }),
             signal: AbortSignal.timeout(8_000),
@@ -663,7 +684,7 @@ async function voiceSynthesisResponse(env, text) {
             voice: String(env.CHE_OPENAI_VOICE || 'marin'),
             input,
             instructions:
-              'Warm, confident, smooth, intelligent young-adult feminine voice. Natural conversational pacing. Concise and expressive, never robotic.',
+              'Warm, confident, smooth, intelligent young-adult feminine voice. Speak fluently in one continuous flow at a natural, slightly brisk conversational pace. Do not pause at commas or line breaks; only brief pauses between sentences. Never robotic.',
             response_format: 'mp3',
           }),
           signal: AbortSignal.timeout(8_000),
@@ -1951,6 +1972,7 @@ export function selfUpdateChatIntent(message) {
     || /\b(?:pr|pull request)\s+(?:status|state|checks?)\b/i.test(text)
   ) return { kind: 'status' };
 
+  if (/\b(?:show|read|let me see|display)\b[\s\S]{0,25}\b(?:the\s+)?(?:code|diff|changes?)\b/i.test(text) && text.length < 120) return { kind: 'show-code' };
   if (/\b(?:pending|waiting)\b[\s\S]{0,25}\b(?:code|update|change|pr)\b/i.test(text)) return { kind: 'pending' };
 
   // Explicit owner authorization to merge (and therefore deploy). Negations
@@ -1976,6 +1998,14 @@ function ownerPrFailure(result, action) {
   if (cls === FAILURE_CLASS.PERMANENT_EXTERNAL) return `GitHub refused to ${action}, sir: the CHE GitHub token or repository permission needs fixing on GitHub's side. Nothing else changed.`;
   if (cls === FAILURE_CLASS.TEMPORARY_EXTERNAL) return `GitHub is temporarily unavailable, so I could not ${action} yet, sir. Nothing was half-written; it is safe to retry.`;
   return `I could not ${action}, sir. ${stripOwnerHomework(String(result?.detail || '')).slice(0, 220)}`.trim();
+}
+
+// Short, speakable description of a reviewed proposal. File contents and
+// diffs stay out of chat; the owner can ask "show me the code".
+export function proposalSummaryMessage(proposal, lead = 'My team built and reviewed that change, sir.') {
+  const files = (proposal?.files || []).map((file) => String(file.path || '').split('/').pop()).filter(Boolean);
+  const summary = String(proposal?.summary || 'A small improvement').replace(/\s*\(built by[^)]*\)\s*$/, '').trim();
+  return `${lead} ${summary}${/[.!?]$/.test(summary) ? '' : '.'} It touches ${files.length === 1 ? files[0] : `${files.length} files`}. Nothing is applied yet. Say "create the PR" to send it to GitHub, or "show me the code" if you want to see it.`;
 }
 
 async function handleSelfUpdateChatAction(env, storage, intent, ops = {}) {
@@ -2042,11 +2072,11 @@ async function handleSelfUpdateChatAction(env, storage, intent, ops = {}) {
       }
       const rebuilt = await prepareSelfUpdate(env, pending.request, fetch, storage, { ownerInitiated: true }).catch(() => null);
       if (rebuilt?.status === 200 && rebuilt.proposal) {
-        await storage.put(PENDING_SELF_UPDATE_KEY, { ...pending, proposal: rebuilt.proposal, reviewed_at: new Date().toISOString(), rebuilt_from_stale: true });
+        await storage.put(PENDING_SELF_UPDATE_KEY, { ...pending, proposal: rebuilt.proposal, diff: String(rebuilt.diff || '').slice(0, 20000), reviewed_at: new Date().toISOString(), rebuilt_from_stale: true });
         return {
           ok: false,
           rebuilt: true,
-          message: `The code changed on GitHub after I prepared that update, sir (${(opened.changed_files || []).join(', ') || 'main moved'}), so I did not write the old version. My team rebuilt and re-reviewed it against the current source. Because the change is different now, it needs your approval again: say "create the PR" or approve the new card.\n\n\`\`\`che-update\n${JSON.stringify(rebuilt.proposal)}\n\`\`\``,
+          message: proposalSummaryMessage(rebuilt.proposal, 'The code changed on GitHub after I prepared that update, sir, so I did not write the old version. My team rebuilt and re-reviewed it against the current source, and because it is different now it needs your approval again.'),
         };
       }
       return { ok: false, opened, message: rebuilt?.owner_message || ownerEngineeringMessage(rebuilt?.failure_class || FAILURE_CLASS.INTERNAL) };
@@ -2073,6 +2103,19 @@ async function handleSelfUpdateChatAction(env, storage, intent, ops = {}) {
       message: `Real draft PR #${opened.number} is open, sir. Branch: ${opened.branch}. Commit: ${opened.commit_sha || 'GitHub did not return the commit SHA'}. ${opened.url}`,
     };
   }
+  if (intent.kind === 'show-code') {
+    const pending = await storage.get(PENDING_SELF_UPDATE_KEY).catch(() => null);
+    if (!pending?.proposal) return { ok: true, message: 'There is no reviewed change waiting right now, sir.' };
+    const diff = String(pending.diff || '').trim();
+    const files = pending.proposal.files.map((file) => file.path).join(', ');
+    return {
+      ok: true,
+      message: diff
+        ? `Here is what changes, sir (${files}):\n\n\`\`\`diff\n${diff.slice(0, 6000)}\n\`\`\``
+        : `The change touches ${files}, sir. I don't have a line-by-line view saved for this one; the pull request will show it.`,
+    };
+  }
+
   if (intent.kind === 'merge') {
     const last = await storage.get(LAST_SELF_UPDATE_PR_KEY).catch(() => null);
     if (!last?.number) return { ok: false, message: 'There is no CHE pull request to merge yet, sir.' };
@@ -2281,13 +2324,14 @@ async function dispatchChange(env, body, memory = null, options = {}) {
       proposal: prepared.proposal,
       request: request.slice(0, 16000),
       team: prepared.team || [],
+      diff: String(prepared.diff || '').slice(0, 20000),
       reviewed_at: new Date().toISOString(),
     }).catch(() => null);
   }
-  const team = Array.isArray(prepared.team) ? prepared.team.join(', ') : 'CHE engineering team';
-  const proposalBlock = '```che-update\n' + JSON.stringify(prepared.proposal) + '\n```';
   return json({
-    message: `${team} wrote and reviewed that change, sir. Nothing has been applied yet. Say "create the PR" by voice/text or approve the update card; either route opens the same real draft pull request.\n\n${proposalBlock}`,
+    // Owner preference: no code in chat unless he asks ("show me the code").
+    message: proposalSummaryMessage(prepared.proposal),
+    pending_update: true,
     engineering_team: prepared.team || [],
     code_review_passed: true,
     owner_approval_required: true,
@@ -5835,7 +5879,7 @@ export class CheState extends DurableObject {
           /\b(?:add|apply|put|install|merge)\b[\s\S]{0,100}\b(?:this|the)\s+code\b[\s\S]{0,100}\b(?:to|into)\s+(?:che|your app|yourself)\b/i.test(message));
         if (selfChangeRequest) {
           // Same reviewed pipeline as every other coding route: the proposal
-          // is saved for "create the PR", rendered as a real che-update card,
+          // is saved for "create the PR" (no code is put in chat unless asked),
           // and failures are classified instead of dumped into chat.
           return ownerDevice
             ? this.selfDevelopmentReply(message, { vectorRecall })
@@ -6748,7 +6792,7 @@ export class CheState extends DurableObject {
     return { job, deduplicated, paused: !data.autonomy };
   }
 
-  // Owner chat reply for a coding request. Proposal → che-update card;
+  // Owner chat reply for a coding request. Proposal → short summary;
   // failures → one human-level sentence (diagnostics stay on the Worker).
   async selfDevelopmentReply(message, { vectorRecall = {} } = {}) {
     const response = await dispatchChange(this.env, { request: message }, this.ctx.storage, {
@@ -7003,13 +7047,14 @@ export class CheState extends DurableObject {
         proposal: prepared.proposal,
         request: String(job.request || job.prompt).slice(0, 16000),
         team: prepared.team || [],
+        diff: String(prepared.diff || '').slice(0, 20000),
         reviewed_at: new Date().toISOString(),
         from_job: job.id,
       });
       return {
         id: job.id,
         status: 'complete',
-        result: `${prepared.proposal.summary}\n\n\`\`\`che-update\n${JSON.stringify(prepared.proposal)}\n\`\`\``,
+        result: proposalSummaryMessage(prepared.proposal, 'The coding job I saved finished, sir.'),
         owner_message: 'The coding job I saved finished, sir. The change was built and independently reviewed; say "create the PR" or approve the update card to open it.',
         error: '',
       };
