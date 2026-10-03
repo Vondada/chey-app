@@ -32,7 +32,7 @@ import { discoverKeylessModels, engineStatus, routedEnv } from './ai_router.js';
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
-import { candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
+import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
@@ -2385,7 +2385,7 @@ async function dispatchChange(env, body, memory = null, options = {}) {
   if (memory?.put) await memory.put(LAST_ENGINEERING_REQUEST_KEY, { request: request.slice(0, 4000), integrate: true, at: new Date().toISOString() }).catch(() => null);
   let prepared;
   try {
-    prepared = await prepareSelfUpdate(env, groundedRequest, fetch, memory, { ownerInitiated: true });
+    prepared = await prepareSelfUpdate(env, groundedRequest, fetch, memory, { ownerInitiated: true, intentRequest: request });
   } catch (error) {
     console.error('CHE change request failed', error?.message || error);
     const { failure_class: failureClass, kind } = classifyFailure(error);
@@ -4088,6 +4088,9 @@ export class CheState extends DurableObject {
       // ─── Markets desk (real quotes only; unavailable says so) ───────────
       if (path === '/api/markets/snapshot' && request.method === 'GET') {
         return json(await marketSnapshot(this.env));
+      }
+      if (path === '/api/trading/account' && request.method === 'GET') {
+        return json(await marketAccountSnapshot(this.env));
       }
       // ─── Trading Lab: swings, entries, patterns, backtests, paper trades ──
       if (path === '/api/trading/analyze' && request.method === 'GET') {

@@ -69,6 +69,7 @@ class CheMarketsRoom extends StatefulWidget {
     required this.actions,
     required this.onAsk,
     this.client,
+    this.onOpenTradingApp,
   });
 
   final String Function() baseUrl;
@@ -78,6 +79,9 @@ class CheMarketsRoom extends StatefulWidget {
   /// Sends a prompt to CHE (e.g. "Analyze S&P 500 structure").
   final void Function(String prompt) onAsk;
   final http.Client? client;
+
+  /// Opens a supported trading website inside CHE's in-app browser.
+  final void Function(String appName)? onOpenTradingApp;
 
   @override
   State<CheMarketsRoom> createState() => _CheMarketsRoomState();
@@ -97,6 +101,9 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
   List<CheCandle> _candles = const [];
   String? _chartNote;
   Timer? _timer;
+  // Live broker account from the Worker (/api/trading/account); null = unknown.
+  Map<String, dynamic>? _account;
+  Timer? _accountTimer;
 
   @override
   void initState() {
@@ -104,11 +111,30 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
     unawaited(_load());
     unawaited(_loadCandles());
     _timer = Timer.periodic(const Duration(seconds: 60), (_) => unawaited(_load()));
+    unawaited(_loadAccount());
+    _accountTimer = Timer.periodic(const Duration(seconds: 30), (_) => unawaited(_loadAccount()));
+  }
+
+  Future<void> _loadAccount() async {
+    try {
+      _account = await _get('/api/trading/account');
+    } catch (_) {
+      _account = null;
+    }
+    if (mounted) setState(() {});
+  }
+
+  String _money(Object? value, [String currency = 'USD']) {
+    final n = value is num ? value.toDouble() : double.tryParse('$value');
+    if (n == null) return '—';
+    final symbol = currency.toUpperCase() == 'USD' ? '\$' : '${currency.toUpperCase()} ';
+    return '$symbol${n.toStringAsFixed(2)}';
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _accountTimer?.cancel();
     super.dispose();
   }
 
@@ -237,6 +263,14 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
                 child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                   if (_error != null)
                     Text('Market data: $_error', style: CheType.caption.copyWith(color: CheColors.warning)),
+                  _LiveAccountCard(
+                    account: _account,
+                    money: _money,
+                    onOpenNinjaTrader: widget.onOpenTradingApp == null
+                        ? null
+                        : () => widget.onOpenTradingApp!('NinjaTrader'),
+                  ),
+                  const SizedBox(height: CheSpace.md),
                   SizedBox(
                     height: 84,
                     child: ListView.separated(
@@ -549,3 +583,82 @@ class _CandlePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _CandlePainter old) => old.candles != candles;
 }
+
+class _LiveAccountCard extends StatelessWidget {
+  const _LiveAccountCard({
+    required this.account,
+    required this.money,
+    this.onOpenNinjaTrader,
+  });
+
+  final Map<String, dynamic>? account;
+  final String Function(Object? value, [String currency]) money;
+  final VoidCallback? onOpenNinjaTrader;
+
+  @override
+  Widget build(BuildContext context) {
+    final a = account;
+    final connected = a?['connected'] == true;
+    final live = a?['live'] == true;
+    final currency = '${a?['currency'] ?? 'USD'}';
+    final primary = a?['equity'] ?? a?['balance'];
+    final accountName = '${a?['account_name'] ?? ''}'.trim();
+    final detail = '${a?['detail'] ?? ''}'.trim();
+
+    return Semantics(
+      container: true,
+      label: live
+          ? 'Live trading account. ${accountName.isEmpty ? '' : '$accountName. '}Equity ${money(primary, currency)}.'
+          : 'Live trading account is not connected.',
+      child: Container(
+        padding: const EdgeInsets.all(CheSpace.lg),
+        decoration: BoxDecoration(
+          color: const Color(0xFF090F12),
+          borderRadius: BorderRadius.circular(CheRadius.lg),
+          border: Border.all(color: live ? const Color(0xFF3DDC97) : CheColors.strokeHi),
+          boxShadow: live
+              ? [BoxShadow(color: const Color(0xFF3DDC97).withValues(alpha: 0.12), blurRadius: 24)]
+              : null,
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Text('LIVE ACCOUNT', style: CheType.overline.copyWith(color: live ? const Color(0xFF3DDC97) : CheColors.textDim)),
+            const Spacer(),
+            Text(live ? 'LIVE' : connected ? 'CONNECTOR OFFLINE' : 'NOT CONNECTED',
+                style: CheType.caption.copyWith(color: live ? const Color(0xFF3DDC97) : CheColors.warning, fontWeight: FontWeight.w700)),
+          ]),
+          const SizedBox(height: 6),
+          Text(
+            live ? money(primary, currency) : '—',
+            style: CheType.display.copyWith(fontSize: 38, color: Colors.white, fontWeight: FontWeight.w800),
+          ),
+          if (accountName.isNotEmpty) Text(accountName, style: CheType.bodyDim),
+          if (live) ...[
+            const SizedBox(height: CheSpace.sm),
+            Wrap(spacing: 18, runSpacing: 6, children: [
+              Text('Balance ${money(a?['balance'], currency)}', style: CheType.caption),
+              Text('Buying power ${money(a?['buying_power'], currency)}', style: CheType.caption),
+            ]),
+          ] else ...[
+            const SizedBox(height: 4),
+            Text(
+              detail.isNotEmpty
+                  ? detail
+                  : 'Sign in can stay inside CHE. A real balance appears here only when an authorized broker connector supplies it.',
+              style: CheType.caption,
+            ),
+          ],
+          if (onOpenNinjaTrader != null) ...[
+            const SizedBox(height: CheSpace.md),
+            OutlinedButton.icon(
+              onPressed: onOpenNinjaTrader,
+              icon: const Icon(Icons.candlestick_chart_rounded, size: 18),
+              label: const Text('Open NinjaTrader inside CHE'),
+            ),
+          ],
+        ]),
+      ),
+    );
+  }
+}
+

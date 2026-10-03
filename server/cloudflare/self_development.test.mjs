@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyEdits, attemptFingerprint, diagnoseNoOp, fallbackTreeCandidates, focusView, jsonObject, literalTerms, loadLessons, prepareSelfUpdate, recordLesson, substantiveChange, unusedNewCode, wantsDocsOnly } from './self_development.js';
+import { applyEdits, attemptFingerprint, diagnoseNoOp, fallbackTreeCandidates, focusView, isUiTask, jsonObject, literalTerms, loadLessons, prepareSelfUpdate, rankSourcePaths, recordLesson, substantiveChange, unusedNewCode, wantsDocsOnly } from './self_development.js';
 
 const MAIN = `class Home {\n  String _statusBanner = 'Ready. Type or speak a request.';\n}\n`;
 const PATCH = `const t = Text('CHE updated. Restart to apply.');\n`;
@@ -31,6 +31,81 @@ function fakeGitHub() {
 
 test('literalTerms pulls quoted on-screen text', () => {
   assert.deepEqual(literalTerms('make the banner "Ready. Type or speak" say hi'), ['Ready. Type or speak']);
+});
+
+test('UI classification uses the owner intent, not generic architecture/reference words', () => {
+  assert.equal(isUiTask('Change the Ready banner text on the home screen.'), true);
+  assert.equal(isUiTask('Redesign the agent architecture and workflow; reference docs mention UI screen design and text labels.'), true);
+  assert.equal(isUiTask('Improve agent architecture, delegation, memory, research, retries, review, and workflow state management.'), false);
+});
+
+test('broad architecture requests infer real CHE source modules when code search has no exact phrase', () => {
+  const paths = [
+    'server/cloudflare/agent_runtime.js',
+    'server/cloudflare/code_scout.js',
+    'server/cloudflare/self_development.js',
+    'server/cloudflare/self_update.js',
+    'server/cloudflare/worker.js',
+    'lib/rooms/che_theater_room.dart',
+  ];
+  const ranked = rankSourcePaths(
+    paths,
+    'Improve agent delegation, handoffs, parallel planning, memory RAG, research, coding review, retries and workflow reliability.',
+    6,
+  );
+  assert.ok(ranked.includes('server/cloudflare/agent_runtime.js'));
+  assert.ok(ranked.includes('server/cloudflare/self_development.js'));
+  assert.ok(ranked.includes('server/cloudflare/code_scout.js'));
+});
+
+test('reference README UI words do not turn a broad owner architecture request into a UI job', async () => {
+  const files = {
+    'server/cloudflare/agent_runtime.js': "export function delegateAgent() { return 'ready'; }\n",
+  };
+  const fetcher = async (url) => {
+    const u = String(url);
+    const ok = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (u.includes('/search/code')) return ok({ items: [] });
+    if (u.endsWith('/o/r')) return ok({ default_branch: 'main' });
+    if (u.includes('/git/ref/')) return ok({ object: { sha: 'abc' } });
+    if (u.includes('/git/trees/')) return ok({ tree: Object.keys(files).map((path) => ({ type: 'blob', path })) });
+    const m = /\/contents\/(.+)\?ref=/.exec(u);
+    if (m && files[m[1]]) return ok({ content: btoa(files[m[1]]) });
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const roles = [];
+  const env = {
+    CHE_GITHUB_TOKEN: 't',
+    CHE_GITHUB_REPO: 'o/r',
+    AI: {
+      run: async (_model, input) => {
+        const system = input.messages[0].content;
+        roles.push(system);
+        if (system.includes('Architect')) {
+          return { response: JSON.stringify({
+            plan: 'Inspect the agent runtime.',
+            search_terms: ['delegateAgent'],
+            paths: ['server/cloudflare/agent_runtime.js'],
+          }) };
+        }
+        if (system.includes('No-Change Verification Agent')) {
+          return { response: JSON.stringify({ approved: true, notes: ['Verified.'], repair_instructions: '' }) };
+        }
+        return { response: JSON.stringify({
+          no_change: true,
+          summary: 'The requested agent capability is already present.',
+          evidence: ['server/cloudflare/agent_runtime.js exports delegateAgent.'],
+        }) };
+      },
+    },
+  };
+  const owner = 'Improve agent delegation, handoffs, parallel planning, memory, research, review, retries and workflow reliability.';
+  const grounded = owner + '\n\nREFERENCE MATERIAL: this external README discusses UI screens, visual design, labels and text.';
+  const out = await prepareSelfUpdate(env, grounded, fetcher, memoryStore(), { intentRequest: owner });
+  assert.equal(out.status, 200, out.detail);
+  assert.equal(out.already_satisfied, true);
+  assert.ok(roles.some((system) => system.includes('CHE Software Architect')));
+  assert.ok(!roles.some((system) => system.includes('CHE UI/UX Architect')));
 });
 
 test('applyEdits requires exact, unique find text', () => {

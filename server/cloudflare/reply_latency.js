@@ -4,6 +4,11 @@
 const HEAVY_TURN = /\b(debug|code|implement|architect|research|analy[sz]e|analysis|report|backtest|legal|financial|medical|compare|plan|design|build|fix|investigate|write|create|generate|image|video|delegate|screenplay|novel|campaign|latest|current|prior art|feasib)\b/i;
 
 /**
+ * Headers used to trigger edge-side pre-warming for high-traffic endpoints.
+ */
+export const WARMUP_HEADERS = { 'x-che-warmup': '1' };
+
+/**
  * True when the owner turn is short, has no requested specialist caps, and
  * does not look like a deep/tool-heavy job. Used to skip slow pre-work and
  * prefer the compact/fast model route.

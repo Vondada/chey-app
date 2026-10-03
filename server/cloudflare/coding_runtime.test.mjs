@@ -27,8 +27,9 @@ test('request validation refuses secrets before dispatch', () => {
 });
 
 test('session ids are stable for the same coding job', () => {
-  const input = { repo: 'Vondada/chey-app', baseSha: 'abcdef1', targetBranch: 'che/test', ownerRequest: 'Fix the voice bug', jobId: 'job-1' };
+  const input = { repo: 'Vondada/chey-app', baseSha: 'abcdef1', targetBranch: 'che/test', ownerRequest: 'Fix the voice bug', jobId: 'job-1', model: 'openrouter/openai/gpt-oss-20b:free' };
   assert.equal(runtimeSessionId(input), runtimeSessionId(input));
+  assert.notEqual(runtimeSessionId(input), runtimeSessionId({ ...input, model: 'groq/openai/gpt-oss-20b' }));
 });
 
 test('createSession dispatches the pinned workflow with compact inputs', async () => {

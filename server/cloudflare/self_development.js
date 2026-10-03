@@ -302,8 +302,61 @@ async function readFile(env, ref, path, fetcher) {
   try { return { text: decodeBase64Utf8(found.data.content), sha: String(found.data.sha || '') || null }; } catch (_) { return null; }
 }
 
-function isUiTask(request) {
-  return /\b(ui|ux|screen|page|layout|button|card|navigation|nav|color|theme|font|spacing|menu|panel|interface|visual|design|redesign|banner|label|text|title)\b/i.test(request);
+export function isUiTask(request) {
+  const text = String(request || '');
+  // Classify the owner's request, not appended RAG/README/reference material.
+  // A broad architecture prompt often contains words like "UI", "design" or
+  // "text" inside reference docs; those must not turn the whole job into UI work.
+  if (/\b(?:ui|ux|screen|page|layout|navigation|menu|panel|interface|widget)\b/i.test(text)) return true;
+  const visibleElement = /\b(?:button|card|banner|label|title|font|color|theme|spacing|visible text)\b/i.test(text);
+  const changeVerb = /\b(?:change|rename|redesign|restyle|move|rearrange|add|remove|hide|show|fix|improve|update|make)\b/i.test(text);
+  return visibleElement && changeVerb;
+}
+
+const SOURCE_TERM_STOP = new Set([
+  'about','after','again','against','already','also','and','anything','apply','before','being','better','codebase',
+  'compare','current','does','everything','from','give','into','just','latest','make','more','only','owner','project',
+  'request','should','source','study','than','that','their','them','then','there','these','they','this','through','use',
+  'using','what','when','where','which','with','would','your','che',
+]);
+
+export function rankSourcePaths(paths, request, limit = 6) {
+  const words = [...new Set(
+    (String(request || '').toLowerCase().match(/[a-z][a-z0-9_-]{2,}/g) || [])
+      .filter((word) => word.length >= 4 && !SOURCE_TERM_STOP.has(word)),
+  )];
+  const alias = new Map([
+    ['agent', ['agent','office','team','delegate','handoff','orchestrat']],
+    ['agents', ['agent','office','team','delegate','handoff','orchestrat']],
+    ['delegation', ['agent','delegate','handoff','office']],
+    ['handoffs', ['handoff','agent','office']],
+    ['memory', ['memory','vector','rag','context','brain']],
+    ['context', ['context','memory','rag','vector']],
+    ['research', ['research','scout','inspiration']],
+    ['inspirations', ['scout','inspiration','research']],
+    ['starred', ['scout','inspiration']],
+    ['coding', ['self_development','self_update','code','develop']],
+    ['review', ['review','test','self_development']],
+    ['workflow', ['workflow','pipeline','runtime','state','orchestrat']],
+    ['retries', ['retry','resilience']],
+    ['recovery', ['retry','resilience','recover']],
+    ['reliability', ['resilience','retry','health']],
+    ['parallel', ['agent','runtime','orchestrat','team']],
+    ['planning', ['plan','agent','office']],
+  ]);
+  const needles = new Set(words);
+  for (const word of words) for (const extra of alias.get(word) || []) needles.add(extra);
+  const ranked = (Array.isArray(paths) ? paths : []).map((path) => {
+    const lower = String(path).toLowerCase();
+    let score = 0;
+    for (const needle of needles) {
+      if (lower.includes(needle)) score += needle.length >= 7 ? 3 : 1;
+    }
+    if (/server\/cloudflare\/(?:self_development|self_update|code_scout|agent_runtime|worker)\./.test(lower)) score += 1;
+    return { path: String(path), score };
+  }).filter((item) => item.score > 0);
+  ranked.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+  return ranked.slice(0, Math.max(1, limit)).map((item) => item.path);
 }
 
 // ─── Team memory: every mistake becomes a rule, every find becomes a shortcut ───
@@ -975,7 +1028,8 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     };
   }
   const task = String(request || '').trim().slice(0, 16000);
-  if (!task) return { status: 400, detail: 'Describe the requested app change.' };
+  const ownerIntent = String(options?.intentRequest || request || '').trim().slice(0, 16000);
+  if (!task || !ownerIntent) return { status: 400, detail: 'Describe the requested app change.' };
   const ctx = createContext(env, task, options);
   const finish = (result) => ({ ...result, diagnostics: { budget: ctx.budget.snapshot(), events: ctx.diagnostics.slice(-40), outcomes: ctx.outcomes.slice(-30) } });
 
@@ -993,7 +1047,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         owner_message: ownerEngineeringMessage(cls, kind),
       });
     }
-    const uiTask = isUiTask(task);
+    const uiTask = isUiTask(ownerIntent);
 
     // 1. Two architects in parallel on different engines; plans are merged.
     const plans = await Promise.all(CREW.planners.map(async (member) => {
@@ -1008,7 +1062,8 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
           'Return ONLY JSON: {"plan":"...","search_terms":["exact text or identifier"],"paths":["an actual repository path"]}.',
         ].join('\n'),
         payload: (budget) => ({
-          request: task,
+          owner_request: ownerIntent,
+          engineering_context: task,
           editable_source_files: listForBudget(index.editable_paths, Math.floor(budget * 0.6)),
           readable_source_files: listForBudget(index.paths.filter((p) => !isSelfUpdateEditablePath(p)), Math.floor(budget * 0.15)),
           team_lessons: lessonText(lessons),
@@ -1027,8 +1082,8 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       paths: good.flatMap((p) => (Array.isArray(p.paths) ? p.paths : [])).map(String),
     };
     const terms = [...new Set([
-      ...literalTerms(task),
-      ...architecture.search_terms,
+      ...literalTerms(ownerIntent),
+      ...(Array.isArray(architecture.search_terms) ? architecture.search_terms.map(String) : []),
     ])].filter((t) => t.trim().length > 2).slice(0, 8);
 
     // 2. Locate: real code search beats guessing from file names. Planner
@@ -1036,7 +1091,8 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     const hits = await searchCode(ctx, terms, fetcher);
     const ranked = [...hits.entries()].sort((a, b) => b[1] - a[1]).map(([path]) => path);
     const planned = architecture.paths.filter((p) => index.paths.includes(p));
-    let chosen = [...new Set([...ranked, ...planned])].filter((path) => index.paths.includes(path)).slice(0, 5);
+    const inferred = rankSourcePaths(index.editable_paths, ownerIntent, 6);
+    let chosen = [...new Set([...ranked, ...planned, ...inferred])].filter((path) => index.paths.includes(path)).slice(0, 6);
     if (!chosen.length && terms.length) {
       const scanned = await contentScan(ctx, index, task, terms, fetcher);
       for (const [path, score] of scanned.entries()) hits.set(path, (hits.get(path) || 0) + score);

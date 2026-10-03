@@ -119,6 +119,11 @@ Future<void> _pumpUntilFound(
   expect(finder, findsWidgets);
 }
 
+/// The desk sheet's own list (a TextField also contains a Scrollable).
+final _deskList = find
+    .descendant(of: find.byType(DraggableScrollableSheet), matching: find.byType(Scrollable))
+    .first;
+
 void main() {
   test('short summaries keep titles glanceable', () {
     expect(cheShortSummary('Find competitors'), 'Find competitors');
@@ -243,10 +248,16 @@ void main() {
     await tester.scrollUntilVisible(
       find.text('Approved by CHE'),
       160,
-      scrollable: find.byType(Scrollable).last,
+      scrollable: _deskList,
     );
     expect(find.text('Approved by CHE'), findsOneWidget);
 
+    await tester.scrollUntilVisible(
+      find.byTooltip('Send task'),
+      160,
+      scrollable: _deskList,
+    );
+    await tester.pump();
     await tester.enterText(find.byType(TextField).first, 'Check pricing');
     await tester.tap(find.byTooltip('Send task'));
     await tester.pump();
@@ -283,12 +294,16 @@ void main() {
     await tester.tap(find.bySemanticsLabel(RegExp(r"CHE.*Open to talk or send a request")));
     await _pumpUntilFound(tester, find.text('CURRENT JOB'));
     // The desk sheet now lists job, capabilities, skills and limits first.
-    await tester.ensureVisible(find.text('Talk to CHE', skipOffstage: false));
+    await tester.scrollUntilVisible(
+      find.text('Talk to CHE'),
+      160,
+      scrollable: _deskList,
+    );
     await tester.pump();
     await tester.scrollUntilVisible(
       find.text('REQUEST TO CHE'),
       160,
-      scrollable: find.byType(Scrollable).last,
+      scrollable: _deskList,
     );
 
     expect(find.text('Talk to CHE'), findsWidgets);
@@ -298,6 +313,9 @@ void main() {
     expect(seen.any((r) => r.url.path == '/api/agents/che'), isFalse);
     expect(seen.any((r) => r.url.path == '/api/agents' && r.method == 'GET'), isTrue);
 
+    final talk = find.widgetWithText(FilledButton, 'Talk to CHE', skipOffstage: false);
+    await tester.ensureVisible(talk);
+    await tester.pump();
     await tester.tap(find.widgetWithText(FilledButton, 'Talk to CHE'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));

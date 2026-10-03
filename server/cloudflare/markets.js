@@ -124,3 +124,68 @@ export async function snapshot(env, fetcher = fetch) {
     };
   });
 }
+
+
+function moneyNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function firstMoney(data, keys) {
+  for (const key of keys) {
+    const value = moneyNumber(data?.[key]);
+    if (value != null) return value;
+  }
+  return null;
+}
+
+// Read-only live trading account summary. CHE never scrapes or invents an
+// account balance: the number must come from the owner's authorized broker
+// connector. A normal web login alone is not treated as broker API access.
+export async function accountSnapshot(env, fetcher = fetch) {
+  if (!env.CHE_BROKER_URL) {
+    return {
+      connected: false,
+      live: false,
+      source: 'Broker connector not connected',
+      detail: 'Sign-in can stay inside CHE, but live balance/equity requires an authorized broker connector.',
+    };
+  }
+  return cached('broker-account', 5000, async () => {
+    try {
+      const response = await fetcher(env.CHE_BROKER_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(env.CHE_BROKER_TOKEN ? { Authorization: `Bearer ${env.CHE_BROKER_TOKEN}` } : {}),
+        },
+        body: JSON.stringify({ tool: 'account_snapshot', mode: 'read_only' }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const raw = await response.json();
+      const data = raw?.account && typeof raw.account === 'object' ? raw.account : raw;
+      const balance = firstMoney(data, ['balance', 'cash_balance', 'account_balance', 'net_liquidation', 'net_liq']);
+      const equity = firstMoney(data, ['equity', 'net_liquidation', 'net_liq', 'account_value']);
+      const buyingPower = firstMoney(data, ['buying_power', 'buyingPower', 'available_funds', 'available']);
+      if (balance == null && equity == null && buyingPower == null) throw new Error('connector returned no account amounts');
+      return {
+        connected: true,
+        live: true,
+        account_name: String(data?.account_name || data?.name || data?.account || data?.account_id || '').slice(0, 100),
+        currency: String(data?.currency || 'USD').slice(0, 8),
+        balance,
+        equity,
+        buying_power: buyingPower,
+        as_of: String(data?.as_of || data?.timestamp || new Date().toISOString()),
+        source: 'Your authorized broker connector',
+      };
+    } catch (error) {
+      return {
+        connected: true,
+        live: false,
+        source: 'Broker connector',
+        detail: `Live account unavailable: ${String(error?.message || error).slice(0, 180)}`,
+      };
+    }
+  });
+}
