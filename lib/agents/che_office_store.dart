@@ -40,11 +40,23 @@ class CheDeskView {
   int get hashCode => Object.hash(agent.id, agent.name, agent.role, agent.status, agent.task, agent.color, note);
 }
 
+extension CheOfficeStoreIndex on CheOfficeStore {
+  void updateAgentCache(List<CheAgent> agents) {
+    _agentCache.clear();
+    for (final agent in agents) {
+      _agentCache[agent.id] = agent;
+    }
+  }
+
+  CheAgent? getAgent(String id) => _agentCache[id];
+}
+
 /// Counts as working on the floor: anything but idle, offline or done.
 bool cheAgentIsWorking(CheAgentStatus status) =>
     !const {CheAgentStatus.idle, CheAgentStatus.offline, CheAgentStatus.done}.contains(status);
 
 class CheOfficeStore extends ChangeNotifier {
+  final Map<String, CheAgent> _agentCache = {};
   CheOfficeStore();
 
   static const cheId = 'che';
