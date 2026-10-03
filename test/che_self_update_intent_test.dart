@@ -23,6 +23,18 @@ void main() {
     );
   });
 
+  test('natural CHE surface changes route to controlled self-update', () {
+    expect(
+      cheIsSelfUpdateRequest(
+        'CHE, find where your Office screen displays agent status. Change one small visual detail that improves readability. Figure out the correct files yourself, make the change, test it, review it, and report what you changed.',
+      ),
+      isTrue,
+    );
+    expect(cheIsSelfUpdateRequest('Improve the Office agent status readability and test it.'), isTrue);
+    expect(cheIsSelfUpdateRequest('Where is the Office screen implemented?'), isFalse);
+    expect(cheIsSelfUpdateRequest('What does agent status mean?'), isFalse);
+  });
+
   test('GitHub information question is not a self-update', () {
     expect(cheIsSelfUpdateRequest('how do I make a GitHub token?'), isFalse);
     expect(cheIsSelfUpdateRequest('what does pull request mean?'), isFalse);
