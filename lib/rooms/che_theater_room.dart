@@ -111,7 +111,7 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
   final CheTheaterGuard _guard = CheTheaterGuard();
   final TextEditingController _address = TextEditingController();
   WebViewController? _web;
-  String _status = 'Say or type a video page address, or open iWebTV.';
+  String _status = 'Say or type a video page address, or activate the Theater TV.';
   String? _blockedUrl;
   int _blockedCount = 0;
   bool _watching = false;
@@ -528,10 +528,10 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
           child: Wrap(spacing: CheSpace.sm, runSpacing: CheSpace.xs, children: [
             Semantics(
               button: true,
-              label: 'Open the iWebTV app. CHE asks you to confirm first.',
+              label: 'Open the separate iWebTV app. This leaves CHE and requires confirmation.',
               excludeSemantics: true,
               onTap: _openIWebTv,
-              child: OutlinedButton.icon(onPressed: _openIWebTv, icon: const Icon(Icons.cast_rounded, size: 18), label: const Text('Open iWebTV')),
+              child: OutlinedButton.icon(onPressed: _openIWebTv, icon: const Icon(Icons.cast_rounded, size: 18), label: const Text('iWebTV app · leaves CHE')),
             ),
             if (web != null)
               Semantics(
