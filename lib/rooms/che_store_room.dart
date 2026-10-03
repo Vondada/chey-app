@@ -4,6 +4,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import '../widgets/che_native_scene_world.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -341,6 +342,26 @@ class _CheStoreRoomState extends State<CheStoreRoom> {
             if (_loading) const LinearProgressIndicator(),
             if (_error != null)
               Card(child: ListTile(leading: const Icon(Icons.error_outline), title: const Text('Store unavailable'), subtitle: Text(_error!))),
+            ValueListenableBuilder<CheSceneQuality>(
+              valueListenable: CheSceneQualityStore.value,
+              builder: (context, quality, _) => CheNativeSceneWorld(
+                mode: CheSceneMode.store,
+                quality: quality,
+                height: 240,
+                semanticsLabel: 'Immersive CHE Studio Store',
+                entities: [
+                  for (final product in _proposals.take(12))
+                    CheSceneEntity(
+                      id: '${product['id']}',
+                      label: '${product['name'] ?? product['title'] ?? 'Product'}',
+                      description: '${product['status'] ?? 'pending'}',
+                      color: _teal,
+                      state: '${product['status'] ?? 'pending'}',
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
             const Text(
               'Nothing goes to Stripe until you tap Approve. CHE cannot refund, move money or spend.',
               style: TextStyle(color: Colors.white54),
