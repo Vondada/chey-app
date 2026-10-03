@@ -505,3 +505,11 @@ test('update-yourself PR capability wording reaches self-development instead of 
   assert.equal(intent?.kind, 'access');
   assert.equal(shouldHandleSelfUpdateAction(message, intent), false);
 });
+
+
+test('Copilot: improve-your-code capability request routes to self-development', () => {
+  const message = 'Can you improve your code so you can create a PR?';
+  const intent = selfUpdateChatIntent(message);
+  assert.equal(intent?.kind, 'access');
+  assert.equal(shouldHandleSelfUpdateAction(message, intent), false);
+});
