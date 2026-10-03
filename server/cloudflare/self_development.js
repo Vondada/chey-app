@@ -540,14 +540,17 @@ export function substantiveChange(beforeMap, files) {
 
 export function wantsDocsOnly(request) {
   const text = String(request || '').trim();
-  const docs = /\b(?:doc(?:s|umentation)?|readme|comments?|changelog|notes?|guide|docstrings?)\b/i;
+  const docs = /\b(?:doc(?:s|ument(?:s|ation)?)?|readme|comments?|changelog|notes?|guide|docstrings?)\b/i;
   if (!docs.test(text)) return false;
 
   const functionalAction = /\b(?:build|rebuild|redesign|implement|make|upgrade|refactor|develop|ship|fix|update|add|create|edit|improve|change)\b/i;
   const docsAction = /\b(?:fix|update|add|create|write|edit|improve|change|correct|refresh|document)\b/i;
-  const clauses = text
+  // Protect dots inside filenames/paths (README.md, docs/setup.md) before
+  // treating punctuation as a sentence boundary.
+  const protectedText = text.replace(/(?<=[\w/-])\.(?=[\w/-])/g, '\u0000');
+  const clauses = protectedText
     .split(/\b(?:and|plus|also|along\s+with|as\s+well\s+as|then|while|whereas)\b|[,;&]|[;.!?]+/i)
-    .map((clause) => clause.trim())
+    .map((clause) => clause.replace(/\u0000/g, '.').trim())
     .filter(Boolean);
 
   let sawDocsTarget = false;
