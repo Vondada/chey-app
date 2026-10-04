@@ -67,7 +67,7 @@ Then, on GitHub:
 **Since then (2026-10-04 evening):**
 - #175 merged (c8804a1): Codex review fixes for the group chats. Shorebird OTA patch dispatched.
 - ChatGPT merged #173 and #174 earlier; Claude reviewed both, no conflicts.
-- **Open PR #176** (`claude/autonomy-edit-recovery`, head 587a355). Owner said "do NOT merge yet". It fixes the live War Room autonomy stress-test failure at its root causes:
+- **Open PR #176** (`claude/autonomy-edit-recovery`, head 8d15113; adds deterministic code-graph discovery `traceSourceGraph` + the autonomy exam `discovery_exam.test.mjs`, 524 Worker tests pass. GROUND TRUTH: the War Room renders through lib/widgets/che_native_scene_world.dart; assets/office3d/warroom.html is DEAD, never edit it). Owner said "do NOT merge yet". It fixes the live War Room autonomy stress-test failure at its root causes:
   - evidence packing hid the target file's real code;
   - failed anchors gave no usable feedback;
   - "Create the PR. Continue…" started a new job;
