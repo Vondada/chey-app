@@ -37,6 +37,9 @@ test('starred GitHub intent distinguishes research from implementation', () => {
   assert.equal(intent.integrate, true);
   assert.equal(repositoryImplementationIntent(implementationText), true);
   assert.equal(repositoryImplementationIntent('Inspect my starred GitHub repos for agent and RAG systems.'), false);
+  assert.equal(repositoryImplementationIntent('Run a comprehensive autonomy stress test against the current main branch and verify background job recovery.'), true);
+  assert.equal(repositoryImplementationIntent('Audit CHE's coding runner and fix any faulty workflow you find.'), true);
+  assert.equal(repositoryImplementationIntent('Tell me what autonomous coding means.'), false);
   assert.equal(starredRepoIntent('change the text on my home screen'), null);
 });
 
