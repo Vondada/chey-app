@@ -64,17 +64,25 @@ Then, on GitHub:
 
 **Not Claude's:** #166 (`chatgpt/autonomy-orchestration-hardening`) belongs to ChatGPT.
 
-**Since then:**
-- #172 merged (7c20395), but one commit early.
-- ChatGPT merged #173 (Flagstaff repository grounding) and #174 (tiered repository discovery). Claude reviewed both: no conflicts. Suggestions were sent to `chatgpt.jsonl`.
-- **Open PR:** #175 (`claude/che-review-fixes`) re-lands the Codex review fixes for #169:
-  - real Office threads from `team_tasks`;
-  - spoken load failure;
-  - VoiceOver copy action;
-  - War Room objective as the title;
-  - globe rotation.
-  Merge with `[worker-deploy]` once green.
-- **Note:** when the owner says "Chase", he means **CHE**.
+**Since then (2026-10-04 evening):**
+- #175 merged (c8804a1): Codex review fixes for the group chats. Shorebird OTA patch dispatched.
+- ChatGPT merged #173 and #174 earlier; Claude reviewed both, no conflicts.
+- **Open PR #176** (`claude/autonomy-edit-recovery`, head 587a355). Owner said "do NOT merge yet". It fixes the live War Room autonomy stress-test failure at its root causes:
+  - evidence packing hid the target file's real code;
+  - failed anchors gave no usable feedback;
+  - "Create the PR. Continue…" started a new job;
+  - status contradicted itself (stale receipts, a failed job beside a waiting change, stale pending changes);
+  - false "three approaches" failure wording.
+  Worker tests: 519 pass. Needs `[worker-deploy]`, then re-run the War Room stress test live.
+- **Owner's starred repos**, from his screenshots, in GitHub's order:
+  - affaan-m/ECC (agent harness: skills, instincts, memory, security);
+  - Panniantong/Agent-Reach (agent web reading/search CLI);
+  - fffaraz/awesome-cpp;
+  - papers-we-love/papers-we-love;
+  - jaywcjlove/awesome-mac;
+  - Hack-with-Github/Awesome-Hacking.
+  Verify exact names on GitHub before integrating (queue item 4).
+- **Note:** "Chase" means **CHE**.
 
 **Next:** queue item 1 (Trading Room learning engine). Nothing is half-done; no WIP branches.
 
