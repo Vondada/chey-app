@@ -209,6 +209,19 @@ function prefixNdjson(response, text) {
   return new Response(stream, { status: response.status, headers: response.headers });
 }
 
+// Queues one autonomy exam level; `next` are the levels to run after it.
+function enqueueExamLevel(data, level, next = []) {
+  const spec = examLevel(level);
+  return enqueueJob(data, {
+    kind: 'autonomy_exam',
+    title: `Autonomy exam level ${level}: ${spec.name}`,
+    prompt: spec.request,
+    exam_level: level,
+    exam_next: next,
+    idempotency_key: idempotencyKey('job:autonomy_exam', `level ${level}`),
+  });
+}
+
 function ndjsonReply(reply, meta = {}) {
   return new Response(
     JSON.stringify({ type: 'delta', delta: reply }) + '\n' +
@@ -6091,26 +6104,18 @@ export class CheState extends DurableObject {
         if (exam?.kind === 'run') {
           if (!this.env.CHE_GITHUB_TOKEN || !this.env.CHE_GITHUB_REPO) return ndjsonReply('The autonomy exam needs my GitHub connection, sir, and it is not set up on the Worker. Nothing was started.', { source: 'che_autonomy_exam', ok: false });
           const fresh = await this.loadData();
-          const started = [];
-          exam.levels.forEach((level, i) => {
-            const spec = examLevel(level);
-            if (!spec) return;
-            const queued = enqueueJob(fresh, {
-              kind: 'autonomy_exam',
-              title: `Autonomy exam level ${level}: ${spec.name}`,
-              prompt: spec.request,
-              exam_level: level,
-              idempotency_key: idempotencyKey('job:autonomy_exam', `level ${level}`),
-              // One level at a time (CHE searches her own code index, so no
-              // GitHub search limit; the gap just keeps engines unhurried).
-              retry_at: Date.now() + i * 3 * 60_000,
-            });
-            started.push({ level, id: queued.job.id, deduplicated: queued.deduplicated });
-          });
+          // One level at a time, back to back: the first starts now and each
+          // finished level starts the next at once (see processJobs), with no
+          // fixed wait. Running them together would only race the free
+          // engines' rate limits and fail levels for the wrong reason.
+          const levels = exam.levels.filter((level) => examLevel(level));
+          const inFlight = fresh.jobs.find((job) => job.kind === 'autonomy_exam' && ['queued', 'running'].includes(job.status));
+          if (inFlight) return ndjsonReply(`An autonomy exam is already running, sir (level ${inFlight.exam_level}${inFlight.exam_next?.length ? `, then ${inFlight.exam_next.join(', ')}` : ''}). Say "autonomy exam results" anytime to hear the scores.`, { source: 'che_autonomy_exam', background_job_ids: [inFlight.id] });
+          const queued = levels.length ? enqueueExamLevel(fresh, levels[0], levels.slice(1)) : null;
           await this.ctx.storage.put('che', fresh);
           await this.scheduleWork();
-          const list = started.map((item) => `level ${item.level}${item.deduplicated ? ' (already running)' : ''}`).join(', ');
-          return ndjsonReply(`I started the autonomy exam, sir: ${list}. Each level is a real coding job on my own code, each harder than the last, run in practice mode so nothing is changed or sent to GitHub. They run one at a time, a few minutes apart. Say "autonomy exam results" anytime to hear the scores.${fresh.autonomy === false ? ' Autonomy is paused right now; say "resume" so the jobs can run.' : ''}`, { source: 'che_autonomy_exam', background_job_ids: started.map((item) => item.id) });
+          const list = levels.map((level) => `level ${level}`).join(', ');
+          return ndjsonReply(`I started the autonomy exam, sir: ${list}. Each level is a real coding job on my own code, each harder than the last, run in practice mode so nothing is changed or sent to GitHub. They run one at a time, each starting as soon as the one before finishes. Say "autonomy exam results" anytime to hear the scores.${fresh.autonomy === false ? ' Autonomy is paused right now; say "resume" so the jobs can run.' : ''}`, { source: 'che_autonomy_exam', background_job_ids: queued ? [queued.job.id] : [] });
         }
         // "Diagnose/recover the failed coding job": goes to the coding
         // pipeline, which builds on the retained failure evidence.
@@ -8535,6 +8540,14 @@ export class CheState extends DurableObject {
       if (outcome.owner_message !== undefined) job.owner_message = outcome.owner_message;
       if (outcome.failure_class !== undefined) job.failure_class = outcome.failure_class;
       job.updated_at = finishedAt;
+    }
+    // A finished exam level starts the next one immediately. A level that is
+    // only waiting to retry (engines busy) holds the rest back.
+    for (const outcome of results) {
+      const job = fresh.jobs.find((item) => item.id === outcome.id);
+      if (job?.kind !== 'autonomy_exam' || !['complete', 'failed'].includes(job.status) || !job.exam_next?.length) continue;
+      enqueueExamLevel(fresh, job.exam_next[0], job.exam_next.slice(1));
+      job.exam_next = [];
     }
     await this.ctx.storage.put('che', fresh);
     await this.scheduleWork();
