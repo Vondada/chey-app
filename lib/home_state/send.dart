@@ -447,6 +447,22 @@ extension _CheHomeSend on _CHEHomeState {
       return;
     }
 
+    // Brain space: "take me inside", "show my research memories", "find my
+    // memory about …", "open this memory", "expand this cluster", "back out".
+    final brainCommand = _pendingAttachment == null ? CheBrainCommand.parse(message) : null;
+    if (brainCommand != null && await _runBrainCommand(message, brainCommand)) return;
+
+    // "show the agent conversations", "open group chats", "what did the
+    // agents say": every AI/agent conversation as group chats.
+    if (_pendingAttachment == null &&
+        RegExp(r"^(?:(?:che|chey|chay)[,:]?\s+)?(?:show|open|read)(?: me)? (?:the |my )?(?:(?:agent|agents|ai|ais|office|war room|crew) (?:conversations|group chats|chats|messages)|group chats)\b|^what did (?:the )?(?:agents|crew|ais) say", caseSensitive: false)
+            .hasMatch(message.trim())) {
+      if (mounted) _set(() => controller.clear());
+      await speakText('Opening the agent conversations, sir.', record: false);
+      _openConversations();
+      return;
+    }
+
     // Trading Room live chart: "show me the E-mini", "switch to Tesla on the
     // 1 minute", "read the price". Opens the room and speaks the result.
     final chartCommand = _pendingAttachment == null ? CheChartCommand.parse(message) : null;
@@ -659,6 +675,11 @@ extension _CheHomeSend on _CHEHomeState {
       Future<void>.delayed(const Duration(milliseconds: 1400), () {
         if (mounted) _set(() => _justCompleted = false);
       });
+      // The Worker turns this exchange into a brain memory right after the
+      // reply; fetch it so the new neuron appears in the Brain in real time.
+      Future<void>.delayed(const Duration(milliseconds: 2500), () {
+        if (mounted) unawaited(_loadAgentState(silent: true));
+      });
 
       if (stopped) {
         replySpeech?.cancel();
@@ -792,6 +813,53 @@ extension _CheHomeSend on _CHEHomeState {
         _scrollController.position.maxScrollExtent,
       );
     });
+  }
+
+  /// Returns false when the command needs the Brain on screen and it is not,
+  /// so ordinary phrases ("back out") fall through to other handlers.
+  Future<bool> _runBrainCommand(String message, CheBrainCommand command) async {
+    const needsBrainOnScreen = {CheBrainAction.backOut, CheBrainAction.openSelected, CheBrainAction.expand, CheBrainAction.collapse};
+    var space = CheBrainSpaceController.current;
+    if (space == null) {
+      // Off the Brain screen only explicit brain/memory phrases open it, so
+      // "go deeper" or "overview" in ordinary chat still reach CHE's AI.
+      if (needsBrainOnScreen.contains(command.action) || !RegExp(r'\b(?:brain|memor)', caseSensitive: false).hasMatch(message)) return false;
+      if (_brainCommandBusy) return true;
+      _brainCommandBusy = true;
+      if (mounted) _set(() => controller.clear());
+      // The hub may be open on another tab: close it, then open the Brain.
+      if (_assistantHubOpen && mounted) Navigator.of(context).pop();
+      _openAssistantHub(tab: 0);
+      for (var i = 0; i < 12 && CheBrainSpaceController.current == null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      }
+      space = CheBrainSpaceController.current;
+      _brainCommandBusy = false;
+    } else if (mounted) {
+      _set(() => controller.clear());
+    }
+    final reply = space == null
+        ? 'I opened your brain, sir, but it has no memories to show yet.'
+        : space.execute(command);
+    HapticFeedback.selectionClick();
+    if (mounted) {
+      _set(() => messages
+        ..add({'role': 'user', 'text': message})
+        ..add({'role': 'assistant', 'text': reply}));
+    }
+    await speakText(reply, record: false);
+    return true;
+  }
+
+  void _openConversations() {
+    HapticFeedback.selectionClick();
+    unawaited(CheConversationsScreen.open(
+      context,
+      baseUrl: () => cheAgentBaseUrl,
+      headers: () => _authHeaders,
+      onOpenFlagstaff: () => unawaited(_openMailbox()),
+      onReadAloud: (t) => speakText(t, record: false),
+    ));
   }
 
   Future<void> _runChartCommand(String message, CheChartCommand command) async {

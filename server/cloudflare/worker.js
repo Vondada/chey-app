@@ -1,5 +1,6 @@
 // CHE cloud Agent. One SQLite-backed Durable Object holds paired devices and
 // memories, so deployment does not require creating a separate database.
+import { CREW_THREADS_KEY, conversationThreads, recordCrewThread } from './conversations.js';
 import { DurableObject } from 'cloudflare:workers';
 import {
   agentDetail,
@@ -113,6 +114,7 @@ import {
   listMemoryNotes,
   writeResearchMemoryNote,
 } from './research_memory.js';
+import { conversationMemoryCount, listConversationMemories, recordConversationMemory, replyFromNdjson } from './brain_memory.js';
 import { assertOwnerToCheOnly } from './che_router.js';
 import { assertAgentMayRun, permissionBlocker } from './agent_permissions.js';
 import { makeWorkPacket, savePacket, startCodexJob } from './codex_packets.js';
@@ -153,6 +155,9 @@ import {
   replyNeedsContinuation,
   splitReplyDeltas,
 } from './reply_latency.js';
+
+// Requests that came from the owner's own device (set during auth).
+const OWNER_CHAT_REQUESTS = new WeakSet();
 
 const FAST_MODEL = '@cf/meta/llama-3.2-3b-instruct';
 // 8B on purpose: Cloudflare's free 10k neurons/day last ~10x longer than with 70B.
@@ -980,6 +985,12 @@ export function busyError(error) {
 // that were interrupted by a Worker restart), so a job that keeps crashing the
 // isolate cannot be re-run forever.
 export const MAX_JOB_ATTEMPTS = 4;
+// One line about how a coding run ended, for its group-chat thread.
+function crewOutcome(prepared) {
+  if (prepared?.proposal) return 'Reviewed change ready for your approval';
+  if (prepared?.already_satisfied) return 'No change needed';
+  return prepared?.failure_class === 'B' ? 'Paused: engines unavailable' : 'Stopped without a safe change';
+}
 // How long a "running" job may go without an update before it counts as
 // interrupted. Coding jobs may run up to their 15-minute engineering budget.
 export function jobStaleMs(job) {
@@ -2462,6 +2473,7 @@ async function dispatchChange(env, body, memory = null, options = {}) {
     prepared = priorFailure
       ? await prepareSelfUpdate(env, `${priorFailure.request}\n\nRECOVERY of a coding job that stopped after its attempts. Owner's recovery request: ${request.slice(0, 2000)}`, fetch, memory, { ownerInitiated: true, intentRequest: priorFailure.request, priorFailure })
       : await prepareSelfUpdate(env, groundedRequest, fetch, memory, { ownerInitiated: true, intentRequest: request });
+    await recordCrewThread(memory, { request, discussion: prepared?.discussion, outcome: crewOutcome(prepared) }).catch(() => null);
   } catch (error) {
     console.error('CHE change request failed', error?.message || error);
     const { failure_class: failureClass, kind } = classifyFailure(error);
@@ -3535,7 +3547,36 @@ export class CheState extends DurableObject {
     };
   }
 
+  // Every owner ↔ CHE exchange becomes a brain memory, after the reply is
+  // sent (never in front of it), whatever route inside /api/chat answered.
   async fetch(request) {
+    const isChat = request.method === 'POST' && new URL(request.url).pathname === '/api/chat';
+    const sent = isChat ? request.clone().json().catch(() => null) : null;
+    const response = await this.handleRequest(request);
+    // Only the owner's own conversations grow his brain (never a guest's).
+    if (isChat && response?.ok && OWNER_CHAT_REQUESTS.has(request) && this.ctx.waitUntil) {
+      const copy = response.clone();
+      this.ctx.waitUntil((async () => {
+        const body = await sent;
+        const message = String(body?.message || '').trim();
+        const reply = replyFromNdjson(await copy.text());
+        const memory = await recordConversationMemory(this.ctx.storage, { message, reply });
+        if (memory) {
+          await storeVectorMemory(this.keyEnv || this.env, {
+            external_id: `conversation:${memory.id}`,
+            kind: 'conversation',
+            title: memory.title,
+            content: memory.body,
+            source: 'owner_chat',
+            metadata: { links: memory.links },
+          }).catch(() => null);
+        }
+      })().catch(() => null));
+    }
+    return response;
+  }
+
+  async handleRequest(request) {
     await this.refreshKeyEnv();
     try {
       const path = new URL(request.url).pathname;
@@ -3732,6 +3773,7 @@ export class CheState extends DurableObject {
       // consequential actions. Family/guest tenants (and anything they relay)
       // can never authorize them.
       const ownerDevice = activeTenant?.role === 'owner';
+      if (ownerDevice) OWNER_CHAT_REQUESTS.add(request);
       const ownerOnly = () => json({ detail: 'Only the CHE owner can change, merge or deploy CHE’s code.' }, 403);
 
       // CHE Home platform: tenant-scoped identity, devices, notifications and Core.
@@ -3969,6 +4011,14 @@ export class CheState extends DurableObject {
         return json(runtimeCapabilityRegistry(this.env, data));
       }
 
+      if (request.method === 'GET' && path === '/api/brain/memories') {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
+        const q = new URL(request.url).searchParams;
+        return json({
+          memories: await listConversationMemories(this.ctx.storage, { limit: q.get('limit'), before: q.get('before') }),
+          total: await conversationMemoryCount(this.ctx.storage),
+        });
+      }
       if (request.method === 'GET' && path === '/api/state') {
         const capabilityRegistry = runtimeCapabilityRegistry(this.env, data);
         return json({
@@ -3976,6 +4026,8 @@ export class CheState extends DurableObject {
           memories: data.memories,
           memory_records: data.memory_records || [],
           memory_notes: listMemoryNotes(data),
+          conversation_memories: ownerDevice ? await listConversationMemories(this.ctx.storage).catch(() => []) : [],
+          conversation_memory_total: ownerDevice ? await conversationMemoryCount(this.ctx.storage).catch(() => 0) : 0,
           brain_graph: buildBrainGraph(data),
           preference_memory: data.preference_memory,
           owner_context: data.owner_context.map(ownerContextPreview),
@@ -4911,6 +4963,11 @@ export class CheState extends DurableObject {
         await this.scheduleWork();
         this.broadcastAgents(data);
         return json(outcome);
+      }
+      if (path === '/api/conversations' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const crew = (await Promise.resolve().then(() => this.ctx.storage.get(CREW_THREADS_KEY)).catch(() => null)) || [];
+        return json({ threads: conversationThreads({ meetings: data.meetings, agents: (data.team || []).filter((a) => !a.retired) }, crew) });
       }
       if (path === '/api/meetings' && request.method === 'GET') {
         return json({ meetings: runtimeSnapshot(data).meetings });
@@ -8326,6 +8383,7 @@ export class CheState extends DurableObject {
       }
     }
     const prepared = await prepareSelfUpdate(this.env, prompt, fetch, this.ctx.storage, { ownerInitiated: true });
+    await recordCrewThread(this.ctx.storage, { request: job.request || job.prompt, discussion: prepared?.discussion, outcome: crewOutcome(prepared) }).catch(() => null);
     if (prepared.status === 200 && prepared.proposal) {
       await recordReceipt(this.ctx.storage, { kind: 'proposal_ready', key: `proposal:${job.id}`, job_id: job.id, files: prepared.proposal.files.map((f) => f.path) });
       const reviewed = {

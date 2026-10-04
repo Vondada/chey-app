@@ -102,6 +102,9 @@ import 'security/che_password_vault.dart';
 import 'security/che_vault_auth.dart';
 import 'browser/che_browser.dart' show CheBrowserActions;
 import 'browser/che_embedded_app_shell.dart' show CheEmbeddedAppAnnouncer;
+import 'brain/che_brain_space.dart' show CheBrainSpaceController;
+import 'brain/che_brain_space_model.dart' show CheBrainAction, CheBrainCommand;
+import 'conversations/che_conversations_screen.dart';
 import 'browser/che_chat_links.dart';
 import 'home/che_chat_link_actions.dart';
 import 'rooms/che_live_chart.dart';
@@ -373,6 +376,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   bool cheSleeping = true;
 
   bool _isSending = false;
+  bool _assistantHubOpen = false;
+  bool _brainCommandBusy = false;
   bool _isSpeaking = false;
   bool _autoSentCurrentTurn = false;
   // Words held open while the owner pauses mid-thought (see microphone.dart).
@@ -794,6 +799,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   List<String> savedMemories = [];
   List<Map<String, dynamic>> memoryRecords = [];
   List<Map<String, dynamic>> memoryNotes = [];
+  List<Map<String, dynamic>> conversationMemories = [];
   List<Map<String, dynamic>> brainLinks = [];
   List<Map<String, dynamic>> learnedPersonality = [];
   List<String> learnedKnowledge = [];
@@ -1640,8 +1646,9 @@ OWNER AGENCY
         data: kit.CheTheme.dark(),
         child: Scaffold(
           backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+          // Back button only: the Brain's own compact header names it.
           appBar: AppBar(
-            title: const Text('CHE Brain'),
+            toolbarHeight: 44,
             backgroundColor: Colors.transparent,
           ),
           body: CheTwoBrainsView(
@@ -1664,13 +1671,14 @@ OWNER AGENCY
                 learnedKnowledge: learnedKnowledge,
                 brainLinks: brainLinks,
                 suggestions: suggestions,
+                conversationMemories: conversationMemories,
               ),
               brainLinks: brainLinks,
               onReadAloud: (t) => speakText(t, record: false),
               onRefresh: () => _loadAgentState(silent: true),
             ),
             ),
-            offline: const CheOfflineBrainPanel(),
+            offline: const CheOfflineBrainPanel(compact: true),
           ),
         ),
       ),
@@ -1840,6 +1848,13 @@ OWNER AGENCY
           subtitle: 'Swings · entries · backtests · paper trades',
           onTap: () => _openAssistantHub(tab: 1),
           hue: kit.CheColors.markets,
+        ),
+        CheMoreItem(
+          icon: Icons.forum_rounded,
+          title: 'Conversations',
+          subtitle: 'Agents, War Room and AIs · group chats',
+          onTap: _openConversations,
+          hue: kit.CheColors.accent,
         ),
         CheMoreItem(
           icon: Icons.markunread_mailbox_rounded,

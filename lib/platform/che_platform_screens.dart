@@ -512,16 +512,34 @@ class _CheTwoBrainsViewState extends State<CheTwoBrainsView> {
   @override
   Widget build(BuildContext context) {
     final selected = cheBrainPresentations[_index];
+    // One compact row: the brain's name plus the Live/Offline switch. The
+    // visualization below gets the rest of the screen.
+    final media = MediaQuery.of(context);
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-          child: Row(
-            children: [
-              for (var i = 0; i < cheBrainPresentations.length; i++)
+        MediaQuery(
+          data: media.copyWith(textScaler: media.textScaler.clamp(minScaleFactor: 1.0, maxScaleFactor: 1.2)),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 12, 2),
+            child: Row(
+              children: [
                 Expanded(
-                  child: Padding(
-                    padding: EdgeInsets.only(left: i == 0 ? 0 : 6),
+                  child: Semantics(
+                    header: true,
+                    label: '${selected.title}. ${selected.detail}',
+                    excludeSemantics: true,
+                    child: Text(
+                      selected.title,
+                      maxLines: 1,
+                      softWrap: false,
+                      overflow: TextOverflow.ellipsis,
+                      style: CheType.label.copyWith(color: CheColors.text, fontSize: 15),
+                    ),
+                  ),
+                ),
+                for (var i = 0; i < cheBrainPresentations.length; i++)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 6),
                     child: Semantics(
                       button: true,
                       selected: i == _index,
@@ -534,7 +552,8 @@ class _CheTwoBrainsViewState extends State<CheTwoBrainsView> {
                         },
                         borderRadius: BorderRadius.circular(999),
                         child: Ink(
-                          height: 40,
+                          height: 44,
+                          padding: const EdgeInsets.symmetric(horizontal: 14),
                           decoration: BoxDecoration(
                             color: i == _index ? CheColors.accent.withValues(alpha: 0.22) : CheColors.surface,
                             borderRadius: BorderRadius.circular(999),
@@ -553,29 +572,49 @@ class _CheTwoBrainsViewState extends State<CheTwoBrainsView> {
                       ),
                     ),
                   ),
-                ),
-            ],
-          ),
-        ),
-        Semantics(
-          header: true,
-          label: '${selected.title}. ${selected.detail}',
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(selected.title, style: CheType.headline),
+              ],
             ),
           ),
         ),
-        Expanded(child: _index == 0 ? widget.live : widget.offline),
+        Expanded(
+          child: _index == 0
+              ? widget.live
+              // Owner rule: the offline brain is the same brain, same memories
+              // and gestures, shown in inverted colors (white space, inverse
+              // orbs) with the on-device model status on top.
+              : Column(
+                  children: [
+                    widget.offline,
+                    Expanded(
+                      child: Semantics(
+                        label: 'Offline brain view, inverted colors.',
+                        child: ColorFiltered(
+                          colorFilter: cheInvertColors,
+                          child: ColoredBox(color: CheColors.bg, child: widget.live),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+        ),
       ],
     );
   }
 }
 
+/// Inverts every color (black space turns white, teal orbs turn coral).
+const ColorFilter cheInvertColors = ColorFilter.matrix(<double>[
+  -1, 0, 0, 0, 255, //
+  0, -1, 0, 0, 255, //
+  0, 0, -1, 0, 255, //
+  0, 0, 0, 1, 0, //
+]);
+
 class CheOfflineBrainPanel extends StatefulWidget {
-  const CheOfflineBrainPanel({super.key, this.health});
+  const CheOfflineBrainPanel({super.key, this.health, this.compact = false});
+
+  /// One status line (shown above the inverted brain) instead of the page.
+  final bool compact;
 
   final CheLocalBrainHealth? health;
 
@@ -630,6 +669,24 @@ class _CheOfflineBrainPanelState extends State<CheOfflineBrainPanel> {
     final label = _loading
         ? 'Checking CHE Brain Offline.'
         : 'CHE Brain — Offline. ${model.modelId}. Status ${health?.status ?? 'unknown'}. ${health?.detail ?? ''}';
+    if (widget.compact) {
+      return Semantics(
+        container: true,
+        label: label,
+        excludeSemantics: true,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 2, 16, 4),
+          child: Text(
+            _loading
+                ? 'Checking the on-device brain…'
+                : 'On-device ${model.modelId} · ${health?.status ?? 'unknown'}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: CheType.caption.copyWith(color: CheColors.textDim),
+          ),
+        ),
+      );
+    }
     return Semantics(
       container: true,
       label: label,

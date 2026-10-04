@@ -1075,6 +1075,7 @@ extension _CheHomeMemory on _CHEHomeState {
 
   void _openAssistantHub({int tab = 0}) {
     _selectedTab = tab < 0 ? 0 : (tab > 9 ? 9 : tab);
+    _assistantHubOpen = true;
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF101821),
@@ -1142,7 +1143,7 @@ extension _CheHomeMemory on _CHEHomeState {
           ),
         );
       },
-    );
+    ).whenComplete(() => _assistantHubOpen = false);
   }
 
   String _mediaTypeFromName(String name) {

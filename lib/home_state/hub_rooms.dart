@@ -42,13 +42,14 @@ extension _CheHomeHubRooms on _CHEHomeState {
           learnedKnowledge: learnedKnowledge,
           brainLinks: brainLinks,
           suggestions: suggestions,
+          conversationMemories: conversationMemories,
         ),
         brainLinks: brainLinks,
         onReadAloud: (t) => speakText(t, record: false),
         onRefresh: () => _loadAgentState(silent: true),
       ),
       ),
-      offline: const CheOfflineBrainPanel(),
+      offline: const CheOfflineBrainPanel(compact: true),
     );
   }
 

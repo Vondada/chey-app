@@ -1080,3 +1080,43 @@ test('"Update CHE" is the one-button approval; ordinary requests and the phone u
   assert.notEqual(selfUpdateChatIntent('update yourself')?.kind, 'ship-update', 'the phone handles "update yourself" as the app update check');
   assert.notEqual(selfUpdateChatIntent('update CHE so the banner is bigger')?.kind, 'ship-update');
 });
+
+test('every owner chat turn becomes a brain memory after the reply', async () => {
+  const saved = new Map();
+  const pending = [];
+  const env = { CHE_PAIR_CODE: '123456', AI: { run: async () => ({ response: 'Futures open at five, sir.' }) } };
+  const state = new CheState({
+    storage: {
+      get: (key) => saved.get(key),
+      put: (key, value) => {
+        if (typeof key === 'object') for (const [k, v] of Object.entries(key)) saved.set(k, v);
+        else saved.set(key, value);
+      },
+      list: async ({ prefix = '', reverse = false, limit = Infinity } = {}) => {
+        let keys = [...saved.keys()].filter((k) => k.startsWith(prefix)).sort();
+        if (reverse) keys.reverse();
+        return new Map(keys.slice(0, limit).map((k) => [k, saved.get(k)]));
+      },
+      setAlarm: async () => {},
+    },
+    waitUntil: (p) => pending.push(p),
+  }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, method = 'GET', body = {}, token = '') => worker.fetch(
+    new Request(`https://che.example${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
+    }), env,
+  );
+  const token = (await (await send('/api/pair', 'POST', { code: '123456' })).json()).device_token;
+  const reply = await (await send('/api/chat', 'POST', { message: 'When do futures open on Sunday?' }, token)).text();
+  await Promise.all(pending);
+  const brain = await (await send('/api/state', 'GET', {}, token)).json();
+  assert.equal(brain.conversation_memory_total, 1);
+  assert.equal(brain.conversation_memories[0].title, 'When do futures open on Sunday?');
+  assert.match(brain.conversation_memories[0].body, /CHE answered:/);
+  assert.ok(reply.length > 0);
+  const paged = await (await send('/api/brain/memories', 'GET', {}, token)).json();
+  assert.equal(paged.total, 1);
+});
