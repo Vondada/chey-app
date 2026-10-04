@@ -59,7 +59,24 @@ export function checkHtml(html) {
   if (/http-equiv=["']?refresh/i.test(text)) problems.push('Meta refresh redirects are not allowed.');
   if (/\blorem ipsum\b/i.test(text)) problems.push('Replace lorem ipsum with real content.');
   for (const img of text.match(/<img\b[^>]*>/gi) || []) {
-    if (!/\balt\s*=/i.test(img)) { problems.push('Every <img> needs alt text.'); break; }
+    if (!/\balt\s*=\s*["'][^"']*["']/i.test(img)) { problems.push('Every <img> needs alt text.'); break; }
+  }
+  // Validate the accessibility properties CHE reports as passed.
+  const labelFors = new Set([...text.matchAll(/<label\b[^>]*\bfor\s*=\s*["']([^"']+)["'][^>]*>/gi)].map((m) => m[1]));
+  for (const control of text.match(/<(?:input|select|textarea)\b[^>]*>/gi) || []) {
+    if (/\btype\s*=\s*["']?hidden\b/i.test(control)) continue;
+    const id = /\bid\s*=\s*["']([^"']+)["']/i.exec(control)?.[1] || '';
+    const named = /\baria-label\s*=\s*["'][^"']+["']/i.test(control)
+      || /\baria-labelledby\s*=\s*["'][^"']+["']/i.test(control)
+      || (id && labelFors.has(id));
+    if (!named) { problems.push('Every form control needs an accessible label.'); break; }
+  }
+  for (const button of text.match(/<button\b[^>]*>[\s\S]*?<\/button>/gi) || []) {
+    const opening = /^<button\b[^>]*>/i.exec(button)?.[0] || '';
+    const visible = button.replace(/^<button\b[^>]*>/i, '').replace(/<\/button>$/i, '').replace(/<[^>]+>/g, '').trim();
+    if (!visible && !/\baria-label\s*=\s*["'][^"']+["']/i.test(opening) && !/\baria-labelledby\s*=\s*["'][^"']+["']/i.test(opening)) {
+      problems.push('Every button needs an accessible name.'); break;
+    }
   }
   const opens = (text.match(/<(?:div|section|main|header|footer|nav|article)\b/gi) || []).length;
   const closes = (text.match(/<\/(?:div|section|main|header|footer|nav|article)>/gi) || []).length;
@@ -95,8 +112,13 @@ async function draft(env, model, messages, audit) {
 // Writes (or rewrites) a page, checks it, and repairs it once. Returns
 // { html, problems } — problems is empty when the page passed the check.
 export async function writeSite(env, { brief, previousHtml = '', change = '' }, model) {
+  // Editing must be lossless. Never send half a stored document and then
+  // overwrite the complete version with a model reconstruction.
+  if (previousHtml && previousHtml.length > 60_000) {
+    return { html: previousHtml, problems: ['This page is too large for a safe full-document edit. No changes were saved.'] };
+  }
   const user = previousHtml
-    ? `Current page:\n${previousHtml.slice(0, 60_000)}\n\nOwner's change request: ${change}\n\nReturn the complete updated page.`
+    ? `Current page:\n${previousHtml}\n\nOwner's change request: ${change}\n\nReturn the complete updated page.`
     : `Build this: ${brief}`;
   const audit = { task: (change || brief).slice(0, 160), agent: 'CHE', route: previousHtml ? 'site_edit' : 'site_build' };
   let html = extractHtml(await draft(env, model, [{ role: 'system', content: BUILD_RULES }, { role: 'user', content: user }], audit));
@@ -154,7 +176,7 @@ export async function serveSite(request, storage) {
       'Cache-Control': 'no-store',
       // Opaque-origin sandbox + no network: the page cannot reach CHE's API,
       // storage or anything else, whatever its script does.
-      'Content-Security-Policy': "sandbox allow-scripts allow-forms allow-modals allow-popups; default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'",
+      'Content-Security-Policy': "sandbox allow-scripts allow-forms allow-modals; default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; form-action 'none'; navigate-to 'none'; base-uri 'none'",
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
     },
