@@ -63,7 +63,7 @@ export function inferTurnCapabilities(message, attachment = null) {
   ])) add('self_development');
 
   if (any(value, [
-    /\b(parallel|in parallel|batch|multitask|at the same time|simultaneously|background work|in the background)\b/,
+    /\b(parallel|in parallel|batch|multitask|at the same time|simultaneously|background work|in the background|keep monitoring|keep watching|watch for|alert me|follow up|follow-up)\b/,
   ])) add('multitasking', 'speed_mode');
 
   if (any(value, [
