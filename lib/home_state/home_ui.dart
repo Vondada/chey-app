@@ -147,6 +147,9 @@ extension _CheHomeUi on _CHEHomeState {
             headers: url.startsWith(cheAgentBaseUrl) ? _authHeaders : const {},
             label: url.contains('youtu') ? 'Video' : 'Page',
           ),
+      // Places CHE told the owner to go ("go to Supabase") become "Open
+      // Supabase" actions that open inside CHE.
+      if (!isLiveReply) CheChatLinkActions(links: _chatLinksIn(display, item['media_url'], text)),
     ];
     return MediaQuery(
       data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(MediaQuery.textScalerOf(context).scale(1).clamp(1.15, double.infinity).toDouble())),
@@ -182,6 +185,61 @@ extension _CheHomeUi on _CHEHomeState {
       if (seen.add(url)) out.add(url);
     }
     return out;
+  }
+
+  /// Destinations in a reply that get an "Open …" action. Links already
+  /// shown as an image or an inline preview are left out.
+  List<CheChatLink> _chatLinksIn(String display, String? mediaUrl, String raw) => cheChatLinks(
+        display,
+        skip: [mediaUrl, ..._inlineImageUrls(raw, mediaUrl), ..._inlinePageUrls(raw, mediaUrl)],
+        ownBase: cheAgentBaseUrl,
+      );
+
+  /// The links in CHE's latest reply that has any, for "open it" by voice.
+  List<CheChatLink> _recentChatLinks() {
+    var checked = 0;
+    for (var i = messages.length - 1; i >= 0 && checked < 6; i--) {
+      final m = messages[i];
+      if (m['role'] == 'user') continue;
+      checked++;
+      final raw = m['text'] ?? '';
+      final display = CheUpdateProposal.stripBlocks(raw.replaceAll(RegExp(r'```che-plugin[\s\S]*?(```|$)'), '').trim());
+      // Every link counts here, including ones shown as an inline preview
+      // (which get no extra button), so "open it" can reach them too.
+      final links = cheChatLinks('$display ${m['media_url'] ?? ''}', ownBase: cheAgentBaseUrl);
+      if (links.isNotEmpty) return links;
+    }
+    return const [];
+  }
+
+  /// "Open Supabase", "open link 2", "open it in Safari", "what's the link",
+  /// "copy the link": acts on the links CHE just gave and reports the result.
+  Future<void> _runChatLinkCommand(String message, CheLinkVoiceCommand command) async {
+    final link = command.link;
+    final opens = command.action == CheLinkVoiceAction.open || command.action == CheLinkVoiceAction.openExternally;
+    final external = command.action == CheLinkVoiceAction.openExternally;
+    final reply = switch (command.action) {
+      CheLinkVoiceAction.chooseFromList => CheLinkVoiceCommand.listAloud(command.links),
+      CheLinkVoiceAction.readAddress => '${link.label}: ${link.url}',
+      CheLinkVoiceAction.copyAddress => 'Copied the link for ${link.name}, sir.',
+      _ => external || link.opensExternally || kIsWeb ? 'Opening ${link.name} in Safari, sir.' : 'Opening ${link.name} inside CHE, sir.',
+    };
+    if (command.action == CheLinkVoiceAction.copyAddress) {
+      await Clipboard.setData(ClipboardData(text: link.url));
+      HapticFeedback.lightImpact();
+    }
+    if (!mounted) return;
+    _set(() => messages
+      ..add({'role': 'user', 'text': message})
+      ..add({'role': 'assistant', 'text': reply}));
+    _scrollToBottom();
+    if (opens) {
+      // The opener announces what opens and any failure; the browser says
+      // "Opening … inside CHE."
+      await cheOpenChatLink(context, link, external: external);
+      return;
+    }
+    await speakText(reply, record: false);
   }
 
   List<String> _inlineImageUrls(String text, String? skip) =>

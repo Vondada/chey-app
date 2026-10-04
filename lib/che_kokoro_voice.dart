@@ -802,11 +802,14 @@ class CheKokoroVoice {
     }
   }
 
-  Future<bool> speak(String text) async {
+  /// Synthesizes [text] to WAV bytes without playing it, so the speech
+  /// pipeline can prepare the next paragraph while the current one plays
+  /// (no silent gap while the phone generates audio). Null on failure.
+  Future<Uint8List?> synthesize(String text) async {
     final clean = text.trim();
 
     if (clean.isEmpty) {
-      return false;
+      return null;
     }
 
     if (_tts == null) {
@@ -817,7 +820,7 @@ class CheKokoroVoice {
           debugPrint(
             'CHE local TTS prepare completed without a usable engine.',
           );
-          return false;
+          return null;
         }
       } catch (error, stackTrace) {
         debugPrint(
@@ -825,7 +828,7 @@ class CheKokoroVoice {
           '$error\n'
           '$stackTrace',
         );
-        return false;
+        return null;
       }
     }
 
@@ -846,7 +849,7 @@ class CheKokoroVoice {
         debugPrint(
           'CHE local TTS generated zero audio samples.',
         );
-        return false;
+        return null;
       }
 
       if (audio.sampleRate <= 0) {
@@ -854,7 +857,7 @@ class CheKokoroVoice {
           'CHE local TTS returned invalid sample rate: '
           '${audio.sampleRate}',
         );
-        return false;
+        return null;
       }
 
       final root =
@@ -891,30 +894,35 @@ class CheKokoroVoice {
         debugPrint(
           'CHE local TTS WAV contained zero bytes.',
         );
-        return false;
+        return null;
       }
 
-      try {
-        return (await _nativeAudio.invokeMethod<bool>(
-              'playAudio',
-              bytes,
-            )) ??
-            false;
-      } catch (error, stackTrace) {
-        debugPrint(
-          'CHE native audio playback failed:\n'
-          '$error\n'
-          '$stackTrace',
-        );
-        return false;
-      }
+      return bytes;
     } catch (error, stackTrace) {
       debugPrint(
         'CHE local TTS generation failed:\n'
         '$error\n'
         '$stackTrace',
       );
+      return null;
+    }
+  }
 
+  Future<bool> speak(String text) async {
+    final bytes = await synthesize(text);
+    if (bytes == null) return false;
+    try {
+      return (await _nativeAudio.invokeMethod<bool>(
+            'playAudio',
+            bytes,
+          )) ??
+          false;
+    } catch (error, stackTrace) {
+      debugPrint(
+        'CHE native audio playback failed:\n'
+        '$error\n'
+        '$stackTrace',
+      );
       return false;
     }
   }

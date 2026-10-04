@@ -231,6 +231,23 @@ class CheNativeVoice {
     }
   }
 
+  /// On-device Kokoro audio for [text] without playing it, so the next chunk
+  /// is ready the moment the current one ends. Null until the voice is ready.
+  static Future<Uint8List?> synthesizeNeural(String text) async {
+    final clean = text.trim();
+    if (clean.isEmpty) return null;
+    await _applyStoredSettings();
+    if (!_kokoro.isReady) {
+      unawaited(_kokoro.prepare());
+      return null;
+    }
+    try {
+      return await _kokoro.synthesize(clean);
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<bool> previewVoice() => speakText(
         'Hey, I’m CHE. You’re hearing my Chaze signature voice, sir.',
       );

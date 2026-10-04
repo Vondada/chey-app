@@ -1114,6 +1114,19 @@ test('"set up the memory database" → steps; owner connects it in Keys; memory 
   }
 });
 
+test('chat prompt carries the permanent link rule: real https address, named, never copy/paste', async () => {
+  const saved = new Map();
+  const systems = [];
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async (_m, input) => { systems.push(String(input.messages?.[0]?.content || '')); return { response: 'Open Supabase: https://supabase.com/dashboard/new' }; } } };
+  const { chat } = await pairedChat(env, saved);
+  await deltaText(await chat('How do I make a Supabase account?'));
+  const prompt = systems.find((s) => s.includes('ACCESSIBILITY')) || '';
+  assert.match(prompt, /LINKS \(permanent rule\)/);
+  assert.match(prompt, /full https:\/\/ address/);
+  assert.match(prompt, /never tell him to copy or paste a URL/);
+  assert.match(prompt, /never guess one/);
+});
+
 // ─── Saved coding jobs vs. engines that return nothing (Oct 3 recording) ─────
 function emptyEngineEnv(mode) {
   const counter = { engineer: 0 };

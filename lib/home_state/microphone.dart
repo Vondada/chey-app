@@ -492,7 +492,7 @@ extension _CheHomeMicrophone on _CHEHomeState {
           // Trailing fillers ("um", "and", "so...") still hold the turn open
           // via cheSoundsUnfinished; one turn can still run five minutes.
           // Partials never submit — only result.finalResult below.
-          pauseFor: const Duration(milliseconds: 2800),
+          pauseFor: const Duration(milliseconds: 3600),
           listenFor: const Duration(minutes: 5),
         ),
       );

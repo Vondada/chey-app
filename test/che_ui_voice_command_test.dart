@@ -37,4 +37,17 @@ void main() {
     expect(CheUiVoiceCommand.parse('volume 250')!.value, 1.0);
     expect(CheUiVoiceCommand.parse('set your volume to 30%')!.value, 0.3);
   });
+
+  test('hands-free wake is opt-in and toggled by voice', () {
+    for (final phrase in ['turn on hands-free', 'hands free on', 'Che, always listen', 'hands free mode']) {
+      final c = CheUiVoiceCommand.parse(phrase);
+      expect(c?.kind, 'handsFree', reason: phrase);
+      expect(c?.value, true, reason: phrase);
+    }
+    for (final phrase in ['turn off hands-free', 'hands free off', 'only listen when I press the mic']) {
+      final c = CheUiVoiceCommand.parse(phrase);
+      expect(c?.kind, 'handsFree', reason: phrase);
+      expect(c?.value, false, reason: phrase);
+    }
+  });
 }

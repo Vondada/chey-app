@@ -380,7 +380,16 @@ extension _CheHomeVoice on _CHEHomeState {
       ready: _prepareSpeechOutput(),
       synthesize: (text) async {
         if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return null;
-        return _synthesizeServerVoice(text);
+        final server = await _synthesizeServerVoice(text);
+        if (server != null) return server;
+        // Fluent reading: prepare the on-device neural voice here (ahead of
+        // playback) instead of in the fallback, which only runs after the
+        // previous chunk finished and left a pause between paragraphs.
+        try {
+          final local = await CheNativeVoice.synthesizeNeural(text);
+          if (local != null) return CheVoiceClip(local, 'iphone-neural');
+        } catch (_) {}
+        return null;
       },
       play: _playServerVoice,
       fallback: _speakFallbackChunk,
@@ -617,6 +626,7 @@ extension _CheHomeVoice on _CHEHomeState {
           isListening = false;
         });
       }
+      await _closeMicUnlessHandsFree();
 
       await _controlAutonomy('stand by');
       return;
@@ -714,6 +724,7 @@ extension _CheHomeVoice on _CHEHomeState {
         try {
           await CheNativeVoice.sleep();
         } catch (_) {}
+        await _closeMicUnlessHandsFree();
 
         await _controlAutonomy('stand by');
         return;

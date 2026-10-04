@@ -102,6 +102,8 @@ import 'security/che_password_vault.dart';
 import 'security/che_vault_auth.dart';
 import 'browser/che_browser.dart' show CheBrowserActions;
 import 'browser/che_embedded_app_shell.dart' show CheEmbeddedAppAnnouncer;
+import 'browser/che_chat_links.dart';
+import 'home/che_chat_link_actions.dart';
 import 'rooms/che_live_chart.dart';
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
@@ -1073,7 +1075,8 @@ OWNER AGENCY
     unawaited(_syncUiVoicePrefs());
     CheUiPreferences.instance.addListener(_onUiPrefsChanged);
     WidgetsBinding.instance.addObserver(this);
-    _voiceMachine.startWakeListening();
+    // No wake listening at launch: the mic opens only from the mic button,
+    // or when the owner has turned hands-free on (see _restartWakeListener).
     _voiceSnapshot = _voiceMachine.snapshot;
     _cognitionReady = _restoreCognition();
     unawaited(_skillPlugins.load());
@@ -1123,7 +1126,8 @@ OWNER AGENCY
     final views = WidgetsBinding.instance.platformDispatcher.views;
     if (views.isEmpty) return;
     final visible = views.first.viewInsets.bottom > 0;
-    if (_keyboardWasVisible && !visible && _typingOn) {
+    // A half-typed message stays on screen when the keyboard is dropped.
+    if (_keyboardWasVisible && !visible && _typingOn && controller.text.trim().isEmpty) {
       _typingOn = false;
       _composerFocus.unfocus();
       unawaited(
@@ -1133,6 +1137,8 @@ OWNER AGENCY
       );
       setState(() {});
     }
+    // Keyboard opening: keep the newest message above it, never covered.
+    if (!_keyboardWasVisible && visible) _scrollToBottom();
     _keyboardWasVisible = visible;
   }
 
@@ -1355,8 +1361,11 @@ OWNER AGENCY
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 260),
             child: messages.isEmpty
-                ? Center(
+                ? GestureDetector(
                     key: const ValueKey('empty'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _composerFocus.unfocus(),
+                    child: Center(
                     child: Semantics(
                       label: 'Empty Chat. Type a message or use the Talk button to speak with CHE.',
                       child: Text(
@@ -1364,6 +1373,7 @@ OWNER AGENCY
                         style: kit.CheType.title.copyWith(color: kit.CheColors.textDim),
                       ),
                     ),
+                  ),
                   )
                 : GestureDetector(
                     key: const ValueKey('chat'),

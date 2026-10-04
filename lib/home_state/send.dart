@@ -416,6 +416,7 @@ extension _CheHomeSend on _CHEHomeState {
     if (uiCommand != null) {
       if (mounted) _set(() => controller.clear());
       final reply = await uiCommand.apply(CheUiPreferences.instance);
+      if (uiCommand.kind == 'handsFree') unawaited(_applyHandsFreeChange());
       HapticFeedback.mediumImpact();
       if (mounted) {
         _set(() => messages
@@ -435,6 +436,15 @@ extension _CheHomeSend on _CHEHomeState {
         await speakText(reply);
         return;
       }
+    }
+
+    // Links CHE just gave: "open Supabase", "open it", "open link 2",
+    // "open it in Safari", "what's the link".
+    final linkCommand = _pendingAttachment == null ? CheLinkVoiceCommand.parse(message, _recentChatLinks()) : null;
+    if (linkCommand != null) {
+      if (mounted) _set(() => controller.clear());
+      await _runChatLinkCommand(message, linkCommand);
+      return;
     }
 
     // Trading Room live chart: "show me the E-mini", "switch to Tesla on the

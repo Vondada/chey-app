@@ -63,6 +63,16 @@ class CheUiVoiceCommand {
       return const CheUiVoiceCommand._('voice', true);
     }
 
+    if (has(r'^(?:turn |switch )?(?:on )?hands[- ]?free(?: mode| listening)?(?: on)?$') ||
+        has(r'^(?:always listen|listen all the time|keep (?:the|your) mic on)$')) {
+      return const CheUiVoiceCommand._('handsFree', true);
+    }
+    if (has(r'^(?:turn |switch )?(?:off )?hands[- ]?free(?: mode| listening)? off$') ||
+        has(r'^turn off hands[- ]?free(?: mode| listening)?$') ||
+        has(r'^(?:stop listening all the time|only listen when i (?:press|use) the mic)$')) {
+      return const CheUiVoiceCommand._('handsFree', false);
+    }
+
     final pct = RegExp(r'^(?:set )?(?:your )?volume (?:to )?(\d{1,3})(?: ?%| percent)?$').firstMatch(t);
     if (pct != null) {
       final v = int.parse(pct.group(1)!).clamp(0, 100);
@@ -117,6 +127,12 @@ class CheUiVoiceCommand {
           return on
               ? 'Done. I will answer out loud again.'
               : 'Done. My replies will be text only until you turn my voice back on.';
+        case 'handsFree':
+          final on = value! as bool;
+          await prefs.setHandsFreeWake(on);
+          return on
+              ? 'Done. Hands-free is on. I will keep listening for my name.'
+              : 'Done. Hands-free is off. I only listen after you press the mic button.';
         case 'volume':
           final v = (value! as double).clamp(0.0, 1.0);
           await prefs.setVoiceVolume(v);
