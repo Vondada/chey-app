@@ -34,8 +34,8 @@ import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry 
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
-import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
-import { MODE_NAME, deskIntent, deskTick, pendingAlert, readDesk, setMode, setSize, skipTrade, speakAlert, speakDeskStatus, takeAnnouncement, takeTrade } from './trading_desk.js';
+import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
+import { MODE_NAME, chooseAccount, deskIntent, rememberListed, deskTick, pendingAlert, readDesk, setMode, setSize, skipTrade, speakAlert, speakDeskStatus, takeAnnouncement, takeTrade } from './trading_desk.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
@@ -6653,7 +6653,7 @@ export class CheState extends DurableObject {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the trading desk.', { source: 'che_trading_desk', ok: false });
           if (desk.kind === 'connect') {
             if (!tradovateConfigured(this.keyEnv || this.env)) {
-              return ndjsonReply('To connect NinjaTrader I need your Tradovate API key first, sir. On Tradovate\'s website, under Application Settings, API Access, create an API key (Tradovate may charge for API access, so that choice is yours). Then save its two values as the Worker secrets CHE_TRADOVATE_CLIENT_ID and CHE_TRADOVATE_CLIENT_SECRET, and say "connect NinjaTrader" again. Your password never comes to me: you sign in on Tradovate\'s own page.', { source: 'che_trading_desk', ok: false });
+              return ndjsonReply(`To connect NinjaTrader, Tradovate first has to give CHE OAuth app credentials, sir. Ask Tradovate support (or their partner program) to register an OAuth application with this redirect address: ${new URL(request.url).origin}/broker/tradovate/callback. They will give you a client ID and a client secret; save them as the Worker secrets CHE_TRADOVATE_OAUTH_CLIENT_ID and CHE_TRADOVATE_OAUTH_CLIENT_SECRET, then say "connect NinjaTrader" again. Your password never comes to me: you sign in on Tradovate's own page.`, { source: 'che_trading_desk', ok: false });
             }
             const link = await connectLink(this.ctx.storage, this.keyEnv || this.env, new URL(request.url).origin);
             return ndjsonReply(`Open this link to sign in to NinjaTrader on Tradovate's own page, sir. Your password goes only to Tradovate, never to me. The link works once, for 10 minutes: ${link.url}`, { source: 'che_trading_desk', ok: true });
@@ -6664,7 +6664,10 @@ export class CheState extends DurableObject {
             const note = desk.mode === 'live'
               ? ' Real money now. I will call each entry and place it only when you say "take the trade".'
               : desk.mode === 'sim' ? ' I will place my entries on the simulated account myself and tell you each one.' : ' Nothing goes to NinjaTrader.';
-            const needs = desk.mode !== 'paper' && !conn.connected ? ' NinjaTrader is not connected yet, so say "connect NinjaTrader" first.' : '';
+            const chosen = (await readDesk(this.ctx.storage)).account[desk.mode];
+            const needs = desk.mode !== 'paper' && !conn.connected ? ' NinjaTrader is not connected yet, so say "connect NinjaTrader" first.'
+              : desk.mode === 'live' && !chosen ? ' Choose the live account first: say "list my trading accounts".'
+              : chosen ? ` Account: ${chosen}.` : '';
             return ndjsonReply(`Switched from ${MODE_NAME[changed.before]} to ${MODE_NAME[changed.mode]}, sir.${note}${needs}`, { source: 'che_trading_desk', ok: true, trading_mode: changed.mode });
           }
           if (desk.kind === 'status') return ndjsonReply(speakDeskStatus(await readDesk(this.ctx.storage), await brokerConnection(this.ctx.storage)), { source: 'che_trading_desk' });
@@ -6676,6 +6679,18 @@ export class CheState extends DurableObject {
             const taken = await takeTrade(this.ctx.storage);
             if (taken.ok) await recordReceipt(this.ctx.storage, { kind: 'trade_placed', key: `trade_placed:${Date.now()}`, detail: taken.reply.slice(0, 300) }).catch(() => null);
             return ndjsonReply(taken.reply, { source: 'che_trading_desk', ok: Boolean(taken.ok) });
+          }
+          if (desk.kind === 'accounts') {
+            const mode = (await readDesk(this.ctx.storage)).mode === 'live' ? 'live' : 'sim';
+            const listed = await listAccounts(this.ctx.storage, mode).catch((e) => ({ error: String(e?.message || e) }));
+            if (listed.error) return ndjsonReply(`I could not read your ${mode === 'live' ? 'live' : 'simulated'} accounts, sir. ${listed.error}`, { source: 'che_trading_desk', ok: false });
+            if (!listed.accounts.length) return ndjsonReply(`Your NinjaTrader login has no active ${mode === 'live' ? 'live' : 'simulated'} accounts, sir.`, { source: 'che_trading_desk', ok: true });
+            await rememberListed(this.ctx.storage, mode, listed.accounts.map((a) => a.name));
+            return ndjsonReply(`Your ${mode === 'live' ? 'live' : 'simulated'} accounts, sir: ${listed.accounts.map((a, i) => `${i + 1}, ${a.name}`).join('; ')}. Say "use account" and its number.`, { source: 'che_trading_desk', ok: true });
+          }
+          if (desk.kind === 'pick') {
+            const picked = await chooseAccount(this.ctx.storage, desk);
+            return ndjsonReply(picked.error || `Done, sir: ${picked.mode === 'live' ? 'LIVE' : 'simulated'} orders go to account ${picked.account}.`, { source: 'che_trading_desk', ok: !picked.error });
           }
           if (desk.kind === 'skip') return ndjsonReply(await skipTrade(this.ctx.storage), { source: 'che_trading_desk', ok: true });
           if (desk.kind === 'alerts') {

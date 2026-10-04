@@ -1258,7 +1258,7 @@ test('an idle CHE still wakes hourly for paper-trading learning', async () => {
 
 test('trading desk through chat: switch modes, connect, alerts said first, take the trade', async () => {
   const saved = new Map();
-  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_TRADOVATE_CLIENT_ID: '123', CHE_TRADOVATE_CLIENT_SECRET: 'sec' };
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_TRADOVATE_OAUTH_CLIENT_ID: '123', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'sec' };
   const { chat } = await pairedChat(env, saved);
   const say = async (m) => replyFromNdjson(await (await chat(m)).text());
   assert.match(await say('CHE, switch to live trading'), /Switched from paper trading.*to your NinjaTrader LIVE account, real money.*take the trade.*not connected yet/s);
@@ -1271,15 +1271,17 @@ test('trading desk through chat: switch modes, connect, alerts said first, take 
   const next = await say("what's my trading mode");
   assert.match(next, /^Trade alert, sir, good entry on your LIVE account: buy 1 MES at 5820.*take the trade[\s\S]*You are on your NinjaTrader LIVE account/);
   assert.doesNotMatch(await say("what's my trading mode"), /Trade alert/, 'said once');
-  // No sign-in: the yes is answered honestly and nothing is placed.
-  assert.match(await say('take the trade'), /NOT placed.*not connected/);
-  assert.equal(saved.get('trading_desk').alerts[0].status, 'failed');
+  // No live account chosen: the yes is answered honestly and nothing is placed.
+  assert.match(await say('take the trade'), /Which live account.*Nothing was placed/);
+  assert.equal(saved.get('trading_desk').alerts[0].status, 'pending');
+  // Reading accounts needs the sign-in; CHE says so instead of guessing.
+  assert.match(await say('list my trading accounts'), /could not read your live accounts.*not connected/);
   assert.match(await say('switch to paper trading'), /to paper trading/);
 });
 
 test('trading desk: the NinjaTrader sign-in page is public but only accepts CHE\'s one-time state', async () => {
   const saved = new Map();
-  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_TRADOVATE_CLIENT_ID: '123', CHE_TRADOVATE_CLIENT_SECRET: 'sec' };
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_TRADOVATE_OAUTH_CLIENT_ID: '123', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'sec' };
   await pairedChat(env, saved);
   const res = await worker.fetch(new Request('https://che.example/broker/tradovate/callback?code=x&state=forged'), env);
   assert.equal(res.status, 400);

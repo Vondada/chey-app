@@ -21,6 +21,9 @@ export async function readDesk(storage) {
     qty: Number.isInteger(desk.qty) && desk.qty >= 1 && desk.qty <= 10 ? desk.qty : 1,
     contract: desk.contract === 'full' ? 'full' : 'micro',
     alerts: Array.isArray(desk.alerts) ? desk.alerts : [],
+    // The account each mode trades: live orders go only to the one the owner named.
+    account: { sim: String(desk.account?.sim || ''), live: String(desk.account?.live || '') },
+    listed: desk.listed && Array.isArray(desk.listed.names) ? desk.listed : null,
   };
 }
 
@@ -64,20 +67,31 @@ export async function deskTick(storage, book, { now = Date.now(), place = placeB
       skill: t.strategy,
       why: t.why || '',
       mode: desk.mode,
+      account: desk.mode === 'live' ? desk.account.live : desk.mode === 'sim' ? desk.account.sim : '',
       status: 'pending',
       announced: false,
     };
-    if (desk.mode === 'sim') {
-      const result = await place(storage, 'sim', alert).catch((e) => ({ error: String(e?.message || e) }));
-      Object.assign(alert, result.ok ? { status: 'placed', result } : { status: 'failed', error: result.error });
-    } else if (desk.mode === 'paper') {
-      alert.status = 'info';
-    }
+    if (desk.mode === 'paper') alert.status = 'info';
+    if (desk.mode === 'sim') alert.status = 'placing';
     desk.alerts.push(alert);
     changed = true;
   }
   if (changed) await saveDesk(storage, desk);
-  return desk;
+  // Simulated orders: each alert is claimed ("placing", saved above) before
+  // the broker is called, so an overlapping tick cannot send it twice.
+  for (const alert of desk.alerts.filter((a) => a.status === 'placing' && a.mode === 'sim' && !a.result && !a.error)) {
+    const result = await place(storage, 'sim', { ...alert, account: desk.account.sim }).catch((e) => ({ error: String(e?.message || e) }));
+    await updateAlert(storage, alert.id, result.ok ? { status: 'placed', result } : { status: 'failed', error: result.error });
+  }
+  return readDesk(storage);
+}
+
+async function updateAlert(storage, id, patch) {
+  const desk = await readDesk(storage);
+  const alert = desk.alerts.find((a) => a.id === id);
+  if (alert) Object.assign(alert, patch);
+  await saveDesk(storage, desk);
+  return alert;
 }
 
 /** Spoken text for alerts the owner has not heard yet, then marks them heard. */
@@ -94,7 +108,7 @@ export function speakAlert(a) {
   if (a.status === 'placed') return `Trade alert, sir: ${a.why ? `${a.why}. ` : ''}I placed it on ${a.mode === 'live' ? 'your LIVE account' : 'your simulated account'} ${a.result.account}: buy ${a.result.qty} ${a.result.symbol} limit ${a.result.entry}, stop ${a.result.stop}, target ${a.result.target}. Tradovate order ${a.result.order_id}.`;
   if (a.status === 'failed') return `Trade alert, sir: ${describe(a)}. I tried to place it but it failed: ${a.error}`;
   if (a.status === 'info') return `Trade alert, sir (paper only): ${describe(a)}${a.why ? `, because it ${a.why}` : ''}. Say "switch to sim trading" or "switch to live trading" to send entries to NinjaTrader.`;
-  if (a.status === 'pending') return `Trade alert, sir, good entry on your LIVE account: ${describe(a)}${a.why ? `, because it ${a.why}` : ''}. Real money. Say "take the trade" to place it, or "skip it".`;
+  if (a.status === 'pending') return `Trade alert, sir, good entry on your LIVE account${a.account ? ` ${a.account}` : ''}: ${describe(a)}${a.why ? `, because it ${a.why}` : ''}. Real money. Say "take the trade" to place it, or "skip it".`;
   return '';
 }
 
@@ -116,6 +130,13 @@ export function deskIntent(message) {
     return { kind: 'size', qty: words[size[1]] || Number(size[1]), contract: /full/.test(size[2]) ? 'full' : /micro/.test(size[2]) ? 'micro' : null };
   }
   if (/\b(?:any|what are|read|tell me)\b[\s\S]{0,20}\b(?:trade alerts?|entry points?|entries|good entr(?:y|ies))\b|\bwhat'?s the trade\b/.test(text) && !/\bbacktest|swing high/.test(text)) return { kind: 'alerts' };
+  if (/\b(?:list|what are|which|read|tell me)\b[\s\S]{0,15}\b(?:my\s+)?(?:trading |ninja\s?trader |funded |live |sim |simulated )?accounts\b/.test(text)) return { kind: 'accounts' };
+  const pick = /\b(?:use|trade on|trade with|choose|pick|select)\s+(?:the\s+)?account\s+(?:number\s+)?([a-z0-9-]+)\b/.exec(text);
+  if (pick) {
+    const words = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, first: 1, second: 2, third: 3 };
+    const n = words[pick[1]] || (/^\d{1,2}$/.test(pick[1]) ? Number(pick[1]) : null);
+    return { kind: 'pick', ...(n ? { number: n } : { name: String(message).match(new RegExp(`account\\s+(?:number\\s+)?(${pick[1]})`, 'i'))?.[1] || pick[1] }) };
+  }
   if (/\b(?:balance|how much (?:money )?(?:is|do i have))\b[\s\S]{0,40}\b(?:ninja\s?trader|trading|funded|sim|live)\b[\s\S]{0,10}\baccount\b/.test(text)) return { kind: 'balance' };
   return null;
 }
@@ -148,9 +169,15 @@ export async function takeTrade(storage, { now = Date.now(), place = placeBracke
   const alert = pendingAlert(desk, now);
   if (!alert) return { reply: 'There is no open trade alert to take right now, sir. Nothing was placed.' };
   if (desk.mode === 'paper') return { reply: 'You are in paper trading, sir, so nothing goes to NinjaTrader. Say "switch to sim trading" or "switch to live trading" first. Nothing was placed.' };
-  const result = await place(storage, desk.mode, alert).catch((e) => ({ error: String(e?.message || e) }));
-  Object.assign(alert, result.ok ? { status: 'placed', result, mode: desk.mode, announced: true } : { status: 'failed', error: result.error, announced: true });
+  const account = desk.account[desk.mode];
+  if (desk.mode === 'live' && !account) return { reply: 'Which live account should this go to, sir? Say "list my trading accounts", then "use account" and its number. Nothing was placed.' };
+  // Claim the alert before calling the broker: a repeated or overlapping
+  // "take the trade" finds it already taken and sends nothing.
+  alert.status = 'placing';
+  alert.announced = true;
   await saveDesk(storage, desk);
+  const result = await place(storage, desk.mode, { ...alert, account }).catch((e) => ({ error: String(e?.message || e) }));
+  await updateAlert(storage, alert.id, result.ok ? { status: 'placed', result, mode: desk.mode } : { status: 'failed', error: result.error });
   return {
     ok: Boolean(result.ok),
     reply: result.ok
@@ -171,5 +198,24 @@ export async function skipTrade(storage, now = Date.now()) {
 
 export function speakDeskStatus(desk, conn) {
   const link = conn?.connected ? 'NinjaTrader is connected.' : 'NinjaTrader is not connected yet; say "connect NinjaTrader".';
-  return `You are on ${MODE_NAME[desk.mode]}, sir. Size: ${desk.qty} ${desk.contract === 'full' ? 'full-size' : 'micro'} contract${desk.qty === 1 ? '' : 's'}. ${link}`;
+  const acct = desk.mode !== 'paper' ? (desk.account[desk.mode] ? ` Account: ${desk.account[desk.mode]}.` : desk.mode === 'live' ? ' No live account chosen yet; say "list my trading accounts".' : '') : '';
+  return `You are on ${MODE_NAME[desk.mode]}, sir.${acct} Size: ${desk.qty} ${desk.contract === 'full' ? 'full-size' : 'micro'} contract${desk.qty === 1 ? '' : 's'}. ${link}`;
+}
+
+/** Saves the accounts just read aloud, so "use account 2" means the second one said. */
+export async function rememberListed(storage, mode, names) {
+  const desk = await readDesk(storage);
+  desk.listed = { mode, names: names.slice(0, 20) };
+  await saveDesk(storage, desk);
+}
+
+export async function chooseAccount(storage, { number, name }) {
+  const desk = await readDesk(storage);
+  const listed = desk.listed;
+  if (!listed?.names?.length) return { error: 'Say "list my trading accounts" first, sir, so I can read them to you.' };
+  const chosen = number ? listed.names[number - 1] : listed.names.find((n) => n.toLowerCase() === String(name).toLowerCase());
+  if (!chosen) return { error: `I don't have that account in the list I read, sir. The accounts are: ${listed.names.map((n, i) => `${i + 1}, ${n}`).join('; ')}.` };
+  desk.account[listed.mode] = chosen;
+  await saveDesk(storage, desk);
+  return { mode: listed.mode, account: chosen };
 }

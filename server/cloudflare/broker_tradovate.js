@@ -3,9 +3,12 @@
 // his password never reaches CHE, the Worker, an AI provider or a log; CHE
 // only keeps the short-lived access token Tradovate hands back.
 //
-// Worker secrets (from Tradovate's API Access page):
-//   CHE_TRADOVATE_CLIENT_ID      the API key's "cid"
-//   CHE_TRADOVATE_CLIENT_SECRET  the API key's "sec"
+// Worker secrets: OAuth application credentials that Tradovate issues for a
+// registered app (not an ordinary API key's cid/sec, which only works with
+// the password flow CHE must never use), registered with the redirect URI
+// <worker origin>/broker/tradovate/callback:
+//   CHE_TRADOVATE_OAUTH_CLIENT_ID
+//   CHE_TRADOVATE_OAUTH_CLIENT_SECRET
 // Optional: CHE_TRADOVATE_OAUTH_TOKEN_URL if Tradovate moves its token endpoint.
 //
 // "sim" uses Tradovate's demo environment (the simulated account), "live"
@@ -18,7 +21,7 @@ const DEFAULT_TOKEN_URL = 'https://live.tradovateapi.com/auth/oauthtoken';
 export const CALLBACK_PATH = '/broker/tradovate/callback';
 
 export function tradovateConfigured(env) {
-  return Boolean(env?.CHE_TRADOVATE_CLIENT_ID && env?.CHE_TRADOVATE_CLIENT_SECRET);
+  return Boolean(env?.CHE_TRADOVATE_OAUTH_CLIENT_ID && env?.CHE_TRADOVATE_OAUTH_CLIENT_SECRET);
 }
 
 /** One-time sign-in link (valid 10 minutes, single use). */
@@ -27,7 +30,7 @@ export async function connectLink(storage, env, origin, now = Date.now()) {
   const state = [...crypto.getRandomValues(new Uint8Array(24))].map((b) => b.toString(16).padStart(2, '0')).join('');
   await storage.put(STATE_KEY, { state, expires_at: now + 10 * 60_000 });
   const redirect = `${origin}${CALLBACK_PATH}`;
-  const url = `https://trader.tradovate.com/oauth?response_type=code&client_id=${encodeURIComponent(env.CHE_TRADOVATE_CLIENT_ID)}&redirect_uri=${encodeURIComponent(redirect)}&state=${state}`;
+  const url = `https://trader.tradovate.com/oauth?response_type=code&client_id=${encodeURIComponent(env.CHE_TRADOVATE_OAUTH_CLIENT_ID)}&redirect_uri=${encodeURIComponent(redirect)}&state=${state}`;
   return { url };
 }
 
@@ -37,22 +40,23 @@ export async function handleCallback(storage, env, requestUrl, fetcher = fetch, 
   const code = url.searchParams.get('code') || '';
   const state = url.searchParams.get('state') || '';
   const saved = await storage.get(STATE_KEY);
-  // Single use: the state is consumed before anything else happens.
-  await storage.delete?.(STATE_KEY);
-  if (!saved || saved.state !== state || now > saved.expires_at || !code) {
+  // A forged or stale callback changes nothing (so it cannot cancel the
+  // owner's real sign-in); a matching one is consumed before any network call.
+  if (!saved || !state || saved.state !== state || now > saved.expires_at || !code) {
     return { ok: false, message: 'This sign-in link is invalid or expired. Ask CHE to connect NinjaTrader again.' };
   }
+  await storage.delete?.(STATE_KEY);
   try {
     const response = await fetcher(env.CHE_TRADOVATE_OAUTH_TOKEN_URL || DEFAULT_TOKEN_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body: new URLSearchParams({
         grant_type: 'authorization_code',
         code,
         redirect_uri: `${url.origin}${CALLBACK_PATH}`,
-        client_id: env.CHE_TRADOVATE_CLIENT_ID,
-        client_secret: env.CHE_TRADOVATE_CLIENT_SECRET,
-      }),
+        client_id: env.CHE_TRADOVATE_OAUTH_CLIENT_ID,
+        client_secret: env.CHE_TRADOVATE_OAUTH_CLIENT_SECRET,
+      }).toString(),
     });
     const body = await response.json().catch(() => ({}));
     const token = body.access_token || body.accessToken;
@@ -100,14 +104,27 @@ async function api(storage, mode, path, { method = 'GET', body, fetcher = fetch,
   return { data };
 }
 
-/** The account to trade in this mode: the named one if set, else the first active one. */
-export async function pickAccount(storage, mode, preferred = '', opts = {}) {
+/** Active accounts on the owner's login in this mode, in Tradovate's order. */
+export async function listAccounts(storage, mode, opts = {}) {
   const res = await api(storage, mode, '/account/list', opts);
   if (res.error) return res;
-  const accounts = (Array.isArray(res.data) ? res.data : []).filter((a) => a && a.active !== false);
+  return { accounts: (Array.isArray(res.data) ? res.data : []).filter((a) => a && a.active !== false).map((a) => ({ id: a.id, name: String(a.name) })) };
+}
+
+/**
+ * The account to trade in this mode. Live money only ever goes to the
+ * account the owner named; a simulated order may use the only/first one.
+ */
+export async function pickAccount(storage, mode, preferred = '', opts = {}) {
+  const listed = await listAccounts(storage, mode, opts);
+  if (listed.error) return listed;
   const want = String(preferred || '').toLowerCase();
-  const account = (want && accounts.find((a) => String(a.name).toLowerCase() === want)) || accounts[0];
-  return account ? { account: { id: account.id, name: account.name } } : { error: `No active ${mode === 'live' ? 'live' : 'simulated'} account was found on your NinjaTrader login.` };
+  if (want) {
+    const named = listed.accounts.find((a) => a.name.toLowerCase() === want);
+    return named ? { account: named } : { error: `The account ${preferred} is not active on your NinjaTrader login.` };
+  }
+  if (mode === 'live') return { error: 'Choose which live account to trade first: say "list my trading accounts".' };
+  return listed.accounts[0] ? { account: listed.accounts[0] } : { error: 'No active simulated account was found on your NinjaTrader login.' };
 }
 
 /** Front-month contract for a root like MES or MNQ (e.g. "MESZ6"). */
@@ -149,7 +166,9 @@ export async function placeBracket(storage, mode, order, opts = {}) {
   };
   const res = await api(storage, mode, '/order/placeoso', { ...opts, method: 'POST', body });
   if (res.error) return res;
-  if (res.data?.failureReason || !res.data?.orderId) {
+  // Tradovate reports an accepted order with failureReason "Success".
+  const failed = res.data?.failureReason && res.data.failureReason !== 'Success';
+  if (failed || !res.data?.orderId) {
     return { error: `Tradovate rejected the order${res.data?.failureText ? `: ${res.data.failureText}` : res.data?.failureReason ? ` (${res.data.failureReason})` : ''}.` };
   }
   return { ok: true, order_id: res.data.orderId, account: acct.account.name, symbol: contract.symbol, entry: body.price, stop: body.bracket2.stopPrice, target: body.bracket1.price, qty };

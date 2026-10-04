@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deskIntent, deskTick, readDesk, setMode, setSize, takeAnnouncement, takeTrade, skipTrade, pendingAlert } from './trading_desk.js';
-import { connectLink, handleCallback, placeBracket, connection, renewToken, accountBalance } from './broker_tradovate.js';
+import { deskIntent, deskTick, readDesk, setMode, setSize, takeAnnouncement, takeTrade, skipTrade, pendingAlert, rememberListed, chooseAccount } from './trading_desk.js';
+import { connectLink, handleCallback, placeBracket, connection, renewToken, accountBalance, pickAccount } from './broker_tradovate.js';
 
 const store = () => {
   const m = new Map();
@@ -55,8 +55,10 @@ test('sim mode: CHE places the entry on the simulated account herself and report
 test('live mode: nothing is placed until the owner says take the trade; skip and expiry place nothing', async () => {
   const s = store();
   await setMode(s, 'live');
+  await rememberListed(s, 'live', ['FYE-1001', 'LIVE1']);
+  assert.deepEqual(await chooseAccount(s, { number: 2 }), { mode: 'live', account: 'LIVE1' });
   let placed = [];
-  const place = async (_st, mode, a) => { placed.push(mode); return { ok: true, order_id: 9, account: 'LIVE1', symbol: 'MESZ6', entry: a.entry, stop: a.stop, target: a.target, qty: a.qty }; };
+  const place = async (_st, mode, a) => { placed.push(mode); assert.equal(a.account, 'LIVE1'); return { ok: true, order_id: 9, account: a.account, symbol: 'MESZ6', entry: a.entry, stop: a.stop, target: a.target, qty: a.qty }; };
   const t0 = Date.UTC(2026, 9, 5, 14);
   await deskTick(s, paperBook(), { place, now: t0 });
   assert.deepEqual(placed, [], 'no live order without a yes');
@@ -83,6 +85,10 @@ test('taking a trade in paper mode sends nothing; a failed order is reported as 
   await setMode(s, 'paper');
   assert.match((await takeTrade(s, { place: async () => { throw new Error('must not place'); } })).reply, /paper trading.*Nothing was placed/);
   await setMode(s, 'live');
+  assert.match((await takeTrade(s, { place: async () => { throw new Error('must not place'); } })).reply, /Which live account.*Nothing was placed/, 'live needs a named account');
+  await rememberListed(s, 'live', ['FYE-1001']);
+  await chooseAccount(s, { name: 'fye-1001' });
+  await deskTick(s, paperBook('p9'), { place: async () => ({ ok: true }) });
   const failed = await takeTrade(s, { place: async () => ({ error: 'Tradovate rejected the order: Insufficient margin.' }) });
   assert.equal(failed.ok, false);
   assert.match(failed.reply, /NOT placed.*Insufficient margin/);
@@ -100,7 +106,7 @@ test('size: micro by default, owner can choose full-size and 1-10 contracts', as
 
 // ─── Tradovate connector ─────────────────────────────────────────────────
 
-const ENV = { CHE_TRADOVATE_CLIENT_ID: '123', CHE_TRADOVATE_CLIENT_SECRET: 'sec' };
+const ENV = { CHE_TRADOVATE_OAUTH_CLIENT_ID: '123', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'sec' };
 
 test('NinjaTrader sign-in: one-time state, token stored, password never involved', async () => {
   const s = store();
@@ -109,7 +115,7 @@ test('NinjaTrader sign-in: one-time state, token stored, password never involved
   assert.match(url, /^https:\/\/trader\.tradovate\.com\/oauth\?response_type=code&client_id=123&redirect_uri=https%3A%2F%2Fche\.example%2Fbroker%2Ftradovate%2Fcallback&state=[0-9a-f]{48}$/);
   const state = new URL(url).searchParams.get('state');
   let sent;
-  const fetcher = async (u, init) => { sent = { u, body: JSON.parse(init.body) }; return new Response(JSON.stringify({ access_token: 'tok', expires_in: 4800 }), { status: 200 }); };
+  const fetcher = async (u, init) => { sent = { u, body: Object.fromEntries(new URLSearchParams(init.body)) }; return new Response(JSON.stringify({ access_token: 'tok', expires_in: 4800 }), { status: 200 }); };
   const bad = await handleCallback(s, ENV, `https://che.example/broker/tradovate/callback?code=c&state=wrong`, fetcher);
   assert.equal(bad.ok, false, 'wrong state refused');
   const { url: again } = await connectLink(s, ENV, 'https://che.example');
@@ -124,14 +130,14 @@ test('NinjaTrader sign-in: one-time state, token stored, password never involved
   assert.notEqual(state, new URL(again).searchParams.get('state'));
 });
 
-function tradovate({ failure } = {}) {
+function tradovate({ failure, success } = {}) {
   const calls = [];
   const fetcher = async (u, init = {}) => {
     calls.push({ u, method: init.method || 'GET', auth: init.headers?.Authorization, body: init.body ? JSON.parse(init.body) : null });
     const ok = (b) => new Response(JSON.stringify(b), { status: 200 });
     if (u.endsWith('/account/list')) return ok([{ id: 5, name: 'DEMO123', active: true }]);
     if (u.includes('/contract/suggest')) return ok([{ id: 1, name: 'MESZ6' }, { id: 2, name: 'MESH7' }]);
-    if (u.endsWith('/order/placeoso')) return ok(failure ? { failureReason: 'RiskCheck', failureText: failure } : { orderId: 42, oso1Id: 43, oso2Id: 44 });
+    if (u.endsWith('/order/placeoso')) return ok(failure ? { failureReason: 'RiskCheck', failureText: failure } : success ? { orderId: 42, failureReason: 'Success' } : { orderId: 42, oso1Id: 43, oso2Id: 44 });
     if (u.endsWith('/cashBalance/getcashbalancesnapshot')) return ok({ totalCashValue: 50000.5, netLiq: 50120.25, openPnL: 119.75 });
     if (u.endsWith('/auth/renewaccesstoken')) return ok({ accessToken: 'tok2', expirationTime: '2026-10-05T16:00:00Z' });
     return new Response('{}', { status: 404 });
@@ -155,7 +161,7 @@ test('orders: limit entry with stop and target attached, on the right server, ro
     bracket2: { action: 'Sell', orderType: 'Stop', stopPrice: 5805.25, timeInForce: 'GTC' },
   });
   const live = tradovate();
-  await placeBracket(s, 'live', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850 }, { fetcher: live.fetcher });
+  assert.equal((await placeBracket(s, 'live', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, account: 'DEMO123' }, { fetcher: live.fetcher })).ok, true);
   assert.ok(live.calls.every((c) => c.u.startsWith('https://live.tradovateapi.com/v1')), 'live goes to the live server');
 });
 
@@ -167,7 +173,7 @@ test('orders: rejections, bad brackets, missing sign-in and size limits are refu
   assert.match((await placeBracket(s, 'sim', { root: 'MES', qty: 11, entry: 5820, stop: 5805, target: 5850 })).error, /1 to 10/);
   assert.match((await placeBracket(s, 'paper', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850 })).error, /simulated or the live/);
   const { fetcher } = tradovate({ failure: 'Insufficient margin' });
-  assert.match((await placeBracket(s, 'live', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850 }, { fetcher })).error, /rejected the order: Insufficient margin/);
+  assert.match((await placeBracket(s, 'live', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, account: 'DEMO123' }, { fetcher })).error, /rejected the order: Insufficient margin/);
   await s.put('tradovate_auth', { access_token: 'tok', expires_at: Date.now() - 1 });
   assert.match((await placeBracket(s, 'live', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850 }, { fetcher })).error, /expired/);
 });
@@ -195,4 +201,37 @@ test('old paper trades are never called as entries (no stale orders after a rest
   const fresh = { open: [{ ...paperBook('n').open[0], opened_at: new Date(now - 60_000).toISOString() }] };
   await deskTick(s, fresh, { now, place: async () => { placed++; return { ok: true, order_id: 1, account: 'D', symbol: 'MESZ6', entry: 1, stop: 0, target: 2, qty: 1 }; } });
   assert.equal(placed, 1);
+});
+
+test('review fixes: Success response, named live account, forged callbacks, one yes = one order', async () => {
+  const s = store();
+  await s.put('tradovate_auth', { access_token: 'tok', expires_at: Date.now() + 3600_000 });
+  // Tradovate's documented accepted response carries failureReason "Success".
+  const ok = tradovate({ success: true });
+  assert.equal((await placeBracket(s, 'sim', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850 }, { fetcher: ok.fetcher })).ok, true);
+  // Live money never goes to "the first account in the list".
+  assert.match((await pickAccount(s, 'live', '', { fetcher: ok.fetcher })).error, /Choose which live account/);
+  assert.match((await pickAccount(s, 'live', 'OTHER', { fetcher: ok.fetcher })).error, /not active/);
+  assert.equal((await pickAccount(s, 'live', 'demo123', { fetcher: ok.fetcher })).account.name, 'DEMO123');
+  // A forged callback does not cancel the owner's real sign-in link.
+  const { url } = await connectLink(s, ENV, 'https://che.example');
+  const state = new URL(url).searchParams.get('state');
+  await handleCallback(s, ENV, 'https://che.example/broker/tradovate/callback?code=x&state=forged', ok.fetcher);
+  assert.equal((await s.get('tradovate_oauth_state')).state, state, 'real state survives a forged attempt');
+  // Two overlapping "take the trade": the alert is claimed first, one order only.
+  await setMode(s, 'live');
+  await rememberListed(s, 'live', ['LIVE1']);
+  await chooseAccount(s, { number: 1 });
+  await deskTick(s, paperBook('race'), { place: async () => ({ ok: true }) });
+  let orders = 0;
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const place = async (_st, _m, a) => { orders++; await gate; return { ok: true, order_id: 1, account: a.account, symbol: 'MESZ6', entry: 1, stop: 0, target: 2, qty: 1 }; };
+  const first = takeTrade(s, { place });
+  await new Promise((r) => setTimeout(r, 0));
+  const second = await takeTrade(s, { place });
+  release();
+  assert.equal((await first).ok, true);
+  assert.match(second.reply, /no open trade alert/);
+  assert.equal(orders, 1);
 });
