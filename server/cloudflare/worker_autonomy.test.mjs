@@ -1185,3 +1185,37 @@ test('9. engines that never produce usable output cannot loop: the saved job sto
     assert.ok(counter.engineer <= (MAX_JOB_RETRIES + 1) * 12, `engineer calls ${counter.engineer}`);
   } finally { globalThis.fetch = original; }
 });
+
+test('review: a recovery whose engines return nothing says nothing was saved (it is not queued); through the router that is an outage, which spends no recovery run', async () => {
+  const saved = new Map();
+  const { env } = emptyEngineEnv({ value: 'empty' });
+  const { chat } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  globalThis.fetch = GITHUB_OK(BANNER_FILES);
+  try {
+    saved.set('che_failed_engineering', { request: 'Update your code: make the ready banner friendlier', failed_strategies: [], fingerprints: [], files: ['lib/main.dart'], diagnosis: 'x', recovery_runs: 0, recovery_lock_until: 0 });
+    const reply = await deltaText(await chat('Diagnose and recover the failed coding job'));
+    assert.doesNotMatch(reply, /saved the coding job|continue it automatically/i, reply);
+    assert.match(reply, /nothing was saved/i, reply);
+    assert.equal((saved.get('che')?.jobs || []).filter((j) => j.kind === 'self_development').length, 0);
+    // The router turns an empty Workers AI answer into "all engines failed",
+    // i.e. an outage: by design that spends no recovery run, and nothing
+    // retries without the owner asking again.
+    assert.equal(saved.get('che_failed_engineering').recovery_runs, 0);
+  } finally { globalThis.fetch = original; }
+});
+
+test('review: a job waiting on its retry backoff blocks duplicates past 30 minutes; long coding runs are not treated as stale', async () => {
+  const old = new Date(Date.now() - 45 * 60_000).toISOString();
+  const data = { jobs: [{ id: 'j1', kind: 'self_development', status: 'queued', retry_count: 1, idempotency_key: 'k', created_at: old, updated_at: old }] };
+  assert.equal(enqueueJob(data, { kind: 'self_development', prompt: 'p', idempotency_key: 'k' }).deduplicated, true);
+  const fresh = { jobs: [{ id: 'j2', kind: 'chat', status: 'queued', retry_count: 0, idempotency_key: 'k2', created_at: old, updated_at: old }] };
+  assert.equal(enqueueJob(fresh, { kind: 'chat', prompt: 'p', idempotency_key: 'k2' }).deduplicated, false, 'never-retried jobs keep the 30-minute window');
+
+  const saved = new Map();
+  const state = new CheState({ storage: storageFor(saved) }, { CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'x' }) } });
+  const tenMinutesAgo = new Date(Date.now() - 10 * 60_000).toISOString();
+  saved.set('che', { jobs: [{ id: 'run', kind: 'self_development', status: 'running', attempts: 1, prompt: 'p', created_at: tenMinutesAgo, updated_at: tenMinutesAgo }], devices: {}, memories: [] });
+  await state.processJobs();
+  assert.equal(saved.get('che').jobs[0].status, 'running', 'a 10-minute coding run is still in flight, not requeued');
+});

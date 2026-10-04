@@ -781,3 +781,60 @@ test('10. reviewer rejection stays distinct from a reviewer that returned nothin
   assert.equal(rejected.status, 422);
   assert.ok(rejected.diagnostics.outcomes.some((o) => o.outcome === 'review_rejected'));
 });
+
+// ─── Independent review findings on the empty-output fix ─────────────────────
+const variantEdit = (n) => json({ summary: 'v', edits: [{ path: 'lib/main.dart', find: "'Ready. Type or speak a request.'", replace: `'Ready ${n}.'` }] });
+
+test('review: genuine strategies followed by empty engines stay a final failure with evidence (a retry never gets extra strategies)', async () => {
+  let n = 0;
+  const ai = scriptedAI({
+    engineer: () => { n += 1; return n <= 2 ? variantEdit(n) : { response: '' }; },
+    review: () => json({ approved: false, target_correct: true, notes: ['Breaks the VoiceOver label.'] }),
+  });
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore());
+  assert.equal(out.status, 422);
+  assert.equal(out.failure_class, FAILURE_CLASS.INTERNAL);
+  assert.match(out.detail, /stopped after 1 implementation passes because the engines then returned no usable output/);
+  assert.ok(out.engineering_record.failed_strategies.length >= 1, 'genuine evidence kept for recovery');
+});
+
+test('review: a model that always returns cut-off JSON is an honest final failure, not an outage retried four times', async () => {
+  const ai = scriptedAI({ engineer: () => ({ response: '{"summary":"x","edits":[{"path":"lib/main.dart","find":"Ready' }) });
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore());
+  assert.equal(out.status, 422);
+  assert.equal(out.failure_class, FAILURE_CLASS.INTERNAL);
+  assert.ok(out.diagnostics.outcomes.every((o) => o.outcome === 'invalid_json'));
+});
+
+test('review: a re-request that cannot run keeps the real format failure (not "engines down")', async () => {
+  const ai = scriptedAI({
+    engineer: (input) => {
+      if (input.che_avoid_providers) { const e = new Error('all engines resting'); e.category = 'temporary_cloud_unavailable'; throw e; }
+      return { response: 'no json at all' };
+    },
+  });
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore());
+  assert.ok(out.diagnostics.outcomes.every((o) => o.outcome === 'invalid_json'), JSON.stringify(out.diagnostics.outcomes));
+  assert.equal(out.failure_class, FAILURE_CLASS.INTERNAL);
+});
+
+test('review: hitting the engineering budget is reported as a budget stop, never "engines failed" or "exhausted"', async () => {
+  let n = 0;
+  const ai = scriptedAI({
+    engineer: () => { n += 1; return variantEdit(n); },
+    review: () => json({ approved: false, target_correct: true, notes: ['no'] }),
+  });
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore(), { budgetLimits: { maxCalls: 9 } });
+  assert.equal(out.status, 422);
+  assert.match(out.detail, /stopped at its engineering budget/);
+  assert.doesNotMatch(out.detail, /no usable output|exhausted/);
+});
+
+test('review: a failed site repair keeps the first draft', async () => {
+  const { writeSite } = await import('./site_builder.js');
+  let calls = 0;
+  const ai = { run: async () => { calls += 1; if (calls === 1) return { response: '<!doctype html><html><body><button>x</button></body></html>' }; throw new Error('engines down'); } };
+  const out = await writeSite({ AI: ai }, { brief: 'a page' }, '@cf/x');
+  assert.equal(calls, 2);
+  assert.match(out.html, /<button>x<\/button>/);
+});

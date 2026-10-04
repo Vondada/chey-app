@@ -992,7 +992,9 @@ export function enqueueJob(data, fields) {
   const existing = (data.jobs || []).find((job) =>
     job.idempotency_key === key
     && ['queued', 'running'].includes(job.status)
-    && Date.now() - Date.parse(job.created_at || 0) < JOB_DEDUPE_MS);
+    // A job still waiting on its retry backoff blocks duplicates however old
+    // it is; it is bounded by its own retry limit.
+    && (job.status === 'running' || Number(job.retry_count || 0) > 0 || Date.now() - Date.parse(job.created_at || 0) < JOB_DEDUPE_MS));
   if (existing) return { job: existing, deduplicated: true };
   const job = {
     id: crypto.randomUUID(),
@@ -2479,7 +2481,7 @@ async function dispatchChange(env, body, memory = null, options = {}) {
           } : {}),
           // An engine outage is not a recovery attempt: it does not use up the
           // recovery budget.
-          recovery_runs: Number(priorFailure.recovery_runs || 0) + (prepared?.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL ? 0 : 1),
+          recovery_runs: Number(priorFailure.recovery_runs || 0) + (prepared?.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL && !prepared?.engines_unusable ? 0 : 1),
           recovery_lock_until: 0,
         }).catch(() => null);
     } else if (prepared?.engineering_record) {
@@ -2544,8 +2546,12 @@ async function dispatchChange(env, body, memory = null, options = {}) {
     if (prepared.failure_class !== FAILURE_CLASS.TEMPORARY_EXTERNAL) {
       await sendMail(env, { from: 'che', to: 'claude', text: `My coding crew stopped on: "${request.slice(0, 300)}". Class ${prepared.failure_class || 'A'}. Engineering record: ${String(prepared.detail || 'unknown').slice(0, 800)}` }).catch(() => null);
     }
-    const ownerText = stripOwnerHomework(prepared.owner_message || ownerEngineeringMessage(prepared.failure_class || FAILURE_CLASS.INTERNAL))
-      || ownerEngineeringMessage(FAILURE_CLASS.INTERNAL);
+    // Nothing was queued here (a recovery run, or saving failed): never say
+    // the job was saved.
+    const ownerText = prepared.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL
+      ? 'My AI engines gave no usable answer just now, sir. Nothing was changed and nothing was saved; ask me again in a few minutes.'
+      : stripOwnerHomework(prepared.owner_message || ownerEngineeringMessage(prepared.failure_class || FAILURE_CLASS.INTERNAL))
+        || ownerEngineeringMessage(FAILURE_CLASS.INTERNAL);
     return json({
       detail: ownerText,
       failure_class: prepared.failure_class || FAILURE_CLASS.INTERNAL,
@@ -2688,6 +2694,7 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
       for (let continuationPass = 0;
            continuationPass < 2 && replyNeedsContinuation(answer, reply);
            continuationPass++) {
+        // A continuation that fails keeps the good reply already in hand.
         const continued = await env.AI.run(attempt.model, {
           messages: [
             ...baseMessages,
@@ -2700,7 +2707,7 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
           max_tokens: Math.max(900, maxTokens),
           ...routeFields,
           che_audit: { task: String(message).slice(0, 160), agent: 'CHE', route: 'owner_chat_continue', provider: provider || undefined },
-        });
+        }).catch(() => null);
         const more = String(continued?.response || continued?.choices?.[0]?.message?.content || '').trim();
         if (!more) break;
         reply = mergeReplyContinuation(reply, more);
@@ -8048,7 +8055,10 @@ export class CheState extends DurableObject {
       // A job left "running" for 5 minutes was interrupted (Worker restart,
       // isolate eviction, CPU limit). It is requeued only while it still has
       // attempts left; otherwise it is dead-lettered instead of looping.
-      if (job.status === 'running' && Date.parse(job.updated_at) <= now - 300000) {
+      // Coding jobs may legitimately run up to their 15-minute engineering
+      // budget; only after that are they treated as interrupted.
+      const staleMs = job.kind === 'self_development' ? 20 * 60_000 : 300000;
+      if (job.status === 'running' && Date.parse(job.updated_at) <= now - staleMs) {
         const attempts = Number(job.attempts || 0);
         if (attempts >= MAX_JOB_ATTEMPTS) {
           Object.assign(job, {

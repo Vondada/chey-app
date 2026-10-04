@@ -120,7 +120,7 @@ export function strategyFingerprint(answer) {
 // Per-job AI budget: call ceiling, per-stage ceilings and an estimated token
 // ceiling. Exhaustion is a hard stop, never a silent extra loop.
 export class AgentBudget {
-  constructor({ maxCalls = 32, maxTokens = 160_000, stageLimits = {}, maxElapsedMs = 15 * 60_000, maxIdenticalErrors = 3, now = () => Date.now() } = {}) {
+  constructor({ maxCalls = 40, maxTokens = 200_000, stageLimits = {}, maxElapsedMs = 15 * 60_000, maxIdenticalErrors = 3, now = () => Date.now() } = {}) {
     this.maxCalls = maxCalls;
     this.maxTokens = maxTokens;
     this.maxElapsedMs = maxElapsedMs;
@@ -129,8 +129,8 @@ export class AgentBudget {
     this.startedAt = now();
     this.errorCounts = {};
     // engineer: 3 genuine passes + 2 passes that produced nothing, 2 engineers
-    // each; format_retry: one re-request per unusable answer. maxCalls still
-    // caps the whole job.
+    // each; format_retry: one re-request per unusable answer. maxCalls and
+    // maxTokens (raised by that allowance only) still cap the whole job.
     this.stageLimits = { planner: 2, engineer: 10, format_retry: 6, reviewer: 16, recovery: 3, ...stageLimits };
     this.calls = 0;
     this.tokens = 0;
