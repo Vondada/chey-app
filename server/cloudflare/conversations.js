@@ -38,7 +38,7 @@ export function conversationThreads(data = {}, crewThreads = []) {
     })).filter((p) => p.text);
     if (!messages.length) continue;
     threads.push({
-      id: `meeting:${m.id}`, kind: 'war_room', title: clip(m.title || m.topic || m.goal || 'War Room meeting', 90),
+      id: `meeting:${m.id}`, kind: 'war_room', title: clip(m.objective || m.title || m.topic || m.goal || 'War Room meeting', 90),
       participants: [...new Set(messages.map((p) => p.from))], status: m.status || '', messages, updated_at: lastAt(messages, m.updated_at),
     });
   }
@@ -51,6 +51,25 @@ export function conversationThreads(data = {}, crewThreads = []) {
       id: `agent:${a.id}`, kind: 'office', title: clip(a.name || 'Agent', 60),
       participants: [...new Set(messages.map((x) => x.from))], status: a.status || '', messages, updated_at: lastAt(messages),
     });
+  }
+  // Office work as it is really recorded: each agent's assignments from CHE,
+  // CHE's steering, the agent's delivered result and CHE's review.
+  const byAgent = new Map();
+  for (const t of Array.isArray(data.team_tasks) ? data.team_tasks : []) {
+    if (!t?.partner_id) continue;
+    const name = clip(t.partner_name || 'Agent', 40);
+    const list = byAgent.get(t.partner_id) || { name, messages: [] };
+    list.messages.push({ from: 'CHE', to: name, kind: 'task', text: clip(t.task, 3000), at: t.created_at || '' });
+    for (const st of Array.isArray(t.steering) ? t.steering : []) list.messages.push({ from: 'CHE', to: name, kind: 'steering', text: clip(st.text, 3000), at: st.at || '' });
+    if (t.result) list.messages.push({ from: name, to: 'CHE', kind: 'result', text: clip(t.result, 3000), at: t.updated_at || '' });
+    if (t.review_feedback) list.messages.push({ from: 'CHE', to: name, kind: 'review', text: clip(t.review_feedback, 3000), at: t.updated_at || '' });
+    byAgent.set(t.partner_id, list);
+  }
+  const seenAgents = new Set(threads.filter((t) => t.kind === 'office').map((t) => t.id));
+  for (const [id, { name, messages }] of byAgent) {
+    const msgs = messages.filter((m) => m.text).sort((a, b) => String(a.at).localeCompare(String(b.at)));
+    if (!msgs.length || seenAgents.has(`agent:${id}`)) continue;
+    threads.push({ id: `agent:${id}`, kind: 'office', title: name, participants: [...new Set(msgs.map((x) => x.from))], status: '', messages: msgs.slice(-60), updated_at: lastAt(msgs) });
   }
   for (const t of Array.isArray(crewThreads) ? crewThreads : []) {
     const messages = Array.isArray(t.messages) ? t.messages : [];

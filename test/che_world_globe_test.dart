@@ -31,4 +31,15 @@ void main() {
     expect(opened.last, 0);
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets('the globe turns on its own while it is on screen', (tester) async {
+    await tester.pumpWidget(MaterialApp(home: CheWorldHubScreen(onOpenTab: (_) {})));
+    await tester.pump();
+    final state = tester.state<CheWorldGlobeState>(find.byType(CheWorldGlobe));
+    final start = state.yaw;
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(state.yaw, greaterThan(start));
+    await tester.pumpWidget(const SizedBox());
+  });
 }
