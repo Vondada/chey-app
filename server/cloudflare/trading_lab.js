@@ -359,7 +359,9 @@ export function discoverSkills(candles, ids = SKILL_IDS) {
   });
 }
 
-const SKILLS_PER_TICK = 12;
+// All skills in one pass: 63 skills on decades of daily bars take well
+// under a second of CPU, so there is no reason to spread them out.
+const SKILLS_PER_TICK = SKILL_IDS.length;
 const RETEST_DAYS = 30;
 
 /// One learning step for one market: test the next batch of skills not yet
@@ -607,7 +609,7 @@ export async function nextTradingTickAt(storage) {
 export function speakLearning(book) {
   const lines = ['Trading learning, paper only, no real money.'];
   const markets = Object.entries(book.lab || {});
-  if (!markets.length) return `${lines[0]} I have not finished a learning pass yet. I test new skills every hour.`;
+  if (!markets.length) return `${lines[0]} I have not finished a learning pass yet. I test every skill on each market every hour.`;
   for (const [symbol, lab] of markets) {
     const label = resolveSymbol(symbol)?.label || symbol;
     const best = lab.found?.[0];

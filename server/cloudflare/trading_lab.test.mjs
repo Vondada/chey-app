@@ -122,19 +122,19 @@ test('discovery keeps only skills that hold up on all three parts of history', (
   assert.ok(discoverSkills(noise).filter((x) => x.found).length <= 3);
 });
 
-test('learning works through every skill in batches and re-tests after 30 days', () => {
+test('learning tests every skill in one pass and re-tests after 30 days', () => {
   const c = series(1500);
   const t0 = Date.UTC(2026, 9, 1);
   let lab;
   let steps = 0;
   do { lab = learnStep(lab, c, t0 + steps * 3600_000).lab; steps += 1; } while (lab.tested.length < SKILL_IDS.length);
-  assert.equal(steps, Math.ceil(SKILL_IDS.length / 12));
+  assert.equal(steps, 1, 'every skill is tested in a single pass');
   assert.equal(lab.progress, `${SKILL_IDS.length} of ${SKILL_IDS.length}`);
   if (lab.found.length) assert.equal(lab.best, lab.found[0]);
   const known = [...lab.known];
   assert.deepEqual([...known].sort(), [...lab.found].sort());
   let later = learnStep(lab, c, t0 + 31 * 86400000);
-  assert.equal(later.lab.tested.length, 12, 'a new cycle starts');
+  assert.equal(later.lab.tested.length, SKILL_IDS.length, 'a new cycle starts and re-tests everything');
   // Re-finding the same skills next month is not announced as new.
   const renewed = [...later.newly];
   while (later.lab.tested.length < SKILL_IDS.length) { later = learnStep(later.lab, c, t0 + 31 * 86400000 + 3600_000); renewed.push(...later.newly); }
@@ -166,7 +166,7 @@ test('paper ticks keep learning, journal discoveries and add index futures once'
     return new Response('Date,Open,High,Low,Close,Volume\n' + c.map((k) => [k.t, k.o, k.h, k.l, k.c, 1].join(',')).join('\n'), { status: 200 });
   };
   let book;
-  for (let h = 0; h < 6; h++) book = await paperTick(storage, { fetcher, force: true, now: Date.UTC(2026, 9, 4, h) });
+  book = await paperTick(storage, { fetcher, force: true, now: Date.UTC(2026, 9, 4, 0) }); // one tick learns everything;
   assert.deepEqual(book.watch, ['BTCUSDT', 'es.f', 'nq.f']);
   for (const sym of book.watch) assert.equal(book.lab[sym].tested.length, SKILL_IDS.length);
   assert.equal(book.discoveries.length, book.watch.reduce((n, sym) => n + book.lab[sym].found.length, 0));
