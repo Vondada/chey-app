@@ -64,6 +64,12 @@ Then, on GitHub:
 
 **Not Claude's:** #166 (`chatgpt/autonomy-orchestration-hardening`) belongs to ChatGPT.
 
+**Open PR:** #172 (`claude/che-conversation-recall`):
+- CHE remembers War Room meetings and Flagstaff exchanges (`brain_memory.js`: `rememberThread`, `syncWarRoomMemories`, `recallMemories`). They are recalled into chat and Flagstaff prompts.
+- New owner command: "what are my 5 newest starred repos". She reads them, says them, saves them to memory, and posts them to `mailbox/claude.jsonl`.
+- Merge with `[worker-deploy]` once green.
+- **Starred repos:** CHE refused the Flagstaff request (relayed AI asks are never owner permission). The owner must ask her in the app; the list then lands in `mailbox/claude.jsonl`, and the next AI integrates those repos (queue item 4).
+
 **Next:** queue item 1 (Trading Room learning engine). Nothing is half-done; no WIP branches.
 
 **Owner answers still pending (don't guess):**
