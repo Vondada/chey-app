@@ -1159,3 +1159,41 @@ test('CHE remembers War Room meetings when the owner asks about them', async () 
   const text = await reply.text();
   assert.ok(prompts.some((p) => p.includes('REMEMBERED CONVERSATIONS') && p.includes('opening-range breakout on MES')), 'the meeting reached her prompt');
 });
+
+test('"what are my 5 newest starred repos" reads GitHub, says them, remembers them, and mails Claude', async () => {
+  const saved = new Map();
+  const mailed = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const u = String(url);
+    if (u.includes('/users/Vondada/starred')) {
+      return new Response(JSON.stringify(['n1', 'n2', 'n3', 'n4', 'n5', 'n6'].map((n) => ({ full_name: `owner/${n}`, html_url: `https://github.com/owner/${n}`, description: `Repo ${n}`, stargazers_count: 1, license: { spdx_id: 'MIT', name: 'MIT License' } }))), { status: 200 });
+    }
+    if (u.includes('/git/ref/heads/che-mailbox')) return new Response(JSON.stringify({ object: { sha: 'a'.repeat(40) } }), { status: 200 });
+    if (u.includes('/contents/mailbox/')) {
+      if ((options.method || 'GET') === 'PUT') { mailed.push(JSON.parse(options.body)); return new Response('{}', { status: 201 }); }
+      return new Response('{}', { status: 404 });
+    }
+    return new Response('{}', { status: 404 });
+  };
+  try {
+    const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_REPO: 'Vondada/chey-app', CHE_GITHUB_TOKEN: 't', AI: { run: async () => ({ response: 'unused' }) } };
+    const state = new CheState({ storage: { get: (k) => saved.get(k), put: (k, v) => saved.set(k, v), setAlarm: async () => {} } }, env);
+    env.CHE_STATE = { getByName: () => state };
+    const send = (path, method = 'GET', body = {}, token = '') => worker.fetch(new Request(`https://che.example${path}`, {
+      method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
+    }), env);
+    const token = (await (await send('/api/pair', 'POST', { code: '123456' })).json()).device_token;
+    const text = await (await send('/api/chat', 'POST', { message: 'CHE, what are my 5 newest starred repos?' }, token)).text();
+    assert.match(text, /1\. owner\/n1/);
+    assert.match(text, /5\. owner\/n5/);
+    assert.doesNotMatch(text, /owner\/n6/);
+    assert.match(saved.get('che').memories.at(-1), /newest starred GitHub repos.*owner\/n1/);
+    assert.equal(saved.get('starred_newest').repos.length, 5);
+    assert.ok(mailed.length === 1 && Buffer.from(mailed[0].content, 'base64').toString().includes('owner/n5'), 'sent to Claude in the mailbox');
+    assert.match(text, /sent them to Claude in the mailbox/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

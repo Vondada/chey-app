@@ -169,3 +169,14 @@ test('readRepoSource reads the code itself and marks the license', async () => {
   assert.match(referenceSourceBlock(closed), /STUDY ONLY[\s\S]*never copy/);
   assert.equal(referenceSourceBlock({ files: [] }), '');
 });
+
+test('newest starred repos: owner phrases, count, spoken list', async () => {
+  const { newestStarredIntent, speakNewestStarred } = await import('./code_scout.js');
+  assert.deepEqual(newestStarredIntent('CHE, what are my 5 newest starred repos?'), { count: 5 });
+  assert.deepEqual(newestStarredIntent('list my three latest GitHub stars'), { count: 3 });
+  assert.deepEqual(newestStarredIntent('what did I star recently on GitHub'), { count: 5 });
+  assert.equal(newestStarredIntent('study my starred repos'), null);
+  assert.equal(newestStarredIntent('what is the newest iPhone'), null);
+  const spoken = speakNewestStarred([{ full_name: 'a/b', description: 'Agents' }, { full_name: 'c/d', description: '' }]);
+  assert.match(spoken, /1\. a\/b: Agents\n2\. c\/d/);
+});

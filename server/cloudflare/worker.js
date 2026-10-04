@@ -43,7 +43,7 @@ import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
-import { autoImproveScan, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
+import { newestStarredIntent, speakNewestStarred, autoImproveScan, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { webAppPage } from './web_app.js';
 import { lastSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, siteUrl, speakSiteResult, writeSite } from './site_builder.js';
 import { changeHistoryIntent, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
@@ -5843,6 +5843,24 @@ export class CheState extends DurableObject {
         // model guesses about credentials. "Create the PR" works by voice/text.
         if (playbookIntent(message)) {
           return ndjsonReply(ENGINEERING_PLAYBOOK_SPOKEN, { source: 'che_engineering_playbook' });
+        }
+        // "What are my 5 newest starred repos?": read from GitHub (newest
+        // first), said aloud, kept as a memory, and sent to Claude in the
+        // mailbox so the coding AIs can integrate them.
+        const newestStars = ownerDevice ? newestStarredIntent(message) : null;
+        if (newestStars) {
+          const result = await listOwnerStarredRepos(this.keyEnv || this.env, fetch, { limit: Math.max(30, newestStars.count) });
+          if (result.error) return ndjsonReply(`I could not read your GitHub stars, sir. ${result.error} Nothing was changed.`, { source: 'che_starred_newest', ok: false });
+          const top = (result.repos || []).slice(0, newestStars.count);
+          if (!top.length) return ndjsonReply('GitHub shows no starred repositories on your account, sir.', { source: 'che_starred_newest', ok: true });
+          const at = new Date().toISOString();
+          await this.ctx.storage.put('starred_newest', { at, repos: top });
+          addOwnerMemory(data, `Owner's ${top.length} newest starred GitHub repos (${at.slice(0, 10)}): ${top.map((r) => r.full_name).join(', ')}`, { category: 'Knowledge', source: 'github_stars' });
+          await this.saveChatData(data);
+          const mailText = `The owner asked me to send you his ${top.length} newest starred GitHub repositories, read from GitHub just now (newest first):\n${top.map((r, i) => `${i + 1}. ${r.full_name} ${r.url} - ${r.description || 'no description'} (license: ${r.license_name})`).join('\n')}\nHe wants them integrated into CHE.`;
+          const mailed = await sendMail(this.env, { from: 'che', to: 'claude', text: mailText }).catch((e) => ({ error: String(e?.message || e) }));
+          const reply = speakNewestStarred(top).replace(' and sent them to Claude in the mailbox', mailed?.status !== 200 ? ', but I could not post them to the mailbox' : ' and sent them to Claude in the mailbox');
+          return ndjsonReply(reply, { source: 'che_starred_newest', ok: true });
         }
         // "Study <repo>: these topics, then implement them": real reading of
         // the reference first, one topic at a time, before any coding.
