@@ -1,18 +1,16 @@
-// Memory Brain — neural constellation (mockup 01).
-// Every learned thought is a category-colored luminous orb. NO capacity limit.
-// Related memories connect like neural branches. Tap an orb for provenance.
-// Cheap pseudo-3D CustomPaint + InteractiveViewer; no heavy WebView scene.
+// Memory Brain: CHE's real memories as an immersive 3D space (see
+// lib/brain/). Every learned thought is a category-colored orb, NO capacity
+// limit. Related memories connect like neural branches. Orbit, travel inside,
+// select, open, expand clusters, by touch or voice.
 
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
+import '../brain/che_brain_space.dart';
+import '../brain/che_brain_space_model.dart';
 import '../che_ui/che_theme.dart';
-import '../che_ui/che_voice_actions.dart';
-import '../che_ui/che_widgets.dart';
-import '../widgets/che_native_scene_world.dart';
 
 class CheMemoryDot {
   const CheMemoryDot({
@@ -180,15 +178,6 @@ List<CheMemoryDot> cheBuildMemoryDots({
   return out;
 }
 
-String _formatMemoryTime(DateTime? value) {
-  if (value == null) return 'Date unavailable for this older memory';
-  final t = value.toLocal();
-  final hour = t.hour % 12 == 0 ? 12 : t.hour % 12;
-  final minute = t.minute.toString().padLeft(2, '0');
-  final amPm = t.hour < 12 ? 'AM' : 'PM';
-  return '${t.month}/${t.day}/${t.year} · $hour:$minute $amPm';
-}
-
 String _shortTitle(String text) {
   final line = text.split(RegExp(r'[\n.]')).first.trim();
   if (line.length <= 42) return line.isEmpty ? 'Memory' : line;
@@ -287,334 +276,200 @@ class CheMemoryBrainRoom extends StatefulWidget {
 }
 
 class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
-  String _query = '';
-  CheMemoryDot? _selected;
+  late final CheBrainSpaceController _space = CheBrainSpaceController(widget.dots, brainLinks: widget.brainLinks);
   final _search = TextEditingController();
+  bool _searchOpen = false;
+  bool _filtersOpen = false;
 
-  /// Full view hides the search and legend so the constellation fills the
-  /// room instead of being squeezed into a band at the bottom.
-  bool _fullView = false;
+  late int _signature = _sig();
 
-  void _toggleFullView() {
-    HapticFeedback.selectionClick();
-    setState(() => _fullView = !_fullView);
-    final view = View.maybeOf(context);
-    if (view == null) return;
-    unawaited(SemanticsService.sendAnnouncement(
-      view,
-      _fullView ? 'Full brain view. The constellation fills the screen.' : 'Brain controls shown: search and color legend.',
-      Directionality.maybeOf(context) ?? TextDirection.ltr,
-    ));
+  // The hub rebuilds the dot list on every parent rebuild (e.g. while a chat
+  // reply streams); re-layout only when the memories actually changed.
+  int _sig() => Object.hash(
+        Object.hashAll([for (final d in widget.dots) Object.hash(d.id, d.title, d.category, d.importance)]),
+        Object.hashAll([for (final l in widget.brainLinks) Object.hash(l['source'], l['target'])]),
+      );
+
+  @override
+  void didUpdateWidget(covariant CheMemoryBrainRoom old) {
+    super.didUpdateWidget(old);
+    final next = _sig();
+    if (next != _signature) {
+      _signature = next;
+      _space.update(widget.dots, widget.brainLinks);
+    }
   }
 
   @override
   void dispose() {
     _search.dispose();
+    _space.dispose();
     super.dispose();
   }
 
-  List<CheMemoryDot> get _visible {
-    final q = _query.trim().toLowerCase();
-    if (q.isEmpty) return widget.dots;
-    return [
-      for (final d in widget.dots)
-        if (d.title.toLowerCase().contains(q) ||
-            d.body.toLowerCase().contains(q) ||
-            d.category.toLowerCase().contains(q))
-          d,
-    ];
-  }
+  void _say(String text) => unawaited(widget.onReadAloud?.call(text) ?? Future<void>.value());
 
-  void _openDetail(CheMemoryDot dot) {
+  void _toggleSearch() {
     HapticFeedback.selectionClick();
-    setState(() => _selected = dot);
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: CheColors.surface,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(CheRadius.xl)),
-      ),
-      builder: (ctx) {
-        final bottom = MediaQuery.viewPaddingOf(ctx).bottom;
-        return Padding(
-          padding: EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.lg, CheSpace.gutter, CheSpace.xl + bottom),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Memory detail', style: CheType.title),
-              const SizedBox(height: CheSpace.sm),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: cheMemoryCategoryColor(dot.category).withValues(alpha: 0.16),
-                  borderRadius: BorderRadius.circular(CheRadius.pill),
-                ),
-                child: Text(dot.category, style: CheType.caption.copyWith(color: cheMemoryCategoryColor(dot.category))),
-              ),
-              const SizedBox(height: CheSpace.md),
-              Text(dot.title, style: CheType.headline),
-              const SizedBox(height: CheSpace.sm),
-              Text(dot.body, style: CheType.bodyDim),
-              const SizedBox(height: CheSpace.md),
-              Semantics(
-                label: 'Memory metadata. Source ${dot.source}. Saved ${_formatMemoryTime(dot.at)}. '
-                    '${dot.confidence == null ? '' : 'Confidence ${(dot.confidence! * 100).round()} percent. '}'
-                    'Scope ${dot.scope}.',
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.035),
-                    borderRadius: BorderRadius.circular(CheRadius.md),
-                    border: Border.all(color: cheMemoryCategoryColor(dot.category).withValues(alpha: 0.24)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Source · ${dot.source}', style: CheType.caption),
-                      const SizedBox(height: 4),
-                      Text('Saved · ${_formatMemoryTime(dot.at)}', style: CheType.caption),
-                      if (dot.lastVerifiedAt != null) ...[
-                        const SizedBox(height: 4),
-                        Text('Last verified · ${_formatMemoryTime(dot.lastVerifiedAt)}', style: CheType.caption),
-                      ],
-                      if (dot.confidence != null) ...[
-                        const SizedBox(height: 4),
-                        Text('Confidence · ${(dot.confidence! * 100).round()}%', style: CheType.caption),
-                      ],
-                      const SizedBox(height: 4),
-                      Text('Scope · ${dot.scope == 'owner' ? 'Owner memory' : 'General knowledge'}', style: CheType.caption),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: CheSpace.lg),
-              CheVoiceActionList(
-                actions: [
-                  CheVoiceAction(
-                    number: 1,
-                    label: 'Read aloud',
-                    icon: Icons.volume_up_rounded,
-                    onTap: () async {
-                      Navigator.pop(ctx);
-                      await widget.onReadAloud?.call('${dot.title}. ${dot.body}');
-                    },
-                  ),
-                  CheVoiceAction(
-                    number: 2,
-                    label: 'Related memories',
-                    icon: Icons.hub_rounded,
-                    onTap: () {
-                      Navigator.pop(ctx);
-                      final related = [
-                        for (final other in widget.dots)
-                          if (other.id != dot.id &&
-                              other.tokens.toSet().intersection(dot.tokens.toSet()).length >= 2)
-                            other,
-                      ].take(5).toList();
-                      final text = related.isEmpty
-                          ? 'No strongly related memories yet.'
-                          : related.map((r) => r.title).join('. ');
-                      widget.onReadAloud?.call(text);
-                      setState(() => _query = dot.tokens.isEmpty ? dot.title : dot.tokens.first);
-                      _search.text = _query;
-                    },
-                  ),
-                  CheVoiceAction(
-                    number: 3,
-                    label: 'Close',
-                    icon: Icons.close_rounded,
-                    onTap: () => Navigator.pop(ctx),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        );
-      },
-    ).whenComplete(() {
-      if (mounted) setState(() => _selected = null);
+    setState(() {
+      _searchOpen = !_searchOpen;
+      if (_searchOpen) _filtersOpen = false;
     });
   }
 
+  void _toggleFilters() {
+    HapticFeedback.selectionClick();
+    setState(() {
+      _filtersOpen = !_filtersOpen;
+      if (_filtersOpen) _searchOpen = false;
+    });
+  }
+
+  void _find(String query) {
+    if (query.trim().isEmpty) return;
+    HapticFeedback.selectionClick();
+    _say(_space.find(query));
+  }
+
+  Widget _iconButton(IconData icon, String label, VoidCallback onTap, {bool on = false}) => Semantics(
+        button: true,
+        selected: on,
+        label: label,
+        excludeSemantics: true,
+        child: IconButton(
+          tooltip: label,
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+          icon: Icon(icon, size: 20, color: on ? CheColors.accent : Colors.white70),
+          onPressed: onTap,
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
-    final dots = _visible;
-    final child = Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.sm, CheSpace.gutter, 0),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (!_fullView) Text('MEMORY', style: CheType.overline.copyWith(color: CheColors.accent, letterSpacing: 2)),
-                    Text('Brain constellation', style: _fullView ? CheType.caption : CheType.title),
-                    if (!_fullView)
-                      Text(
-                        '${widget.dots.length} thoughts · no capacity limit',
-                        style: CheType.caption,
-                      ),
-                  ],
-                ),
-              ),
-              CheIconButton(
-                icon: _fullView ? Icons.close_fullscreen_rounded : Icons.open_in_full_rounded,
-                onTap: _toggleFullView,
-                tooltip: _fullView ? 'Show brain controls' : 'Full brain view',
-              ),
-              if (widget.onRefresh != null)
-                CheIconButton(
-                  icon: Icons.refresh_rounded,
-                  onTap: () => widget.onRefresh!(),
-                  tooltip: 'Refresh memories',
-                ),
-              const CheSceneQualityButton(),
-            ],
-          ),
-        ),
-        if (!_fullView) Padding(
-          padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.sm, CheSpace.gutter, CheSpace.sm),
-          child: TextField(
-            controller: _search,
-            onChanged: (v) => setState(() => _query = v),
-            decoration: InputDecoration(
-              hintText: 'Find a memory',
-              prefixIcon: const Icon(Icons.search_rounded, color: CheColors.accent),
-              filled: true,
-              fillColor: CheColors.surfaceHi,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(CheRadius.pill),
-                borderSide: BorderSide(color: CheColors.accent.withValues(alpha: 0.35)),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(CheRadius.pill),
-                borderSide: BorderSide(color: CheColors.strokeHi),
-              ),
-            ),
-          ),
-        ),
-        // One scrolling row instead of a 2-3 row wrap, so the legend never
-        // pushes the constellation down.
-        if (!_fullView) Padding(
-          padding: const EdgeInsets.fromLTRB(CheSpace.gutter, 0, CheSpace.gutter, CheSpace.sm),
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: [
-              for (final category in const ['Memory', 'Learning', 'Knowledge', 'ML Learning', 'Research', 'About you', 'Suggestion', 'Translation'])
-                Semantics(
-                  label: switch (category) {
-                    'Memory' => 'Teal means personal memories and preferences.',
-                    'Learning' => 'Cyan means learned information.',
-                    'Knowledge' => 'Blue means general knowledge.',
-                    'ML Learning' => 'Violet means machine learning and derived patterns.',
-                    'Research' => 'Gold means research.',
-                    'About you' => 'Pink means information about you.',
-                    'Suggestion' => 'Green means suggestions and plans.',
-                    'Translation' => 'Orange means translations and language.',
-                    _ => category,
-                  },
-                  child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: cheMemoryCategoryColor(category).withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(CheRadius.pill),
-                    border: Border.all(color: cheMemoryCategoryColor(category).withValues(alpha: 0.35)),
-                  ),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Container(width: 7, height: 7, decoration: BoxDecoration(shape: BoxShape.circle, color: cheMemoryCategoryColor(category))),
-                    const SizedBox(width: 5),
-                    Text(category, style: CheType.caption.copyWith(fontSize: 10)),
+    final total = widget.dots.length;
+    final counts = <String, int>{};
+    for (final d in widget.dots) {
+      counts[cheBrainCategoryKey(d.category)] = (counts[cheBrainCategoryKey(d.category)] ?? 0) + 1;
+    }
+    // The chrome stays compact at any text size; memory text itself (card,
+    // VoiceOver, speech) keeps the owner's full size.
+    final media = MediaQuery.of(context);
+    final chromeScale = media.textScaler.clamp(minScaleFactor: 1.0, maxScaleFactor: 1.2);
+    final chrome = MediaQuery(
+      data: media.copyWith(textScaler: chromeScale),
+      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        SizedBox(
+          height: 44,
+          child: Row(children: [
+            const SizedBox(width: CheSpace.gutter),
+            Expanded(
+              child: Semantics(
+                header: true,
+                label: 'Brain constellation. $total memories, no capacity limit.',
+                excludeSemantics: true,
+                child: Text.rich(
+                  TextSpan(children: [
+                    TextSpan(text: 'Brain constellation', style: CheType.label.copyWith(color: Colors.white, fontSize: 15)),
+                    TextSpan(text: '  ·  $total memories', style: CheType.caption.copyWith(fontSize: 12)),
                   ]),
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                ),
-              Text('Pinch to zoom · tap an orb', style: CheType.caption.copyWith(fontSize: 10)),
-            ],
-          ),
-          ),
+              ),
+            ),
+            _iconButton(Icons.search_rounded, _searchOpen ? 'Hide memory search' : 'Find a memory', _toggleSearch, on: _searchOpen),
+            _iconButton(Icons.tune_rounded, _filtersOpen ? 'Hide category filters' : 'Filter by category', _toggleFilters, on: _filtersOpen || _space.filter.isNotEmpty),
+            _iconButton(Icons.center_focus_strong_rounded, 'Show the whole brain', () => _say(_space.overview())),
+            _iconButton(Icons.blur_on_rounded, 'Go inside the brain', () => _say(_space.inside())),
+            if (widget.onRefresh != null) _iconButton(Icons.refresh_rounded, 'Refresh memories', () => widget.onRefresh!()),
+            const SizedBox(width: 4),
+          ]),
         ),
-        Expanded(
-          child: TickerMode(
-            enabled: widget.active,
-            child: ValueListenableBuilder<CheSceneQuality>(
-              valueListenable: CheSceneQualityStore.value,
-              builder: (context, quality, _) {
-                final edges =
-                    cheRelatedMemoryEdges(dots, brainLinks: widget.brainLinks);
-                if (dots.isEmpty) {
-                  return const Center(
-                    child: Text(
-                      'No memories yet.\nSay “remember that …” or let learning notes land.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white54),
-                    ),
-                  );
-                }
-                return CheNativeSceneWorld(
-                  mode: CheSceneMode.brain,
-                  quality: quality,
-                  height: double.infinity,
-                  semanticsLabel:
-                      'Native 3D Brain constellation. Real stored memories only.',
-                  entities: [
-                    for (final d in dots)
-                      CheSceneEntity(
-                        id: d.id,
-                        label: d.title,
-                        description: '${d.category}. ${d.body}',
-                        color: cheMemoryCategoryColor(d.category),
-                        importance: d.importance,
-                      ),
-                  ],
-                  links: [
-                    for (final edge in edges)
-                      CheSceneLink(edge.$1, edge.$2),
-                  ],
-                  onEntityTap: (id) {
-                    final matches = dots.where((d) => d.id == id);
-                    if (matches.isNotEmpty) _openDetail(matches.first);
-                  },
-                );
-              },
+        if (_searchOpen)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(CheSpace.gutter, 0, CheSpace.gutter, 6),
+            child: SizedBox(
+              height: 40,
+              child: TextField(
+                controller: _search,
+                autofocus: true,
+                textInputAction: TextInputAction.search,
+                onSubmitted: _find,
+                style: const TextStyle(fontSize: 14),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: 'Find a memory, then fly to it',
+                  prefixIcon: const Icon(Icons.search_rounded, size: 18, color: CheColors.accent),
+                  suffixIcon: IconButton(
+                    tooltip: 'Fly to the best match',
+                    icon: const Icon(Icons.arrow_forward_rounded, size: 18),
+                    onPressed: () => _find(_search.text),
+                  ),
+                  filled: true,
+                  fillColor: CheColors.surfaceHi,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(CheRadius.pill), borderSide: BorderSide.none),
+                ),
+              ),
             ),
           ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(CheSpace.gutter, 0, CheSpace.gutter, CheSpace.md),
-          child: CheVoiceActionList(
-            actions: [
-              CheVoiceAction(
-                number: 1,
-                label: 'Read selected memory',
-                icon: Icons.mic_rounded,
-                onTap: () async {
-                  final d = _selected ?? (dots.isNotEmpty ? dots.first : null);
-                  if (d == null) {
-                    await widget.onReadAloud?.call('No memory selected.');
-                    return;
-                  }
-                  await widget.onReadAloud?.call('${d.title}. ${d.body}');
-                },
-              ),
-              CheVoiceAction(
-                number: 2,
-                label: _fullView ? 'Show brain controls' : 'Full brain view',
-                icon: _fullView ? Icons.close_fullscreen_rounded : Icons.open_in_full_rounded,
-                onTap: _toggleFullView,
-              ),
-            ],
+        if (_filtersOpen)
+          SizedBox(
+            height: 38,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: CheSpace.gutter),
+              children: [
+                for (final category in cheBrainCategories)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6, bottom: 4),
+                    child: Semantics(
+                      button: true,
+                      selected: _space.filter.contains(category),
+                      label: '$category memories, ${counts[category] ?? 0}${_space.filter.contains(category) ? ', showing only these' : ''}',
+                      excludeSemantics: true,
+                      child: FilterChip(
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        avatar: CircleAvatar(radius: 4, backgroundColor: cheMemoryCategoryColor(category)),
+                        label: Text('$category ${counts[category] ?? 0}', style: const TextStyle(fontSize: 12)),
+                        selected: _space.filter.contains(category),
+                        onSelected: (on) {
+                          HapticFeedback.selectionClick();
+                          setState(() {});
+                          _say(_space.setFilter(on ? category : null));
+                        },
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
-        ),
-      ],
+      ]),
     );
 
+    final space = widget.dots.isEmpty
+        ? const Center(
+            child: Text(
+              'No memories yet.\nSay “remember that …” or let learning notes land.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white54),
+            ),
+          )
+        : CheBrainSpace(
+            controller: _space,
+            active: widget.active && TickerMode.valuesOf(context).enabled,
+            onSpeak: _say,
+            // The Soul & facts / Log chips float bottom-right in the room.
+            cardBottomInset: 56 + media.viewPadding.bottom,
+          );
+
+    final child = Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      chrome,
+      Expanded(child: space),
+    ]);
     if (!widget.embedded) return ColoredBox(color: Colors.black, child: child);
     return Material(color: Colors.black, child: child);
   }

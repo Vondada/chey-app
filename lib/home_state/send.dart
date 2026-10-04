@@ -446,6 +446,14 @@ extension _CheHomeSend on _CHEHomeState {
       return;
     }
 
+    // Brain space: "take me inside", "show my research memories", "find my
+    // memory about …", "open this memory", "expand this cluster", "back out".
+    final brainCommand = _pendingAttachment == null ? CheBrainCommand.parse(message) : null;
+    if (brainCommand != null && await _runBrainCommand(message, brainCommand)) {
+      if (mounted) _set(() => controller.clear());
+      return;
+    }
+
     if (await _openExternalAppByVoice(message)) {
       return;
     }
@@ -783,5 +791,30 @@ extension _CheHomeSend on _CHEHomeState {
       );
     });
   }
-}
 
+  /// Returns false when the command needs the Brain on screen and it is not,
+  /// so ordinary phrases ("back out") fall through to other handlers.
+  Future<bool> _runBrainCommand(String message, CheBrainCommand command) async {
+    const needsBrainOnScreen = {CheBrainAction.backOut, CheBrainAction.openSelected, CheBrainAction.expand, CheBrainAction.collapse};
+    var space = CheBrainSpaceController.current;
+    if (space == null) {
+      if (needsBrainOnScreen.contains(command.action)) return false;
+      _openAssistantHub(tab: 0);
+      for (var i = 0; i < 12 && CheBrainSpaceController.current == null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      }
+      space = CheBrainSpaceController.current;
+    }
+    final reply = space == null
+        ? 'I opened your brain, sir, but it has no memories to show yet.'
+        : space.execute(command);
+    HapticFeedback.selectionClick();
+    if (mounted) {
+      _set(() => messages
+        ..add({'role': 'user', 'text': message})
+        ..add({'role': 'assistant', 'text': reply}));
+    }
+    await speakText(reply, record: false);
+    return true;
+  }
+}

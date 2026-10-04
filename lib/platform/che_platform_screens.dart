@@ -512,16 +512,34 @@ class _CheTwoBrainsViewState extends State<CheTwoBrainsView> {
   @override
   Widget build(BuildContext context) {
     final selected = cheBrainPresentations[_index];
+    // One compact row: the brain's name plus the Live/Offline switch. The
+    // visualization below gets the rest of the screen.
+    final media = MediaQuery.of(context);
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-          child: Row(
-            children: [
-              for (var i = 0; i < cheBrainPresentations.length; i++)
+        MediaQuery(
+          data: media.copyWith(textScaler: media.textScaler.clamp(minScaleFactor: 1.0, maxScaleFactor: 1.2)),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 12, 2),
+            child: Row(
+              children: [
                 Expanded(
-                  child: Padding(
-                    padding: EdgeInsets.only(left: i == 0 ? 0 : 6),
+                  child: Semantics(
+                    header: true,
+                    label: '${selected.title}. ${selected.detail}',
+                    excludeSemantics: true,
+                    child: Text(
+                      selected.title,
+                      maxLines: 1,
+                      softWrap: false,
+                      overflow: TextOverflow.ellipsis,
+                      style: CheType.label.copyWith(color: CheColors.text, fontSize: 15),
+                    ),
+                  ),
+                ),
+                for (var i = 0; i < cheBrainPresentations.length; i++)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 6),
                     child: Semantics(
                       button: true,
                       selected: i == _index,
@@ -534,7 +552,8 @@ class _CheTwoBrainsViewState extends State<CheTwoBrainsView> {
                         },
                         borderRadius: BorderRadius.circular(999),
                         child: Ink(
-                          height: 40,
+                          height: 32,
+                          padding: const EdgeInsets.symmetric(horizontal: 14),
                           decoration: BoxDecoration(
                             color: i == _index ? CheColors.accent.withValues(alpha: 0.22) : CheColors.surface,
                             borderRadius: BorderRadius.circular(999),
@@ -553,18 +572,7 @@ class _CheTwoBrainsViewState extends State<CheTwoBrainsView> {
                       ),
                     ),
                   ),
-                ),
-            ],
-          ),
-        ),
-        Semantics(
-          header: true,
-          label: '${selected.title}. ${selected.detail}',
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(selected.title, style: CheType.headline),
+              ],
             ),
           ),
         ),

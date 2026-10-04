@@ -102,6 +102,8 @@ import 'security/che_password_vault.dart';
 import 'security/che_vault_auth.dart';
 import 'browser/che_browser.dart' show CheBrowserActions;
 import 'browser/che_embedded_app_shell.dart' show CheEmbeddedAppAnnouncer;
+import 'brain/che_brain_space.dart' show CheBrainSpaceController;
+import 'brain/che_brain_space_model.dart' show CheBrainAction, CheBrainCommand;
 import 'browser/che_chat_links.dart';
 import 'home/che_chat_link_actions.dart';
 import 'che_web_voice_stub.dart'
