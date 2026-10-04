@@ -5047,7 +5047,7 @@ export class CheState extends DurableObject {
       if (path === '/api/conversations' && request.method === 'GET') {
         if (!ownerDevice) return ownerOnly();
         const crew = (await Promise.resolve().then(() => this.ctx.storage.get(CREW_THREADS_KEY)).catch(() => null)) || [];
-        return json({ threads: conversationThreads({ meetings: data.meetings, agents: (data.team || []).filter((a) => !a.retired) }, crew) });
+        return json({ threads: conversationThreads({ meetings: data.meetings, agents: (data.team || []).filter((a) => !a.retired), team_tasks: data.team_tasks }, crew) });
       }
       if (path === '/api/meetings' && request.method === 'GET') {
         return json({ meetings: runtimeSnapshot(data).meetings });
