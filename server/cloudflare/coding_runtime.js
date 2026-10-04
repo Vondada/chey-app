@@ -186,6 +186,7 @@ export function speakRuntimeStatus(result = {}) {
     case 'implemented': parts.push(`My coding runner ${changed}.`); break;
     case 'pr_open': parts.push(`I ${changed} and opened pull request ${result.pr_number || ''}. Tests are running.`); break;
     case 'reviewing': parts.push(`Tests passed. My reviewer is checking pull request ${result.pr_number || ''}.`); break;
+    case 'approved_waiting_owner': parts.push(`Tests and independent review passed for pull request ${result.pr_number || ''}. It is waiting for your approval, sir; I have not merged or deployed it.`); break;
     case 'merged': parts.push(`Done. I ${changed}, tests passed, my reviewer approved, and I merged pull request ${result.pr_number || ''}.`); break;
     case 'review_rejected': parts.push(`Tests passed but my reviewer rejected it: ${String(result.review || '').slice(0, 200)}. I did not merge.`); break;
     case 'tests_failed': parts.push(`Tests failed on pull request ${result.pr_number || ''}, so I did not merge it.`); break;
