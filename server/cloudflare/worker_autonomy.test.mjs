@@ -947,3 +947,145 @@ test('"build me a website" → CHE writes, checks and hosts a real page; "change
   assert.equal(edited.done.media_url, url, 'same link after an edit');
   assert.match(await (await worker.fetch(new Request(url), env)).text(), /Open late/);
 });
+
+test('a request to ADD a GitHub capability reaches the coding pipeline (no "vectorRecall before initialization" crash)', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { const e = new Error('engines down'); e.category = 'temporary_cloud_unavailable'; throw e; } } };
+  const { chat } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  globalThis.fetch = GITHUB_OK({ 'lib/main.dart': 'class A {}\n' });
+  try {
+    const text = (await (await chat('Can you add the ability to create a GitHub pull request from voice?')).text());
+    assert.doesNotMatch(text, /before initialization|ReferenceError/, text);
+    assert.match(text, /che_self_development/);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+const deltaText = async (res) => (await res.text()).trim().split('\n').map((l) => JSON.parse(l)).filter((l) => l.type === 'delta').map((l) => l.delta).join('');
+
+test('a guessed "owner/repo" that GitHub 404s is prose, not a dead end: CHE continues instead of stopping', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'Here is what I found.' }) } };
+  const { chat } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url) => { calls.push(String(url)); return new Response('{"message":"Not Found"}', { status: 404 }); };
+  try {
+    const reply = await deltaText(await chat('Research the fast/slow tradeoff in the github readme and summarize it'));
+    assert.doesNotMatch(reply, /did not start a study|Could not inspect/, reply);
+    assert.equal(calls.filter((u) => u === 'https://api.github.com/repos/fast/slow').length, 1, 'validated once, never retried');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+function failingCrewEnv(counter, { recoverWith = '' } = {}) {
+  return {
+    CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_DISABLE_KEYLESS_AI: '1',
+    AI: {
+      run: async (_m, input) => {
+        counter.ai += 1;
+        const system = String(input.messages?.[0]?.content || '');
+        const user = String(input.messages?.[1]?.content || '');
+        if (system.includes('Architect')) return { response: JSON.stringify({ plan: 'banner', search_terms: ['Ready'], paths: ['lib/main.dart'] }) };
+        if (system.includes('Review')) {
+          counter.reviews += 1;
+          const approved = Boolean(recoverWith) && user.includes(recoverWith);
+          return { response: JSON.stringify({ approved, target_correct: approved, notes: approved ? [] : ['The banner text change breaks the VoiceOver label.'] }) };
+        }
+        if (system.includes('Engineer') || system.includes('Implementation')) {
+          counter.engineer += 1;
+          if (user.includes('Recovery of a failed job')) {
+            counter.recoveryPrompts += 1;
+            if (user.includes('VoiceOver label')) counter.sawReviewerReason += 1;
+            if (recoverWith) return { response: JSON.stringify({ summary: 'Keep the label', edits: [{ path: 'lib/main.dart', find: "'Ready'", replace: `'${recoverWith}'` }] }) };
+          }
+          // The same two strategies every time (one per engineer).
+          const v = counter.engineer % 2 ? 'Hi' : 'Hello';
+          return { response: JSON.stringify({ summary: `Say ${v}`, edits: [{ path: 'lib/main.dart', find: "'Ready'", replace: `'${v}'` }] }) };
+        }
+        return { response: 'ok' };
+      },
+    },
+  };
+}
+
+test('three failed attempts stop safely; recovery uses the evidence, never repeats them, and is bounded', async () => {
+  const saved = new Map();
+  const counter = { ai: 0, reviews: 0, engineer: 0, recoveryPrompts: 0, sawReviewerReason: 0 };
+  const { chat } = await pairedChat(failingCrewEnv(counter), saved);
+  const original = globalThis.fetch;
+  globalThis.fetch = GITHUB_OK({ 'lib/main.dart': "class A { String s = 'Ready'; }\n" });
+  try {
+    await deltaText(await chat('Update your code: make the ready banner friendlier'));
+    const record = saved.get('che_failed_engineering');
+    assert.ok(record, 'failure evidence retained');
+    assert.ok(record.failed_strategies.length >= 1 && record.fingerprints.length >= 2);
+    assert.ok(record.diagnosis);
+    assert.ok(counter.engineer <= 6, `three rounds of two engineers at most, got ${counter.engineer}`);
+
+    // Recovery 1: same two strategies come back → rejected as duplicates
+    // before any reviewer spends tokens on them.
+    const reviewsBefore = counter.reviews;
+    await deltaText(await chat('Diagnose and recover the failed coding job'));
+    assert.ok(counter.recoveryPrompts >= 1, 'engineers were told this is a recovery');
+    assert.ok(counter.sawReviewerReason >= 1, 'engineers saw the earlier reviewer reason');
+    assert.equal(counter.reviews, reviewsBefore, 'repeated strategies never reach review');
+    assert.equal(saved.get('che_failed_engineering').recovery_runs, 1);
+    assert.equal(saved.get('che_failed_engineering').recovery_lock_until, 0, 'lock released');
+
+    await deltaText(await chat('Retry the failed coding job'));
+    // Budget spent: the third recovery answers from the record with no AI.
+    const aiBefore = counter.ai;
+    const third = await deltaText(await chat('Recover the previous failed job again'));
+    assert.match(third, /already ran 2 recovery passes/, third);
+    assert.equal(counter.ai, aiBefore, 'no engines spent once the recovery budget is used');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('a recovery already running is not started twice', async () => {
+  const saved = new Map();
+  const counter = { ai: 0, reviews: 0, engineer: 0, recoveryPrompts: 0, sawReviewerReason: 0 };
+  const { chat } = await pairedChat(failingCrewEnv(counter), saved);
+  saved.set('che_failed_engineering', { request: 'make the ready banner friendlier', failed_strategies: [], fingerprints: [], diagnosis: 'x', recovery_runs: 0, recovery_lock_until: Date.now() + 60_000 });
+  const reply = await deltaText(await chat('Diagnose and recover the failed coding job'));
+  assert.match(reply, /already recovering that coding job/);
+  assert.equal(counter.ai, 0);
+});
+
+test('recovery can succeed with a materially different strategy, and the record is closed', async () => {
+  const saved = new Map();
+  const counter = { ai: 0, reviews: 0, engineer: 0, recoveryPrompts: 0, sawReviewerReason: 0 };
+  const { chat } = await pairedChat(failingCrewEnv(counter, { recoverWith: 'Ready, sir' }), saved);
+  const original = globalThis.fetch;
+  globalThis.fetch = GITHUB_OK({ 'lib/main.dart': "class A { String s = 'Ready'; }\n" });
+  try {
+    saved.set('che_failed_engineering', { request: 'Update your code: make the ready banner friendlier', failed_strategies: [{ engineer: 'Knox', outcome: 'review_rejected', why: 'The banner text change breaks the VoiceOver label.', edits: [] }], fingerprints: [], files: ['lib/main.dart'], diagnosis: 'Independent review rejected every candidate.', recovery_runs: 0, recovery_lock_until: 0 });
+    const reply = await deltaText(await chat('Reopen the engineering record and recover that failed job'));
+    assert.match(reply, /create the PR/, reply);
+    assert.ok(saved.get('che_failed_engineering').resolved_at, 'record closed after a reviewed fix');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('an engine outage during recovery neither queues a blind job nor spends the recovery budget', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { const e = new Error('engines down'); e.category = 'temporary_cloud_unavailable'; throw e; } } };
+  const { chat } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  globalThis.fetch = GITHUB_OK({ 'lib/main.dart': "class A { String s = 'Ready'; }\n" });
+  try {
+    saved.set('che_failed_engineering', { request: 'Update your code: make the ready banner friendlier', failed_strategies: [], fingerprints: [], files: ['lib/main.dart'], diagnosis: 'x', recovery_runs: 1, recovery_lock_until: 0 });
+    await deltaText(await chat('Diagnose and recover the failed coding job'));
+    assert.equal((saved.get('che')?.jobs || []).filter((j) => j.kind === 'self_development').length, 0, 'no blind background job');
+    assert.equal(saved.get('che_failed_engineering').recovery_runs, 1, 'outage did not spend the budget');
+    assert.equal(saved.get('che_failed_engineering').recovery_lock_until, 0);
+  } finally {
+    globalThis.fetch = original;
+  }
+});

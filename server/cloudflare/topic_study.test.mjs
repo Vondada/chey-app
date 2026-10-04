@@ -4,8 +4,8 @@ import { OWNER_PROMPT, README } from './topic_study.fixtures.mjs';
 import { htmlToText, matchTopicSections, namedRepoStudyIntent, readTutorial, readmeSections, sectionTutorials, topicBuildRequest, topicTitles } from './topic_study.js';
 
 test('the owner prompt is a named study of build-your-own-x with implementation', () => {
-  assert.deepEqual(namedRepoStudyIntent(OWNER_PROMPT), { repo: 'codecrafters-io/build-your-own-x', implement: true });
-  assert.deepEqual(namedRepoStudyIntent('Look in the build your own X readme for the search engine topic'), { repo: 'codecrafters-io/build-your-own-x', implement: false });
+  assert.deepEqual(namedRepoStudyIntent(OWNER_PROMPT), { repo: 'codecrafters-io/build-your-own-x', implement: true, evidence: 'alias' });
+  assert.deepEqual(namedRepoStudyIntent('Look in the build your own X readme for the search engine topic'), { repo: 'codecrafters-io/build-your-own-x', implement: false, evidence: 'alias' });
   assert.equal(namedRepoStudyIntent('Study https://github.com/msitarzewski/agency-agents and report').repo, 'msitarzewski/agency-agents');
   assert.equal(namedRepoStudyIntent('Research the tauri-apps/tauri repo').repo, 'tauri-apps/tauri');
 });
@@ -98,4 +98,20 @@ test('topic build request carries the repo source and asks for real wiring', asy
   assert.match(request, /REFERENCE CODE from o\/r/);
   assert.match(request, /Wire it into the existing code path/);
   assert.doesNotMatch(topicBuildRequest({ repo: 'o/r', topic: { title: 'Agents' }, analysis: {} }), /Wire it/);
+});
+
+test('slashes in ordinary English are not repositories (autonomy test regressions)', () => {
+  // The exact prompts that produced "Could not inspect file/path (404)" and
+  // "Could not inspect engineering/research (404)".
+  assert.equal(namedRepoStudyIntent('Read your repo and diagnose the failed job; the file/path in the record is not a literal filename.'), null);
+  // No own-repo wording: only weak evidence, confirmed on GitHub first (a 404
+  // falls through to the normal routes; see worker_autonomy tests).
+  assert.equal(namedRepoStudyIntent('Research the engineering/research notes in the repo and improve the recovery path.').evidence, 'bare');
+  assert.equal(namedRepoStudyIntent('Diagnose the failed job: research engineering/research in your repo.'), null);
+  assert.equal(namedRepoStudyIntent('Study the tauri-apps/tauri repo and implement it in your code').repo, 'tauri-apps/tauri');
+  assert.equal(namedRepoStudyIntent('Study the coding job record on GitHub: which file/path broke?'), null);
+  // Without own-code context a bare pair is only weak evidence; the caller
+  // confirms it on GitHub before treating it as a repository.
+  assert.equal(namedRepoStudyIntent('Research the tauri-apps/tauri repo').evidence, 'bare');
+  assert.equal(namedRepoStudyIntent('Study https://github.com/msitarzewski/agency-agents and report').evidence, 'url');
 });

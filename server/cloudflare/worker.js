@@ -37,7 +37,7 @@ import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook,
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
-import { prepareSelfUpdate, recordLesson } from './self_development.js';
+import { prepareSelfUpdate, recordLesson, recoveryRequestIntent } from './self_development.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
 import { KEY_PROVIDERS, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
@@ -2089,6 +2089,10 @@ export function shouldHandleSelfUpdateAction(message, intent) {
 
 const LAST_SELF_UPDATE_DEPLOY_KEY = 'last_self_update_deploy';
 const LAST_ENGINEERING_REQUEST_KEY = 'che_last_engineering_request';
+// The last coding job that stopped after its attempts, with its evidence.
+const FAILED_ENGINEERING_KEY = 'che_failed_engineering';
+const MAX_RECOVERY_RUNS = 2;
+const RECOVERY_LOCK_MS = 15 * 60_000;
 // True when a stored diff view changes at least one real (non-comment) line.
 export function diffHasSubstance(diff) {
   return String(diff || '').split('\n').some((line) => {
@@ -2370,7 +2374,7 @@ async function dispatchChange(env, body, memory = null, options = {}) {
   const namedStudy = namedRepoStudyIntent(request);
   if (namedStudy && options.topicStudy && namedStudy.repo.toLowerCase() !== String(env.CHE_GITHUB_REPO || '').toLowerCase()) {
     const started = await options.topicStudy(namedStudy, request);
-    return json({ message: started.message, repository_research: true, background_job_ids: started.job_ids || [], code_review_passed: false, owner_approval_required: false });
+    if (!started.not_a_repo) return json({ message: started.message, repository_research: true, background_job_ids: started.job_ids || [], code_review_passed: false, owner_approval_required: false });
   }
   if (options.batchStudies && studyBatchIntent(request)) {
     const batched = await options.batchStudies();
@@ -2429,15 +2433,59 @@ async function dispatchChange(env, body, memory = null, options = {}) {
     }
   }
   if (memory?.put) await memory.put(LAST_ENGINEERING_REQUEST_KEY, { request: request.slice(0, 4000), integrate: true, at: new Date().toISOString() }).catch(() => null);
+  // "Diagnose/recover the failed job": build on the retained evidence of the
+  // last job that stopped after its attempts, instead of starting blind.
+  // Bounded: MAX_RECOVERY_RUNS per failed job, one at a time (lock).
+  let priorFailure = null;
+  if (memory?.get && memory?.put && recoveryRequestIntent(request)) {
+    const record = await memory.get(FAILED_ENGINEERING_KEY).catch(() => null);
+    if (record?.request && !record.resolved_at) {
+      if (Number(record.recovery_lock_until || 0) > Date.now()) {
+        return json({ message: 'I am already recovering that coding job, sir. I will tell you how it ends; I did not start it twice.', code_review_passed: false, owner_approval_required: false });
+      }
+      if (Number(record.recovery_runs || 0) >= MAX_RECOVERY_RUNS) {
+        return json({ message: `I already ran ${MAX_RECOVERY_RUNS} recovery passes on that job, sir, and none passed review, so I stopped instead of burning more engines. What went wrong: ${record.diagnosis} Tell me a different approach or a smaller change and I will build that.`, code_review_passed: false, owner_approval_required: false, failure_class: FAILURE_CLASS.INTERNAL });
+      }
+      priorFailure = record;
+      await memory.put(FAILED_ENGINEERING_KEY, { ...record, recovery_runs: Number(record.recovery_runs || 0) + 1, recovery_lock_until: Date.now() + RECOVERY_LOCK_MS });
+    }
+  }
   let prepared;
   try {
-    prepared = await prepareSelfUpdate(env, groundedRequest, fetch, memory, { ownerInitiated: true, intentRequest: request });
+    prepared = priorFailure
+      ? await prepareSelfUpdate(env, `${priorFailure.request}\n\nRECOVERY of a coding job that stopped after its attempts. Owner's recovery request: ${request.slice(0, 2000)}`, fetch, memory, { ownerInitiated: true, intentRequest: priorFailure.request, priorFailure })
+      : await prepareSelfUpdate(env, groundedRequest, fetch, memory, { ownerInitiated: true, intentRequest: request });
   } catch (error) {
     console.error('CHE change request failed', error?.message || error);
     const { failure_class: failureClass, kind } = classifyFailure(error);
     prepared = { status: 502, failure_class: failureClass, detail: String(error?.message || error).slice(0, 500), owner_message: ownerEngineeringMessage(failureClass, kind) };
   }
   if (prepared?.diagnostics) console.log('CHE engineering diagnostics', JSON.stringify(prepared.diagnostics).slice(0, 3000));
+  if (memory?.put) {
+    if (priorFailure) {
+      // Recovery finished: release the lock; keep the combined evidence if it
+      // failed again so the next recovery knows every strategy tried.
+      const record = prepared?.engineering_record;
+      await memory.put(FAILED_ENGINEERING_KEY, prepared?.status === 200
+        ? { ...priorFailure, recovery_runs: Number(priorFailure.recovery_runs || 0) + 1, recovery_lock_until: 0, resolved_at: new Date().toISOString() }
+        : {
+          ...priorFailure,
+          ...(record ? {
+            failed_strategies: [...(priorFailure.failed_strategies || []), ...(record.failed_strategies || [])].slice(-16),
+            fingerprints: [...new Set([...(priorFailure.fingerprints || []), ...(record.fingerprints || [])])].slice(-40),
+            outcomes: [...(priorFailure.outcomes || []), ...(record.outcomes || [])].slice(-40),
+            root_cause: record.root_cause,
+            diagnosis: record.diagnosis,
+          } : {}),
+          // An engine outage is not a recovery attempt: it does not use up the
+          // recovery budget.
+          recovery_runs: Number(priorFailure.recovery_runs || 0) + (prepared?.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL ? 0 : 1),
+          recovery_lock_until: 0,
+        }).catch(() => null);
+    } else if (prepared?.engineering_record) {
+      await memory.put(FAILED_ENGINEERING_KEY, { ...prepared.engineering_record, recovery_runs: 0, recovery_lock_until: 0 }).catch(() => null);
+    }
+  }
   if (prepared.status === 200 && prepared.already_satisfied) {
     if (memory?.put && inspiration?.references?.length) {
       let ledger = [];
@@ -2473,7 +2521,9 @@ async function dispatchChange(env, body, memory = null, options = {}) {
   if (prepared.status !== 200 || !prepared.proposal) {
     // Temporary outage (class B): checkpoint the request as an idempotent
     // background job with bounded exponential backoff instead of failing.
-    if (prepared.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL && options.queue) {
+    // A recovery is never queued blind: the background job would lose the
+    // failure evidence. The owner asks again once engines are back.
+    if (prepared.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL && options.queue && !priorFailure) {
       const queued = await options.queue({ request, groundedRequest }).catch(() => null);
       if (queued?.job) {
         return json({
@@ -5712,7 +5762,7 @@ export class CheState extends DurableObject {
         if (namedStudy && namedStudy.repo.toLowerCase() !== String(this.env.CHE_GITHUB_REPO || '').toLowerCase()) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can start a repository study.', { source: 'che_topic_study', ok: false });
           const started = await this.startTopicStudy(namedStudy, message);
-          return ndjsonReply(started.message, { source: 'che_topic_study', repository_research: true, background_job_ids: started.job_ids || [] });
+          if (!started.not_a_repo) return ndjsonReply(started.message, { source: 'che_topic_study', repository_research: true, background_job_ids: started.job_ids || [] });
         }
         // "Batch them": the studies and builds already lined up run together.
         // Without lined-up study work this falls through to the usual routes.
@@ -5763,6 +5813,11 @@ export class CheState extends DurableObject {
           await this.ctx.storage.put('che', data);
           return ndjsonReply(`Done, sir. ${revoked.device.name} is signed out and can no longer reach me. Your memories and settings are safe on my server.`, { source: 'che_devices', ok: true });
         }
+        // "Diagnose/recover the failed coding job": goes to the coding
+        // pipeline, which builds on the retained failure evidence.
+        if (ownerDevice && recoveryRequestIntent(message) && (await this.ctx.storage.get(FAILED_ENGINEERING_KEY).catch(() => null))?.request) {
+          return this.selfDevelopmentReply(message, { vectorRecall: {} });
+        }
         // "What changed?": only real, recorded updates are read back.
         if (changeHistoryIntent(message)) {
           return ndjsonReply(speakChangeHistory(await loadChangeHistory(this.ctx.storage)), { source: 'che_change_history' });
@@ -5799,7 +5854,7 @@ export class CheState extends DurableObject {
           // capability. If the wording is a request to ADD that capability,
           // run the real coding pipeline now instead of falling into chat.
           return ownerDevice
-            ? this.selfDevelopmentReply(message, { vectorRecall })
+            ? this.selfDevelopmentReply(message, { vectorRecall: {} })
             : ndjsonReply('Only the CHE owner can ask me to change my code.', { source: 'che_self_development', ok: false });
         }
 
@@ -7496,7 +7551,13 @@ export class CheState extends DurableObject {
     const repo = intent.repo;
     const inspected = await inspectReferenceRepo(this.env, { full_name: repo }, fetch, { allowStudyOnly: true, readmeChars: 400_000 })
       .catch((error) => ({ error: String(error?.message || error) }));
-    if (inspected.error) return { message: `I could not read ${repo} on GitHub, sir, so I did not start a study. ${inspected.error}` };
+    if (inspected.error) {
+      // A bare "word/word" that GitHub does not know is ordinary prose, not a
+      // repository: the caller continues with the normal routes (coding,
+      // source discovery) instead of stopping here.
+      if (intent.evidence === 'bare' && /\(404\)/.test(inspected.error)) return { not_a_repo: true };
+      return { message: `I could not read ${repo} on GitHub, sir, so I did not start a study. ${inspected.error}` };
+    }
     const sections = readmeSections(inspected.readme);
     const topics = matchTopicSections(sections, message, 6).map((topic) => ({ title: topic.title, tutorials: sectionTutorials(topic.body, 3) }));
     const repoRef = {
