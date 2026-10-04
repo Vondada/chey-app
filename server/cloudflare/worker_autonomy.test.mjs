@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
+import { replyFromNdjson } from './brain_memory.js';
 
 const generated = new URL('./.worker_autonomy.test.generated.mjs', import.meta.url);
 writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
@@ -1253,4 +1254,37 @@ test('an idle CHE still wakes hourly for paper-trading learning', async () => {
   assert.ok(alarms.length >= 1, 'an alarm is set with nothing else queued');
   assert.equal(alarms[alarms.length - 1], Math.max(Date.parse('2026-10-04T11:00:00.000Z'), alarms[alarms.length - 1]));
   assert.ok(alarms[alarms.length - 1] <= Math.max(Date.now() + 1000, Date.parse('2026-10-04T11:00:00.000Z')));
+});
+
+test('trading desk through chat: switch modes, connect, alerts said first, take the trade', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_TRADOVATE_OAUTH_CLIENT_ID: '123', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'sec' };
+  const { chat } = await pairedChat(env, saved);
+  const say = async (m) => replyFromNdjson(await (await chat(m)).text());
+  assert.match(await say('CHE, switch to live trading'), /Switched from paper trading.*to your NinjaTrader LIVE account, real money.*take the trade.*not connected yet/s);
+  assert.equal(saved.get('trading_desk').mode, 'live');
+  const connect = await say('connect my NinjaTrader account');
+  assert.match(connect, /https:\/\/trader\.tradovate\.com\/oauth\?/);
+  assert.match(connect, /password goes only to Tradovate/);
+  // An entry CHE found is said before the reply to whatever the owner says next.
+  saved.set('trading_desk', { ...saved.get('trading_desk'), alerts: [{ id: 'a1', paper_id: 'p1', at: new Date().toISOString(), expires_at: new Date(Date.now() + 3600_000).toISOString(), root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, status: 'pending', announced: false, mode: 'live' }] });
+  const next = await say("what's my trading mode");
+  assert.match(next, /^Trade alert, sir, good entry on your LIVE account: buy 1 MES at 5820.*take the trade[\s\S]*You are on your NinjaTrader LIVE account/);
+  assert.doesNotMatch(await say("what's my trading mode"), /Trade alert/, 'said once');
+  // No live account chosen: the yes is answered honestly and nothing is placed.
+  assert.match(await say('take the trade'), /Which live account.*Nothing was placed/);
+  assert.equal(saved.get('trading_desk').alerts[0].status, 'pending');
+  // Reading accounts needs the sign-in; CHE says so instead of guessing.
+  assert.match(await say('list my trading accounts'), /could not read your live accounts.*not connected/);
+  assert.match(await say('switch to paper trading'), /to paper trading/);
+});
+
+test('trading desk: the NinjaTrader sign-in page is public but only accepts CHE\'s one-time state', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_TRADOVATE_OAUTH_CLIENT_ID: '123', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'sec' };
+  await pairedChat(env, saved);
+  const res = await worker.fetch(new Request('https://che.example/broker/tradovate/callback?code=x&state=forged'), env);
+  assert.equal(res.status, 400);
+  assert.match(await res.text(), /invalid or expired/);
+  assert.equal(saved.has('tradovate_auth'), false);
 });
