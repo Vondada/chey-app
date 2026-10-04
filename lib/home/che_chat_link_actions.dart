@@ -78,7 +78,12 @@ Future<bool> cheOpenChatLink(BuildContext context, CheChatLink link, {bool exter
     if (!context.mounted) return false;
     HapticFeedback.heavyImpact();
     _say(context, 'I could not open ${link.name} inside CHE, so I am opening it in Safari.');
-    return CheChatLinkOpener.external(uri);
+    final ok = await CheChatLinkOpener.external(uri);
+    if (!ok && context.mounted) {
+      HapticFeedback.heavyImpact();
+      _say(context, 'Safari could not open ${link.name} either. Say "what\'s the link" and I will read the address.');
+    }
+    return ok;
   }
 }
 

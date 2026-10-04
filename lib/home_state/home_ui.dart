@@ -204,7 +204,9 @@ extension _CheHomeUi on _CHEHomeState {
       checked++;
       final raw = m['text'] ?? '';
       final display = CheUpdateProposal.stripBlocks(raw.replaceAll(RegExp(r'```che-plugin[\s\S]*?(```|$)'), '').trim());
-      final links = _chatLinksIn(display, m['media_url'], raw);
+      // Every link counts here, including ones shown as an inline preview
+      // (which get no extra button), so "open it" can reach them too.
+      final links = cheChatLinks('$display ${m['media_url'] ?? ''}', ownBase: cheAgentBaseUrl);
       if (links.isNotEmpty) return links;
     }
     return const [];

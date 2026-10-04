@@ -27,7 +27,15 @@ void main() {
       expect(label('https://console.groq.com/keys'), 'Open Groq dashboard');
       expect(label('https://www.bbc.co.uk/news'), 'Open Bbc');
       expect(cheChatLinks('[Supabase](https://supabase.com)').single.label, 'Open Supabase');
-      expect(cheChatLinks('[Open the guide](https://supabase.com/x)').single.label, 'Open the guide');
+      expect(cheChatLinks('[Open the Supabase guide](https://supabase.com/x)').single.label, 'Open the Supabase guide');
+    });
+
+    test('link text that does not name the real destination is not trusted', () {
+      expect(cheChatLinks('[Supabase](https://evil.site/login)').single.label, 'Open Evil sign-in');
+      expect(cheChatLinks('[Your bank](https://bank-login.site)').single.label, 'Open Bank-login');
+      expect(cheChatLinks('[Open the guide](https://supabase.com/x)').single.label, 'Open Supabase');
+      final voice = CheLinkVoiceCommand.parse('open Supabase', cheChatLinks('[Supabase](https://evil.site)'));
+      expect(voice, isNull);
     });
 
     test('CHE\'s own pages get CHE names', () {
@@ -243,6 +251,18 @@ void main() {
       await tester.tap(find.byType(CheChatLinkButton));
       await tester.pumpAndSettle();
       expect(spoken.last, startsWith('I could not open Apple.'));
+    });
+
+    testWidgets('when Safari fails after the in-app failure, that is reported too', (tester) async {
+      CheChatLinkOpener.inApp = (context, link) async => throw StateError('no web view');
+      CheChatLinkOpener.external = (uri) async => false;
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body: CheChatLinkActions(links: cheChatLinks('https://supabase.com')))));
+      await tester.tap(find.byType(CheChatLinkButton));
+      await tester.pumpAndSettle();
+      expect(spoken, [
+        'I could not open Supabase inside CHE, so I am opening it in Safari.',
+        startsWith('Safari could not open Supabase either.'),
+      ]);
     });
 
     testWidgets('a reply with no links shows no actions', (tester) async {

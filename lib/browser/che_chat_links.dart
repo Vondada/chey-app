@@ -180,10 +180,20 @@ String _brand(String host) {
 }
 
 String _nameFor(Uri uri, String? title, String? ownBase) {
-  final cleanTitle = title?.replaceFirst(RegExp(r'^open\s+', caseSensitive: false), '').trim();
-  if (cleanTitle != null && cleanTitle.isNotEmpty && cheSafeLinkUri(cleanTitle) == null && !cleanTitle.contains('://')) {
-    return cleanTitle;
-  }
+  final derived = _derivedName(uri, ownBase);
+  // Link text is only trusted when it names the real destination, so
+  // "[Supabase](https://evil.site)" is announced as "Evil", never "Supabase".
+  final cleanTitle = title?.replaceFirst(RegExp(r'^open\s+', caseSensitive: false), '').trim() ?? '';
+  if (cleanTitle.isEmpty || cleanTitle.contains('://')) return derived;
+  String squash(String v) => v.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
+  final site = squash(_brand(uri.host));
+  final hostWord = squash(_bareHost(uri.host).split('.').first);
+  final said = squash(cleanTitle);
+  final matches = (site.length >= 2 && said.contains(site)) || (hostWord.length >= 3 && said.contains(hostWord));
+  return matches ? cleanTitle : derived;
+}
+
+String _derivedName(Uri uri, String? ownBase) {
   final path = uri.path.toLowerCase();
   final own = ownBase == null ? null : Uri.tryParse(ownBase);
   if (own != null && own.host.isNotEmpty && own.host.toLowerCase() == uri.host.toLowerCase()) {
