@@ -86,7 +86,9 @@ footer .row{max-width:760px;margin:0 auto}
   let token = store.get('che_token');
   const invite = new URLSearchParams(location.search).get('invite') || '';
   const turns = [];
-  const say = (text) => { $('banner').textContent = text; if ($('speak').checked && 'speechSynthesis' in window) { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(text)); } };
+  // Status haptics: a short double pulse for success, a long buzz for failure.
+  const buzz = (ok) => { try { if (navigator.vibrate) navigator.vibrate(ok ? [40, 60, 40] : [300]); } catch (_) {} };
+  const say = (text, ok) => { if (ok !== undefined) buzz(ok); $('banner').textContent = text; if ($('speak').checked && 'speechSynthesis' in window) { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(text)); } };
   const api = async (path, body, method) => {
     const res = await fetch(path, { method: method || (body ? 'POST' : 'GET'), headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: body ? JSON.stringify(body) : undefined });
     if (res.status === 401) { store.set('che_token', ''); token = ''; show(); throw new Error('This device is signed out. Sign in again.'); }
@@ -213,6 +215,17 @@ footer .row{max-width:760px;margin:0 auto}
         if (p.last4) { const rm = el('button', 'Remove ' + p.name + ' key', 'danger'); rm.onclick = async () => { if (!confirm('Remove the ' + p.name + ' key?')) return; try { await api('/api/keys', { provider: p.id, remove: true }); say(p.name + ' key removed.'); loadKeys(); } catch (e) { say(e.message); } }; card.append(' ', rm); }
         box.append(card);
       });
+      if (k.memory) {
+        const m = k.memory; const card = el('div', null, 'card');
+        card.append(el('div', m.name + ': ' + m.status + (m.last4 ? ' (key ends ' + m.last4 + ')' : '')), el('p', 'Long-term memory. Say "set up the memory database" to hear the steps.', 'dim'));
+        const u = el('input'); u.id = 'mem-url'; u.type = 'url'; u.autocomplete = 'off'; const ul = el('label', 'Project URL (Supabase, Settings, API)'); ul.htmlFor = 'mem-url';
+        const t = el('input'); t.id = 'mem-token'; t.type = 'password'; t.autocomplete = 'off'; const tl = el('label', 'service_role key'); tl.htmlFor = 'mem-token';
+        const save = el('button', 'Connect and test the memory database');
+        save.onclick = async () => { try { const r = await api('/api/keys/memory', { url: u.value, token: t.value }); t.value = ''; say('Memory database connected, key ending ' + r.last4 + '. Long-term memory is on.', true); loadKeys(); } catch (e) { say(e.message, false); } };
+        card.append(ul, u, tl, t, el('p'), save);
+        if (m.stored) { const rm = el('button', 'Disconnect the memory database', 'danger'); rm.onclick = async () => { if (!confirm('Disconnect the memory database? Saved memories stay in it.')) return; try { await api('/api/keys/memory', { remove: true }); say('Memory database disconnected.', true); loadKeys(); } catch (e) { say(e.message, false); } }; card.append(' ', rm); }
+        box.append(card);
+      }
     } catch (e) { box.textContent = ''; say(e.message); }
   }
 

@@ -39,7 +39,7 @@ import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEnginee
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
 import { prepareSelfUpdate, recordLesson, recoveryRequestIntent } from './self_development.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
-import { KEY_PROVIDERS, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
+import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { autoImproveScan, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
@@ -3329,7 +3329,7 @@ export class CheState extends DurableObject {
       fallback_reply_id: String(prior?.fallback_reply_id || ''),
     });
     try {
-      const recall = await retrieveVectorContext(this.env, incoming).catch(() => ({ matches: [], status: 'unavailable' }));
+      const recall = await retrieveVectorContext(this.keyEnv || this.env, incoming).catch(() => ({ matches: [], status: 'unavailable' }));
       const rag = vectorContextText(recall);
       const verified = await this.currentVerifiedState().catch(() => null);
       const answer = await this.env.AI.run(this.env.CHE_STRONG_MODEL || STRONG_MODEL, {
@@ -4009,7 +4009,7 @@ export class CheState extends DurableObject {
             cloud_computer: Boolean(this.env.CHE_COMPUTER_URL),
             owner_context: true,
             personal_source_learning: true,
-            postgres_pgvector: vectorMemoryReadiness(this.env),
+            postgres_pgvector: vectorMemoryReadiness(this.keyEnv || this.env),
             fine_tuning: {
               vmware_private_ai: Boolean(this.env.CHE_VMWARE_TRAINING_URL),
               huggingface: Boolean(this.env.CHE_HF_TRAINING_URL),
@@ -4243,7 +4243,21 @@ export class CheState extends DurableObject {
       if (path === '/api/keys' && request.method === 'GET') {
         // Status only; keys themselves never leave the server.
         const health = (await this.ctx.storage.get('key_health')) || {};
-        return json({ providers: Object.entries(KEY_PROVIDERS).map(([id, p]) => ({ id, name: p.name, page: p.page, status: health[id]?.status || 'not set up', last4: health[id]?.last4 || '' })) });
+        const memoryOn = vectorMemoryReadiness(this.keyEnv || this.env).configured;
+        const memoryStored = hasStoredMemoryDatabase(await storedKeys(this.ctx.storage));
+        return json({
+          providers: Object.entries(KEY_PROVIDERS).map(([id, p]) => ({ id, name: p.name, page: p.page, status: health[id]?.status || 'not set up', last4: health[id]?.last4 || '' })),
+          memory: { name: MEMORY_DB.name, page: MEMORY_DB.page, status: memoryStored ? (health.memory?.status || 'connected') : (memoryOn ? 'connected (server secret)' : 'not set up'), last4: memoryStored ? (health.memory?.last4 || '') : '', stored: memoryStored },
+        });
+      }
+      if (path === '/api/keys/memory' && request.method === 'POST') {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can connect the memory database.' }, 403);
+        if (await isLockedDown(this.ctx.storage)) return json({ detail: 'Lockdown is on; key changes are frozen.' }, 423);
+        const out = body.remove === true
+          ? await removeMemoryDatabase(this.ctx.storage)
+          : await saveMemoryDatabase(this.ctx.storage, body.url, body.token);
+        if (out.ok) await this.refreshKeyEnv();
+        return json(out.ok ? { ok: true, ...(out.last4 ? { last4: out.last4, status: out.test?.status } : { removed: true }) } : { detail: out.detail }, out.ok ? 200 : 422);
       }
       if (path === '/api/keys' && request.method === 'POST') {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can add or remove AI keys.' }, 403);
@@ -4802,7 +4816,7 @@ export class CheState extends DurableObject {
           ...data.youtube_learning.filter((item) => item.video_id !== videoId),
         ].slice(0, 250);
         await this.ctx.storage.put('che', data);
-        this.ctx.waitUntil?.(storeVectorMemory(this.env, {
+        this.ctx.waitUntil?.(storeVectorMemory(this.keyEnv || this.env, {
           external_id: `youtube:${videoId}`,
           kind: 'knowledge',
           title: `YouTube · ${sourceTitle}`,
@@ -5022,17 +5036,17 @@ export class CheState extends DurableObject {
         if (added.added || added.replaced?.length) await this.ctx.storage.put('che', data);
         for (const oldMemory of added.replaced || []) {
           const oldVectorId = `memory:${await digest(String(oldMemory).toLowerCase())}`;
-          this.ctx.waitUntil?.(deleteVectorMemory(this.env, oldVectorId));
+          this.ctx.waitUntil?.(deleteVectorMemory(this.keyEnv || this.env, oldVectorId));
         }
         const vectorId = `memory:${await digest(memory.toLowerCase())}`;
-        this.ctx.waitUntil?.(storeVectorMemory(this.env, {
+        this.ctx.waitUntil?.(storeVectorMemory(this.keyEnv || this.env, {
           external_id: vectorId,
           kind: 'memory',
           title: 'CHE memory',
           content: memory,
           source: 'explicit_memory',
         }));
-        return json({ ok: true, vector_memory: vectorMemoryReadiness(this.env).configured ? 'syncing' : 'not_configured' });
+        return json({ ok: true, vector_memory: vectorMemoryReadiness(this.keyEnv || this.env).configured ? 'syncing' : 'not_configured' });
       }
       if (path === '/api/memory/delete') {
         const index = Number(body.index);
@@ -5047,7 +5061,7 @@ export class CheState extends DurableObject {
         await this.ctx.storage.put('che', data);
         if (removed) {
           const vectorId = `memory:${await digest(String(removed).toLowerCase())}`;
-          this.ctx.waitUntil?.(deleteVectorMemory(this.env, vectorId));
+          this.ctx.waitUntil?.(deleteVectorMemory(this.keyEnv || this.env, vectorId));
         }
         return json({ ok: true });
       }
@@ -5055,7 +5069,7 @@ export class CheState extends DurableObject {
         data.memories = [];
         data.memory_records = [];
         await this.ctx.storage.put('che', data);
-        this.ctx.waitUntil?.(clearVectorMemoryKind(this.env, 'memory'));
+        this.ctx.waitUntil?.(clearVectorMemoryKind(this.keyEnv || this.env, 'memory'));
         return json({ ok: true });
       }
 
@@ -5127,7 +5141,7 @@ export class CheState extends DurableObject {
           existing.owner_agent_role = partner.role;
           existing.next_responsibility = spec.responsibility;
           await this.ctx.storage.put('che', data);
-          this.ctx.waitUntil?.(storeVectorMemory(this.env, {
+          this.ctx.waitUntil?.(storeVectorMemory(this.keyEnv || this.env, {
             external_id: existing.id,
             kind: 'owner_context',
             title: existing.title || type,
@@ -5161,7 +5175,7 @@ export class CheState extends DurableObject {
         data.owner_context.unshift(item);
         data.owner_context = data.owner_context.slice(0, 500);
         await this.ctx.storage.put('che', data);
-        this.ctx.waitUntil?.(storeVectorMemory(this.env, {
+        this.ctx.waitUntil?.(storeVectorMemory(this.keyEnv || this.env, {
           external_id: item.id,
           kind: 'owner_context',
           title: item.title || type,
@@ -5180,14 +5194,14 @@ export class CheState extends DurableObject {
           return json({ detail: 'Context item not found.' }, 404);
         }
         await this.ctx.storage.put('che', data);
-        this.ctx.waitUntil?.(deleteVectorMemory(this.env, id));
+        this.ctx.waitUntil?.(deleteVectorMemory(this.keyEnv || this.env, id));
         return json({ ok: true });
       }
 
       if (request.method === 'POST' && path === '/api/context/clear') {
         data.owner_context = [];
         await this.ctx.storage.put('che', data);
-        this.ctx.waitUntil?.(clearVectorMemoryKind(this.env, 'owner_context'));
+        this.ctx.waitUntil?.(clearVectorMemoryKind(this.keyEnv || this.env, 'owner_context'));
         return json({ ok: true });
       }
 
@@ -5438,7 +5452,7 @@ export class CheState extends DurableObject {
 
         let content = '';
         if (brief) {
-          const projectRecall = await retrieveVectorContext(this.env, `${title}\n${brief}`);
+          const projectRecall = await retrieveVectorContext(this.keyEnv || this.env, `${title}\n${brief}`);
           const projectRag = vectorContextText(projectRecall);
           const draft = await this.env.AI.run(this.env.CHE_STRONG_MODEL || STRONG_MODEL, {
             messages: [
@@ -5513,7 +5527,7 @@ export class CheState extends DurableObject {
         if (!project) return json({ detail: 'Project not found.' }, 404);
         if (!instruction) return json({ detail: 'Tell CHE what to develop next.' }, 400);
 
-        const projectRecall = await retrieveVectorContext(this.env, `${project.title}\n${instruction}`);
+        const projectRecall = await retrieveVectorContext(this.keyEnv || this.env, `${project.title}\n${instruction}`);
         const projectRag = vectorContextText(projectRecall);
         const draft = await this.env.AI.run(this.env.CHE_STRONG_MODEL || STRONG_MODEL, {
           messages: [
@@ -5879,6 +5893,15 @@ export class CheState extends DurableObject {
         // Resilience voice commands + lockdown gate.
         const usage = usageIntent(message);
         if (usage) return ndjsonReply(speakUsage(await usageReport(this.ctx.storage), usage.scope), { source: 'che_usage' });
+        // "Set up the memory database": guided, owner-only steps; the URL and
+        // key are pasted into the Keys tab, never into chat.
+        if (ownerDevice && memorySetupIntent(message)) {
+          const on = vectorMemoryReadiness(this.keyEnv || this.env).configured;
+          const script = `https://github.com/${String(this.env.CHE_GITHUB_REPO || 'Vondada/chey-app')}/blob/main/server/cloudflare/pgvector_setup.sql`;
+          return ndjsonReply(on
+            ? 'My long-term memory database is already connected, sir. Every memory is kept and searchable without a limit. To switch to a different database, paste the new address and key in the Keys tab.'
+            : memorySetupSteps(script, `${new URL(request.url).origin}/app`), { source: 'che_memory_setup' });
+        }
         const resil = resilienceIntent(message);
         if (await isLockedDown(this.ctx.storage)) {
           if (resil?.kind === 'unlock') {
@@ -6076,7 +6099,7 @@ export class CheState extends DurableObject {
         const casualChat = isLikelyCasualChat(message, earlyCaps);
         const vectorRecall = casualChat
           ? { status: 'skipped_casual', checked: false, matches: [], detail: 'Skipped for short casual chat latency.' }
-          : await retrieveVectorContext(this.env, message);
+          : await retrieveVectorContext(this.keyEnv || this.env, message);
         const vectorMemoryContext = vectorContextText(vectorRecall);
         // CHE User Knowledge Bundle: canonical items from pgvector. The router
         // sends each engine only the data classes it is authorized for.
@@ -6298,7 +6321,7 @@ export class CheState extends DurableObject {
             if (table.conclusion && !looksLikeAttack(table.conclusion)) {
               await postWebMail(this.ctx.storage, { from: 'che', to: consult.peers.join(','), text: `Round-table conclusion on "${consult.question.slice(0, 200)}": ${table.conclusion}` }, this.env).catch(() => null);
               // Memory grows after the reply, never in front of it.
-              this.ctx.waitUntil?.(storeVectorMemory(this.env, {
+              this.ctx.waitUntil?.(storeVectorMemory(this.keyEnv || this.env, {
                 external_id: `roundtable:${Date.now()}`,
                 kind: 'knowledge',
                 title: `AI round table · ${consult.question.slice(0, 160)}`,
@@ -6928,7 +6951,7 @@ export class CheState extends DurableObject {
                 background_jobs: true,
                 quantum_compute: Boolean(this.env.CHE_QUANTUM_URL),
                 fine_tuning: fineTuneReadiness(this.env),
-                postgres_pgvector: vectorMemoryReadiness(this.env),
+                postgres_pgvector: vectorMemoryReadiness(this.keyEnv || this.env),
               })}`,
               multimodal?.summary
                 ? `Connected multimodal analysis for ${multimodal.name}: ${multimodal.summary}`
@@ -7305,7 +7328,7 @@ export class CheState extends DurableObject {
         save: (value) => this.ctx.storage.put('che', value),
         notify: () => { this.loadData().then((value) => this.broadcastAgents(value)).catch(() => {}); },
         models: { fast: FAST_MODEL, strong: STRONG_MODEL },
-        recall: (text) => retrieveVectorContext(this.env, text),
+        recall: (text) => retrieveVectorContext(this.keyEnv || this.env, text),
       });
     }
     // A retry or mailbox watch may be due later, so always compute the next alarm.

@@ -1089,3 +1089,27 @@ test('an engine outage during recovery neither queues a blind job nor spends the
     globalThis.fetch = original;
   }
 });
+
+test('"set up the memory database" → steps; owner connects it in Keys; memory reports connected', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => ({ response: 'ok' }) } };
+  const { chat } = await pairedChat(env, saved);
+  const steps = await deltaText(await chat('Set up the memory database'));
+  assert.match(steps, /supabase\.com/);
+  assert.match(steps, /https:\/\/che\.example\/app/);
+  const token = (await (await worker.fetch(new Request('https://che.example/api/pair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: '123456' }) }), env)).json()).device_token;
+  const call = (path, body) => worker.fetch(new Request(`https://che.example${path}`, { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: body ? JSON.stringify(body) : undefined }), env);
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => (String(url).includes('/che_memory?') ? new Response('[]', { status: 200 }) : new Response('{}', { status: 404 }));
+  try {
+    const connected = await call('/api/keys/memory', { url: 'https://abc.supabase.co', token: 'eyJhbGciOiJIUzI1NiJ9.service-role-key-for-tests' });
+    assert.equal(connected.status, 200);
+    const keys = await (await call('/api/keys')).json();
+    assert.equal(keys.memory.status, 'healthy');
+    assert.equal(JSON.stringify(keys).includes('service-role-key'), false, 'the key never comes back');
+    const again = await deltaText(await chat('Set up the memory database'));
+    assert.match(again, /already connected/);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
