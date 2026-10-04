@@ -59,6 +59,34 @@ test('read-only collaboration grounding returns live SHA, real symbols and open 
   assert.ok(out.files.find((file) => file.path === 'lib/agents/che_war_room_screen.dart').symbols.includes('CheWarRoomScreen'));
 });
 
+
+test('collaboration grounding retries a transient GitHub read before succeeding', async () => {
+  const sha = 'c'.repeat(40);
+  let metadataReads = 0;
+  const fetcher = async (url) => {
+    const u = String(url);
+    const ok = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (u.endsWith('/o/r')) {
+      metadataReads++;
+      if (metadataReads === 1) return { ok: false, status: 503, json: async () => ({ message: 'busy' }) };
+      return ok({ default_branch: 'main' });
+    }
+    if (u.includes('/git/ref/heads/main')) return ok({ object: { sha } });
+    if (u.includes('/git/trees/')) return ok({ tree: [{ type: 'blob', path: 'lib/agents/che_war_room_screen.dart' }] });
+    if (u.includes('/contents/lib/agents/che_war_room_screen.dart')) return ok({ content: btoa('class CheWarRoomScreen {}\n'), sha: 'blob' });
+    if (u.includes('/pulls?state=open')) return ok([]);
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const out = await inspectRepositoryContext(
+    { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' },
+    'War Room',
+    fetcher,
+  );
+  assert.equal(out.ok, true);
+  assert.equal(out.head_sha, sha);
+  assert.equal(metadataReads, 2);
+});
+
 test('collaboration grounding reports genuine permission failure without asking for source', async () => {
   const fetcher = async () => ({ ok: false, status: 403, json: async () => ({ message: 'forbidden' }) });
   const out = await inspectRepositoryContext(
