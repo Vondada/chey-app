@@ -11,7 +11,7 @@ import {
 } from './recovery_policy.js';
 import { dartStaticCheck, staticRegression, jsStaticCheck } from './dart_check.js';
 import { mergeSelfUpdatePr, openSelfUpdatePr, selfUpdateStatus, updateBranchName, validateUpdateFiles, workerDeploymentStatus } from './self_update.js';
-import { fitToBudget, resetRouterForTests, routeText } from './ai_router.js';
+import { fitToBudget, resetRouterForTests, routeText, routedEnv } from './ai_router.js';
 
 const HOMEWORK = /(?:provide|send|paste|share|copy)\s+(?:me\s+)?(?:the\s+)?(?:source|code|file|filename|exact text|line)|source (?:code )?(?:was|is) not provided|cannot inspect|tell me the file|token|stack trace|retry trace|\b429\b|\b503\b/i;
 
@@ -592,4 +592,249 @@ test('budget stops after more than 3 identical errors and after the time limit',
   const timed = new AgentBudget({ maxElapsedMs: 1000, now: () => t });
   t = 1001;
   assert.equal(timed.canSpend('planner', 10), false);
+});
+
+// ─── Empty / malformed engine output (Advanced Autonomy Test, Oct 3 2026) ────
+// The owner's real key set: Groq, Gemini and OpenRouter keys; the crew's other
+// engines (Cerebras, Mistral, GitHub Models, Hugging Face) have no key. Groq's
+// 8k context budget is below the engineers' evidence floor, so it is skipped.
+// After an outage Gemini/OpenRouter are rate-limited and every call lands on
+// Workers AI, whose 8B model returns an empty answer for the big JSON task.
+function ownerKeyEnv({ cloudflare, providerStatus = 429, providerBody = null, calls = [] }) {
+  const github = fakeGitHub();
+  const fetcher = async (url, init) => {
+    const u = String(url);
+    if (u.includes('api.github.com')) return github(url, init);
+    if (u.endsWith('/models')) return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    const body = init?.body ? JSON.parse(init.body) : {};
+    calls.push({ url: u, system: String(body.messages?.[0]?.content || '') });
+    if (providerBody) {
+      const answer = providerBody(u, body);
+      if (answer) return new Response(JSON.stringify({ choices: [{ message: { content: answer } }] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ error: { message: 'rate limit reached' } }), { status: providerStatus });
+  };
+  const base = { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', GROQ_API_KEY: 'g', GEMINI_API_KEY: 'k', OPENROUTER_API_KEY: 'o', CHE_DISABLE_KEYLESS_AI: '1', AI: cloudflare };
+  return { env: routedEnv(base, fetcher), fetcher };
+}
+
+const cloudflareCrew = (engineer, log = []) => ({
+  run: async (_model, input) => {
+    const system = roleOf(input);
+    log.push(system.includes('Engineer') ? 'engineer' : system.includes('Review') ? 'review' : 'other');
+    if (system.includes('Source Recovery Architect')) return json({ plan: 'look at main', search_terms: ['Ready'], paths: ['lib/main.dart'] });
+    if (system.includes('Architect')) return json({ plan: 'improve banner', search_terms: ['Ready. Type or speak a request.'], paths: ['lib/main.dart'] });
+    if (system.includes('Review')) return json({ approved: true, target_correct: true, notes: ['ok'] });
+    return engineer(input);
+  },
+});
+
+test('Oct 3 recording, root cause: engines returning nothing no longer end the job as "exhausted 3 passes"; it stays retryable', async () => {
+  resetRouterForTests();
+  const log = [];
+  const { env: routed, fetcher } = ownerKeyEnv({ cloudflare: cloudflareCrew(() => ({ response: '' }), log) });
+  const out = await prepareSelfUpdate(routed, 'change the home status wording', fetcher, memoryStore());
+  // Before the fix: status 422, class A, "The coding team exhausted 3
+  // implementation passes … Your last answer was empty. Return only the JSON
+  // object, with small edits." — a terminal failure with nothing implemented.
+  assert.equal(out.status, 503);
+  assert.equal(out.failure_class, FAILURE_CLASS.TEMPORARY_EXTERNAL);
+  assert.equal(out.retryable, true);
+  assert.equal(out.proposal, undefined);
+  assert.doesNotMatch(String(out.detail), /exhausted|Your last answer was empty/);
+  assert.ok(!log.includes('review'), 'no reviewer is paid when nothing was implemented');
+  assertNoHomework(out);
+});
+
+test('1. empty engineer answer is re-requested once on another engine (same job and evidence) and the change ships', async () => {
+  const engineer = [];
+  const ai = scriptedAI({
+    engineer: (input) => {
+      engineer.push({ avoid: input.che_avoid_providers || [], provider: input.che_provider || '', system: roleOf(input), evidence: payloadOf(input).inspected });
+      return engineer.length <= 2 ? { response: '', engine: input.che_provider || 'x' } : json(GOOD_EDIT);
+    },
+  });
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore());
+  assert.equal(out.status, 200, out.detail);
+  const retries = engineer.slice(2);
+  assert.ok(retries.length >= 1);
+  for (const r of retries) {
+    assert.equal(r.provider, '', 'retry goes to another engine, not the same one');
+    assert.ok(r.avoid.length >= 1, 'the engine that returned nothing is avoided');
+    assert.match(r.system, /FORMAT: another engine returned an empty answer/);
+    assert.deepEqual(r.evidence, engineer[0].evidence, 'same inspected evidence');
+  }
+  assert.ok(!out.diagnostics.outcomes.some((o) => o.outcome === 'empty'), 'a recovered empty answer is not a failed attempt');
+});
+
+test('2. non-JSON engineer answer is re-requested with the concrete format problem', async () => {
+  let n = 0;
+  const hints = [];
+  const ai = scriptedAI({
+    engineer: (input) => {
+      n += 1;
+      hints.push(roleOf(input));
+      return n <= 2 ? { response: 'Sure! I would change the banner text to something friendlier.' } : json(GOOD_EDIT);
+    },
+  });
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore());
+  assert.equal(out.status, 200, out.detail);
+  assert.ok(hints.slice(2).every((h) => /FORMAT: another engine's answer was unusable\. Your last answer contained no JSON object/.test(h)));
+});
+
+test('3. valid structured answer: no re-request, one engineer call each', async () => {
+  let engineerCalls = 0;
+  const ai = scriptedAI({ engineer: () => { engineerCalls += 1; return json(GOOD_EDIT); } });
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore());
+  assert.equal(out.status, 200, out.detail);
+  assert.equal(engineerCalls, 2);
+  assert.ok(!out.diagnostics.notes?.some?.((d) => d.kind === 'format_retry'));
+});
+
+test('4. router: an empty Workers AI answer is a failed engine, the next engine answers; avoided engines are skipped', async () => {
+  resetRouterForTests();
+  const urls = [];
+  const fetcher = async (url, init) => {
+    urls.push(String(url));
+    if (String(url).endsWith('/models')) return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    return new Response(JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] }), { status: 200 });
+  };
+  const base = { GEMINI_API_KEY: 'k', OPENROUTER_API_KEY: 'o', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: '' }) } };
+  // Not strongest/keyed-first: Cloudflare is tried first, returns nothing, routing continues.
+  const out = await routeText(base, '@cf/x', { messages: [{ role: 'user', content: 'hi there, how are you' }] }, fetcher);
+  assert.equal(out.response, '{"ok":true}');
+  assert.notEqual(out.engine, 'cloudflare');
+  // Avoided engines are never called for the re-request.
+  resetRouterForTests();
+  urls.length = 0;
+  const again = await routeText(base, '@cf/x', { messages: [{ role: 'user', content: 'x' }], che_capability: 'coding', che_strongest: true, che_avoid_providers: ['gemini', 'cloudflare'] }, fetcher);
+  assert.equal(again.engine, 'openrouter');
+  assert.ok(!urls.some((u) => u.includes('generativelanguage') && u.includes('chat/completions')));
+  // Nothing usable anywhere: an honest temporary engine error, never "".
+  resetRouterForTests();
+  await assert.rejects(routeText({ CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: '  ' }) } }, '@cf/x', { messages: [{ role: 'user', content: 'x' }] }, fetcher),
+    (error) => /temporary|engines/i.test(`${error.category} ${error.message}`));
+});
+
+test('5. an empty pass is not a strategy: it does not use up one of the three passes', async () => {
+  let n = 0;
+  let variant = 0;
+  const ai = scriptedAI({
+    // Pass 1: both engineers and both re-requests return nothing. Then real
+    // strategies that review keeps rejecting.
+    engineer: () => { n += 1; if (n <= 4) return { response: '' }; variant += 1; return json({ summary: 'v', edits: [{ path: 'lib/main.dart', find: "'Ready. Type or speak a request.'", replace: `'Ready ${variant}.'` }] }); },
+    review: () => json({ approved: false, target_correct: true, notes: ['Not friendly enough.'] }),
+  });
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore());
+  assert.equal(out.status, 422);
+  const rounds = new Set(out.diagnostics.outcomes.map((o) => o.round));
+  assert.equal(rounds.size, 4, 'one empty pass + three genuine passes');
+  assert.match(out.detail, /exhausted 3 implementation passes/);
+  assert.doesNotMatch(out.detail, /Your last answer was empty/, 'format hints are not engineering findings');
+  assert.ok(out.engineering_record.failed_strategies.every((f) => f.outcome !== 'empty'));
+});
+
+test('6. three genuinely failed strategies still hit the hard stop (and never more than five passes in total)', async () => {
+  let variant = 0;
+  const ai = scriptedAI({
+    engineer: () => { variant += 1; return json({ summary: 'v', edits: [{ path: 'lib/main.dart', find: "'Ready. Type or speak a request.'", replace: `'Ready ${variant}.'` }] }); },
+    review: () => json({ approved: false, target_correct: true, notes: ['Rejected.'] }),
+  });
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore());
+  assert.equal(out.status, 422);
+  assert.equal(out.failure_class, FAILURE_CLASS.INTERNAL);
+  assert.equal(new Set(out.diagnostics.outcomes.map((o) => o.round)).size, 3);
+  assert.ok(out.diagnostics.outcomes.filter((o) => o.outcome === 'review_rejected').length >= 3);
+  // Endless empty output is bounded: three free passes at most, then retryable.
+  let calls = 0;
+  const empty = scriptedAI({ engineer: () => { calls += 1; return { response: '' }; } });
+  const stopped = await prepareSelfUpdate(env(empty), 'change the home status wording', fakeGitHub(), memoryStore());
+  assert.equal(stopped.status, 503);
+  assert.ok(new Set(stopped.diagnostics.outcomes.map((o) => o.round)).size <= 5);
+  assert.ok(calls <= 12, `engineer calls ${calls}: two engineers × (answer + one re-request) × at most three free passes`);
+});
+
+test('9. no loop or token runaway: unusable output and rejections together stay inside the call ceiling', async () => {
+  let n = 0;
+  const ai = scriptedAI({
+    engineer: () => { n += 1; return n % 3 === 0 ? json({ summary: 'v', edits: [{ path: 'lib/main.dart', find: "'Ready. Type or speak a request.'", replace: `'Ready ${n}.'` }] }) : { response: n % 2 ? '' : 'no json here' }; },
+    review: () => json({ approved: false, target_correct: true, notes: ['Rejected.'] }),
+  });
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore());
+  assert.ok([422, 503].includes(out.status));
+  assert.ok(out.diagnostics.budget.calls <= 40, `calls=${out.diagnostics.budget.calls}`);
+  assert.ok(new Set(out.diagnostics.outcomes.map((o) => o.round)).size <= 5);
+});
+
+test('10. reviewer rejection stays distinct from a reviewer that returned nothing', async () => {
+  const avoided = [];
+  const ai = scriptedAI({
+    review: (input) => { avoided.push(input.che_avoid_providers || []); return { response: '', engine: input.che_provider || 'gemini' }; },
+  });
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore());
+  assert.equal(out.status, 503, 'a reviewer that returned nothing never rejects (or approves) a change');
+  assert.equal(out.failure_class, FAILURE_CLASS.TEMPORARY_EXTERNAL);
+  assert.ok(out.diagnostics.outcomes.some((o) => o.outcome === 'review_unavailable'));
+  assert.ok(!out.diagnostics.outcomes.some((o) => o.outcome === 'review_rejected'));
+  assert.ok(avoided.some((list) => list.length >= 1), 'the second review attempt avoids the engine that returned nothing');
+  const rejected = await prepareSelfUpdate(env(scriptedAI({ review: () => json({ approved: false, target_correct: true, notes: ['Wrong banner.'] }) })), 'change the home status wording', fakeGitHub(), memoryStore());
+  assert.equal(rejected.status, 422);
+  assert.ok(rejected.diagnostics.outcomes.some((o) => o.outcome === 'review_rejected'));
+});
+
+// ─── Independent review findings on the empty-output fix ─────────────────────
+const variantEdit = (n) => json({ summary: 'v', edits: [{ path: 'lib/main.dart', find: "'Ready. Type or speak a request.'", replace: `'Ready ${n}.'` }] });
+
+test('review: genuine strategies followed by empty engines stay a final failure with evidence (a retry never gets extra strategies)', async () => {
+  let n = 0;
+  const ai = scriptedAI({
+    engineer: () => { n += 1; return n <= 2 ? variantEdit(n) : { response: '' }; },
+    review: () => json({ approved: false, target_correct: true, notes: ['Breaks the VoiceOver label.'] }),
+  });
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore());
+  assert.equal(out.status, 422);
+  assert.equal(out.failure_class, FAILURE_CLASS.INTERNAL);
+  assert.match(out.detail, /stopped after 1 implementation passes because the engines then returned no usable output/);
+  assert.ok(out.engineering_record.failed_strategies.length >= 1, 'genuine evidence kept for recovery');
+});
+
+test('review: a model that always returns cut-off JSON is an honest final failure, not an outage retried four times', async () => {
+  const ai = scriptedAI({ engineer: () => ({ response: '{"summary":"x","edits":[{"path":"lib/main.dart","find":"Ready' }) });
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore());
+  assert.equal(out.status, 422);
+  assert.equal(out.failure_class, FAILURE_CLASS.INTERNAL);
+  assert.ok(out.diagnostics.outcomes.every((o) => o.outcome === 'invalid_json'));
+});
+
+test('review: a re-request that cannot run keeps the real format failure (not "engines down")', async () => {
+  const ai = scriptedAI({
+    engineer: (input) => {
+      if (input.che_avoid_providers) { const e = new Error('all engines resting'); e.category = 'temporary_cloud_unavailable'; throw e; }
+      return { response: 'no json at all' };
+    },
+  });
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore());
+  assert.ok(out.diagnostics.outcomes.every((o) => o.outcome === 'invalid_json'), JSON.stringify(out.diagnostics.outcomes));
+  assert.equal(out.failure_class, FAILURE_CLASS.INTERNAL);
+});
+
+test('review: hitting the engineering budget is reported as a budget stop, never "engines failed" or "exhausted"', async () => {
+  let n = 0;
+  const ai = scriptedAI({
+    engineer: () => { n += 1; return variantEdit(n); },
+    review: () => json({ approved: false, target_correct: true, notes: ['no'] }),
+  });
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore(), { budgetLimits: { maxCalls: 9 } });
+  assert.equal(out.status, 422);
+  assert.match(out.detail, /stopped at its engineering budget/);
+  assert.doesNotMatch(out.detail, /no usable output|exhausted/);
+});
+
+test('review: a failed site repair keeps the first draft', async () => {
+  const { writeSite } = await import('./site_builder.js');
+  let calls = 0;
+  const ai = { run: async () => { calls += 1; if (calls === 1) return { response: '<!doctype html><html><body><button>x</button></body></html>' }; throw new Error('engines down'); } };
+  const out = await writeSite({ AI: ai }, { brief: 'a page' }, '@cf/x');
+  assert.equal(calls, 2);
+  assert.match(out.html, /<button>x<\/button>/);
 });

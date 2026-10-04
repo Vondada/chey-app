@@ -11,7 +11,7 @@ writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), '
 ), 'utf8');
 let mod;
 try { mod = await import(generated.href + '?t=' + Date.now()); } finally { try { unlinkSync(generated); } catch (_) {} }
-const { default: worker, CheState, busyError, enqueueJob, selfUpdateChatIntent, isExistingChangeCommand, selectReadyJobs, shouldHandleSelfUpdateAction, MAX_JOB_ATTEMPTS } = mod;
+const { default: worker, CheState, busyError, enqueueJob, selfUpdateChatIntent, isExistingChangeCommand, selectReadyJobs, shouldHandleSelfUpdateAction, MAX_JOB_ATTEMPTS, MAX_JOB_RETRIES } = mod;
 
 function storageFor(saved, alarms = []) {
   return {
@@ -1125,4 +1125,116 @@ test('chat prompt carries the permanent link rule: real https address, named, ne
   assert.match(prompt, /full https:\/\/ address/);
   assert.match(prompt, /never tell him to copy or paste a URL/);
   assert.match(prompt, /never guess one/);
+});
+
+// ─── Saved coding jobs vs. engines that return nothing (Oct 3 recording) ─────
+function emptyEngineEnv(mode) {
+  const counter = { engineer: 0 };
+  const env = {
+    CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_DISABLE_KEYLESS_AI: '1',
+    AI: {
+      run: async (_m, input) => {
+        const system = String(input.messages?.[0]?.content || '');
+        if (system.includes('Architect')) return { response: JSON.stringify({ plan: 'banner', search_terms: ['Ready. Type or speak a request.'], paths: ['lib/main.dart'] }) };
+        if (system.includes('Review')) return { response: JSON.stringify({ approved: true, target_correct: true, notes: [] }) };
+        if (system.includes('Engineer')) {
+          counter.engineer += 1;
+          return mode.value === 'empty' ? { response: '' } : { response: JSON.stringify({ summary: 'Friendlier banner', edits: [{ path: 'lib/main.dart', find: "'Ready. Type or speak a request.'", replace: "'Ready when you are.'" }] }) };
+        }
+        return { response: 'ok' };
+      },
+    },
+  };
+  return { env, counter };
+}
+const BANNER_FILES = { 'lib/main.dart': "class A {\n  String s = 'Ready. Type or speak a request.';\n}\n" };
+const dueNow = (saved) => { const data = saved.get('che'); for (const job of data.jobs) if (job.status === 'queued') job.retry_at = 0; saved.set('che', data); };
+
+test('7/8. a saved coding job whose engines return nothing is requeued (not failed), resumes by itself, and is never duplicated', async () => {
+  const saved = new Map();
+  const mode = { value: 'empty' };
+  const { env } = emptyEngineEnv(mode);
+  const state = new CheState({ storage: storageFor(saved) }, env);
+  const original = globalThis.fetch;
+  globalThis.fetch = GITHUB_OK(BANNER_FILES);
+  try {
+    const request = 'Update your code: make the ready banner friendlier';
+    const { job } = await state.queueSelfDevelopment({ request });
+    dueNow(saved);
+    await state.processJobs();
+    let stored = saved.get('che').jobs.find((j) => j.id === job.id);
+    assert.equal(stored.status, 'queued', 'empty engine output is retryable, not a terminal failure');
+    assert.equal(stored.retry_count, 1);
+    assert.ok(stored.retry_at > Date.now(), 'backs off before resuming');
+    assert.doesNotMatch(String(stored.error), /exhausted|Your last answer was empty/);
+    // The owner (or a handoff) asking again does not create a second job.
+    const again = await state.queueSelfDevelopment({ request });
+    assert.equal(again.deduplicated, true);
+    assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'self_development').length, 1);
+    // Engines recover: the same job resumes on its own and finishes reviewed.
+    mode.value = 'good';
+    dueNow(saved);
+    await state.processJobs();
+    stored = saved.get('che').jobs.find((j) => j.id === job.id);
+    assert.equal(stored.status, 'complete', stored.error);
+    assert.equal(saved.get('pending_self_update').from_job, job.id);
+    assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'self_development').length, 1);
+  } finally { globalThis.fetch = original; }
+});
+
+test('9. engines that never produce usable output cannot loop: the saved job stops after its retry limit', async () => {
+  const saved = new Map();
+  const { env, counter } = emptyEngineEnv({ value: 'empty' });
+  const state = new CheState({ storage: storageFor(saved) }, env);
+  const original = globalThis.fetch;
+  globalThis.fetch = GITHUB_OK(BANNER_FILES);
+  try {
+    const { job } = await state.queueSelfDevelopment({ request: 'Update your code: make the ready banner friendlier' });
+    for (let i = 0; i < 8; i += 1) { dueNow(saved); await state.processJobs(); }
+    const stored = saved.get('che').jobs.find((j) => j.id === job.id);
+    assert.equal(stored.status, 'failed');
+    assert.equal(stored.dead_letter, true);
+    assert.equal(stored.retry_count, MAX_JOB_RETRIES);
+    assert.ok(counter.engineer <= (MAX_JOB_RETRIES + 1) * 12, `engineer calls ${counter.engineer}`);
+  } finally { globalThis.fetch = original; }
+});
+
+test('review: a recovery whose engines return nothing says nothing was saved (it is not queued); through the router that is an outage, which spends no recovery run', async () => {
+  const saved = new Map();
+  const { env } = emptyEngineEnv({ value: 'empty' });
+  const { chat } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  globalThis.fetch = GITHUB_OK(BANNER_FILES);
+  try {
+    saved.set('che_failed_engineering', { request: 'Update your code: make the ready banner friendlier', failed_strategies: [], fingerprints: [], files: ['lib/main.dart'], diagnosis: 'x', recovery_runs: 0, recovery_lock_until: 0 });
+    const reply = await deltaText(await chat('Diagnose and recover the failed coding job'));
+    assert.doesNotMatch(reply, /saved the coding job|continue it automatically/i, reply);
+    assert.match(reply, /nothing was saved/i, reply);
+    assert.equal((saved.get('che')?.jobs || []).filter((j) => j.kind === 'self_development').length, 0);
+    // The router turns an empty Workers AI answer into "all engines failed",
+    // i.e. an outage: by design that spends no recovery run, and nothing
+    // retries without the owner asking again.
+    assert.equal(saved.get('che_failed_engineering').recovery_runs, 0);
+  } finally { globalThis.fetch = original; }
+});
+
+test('review: a job waiting on its retry backoff blocks duplicates past 30 minutes; long coding runs are not treated as stale', async () => {
+  const old = new Date(Date.now() - 45 * 60_000).toISOString();
+  const data = { jobs: [{ id: 'j1', kind: 'self_development', status: 'queued', retry_count: 1, idempotency_key: 'k', created_at: old, updated_at: old }] };
+  assert.equal(enqueueJob(data, { kind: 'self_development', prompt: 'p', idempotency_key: 'k' }).deduplicated, true);
+  const fresh = { jobs: [{ id: 'j2', kind: 'chat', status: 'queued', retry_count: 0, idempotency_key: 'k2', created_at: old, updated_at: old }] };
+  assert.equal(enqueueJob(fresh, { kind: 'chat', prompt: 'p', idempotency_key: 'k2' }).deduplicated, false, 'never-retried jobs keep the 30-minute window');
+
+  const saved = new Map();
+  const state = new CheState({ storage: storageFor(saved) }, { CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'x' }) } });
+  const tenMinutesAgo = new Date(Date.now() - 10 * 60_000).toISOString();
+  saved.set('che', { jobs: [{ id: 'run', kind: 'self_development', status: 'running', attempts: 1, prompt: 'p', created_at: tenMinutesAgo, updated_at: tenMinutesAgo }], devices: {}, memories: [] });
+  await state.processJobs();
+  assert.equal(saved.get('che').jobs[0].status, 'running', 'a 10-minute coding run is still in flight, not requeued');
+  // The watchdog alarm is set for when that run would count as interrupted.
+  const alarms = [];
+  const watched = new CheState({ storage: storageFor(saved, alarms) }, { CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'x' }) } });
+  await watched.scheduleWork();
+  const due = Date.parse(tenMinutesAgo) + 20 * 60_000;
+  assert.ok(alarms.some((t) => t >= due && t <= due + 5000), `alarm at stale deadline, got ${alarms}`);
 });

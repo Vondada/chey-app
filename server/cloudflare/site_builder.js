@@ -127,7 +127,8 @@ export async function writeSite(env, { brief, previousHtml = '', change = '' }, 
   let problems = checkHtml(html);
   if (problems.length) {
     const repairUser = `${user}\n\nYour previous answer failed these checks:\n- ${problems.join('\n- ')}\n\n${html ? `Previous answer:\n${html.slice(0, MAX_HTML)}\n\n` : ''}Return the complete corrected page.`;
-    const retry = extractHtml(await draft(env, model, [{ role: 'system', content: BUILD_RULES }, { role: 'user', content: repairUser }], { ...audit, route: `${audit.route}_repair` }));
+    // A repair that fails keeps the first draft.
+    const retry = extractHtml(await draft(env, model, [{ role: 'system', content: BUILD_RULES }, { role: 'user', content: repairUser }], { ...audit, route: `${audit.route}_repair` }).catch(() => ''));
     const retryProblems = checkHtml(retry);
     if (retry && retryProblems.length <= problems.length) { html = retry; problems = retryProblems; }
   }
