@@ -56,7 +56,7 @@ class _CheInlinePreviewState extends State<CheInlinePreview> {
     }
   }
 
-  /// A site CHE built and hosts at /site/<id> stays on its own page: its
+  /// A site CHE built and hosts at `/site/<id>` stays on its own page: its
   /// script can never steer the preview to another site.
   NavigationDecision _allowNavigation(NavigationRequest request) {
     final start = Uri.parse(CheInlinePreview.embeddable(widget.url));
