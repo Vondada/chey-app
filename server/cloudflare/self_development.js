@@ -464,6 +464,10 @@ export function rankSourcePaths(paths, request, limit = 6) {
     ['reliability', ['resilience','retry','health']],
     ['parallel', ['agent','runtime','orchestrat','team']],
     ['planning', ['plan','agent','office']],
+    ['war', ['war_room','warroom','office','agent','group','chat']],
+    ['room', ['war_room','warroom','office','room']],
+    ['group', ['group','chat','war_room','agent']],
+    ['character', ['character','agent','persona','avatar','state']],
   ]);
   const needles = new Set(words);
   for (const word of words) for (const extra of alias.get(word) || []) needles.add(extra);
@@ -474,10 +478,58 @@ export function rankSourcePaths(paths, request, limit = 6) {
       if (lower.includes(needle)) score += needle.length >= 7 ? 3 : 1;
     }
     if (/server\/cloudflare\/(?:self_development|self_update|code_scout|agent_runtime|worker)\./.test(lower)) score += 1;
+    const normalizedRequest = String(request || '').toLowerCase().replace(/[_/.-]+/g, ' ');
+    const normalizedPath = lower.replace(/[_/.-]+/g, ' ');
+    for (const phrase of ['war room', 'group chat', 'character state', 'agent state']) {
+      if (normalizedRequest.includes(phrase) && normalizedPath.includes(phrase)) score += 12;
+    }
     return { path: String(path), score };
   }).filter((item) => item.score > 0);
   ranked.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
   return ranked.slice(0, Math.max(1, limit)).map((item) => item.path);
+}
+
+
+function sourceTerms(request) {
+  return [...new Set(
+    (String(request || '').toLowerCase().match(/[a-z][a-z0-9_-]{2,}/g) || [])
+      .filter((word) => word.length >= 4 && !SOURCE_TERM_STOP.has(word)),
+  )].slice(0, 24);
+}
+
+function structuralReferences(path, source, allPaths) {
+  const refs = new Set();
+  const text = String(source || '');
+  const imports = /(?:import|export)\s+['"]([^'"]+)['"]|require\(\s*['"]([^'"]+)['"]\s*\)|from\s+['"]([^'"]+)['"]/g;
+  let match;
+  while ((match = imports.exec(text))) {
+    const raw = match[1] || match[2] || match[3] || '';
+    if (!raw || raw.startsWith('package:') || raw.startsWith('dart:') || /^https?:/.test(raw)) continue;
+    const base = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
+    const parts = (base + raw).split('/');
+    const clean = [];
+    for (const part of parts) {
+      if (!part || part === '.') continue;
+      if (part === '..') clean.pop();
+      else clean.push(part);
+    }
+    const resolved = clean.join('/');
+    if (allPaths.has(resolved)) refs.add(resolved);
+  }
+  return [...refs];
+}
+
+function evidenceScore(path, source, request) {
+  const terms = sourceTerms(request);
+  const lower = String(source || '').toLowerCase();
+  const normalized = lower.replace(/[_-]+/g, ' ');
+  let score = 0;
+  for (const term of terms) if (lower.includes(term)) score += term.length >= 7 ? 2 : 1;
+  for (const phrase of ['war room', 'group chat', 'character state', 'agent state']) {
+    if (String(request || '').toLowerCase().includes(phrase) && normalized.includes(phrase)) score += 10;
+  }
+  if (/test\.(?:dart|mjs|js)$/.test(path)) score += 1;
+  return score;
 }
 
 
@@ -502,16 +554,55 @@ export async function inspectRepositoryContext(env, request, fetcher = fetch) {
     };
   }
 
-  const wanted = rankSourcePaths(index.paths, request, 10);
+  // Tier 1: deterministic path ranking. Feature phrases receive a strong
+  // bonus so a broad engineering prompt cannot crowd the named feature out.
+  const wanted = rankSourcePaths(index.paths, request, 16);
   const fallback = index.paths.filter((path) =>
     /^(?:lib|server\/cloudflare)\//.test(path)
     && /\.(?:dart|js|mjs)$/.test(path)
     && /\b(?:war|room|office|agent|chat|navigation|router|worker|self_development)\b/i.test(path.replace(/[_/.-]+/g, ' '))
-  );
-  const paths = [...new Set([...wanted, ...fallback])].slice(0, 10);
+  ).slice(0, 24);
+  const seeds = [...new Set([...wanted, ...fallback])].slice(0, 24);
+  const allPaths = new Set(index.paths);
+  const loaded = new Map();
+
+  // Tier 2: inspect real source, then follow structural imports/exports. This
+  // is deterministic and bounded; the model never decides whether a neighbor
+  // exists. Independent reads are batched to keep grounding fast.
+  const loadBatch = async (paths) => {
+    const missing = paths.filter((path) => !loaded.has(path)).slice(0, 24);
+    const rows = await Promise.all(missing.map(async (path) => [path, await readFile(env, index.head_sha, path, fetcher)]));
+    for (const [path, file] of rows) if (file) loaded.set(path, file);
+  };
+  await loadBatch(seeds);
+  const neighbors = new Set();
+  for (const [path, file] of loaded) {
+    for (const ref of structuralReferences(path, file.text, allPaths)) neighbors.add(ref);
+  }
+  await loadBatch([...neighbors]);
+
+  // Tier 3: rank inspected evidence by source content, while retaining direct
+  // path hits. Tests adjacent to discovered implementation are included when
+  // the tree exposes them. A feature contradiction therefore expands evidence
+  // instead of authorizing the model to invent a replacement architecture.
+  const discovered = [...loaded.keys()];
+  const testNeighbors = index.paths.filter((path) => {
+    if (!/test\.(?:dart|mjs|js)$/.test(path) && !/^test\//.test(path)) return false;
+    const lower = path.toLowerCase();
+    return discovered.some((sourcePath) => {
+      const stem = sourcePath.split('/').pop().replace(/\.(?:dart|js|mjs)$/, '').toLowerCase();
+      return stem.length > 5 && lower.includes(stem);
+    });
+  }).slice(0, 12);
+  await loadBatch(testNeighbors);
+
+  const paths = [...loaded.keys()].sort((a, b) =>
+    evidenceScore(b, loaded.get(b).text, request) - evidenceScore(a, loaded.get(a).text, request)
+    || a.localeCompare(b)
+  ).slice(0, 18);
   const files = [];
   for (const path of paths) {
-    const file = await readFile(env, index.head_sha, path, fetcher);
+    const file = loaded.get(path);
     if (!file) continue;
     const symbols = [];
     const re = /^\s*(?:export\s+)?(?:class|mixin|enum|extension|typedef)\s+([A-Za-z_$][\w$]*)|^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)|^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=|^\s*(?:Future<[^>]+>|Future|void|String|bool|int|double|Widget|Map<[^>]+>|List<[^>]+>)\s+([A-Za-z_$][\w$]*)\s*\(/gm;
@@ -520,7 +611,7 @@ export async function inspectRepositoryContext(env, request, fetcher = fetch) {
       const name = match[1] || match[2] || match[3] || match[4];
       if (name && !symbols.includes(name)) symbols.push(name);
     }
-    files.push({ path, sha: file.sha, symbols });
+    files.push({ path, sha: file.sha, symbols, references: structuralReferences(path, file.text, allPaths) });
   }
 
   const pulls = await ghRead(env, '/pulls?state=open&per_page=30', fetcher);
