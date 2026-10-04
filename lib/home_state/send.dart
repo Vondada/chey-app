@@ -789,7 +789,7 @@ extension _CheHomeSend on _CHEHomeState {
     if (command.interval != null) CheLiveChart.interval.value = command.interval!;
     final reply = command.readPrice
         ? await CheLiveChart.readPrice(cheAgentBaseUrl, _authHeaders, command.symbol ?? CheLiveChart.symbol.value)
-        : CheLiveChart.describe(CheLiveChart.symbol.value, CheLiveChart.interval.value);
+        : 'Loading ${CheLiveChart.symbol.value.name}, ${cheChartIntervals[CheLiveChart.interval.value] ?? CheLiveChart.interval.value} candles.';
     HapticFeedback.selectionClick();
     if (!mounted) return;
     _set(() => messages

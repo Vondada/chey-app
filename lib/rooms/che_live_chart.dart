@@ -115,7 +115,10 @@ class CheChartCommand {
     if (t.length > 80) return null;
     if (RegExp(r"^(?:read|say|what'?s|what is|tell me)(?: me)? (?:the )?(?:chart|price|quote)(?: (?:on|of|for) .+)?$").hasMatch(t)) {
       final on = RegExp(r' (?:on|of|for) (.+)$').firstMatch(t);
-      return CheChartCommand(symbol: on == null ? null : cheResolveLiveSymbol(on.group(1)!, allowTicker: false), readPrice: true);
+      if (on == null) return const CheChartCommand(readPrice: true);
+      // A named target must resolve; never read a different symbol instead.
+      final named = cheResolveLiveSymbol(on.group(1)!);
+      return named == null ? null : CheChartCommand(symbol: named, readPrice: true);
     }
     final interval = _interval(t);
     final cleaned = t
@@ -213,16 +216,26 @@ class _CheLiveChartPanelState extends State<CheLiveChartPanel> {
       ..showSnackBar(SnackBar(content: Text(message, style: const TextStyle(fontSize: 18))));
   }
 
+  // Success or failure is announced when the chart page actually loads.
   void _pick(CheLiveSymbol s) {
     HapticFeedback.selectionClick();
     CheLiveChart.symbol.value = s;
-    _say(CheLiveChart.describe(s, CheLiveChart.interval.value));
   }
 
   void _interval(String code) {
     HapticFeedback.selectionClick();
     CheLiveChart.interval.value = code;
-    _say(CheLiveChart.describe(CheLiveChart.symbol.value, code));
+  }
+
+  void _loaded(bool ok) {
+    final s = CheLiveChart.symbol.value;
+    if (ok) {
+      HapticFeedback.lightImpact();
+      _say(CheLiveChart.describe(s, CheLiveChart.interval.value));
+    } else {
+      HapticFeedback.heavyImpact();
+      _say('The chart for ${s.name} could not load. Check the connection; say "read the price" for the latest quote.');
+    }
   }
 
   void _submitTyped(String text) {
@@ -246,7 +259,7 @@ class _CheLiveChartPanelState extends State<CheLiveChartPanel> {
     if (kIsWeb || WebViewPlatform.instance == null) {
       return const Center(child: Text('The live chart runs in the CHE iPhone app.', style: CheType.caption));
     }
-    return _CheChartWebView(url: url);
+    return _CheChartWebView(url: url, onLoaded: _loaded);
   }
 
   @override
@@ -345,8 +358,9 @@ class _CheLiveChartPanelState extends State<CheLiveChartPanel> {
 }
 
 class _CheChartWebView extends StatefulWidget {
-  const _CheChartWebView({required this.url});
+  const _CheChartWebView({required this.url, required this.onLoaded});
   final String url;
+  final void Function(bool ok) onLoaded;
 
   @override
   State<_CheChartWebView> createState() => _CheChartWebViewState();
@@ -356,7 +370,17 @@ class _CheChartWebViewState extends State<_CheChartWebView> {
   late final WebViewController _controller = WebViewController()
     ..setJavaScriptMode(JavaScriptMode.unrestricted)
     ..setBackgroundColor(const Color(0xFF05080A))
-    ..setNavigationDelegate(NavigationDelegate(onNavigationRequest: (request) {
+    ..setNavigationDelegate(NavigationDelegate(
+        onPageFinished: (_) {
+          if (!_failed) widget.onLoaded(true);
+        },
+        onWebResourceError: (error) {
+          if (error.isForMainFrame != false && !_failed) {
+            _failed = true;
+            widget.onLoaded(false);
+          }
+        },
+        onNavigationRequest: (request) {
       // The chart page and TradingView's own frames only; links in the
       // widget (e.g. "chart by TradingView") never take the room away.
       final host = Uri.tryParse(request.url)?.host ?? '';
@@ -366,6 +390,10 @@ class _CheChartWebViewState extends State<_CheChartWebView> {
     }))
     ..loadRequest(Uri.parse(widget.url));
 
+  bool _failed = false;
+
+  // Parent-friendly: the room's page scroll wins vertical drags over the
+  // chart; the chart still gets taps and horizontal pans nobody else claims.
   @override
-  Widget build(BuildContext context) => WebViewWidget(controller: _controller, gestureRecognizers: cheEmbeddedWebViewGestures());
+  Widget build(BuildContext context) => WebViewWidget(controller: _controller, gestureRecognizers: cheEmbeddedParentFriendlyGestures());
 }

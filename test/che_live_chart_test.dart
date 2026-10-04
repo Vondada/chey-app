@@ -40,6 +40,8 @@ void main() {
     test('read the price', () {
       expect(CheChartCommand.parse('read the price')!.readPrice, isTrue);
       expect(CheChartCommand.parse("what's the price of bitcoin")!.symbol!.id, 'BTC');
+      expect(CheChartCommand.parse('what is the price of AMD')!.symbol!.id, 'AMD', reason: 'tickers resolve');
+      expect(CheChartCommand.parse('what is the price of my house'), isNull, reason: 'never reads a different symbol instead');
     });
 
     test('never hijacks other commands', () {
@@ -88,7 +90,7 @@ void main() {
     await tester.tap(find.text('NQ'));
     await tester.pump();
     expect(urls.last, contains('NQ1'));
-    expect(spoken.last, startsWith('Showing E-mini Nasdaq 100 futures, 5-minute candles'));
+    expect(spoken, isEmpty, reason: 'nothing is announced until the chart reports it loaded');
     await tester.tap(find.text('1m'));
     await tester.pump();
     expect(urls.last, endsWith('interval=1'));
