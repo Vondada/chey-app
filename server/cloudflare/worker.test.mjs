@@ -21,9 +21,10 @@ let selfUpdateChatIntent;
 let handleSelfUpdateChatAction;
 let dispatchChange;
 let continuationOf;
+let autoOpenReviewedPr;
 let selfImprovementLesson;
 try {
-  ({ default: worker, CheState, publicResearch, geminiVision, selfUpdateChatIntent, selfImprovementLesson, handleSelfUpdateChatAction, dispatchChange, continuationOf } = await import(
+  ({ default: worker, CheState, publicResearch, geminiVision, selfUpdateChatIntent, selfImprovementLesson, handleSelfUpdateChatAction, dispatchChange, continuationOf, autoOpenReviewedPr } = await import(
     generatedWorker.href + '?test=' + Date.now(),
   ));
 } finally {
@@ -1306,6 +1307,23 @@ test('a stale reviewed change that cannot be rebuilt stops reporting as waiting 
     assert.equal(memory.m.has('pending_self_update'), false, 'no stale change left "waiting"');
     assert.ok(memory.m.get('che_failed_engineering'), 'evidence kept for recovery');
     assert.equal(memory.m.has('last_self_update_pr'), false, 'never claims a PR that was not opened');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('autonomy: when CHE cannot open the PR herself she says so and the reviewed change stays waiting (never a claimed PR)', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ message: 'Bad credentials' }), { status: 401 });
+  try {
+    const memory = store([['pending_self_update', { proposal: { summary: 'War Room table radius', expected_base_sha: 'x', files: [{ path: 'lib/a.dart', content: 'x' }] }, request: 'r', reviewed_at: new Date().toISOString() }]]);
+    const out = await autoOpenReviewedPr({ CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' }, memory, { summary: 'War Room table radius' });
+    assert.equal(out.opened, false);
+    assert.match(out.message, /could not open the pull request myself/);
+    assert.match(out.message, /still waiting; say "create the PR"/);
+    assert.doesNotMatch(out.message, /PR #\d+ is open/);
+    assert.ok(memory.m.has('pending_self_update'));
+    assert.equal(memory.m.has('last_self_update_pr'), false);
   } finally {
     globalThis.fetch = realFetch;
   }

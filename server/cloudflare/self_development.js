@@ -2053,7 +2053,17 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       ctx.outcomes.push({ round: round + 1, engineer: member.name, provider: member.provider, outcome, ...(detail ? { detail: String(detail).slice(0, 300) } : {}) });
     };
 
+    // Autonomy exam level 5 injects real failure classes (never in normal use).
+    const faults = options.faults && typeof options.faults === 'object' ? options.faults : {};
+    const faultsUsed = { malformed: false, anchor: false };
     const attemptOnce = async (round, member, i) => {
+      if (faults.malformedOnce && !faultsUsed.malformed) {
+        faultsUsed.malformed = true;
+        feedbacks[i] = jsonProblem('{"summary":"exam fault","edits":[{"path":"lib/');
+        formatFeedback.add(feedbacks[i]);
+        record(round, member, 'invalid_json', 'injected exam fault: truncated output');
+        return null;
+      }
       const res = await agentJson(ctx, {
         stage: 'engineer',
         role: who(member, role),
@@ -2097,6 +2107,12 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       }
       producedRounds.add(round);
       const answer = res.value;
+      // Exam fault: the answer itself arrives with a broken anchor (before it
+      // is fingerprinted), exactly like a real bad answer would.
+      if (faults.anchorMissOnce && !faultsUsed.anchor && Array.isArray(answer?.edits) && typeof answer.edits[0]?.find === 'string') {
+        faultsUsed.anchor = true;
+        answer.edits = [{ ...answer.edits[0], find: `${answer.edits[0].find} /* injected exam fault */` }, ...answer.edits.slice(1)];
+      }
       const claimText = [answer.summary, ...(Array.isArray(answer.evidence) ? answer.evidence : [])].map(String).join(' ');
       if (isEvidenceRequest(claimText) && !(Array.isArray(answer.edits) && answer.edits.length)) {
         // The engineer says it lacks source it was given: agent failure, not

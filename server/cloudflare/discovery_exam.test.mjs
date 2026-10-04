@@ -61,3 +61,36 @@ test('exam (complex): the live War Room from screen to Worker routes, the dead H
   assert.equal(meeting.route, '/api/meetings/$id');
   assert.ok(meeting.server.some((r) => /\\\/api\\\/meetings\\\//.test(r.route)), 'the regex route is found too');
 });
+
+test('exam level 3 end to end on the real repo: the pipeline edits the live renderer and the grader passes it', async () => {
+  const { AUTONOMY_EXAM, gradeLevel } = await import('./autonomy_exam.js');
+  const { prepareSelfUpdate } = await import('./self_development.js');
+  const spec = AUTONOMY_EXAM[2];
+  const gh = async (url) => {
+    const u = String(url);
+    const ok = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (u.includes('/search/code')) return fetcher(url);
+    if (u.endsWith('/o/r')) return ok({ default_branch: 'main' });
+    if (u.includes('/git/ref/')) return ok({ object: { sha: 'abc' } });
+    if (u.includes('/git/trees/')) return ok({ tree: PATHS.map((path) => ({ type: 'blob', path })) });
+    const m = /\/contents\/(.+)\?ref=/.exec(u);
+    if (m && TEXT.has(m[1])) return ok({ content: Buffer.from(TEXT.get(m[1])).toString('base64'), sha: 'b' });
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const SCENE = 'lib/widgets/che_native_scene_world.dart';
+  const crew = { run: async (_m, input) => {
+    const system = input.messages[0].content;
+    const payload = JSON.parse(input.messages[1].content);
+    if (system.includes('Architect')) return { response: JSON.stringify({ plan: 'War Room table radius', search_terms: ['War Room', 'table'], paths: ['assets/office3d/warroom.html'] }) };
+    if (system.includes('Review')) return { response: JSON.stringify({ approved: true, target_correct: true, notes: [] }) };
+    if (!payload.inspected) return { response: JSON.stringify({ plan: 'p', search_terms: ['warRoom'], paths: [SCENE] }) };
+    // A careful engineer: follows the discovery map to the live renderer.
+    const live = (payload.discovery?.live_files || []).some((f) => f.path === SCENE);
+    if (!live) return { response: JSON.stringify({ summary: 'guess', edits: [{ path: 'assets/office3d/warroom.html', find: 'x', replace: 'y' }] }) };
+    return { response: JSON.stringify({ summary: 'Larger War Room table', edits: [{ path: SCENE, find: '            bottomRadius: 2.55,\n            topRadius: 2.55,', replace: '            bottomRadius: 2.7,\n            topRadius: 2.7,' }] }) };
+  } };
+  const out = await prepareSelfUpdate({ CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: crew }, spec.request, gh, null, { intentRequest: spec.request });
+  const grade = gradeLevel(spec, out);
+  assert.equal(grade.passed, true, `${out.detail || ''} ${JSON.stringify(grade.failed_checks)}`);
+  assert.deepEqual(grade.files, [SCENE]);
+});

@@ -289,12 +289,12 @@ test('end-to-end: "make one small real improvement" → recover → review → a
   try {
     // 1. Vague owner request, no filename or guidance.
     const proposal = await replyOf(await chat('CHE, make one small real improvement to your code.'));
-    assert.match(proposal, /Say "create the PR"/, proposal);
     assert.doesNotMatch(proposal, /```|export default/);
     assert.doesNotMatch(proposal, /provide|paste|filename|not provided|cannot inspect|503/i);
-    // 2. Owner authorization step.
-    const opened = await replyOf(await chat('Create the PR'));
-    assert.match(opened, /Real draft PR #77 is open/);
+    // 2. Full autonomy: after independent review CHE opens the draft PR
+    //    herself and reports the real PR; merging stays the owner's.
+    assert.match(proposal, /independently reviewed[\s\S]*Real draft PR #77 is open[\s\S]*say "merge"/, proposal);
+    assert.ok(!calls.some((c) => c.method === 'PUT'), 'opening a PR never merges it');
     assert.equal(calls.filter((c) => c.method === 'POST' && c.u.endsWith('/git/commits')).length, 1, 'one atomic commit');
     // 3. Owner authorizes merge while CI is still running → CHE waits.
     const waiting = await replyOf(await chat('merge it'));
@@ -390,12 +390,14 @@ test('one-button "Update CHE": one approval → PR → merge after CI → verifi
   try {
     // 1. Vague owner request, no filename or guidance.
     const proposal = await replyOf(await chat('CHE, make one small real improvement to your code.'));
-    assert.match(proposal, /Say "create the PR"/, proposal);
+    assert.match(proposal, /Real draft PR #77 is open/, proposal);
     assert.doesNotMatch(proposal, /```|export default/);
     assert.doesNotMatch(proposal, /provide|paste|filename|not provided|cannot inspect|503/i);
     // 2. One owner approval: PR opens and the merge is authorized together.
     const shipped = await replyOf(await chat('Update CHE'));
-    assert.match(shipped, /Update approved, sir\. Pull request #77 is open/, shipped);
+    // The PR is already open (CHE opened it); "Update CHE" is the merge approval.
+    assert.match(shipped, /PR #77/, shipped);
+    assert.match(shipped, /merge it the moment every required check passes|is merged/, shipped);
     assert.equal(calls.filter((c) => c.method === 'POST' && c.u.endsWith('/git/commits')).length, 1, 'one atomic commit');
     assert.ok(saved.get('che').jobs.some((j) => j.kind === 'merge_pr' && j.pr_number === 77), 'merge queued for after CI');
     assert.ok(!calls.some((c) => c.method === 'PUT'), 'nothing merged before CI passes');

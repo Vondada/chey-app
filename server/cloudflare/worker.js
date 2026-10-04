@@ -114,6 +114,7 @@ import {
   listMemoryNotes,
   writeResearchMemoryNote,
 } from './research_memory.js';
+import { AUTONOMY_EXAM, EXAM_RESULTS_KEY, examIntent, examLevel, gradeLevel, speakExamResults } from './autonomy_exam.js';
 import { conversationMemoryCount, listConversationMemories, recallMemories, recordConversationMemory, rememberThread, rememberedText, replyFromNdjson, syncWarRoomMemories } from './brain_memory.js';
 import { assertOwnerToCheOnly } from './che_router.js';
 import { assertAgentMayRun, permissionBlocker } from './agent_permissions.js';
@@ -994,7 +995,7 @@ function crewOutcome(prepared) {
 // How long a "running" job may go without an update before it counts as
 // interrupted. Coding jobs may run up to their 15-minute engineering budget.
 export function jobStaleMs(job) {
-  return job?.kind === 'self_development' ? 20 * 60_000 : 300000;
+  return job?.kind === 'self_development' || job?.kind === 'autonomy_exam' ? 20 * 60_000 : 300000;
 }
 export const MAX_JOB_RETRIES = 3;
 const JOB_DEDUPE_MS = 30 * 60_000;
@@ -2110,6 +2111,18 @@ export function continuationOf(message, last) {
   return `${String(last.request).slice(0, 4000)}\n\nOwner follow-up on the same task (not a new spec): ${text.slice(0, 2000)}`;
 }
 
+// Full autonomy up to the owner's merge: once a change passed independent
+// review, CHE opens the draft PR herself and reports the real result.
+// Merging and deploying stay the owner's ("merge").
+export async function autoOpenReviewedPr(env, storage, proposal, ops = {}) {
+  const opened = await handleSelfUpdateChatAction(env, storage, { kind: 'open-pr' }, ops).catch((error) => ({ ok: false, message: `GitHub did not accept the pull request (${String(error?.message || error).slice(0, 120)}).` }));
+  const summary = String(proposal?.summary || 'CHE update').replace(/\s+/g, ' ').trim().slice(0, 300);
+  if (opened?.ok && opened?.opened?.number) {
+    return { opened: true, number: opened.opened.number, message: `My team built and independently reviewed it, sir: ${summary}. ${opened.message} CI is running; say "merge" when you want it shipped.` };
+  }
+  return { opened: false, message: `My team built and independently reviewed it, sir: ${summary}. I could not open the pull request myself: ${String(opened?.message || 'GitHub did not answer.').slice(0, 400)} The reviewed change is still waiting; say "create the PR" to try again.` };
+}
+
 export function shouldHandleSelfUpdateAction(message, intent) {
   if (!intent) return false;
   if (isExistingChangeCommand(intent)) return true;
@@ -2658,6 +2671,19 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
       diff: String(prepared.diff || '').slice(0, 20000),
       reviewed_at: new Date().toISOString(),
     }).catch(() => null);
+  }
+  if (options.autoOpenPr && memory?.put) {
+    const auto = await autoOpenReviewedPr(env, memory, prepared.proposal, options.ops || {});
+    return json({
+      message: auto.message,
+      pending_update: !auto.opened,
+      pr_number: auto.opened ? auto.number : undefined,
+      engineering_team: prepared.team || [],
+      code_review_passed: true,
+      owner_approval_required: true,
+      vector_memory_status: recall.status,
+      vector_memory_matches: recall.matches?.length || 0,
+    });
   }
   return json({
     // Owner preference: no code in chat unless he asks ("show me the code").
@@ -5876,6 +5902,7 @@ export class CheState extends DurableObject {
       }
       if (path === '/api/change/request' && !ownerDevice) return ownerOnly();
       if (path === '/api/change/request') return dispatchChange(this.env, body, this.ctx.storage, {
+        autoOpenPr: ownerDevice && data.autonomy !== false,
         queue: (args) => this.queueSelfDevelopment(args),
         topicStudy: (intent, text) => this.startTopicStudy(intent, text),
         advanceStudyBuilds: () => this.advanceStudyBuilds(),
@@ -6001,6 +6028,36 @@ export class CheState extends DurableObject {
           if (revoked.error) return ndjsonReply(revoked.error === 'cannot_revoke_current_device' ? 'That is the device you are talking to me on, sir, so I did not sign it out.' : 'I could not remove that device, sir.', { source: 'che_devices', ok: false });
           await this.ctx.storage.put('che', data);
           return ndjsonReply(`Done, sir. ${revoked.device.name} is signed out and can no longer reach me. Your memories and settings are safe on my server.`, { source: 'che_devices', ok: true });
+        }
+        // "Run the autonomy exam" (5 levels, each harder): real coding runs in
+        // dry-run mode, graded deterministically. "Autonomy exam results".
+        const exam = ownerDevice ? examIntent(message) : null;
+        if (exam?.kind === 'results') {
+          const results = await Promise.resolve().then(() => this.ctx.storage.get(EXAM_RESULTS_KEY)).catch(() => null);
+          return ndjsonReply(speakExamResults(results || {}), { source: 'che_autonomy_exam' });
+        }
+        if (exam?.kind === 'run') {
+          if (!this.env.CHE_GITHUB_TOKEN || !this.env.CHE_GITHUB_REPO) return ndjsonReply('The autonomy exam needs my GitHub connection, sir, and it is not set up on the Worker. Nothing was started.', { source: 'che_autonomy_exam', ok: false });
+          const fresh = await this.loadData();
+          const started = [];
+          exam.levels.forEach((level, i) => {
+            const spec = examLevel(level);
+            if (!spec) return;
+            const queued = enqueueJob(fresh, {
+              kind: 'autonomy_exam',
+              title: `Autonomy exam level ${level}: ${spec.name}`,
+              prompt: spec.request,
+              exam_level: level,
+              idempotency_key: idempotencyKey('job:autonomy_exam', `level ${level}`),
+              // One level at a time: GitHub code search allows ~10 a minute.
+              retry_at: Date.now() + i * 10 * 60_000,
+            });
+            started.push({ level, id: queued.job.id, deduplicated: queued.deduplicated });
+          });
+          await this.ctx.storage.put('che', fresh);
+          await this.scheduleWork();
+          const list = started.map((item) => `level ${item.level}${item.deduplicated ? ' (already running)' : ''}`).join(', ');
+          return ndjsonReply(`I started the autonomy exam, sir: ${list}. Each level is a real coding job on my own code, each harder than the last, run in practice mode so nothing is changed or sent to GitHub. They run one at a time, about ten minutes apart. Say "autonomy exam results" anytime to hear the scores.${fresh.autonomy === false ? ' Autonomy is paused right now; say "resume" so the jobs can run.' : ''}`, { source: 'che_autonomy_exam', background_job_ids: started.map((item) => item.id) });
         }
         // "Diagnose/recover the failed coding job": goes to the coding
         // pipeline, which builds on the retained failure evidence.
@@ -8179,7 +8236,9 @@ export class CheState extends DurableObject {
       }
       await this.ctx.storage.put('che_runtime_last_fallback', { at: new Date().toISOString(), detail: String(started.detail || '').slice(0, 300) });
     }
+    const autonomyOn = (await this.loadData().catch(() => ({})))?.autonomy !== false;
     const response = await dispatchChange(this.env, { request: message }, this.ctx.storage, {
+      autoOpenPr: autonomyOn,
       queue: (args) => this.queueSelfDevelopment(args),
       topicStudy: (intent, text) => this.startTopicStudy(intent, text),
       advanceStudyBuilds: () => this.advanceStudyBuilds(),
@@ -8263,6 +8322,7 @@ export class CheState extends DurableObject {
       queued.map(async (job) => {
         try {
           if (job.kind === 'self_development') return await this.runSelfDevelopmentJob(job);
+          if (job.kind === 'autonomy_exam') return await this.runAutonomyExamJob(job);
           if (job.kind === 'merge_pr') return await this.runMergeJob(job);
           if (job.kind === 'repo_study') return await this.runRepoStudyJob(job);
           if (job.kind === 'office_skill_import') return await this.runOfficeSkillImportJob(job);
@@ -8473,6 +8533,26 @@ export class CheState extends DurableObject {
   // Background continuation of an owner coding request that hit a temporary
   // external failure. The result is the same reviewed proposal the chat path
   // produces; nothing is written to GitHub without owner approval.
+  // One exam level: CHE's real pipeline on a real task, dry run (no approval
+  // slot, no PR), graded deterministically and kept for "exam results".
+  async runAutonomyExamJob(job) {
+    const spec = examLevel(job.exam_level);
+    if (!spec) return { id: job.id, status: 'failed', result: '', owner_message: 'That exam level does not exist, sir.', error: 'unknown exam level' };
+    const prepared = await prepareSelfUpdate(this.env, spec.request, fetch, this.ctx.storage, { ownerInitiated: true, intentRequest: spec.request, faults: spec.faults });
+    if (prepared.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL) {
+      // An engine/GitHub outage is not a grade: the job retries later.
+      const error = new Error(prepared.detail || 'Engines unavailable for the exam.');
+      error.failure_class = FAILURE_CLASS.TEMPORARY_EXTERNAL;
+      throw error;
+    }
+    const grade = gradeLevel(spec, prepared);
+    const stored = (await Promise.resolve().then(() => this.ctx.storage.get(EXAM_RESULTS_KEY)).catch(() => null)) || {};
+    stored[spec.level] = { ...grade, owner_message: String(prepared.owner_message || '').slice(0, 400), detail: String(prepared.detail || '').slice(0, 600) };
+    await this.ctx.storage.put(EXAM_RESULTS_KEY, stored);
+    const message = `Autonomy exam level ${spec.level} (${spec.name}): ${grade.passed ? 'passed' : `failed: ${grade.failed_checks.slice(0, 3).join('; ')}`}${grade.passes ? `, in ${grade.passes} pass${grade.passes === 1 ? '' : 'es'}` : ''}, sir. Nothing was changed; it was a practice run.`;
+    return { id: job.id, status: grade.passed ? 'complete' : 'failed', result: message, owner_message: message, error: grade.passed ? '' : grade.failed_checks.join('; ').slice(0, 500) };
+  }
+
   async runSelfDevelopmentJob(job) {
     // Real peer replies to this job's collaboration packets are engineering
     // input (untrusted advice); peers that have not replied are simply absent.
@@ -8518,6 +8598,10 @@ export class CheState extends DurableObject {
         };
       }
       await this.ctx.storage.put(PENDING_SELF_UPDATE_KEY, reviewed);
+      if ((await this.loadData().catch(() => ({})))?.autonomy !== false) {
+        const auto = await autoOpenReviewedPr(this.env, this.ctx.storage, prepared.proposal);
+        return { id: job.id, status: 'complete', result: auto.message, owner_message: auto.message, error: '' };
+      }
       return {
         id: job.id,
         status: 'complete',
