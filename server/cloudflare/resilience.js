@@ -116,6 +116,90 @@ export async function removeKey(storage, provider) {
   return { ok: true, provider, removed: had };
 }
 
+// ─── Memory database (Postgres + pgvector via PostgREST, e.g. Supabase) ───
+// Stored like the engine keys (server-side only) under the names the memory
+// code reads, so long-term memory switches on without a deploy.
+export const MEMORY_DB = { name: 'Memory database', urlEnv: 'CHE_PGVECTOR_REST_URL', tokenEnv: 'CHE_PGVECTOR_TOKEN', page: 'https://supabase.com/dashboard/new' };
+
+export function normalizeMemoryUrl(raw) {
+  let url = String(raw || '').trim().replace(/\/+$/, '');
+  if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?(?:\/[\w./-]*)?$/i.test(url)) return '';
+  // A Supabase project URL needs the PostgREST path.
+  if (/\.supabase\.co$/i.test(url)) url += '/rest/v1';
+  return url;
+}
+
+// Proves the database is reachable, the key works and the CHE table exists.
+export async function testMemoryDatabase(url, token, fetcher = fetch) {
+  try {
+    const response = await fetcher(`${url}/che_memory?select=external_id&limit=1`, {
+      headers: { Authorization: `Bearer ${token}`, apikey: token, Accept: 'application/json' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (response.ok) return { status: 'healthy' };
+    if (response.status === 401 || response.status === 403) return { status: 'unauthorized', code: response.status };
+    if (response.status === 404) return { status: 'missing_table', code: 404 };
+    return { status: 'unknown', code: response.status };
+  } catch (error) {
+    return { status: 'network', error: String(error?.message || error).slice(0, 80) };
+  }
+}
+
+export async function saveMemoryDatabase(storage, rawUrl, rawToken, fetcher = fetch) {
+  const url = normalizeMemoryUrl(rawUrl);
+  const token = String(rawToken || '').trim();
+  if (!url) return { ok: false, detail: 'That is not an https database address. Use the Project URL from Supabase, Settings, API.' };
+  if (token.length < 20 || /\s/.test(token)) return { ok: false, detail: 'That does not look like a database key.' };
+  const test = await testMemoryDatabase(url, token, fetcher);
+  if (test.status !== 'healthy') {
+    const why = {
+      unauthorized: 'the key was rejected; use the service_role key from Settings, API',
+      missing_table: 'the CHE memory table is not there yet; run the setup script in the SQL editor first',
+      network: 'I could not reach that address',
+    }[test.status] || `the database answered ${test.code || test.status}`;
+    return { ok: false, detail: `I did not save it: ${why}.`, test };
+  }
+  const keys = await storedKeys(storage);
+  keys[MEMORY_DB.urlEnv] = url;
+  keys[MEMORY_DB.tokenEnv] = token;
+  await put(storage, STORED_KEYS, keys);
+  const health = await get(storage, HEALTH, {});
+  health.memory = { status: 'healthy', at: Date.now(), last4: last4(token) };
+  await put(storage, HEALTH, health);
+  await fileLetter(storage, { tray: 'memory', subject: 'Memory database connected', body: 'My long-term memory database is connected and tested. Every memory is now kept and searchable without a limit.', tag: 'system', severity: 'info' });
+  return { ok: true, url, last4: last4(token), test };
+}
+
+export async function removeMemoryDatabase(storage) {
+  const keys = await storedKeys(storage);
+  delete keys[MEMORY_DB.urlEnv];
+  delete keys[MEMORY_DB.tokenEnv];
+  await put(storage, STORED_KEYS, keys);
+  const health = await get(storage, HEALTH, {});
+  delete health.memory;
+  await put(storage, HEALTH, health);
+  return { ok: true };
+}
+
+export function memorySetupSteps(scriptUrl, appUrl = '/app') {
+  return [
+    'Setting up my long-term memory database, sir. It is free on Supabase, no card needed.',
+    `1. Open ${MEMORY_DB.page} and sign in or sign up. I stop for anything only you can do: the captcha, email codes and accepting their terms.`,
+    '2. Create a new project. Any name works; save the database password somewhere safe.',
+    `3. Open the SQL editor, paste my setup script and run it once. The script is here: ${scriptUrl}`,
+    '4. Open Project Settings, then API. Copy the Project URL and the service_role key.',
+    `5. Open my web app at ${appUrl}, go to Keys, and paste both into Memory database. Please do not paste them into chat.`,
+    '6. I test the connection right away and tell you if long-term memory is on.',
+  ].join('\n');
+}
+
+export function memorySetupIntent(message) {
+  const t = String(message || '').toLowerCase().replace(/^(?:che|chay)[,:]?\s+/, '').replace(/[.!?]+$/, '').trim();
+  if (t.length > 120) return false;
+  return /\b(?:set ?up|connect|add|turn on|switch on|fix)\b[\s\S]{0,30}\b(?:(?:long[- ]term )?memory (?:database|db)|vector (?:memory|database|db)|pgvector|supabase)\b/.test(t)
+    || /\bturn on (?:your )?long[- ]term memory\b/.test(t);
+}
+
 export async function checkAllKeys(env, storage, fetcher = fetch) {
   const keys = await storedKeys(storage);
   const before = await get(storage, HEALTH, {});

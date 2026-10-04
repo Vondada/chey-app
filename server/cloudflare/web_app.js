@@ -213,6 +213,17 @@ footer .row{max-width:760px;margin:0 auto}
         if (p.last4) { const rm = el('button', 'Remove ' + p.name + ' key', 'danger'); rm.onclick = async () => { if (!confirm('Remove the ' + p.name + ' key?')) return; try { await api('/api/keys', { provider: p.id, remove: true }); say(p.name + ' key removed.'); loadKeys(); } catch (e) { say(e.message); } }; card.append(' ', rm); }
         box.append(card);
       });
+      if (k.memory) {
+        const m = k.memory; const card = el('div', null, 'card');
+        card.append(el('div', m.name + ': ' + m.status + (m.last4 ? ' (key ends ' + m.last4 + ')' : '')), el('p', 'Long-term memory. Say "set up the memory database" to hear the steps.', 'dim'));
+        const u = el('input'); u.id = 'mem-url'; u.type = 'url'; u.autocomplete = 'off'; const ul = el('label', 'Project URL (Supabase, Settings, API)'); ul.htmlFor = 'mem-url';
+        const t = el('input'); t.id = 'mem-token'; t.type = 'password'; t.autocomplete = 'off'; const tl = el('label', 'service_role key'); tl.htmlFor = 'mem-token';
+        const save = el('button', 'Connect and test the memory database');
+        save.onclick = async () => { try { const r = await api('/api/keys/memory', { url: u.value, token: t.value }); t.value = ''; say('Memory database connected, key ending ' + r.last4 + '. Long-term memory is on.'); loadKeys(); } catch (e) { say(e.message); } };
+        card.append(ul, u, tl, t, el('p'), save);
+        if (m.stored) { const rm = el('button', 'Disconnect the memory database', 'danger'); rm.onclick = async () => { if (!confirm('Disconnect the memory database? Saved memories stay in it.')) return; try { await api('/api/keys/memory', { remove: true }); say('Memory database disconnected.'); loadKeys(); } catch (e) { say(e.message); } }; card.append(' ', rm); }
+        box.append(card);
+      }
     } catch (e) { box.textContent = ''; say(e.message); }
   }
 
