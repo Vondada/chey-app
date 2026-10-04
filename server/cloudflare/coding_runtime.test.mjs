@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CheCodingRuntime, codingRuntimeEnabled, runtimeSessionId, validateRuntimeRequest } from './coding_runtime.js';
+import { CheCodingRuntime, codingRuntimeEnabled, runtimeSessionId, speakRuntimeStatus, validateRuntimeRequest } from './coding_runtime.js';
 
 function response(status, data = null) {
   return new Response(data === null ? null : JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
@@ -62,4 +62,11 @@ test('getStatus treats no result as queued and validates finished JSON', async (
   const done = await runtime.getStatus(id);
   assert.equal(done.state, 'done');
   assert.equal(done.changed_files, 2);
+});
+
+
+test('approved runtime result waits for explicit owner approval', () => {
+  const spoken = speakRuntimeStatus({ state: 'approved_waiting_owner', pr_number: 166, changed_files: 2, additions: 8, deletions: 3 });
+  assert.match(spoken, /waiting for your approval/i);
+  assert.match(spoken, /not merged or deployed/i);
 });
