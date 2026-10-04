@@ -480,6 +480,71 @@ export function rankSourcePaths(paths, request, limit = 6) {
   return ranked.slice(0, Math.max(1, limit)).map((item) => item.path);
 }
 
+
+// Read-only repository grounding for CHE's Flagstaff collaboration replies.
+// This never edits source and never treats another AI's message as owner
+// authorization. It gives CHE facts she can safely use before discussing a
+// coding lane: the exact live commit, real paths/symbols and open PRs.
+export async function inspectRepositoryContext(env, request, fetcher = fetch) {
+  if (!repoOf(env)) {
+    return { ok: false, failure_class: FAILURE_CLASS.PERMANENT_EXTERNAL, detail: 'CHE_GITHUB_TOKEN or CHE_GITHUB_REPO is missing.' };
+  }
+  const index = await sourceIndex(env, fetcher);
+  if (index.error || !index.head_sha) {
+    const status = Number(index.status || 0);
+    const permission = [401, 403, 404].includes(status);
+    return {
+      ok: false,
+      failure_class: permission ? FAILURE_CLASS.PERMANENT_EXTERNAL : FAILURE_CLASS.TEMPORARY_EXTERNAL,
+      retryable: !permission,
+      status,
+      detail: index.error || 'Repository source index is unavailable.',
+    };
+  }
+
+  const wanted = rankSourcePaths(index.paths, request, 10);
+  const fallback = index.paths.filter((path) =>
+    /^(?:lib|server\/cloudflare)\//.test(path)
+    && /\.(?:dart|js|mjs)$/.test(path)
+    && /\b(?:war|room|office|agent|chat|navigation|router|worker|self_development)\b/i.test(path.replace(/[_/.-]+/g, ' '))
+  );
+  const paths = [...new Set([...wanted, ...fallback])].slice(0, 10);
+  const files = [];
+  for (const path of paths) {
+    const file = await readFile(env, index.head_sha, path, fetcher);
+    if (!file) continue;
+    const symbols = [];
+    const re = /^\s*(?:export\s+)?(?:class|mixin|enum|extension|typedef)\s+([A-Za-z_$][\w$]*)|^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)|^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=|^\s*(?:Future<[^>]+>|Future|void|String|bool|int|double|Widget|Map<[^>]+>|List<[^>]+>)\s+([A-Za-z_$][\w$]*)\s*\(/gm;
+    let match;
+    while ((match = re.exec(file.text)) && symbols.length < 12) {
+      const name = match[1] || match[2] || match[3] || match[4];
+      if (name && !symbols.includes(name)) symbols.push(name);
+    }
+    files.push({ path, sha: file.sha, symbols });
+  }
+
+  const pulls = await ghRead(env, '/pulls?state=open&per_page=30', fetcher);
+  const open_prs = pulls.ok && Array.isArray(pulls.data)
+    ? pulls.data.slice(0, 30).map((pr) => ({
+        number: Number(pr.number || 0),
+        title: String(pr.title || '').slice(0, 180),
+        head: String(pr.head?.ref || ''),
+        head_sha: String(pr.head?.sha || ''),
+        base: String(pr.base?.ref || ''),
+      }))
+    : [];
+
+  return {
+    ok: true,
+    repository: String(env.CHE_GITHUB_REPO),
+    base: index.base,
+    head_sha: index.head_sha,
+    files,
+    open_prs,
+    open_prs_status: pulls.ok ? 'verified' : 'unavailable:' + String(pulls.status || 0),
+  };
+}
+
 // ─── Failed-job evidence and recovery ─────────────────────────────────────────
 
 export function engineeringRecord({ request, failedStrategies = [], fingerprints = [], outcomes = [], feedback = '', files = [] }) {
