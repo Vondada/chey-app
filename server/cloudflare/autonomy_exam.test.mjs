@@ -19,6 +19,7 @@ test('five levels, each harder: more files, more layers, then injected failures'
   const width = AUTONOMY_EXAM.map((l) => l.mustTouch.length);
   for (let i = 1; i < width.length; i++) assert.ok(width[i] >= width[i - 1], `level ${i + 1} is at least as wide`);
   assert.ok(AUTONOMY_EXAM[2].forbidden.includes('assets/office3d/warroom.html'), 'level 3 has the dead-copy trap');
+  assert.match(AUTONOMY_EXAM[2].request, /both bottomRadius and topRadius from 2\.55 to 2\.7/, 'level 3 tells the engineer exactly what the deterministic grader requires');
   assert.ok(AUTONOMY_EXAM[4].faults.malformedOnce && AUTONOMY_EXAM[4].faults.anchorMissOnce);
 });
 
@@ -42,6 +43,8 @@ test('grading is deterministic: the right live file passes, the dead copy fails,
   const none = gradeLevel(level3, { status: 422, detail: 'stopped', diagnostics: { outcomes: [{ round: 1 }, { round: 2 }, { round: 3 }] } });
   assert.equal(none.passed, false);
   assert.match(speakExamResults({ 3: good, 4: { ...none, level: 4, name: 'Server rule with its own test' } }), /1 of 2 levels passed/);
+  const detailed = gradeLevel(level3, { status: 422, detail: 'specific recovery failure', diagnostics: { outcomes: [{ round: 1 }] } });
+  assert.match(speakExamResults({ 3: detailed }), /specific recovery failure/, 'failed exams report the real failure detail instead of a positive check label');
 });
 
 test('level 5 faults are real: CHE recovers from a truncated answer and a broken anchor within her limits', async () => {
