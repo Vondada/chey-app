@@ -194,7 +194,7 @@ class CheBrainCamera {
   CheBrainCamera({vm.Vector3? target, this.yaw = .6, this.pitch = .25, this.distance = overview})
       : target = target ?? vm.Vector3.zero();
 
-  static const double overview = 30;
+  static const double overview = 21;
   static const double maxDistance = 46;
   static const double fov = 60 * math.pi / 180;
   static const double near = .12;
@@ -243,7 +243,7 @@ class CheBrainCamera {
     final rel = p - eye;
     final z = rel.dot(forward);
     if (z < near) return null;
-    final focal = size.height / (2 * math.tan(fov / 2));
+    final focal = size.shortestSide / (2 * math.tan(fov / 2));
     final x = size.width / 2 + rel.dot(right) / z * focal;
     final y = size.height / 2 - rel.dot(up) / z * focal;
     final r = worldRadius / z * focal;
@@ -253,7 +253,7 @@ class CheBrainCamera {
 
   /// World point under a screen point at a given depth (dragging an orb).
   vm.Vector3 unproject(Offset screen, double depth, Size size) {
-    final focal = size.height / (2 * math.tan(fov / 2));
+    final focal = size.shortestSide / (2 * math.tan(fov / 2));
     final x = (screen.dx - size.width / 2) / focal * depth;
     final y = -(screen.dy - size.height / 2) / focal * depth;
     return eye + forward * depth + right * x + up * y;

@@ -242,6 +242,13 @@ class CheBrainSpaceController {
 
   /// The orb or collapsed cluster under a screen point (nearest wins).
   ({CheBrainNode? node, CheBrainCluster? cluster}) hit(Offset at, Size size) {
+    // A collapsed cluster is a big, labelled target: a tap inside its orb
+    // always means the cluster.
+    for (final c in layout.clusters.values) {
+      if (c.expanded || (filter.isNotEmpty && !filter.contains(c.name))) continue;
+      final p = camera.project(c.center, size, worldRadius: _clusterRadius(c));
+      if (p != null && (p.offset - at).distance <= math.max(p.radius, 26)) return (node: null, cluster: c);
+    }
     CheBrainNode? best;
     var bestDepth = double.infinity;
     for (final n in layout.nodes) {
@@ -251,14 +258,6 @@ class CheBrainSpaceController {
       if ((p.offset - at).distance <= math.max(p.radius * 1.6, 18) && p.depth < bestDepth) {
         best = n;
         bestDepth = p.depth;
-      }
-    }
-    for (final c in layout.clusters.values) {
-      if (c.expanded || (filter.isNotEmpty && !filter.contains(c.name))) continue;
-      final p = camera.project(c.center, size, worldRadius: _clusterRadius(c));
-      if (p == null) continue;
-      if ((p.offset - at).distance <= math.max(p.radius, 26) && p.depth < bestDepth) {
-        return (node: null, cluster: c);
       }
     }
     return (node: best, cluster: null);
@@ -597,19 +596,23 @@ class CheBrainPainter extends CustomPainter {
     if (_glow != null) return _glow;
     try {
       const s = 64.0;
+      const c = Offset(s / 2, s / 2);
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
-      canvas.drawCircle(
-        const Offset(s / 2, s / 2),
-        s / 2,
-        Paint()
-          ..shader = ui.Gradient.radial(const Offset(s / 2, s / 2), s / 2, const [
-            Color(0xFFFFFFFF),
-            Color(0xCCFFFFFF),
-            Color(0x33FFFFFF),
-            Color(0x00FFFFFF),
-          ], const [0, .18, .45, 1]),
-      );
+      // Holographic orb (white; tinted per category when drawn): soft halo,
+      // bright core, a thin outer ring and a dashed inner ring.
+      canvas.drawCircle(c, s / 2, Paint()
+        ..shader = ui.Gradient.radial(c, s / 2, const [Color(0x66FFFFFF), Color(0x14FFFFFF), Color(0x00FFFFFF)], const [0, .55, 1]));
+      canvas.drawCircle(c, s * .12, Paint()
+        ..shader = ui.Gradient.radial(c, s * .12, const [Color(0xFFFFFFFF), Color(0x55FFFFFF)]));
+      final ring = Paint()
+        ..style = PaintingStyle.stroke
+        ..color = const Color(0xDDFFFFFF);
+      canvas.drawCircle(c, s * .40, ring..strokeWidth = 1.6);
+      for (var i = 0; i < 12; i++) {
+        final a0 = i * math.pi / 6;
+        canvas.drawArc(Rect.fromCircle(center: c, radius: s * .27), a0, math.pi / 10, false, ring..strokeWidth = 2.2);
+      }
       _glow = recorder.endRecording().toImageSync(s.toInt(), s.toInt());
     } catch (_) {
       _glow = null;
@@ -693,7 +696,7 @@ class CheBrainPainter extends CustomPainter {
       final node = layout.nodes[i];
       final breathe = 1 + math.sin(c.time * 1.4 + i * .7) * .06;
       final presence = 1 + math.min(node.degree, 8) * .05;
-      final radius = (math.max(p.radius, 1.6) * 2.4 * breathe * presence).clamp(1.6, 160.0);
+      final radius = (math.max(p.radius, 1.6) * 2.0 * breathe * presence).clamp(1.6, 56.0);
       final depthFade = (1.0 - (p.depth - 4) / 60).clamp(.25, 1.0);
       final color = cheMemoryCategoryColor(node.dot.category).withValues(alpha: (i == selIndex ? 1.0 : .82) * depthFade);
       final scale = radius * 2 / 64;
@@ -745,7 +748,9 @@ class CheBrainPainter extends CustomPainter {
     final labelled = <int>[if (selIndex >= 0 && proj[selIndex] != null) selIndex];
     for (final i in order.reversed) {
       if (labelled.length >= 7) break;
-      if (i != selIndex && proj[i]!.radius > 5) labelled.add(i);
+      // Memory names only once the owner has moved in; the overview shows
+      // lobe names instead, so labels never pile up.
+      if (i != selIndex && cam.distance < 14 && proj[i]!.radius > 5) labelled.add(i);
     }
     for (final i in labelled) {
       final p = proj[i]!;
