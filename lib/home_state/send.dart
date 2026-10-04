@@ -410,6 +410,22 @@ extension _CheHomeSend on _CHEHomeState {
       return;
     }
 
+    // CHE adjusts her own UI on the spot ("dark mode", "bigger text",
+    // "volume down"), on the phone, confirmed aloud.
+    final uiCommand = _pendingAttachment == null ? CheUiVoiceCommand.parse(message) : null;
+    if (uiCommand != null) {
+      if (mounted) _set(() => controller.clear());
+      final reply = await uiCommand.apply(CheUiPreferences.instance);
+      HapticFeedback.mediumImpact();
+      if (mounted) {
+        _set(() => messages
+          ..add({'role': 'user', 'text': message})
+          ..add({'role': 'assistant', 'text': reply}));
+      }
+      await speakText(reply, record: false);
+      return;
+    }
+
     // Voice navigation inside the CHE browser/app that is open right now.
     final browserVoice = CheBrowserActions.voice;
     if (browserVoice != null && _pendingAttachment == null) {
