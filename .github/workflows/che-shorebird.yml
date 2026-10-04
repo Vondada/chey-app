@@ -81,7 +81,10 @@ jobs:
 
       - name: Shorebird release (unsigned)
         if: steps.configured.outputs.ready == 'true' && env.MODE == 'release'
-        run: shorebird release ios --no-codesign -- --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
+        run: |
+          shorebird release ios --no-codesign -- \
+            --build-number="${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" \
+            --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
 
       - name: Shorebird patch
         if: steps.configured.outputs.ready == 'true' && env.MODE == 'patch'

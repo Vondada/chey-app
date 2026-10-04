@@ -72,12 +72,15 @@ jobs:
         env:
           SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
         run: |
-          shorebird release ios --no-codesign -- --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
+          shorebird release ios --no-codesign -- \
+            --build-number="${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" \
+            --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
 
       - name: Build unsigned iPhone app (plain, not patchable)
         if: steps.shorebird.outputs.ready != 'true'
         run: |
           flutter build ios --release --no-codesign \
+            --build-number="${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" \
             --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
 
       - name: Package unsigned IPA

@@ -2,7 +2,7 @@ name: CHE Autopilot
 
 on:
   workflow_run:
-    workflows: ["Check CHE Flutter client"]
+    workflows: ["Check CHE Flutter client", "CHE iPhone IPA"]
     types: [completed]
   check_run:
     types: [completed]
@@ -21,6 +21,7 @@ jobs:
   auto-pr:
     if: >-
       github.event_name == 'workflow_run' &&
+      github.event.workflow_run.name == 'Check CHE Flutter client' &&
       startsWith(github.event.workflow_run.head_branch, 'che/auto/') &&
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
@@ -545,7 +546,7 @@ jobs:
             const mailboxBranch = 'che-mailbox';
             const isWorkflow = context.eventName === 'workflow_run';
             const sha = isWorkflow ? context.payload.workflow_run.head_sha : context.payload.check_run.head_sha;
-            const source = isWorkflow ? 'Check CHE Flutter client' : 'Workers Builds: chey-app';
+            const source = isWorkflow ? context.payload.workflow_run.name : 'Workers Builds: chey-app';
 
             async function readJsonl(path) {
               try {
