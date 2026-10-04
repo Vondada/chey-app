@@ -80,7 +80,7 @@ test('the build request names its sources and forbids copying', () => {
   assert.match(request, /already does this as well or better, report that/);
 });
 
-import { STARRED_LIBRARY, namedRepoStudyIntent as studyIntent, starredLibraryIntent } from './topic_study.js';
+import { STARRED_LIBRARY, starredStudyTargets, namedRepoStudyIntent as studyIntent, starredLibraryIntent } from './topic_study.js';
 
 test('owner starred repositories are a known study library', () => {
   assert.equal(STARRED_LIBRARY.length, 13);
@@ -114,4 +114,21 @@ test('slashes in ordinary English are not repositories (autonomy test regression
   // confirms it on GitHub before treating it as a repository.
   assert.equal(namedRepoStudyIntent('Research the tauri-apps/tauri repo').evidence, 'bare');
   assert.equal(namedRepoStudyIntent('Study https://github.com/msitarzewski/agency-agents and report').evidence, 'url');
+});
+
+test('starred study reads the live GitHub stars, newest first, and falls back to the saved list', () => {
+  const live = { repos: [
+    { full_name: 'freqtrade/freqtrade' },
+    { full_name: 'papers-we-love/papers-we-love' },
+    { full_name: 'old/archived', archived: true },
+    { full_name: 'bdero/flutter_scene' },
+  ] };
+  const t = starredStudyTargets(live);
+  assert.deepEqual(t.names, ['freqtrade/freqtrade', 'papers-we-love/papers-we-love', 'bdero/flutter_scene']);
+  assert.equal(t.live, true);
+  assert.equal(starredStudyTargets(live, 2).names.length, 2);
+  assert.equal(starredStudyTargets(live, 2).total, 3);
+  const fallback = starredStudyTargets({ error: 'GitHub down', repos: [] });
+  assert.equal(fallback.live, false);
+  assert.deepEqual(fallback.names, STARRED_LIBRARY);
 });

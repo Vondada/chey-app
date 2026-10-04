@@ -30,6 +30,21 @@ const STARRED_FOCUS = {
   'sindresorhus/awesome': 'Curated lists: discover well-regarded tools for a need before building one.',
   'msitarzewski/agency-agents': 'Specialist agent roles and personalities: apply to how her Office agents are defined and work together.',
   'codecrafters-io/build-your-own-x': 'Build-it-yourself tutorials: learn how a system works, then write CHE\'s own version.',
+  'affaan-m/everything-claude-code': 'Agent harness patterns (skills, hooks, memory, verification loops): apply to how CHE plans, checks and remembers her own coding work.',
+  'panniantong/agent-reach': 'Giving an agent read access to web platforms: apply to CHE\'s research tools, keeping keys on the Worker and respecting each site\'s terms.',
+  'fffaraz/awesome-cpp': 'Curated C++ libraries: find proven native components before writing one; study only.',
+  'papers-we-love/papers-we-love': 'Foundational computer-science papers: learn the idea behind a system before building it; study only.',
+  'jaywcjlove/awesome-mac': 'Curated macOS apps and tools: suggest tools to the owner; study only.',
+  'hack-with-github/awesome-hacking': 'Security resources: defensive use only, to harden CHE (password vault, Worker auth, input checks). Never attack anything.',
+  'freqtrade/freqtrade': 'Strategy backtesting, hyperparameter search and walk-forward checks: apply to her paper trading lab (learn the method; GPL code is never copied).',
+  'microsoft/qlib': 'Quant research pipeline (features, models, out-of-sample evaluation): apply to how her trading lab scores strategies.',
+  'ai4finance-foundation/finrl': 'Reinforcement-learning trading environments: learn the reward and evaluation ideas for her paper trading lab.',
+  'nautechsystems/nautilus_trader': 'Event-driven backtesting with realistic fills and futures contracts: apply to her futures paper trades (learn only; LGPL).',
+  'quantconnect/lean': 'Futures backtesting (ES, NQ, rolling contracts, fees, slippage): apply to realistic paper results in her trading lab.',
+  'tauricresearch/tradingagents': 'Multi-agent trading research (analyst, researcher, risk roles): apply to her Office agents\' trading reviews, paper only.',
+  'kernc/backtesting.py': 'Small, clear backtest metrics (win rate, expectancy, drawdown): apply to her trading lab report (learn only; AGPL).',
+  'polakowo/vectorbt': 'Testing many strategy parameters at once: apply to how her trading lab searches for new strategy variants.',
+  'stefan-jansen/machine-learning-for-trading': 'Feature engineering and honest out-of-sample testing for trading: apply to her trading lab without leaking future data.',
 };
 
 export function starredFocus(repo) {
