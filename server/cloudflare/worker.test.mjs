@@ -880,6 +880,15 @@ test('Flagstaff unsafe mail gets a visible refusal instead of silent blocking', 
 });
 
 
+
+test('Flagstaff engineering replies are grounded in live repository facts before the model answers', async () => {
+  const source = await import('node:fs/promises').then((fs) => fs.readFile(new URL('./worker.js', import.meta.url), 'utf8'));
+  assert.match(source, /inspectRepositoryContext\(this\.env, incoming, fetch\)/);
+  assert.match(source, /REPOSITORY GROUNDING \(read-only facts from CHE's GitHub connection\)/);
+  assert.match(source, /RECENT FLAGSTAFF OWNERSHIP CLAIMS/);
+  assert.match(source, /Never say you lack repository access when grounding is ok/);
+});
+
 test('Flagstaff retry hard-stops after three failed attempts', async () => {
   const source = await import('node:fs/promises').then((fs) => fs.readFile(new URL('./worker.js', import.meta.url), 'utf8'));
   assert.match(source, /const retryable = retryCount <= 3;/);

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyEdits, attemptFingerprint, diagnoseNoOp, fallbackTreeCandidates, focusView, isUiTask, jsonObject, jsonProblem, literalTerms, loadLessons, prepareSelfUpdate, rankSourcePaths, recordLesson, substantiveChange, unusedNewCode, wantsDocsOnly } from './self_development.js';
+import { applyEdits, attemptFingerprint, diagnoseNoOp, fallbackTreeCandidates, focusView, inspectRepositoryContext, isUiTask, jsonObject, jsonProblem, literalTerms, loadLessons, prepareSelfUpdate, rankSourcePaths, recordLesson, substantiveChange, unusedNewCode, wantsDocsOnly } from './self_development.js';
 
 const MAIN = `class Home {\n  String _statusBanner = 'Ready. Type or speak a request.';\n}\n`;
 const PATCH = `const t = Text('CHE updated. Restart to apply.');\n`;
@@ -28,6 +28,77 @@ function fakeGitHub() {
     return { ok: false, status: 404, json: async () => ({}) };
   };
 }
+
+
+test('read-only collaboration grounding returns live SHA, real symbols and open PRs', async () => {
+  const sha = 'a'.repeat(40);
+  const files = {
+    'lib/agents/che_war_room_screen.dart': 'class CheWarRoomScreen {}\nWidget buildWarRoom() => throw UnimplementedError();\n',
+    'lib/agents/che_office_floor_screen.dart': 'class CheOfficeFloorScreen {}\n',
+  };
+  const fetcher = async (url) => {
+    const u = String(url);
+    const ok = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (u.endsWith('/o/r')) return ok({ default_branch: 'main' });
+    if (u.includes('/git/ref/heads/main')) return ok({ object: { sha } });
+    if (u.includes('/git/trees/')) return ok({ tree: Object.keys(files).map((path) => ({ type: 'blob', path })) });
+    if (u.includes('/pulls?state=open')) return ok([{ number: 172, title: 'Conversation recall', head: { ref: 'claude/recall', sha: 'b'.repeat(40) }, base: { ref: 'main' } }]);
+    const m = /\/contents\/(.+)\?ref=/.exec(u);
+    if (m && files[m[1]]) return ok({ content: btoa(files[m[1]]), sha: 'blob-' + m[1] });
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const out = await inspectRepositoryContext(
+    { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' },
+    'inspect the War Room group chat and character state',
+    fetcher,
+  );
+  assert.equal(out.ok, true);
+  assert.equal(out.head_sha, sha);
+  assert.equal(out.open_prs[0].number, 172);
+  assert.ok(out.files.some((file) => file.path === 'lib/agents/che_war_room_screen.dart'));
+  assert.ok(out.files.find((file) => file.path === 'lib/agents/che_war_room_screen.dart').symbols.includes('CheWarRoomScreen'));
+});
+
+
+test('collaboration grounding retries a transient GitHub read before succeeding', async () => {
+  const sha = 'c'.repeat(40);
+  let metadataReads = 0;
+  const fetcher = async (url) => {
+    const u = String(url);
+    const ok = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (u.endsWith('/o/r')) {
+      metadataReads++;
+      if (metadataReads === 1) return { ok: false, status: 503, json: async () => ({ message: 'busy' }) };
+      return ok({ default_branch: 'main' });
+    }
+    if (u.includes('/git/ref/heads/main')) return ok({ object: { sha } });
+    if (u.includes('/git/trees/')) return ok({ tree: [{ type: 'blob', path: 'lib/agents/che_war_room_screen.dart' }] });
+    if (u.includes('/contents/lib/agents/che_war_room_screen.dart')) return ok({ content: btoa('class CheWarRoomScreen {}\n'), sha: 'blob' });
+    if (u.includes('/pulls?state=open')) return ok([]);
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const out = await inspectRepositoryContext(
+    { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' },
+    'War Room',
+    fetcher,
+  );
+  assert.equal(out.ok, true);
+  assert.equal(out.head_sha, sha);
+  assert.equal(metadataReads, 2);
+});
+
+test('collaboration grounding reports genuine permission failure without asking for source', async () => {
+  const fetcher = async () => ({ ok: false, status: 403, json: async () => ({ message: 'forbidden' }) });
+  const out = await inspectRepositoryContext(
+    { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' },
+    'inspect current main',
+    fetcher,
+  );
+  assert.equal(out.ok, false);
+  assert.equal(out.status, 403);
+  assert.equal(out.retryable, false);
+  assert.match(out.detail, /repository metadata/i);
+});
 
 test('literalTerms pulls quoted on-screen text', () => {
   assert.deepEqual(literalTerms('make the banner "Ready. Type or speak" say hi'), ['Ready. Type or speak']);
