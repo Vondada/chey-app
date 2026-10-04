@@ -241,15 +241,16 @@ Do NOT falsely claim omniscience.
 ''';
 
 class CheBrain extends ChangeNotifier {
-  CheBrain({this.maxFacts = 5000, this.maxJournal = 1000, this.recallChars = 2400, this.recallCount = 5});
+  CheBrain({this.maxFacts, this.maxJournal, this.recallChars = 2400, this.recallCount = 5});
 
   /// Current personality (starts as [cheDefaultSoul], editable in the app).
   String soul = cheDefaultSoul.trim();
 
-  /// Live working set. Older facts and reflections beyond it move to an
-  /// archive file on the phone; nothing she learned is thrown away.
-  final int maxFacts;
-  final int maxJournal;
+  /// No limit by default: CHE keeps every fact and reflection, bounded only
+  /// by the phone's storage. Only an explicit limit (tests, previews) trims,
+  /// and even then the overflow moves to an archive file, never deleted.
+  final int? maxFacts;
+  final int? maxJournal;
   final int recallChars;
   final int recallCount;
 
@@ -290,9 +291,10 @@ class CheBrain extends ChangeNotifier {
     final t = text.trim();
     if (t.isEmpty) return;
     journal.insert(0, CheBrainFact(id: 'j${DateTime.now().microsecondsSinceEpoch}', text: t, at: DateTime.now(), source: 'che'));
-    if (journal.length > maxJournal) {
-      final overflow = journal.sublist(maxJournal);
-      journal.removeRange(maxJournal, journal.length);
+    final journalLimit = maxJournal;
+    if (journalLimit != null && journal.length > journalLimit) {
+      final overflow = journal.sublist(journalLimit);
+      journal.removeRange(journalLimit, journal.length);
       await _archive(overflow);
     }
     notifyListeners();
@@ -378,9 +380,10 @@ class CheBrain extends ChangeNotifier {
     }
     facts.insert(
         0, CheBrainFact(id: 'f${DateTime.now().microsecondsSinceEpoch}', text: t, at: DateTime.now(), source: source, kind: k));
-    if (facts.length > maxFacts) {
-      final overflow = facts.sublist(maxFacts);
-      facts.removeRange(maxFacts, facts.length);
+    final factLimit = maxFacts;
+    if (factLimit != null && facts.length > factLimit) {
+      final overflow = facts.sublist(factLimit);
+      facts.removeRange(factLimit, facts.length);
       await _archive(overflow);
     }
     notifyListeners();
@@ -401,6 +404,11 @@ class CheBrain extends ChangeNotifier {
     'also', 'into', 'out', 'our', 'we', 'me', 'my', 'do', 'does', 'did', 'it', 'is', 'to', 'of', 'in', 'on',
     'che', 'please', 'need', 'know', 'think', 'would', 'could', 'should', 'yes', 'yeah', 'okay'
   };
+
+  // Each fact's words are worked out once, so recall stays fast no matter how
+  // many facts she has learned.
+  static final Expando<Set<String>> _factTokens = Expando<Set<String>>();
+  static Set<String> _tokensOf(CheBrainFact f) => _factTokens[f] ??= _tokens(f.text);
 
   static Set<String> _tokens(String s) => s
       .toLowerCase()
@@ -441,7 +449,7 @@ class CheBrain extends ChangeNotifier {
         // knowledge still surfaces when it is relevant.
         if (q.isNotEmpty) {
           final rank = <CheBrainFact, int>{for (var i = 0; i < list.length; i++) list[i]: i};
-          final hits = <CheBrainFact, int>{for (final f in list) f: _tokens(f.text).where(q.contains).length};
+          final hits = <CheBrainFact, int>{for (final f in list) f: _tokensOf(f).where(q.contains).length};
           list.sort((a, b) {
             final byHits = hits[b]!.compareTo(hits[a]!);
             return byHits != 0 ? byHits : rank[a]!.compareTo(rank[b]!);

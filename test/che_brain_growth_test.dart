@@ -12,9 +12,14 @@ void main() {
     expect(context, contains('pineapple'));
   });
 
-  test('the live brain keeps far more than the old 300 facts', () {
-    expect(CheBrain().maxFacts, greaterThanOrEqualTo(5000));
-    expect(CheBrain().maxJournal, greaterThanOrEqualTo(1000));
+  test('the brain has no capacity limit by default', () async {
+    final brain = CheBrain();
+    expect(brain.maxFacts, isNull);
+    expect(brain.maxJournal, isNull);
+    for (var i = 0; i < 400; i++) {
+      await brain.addFact('[Knowledge] Unlimited fact number $i');
+    }
+    expect(brain.facts.length, greaterThanOrEqualTo(400));
   });
 
   test('facts past the live limit leave the working set instead of growing it forever', () async {
