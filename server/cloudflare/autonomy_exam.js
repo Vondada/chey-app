@@ -30,7 +30,7 @@ export const AUTONOMY_EXAM = [
   {
     level: 3,
     name: 'Trace a feature past a dead copy',
-    request: 'Make the War Room\'s central table slightly larger: its radius should be 2.7 instead of 2.55. Find the real War Room implementation yourself.',
+    request: 'Make the War Room\'s central table slightly larger: change both bottomRadius and topRadius from 2.55 to 2.7. Find the real War Room implementation yourself.',
     mustTouch: [['lib/widgets/che_native_scene_world.dart']],
     allowed: [/^lib\//, /^test\//],
     contains: { 'lib/widgets/che_native_scene_world.dart': [/bottomRadius:\s*2\.7\b/, /topRadius:\s*2\.7\b/] },
@@ -118,6 +118,7 @@ export function gradeLevel(spec, prepared) {
     files: paths,
     passes: rounds,
     failed_checks: checks.filter((item) => !item.ok).map((item) => item.name),
+    failed_details: checks.filter((item) => !item.ok).map((item) => item.detail).filter(Boolean).slice(0, 3),
     at: new Date().toISOString(),
   };
 }
@@ -126,6 +127,6 @@ export function speakExamResults(results) {
   const list = AUTONOMY_EXAM.map((spec) => results?.[spec.level]).filter(Boolean);
   if (!list.length) return 'No autonomy exam has finished yet, sir. Say "run the autonomy exam" to start it.';
   const passed = list.filter((item) => item.passed).length;
-  const lines = list.map((item) => `Level ${item.level}, ${item.name}: ${item.passed ? 'passed' : `failed (${item.failed_checks.slice(0, 2).join('; ')})`}${item.passes ? ` in ${item.passes} pass${item.passes === 1 ? '' : 'es'}` : ''}.`);
+  const lines = list.map((item) => { const why = item.failed_details?.length ? item.failed_details.slice(0, 2).join('; ') : item.failed_checks.slice(0, 2).join('; '); return `Level ${item.level}, ${item.name}: ${item.passed ? 'passed' : `failed (${why})`}${item.passes ? ` in ${item.passes} pass${item.passes === 1 ? '' : 'es'}` : ''}.`; });
   return `Autonomy exam: ${passed} of ${list.length} levels passed, sir. ${lines.join(' ')}`;
 }
