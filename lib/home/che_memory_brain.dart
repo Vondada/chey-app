@@ -248,16 +248,17 @@ List<String> _tokens(String text) {
   return text.toLowerCase().split(RegExp(r'[^a-z0-9]+')).where((w) => w.length > 2).toSet().take(24).toList();
 }
 
+// The brain's palette: green, teal, cyan, blue, violet and white.
 Color cheMemoryCategoryColor(String category) => switch (category.toLowerCase()) {
-  'memory' => const Color(0xFF39E6C5),
-  'learning' => const Color(0xFF4CC9F0),
-  'ml learning' => const Color(0xFFB17CFF),
-  'research' => const Color(0xFFFFC857),
-  'about you' => const Color(0xFFFF7EB6),
-  'knowledge' => const Color(0xFF6EA8FF),
-  'suggestion' => const Color(0xFF8DE969),
-  'translation' => const Color(0xFFFF9F68),
-  'conversations' => const Color(0xFFE4DEFF),
+  'memory' => const Color(0xFF3EE6C9),
+  'conversations' => const Color(0xFF52E89A),
+  'learning' => const Color(0xFF4FB8FF),
+  'ml learning' => const Color(0xFFA77BFF),
+  'research' => const Color(0xFF7CF0FF),
+  'about you' => const Color(0xFFC79BFF),
+  'knowledge' => const Color(0xFF6E8CFF),
+  'suggestion' => const Color(0xFF9DF7C9),
+  'translation' => const Color(0xFFEAF6FF),
   _ => CheColors.accent,
 };
 

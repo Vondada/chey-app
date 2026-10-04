@@ -73,22 +73,42 @@ void main() {
       expect(CheBrainLayout.build(const []).nodes, isEmpty);
     });
 
-    test('categories become separate lobes; related memories connect', () {
+    test('categories become brain regions; related memories connect', () {
       final layout = CheBrainLayout.build(_memories());
       final research = layout.clusters['Research']!;
       final ml = layout.clusters['ML Learning']!;
       expect(research.center.distanceTo(ml.center), greaterThan(3));
+      // Memories fill one brain but lean toward their own region.
+      var own = 0.0, other = 0.0, others = 0;
       for (final n in layout.nodes) {
-        expect(n.position.distanceTo(layout.clusters[n.cluster]!.center), lessThan(CheBrainLayout.radius * .45));
+        own += n.position.distanceTo(layout.clusters[n.cluster]!.center);
+        for (final c in layout.clusters.values) {
+          if (c.name == n.cluster) continue;
+          other += n.position.distanceTo(c.center);
+          others++;
+        }
       }
+      expect(own / layout.nodes.length, lessThan(other / others));
       final a = layout.byId['n2']!, b = layout.byId['n3']!;
       expect(layout.edges.any((e) => (e.$1 == a && e.$2 == b) || (e.$1 == b && e.$2 == a)), isTrue, reason: 'same ML cluster');
     });
 
-    test('big categories start collapsed; small ones expanded', () {
-      final layout = CheBrainLayout.build(_memories(extraResearch: 60));
+    test('only huge categories (over 1,500) start collapsed; the whole brain shows by default', () {
+      final layout = CheBrainLayout.build(_memories(extraResearch: 1500));
       expect(layout.clusters['Research']!.expanded, isFalse);
       expect(layout.clusters['Memory']!.expanded, isTrue);
+    });
+
+    test('every memory sits inside one brain-shaped volume', () {
+      final layout = CheBrainLayout.build(_memories(extraResearch: 300));
+      for (final n in layout.nodes) {
+        expect(cheBrainShape(n.position), lessThan(1), reason: n.id);
+      }
+    });
+
+    test('memory time reads like the picture: "Apr 12, 2024 • 4:32 PM"', () {
+      expect(cheMemoryWhen(DateTime(2024, 4, 12, 16, 32)), 'Apr 12, 2024 • 4:32 PM');
+      expect(cheMemoryWhen(DateTime(2024, 1, 2, 0, 5)), 'Jan 2, 2024 • 12:05 AM');
     });
 
     test('search finds the memory by its words', () {
@@ -317,15 +337,30 @@ void main() {
       c.dispose();
     });
 
+    testWidgets('a selected memory shows a callout with its title, date and time; tapping it opens the memory', (tester) async {
+      final area = await pumpSpace(tester);
+      await tester.tapAt(screenOf(area, 'r1'));
+      await tester.pump();
+      await settle(tester);
+      final callout = find.bySemanticsLabel(RegExp(r'^TradeSea login uses email.*Open this memory\.$'));
+      expect(callout, findsOneWidget);
+      await tester.tap(callout);
+      await tester.pump();
+      expect(c.cardOpen, isTrue);
+      expect(callout, findsNothing, reason: 'the full card replaces the callout');
+      await tester.pumpWidget(const SizedBox());
+      c.dispose();
+    });
+
     testWidgets('tapping a collapsed cluster expands it; the card can collapse it again', (tester) async {
-      final area = await pumpSpace(tester, extraResearch: 60);
+      final area = await pumpSpace(tester, extraResearch: 1500);
       final cluster = c.layout.clusters['Research']!;
       expect(cluster.expanded, isFalse);
       final at = area.topLeft + c.camera.project(cluster.center, area.size)!.offset;
       await tester.tapAt(at);
       await tester.pump();
       expect(cluster.expanded, isTrue);
-      expect(spoken.last, 'Research cluster expanded: 62 memories.');
+      expect(spoken.last, 'Research cluster expanded: 1502 memories.');
       await settle(tester);
       c.select(c.layout.node('x1')!, fly: false);
       c.openSelected();

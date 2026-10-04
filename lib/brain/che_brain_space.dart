@@ -233,8 +233,8 @@ class CheBrainSpaceController {
     }
     if (!reduceMotion) {
       _idle += dt;
-      // Left alone, the brain slowly turns by itself.
-      if (!moving && grabbedId == null && !cardOpen && _idle > 2.5) camera.rotate(dt * .05, 0);
+      // Left alone, the brain slowly sways side to side by itself.
+      if (!moving && grabbedId == null && !cardOpen && _idle > 2.5) camera.rotate(dt * .06 * math.cos(time * .12), 0);
       _advanceNeurons(dt);
     }
     _born.removeWhere((_, b) => time - b > 1.2);
@@ -294,7 +294,7 @@ class CheBrainSpaceController {
 
   String overview() {
     cardOpen = false;
-    flyTo(CheBrainCamera(yaw: camera.yaw, pitch: .25));
+    flyTo(CheBrainCamera(yaw: math.pi, pitch: .08));
     _changed();
     return 'Showing the whole brain: ${layout.nodes.length} memories in ${layout.clusters.length} clusters.';
   }
@@ -755,6 +755,19 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
                   ),
           ),
         ),
+        // The selected memory's callout (title, date and time), pinned to its
+        // orb by a line, like a label in space. Tap it to open the memory.
+        ValueListenableBuilder<int>(
+          valueListenable: c.frame,
+          builder: (context, _, _) {
+            final sel = c.selected;
+            final i = sel == null ? null : c.layout.byId[sel.id];
+            if (sel == null || i == null || c.cardOpen || _size.isEmpty) return const SizedBox.shrink();
+            final p = c.camera.project(c.livePosition(i), _size, worldRadius: sel.size);
+            if (p == null) return const SizedBox.shrink();
+            return _MemoryCallout(node: sel, anchor: p.offset, area: _size, onOpen: () => _say(c.openSelected()));
+          },
+        ),
         ValueListenableBuilder<int>(
           valueListenable: c.state,
           builder: (context, _, _) {
@@ -771,6 +784,105 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
       ]);
     });
   }
+}
+
+const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/// "Apr 12, 2024 • 4:32 PM" in the phone's local time.
+String cheMemoryWhen(DateTime at) {
+  final t = at.toLocal();
+  final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
+  return '${_months[t.month - 1]} ${t.day}, ${t.year} • $h:${t.minute.toString().padLeft(2, '0')} ${t.hour < 12 ? 'AM' : 'PM'}';
+}
+
+IconData cheMemoryIcon(String category) => switch (category.toLowerCase()) {
+      'conversations' => Icons.forum_outlined,
+      'about you' => Icons.person_outline_rounded,
+      'research' => Icons.travel_explore_rounded,
+      'learning' || 'ml learning' => Icons.school_outlined,
+      'knowledge' => Icons.menu_book_outlined,
+      'suggestion' => Icons.lightbulb_outline_rounded,
+      'translation' => Icons.translate_rounded,
+      _ => Icons.bookmark_outline_rounded,
+    };
+
+class _MemoryCallout extends StatelessWidget {
+  const _MemoryCallout({required this.node, required this.anchor, required this.area, required this.onOpen});
+
+  final CheBrainNode node;
+  final Offset anchor;
+  final Size area;
+  final VoidCallback onOpen;
+
+  static const double _w = 248, _h = 64;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = cheMemoryCategoryColor(node.dot.category);
+    final right = anchor.dx + 36 + _w <= area.width - 8;
+    final left = (right ? anchor.dx + 36 : anchor.dx - 36 - _w).clamp(8.0, math.max(8.0, area.width - _w - 8)).toDouble();
+    final top = (anchor.dy - 70 - _h / 2).clamp(56.0, math.max(56.0, area.height - _h - 8)).toDouble();
+    final at = node.dot.at;
+    final joint = Offset(right ? left : left + _w, top + _h / 2);
+    return Stack(children: [
+      IgnorePointer(child: CustomPaint(size: area, painter: _LeaderLine(anchor, joint, color))),
+      Positioned(
+        left: left,
+        top: top,
+        width: _w,
+        child: Semantics(
+          button: true,
+          label: '${node.dot.title}. ${at == null ? '' : cheMemoryWhen(at)}. Open this memory.',
+          excludeSemantics: true,
+          child: GestureDetector(
+            onTap: onOpen,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xE6061614),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: color.withValues(alpha: .7), width: 1.2),
+                boxShadow: [BoxShadow(color: color.withValues(alpha: .25), blurRadius: 18)],
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+                child: Row(children: [
+                  Icon(cheMemoryIcon(node.dot.category), color: color, size: 24),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                      Text(node.dot.title, maxLines: 1, overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
+                      if (at != null)
+                        Text(cheMemoryWhen(at), maxLines: 1, overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: Color(0xFFA9B8B6), fontSize: 12.5)),
+                    ]),
+                  ),
+                  const Icon(Icons.chevron_right_rounded, color: Color(0xFFA9B8B6)),
+                ]),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ]);
+  }
+}
+
+class _LeaderLine extends CustomPainter {
+  _LeaderLine(this.from, this.to, this.color);
+  final Offset from, to;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawLine(from, to, Paint()
+      ..color = Colors.white.withValues(alpha: .85)
+      ..strokeWidth = 1.4);
+    canvas.drawCircle(to, 3, Paint()..color = color);
+  }
+
+  @override
+  bool shouldRepaint(_LeaderLine old) => old.from != from || old.to != to || old.color != color;
 }
 
 /// The readable card for one memory; surrounding memories stay visible.
@@ -868,56 +980,51 @@ class CheBrainPainter extends CustomPainter {
   final CheBrainSpaceController c;
 
   static ui.Image? _glow;
+
+  /// Brain-shaped backdrop: fine dust along the brain's surface and distant
+  /// soft lights. Scenery only — never memories, never tappable or counted.
+  static final List<vm.Vector3> _dust = () {
+    final rng = math.Random(11);
+    final out = <vm.Vector3>[];
+    for (var k = 0; k < 60000 && out.length < 1400; k++) {
+      final p = vm.Vector3(rng.nextDouble() * 18 - 9, rng.nextDouble() * 16 - 9, rng.nextDouble() * 10 - 5);
+      final f = cheBrainShape(p);
+      if (f > .78 && f < 1) out.add(p);
+    }
+    return out;
+  }();
+  static final List<vm.Vector3> _bokeh = () {
+    final rng = math.Random(23);
+    return [
+      for (var k = 0; k < 90; k++)
+        (vm.Vector3(rng.nextDouble() * 2 - 1, rng.nextDouble() * 2 - 1, rng.nextDouble() * 2 - 1)..normalize()) * (16 + rng.nextDouble() * 22),
+    ];
+  }();
   static ui.Image? _glowSprite() {
     if (_glow != null) return _glow;
     try {
       // Two 64px cells, tinted per category when drawn:
-      //  [0..64)   the orb body: a lit glass sphere (light from top-left,
-      //            shaded terminator, rim light) wrapped in a tilted
-      //            holographic ring whose back half passes behind it;
-      //  [64..128) the light layer (halo + specular), added on top.
+      //  [0..64)   the orb body: a glowing glass sphere lit from the top-left
+      //            (bright core, coloured body, darker rim, rim light);
+      //  [64..128) the light layer (wide soft glow + specular), added on top.
       const s = 64.0;
       const c = Offset(s / 2, s / 2);
-      const r = s * .30;
+      const r = s * .24;
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
-      final ringRect = Rect.fromCenter(center: c, width: s * .92, height: s * .30);
-      void ring(double start, double sweep, int argb, double w) {
-        canvas.save();
-        canvas.translate(c.dx, c.dy);
-        canvas.rotate(-.38);
-        canvas.translate(-c.dx, -c.dy);
-        canvas.drawArc(ringRect, start, sweep, false, Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = w
-          ..color = Color(argb));
-        canvas.restore();
-      }
-      ring(math.pi, math.pi, 0x66FFFFFF, 1.4); // back half, behind the sphere
       canvas.drawCircle(c, r, Paint()
-        ..shader = ui.Gradient.radial(c, r, const [Color(0xF2FFFFFF), Color(0xF29A9A9A), Color(0xF23A3A3A), Color(0xF5121212)],
-            const [0, .35, .78, 1], TileMode.clamp, null, c + const Offset(-r * .42, -r * .46), r * .08));
-      // Rim light on the shadow side reads as depth (light wrapping round).
-      canvas.drawArc(Rect.fromCircle(center: c, radius: r - .8), .1, 1.5, false, Paint()
+        ..shader = ui.Gradient.radial(c, r, const [Color(0xFFFFFFFF), Color(0xFFD8D8D8), Color(0xFF8A8A8A), Color(0xFF3C3C3C)],
+            const [0, .3, .78, 1], TileMode.clamp, null, c + const Offset(-r * .35, -r * .4), r * .1));
+      canvas.drawArc(Rect.fromCircle(center: c, radius: r - .9), .2, 1.4, false, Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.3
-        ..color = const Color(0x88FFFFFF));
-      // Dashed inner band (the hologram detail), foreshortened like a latitude.
-      final band = Rect.fromCenter(center: c + const Offset(0, r * .18), width: r * 1.7, height: r * .55);
-      for (var i = 0; i < 10; i++) {
-        canvas.drawArc(band, i * math.pi / 5, math.pi / 9, false, Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.1
-          ..color = const Color(0x55FFFFFF));
-      }
-      ring(0, math.pi, 0xEEFFFFFF, 1.8); // front half, over the sphere
-      // Light layer.
+        ..strokeWidth = 1.4
+        ..color = const Color(0x99FFFFFF));
       const g = Offset(s * 1.5, s / 2);
       canvas.drawCircle(g, s / 2, Paint()
-        ..shader = ui.Gradient.radial(g, s / 2, const [Color(0x00FFFFFF), Color(0x00FFFFFF), Color(0x38FFFFFF), Color(0x00FFFFFF)], const [0, .40, .52, 1]));
-      final spec = g + const Offset(-r * .40, -r * .44);
-      canvas.drawCircle(spec, r * .30, Paint()
-        ..shader = ui.Gradient.radial(spec, r * .30, const [Color(0xFFFFFFFF), Color(0x00FFFFFF)]));
+        ..shader = ui.Gradient.radial(g, s / 2, const [Color(0x48FFFFFF), Color(0x22FFFFFF), Color(0x08FFFFFF), Color(0x00FFFFFF)], const [0, .30, .60, 1]));
+      final spec = g + const Offset(-r * .36, -r * .42);
+      canvas.drawCircle(spec, r * .32, Paint()
+        ..shader = ui.Gradient.radial(spec, r * .32, const [Color(0xFFFFFFFF), Color(0x00FFFFFF)]));
       _glow = recorder.endRecording().toImageSync(s.toInt() * 2, s.toInt());
     } catch (_) {
       _glow = null;
@@ -941,6 +1048,25 @@ class CheBrainPainter extends CustomPainter {
       canvas.drawCircle(core.offset, math.min(core.radius * 1.4, size.longestSide), Paint()
         ..shader = ui.Gradient.radial(core.offset, math.max(1, math.min(core.radius * 1.4, size.longestSide)), const [Color(0x2239E6C5), Color(0x00000000)]));
     }
+
+    final far = <double>[], dust = <double>[];
+    for (final b in _bokeh) {
+      final p = cam.project(b, size, worldRadius: .5);
+      if (p != null) far.addAll([p.offset.dx, p.offset.dy]);
+    }
+    for (final d in _dust) {
+      final p = cam.project(d, size, worldRadius: .05);
+      if (p != null) dust.addAll([p.offset.dx, p.offset.dy]);
+    }
+    canvas.drawRawPoints(ui.PointMode.points, Float32List.fromList(far), Paint()
+      ..color = const Color(0x3352E8B0)
+      ..strokeWidth = 7
+      ..strokeCap = StrokeCap.round
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3));
+    canvas.drawRawPoints(ui.PointMode.points, Float32List.fromList(dust), Paint()
+      ..color = const Color(0x8062E3F0)
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round);
 
     final layout = c.layout;
     final n = layout.nodes.length;
@@ -976,8 +1102,8 @@ class CheBrainPainter extends CustomPainter {
     }
     if (faint.isNotEmpty) {
       canvas.drawRawPoints(ui.PointMode.lines, Float32List.fromList(faint), Paint()
-        ..color = const Color(0x2E7FF5E0)
-        ..strokeWidth = .8);
+        ..color = const Color(0x4A62E3F0)
+        ..strokeWidth = .7);
     }
     if (strong.isNotEmpty) {
       canvas.drawRawPoints(ui.PointMode.lines, Float32List.fromList(strong), Paint()
@@ -1028,7 +1154,7 @@ class CheBrainPainter extends CustomPainter {
       final breathe = 1 + math.sin(c.time * 1.4 + i * .7) * .06;
       final presence = 1 + math.min(node.degree, 8) * .05;
       final fire = c.flash(i);
-      final radius = (math.max(p.radius, 1.6) * 2.0 * breathe * presence * (1 + fire * .45) * c.birthScale(node.id)).clamp(0.0, 64.0);
+      final radius = (math.max(p.radius, 1.4) * 1.45 * breathe * presence * (1 + fire * .45) * c.birthScale(node.id)).clamp(0.0, 64.0);
       final depthFade = (1.0 - (p.depth - 4) / 60).clamp(.25, 1.0);
       final base = cheMemoryCategoryColor(node.dot.category);
       final color = (fire > .02 ? Color.lerp(base, Colors.white, fire * .5)! : base).withValues(alpha: (i == selIndex ? 1.0 : .82) * depthFade);
@@ -1062,10 +1188,16 @@ class CheBrainPainter extends CustomPainter {
     if (selIndex >= 0 && proj[selIndex] != null) {
       final p = proj[selIndex]!;
       final r = math.max(p.radius * 3.2, 14.0) * (1 + math.sin(c.time * 3) * .06);
+      canvas.drawCircle(p.offset, r * 1.15, Paint()
+        ..shader = ui.Gradient.radial(p.offset, r * 1.15, const [Color(0x553EE6C9), Color(0x003EE6C9)]));
       canvas.drawCircle(p.offset, r, Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.6
-        ..color = Colors.white.withValues(alpha: .85));
+        ..strokeWidth = 1.8
+        ..color = const Color(0xDD7FFFE8));
+      canvas.drawCircle(p.offset, r * .62, Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2
+        ..color = const Color(0x997FFFE8));
     }
 
     // Collapsed clusters: one orb with its name and count.

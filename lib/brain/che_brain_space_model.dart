@@ -25,7 +25,41 @@ const List<String> cheBrainCategories = [
   'About you',
   'Suggestion',
   'Translation',
+  'Conversations',
 ];
+
+/// The brain's shape, seen from its left side by default like an anatomy
+/// picture: front on the left, cerebellum lower right (world units; x front/back, y up, z left/right): a
+/// cerebrum, temporal lobe, cerebellum and brainstem. Memories live inside.
+const List<(double, double, double, double, double, double)> _brainVolumes = [
+  (0, 1.2, 0, 8.2, 5.4, 4.6), // cerebrum
+  (1.6, -2.4, 0, 5.2, 2.6, 4.4), // temporal lobe
+  (-5.4, -3.9, 0, 2.9, 1.9, 3.4), // cerebellum
+  (-2.2, -6.0, 0, 1.1, 2.6, 1.1), // brainstem
+];
+
+/// < 1 inside the brain, 1 on its surface.
+double cheBrainShape(vm.Vector3 p) {
+  var best = double.infinity;
+  for (final (cx, cy, cz, rx, ry, rz) in _brainVolumes) {
+    final dx = (p.x - cx) / rx, dy = (p.y - cy) / ry, dz = (p.z - cz) / rz;
+    best = math.min(best, dx * dx + dy * dy + dz * dz);
+  }
+  return best;
+}
+
+/// Where each kind of memory lives, like regions of a real brain.
+const Map<String, (double, double, double, double)> _brainRegions = {
+  'Conversations': (2.6, 3.0, 0, 3.6), // frontal / top: everything said together
+  'Memory': (0.4, -0.6, 0, 2.4), // deep middle
+  'About you': (0.2, 1.8, 0, 2.2),
+  'Learning': (-2.4, 4.0, 0, 2.4), // parietal
+  'Knowledge': (6.0, 1.0, 0, 2.2), // front
+  'ML Learning': (-6.0, 1.4, 0, 2.2), // occipital
+  'Research': (2.6, -2.8, 0, 2.4), // temporal
+  'Suggestion': (-5.4, -3.9, 0, 1.6), // cerebellum
+  'Translation': (-2.2, -5.4, 0, 1.2), // brainstem
+};
 
 String cheBrainCategoryKey(String category) {
   final lower = category.toLowerCase();
@@ -72,9 +106,16 @@ int _hash(String s) {
   var h = 0x811c9dc5;
   for (final c in s.codeUnits) {
     h ^= c;
-    h = (h * 0x01000193) & 0x7fffffff;
+    h = (h * 0x01000193) & 0xffffffff;
   }
-  return h;
+  // Final avalanche, so ids that differ only in their last character (the
+  // salts) give independent numbers instead of points lined up in streaks.
+  h ^= h >> 16;
+  h = (h * 0x85ebca6b) & 0xffffffff;
+  h ^= h >> 13;
+  h = (h * 0xc2b2ae35) & 0xffffffff;
+  h ^= h >> 16;
+  return h & 0x7fffffff;
 }
 
 /// Deterministic pseudo-random in [0,1) for a memory id and salt.
@@ -94,33 +135,34 @@ class CheBrainLayout {
   static const double radius = 10;
 
   /// Clusters bigger than this start collapsed so the overview is readable.
-  static const int collapseAbove = 40;
+  static const int collapseAbove = 1500;
 
   factory CheBrainLayout.build(List<CheMemoryDot> dots, {List<Map<String, dynamic>> brainLinks = const []}) {
-    // Lobe centers: categories spread evenly over a sphere (golden spiral).
+    // Each category is a region of one brain-shaped volume.
     final clusters = <String, CheBrainCluster>{};
-    for (var i = 0; i < cheBrainCategories.length; i++) {
-      final y = 1 - (i + .5) / cheBrainCategories.length * 2;
-      final r = math.sqrt(1 - y * y);
-      final theta = i * math.pi * (3 - math.sqrt(5));
-      clusters[cheBrainCategories[i]] = CheBrainCluster(
-        cheBrainCategories[i],
-        vm.Vector3(math.cos(theta) * r, y * .82, math.sin(theta) * r) * (radius * .58),
-      );
+    for (final name in cheBrainCategories) {
+      final (x, y, z, _) = _brainRegions[name]!;
+      clusters[name] = CheBrainCluster(name, vm.Vector3(x, y, z));
     }
     final nodes = <CheBrainNode>[];
     final byId = <String, int>{};
     for (final dot in dots) {
       if (byId.containsKey(dot.id)) continue;
       final cluster = clusters[cheBrainCategoryKey(dot.category)]!;
-      // Inside the lobe: a jittered ball around its center, pulled slightly
-      // toward the middle so the whole field reads as one brain.
-      final u = _rand(dot.id, 1), v = _rand(dot.id, 2), w = _rand(dot.id, 3);
-      final theta = u * 2 * math.pi;
-      final phi = math.acos(2 * v - 1);
-      final spread = radius * .42 * math.pow(w, 1 / 3);
-      final offset = vm.Vector3(math.sin(phi) * math.cos(theta), math.cos(phi), math.sin(phi) * math.sin(theta)) * spread.toDouble();
-      final home = cluster.center + offset;
+      // Inside its region and always inside the brain's shape (stable per
+      // memory: the same memory keeps its place).
+      // Points fill the whole brain; each memory leans toward its region.
+      final sigma = _brainRegions[cluster.name]!.$4 * 1.5;
+      var home = cluster.center.clone();
+      for (var k = 0; k < 240; k++) {
+        final p = vm.Vector3(_rand(dot.id, 4 * k + 1) * 18 - 9, _rand(dot.id, 4 * k + 2) * 16 - 9, _rand(dot.id, 4 * k + 3) * 10 - 5);
+        if (cheBrainShape(p) >= .95) continue;
+        final d2 = (p - cluster.center).length2;
+        if (_rand(dot.id, 4 * k + 4) < math.exp(-d2 / (2 * sigma * sigma)) * .8 + .2) {
+          home = p;
+          break;
+        }
+      }
       final node = CheBrainNode(
         dot: dot,
         home: home,
@@ -191,10 +233,10 @@ class CheBrainLayout {
 /// Free camera. `distance` > 0 orbits `target`; `distance` == 0 stands at
 /// `target` and looks outward ("inside the brain").
 class CheBrainCamera {
-  CheBrainCamera({vm.Vector3? target, this.yaw = .6, this.pitch = .25, this.distance = overview})
+  CheBrainCamera({vm.Vector3? target, this.yaw = math.pi, this.pitch = .08, this.distance = overview})
       : target = target ?? vm.Vector3.zero();
 
-  static const double overview = 21;
+  static const double overview = 17;
   static const double maxDistance = 46;
   static const double fov = 60 * math.pi / 180;
   static const double near = .12;
