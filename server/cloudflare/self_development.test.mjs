@@ -1052,3 +1052,70 @@ test('failed-job diagnosis is deterministic and recovery phrases are recognized'
   for (const p of ['Diagnose and recover the failed coding job', 'retry the last failed job', 'reopen the engineering record']) assert.ok(recoveryRequestIntent(p), p);
   for (const p of ['update your code: add dark mode', 'what is a failed state']) assert.ok(!recoveryRequestIntent(p), p);
 });
+
+test('tiered grounding maps a named utility, its caller and adjacent test', async () => {
+  const sha = 'd'.repeat(40);
+  const files = {
+    'lib/util/che_message_split.dart': 'List<String> cheSplitMessage(String value) => [value];\n',
+    'lib/chat/che_chat.dart': "import '../util/che_message_split.dart';\nvoid send(String text) { cheSplitMessage(text); }\n",
+    'test/che_message_split_test.dart': "import '../lib/util/che_message_split.dart';\nvoid main() { cheSplitMessage('hi'); }\n",
+  };
+  const fetcher = async (url) => {
+    const u = String(url);
+    const ok = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (u.endsWith('/o/r')) return ok({ default_branch: 'main' });
+    if (u.includes('/git/ref/heads/main')) return ok({ object: { sha } });
+    if (u.includes('/git/trees/')) return ok({ tree: Object.keys(files).map((path) => ({ type: 'blob', path })) });
+    if (u.includes('/pulls?state=open')) return ok([]);
+    const m = /\/contents\/(.+)\?ref=/.exec(u);
+    if (m && files[m[1]]) return ok({ content: btoa(files[m[1]]), sha: 'blob-' + m[1] });
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const out = await inspectRepositoryContext(
+    { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' },
+    'inspect che message split utility and its callers and tests',
+    fetcher,
+  );
+  assert.equal(out.ok, true);
+  assert.ok(out.files.some((file) => file.path === 'lib/util/che_message_split.dart'));
+  assert.ok(out.files.some((file) => file.path === 'lib/chat/che_chat.dart'));
+  assert.ok(out.files.some((file) => file.path === 'test/che_message_split_test.dart'));
+  assert.ok(out.files.find((file) => file.path === 'lib/chat/che_chat.dart').references.includes('lib/util/che_message_split.dart'));
+});
+
+test('tiered grounding keeps existing War Room architecture in a broad complex request', async () => {
+  const sha = 'e'.repeat(40);
+  const files = {
+    'lib/agents/che_office_floor_screen.dart': "import 'che_war_room_screen.dart';\nclass CheOfficeFloorScreen {}\nvoid openProject() { const CheWarRoomScreen(); }\n",
+    'lib/agents/che_war_room_screen.dart': 'class CheWarRoomScreen { const CheWarRoomScreen(); }\nclass CheWarRoomController {}\n',
+    'test/che_war_room_screen_test.dart': "import '../lib/agents/che_war_room_screen.dart';\nvoid main() { const CheWarRoomScreen(); }\n",
+    'server/cloudflare/worker.js': "async function handleRequest(request) { if (new URL(request.url).pathname === '/api/office/war-room') return new Response('ok'); }\n",
+    'server/cloudflare/agent_runtime.js': "export function agentState() { return 'working'; }\n",
+    'lib/home_state/security.dart': 'class SecuritySession {}\n',
+    'lib/rooms/che_live_chart.dart': 'class CheLiveChart {}\n',
+  };
+  const fetcher = async (url) => {
+    const u = String(url);
+    const ok = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (u.endsWith('/o/r')) return ok({ default_branch: 'main' });
+    if (u.includes('/git/ref/heads/main')) return ok({ object: { sha } });
+    if (u.includes('/git/trees/')) return ok({ tree: Object.keys(files).map((path) => ({ type: 'blob', path })) });
+    if (u.includes('/pulls?state=open')) return ok([]);
+    const m = /\/contents\/(.+)\?ref=/.exec(u);
+    if (m && files[m[1]]) return ok({ content: btoa(files[m[1]]), sha: 'blob-' + m[1] });
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const out = await inspectRepositoryContext(
+    { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' },
+    'Design a production-ready complicated coding plan covering architecture security accessibility planning review parallel workflows for the War Room group chat and character state.',
+    fetcher,
+  );
+  assert.equal(out.ok, true);
+  const paths = out.files.map((file) => file.path);
+  assert.ok(paths.includes('lib/agents/che_war_room_screen.dart'), 'existing War Room implementation cannot be crowded out');
+  assert.ok(paths.includes('lib/agents/che_office_floor_screen.dart'), 'War Room caller must remain grounded');
+  assert.ok(paths.includes('test/che_war_room_screen_test.dart'), 'adjacent War Room test must be grounded');
+  assert.ok(paths.includes('server/cloudflare/worker.js'), 'Worker routing evidence must remain grounded');
+  assert.ok(out.files.find((file) => file.path === 'lib/agents/che_office_floor_screen.dart').references.includes('lib/agents/che_war_room_screen.dart'));
+});
+
