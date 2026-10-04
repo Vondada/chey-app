@@ -28,7 +28,7 @@ extension _CheHomeSecurity on _CHEHomeState {
         ),
       );
 
-      if (kIsWeb) {
+      if (kIsWeb && await _handsFreeOn()) {
         openConversation = true;
         _rearmWebMicSoon(
           delay: const Duration(milliseconds: 900),
@@ -364,7 +364,7 @@ extension _CheHomeSecurity on _CHEHomeState {
     if (result == true) {
       await _loadAgentState();
 
-      if (kIsWeb) {
+      if (kIsWeb && await _handsFreeOn()) {
         openConversation = true;
         _rearmWebMicSoon(
           delay: const Duration(milliseconds: 650),
@@ -914,8 +914,57 @@ extension _CheHomeSecurity on _CHEHomeState {
     return started;
   }
 
+  /// Owner rule: the mic never opens on its own. Wake-word listening only
+  /// runs when the owner turned hands-free on; otherwise CHE listens only
+  /// after the mic button (or a typed/spoken request through it).
+  Future<bool> _handsFreeOn() async {
+    final ui = CheUiPreferences.instance;
+    if (!ui.isLoaded) await ui.load();
+    return ui.handsFreeWake;
+  }
+
+  /// Closes every microphone owner (wake engine, native recognizer, Flutter
+  /// recognizer) when hands-free is off, so nothing keeps recording.
+  Future<void> _closeMicUnlessHandsFree() async {
+    if (await _handsFreeOn()) return;
+    _mic.cancelRestart('hands-free off');
+    try {
+      await _stopPorcupineWake();
+    } catch (_) {}
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS && _nativeIosVoiceActive) {
+      await _localVoice.runMicOp(() async {
+        try {
+          await CheNativeVoice.stop();
+        } catch (_) {}
+      });
+      _nativeIosVoiceActive = false;
+    }
+    if (speech.isListening) {
+      await _localVoice.runMicOp(() async {
+        await speech.stop();
+      });
+    }
+    if (mounted) {
+      _set(() {
+        openConversation = false;
+        isListening = false;
+      });
+    }
+  }
+
+  /// Applies a hands-free change right away, then reports it truthfully.
+  Future<void> _applyHandsFreeChange() async {
+    if (await _handsFreeOn()) {
+      if (mounted) _set(() => openConversation = true);
+      await _restartWakeListener();
+    } else {
+      await _closeMicUnlessHandsFree();
+    }
+  }
+
   Future<void> _restartWakeListener() async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return;
+    if (!await _handsFreeOn()) return;
     if (_realtimeVoice?.connected == true ||
         _realtimeConnecting ||
         _wakeListenerStarting) {
@@ -1089,7 +1138,9 @@ extension _CheHomeSecurity on _CHEHomeState {
       });
     }
 
-    if (restartWakeListener) {
+    if (!await _handsFreeOn()) {
+      await _closeMicUnlessHandsFree();
+    } else if (restartWakeListener) {
       await _restartWakeListener();
     }
   }

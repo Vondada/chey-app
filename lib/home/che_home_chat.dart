@@ -418,6 +418,17 @@ class CheHomeComposer extends StatelessWidget {
                   ),
                 ),
                 const Spacer(),
+                if (keyboardUp)
+                  Semantics(
+                    button: true,
+                    label: 'Hide keyboard. Your typing stays.',
+                    excludeSemantics: true,
+                    child: _ComposerIcon(
+                      icon: Icons.keyboard_arrow_down_rounded,
+                      tooltip: 'Hide keyboard',
+                      onTap: focusNode.unfocus,
+                    ),
+                  ),
                 if (onToggleTyping != null)
                   _ComposerIcon(
                     icon: typingOn ? Icons.keyboard_hide_rounded : Icons.keyboard_rounded,
