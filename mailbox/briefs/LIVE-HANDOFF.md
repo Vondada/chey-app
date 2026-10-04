@@ -40,7 +40,7 @@ Then, on GitHub:
 
 ---
 
-## 2. Current position (updated by: Claude, 2026-10-04 13:40 UTC)
+## 2. Current position (updated by: Claude, 2026-10-04 19:10 UTC)
 
 **Merged to main today**, on the owner's "merge". Every merge with a Worker change carried `[worker-deploy]`.
 
@@ -92,7 +92,21 @@ Then, on GitHub:
 - **Next for the owner:** say "CHE, run the autonomy exam", then "autonomy exam results".
 - **Next for any AI:** read the exam results (key `che_autonomy_exam`, or ask CHE) and fix the first failed level at its root cause.
 
-**Next:** queue item 1 (Trading Room learning engine). Nothing is half-done; no WIP branches.
+**#177 MERGED** (c7fd384, 18:53Z) with `[worker-deploy]`. Deploy run 37226167474 succeeded.
+- CHE's private code search is live: one tarball per commit, searched on the Worker, so she is no longer bound by GitHub's 10-per-minute code-search limit.
+- Exam levels now run 3 minutes apart.
+
+**Open PR #178** (`claude/che-live-stars`, 543 Worker tests pass; needs the owner's "merge", with `[worker-deploy]`):
+- Queue item 1, the trading learning engine, as first cut. Details:
+  - 63 skills = 7 signals × 3 filters × 3 targets.
+  - Hourly, each market tests 12 of them.
+  - History is split 60/20/20 (choose, confirm, held-back test). A skill must have profit factor > 1.15 in all three parts.
+  - All skills are re-tested every 30 days. A skill that loses 5 in a row is benched.
+  - ES/NQ (MES/MNQ by name) are added once, on Stooq daily data, which is delayed. These are swing trades, not intraday.
+  - Futures trades show dollars per contract and per micro.
+  - Voice: "what have you learned about trading".
+  - LIMIT: intraday ES/NQ ("many trades a day") needs a real-time futures data feed or key.
+- Starred-repo study now reads the owner's live GitHub stars, newest 25. Study focus was added for the new stars and the trading repos (freqtrade, qlib, FinRL, nautilus_trader, Lean, TradingAgents, backtesting.py, vectorbt, ML-for-trading). Copyleft repos are learn-only.
 
 **Owner answers still pending (don't guess):**
 - His 5 starred repo names.
@@ -102,7 +116,7 @@ Then, on GitHub:
 
 Do them top to bottom. Mark each one `DONE (PR #, SHA)` or `WIP (branch, next step)` here.
 
-1. **Trading Room learning engine.**
+1. **Trading Room learning engine.** WIP (PR #178, first cut; next: intraday futures data once the owner has a feed)
    - Agents permanently backtest and paper-trade ES, NQ, MES and MNQ, many trades a day, and learn from the results.
    - Show accuracy, P&L and trade counts.
    - Build on `server/cloudflare/trading_lab.js`: `backtest`, `backtestAll`, `paperTick`, `stats` and `readBook` already exist.
