@@ -15,6 +15,7 @@ import '../che_app_portal.dart';
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
 import '../widgets/che_native_scene_world.dart';
+import 'che_live_chart.dart';
 
 class CheQuote {
   const CheQuote({required this.symbol, required this.name, this.price, this.changePct, required this.status, this.note});
@@ -210,6 +211,17 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
             padding: const EdgeInsets.only(bottom: CheSpace.xxl),
             children: [
               _TickerTape(quotes: _quotes, fmt: _fmt),
+              // The live chart fills the room: switch symbols and timeframes
+              // by tap, typing or voice; "Read price" speaks the latest price.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
+                child: CheLiveChartPanel(
+                  baseUrl: widget.baseUrl,
+                  headers: widget.headers,
+                  client: widget.client,
+                  height: math.max(320.0, MediaQuery.sizeOf(context).height * 0.55),
+                ),
+              ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(
                   CheSpace.gutter,
