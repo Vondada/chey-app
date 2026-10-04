@@ -21,6 +21,14 @@ test('server infers obvious capabilities without phone magic phrases', () => {
   assert.ok(media.includes('multimodal'));
 });
 
+test('monitoring and follow-up language becomes background multitasking work', () => {
+  for (const phrase of ['keep monitoring NQ', 'watch for a deployment failure', 'alert me when it changes', 'follow up on that job']) {
+    const caps = inferTurnCapabilities(phrase);
+    assert.ok(caps.includes('multitasking'), phrase);
+    assert.ok(caps.includes('speed_mode'), phrase);
+  }
+});
+
 test('runtime registry reports only capabilities with a real configured path', () => {
   const registry = runtimeCapabilityRegistry(
     {
