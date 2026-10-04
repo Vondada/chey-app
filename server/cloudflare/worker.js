@@ -34,6 +34,8 @@ import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry 
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
+import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
+import { MODE_NAME, deskIntent, deskTick, pendingAlert, readDesk, setMode, setSize, skipTrade, speakAlert, speakDeskStatus, takeAnnouncement, takeTrade } from './trading_desk.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
@@ -184,6 +186,27 @@ async function bodyOf(request) {
   const body = JSON.parse(raw);
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('invalid_json');
   return body;
+}
+
+// Says `text` before an existing streamed reply.
+function prefixNdjson(response, text) {
+  const head = new TextEncoder().encode(JSON.stringify({ type: 'delta', delta: text }) + '\n');
+  const body = response.body;
+  const stream = new ReadableStream({
+    async start(controller) {
+      controller.enqueue(head);
+      if (body) {
+        const reader = body.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          controller.enqueue(value);
+        }
+      }
+      controller.close();
+    },
+  });
+  return new Response(stream, { status: response.status, headers: response.headers });
 }
 
 function ndjsonReply(reply, meta = {}) {
@@ -2847,6 +2870,16 @@ export class CheState extends DurableObject {
     }
   }
 
+  // One paper-trading pass, then its entries go to the trading desk
+  // (alerts; simulated-account orders when the owner chose sim mode), and the
+  // NinjaTrader sign-in is kept alive.
+  async tradingTick(opts = {}) {
+    const book = await paperTick(this.ctx.storage, opts);
+    await renewToken(this.ctx.storage).catch(() => null);
+    await deskTick(this.ctx.storage, book).catch((error) => console.error('Trading desk tick failed:', error?.message || error));
+    return book;
+  }
+
   async scheduleWork() {
     const data = await this.loadData();
     const times = [];
@@ -3660,7 +3693,13 @@ export class CheState extends DurableObject {
   async fetch(request) {
     const isChat = request.method === 'POST' && new URL(request.url).pathname === '/api/chat';
     const sent = isChat ? request.clone().json().catch(() => null) : null;
-    const response = await this.handleRequest(request);
+    let response = await this.handleRequest(request);
+    // A trade alert the owner has not heard yet is said first, in the reply
+    // to whatever he says next (there is no phone push for it yet).
+    if (isChat && response?.ok && OWNER_CHAT_REQUESTS.has(request)) {
+      const alert = await takeAnnouncement(this.ctx.storage).catch(() => '');
+      if (alert) response = prefixNdjson(response, `${alert}\n\n`);
+    }
     // Only the owner's own conversations grow his brain (never a guest's).
     if (isChat && response?.ok && OWNER_CHAT_REQUESTS.has(request) && this.ctx.waitUntil) {
       const copy = response.clone();
@@ -3726,6 +3765,13 @@ export class CheState extends DurableObject {
       // Engine report (no secrets) so failures can be diagnosed remotely.
       if (path === '/health/engines' && request.method === 'GET') {
         return json(await engineStatus(this.env, this.ctx.storage));
+      }
+      // NinjaTrader (Tradovate) sign-in returns here. Public, but it only
+      // accepts the one-time state CHE created for the owner's own request.
+      if (path === TRADOVATE_CALLBACK && request.method === 'GET') {
+        const done = await tradovateCallback(this.ctx.storage, this.keyEnv || this.env, request.url);
+        const safe = done.message.replace(/[<>&]/g, '');
+        return new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CHE and NinjaTrader</title><body style="font:20px system-ui;padding:24px"><h1 role="status">${safe}</h1></body>`, { status: done.ok ? 200 : 400, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } });
       }
       // Sites CHE built: public, sandboxed pages at /site/<id>.
       const site = await serveSite(request, this.ctx.storage);
@@ -4406,7 +4452,7 @@ export class CheState extends DurableObject {
       }
       if (path === '/api/trading/paper' && request.method === 'POST') {
         if (body.action === 'watch') return json(await watchSymbol(this.ctx.storage, body.symbol));
-        if (body.action === 'tick') { const book = await paperTick(this.ctx.storage, { force: true }); return json({ ...book, summary: speakBook(book) }); }
+        if (body.action === 'tick') { const book = await this.tradingTick({ force: true }); return json({ ...book, summary: speakBook(book) }); }
         return json({ detail: 'Use watch or tick.' }, 400);
       }
       if (path === '/api/markets/quote' && request.method === 'GET') {
@@ -6600,14 +6646,59 @@ export class CheState extends DurableObject {
 
         // Trading Lab by voice: "how are the trades doing", "backtest bitcoin",
         // "swing highs and entries on ETH", "paper trade Apple".
+        // Trading desk by voice: paper / sim / live switch, NinjaTrader
+        // sign-in, entry alerts, and "take the trade" for live orders.
+        const desk = deskIntent(message);
+        if (desk) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the trading desk.', { source: 'che_trading_desk', ok: false });
+          if (desk.kind === 'connect') {
+            if (!tradovateConfigured(this.keyEnv || this.env)) {
+              return ndjsonReply('To connect NinjaTrader I need your Tradovate API key first, sir. On Tradovate\'s website, under Application Settings, API Access, create an API key (Tradovate may charge for API access, so that choice is yours). Then save its two values as the Worker secrets CHE_TRADOVATE_CLIENT_ID and CHE_TRADOVATE_CLIENT_SECRET, and say "connect NinjaTrader" again. Your password never comes to me: you sign in on Tradovate\'s own page.', { source: 'che_trading_desk', ok: false });
+            }
+            const link = await connectLink(this.ctx.storage, this.keyEnv || this.env, new URL(request.url).origin);
+            return ndjsonReply(`Open this link to sign in to NinjaTrader on Tradovate's own page, sir. Your password goes only to Tradovate, never to me. The link works once, for 10 minutes: ${link.url}`, { source: 'che_trading_desk', ok: true });
+          }
+          if (desk.kind === 'mode') {
+            const changed = await setMode(this.ctx.storage, desk.mode);
+            const conn = await brokerConnection(this.ctx.storage);
+            const note = desk.mode === 'live'
+              ? ' Real money now. I will call each entry and place it only when you say "take the trade".'
+              : desk.mode === 'sim' ? ' I will place my entries on the simulated account myself and tell you each one.' : ' Nothing goes to NinjaTrader.';
+            const needs = desk.mode !== 'paper' && !conn.connected ? ' NinjaTrader is not connected yet, so say "connect NinjaTrader" first.' : '';
+            return ndjsonReply(`Switched from ${MODE_NAME[changed.before]} to ${MODE_NAME[changed.mode]}, sir.${note}${needs}`, { source: 'che_trading_desk', ok: true, trading_mode: changed.mode });
+          }
+          if (desk.kind === 'status') return ndjsonReply(speakDeskStatus(await readDesk(this.ctx.storage), await brokerConnection(this.ctx.storage)), { source: 'che_trading_desk' });
+          if (desk.kind === 'size') {
+            const sized = await setSize(this.ctx.storage, desk.qty, desk.contract);
+            return ndjsonReply(sized.error || `Done, sir: I will size entries at ${sized.qty} ${sized.contract === 'full' ? 'full-size' : 'micro'} contract${sized.qty === 1 ? '' : 's'}.`, { source: 'che_trading_desk', ok: !sized.error });
+          }
+          if (desk.kind === 'take') {
+            const taken = await takeTrade(this.ctx.storage);
+            if (taken.ok) await recordReceipt(this.ctx.storage, { kind: 'trade_placed', key: `trade_placed:${Date.now()}`, detail: taken.reply.slice(0, 300) }).catch(() => null);
+            return ndjsonReply(taken.reply, { source: 'che_trading_desk', ok: Boolean(taken.ok) });
+          }
+          if (desk.kind === 'skip') return ndjsonReply(await skipTrade(this.ctx.storage), { source: 'che_trading_desk', ok: true });
+          if (desk.kind === 'alerts') {
+            const current = await readDesk(this.ctx.storage);
+            const open = pendingAlert(current);
+            const recent = current.alerts.slice(-3).reverse();
+            return ndjsonReply(open ? speakAlert(open) : recent.length ? `No open entry right now, sir. Latest: ${speakAlert(recent[0])}` : 'No trade alerts yet, sir. I call an entry when one of my learned skills fires on ES or NQ.', { source: 'che_trading_desk' });
+          }
+          if (desk.kind === 'balance') {
+            const mode = (await readDesk(this.ctx.storage)).mode === 'live' ? 'live' : 'sim';
+            const bal = await accountBalance(this.ctx.storage, mode).catch((e) => ({ error: String(e?.message || e) }));
+            return ndjsonReply(bal.error ? `I could not read your ${mode === 'live' ? 'live' : 'simulated'} account, sir. ${bal.error}` : `Your ${mode === 'live' ? 'live' : 'simulated'} account ${bal.account}: net liquidation $${bal.net_liq ?? 'unknown'}, cash $${bal.cash ?? 'unknown'}${bal.open_pnl != null ? `, open profit and loss $${bal.open_pnl}` : ''}.`, { source: 'che_trading_desk', ok: !bal.error });
+          }
+        }
+
         const trade = tradingIntent(message);
         if (trade) {
           if (trade.kind === 'book') {
-            const book = await paperTick(this.ctx.storage).catch(() => null) || await readBook(this.ctx.storage);
+            const book = await this.tradingTick().catch(() => null) || await readBook(this.ctx.storage);
             return ndjsonReply(speakBook(book), { source: 'che_trading' });
           }
           if (trade.kind === 'learning') {
-            const book = await paperTick(this.ctx.storage).catch(() => null) || await readBook(this.ctx.storage);
+            const book = await this.tradingTick().catch(() => null) || await readBook(this.ctx.storage);
             return ndjsonReply(speakLearning(book), { source: 'che_trading' });
           }
           if (trade.kind === 'watch') {
@@ -7572,7 +7663,7 @@ export class CheState extends DurableObject {
       console.error('Flagstaff mailbox watch failed:', error?.message || error);
     });
     // Paper trading keeps learning even when autonomy is off (no money moves).
-    await paperTick(this.ctx.storage).catch(() => null);
+    await this.tradingTick().catch(() => null);
     if ((await this.loadData()).autonomy) {
       await this.processJobs();
       await processAgentWork({
