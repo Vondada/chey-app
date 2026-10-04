@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:chey/conversations/che_conversations_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -44,5 +45,24 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: CheConversationsScreen(key: UniqueKey(), baseUrl: () => 'https://che', headers: () => const {}, client: MockClient((r) async => http.Response('{"detail":"Owner only"}', 403)))));
     await tester.pumpAndSettle();
     expect(find.textContaining('could not load: Owner only'), findsOneWidget);
+  });
+
+  testWidgets('a failed load is spoken aloud, not only drawn', (tester) async {
+    final spoken = <String>[];
+    await tester.pumpWidget(MaterialApp(home: CheConversationsScreen(baseUrl: () => 'https://che', headers: () => const {}, onReadAloud: (t) async => spoken.add(t), client: MockClient((r) async => http.Response('{"detail":"Pair your phone"}', 401)))));
+    await tester.pumpAndSettle();
+    expect(spoken, ['Conversations could not load: Pair your phone']);
+  });
+
+  testWidgets('VoiceOver can copy a message and hears the result', (tester) async {
+    final handle = tester.ensureSemantics();
+    await tester.pumpWidget(MaterialApp(home: CheConversationsScreen(baseUrl: () => 'https://che', headers: () => const {}, client: MockClient((r) async => http.Response(jsonEncode(payload), 200)))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Launch plan'));
+    await tester.pumpAndSettle();
+    final node = tester.getSemantics(find.bySemanticsLabel(RegExp(r'^Nova to Knox, critique')));
+    expect(node.getSemanticsData().customSemanticsActionIds, isNotEmpty);
+    expect(node.getSemanticsData().hasAction(SemanticsAction.longPress), isTrue);
+    handle.dispose();
   });
 }

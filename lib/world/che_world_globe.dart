@@ -73,6 +73,13 @@ class CheWorldGlobeState extends State<CheWorldGlobe> with SingleTickerProviderS
   Size _size = Size.zero;
 
   @override
+  void initState() {
+    super.initState();
+    // Touch the lazy ticker so the idle rotation starts with the screen.
+    _ticker.isActive;
+  }
+
+  @override
   void dispose() {
     _ticker.dispose();
     _frame.dispose();
