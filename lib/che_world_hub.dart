@@ -15,6 +15,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'che_theme.dart';
+import 'world/che_world_globe.dart';
 
 class CheBuilding {
   const CheBuilding({
@@ -132,10 +133,35 @@ class CheWorldHubScreen extends StatelessWidget {
               Column(
                 children: [
                   _WorldHeader(state: state),
+                  // Each room is a continent on CHE's world.
                   Expanded(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
-                      child: _CheCampus(onOpenTab: onOpenTab),
+                    child: CheWorldGlobe(
+                      continents: cheBuildContinents([for (final b in cheCampusBuildings) (tab: b.tab, name: b.title, color: b.color)]),
+                      onOpenTab: onOpenTab,
+                    ),
+                  ),
+                  // Every continent as a button too (VoiceOver, one tap).
+                  SizedBox(
+                    height: 56,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                      children: [
+                        for (final b in cheCampusBuildings)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: Semantics(
+                              button: true,
+                              label: 'Open ${b.title}. ${b.subtitle}',
+                              excludeSemantics: true,
+                              child: ActionChip(
+                                avatar: Icon(b.icon, size: 16, color: b.color),
+                                label: Text(b.title),
+                                onPressed: () => onOpenTab(b.tab),
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 ],
@@ -262,182 +288,3 @@ class _StarfieldPainter extends CustomPainter {
 
 /// The campus: buildings arranged in staggered rows so nearer rows read as
 /// "closer" and farther rows read as "in the distance", the classic
-/// isometric-game trick done with plain widget offsets instead of 3D.
-class _CheCampus extends StatelessWidget {
-  const _CheCampus({required this.onOpenTab});
-  final void Function(int tab) onOpenTab;
-
-  @override
-  Widget build(BuildContext context) {
-    final rows = <List<CheBuilding>>[
-      for (var i = 0; i < cheCampusBuildings.length; i += 3)
-        cheCampusBuildings.sublist(i, i + 3 > cheCampusBuildings.length ? cheCampusBuildings.length : i + 3),
-    ];
-
-    return Column(
-      children: [
-        for (var r = 0; r < rows.length; r++) ...[
-          _CampusRow(
-            buildings: rows[r],
-            onOpenTab: onOpenTab,
-            // Rows further "back" (lower index) sit smaller/dimmer to fake
-            // depth-of-field, like distant buildings in a game world.
-            depthScale: (0.82 + (r * 0.09)).clamp(0.82, 1.0),
-            stagger: r.isOdd,
-          ),
-          const SizedBox(height: 18),
-        ],
-      ],
-    );
-  }
-}
-
-class _CampusRow extends StatelessWidget {
-  const _CampusRow({
-    required this.buildings,
-    required this.depthScale,
-    required this.stagger,
-    required this.onOpenTab,
-  });
-
-  final void Function(int tab) onOpenTab;
-  final List<CheBuilding> buildings;
-  final double depthScale;
-  final bool stagger;
-
-  @override
-  Widget build(BuildContext context) {
-    final tiles = <Widget>[
-      for (var i = 0; i < buildings.length; i++)
-        Expanded(
-          child: Padding(
-            padding: EdgeInsets.only(top: stagger && i.isOdd ? 22 : 0),
-            child: CheFloat(
-              amplitude: 4,
-              phase: i.toDouble(),
-              child: _BuildingTile(
-                building: buildings[i],
-                scale: depthScale,
-                onTap: () => onOpenTab(buildings[i].tab),
-              ),
-            ),
-          ),
-        ),
-    ];
-
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (var i = 0; i < tiles.length; i++) ...[
-          if (i > 0) const SizedBox(width: 12),
-          tiles[i],
-        ],
-      ],
-    );
-  }
-}
-
-class _BuildingTile extends StatefulWidget {
-  const _BuildingTile({
-    required this.building,
-    required this.onTap,
-    this.scale = 1.0,
-  });
-
-  final CheBuilding building;
-  final VoidCallback onTap;
-  final double scale;
-
-  @override
-  State<_BuildingTile> createState() => _BuildingTileState();
-}
-
-class _BuildingTileState extends State<_BuildingTile> {
-  bool _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final b = widget.building;
-
-    return Transform.scale(
-      scale: widget.scale,
-      alignment: Alignment.bottomCenter,
-      child: GestureDetector(
-        onTapDown: (_) => setState(() => _pressed = true),
-        onTapCancel: () => setState(() => _pressed = false),
-        onTapUp: (_) => setState(() => _pressed = false),
-        onTap: widget.onTap,
-        child: AnimatedScale(
-          scale: _pressed ? 0.94 : 1.0,
-          duration: const Duration(milliseconds: 120),
-          child: AspectRatio(
-            aspectRatio: 0.82,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(18),
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    b.color.withValues(alpha: 0.22),
-                    CheColors.panel,
-                  ],
-                ),
-                border: Border.all(color: b.color.withValues(alpha: 0.55)),
-                boxShadow: [
-                  BoxShadow(
-                    color: b.color.withValues(alpha: 0.28),
-                    blurRadius: 18,
-                    spreadRadius: -2,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: b.color.withValues(alpha: 0.18),
-                        border: Border.all(color: b.color, width: 1.2),
-                      ),
-                      child: Icon(b.icon, color: b.color, size: 20),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      b.title,
-                      textAlign: TextAlign.center,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: CheColors.textPrimary,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12.5,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      b.subtitle,
-                      textAlign: TextAlign.center,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: CheColors.textDim,
-                        fontSize: 9.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}

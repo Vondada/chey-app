@@ -1215,7 +1215,8 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
   const ownerIntent = String(options?.intentRequest || request || '').trim().slice(0, 16000);
   if (!task || !ownerIntent) return { status: 400, detail: 'Describe the requested app change.' };
   const ctx = createContext(env, task, options);
-  const finish = (result) => ({ ...result, diagnostics: { budget: ctx.budget.snapshot(), events: ctx.diagnostics.slice(-40), outcomes: ctx.outcomes.slice(-30) } });
+  // Every result carries the crew's conversation (shown to the owner as a group chat).
+  const finish = (result) => ({ ...result, discussion: result.discussion || (ctx.chat || []).slice(-30), diagnostics: { budget: ctx.budget.snapshot(), events: ctx.diagnostics.slice(-40), outcomes: ctx.outcomes.slice(-30) } });
 
   try {
     const lessons = await loadLessons(memory);
@@ -1259,6 +1260,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       return res.ok ? res.value : null;
     }));
     const chat = [];
+    ctx.chat = chat;
     plans.forEach((p, i) => { if (p) chat.push({ from: CREW.planners[i].name, msg: `Plan: ${String(p.plan || '').slice(0, 600)} Look for: ${(Array.isArray(p.search_terms) ? p.search_terms : []).slice(0, 5).join(' / ')}` }); });
     const good = plans.filter(Boolean);
     const architecture = {
