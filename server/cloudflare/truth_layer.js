@@ -126,6 +126,13 @@ export function verifiedState(receipts, jobs = [], extras = {}) {
   const activeJobs = (jobs || []).filter((job) => engineeringKinds.has(job.kind) && ['queued', 'running'].includes(job.status));
   const finishedJobs = (jobs || []).filter((job) => engineeringKinds.has(job.kind) && ['complete', 'failed'].includes(job.status)
     && Date.now() - Date.parse(job.updated_at || 0) <= RECENT_MS);
+  // Status is about NOW: old receipts are history, not current state, and a
+  // PR that was merged afterwards is no longer "open". (Old merge/deploy
+  // receipts were read out as "the repository was updated" for new work.)
+  const recent = (receipt) => receipt && Date.now() - Date.parse(receipt.at || 0) <= RECENT_MS ? receipt : null;
+  const merged = recent(byKind('merged').at(-1) || null);
+  const openPr = recent(byKind('pr_opened').at(-1) || null);
+  const prStillOpen = openPr && !byKind('merged').some((r) => Number(r.number) === Number(openPr.number) && r.at >= openPr.at) ? openPr : null;
   return {
     peers,
     active_jobs: activeJobs.map((job) => ({ id: job.id, kind: job.kind, status: job.status, title: job.title })),
@@ -133,10 +140,12 @@ export function verifiedState(receipts, jobs = [], extras = {}) {
     study: byKind('study_complete').at(-1) || null,
     study_started: byKind('study_started').at(-1) || null,
     proposal_ready: Boolean(extras.pendingProposal),
-    pr: byKind('pr_opened').at(-1) || null,
-    merged: byKind('merged').at(-1) || null,
-    deployed: byKind('deployed').at(-1) || null,
-    ci_passed: byKind('ci_passed').at(-1) || null,
+    proposal_summary: String(extras.pendingProposal?.summary || '').slice(0, 160),
+    pr: openPr,
+    pr_open: Boolean(prStillOpen),
+    merged,
+    deployed: recent(byKind('deployed').at(-1) || null),
+    ci_passed: recent(byKind('ci_passed').at(-1) || null),
   };
 }
 
@@ -156,8 +165,15 @@ export function verifiedStatusText(state) {
     if (info.replied) lines.push(`${peerLabel(peer)} replied (message ${shortId(info.reply_id)}).`);
     else if (info.sent) lines.push(`I sent ${peerLabel(peer)} the request (message ${shortId(info.sent_id)}); no reply yet.`);
   }
-  if (state.proposal_ready) lines.push('A reviewed change is waiting for your approval.');
-  if (state.pr) lines.push(`PR #${state.pr.number} is open.`);
+  if (state.proposal_ready) {
+    // Said as its own fact, so a stopped newer job and an older waiting
+    // change never read as one contradictory story.
+    const what = state.proposal_summary ? ` (${state.proposal_summary})` : '';
+    lines.push(state.finished_jobs.length
+      ? `Separately, an earlier reviewed change${what} is still waiting for your approval; it is not on GitHub yet.`
+      : `A reviewed change${what} is waiting for your approval; it is not on GitHub yet.`);
+  }
+  if (state.pr && state.pr_open !== false) lines.push(`PR #${state.pr.number} is open.`);
   if (state.merged) lines.push(`PR #${state.merged.number} was merged (commit ${String(state.merged.sha || '').slice(0, 7)}).`);
   if (state.deployed) lines.push('The last merged Worker change was verified as deployed.');
   if (!lines.length) return 'Nothing is running right now, sir: no coding job, repository study or AI request is in progress.';

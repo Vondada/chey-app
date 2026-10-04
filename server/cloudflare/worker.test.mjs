@@ -18,9 +18,12 @@ let CheState;
 let publicResearch;
 let geminiVision;
 let selfUpdateChatIntent;
+let handleSelfUpdateChatAction;
+let dispatchChange;
+let continuationOf;
 let selfImprovementLesson;
 try {
-  ({ default: worker, CheState, publicResearch, geminiVision, selfUpdateChatIntent, selfImprovementLesson } = await import(
+  ({ default: worker, CheState, publicResearch, geminiVision, selfUpdateChatIntent, selfImprovementLesson, handleSelfUpdateChatAction, dispatchChange, continuationOf } = await import(
     generatedWorker.href + '?test=' + Date.now(),
   ));
 } finally {
@@ -1202,6 +1205,99 @@ test('"what are my 5 newest starred repos" reads GitHub, says them, remembers th
     assert.equal(saved.get('starred_newest').repos.length, 5);
     assert.ok(mailed.length === 1 && Buffer.from(mailed[0].content, 'base64').toString().includes('owner/n5'), 'sent to Claude in the mailbox');
     assert.match(text, /sent them to Claude in the mailbox/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+
+// ─── Live autonomy stress test regressions (War Room) ─────────────────────
+const WARROOM_SRC = readFileSync(new URL('../../assets/office3d/warroom.html', import.meta.url), 'utf8');
+
+function autonomyFetch({ mainSha = 'main-sha', mailbox = [] } = {}) {
+  const files = { 'assets/office3d/warroom.html': WARROOM_SRC };
+  return async (url, options = {}) => {
+    const u = String(url);
+    const method = options.method || 'GET';
+    const reply = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
+    if (method !== 'GET') { mailbox.push(u); return reply({}, 404); }
+    if (/api\.github\.com\/repos\/[^/]+\/[^/]+$/.test(u)) return reply({ default_branch: 'main' });
+    if (u.includes('/git/ref/heads/main')) return reply({ object: { sha: mainSha } });
+    if (u.includes('/git/trees/')) return reply({ tree: Object.keys(files).map((path) => ({ type: 'blob', path })) });
+    if (u.includes('/search/code')) return reply({ items: [{ path: 'assets/office3d/warroom.html' }] });
+    const m = /\/contents\/(.+)\?ref=/.exec(u);
+    if (m && files[m[1]] !== undefined) return reply({ content: Buffer.from(files[m[1]]).toString('base64'), sha: 'blob' });
+    return reply({}, 404);
+  };
+}
+
+// Engineers that always anchor on the non-existent CSS orb (the production failure).
+const hallucinatingCrew = {
+  run: async (_model, input) => {
+    const system = input.messages[0].content;
+    if (system.includes('Architect')) return { response: JSON.stringify({ plan: 'p', search_terms: ['War Room'], paths: ['assets/office3d/warroom.html'] }) };
+    if (system.includes('Review')) return { response: JSON.stringify({ approved: true, target_correct: true, notes: [] }) };
+    return { response: JSON.stringify({ summary: 'orb', edits: [{ path: 'assets/office3d/warroom.html', find: `#orb { animation: x${Math.random()}; }`, replace: '#orb {}' }] }) };
+  },
+};
+
+function store(entries = []) {
+  const m = new Map(entries);
+  return { m, get: async (k) => m.get(k), put: async (k, v) => m.set(k, v), delete: async (k) => m.delete(k) };
+}
+
+test('"Create the PR. Continue the original task…" opens the waiting reviewed change instead of starting a new job', () => {
+  const owner = 'Create the PR. Continue the original task through the complete workflow yourself. Do not stop for normal engineering decisions or recoverable failures. Report back when the requested workflow is complete, or only stop if an action specifically needs my approval.';
+  assert.deepEqual(selfUpdateChatIntent(owner), { kind: 'open-pr' });
+  assert.deepEqual(selfUpdateChatIntent('Okay, create the PR now.'), { kind: 'open-pr' });
+  // An explicit code command that mentions a PR later is still a code request.
+  assert.equal(selfUpdateChatIntent('Update your code: make the War Room table pulse, then create the PR and report back with the result of the checks please, thank you very much sir.'), null);
+  assert.equal(selfUpdateChatIntent('Explain how you would create a PR for the War Room work and what it would change across the Office, the War Room and the agents. ' + 'x'.repeat(80)), null);
+});
+
+test('"continue the original task" works from the last real request, never from the follow-up text as a spec', () => {
+  const last = { request: 'Update the existing War Room: make the central table feel alive.' };
+  const out = continuationOf('Continue the original task and finish it yourself.', last);
+  assert.match(out, /^Update the existing War Room: make the central table feel alive\./);
+  assert.match(out, /Owner follow-up on the same task/);
+  assert.equal(continuationOf('Make the Office brighter.', last), null);
+  assert.equal(continuationOf('Continue the original task.', null), null);
+});
+
+test('a failed new job never hides a reviewed change that is still waiting (no contradictory state)', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = autonomyFetch();
+  try {
+    const memory = store([['pending_self_update', { proposal: { summary: 'War Room table pulse', files: [] }, request: 'War Room pulse', reviewed_at: new Date().toISOString() }]]);
+    const env = { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: hallucinatingCrew };
+    const res = await dispatchChange(env, { request: 'Update your code: make the War Room central table pulse gently.' }, memory, {});
+    const body = await res.json();
+    assert.equal(res.status, 422);
+    assert.match(body.detail, /edits did not match the current source/);
+    assert.match(body.detail, /earlier reviewed change \(War Room table pulse\) is still waiting/);
+    assert.equal(memory.m.get('che_failed_engineering').root_cause, 'edit_anchor');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('a stale reviewed change that cannot be rebuilt stops reporting as waiting (GitHub is authoritative)', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = autonomyFetch({ mainSha: 'new-main-sha' });
+  try {
+    const memory = store([['pending_self_update', {
+      proposal: { summary: 'War Room table pulse', expected_base_sha: 'old-main-sha', files: [{ path: 'assets/office3d/warroom.html', content: WARROOM_SRC + '\n' }] },
+      request: 'Make the War Room central table pulse gently.',
+      reviewed_at: new Date().toISOString(),
+    }]]);
+    const env = { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: hallucinatingCrew };
+    const out = await handleSelfUpdateChatAction(env, memory, { kind: 'open-pr' });
+    assert.equal(out.ok, false);
+    assert.match(out.message, /changed on GitHub after that update was reviewed/);
+    assert.match(out.message, /no longer waiting/);
+    assert.equal(memory.m.has('pending_self_update'), false, 'no stale change left "waiting"');
+    assert.ok(memory.m.get('che_failed_engineering'), 'evidence kept for recovery');
+    assert.equal(memory.m.has('last_self_update_pr'), false, 'never claims a PR that was not opened');
   } finally {
     globalThis.fetch = realFetch;
   }

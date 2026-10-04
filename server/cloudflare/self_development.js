@@ -240,13 +240,38 @@ export function focusView(source, terms, maxChars = 14000, anchors = []) {
 
 // Packs several files into one evidence budget. Files with search hits or
 // anchors get more room; every listed file gets at least a small window.
-export function packEvidence(sources, { terms = [], hits = new Map(), anchors = new Map(), budget = 12000, paths = null } = {}) {
+export function packEvidence(sources, { terms = [], hits = new Map(), anchors = new Map(), budget = 12000, paths = null, focus = [] } = {}) {
   const list = (paths || [...sources.keys()]).filter((path) => sources.has(path));
   if (!list.length) return [];
   const weight = (path) => 1 + Math.min(4, (hits.get(path) || 0)) + ((anchors.get(path) || []).length ? 3 : 0);
-  const total = list.reduce((sum, path) => sum + weight(path), 0);
+  // The file the work is about is read WHOLE when it reasonably fits, so the
+  // engineers anchor edits on code they can actually see. (A proportional
+  // share cut an 8.7 KB War Room page to windows that hid its 3D table code,
+  // and every edit then anchored on text that does not exist.)
+  const focusSet = new Set((focus || []).filter((path) => list.includes(path)));
+  if (!focusSet.size) {
+    const top = [...list].sort((a, b) => weight(b) - weight(a))[0];
+    if ((hits.get(top) || 0) > 0) focusSet.add(top);
+  }
+  const whole = new Set();
+  let remaining = budget;
+  for (const path of list) {
+    const size = String(sources.get(path) || '').length;
+    if (focusSet.has(path) && size <= remaining * 0.92) {
+      whole.add(path);
+      remaining -= size;
+    }
+  }
+  // A focus file too big to show whole still gets most of the room.
+  const bigFocus = list.filter((path) => focusSet.has(path) && !whole.has(path));
+  const focusShare = bigFocus.length ? Math.floor((remaining * 0.6) / bigFocus.length) : 0;
+  if (bigFocus.length) remaining -= focusShare * bigFocus.length;
+  const rest = list.filter((path) => !whole.has(path) && !bigFocus.includes(path));
+  const total = rest.reduce((sum, path) => sum + weight(path), 0) || 1;
+  const floor = whole.size || bigFocus.length ? 700 : 1200;
   return list.map((path) => {
-    const share = Math.max(1200, Math.floor((budget * weight(path)) / total));
+    if (whole.has(path)) return { path, search_hits: hits.get(path) || 0, whole_file: true, source: String(sources.get(path)) };
+    const share = bigFocus.includes(path) ? Math.max(1200, focusShare) : Math.max(floor, Math.floor((Math.max(remaining, 1800) * weight(path)) / total));
     const view = focusView(sources.get(path), terms, share, anchors.get(path) || []);
     return { path, search_hits: hits.get(path) || 0, whole_file: view.whole, source: view.text };
   });
@@ -681,6 +706,24 @@ export function diagnoseFailure(record) {
   return { root_cause, diagnosis };
 }
 
+// What the owner hears when a coding job stops: what actually went wrong,
+// from the job's own outcomes, never a stock line that may not be true.
+export function honestFailureMessage({ outcomes = [], genuinePasses = 0, budgetStop = false, enginesFailed = false, feedback = '' } = {}) {
+  const tail = 'Nothing was changed, and I kept the engineering record so the next attempt starts from it.';
+  const passes = `${genuinePasses} implementation pass${genuinePasses === 1 ? '' : 'es'}`;
+  if (budgetStop) return `My coding team reached its engineering budget after ${passes} without a change that passed review, sir. ${tail}`;
+  if (enginesFailed) return `My AI engines stopped giving usable answers after ${passes}, sir. ${tail}`;
+  const count = (name) => outcomes.filter((item) => item?.outcome === name).length;
+  const anchors = count('missing_anchor') + count('ambiguous_anchor');
+  const reviewed = count('review_rejected');
+  const files = [...new Set((String(feedback).match(/In ([\w./-]+), the/g) || []).map((hit) => hit.slice(3, -5)))].slice(0, 3);
+  if (anchors && anchors >= reviewed) {
+    return `My engineers' edits did not match the current source${files.length ? ` of ${files.join(', ')}` : ''} in ${passes}, so nothing could be applied, sir. ${tail}`;
+  }
+  if (reviewed) return `My coding team tried ${passes} and none passed independent review and validation, sir. ${tail}`;
+  return `My coding team could not produce a safe change in ${passes}, sir. ${tail}`;
+}
+
 // "Diagnose/recover/retry the failed coding job", "reopen the engineering record".
 export function recoveryRequestIntent(message) {
   const text = String(message || '');
@@ -865,6 +908,53 @@ export function fallbackTreeCandidates(request, index, terms = [], limit = 6) {
     .map((item) => item.path);
 }
 
+const looseLine = (line) => String(line).trim().replace(/\s+/g, ' ');
+
+// The unique run of lines equal to `find` once whitespace is normalized
+// (indentation, trailing spaces, tabs). Models often re-indent a correct
+// anchor; that is the same code, not a wrong one. Null unless exactly one
+// such run exists, so an ambiguous anchor is never guessed.
+export function looseLocate(current, find) {
+  const want = String(find).split('\n').map(looseLine);
+  while (want.length && !want[0]) want.shift();
+  while (want.length && !want[want.length - 1]) want.pop();
+  if (!want.length || want.join('').length < 8) return null;
+  const lines = String(current).split('\n');
+  const norm = lines.map(looseLine);
+  const starts = [];
+  for (let i = 0; i + want.length <= lines.length && starts.length < 2; i += 1) {
+    let ok = true;
+    for (let j = 0; j < want.length && ok; j += 1) ok = norm[i + j] === want[j];
+    if (ok) starts.push(i);
+  }
+  if (starts.length !== 1) return null;
+  const i = starts[0];
+  const start = lines.slice(0, i).reduce((sum, line) => sum + line.length + 1, 0);
+  const end = start + lines.slice(i, i + want.length).join('\n').length;
+  return { start, end };
+}
+
+// The real lines that most resemble a failed anchor, numbered, so the next
+// attempt edits code that exists instead of guessing again.
+export function nearestSource(current, find, context = 3) {
+  const lines = String(current).split('\n');
+  const words = (text) => new Set(String(text).toLowerCase().match(/[a-z_$][\w$]{2,}/g) || []);
+  const wanted = words(find);
+  const span = Math.max(1, Math.min(15, String(find).split('\n').length));
+  let best = -1;
+  let bestScore = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    const window = words(lines.slice(i, i + span).join('\n'));
+    let score = 0;
+    for (const word of wanted) if (window.has(word)) score += 1;
+    if (score > bestScore) { bestScore = score; best = i; }
+  }
+  if (best < 0) return null;
+  const from = Math.max(0, best - context);
+  const to = Math.min(lines.length, best + span + context);
+  return { from: from + 1, to, text: lines.slice(from, to).map((line, k) => `${from + k + 1}| ${line}`).join('\n') };
+}
+
 export function applyEdits(sources, edits) {
   const next = new Map(sources);
   for (const edit of Array.isArray(edits) ? edits : []) {
@@ -881,7 +971,19 @@ export function applyEdits(sources, edits) {
       ? requestedFind
       : (unnumbered !== requestedFind && current.includes(unnumbered) ? unnumbered : requestedFind);
     const first = current.indexOf(find);
-    if (first < 0) return { error: `In ${path}, the "find" text does not exist exactly in current source. Re-read this file and regenerate the edit from the inspected source; do not ask the owner to copy source text.`, anchor_path: path };
+    if (first < 0) {
+      const loose = looseLocate(current, unnumbered);
+      if (loose) {
+        next.set(path, current.slice(0, loose.start) + replace + current.slice(loose.end));
+        continue;
+      }
+      const near = nearestSource(current, unnumbered);
+      return {
+        error: `In ${path}, the "find" text does not exist exactly in current source. Re-read this file and regenerate the edit from the inspected source; do not ask the owner to copy source text.${near ? ` The closest real code in ${path} is lines ${near.from}-${near.to}:\n${near.text}` : ` Nothing like that text exists anywhere in ${path}: the element you anchored on is not in this file. CHE now gives this file the most room in "inspected" (the whole file when it fits); anchor on code that is actually there.`}`,
+        anchor_path: path,
+        ...(near ? { anchor_lines: [near.from - 1, near.to - 1] } : {}),
+      };
+    }
     if (current.indexOf(find, first + find.length) >= 0) return { error: `In ${path}, the proposed edit is ambiguous because it matches more than once. Re-read the surrounding function or widget and regenerate a uniquely anchored edit.`, anchor_path: path };
     next.set(path, current.slice(0, first) + replace + current.slice(first + find.length));
   }
@@ -1563,10 +1665,15 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     let enginesFailed = false;
     let budgetStop = false;
 
-    const inspectedEvidence = (budget, extraAnchors = new Map()) => packEvidence(sources, {
+    // Files whose edits failed to apply are shown whole (or around the real
+    // lines nearest the failed anchor) on every later attempt.
+    const focusFiles = new Set();
+    const anchorHints = new Map();
+    const inspectedEvidence = (budget, extraAnchors = anchorHints) => packEvidence(sources, {
       terms,
       hits,
       anchors: extraAnchors,
+      focus: [...focusFiles],
       budget: widenEvidence ? Math.floor(budget * 1.0) : budget,
     });
 
@@ -1692,6 +1799,15 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       }
       const applied = applyEdits(sources, requestedEdits);
       if (applied.error) {
+        if (applied.anchor_path) {
+          focusFiles.add(applied.anchor_path);
+          if (Array.isArray(applied.anchor_lines)) {
+            const [from, to] = applied.anchor_lines;
+            const list = anchorHints.get(applied.anchor_path) || [];
+            for (let line = from; line <= to; line += 1) if (!list.includes(line)) list.push(line);
+            anchorHints.set(applied.anchor_path, list.slice(-60));
+          }
+        }
         feedbacks[i] = applied.error;
         failStrategy(/ambiguous/.test(applied.error) ? 'ambiguous_anchor' : 'missing_anchor', applied.error);
         return null;
@@ -1926,7 +2042,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
           : enginesFailed
             ? `The coding team stopped after ${genuinePasses} implementation passes because the engines then returned no usable output (empty or malformed answers). ${engineering}`
             : `The coding team exhausted ${genuinePasses} implementation passes and re-inspected the source but could not produce a safe reviewed change. ${engineering || 'No safe diff passed review.'}`).trim().slice(0, 800),
-        owner_message: ownerEngineeringMessage(FAILURE_CLASS.INTERNAL),
+        owner_message: honestFailureMessage({ outcomes: ctx.outcomes, genuinePasses, budgetStop, enginesFailed, feedback: engineering }),
         // Retained so a later "diagnose/recover that job" builds on this
         // evidence instead of restarting the same attempts.
         engineering_record: engineeringRecord({

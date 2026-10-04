@@ -2040,6 +2040,14 @@ export function selfUpdateChatIntent(message) {
   // short lead-in like "Discard that change." comes first or the body mentions
   // PR, GitHub, status, check or deploy in passing.
   if (/(?:^|[.!?\n]\s*)(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:ok(?:ay)?|now|please)[,]?\s+)*(?:update|fix|change|modify|repair|rewrite|patch)\s+(?:your|che'?s|the)\s+(?:code|worker|router|app)\b|(?:^|[.!?\n]\s*)(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+)?(?:repair|implement)\b/i.test(text)) return null;
+  // "Create the PR. Continue the original task …": a long message that
+  // LEADS with the create-PR command is that command (the rest is how to
+  // carry on), never a new coding request. Treating it as one ran a coding
+  // job on "Create the PR…" as its spec and ignored the reviewed change.
+  const lead = text.split(/(?<=[.!?])\s+|\n/)[0].trim();
+  if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:ok(?:ay)?|yes|yeah|go ahead)[,!.]?\s+)?(?:please\s+)?(?:now\s+)?(?:create|open|make|send|push)\s+(?:(?:the|that|this|a)\s+)?(?:pr|pull request)(?:\s+(?:now|for (?:it|that|this)))?[.!]?$/i.test(lead)) {
+    return { kind: 'open-pr' };
+  }
   // Long messages are instructions, not quick shortcut questions.
   const shortcutSized = text.length < 160;
   if (!shortcutSized) return null;
@@ -2089,6 +2097,17 @@ const EXISTING_SELF_UPDATE_COMMANDS = new Set([
 ]);
 export function isExistingChangeCommand(intent) {
   return Boolean(intent && EXISTING_SELF_UPDATE_COMMANDS.has(intent.kind));
+}
+
+// "Continue / finish / resume the original task" with no new spec: the same
+// engineering job. Returns the last real request plus the follow-up, or null.
+export function continuationOf(message, last) {
+  const text = String(message || '').trim();
+  if (!last?.request || !text) return null;
+  const continues = /\b(?:continue|resume|keep going|carry on|finish|complete|pick up)\b[\s\S]{0,40}\b(?:the\s+|that\s+|this\s+)?(?:original|previous|last|same|earlier)\s+(?:task|job|request|change|work|workflow)\b/i.test(text);
+  if (!continues) return null;
+  if (String(last.request).trim() === text) return null;
+  return `${String(last.request).slice(0, 4000)}\n\nOwner follow-up on the same task (not a new spec): ${text.slice(0, 2000)}`;
 }
 
 export function shouldHandleSelfUpdateAction(message, intent) {
@@ -2155,7 +2174,7 @@ export function proposalSummaryMessage(proposal, lead = 'My team built and revie
   return `${lead} ${summary}${/[.!?]$/.test(summary) ? '' : '.'} It touches ${files.length === 1 ? files[0] : `${files.length} files`}. Nothing is applied yet. Say "create the PR" to send it to GitHub, or "show me the code" if you want to see it.`;
 }
 
-async function handleSelfUpdateChatAction(env, storage, intent, ops = {}) {
+export async function handleSelfUpdateChatAction(env, storage, intent, ops = {}) {
   if (intent.kind === 'access') {
     const access = await selfUpdateGitHubAccess(env);
     if (access.status !== 200) return { ok: false, message: access.detail, access };
@@ -2250,7 +2269,23 @@ async function handleSelfUpdateChatAction(env, storage, intent, ops = {}) {
           message: proposalSummaryMessage(rebuilt.proposal, 'The code changed on GitHub after I prepared that update, sir, so I did not write the old version. My team rebuilt and re-reviewed it against the current source, and because it is different now it needs your approval again.'),
         };
       }
-      return { ok: false, opened, message: rebuilt?.owner_message || ownerEngineeringMessage(rebuilt?.failure_class || FAILURE_CLASS.INTERNAL) };
+      // The reviewed version can no longer land and the rebuild did not pass:
+      // it is not "waiting" any more. Keep the evidence for recovery instead
+      // of leaving a stale change that reports as waiting and fails forever.
+      // (A temporary engine outage keeps it, so it can be rebuilt later.)
+      const temporary = rebuilt?.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL;
+      if (!temporary) {
+        await storage.delete?.(PENDING_SELF_UPDATE_KEY);
+        if (rebuilt?.engineering_record) await storage.put(FAILED_ENGINEERING_KEY, { ...rebuilt.engineering_record, recovery_runs: 0, recovery_lock_until: 0 }).catch(() => null);
+      }
+      const why = rebuilt?.owner_message || ownerEngineeringMessage(rebuilt?.failure_class || FAILURE_CLASS.INTERNAL);
+      return {
+        ok: false,
+        opened,
+        message: temporary
+          ? `${why} The reviewed change is still saved; I will rebuild it against the current code when my engines are back.`
+          : `The code changed on GitHub after that update was reviewed, so I did not write it, sir. ${why} The old version is no longer waiting for approval.`,
+      };
     }
     if (opened.status !== 200) {
       return { ok: false, opened, message: ownerPrFailure(opened, 'open the pull request') };
@@ -2374,7 +2409,7 @@ async function handleSelfUpdateChatAction(env, storage, intent, ops = {}) {
   return { ok: false, message: 'Unknown self-update action.' };
 }
 
-async function dispatchChange(env, body, memory = null, options = {}) {
+export async function dispatchChange(env, body, memory = null, options = {}) {
   const request = String(body.request || '').trim();
   // Commands about an existing change ("show me the code", "create the PR",
   // "merge it", "PR status") are never new coding requests, even when an app
@@ -2430,10 +2465,16 @@ async function dispatchChange(env, body, memory = null, options = {}) {
     }, 200);
   }
 
+  // "Continue the original task" is the same job, not a new spec: work from
+  // the last real engineering request plus this follow-up.
+  const lastEngineering = memory?.get ? await Promise.resolve().then(() => memory.get(LAST_ENGINEERING_REQUEST_KEY)).catch(() => null) : null;
+  const continued = continuationOf(request, lastEngineering);
+  const work = continued || request;
+
   // The coding team runs here on Cloudflare and reads/writes the repo through
   // the GitHub API. GitHub Actions (billed minutes) is no longer required.
-  const recall = await retrieveVectorContext(env, request);
-  let groundedRequest = ragReference(request, vectorContextText(recall), 12000).slice(0, 16000);
+  const recall = await retrieveVectorContext(env, work);
+  let groundedRequest = ragReference(work, vectorContextText(recall), 12000).slice(0, 16000);
 
   const inspiration = await inspirationUpgradeContext(env, memory, request, fetch)
     .catch(() => ({ text: '', references: [] }));
@@ -2450,7 +2491,7 @@ async function dispatchChange(env, body, memory = null, options = {}) {
       groundedRequest += `\n\nREFERENCE PROJECTS (learn the approach, write CHE's own code, no copying, credit in the PR):\n${found.repos.map((r) => `- ${r.full_name} (${r.license_name}, ${r.stars} stars): ${r.description}`).join('\n')}`;
     }
   }
-  if (memory?.put) await memory.put(LAST_ENGINEERING_REQUEST_KEY, { request: request.slice(0, 4000), integrate: true, at: new Date().toISOString() }).catch(() => null);
+  if (memory?.put) await memory.put(LAST_ENGINEERING_REQUEST_KEY, { request: (continued ? lastEngineering.request : request).slice(0, 4000), integrate: true, at: new Date().toISOString() }).catch(() => null);
   // "Diagnose/recover the failed job": build on the retained evidence of the
   // last job that stopped after its attempts, instead of starting blind.
   // Bounded: MAX_RECOVERY_RUNS per failed job, one at a time (lock).
@@ -2472,7 +2513,7 @@ async function dispatchChange(env, body, memory = null, options = {}) {
   try {
     prepared = priorFailure
       ? await prepareSelfUpdate(env, `${priorFailure.request}\n\nRECOVERY of a coding job that stopped after its attempts. Owner's recovery request: ${request.slice(0, 2000)}`, fetch, memory, { ownerInitiated: true, intentRequest: priorFailure.request, priorFailure })
-      : await prepareSelfUpdate(env, groundedRequest, fetch, memory, { ownerInitiated: true, intentRequest: request });
+      : await prepareSelfUpdate(env, groundedRequest, fetch, memory, { ownerInitiated: true, intentRequest: work });
     await recordCrewThread(memory, { request, discussion: prepared?.discussion, outcome: crewOutcome(prepared) }).catch(() => null);
   } catch (error) {
     console.error('CHE change request failed', error?.message || error);
@@ -2565,10 +2606,16 @@ async function dispatchChange(env, body, memory = null, options = {}) {
     }
     // Nothing was queued here (a recovery run, or saving failed): never say
     // the job was saved.
-    const ownerText = prepared.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL
+    const failedText = prepared.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL
       ? 'My AI engines gave no usable answer just now, sir. Nothing was changed and nothing was saved; ask me again in a few minutes.'
       : stripOwnerHomework(prepared.owner_message || ownerEngineeringMessage(prepared.failure_class || FAILURE_CLASS.INTERNAL))
         || ownerEngineeringMessage(FAILURE_CLASS.INTERNAL);
+    // One consistent state: this attempt failed, AND an earlier reviewed
+    // change may still be waiting. Say both, never one without the other.
+    const stillWaiting = memory?.get ? await Promise.resolve().then(() => memory.get(PENDING_SELF_UPDATE_KEY)).catch(() => null) : null;
+    const ownerText = stillWaiting?.proposal
+      ? `${failedText} The earlier reviewed change (${String(stillWaiting.proposal.summary || 'CHE update').slice(0, 160)}) is still waiting for you; say "create the PR" to send it to GitHub.`
+      : failedText;
     return json({
       detail: ownerText,
       failure_class: prepared.failure_class || FAILURE_CLASS.INTERNAL,
