@@ -131,4 +131,9 @@ test('starred study reads the live GitHub stars, newest first, and falls back to
   const fallback = starredStudyTargets({ error: 'GitHub down', repos: [] });
   assert.equal(fallback.live, false);
   assert.deepEqual(fallback.names, STARRED_LIBRARY);
+  // GitHub reached with zero stars is live and empty, not a fallback.
+  const none = starredStudyTargets({ repos: [] });
+  assert.equal(none.live, true);
+  assert.deepEqual(none.names, []);
+  assert.equal(starredStudyTargets(null).live, false);
 });

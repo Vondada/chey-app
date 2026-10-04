@@ -339,8 +339,8 @@ export function strategyName(id) { return strategyById(id)?.name || String(id ||
 
 /// Tests skills on one market with a three-way split, oldest to newest:
 /// 60% to choose on, 20% to confirm, last 20% held back as the honest test.
-/// A skill is "found" only if it makes money in all three parts with a real
-/// sample size; the held-back part is the number CHE reports.
+/// A skill is "found" only if it makes money on the first two parts with a
+/// real sample size. The held-back result is reported as it is, good or bad.
 export function discoverSkills(candles, ids = SKILL_IDS) {
   const a = Math.floor(candles.length * 0.6);
   const b = Math.floor(candles.length * 0.8);
@@ -349,10 +349,11 @@ export function discoverSkills(candles, ids = SKILL_IDS) {
     const choose = backtest(candles, id, { to: a, ctx });
     const confirm = backtest(candles, id, { from: a, to: b, ctx });
     const test = backtest(candles, id, { from: b, ctx });
-    // Many skills are tried, so a few would look good by luck alone. Every
-    // part must clear a real edge (profit factor above 1.15), not just break even.
-    const found = choose.trades_count >= 20 && confirm.trades_count >= 6 && test.trades_count >= 6
-      && [choose, confirm, test].every((part) => part.expectancy_r > 0 && part.profit_factor > 1.15);
+    // Many skills are tried, so a few would look good by luck alone: both
+    // selection parts must clear a real edge (profit factor above 1.15). The
+    // held-back part never decides or ranks anything; it is only reported.
+    const found = choose.trades_count >= 20 && confirm.trades_count >= 6
+      && [choose, confirm].every((part) => part.expectancy_r > 0 && part.profit_factor > 1.15);
     const brief = ({ trades, strategy, ...rest }) => rest;
     return { id, name: strategyName(id), found, choose: brief(choose), confirm: brief(confirm), test: brief(test) };
   });
@@ -366,6 +367,7 @@ const RETEST_DAYS = 30;
 /// change). Returns what is new.
 export function learnStep(lab, candles, now = Date.now()) {
   const state = lab && typeof lab === 'object' ? lab : {};
+  state.known = Array.isArray(state.known) ? state.known : [];
   if (!state.cycle_at || now - Date.parse(state.cycle_at) > RETEST_DAYS * 86400000) {
     state.cycle_at = new Date(now).toISOString();
     state.tested = [];
@@ -374,13 +376,14 @@ export function learnStep(lab, candles, now = Date.now()) {
   const next = SKILL_IDS.filter((id) => !state.tested.includes(id)).slice(0, SKILLS_PER_TICK);
   const newly = [];
   for (const r of discoverSkills(candles, next)) {
-    const before = state.results[r.id]?.found;
     state.results[r.id] = { found: r.found, test: r.test, confirm: r.confirm, choose: r.choose };
     state.tested.push(r.id);
-    if (r.found && !before) newly.push(r.id);
+    // A skill re-found in a later monthly cycle is not a new discovery.
+    if (r.found && !state.known.includes(r.id)) { newly.push(r.id); state.known.push(r.id); }
   }
+  // Ranked by the confirm part only, never by the held-back test.
   const found = Object.entries(state.results).filter(([, r]) => r.found)
-    .sort((x, y) => y[1].test.expectancy_r - x[1].test.expectancy_r);
+    .sort((x, y) => y[1].confirm.expectancy_r - x[1].confirm.expectancy_r);
   state.best = found[0]?.[0] || null;
   state.found = found.map(([id]) => id);
   state.progress = `${state.tested.length} of ${SKILL_IDS.length}`;
@@ -592,6 +595,12 @@ export async function paperTick(storage, { fetcher = fetch, force = false, now =
   return book;
 }
 
+/// When the next learning tick is due (ms), so the alarm keeps it hourly.
+export async function nextTradingTickAt(storage) {
+  const last = Date.parse((await storage.get(BOOK))?.last_tick || '');
+  return Number.isFinite(last) ? last + 60 * 60_000 : Date.now() + 60_000;
+}
+
 /// What CHE has learned about trading, said aloud: skills found per market
 /// with their held-back test numbers, newest discoveries, and paper results
 /// (with dollars per contract for index futures).
@@ -604,7 +613,7 @@ export function speakLearning(book) {
     const best = lab.found?.[0];
     const t = best ? lab.results[best].test : null;
     lines.push(best
-      ? `${label}: ${lab.found.length} skill${lab.found.length === 1 ? '' : 's'} found after testing ${lab.progress}. Best: ${strategyName(best)}, on held-back data ${t.trades_count} trades, ${t.win_rate}% wins, ${t.expectancy_r}R per trade.`
+      ? `${label}: ${lab.found.length} skill${lab.found.length === 1 ? '' : 's'} found after testing ${lab.progress}. Best: ${strategyName(best)}. On held-back data it never saw while choosing: ${t.trades_count} trades, ${t.win_rate}% wins, ${t.expectancy_r}R per trade${t.expectancy_r > 0 ? '' : ', so it did not hold up there; paper trading will show whether it is real'}.`
       : `${label}: no skill has held up yet after testing ${lab.progress}. I will not trade it until one does.`);
   }
   const fresh = (book.discoveries || []).slice(-3);

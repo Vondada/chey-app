@@ -34,7 +34,7 @@ import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry 
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
-import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
+import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
@@ -2870,6 +2870,8 @@ export class CheState extends DurableObject {
     if (flagstaffInitialized && await flagstaffOpen(this.ctx.storage)) times.push(Date.now() + 30_000);
     const outboxPending = await Promise.resolve().then(() => this.ctx.storage.get('web_mailbox_outbox')).catch(() => null);
     if (Array.isArray(outboxPending) && outboxPending.some((m) => m.state !== 'failed')) times.push(Date.now() + 60_000);
+    // Paper trading learns every hour (deterministic, no AI tokens, no money).
+    times.push(Math.max(Date.now() + 250, await nextTradingTickAt(this.ctx.storage).catch(() => Date.now() + 3_600_000)));
     if (times.length) await this.ctx.storage.setAlarm(Math.min(...times));
   }
 
@@ -5964,6 +5966,7 @@ export class CheState extends DurableObject {
         if (ownerDevice && starredLibraryIntent(message)) {
           const live = await listOwnerStarredRepos(this.keyEnv || this.env, fetch, { limit: 100 }).catch(() => null);
           const targets = starredStudyTargets(live);
+          if (targets.live && !targets.names.length) return ndjsonReply('GitHub shows no starred repositories on your account, sir. Nothing was started.', { source: 'che_topic_study', ok: true });
           const refs = (await Promise.all(targets.names.map((full_name) => inspectReferenceRepo(this.env, { full_name }, fetch, { allowStudyOnly: true, readmeChars: 60_000 })
             .then((r) => (r?.error ? null : { full_name: r.full_name, license: r.license, license_name: r.license_name, description: r.description, stars: r.stars, reusable: r.reusable }))
             .catch(() => null)))).filter(Boolean);

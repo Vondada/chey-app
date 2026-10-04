@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { swings, patternsAt, backtest, backtestAll, analyze, resolveSymbol, tradingIntent, paperTick, readBook, speakBook, prepare, stats, SKILL_IDS, discoverSkills, learnStep, strategyById, futuresDollars, speakLearning } from './trading_lab.js';
+import { swings, patternsAt, backtest, backtestAll, analyze, resolveSymbol, tradingIntent, paperTick, readBook, speakBook, prepare, stats, nextTradingTickAt, SKILL_IDS, discoverSkills, learnStep, strategyById, futuresDollars, speakLearning } from './trading_lab.js';
 
 // Deterministic wavy uptrend: real swings, some breakouts.
 function series(n = 1500) {
@@ -106,14 +106,20 @@ test('skills: every combination is a valid, look-ahead-free strategy', () => {
 test('discovery keeps only skills that hold up on all three parts of history', () => {
   const r = discoverSkills(series(1500));
   for (const x of r.filter((y) => y.found)) {
-    for (const part of [x.choose, x.confirm, x.test]) assert.ok(part.expectancy_r > 0 && part.profit_factor > 1.15, x.id);
+    for (const part of [x.choose, x.confirm]) assert.ok(part.expectancy_r > 0 && part.profit_factor > 1.15, x.id);
+  }
+  // The held-back part never decides: same choose/confirm, any test result.
+  for (const x of r) {
+    const decides = x.choose.trades_count >= 20 && x.confirm.trades_count >= 6
+      && [x.choose, x.confirm].every((p) => p.expectancy_r > 0 && p.profit_factor > 1.15);
+    assert.equal(x.found, decides, x.id);
   }
   // A flat, noisy market with no edge yields (almost) nothing.
   let seed = 42;
   const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
   let p = 100;
   const noise = Array.from({ length: 3000 }, (_, i) => { const o = p; p *= 1 + (rnd() - 0.5) * 0.03; return { t: String(i).padStart(6, '0'), o, c: p, h: Math.max(o, p) * (1 + rnd() * 0.01), l: Math.min(o, p) * (1 - rnd() * 0.01), v: 1 }; });
-  assert.ok(discoverSkills(noise).filter((x) => x.found).length <= 2);
+  assert.ok(discoverSkills(noise).filter((x) => x.found).length <= 3);
 });
 
 test('learning works through every skill in batches and re-tests after 30 days', () => {
@@ -125,8 +131,18 @@ test('learning works through every skill in batches and re-tests after 30 days',
   assert.equal(steps, Math.ceil(SKILL_IDS.length / 12));
   assert.equal(lab.progress, `${SKILL_IDS.length} of ${SKILL_IDS.length}`);
   if (lab.found.length) assert.equal(lab.best, lab.found[0]);
-  const later = learnStep(lab, c, t0 + 31 * 86400000).lab;
-  assert.equal(later.tested.length, 12, 'a new cycle starts');
+  const known = [...lab.known];
+  assert.deepEqual([...known].sort(), [...lab.found].sort());
+  let later = learnStep(lab, c, t0 + 31 * 86400000);
+  assert.equal(later.lab.tested.length, 12, 'a new cycle starts');
+  // Re-finding the same skills next month is not announced as new.
+  const renewed = [...later.newly];
+  while (later.lab.tested.length < SKILL_IDS.length) { later = learnStep(later.lab, c, t0 + 31 * 86400000 + 3600_000); renewed.push(...later.newly); }
+  assert.deepEqual(renewed, []);
+  if (later.lab.found.length > 1) {
+    const ranks = later.lab.found.map((id) => later.lab.results[id].confirm.expectancy_r);
+    assert.deepEqual(ranks, [...ranks].sort((a, b) => b - a), 'ranked by confirm, not by the held-back test');
+  }
 });
 
 test('futures: ES/NQ and micros, dollars per contract, voice', () => {
@@ -162,4 +178,13 @@ test('paper ticks keep learning, journal discoveries and add index futures once'
   assert.match(said, /paper only, no real money/);
   assert.match(said, /delayed/);
   assert.doesNotMatch(said, /undefined|NaN/);
+});
+
+test('the next learning tick is due an hour after the last one', async () => {
+  const m = new Map();
+  const storage = { get: async (k) => m.get(k), put: async (k, v) => m.set(k, v) };
+  const soon = await nextTradingTickAt(storage);
+  assert.ok(soon - Date.now() <= 60_000);
+  m.set('trading_paper_book', { last_tick: '2026-10-04T10:00:00.000Z' });
+  assert.equal(await nextTradingTickAt(storage), Date.parse('2026-10-04T11:00:00.000Z'));
 });

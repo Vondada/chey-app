@@ -1233,10 +1233,24 @@ test('review: a job waiting on its retry backoff blocks duplicates past 30 minut
   saved.set('che', { jobs: [{ id: 'run', kind: 'self_development', status: 'running', attempts: 1, prompt: 'p', created_at: tenMinutesAgo, updated_at: tenMinutesAgo }], devices: {}, memories: [] });
   await state.processJobs();
   assert.equal(saved.get('che').jobs[0].status, 'running', 'a 10-minute coding run is still in flight, not requeued');
-  // The watchdog alarm is set for when that run would count as interrupted.
+  // The watchdog alarm is set for when that run would count as interrupted
+  // (paper trading just ticked, so its hourly alarm comes later).
+  saved.set('trading_paper_book', { last_tick: new Date().toISOString() });
   const alarms = [];
   const watched = new CheState({ storage: storageFor(saved, alarms) }, { CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'x' }) } });
   await watched.scheduleWork();
   const due = Date.parse(tenMinutesAgo) + 20 * 60_000;
   assert.ok(alarms.some((t) => t >= due && t <= due + 5000), `alarm at stale deadline, got ${alarms}`);
+});
+
+test('an idle CHE still wakes hourly for paper-trading learning', async () => {
+  const saved = new Map();
+  saved.set('che', { jobs: [], devices: {}, memories: [], autonomy: false });
+  saved.set('trading_paper_book', { last_tick: '2026-10-04T10:00:00.000Z' });
+  const alarms = [];
+  const state = new CheState({ storage: storageFor(saved, alarms) }, { CHE_DISABLE_KEYLESS_AI: '1' });
+  await state.scheduleWork();
+  assert.ok(alarms.length >= 1, 'an alarm is set with nothing else queued');
+  assert.equal(alarms[alarms.length - 1], Math.max(Date.parse('2026-10-04T11:00:00.000Z'), alarms[alarms.length - 1]));
+  assert.ok(alarms[alarms.length - 1] <= Math.max(Date.now() + 1000, Date.parse('2026-10-04T11:00:00.000Z')));
 });

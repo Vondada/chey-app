@@ -32,7 +32,8 @@ export const STARRED_LIBRARY = [
 // first (archived ones skipped), so every new star is included. The list
 // above is only the fallback when GitHub cannot be read.
 export function starredStudyTargets(live, cap = 25) {
-  const fromGitHub = Array.isArray(live?.repos) && live.repos.length > 0;
+  // Reached GitHub (even with zero stars) means live; only an error falls back.
+  const fromGitHub = Boolean(live) && !live.error && Array.isArray(live.repos);
   const names = fromGitHub
     ? live.repos.filter((r) => r?.full_name && !r.archived).map((r) => r.full_name)
     : STARRED_LIBRARY;
