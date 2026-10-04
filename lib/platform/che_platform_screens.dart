@@ -576,14 +576,45 @@ class _CheTwoBrainsViewState extends State<CheTwoBrainsView> {
             ),
           ),
         ),
-        Expanded(child: _index == 0 ? widget.live : widget.offline),
+        Expanded(
+          child: _index == 0
+              ? widget.live
+              // Owner rule: the offline brain is the same brain, same memories
+              // and gestures, shown in inverted colors (white space, inverse
+              // orbs) with the on-device model status on top.
+              : Column(
+                  children: [
+                    widget.offline,
+                    Expanded(
+                      child: Semantics(
+                        label: 'Offline brain view, inverted colors.',
+                        child: ColorFiltered(
+                          colorFilter: cheInvertColors,
+                          child: ColoredBox(color: CheColors.bg, child: widget.live),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+        ),
       ],
     );
   }
 }
 
+/// Inverts every color (black space turns white, teal orbs turn coral).
+const ColorFilter cheInvertColors = ColorFilter.matrix(<double>[
+  -1, 0, 0, 0, 255, //
+  0, -1, 0, 0, 255, //
+  0, 0, -1, 0, 255, //
+  0, 0, 0, 1, 0, //
+]);
+
 class CheOfflineBrainPanel extends StatefulWidget {
-  const CheOfflineBrainPanel({super.key, this.health});
+  const CheOfflineBrainPanel({super.key, this.health, this.compact = false});
+
+  /// One status line (shown above the inverted brain) instead of the page.
+  final bool compact;
 
   final CheLocalBrainHealth? health;
 
@@ -638,6 +669,24 @@ class _CheOfflineBrainPanelState extends State<CheOfflineBrainPanel> {
     final label = _loading
         ? 'Checking CHE Brain Offline.'
         : 'CHE Brain — Offline. ${model.modelId}. Status ${health?.status ?? 'unknown'}. ${health?.detail ?? ''}';
+    if (widget.compact) {
+      return Semantics(
+        container: true,
+        label: label,
+        excludeSemantics: true,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 2, 16, 4),
+          child: Text(
+            _loading
+                ? 'Checking the on-device brain…'
+                : 'On-device ${model.modelId} · ${health?.status ?? 'unknown'}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: CheType.caption.copyWith(color: CheColors.textDim),
+          ),
+        ),
+      );
+    }
     return Semantics(
       container: true,
       label: label,

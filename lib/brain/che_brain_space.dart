@@ -743,25 +743,54 @@ class CheBrainPainter extends CustomPainter {
   static ui.Image? _glowSprite() {
     if (_glow != null) return _glow;
     try {
+      // Two 64px cells, tinted per category when drawn:
+      //  [0..64)   the orb body: a lit glass sphere (light from top-left,
+      //            shaded terminator, rim light) wrapped in a tilted
+      //            holographic ring whose back half passes behind it;
+      //  [64..128) the light layer (halo + specular), added on top.
       const s = 64.0;
       const c = Offset(s / 2, s / 2);
+      const r = s * .30;
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
-      // Holographic orb (white; tinted per category when drawn): soft halo,
-      // bright core, a thin outer ring and a dashed inner ring.
-      canvas.drawCircle(c, s / 2, Paint()
-        ..shader = ui.Gradient.radial(c, s / 2, const [Color(0x66FFFFFF), Color(0x14FFFFFF), Color(0x00FFFFFF)], const [0, .55, 1]));
-      canvas.drawCircle(c, s * .12, Paint()
-        ..shader = ui.Gradient.radial(c, s * .12, const [Color(0xFFFFFFFF), Color(0x55FFFFFF)]));
-      final ring = Paint()
-        ..style = PaintingStyle.stroke
-        ..color = const Color(0xDDFFFFFF);
-      canvas.drawCircle(c, s * .40, ring..strokeWidth = 1.6);
-      for (var i = 0; i < 12; i++) {
-        final a0 = i * math.pi / 6;
-        canvas.drawArc(Rect.fromCircle(center: c, radius: s * .27), a0, math.pi / 10, false, ring..strokeWidth = 2.2);
+      final ringRect = Rect.fromCenter(center: c, width: s * .92, height: s * .30);
+      void ring(double start, double sweep, int argb, double w) {
+        canvas.save();
+        canvas.translate(c.dx, c.dy);
+        canvas.rotate(-.38);
+        canvas.translate(-c.dx, -c.dy);
+        canvas.drawArc(ringRect, start, sweep, false, Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = w
+          ..color = Color(argb));
+        canvas.restore();
       }
-      _glow = recorder.endRecording().toImageSync(s.toInt(), s.toInt());
+      ring(math.pi, math.pi, 0x66FFFFFF, 1.4); // back half, behind the sphere
+      canvas.drawCircle(c, r, Paint()
+        ..shader = ui.Gradient.radial(c, r, const [Color(0xF2FFFFFF), Color(0xF29A9A9A), Color(0xF23A3A3A), Color(0xF5121212)],
+            const [0, .35, .78, 1], TileMode.clamp, null, c + const Offset(-r * .42, -r * .46), r * .08));
+      // Rim light on the shadow side reads as depth (light wrapping round).
+      canvas.drawArc(Rect.fromCircle(center: c, radius: r - .8), .1, 1.5, false, Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.3
+        ..color = const Color(0x88FFFFFF));
+      // Dashed inner band (the hologram detail), foreshortened like a latitude.
+      final band = Rect.fromCenter(center: c + const Offset(0, r * .18), width: r * 1.7, height: r * .55);
+      for (var i = 0; i < 10; i++) {
+        canvas.drawArc(band, i * math.pi / 5, math.pi / 9, false, Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.1
+          ..color = const Color(0x55FFFFFF));
+      }
+      ring(0, math.pi, 0xEEFFFFFF, 1.8); // front half, over the sphere
+      // Light layer.
+      const g = Offset(s * 1.5, s / 2);
+      canvas.drawCircle(g, s / 2, Paint()
+        ..shader = ui.Gradient.radial(g, s / 2, const [Color(0x00FFFFFF), Color(0x00FFFFFF), Color(0x38FFFFFF), Color(0x00FFFFFF)], const [0, .40, .52, 1]));
+      final spec = g + const Offset(-r * .40, -r * .44);
+      canvas.drawCircle(spec, r * .30, Paint()
+        ..shader = ui.Gradient.radial(spec, r * .30, const [Color(0xFFFFFFFF), Color(0x00FFFFFF)]));
+      _glow = recorder.endRecording().toImageSync(s.toInt() * 2, s.toInt());
     } catch (_) {
       _glow = null;
     }
@@ -837,7 +866,9 @@ class CheBrainPainter extends CustomPainter {
     final sprite = _glowSprite();
     final transforms = Float32List(order.length * 4);
     final rects = Float32List(order.length * 4);
+    final lightRects = Float32List(order.length * 4);
     final colors = Int32List(order.length);
+    final lightColors = Int32List(order.length);
     for (var k = 0; k < order.length; k++) {
       final i = order[k];
       final p = proj[i]!;
@@ -858,11 +889,19 @@ class CheBrainPainter extends CustomPainter {
         ..[k * 4 + 1] = 0
         ..[k * 4 + 2] = 64
         ..[k * 4 + 3] = 64;
+      lightRects
+        ..[k * 4] = 64
+        ..[k * 4 + 1] = 0
+        ..[k * 4 + 2] = 128
+        ..[k * 4 + 3] = 64;
       colors[k] = color.toARGB32();
+      lightColors[k] = Color.lerp(color, Colors.white, .55)!.withValues(alpha: color.a).toARGB32();
       if (sprite == null) canvas.drawCircle(p.offset, radius * .4, Paint()..color = color);
     }
     if (sprite != null && order.isNotEmpty) {
-      canvas.drawRawAtlas(sprite, transforms, rects, colors, BlendMode.modulate, null, Paint()..blendMode = BlendMode.plus);
+      // Body alpha-blended (so shading can darken), light layer added on top.
+      canvas.drawRawAtlas(sprite, transforms, rects, colors, BlendMode.modulate, null, Paint());
+      canvas.drawRawAtlas(sprite, transforms, lightRects, lightColors, BlendMode.modulate, null, Paint()..blendMode = BlendMode.plus);
     }
 
     // Selection ring.

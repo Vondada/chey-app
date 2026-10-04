@@ -8,6 +8,7 @@ import 'package:chey/che_ui/che_backend.dart';
 import 'package:chey/che_ui/che_brain.dart';
 import 'package:chey/home/che_insights_room.dart';
 import 'package:chey/home/che_memory_brain.dart';
+import 'package:chey/platform/che_platform_models.dart';
 import 'package:chey/platform/che_platform_screens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -410,5 +411,18 @@ void main() {
     c.hit(const Offset(220, 478), size);
     expect(hitSw.elapsedMilliseconds, lessThan(20));
     c.dispose();
+  });
+
+  testWidgets('offline brain is the same brain in inverted colors', (tester) async {
+    _usePhone(tester);
+    await tester.pumpWidget(_brainScreen(_memories()));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byType(ColorFiltered), findsNothing);
+    await tester.tap(find.bySemanticsLabel(cheBrainPresentations[1].title));
+    await tester.pump(const Duration(milliseconds: 300));
+    final filtered = tester.widget<ColorFiltered>(find.byType(ColorFiltered));
+    expect(filtered.colorFilter, cheInvertColors);
+    expect(find.descendant(of: find.byType(ColorFiltered), matching: find.byType(CheBrainSpace)), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
   });
 }

@@ -1666,7 +1666,7 @@ OWNER AGENCY
               onRefresh: () => _loadAgentState(silent: true),
             ),
             ),
-            offline: const CheOfflineBrainPanel(),
+            offline: const CheOfflineBrainPanel(compact: true),
           ),
         ),
       ),
