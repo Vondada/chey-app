@@ -1215,7 +1215,12 @@ test('"what are my 5 newest starred repos" reads GitHub, says them, remembers th
 const WARROOM_SRC = readFileSync(new URL('../../assets/office3d/warroom.html', import.meta.url), 'utf8');
 
 function autonomyFetch({ mainSha = 'main-sha', mailbox = [] } = {}) {
-  const files = { 'assets/office3d/warroom.html': WARROOM_SRC };
+  // A live War Room (entry -> screen) beside the dead HTML page.
+  const files = {
+    'assets/office3d/warroom.html': WARROOM_SRC,
+    'lib/main.dart': "import 'agents/che_war_room_screen.dart';\nvoid main() {}\n",
+    'lib/agents/che_war_room_screen.dart': "class CheWarRoomScreen {\n  final double tableRadius = 2.55;\n}\n",
+  };
   return async (url, options = {}) => {
     const u = String(url);
     const method = options.method || 'GET';
@@ -1224,20 +1229,23 @@ function autonomyFetch({ mainSha = 'main-sha', mailbox = [] } = {}) {
     if (/api\.github\.com\/repos\/[^/]+\/[^/]+$/.test(u)) return reply({ default_branch: 'main' });
     if (u.includes('/git/ref/heads/main')) return reply({ object: { sha: mainSha } });
     if (u.includes('/git/trees/')) return reply({ tree: Object.keys(files).map((path) => ({ type: 'blob', path })) });
-    if (u.includes('/search/code')) return reply({ items: [{ path: 'assets/office3d/warroom.html' }] });
+    if (u.includes('/search/code')) {
+      const q = decodeURIComponent(u.split('q=')[1] || '').split('" repo:')[0].replace(/^"/, '').toLowerCase();
+      return reply({ items: Object.entries(files).filter(([, src]) => q && src.toLowerCase().includes(q)).map(([path]) => ({ path })) });
+    }
     const m = /\/contents\/(.+)\?ref=/.exec(u);
     if (m && files[m[1]] !== undefined) return reply({ content: Buffer.from(files[m[1]]).toString('base64'), sha: 'blob' });
     return reply({}, 404);
   };
 }
 
-// Engineers that always anchor on the non-existent CSS orb (the production failure).
+// Engineers that always anchor on an orb that does not exist in the live screen.
 const hallucinatingCrew = {
   run: async (_model, input) => {
     const system = input.messages[0].content;
-    if (system.includes('Architect')) return { response: JSON.stringify({ plan: 'p', search_terms: ['War Room'], paths: ['assets/office3d/warroom.html'] }) };
+    if (system.includes('Architect')) return { response: JSON.stringify({ plan: 'p', search_terms: ['War Room'], paths: ['lib/agents/che_war_room_screen.dart'] }) };
     if (system.includes('Review')) return { response: JSON.stringify({ approved: true, target_correct: true, notes: [] }) };
-    return { response: JSON.stringify({ summary: 'orb', edits: [{ path: 'assets/office3d/warroom.html', find: `#orb { animation: x${Math.random()}; }`, replace: '#orb {}' }] }) };
+    return { response: JSON.stringify({ summary: 'orb', edits: [{ path: 'lib/agents/che_war_room_screen.dart', find: `final orb = Orb(${Math.random()});`, replace: 'x' }] }) };
   },
 };
 

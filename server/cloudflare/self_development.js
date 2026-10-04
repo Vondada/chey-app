@@ -203,7 +203,11 @@ export function focusView(source, terms, maxChars = 14000, anchors = []) {
   if (text.length <= maxChars) return { whole: true, text };
   const lines = text.split('\n');
   const radius = maxChars < 5000 ? 10 : maxChars < 9000 ? 16 : 25;
-  const lowered = (terms || []).map((t) => String(t).toLowerCase()).filter((t) => t.length > 2);
+  // "war room" must also find warRoom / _addWarRoomFurniture / war_room.
+  const lowered = [...new Set((terms || []).flatMap((t) => {
+    const words = String(t).toLowerCase().match(/[a-z0-9]+/g) || [];
+    return [String(t).toLowerCase(), ...(words.length > 1 ? [words.join(''), words.join('_')] : [])];
+  }))].filter((t) => t.length > 2);
   const centers = [];
   for (const anchor of anchors || []) if (Number.isInteger(anchor) && anchor >= 0 && anchor < lines.length) centers.push(anchor);
   lines.forEach((line, i) => {
@@ -659,6 +663,331 @@ export async function inspectRepositoryContext(env, request, fetcher = fetch) {
     open_prs,
     open_prs_status: pulls.ok ? 'verified' : 'unavailable:' + String(pulls.status || 0),
   };
+}
+
+// ─── Deterministic source graph (tier 2 discovery, zero model tokens) ────────
+// Name matches find candidates; the code graph decides what is REAL. A file
+// can match a feature by name and still be dead (nothing loads it). The War
+// Room stress test edited assets/office3d/warroom.html, which no running code
+// references, while the live War Room renders through
+// lib/widgets/che_native_scene_world.dart (imported by the War Room screen).
+
+// Files that are entry points: always live, never need a caller.
+const ENTRY_POINTS = new Set(['lib/main.dart', 'server/cloudflare/worker.js']);
+
+// Every repository path a file points at: relative imports, package: imports,
+// quoted repository paths (assets loaded by name) and HTML script/link srcs.
+export function codeReferences(path, source, allPaths) {
+  const refs = new Set(structuralReferences(path, source, allPaths));
+  const text = String(source || '');
+  const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
+  const resolve = (raw) => {
+    const clean = [];
+    for (const part of (dir + raw).split('/')) {
+      if (!part || part === '.') continue;
+      if (part === '..') clean.pop(); else clean.push(part);
+    }
+    return clean.join('/');
+  };
+  for (const m of text.matchAll(/^\s*part\s+(?:of\s+)?['"]([^'"]+)['"]/gm)) {
+    const target = resolve(m[1]);
+    if (allPaths.has(target)) refs.add(target);
+  }
+  for (const m of text.matchAll(/['"]package:[a-z0-9_]+\/([^'"]+)['"]/g)) if (allPaths.has(`lib/${m[1]}`)) refs.add(`lib/${m[1]}`);
+  for (const m of text.matchAll(/['"`]((?:assets|lib|web|server)\/[A-Za-z0-9_./-]+)['"`]/g)) if (allPaths.has(m[1])) refs.add(m[1]);
+  for (const m of text.matchAll(/\b(?:src|href)=["']([^"':?#]+)["']/g)) {
+    const target = resolve(m[1]);
+    if (allPaths.has(target)) refs.add(target);
+  }
+  refs.delete(path);
+  return [...refs];
+}
+
+// Repository paths the owner named outright ("lib/che_stream_batcher.dart").
+export function explicitPaths(request, allPaths) {
+  return [...new Set(String(request || '').match(/\b(?:lib|server|assets|test|ios|android|web)\/[\w./-]*\w/g) || [])].filter((path) => allPaths.has(path));
+}
+
+// Feature names the owner used: "War Room", "Trading Room", quoted phrases.
+export function featurePhrases(request) {
+  const out = new Set();
+  for (const m of String(request || '').matchAll(/\b([A-Z][a-z]+(?:[ -][A-Z][a-z]+)+)\b/g)) out.add(m[1]);
+  for (const term of literalTerms(request)) out.add(term);
+  return [...out].slice(0, 6);
+}
+
+// Every way a feature is spelled in code and paths: "War Room" -> war room,
+// warRoom, WarRoom, war_room, warroom, war-room.
+export function featureSpellings(feature) {
+  const words = String(feature || '').toLowerCase().match(/[a-z0-9]+/g) || [];
+  if (!words.length) return [];
+  return [...new Set([words.join(' '), words.join(''), words.join('_'), words.join('-'), ...identifierVariants(feature)])];
+}
+
+const pathMatchesFeature = (path, spellings) => {
+  const lower = String(path).toLowerCase();
+  return spellings.some((spelling) => spelling.length > 3 && !spelling.includes(' ') && lower.includes(spelling.toLowerCase()));
+};
+
+// GitHub code search for an exact string. { ok:false } on failure, so a
+// search outage is never mistaken for "nothing references this file".
+async function exactSearch(env, text, fetcher) {
+  const q = `"${String(text).replace(/"/g, '').slice(0, 80)}" repo:${repoOf(env)}`;
+  try {
+    const response = await fetcher(`https://api.github.com/search/code?per_page=20&q=${encodeURIComponent(q)}`, {
+      headers: { Authorization: `Bearer ${env.CHE_GITHUB_TOKEN}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'CHE-Agent' },
+    });
+    if (!response.ok) return { ok: false, paths: [] };
+    const data = await response.json();
+    return { ok: true, paths: (data?.items || []).map((item) => String(item?.path || '')).filter(Boolean) };
+  } catch (_) {
+    return { ok: false, paths: [] };
+  }
+}
+
+/**
+ * Maps a feature's real implementation from the code graph:
+ *  - seeds (search/path candidates) -> what they import/load (one hop)
+ *  - who references each file (callers) -> live or dead
+ *  - adjacent tests
+ * A Discovery Contradiction is raised when the files named after the feature
+ * are all dead: discovery then broadens to the feature's code spellings and
+ * the live files' graph instead of editing (or rebuilding) a dead copy.
+ * `read(path)` returns the file text (or null); `known` is a Map of texts
+ * already read. Deterministic; at most maxSearches code searches.
+ */
+// GitHub code search allows ~10 requests a minute: budgets are small, and a
+// failed or skipped search makes a file "unknown", never "dead".
+export async function traceSourceGraph(env, { index, request, seeds = [], read, known = new Map(), fetcher = fetch, maxFiles = 10, maxSearches = 20, apiSearches = 6 } = {}) {
+  const allPaths = new Set(index?.paths || []);
+  const texts = new Map(known);
+  const load = async (path) => {
+    if (texts.has(path)) return texts.get(path);
+    const text = allPaths.has(path) && read ? await read(path).catch(() => null) : null;
+    if (typeof text === 'string') texts.set(path, text);
+    return typeof text === 'string' ? text : null;
+  };
+  const features = featurePhrases(request);
+  const spellings = [...new Set(features.flatMap(featureSpellings))];
+  const relevant = (path, text) => pathMatchesFeature(path, spellings)
+    || (text ? scoreSourceContent(text, features.length ? features : sourceTerms(request)) > 0 : false);
+
+  const order = [...new Set(seeds.filter((path) => allPaths.has(path)))];
+  for (const path of order.slice(0, maxFiles)) await load(path);
+  // One hop along the graph from every seed, keeping what relates to the feature.
+  const edges = new Map();
+  for (const path of [...order]) {
+    const text = texts.get(path);
+    if (!text) continue;
+    const refs = codeReferences(path, text, allPaths);
+    edges.set(path, refs);
+    for (const ref of refs) {
+      if (order.length >= maxFiles || order.includes(ref)) continue;
+      const refText = await load(ref);
+      if (relevant(ref, refText)) order.push(ref);
+    }
+  }
+
+  // Callers: production code on the same side (app or server) that points
+  // at the file, by path or by its public symbols. Tests, docs and tooling
+  // that merely mention a file never make it live.
+  const isTest = (p) => /(?:^|\/)test\/|\.test\.(?:mjs|js)$|_test\.dart$|\.fixtures\.mjs$/.test(p);
+  const side = (p) => (p.startsWith('server/') ? 'server' : 'app');
+  const counts = (caller, target) => caller !== target && !isTest(caller) && side(caller) === side(target) && allPaths.has(caller);
+  const callers = new Map();
+  const addCaller = (target, caller) => {
+    if (!callers.has(target)) callers.set(target, new Set());
+    if (counts(caller, target)) callers.get(target).add(caller);
+  };
+  for (const [path, text] of texts) {
+    for (const ref of codeReferences(path, text, allPaths)) {
+      // "part of 'main.dart'" makes the parent the caller, not the child.
+      const partOf = new RegExp(`^\\s*part\\s+of\\s+['"][^'"]*${ref.split('/').pop().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`, 'm').test(text);
+      if (partOf) addCaller(path, ref); else addCaller(ref, path);
+    }
+  }
+  // Only names other files can actually use: Dart public types, JS exports.
+  const publicSymbols = (path, text) => {
+    const body = String(text || '');
+    const re = /\.dart$/.test(path)
+      ? /^\s*(?:abstract\s+|final\s+|base\s+|sealed\s+)*(?:class|enum|mixin|extension)\s+([A-Z][A-Za-z0-9_]{3,})/gm
+      : /\.m?js$/.test(path) ? /^\s*export\s+(?:async\s+)?(?:function|class|const)\s+([A-Za-z_$][\w$]{3,})/gm : null;
+    return re ? [...body.matchAll(re)].map((m) => m[1]).slice(0, 2) : [];
+  };
+  let searches = 0;
+  const searchedEmpty = new Set();
+  const findCallers = async (path) => {
+    if (!callers.has(path)) callers.set(path, new Set());
+    if (ENTRY_POINTS.has(path) || callers.get(path).size || searches >= maxSearches) return;
+    const text = await load(path);
+    let ok = false;
+    for (const needle of [path.split('/').pop(), ...publicSymbols(path, text)]) {
+      if (searches >= maxSearches || callers.get(path).size) break;
+      searches += 1;
+      const found = await exactSearch(env, needle, fetcher);
+      ok = ok || found.ok;
+      for (const hit of found.paths) addCaller(path, hit);
+    }
+    if (ok && !callers.get(path).size && !(await dynamicallyLoaded(path))) searchedEmpty.add(path);
+  };
+  // A non-code asset can be loaded by a built path ('assets/office3d/$room.html'),
+  // which no filename search finds. If app code builds paths into its folder,
+  // the file is "unknown", never "dead" (a false dead would block real work).
+  const dynamicDirs = new Map();
+  const dynamicallyLoaded = async (path) => {
+    if (/\.(?:dart|m?js)$/.test(path) || !path.includes('/')) return false;
+    const dir = path.slice(0, path.lastIndexOf('/') + 1);
+    if (!dynamicDirs.has(dir)) {
+      let dynamic = searches >= maxSearches; // no budget left: assume it might be
+      if (!dynamic) {
+        searches += 1;
+        const found = await exactSearch(env, dir, fetcher);
+        dynamic = !found.ok;
+        const escaped = dir.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+        const builds = new RegExp(`['"\`]${escaped}['"\`]?\\s*\\+|['"\`]${escaped}\\$`);
+        for (const hit of found.paths) {
+          if (dynamic) break;
+          if (!counts(hit, path) || !/\.(?:dart|m?js)$/.test(hit)) continue;
+          const text = await load(hit);
+          if (text && builds.test(text)) dynamic = true;
+        }
+      }
+      dynamicDirs.set(dir, dynamic);
+    }
+    return dynamicDirs.get(dir);
+  };
+  // Live = an entry point, or reached from one through live callers (bounded).
+  const memo = new Map();
+  const liveness = async (path, depth = 0, seen = new Set()) => {
+    if (memo.has(path)) return memo.get(path);
+    if (ENTRY_POINTS.has(path)) { memo.set(path, true); return true; }
+    if (seen.has(path) || depth > 4) return null;
+    seen.add(path);
+    await findCallers(path);
+    const from = [...(callers.get(path) || [])];
+    if (!from.length) {
+      const verdict = searchedEmpty.has(path) ? false : null; // null: unknown
+      memo.set(path, verdict);
+      return verdict;
+    }
+    let unknown = false;
+    for (const caller of from.slice(0, 4)) {
+      const v = await liveness(caller, depth + 1, seen);
+      if (v === true) { memo.set(path, true); return true; }
+      if (v === null) unknown = true;
+    }
+    const verdict = unknown ? null : false;
+    memo.set(path, verdict);
+    return verdict;
+  };
+  const live = new Map();
+  for (const path of order) live.set(path, isTest(path) ? null : await liveness(path));
+
+  const tests = (path) => {
+    const stem = path.split('/').pop().replace(/\.(?:dart|m?js|html)$/, '').toLowerCase();
+    if (stem.length < 4) return [];
+    return [...allPaths].filter((p) => /(^test\/|\.test\.(?:mjs|js)$|_test\.dart$)/.test(p) && p.toLowerCase().includes(stem)).slice(0, 4);
+  };
+
+  const files = order.map((path) => ({
+    path,
+    live: live.get(path),
+    test: isTest(path),
+    references: edges.get(path) || [],
+    callers: [...(callers.get(path) || [])].slice(0, 8),
+    tests: tests(path),
+    feature_match: pathMatchesFeature(path, spellings),
+  }));
+  const dead = files.filter((file) => file.live === false).map((file) => file.path);
+  const named = files.filter((file) => file.feature_match);
+  const contradiction = named.length > 0 && named.every((file) => file.live === false);
+  const notes = [];
+  for (const path of dead) notes.push(`${path} is not referenced by any running code (dead file); do not edit it as the feature's implementation.`);
+  if (contradiction) {
+    // Discovery Contradiction: the feature exists in name only in dead files.
+    // Broaden to how the feature is spelled in live code before anyone edits.
+    notes.push(`Discovery contradiction: every file named after ${features.join(', ') || 'the feature'} is dead. Broadening to the feature's code spellings.`);
+    for (const spelling of spellings.filter((item) => !item.includes(' ')).slice(0, Math.max(0, maxSearches - searches))) {
+      const found = await exactSearch(env, spelling, fetcher);
+      for (const hit of found.paths) {
+        if (!allPaths.has(hit) || files.some((file) => file.path === hit) || files.length >= maxFiles + 4) continue;
+        files.push({ path: hit, live: null, references: [], callers: [], tests: tests(hit), feature_match: false, found_by: spelling });
+      }
+    }
+  }
+  const api = await apiBridge({ files, texts, load, allPaths, publicSymbols, search: async (text) => {
+    if (searches >= maxSearches + apiSearches) return { ok: false, paths: [] };
+    searches += 1;
+    return exactSearch(env, text, fetcher);
+  } });
+  return { features, files, dead, contradiction, notes, api, texts };
+}
+
+// App -> server: the client methods the feature's live screens invoke (in
+// the screen, or right where a caller opens it), the /api route each one
+// calls, the server file that routes it, and the server functions handling
+// it (resolved through the router's imports). Deterministic.
+async function apiBridge({ files, texts, load, allPaths, publicSymbols, search }) {
+  const featureFiles = files.filter((file) => file.live === true && file.feature_match && !file.path.startsWith('server/'));
+  if (!featureFiles.length) return [];
+  const invocations = [];
+  for (const file of featureFiles) {
+    const text = texts.get(file.path) || await load(file.path);
+    if (text) invocations.push(text);
+    const names = publicSymbols(file.path, text);
+    for (const caller of file.callers.slice(0, 3)) {
+      const callerText = texts.get(caller) || await load(caller);
+      if (!callerText) continue;
+      const lines = callerText.split('\n');
+      lines.forEach((line, i) => {
+        if (names.some((name) => line.includes(name))) invocations.push(lines.slice(Math.max(0, i - 25), i + 5).join('\n'));
+      });
+    }
+  }
+  const used = invocations.join('\n');
+  // Client methods that call an /api route: the nearest declaration before it.
+  const calls = [];
+  for (const [path, text] of texts) {
+    if (path.startsWith('server/') || !/\.(?:dart|m?js)$/.test(path)) continue;
+    for (const m of text.matchAll(/['"`](\/api\/[A-Za-z0-9_\/$.{}-]+)['"`]/g)) {
+      const before = text.slice(Math.max(0, m.index - 400), m.index);
+      const decls = [...before.matchAll(/\b([a-z][A-Za-z0-9_]*)\s*\([^()]*\)\s*(?:async\s*)?(?:=>|\{)/g)];
+      const fn = decls.at(-1)?.[1];
+      const verb = /['"](GET|POST|PUT|PATCH|DELETE)['"]\s*,\s*$/.exec(before)?.[1] || '';
+      if (fn && new RegExp(`\\.${fn}\\(`).test(used)) calls.push({ client_file: path, client_method: fn, http: verb, route: m[1] });
+    }
+  }
+  const out = [];
+  const seen = new Set();
+  for (const call of calls) {
+    const prefix = call.route.replace(/\/\$\{?[A-Za-z_]\w*\}?.*$/, '').replace(/\/$/, '');
+    if (seen.has(`${call.client_method}|${prefix}`)) continue;
+    seen.add(`${call.client_method}|${prefix}`);
+    const found = await search(prefix);
+    const servers = found.paths.filter((p) => p.startsWith('server/') && !/\.test\.m?js$|\.fixtures\.mjs$/.test(p) && allPaths.has(p));
+    const routes = [];
+    for (const serverFile of servers.slice(0, 2)) {
+      const text = texts.get(serverFile) || await load(serverFile);
+      if (!text) continue;
+      const imports = new Map();
+      for (const im of text.matchAll(/import\s*\{([^}]+)\}\s*from\s*['"]\.\/([^'"]+)['"]/g)) {
+        for (const name of im[1].split(',').map((n) => n.trim().split(/\s+as\s+/).pop()).filter(Boolean)) imports.set(name, `server/cloudflare/${im[2]}`);
+      }
+      const escaped = prefix.replace(/\//g, '\\/');
+      const lines = text.split('\n');
+      lines.forEach((line, i) => {
+        if (!line.includes(`'${prefix}`) && !line.includes(`"${prefix}`) && !line.includes(escaped)) return;
+        let stop = i + 1;
+        while (stop < Math.min(lines.length, i + 14) && !/\bpath\s*===|Match\s*=\s*\/\^/.test(lines[stop])) stop += 1;
+        const block = lines.slice(i, stop).join('\n');
+        const handlers = [...new Set([...block.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g)].map((h) => h[1]))]
+          .filter((name) => imports.has(name)).map((name) => ({ fn: name, module: imports.get(name) }));
+        routes.push({ server_file: serverFile, line: i + 1, route: line.trim().slice(0, 140), handlers });
+      });
+    }
+    out.push({ ...call, server: routes.slice(0, 4) });
+  }
+  return out;
 }
 
 // ─── Failed-job evidence and recovery ─────────────────────────────────────────
@@ -1624,6 +1953,49 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       });
     }
 
+    // Tier 2: the code graph decides what is real. Follow imports/loads one
+    // hop from what search found, find who uses each file, and drop dead
+    // files from the work (a dead copy named after the feature is how the
+    // War Room stress test edited a page the app never loads).
+    const graph = await traceSourceGraph(env, {
+      index,
+      request: ownerIntent,
+      seeds: [...sources.keys()],
+      known: sources,
+      read: async (path) => (await readFile(env, baseSha, path, fetcher))?.text ?? null,
+      fetcher,
+      maxSearches: 8,
+      apiSearches: 3,
+    }).catch((error) => { note(ctx, { stage: 'graph', kind: 'graph_failed', error: String(error?.message || error).slice(0, 160) }); return null; });
+    const ownerNamed = new Set(explicitPaths(ownerIntent, new Set(index.paths)));
+    const deadFiles = new Set((graph?.dead || []).filter((path) => !ownerNamed.has(path)));
+    const liveFeatureFiles = (graph?.files || []).filter((file) => file.live === true && file.feature_match && !file.test).map((file) => file.path);
+    // The live implementation: the feature's files plus the live code they use.
+    const liveImplementation = [...new Set([
+      ...liveFeatureFiles,
+      ...(graph?.files || []).filter((file) => file.live === true && !file.test && file.callers.some((caller) => liveFeatureFiles.includes(caller))).map((file) => file.path),
+    ])];
+    if (graph) {
+      const add = graph.files
+        .filter((file) => file.live !== false && !file.test && !sources.has(file.path) && index.editable_paths.includes(file.path))
+        .map((file) => file.path).slice(0, 4);
+      if (add.length) await readInto(add);
+      for (const path of deadFiles) { hits.set(path, 0); sources.delete(path); }
+      for (const path of liveFeatureFiles) hits.set(path, (hits.get(path) || 0) + 3);
+      for (const file of graph.files) if (file.live === true && file.callers.some((caller) => liveFeatureFiles.includes(caller))) hits.set(file.path, (hits.get(file.path) || 0) + 2);
+      if (graph.notes.length || add.length) {
+        chat.push({ from: 'CHE', msg: `Code graph: ${[...graph.notes, add.length ? `Added live files from the graph: ${add.join(', ')}.` : ''].filter(Boolean).join(' ')}`.slice(0, 1500) });
+      }
+      if (!sources.size) await readInto(liveFeatureFiles.length ? liveFeatureFiles : chosen.filter((path) => !deadFiles.has(path)));
+    }
+    const discovery = graph ? {
+      live_files: graph.files.filter((file) => file.live === true && !file.test).map((file) => ({ path: file.path, callers: file.callers.slice(0, 4), tests: file.tests })).slice(0, 10),
+      dead_files: [...deadFiles],
+      contradiction: graph.contradiction,
+      api_routes: graph.api.map((call) => ({ client: `${call.client_file}#${call.client_method}`, route: `${call.http} ${call.route}`, server: call.server.map((r) => `${r.server_file}:${r.line} ${r.handlers.map((h) => `${h.fn}@${h.module}`).join(', ')}`) })).slice(0, 8),
+      notes: graph.notes,
+    } : null;
+
     // Main moved while CHE was working: re-read at the new head so nothing is
     // planned or written against stale source.
     const refreshBase = async () => {
@@ -1701,6 +2073,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
           inspected: inspectedEvidence(Math.floor(budget * 0.7)),
           other_repository_files: listForBudget(index.editable_paths.filter((p) => !sources.has(p)), Math.floor(budget * 0.06)),
           previous_attempt_problem: feedbacks[i] || '',
+          discovery: discovery || undefined,
           failed_strategies: failedStrategies.slice(-6),
           team_lessons: lessonText(lessons),
           team_chat: chat.slice(-20),
@@ -1777,6 +2150,21 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       if (protectedPath !== undefined) {
         feedbacks[i] = `That edit targets a protected/read-only path: ${protectedPath || 'missing path'}. Keep the control plane read-only and implement through normal source instead.`;
         failStrategy('protected_path', protectedPath);
+        return null;
+      }
+      // Never build on a dead copy, never stand up a replacement for a live
+      // implementation: the graph is authoritative over name matches.
+      const deadTarget = requestedEdits.map((edit) => String(edit?.path || '').trim()).find((path) => deadFiles.has(path));
+      if (deadTarget) {
+        feedbacks[i] = `${deadTarget} is dead: no running code loads or imports it. Edit the live implementation instead: ${liveImplementation.join(', ') || 'see discovery.live_files'}.`;
+        failStrategy('dead_file', deadTarget);
+        return null;
+      }
+      const replacement = requestedFiles.map((file) => String(file?.path || '').trim())
+        .find((path) => liveFeatureFiles.length && graph && pathMatchesFeature(path, graph.features.flatMap(featureSpellings)) && !/\b(?:new|separate|second|another)\b/i.test(ownerIntent));
+      if (replacement) {
+        feedbacks[i] = `${replacement} would replace an implementation that already exists and is live (${liveImplementation.join(', ')}). Extend the existing code instead.`;
+        failStrategy('replacement_architecture', replacement);
         return null;
       }
       // Edits to real repository files that were not inspected yet: CHE

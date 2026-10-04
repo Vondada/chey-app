@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { applyEdits, attemptFingerprint, diagnoseNoOp, fallbackTreeCandidates, focusView, inspectRepositoryContext, isUiTask, jsonObject, jsonProblem, literalTerms, loadLessons, prepareSelfUpdate, rankSourcePaths, recordLesson, substantiveChange, unusedNewCode, wantsDocsOnly } from './self_development.js';
 
-const MAIN = `class Home {\n  String _statusBanner = 'Ready. Type or speak a request.';\n}\n`;
+// Like the real lib/main.dart, MAIN imports the patch banner (so it is live code).
+const MAIN = `import 'self_update/che_patch_banner.dart';\nclass Home {\n  String _statusBanner = 'Ready. Type or speak a request.';\n}\n`;
 const PATCH = `const t = Text('CHE updated. Restart to apply.');\n`;
 
 function memoryStore() {
@@ -290,7 +291,9 @@ test('team edits the real Ready banner, and a wrong-target patch is rejected and
         }
         if (system.includes('Review')) {
           const payload = JSON.parse(input.messages[1].content);
-          const wrong = payload.diff.includes('che_patch_banner');
+          // Wrong = the diff edits the patch-banner FILE (its header), not
+          // merely shows main.dart's import of it as context.
+          const wrong = /^--- lib\/self_update\/che_patch_banner\.dart/m.test(payload.diff);
           return { response: JSON.stringify(wrong
             ? { approved: false, target_correct: false, notes: ['Edited the update banner, not the Ready banner.'], lesson: 'Edit the widget showing the exact text the owner named.' }
             : { approved: true, target_correct: true, notes: [] }) };
@@ -519,6 +522,8 @@ test('broad architecture work can inspect and update Worker source', async () =>
   const files = {
     'lib/main.dart': MAIN,
     'server/cloudflare/code_scout.js': "export function oldFlow() { return 'old'; }\n",
+    // As in the real Worker, the router imports the module (so it is live).
+    'server/cloudflare/worker.js': "import { oldFlow } from './code_scout.js';\nexport default { fetch: () => oldFlow() };\n",
   };
   const fetcher = async (url) => {
     const u = String(url);
