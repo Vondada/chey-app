@@ -83,6 +83,16 @@ The page shows inline in chat and opens in the CHE browser. "Change the
 website: …" edits the latest site and keeps the same link. Hosted pages are
 sandboxed with no network access, so they can never reach CHE's data.
 
+## Links she gives you
+When CHE sends you somewhere ("go to Supabase and create an account"), her
+reply carries the real address and the chat shows an action under it, such as
+**Open Supabase** or **Open GitHub PR #161**. It opens inside CHE's own
+browser, which keeps your sign-ins; close or swipe it away and you are back at
+the same spot in the conversation. Say "open it", "open Supabase", "open link
+2", "open it in Safari", "what's the link" or "copy the link". Only App Store
+pages, Google sign-in and files open outside CHE, and she says why. Unsafe or
+made-up addresses never become actions.
+
 ## CHE on any device, and family
 - **Any browser:** open `https://<CHE worker>/app` on a laptop, tablet or a
   borrowed phone and sign in with the pairing code. Talk (browser mic) or type;
