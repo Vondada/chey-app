@@ -63,6 +63,26 @@ All of this runs on CHE's own free engines. She does not need Claude, ChatGPT or
 any other outside AI to study or code; those AIs only help through the mailbox
 when a job needs a full engineering session.
 
+## Updating herself by voice
+- "Update your code: …" — the crew builds and reviews the change.
+- "Update CHE" (or the **Update CHE** button on the update card, or "ship it"
+  while a reviewed change waits) — one approval: CHE opens the PR, merges it
+  only after every required check passes, then delivers it. Worker changes
+  deploy and are verified live; app changes ship as a Shorebird patch (close
+  and reopen CHE to load it). A failed check sends the change back to the crew
+  for repair, and the fix returns for approval.
+- "What changed?" — her change history, read only from real records: each
+  update's pull request, summary, checks, merge and delivery.
+
+## Building websites and web apps
+"Build me a website for …" / "make a landing page about …" / "create a web app
+that …": CHE writes one complete, self-contained page (mobile layout,
+accessibility labels, working scripts, no outside resources), checks it,
+repairs it once if a check fails, and hosts it at `/site/<id>` on her Worker.
+The page shows inline in chat and opens in the CHE browser. "Change the
+website: …" edits the latest site and keeps the same link. Hosted pages are
+sandboxed with no network access, so they can never reach CHE's data.
+
 ## The owner's starred reference repos
 What CHE looks for in each one (study-only unless its license allows reuse):
 

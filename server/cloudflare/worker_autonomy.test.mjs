@@ -323,6 +323,105 @@ test('end-to-end: "make one small real improvement" → recover → review → a
   }
 });
 
+test('one-button "Update CHE": one approval → PR → merge after CI → verified deploy → real change history', async () => {
+  const saved = new Map();
+  let engineerCalls = 0;
+  let reviewCalls = 0;
+  const env = {
+    CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_DISABLE_KEYLESS_AI: '1',
+    CF_VERSION_METADATA: { id: 'v2', tag: 'merge0000001' },
+    AI: {
+      run: async (_m, input) => {
+        const system = String(input.messages?.[0]?.content || '');
+        if (system.includes('Source Recovery')) return { response: JSON.stringify({ plan: 'home', search_terms: ['Ready'], paths: ['server/cloudflare/worker.js'] }) };
+        // Injected: planners return prose instead of JSON.
+        if (system.includes('Architect')) return { response: 'I would improve the status text.' };
+        if (system.includes('Review')) {
+          reviewCalls += 1;
+          // Injected: first reviewer engine is down.
+          if (reviewCalls === 1) { const e = new Error('503'); e.status = 503; throw e; }
+          return { response: JSON.stringify({ approved: true, target_correct: true, notes: ['Verified against fetched source.'] }) };
+        }
+        if (system.includes('Engineer') || system.includes('Implementation')) {
+          engineerCalls += 1;
+          // Injected: first engineer claims it was not given source.
+          if (engineerCalls === 1) return { response: JSON.stringify({ no_change: true, summary: 'The source code was not provided.', evidence: ['cannot inspect the repository'] }) };
+          return { response: JSON.stringify({ summary: 'Clearer health reply', edits: [{ path: 'server/cloudflare/worker.js', find: "agent: 'CHE cloud'", replace: "agent: 'CHE cloud', status: 'ready'" }] }) };
+        }
+        return { response: 'ok' };
+      },
+    },
+  };
+  const workerSource = "export default { fetch() { return Response.json({ ok: true, agent: 'CHE cloud' }); } };\n";
+  let ciDone = false;
+  const calls = [];
+  const fakeGitHubAll = async (url, init = {}) => {
+    const u = String(url);
+    const method = init.method || 'GET';
+    const body = init.body ? JSON.parse(init.body) : null;
+    calls.push({ method, u, body });
+    const reply = (data, status = 200) => new Response(JSON.stringify(data), { status });
+    if (u === 'https://api.github.com/graphql') return reply({ data: { markPullRequestReadyForReview: { pullRequest: { isDraft: false } } } });
+    if (u.includes('/search/code')) return reply({ message: 'rate limited' }, 403); // injected: search unavailable
+    const path = u.replace('https://api.github.com/repos/o/r', '');
+    if (method === 'GET' && path === '') return reply({ default_branch: 'main' });
+    if (method === 'GET' && path.startsWith('/git/ref/heads/main')) return reply({ object: { sha: 'base1' } });
+    if (method === 'GET' && path.startsWith('/git/ref/heads/che')) return reply({ message: 'Not Found' }, 404);
+    if (method === 'GET' && path.startsWith('/git/trees/')) return reply({ tree: [{ type: 'blob', path: 'server/cloudflare/worker.js' }] });
+    const content = /^\/contents\/(.+)\?ref=/.exec(path);
+    if (method === 'GET' && content) return content[1] === 'server/cloudflare/worker.js' ? reply({ sha: 'blobW', content: Buffer.from(workerSource).toString('base64') }) : reply({}, 404);
+    if (method === 'GET' && path.startsWith('/git/commits/')) return reply({ tree: { sha: 't0' } });
+    if (method === 'POST' && path === '/git/trees') return reply({ sha: 't1' }, 201);
+    if (method === 'POST' && path === '/git/commits') return reply({ sha: 'c1' }, 201);
+    if (method === 'POST' && path === '/git/refs') return reply({}, 201);
+    if (method === 'POST' && path === '/pulls') return reply({ number: 77, html_url: 'https://github.com/o/r/pull/77', head: { sha: 'h77' } }, 201);
+    if (method === 'GET' && path.startsWith('/pulls?state=all')) return reply([]);
+    if (method === 'GET' && path === '/pulls/77') return reply({ number: 77, html_url: 'u77', state: 'open', merged: false, draft: true, mergeable: true, mergeable_state: 'clean', node_id: 'N', title: 'CHE update: x', head: { sha: 'h77', ref: 'che/update-x' }, base: { sha: 'base1' } });
+    if (method === 'GET' && path.startsWith('/pulls/77/files')) return reply([{ filename: 'server/cloudflare/worker.js' }]);
+    if (method === 'GET' && path.startsWith('/commits/h77/check-runs')) return reply({ check_runs: [{ name: 'Worker tests', status: ciDone ? 'completed' : 'in_progress', conclusion: ciDone ? 'success' : null }] });
+    if (method === 'PUT' && path === '/pulls/77/merge') return reply({ sha: 'merge0000001abc' });
+    if (method === 'GET' && path.startsWith('/actions/runs')) return reply({ workflow_runs: [{ name: 'Deploy CHE Worker', status: 'completed', conclusion: 'success', html_url: 'run' }] });
+    return reply({ message: `unexpected ${method} ${path}` }, 500);
+  };
+  const { state, chat } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  globalThis.fetch = fakeGitHubAll;
+  const replyOf = async (res) => (await res.text()).trim().split('\n').map((l) => JSON.parse(l)).filter((l) => l.type === 'delta').map((l) => l.delta).join('');
+  try {
+    // 1. Vague owner request, no filename or guidance.
+    const proposal = await replyOf(await chat('CHE, make one small real improvement to your code.'));
+    assert.match(proposal, /Say "create the PR"/, proposal);
+    assert.doesNotMatch(proposal, /```|export default/);
+    assert.doesNotMatch(proposal, /provide|paste|filename|not provided|cannot inspect|503/i);
+    // 2. One owner approval: PR opens and the merge is authorized together.
+    const shipped = await replyOf(await chat('Update CHE'));
+    assert.match(shipped, /Update approved, sir\. Pull request #77 is open/, shipped);
+    assert.equal(calls.filter((c) => c.method === 'POST' && c.u.endsWith('/git/commits')).length, 1, 'one atomic commit');
+    assert.ok(saved.get('che').jobs.some((j) => j.kind === 'merge_pr' && j.pr_number === 77), 'merge queued for after CI');
+    assert.ok(!calls.some((c) => c.method === 'PUT'), 'nothing merged before CI passes');
+    // 4. CI passes; the background merge job merges with the checked head.
+    ciDone = true;
+    const job = saved.get('che').jobs.find((j) => j.kind === 'merge_pr');
+    job.retry_at = 0;
+    const data = saved.get('che'); data.jobs = data.jobs.map((j) => (j.id === job.id ? job : j)); saved.set('che', data);
+    await state.processJobs();
+    const merge = calls.find((c) => c.method === 'PUT');
+    assert.equal(merge.body.sha, 'h77');
+    assert.match(merge.body.commit_title, /\[worker-deploy\]/);
+    // 5. Deployment truth is verified before anyone calls it deployed.
+    const verify = saved.get('che').jobs.find((j) => j.kind === 'verify_deploy');
+    verify.retry_at = 0;
+    const d2 = saved.get('che'); d2.jobs = d2.jobs.map((j) => (j.id === verify.id ? verify : j)); saved.set('che', d2);
+    await state.processJobs();
+    assert.equal(saved.get('last_self_update_deploy').state, 'deployed');
+    // 6. Change history is read back from real records only.
+    const history = await replyOf(await chat('What changed?'));
+    assert.match(history, /Pull request 77: Clearer health reply[^\n]*\. Merged and verified live on \d{4}-\d{2}-\d{2}\./, history);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test('a family/guest tenant device cannot request code changes, open PRs or merge', async () => {
   const saved = new Map();
   let aiCalls = 0;
@@ -791,4 +890,58 @@ test('a reviewed change never overwrites one the owner has not decided on; it wa
     assert.equal(saved.get('pending_self_update').from_job, 'build-2');
     assert.equal(saved.get('ready_self_updates').length, 0);
   } finally { globalThis.fetch = original; }
+});
+
+test('a handoff whose coding job could not start is not marked done, so the owner can retry it', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'ok' }) } };
+  const line = JSON.stringify({ id: 'h1', at: '2026-10-04T00:00:00Z', from: 'claude', to: 'che', text: 'Make the Ready banner say Ready, sir.' });
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('/contents/mailbox/claude.jsonl')) return new Response(JSON.stringify({ sha: 's', content: Buffer.from(`${line}\n`).toString('base64') }));
+    // Injected: GitHub refuses the coding job (bad credentials).
+    return new Response(JSON.stringify({ message: 'Bad credentials' }), { status: 401 });
+  };
+  const { chat } = await pairedChat(env, saved);
+  const replyOf = async (res) => (await res.text()).trim().split('\n').map((l) => JSON.parse(l)).filter((l) => l.type === 'delta').map((l) => l.delta).join('');
+  try {
+    const first = await replyOf(await chat("do Claude's handoff"));
+    assert.doesNotMatch(first, /already started/, first);
+    assert.equal(saved.has('mail_handoff_done:claude:h1'), false, 'a failed start is not recorded as done');
+    const second = await replyOf(await chat("do Claude's handoff"));
+    assert.doesNotMatch(second, /already started/, second);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('"build me a website" → CHE writes, checks and hosts a real page; "change the website" edits it', async () => {
+  const saved = new Map();
+  let builds = 0;
+  const page = (footer) => `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Fade Kings</title></head><body><header><h1>Fade Kings</h1></header><main><p>Fresh cuts.</p></main><footer>${footer}</footer></body></html>`;
+  const env = {
+    CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1',
+    AI: { run: async (_m, input) => {
+      if (/web developer/.test(String(input.messages?.[0]?.content || ''))) { builds += 1; return { response: page(builds === 1 ? 'Open daily' : 'Open late') }; }
+      return { response: 'ok' };
+    } },
+  };
+  const { chat } = await pairedChat(env, saved);
+  const replyOf = async (res) => {
+    const lines = (await res.text()).trim().split('\n').map((l) => JSON.parse(l));
+    return { text: lines.filter((l) => l.type === 'delta').map((l) => l.delta).join(''), done: lines.find((l) => l.type === 'done') };
+  };
+  const built = await replyOf(await chat('Build me a website for my barbershop called Fade Kings'));
+  assert.match(built.text, /Your site "Fade Kings" is built, sir\. It passed my checks/, built.text);
+  assert.equal(built.done.media_type, 'page');
+  const url = built.done.media_url;
+  assert.match(url, /^https:\/\/che\.example\/site\/[a-f0-9]{20}$/);
+  const hosted = await worker.fetch(new Request(url), env);
+  assert.equal(hosted.status, 200);
+  assert.match(await hosted.text(), /Open daily/);
+  const edited = await replyOf(await chat('change the website: say we are open late'));
+  assert.match(edited.text, /I updated "Fade Kings" \(version 2\)/, edited.text);
+  assert.equal(edited.done.media_url, url, 'same link after an edit');
+  assert.match(await (await worker.fetch(new Request(url), env)).text(), /Open late/);
 });

@@ -30,7 +30,71 @@ export async function recordReceipt(storage, receipt) {
   const entry = { ...receipt, at: receipt.at || new Date().toISOString() };
   list.push(entry);
   try { await storage.put(RECEIPTS_KEY, list.slice(-300)); } catch (_) {}
+  if (CHANGE_EVENTS.has(entry.kind) && Number(entry.number) > 0) await recordChange(storage, entry);
   return entry;
+}
+
+// ─── Change history ──────────────────────────────────────────────────────────
+// One entry per CHE update (pull request), built only from real receipts, so
+// "what changed?" never reports anything that did not happen. Kept apart from
+// the general receipt log so mail traffic never pushes old updates out.
+export const CHANGE_HISTORY_KEY = 'che_change_history';
+const CHANGE_EVENTS = new Set(['pr_opened', 'update_approved', 'ci_passed', 'merged', 'deployed', 'deploy_failed']);
+const MAX_CHANGES = 250;
+
+async function recordChange(storage, receipt) {
+  let list = [];
+  try { list = (await storage.get(CHANGE_HISTORY_KEY)) || []; } catch (_) { list = []; }
+  if (!Array.isArray(list)) list = [];
+  const number = Number(receipt.number);
+  let entry = list.find((item) => item.number === number);
+  if (!entry) {
+    entry = { number, opened_at: receipt.at };
+    list.push(entry);
+  }
+  if (receipt.kind === 'pr_opened') {
+    if (receipt.url) entry.url = String(receipt.url).slice(0, 200);
+    if (receipt.summary) entry.summary = String(receipt.summary).slice(0, 220);
+    if (Array.isArray(receipt.files)) entry.files = receipt.files.map(String).slice(0, 8);
+    if (receipt.sha) entry.commit = String(receipt.sha).slice(0, 40);
+  }
+  if (receipt.kind === 'update_approved') entry.approved_at = receipt.at;
+  if (receipt.kind === 'ci_passed') entry.checks = 'passed';
+  if (receipt.kind === 'merged') { entry.merged_at = receipt.at; if (receipt.sha) entry.merge_commit = String(receipt.sha).slice(0, 40); }
+  if (receipt.kind === 'deployed') entry.deployed_at = receipt.at;
+  if (receipt.kind === 'deploy_failed') entry.deploy_failed_at = receipt.at;
+  try { await storage.put(CHANGE_HISTORY_KEY, list.slice(-MAX_CHANGES)); } catch (_) {}
+}
+
+export async function loadChangeHistory(storage) {
+  try {
+    const list = (await storage?.get?.(CHANGE_HISTORY_KEY)) || [];
+    return Array.isArray(list) ? list : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+// "What changed?", "what did you change", "change history", "your updates".
+export function changeHistoryIntent(message) {
+  const text = String(message || '').trim();
+  if (!text || text.length > 120) return false;
+  return /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:what(?:'s| has| have)?\s+(?:you\s+)?changed(?:\s+(?:lately|recently|in you|about you))?|what\s+did\s+you\s+(?:change|update)(?:\s+(?:lately|recently|in yourself))?|(?:show|read|tell)\s+(?:me\s+)?(?:your\s+|the\s+)?(?:change|update)\s+(?:history|log)|(?:your\s+)?(?:change|update)\s+(?:history|log)|what\s+updates?\s+(?:did\s+you\s+(?:get|make|do)|have\s+you\s+(?:had|made)))[?.!]*$/i.test(text);
+}
+
+export function speakChangeHistory(list, limit = 5) {
+  const items = (Array.isArray(list) ? list : []).slice(-limit).reverse();
+  if (!items.length) return 'I have no recorded updates to myself yet, sir. Every change I make from now on is logged here with its pull request, checks and delivery.';
+  const date = (iso) => (iso ? String(iso).slice(0, 10) : '');
+  const lines = items.map((item, i) => {
+    const state = item.deployed_at ? `merged and verified live on ${date(item.deployed_at)}`
+      : item.deploy_failed_at ? 'merged, but its deploy failed, so production kept the previous version'
+        : item.merged_at ? `merged on ${date(item.merged_at)}`
+          : item.approved_at ? 'approved, waiting for its checks before I merge it'
+            : 'opened, not merged';
+    return `${i + 1}. Pull request ${item.number}${item.summary ? `: ${item.summary}` : ''}. ${state[0].toUpperCase()}${state.slice(1)}.`;
+  });
+  return `My latest ${items.length === 1 ? 'update' : `${items.length} updates`}, newest first, sir:\n${lines.join('\n')}`;
 }
 
 export async function loadReceipts(storage, { sinceMs = RECENT_MS, now = Date.now() } = {}) {
@@ -137,9 +201,10 @@ const RULES = [
   },
   {
     name: 'work_done',
-    test: (s) => /\b(?:I|we|the team|my team)\s+(?:have\s+|has\s+|'ve\s+)?(?:already\s+)?(?:inspected|analy[sz]ed|reviewed|mapped out|designed|studied|compared|integrated|implemented|verified|fixed|finished|completed|built|tested|confirmed)\b/i.test(s)
+    test: (s) => /\b(?:I|we|the team|my team)\s+(?:have\s+|has\s+|'ve\s+)?(?:already\s+|now\s+|just\s+)?(?:inspected|analy[sz]ed|reviewed|mapped out|designed|studied|compared|integrated|implemented|verified|fixed|finished|completed|built|tested|confirmed|created|configured|enabled|finalized|set up|wired|added|updated|initiated|activated)\b/i.test(s)
       || /\bmy analysis (?:confirms|shows)\b/i.test(s),
-    supported: (s, st, ctx) => (!ENGINEERING.test(s) && !/\b(?:fixed|finished|completed|implemented|integrated|tested)\b/i.test(s)) || ctx.turnEvidence || st.finished_jobs.some((job) => job.status === 'complete') || Boolean(st.study),
+    supported: (s, st, ctx) => (!ENGINEERING.test(s) && !/\b(?:fixed|finished|completed|implemented|integrated|tested|configured|enabled|finalized|wired|activated)\b/i.test(s)) || ctx.turnEvidence || st.finished_jobs.some((job) => job.status === 'complete') || Boolean(st.study)
+      || (/\b(?:pull request|pr)\b/i.test(s) && Boolean(st.pr)),
   },
   {
     name: 'tests',

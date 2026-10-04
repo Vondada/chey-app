@@ -405,3 +405,12 @@ test('the engineering playbook is built into every coding-team agent and readabl
   assert.match(out.text, /I read my real code on GitHub first/);
   assert.equal(aiCalls.length, 0);
 });
+
+test('configuration/creation claims about code need real evidence too', () => {
+  for (const claim of [
+    'I have finalized the configuration for the workflow by creating the .github/workflows/che-autopilot.yml file.',
+    'I have integrated the coding runtime into the self-development path.',
+    'I have enabled the auto-merge policy for the repo.',
+  ]) assert.equal(guardOwnerReply(claim, NONE).text, '', claim);
+  assert.equal(guardOwnerReply('I have set a reminder for 5 pm.', NONE).text, 'I have set a reminder for 5 pm.');
+});

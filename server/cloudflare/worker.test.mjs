@@ -1070,3 +1070,13 @@ test('Flagstaff mailbox read failure preserves a pending retry alarm', async () 
   assert.equal(alarms.length, 1);
   assert.ok(alarms[0] >= before + 29_000);
 });
+
+test('"Update CHE" is the one-button approval; ordinary requests and the phone update check are not', async () => {
+  assert.equal(selfUpdateChatIntent('Update CHE')?.kind, 'ship-update');
+  assert.equal(selfUpdateChatIntent('CHE, approve and ship it')?.kind, 'ship-update');
+  assert.equal(selfUpdateChatIntent('install the update')?.kind, 'ship-update');
+  assert.equal(selfUpdateChatIntent('ship it')?.kind, 'merge');
+  assert.notEqual(selfUpdateChatIntent('update your code: make the banner bigger')?.kind, 'ship-update');
+  assert.notEqual(selfUpdateChatIntent('update yourself')?.kind, 'ship-update', 'the phone handles "update yourself" as the app update check');
+  assert.notEqual(selfUpdateChatIntent('update CHE so the banner is bigger')?.kind, 'ship-update');
+});
