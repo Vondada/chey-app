@@ -88,3 +88,34 @@ test('reply is rebuilt from the chat NDJSON stream; tokens skip filler', () => {
   assert.equal(replyFromNdjson(ndjson), 'Hello, sir.');
   assert.deepEqual(memoryTokens('Please, sir, the ES chart'), ['chart']);
 });
+
+test('War Room meetings become one remembered thread each, updated as they grow', async () => {
+  const { syncWarRoomMemories, recallMemories } = await import('./brain_memory.js');
+  const storage = memoryStorage();
+  const data = { meetings: [{ id: 'm1', objective: 'Pick the ES paper strategy', status: 'running', board: [
+    { from: 'Atlas', text: 'Breakout after the opening range has the best backtest.', at: '2026-10-04T10:00:00Z' },
+  ] }] };
+  assert.equal(await syncWarRoomMemories(storage, data), 1);
+  assert.equal(await syncWarRoomMemories(storage, data), 0, 'unchanged meeting is not rewritten');
+  data.meetings[0].board.push({ from: 'CHE', kind: 'synthesis', text: 'Final plan: opening-range breakout, paper only.', at: '2026-10-04T10:05:00Z' });
+  data.meetings[0].status = 'complete';
+  assert.equal(await syncWarRoomMemories(storage, data), 1);
+  const all = await listConversationMemories(storage);
+  assert.equal(all.length, 1, 'one memory per meeting, never duplicated');
+  assert.match(all[0].body, /Final plan: opening-range breakout/);
+  const [hit] = await recallMemories(storage, 'What did the War Room decide?');
+  assert.equal(hit.kind, 'war_room');
+});
+
+test('Flagstaff exchanges are recalled when the owner asks what another AI said', async () => {
+  const { rememberThread, recallMemories, rememberedText } = await import('./brain_memory.js');
+  const storage = memoryStorage();
+  await recordConversationMemory(storage, { message: 'What is the weather', reply: 'Sunny.', now: 1_000 });
+  await rememberThread(storage, { id: 'flagstaff:x1', kind: 'flagstaff', title: 'Flagstaff: chatgpt: voice latency', body: 'chatgpt said in Flagstaff: prefetch the next chunk.\nCHE replied: done in the pipeline.', now: 2_000 });
+  const found = await recallMemories(storage, 'What did ChatGPT tell you in the mailbox?');
+  assert.equal(found[0].id, 'flagstaff:x1');
+  const block = rememberedText(found);
+  assert.match(block, /REMEMBERED CONVERSATIONS/);
+  assert.match(block, /\[Flagstaff/);
+  assert.equal(await rememberThread(storage, { id: 'flagstaff:x2', kind: 'flagstaff', body: 'password is hunter2' }), null, 'secrets never stored');
+});

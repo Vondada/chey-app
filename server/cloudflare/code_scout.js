@@ -560,3 +560,21 @@ export function referenceSourceBlock(source, maxChars = 5000) {
   const per = Math.max(800, Math.floor((maxChars - rule.length) / files.length));
   return [rule, ...files.map((file) => `--- ${file.path} ---\n${String(file.text).slice(0, per)}`)].join('\n').slice(0, maxChars);
 }
+
+const COUNT_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+
+// "What are my 5 newest starred repos?", "list my latest GitHub stars".
+// Read-only: lists what the owner most recently starred (GitHub order).
+export function newestStarredIntent(message) {
+  const text = String(message || '').toLowerCase();
+  const stars = /\bstar(?:red|s)?\b/.test(text) && /\b(?:repos?|repositories|github|stars)\b/.test(text);
+  const recent = /\b(?:newest|latest|most recent(?:ly)?|recent(?:ly)?|new|last)\b/.test(text);
+  if (!stars || !recent) return null;
+  const n = /\b(\d{1,2})\b/.exec(text)?.[1] || Object.entries(COUNT_WORDS).find(([w]) => new RegExp(`\\b${w}\\b`).test(text))?.[1];
+  return { count: Math.max(1, Math.min(Number(n) || 5, 20)) };
+}
+
+export function speakNewestStarred(repos) {
+  const items = repos.map((r, i) => `${i + 1}. ${r.full_name}${r.description ? `: ${r.description.slice(0, 120)}` : ''}`);
+  return `Your ${repos.length} newest starred ${repos.length === 1 ? 'repository is' : 'repositories are'}, sir:\n${items.join('\n')}\nI saved them to memory and sent them to Claude in the mailbox.`;
+}
