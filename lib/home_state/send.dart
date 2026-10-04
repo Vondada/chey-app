@@ -416,6 +416,7 @@ extension _CheHomeSend on _CHEHomeState {
     if (uiCommand != null) {
       if (mounted) _set(() => controller.clear());
       final reply = await uiCommand.apply(CheUiPreferences.instance);
+      if (uiCommand.kind == 'handsFree') unawaited(_applyHandsFreeChange());
       HapticFeedback.mediumImpact();
       if (mounted) {
         _set(() => messages

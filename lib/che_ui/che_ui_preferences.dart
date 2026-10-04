@@ -21,6 +21,7 @@ class CheUiPreferences extends ChangeNotifier {
   static const _textScaleKey = 'che.ui.textScale';
   static const _voiceEnabledKey = 'che.ui.voiceResponsesEnabled';
   static const _voiceVolumeKey = 'che.ui.voiceVolume';
+  static const _handsFreeKey = 'che.ui.handsFreeWake';
 
   bool _loaded = false;
   bool get isLoaded => _loaded;
@@ -32,6 +33,9 @@ class CheUiPreferences extends ChangeNotifier {
   CheTextScalePref textScalePref = CheTextScalePref.defaultScale;
   bool voiceResponsesEnabled = true;
   double voiceVolume = 1.0;
+  // Owner rule: the mic never opens by itself when CHE launches. Hands-free
+  // wake listening is opt-in ("turn on hands-free").
+  bool handsFreeWake = false;
 
   double get textScale => switch (textScalePref) {
         CheTextScalePref.small => 0.90,
@@ -58,6 +62,7 @@ class CheUiPreferences extends ChangeNotifier {
     // Default ON — only honor an explicit false.
     voiceResponsesEnabled = prefs.getBool(_voiceEnabledKey) ?? true;
     voiceVolume = (prefs.getDouble(_voiceVolumeKey) ?? 1.0).clamp(0.0, 1.0);
+    handsFreeWake = prefs.getBool(_handsFreeKey) ?? false;
     _loaded = true;
     notifyListeners();
   }
@@ -129,6 +134,14 @@ class CheUiPreferences extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_voiceVolumeKey, v);
+  }
+
+  Future<void> setHandsFreeWake(bool enabled) async {
+    if (handsFreeWake == enabled) return;
+    handsFreeWake = enabled;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_handsFreeKey, enabled);
   }
 
   Future<void> toggleVoiceResponses() =>

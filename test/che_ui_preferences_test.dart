@@ -19,6 +19,8 @@ void main() {
     expect(ui.textScale, 1.0);
     expect(ui.deskCompact, isFalse);
     expect(ui.avatarStyle, CheAvatarStyle.portrait);
+    // Owner rule: no microphone on launch unless hands-free was turned on.
+    expect(ui.handsFreeWake, isFalse);
   });
 
   test('persists theme, text scale, voice mute, volume', () async {
