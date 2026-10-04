@@ -70,11 +70,13 @@ export function repositoryImplementationIntent(message) {
   if (!text) return false;
   if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?update\s+your\s+code\s*:/i.test(text)) return true;
 
-  const implementation = /\b(?:implement|integrate|adapt|apply|install|add|upgrade|improve|rewrite|refactor|build|change|modify|patch)\b/i.test(text);
-  const target = /\b(?:che(?:'s)?|your)\s+(?:code|codebase|repo(?:sitory)?|app|office|agents?|system|workflow|architecture)\b/i.test(text)
-    || /\b(?:into|inside|to)\s+che\b/i.test(text);
-  const receipts = /\b(?:draft\s+pr|pull\s+request|commit\s+sha|files\s+changed|run\s+tests?|implement\s+now|do\s+the\s+implementation)\b/i.test(text);
-  return implementation && (target || receipts);
+  const implementation = /\b(?:implement|integrate|adapt|apply|install|add|upgrade|improve|rewrite|refactor|build|change|modify|patch|fix|repair|debug|test|stress[- ]?test|audit|verify)\b/i.test(text);
+  const target = /\b(?:che(?:'s)?|your)\s+(?:code|codebase|repo(?:sitory)?|app|office|agents?|system|workflow|architecture|autonomy|coding|runner|pipeline)\b/i.test(text)
+    || /\b(?:into|inside|to|against)\s+(?:che|the\s+(?:current\s+)?(?:repo(?:sitory)?|codebase|main\s+branch))\b/i.test(text);
+  const receipts = /\b(?:draft\s+pr|pull\s+request|commit\s+sha|files\s+changed|run\s+tests?|regression\s+tests?|failure[- ]?injection|current\s+main|test\s+branch|implement\s+now|do\s+the\s+implementation)\b/i.test(text);
+  const autonomyWork = /\b(?:autonom(?:y|ous)|coding\s+(?:job|runner|pipeline)|background\s+job|failure[- ]?injection|stress[- ]?test)\b/i.test(text)
+    && /\b(?:repo(?:sitory)?|code|main|branch|tests?|workflow|runner|pipeline|job)\b/i.test(text);
+  return (implementation && (target || receipts)) || autonomyWork;
 }
 
 export function starredRepoIntent(message) {
