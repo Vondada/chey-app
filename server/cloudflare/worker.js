@@ -1,5 +1,6 @@
 // CHE cloud Agent. One SQLite-backed Durable Object holds paired devices and
 // memories, so deployment does not require creating a separate database.
+import { CREW_THREADS_KEY, conversationThreads, recordCrewThread } from './conversations.js';
 import { DurableObject } from 'cloudflare:workers';
 import {
   agentDetail,
@@ -980,6 +981,12 @@ export function busyError(error) {
 // that were interrupted by a Worker restart), so a job that keeps crashing the
 // isolate cannot be re-run forever.
 export const MAX_JOB_ATTEMPTS = 4;
+// One line about how a coding run ended, for its group-chat thread.
+function crewOutcome(prepared) {
+  if (prepared?.proposal) return 'Reviewed change ready for your approval';
+  if (prepared?.already_satisfied) return 'No change needed';
+  return prepared?.failure_class === 'B' ? 'Paused: engines unavailable' : 'Stopped without a safe change';
+}
 // How long a "running" job may go without an update before it counts as
 // interrupted. Coding jobs may run up to their 15-minute engineering budget.
 export function jobStaleMs(job) {
@@ -2462,6 +2469,7 @@ async function dispatchChange(env, body, memory = null, options = {}) {
     prepared = priorFailure
       ? await prepareSelfUpdate(env, `${priorFailure.request}\n\nRECOVERY of a coding job that stopped after its attempts. Owner's recovery request: ${request.slice(0, 2000)}`, fetch, memory, { ownerInitiated: true, intentRequest: priorFailure.request, priorFailure })
       : await prepareSelfUpdate(env, groundedRequest, fetch, memory, { ownerInitiated: true, intentRequest: request });
+    await recordCrewThread(memory, { request, discussion: prepared?.discussion, outcome: crewOutcome(prepared) }).catch(() => null);
   } catch (error) {
     console.error('CHE change request failed', error?.message || error);
     const { failure_class: failureClass, kind } = classifyFailure(error);
@@ -4907,6 +4915,11 @@ export class CheState extends DurableObject {
         await this.scheduleWork();
         this.broadcastAgents(data);
         return json(outcome);
+      }
+      if (path === '/api/conversations' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const crew = (await Promise.resolve().then(() => this.ctx.storage.get(CREW_THREADS_KEY)).catch(() => null)) || [];
+        return json({ threads: conversationThreads({ meetings: data.meetings, agents: (data.team || []).filter((a) => !a.retired) }, crew) });
       }
       if (path === '/api/meetings' && request.method === 'GET') {
         return json({ meetings: runtimeSnapshot(data).meetings });
@@ -8322,6 +8335,7 @@ export class CheState extends DurableObject {
       }
     }
     const prepared = await prepareSelfUpdate(this.env, prompt, fetch, this.ctx.storage, { ownerInitiated: true });
+    await recordCrewThread(this.ctx.storage, { request: job.request || job.prompt, discussion: prepared?.discussion, outcome: crewOutcome(prepared) }).catch(() => null);
     if (prepared.status === 200 && prepared.proposal) {
       await recordReceipt(this.ctx.storage, { kind: 'proposal_ready', key: `proposal:${job.id}`, job_id: job.id, files: prepared.proposal.files.map((f) => f.path) });
       const reviewed = {
