@@ -49,3 +49,12 @@ test('laAgenciaPanelNeeds routes specialist desks from the goal splitter', () =>
   assert.ok(WORK_AGENT_MODE_POLICY.includes('WORK AGENT MODE'));
   assert.ok(!WORK_AGENT_MODE_POLICY.toLowerCase().includes('cursor cloud agents are available'));
 });
+
+test('mission-control policy grounds context, coding evidence and trading safety', () => {
+  assert.match(WORK_AGENT_MODE_POLICY, /context CHE actually has/i);
+  assert.match(WORK_AGENT_MODE_POLICY, /inspect current source plus callers\/callees/i);
+  assert.match(WORK_AGENT_MODE_POLICY, /static checks\/tests/i);
+  assert.match(WORK_AGENT_MODE_POLICY, /data source, timestamp\/session and delay/i);
+  assert.match(WORK_AGENT_MODE_POLICY, /fees\/slippage and out-of-sample evidence/i);
+  assert.match(WORK_AGENT_MODE_POLICY, /Live-money execution requires a real broker path/i);
+});
