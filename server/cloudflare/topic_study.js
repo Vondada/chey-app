@@ -8,9 +8,48 @@
 // copied, and every resulting change still goes through review and owner
 // approval like any other self-update.
 
+// The owner's starred reference repositories (GitHub stars, 2026-10-03).
+// Licenses are re-checked from GitHub at study time; non-reusable ones
+// (developer-roadmap, coding-interview-university CC-BY-SA, build-your-own-x
+// without a license) are study-only: learn the idea, never copy content.
+export const STARRED_LIBRARY = [
+  'bdero/flutter_scene',
+  'cursor/plugins',
+  'DietrichGebert/ponytail',
+  'jwasham/coding-interview-university',
+  'kamranahmedse/developer-roadmap',
+  'donnemartin/system-design-primer',
+  'openclaw/openclaw',
+  'EbookFoundation/free-programming-books',
+  'freeCodeCamp/freeCodeCamp',
+  'public-apis/public-apis',
+  'sindresorhus/awesome',
+  'msitarzewski/agency-agents',
+  'codecrafters-io/build-your-own-x',
+];
+
 const REPO_ALIASES = [
   [/\bbuild[\s-]*your[\s-]*own[\s-]*(?:x|ex)\b/i, 'codecrafters-io/build-your-own-x'],
+  [/\bflutter[\s_-]*scene\b/i, 'bdero/flutter_scene'],
+  [/\bcursor(?:'s)?\s+plugins?\b/i, 'cursor/plugins'],
+  [/\bponytail\b/i, 'DietrichGebert/ponytail'],
+  [/\bcoding[\s-]*interview[\s-]*university\b/i, 'jwasham/coding-interview-university'],
+  [/\b(?:developer|dev)[\s-]*roadmaps?\b/i, 'kamranahmedse/developer-roadmap'],
+  [/\bsystem[\s-]*design[\s-]*primer\b/i, 'donnemartin/system-design-primer'],
+  [/\bopen\s?claw\b/i, 'openclaw/openclaw'],
+  [/\bfree[\s-]*programming[\s-]*books\b/i, 'EbookFoundation/free-programming-books'],
+  [/\bfree\s?code\s?camp\b/i, 'freeCodeCamp/freeCodeCamp'],
+  [/\bpublic[\s-]*apis\b/i, 'public-apis/public-apis'],
+  [/\bawesome\s+lists?\b|\bsindresorhus\/awesome\b/i, 'sindresorhus/awesome'],
+  [/\bagency[\s-]*agents\b/i, 'msitarzewski/agency-agents'],
 ];
+
+// "Study my starred repos" / "learn from all my starred repositories".
+export function starredLibraryIntent(message) {
+  const text = String(message || '');
+  return /\b(?:study|learn\s+from|read|go\s+through|research)\b[\s\S]{0,40}\b(?:all\s+)?(?:my|the|those|these)\s+(?:starred|favou?rite|saved)\s+(?:repos?|repositories|github)\b/i.test(text)
+    || /\b(?:study|learn\s+from)\b[\s\S]{0,20}\b(?:the\s+)?(?:repo|reference)\s+library\b/i.test(text);
+}
 
 const NOT_A_REPO = /^(?:and\/or|either\/or|he\/she|his\/her|him\/her|w\/o|i\/o|n\/a|24\/7)$/i;
 

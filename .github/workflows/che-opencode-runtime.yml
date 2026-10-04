@@ -174,6 +174,7 @@ jobs:
           const preamble = [
             'You are a coding worker inside CHE. Work only in this isolated checkout.',
             'Inspect real source before editing. Make the smallest complete change that satisfies the owner request.',
+            'Use the ponytail skill (.opencode/skills/ponytail): understand the real flow first, then stop at the first rung that holds: not needed, already in the codebase, standard library, native platform feature, installed dependency, one line, then the minimum that works. Never cut validation, security, data-loss handling or accessibility.',
             'Do not push, open or merge pull requests, deploy, alter workflows, signing files, secrets, dependency manifests, or production credentials.',
             'Leave any source edits only in the working tree. Do not print secrets. If no safe change is needed, leave the tree unchanged.',
             '',

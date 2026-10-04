@@ -79,3 +79,15 @@ test('the build request names its sources and forbids copying', () => {
   assert.match(request, /Add TF-IDF ranking to memory search\./);
   assert.match(request, /already does this as well or better, report that/);
 });
+
+import { STARRED_LIBRARY, namedRepoStudyIntent as studyIntent, starredLibraryIntent } from './topic_study.js';
+
+test('owner starred repositories are a known study library', () => {
+  assert.equal(STARRED_LIBRARY.length, 13);
+  assert.ok(starredLibraryIntent('study all my starred repos'));
+  assert.ok(starredLibraryIntent('Chay, learn from my starred repositories'));
+  assert.ok(!starredLibraryIntent('star this repo for me'));
+  assert.equal(studyIntent('study the system design primer')?.repo, 'donnemartin/system-design-primer');
+  assert.equal(studyIntent('research openclaw and implement it in your own code')?.repo, 'openclaw/openclaw');
+  assert.equal(studyIntent('read free code camp')?.repo, 'freeCodeCamp/freeCodeCamp');
+});

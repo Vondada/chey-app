@@ -1056,6 +1056,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         role: who(member, uiTask ? 'CHE UI/UX Architect' : 'CHE Software Architect'),
         assignment: [
           'Plan the smallest change that does exactly what the owner asked.',
+          'Ponytail ladder (after reading the real flow): skip it if not needed; reuse what CHE already has; prefer the standard library, native platform features and installed dependencies; one line if one line works; otherwise the minimum that works. Never cut validation, security, data-loss handling or accessibility.',
           'If the request is vague (e.g. "one small real improvement"), choose one concrete, low-risk, user-visible or reliability improvement yourself; do not ask the owner to choose.',
           'For UI requests, name exact visible text or widget identifiers. For architecture/repository work, name concrete modules, functions, routes or server files that implement the capability.',
           'Use the team lessons (they include known file locations). You may inspect read-only control files for context, but edits must stay inside editable_source_files. Pick at most 6 existing files.',
