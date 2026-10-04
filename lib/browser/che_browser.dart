@@ -11,7 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-import '../che_app_portal.dart' show cheAppForName, cheIsTradeSeaUrl, cheTradeSeaEmbedUrl;
+import '../che_app_portal.dart' show cheAppForName, cheIsTradeSeaUrl, cheTradeSeaEmbedUrl, cheTradeSeaUserAgent;
 import '../security/che_password_vault.dart';
 import '../security/che_vault_auth.dart';
 import 'che_embedded_app_shell.dart';
@@ -135,6 +135,7 @@ const _fileExtensions = ['.pdf', '.zip', '.dmg', '.pkg', '.ipa', '.apk', '.mp3',
 
 class _BrowserTab {
   _BrowserTab(this.url, {required this.onChanged}) {
+    _desktopAgent = cheIsTradeSeaUrl(url);
     controller = WebViewController()
       ..setBackgroundColor(const Color(0xFF060B11))
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -151,11 +152,6 @@ class _BrowserTab {
         },
         onPageStarted: (u) {
           url = u;
-          if (cheIsTradeSeaUrl(u)) {
-            unawaited(controller.runJavaScript(
-              "window.__webView=true;try{if(!new URLSearchParams(location.search).get('source')){var u=new URL(location.href);u.searchParams.set('source','mobile-app');u.searchParams.set('theme',u.searchParams.get('theme')||'dark');history.replaceState(null,'',u.toString());}}catch(e){}",
-            ));
-          }
           onChanged();
         },
         onPageFinished: (u) async {
@@ -177,12 +173,16 @@ class _BrowserTab {
             return NavigationDecision.prevent;
           }
           if (uri.scheme == 'http' || uri.scheme == 'https' || uri.scheme == 'about') {
-            // Keep TradeSea's mobile-app embed flag across SPA/OAuth returns so
-            // the site does not replace login with the App Store / Play sheet.
-            if (uri.scheme != 'about' && cheIsTradeSeaUrl(uri.toString())) {
-              final embedded = cheTradeSeaEmbedUrl(uri.toString());
-              if (embedded != uri.toString()) {
-                unawaited(controller.loadRequest(Uri.parse(embedded)));
+            // TradeSea runs as its regular web app with the desktop agent,
+            // however it is reached (link, redirect), never in its native-app
+            // embed mode (source=mobile-app). Links leaving TradeSea are not
+            // reloaded (that could turn a sign-in POST into a GET); the
+            // address bar restores the normal agent via [load].
+            if (uri.scheme != 'about' && request.isMainFrame) {
+              final target = uri.toString();
+              final tradeSea = cheIsTradeSeaUrl(target);
+              if (tradeSea && (!_desktopAgent || cheTradeSeaEmbedUrl(target) != target)) {
+                unawaited(load(target));
                 return NavigationDecision.prevent;
               }
             }
@@ -192,6 +192,9 @@ class _BrowserTab {
           return NavigationDecision.prevent;
         },
       ))
+      // TradeSea gets the full web app (no "download the app" sheet, no
+      // native-app embed mode that leaves its trading area empty).
+      ..setUserAgent(cheIsTradeSeaUrl(url) ? cheTradeSeaUserAgent : null)
       ..loadRequest(Uri.parse(cheIsTradeSeaUrl(url) ? cheTradeSeaEmbedUrl(url) : url));
   }
 
@@ -270,6 +273,17 @@ if(user&&u&&!user.value)set(user,u);set(pw,p);})($u,$p)''');
     }
   }
 
+  /// Loads [target] with the right user agent for it (desktop on TradeSea).
+  Future<void> load(String target) async {
+    final tradeSea = cheIsTradeSeaUrl(target);
+    if (tradeSea != _desktopAgent) {
+      _desktopAgent = tradeSea;
+      await controller.setUserAgent(tradeSea ? cheTradeSeaUserAgent : null);
+    }
+    await controller.loadRequest(Uri.parse(tradeSea ? cheTradeSeaEmbedUrl(target) : target));
+  }
+
+  bool _desktopAgent = false;
   final VoidCallback onChanged;
   late final WebViewController controller;
   String url;
@@ -667,7 +681,7 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
   void _go(String input) {
     if (input.trim().isEmpty) return;
     _addressFocus.unfocus();
-    unawaited(_tab.controller.loadRequest(cheAddressToUri(input)));
+    unawaited(_tab.load(cheAddressToUri(input).toString()));
   }
 
   Future<String> _pageText() async {
