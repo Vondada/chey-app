@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { swings, patternsAt, backtest, backtestAll, analyze, resolveSymbol, tradingIntent, paperTick, readBook, speakBook, prepare, stats } from './trading_lab.js';
+import { swings, patternsAt, backtest, backtestAll, analyze, resolveSymbol, tradingIntent, paperTick, readBook, speakBook, prepare, stats, SKILL_IDS, discoverSkills, learnStep, strategyById, futuresDollars, speakLearning } from './trading_lab.js';
 
 // Deterministic wavy uptrend: real swings, some breakouts.
 function series(n = 1500) {
@@ -82,4 +82,84 @@ test('paper trading closes, learns and journals without real orders', async () =
   const again = await readBook(storage);
   assert.ok(again.last_tick);
   assert.match(speakBook(again), /Paper trading, no real money/);
+});
+
+test('skills: every combination is a valid, look-ahead-free strategy', () => {
+  assert.equal(SKILL_IDS.length, 63);
+  const c = series(1500);
+  const ctx = prepare(c);
+  for (const id of SKILL_IDS) {
+    const s = strategyById(id);
+    assert.ok(s, id);
+    for (let i = 60; i < c.length; i += 37) {
+      const e = s.entry(c, i, ctx);
+      if (e) assert.ok(e.stop < e.entry && e.target > e.entry, id);
+    }
+  }
+  // Truncating the future does not change what a skill sees today.
+  const id = 'channel-20|any|2';
+  const full = backtest(c, id, { to: 1000 });
+  const cut = backtest(c.slice(0, 1000), id);
+  assert.deepEqual(full.trades, cut.trades);
+});
+
+test('discovery keeps only skills that hold up on all three parts of history', () => {
+  const r = discoverSkills(series(1500));
+  for (const x of r.filter((y) => y.found)) {
+    for (const part of [x.choose, x.confirm, x.test]) assert.ok(part.expectancy_r > 0 && part.profit_factor > 1.15, x.id);
+  }
+  // A flat, noisy market with no edge yields (almost) nothing.
+  let seed = 42;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  let p = 100;
+  const noise = Array.from({ length: 3000 }, (_, i) => { const o = p; p *= 1 + (rnd() - 0.5) * 0.03; return { t: String(i).padStart(6, '0'), o, c: p, h: Math.max(o, p) * (1 + rnd() * 0.01), l: Math.min(o, p) * (1 - rnd() * 0.01), v: 1 }; });
+  assert.ok(discoverSkills(noise).filter((x) => x.found).length <= 2);
+});
+
+test('learning works through every skill in batches and re-tests after 30 days', () => {
+  const c = series(1500);
+  const t0 = Date.UTC(2026, 9, 1);
+  let lab;
+  let steps = 0;
+  do { lab = learnStep(lab, c, t0 + steps * 3600_000).lab; steps += 1; } while (lab.tested.length < SKILL_IDS.length);
+  assert.equal(steps, Math.ceil(SKILL_IDS.length / 12));
+  assert.equal(lab.progress, `${SKILL_IDS.length} of ${SKILL_IDS.length}`);
+  if (lab.found.length) assert.equal(lab.best, lab.found[0]);
+  const later = learnStep(lab, c, t0 + 31 * 86400000).lab;
+  assert.equal(later.tested.length, 12, 'a new cycle starts');
+});
+
+test('futures: ES/NQ and micros, dollars per contract, voice', () => {
+  assert.equal(resolveSymbol('ES').symbol, 'es.f');
+  assert.equal(resolveSymbol('MNQ').symbol, 'nq.f');
+  assert.equal(resolveSymbol('nq').label, 'NQ futures');
+  assert.deepEqual(futuresDollars('es.f', 10), { contract: 'ES', per_contract: 500, micro: 'MES', per_micro: 50 });
+  assert.deepEqual(futuresDollars('nq.f', -25), { contract: 'NQ', per_contract: -500, micro: 'MNQ', per_micro: -50 });
+  assert.equal(futuresDollars('BTCUSDT', 10), null);
+  assert.equal(tradingIntent('CHE, what have you learned about trading?').kind, 'learning');
+  assert.equal(tradingIntent('any new trading skills?').kind, 'learning');
+  assert.equal(tradingIntent('learn a new skill for the app'), null);
+});
+
+test('paper ticks keep learning, journal discoveries and add index futures once', async () => {
+  const m = new Map([['trading_paper_book', { watch: ['BTCUSDT'] }]]);
+  const storage = { get: async (k) => m.get(k), put: async (k, v) => m.set(k, v) };
+  const c = series(1500);
+  const fetcher = async (url) => {
+    if (String(url).includes('binance')) return new Response(JSON.stringify(c.map((k) => [Date.parse(k.t), k.o, k.h, k.l, k.c, 1])), { status: 200 });
+    return new Response('Date,Open,High,Low,Close,Volume\n' + c.map((k) => [k.t, k.o, k.h, k.l, k.c, 1].join(',')).join('\n'), { status: 200 });
+  };
+  let book;
+  for (let h = 0; h < 6; h++) book = await paperTick(storage, { fetcher, force: true, now: Date.UTC(2026, 9, 4, h) });
+  assert.deepEqual(book.watch, ['BTCUSDT', 'es.f', 'nq.f']);
+  for (const sym of book.watch) assert.equal(book.lab[sym].tested.length, SKILL_IDS.length);
+  assert.equal(book.discoveries.length, book.watch.reduce((n, sym) => n + book.lab[sym].found.length, 0));
+  // The owner removing a futures symbol later is respected.
+  book.watch = ['BTCUSDT'];
+  m.set('trading_paper_book', book);
+  assert.deepEqual((await readBook(storage)).watch, ['BTCUSDT']);
+  const said = speakLearning(book);
+  assert.match(said, /paper only, no real money/);
+  assert.match(said, /delayed/);
+  assert.doesNotMatch(said, /undefined|NaN/);
 });

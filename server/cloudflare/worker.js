@@ -34,7 +34,7 @@ import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry 
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
-import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
+import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
@@ -4400,7 +4400,7 @@ export class CheState extends DurableObject {
       }
       if (path === '/api/trading/paper' && request.method === 'GET') {
         const book = await readBook(this.ctx.storage);
-        return json({ ...book, summary: speakBook(book), strategies: Object.fromEntries(Object.entries(STRATEGIES).map(([id, st]) => [id, { name: st.name, about: st.about }])) });
+        return json({ ...book, summary: speakBook(book), learning: speakLearning(book), strategies: Object.fromEntries(Object.entries(STRATEGIES).map(([id, st]) => [id, { name: st.name, about: st.about }])) });
       }
       if (path === '/api/trading/paper' && request.method === 'POST') {
         if (body.action === 'watch') return json(await watchSymbol(this.ctx.storage, body.symbol));
@@ -6602,6 +6602,10 @@ export class CheState extends DurableObject {
           if (trade.kind === 'book') {
             const book = await paperTick(this.ctx.storage).catch(() => null) || await readBook(this.ctx.storage);
             return ndjsonReply(speakBook(book), { source: 'che_trading' });
+          }
+          if (trade.kind === 'learning') {
+            const book = await paperTick(this.ctx.storage).catch(() => null) || await readBook(this.ctx.storage);
+            return ndjsonReply(speakLearning(book), { source: 'che_trading' });
           }
           if (trade.kind === 'watch') {
             const added = await watchSymbol(this.ctx.storage, trade.symbol);

@@ -39,7 +39,14 @@ const NAMES = {
   xrp: 'XRPUSDT', doge: 'DOGEUSDT', dogecoin: 'DOGEUSDT',
   's&p': '^spx', 'sp500': '^spx', 's&p 500': '^spx', spx: '^spx', nasdaq: '^ndq', dow: '^dji',
   gold: 'xauusd', silver: 'xagusd', oil: 'cl.f', euro: 'eurusd',
+  // CME index futures (Stooq daily, delayed). Micros track the same index,
+  // so MES uses ES prices and MNQ uses NQ prices; only the dollars per point differ.
+  es: 'es.f', mes: 'es.f', 'e-mini s&p': 'es.f', 'micro s&p': 'es.f',
+  nq: 'nq.f', mnq: 'nq.f', 'e-mini nasdaq': 'nq.f', 'micro nasdaq': 'nq.f',
 };
+
+/// Dollars per one point, per contract, before commissions and slippage.
+export const POINT_VALUE = { 'es.f': { full: 50, micro: 5, name: 'ES', microName: 'MES' }, 'nq.f': { full: 20, micro: 2, name: 'NQ', microName: 'MNQ' } };
 
 // "bitcoin", "AAPL", "tesla stock", "spy" → a data source + symbol.
 export function resolveSymbol(input) {
@@ -56,7 +63,7 @@ export function resolveSymbol(input) {
 function route(symbol) {
   return /USDT$/.test(symbol)
     ? { source: 'binance', symbol, label: symbol.replace(/USDT$/, '/USD') }
-    : { source: 'stooq', symbol, label: symbol.replace(/\.us$/, '').toUpperCase() };
+    : { source: 'stooq', symbol, label: /\.f$/.test(symbol) ? `${symbol.replace(/\.f$/, '').toUpperCase()} futures` : symbol.replace(/\.us$/, '').toUpperCase() };
 }
 
 export function parseStooq(text) {
@@ -177,7 +184,31 @@ export function prepare(candles, n = 3) {
     if (i >= 19) sma20[i] = s20 / 20;
     if (i >= 49) sma50[i] = s50 / 50;
   }
-  return { lastHigh, lastLow, sma20, sma50 };
+  // Prior-bar channels (Donchian), ATR(14) and RSI(2), all from closed bars only.
+  const hh20 = new Array(len).fill(null);
+  const hh55 = new Array(len).fill(null);
+  const ll10 = new Array(len).fill(null);
+  const ll20 = new Array(len).fill(null);
+  const atr14 = new Array(len).fill(null);
+  const rsi2 = new Array(len).fill(null);
+  const extreme = (from, to, key, pick) => { let v = candles[from][key]; for (let j = from + 1; j < to; j++) v = pick(v, candles[j][key]); return v; };
+  let atr = 0;
+  let up = 0;
+  let down = 0;
+  for (let i = 1; i < len; i++) {
+    if (i >= 20) { hh20[i] = extreme(i - 20, i, 'h', Math.max); ll20[i] = extreme(i - 20, i, 'l', Math.min); }
+    if (i >= 55) hh55[i] = extreme(i - 55, i, 'h', Math.max);
+    if (i >= 10) ll10[i] = extreme(i - 10, i, 'l', Math.min);
+    const k = candles[i];
+    const tr = Math.max(k.h - k.l, Math.abs(k.h - candles[i - 1].c), Math.abs(k.l - candles[i - 1].c));
+    atr = i <= 14 ? atr + tr / 14 : (atr * 13 + tr) / 14;
+    if (i >= 14) atr14[i] = atr;
+    const change = k.c - candles[i - 1].c;
+    up = i <= 2 ? up + Math.max(change, 0) / 2 : (up + Math.max(change, 0)) / 2;
+    down = i <= 2 ? down + Math.max(-change, 0) / 2 : (down + Math.max(-change, 0)) / 2;
+    if (i >= 2) rsi2[i] = down === 0 ? 100 : 100 - 100 / (1 + up / down);
+  }
+  return { lastHigh, lastLow, sma20, sma50, hh20, hh55, ll10, ll20, atr14, rsi2 };
 }
 
 // ─── Strategies (long-only, rule based, no look-ahead) ───────────────────
@@ -231,13 +262,145 @@ export const STRATEGIES = {
 
 const round = (x) => (Math.abs(x) >= 100 ? Math.round(x * 100) / 100 : Math.round(x * 10000) / 10000);
 
+// ─── Trading skills: building blocks CHE combines and tests herself ──────
+//
+// A skill is one entry signal + one trend filter + one profit target in R.
+// CHE tests every combination on each market's history and keeps only the
+// ones that hold up on data they were never chosen on. Deterministic: no AI
+// tokens, no guessing.
+
+const SIGNALS = {
+  'swing-breakout': { name: 'swing breakout', entry: (c, i, x) => { const r = STRATEGIES['swing-breakout'].entry(c, i, x); return r && { entry: r.entry, stop: r.stop, why: r.why }; } },
+  'pullback-reversal': { name: 'pullback reversal', entry: (c, i, x) => { const r = STRATEGIES['pullback-reversal'].entry(c, i, x); return r && { entry: r.entry, stop: r.stop, why: r.why }; } },
+  'trend-cross': { name: 'trend cross', entry: (c, i, x) => { const r = STRATEGIES['trend-cross'].entry(c, i, x); return r && { entry: r.entry, stop: r.stop, why: r.why }; } },
+  'channel-20': {
+    name: '20-day channel breakout',
+    entry(c, i, x) {
+      const hh = x.hh20[i]; const lo = x.ll10[i];
+      if (hh == null || lo == null || i < 1 || !(c[i - 1].c <= hh && c[i].c > hh) || lo >= c[i].c) return null;
+      return { entry: c[i].c, stop: lo, why: `closed above the 20-day high ${round(hh)}` };
+    },
+  },
+  'channel-55': {
+    name: '55-day channel breakout',
+    entry(c, i, x) {
+      const hh = x.hh55[i]; const lo = x.ll20[i];
+      if (hh == null || lo == null || i < 1 || !(c[i - 1].c <= hh && c[i].c > hh) || lo >= c[i].c) return null;
+      return { entry: c[i].c, stop: lo, why: `closed above the 55-day high ${round(hh)}` };
+    },
+  },
+  'rsi2-dip': {
+    name: 'short-term oversold dip',
+    entry(c, i, x) {
+      const rsi = x.rsi2[i]; const atr = x.atr14[i];
+      if (rsi == null || atr == null || rsi >= 10) return null;
+      return { entry: c[i].c, stop: c[i].c - 2 * atr, why: `2-day RSI at ${Math.round(rsi)}, oversold` };
+    },
+  },
+  'inside-bar-break': {
+    name: 'inside bar breakout',
+    entry(c, i) {
+      if (i < 2) return null;
+      const mother = c[i - 2]; const inside = c[i - 1];
+      if (!(inside.h < mother.h && inside.l > mother.l) || c[i].c <= inside.h || inside.l >= c[i].c) return null;
+      return { entry: c[i].c, stop: inside.l, why: 'broke out of an inside bar' };
+    },
+  },
+};
+
+const FILTERS = {
+  any: { name: 'any trend', ok: () => true },
+  above50: { name: 'above the 50-day average', ok: (c, i, x) => x.sma50[i] != null && c[i].c > x.sma50[i] },
+  rising20: { name: '20-day average rising', ok: (c, i, x) => i >= 5 && x.sma20[i] != null && x.sma20[i - 5] != null && x.sma20[i] > x.sma20[i - 5] },
+};
+
+const TARGETS = [1.5, 2, 3];
+
+/// Every skill id: "signal|filter|targetR".
+export const SKILL_IDS = Object.keys(SIGNALS).flatMap((sig) => Object.keys(FILTERS).flatMap((f) => TARGETS.map((r) => `${sig}|${f}|${r}`)));
+
+function skill(id) {
+  const [sig, f, r] = String(id || '').split('|');
+  const signal = SIGNALS[sig]; const filter = FILTERS[f]; const R = Number(r);
+  if (!signal || !filter || !TARGETS.includes(R)) return null;
+  return {
+    name: `${signal.name}, ${filter.name}, target ${R}R`,
+    entry(c, i, x) {
+      if (!filter.ok(c, i, x)) return null;
+      const e = signal.entry(c, i, x);
+      if (!e || !(e.stop < e.entry)) return null;
+      return { ...e, target: e.entry + R * (e.entry - e.stop) };
+    },
+  };
+}
+
+export function strategyById(id) { return STRATEGIES[id] || skill(id); }
+export function strategyName(id) { return strategyById(id)?.name || String(id || 'unknown'); }
+
+/// Tests skills on one market with a three-way split, oldest to newest:
+/// 60% to choose on, 20% to confirm, last 20% held back as the honest test.
+/// A skill is "found" only if it makes money in all three parts with a real
+/// sample size; the held-back part is the number CHE reports.
+export function discoverSkills(candles, ids = SKILL_IDS) {
+  const a = Math.floor(candles.length * 0.6);
+  const b = Math.floor(candles.length * 0.8);
+  const ctx = prepare(candles);
+  return ids.map((id) => {
+    const choose = backtest(candles, id, { to: a, ctx });
+    const confirm = backtest(candles, id, { from: a, to: b, ctx });
+    const test = backtest(candles, id, { from: b, ctx });
+    // Many skills are tried, so a few would look good by luck alone. Every
+    // part must clear a real edge (profit factor above 1.15), not just break even.
+    const found = choose.trades_count >= 20 && confirm.trades_count >= 6 && test.trades_count >= 6
+      && [choose, confirm, test].every((part) => part.expectancy_r > 0 && part.profit_factor > 1.15);
+    const brief = ({ trades, strategy, ...rest }) => rest;
+    return { id, name: strategyName(id), found, choose: brief(choose), confirm: brief(confirm), test: brief(test) };
+  });
+}
+
+const SKILLS_PER_TICK = 12;
+const RETEST_DAYS = 30;
+
+/// One learning step for one market: test the next batch of skills not yet
+/// tested on it (all of them get re-tested every 30 days, because markets
+/// change). Returns what is new.
+export function learnStep(lab, candles, now = Date.now()) {
+  const state = lab && typeof lab === 'object' ? lab : {};
+  if (!state.cycle_at || now - Date.parse(state.cycle_at) > RETEST_DAYS * 86400000) {
+    state.cycle_at = new Date(now).toISOString();
+    state.tested = [];
+    state.results = {};
+  }
+  const next = SKILL_IDS.filter((id) => !state.tested.includes(id)).slice(0, SKILLS_PER_TICK);
+  const newly = [];
+  for (const r of discoverSkills(candles, next)) {
+    const before = state.results[r.id]?.found;
+    state.results[r.id] = { found: r.found, test: r.test, confirm: r.confirm, choose: r.choose };
+    state.tested.push(r.id);
+    if (r.found && !before) newly.push(r.id);
+  }
+  const found = Object.entries(state.results).filter(([, r]) => r.found)
+    .sort((x, y) => y[1].test.expectancy_r - x[1].test.expectancy_r);
+  state.best = found[0]?.[0] || null;
+  state.found = found.map(([id]) => id);
+  state.progress = `${state.tested.length} of ${SKILL_IDS.length}`;
+  return { lab: state, newly };
+}
+
+/// Dollars for one contract (and one micro) of an index future, from points.
+export function futuresDollars(symbol, points) {
+  const pv = POINT_VALUE[symbol];
+  if (!pv || !Number.isFinite(points)) return null;
+  return { contract: pv.name, per_contract: Math.round(points * pv.full * 100) / 100, micro: pv.microName, per_micro: Math.round(points * pv.micro * 100) / 100 };
+}
+
 // ─── Backtest ─────────────────────────────────────────────────────────────
 
 /// Walks forward bar by bar. One trade at a time. Stop is checked before
 /// target inside a bar (the honest, worst-case assumption). Results in R
 /// (multiples of the risk taken), so different markets compare fairly.
 export function backtest(candles, strategyId, { from = 60, to = candles.length, ctx = prepare(candles) } = {}) {
-  const strat = STRATEGIES[strategyId];
+  const strat = strategyById(strategyId);
   if (!strat) return { error: 'Unknown strategy.' };
   const trades = [];
   let open = null;
@@ -343,20 +506,28 @@ export function speakBacktest(label, years, results) {
 // ─── Paper trading + learning ─────────────────────────────────────────────
 
 const BOOK = 'trading_paper_book';
+const DEFAULT_WATCH = ['BTCUSDT', 'ETHUSDT', '^spx', 'es.f', 'nq.f'];
 
 export async function readBook(storage) {
   const book = (await storage.get(BOOK)) || {};
+  const watch = Array.isArray(book.watch) ? book.watch : [...DEFAULT_WATCH];
+  // Index futures joined the default watch list later; add them once.
+  if (!book.futures_added) for (const sym of ['es.f', 'nq.f']) if (!watch.includes(sym)) watch.push(sym);
   return {
-    watch: Array.isArray(book.watch) ? book.watch : ['BTCUSDT', 'ETHUSDT', '^spx'],
+    watch,
+    futures_added: true,
     open: Array.isArray(book.open) ? book.open : [],
     closed: Array.isArray(book.closed) ? book.closed : [],
     learned: book.learned && typeof book.learned === 'object' ? book.learned : {},
+    lab: book.lab && typeof book.lab === 'object' ? book.lab : {},
+    discoveries: Array.isArray(book.discoveries) ? book.discoveries : [],
     last_tick: book.last_tick || null,
   };
 }
 
 async function saveBook(storage, book) {
   book.closed = book.closed.slice(-500);
+  book.discoveries = book.discoveries.slice(-100);
   await storage.put(BOOK, book);
 }
 
@@ -370,51 +541,88 @@ export async function watchSymbol(storage, input) {
   return { ok: true, symbol: sym.label };
 }
 
-/// One paper-trading pass: close trades that hit stop/target, refresh what
-/// works per symbol (re-learned from backtests), open new paper trades from
-/// the best passing strategy.
-export async function paperTick(storage, { fetcher = fetch, force = false } = {}) {
+function closeTrade(t, exit, closedAt) {
+  const r = exit === t.stop ? -1 : round((t.target - t.entry) / (t.entry - t.stop));
+  const dollars = futuresDollars(t.symbol, exit - t.entry);
+  Object.assign(t, { exit, r, closed_at: closedAt }, dollars ? { dollars } : {});
+}
+
+/// One paper-trading pass, at most hourly: close trades that hit stop or
+/// target, take the next learning step on every market (new skills tested,
+/// found ones kept), then open paper trades from the best skill that is
+/// still earning its place.
+export async function paperTick(storage, { fetcher = fetch, force = false, now = Date.now() } = {}) {
   const book = await readBook(storage);
-  if (!force && book.last_tick && Date.now() - Date.parse(book.last_tick) < 55 * 60_000) return book;
-  book.last_tick = new Date().toISOString();
+  if (!force && book.last_tick && now - Date.parse(book.last_tick) < 55 * 60_000) return book;
+  book.last_tick = new Date(now).toISOString();
   for (const symbol of book.watch) {
     const data = await loadCandles(symbol, { fetcher });
     if (data.error || data.candles.length < 120) continue;
     const candles = data.candles;
     const last = candles[candles.length - 1];
     for (const t of book.open.filter((x) => x.symbol === symbol)) {
-      const after = candles.filter((k) => k.t > t.opened_bar);
-      for (const k of after) {
-        if (k.l <= t.stop) { Object.assign(t, { exit: t.stop, r: -1, closed_at: k.t }); break; }
-        if (k.h >= t.target) { Object.assign(t, { exit: t.target, r: round((t.target - t.entry) / (t.entry - t.stop)), closed_at: k.t }); break; }
+      for (const k of candles.filter((bar) => bar.t > t.opened_bar)) {
+        // Stop first inside a bar: the honest, worst-case assumption.
+        if (k.l <= t.stop) { closeTrade(t, t.stop, k.t); break; }
+        if (k.h >= t.target) { closeTrade(t, t.target, k.t); break; }
       }
     }
-    const done = book.open.filter((x) => x.closed_at);
-    book.closed.push(...done);
+    book.closed.push(...book.open.filter((x) => x.closed_at));
     book.open = book.open.filter((x) => !x.closed_at);
-    const learnedAt = book.learned[symbol]?.at;
-    if (!learnedAt || Date.now() - Date.parse(learnedAt) > 7 * 86400000) {
-      const results = backtestAll(candles);
-      book.learned[symbol] = { at: new Date().toISOString(), best: results.find((r) => r.passes)?.id || null, results: results.map((r) => ({ id: r.id, passes: r.passes, unseen: r.unseen })) };
+    const step = learnStep(book.lab[symbol], candles, now);
+    book.lab[symbol] = step.lab;
+    for (const id of step.newly) {
+      book.discoveries.push({ at: new Date(now).toISOString(), symbol, label: data.label, id, name: strategyName(id), test: step.lab.results[id].test });
     }
-    // Live results count too: a strategy losing 5 paper trades in a row on
-    // this symbol is benched until the next re-learn.
-    const best = book.learned[symbol].best;
-    const recent = book.closed.filter((x) => x.symbol === symbol && x.strategy === best).slice(-5);
-    const benched = recent.length === 5 && recent.every((x) => x.r < 0);
-    if (!best || benched || book.open.some((x) => x.symbol === symbol)) continue;
-    const setup = STRATEGIES[best].entry(candles, candles.length - 1, prepare(candles));
+    // Live results count too: a skill that loses 5 paper trades in a row on
+    // this market is benched until its next re-test; the next found one trades.
+    const benched = (id) => {
+      const recent = book.closed.filter((x) => x.symbol === symbol && x.strategy === id).slice(-5);
+      return recent.length === 5 && recent.every((x) => x.r < 0) && Date.parse(recent[4].closed_at) > Date.parse(step.lab.cycle_at);
+    };
+    const best = (step.lab.found || []).find((id) => !benched(id)) || null;
+    book.learned[symbol] = { at: step.lab.cycle_at, best, progress: step.lab.progress, found: (step.lab.found || []).length };
+    if (!best || book.open.some((x) => x.symbol === symbol)) continue;
+    const setup = strategyById(best)?.entry(candles, candles.length - 1, prepare(candles));
     if (setup) {
-      book.open.push({ id: crypto.randomUUID(), symbol, label: data.label, strategy: best, ...setup, entry: round(setup.entry), stop: round(setup.stop), target: round(setup.target), opened_at: new Date().toISOString(), opened_bar: last.t });
+      book.open.push({ id: crypto.randomUUID(), symbol, label: data.label, strategy: best, ...setup, entry: round(setup.entry), stop: round(setup.stop), target: round(setup.target), opened_at: new Date(now).toISOString(), opened_bar: last.t, data: data.data });
     }
   }
   await saveBook(storage, book);
   return book;
 }
 
+/// What CHE has learned about trading, said aloud: skills found per market
+/// with their held-back test numbers, newest discoveries, and paper results
+/// (with dollars per contract for index futures).
+export function speakLearning(book) {
+  const lines = ['Trading learning, paper only, no real money.'];
+  const markets = Object.entries(book.lab || {});
+  if (!markets.length) return `${lines[0]} I have not finished a learning pass yet. I test new skills every hour.`;
+  for (const [symbol, lab] of markets) {
+    const label = resolveSymbol(symbol)?.label || symbol;
+    const best = lab.found?.[0];
+    const t = best ? lab.results[best].test : null;
+    lines.push(best
+      ? `${label}: ${lab.found.length} skill${lab.found.length === 1 ? '' : 's'} found after testing ${lab.progress}. Best: ${strategyName(best)}, on held-back data ${t.trades_count} trades, ${t.win_rate}% wins, ${t.expectancy_r}R per trade.`
+      : `${label}: no skill has held up yet after testing ${lab.progress}. I will not trade it until one does.`);
+  }
+  const fresh = (book.discoveries || []).slice(-3);
+  if (fresh.length) lines.push(`Newest skills learned: ${fresh.map((d) => `${strategyName(d.id)} on ${d.label}`).join('; ')}.`);
+  for (const [symbol, pv] of Object.entries(POINT_VALUE)) {
+    const done = (book.closed || []).filter((x) => x.symbol === symbol && x.dollars);
+    if (!done.length) continue;
+    const s = stats(done);
+    const micro = Math.round(done.reduce((sum, x) => sum + x.dollars.per_micro, 0));
+    lines.push(`${pv.name} paper trades: ${s.trades_count}, ${s.win_rate}% wins, ${s.total_r}R, about $${micro} on one ${pv.microName} contract before commissions and slippage.`);
+  }
+  lines.push('Futures here use free daily data, delayed, so these are swing trades, not intraday.');
+  return lines.join('\n');
+}
+
 export function speakBook(book) {
   const s = stats(book.closed);
-  const open = book.open.map((t) => `${t.label} (${STRATEGIES[t.strategy]?.name || t.strategy}) from ${t.entry}, stop ${t.stop}, target ${t.target}`);
+  const open = book.open.map((t) => `${t.label} (${strategyName(t.strategy)}) from ${t.entry}, stop ${t.stop}, target ${t.target}`);
   return [
     `Paper trading, no real money. Watching ${book.watch.length} markets.`,
     s.trades_count
@@ -435,6 +643,7 @@ export function tradingIntent(message) {
     const m = SYMBOL_HINT.exec(text.replace(/\b(?:swing (?:highs?|lows?)|entry points?|entries|candles?|patterns?|the chart)\b/gi, ' '));
     return m ? m[1].trim() : '';
   };
+  if (/\b(?:what (?:have|did) you (?:learn|learned)|trading (?:skills?|lessons?|learning)|learn(?:ed|ing)? (?:about )?trading|new (?:trading )?(?:skills?|strateg(?:y|ies)))\b/i.test(text) && /\b(?:trad|market|futures|stocks?|crypto)/i.test(text)) return { kind: 'learning' };
   if (/\bbacktest/i.test(text) && !/\b(?:code|app|feature|function)\b/i.test(text)) return { kind: 'backtest', symbol: pick() || 'BTCUSDT' };
   if (/\b(?:paper trade|watch)\b[\s\S]{0,30}/i.test(text) && /\b(?:paper|trade|market)\b/i.test(text)) return { kind: 'watch', symbol: pick() };
   if (/\b(?:swing (?:highs?|lows?)|entry points?|entries|candlestick|scan|analy[sz]e)\b/i.test(text) && /\b(?:chart|market|stock|crypto|bitcoin|btc|eth|ethereum|solana|s&p|nasdaq|dow|swing|entry|entries|candlestick|ticker|price action)\b/i.test(text)) {
