@@ -692,6 +692,8 @@ test('quota jobs use bounded exponential backoff and dead-letter after three ret
     setAlarm: async value => { alarmAt = value; }, deleteAlarm: async () => { alarmAt = null; },
   } }, { CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { calls++; throw new Error('429 busy'); } } });
   saved.set('che', { jobs: [{ id: 'job', prompt: 'Draft a guide', status: 'queued' }], devices: {}, memories: [] });
+  // Paper trading just ticked, so its hourly alarm is later than the retry.
+  saved.set('trading_paper_book', { last_tick: new Date().toISOString() });
   const before = Date.now();
   await state.processJobs();
   let job = saved.get('che').jobs[0];

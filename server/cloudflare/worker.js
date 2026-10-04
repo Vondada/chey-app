@@ -34,7 +34,7 @@ import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry 
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
-import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
+import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
@@ -49,7 +49,7 @@ import { lastSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, siteUrl
 import { changeHistoryIntent, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
-import { STARRED_LIBRARY, describeTopicStudyStart, matchTopicSections, namedRepoStudyIntent, starredLibraryIntent, readTutorial, readmeSections, sectionTutorials, studyBatchIntent, topicBuildRequest, topicTitles, wantsSerialStudy } from './topic_study.js';
+import { describeTopicStudyStart, starredStudyTargets, matchTopicSections, namedRepoStudyIntent, starredLibraryIntent, readTutorial, readmeSections, sectionTutorials, studyBatchIntent, topicBuildRequest, topicTitles, wantsSerialStudy } from './topic_study.js';
 import { buildCollaborationPacket, collaborationIntent, collaborationSessionId, parallelPreference, planParallelLanes, statusIntent } from './collaboration.js';
 import { consultEngine, consultIntent, roundTable, shareIntent, speakConsult, speakRoundTable } from './ai_consult.js';
 import { markOwnerSeen, readArchive as flagstaffArchive, unreadIncoming } from './web_mailbox.js';
@@ -2870,6 +2870,8 @@ export class CheState extends DurableObject {
     if (flagstaffInitialized && await flagstaffOpen(this.ctx.storage)) times.push(Date.now() + 30_000);
     const outboxPending = await Promise.resolve().then(() => this.ctx.storage.get('web_mailbox_outbox')).catch(() => null);
     if (Array.isArray(outboxPending) && outboxPending.some((m) => m.state !== 'failed')) times.push(Date.now() + 60_000);
+    // Paper trading learns every hour (deterministic, no AI tokens, no money).
+    times.push(Math.max(Date.now() + 250, await nextTradingTickAt(this.ctx.storage).catch(() => Date.now() + 3_600_000)));
     if (times.length) await this.ctx.storage.setAlarm(Math.min(...times));
   }
 
@@ -4400,7 +4402,7 @@ export class CheState extends DurableObject {
       }
       if (path === '/api/trading/paper' && request.method === 'GET') {
         const book = await readBook(this.ctx.storage);
-        return json({ ...book, summary: speakBook(book), strategies: Object.fromEntries(Object.entries(STRATEGIES).map(([id, st]) => [id, { name: st.name, about: st.about }])) });
+        return json({ ...book, summary: speakBook(book), learning: speakLearning(book), strategies: Object.fromEntries(Object.entries(STRATEGIES).map(([id, st]) => [id, { name: st.name, about: st.about }])) });
       }
       if (path === '/api/trading/paper' && request.method === 'POST') {
         if (body.action === 'watch') return json(await watchSymbol(this.ctx.storage, body.symbol));
@@ -5962,14 +5964,18 @@ export class CheState extends DurableObject {
         // "Study <repo>: these topics, then implement them": real reading of
         // the reference first, one topic at a time, before any coding.
         if (ownerDevice && starredLibraryIntent(message)) {
-          const refs = (await Promise.all(STARRED_LIBRARY.map((full_name) => inspectReferenceRepo(this.env, { full_name }, fetch, { allowStudyOnly: true, readmeChars: 60_000 })
+          const live = await listOwnerStarredRepos(this.keyEnv || this.env, fetch, { limit: 100 }).catch(() => null);
+          const targets = starredStudyTargets(live);
+          if (targets.live && !targets.names.length) return ndjsonReply('GitHub shows no starred repositories on your account, sir. Nothing was started.', { source: 'che_topic_study', ok: true });
+          const refs = (await Promise.all(targets.names.map((full_name) => inspectReferenceRepo(this.env, { full_name }, fetch, { allowStudyOnly: true, readmeChars: 60_000 })
             .then((r) => (r?.error ? null : { full_name: r.full_name, license: r.license, license_name: r.license_name, description: r.description, stars: r.stars, reusable: r.reusable }))
             .catch(() => null)))).filter(Boolean);
           if (!refs.length) return ndjsonReply('I could not reach GitHub to read your starred repositories, sir. Nothing was started.', { source: 'che_topic_study', ok: false });
           const study = await this.startRepoStudy(refs);
           const studyOnly = refs.filter((r) => !r.reusable).map((r) => r.full_name.split('/')[1]);
           return ndjsonReply(
-            `${study.deduplicated ? 'That study is already running' : `I started repository study job ${study.job.id.slice(0, 8)}`} on ${refs.length} of your ${STARRED_LIBRARY.length} starred repositories, sir.`
+            `${study.deduplicated ? 'That study is already running' : `I started repository study job ${study.job.id.slice(0, 8)}`} on ${refs.length} of your ${targets.total} starred repositories${targets.names.length < targets.total ? ` (the ${targets.names.length} newest)` : ''}, sir.`
+            + (targets.live ? '' : ' I could not read your live GitHub stars, so I used my saved list.')
             + (studyOnly.length ? ` These are study-only because of their licenses, so I learn from them without copying: ${studyOnly.join(', ')}.` : ''),
             { source: 'che_topic_study', repository_research: true, background_job_ids: [study.job.id] },
           );
@@ -6599,6 +6605,10 @@ export class CheState extends DurableObject {
           if (trade.kind === 'book') {
             const book = await paperTick(this.ctx.storage).catch(() => null) || await readBook(this.ctx.storage);
             return ndjsonReply(speakBook(book), { source: 'che_trading' });
+          }
+          if (trade.kind === 'learning') {
+            const book = await paperTick(this.ctx.storage).catch(() => null) || await readBook(this.ctx.storage);
+            return ndjsonReply(speakLearning(book), { source: 'che_trading' });
           }
           if (trade.kind === 'watch') {
             const added = await watchSymbol(this.ctx.storage, trade.symbol);

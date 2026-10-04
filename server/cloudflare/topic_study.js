@@ -28,6 +28,19 @@ export const STARRED_LIBRARY = [
   'codecrafters-io/build-your-own-x',
 ];
 
+// What "study my starred repos" reads: the owner's live GitHub stars, newest
+// first (archived ones skipped), so every new star is included. The list
+// above is only the fallback when GitHub cannot be read.
+export function starredStudyTargets(live, cap = 25) {
+  // Reached GitHub (even with zero stars) means live; only an error falls back.
+  const fromGitHub = Boolean(live) && !live.error && Array.isArray(live.repos);
+  const names = fromGitHub
+    ? live.repos.filter((r) => r?.full_name && !r.archived).map((r) => r.full_name)
+    : STARRED_LIBRARY;
+  const unique = [...new Map(names.map((name) => [name.toLowerCase(), name])).values()];
+  return { names: unique.slice(0, cap), total: unique.length, live: fromGitHub };
+}
+
 const REPO_ALIASES = [
   [/\bbuild[\s-]*your[\s-]*own[\s-]*(?:x|ex)\b/i, 'codecrafters-io/build-your-own-x'],
   [/\bflutter[\s_-]*scene\b/i, 'bdero/flutter_scene'],
