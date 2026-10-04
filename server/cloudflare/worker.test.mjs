@@ -1120,3 +1120,42 @@ test('every owner chat turn becomes a brain memory after the reply', async () =>
   const paged = await (await send('/api/brain/memories', 'GET', {}, token)).json();
   assert.equal(paged.total, 1);
 });
+
+test('CHE remembers War Room meetings when the owner asks about them', async () => {
+  const saved = new Map();
+  const prompts = [];
+  const env = { CHE_PAIR_CODE: '123456', AI: { run: async (_model, input) => { prompts.push(JSON.stringify(input?.messages || input)); return { response: 'The team chose the opening-range breakout, sir.' }; } } };
+  const storage = {
+    get: (key) => saved.get(key),
+    put: (key, value) => {
+      if (typeof key === 'object') for (const [k, v] of Object.entries(key)) saved.set(k, v);
+      else saved.set(key, value);
+    },
+    list: async ({ prefix = '', reverse = false, limit = Infinity } = {}) => {
+      let keys = [...saved.keys()].filter((k) => k.startsWith(prefix)).sort();
+      if (reverse) keys.reverse();
+      return new Map(keys.slice(0, limit).map((k) => [k, saved.get(k)]));
+    },
+    setAlarm: async () => {},
+  };
+  const state = new CheState({ storage, waitUntil: () => {} }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, method = 'GET', body = {}, token = '') => worker.fetch(
+    new Request(`https://che.example${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
+    }), env,
+  );
+  const token = (await (await send('/api/pair', 'POST', { code: '123456' })).json()).device_token;
+  const data = saved.get('che');
+  data.meetings = [{ id: 'wr1', objective: 'Choose the MES paper strategy', status: 'complete', board: [
+    { from: 'Atlas', text: 'Opening-range breakout backtests best on MES.', at: '2026-10-04T10:00:00Z' },
+    { from: 'CHE', kind: 'synthesis', text: 'Final plan: opening-range breakout on MES, paper trading only.', at: '2026-10-04T10:05:00Z' },
+  ] }];
+  saved.set('che', data);
+  const reply = await send('/api/chat', 'POST', { message: 'What did the War Room decide about the MES strategy?' }, token);
+  assert.equal(reply.status, 200);
+  const text = await reply.text();
+  assert.ok(prompts.some((p) => p.includes('REMEMBERED CONVERSATIONS') && p.includes('opening-range breakout on MES')), 'the meeting reached her prompt');
+});
