@@ -1328,3 +1328,31 @@ test('autonomy: when CHE cannot open the PR herself she says so and the reviewed
     globalThis.fetch = realFetch;
   }
 });
+
+test('"Create the PR. Then fix the previous job that failed." opens the PR path, never a recovery coding run', async () => {
+  const saved = new Map();
+  let aiCalls = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ message: 'Bad credentials' }), { status: 401 });
+  try {
+    // OpenCode runtime on: a coding route would hand the raw message to the runner.
+    const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_CODING_RUNTIME: 'opencode', AI: { run: async () => { aiCalls++; return { response: 'x' }; } } };
+    const state = new CheState({ storage: { get: async (k) => saved.get(k), put: async (k, v) => { saved.set(k, v); }, delete: async (k) => saved.delete(k), setAlarm: async () => {} } }, env);
+    env.CHE_STATE = { getByName: () => state };
+    const send = (path, method = 'GET', body = {}, token = '') => worker.fetch(new Request(`https://che.example${path}`, {
+      method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
+    }), env);
+    const token = (await (await send('/api/pair', 'POST', { code: '123456' })).json()).device_token;
+    saved.set('che_failed_engineering', { request: 'old failed job', failed_strategies: [], fingerprints: [], outcomes: [] });
+    saved.set('pending_self_update', { proposal: { summary: 'War Room table', expected_base_sha: 'x', files: [{ path: 'lib/a.dart', content: 'x' }] }, request: 'r', reviewed_at: new Date().toISOString() });
+    aiCalls = 0;
+    const text = await (await send('/api/chat', 'POST', { message: 'Create the PR. Then fix the previous job that failed.' }, token)).text();
+    assert.equal(aiCalls, 0, 'no coding/recovery run was started');
+    assert.equal(saved.has('che_runtime_last_session') || saved.has('che_runtime_last_fallback'), false, 'no OpenCode coding session was attempted');
+    assert.doesNotMatch(text, /recovering|recovery pass/i);
+    assert.match(text, /pull request|GitHub/i);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

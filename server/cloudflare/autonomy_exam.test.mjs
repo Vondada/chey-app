@@ -75,3 +75,23 @@ test('level 5 faults are real: CHE recovers from a truncated answer and a broken
   assert.ok(new Set(out.diagnostics.outcomes.map((o) => o.round)).size <= 3);
   assert.match(out.proposal.files[0].content, /new label/);
 });
+
+test('voice sync: every new owner-facing autonomy/recovery line follows CHE\'s voice rules (sir, speakable, no "tap", no code)', async () => {
+  const { honestFailureMessage } = await import('./self_development.js');
+  const { ownerEngineeringMessage, FAILURE_CLASS } = await import('./recovery_policy.js');
+  const { verifiedStatusText, verifiedState } = await import('./truth_layer.js');
+  const lines = [
+    honestFailureMessage({ outcomes: [{ outcome: 'missing_anchor' }], genuinePasses: 3, feedback: 'In lib/a.dart, the "find"' }),
+    honestFailureMessage({ outcomes: [{ outcome: 'review_rejected' }], genuinePasses: 2 }),
+    honestFailureMessage({ budgetStop: true, genuinePasses: 1 }),
+    ownerEngineeringMessage(FAILURE_CLASS.INTERNAL),
+    speakExamResults({}),
+    speakExamResults({ 1: gradeLevel(AUTONOMY_EXAM[0], { status: 422, detail: 'x', diagnostics: { outcomes: [] } }) }),
+    verifiedStatusText(verifiedState([], [], { pendingProposal: { summary: 'War Room table' } })),
+  ];
+  for (const line of lines) {
+    assert.match(line, /\bsir\b/, line);
+    assert.doesNotMatch(line, /\btap\b|```|As an AI/i, line);
+    assert.ok(line.length <= 700, `speakable length: ${line.length}`);
+  }
+});

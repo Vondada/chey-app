@@ -184,3 +184,28 @@ test('an asset loaded by a built path is never called dead', async () => {
   assert.equal(g.files.find((f) => f.path === 'assets/rooms/garden.html').live, null);
   assert.deepEqual(g.dead, []);
 });
+
+test('liveness follows barrels, conditional imports, part files and dynamic import(); test-only code is not live', async () => {
+  const files = {
+    'lib/main.dart': "import 'api.dart';\nimport 'voice_stub.dart' if (dart.library.js_interop) 'voice_web.dart';\npart 'home/send.dart';\nvoid main() {}\n",
+    'lib/api.dart': "export 'src/client.dart';\n",
+    'lib/src/client.dart': 'class ApiClient {}\n',
+    'lib/voice_stub.dart': 'void speak() {}\n',
+    'lib/voice_web.dart': 'void speak() {}\n',
+    'lib/home/send.dart': "part of '../main.dart';\n",
+    'lib/only_tests.dart': 'class OnlyTests {}\n',
+    'test/only_tests_test.dart': "import 'package:app/only_tests.dart';\n",
+    'server/cloudflare/worker.js': "export default { async fetch() { const m = await import('./lazy.js'); return m.go(); } };\n",
+    'server/cloudflare/lazy.js': 'export function go() {}\n',
+  };
+  const env = { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' };
+  const live = async (seed) => {
+    const g = await traceSourceGraph(env, { index: { paths: Object.keys(files) }, request: 'probe', seeds: [seed], read: async (p) => files[p] ?? null, fetcher: fakeGitHub(files) });
+    return g.files.find((f) => f.path === seed).live;
+  };
+  assert.equal(await live('lib/src/client.dart'), true, 'through the barrel');
+  assert.equal(await live('lib/voice_web.dart'), true, 'conditional import');
+  assert.equal(await live('lib/home/send.dart'), true, 'part of main');
+  assert.equal(await live('server/cloudflare/lazy.js'), true, 'dynamic import()');
+  assert.equal(await live('lib/only_tests.dart'), false, 'only a test imports it');
+});

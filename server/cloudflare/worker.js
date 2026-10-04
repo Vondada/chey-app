@@ -6031,7 +6031,7 @@ export class CheState extends DurableObject {
         }
         // "Run the autonomy exam" (5 levels, each harder): real coding runs in
         // dry-run mode, graded deterministically. "Autonomy exam results".
-        const exam = ownerDevice ? examIntent(message) : null;
+        const exam = ownerDevice && !isExistingChangeCommand(selfUpdateChatIntent(message)) ? examIntent(message) : null;
         if (exam?.kind === 'results') {
           const results = await Promise.resolve().then(() => this.ctx.storage.get(EXAM_RESULTS_KEY)).catch(() => null);
           return ndjsonReply(speakExamResults(results || {}), { source: 'che_autonomy_exam' });
@@ -6061,7 +6061,9 @@ export class CheState extends DurableObject {
         }
         // "Diagnose/recover the failed coding job": goes to the coding
         // pipeline, which builds on the retained failure evidence.
-        if (ownerDevice && recoveryRequestIntent(message) && (await this.ctx.storage.get(FAILED_ENGINEERING_KEY).catch(() => null))?.request) {
+        // A command about the existing change ("Create the PR. Then fix the
+        // previous job…") is that command first; it never becomes a recovery run.
+        if (ownerDevice && !isExistingChangeCommand(selfUpdateChatIntent(message)) && recoveryRequestIntent(message) && (await this.ctx.storage.get(FAILED_ENGINEERING_KEY).catch(() => null))?.request) {
           return this.selfDevelopmentReply(message, { vectorRecall: {} });
         }
         // "What changed?": only real, recorded updates are read back.

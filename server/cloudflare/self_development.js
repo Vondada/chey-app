@@ -689,6 +689,11 @@ export function codeReferences(path, source, allPaths) {
     }
     return clean.join('/');
   };
+  // Dynamic import('./x.js') and Dart conditional imports (if (...) 'x.dart').
+  for (const m of text.matchAll(/\bimport\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)|\bif\s*\([^)]*\)\s*['"]([^'"]+\.dart)['"]/g)) {
+    const target = resolve(m[1] || m[2]);
+    if (allPaths.has(target)) refs.add(target);
+  }
   for (const m of text.matchAll(/^\s*part\s+(?:of\s+)?['"]([^'"]+)['"]/gm)) {
     const target = resolve(m[1]);
     if (allPaths.has(target)) refs.add(target);
