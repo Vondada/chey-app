@@ -15,7 +15,7 @@ CHE (Cognitive Horizon Engine) is the owner's voice-first personal AI.
   and GitHub self-development.
 - **Engines:** free engines first (Workers AI, Groq, Cerebras, Gemini, Mistral,
   GitHub Models, Hugging Face, OpenRouter and others), rotated by health and daily
-  limits. Paid engines stay off unless `CHE_ALLOW_PAID_MODELS=true`.
+  limits. Paid engines stay off unless `CHE_ALLOW_PAID_AI` is set to `1`/`true`.
 
 ## Her principles (the owner's standing rules)
 1. Voice first, as if the owner is blind: everything works by voice or typing,
