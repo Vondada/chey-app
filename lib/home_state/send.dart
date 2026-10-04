@@ -447,6 +447,11 @@ extension _CheHomeSend on _CHEHomeState {
       return;
     }
 
+    // Brain space: "take me inside", "show my research memories", "find my
+    // memory about …", "open this memory", "expand this cluster", "back out".
+    final brainCommand = _pendingAttachment == null ? CheBrainCommand.parse(message) : null;
+    if (brainCommand != null && await _runBrainCommand(message, brainCommand)) return;
+
     // "show the agent conversations", "open group chats", "what did the
     // agents say": every AI/agent conversation as group chats.
     if (_pendingAttachment == null &&
@@ -661,6 +666,11 @@ extension _CheHomeSend on _CHEHomeState {
       Future<void>.delayed(const Duration(milliseconds: 1400), () {
         if (mounted) _set(() => _justCompleted = false);
       });
+      // The Worker turns this exchange into a brain memory right after the
+      // reply; fetch it so the new neuron appears in the Brain in real time.
+      Future<void>.delayed(const Duration(milliseconds: 2500), () {
+        if (mounted) unawaited(_loadAgentState(silent: true));
+      });
 
       if (stopped) {
         replySpeech?.cancel();
@@ -794,6 +804,42 @@ extension _CheHomeSend on _CHEHomeState {
         _scrollController.position.maxScrollExtent,
       );
     });
+  }
+
+  /// Returns false when the command needs the Brain on screen and it is not,
+  /// so ordinary phrases ("back out") fall through to other handlers.
+  Future<bool> _runBrainCommand(String message, CheBrainCommand command) async {
+    const needsBrainOnScreen = {CheBrainAction.backOut, CheBrainAction.openSelected, CheBrainAction.expand, CheBrainAction.collapse};
+    var space = CheBrainSpaceController.current;
+    if (space == null) {
+      // Off the Brain screen only explicit brain/memory phrases open it, so
+      // "go deeper" or "overview" in ordinary chat still reach CHE's AI.
+      if (needsBrainOnScreen.contains(command.action) || !RegExp(r'\b(?:brain|memor)', caseSensitive: false).hasMatch(message)) return false;
+      if (_brainCommandBusy) return true;
+      _brainCommandBusy = true;
+      if (mounted) _set(() => controller.clear());
+      // The hub may be open on another tab: close it, then open the Brain.
+      if (_assistantHubOpen && mounted) Navigator.of(context).pop();
+      _openAssistantHub(tab: 0);
+      for (var i = 0; i < 12 && CheBrainSpaceController.current == null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      }
+      space = CheBrainSpaceController.current;
+      _brainCommandBusy = false;
+    } else if (mounted) {
+      _set(() => controller.clear());
+    }
+    final reply = space == null
+        ? 'I opened your brain, sir, but it has no memories to show yet.'
+        : space.execute(command);
+    HapticFeedback.selectionClick();
+    if (mounted) {
+      _set(() => messages
+        ..add({'role': 'user', 'text': message})
+        ..add({'role': 'assistant', 'text': reply}));
+    }
+    await speakText(reply, record: false);
+    return true;
   }
 
   void _openConversations() {

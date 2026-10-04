@@ -437,6 +437,10 @@ extension _CheHomeSecurity on _CHEHomeState {
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
+      conversationMemories = ((data['conversation_memories'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
       brainLinks = brainLinkData
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
