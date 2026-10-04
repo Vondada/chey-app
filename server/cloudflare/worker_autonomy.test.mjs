@@ -1218,4 +1218,10 @@ test('review: a job waiting on its retry backoff blocks duplicates past 30 minut
   saved.set('che', { jobs: [{ id: 'run', kind: 'self_development', status: 'running', attempts: 1, prompt: 'p', created_at: tenMinutesAgo, updated_at: tenMinutesAgo }], devices: {}, memories: [] });
   await state.processJobs();
   assert.equal(saved.get('che').jobs[0].status, 'running', 'a 10-minute coding run is still in flight, not requeued');
+  // The watchdog alarm is set for when that run would count as interrupted.
+  const alarms = [];
+  const watched = new CheState({ storage: storageFor(saved, alarms) }, { CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'x' }) } });
+  await watched.scheduleWork();
+  const due = Date.parse(tenMinutesAgo) + 20 * 60_000;
+  assert.ok(alarms.some((t) => t >= due && t <= due + 5000), `alarm at stale deadline, got ${alarms}`);
 });

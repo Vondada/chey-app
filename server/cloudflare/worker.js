@@ -980,6 +980,11 @@ export function busyError(error) {
 // that were interrupted by a Worker restart), so a job that keeps crashing the
 // isolate cannot be re-run forever.
 export const MAX_JOB_ATTEMPTS = 4;
+// How long a "running" job may go without an update before it counts as
+// interrupted. Coding jobs may run up to their 15-minute engineering budget.
+export function jobStaleMs(job) {
+  return job?.kind === 'self_development' ? 20 * 60_000 : 300000;
+}
 export const MAX_JOB_RETRIES = 3;
 const JOB_DEDUPE_MS = 30 * 60_000;
 
@@ -2769,6 +2774,10 @@ export class CheState extends DurableObject {
     if (data.autonomy) {
       if (data.meetings.some(m => ['drafting', 'cross_check', 'synthesizing'].includes(m.status))) times.push(Date.now() + 250);
     }
+    // Watchdog: revisit a running job when it would count as interrupted, so
+    // one cut off by a Worker eviction is never left "running" forever.
+    times.push(...data.jobs.filter((j) => j.status === 'running')
+      .map((j) => Math.max(Date.now() + 250, (Date.parse(j.updated_at) || Date.now()) + jobStaleMs(j) + 1000)));
     // While Flagstaff is open, do one cheap GitHub-head check every 30 seconds.
     // The AI only runs when a genuinely new message addressed to CHE appears.
     const flagstaffInitialized = Boolean(await this.ctx.storage.get('web_mailbox_code'));
@@ -8055,10 +8064,7 @@ export class CheState extends DurableObject {
       // A job left "running" for 5 minutes was interrupted (Worker restart,
       // isolate eviction, CPU limit). It is requeued only while it still has
       // attempts left; otherwise it is dead-lettered instead of looping.
-      // Coding jobs may legitimately run up to their 15-minute engineering
-      // budget; only after that are they treated as interrupted.
-      const staleMs = job.kind === 'self_development' ? 20 * 60_000 : 300000;
-      if (job.status === 'running' && Date.parse(job.updated_at) <= now - staleMs) {
+      if (job.status === 'running' && Date.parse(job.updated_at) <= now - jobStaleMs(job)) {
         const attempts = Number(job.attempts || 0);
         if (attempts >= MAX_JOB_ATTEMPTS) {
           Object.assign(job, {
