@@ -73,22 +73,107 @@ function modelText(answer) {
   return String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim();
 }
 
-export function jsonObject(text) {
+// Engineers write Dart, so their JSON often carries `\$` / `\'` escapes, raw
+// newlines or tabs inside code strings, and trailing commas. Each is illegal
+// JSON but the intent is unambiguous; repairing it keeps a correct edit from
+// being thrown away as "not valid JSON". Truncated output is never completed.
+export function repairJsonText(text) {
+  const src = String(text || '');
+  let out = '';
+  let inString = false;
+  for (let i = 0; i < src.length; i += 1) {
+    const ch = src[i];
+    if (!inString) {
+      if (ch === '"') inString = true;
+      if (ch === ',') {
+        let j = i + 1;
+        while (j < src.length && /\s/.test(src[j])) j += 1;
+        if (src[j] === '}' || src[j] === ']') continue;
+      }
+      out += ch;
+      continue;
+    }
+    if (ch === '\\') {
+      const next = src[i + 1];
+      if (next === undefined) { out += '\\\\'; continue; }
+      if ('"\\/bfnrt'.includes(next)) { out += ch + next; i += 1; continue; }
+      if (next === 'u' && /^[0-9a-fA-F]{4}$/.test(src.slice(i + 2, i + 6))) { out += ch + next; i += 1; continue; }
+      // Not a JSON escape (Dart `\$`, `\'`, regex `\d`): keep it literally.
+      out += '\\\\';
+      continue;
+    }
+    if (ch === '"') { inString = false; out += ch; continue; }
+    if (ch === '\n') { out += '\\n'; continue; }
+    if (ch === '\r') { out += '\\r'; continue; }
+    if (ch === '\t') { out += '\\t'; continue; }
+    const code = ch.charCodeAt(0);
+    if (code < 0x20) { out += `\\u${code.toString(16).padStart(4, '0')}`; continue; }
+    out += ch;
+  }
+  return out;
+}
+
+function jsonCandidates(text) {
   const raw = String(text || '').trim();
-  if (!raw) return null;
+  if (!raw) return [];
   const candidates = [raw];
   const fenced = /^\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`$/i.exec(raw);
   if (fenced) candidates.push(fenced[1].trim());
+  const inner = /\`\`\`(?:json)?\s*\n([\s\S]*?)\n\s*\`\`\`/i.exec(raw);
+  if (inner) candidates.push(inner[1].trim());
   const first = raw.indexOf('{');
   const last = raw.lastIndexOf('}');
   if (first >= 0 && last > first) candidates.push(raw.slice(first, last + 1));
-  for (const candidate of [...new Set(candidates)]) {
-    try {
-      const parsed = JSON.parse(candidate);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
-    } catch (_) {}
+  return [...new Set(candidates)];
+}
+
+function parseObject(candidate) {
+  try {
+    const parsed = JSON.parse(candidate);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+  } catch (_) {}
+  return null;
+}
+
+export function jsonObject(text) {
+  const candidates = jsonCandidates(text);
+  for (const candidate of candidates) {
+    const parsed = parseObject(candidate);
+    if (parsed) return parsed;
+  }
+  for (const candidate of candidates) {
+    const parsed = parseObject(repairJsonText(candidate));
+    if (parsed) return parsed;
   }
   return null;
+}
+
+// Says concretely why an answer did not parse, so the next engineer pass
+// fixes that instead of guessing.
+export function jsonProblem(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return 'Your last answer was empty. Return only the JSON object, with small edits.';
+  const start = raw.indexOf('{');
+  if (start < 0) return 'Your last answer contained no JSON object. Return only the JSON object, with small edits.';
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < raw.length; i += 1) {
+    const ch = raw[i];
+    if (inString) {
+      if (ch === '\\') i += 1;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{' || ch === '[') depth += 1;
+    else if (ch === '}' || ch === ']') depth -= 1;
+  }
+  if (depth > 0 || inString) {
+    return 'Your last answer was cut off before the JSON closed. Return fewer, smaller edits (find 1-8 lines each, at most 4 edits) so the whole object fits.';
+  }
+  let detail = '';
+  try { JSON.parse(repairJsonText(raw.slice(start, raw.lastIndexOf('}') + 1))); } catch (error) { detail = String(error?.message || '').slice(0, 120); }
+  return `Your last answer was not valid JSON${detail ? ` (${detail})` : ''}. Return only the JSON object: escape every " and \\ inside strings as \\" and \\\\, and keep edits small.`;
 }
 
 // ─── Evidence packing ────────────────────────────────────────────────────────
@@ -1246,8 +1331,8 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
           return null;
         }
         if (res.failure === 'budget') { record(round, member, 'budget_exhausted'); return null; }
-        feedbacks[i] = 'Your last answer was not valid JSON. Return only the JSON object, with small edits.';
-        record(round, member, 'invalid_json');
+        feedbacks[i] = jsonProblem(res.raw);
+        record(round, member, 'invalid_json', feedbacks[i]);
         return null;
       }
       const answer = res.value;
