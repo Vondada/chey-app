@@ -166,7 +166,7 @@ test('paper ticks keep learning, journal discoveries and add index futures once'
     return new Response('Date,Open,High,Low,Close,Volume\n' + c.map((k) => [k.t, k.o, k.h, k.l, k.c, 1].join(',')).join('\n'), { status: 200 });
   };
   let book;
-  book = await paperTick(storage, { fetcher, force: true, now: Date.UTC(2026, 9, 4, 0) }); // one tick learns everything;
+  book = await paperTick(storage, { fetcher, force: true, now: Date.UTC(2026, 9, 4, 0) }); // one tick learns everything
   assert.deepEqual(book.watch, ['BTCUSDT', 'es.f', 'nq.f']);
   for (const sym of book.watch) assert.equal(book.lab[sym].tested.length, SKILL_IDS.length);
   assert.equal(book.discoveries.length, book.watch.reduce((n, sym) => n + book.lab[sym].found.length, 0));
