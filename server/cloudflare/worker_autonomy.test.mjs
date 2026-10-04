@@ -1288,3 +1288,45 @@ test('trading desk: the NinjaTrader sign-in page is public but only accepts CHE\
   assert.match(await res.text(), /invalid or expired/);
   assert.equal(saved.has('tradovate_auth'), false);
 });
+
+test('autonomy exam runs its levels back to back: each finished level starts the next at once', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' };
+  const { state, chat } = await pairedChat(env, saved);
+  const say = async (m) => replyFromNdjson(await (await chat(m)).text());
+  assert.match(await say('CHE, run the autonomy exam'), /level 1, level 2, level 3, level 4, level 5.*each starting as soon as the one before finishes/);
+  const examJobs = () => saved.get('che').jobs.filter((j) => j.kind === 'autonomy_exam');
+  assert.equal(examJobs().length, 1, 'only the first level is queued');
+  assert.equal(examJobs()[0].exam_level, 1);
+  assert.deepEqual(examJobs()[0].exam_next, [2, 3, 4, 5]);
+  assert.ok(!examJobs()[0].retry_at, 'no fixed wait');
+  assert.match(await say('run the autonomy exam'), /already running.*level 1, then 2, 3, 4, 5/, 'no second chain');
+  // Engines busy: the level waits to retry and holds the rest back.
+  const ran = [];
+  state.runAutonomyExamJob = async (job) => { ran.push(job.exam_level); return { id: job.id, status: 'queued', retry_at: Date.now() - 1, result: '', error: 'busy' }; };
+  await state.processJobs();
+  assert.equal(examJobs().length, 1, 'a retrying level does not start the next');
+  // Each finished level (pass or fail) starts the next immediately.
+  state.runAutonomyExamJob = async (job) => { ran.push(job.exam_level); return { id: job.id, status: job.exam_level === 3 ? 'failed' : 'complete', result: 'graded', owner_message: 'graded', error: '' }; };
+  for (let i = 0; i < 6; i++) await state.processJobs();
+  assert.deepEqual(ran, [1, 1, 2, 3, 4, 5]);
+  assert.equal(examJobs().filter((j) => ['queued', 'running'].includes(j.status)).length, 0, 'the chain ends after level 5');
+  // A level dead-lettered by the stale sweep (interrupted too often) still
+  // starts the next level instead of stranding the rest of the exam.
+  assert.match(await say('run the autonomy exam'), /started the autonomy exam/);
+  const data = saved.get('che');
+  const first = data.jobs.find((j) => j.kind === 'autonomy_exam' && j.status === 'queued');
+  const earlier = new Set(data.jobs.map((j) => j.id));
+  Object.assign(first, { status: 'running', attempts: 99, updated_at: new Date(Date.now() - 3600_000).toISOString() });
+  saved.set('che', data);
+  state.runAutonomyExamJob = async (job) => ({ id: job.id, status: 'complete', result: 'graded', owner_message: 'graded', error: '' });
+  await state.processJobs();
+  const after = saved.get('che').jobs.filter((j) => j.kind === 'autonomy_exam');
+  assert.equal(after.find((j) => j.id === first.id).status, 'failed');
+  assert.ok(after.some((j) => j.exam_level === 2 && !earlier.has(j.id)), 'level 2 started after the dead-lettered level 1');
+  for (let i = 0; i < 6; i++) await state.processJobs();
+  assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'autonomy_exam' && ['queued', 'running'].includes(j.status)).length, 0);
+  // A single level runs alone.
+  assert.match(await say('run autonomy exam level 3'), /started the autonomy exam, sir: level 3\./);
+  assert.deepEqual(examJobs().find((j) => j.status === 'queued').exam_next, []);
+});
