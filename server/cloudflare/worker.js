@@ -39,10 +39,11 @@ import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEnginee
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
 import { prepareSelfUpdate, recordLesson } from './self_development.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
-import { KEY_PROVIDERS, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
+import { KEY_PROVIDERS, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { autoImproveScan, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
+import { webAppPage } from './web_app.js';
 import { lastSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, siteUrl, speakSiteResult, writeSite } from './site_builder.js';
 import { changeHistoryIntent, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
@@ -140,6 +141,10 @@ import {
   createPersonalTenant, createEnrollment, consumeEnrollment, addNotification,
   notificationsFor, markNotificationRead, createCoreRequest, coreRequestsFor,
   coreRules, platformView,
+  deviceCommandIntent,
+  deviceId,
+  findDevice,
+  revokeDevice,
 } from './che_platform.js';
 import {
   chatModelAttempts,
@@ -3667,6 +3672,14 @@ export class CheState extends DurableObject {
       if (request.method === 'GET' && path === '/api/platform') {
         return json(platformView(data, activeTenant.id, tokenHash));
       }
+      // Owner removes a lost or retired device from any other device.
+      if (request.method === 'POST' && path === '/api/platform/devices/revoke') {
+        if (activeTenant.role !== 'owner') return json({ detail: 'Only the CHE owner can remove devices.' }, 403);
+        const revoked = revokeDevice(data, body.id, { byTokenHash: tokenHash });
+        if (revoked.error) return json({ detail: revoked.error === 'cannot_revoke_current_device' ? 'That is the device you are using. Use sign out on it instead.' : 'No device with that id.' }, revoked.error === 'cannot_revoke_current_device' ? 409 : 404);
+        await this.ctx.storage.put('che', data);
+        return json({ ok: true, device: revoked.device });
+      }
       if (request.method === 'POST' && path === '/api/platform/tenants') {
         if (activeTenant.role !== 'owner') return json({ detail: 'Only the CHE owner can create another personal CHE.' }, 403);
         const tenant = createPersonalTenant(data, { name: body.name, role: body.role });
@@ -4183,7 +4196,13 @@ export class CheState extends DurableObject {
         return json({ providers: Object.entries(KEY_PROVIDERS).map(([id, p]) => ({ id, name: p.name, page: p.page, status: health[id]?.status || 'not set up', last4: health[id]?.last4 || '' })) });
       }
       if (path === '/api/keys' && request.method === 'POST') {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can add or remove AI keys.' }, 403);
         if (await isLockedDown(this.ctx.storage)) return json({ detail: 'Lockdown is on; key changes are frozen.' }, 423);
+        if (body.remove === true) {
+          const removed = await removeKey(this.ctx.storage, String(body.provider || ''));
+          if (removed.ok) await this.refreshKeyEnv();
+          return json(removed.ok ? removed : { detail: removed.detail }, removed.ok ? 200 : 422);
+        }
         const saved = await saveKey(this.ctx.storage, String(body.provider || ''), String(body.key || ''));
         return json(saved.ok ? { ok: true, provider: saved.provider, last4: saved.last4, status: saved.test.status } : { detail: saved.detail }, saved.ok ? 200 : 422);
       }
@@ -5722,6 +5741,28 @@ export class CheState extends DurableObject {
             source: 'che_site_builder', ok: true, site_id: record.id, media_url: url, media_type: 'page',
           });
         }
+        // "List my devices" / "remove my lost iPhone": owner device control
+        // from any signed-in device, read back as a numbered list.
+        const deviceCommand = ownerDevice ? deviceCommandIntent(message) : null;
+        if (deviceCommand?.kind === 'list') {
+          const devices = platformView(data, activeTenant.id, tokenHash).devices.filter((d) => !d.revoked_at);
+          const here = deviceId(data, tokenHash);
+          return ndjsonReply(devices.length
+            ? `You have ${devices.length} signed-in ${devices.length === 1 ? 'device' : 'devices'}, sir:\n${devices.map((d, i) => `${i + 1}. ${d.name}${d.profile && d.profile !== 'CHE Owner' ? ` (${d.profile})` : ''}${d.id === here ? ', this one' : ''}, last used ${String(d.last_seen_at || d.created_at || '').slice(0, 10) || 'unknown'}.`).join('\n')}\nSay "remove" and the device name to sign one out.`
+            : 'No devices are signed in, sir.', { source: 'che_devices' });
+        }
+        if (deviceCommand?.kind === 'revoke') {
+          const found = findDevice(data, deviceCommand.target);
+          if (found.length !== 1) {
+            return ndjsonReply(found.length
+              ? `${found.length} devices match "${deviceCommand.target}", sir. Say "list my devices" and then remove one by its full name.`
+              : `I could not find a signed-in device called "${deviceCommand.target}", sir. Say "list my devices" to hear their names.`, { source: 'che_devices', ok: false });
+          }
+          const revoked = revokeDevice(data, found[0][1].id, { byTokenHash: tokenHash });
+          if (revoked.error) return ndjsonReply(revoked.error === 'cannot_revoke_current_device' ? 'That is the device you are talking to me on, sir, so I did not sign it out.' : 'I could not remove that device, sir.', { source: 'che_devices', ok: false });
+          await this.ctx.storage.put('che', data);
+          return ndjsonReply(`Done, sir. ${revoked.device.name} is signed out and can no longer reach me. Your memories and settings are safe on my server.`, { source: 'che_devices', ok: true });
+        }
         // "What changed?": only real, recorded updates are read back.
         if (changeHistoryIntent(message)) {
           return ndjsonReply(speakChangeHistory(await loadChangeHistory(this.ctx.storage)), { source: 'che_change_history' });
@@ -6723,6 +6764,9 @@ export class CheState extends DurableObject {
               'CHE is the user-facing product. Never present yourself as Gemini, Cloudflare, or another provider. Models and services are replaceable internal engines behind CHE.',
               capabilityPromptLine(capabilityRegistry),
               'MATURE TOOL USE: infer the owner’s goal, then use the best available capability without waiting for the owner to name a model, provider, agent, or tool. Search/retrieve when knowledge may be current or missing. Use stored owner context only when relevant. For independent complex subtasks, parallelize only when it materially helps.',
+              activeTenant?.role === 'parental_guidance'
+                ? 'PARENTAL GUIDANCE PROFILE (this person is a child or teen the owner supervises; these rules override other style rules): keep every answer age-appropriate and kind; no sexual, graphic violent, drug or gambling content; for self-harm or danger, respond with care, tell them to talk to a parent or trusted adult now and give the 988 Suicide & Crisis Lifeline (call or text 988 in the US); never help buy, order, subscribe, pay, sign up for accounts, share their name, address, school, photos or location, or meet or message strangers; help with homework by teaching, not doing it for them.'
+                : '',
               'HONESTY (highest priority): never claim an action happened unless a tool in this turn returned success, and give the receipt (link, ID or result) when it did. Label anything unverified as unverified. Say "I don\u2019t know" or "I can\u2019t do that yet" instead of guessing. Never invent plugins, settings, panels, features, services, outages, prices, sales or numbers.',
               'CONTEXT PRIORITY: current owner message > verified tool results from this turn > active conversation > explicit stored/retrieved owner context > cached/general knowledge. The newest owner correction wins conflicts. Short follow-ups continue the most recent unresolved subject/action; do not restart from scratch.',
               'COGNITION LOOP: understand the goal, recall relevant context, select the real capability/tool, act when available, verify the result, then answer. Do not repeat an earlier answer merely because it is cached. Do not call a task complete without a real result.',
@@ -8249,6 +8293,8 @@ export default {
     if (path === '/health') return json({ ok: true, agent: 'CHE cloud', ...runtimeVersion(env) });
     if (path === '/health/engines') return env.CHE_STATE.getByName('owner').fetch(request);
     if (path === '/live-voice') return liveVoicePage();
+    // CHE in any browser (lost phone, laptop, family invite links).
+    if (path === '/app' || path === '/app/') return webAppPage();
     return env.CHE_STATE.getByName('owner').fetch(request);
   },
 };

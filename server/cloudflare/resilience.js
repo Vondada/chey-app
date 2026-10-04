@@ -101,6 +101,21 @@ export async function saveKey(storage, provider, key, fetcher = fetch) {
   return { ok: true, provider, last4: last4(clean), test };
 }
 
+// Removes a stored key; the engine rotation stops using it on the next
+// request. Keys set as Worker secrets are not touched here.
+export async function removeKey(storage, provider) {
+  const p = KEY_PROVIDERS[provider];
+  if (!p) return { ok: false, detail: 'Unknown provider.' };
+  const keys = await storedKeys(storage);
+  const had = Boolean(keys[p.env]);
+  delete keys[p.env];
+  await put(storage, STORED_KEYS, keys);
+  const health = await get(storage, HEALTH, {});
+  delete health[provider];
+  await put(storage, HEALTH, health);
+  return { ok: true, provider, removed: had };
+}
+
 export async function checkAllKeys(env, storage, fetcher = fetch) {
   const keys = await storedKeys(storage);
   const before = await get(storage, HEALTH, {});
