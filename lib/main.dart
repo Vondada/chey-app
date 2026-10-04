@@ -374,6 +374,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   bool cheSleeping = true;
 
   bool _isSending = false;
+  bool _assistantHubOpen = false;
+  bool _brainCommandBusy = false;
   bool _isSpeaking = false;
   bool _autoSentCurrentTurn = false;
   // Words held open while the owner pauses mid-thought (see microphone.dart).
@@ -1633,8 +1635,9 @@ OWNER AGENCY
         data: kit.CheTheme.dark(),
         child: Scaffold(
           backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+          // Back button only: the Brain's own compact header names it.
           appBar: AppBar(
-            title: const Text('CHE Brain'),
+            toolbarHeight: 44,
             backgroundColor: Colors.transparent,
           ),
           body: CheTwoBrainsView(

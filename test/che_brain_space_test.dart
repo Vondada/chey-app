@@ -239,6 +239,24 @@ void main() {
       }
     }
 
+    testWidgets('inside the hub (swipeable tabs) a one-finger drag orbits instead of changing tabs', (tester) async {
+      _usePhone(tester);
+      c = CheBrainSpaceController(_memories());
+      final tabs = TabController(length: 2, vsync: const TestVSync());
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body: TabBarView(controller: tabs, children: [CheBrainSpace(controller: c), const Text('Trading')]))));
+      await tester.pump();
+      final yaw = c.camera.yaw;
+      final area = tester.getRect(find.byKey(const ValueKey('che-brain-canvas')));
+      await tester.dragFrom(area.center, const Offset(-200, 0));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(tabs.index, 0);
+      expect(tabs.offset, 0);
+      expect(c.camera.yaw, isNot(closeTo(yaw, .01)));
+      await tester.pumpWidget(const SizedBox());
+      tabs.dispose();
+      c.dispose();
+    });
+
     testWidgets('one-finger drag orbits; pinch travels inside to the center; spread backs out', (tester) async {
       final area = await pumpSpace(tester);
       final yaw = c.camera.yaw;

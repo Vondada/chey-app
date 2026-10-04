@@ -552,7 +552,7 @@ class _CheTwoBrainsViewState extends State<CheTwoBrainsView> {
                         },
                         borderRadius: BorderRadius.circular(999),
                         child: Ink(
-                          height: 32,
+                          height: 44,
                           padding: const EdgeInsets.symmetric(horizontal: 14),
                           decoration: BoxDecoration(
                             color: i == _index ? CheColors.accent.withValues(alpha: 0.22) : CheColors.surface,

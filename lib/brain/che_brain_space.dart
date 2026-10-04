@@ -15,10 +15,12 @@
 //   tap a cluster orb    expand the cluster
 //   long-press + drag    grab an orb and move it (this session only)
 
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/semantics.dart';
@@ -57,6 +59,22 @@ class CheBrainSpaceController {
   double _flyT = 1;
   double _spinX = 0, _spinY = 0;
 
+  /// Label text painters, capped; evicted ones are disposed.
+  final Map<String, TextPainter> labels = {};
+
+  TextPainter label(String key, String text, double size, Color color) {
+    final k = '$key|$size';
+    final hit = labels.remove(k);
+    if (hit != null) return labels[k] = hit;
+    if (labels.length >= 240) labels.remove(labels.keys.first)?.dispose();
+    return labels[k] = TextPainter(
+      text: TextSpan(text: text, style: TextStyle(fontSize: size, color: color, fontWeight: FontWeight.w600, shadows: const [Shadow(blurRadius: 6)])),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+      ellipsis: '…',
+    )..layout(maxWidth: 200);
+  }
+
   CheBrainNode? get selected => selectedId == null ? null : layout.node(selectedId!);
   bool get flying => _flyT < 1;
 
@@ -94,12 +112,15 @@ class CheBrainSpaceController {
       moving = true;
     } else if (_spinX.abs() > .0004 || _spinY.abs() > .0004) {
       camera.rotate(_spinX, _spinY);
-      _spinX *= .9;
-      _spinY *= .9;
+      final decay = math.pow(.9, dt * 60).toDouble();
+      _spinX *= decay;
+      _spinY *= decay;
       moving = true;
     }
     _repaint();
-    return moving;
+    // Idle (nothing moving, nothing selected to pulse): the caller may stop
+    // ticking until the next interaction.
+    return moving || selectedId != null || grabbedId != null;
   }
 
   void flyTo(CheBrainCamera to) {
@@ -183,7 +204,7 @@ class CheBrainSpaceController {
         return 'There are no $category memories yet.';
       }
       c.expanded = true;
-      flyTo(CheBrainCamera(target: c.center.clone(), yaw: math.atan2(c.center.x, -c.center.z), pitch: .15, distance: 11));
+      flyTo(CheBrainCamera(target: c.center.clone(), yaw: math.atan2(-c.center.x, c.center.z), pitch: .15, distance: 11));
       _changed();
       return 'Showing your $category memories: ${c.members.length}.';
     }
@@ -194,8 +215,9 @@ class CheBrainSpaceController {
   String toggleCluster(String name, {bool? expand}) {
     final c = layout.clusters[name];
     if (c == null) return 'There is no $name cluster.';
+    focusedCluster = name;
     c.expanded = expand ?? !c.expanded;
-    if (c.expanded) flyTo(CheBrainCamera(target: c.center.clone(), yaw: math.atan2(c.center.x, -c.center.z), pitch: .15, distance: 9));
+    if (c.expanded) flyTo(CheBrainCamera(target: c.center.clone(), yaw: math.atan2(-c.center.x, c.center.z), pitch: .15, distance: 9));
     if (!c.expanded && selected?.cluster == name) {
       selectedId = null;
       cardOpen = false;
@@ -211,16 +233,43 @@ class CheBrainSpaceController {
     return 'Found it. ${select(node)}';
   }
 
-  /// Next/previous memory for VoiceOver users (most important first).
+  /// Cluster the owner last reached (VoiceOver step, tap, filter).
+  String? focusedCluster;
+
+  String focusCluster(CheBrainCluster cl) {
+    focusedCluster = cl.name;
+    selectedId = null;
+    cardOpen = false;
+    flyTo(CheBrainCamera(target: cl.center.clone(), yaw: math.atan2(-cl.center.x, cl.center.z), pitch: .15, distance: 11));
+    _changed();
+    return '${cl.name} cluster, ${cl.members.length} memories, collapsed. Say "expand this cluster" to open it.';
+  }
+
+  /// Next/previous stop for VoiceOver users: collapsed clusters first, then
+  /// visible memories, most important first.
   String step(int delta) {
-    final order = [
+    final clusters = [
+      for (final cl in layout.clusters.values)
+        if (!cl.expanded && (filter.isEmpty || filter.contains(cl.name))) cl,
+    ];
+    final nodes = [
       for (final n in layout.nodes)
         if (layout.visible(n, filter)) n,
     ]..sort((a, b) => b.dot.importance.compareTo(a.dot.importance) != 0 ? b.dot.importance.compareTo(a.dot.importance) : a.id.compareTo(b.id));
-    if (order.isEmpty) return 'No memories are visible.';
-    final i = order.indexWhere((n) => n.id == selectedId);
-    final next = order[((i < 0 ? (delta > 0 ? -1 : 0) : i) + delta) % order.length];
-    return select(next);
+    final stops = <Object>[...clusters, ...nodes];
+    if (stops.isEmpty) return 'No memories are visible.';
+    final i = stops.indexWhere((x) => x is CheBrainNode ? x.id == selectedId : (x as CheBrainCluster).name == focusedCluster && selectedId == null);
+    final next = stops[((i < 0 ? (delta > 0 ? -1 : 0) : i) + delta) % stops.length];
+    return next is CheBrainNode ? select(next) : focusCluster(next as CheBrainCluster);
+  }
+
+  String? get _targetCluster {
+    if (selected != null) return selected!.cluster;
+    if (focusedCluster != null) return focusedCluster;
+    for (final cl in layout.clusters.values) {
+      if (!cl.expanded) return cl.name;
+    }
+    return null;
   }
 
   String execute(CheBrainCommand command) => switch (command.action) {
@@ -232,10 +281,8 @@ class CheBrainSpaceController {
         CheBrainAction.clearFilter => setFilter(null),
         CheBrainAction.find => find(command.query ?? ''),
         CheBrainAction.openSelected => openSelected(),
-        CheBrainAction.expand => selected == null
-            ? 'Select a memory or say "show my research memories" first.'
-            : toggleCluster(selected!.cluster, expand: true),
-        CheBrainAction.collapse => selected == null ? 'No cluster is selected.' : toggleCluster(selected!.cluster, expand: false),
+        CheBrainAction.expand => _targetCluster == null ? 'Every cluster is already open.' : toggleCluster(_targetCluster!, expand: true),
+        CheBrainAction.collapse => _targetCluster == null ? 'No cluster is selected.' : toggleCluster(_targetCluster!, expand: false),
       };
 
   // ─── Hit testing ───────────────────────────────────────────────────────
@@ -267,6 +314,10 @@ class CheBrainSpaceController {
 
   void dispose() {
     if (identical(current, this)) current = null;
+    for (final t in labels.values) {
+      t.dispose();
+    }
+    labels.clear();
     frame.dispose();
     state.dispose();
   }
@@ -295,78 +346,133 @@ class CheBrainSpace extends StatefulWidget {
   State<CheBrainSpace> createState() => _CheBrainSpaceState();
 }
 
+/// A scale recognizer that claims the gesture the moment a finger lands, so
+/// the hub's tab swipe or the sheet's drag-to-dismiss can never steal an
+/// orbit. Tap and long-press are recognized inside it (see the state).
+class _BrainGestureRecognizer extends ScaleGestureRecognizer {
+  @override
+  void addAllowedPointer(PointerDownEvent event) {
+    super.addAllowedPointer(event);
+    resolve(GestureDisposition.accepted);
+  }
+}
+
 class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProviderStateMixin {
   late final Ticker _ticker = createTicker(_onTick);
   Duration _last = Duration.zero;
   Size _size = Size.zero;
   Offset _lastFocal = Offset.zero;
   double _lastScale = 1;
-  int _pointers = 0;
-  double _grabDepth = 0;
+  int _maxPointers = 0;
   Offset _velocity = Offset.zero;
+  // Tap / long-press detection inside the one recognizer.
+  Offset _downAt = Offset.zero;
+  double _travel = 0;
+  DateTime _downTime = DateTime.now();
+  Timer? _holdTimer;
+  double _grabDepth = 0;
+  Offset _grabOffset = Offset.zero;
+  // Large-text caption for everything CHE says here (deaf-friendly).
+  final ValueNotifier<String?> _caption = ValueNotifier<String?>(null);
+  Timer? _captionTimer;
 
   CheBrainSpaceController get c => widget.controller;
 
   @override
   void initState() {
     super.initState();
+    c.state.addListener(_wake);
     if (widget.active) {
       CheBrainSpaceController.current = c;
-      _ticker.start();
+      _wake();
     }
   }
 
   @override
   void didUpdateWidget(covariant CheBrainSpace old) {
     super.didUpdateWidget(old);
+    if (!identical(old.controller, c)) {
+      old.controller.state.removeListener(_wake);
+      c.state.addListener(_wake);
+    }
     // Voice commands reach the Brain only while it is on screen.
     if (widget.active) {
       CheBrainSpaceController.current = c;
-    } else if (identical(CheBrainSpaceController.current, c)) {
-      CheBrainSpaceController.current = null;
-    }
-    if (widget.active && !_ticker.isActive) {
-      _last = Duration.zero;
-      _ticker.start();
-    } else if (!widget.active && _ticker.isActive) {
-      _ticker.stop();
+      _wake();
+    } else {
+      if (identical(CheBrainSpaceController.current, c)) CheBrainSpaceController.current = null;
+      if (_ticker.isActive) _ticker.stop();
     }
   }
 
   @override
   void dispose() {
+    c.state.removeListener(_wake);
+    _holdTimer?.cancel();
+    _captionTimer?.cancel();
+    _caption.dispose();
     _ticker.dispose();
     if (identical(CheBrainSpaceController.current, c)) CheBrainSpaceController.current = null;
     super.dispose();
   }
 
+  /// Starts frames on interaction; they stop again when nothing moves.
+  void _wake() {
+    if (!widget.active || _ticker.isActive || !mounted) return;
+    _last = Duration.zero;
+    _ticker.start();
+  }
+
   void _onTick(Duration elapsed) {
     final dt = _last == Duration.zero ? 1 / 60 : (elapsed - _last).inMicroseconds / 1e6;
     _last = elapsed;
-    c.tick(dt.clamp(0, .05).toDouble());
+    if (!c.tick(dt.clamp(0, .05).toDouble())) _ticker.stop();
   }
 
   void _say(String text) {
-    widget.onSpeak?.call(text);
-    final view = View.maybeOf(context);
-    if (view != null) SemanticsService.sendAnnouncement(view, text, TextDirection.ltr);
+    _caption.value = text;
+    _captionTimer?.cancel();
+    _captionTimer = Timer(const Duration(seconds: 5), () => _caption.value = null);
+    if (widget.onSpeak != null) {
+      widget.onSpeak!(text);
+    } else {
+      // No CHE voice wired: VoiceOver reads it instead (never both at once).
+      final view = View.maybeOf(context);
+      if (view != null) SemanticsService.sendAnnouncement(view, text, TextDirection.ltr);
+    }
   }
 
   // ─── Gestures ──────────────────────────────────────────────────────────
 
   void _scaleStart(ScaleStartDetails d) {
     c.stop();
+    _wake();
     _lastFocal = d.localFocalPoint;
     _lastScale = 1;
-    _pointers = d.pointerCount;
     _velocity = Offset.zero;
+    if (d.pointerCount <= 1 && _maxPointers == 0) {
+      _downAt = d.localFocalPoint;
+      _downTime = DateTime.now();
+      _travel = 0;
+      _holdTimer?.cancel();
+      _holdTimer = Timer(const Duration(milliseconds: 450), _hold);
+    }
+    _maxPointers = d.pointerCount > _maxPointers ? d.pointerCount : _maxPointers;
+    if (d.pointerCount > 1) _holdTimer?.cancel();
   }
 
   void _scaleUpdate(ScaleUpdateDetails d) {
-    if (c.grabbedId != null) return;
     final delta = d.localFocalPoint - _lastFocal;
     _lastFocal = d.localFocalPoint;
-    _pointers = d.pointerCount;
+    _travel += delta.distance;
+    if (d.pointerCount > _maxPointers) _maxPointers = d.pointerCount;
+    if (_travel > 10 || d.pointerCount > 1) _holdTimer?.cancel();
+    final grabbed = c.grabbedId == null ? null : c.layout.node(c.grabbedId!);
+    if (grabbed != null) {
+      grabbed.moved = c.camera.unproject(d.localFocalPoint + _grabOffset, _grabDepth, _size);
+      c.tick(0);
+      return;
+    }
     if (d.pointerCount >= 2) {
       final step = d.scale / _lastScale;
       _lastScale = d.scale;
@@ -381,14 +487,41 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
     c.tick(0);
   }
 
-  void _scaleEnd(ScaleEndDetails d) {
-    if (_pointers <= 1 && _velocity.distance > .002) c.fling(_velocity.dx, _velocity.dy);
-    final inside = c.camera.inside;
-    if (inside && _pointers >= 2) _say('Inside my brain. Drag to look around; spread fingers apart to back out.');
+  void _scaleEnd(ScaleEndDetails d) {}
+
+  // Fingers on the canvas, counted directly: the recognizer restarts when a
+  // finger lifts mid-pinch, so its end event cannot tell the last lift.
+  int _down = 0;
+
+  void _pointerDown(PointerDownEvent e) => _down++;
+
+  void _pointerUp(PointerEvent e) {
+    _down = _down > 0 ? _down - 1 : 0;
+    if (_down == 0) _gestureFinished();
   }
 
-  void _tap(TapUpDetails d) {
-    final hit = c.hit(d.localPosition, _size);
+  void _gestureFinished() {
+    _holdTimer?.cancel();
+    final multi = _maxPointers > 1;
+    _maxPointers = 0;
+    if (c.grabbedId != null) {
+      final node = c.layout.node(c.grabbedId!);
+      c.grabbedId = null;
+      HapticFeedback.lightImpact();
+      c.state.value++;
+      if (node != null) _say('Placed ${node.dot.title}.');
+      return;
+    }
+    if (!multi && _travel < 10 && DateTime.now().difference(_downTime) < const Duration(milliseconds: 450)) {
+      _tap(_downAt);
+      return;
+    }
+    if (!multi && _velocity.distance > .002) c.fling(_velocity.dx, _velocity.dy);
+    if (multi && c.camera.inside) _say('Inside my brain. Drag to look around; spread fingers apart to back out.');
+  }
+
+  void _tap(Offset at) {
+    final hit = c.hit(at, _size);
     if (hit.cluster != null) {
       HapticFeedback.mediumImpact();
       _say(c.toggleCluster(hit.cluster!.name, expand: true));
@@ -400,15 +533,14 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
       return;
     }
     HapticFeedback.selectionClick();
-    if (node.id == c.selectedId) {
-      _say(c.openSelected());
-    } else {
-      _say(c.select(node));
-    }
+    _say(node.id == c.selectedId ? c.openSelected() : c.select(node));
   }
 
-  void _grabStart(LongPressStartDetails d) {
-    final node = c.hit(d.localPosition, _size).node;
+  /// Long-press: grab the orb under the finger. On empty space nothing is
+  /// grabbed and the drag keeps orbiting.
+  void _hold() {
+    if (_maxPointers > 1 || _travel > 10) return;
+    final node = c.hit(_downAt, _size).node;
     if (node == null) return;
     final p = c.camera.project(node.position, _size);
     if (p == null) return;
@@ -417,28 +549,14 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
     c.grabbedId = node.id;
     c.selectedId = node.id;
     _grabDepth = p.depth;
+    _grabOffset = p.offset - _lastFocal;
     c.state.value++;
     _say('Holding ${node.dot.title}. Move your finger to place it.');
   }
 
-  void _grabMove(LongPressMoveUpdateDetails d) {
-    final node = c.grabbedId == null ? null : c.layout.node(c.grabbedId!);
-    if (node == null) return;
-    node.moved = c.camera.unproject(d.localPosition, _grabDepth, _size);
-    c.tick(0);
-  }
-
-  void _grabEnd(LongPressEndDetails d) {
-    final node = c.grabbedId == null ? null : c.layout.node(c.grabbedId!);
-    c.grabbedId = null;
-    if (node == null) return;
-    HapticFeedback.lightImpact();
-    c.state.value++;
-    _say('Placed ${node.dot.title}.');
-  }
-
   @override
   Widget build(BuildContext context) {
+    final labelScale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.4).toDouble();
     return LayoutBuilder(builder: (context, constraints) {
       _size = constraints.biggest;
       return Stack(fit: StackFit.expand, children: [
@@ -450,33 +568,63 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
               return Semantics(
                 label: 'CHE brain space: ${c.layout.nodes.length} real memories in ${c.layout.clusters.length} clusters. '
                     '${sel == null ? 'Nothing selected.' : 'Selected: ${sel.dot.title}, ${sel.dot.category}.'}',
-                hint: 'Use the actions to move between memories, open one, go inside, or show the whole brain.',
+                hint: 'Use the actions to move between memories and clusters, open one, go inside, back out, or show the whole brain.',
                 customSemanticsActions: {
                   const CustomSemanticsAction(label: 'Next memory'): () => _say(c.step(1)),
                   const CustomSemanticsAction(label: 'Previous memory'): () => _say(c.step(-1)),
                   const CustomSemanticsAction(label: 'Open selected memory'): () => _say(c.openSelected()),
+                  const CustomSemanticsAction(label: 'Expand cluster'): () => _say(c.execute(const CheBrainCommand(CheBrainAction.expand))),
+                  const CustomSemanticsAction(label: 'Collapse cluster'): () => _say(c.execute(const CheBrainCommand(CheBrainAction.collapse))),
                   const CustomSemanticsAction(label: 'Go inside the brain'): () => _say(c.inside()),
+                  const CustomSemanticsAction(label: 'Back out'): () => _say(c.backOut()),
                   const CustomSemanticsAction(label: 'Show the whole brain'): () => _say(c.overview()),
                 },
-                child: GestureDetector(
+                child: Listener(
+                  onPointerDown: _pointerDown,
+                  onPointerUp: _pointerUp,
+                  onPointerCancel: _pointerUp,
+                  child: RawGestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onScaleStart: _scaleStart,
-                  onScaleUpdate: _scaleUpdate,
-                  onScaleEnd: _scaleEnd,
-                  onTapUp: _tap,
-                  onLongPressStart: _grabStart,
-                  onLongPressMoveUpdate: _grabMove,
-                  onLongPressEnd: _grabEnd,
+                  gestures: {
+                    _BrainGestureRecognizer: GestureRecognizerFactoryWithHandlers<_BrainGestureRecognizer>(
+                      _BrainGestureRecognizer.new,
+                      (r) => r
+                        ..onStart = _scaleStart
+                        ..onUpdate = _scaleUpdate
+                        ..onEnd = _scaleEnd,
+                    ),
+                  },
                   child: RepaintBoundary(
                     child: CustomPaint(
                       key: const ValueKey('che-brain-canvas'),
-                      painter: CheBrainPainter(c),
+                      painter: CheBrainPainter(c, textScale: labelScale),
                       size: Size.infinite,
                     ),
                   ),
                 ),
+                ),
               );
             },
+          ),
+        ),
+        // What CHE just said, as large text at the top.
+        Positioned(
+          left: 12,
+          right: 12,
+          top: 8,
+          child: ValueListenableBuilder<String?>(
+            valueListenable: _caption,
+            builder: (context, text, _) => text == null
+                ? const SizedBox.shrink()
+                : ExcludeSemantics(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(color: const Color(0xCC071012), borderRadius: BorderRadius.circular(14)),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        child: Text(text, maxLines: 3, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 18, height: 1.25)),
+                      ),
+                    ),
+                  ),
           ),
         ),
         ValueListenableBuilder<int>(
@@ -587,7 +735,7 @@ class _MemoryCard extends StatelessWidget {
 
 /// Batched painter for the whole space.
 class CheBrainPainter extends CustomPainter {
-  CheBrainPainter(this.c) : super(repaint: c.frame);
+  CheBrainPainter(this.c, {this.textScale = 1}) : super(repaint: c.frame);
 
   final CheBrainSpaceController c;
 
@@ -620,16 +768,10 @@ class CheBrainPainter extends CustomPainter {
     return _glow;
   }
 
-  final Map<String, TextPainter> _labels = {};
+  /// Label size follows the owner's text setting (capped so labels stay tidy).
+  final double textScale;
 
-  TextPainter _label(String key, String text, double size, Color color) {
-    return _labels.putIfAbsent('$key|$size', () => TextPainter(
-          text: TextSpan(text: text, style: TextStyle(fontSize: size, color: color, fontWeight: FontWeight.w600, shadows: const [Shadow(blurRadius: 6)])),
-          textDirection: TextDirection.ltr,
-          maxLines: 1,
-          ellipsis: '…',
-        )..layout(maxWidth: 200));
-  }
+  TextPainter _label(String key, String text, double size, Color color) => c.label(key, text, (size * textScale).roundToDouble(), color);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -660,13 +802,19 @@ class CheBrainPainter extends CustomPainter {
       final a = proj[e.$1], b = proj[e.$2];
       if (a == null || b == null) continue;
       final hot = e.$1 == selIndex || e.$2 == selIndex;
-      (hot ? strong : faint).addAll([a.offset.dx, a.offset.dy, b.offset.dx, b.offset.dy]);
+      (hot ? strong : faint)
+        ..add(a.offset.dx)
+        ..add(a.offset.dy)
+        ..add(b.offset.dx)
+        ..add(b.offset.dy);
       if (hot) {
         final t = (c.time * .6 + (e.$1 + e.$2) * .13) % 1.0;
         final from = e.$1 == selIndex ? a.offset : b.offset;
         final to = e.$1 == selIndex ? b.offset : a.offset;
         final p = Offset.lerp(from, to, t)!;
-        sparks.addAll([p.dx, p.dy]);
+        sparks
+          ..add(p.dx)
+          ..add(p.dy);
       }
     }
     if (faint.isNotEmpty) {

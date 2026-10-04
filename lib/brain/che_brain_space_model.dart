@@ -206,15 +206,46 @@ class CheBrainCamera {
 
   CheBrainCamera copy() => CheBrainCamera(target: target.clone(), yaw: yaw, pitch: pitch, distance: distance);
 
-  vm.Vector3 get forward => vm.Vector3(
-        math.cos(pitch) * math.sin(yaw),
-        math.sin(pitch),
-        -math.cos(pitch) * math.cos(yaw),
-      );
+  // Camera basis, recomputed only when the camera changes (not per node).
+  double _ky = double.nan, _kp = double.nan, _kd = double.nan;
+  final vm.Vector3 _kt = vm.Vector3.zero();
+  final vm.Vector3 _f = vm.Vector3.zero(), _r = vm.Vector3.zero(), _u = vm.Vector3.zero(), _e = vm.Vector3.zero();
 
-  vm.Vector3 get right => forward.cross(vm.Vector3(0, 1, 0)).normalized();
-  vm.Vector3 get up => right.cross(forward).normalized();
-  vm.Vector3 get eye => target - forward * distance;
+  void _basis() {
+    if (yaw == _ky && pitch == _kp && distance == _kd && target == _kt) return;
+    _ky = yaw;
+    _kp = pitch;
+    _kd = distance;
+    _kt.setFrom(target);
+    _f.setValues(math.cos(pitch) * math.sin(yaw), math.sin(pitch), -math.cos(pitch) * math.cos(yaw));
+    _r
+      ..setFrom(_f.cross(vm.Vector3(0, 1, 0)))
+      ..normalize();
+    _u
+      ..setFrom(_r.cross(_f))
+      ..normalize();
+    _e.setFrom(target - _f * distance);
+  }
+
+  vm.Vector3 get forward {
+    _basis();
+    return _f.clone();
+  }
+
+  vm.Vector3 get right {
+    _basis();
+    return _r.clone();
+  }
+
+  vm.Vector3 get up {
+    _basis();
+    return _u.clone();
+  }
+
+  vm.Vector3 get eye {
+    _basis();
+    return _e.clone();
+  }
 
   bool get inside => distance < LayoutRadius.inner;
 
@@ -240,12 +271,14 @@ class CheBrainCamera {
 
   /// Projects a world point. Null when behind the camera or off-screen.
   CheProjected? project(vm.Vector3 p, Size size, {double worldRadius = 0, double margin = 40}) {
-    final rel = p - eye;
-    final z = rel.dot(forward);
+    _basis();
+    // Scalar math: no allocations per projected node.
+    final rx = p.x - _e.x, ry = p.y - _e.y, rz = p.z - _e.z;
+    final z = rx * _f.x + ry * _f.y + rz * _f.z;
     if (z < near) return null;
     final focal = size.shortestSide / (2 * math.tan(fov / 2));
-    final x = size.width / 2 + rel.dot(right) / z * focal;
-    final y = size.height / 2 - rel.dot(up) / z * focal;
+    final x = size.width / 2 + (rx * _r.x + ry * _r.y + rz * _r.z) / z * focal;
+    final y = size.height / 2 - (rx * _u.x + ry * _u.y + rz * _u.z) / z * focal;
     final r = worldRadius / z * focal;
     if (x < -margin - r || x > size.width + margin + r || y < -margin - r || y > size.height + margin + r) return null;
     return CheProjected(Offset(x, y), z, r);
