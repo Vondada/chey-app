@@ -70,10 +70,18 @@ revoke all on function public.match_che_memory(vector, double precision, integer
 -- Supabase/PostgREST: allow the server-side service role to call the search
 -- function while keeping it unavailable to anonymous/public roles. On a
 -- generic Postgres install without a service_role role, this block is a no-op.
-do $
+do $$
 begin
+  -- Supabase grants new functions to anon/authenticated by default; this
+  -- search runs as definer, so only the service role may call it.
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    execute 'revoke all on function public.match_che_memory(vector, double precision, integer) from anon';
+  end if;
+  if exists (select 1 from pg_roles where rolname = 'authenticated') then
+    execute 'revoke all on function public.match_che_memory(vector, double precision, integer) from authenticated';
+  end if;
   if exists (select 1 from pg_roles where rolname = 'service_role') then
     execute 'grant execute on function public.match_che_memory(vector, double precision, integer) to service_role';
   end if;
 end
-$;
+$$;

@@ -39,7 +39,7 @@ import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEnginee
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
 import { prepareSelfUpdate, recordLesson, recoveryRequestIntent } from './self_development.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
-import { KEY_PROVIDERS, MEMORY_DB, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
+import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { autoImproveScan, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
@@ -4244,9 +4244,10 @@ export class CheState extends DurableObject {
         // Status only; keys themselves never leave the server.
         const health = (await this.ctx.storage.get('key_health')) || {};
         const memoryOn = vectorMemoryReadiness(this.keyEnv || this.env).configured;
+        const memoryStored = hasStoredMemoryDatabase(await storedKeys(this.ctx.storage));
         return json({
           providers: Object.entries(KEY_PROVIDERS).map(([id, p]) => ({ id, name: p.name, page: p.page, status: health[id]?.status || 'not set up', last4: health[id]?.last4 || '' })),
-          memory: { name: MEMORY_DB.name, page: MEMORY_DB.page, status: health.memory?.status || (memoryOn ? 'connected (server secret)' : 'not set up'), last4: health.memory?.last4 || '', stored: Boolean(health.memory) },
+          memory: { name: MEMORY_DB.name, page: MEMORY_DB.page, status: memoryStored ? (health.memory?.status || 'connected') : (memoryOn ? 'connected (server secret)' : 'not set up'), last4: memoryStored ? (health.memory?.last4 || '') : '', stored: memoryStored },
         });
       }
       if (path === '/api/keys/memory' && request.method === 'POST') {

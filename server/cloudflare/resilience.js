@@ -57,6 +57,12 @@ export function withStoredKeys(env, keys) {
   for (const [name, value] of Object.entries(keys)) {
     if (!env[name] && typeof value === 'string' && value) merged[name] = value;
   }
+  // A memory database the owner connected through CHE replaces the Worker
+  // secret pair, so switching databases really switches where memories go.
+  if (hasStoredMemoryDatabase(keys)) {
+    merged[MEMORY_DB.urlEnv] = keys[MEMORY_DB.urlEnv];
+    merged[MEMORY_DB.tokenEnv] = keys[MEMORY_DB.tokenEnv];
+  }
   return merged;
 }
 
@@ -121,6 +127,10 @@ export async function removeKey(storage, provider) {
 // code reads, so long-term memory switches on without a deploy.
 export const MEMORY_DB = { name: 'Memory database', urlEnv: 'CHE_PGVECTOR_REST_URL', tokenEnv: 'CHE_PGVECTOR_TOKEN', page: 'https://supabase.com/dashboard/new' };
 
+export function hasStoredMemoryDatabase(keys) {
+  return Boolean(keys && typeof keys[MEMORY_DB.urlEnv] === 'string' && keys[MEMORY_DB.urlEnv] && typeof keys[MEMORY_DB.tokenEnv] === 'string' && keys[MEMORY_DB.tokenEnv]);
+}
+
 export function normalizeMemoryUrl(raw) {
   let url = String(raw || '').trim().replace(/\/+$/, '');
   if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?(?:\/[\w./-]*)?$/i.test(url)) return '';
@@ -129,17 +139,35 @@ export function normalizeMemoryUrl(raw) {
   return url;
 }
 
-// Proves the database is reachable, the key works and the CHE table exists.
+const CANARY_ID = 'che-setup-connection-check';
+const statusOf = (response) => {
+  if (response.status === 401 || response.status === 403) return { status: 'unauthorized', code: response.status };
+  if (response.status === 404) return { status: 'missing_table', code: 404 };
+  return { status: 'unknown', code: response.status };
+};
+
+// Proves the database is reachable, the CHE table exists and the key can
+// write. A read alone is not enough: with row-level security an anon key
+// reads an empty list, then every save is refused. The check writes one
+// marker row (never a memory) and deletes it again.
 export async function testMemoryDatabase(url, token, fetcher = fetch) {
+  const headers = { Authorization: `Bearer ${token}`, apikey: token, Accept: 'application/json' };
   try {
-    const response = await fetcher(`${url}/che_memory?select=external_id&limit=1`, {
-      headers: { Authorization: `Bearer ${token}`, apikey: token, Accept: 'application/json' },
+    const read = await fetcher(`${url}/che_memory?select=external_id&limit=1`, { headers, signal: AbortSignal.timeout(8000) });
+    if (!read.ok) return statusOf(read);
+    const embedding = Array.from({ length: 768 }, (_, i) => (i === 0 ? 1 : 0));
+    const write = await fetcher(`${url}/che_memory?on_conflict=external_id`, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify({ external_id: CANARY_ID, kind: 'system', title: 'Connection check', content: 'CHE connection check; deleted right away.', source: 'che_setup', embedding }),
       signal: AbortSignal.timeout(8000),
     });
-    if (response.ok) return { status: 'healthy' };
-    if (response.status === 401 || response.status === 403) return { status: 'unauthorized', code: response.status };
-    if (response.status === 404) return { status: 'missing_table', code: 404 };
-    return { status: 'unknown', code: response.status };
+    if (!write.ok) return { ...statusOf(write), step: 'write' };
+    const removed = await fetcher(`${url}/che_memory?external_id=eq.${CANARY_ID}`, {
+      method: 'DELETE', headers: { ...headers, Prefer: 'return=minimal' }, signal: AbortSignal.timeout(8000),
+    });
+    if (!removed.ok) return { ...statusOf(removed), step: 'delete' };
+    return { status: 'healthy' };
   } catch (error) {
     return { status: 'network', error: String(error?.message || error).slice(0, 80) };
   }
@@ -153,7 +181,7 @@ export async function saveMemoryDatabase(storage, rawUrl, rawToken, fetcher = fe
   const test = await testMemoryDatabase(url, token, fetcher);
   if (test.status !== 'healthy') {
     const why = {
-      unauthorized: 'the key was rejected; use the service_role key from Settings, API',
+      unauthorized: test.step ? 'that key can read but cannot save memories; use the service_role key from Settings, API' : 'the key was rejected; use the service_role key from Settings, API',
       missing_table: 'the CHE memory table is not there yet; run the setup script in the SQL editor first',
       network: 'I could not reach that address',
     }[test.status] || `the database answered ${test.code || test.status}`;
@@ -216,7 +244,8 @@ export async function checkAllKeys(env, storage, fetcher = fetch) {
       await fileLetter(storage, { tray: id, subject: `${p.name} key is working again`, body: `Key ending ${last4(key)} passed its test.`, tag: 'system', severity: 'info' });
     }
   }
-  await put(storage, HEALTH, { ...health, checked_at: Date.now() });
+  // Only engine keys are re-tested here; keep the memory database's status.
+  await put(storage, HEALTH, { ...(before.memory ? { memory: before.memory } : {}), ...health, checked_at: Date.now() });
   return health;
 }
 
