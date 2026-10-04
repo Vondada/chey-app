@@ -12,6 +12,7 @@
 
 import { isSelfUpdateEditablePath, isSelfUpdateReadablePath, validateUpdateFiles } from './self_update.js';
 import { ENGINEERING_PLAYBOOK } from './engineering_playbook.js';
+import { CHE_SELF_BRIEF } from './che_self_knowledge.js';
 import {
   AgentBudget,
   FAILURE_CLASS,
@@ -293,6 +294,7 @@ async function runAgent(ctx, { stage, role, assignment, payload, maxTokens = 220
     'All repository evidence available to you is in this request. If something you need is missing, say exactly which path or identifier CHE should fetch in your notes; never ask the owner for source, filenames, line numbers, diffs or exact text.',
     'Never expose or place credentials, tokens, private keys, passwords, or signing material in code.',
     'Never claim you inspected a file unless its actual source is included in your task.',
+    CHE_SELF_BRIEF,
     ENGINEERING_PLAYBOOK,
   ].join('\n');
   const user = typeof payload === 'function' ? fitPayload(payload, ctx.inputChars) : JSON.stringify(payload);
@@ -447,6 +449,7 @@ export function rankSourcePaths(paths, request, limit = 6) {
 // ─── Team memory: every mistake becomes a rule, every find becomes a shortcut ───
 // Stored in the Durable Object (key below). Seeded with lessons learned by hand.
 const LESSONS_KEY = 'che_team_lessons';
+const MAX_TECHNIQUE_LESSONS = 15;
 const SEED_LESSONS = [
   { kind: 'mistake', text: 'When the owner names on-screen text (e.g. "the Ready banner"), edit the widget that shows THAT exact text. Never edit a different banner/label that merely has a similar name. PR #73 wrongly changed the Shorebird "CHE updated. Restart to apply." banner instead of the status banner.' },
   { kind: 'location', text: 'The home status banner text ("Ready. Type or speak a request." / "Voice standby...") lives in lib/main.dart (_statusBanner and the status getter).' },
@@ -471,7 +474,11 @@ export async function recordLesson(memory, kind, text) {
     const list = Array.isArray(saved) ? saved : [];
     if (list.some((item) => item.text === clean)) return;
     list.push({ kind, text: clean, at: new Date().toISOString() });
-    await memory.put(LESSONS_KEY, list.slice(-50));
+    // Studied techniques never crowd out the crew's own mistakes and
+    // locations: at most MAX_TECHNIQUE_LESSONS are kept, oldest dropped first.
+    let techniques = list.filter((item) => item.kind === 'technique').length;
+    const kept = list.filter((item) => item.kind !== 'technique' || techniques-- <= MAX_TECHNIQUE_LESSONS);
+    await memory.put(LESSONS_KEY, kept.slice(-50));
   } catch (_) {}
 }
 
