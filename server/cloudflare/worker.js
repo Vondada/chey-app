@@ -209,6 +209,20 @@ function prefixNdjson(response, text) {
   return new Response(stream, { status: response.status, headers: response.headers });
 }
 
+// Every exam level that has finished (passed, failed, or dead-lettered after
+// repeated interruptions) starts the next level at once. A level waiting to
+// retry holds the rest back; a cancelled one ends the exam.
+function advanceExamChains(data) {
+  for (const job of [...(data.jobs || [])]) {
+    if (job.kind !== 'autonomy_exam' || !job.exam_next?.length) continue;
+    if (job.status === 'cancelled') { job.exam_next = []; continue; }
+    if (!['complete', 'failed'].includes(job.status)) continue;
+    const next = job.exam_next;
+    job.exam_next = [];
+    enqueueExamLevel(data, next[0], next.slice(1));
+  }
+}
+
 // Queues one autonomy exam level; `next` are the levels to run after it.
 function enqueueExamLevel(data, level, next = []) {
   const spec = examLevel(level);
@@ -8427,6 +8441,8 @@ export class CheState extends DurableObject {
         }
       }
     }
+    // A level the sweep above just dead-lettered still starts the next one.
+    advanceExamChains(data);
     const queued = selectReadyJobs(ownerApprovedOnly ? data.jobs.filter((job) => OWNER_APPROVED_JOB_KINDS.has(job.kind)) : data.jobs, now, 4);
     if (!queued.length) { await this.ctx.storage.put('che', data); await this.scheduleWork(); return false; }
 
@@ -8541,14 +8557,7 @@ export class CheState extends DurableObject {
       if (outcome.failure_class !== undefined) job.failure_class = outcome.failure_class;
       job.updated_at = finishedAt;
     }
-    // A finished exam level starts the next one immediately. A level that is
-    // only waiting to retry (engines busy) holds the rest back.
-    for (const outcome of results) {
-      const job = fresh.jobs.find((item) => item.id === outcome.id);
-      if (job?.kind !== 'autonomy_exam' || !['complete', 'failed'].includes(job.status) || !job.exam_next?.length) continue;
-      enqueueExamLevel(fresh, job.exam_next[0], job.exam_next.slice(1));
-      job.exam_next = [];
-    }
+    advanceExamChains(fresh);
     await this.ctx.storage.put('che', fresh);
     await this.scheduleWork();
     // A finished topic study or study build may free the next build.

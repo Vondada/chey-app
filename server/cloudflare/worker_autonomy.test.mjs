@@ -1311,6 +1311,21 @@ test('autonomy exam runs its levels back to back: each finished level starts the
   for (let i = 0; i < 6; i++) await state.processJobs();
   assert.deepEqual(ran, [1, 1, 2, 3, 4, 5]);
   assert.equal(examJobs().filter((j) => ['queued', 'running'].includes(j.status)).length, 0, 'the chain ends after level 5');
+  // A level dead-lettered by the stale sweep (interrupted too often) still
+  // starts the next level instead of stranding the rest of the exam.
+  assert.match(await say('run the autonomy exam'), /started the autonomy exam/);
+  const data = saved.get('che');
+  const first = data.jobs.find((j) => j.kind === 'autonomy_exam' && j.status === 'queued');
+  const earlier = new Set(data.jobs.map((j) => j.id));
+  Object.assign(first, { status: 'running', attempts: 99, updated_at: new Date(Date.now() - 3600_000).toISOString() });
+  saved.set('che', data);
+  state.runAutonomyExamJob = async (job) => ({ id: job.id, status: 'complete', result: 'graded', owner_message: 'graded', error: '' });
+  await state.processJobs();
+  const after = saved.get('che').jobs.filter((j) => j.kind === 'autonomy_exam');
+  assert.equal(after.find((j) => j.id === first.id).status, 'failed');
+  assert.ok(after.some((j) => j.exam_level === 2 && !earlier.has(j.id)), 'level 2 started after the dead-lettered level 1');
+  for (let i = 0; i < 6; i++) await state.processJobs();
+  assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'autonomy_exam' && ['queued', 'running'].includes(j.status)).length, 0);
   // A single level runs alone.
   assert.match(await say('run autonomy exam level 3'), /started the autonomy exam, sir: level 3\./);
   assert.deepEqual(examJobs().find((j) => j.status === 'queued').exam_next, []);
