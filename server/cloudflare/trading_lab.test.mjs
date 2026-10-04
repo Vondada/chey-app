@@ -122,7 +122,7 @@ test('discovery keeps only skills that hold up on all three parts of history', (
   assert.ok(discoverSkills(noise).filter((x) => x.found).length <= 3);
 });
 
-test('learning tests every skill in one pass and re-tests after 30 days', () => {
+test('learning tests every skill in one pass and re-tests every day', () => {
   const c = series(1500);
   const t0 = Date.UTC(2026, 9, 1);
   let lab;
@@ -133,11 +133,11 @@ test('learning tests every skill in one pass and re-tests after 30 days', () => 
   if (lab.found.length) assert.equal(lab.best, lab.found[0]);
   const known = [...lab.known];
   assert.deepEqual([...known].sort(), [...lab.found].sort());
-  let later = learnStep(lab, c, t0 + 31 * 86400000);
+  let later = learnStep(lab, c, t0 + 2 * 86400000);
   assert.equal(later.lab.tested.length, SKILL_IDS.length, 'a new cycle starts and re-tests everything');
   // Re-finding the same skills next month is not announced as new.
   const renewed = [...later.newly];
-  while (later.lab.tested.length < SKILL_IDS.length) { later = learnStep(later.lab, c, t0 + 31 * 86400000 + 3600_000); renewed.push(...later.newly); }
+  while (later.lab.tested.length < SKILL_IDS.length) { later = learnStep(later.lab, c, t0 + 2 * 86400000 + 3600_000); renewed.push(...later.newly); }
   assert.deepEqual(renewed, []);
   if (later.lab.found.length > 1) {
     const ranks = later.lab.found.map((id) => later.lab.results[id].confirm.expectancy_r);

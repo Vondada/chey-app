@@ -362,10 +362,11 @@ export function discoverSkills(candles, ids = SKILL_IDS) {
 // All skills in one pass: 63 skills on decades of daily bars take well
 // under a second of CPU, so there is no reason to spread them out.
 const SKILLS_PER_TICK = SKILL_IDS.length;
-const RETEST_DAYS = 30;
+// Daily bars add one new day of evidence; re-test everything once a day.
+const RETEST_DAYS = 1;
 
 /// One learning step for one market: test the next batch of skills not yet
-/// tested on it (all of them get re-tested every 30 days, because markets
+/// tested on it (all of them get re-tested every day, because markets
 /// change). Returns what is new.
 export function learnStep(lab, candles, now = Date.now()) {
   const state = lab && typeof lab === 'object' ? lab : {};
@@ -380,7 +381,7 @@ export function learnStep(lab, candles, now = Date.now()) {
   for (const r of discoverSkills(candles, next)) {
     state.results[r.id] = { found: r.found, test: r.test, confirm: r.confirm, choose: r.choose };
     state.tested.push(r.id);
-    // A skill re-found in a later monthly cycle is not a new discovery.
+    // A skill re-found in a later daily re-test is not a new discovery.
     if (r.found && !state.known.includes(r.id)) { newly.push(r.id); state.known.push(r.id); }
   }
   // Ranked by the confirm part only, never by the held-back test.
@@ -580,10 +581,10 @@ export async function paperTick(storage, { fetcher = fetch, force = false, now =
       book.discoveries.push({ at: new Date(now).toISOString(), symbol, label: data.label, id, name: strategyName(id), test: step.lab.results[id].test });
     }
     // Live results count too: a skill that loses 5 paper trades in a row on
-    // this market is benched until its next re-test; the next found one trades.
+    // this market is benched for 30 days after the last loss; the next found one trades.
     const benched = (id) => {
       const recent = book.closed.filter((x) => x.symbol === symbol && x.strategy === id).slice(-5);
-      return recent.length === 5 && recent.every((x) => x.r < 0) && Date.parse(recent[4].closed_at) > Date.parse(step.lab.cycle_at);
+      return recent.length === 5 && recent.every((x) => x.r < 0) && now - Date.parse(recent[4].closed_at) < 30 * 86400000;
     };
     const best = (step.lab.found || []).find((id) => !benched(id)) || null;
     book.learned[symbol] = { at: step.lab.cycle_at, best, progress: step.lab.progress, found: (step.lab.found || []).length };
@@ -609,7 +610,7 @@ export async function nextTradingTickAt(storage) {
 export function speakLearning(book) {
   const lines = ['Trading learning, paper only, no real money.'];
   const markets = Object.entries(book.lab || {});
-  if (!markets.length) return `${lines[0]} I have not finished a learning pass yet. I test every skill on each market every hour.`;
+  if (!markets.length) return `${lines[0]} I have not finished a learning pass yet. I test every skill on each market within the hour, then re-test all of them once a day as new market data comes in.`;
   for (const [symbol, lab] of markets) {
     const label = resolveSymbol(symbol)?.label || symbol;
     const best = lab.found?.[0];
