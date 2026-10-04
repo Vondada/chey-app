@@ -7,6 +7,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
@@ -122,6 +123,13 @@ class _CheConversationsScreenState extends State<CheConversationsScreen> {
       _error = 'Conversations could not load: ${'$e'.replaceFirst('Exception: ', '')}';
     }
     if (mounted) setState(() => _loading = false);
+    // The real result, spoken and felt, not only drawn.
+    if (_error != null) {
+      HapticFeedback.heavyImpact();
+      await widget.onReadAloud?.call(_error!);
+    } else {
+      HapticFeedback.lightImpact();
+    }
   }
 
   @override
@@ -245,7 +253,18 @@ class _Bubble extends StatelessWidget {
     final mine = message.from.toUpperCase() == 'CHE';
     final color = cheSpeakerColor(message.from);
     final width = MediaQuery.sizeOf(context).width * .78;
+    void copy() {
+      Clipboard.setData(ClipboardData(text: message.text));
+      HapticFeedback.lightImpact();
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(content: Text('Message copied')));
+      final view = View.maybeOf(context);
+      if (view != null) SemanticsService.sendAnnouncement(view, 'Message copied.', TextDirection.ltr);
+    }
+
     return Semantics(
+      onLongPress: copy,
+      onLongPressHint: 'Copy this message',
+      customSemanticsActions: {const CustomSemanticsAction(label: 'Copy message'): copy},
       label: '${message.from}${message.to == null ? '' : ' to ${message.to}'}${message.kind.isEmpty ? '' : ', ${message.kind}'}${message.at == null ? '' : ', ${cheChatTime(message.at)}'}: ${message.text}',
       excludeSemantics: true,
       child: Padding(
@@ -260,11 +279,7 @@ class _Bubble extends StatelessWidget {
               ),
             ),
           GestureDetector(
-            onLongPress: () {
-              Clipboard.setData(ClipboardData(text: message.text));
-              HapticFeedback.lightImpact();
-              ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(content: Text('Copied')));
-            },
+            onLongPress: copy,
             child: ConstrainedBox(
               constraints: BoxConstraints(maxWidth: width),
               child: DecoratedBox(

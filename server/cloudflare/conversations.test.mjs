@@ -24,3 +24,17 @@ test('War Room, Office and crew conversations become group-chat threads, newest 
   assert.equal(threads.find((t) => t.kind === 'office').messages[0].to, 'Iris');
   assert.equal(threads.length, 3, 'no empty threads');
 });
+
+test('Office threads come from real team tasks; War Room titles use the objective', () => {
+  const threads = conversationThreads({
+    meetings: [{ id: 'm1', objective: 'Pick the MES plan', board: [{ from: 'Atlas', text: 'Breakout.', at: '2026-10-04T10:00:00Z' }] }],
+    team_tasks: [{
+      partner_id: 'a1', partner_name: 'Mira', task: 'Review the trading lab', created_at: '2026-10-04T09:00:00Z',
+      steering: [{ text: 'Focus on MES', at: '2026-10-04T09:05:00Z' }],
+      result: 'Reviewed: two bugs found.', review_feedback: 'Good, fix the first.', updated_at: '2026-10-04T09:30:00Z',
+    }],
+  });
+  assert.equal(threads.find((t) => t.kind === 'war_room').title, 'Pick the MES plan');
+  const office = threads.find((t) => t.id === 'agent:a1');
+  assert.deepEqual(office.messages.map((m) => `${m.from}:${m.kind}`), ['CHE:task', 'CHE:steering', 'Mira:result', 'CHE:review']);
+});
