@@ -108,8 +108,20 @@ Then, on GitHub:
   - LIMIT: intraday ES/NQ ("many trades a day") needs a real-time futures data feed or key.
 - Starred-repo study now reads the owner's live GitHub stars, newest 25. Study focus was added for the new stars and the trading repos (freqtrade, qlib, FinRL, nautilus_trader, Lean, TradingAgents, backtesting.py, vectorbt, ML-for-trading). Copyleft repos are learn-only.
 
+**Later on 2026-10-04 (Claude):**
+- **#179 MERGED** (d7fc484): CHE tests all 63 trading skills in one pass and re-tests them daily. A skill that loses 5 in a row is benched for 30 days.
+- **#180 MERGED** (44314e8): the trading desk (`trading_desk.js`, `broker_tradovate.js`).
+  - One spoken switch between paper, sim and live: "switch to sim/live/paper trading".
+  - ES/NQ entry alerts are said before CHE's next reply.
+  - Sim: CHE places the entries herself. Live: she places them only after the owner says "take the trade".
+  - Live orders go only to the account the owner named: "list my trading accounts", then "use account N".
+  - Orders are a limit entry with stop and target attached (placeoso). Each alert is claimed before the broker call, so it can't be placed twice.
+  - Sign-in is Tradovate OAuth, so the password never reaches CHE.
+  - **Owner setup still needed:** Tradovate must issue OAuth app credentials for the redirect URI `<worker>/broker/tradovate/callback`. They go in the Worker secrets CHE_TRADOVATE_OAUTH_CLIENT_ID and CHE_TRADOVATE_OAUTH_CLIENT_SECRET. Then he says "connect NinjaTrader" and tests in sim first.
+  - Not yet run against Tradovate's real servers.
+- **Owner's platforms:** NinjaTrader and Tradovate. Funded firm: FundYourEdge. A search result says FYE allows automated strategies; this is unverified, and the owner should confirm. Tradesea has no public order API, so it is alerts only.
+
 **Owner answers still pending (don't guess):**
-- His 5 starred repo names.
 - The exact NinjaTrader login error text.
 
 ## 3. Queue: the owner's open requests, in order
