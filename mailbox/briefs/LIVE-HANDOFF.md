@@ -121,6 +121,9 @@ Then, on GitHub:
   - Not yet run against Tradovate's real servers.
 - **Owner's platforms:** NinjaTrader and Tradovate. Funded firm: FundYourEdge. A search result says FYE allows automated strategies; this is unverified, and the owner should confirm. Tradesea has no public order API, so it is alerts only.
 
+**REPO INTEGRATION MISSION (Claude, 2026-10-04 ~23:55 UTC):** the owner asked to study and integrate ~30 repos into CHE. The full plan, per-repo status and the exact next step are in `mailbox/briefs/2026-10-04-repo-integration-plan.md`. Continue it there.
+- Also merged today: #181 (exam level 3 contract), #185 (exam levels back to back).
+
 **Owner answers still pending (don't guess):**
 - The exact NinjaTrader login error text.
 
