@@ -401,6 +401,8 @@ test('one-button "Update CHE": one approval → PR → merge after CI → verifi
     assert.ok(!calls.some((c) => c.method === 'PUT'), 'nothing merged before CI passes');
     // 4. CI passes; the background merge job merges with the checked head.
     ciDone = true;
+    // Office autonomy paused by the owner: the approved merge still runs.
+    const paused = saved.get('che'); paused.autonomy = false; saved.set('che', paused);
     const job = saved.get('che').jobs.find((j) => j.kind === 'merge_pr');
     job.retry_at = 0;
     const data = saved.get('che'); data.jobs = data.jobs.map((j) => (j.id === job.id ? job : j)); saved.set('che', data);

@@ -1015,6 +1015,10 @@ export function enqueueJob(data, fields) {
 
 // Keep independent background work parallel, but serialize skill imports.
 // Two imports both update office_skills/team and must never race snapshots.
+// Jobs the owner authorized directly ("Update CHE", "merge it"); they run even
+// while Office autonomy is paused.
+const OWNER_APPROVED_JOB_KINDS = new Set(['merge_pr', 'verify_deploy']);
+
 export function selectReadyJobs(jobs, now = Date.now(), limit = 4) {
   const all = Array.isArray(jobs) ? jobs : [];
   const ready = all
@@ -2696,6 +2700,11 @@ export class CheState extends DurableObject {
     if (data.autonomy) {
       times.push(...[...data.jobs, ...data.team_tasks].filter(j => j.status === 'queued')
         .map(j => Math.max(Date.now() + 250, Number(j.retry_at) || 0)));
+    } else {
+      times.push(...data.jobs.filter(j => j.status === 'queued' && OWNER_APPROVED_JOB_KINDS.has(j.kind))
+        .map(j => Math.max(Date.now() + 250, Number(j.retry_at) || 0)));
+    }
+    if (data.autonomy) {
       if (data.meetings.some(m => ['drafting', 'cross_check', 'synthesizing'].includes(m.status))) times.push(Date.now() + 250);
     }
     // While Flagstaff is open, do one cheap GitHub-head check every 30 seconds.
@@ -6717,7 +6726,7 @@ export class CheState extends DurableObject {
               'HONESTY (highest priority): never claim an action happened unless a tool in this turn returned success, and give the receipt (link, ID or result) when it did. Label anything unverified as unverified. Say "I don\u2019t know" or "I can\u2019t do that yet" instead of guessing. Never invent plugins, settings, panels, features, services, outages, prices, sales or numbers.',
               'CONTEXT PRIORITY: current owner message > verified tool results from this turn > active conversation > explicit stored/retrieved owner context > cached/general knowledge. The newest owner correction wins conflicts. Short follow-ups continue the most recent unresolved subject/action; do not restart from scratch.',
               'COGNITION LOOP: understand the goal, recall relevant context, select the real capability/tool, act when available, verify the result, then answer. Do not repeat an earlier answer merely because it is cached. Do not call a task complete without a real result.',
-              'SELF-KNOWLEDGE: your voice is chosen by CHE\u2019s server code (Gemini voice first, then other connected voices, then the iPhone voice as a last resort). There is no voice plugin and you cannot change your voice, server code or keys yourself; the owner changes those in the server/code. Your built-in plugins are only Weather, Crypto Prices and Wikipedia unless the plugin list in this turn says otherwise.',
+              'SELF-KNOWLEDGE: your voice is chosen by CHE\u2019s server code (Gemini voice first, then other connected voices, then the iPhone voice as a last resort). There is no voice plugin. You CAN change your own app code: the owner says \u201cupdate your code: \u2026\u201d, your Office coding crew builds and reviews it, and \u201cUpdate CHE\u201d ships it after the checks pass. Server code, native iOS code and API keys still need an engineering session. You can build and host websites and web apps (\u201cbuild me a website for \u2026\u201d). Your built-in plugins are only Weather, Crypto Prices and Wikipedia unless the plugin list in this turn says otherwise.',
               'VOICE-FIRST (always): treat the owner as someone who uses CHE entirely by voice, as if he cannot see the screen. Be his eyes and navigator: when he asks what is on screen, describe it in plain spoken language; read real choices as a short numbered list; say what you did and how it went, and never say \u201ctap here\u201d or rely on him seeing something. Lead with the answer, never with a screen description or a \u201cScreen context\u201d label. Keep spoken replies short. Your own built-in tools (image/video/music generation, research, browser, Office agents) never need permission: use them and report the result. Ask first only before spending money or deleting anything. Acting inside a third-party app outside CHE needs the owner\u2019s go-ahead for that app. Inside CHE\u2019s built-in apps and browser you can read the page, scroll, search, and open or play items by name or number. You cannot see or control apps outside CHE; for those, say so and suggest iPhone Voice Control or VoiceOver (Settings \u2192 Accessibility).',
               'STORE: products are sold only through the CHE Studio Store (Business \u2192 CHE Studio Store). You may suggest product ideas, but nothing exists in Stripe until the owner approves it there, and you must never claim a product, payment link or sale exists unless the store data shows it.',
               'DATA + COMPUTE: core owner state is persisted in CHE storage. Large media, datasets, model artifacts and generated files should use CHE object storage when connected. If storage is not connected, say the item is temporary instead of pretending it was archived.',
@@ -7902,7 +7911,10 @@ export class CheState extends DurableObject {
 
   async processJobs() {
     const data = await this.loadData();
-    if (!data.autonomy) return false;
+    // Pausing Office autonomy never strands an update the owner explicitly
+    // approved: its merge and deploy check still run once CI allows.
+    const ownerApprovedOnly = !data.autonomy;
+    if (ownerApprovedOnly && !data.jobs.some((job) => OWNER_APPROVED_JOB_KINDS.has(job.kind) && job.status === 'queued')) return false;
     const now = Date.now();
     for (const job of data.jobs) {
       // A job left "running" for 5 minutes was interrupted (Worker restart,
@@ -7921,7 +7933,7 @@ export class CheState extends DurableObject {
         }
       }
     }
-    const queued = selectReadyJobs(data.jobs, now, 4);
+    const queued = selectReadyJobs(ownerApprovedOnly ? data.jobs.filter((job) => OWNER_APPROVED_JOB_KINDS.has(job.kind)) : data.jobs, now, 4);
     if (!queued.length) { await this.ctx.storage.put('che', data); await this.scheduleWork(); return false; }
 
     const startedAt = new Date().toISOString();

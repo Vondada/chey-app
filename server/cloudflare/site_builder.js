@@ -11,7 +11,9 @@
 
 const SITE_PREFIX = 'site:';
 const SITE_INDEX_KEY = 'che_sites';
-const MAX_HTML = 120_000; // fits one Durable Object value with room to spare
+// Every page CHE builds stays small enough to be edited later as a whole
+// document (and fits one Durable Object value with room to spare).
+const MAX_HTML = 60_000;
 const MAX_INDEX = 100;
 
 const KIND = '(?:website|web\\s*site|web\\s*page|landing\\s+page|web\\s+app|webapp|html\\s+page|homepage|home\\s+page|portfolio\\s+site|online\\s+store\\s+page)';
@@ -114,7 +116,7 @@ async function draft(env, model, messages, audit) {
 export async function writeSite(env, { brief, previousHtml = '', change = '' }, model) {
   // Editing must be lossless. Never send half a stored document and then
   // overwrite the complete version with a model reconstruction.
-  if (previousHtml && previousHtml.length > 60_000) {
+  if (previousHtml && previousHtml.length > MAX_HTML) {
     return { html: previousHtml, problems: ['This page is too large for a safe full-document edit. No changes were saved.'] };
   }
   const user = previousHtml
@@ -124,7 +126,7 @@ export async function writeSite(env, { brief, previousHtml = '', change = '' }, 
   let html = extractHtml(await draft(env, model, [{ role: 'system', content: BUILD_RULES }, { role: 'user', content: user }], audit));
   let problems = checkHtml(html);
   if (problems.length) {
-    const repairUser = `${user}\n\nYour previous answer failed these checks:\n- ${problems.join('\n- ')}\n\n${html ? `Previous answer:\n${html.slice(0, 60_000)}\n\n` : ''}Return the complete corrected page.`;
+    const repairUser = `${user}\n\nYour previous answer failed these checks:\n- ${problems.join('\n- ')}\n\n${html ? `Previous answer:\n${html.slice(0, MAX_HTML)}\n\n` : ''}Return the complete corrected page.`;
     const retry = extractHtml(await draft(env, model, [{ role: 'system', content: BUILD_RULES }, { role: 'user', content: repairUser }], { ...audit, route: `${audit.route}_repair` }));
     const retryProblems = checkHtml(retry);
     if (retry && retryProblems.length <= problems.length) { html = retry; problems = retryProblems; }
