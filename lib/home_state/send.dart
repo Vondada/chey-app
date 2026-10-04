@@ -463,6 +463,15 @@ extension _CheHomeSend on _CHEHomeState {
       return;
     }
 
+    // Trading Room live chart: "show me the E-mini", "switch to Tesla on the
+    // 1 minute", "read the price". Opens the room and speaks the result.
+    final chartCommand = _pendingAttachment == null ? CheChartCommand.parse(message) : null;
+    if (chartCommand != null) {
+      if (mounted) _set(() => controller.clear());
+      await _runChartCommand(message, chartCommand);
+      return;
+    }
+
     if (await _openExternalAppByVoice(message)) {
       return;
     }
@@ -851,5 +860,20 @@ extension _CheHomeSend on _CHEHomeState {
       onOpenFlagstaff: () => unawaited(_openMailbox()),
       onReadAloud: (t) => speakText(t, record: false),
     ));
+  }
+
+  Future<void> _runChartCommand(String message, CheChartCommand command) async {
+    if (command.symbol != null) CheLiveChart.symbol.value = command.symbol!;
+    if (command.interval != null) CheLiveChart.interval.value = command.interval!;
+    final reply = command.readPrice
+        ? await CheLiveChart.readPrice(cheAgentBaseUrl, _authHeaders, command.symbol ?? CheLiveChart.symbol.value)
+        : 'Loading ${CheLiveChart.symbol.value.name}, ${cheChartIntervals[CheLiveChart.interval.value] ?? CheLiveChart.interval.value} candles.';
+    HapticFeedback.selectionClick();
+    if (!mounted) return;
+    _set(() => messages
+      ..add({'role': 'user', 'text': message})
+      ..add({'role': 'assistant', 'text': reply}));
+    if (!command.readPrice) _openAssistantHub(tab: 1);
+    await speakText(reply, record: false);
   }
 }

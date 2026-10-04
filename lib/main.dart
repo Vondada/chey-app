@@ -107,6 +107,7 @@ import 'brain/che_brain_space_model.dart' show CheBrainAction, CheBrainCommand;
 import 'conversations/che_conversations_screen.dart';
 import 'browser/che_chat_links.dart';
 import 'home/che_chat_link_actions.dart';
+import 'rooms/che_live_chart.dart';
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
 

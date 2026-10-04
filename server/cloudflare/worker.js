@@ -33,7 +33,7 @@ import { discoverKeylessModels, engineStatus, routedEnv } from './ai_router.js';
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
-import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, snapshot as marketSnapshot } from './markets.js';
+import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
@@ -4301,6 +4301,10 @@ export class CheState extends DurableObject {
         if (body.action === 'tick') { const book = await paperTick(this.ctx.storage, { force: true }); return json({ ...book, summary: speakBook(book) }); }
         return json({ detail: 'Use watch or tick.' }, 400);
       }
+      if (path === '/api/markets/quote' && request.method === 'GET') {
+        const result = await marketQuote(new URL(request.url).searchParams.get('symbol') || '');
+        return json(result, result.error === 'Unknown symbol.' ? 400 : 200);
+      }
       if (path === '/api/markets/candles' && request.method === 'GET') {
         const symbol = new URL(request.url).searchParams.get('symbol') || '^spx';
         const result = await marketCandles(symbol);
@@ -8453,6 +8457,8 @@ export default {
     if (path === '/live-voice') return liveVoicePage();
     // CHE in any browser (lost phone, laptop, family invite links).
     if (path === '/app' || path === '/app/') return webAppPage();
+    // Public live-chart page for the Trading Room (no private data).
+    if (path === '/markets/chart' && request.method === 'GET') return marketChartPage(request.url);
     return env.CHE_STATE.getByName('owner').fetch(request);
   },
 };

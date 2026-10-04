@@ -112,6 +112,10 @@ void main() {
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
+    // The live chart now fills the top of the room; the quote panels follow it.
+    expect(find.textContaining('E-mini S&P 500 futures'), findsWidgets);
+    await tester.ensureVisible(find.text('6123', skipOffstage: false));
+    await tester.pump();
     expect(find.text('6123'), findsOneWidget);
     expect(find.text('Unavailable'), findsOneWidget);
     expect(find.textContaining('Stooq (delayed)'), findsOneWidget);
@@ -295,7 +299,10 @@ void main() {
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
-    await tester.tap(find.text('Nasdaq').first);
+    // The live chart sits above the delayed index panels.
+    await tester.ensureVisible(find.text('Nasdaq', skipOffstage: false).last);
+    await tester.pump();
+    await tester.tap(find.text('Nasdaq').last);
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.textContaining('NDQ source'), findsOneWidget);
     slowSpx.complete(http.Response(jsonEncode({'candles': [], 'error': 'SPX stale'}), 200));

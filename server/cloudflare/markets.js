@@ -189,3 +189,104 @@ export async function accountSnapshot(env, fetcher = fetch) {
     }
   });
 }
+
+// ─── Live chart (Trading Room) ───────────────────────────────────────────────
+// The chart is TradingView's free embeddable Advanced Chart, hosted on a page
+// CHE serves so the widget has a real https origin. It streams its own data:
+// stocks and crypto are live or near-live; CME futures are usually delayed
+// (~10 minutes) on the free widget. Real-time futures need the owner's broker
+// feed later. The page carries no private data.
+
+const TV_SYMBOL = /^[A-Z0-9_]{1,20}(?::[A-Z0-9_.!^-]{1,20})?$/;
+const CHART_INTERVALS = new Set(['1', '3', '5', '15', '30', '60', '240', 'D', 'W']);
+
+export function chartPage(url) {
+  const params = new URL(url).searchParams;
+  const symbol = String(params.get('symbol') || 'CME_MINI:ES1!').toUpperCase();
+  const interval = String(params.get('interval') || '5').toUpperCase();
+  if (!TV_SYMBOL.test(symbol) || !CHART_INTERVALS.has(interval)) {
+    return new Response('Unknown chart symbol or interval.', { status: 400, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+  }
+  // JSON.stringify of a validated string, with "<" escaped, cannot break out
+  // of the script element.
+  const config = JSON.stringify({
+    autosize: true,
+    symbol,
+    interval,
+    timezone: 'America/Chicago',
+    theme: 'dark',
+    style: '1',
+    locale: 'en',
+    allow_symbol_change: true,
+    hide_side_toolbar: true,
+    withdateranges: true,
+    details: false,
+    calendar: false,
+    support_host: 'https://www.tradingview.com',
+  }).replace(/</g, '\\u003c');
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>CHE live chart</title>
+<style>html,body{margin:0;height:100%;background:#05080a}.tradingview-widget-container{height:100%;width:100%}.tradingview-widget-container__widget{height:100%;width:100%}</style>
+</head><body>
+<div class="tradingview-widget-container" role="img" aria-label="Live candlestick chart">
+<div class="tradingview-widget-container__widget"></div>
+<script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>${config}</script>
+</div></body></html>`;
+  return new Response(html, {
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'public, max-age=300',
+      'Content-Security-Policy': "default-src 'none'; script-src https://s3.tradingview.com; frame-src https://*.tradingview.com https://*.tradingview-widget.com; style-src 'unsafe-inline'; img-src https: data:; connect-src https://*.tradingview.com wss://*.tradingview.com; base-uri 'none'; form-action 'none'",
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+    },
+  });
+}
+
+// Quote for the spoken readout ("read the chart"). Free delayed source; when
+// it has nothing, CHE says so instead of guessing a price.
+const STOOQ_FUTURES = { ES: 'es.f', NQ: 'nq.f', YM: 'ym.f', RTY: 'rty.f', CL: 'cl.f', GC: 'gc.f', SI: 'si.f', NG: 'ng.f', ZB: 'zb.f' };
+const STOOQ_CRYPTO = { BTC: 'btcusd', ETH: 'ethusd', SOL: 'solusd' };
+
+export function stooqQuoteSymbol(id) {
+  const clean = String(id || '').trim().toUpperCase();
+  if (STOOQ_FUTURES[clean]) return STOOQ_FUTURES[clean];
+  if (STOOQ_CRYPTO[clean]) return STOOQ_CRYPTO[clean];
+  if (/^[A-Z]{1,5}(?:\.[A-Z])?$/.test(clean)) return `${clean.toLowerCase().replace('.', '-')}.us`;
+  return '';
+}
+
+export function parseStooqQuote(text) {
+  const lines = String(text || '').trim().split(/\r?\n/);
+  if (lines.length < 2 || !/^symbol,date,time,open,high,low,close/i.test(lines[0])) return null;
+  const [symbol, date, time, open, high, low, close] = lines[1].split(',');
+  const nums = [open, high, low, close].map(Number);
+  if (!nums.every(Number.isFinite) || nums[3] <= 0) return null;
+  return { symbol, date, time, open: nums[0], high: nums[1], low: nums[2], close: nums[3] };
+}
+
+export async function quote(id, fetcher = fetch) {
+  const stooq = stooqQuoteSymbol(id);
+  if (!stooq) return { error: 'Unknown symbol.' };
+  return cached(`quote:${stooq}`, 30_000, async () => {
+    try {
+      const text = await fetchText(`https://stooq.com/q/l/?s=${encodeURIComponent(stooq)}&f=sd2t2ohlc&h&e=csv`, fetcher);
+      const q = parseStooqQuote(text);
+      if (!q) return { id: String(id).toUpperCase(), error: 'No price available right now.' };
+      return {
+        id: String(id).toUpperCase(),
+        price: q.close,
+        open: q.open,
+        high: q.high,
+        low: q.low,
+        change_pct: q.open ? ((q.close - q.open) / q.open) * 100 : 0,
+        as_of: `${q.date} ${q.time}`.trim(),
+        source: 'Stooq (delayed)',
+      };
+    } catch (_) {
+      return { id: String(id).toUpperCase(), error: 'Price source unavailable right now.' };
+    }
+  });
+}
