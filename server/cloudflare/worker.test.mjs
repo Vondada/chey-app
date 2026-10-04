@@ -18,9 +18,13 @@ let CheState;
 let publicResearch;
 let geminiVision;
 let selfUpdateChatIntent;
+let handleSelfUpdateChatAction;
+let dispatchChange;
+let continuationOf;
+let autoOpenReviewedPr;
 let selfImprovementLesson;
 try {
-  ({ default: worker, CheState, publicResearch, geminiVision, selfUpdateChatIntent, selfImprovementLesson } = await import(
+  ({ default: worker, CheState, publicResearch, geminiVision, selfUpdateChatIntent, selfImprovementLesson, handleSelfUpdateChatAction, dispatchChange, continuationOf, autoOpenReviewedPr } = await import(
     generatedWorker.href + '?test=' + Date.now(),
   ));
 } finally {
@@ -1202,6 +1206,152 @@ test('"what are my 5 newest starred repos" reads GitHub, says them, remembers th
     assert.equal(saved.get('starred_newest').repos.length, 5);
     assert.ok(mailed.length === 1 && Buffer.from(mailed[0].content, 'base64').toString().includes('owner/n5'), 'sent to Claude in the mailbox');
     assert.match(text, /sent them to Claude in the mailbox/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+
+// ─── Live autonomy stress test regressions (War Room) ─────────────────────
+const WARROOM_SRC = readFileSync(new URL('../../assets/office3d/warroom.html', import.meta.url), 'utf8');
+
+function autonomyFetch({ mainSha = 'main-sha', mailbox = [] } = {}) {
+  // A live War Room (entry -> screen) beside the dead HTML page.
+  const files = {
+    'assets/office3d/warroom.html': WARROOM_SRC,
+    'lib/main.dart': "import 'agents/che_war_room_screen.dart';\nvoid main() {}\n",
+    'lib/agents/che_war_room_screen.dart': "class CheWarRoomScreen {\n  final double tableRadius = 2.55;\n}\n",
+  };
+  return async (url, options = {}) => {
+    const u = String(url);
+    const method = options.method || 'GET';
+    const reply = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
+    if (method !== 'GET') { mailbox.push(u); return reply({}, 404); }
+    if (/api\.github\.com\/repos\/[^/]+\/[^/]+$/.test(u)) return reply({ default_branch: 'main' });
+    if (u.includes('/git/ref/heads/main')) return reply({ object: { sha: mainSha } });
+    if (u.includes('/git/trees/')) return reply({ tree: Object.keys(files).map((path) => ({ type: 'blob', path })) });
+    if (u.includes('/search/code')) {
+      const q = decodeURIComponent(u.split('q=')[1] || '').split('" repo:')[0].replace(/^"/, '').toLowerCase();
+      return reply({ items: Object.entries(files).filter(([, src]) => q && src.toLowerCase().includes(q)).map(([path]) => ({ path })) });
+    }
+    const m = /\/contents\/(.+)\?ref=/.exec(u);
+    if (m && files[m[1]] !== undefined) return reply({ content: Buffer.from(files[m[1]]).toString('base64'), sha: 'blob' });
+    return reply({}, 404);
+  };
+}
+
+// Engineers that always anchor on an orb that does not exist in the live screen.
+const hallucinatingCrew = {
+  run: async (_model, input) => {
+    const system = input.messages[0].content;
+    if (system.includes('Architect')) return { response: JSON.stringify({ plan: 'p', search_terms: ['War Room'], paths: ['lib/agents/che_war_room_screen.dart'] }) };
+    if (system.includes('Review')) return { response: JSON.stringify({ approved: true, target_correct: true, notes: [] }) };
+    return { response: JSON.stringify({ summary: 'orb', edits: [{ path: 'lib/agents/che_war_room_screen.dart', find: `final orb = Orb(${Math.random()});`, replace: 'x' }] }) };
+  },
+};
+
+function store(entries = []) {
+  const m = new Map(entries);
+  return { m, get: async (k) => m.get(k), put: async (k, v) => m.set(k, v), delete: async (k) => m.delete(k) };
+}
+
+test('"Create the PR. Continue the original task…" opens the waiting reviewed change instead of starting a new job', () => {
+  const owner = 'Create the PR. Continue the original task through the complete workflow yourself. Do not stop for normal engineering decisions or recoverable failures. Report back when the requested workflow is complete, or only stop if an action specifically needs my approval.';
+  assert.deepEqual(selfUpdateChatIntent(owner), { kind: 'open-pr' });
+  assert.deepEqual(selfUpdateChatIntent('Okay, create the PR now.'), { kind: 'open-pr' });
+  // An explicit code command that mentions a PR later is still a code request.
+  assert.equal(selfUpdateChatIntent('Update your code: make the War Room table pulse, then create the PR and report back with the result of the checks please, thank you very much sir.'), null);
+  assert.equal(selfUpdateChatIntent('Explain how you would create a PR for the War Room work and what it would change across the Office, the War Room and the agents. ' + 'x'.repeat(80)), null);
+});
+
+test('"continue the original task" works from the last real request, never from the follow-up text as a spec', () => {
+  const last = { request: 'Update the existing War Room: make the central table feel alive.' };
+  const out = continuationOf('Continue the original task and finish it yourself.', last);
+  assert.match(out, /^Update the existing War Room: make the central table feel alive\./);
+  assert.match(out, /Owner follow-up on the same task/);
+  assert.equal(continuationOf('Make the Office brighter.', last), null);
+  assert.equal(continuationOf('Continue the original task.', null), null);
+});
+
+test('a failed new job never hides a reviewed change that is still waiting (no contradictory state)', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = autonomyFetch();
+  try {
+    const memory = store([['pending_self_update', { proposal: { summary: 'War Room table pulse', files: [] }, request: 'War Room pulse', reviewed_at: new Date().toISOString() }]]);
+    const env = { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: hallucinatingCrew };
+    const res = await dispatchChange(env, { request: 'Update your code: make the War Room central table pulse gently.' }, memory, {});
+    const body = await res.json();
+    assert.equal(res.status, 422);
+    assert.match(body.detail, /edits did not match the current source/);
+    assert.match(body.detail, /earlier reviewed change \(War Room table pulse\) is still waiting/);
+    assert.equal(memory.m.get('che_failed_engineering').root_cause, 'edit_anchor');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('a stale reviewed change that cannot be rebuilt stops reporting as waiting (GitHub is authoritative)', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = autonomyFetch({ mainSha: 'new-main-sha' });
+  try {
+    const memory = store([['pending_self_update', {
+      proposal: { summary: 'War Room table pulse', expected_base_sha: 'old-main-sha', files: [{ path: 'assets/office3d/warroom.html', content: WARROOM_SRC + '\n' }] },
+      request: 'Make the War Room central table pulse gently.',
+      reviewed_at: new Date().toISOString(),
+    }]]);
+    const env = { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: hallucinatingCrew };
+    const out = await handleSelfUpdateChatAction(env, memory, { kind: 'open-pr' });
+    assert.equal(out.ok, false);
+    assert.match(out.message, /changed on GitHub after that update was reviewed/);
+    assert.match(out.message, /no longer waiting/);
+    assert.equal(memory.m.has('pending_self_update'), false, 'no stale change left "waiting"');
+    assert.ok(memory.m.get('che_failed_engineering'), 'evidence kept for recovery');
+    assert.equal(memory.m.has('last_self_update_pr'), false, 'never claims a PR that was not opened');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('autonomy: when CHE cannot open the PR herself she says so and the reviewed change stays waiting (never a claimed PR)', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ message: 'Bad credentials' }), { status: 401 });
+  try {
+    const memory = store([['pending_self_update', { proposal: { summary: 'War Room table radius', expected_base_sha: 'x', files: [{ path: 'lib/a.dart', content: 'x' }] }, request: 'r', reviewed_at: new Date().toISOString() }]]);
+    const out = await autoOpenReviewedPr({ CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' }, memory, { summary: 'War Room table radius' });
+    assert.equal(out.opened, false);
+    assert.match(out.message, /could not open the pull request myself/);
+    assert.match(out.message, /still waiting; say "create the PR"/);
+    assert.doesNotMatch(out.message, /PR #\d+ is open/);
+    assert.ok(memory.m.has('pending_self_update'));
+    assert.equal(memory.m.has('last_self_update_pr'), false);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('"Create the PR. Then fix the previous job that failed." opens the PR path, never a recovery coding run', async () => {
+  const saved = new Map();
+  let aiCalls = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ message: 'Bad credentials' }), { status: 401 });
+  try {
+    // OpenCode runtime on: a coding route would hand the raw message to the runner.
+    const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_CODING_RUNTIME: 'opencode', AI: { run: async () => { aiCalls++; return { response: 'x' }; } } };
+    const state = new CheState({ storage: { get: async (k) => saved.get(k), put: async (k, v) => { saved.set(k, v); }, delete: async (k) => saved.delete(k), setAlarm: async () => {} } }, env);
+    env.CHE_STATE = { getByName: () => state };
+    const send = (path, method = 'GET', body = {}, token = '') => worker.fetch(new Request(`https://che.example${path}`, {
+      method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
+    }), env);
+    const token = (await (await send('/api/pair', 'POST', { code: '123456' })).json()).device_token;
+    saved.set('che_failed_engineering', { request: 'old failed job', failed_strategies: [], fingerprints: [], outcomes: [] });
+    saved.set('pending_self_update', { proposal: { summary: 'War Room table', expected_base_sha: 'x', files: [{ path: 'lib/a.dart', content: 'x' }] }, request: 'r', reviewed_at: new Date().toISOString() });
+    aiCalls = 0;
+    const text = await (await send('/api/chat', 'POST', { message: 'Create the PR. Then fix the previous job that failed.' }, token)).text();
+    assert.equal(aiCalls, 0, 'no coding/recovery run was started');
+    assert.equal(saved.has('che_runtime_last_session') || saved.has('che_runtime_last_fallback'), false, 'no OpenCode coding session was attempted');
+    assert.doesNotMatch(text, /recovering|recovery pass/i);
+    assert.match(text, /pull request|GitHub/i);
   } finally {
     globalThis.fetch = realFetch;
   }

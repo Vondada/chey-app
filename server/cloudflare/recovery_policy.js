@@ -200,7 +200,9 @@ export function ownerEngineeringMessage(failureClass, kind = '') {
     case FAILURE_CLASS.AUTHORIZATION:
       return 'This next step needs your approval, sir.';
     default:
-      return 'My coding team tried three materially different approaches against the current source and none passed independent review and validation, sir. I stopped instead of looping. Nothing was changed, and I kept the engineering record for the next attempt.';
+      // Only the job's own record may say how many attempts ran or why they
+      // failed (see honestFailureMessage); this fallback claims neither.
+      return 'My coding job stopped before it produced a change that passed review, sir. Nothing was changed, and I kept the engineering record for the next attempt.';
   }
 }
 

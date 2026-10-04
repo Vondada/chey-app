@@ -414,3 +414,24 @@ test('configuration/creation claims about code need real evidence too', () => {
   ]) assert.equal(guardOwnerReply(claim, NONE).text, '', claim);
   assert.equal(guardOwnerReply('I have set a reminder for 5 pm.', NONE).text, 'I have set a reminder for 5 pm.');
 });
+
+test('status is about now: old merges are not "updated", a merged PR is not "open", and a failed job never reads as the waiting change', () => {
+  const old = new Date(Date.now() - 48 * 3600_000).toISOString();
+  const now = new Date().toISOString();
+  const stale = verifiedStatusText(verifiedState([
+    { kind: 'merged', number: 3, sha: 'aaa1111', at: old },
+    { kind: 'deployed', at: old },
+  ], [], {}));
+  assert.doesNotMatch(stale, /merged|deployed/);
+  const mergedSince = verifiedStatusText(verifiedState([
+    { kind: 'pr_opened', number: 9, at: now },
+    { kind: 'merged', number: 9, sha: 'bbb2222', at: now },
+  ], [], {}));
+  assert.doesNotMatch(mergedSince, /PR #9 is open/);
+  assert.match(mergedSince, /PR #9 was merged/);
+  const both = verifiedStatusText(verifiedState([], [
+    { id: 'job12345678', kind: 'self_development', status: 'failed', updated_at: now, owner_message: "Coding job job12345 stopped: my engineers' edits did not match the current source. Nothing was changed." },
+  ], { pendingProposal: { summary: 'War Room table pulse', files: [] } }));
+  assert.match(both, /Nothing was changed\..*Separately, an earlier reviewed change \(War Room table pulse\) is still waiting/);
+  assert.doesNotMatch(both, /complete|repository (?:was|is) updated/i);
+});
