@@ -115,7 +115,11 @@ jobs:
 
       - name: Shorebird patch
         if: steps.configured.outputs.ready == 'true' && env.MODE == 'patch'
-        run: shorebird patch ios --no-codesign --release-version=latest --allow-native-diffs --allow-asset-diffs -- --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
+        run: |
+          set -euo pipefail
+          # Do not hide native/asset incompatibilities. Those changes belong in
+          # the full IPA lane and must never be forced through an OTA patch.
+          shorebird patch ios --no-codesign --release-version=latest -- --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
 
       - name: Package unsigned IPA (release only)
         if: steps.configured.outputs.ready == 'true' && env.MODE == 'release'
