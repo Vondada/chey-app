@@ -3,7 +3,10 @@
 // Related memories connect like neural branches. Tap an orb for provenance.
 // Cheap pseudo-3D CustomPaint + InteractiveViewer; no heavy WebView scene.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../che_ui/che_theme.dart';
@@ -288,6 +291,22 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
   CheMemoryDot? _selected;
   final _search = TextEditingController();
 
+  /// Full view hides the search and legend so the constellation fills the
+  /// room instead of being squeezed into a band at the bottom.
+  bool _fullView = false;
+
+  void _toggleFullView() {
+    HapticFeedback.selectionClick();
+    setState(() => _fullView = !_fullView);
+    final view = View.maybeOf(context);
+    if (view == null) return;
+    unawaited(SemanticsService.sendAnnouncement(
+      view,
+      _fullView ? 'Full brain view. The constellation fills the screen.' : 'Brain controls shown: search and color legend.',
+      Directionality.maybeOf(context) ?? TextDirection.ltr,
+    ));
+  }
+
   @override
   void dispose() {
     _search.dispose();
@@ -433,14 +452,20 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('MEMORY', style: CheType.overline.copyWith(color: CheColors.accent, letterSpacing: 2)),
-                    Text('Brain constellation', style: CheType.title),
-                    Text(
-                      '${widget.dots.length} thoughts · no capacity limit',
-                      style: CheType.caption,
-                    ),
+                    if (!_fullView) Text('MEMORY', style: CheType.overline.copyWith(color: CheColors.accent, letterSpacing: 2)),
+                    Text('Brain constellation', style: _fullView ? CheType.caption : CheType.title),
+                    if (!_fullView)
+                      Text(
+                        '${widget.dots.length} thoughts · no capacity limit',
+                        style: CheType.caption,
+                      ),
                   ],
                 ),
+              ),
+              CheIconButton(
+                icon: _fullView ? Icons.close_fullscreen_rounded : Icons.open_in_full_rounded,
+                onTap: _toggleFullView,
+                tooltip: _fullView ? 'Show brain controls' : 'Full brain view',
               ),
               if (widget.onRefresh != null)
                 CheIconButton(
@@ -452,7 +477,7 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
             ],
           ),
         ),
-        Padding(
+        if (!_fullView) Padding(
           padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.sm, CheSpace.gutter, CheSpace.sm),
           child: TextField(
             controller: _search,
@@ -473,9 +498,13 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
             ),
           ),
         ),
-        Padding(
+        // One scrolling row instead of a 2-3 row wrap, so the legend never
+        // pushes the constellation down.
+        if (!_fullView) Padding(
           padding: const EdgeInsets.fromLTRB(CheSpace.gutter, 0, CheSpace.gutter, CheSpace.sm),
-          child: Wrap(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Wrap(
             spacing: 8,
             runSpacing: 6,
             children: [
@@ -508,6 +537,7 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
                 ),
               Text('Pinch to zoom · tap an orb', style: CheType.caption.copyWith(fontSize: 10)),
             ],
+          ),
           ),
         ),
         Expanded(
@@ -572,6 +602,12 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
                   }
                   await widget.onReadAloud?.call('${d.title}. ${d.body}');
                 },
+              ),
+              CheVoiceAction(
+                number: 2,
+                label: _fullView ? 'Show brain controls' : 'Full brain view',
+                icon: _fullView ? Icons.close_fullscreen_rounded : Icons.open_in_full_rounded,
+                onTap: _toggleFullView,
               ),
             ],
           ),

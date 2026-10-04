@@ -48,7 +48,7 @@ import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playb
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
 import { STARRED_LIBRARY, describeTopicStudyStart, matchTopicSections, namedRepoStudyIntent, starredLibraryIntent, readTutorial, readmeSections, sectionTutorials, studyBatchIntent, topicBuildRequest, topicTitles, wantsSerialStudy } from './topic_study.js';
 import { buildCollaborationPacket, collaborationIntent, collaborationSessionId, parallelPreference, planParallelLanes, statusIntent } from './collaboration.js';
-import { consultEngine, consultIntent, shareIntent, speakConsult } from './ai_consult.js';
+import { consultEngine, consultIntent, roundTable, shareIntent, speakConsult, speakRoundTable } from './ai_consult.js';
 import { markOwnerSeen, readArchive as flagstaffArchive, unreadIncoming } from './web_mailbox.js';
 import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
 import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSnapshot } from './workshop.js';
@@ -6084,17 +6084,50 @@ export class CheState extends DurableObject {
         // Talk to other AIs right now: "ask Gemini and ChatGPT about …".
         const consult = consultIntent(message);
         if (consult) {
-          const results = await Promise.all(consult.peers.map((peer) => consultEngine(this.env, peer, consult.question, this.env.CHE_STRONG_MODEL || STRONG_MODEL)));
+          const consultModel = this.env.CHE_STRONG_MODEL || STRONG_MODEL;
+          const results = await Promise.all(consult.peers.map((peer) => consultEngine(this.env, peer, consult.question, consultModel)));
           await postWebMail(this.ctx.storage, { from: 'che', to: consult.peers.join(','), text: consult.question }, this.env).catch(() => null);
           for (const r of results) {
             if (r.text && looksLikeAttack(r.text)) {
               await fileLetter(this.ctx.storage, { tray: 'security', subject: `${r.label} tried to give me orders`, body: 'Its reply asked for secrets or to override you. I stopped and did not follow it.', tag: 'security', severity: 'danger' });
               r.text = 'Its answer tried to get me to break your rules, so I stopped and filed a security letter. I did not give it anything.';
+              r.blocked = true;
             }
             if (r.text) await postWebMail(this.ctx.storage, { from: r.peer, to: 'che', text: r.text }, this.env).catch(() => null);
-            if (r.mailbox) await sendMail(this.env, { from: 'che', to: r.peer, text: `CHE's owner asks (relayed by CHE; "you" meant CHE): ${relayText(consult.question)}` }).catch(() => null);
           }
-          return ndjsonReply(speakConsult(results), { source: 'che_consult', peers: consult.peers });
+          // Two or more answers: the AIs read each other and build on it, and
+          // CHE keeps the conclusion. Substitute engines are not the AI the
+          // owner named, so they do not take part.
+          const table = await roundTable(this.env, results.filter((r) => !r.blocked && !r.substitute), consult.question, consultModel).catch(() => null);
+          if (table) {
+            for (const b of table.builds) {
+              if (looksLikeAttack(b.text)) { b.text = ''; continue; }
+              await postWebMail(this.ctx.storage, { from: b.peer, to: 'che', text: b.text }, this.env).catch(() => null);
+            }
+            table.builds = table.builds.filter((b) => b.text);
+            if (table.conclusion && !looksLikeAttack(table.conclusion)) {
+              await postWebMail(this.ctx.storage, { from: 'che', to: consult.peers.join(','), text: `Round-table conclusion on "${consult.question.slice(0, 200)}": ${table.conclusion}` }, this.env).catch(() => null);
+              // Memory grows after the reply, never in front of it.
+              this.ctx.waitUntil?.(storeVectorMemory(this.env, {
+                external_id: `roundtable:${Date.now()}`,
+                kind: 'knowledge',
+                title: `AI round table · ${consult.question.slice(0, 160)}`,
+                content: `Question: ${consult.question}\nConclusion (CHE, from ${results.filter((r) => r.text && !r.blocked).map((r) => r.label).join(', ')}): ${table.conclusion}`,
+                source: 'ai_round_table',
+                metadata: { peers: consult.peers },
+              }).catch(() => null));
+            } else {
+              table.conclusion = '';
+            }
+          }
+          for (const r of results) {
+            if (r.mailbox) {
+              const shared = table?.conclusion ? ` What the other AIs concluded so far: ${table.conclusion}` : '';
+              await sendMail(this.env, { from: 'che', to: r.peer, text: `CHE's owner asks (relayed by CHE; "you" meant CHE): ${relayText(consult.question)}${shared}` }).catch(() => null);
+            }
+          }
+          const tableText = speakRoundTable(table);
+          return ndjsonReply([speakConsult(results), tableText].filter(Boolean).join('\n\n'), { source: 'che_consult', peers: consult.peers, round_table: Boolean(table?.conclusion) });
         }
 
         const lookChange = workshopAvatarIntent(message, data);

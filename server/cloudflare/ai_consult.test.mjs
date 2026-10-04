@@ -34,3 +34,37 @@ test('consult pins the named engine, falls back honestly, and never comes back e
   assert.equal(c.mailbox, true);
   assert.match(speakConsult([g, m, c]), /Gemini says: Use caching\.[\s\S]*unreachable right now, so groq answered[\s\S]*mailbox/);
 });
+
+test('round table: each AI reads the others and CHE writes one conclusion', async () => {
+  const { roundTable, speakRoundTable } = await import('./ai_consult.js');
+  const prompts = [];
+  const env = {
+    AI: {
+      run: async (_model, input) => {
+        const user = input.messages[1].content;
+        prompts.push({ system: input.messages[0].content, user, provider: input.che_provider || '' });
+        if (/Write the conclusion/.test(input.messages[0].content)) return { response: 'Both agree: cache for five minutes.' };
+        return { response: `${input.che_provider} builds on it.` };
+      },
+    },
+  };
+  const results = [
+    { peer: 'gemini', label: 'Gemini', text: 'Cache for five minutes.' },
+    { peer: 'chatgpt', label: 'ChatGPT (OpenAI gpt-oss)', text: 'Cache, but invalidate on writes.' },
+  ];
+  const table = await roundTable(env, results, 'how long should CHE cache provider health?', 'm');
+  assert.equal(table.builds.length, 2);
+  const geminiBuild = prompts.find((p) => p.provider === 'gemini');
+  assert.match(geminiBuild.user, /invalidate on writes/, 'Gemini sees ChatGPT\'s answer');
+  assert.doesNotMatch(geminiBuild.user.split('The other AIs answered:')[1], /Gemini:/, 'an AI is not shown its own answer as another AI');
+  assert.equal(table.conclusion, 'Both agree: cache for five minutes.');
+  assert.match(speakRoundTable(table), /Together, my conclusion: Both agree/);
+});
+
+test('round table needs at least two real answers', async () => {
+  const { roundTable } = await import('./ai_consult.js');
+  let calls = 0;
+  const env = { AI: { run: async () => { calls += 1; return { response: 'x' }; } } };
+  assert.equal(await roundTable(env, [{ peer: 'gemini', label: 'Gemini', text: 'only one' }, { peer: 'claude', mailbox: true }], 'q', 'm'), null);
+  assert.equal(calls, 0);
+});
