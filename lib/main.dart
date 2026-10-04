@@ -102,6 +102,7 @@ import 'security/che_password_vault.dart';
 import 'security/che_vault_auth.dart';
 import 'browser/che_browser.dart' show CheBrowserActions;
 import 'browser/che_embedded_app_shell.dart' show CheEmbeddedAppAnnouncer;
+import 'conversations/che_conversations_screen.dart';
 import 'browser/che_chat_links.dart';
 import 'home/che_chat_link_actions.dart';
 import 'che_web_voice_stub.dart'
@@ -1831,6 +1832,13 @@ OWNER AGENCY
           subtitle: 'Swings · entries · backtests · paper trades',
           onTap: () => _openAssistantHub(tab: 1),
           hue: kit.CheColors.markets,
+        ),
+        CheMoreItem(
+          icon: Icons.forum_rounded,
+          title: 'Conversations',
+          subtitle: 'Agents, War Room and AIs · group chats',
+          onTap: _openConversations,
+          hue: kit.CheColors.accent,
         ),
         CheMoreItem(
           icon: Icons.markunread_mailbox_rounded,

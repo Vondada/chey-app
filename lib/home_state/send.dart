@@ -446,6 +446,17 @@ extension _CheHomeSend on _CHEHomeState {
       return;
     }
 
+    // "show the agent conversations", "open group chats", "what did the
+    // agents say": every AI/agent conversation as group chats.
+    if (_pendingAttachment == null &&
+        RegExp(r"^(?:(?:che|chey|chay)[,:]?\s+)?(?:show|open|read)(?: me)? (?:the |my )?(?:(?:agent|agents|ai|ais|office|war room|crew) (?:conversations|group chats|chats|messages)|group chats)\b|^what did (?:the )?(?:agents|crew|ais) say", caseSensitive: false)
+            .hasMatch(message.trim())) {
+      if (mounted) _set(() => controller.clear());
+      await speakText('Opening the agent conversations, sir.', record: false);
+      _openConversations();
+      return;
+    }
+
     if (await _openExternalAppByVoice(message)) {
       return;
     }
@@ -783,5 +794,15 @@ extension _CheHomeSend on _CHEHomeState {
       );
     });
   }
-}
 
+  void _openConversations() {
+    HapticFeedback.selectionClick();
+    unawaited(CheConversationsScreen.open(
+      context,
+      baseUrl: () => cheAgentBaseUrl,
+      headers: () => _authHeaders,
+      onOpenFlagstaff: () => unawaited(_openMailbox()),
+      onReadAloud: (t) => speakText(t, record: false),
+    ));
+  }
+}
