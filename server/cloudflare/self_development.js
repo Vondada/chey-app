@@ -11,6 +11,7 @@
 // permission problems are class C; owner approval is class D.
 
 import { isSelfUpdateEditablePath, isSelfUpdateReadablePath, validateUpdateFiles } from './self_update.js';
+import { cachedCodeIndex, gitBlobSha, loadCodeIndex } from './code_index.js';
 import { ENGINEERING_PLAYBOOK } from './engineering_playbook.js';
 import { CHE_SELF_BRIEF } from './che_self_knowledge.js';
 import {
@@ -447,6 +448,12 @@ async function sourceIndex(env, fetcher) {
 // Reads one file at the exact inspected commit. Returns { text, sha } or null.
 async function readFile(env, ref, path, fetcher) {
   if (!isSelfUpdateReadablePath(path)) return null;
+  // CHE's own index of this exact commit: no GitHub request at all.
+  const local = cachedCodeIndex(ref);
+  if (local?.has(path)) {
+    const text = local.text(path);
+    return { text, sha: local.blobSha(path) || await gitBlobSha(text) };
+  }
   const found = await ghRead(env, `/contents/${path}?ref=${encodeURIComponent(ref)}`, fetcher);
   if (!found.ok || typeof found.data?.content !== 'string' || !found.data.content) return null;
   try { return { text: decodeBase64Utf8(found.data.content), sha: String(found.data.sha || '') || null }; } catch (_) { return null; }
@@ -583,6 +590,9 @@ export async function inspectRepositoryContext(env, request, fetcher = fetch) {
     };
   }
 
+  // CHE's own index: one download instead of dozens of file requests.
+  await loadCodeIndex(null, env, index.head_sha, fetcher).catch(() => null);
+
   // Tier 1: deterministic path ranking. Feature phrases receive a strong
   // bonus so a broad engineering prompt cannot crowd the named feature out.
   const wanted = rankSourcePaths(index.paths, request, 16);
@@ -672,6 +682,10 @@ export async function inspectRepositoryContext(env, request, fetcher = fetch) {
 // references, while the live War Room renders through
 // lib/widgets/che_native_scene_world.dart (imported by the War Room screen).
 
+// Code that can load or call other files (docs and data never do).
+const CODE_PATH = /\.(?:dart|m?js|cjs|ts|tsx|jsx|html|swift|kt|kts|java|m|mm)$/i;
+const isCodePath = (path) => CODE_PATH.test(String(path)) && !/^docs\//.test(String(path));
+
 // Files that are entry points: always live, never need a caller.
 const ENTRY_POINTS = new Set(['lib/main.dart', 'server/cloudflare/worker.js']);
 
@@ -736,7 +750,9 @@ const pathMatchesFeature = (path, spellings) => {
 
 // GitHub code search for an exact string. { ok:false } on failure, so a
 // search outage is never mistaken for "nothing references this file".
-async function exactSearch(env, text, fetcher) {
+async function exactSearch(env, text, fetcher, sha = '') {
+  const local = cachedCodeIndex(sha);
+  if (local) return { ok: true, paths: local.search(text, { limit: 100 }) };
   const q = `"${String(text).replace(/"/g, '').slice(0, 80)}" repo:${repoOf(env)}`;
   try {
     const response = await fetcher(`https://api.github.com/search/code?per_page=20&q=${encodeURIComponent(q)}`, {
@@ -765,10 +781,13 @@ async function exactSearch(env, text, fetcher) {
 // failed or skipped search makes a file "unknown", never "dead".
 export async function traceSourceGraph(env, { index, request, seeds = [], read, known = new Map(), fetcher = fetch, maxFiles = 10, maxSearches = 20, apiSearches = 6 } = {}) {
   const allPaths = new Set(index?.paths || []);
+  // With CHE's own index there is no GitHub search limit to ration.
+  if (cachedCodeIndex(index?.head_sha)) { maxSearches = 1e6; apiSearches = 1e6; }
   const texts = new Map(known);
   const load = async (path) => {
     if (texts.has(path)) return texts.get(path);
-    const text = allPaths.has(path) && read ? await read(path).catch(() => null) : null;
+    // Minified vendor bundles (three.min.js) carry no feature code to map.
+    const text = allPaths.has(path) && read && !/\.min\.js$/.test(path) ? await read(path).catch(() => null) : null;
     if (typeof text === 'string') texts.set(path, text);
     return typeof text === 'string' ? text : null;
   };
@@ -798,7 +817,7 @@ export async function traceSourceGraph(env, { index, request, seeds = [], read, 
   // that merely mention a file never make it live.
   const isTest = (p) => /(?:^|\/)test\/|\.test\.(?:mjs|js)$|_test\.dart$|\.fixtures\.mjs$/.test(p);
   const side = (p) => (p.startsWith('server/') ? 'server' : 'app');
-  const counts = (caller, target) => caller !== target && !isTest(caller) && side(caller) === side(target) && allPaths.has(caller);
+  const counts = (caller, target) => caller !== target && !isTest(caller) && isCodePath(caller) && side(caller) === side(target) && allPaths.has(caller);
   const callers = new Map();
   const addCaller = (target, caller) => {
     if (!callers.has(target)) callers.set(target, new Set());
@@ -829,7 +848,7 @@ export async function traceSourceGraph(env, { index, request, seeds = [], read, 
     for (const needle of [path.split('/').pop(), ...publicSymbols(path, text)]) {
       if (searches >= maxSearches || callers.get(path).size) break;
       searches += 1;
-      const found = await exactSearch(env, needle, fetcher);
+      const found = await exactSearch(env, needle, fetcher, index?.head_sha);
       ok = ok || found.ok;
       for (const hit of found.paths) addCaller(path, hit);
     }
@@ -846,7 +865,7 @@ export async function traceSourceGraph(env, { index, request, seeds = [], read, 
       let dynamic = searches >= maxSearches; // no budget left: assume it might be
       if (!dynamic) {
         searches += 1;
-        const found = await exactSearch(env, dir, fetcher);
+        const found = await exactSearch(env, dir, fetcher, index?.head_sha);
         dynamic = !found.ok;
         const escaped = dir.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
         const builds = new RegExp(`['"\`]${escaped}['"\`]?\\s*\\+|['"\`]${escaped}\\$`);
@@ -886,7 +905,8 @@ export async function traceSourceGraph(env, { index, request, seeds = [], read, 
     return verdict;
   };
   const live = new Map();
-  for (const path of order) live.set(path, isTest(path) ? null : await liveness(path));
+  // Tests, docs and data are not code paths: never classified live or dead.
+  for (const path of order) live.set(path, isTest(path) || !isCodePath(path) ? null : await liveness(path));
 
   const tests = (path) => {
     const stem = path.split('/').pop().replace(/\.(?:dart|m?js|html)$/, '').toLowerCase();
@@ -913,7 +933,7 @@ export async function traceSourceGraph(env, { index, request, seeds = [], read, 
     // Broaden to how the feature is spelled in live code before anyone edits.
     notes.push(`Discovery contradiction: every file named after ${features.join(', ') || 'the feature'} is dead. Broadening to the feature's code spellings.`);
     for (const spelling of spellings.filter((item) => !item.includes(' ')).slice(0, Math.max(0, maxSearches - searches))) {
-      const found = await exactSearch(env, spelling, fetcher);
+      const found = await exactSearch(env, spelling, fetcher, index?.head_sha);
       for (const hit of found.paths) {
         if (!allPaths.has(hit) || files.some((file) => file.path === hit) || files.length >= maxFiles + 4) continue;
         files.push({ path: hit, live: null, references: [], callers: [], tests: tests(hit), feature_match: false, found_by: spelling });
@@ -923,7 +943,7 @@ export async function traceSourceGraph(env, { index, request, seeds = [], read, 
   const api = await apiBridge({ files, texts, load, allPaths, publicSymbols, search: async (text) => {
     if (searches >= maxSearches + apiSearches) return { ok: false, paths: [] };
     searches += 1;
-    return exactSearch(env, text, fetcher);
+    return exactSearch(env, text, fetcher, index?.head_sha);
   } });
   return { features, files, dead, contradiction, notes, api, texts };
 }
@@ -1140,6 +1160,16 @@ async function searchCode(ctx, terms, fetcher) {
   const repo = repoOf(env);
   const hits = new Map();
   if (!repo) return hits;
+  const local = cachedCodeIndex(ctx.codeSha);
+  if (local) {
+    // Her own index: every code file at this commit, ranked by how many of
+    // the request's terms it contains (docs never crowd out the code).
+    for (const term of terms.slice(0, 12)) {
+      const needle = String(term).replace(/"/g, '').slice(0, 80);
+      for (const path of local.search(needle, { limit: 400, filter: (p) => isSelfUpdateReadablePath(p) && isCodePath(p) })) hits.set(path, (hits.get(path) || 0) + 1);
+    }
+    return hits;
+  }
   const batches = await Promise.all(terms.slice(0, 5).map(async (term) => {
     const q = `"${String(term).replace(/"/g, '').slice(0, 80)}" repo:${repo}`;
     try {
@@ -1825,6 +1855,10 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       });
     }
     const uiTask = isUiTask(ownerIntent);
+    // CHE's own code search for this commit (one tarball download, cached).
+    const codeIndex = await loadCodeIndex(memory, env, index.head_sha, fetcher).catch(() => null);
+    ctx.codeSha = codeIndex ? index.head_sha : '';
+    note(ctx, { stage: 'index', kind: codeIndex ? 'code_index_ready' : 'code_index_unavailable', files: codeIndex?.size || 0 });
 
     // 1. Two architects in parallel on different engines; plans are merged.
     const plans = await Promise.all(CREW.planners.map(async (member) => {
@@ -2008,6 +2042,8 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       if (head.error || head.sha === baseSha) return false;
       note(ctx, { stage: 'base', kind: 'base_moved', from: baseSha, to: head.sha });
       baseSha = head.sha;
+      const moved = await loadCodeIndex(memory, env, head.sha, fetcher).catch(() => null);
+      ctx.codeSha = moved ? head.sha : '';
       const paths = [...sources.keys()];
       sources.clear();
       blobShas.clear();

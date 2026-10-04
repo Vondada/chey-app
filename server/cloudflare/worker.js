@@ -6049,15 +6049,16 @@ export class CheState extends DurableObject {
               prompt: spec.request,
               exam_level: level,
               idempotency_key: idempotencyKey('job:autonomy_exam', `level ${level}`),
-              // One level at a time: GitHub code search allows ~10 a minute.
-              retry_at: Date.now() + i * 10 * 60_000,
+              // One level at a time (CHE searches her own code index, so no
+              // GitHub search limit; the gap just keeps engines unhurried).
+              retry_at: Date.now() + i * 3 * 60_000,
             });
             started.push({ level, id: queued.job.id, deduplicated: queued.deduplicated });
           });
           await this.ctx.storage.put('che', fresh);
           await this.scheduleWork();
           const list = started.map((item) => `level ${item.level}${item.deduplicated ? ' (already running)' : ''}`).join(', ');
-          return ndjsonReply(`I started the autonomy exam, sir: ${list}. Each level is a real coding job on my own code, each harder than the last, run in practice mode so nothing is changed or sent to GitHub. They run one at a time, about ten minutes apart. Say "autonomy exam results" anytime to hear the scores.${fresh.autonomy === false ? ' Autonomy is paused right now; say "resume" so the jobs can run.' : ''}`, { source: 'che_autonomy_exam', background_job_ids: started.map((item) => item.id) });
+          return ndjsonReply(`I started the autonomy exam, sir: ${list}. Each level is a real coding job on my own code, each harder than the last, run in practice mode so nothing is changed or sent to GitHub. They run one at a time, a few minutes apart. Say "autonomy exam results" anytime to hear the scores.${fresh.autonomy === false ? ' Autonomy is paused right now; say "resume" so the jobs can run.' : ''}`, { source: 'che_autonomy_exam', background_job_ids: started.map((item) => item.id) });
         }
         // "Diagnose/recover the failed coding job": goes to the coding
         // pipeline, which builds on the retained failure evidence.
