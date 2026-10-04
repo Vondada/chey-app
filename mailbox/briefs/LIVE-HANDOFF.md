@@ -84,6 +84,12 @@ Then, on GitHub:
   Verify exact names on GitHub before integrating (queue item 4).
 - **Note:** "Chase" means **CHE**.
 
+**PR #176 (head 21e94b0) now also adds:**
+- **Full coding autonomy up to the owner's merge:** CHE opens the draft PR herself after independent review.
+- **The 5-level autonomy exam** (`server/cloudflare/autonomy_exam.js`). Owner commands: "run the autonomy exam", "run autonomy exam level N", "autonomy exam results".
+- Worker tests: 531 pass.
+- After merge plus `[worker-deploy]`, the owner runs the exam live. Record the results here.
+
 **Next:** queue item 1 (Trading Room learning engine). Nothing is half-done; no WIP branches.
 
 **Owner answers still pending (don't guess):**
