@@ -397,7 +397,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           rm -f /tmp/che-review-config.json /tmp/che-review-prompt.txt /tmp/che-review.err
 
-      - name: Merge approved PR or record rejection
+      - name: Record review result and wait for owner approval
         if: steps.resolve.outputs.ready == 'true'
         uses: actions/github-script@v7
         env:
@@ -500,28 +500,13 @@ jobs:
               return;
             }
 
-            const merged = await github.rest.pulls.merge({
-              ...context.repo,
-              pull_number: prNumber,
-              merge_method: 'squash',
-              sha: expectedSha,
-            });
-            if (!merged.data.merged) {
-              await putRuntime('review_rejected', {
-                pr_number: prNumber,
-                review_model: reviewModel,
-                review: 'GitHub refused the squash merge: ' + String(merged.data.message || ''),
-              });
-              await appendAction('merge_refused', String(merged.data.message || 'GitHub refused merge.'));
-              return;
-            }
-            await putRuntime('merged', {
+            await putRuntime('approved_waiting_owner', {
               pr_number: prNumber,
               review_model: reviewModel,
               review: finding,
-              merge_commit_sha: merged.data.sha || '',
+              owner_approval_required: true,
             });
-            await appendAction('merged', 'Independent review approved; squash merge ' + String(merged.data.sha || '').slice(0, 12));
+            await appendAction('approved_waiting_owner', 'CI and independent review passed; waiting for explicit owner approval before merge or deploy.');
 
   main-failure:
     if: >-
