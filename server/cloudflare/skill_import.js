@@ -24,9 +24,27 @@ export function reusableLicense(spdx) {
 
 // Deterministic file choice: files in the agent's divisions, ranked by how
 // many words of the agent's role/specialty appear in the file name.
+// Skill-shaped files in Cursor plugins (skills/*/SKILL.md, agents/*.md,
+// rules/*.mdc) and AgentSkills/openclaw repos (.../SKILL.md).
+const SKILL_FILE = /(?:^|\/)SKILL\.md$|(?:^|\/)agents\/[^/]+\.md$|(?:^|\/)rules\/[^/]+\.mdc$/i;
+
 export function selectFilesForAgent(paths, agentName, spec = {}, perAgent = 2) {
   const divisions = AGENT_DIVISIONS[agentName] || [];
   const words = `${spec.role || ''} ${spec.specialty || ''}`.toLowerCase().match(/[a-z]{4,}/g) || [];
+  const byDivision = selectByDivision(paths, divisions, words, perAgent);
+  if (byDivision.length || !paths.some((path) => SKILL_FILE.test(path))) return byDivision;
+  // Plugin / skill repos have no agency divisions: rank skill files by how
+  // well their path matches the agent's role, skipping vendored third-party code.
+  return paths
+    .filter((path) => SKILL_FILE.test(path) && !/(?:^|\/)(?:third_party|vendor|node_modules|test|tests|fixtures)\//i.test(path))
+    .map((path) => ({ path, score: words.reduce((sum, word) => sum + (path.toLowerCase().includes(word.slice(0, 6)) ? 2 : 0), 0) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
+    .slice(0, perAgent)
+    .map((item) => item.path);
+}
+
+function selectByDivision(paths, divisions, words, perAgent) {
   return paths
     .filter((path) => /\.md$/i.test(path) && divisions.some((division) => path.toLowerCase().startsWith(`${division}/`)))
     .filter((path) => !/readme|contributing|license|changelog/i.test(path))
@@ -44,12 +62,20 @@ export function selectFilesForAgent(paths, agentName, spec = {}, perAgent = 2) {
 // Fallback skill when the AI condenser is unavailable: title + the first
 // list items under a process/workflow heading. Never invents content.
 export function skillFromMarkdown(path, markdown) {
-  const text = String(markdown || '');
-  const title = (/^#\s+(.+)$/m.exec(text)?.[1] || path.split('/').pop().replace(/\.md$/i, '').replace(/[-_]/g, ' ')).replace(/[*_`#]/g, '').trim();
+  const raw = String(markdown || '');
+  // SKILL.md / .mdc files start with YAML frontmatter (name, description).
+  const front = /^---\n([\s\S]*?)\n---\n?/.exec(raw);
+  const meta = (key) => {
+    const m = front && new RegExp(`^${key}:\\s*(?:[>|]-?\\s*\\n)?([\\s\\S]*?)(?=^\\w[\\w-]*:|$(?![\\s\\S]))`, 'm').exec(front[1]);
+    return m ? m[1].replace(/\s+/g, ' ').replace(/^["']|["']$/g, '').trim() : '';
+  };
+  const text = front ? raw.slice(front[0].length) : raw;
+  const fileName = path.split('/').slice(-2).join(' ').replace(/SKILL\.md$/i, '').replace(/\.mdc?$/i, '').replace(/[-_/]/g, ' ').trim();
+  const title = (meta('name') || /^#\s+(.+)$/m.exec(text)?.[1] || fileName).replace(/[*_`#]/g, '').trim();
   const section = /^#{2,3}\s+[^\n]*(?:process|workflow|methodolog|approach|how i work)[^\n]*\n([\s\S]*?)(?=^#{1,3}\s|$(?![\s\S]))/im.exec(text)?.[1] || text;
   const steps = [...section.matchAll(/^\s*(?:[-*]|\d+[.)])\s+(.+)$/gm)].map((m) => m[1].replace(/[*_`]/g, '').trim()).filter((s) => s.length > 8).slice(0, 8);
   const when = /^#{2,3}\s+[^\n]*(?:when to|use cases?|activate)[^\n]*\n([\s\S]*?)(?=^#{1,3}\s|$(?![\s\S]))/im.exec(text)?.[1] || '';
-  const trigger = (when.match(/^\s*(?:[-*]|\d+[.)])\s+(.+)$/m)?.[1] || title).replace(/[*_`]/g, '').trim().slice(0, 200);
+  const trigger = (meta('description') || when.match(/^\s*(?:[-*]|\d+[.)])\s+(.+)$/m)?.[1] || title).replace(/[*_`]/g, '').trim().slice(0, 200);
   return steps.length ? { name: title.slice(0, 80), trigger, steps } : null;
 }
 
@@ -64,7 +90,11 @@ export function skillsReportIntent(message) {
 export function skillImportIntent(message) {
   const text = String(message || '');
   if (!/\b(?:give|teach|assign|add|load|install|equip|train)\b[^.?!]{0,60}\bskills?\b[^.?!]{0,80}\b(?:agents?|office|delegates?|sub-?agents?|team|staff|workers?|nova|atlas|mira|knox|sage|lyra|iris)\b|\b(?:give|teach|equip|train)\s+(?:your|the|her)\s+(?:office\s+)?(?:agents?|delegates?|sub-?agents?|team|staff)\b[^.?!]{0,60}\bskills?\b/i.test(text)) return null;
-  const repo = /\b([\w.-]+\/[\w.-]+)\b/.exec(text)?.[1] || (/\bagency[- ]?agents?\b/i.test(text) ? 'msitarzewski/agency-agents' : '');
+  const repo = /\b([\w.-]+\/[\w.-]+)\b/.exec(text)?.[1]
+    || (/\bagency[- ]?agents?\b/i.test(text) ? 'msitarzewski/agency-agents'
+      : /\bcursor(?:'s)?\s+plugins?\b/i.test(text) ? 'cursor/plugins'
+        : /\bopen\s?claw\b/i.test(text) ? 'openclaw/openclaw'
+          : /\bponytail\b/i.test(text) ? 'DietrichGebert/ponytail' : '');
   return { repo };
 }
 

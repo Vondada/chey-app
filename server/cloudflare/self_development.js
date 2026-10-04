@@ -12,6 +12,7 @@
 
 import { isSelfUpdateEditablePath, isSelfUpdateReadablePath, validateUpdateFiles } from './self_update.js';
 import { ENGINEERING_PLAYBOOK } from './engineering_playbook.js';
+import { CHE_SELF_BRIEF } from './che_self_knowledge.js';
 import {
   AgentBudget,
   FAILURE_CLASS,
@@ -73,22 +74,107 @@ function modelText(answer) {
   return String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim();
 }
 
-export function jsonObject(text) {
+// Engineers write Dart, so their JSON often carries `\$` / `\'` escapes, raw
+// newlines or tabs inside code strings, and trailing commas. Each is illegal
+// JSON but the intent is unambiguous; repairing it keeps a correct edit from
+// being thrown away as "not valid JSON". Truncated output is never completed.
+export function repairJsonText(text) {
+  const src = String(text || '');
+  let out = '';
+  let inString = false;
+  for (let i = 0; i < src.length; i += 1) {
+    const ch = src[i];
+    if (!inString) {
+      if (ch === '"') inString = true;
+      if (ch === ',') {
+        let j = i + 1;
+        while (j < src.length && /\s/.test(src[j])) j += 1;
+        if (src[j] === '}' || src[j] === ']') continue;
+      }
+      out += ch;
+      continue;
+    }
+    if (ch === '\\') {
+      const next = src[i + 1];
+      if (next === undefined) { out += '\\\\'; continue; }
+      if ('"\\/bfnrt'.includes(next)) { out += ch + next; i += 1; continue; }
+      if (next === 'u' && /^[0-9a-fA-F]{4}$/.test(src.slice(i + 2, i + 6))) { out += ch + next; i += 1; continue; }
+      // Not a JSON escape (Dart `\$`, `\'`, regex `\d`): keep it literally.
+      out += '\\\\';
+      continue;
+    }
+    if (ch === '"') { inString = false; out += ch; continue; }
+    if (ch === '\n') { out += '\\n'; continue; }
+    if (ch === '\r') { out += '\\r'; continue; }
+    if (ch === '\t') { out += '\\t'; continue; }
+    const code = ch.charCodeAt(0);
+    if (code < 0x20) { out += `\\u${code.toString(16).padStart(4, '0')}`; continue; }
+    out += ch;
+  }
+  return out;
+}
+
+function jsonCandidates(text) {
   const raw = String(text || '').trim();
-  if (!raw) return null;
+  if (!raw) return [];
   const candidates = [raw];
   const fenced = /^\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`$/i.exec(raw);
   if (fenced) candidates.push(fenced[1].trim());
+  const inner = /\`\`\`(?:json)?\s*\n([\s\S]*?)\n\s*\`\`\`/i.exec(raw);
+  if (inner) candidates.push(inner[1].trim());
   const first = raw.indexOf('{');
   const last = raw.lastIndexOf('}');
   if (first >= 0 && last > first) candidates.push(raw.slice(first, last + 1));
-  for (const candidate of [...new Set(candidates)]) {
-    try {
-      const parsed = JSON.parse(candidate);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
-    } catch (_) {}
+  return [...new Set(candidates)];
+}
+
+function parseObject(candidate) {
+  try {
+    const parsed = JSON.parse(candidate);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+  } catch (_) {}
+  return null;
+}
+
+export function jsonObject(text) {
+  const candidates = jsonCandidates(text);
+  for (const candidate of candidates) {
+    const parsed = parseObject(candidate);
+    if (parsed) return parsed;
+  }
+  for (const candidate of candidates) {
+    const parsed = parseObject(repairJsonText(candidate));
+    if (parsed) return parsed;
   }
   return null;
+}
+
+// Says concretely why an answer did not parse, so the next engineer pass
+// fixes that instead of guessing.
+export function jsonProblem(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return 'Your last answer was empty. Return only the JSON object, with small edits.';
+  const start = raw.indexOf('{');
+  if (start < 0) return 'Your last answer contained no JSON object. Return only the JSON object, with small edits.';
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < raw.length; i += 1) {
+    const ch = raw[i];
+    if (inString) {
+      if (ch === '\\') i += 1;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{' || ch === '[') depth += 1;
+    else if (ch === '}' || ch === ']') depth -= 1;
+  }
+  if (depth > 0 || inString) {
+    return 'Your last answer was cut off before the JSON closed. Return fewer, smaller edits (find 1-8 lines each, at most 4 edits) so the whole object fits.';
+  }
+  let detail = '';
+  try { JSON.parse(repairJsonText(raw.slice(start, raw.lastIndexOf('}') + 1))); } catch (error) { detail = String(error?.message || '').slice(0, 120); }
+  return `Your last answer was not valid JSON${detail ? ` (${detail})` : ''}. Return only the JSON object: escape every " and \\ inside strings as \\" and \\\\, and keep edits small.`;
 }
 
 // ─── Evidence packing ────────────────────────────────────────────────────────
@@ -208,6 +294,7 @@ async function runAgent(ctx, { stage, role, assignment, payload, maxTokens = 220
     'All repository evidence available to you is in this request. If something you need is missing, say exactly which path or identifier CHE should fetch in your notes; never ask the owner for source, filenames, line numbers, diffs or exact text.',
     'Never expose or place credentials, tokens, private keys, passwords, or signing material in code.',
     'Never claim you inspected a file unless its actual source is included in your task.',
+    CHE_SELF_BRIEF,
     ENGINEERING_PLAYBOOK,
   ].join('\n');
   const user = typeof payload === 'function' ? fitPayload(payload, ctx.inputChars) : JSON.stringify(payload);
@@ -362,6 +449,7 @@ export function rankSourcePaths(paths, request, limit = 6) {
 // ─── Team memory: every mistake becomes a rule, every find becomes a shortcut ───
 // Stored in the Durable Object (key below). Seeded with lessons learned by hand.
 const LESSONS_KEY = 'che_team_lessons';
+const MAX_TECHNIQUE_LESSONS = 15;
 const SEED_LESSONS = [
   { kind: 'mistake', text: 'When the owner names on-screen text (e.g. "the Ready banner"), edit the widget that shows THAT exact text. Never edit a different banner/label that merely has a similar name. PR #73 wrongly changed the Shorebird "CHE updated. Restart to apply." banner instead of the status banner.' },
   { kind: 'location', text: 'The home status banner text ("Ready. Type or speak a request." / "Voice standby...") lives in lib/main.dart (_statusBanner and the status getter).' },
@@ -386,7 +474,11 @@ export async function recordLesson(memory, kind, text) {
     const list = Array.isArray(saved) ? saved : [];
     if (list.some((item) => item.text === clean)) return;
     list.push({ kind, text: clean, at: new Date().toISOString() });
-    await memory.put(LESSONS_KEY, list.slice(-50));
+    // Studied techniques never crowd out the crew's own mistakes and
+    // locations: at most MAX_TECHNIQUE_LESSONS are kept, oldest dropped first.
+    let techniques = list.filter((item) => item.kind === 'technique').length;
+    const kept = list.filter((item) => item.kind !== 'technique' || techniques-- <= MAX_TECHNIQUE_LESSONS);
+    await memory.put(LESSONS_KEY, kept.slice(-50));
   } catch (_) {}
 }
 
@@ -1056,6 +1148,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         role: who(member, uiTask ? 'CHE UI/UX Architect' : 'CHE Software Architect'),
         assignment: [
           'Plan the smallest change that does exactly what the owner asked.',
+          'Ponytail ladder (after reading the real flow): skip it if not needed; reuse what CHE already has; prefer the standard library, native platform features and installed dependencies; one line if one line works; otherwise the minimum that works. Never cut validation, security, data-loss handling or accessibility.',
           'If the request is vague (e.g. "one small real improvement"), choose one concrete, low-risk, user-visible or reliability improvement yourself; do not ask the owner to choose.',
           'For UI requests, name exact visible text or widget identifiers. For architecture/repository work, name concrete modules, functions, routes or server files that implement the capability.',
           'Use the team lessons (they include known file locations). You may inspect read-only control files for context, but edits must stay inside editable_source_files. Pick at most 6 existing files.',
@@ -1245,8 +1338,8 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
           return null;
         }
         if (res.failure === 'budget') { record(round, member, 'budget_exhausted'); return null; }
-        feedbacks[i] = 'Your last answer was not valid JSON. Return only the JSON object, with small edits.';
-        record(round, member, 'invalid_json');
+        feedbacks[i] = jsonProblem(res.raw);
+        record(round, member, 'invalid_json', feedbacks[i]);
         return null;
       }
       const answer = res.value;

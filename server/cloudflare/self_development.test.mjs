@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyEdits, attemptFingerprint, diagnoseNoOp, fallbackTreeCandidates, focusView, isUiTask, jsonObject, literalTerms, loadLessons, prepareSelfUpdate, rankSourcePaths, recordLesson, substantiveChange, unusedNewCode, wantsDocsOnly } from './self_development.js';
+import { applyEdits, attemptFingerprint, diagnoseNoOp, fallbackTreeCandidates, focusView, isUiTask, jsonObject, jsonProblem, literalTerms, loadLessons, prepareSelfUpdate, rankSourcePaths, recordLesson, substantiveChange, unusedNewCode, wantsDocsOnly } from './self_development.js';
 
 const MAIN = `class Home {\n  String _statusBanner = 'Ready. Type or speak a request.';\n}\n`;
 const PATCH = `const t = Text('CHE updated. Restart to apply.');\n`;
@@ -121,6 +121,28 @@ test('jsonObject accepts strict, fenced, and harmlessly wrapped JSON', () => {
   assert.deepEqual(jsonObject('\`\`\`json\\n{"ok":true}\\n\`\`\`'), { ok: true });
   assert.deepEqual(jsonObject('Result follows: {"ok":true} done'), { ok: true });
   assert.equal(jsonObject('not json'), null);
+});
+
+test('jsonObject repairs Dart-flavoured engineer JSON without changing its meaning', () => {
+  // Dart interpolation escape, raw newline inside a code string, trailing comma.
+  const raw = '{"summary":"x","edits":[{"path":"lib/a.dart","find":"Text(\'\\$n\')","replace":"Text(\n  \'\\$n items\',\n)"},]}';
+  const parsed = jsonObject(raw);
+  assert.ok(parsed, 'repaired answer parses');
+  assert.equal(parsed.edits[0].find, "Text('\\$n')");
+  assert.equal(parsed.edits[0].replace, "Text(\n  '\\$n items',\n)");
+  // Answers wrapped in prose with a fenced block in the middle.
+  assert.deepEqual(jsonObject('Here is the fix:\n```json\n{"ok":true}\n```\nThanks'), { ok: true });
+  // Valid JSON is untouched by the repair path.
+  assert.deepEqual(jsonObject('{"a":"\\u0041\\n"}'), { a: 'A\n' });
+});
+
+test('jsonObject never completes truncated output, and jsonProblem says why it failed', () => {
+  const cut = '{"summary":"x","edits":[{"path":"lib/a.dart","find":"a","replace":"b';
+  assert.equal(jsonObject(cut), null);
+  assert.match(jsonProblem(cut), /cut off/);
+  assert.match(jsonProblem('no object here'), /no JSON object/);
+  assert.match(jsonProblem(''), /empty/);
+  assert.match(jsonProblem('{"a": nope}'), /not valid JSON/);
 });
 
 test('applyEdits accepts numbered source excerpts but still rejects stale and ambiguous edits', () => {

@@ -241,12 +241,16 @@ Do NOT falsely claim omniscience.
 ''';
 
 class CheBrain extends ChangeNotifier {
-  CheBrain({this.maxFacts = 300, this.recallChars = 2400, this.recallCount = 5});
+  CheBrain({this.maxFacts, this.maxJournal, this.recallChars = 2400, this.recallCount = 5});
 
   /// Current personality (starts as [cheDefaultSoul], editable in the app).
   String soul = cheDefaultSoul.trim();
 
-  final int maxFacts;
+  /// No limit by default: CHE keeps every fact and reflection, bounded only
+  /// by the phone's storage. Only an explicit limit (tests, previews) trims,
+  /// and even then the overflow moves to an archive file, never deleted.
+  final int? maxFacts;
+  final int? maxJournal;
   final int recallChars;
   final int recallCount;
 
@@ -269,12 +273,30 @@ class CheBrain extends ChangeNotifier {
   static Future<File> _file() async => File('${(await _dir()).path}/facts.json');
   static Future<File> _soulFile() async => File('${(await _dir()).path}/soul.txt');
   static Future<File> _journalFile() async => File('${(await _dir()).path}/journal.json');
+  static Future<File> _archiveFile() async => File('${(await _dir()).path}/archive.json');
+
+  Future<void> _archive(List<CheBrainFact> overflow) async {
+    if (overflow.isEmpty) return;
+    try {
+      final f = await _archiveFile();
+      final saved = await f.exists() ? jsonDecode(await f.readAsString()) as List : <dynamic>[];
+      saved.addAll([for (final x in overflow) x.toJson()]);
+      final tmp = File('${f.path}.tmp');
+      await tmp.writeAsString(jsonEncode(saved));
+      await tmp.rename(f.path);
+    } catch (_) {}
+  }
 
   Future<void> addReflection(String text) async {
     final t = text.trim();
     if (t.isEmpty) return;
     journal.insert(0, CheBrainFact(id: 'j${DateTime.now().microsecondsSinceEpoch}', text: t, at: DateTime.now(), source: 'che'));
-    if (journal.length > 60) journal.removeRange(60, journal.length);
+    final journalLimit = maxJournal;
+    if (journalLimit != null && journal.length > journalLimit) {
+      final overflow = journal.sublist(journalLimit);
+      journal.removeRange(journalLimit, journal.length);
+      await _archive(overflow);
+    }
     notifyListeners();
     try {
       await (await _journalFile()).writeAsString(jsonEncode([for (final j in journal) j.toJson()]));
@@ -358,7 +380,12 @@ class CheBrain extends ChangeNotifier {
     }
     facts.insert(
         0, CheBrainFact(id: 'f${DateTime.now().microsecondsSinceEpoch}', text: t, at: DateTime.now(), source: source, kind: k));
-    if (facts.length > maxFacts) facts.removeRange(maxFacts, facts.length);
+    final factLimit = maxFacts;
+    if (factLimit != null && facts.length > factLimit) {
+      final overflow = facts.sublist(factLimit);
+      facts.removeRange(factLimit, facts.length);
+      await _archive(overflow);
+    }
     notifyListeners();
     await _save();
   }
@@ -377,6 +404,11 @@ class CheBrain extends ChangeNotifier {
     'also', 'into', 'out', 'our', 'we', 'me', 'my', 'do', 'does', 'did', 'it', 'is', 'to', 'of', 'in', 'on',
     'che', 'please', 'need', 'know', 'think', 'would', 'could', 'should', 'yes', 'yeah', 'okay'
   };
+
+  // Each fact's words are worked out once, so recall stays fast no matter how
+  // many facts she has learned.
+  static final Expando<Set<String>> _factTokens = Expando<Set<String>>();
+  static Set<String> _tokensOf(CheBrainFact f) => _factTokens[f] ??= _tokens(f.text);
 
   static Set<String> _tokens(String s) => s
       .toLowerCase()
@@ -406,12 +438,23 @@ class CheBrain extends ChangeNotifier {
     }
     final avoid = _repetitionGuard(recentReplies);
     if (avoid != null) out.add(avoid);
+    final q = _tokens(message);
     if (facts.isNotEmpty) {
       final b = StringBuffer('[CHE BRAIN — what you know, by category]\n');
       var used = 0;
       for (final kind in cheKnowledgeKinds) {
         final list = facts.where((f) => f.kind == kind).toList();
         if (list.isEmpty) continue;
+        // Facts that match this message come first, then the newest, so old
+        // knowledge still surfaces when it is relevant.
+        if (q.isNotEmpty) {
+          final rank = <CheBrainFact, int>{for (var i = 0; i < list.length; i++) list[i]: i};
+          final hits = <CheBrainFact, int>{for (final f in list) f: _tokensOf(f).where(q.contains).length};
+          list.sort((a, b) {
+            final byHits = hits[b]!.compareTo(hits[a]!);
+            return byHits != 0 ? byHits : rank[a]!.compareTo(rank[b]!);
+          });
+        }
         b.writeln('$kind:');
         for (final f in list) {
           if (used + f.text.length > 1800) break;
@@ -422,7 +465,6 @@ class CheBrain extends ChangeNotifier {
       out.add(b.toString().trimRight());
     }
 
-    final q = _tokens(message);
     if (q.isEmpty) return out;
 
     // Document frequency for light IDF weighting.

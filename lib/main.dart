@@ -25,6 +25,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:url_launcher/url_launcher.dart';
 import 'che_mic_supervisor.dart';
+import 'che_ui/che_ui_voice_command.dart';
 import 'che_native_voice.dart';
 import 'che_speech_pipeline.dart';
 import 'che_notifications.dart';
