@@ -654,6 +654,11 @@ extension _CheHomeSend on _CHEHomeState {
       Future<void>.delayed(const Duration(milliseconds: 1400), () {
         if (mounted) _set(() => _justCompleted = false);
       });
+      // The Worker turns this exchange into a brain memory right after the
+      // reply; fetch it so the new neuron appears in the Brain in real time.
+      Future<void>.delayed(const Duration(milliseconds: 2500), () {
+        if (mounted) unawaited(_loadAgentState(silent: true));
+      });
 
       if (stopped) {
         replySpeech?.cancel();

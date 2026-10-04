@@ -26,6 +26,7 @@ class CheMemoryDot {
     this.lastVerifiedAt,
     this.scope = 'general',
     this.importance = 3,
+    this.links = const [],
   });
 
   final String id;
@@ -40,6 +41,9 @@ class CheMemoryDot {
   final DateTime? lastVerifiedAt;
   final String scope;
   final int importance;
+
+  /// Ids of earlier memories this one builds on (real shared topics).
+  final List<String> links;
 }
 
 /// Build unlimited dots from Worker memories / notes / learning — never capped.
@@ -51,6 +55,7 @@ List<CheMemoryDot> cheBuildMemoryDots({
   required List<String> learnedKnowledge,
   List<Map<String, dynamic>> brainLinks = const [],
   List<String> suggestions = const [],
+  List<Map<String, dynamic>> conversationMemories = const [],
 }) {
   // brainLinks are applied in CheMemoryBrainRoom via cheRelatedMemoryEdges.
 
@@ -157,6 +162,29 @@ List<CheMemoryDot> cheBuildMemoryDots({
     out.add(CheMemoryDot(id: 'sug-$i', title: _shortTitle(t), body: t, category: 'Suggestion', tokens: _tokens(t), source: 'CHE planning', scope: 'owner'));
     i++;
   }
+  // Every conversation with the owner is a memory; it links to the earlier
+  // ones it builds on and grows with how often its topic comes back.
+  for (final m in conversationMemories) {
+    final title = '${m['title'] ?? ''}'.trim();
+    final body = '${m['body'] ?? title}'.trim();
+    if (body.isEmpty) continue;
+    final strength = (m['strength'] as num?)?.round() ?? 1;
+    out.add(
+      CheMemoryDot(
+        id: 'conv:${m['id'] ?? i}',
+        title: _shortTitle(title.isEmpty ? body : title),
+        body: body,
+        category: 'Conversations',
+        tokens: _tokens(body),
+        at: DateTime.tryParse('${m['at'] ?? ''}'),
+        source: 'Conversation with you',
+        scope: 'owner',
+        importance: (strength + 2).clamp(1, 5),
+        links: [for (final l in (m['links'] as List?) ?? const []) 'conv:$l'],
+      ),
+    );
+    i++;
+  }
   return out;
 }
 
@@ -179,6 +207,11 @@ List<(String, String)> cheRelatedMemoryEdges(List<CheMemoryDot> dots, {List<Map<
 
   for (final link in brainLinks) {
     add('${link['source'] ?? ''}', '${link['target'] ?? ''}');
+  }
+  for (final d in dots) {
+    for (final l in d.links) {
+      add(d.id, l);
+    }
   }
   // Same cluster_id (ML clustering nodes): a chain through the cluster, not
   // every pair (a cluster of 300 would otherwise draw ~45k lines).
@@ -224,6 +257,7 @@ Color cheMemoryCategoryColor(String category) => switch (category.toLowerCase())
   'knowledge' => const Color(0xFF6EA8FF),
   'suggestion' => const Color(0xFF8DE969),
   'translation' => const Color(0xFFFF9F68),
+  'conversations' => const Color(0xFFE4DEFF),
   _ => CheColors.accent,
 };
 

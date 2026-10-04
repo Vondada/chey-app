@@ -797,6 +797,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   List<String> savedMemories = [];
   List<Map<String, dynamic>> memoryRecords = [];
   List<Map<String, dynamic>> memoryNotes = [];
+  List<Map<String, dynamic>> conversationMemories = [];
   List<Map<String, dynamic>> brainLinks = [];
   List<Map<String, dynamic>> learnedPersonality = [];
   List<String> learnedKnowledge = [];
@@ -1660,6 +1661,7 @@ OWNER AGENCY
                 learnedKnowledge: learnedKnowledge,
                 brainLinks: brainLinks,
                 suggestions: suggestions,
+                conversationMemories: conversationMemories,
               ),
               brainLinks: brainLinks,
               onReadAloud: (t) => speakText(t, record: false),

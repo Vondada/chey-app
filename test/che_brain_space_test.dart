@@ -425,4 +425,61 @@ void main() {
     expect(find.descendant(of: find.byType(ColorFiltered), matching: find.byType(CheBrainSpace)), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
+
+  group('alive', () {
+    test('never stands still: signals fire along real links and cascade', () {
+      final c = CheBrainSpaceController(_memories(extraResearch: 20));
+      final edges = {for (final e in c.layout.edges) e, for (final e in c.layout.edges) (e.$2, e.$1)};
+      final start = c.livePosition(0).clone();
+      var fired = 0;
+      for (var i = 0; i < 240; i++) {
+        expect(c.tick(1 / 60), isTrue, reason: 'keeps ticking with nothing touched');
+        fired = math.max(fired, c.pulses.length);
+        for (final p in c.pulses) {
+          expect(edges.contains((p.from, p.to)), isTrue, reason: 'signals only travel real links');
+        }
+      }
+      expect(fired, greaterThan(0));
+      expect(c.livePosition(0).distanceTo(start), greaterThan(0), reason: 'memories drift like neurons');
+      expect([for (var i = 0; i < c.layout.nodes.length; i++) c.flash(i)].any((f) => f > 0), isTrue);
+      c.dispose();
+    });
+
+    test('Reduce Motion holds the brain still', () {
+      final c = CheBrainSpaceController(_memories())..reduceMotion = true;
+      final start = c.livePosition(0).clone();
+      expect(c.tick(1 / 60), isFalse);
+      expect(c.pulses, isEmpty);
+      expect(c.livePosition(0), start);
+      c.dispose();
+    });
+
+    test('a new conversation memory is born and fires into the memories it builds on', () {
+      final c = CheBrainSpaceController(_memories());
+      final first = {'id': 'a1', 'title': 'Backtest ES futures', 'body': 'You said: Backtest ES futures', 'at': '2026-10-04T10:00:00Z', 'links': <String>[]};
+      final next = {'id': 'a2', 'title': 'ES futures results', 'body': 'You said: ES futures results', 'at': '2026-10-04T10:05:00Z', 'links': ['a1'], 'strength': 1};
+      List<CheMemoryDot> dots(List<Map<String, dynamic>> conv) => cheBuildMemoryDots(
+            savedMemories: const ['Owner trades ES futures on NinjaTrader'],
+            memoryNotes: const [],
+            learnedPersonality: const [],
+            learnedKnowledge: const [],
+            conversationMemories: conv,
+          );
+      c.update(dots([first]), const []);
+      c.pulses.clear();
+      c.update(dots([first, next]), const []);
+      final born = c.layout.byId['conv:a2']!;
+      final parent = c.layout.byId['conv:a1']!;
+      expect(c.layout.edges.any((e) => {e.$1, e.$2}.containsAll({born, parent})), isTrue, reason: 'linked to the memory it builds on');
+      expect(c.birthScale('conv:a2'), lessThan(.1), reason: 'grows in from nothing');
+      expect(c.flash(born), 1);
+      expect(c.pulses.any((p) => p.from == born && p.to == parent), isTrue);
+      for (var i = 0; i < 90; i++) {
+        c.tick(1 / 60);
+      }
+      expect(c.birthScale('conv:a2'), 1);
+      expect(c.layout.nodes[born].dot.category, 'Conversations');
+      c.dispose();
+    });
+  });
 }

@@ -14,6 +14,11 @@
 //   tap                  select an orb (camera flies to it); tap again opens it
 //   tap a cluster orb    expand the cluster
 //   long-press + drag    grab an orb and move it (this session only)
+//
+// Alive: the brain never stands still. Memories drift like neurons, signals
+// fire along real links and cascade from memory to memory, the brain slowly
+// turns on its own, and a new memory is born with a flash that fires into
+// the memories it builds on. iPhone Reduce Motion holds it still.
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -34,7 +39,9 @@ import 'che_brain_space_model.dart';
 /// Drives the Brain space: selection, camera flights, clusters, filters.
 class CheBrainSpaceController {
   CheBrainSpaceController(List<CheMemoryDot> dots, {List<Map<String, dynamic>> brainLinks = const []})
-      : layout = CheBrainLayout.build(dots, brainLinks: brainLinks);
+      : layout = CheBrainLayout.build(dots, brainLinks: brainLinks) {
+    _wire();
+  }
 
   /// The Brain room on screen right now (voice commands reach it here).
   static CheBrainSpaceController? current;
@@ -53,6 +60,20 @@ class CheBrainSpaceController {
   bool cardOpen = false;
   String? grabbedId;
   double time = 0;
+
+  /// iPhone Reduce Motion: no drift, no firing; frames stop when idle.
+  bool reduceMotion = false;
+
+  /// Signals travelling along real links right now.
+  final List<CheNeuralPulse> pulses = [];
+  static const int maxPulses = 90;
+  final math.Random _rng = math.Random(7);
+  List<List<int>> _adjacency = const [];
+  List<int> _recent = const [];
+  Float32List _flash = Float32List(0);
+  final Map<String, double> _born = {};
+  double _spawnClock = 0;
+  double _idle = 0;
 
   CheBrainCamera? _flyFrom;
   CheBrainCamera? _flyTo;
@@ -79,6 +100,7 @@ class CheBrainSpaceController {
   bool get flying => _flyT < 1;
 
   void update(List<CheMemoryDot> dots, List<Map<String, dynamic>> brainLinks) {
+    final before = {for (final n in layout.nodes) n.id};
     final moved = {for (final n in layout.nodes) if (n.moved != null) n.id: n.moved!};
     final expanded = {for (final c in layout.clusters.values) c.name: c.expanded};
     layout = CheBrainLayout.build(dots, brainLinks: brainLinks);
@@ -92,7 +114,99 @@ class CheBrainSpaceController {
       selectedId = null;
       cardOpen = false;
     }
+    _wire();
+    // New memories are born: they flash, grow in, and fire into the earlier
+    // memories they build on.
+    for (var i = 0; i < layout.nodes.length; i++) {
+      final id = layout.nodes[i].id;
+      if (before.contains(id) || before.isEmpty) continue;
+      _born[id] = time;
+      _flash[i] = 1;
+      for (final j in _adjacency[i]) {
+        if (pulses.length < maxPulses) pulses.add(CheNeuralPulse(i, j, .9));
+      }
+    }
     _changed();
+  }
+
+  void _wire() {
+    final n = layout.nodes.length;
+    _adjacency = [for (var i = 0; i < n; i++) <int>[]];
+    for (final e in layout.edges) {
+      _adjacency[e.$1].add(e.$2);
+      _adjacency[e.$2].add(e.$1);
+    }
+    _flash = Float32List(n);
+    pulses.removeWhere((p) => p.from >= n || p.to >= n);
+    final dated = [for (var i = 0; i < n; i++) if (layout.nodes[i].dot.at != null && _adjacency[i].isNotEmpty) i]
+      ..sort((a, b) => layout.nodes[b].dot.at!.compareTo(layout.nodes[a].dot.at!));
+    _recent = dated.take(24).toList();
+  }
+
+  /// Where node [i] is drawn right now: its place plus a slow neural drift.
+  vm.Vector3 livePosition(int i) {
+    final node = layout.nodes[i];
+    final p = node.position;
+    if (reduceMotion || node.moved != null) return p;
+    final ph = i * 1.618;
+    const a = .14;
+    return vm.Vector3(
+      p.x + math.sin(time * .50 + ph) * a,
+      p.y + math.sin(time * .43 + ph * 1.3) * a,
+      p.z + math.cos(time * .37 + ph * .7) * a,
+    );
+  }
+
+  /// 0..1 activity of node [i] (it just received or fired a signal).
+  double flash(int i) => i < _flash.length ? _flash[i] : 0;
+
+  /// Grows a just-born memory in from nothing (ease-out with a small pop).
+  double birthScale(String id) {
+    final b = _born[id];
+    if (b == null) return 1;
+    final t = ((time - b) / 1.2).clamp(0.0, 1.0);
+    const c1 = 1.70158, c3 = c1 + 1;
+    return 1 + c3 * math.pow(t - 1, 3) + c1 * math.pow(t - 1, 2);
+  }
+
+  void _fireFrom(int i) {
+    final next = _adjacency[i];
+    if (next.isEmpty || pulses.length >= maxPulses) return;
+    _flash[i] = math.max(_flash[i], .7);
+    pulses.add(CheNeuralPulse(i, next[_rng.nextInt(next.length)], .55 + _rng.nextDouble() * .6));
+  }
+
+  /// Signals travel, arrive, light up the memory, and often carry on to one
+  /// of its neighbours: chains of thought across real links.
+  void _advanceNeurons(double dt) {
+    final n = layout.nodes.length;
+    if (n == 0 || layout.edges.isEmpty) return;
+    final decay = math.exp(-2.4 * dt);
+    for (var i = 0; i < n; i++) {
+      _flash[i] *= decay;
+    }
+    _spawnClock += dt;
+    final interval = .9 / math.max(1, math.sqrt(layout.edges.length / 4));
+    while (_spawnClock > interval) {
+      _spawnClock -= interval;
+      final fromRecent = _recent.isNotEmpty && _rng.nextDouble() < .4;
+      _fireFrom(fromRecent ? _recent[_rng.nextInt(_recent.length)] : _rng.nextInt(n));
+    }
+    final arrived = <CheNeuralPulse>[];
+    for (final p in pulses) {
+      p.t += dt * p.speed;
+      if (p.t >= 1) arrived.add(p);
+    }
+    for (final p in arrived) {
+      pulses.remove(p);
+      _flash[p.to] = 1;
+      if (_rng.nextDouble() < .6) {
+        final next = [for (final j in _adjacency[p.to]) if (j != p.from) j];
+        if (next.isNotEmpty && pulses.length < maxPulses) {
+          pulses.add(CheNeuralPulse(p.to, next[_rng.nextInt(next.length)], p.speed));
+        }
+      }
+    }
   }
 
   void _changed() {
@@ -117,10 +231,16 @@ class CheBrainSpaceController {
       _spinY *= decay;
       moving = true;
     }
+    if (!reduceMotion) {
+      _idle += dt;
+      // Left alone, the brain slowly turns by itself.
+      if (!moving && grabbedId == null && !cardOpen && _idle > 2.5) camera.rotate(dt * .05, 0);
+      _advanceNeurons(dt);
+    }
+    _born.removeWhere((_, b) => time - b > 1.2);
     _repaint();
-    // Idle (nothing moving, nothing selected to pulse): the caller may stop
-    // ticking until the next interaction.
-    return moving || selectedId != null || grabbedId != null;
+    // Alive: always ticking. Reduce Motion: stop when nothing moves.
+    return !reduceMotion || moving || selectedId != null || grabbedId != null;
   }
 
   void flyTo(CheBrainCamera to) {
@@ -131,11 +251,13 @@ class CheBrainSpaceController {
   }
 
   void fling(double vx, double vy) {
+    _idle = 0;
     _spinX = vx;
     _spinY = vy;
   }
 
   void stop() {
+    _idle = 0;
     _flyT = 1;
     _spinX = _spinY = 0;
   }
@@ -298,9 +420,10 @@ class CheBrainSpaceController {
     }
     CheBrainNode? best;
     var bestDepth = double.infinity;
-    for (final n in layout.nodes) {
+    for (var i = 0; i < layout.nodes.length; i++) {
+      final n = layout.nodes[i];
       if (!layout.visible(n, filter)) continue;
-      final p = camera.project(n.position, size, worldRadius: n.size);
+      final p = camera.project(livePosition(i), size, worldRadius: n.size);
       if (p == null) continue;
       if ((p.offset - at).distance <= math.max(p.radius * 1.6, 18) && p.depth < bestDepth) {
         best = n;
@@ -557,6 +680,11 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
   @override
   Widget build(BuildContext context) {
     final labelScale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.4).toDouble();
+    final still = MediaQuery.disableAnimationsOf(context);
+    if (c.reduceMotion != still) {
+      c.reduceMotion = still;
+      if (!still) WidgetsBinding.instance.addPostFrameCallback((_) => _wake());
+    }
     return LayoutBuilder(builder: (context, constraints) {
       _size = constraints.biggest;
       return Stack(fit: StackFit.expand, children: [
@@ -820,7 +948,7 @@ class CheBrainPainter extends CustomPainter {
     for (var i = 0; i < n; i++) {
       final node = layout.nodes[i];
       if (!layout.visible(node, c.filter)) continue;
-      proj[i] = cam.project(node.position, size, worldRadius: node.size);
+      proj[i] = cam.project(c.livePosition(i), size, worldRadius: node.size);
     }
 
     // Edges: batched into faint / strong line lists; edges of the selected
@@ -861,6 +989,30 @@ class CheBrainPainter extends CustomPainter {
         ..strokeCap = StrokeCap.round);
     }
 
+    // Neural signals: a bright head with a short trail along the link.
+    if (c.pulses.isNotEmpty) {
+      final trails = <double>[], heads = <double>[];
+      for (final pulse in c.pulses) {
+        final a = proj[pulse.from], b = proj[pulse.to];
+        if (a == null || b == null) continue;
+        final head = Offset.lerp(a.offset, b.offset, pulse.t)!;
+        final tail = Offset.lerp(a.offset, b.offset, math.max(0, pulse.t - .14))!;
+        trails.addAll([tail.dx, tail.dy, head.dx, head.dy]);
+        heads.addAll([head.dx, head.dy]);
+      }
+      if (heads.isNotEmpty) {
+        canvas.drawRawPoints(ui.PointMode.lines, Float32List.fromList(trails), Paint()
+          ..color = const Color(0x8CBFFFF4)
+          ..strokeWidth = 1.8
+          ..strokeCap = StrokeCap.round);
+        canvas.drawRawPoints(ui.PointMode.points, Float32List.fromList(heads), Paint()
+          ..color = const Color(0xFFEFFFFC)
+          ..strokeWidth = 3.6
+          ..strokeCap = StrokeCap.round
+          ..blendMode = BlendMode.plus);
+      }
+    }
+
     // Nodes far → near, one atlas draw.
     final order = [for (var i = 0; i < n; i++) if (proj[i] != null) i]..sort((x, y) => proj[y]!.depth.compareTo(proj[x]!.depth));
     final sprite = _glowSprite();
@@ -875,9 +1027,11 @@ class CheBrainPainter extends CustomPainter {
       final node = layout.nodes[i];
       final breathe = 1 + math.sin(c.time * 1.4 + i * .7) * .06;
       final presence = 1 + math.min(node.degree, 8) * .05;
-      final radius = (math.max(p.radius, 1.6) * 2.0 * breathe * presence).clamp(1.6, 56.0);
+      final fire = c.flash(i);
+      final radius = (math.max(p.radius, 1.6) * 2.0 * breathe * presence * (1 + fire * .45) * c.birthScale(node.id)).clamp(0.0, 64.0);
       final depthFade = (1.0 - (p.depth - 4) / 60).clamp(.25, 1.0);
-      final color = cheMemoryCategoryColor(node.dot.category).withValues(alpha: (i == selIndex ? 1.0 : .82) * depthFade);
+      final base = cheMemoryCategoryColor(node.dot.category);
+      final color = (fire > .02 ? Color.lerp(base, Colors.white, fire * .5)! : base).withValues(alpha: (i == selIndex ? 1.0 : .82) * depthFade);
       final scale = radius * 2 / 64;
       transforms
         ..[k * 4] = scale
@@ -958,4 +1112,16 @@ class CheBrainPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CheBrainPainter old) => !identical(old.c, c);
+}
+
+/// One signal travelling from memory [from] to memory [to] (layout indices).
+class CheNeuralPulse {
+  CheNeuralPulse(this.from, this.to, this.speed);
+
+  final int from;
+  final int to;
+
+  /// Fraction of the link travelled per second.
+  final double speed;
+  double t = 0;
 }
