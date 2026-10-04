@@ -40,27 +40,35 @@ Then, on GitHub:
 
 ---
 
-## 2. Current position (updated by: Claude, 2026-10-04)
+## 2. Current position (updated by: Claude, 2026-10-04 13:40 UTC)
 
-Branches are named `<ai>/<topic>` (for example `claude/che-brain-immersive`). All checks below were green locally when pushed: `dart analyze --fatal-infos lib test`, `flutter test` and Worker `npm test`.
+**Merged to main today**, on the owner's "merge". Every merge with a Worker change carried `[worker-deploy]`.
 
-| PR | Branch | What | State |
-|---|---|---|---|
-| #167 | claude/che-trading-live | Trading Room live chart (stocks, futures, crypto), voice switching, spoken price | Owner said "merge when green" (2026-10-04). Worker change: `[worker-deploy]` in the merge title. |
-| #168 | claude/che-brain-immersive | Brain: immersive 3D space; brain-shaped neural network like the owner's picture; perpetual motion and neural firing; every chat turn becomes a memory (Worker `brain_memory.js`); offline brain = inverted colors; callout card | Same. Worker change: `[worker-deploy]`. |
-| #169 | claude/che-conversations | Agent group chats (War Room, Office, coding crew, Flagstaff) and CHE World globe | Same. |
-| #170 | claude/che-voice-keyboard-fixes | No mic on launch (hands-free is opt-in), longer end-of-turn waits, fluent reading (Kokoro prefetch), Hide-keyboard button | Same. The Swift timing change needs a full app build; the Dart part ships by Shorebird OTA. |
-| #166 | chatgpt/autonomy-orchestration-hardening | ChatGPT's PR | Not Claude's. Leave it to ChatGPT or the owner. |
+| PR | Merge SHA | What |
+|---|---|---|
+| #170 | 1af29cf | Voice: no mic on launch (hands-free opt-in), longer end-of-turn waits, fluent Kokoro prefetch, Hide-keyboard button |
+| #169 | d437935 | Agent group chats and the CHE World globe |
+| #168 | 5c93bb1 | Brain: brain-shaped living neural network, every owner chat turn becomes a memory (`brain_memory.js`), 3D orbs, inverted offline brain, callout card |
+| #167 | 60f2de1 | Trading Room live chart, voice switching, spoken price |
+| #171 | dbf370b | This live-handoff rule in AGENTS.md and CHE's self-knowledge |
 
-**After the merges:**
-- Dispatch the `che-shorebird.yml` workflow (input `mode=patch`) on `main`, so the Dart changes reach his iPhone.
-- `Workers Builds: chey-app` fails on every PR. That's pre-existing, not a code failure; ignore it.
+**State of main (dbf370b):**
+- `dart analyze --fatal-infos`: clean.
+- `flutter test`: 201 pass.
+- Worker `npm test`: 497 pass.
+
+**Pending checks:**
+- The Shorebird OTA patch (`che-shorebird.yml`, `mode=patch`) was dispatched on main. Check that the run went green.
+- The Swift end-of-turn timing in #170 needs a full app build to reach the phone.
+- The Worker deploys (from `[worker-deploy]`) are not yet confirmed. Check the Deploy workflow runs.
+
+**Not Claude's:** #166 (`chatgpt/autonomy-orchestration-hardening`) belongs to ChatGPT.
+
+**Next:** queue item 1 (Trading Room learning engine). Nothing is half-done; no WIP branches.
 
 **Owner answers still pending (don't guess):**
-- The names of his 5 starred GitHub repos to integrate.
+- His 5 starred repo names.
 - The exact NinjaTrader login error text.
-
----
 
 ## 3. Queue: the owner's open requests, in order
 
