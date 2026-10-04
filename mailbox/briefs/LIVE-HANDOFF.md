@@ -96,7 +96,7 @@ Then, on GitHub:
 - CHE's private code search is live: one tarball per commit, searched on the Worker, so she is no longer bound by GitHub's 10-per-minute code-search limit.
 - Exam levels now run 3 minutes apart.
 
-**Open PR #178** (`claude/che-live-stars`, 543 Worker tests pass; needs the owner's "merge", with `[worker-deploy]`):
+**#178 MERGED** (1ca27c0, 19:07Z, `[worker-deploy]`, Deploy run 37227070882; 545 Worker tests). Codex review fixes are included: the held-back test never selects or ranks, the hourly alarm is included in `scheduleWork`, re-found skills are not announced as new, and zero stars counts as live:
 - Queue item 1, the trading learning engine, as first cut. Details:
   - 63 skills = 7 signals × 3 filters × 3 targets.
   - Hourly, each market tests 12 of them.
@@ -116,7 +116,7 @@ Then, on GitHub:
 
 Do them top to bottom. Mark each one `DONE (PR #, SHA)` or `WIP (branch, next step)` here.
 
-1. **Trading Room learning engine.** WIP (PR #178, first cut; next: intraday futures data once the owner has a feed)
+1. **Trading Room learning engine.** DONE first cut (PR #178, 1ca27c0). Next: intraday futures data once the owner has a feed, and showing the learning in the Trading Room UI.
    - Agents permanently backtest and paper-trade ES, NQ, MES and MNQ, many trades a day, and learn from the results.
    - Show accuracy, P&L and trade counts.
    - Build on `server/cloudflare/trading_lab.js`: `backtest`, `backtestAll`, `paperTick`, `stats` and `readBook` already exist.
