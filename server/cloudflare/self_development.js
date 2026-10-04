@@ -1172,7 +1172,7 @@ async function recoveryPlan(ctx, { task, architecture, feedback, index, lessons,
     assignment: [
       'The previous implementation pass failed or produced no real diff. Do not repeat the same edit.',
       'Re-locate the actual source for the owner request using the failure feedback and repository file list.',
-      'Prefer exact visible text for UI requests; for architecture/repository work, use module names, exported functions and likely server or Flutter files. Name new files to inspect when the previous set was wrong or incomplete.',
+      'Prefer exact visible text for UI requests; for architecture/repository work, use module names, exported functions and likely server or Flutter files. If feedback says new code is never called/dead code, trace imports, callers, callees, routes and entry points and name the real integration-path files; do not propose another isolated helper in the same module. Name new files to inspect when the previous set was wrong or incomplete.',
       'Return ONLY JSON: {"plan":"...","search_terms":["exact text or identifier"],"paths":["an actual repository path"]}.',
     ].join('\n'),
     payload: (budget) => ({
@@ -1574,7 +1574,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       }
       const unused = unusedNewCode(sources, applied.sources, changedFiles, task);
       if (unused.length) {
-        feedbacks[i] = `The new code is never called: ${unused.map((u) => `${u.name} in ${u.path}`).join(', ')}. Code nothing calls delivers nothing. Call it from the real flow that delivers the request (ask for that file if you need it), or do not add it.`;
+        feedbacks[i] = `The new code is never called: ${unused.map((u) => `${u.name} in ${u.path}`).join(', ')}. Code nothing calls delivers nothing. Trace the repository yourself for imports, callers, callees, routes and entry points, fetch the real integration-path file through recovery, and wire the change into the flow that delivers the request; never ask the owner for a file path.`;
         failStrategy('dead_code', unused.map((u) => u.name).join(','));
         return null;
       }
