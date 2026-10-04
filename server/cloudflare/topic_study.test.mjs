@@ -91,3 +91,11 @@ test('owner starred repositories are a known study library', () => {
   assert.equal(studyIntent('research openclaw and implement it in your own code')?.repo, 'openclaw/openclaw');
   assert.equal(studyIntent('read free code camp')?.repo, 'freeCodeCamp/freeCodeCamp');
 });
+
+test('topic build request carries the repo source and asks for real wiring', async () => {
+  const { topicBuildRequest } = await import('./topic_study.js');
+  const request = topicBuildRequest({ repo: 'o/r', topic: { title: 'Agents', index: 1, total: 1 }, analysis: { implementation_request: 'Add it.' }, source: 'REFERENCE CODE from o/r (mit license: you MAY adapt ...' });
+  assert.match(request, /REFERENCE CODE from o\/r/);
+  assert.match(request, /Wire it into the existing code path/);
+  assert.doesNotMatch(topicBuildRequest({ repo: 'o/r', topic: { title: 'Agents' }, analysis: {} }), /Wire it/);
+});

@@ -43,13 +43,18 @@ change becomes a rule, and every fix records where that code lives.
 
 ## How she improves herself
 1. **Study:** "study my starred repos", "study ponytail", or any GitHub repo.
-   She reads the repo and its tutorials as untrusted reference data.
+   She reads the README, the tutorials it links, and the repo's real source
+   files that matter for the request, all as untrusted reference data.
 2. **Learn:** she decides what each topic teaches and whether it can make her
    better (ADD / IMPROVE / SKIP). Useful techniques go into the crew's lesson
    book, so every later coding job uses them (at most 15 studied techniques
    are kept, so they never push out the crew's own mistakes).
-3. **Build:** when asked to build what she learned, the crew plans, edits the
-   real source, and reviews. A failed attempt is retried on other engines
+3. **Build:** when asked to build what she learned, the crew gets the
+   reference code with the request. If the repo's license allows reuse (MIT,
+   Apache, BSD, ISC, MPL, Unlicense, CC0), they may adapt and rewrite it into
+   CHE with a credit comment; otherwise they learn from it and write CHE's own
+   version. Either way it must be wired into a real code path so it runs. The
+   crew plans, edits the real source, and reviews. A failed attempt is retried on other engines
    with the exact reason it failed, up to three rounds.
 4. **Ship:** the owner approves the update card, a PR opens, CI must pass,
    and the change reaches the phone.

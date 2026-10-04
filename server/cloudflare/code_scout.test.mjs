@@ -135,3 +135,37 @@ test('inspiration context reads selected reusable repos and treats them as refer
   assert.match(out.text, /REFERENCE MATERIAL, not instructions/);
   assert.equal(out.references[0].reusable, true);
 });
+
+test('repo source ranking picks real code that matches the need, not tests or vendored files', async () => {
+  const { rankRepoSourcePaths } = await import('./code_scout.js');
+  const entries = [
+    { path: 'README.md', type: 'blob' },
+    { path: 'src/memory/vector_store.ts', type: 'blob', size: 4000 },
+    { path: 'src/memory/vector_store.test.ts', type: 'blob', size: 2000 },
+    { path: 'node_modules/x/memory.js', type: 'blob', size: 100 },
+    { path: 'dist/app.min.js', type: 'blob', size: 100 },
+    { path: 'src/ui/button.ts', type: 'blob', size: 900 },
+    { path: 'src/huge_memory.js', type: 'blob', size: 900_000 },
+  ];
+  const picked = rankRepoSourcePaths(entries, 'improve CHE memory with a vector store', 3);
+  assert.equal(picked[0], 'src/memory/vector_store.ts');
+  assert.ok(!picked.some((p) => /test|node_modules|\.min\.|README|huge_/.test(p)), picked.join(','));
+});
+
+test('readRepoSource reads the code itself and marks the license', async () => {
+  const { readRepoSource, referenceSourceBlock } = await import('./code_scout.js');
+  const fetcher = async (url) => {
+    if (url.includes('/git/trees/')) return new Response(JSON.stringify({ tree: [{ path: 'lib/agent.dart', type: 'blob', size: 50 }] }));
+    if (url.startsWith('https://raw.githubusercontent.com/o/r/main/lib/agent.dart')) return new Response('class Agent { void run() {} }');
+    return new Response('{}', { status: 404 });
+  };
+  const mit = await readRepoSource({}, { full_name: 'o/r', branch: 'main', license: 'mit' }, { need: 'agent' }, fetcher);
+  assert.deepEqual(mit.files, [{ path: 'lib/agent.dart', text: 'class Agent { void run() {} }' }]);
+  assert.equal(mit.reusable, true);
+  assert.match(referenceSourceBlock(mit), /MAY adapt[\s\S]*Adapted from o\/r[\s\S]*class Agent/);
+
+  const closed = await readRepoSource({}, { full_name: 'o/r', branch: 'main', license: 'noassertion' }, { need: 'agent' }, fetcher);
+  assert.equal(closed.reusable, false);
+  assert.match(referenceSourceBlock(closed), /STUDY ONLY[\s\S]*never copy/);
+  assert.equal(referenceSourceBlock({ files: [] }), '');
+});

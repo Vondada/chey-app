@@ -487,3 +487,76 @@ export async function autoImproveScan(env, storage, fileLetter, fileTech, fetche
   }
   return found;
 }
+
+// ─── Reading a reference repo's real source ─────────────────────────────────
+// CHE studies the code itself, not only the README. Every repo may be read to
+// learn from; code is only handed over for adaptation when the license allows
+// reuse (see `reusable`).
+
+const SOURCE_EXT = /\.(?:dart|js|mjs|cjs|ts|tsx|jsx|py|go|rs|swift|kt|java|rb|c|cc|cpp|h|hpp|cs|lua|sh|sql)$/i;
+const SKIP_PATH = /(?:^|\/)(?:node_modules|vendor|third_party|dist|build|out|coverage|\.git|\.github|fixtures?|examples?\/assets|generated|__snapshots__)\//i;
+const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|spec)\/|[._-](?:test|spec)\.[a-z]+$/i;
+
+const words = (text) => String(text || '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+
+// Picks the source files most worth reading for a need. Pure, so it is
+// testable; `entries` are git-tree items ({ path, size }).
+export function rankRepoSourcePaths(entries, need = '', limit = 6) {
+  const wanted = new Set(words(need).filter((w) => !['the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'your', 'che', 'study', 'code', 'repo'].includes(w)));
+  return (Array.isArray(entries) ? entries : [])
+    .filter((item) => item && (item.type === undefined || item.type === 'blob'))
+    .map((item) => ({ path: String(item.path || ''), size: Number(item.size || 0) }))
+    .filter((item) => SOURCE_EXT.test(item.path) && !SKIP_PATH.test(item.path) && !TEST_PATH.test(item.path) && !/\.min\.js$/i.test(item.path))
+    .filter((item) => !item.size || item.size <= 80_000)
+    .map((item) => {
+      const pathWords = words(item.path);
+      let score = 0;
+      for (const w of pathWords) if (wanted.has(w)) score += 5;
+      for (const w of wanted) if (item.path.toLowerCase().includes(w)) score += 2;
+      if (/(?:^|\/)(?:lib|src|core|server|app)\//i.test(item.path)) score += 2;
+      if (/(?:^|\/)(?:main|index|app|core|engine|agent|router)\.[a-z]+$/i.test(item.path)) score += 2;
+      if (/\.(?:dart|js|mjs|ts)$/i.test(item.path)) score += 1; // CHE's own languages
+      score -= Math.min(3, item.path.split('/').length - 1) * 0.5;
+      return { ...item, score };
+    })
+    .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
+    .slice(0, Math.max(1, limit))
+    .map((item) => item.path);
+}
+
+// Reads up to `maxFiles` relevant source files of a repository within
+// `maxChars` total. Returns { full_name, license, reusable, files:[{path,text}] }.
+export async function readRepoSource(env, ref, { need = '', maxFiles = 4, maxChars = 12000 } = {}, fetcher = fetch) {
+  const fullName = String(ref?.full_name || ref || '').trim();
+  if (!/^[\w.-]+\/[\w.-]+$/.test(fullName)) return { full_name: fullName, files: [], error: 'Invalid repository name.' };
+  let branch = String(ref?.branch || '');
+  let license = String(ref?.license || '').toLowerCase();
+  if (!branch || !license) {
+    const meta = await fetcher(`https://api.github.com/repos/${fullName}`, { headers: ghHeaders(env), signal: AbortSignal.timeout(10000) })
+      .then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    branch = branch || String(meta?.default_branch || 'main');
+    license = license || String(meta?.license?.spdx_id || '').toLowerCase();
+  }
+  const tree = await fetcher(`https://api.github.com/repos/${fullName}/git/trees/${encodeURIComponent(branch)}?recursive=1`, { headers: ghHeaders(env), signal: AbortSignal.timeout(10000) })
+    .then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  const paths = rankRepoSourcePaths(tree?.tree, need, maxFiles);
+  const perFile = Math.max(1500, Math.floor(maxChars / Math.max(1, paths.length)));
+  const files = (await Promise.all(paths.map(async (path) => {
+    const text = await fetcher(`https://raw.githubusercontent.com/${fullName}/${branch}/${path.split('/').map(encodeURIComponent).join('/')}`, { headers: { 'User-Agent': 'CHE-CodeScout' }, signal: AbortSignal.timeout(8000) })
+      .then((r) => (r.ok ? r.text() : '')).catch(() => '');
+    return text ? { path, text: text.replace(/\0/g, '').slice(0, perFile) } : null;
+  }))).filter(Boolean);
+  return { full_name: fullName, license, reusable: reusableLicense(license), files, ...(tree ? {} : { error: 'Could not list the repository source.' }) };
+}
+
+// Source handed to the coding crew. Reusable code may be adapted into CHE
+// with a credit line; study-only code is for understanding, never copying.
+export function referenceSourceBlock(source, maxChars = 5000) {
+  const files = Array.isArray(source?.files) ? source.files : [];
+  if (!files.length) return '';
+  const rule = source.reusable
+    ? `REFERENCE CODE from ${source.full_name} (${source.license || 'reusable'} license: you MAY adapt and rewrite it into CHE's own Dart/JavaScript; keep a comment "Adapted from ${source.full_name}/<path> (${source.license || 'license'})" where it is used):`
+    : `REFERENCE CODE from ${source.full_name} (no reusable license: STUDY ONLY. Learn how it works and write CHE's own implementation; never copy its code):`;
+  const per = Math.max(800, Math.floor((maxChars - rule.length) / files.length));
+  return [rule, ...files.map((file) => `--- ${file.path} ---\n${String(file.text).slice(0, per)}`)].join('\n').slice(0, maxChars);
+}
