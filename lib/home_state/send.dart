@@ -437,6 +437,15 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // Links CHE just gave: "open Supabase", "open it", "open link 2",
+    // "open it in Safari", "what's the link".
+    final linkCommand = _pendingAttachment == null ? CheLinkVoiceCommand.parse(message, _recentChatLinks()) : null;
+    if (linkCommand != null) {
+      if (mounted) _set(() => controller.clear());
+      await _runChatLinkCommand(message, linkCommand);
+      return;
+    }
+
     if (await _openExternalAppByVoice(message)) {
       return;
     }
