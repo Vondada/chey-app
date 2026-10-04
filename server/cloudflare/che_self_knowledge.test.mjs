@@ -13,6 +13,9 @@ test('self brief carries the owner rules and stays free of dynamic data', () => 
   assert.match(CHE_SELF_BRIEF, /voice/);
   assert.match(CHE_SELF_BRIEF, /spending money or deleting/);
   assert.match(CHE_SELF_BRIEF, /Keychain/);
+  assert.match(CHE_SELF_BRIEF, /MISSION CONTROL/);
+  assert.match(CHE_SELF_BRIEF, /never pretends awareness or completion/i);
+  assert.match(CHE_SELF_BRIEF, /out-of-sample evidence/i);
   assert.doesNotMatch(CHE_SELF_BRIEF, /\d{4}-\d{2}-\d{2}/);
   assert.ok(CHE_SELF_BRIEF.length < 2000, 'brief stays small enough for every agent prompt');
 });
