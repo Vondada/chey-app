@@ -51,8 +51,19 @@ class _CheInlinePreviewState extends State<CheInlinePreview> {
       _controller = WebViewController()
         ..setJavaScriptMode(JavaScriptMode.unrestricted)
         ..setBackgroundColor(Colors.black)
+        ..setNavigationDelegate(NavigationDelegate(onNavigationRequest: _allowNavigation))
         ..loadRequest(Uri.parse(CheInlinePreview.embeddable(widget.url)), headers: widget.headers);
     }
+  }
+
+  /// A site CHE built and hosts at `/site/<id>` stays on its own page: its
+  /// script can never steer the preview to another site.
+  NavigationDecision _allowNavigation(NavigationRequest request) {
+    final start = Uri.parse(CheInlinePreview.embeddable(widget.url));
+    if (!start.path.startsWith('/site/')) return NavigationDecision.navigate;
+    final next = Uri.tryParse(request.url);
+    final samePage = next != null && next.scheme == start.scheme && next.host == start.host && next.path == start.path;
+    return samePage ? NavigationDecision.navigate : NavigationDecision.prevent;
   }
 
   @override

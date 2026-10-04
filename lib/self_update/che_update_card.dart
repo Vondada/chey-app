@@ -198,6 +198,9 @@ class _CheUpdateCardState extends State<CheUpdateCard> {
               'files': [for (final f in widget.proposal.files) {'path': f.path, 'content': f.content}],
               if (widget.proposal.expectedBaseSha != null) 'expected_base_sha': widget.proposal.expectedBaseSha,
               if (widget.proposal.baseFiles != null) 'base_files': widget.proposal.baseFiles,
+              // One tap: open the PR and authorize the merge once every
+              // required check passes; CHE then delivers it herself.
+              'ship': true,
             }),
           )
           .timeout(const Duration(seconds: 60));
@@ -235,10 +238,10 @@ class _CheUpdateCardState extends State<CheUpdateCard> {
             : prState == 'closed'
                 ? 'Pull request closed without merging.'
                 : switch (ci) {
-                    'passed' => 'CI passed. Review and merge PR #$pr.',
-                    'failed' => 'CI failed: ${(_status?['failed_checks'] as List?)?.join(', ') ?? ''}',
-                    'running' => 'CI running on PR #$pr…',
-                    _ => 'PR #$pr opened. Waiting for CI.',
+                    'passed' => 'Checks passed on PR #$pr. CHE is merging and delivering it.',
+                    'failed' => 'Checks failed: ${(_status?['failed_checks'] as List?)?.join(', ') ?? ''}. CHE is repairing it.',
+                    'running' => 'Checks running on PR #$pr. CHE merges it when they pass.',
+                    _ => 'PR #$pr opened. CHE merges it when the checks pass.',
                   };
     final color = problems.isNotEmpty ? CheColors.danger : CheColors.accentAlt;
     return Container(
@@ -286,11 +289,16 @@ class _CheUpdateCardState extends State<CheUpdateCard> {
             ),
             const SizedBox(width: CheSpace.sm),
             Expanded(
-              child: FilledButton(
-                onPressed: _busy ? null : _approve,
-                child: _busy
-                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Text('Approve'),
+              child: Semantics(
+                button: true,
+                label: 'Update CHE. Approves this change; CHE merges and delivers it after every check passes.',
+                excludeSemantics: true,
+                child: FilledButton(
+                  onPressed: _busy ? null : _approve,
+                  child: _busy
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Text('Update CHE'),
+                ),
               ),
             ),
           ]),

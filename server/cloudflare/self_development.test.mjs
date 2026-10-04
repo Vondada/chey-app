@@ -970,3 +970,14 @@ test('content scan finds source by text and identifiers without any model call',
   const hits = await contentScan(ctx, index, 'fix the talk to che button on chat', ['Talk to CHE'], fetcher);
   assert.deepEqual([...hits.keys()], ['lib/home/che_home_chat.dart']);
 });
+
+test('failed-job diagnosis is deterministic and recovery phrases are recognized', async () => {
+  const { diagnoseFailure, recoveryRequestIntent, engineeringRecord } = await import('./self_development.js');
+  assert.equal(diagnoseFailure({ outcomes: [{ outcome: 'invalid_json' }, { outcome: 'invalid_json' }, { outcome: 'review_rejected' }] }).root_cause, 'invalid_output');
+  assert.equal(diagnoseFailure({ outcomes: [{ outcome: 'edit_failed' }], feedback: 'find text does not exist exactly' }).root_cause, 'edit_anchor');
+  assert.equal(diagnoseFailure({ outcomes: [{ outcome: 'review_rejected' }] }).root_cause, 'review_rejected');
+  const rec = engineeringRecord({ request: 'r', failedStrategies: [{ engineer: 'Knox', outcome: 'review_rejected', why: 'no', prior: true }, { engineer: 'Nova', outcome: 'review_rejected', why: 'yes' }], fingerprints: ['a'], outcomes: [], files: ['lib/a.dart'] });
+  assert.deepEqual(rec.failed_strategies.map((s) => s.engineer), ['Nova'], 'prior (seeded) strategies are not double-counted');
+  for (const p of ['Diagnose and recover the failed coding job', 'retry the last failed job', 'reopen the engineering record']) assert.ok(recoveryRequestIntent(p), p);
+  for (const p of ['update your code: add dark mode', 'what is a failed state']) assert.ok(!recoveryRequestIntent(p), p);
+});

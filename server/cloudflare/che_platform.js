@@ -13,6 +13,7 @@ const CORE_RULES = Object.freeze([
 const text = (value, max = 240) => String(value ?? '').trim().slice(0, max);
 const nowIso = (now = new Date()) => now.toISOString();
 const randomId = (prefix) => `${prefix}_${crypto.randomUUID()}`;
+const newDeviceId = () => crypto.randomUUID().replace(/-/g, '').slice(0, 12);
 
 export function ensurePlatform(data) {
   data.platform = data.platform && typeof data.platform === 'object' ? data.platform : {};
@@ -24,6 +25,9 @@ export function ensurePlatform(data) {
   p.notifications = Array.isArray(p.notifications) ? p.notifications : [];
   p.core_requests = Array.isArray(p.core_requests) ? p.core_requests : [];
   p.shared_skills = Array.isArray(p.shared_skills) ? p.shared_skills : [];
+  // Every device gets a random public id the owner can name it by; devices
+  // paired before ids existed get one the first time the platform loads.
+  for (const device of Object.values(p.devices)) if (device && !device.id) device.id = newDeviceId();
   if (!p.tenants[OWNER_TENANT_ID]) {
     p.tenants[OWNER_TENANT_ID] = {
       id: OWNER_TENANT_ID, name: 'CHE Owner', role: 'owner', created_at: nowIso(),
@@ -43,7 +47,7 @@ export function registerPairedDevice(data, tokenHash, { name = 'CHE device', acc
   const p = ensurePlatform(data);
   const tenant = p.tenants[tenantId] || p.tenants[OWNER_TENANT_ID];
   p.devices[tokenHash] = {
-    token_hash: tokenHash, tenant_id: tenant.id, name: text(name, 80) || 'CHE device',
+    id: newDeviceId(), token_hash: tokenHash, tenant_id: tenant.id, name: text(name, 80) || 'CHE device',
     access: access === 'private' ? 'private' : 'full', created_at: nowIso(), last_seen_at: nowIso(), revoked_at: null,
   };
   return p.devices[tokenHash];
@@ -154,10 +158,56 @@ export function platformView(data, tenantId, tokenHash) {
     version: p.version, tenant: { ...tenant }, device: device ? { ...device, token_hash: undefined } : null,
     core_rules: coreRules(), notifications: notificationsFor(data, tenant.id),
     core_requests: coreRequestsFor(data, tenant.id),
+    // The owner sees every device on every profile (his and his family's),
+    // each with a short public id he can revoke by. Token hashes stay hidden.
     devices: tenant.role === 'owner'
-      ? Object.values(p.devices).filter(d => d.tenant_id === tenant.id).map(({ token_hash, ...d }) => d)
+      ? Object.values(p.devices).map(({ token_hash, ...d }) => ({ ...d, profile: p.tenants[d.tenant_id]?.name || 'CHE' }))
       : [],
   };
+}
+
+// The public id of the device holding this token (random, never derived
+// from the token).
+export function deviceId(data, tokenHash) {
+  return ensurePlatform(data).devices[tokenHash]?.id || '';
+}
+
+// Owner revokes a lost or retired device from any other device. The device's
+// token stops working on its next request. The device making the request
+// cannot revoke itself here (that is /api/security/revoke_self).
+export function revokeDevice(data, id, { byTokenHash = '' } = {}) {
+  const p = ensurePlatform(data);
+  const key = String(id || '').trim().toLowerCase();
+  if (key.length < 6) return { error: 'device_not_found' };
+  const entry = Object.entries(p.devices).find(([, d]) => d?.id === key);
+  if (!entry) return { error: 'device_not_found' };
+  const [hash, device] = entry;
+  if (hash === byTokenHash) return { error: 'cannot_revoke_current_device' };
+  if (!device.revoked_at) device.revoked_at = nowIso();
+  if (data.devices && typeof data.devices === 'object') delete data.devices[hash];
+  const { token_hash: _hidden, ...visible } = device;
+  return { device: visible };
+}
+
+// "List my devices" / "remove my lost iPhone" / "revoke device 3fa2c1d09b7e".
+export function deviceCommandIntent(message) {
+  const text = String(message || '').trim().replace(/[.!?]+$/, '');
+  if (!text || text.length > 120) return null;
+  if (/^(?:(?:che|chay|chey)[,:]?\s*)?(?:list|show|read|what are)\s+(?:me\s+)?(?:all\s+)?(?:my|the|your)\s+(?:paired\s+|signed[-\s]in\s+)?devices$/i.test(text)
+    || /^(?:(?:che|chay|chey)[,:]?\s*)?(?:which|what)\s+devices\s+(?:are|can)\s+(?:signed in|paired|connected|use you)/i.test(text)) return { kind: 'list' };
+  const m = /^(?:(?:che|chay|chey)[,:]?\s*)?(?:please\s+)?(?:revoke|remove|disconnect|sign out|log out|lock out|block|cut off)\s+(?:my\s+|the\s+)?(?:lost\s+|stolen\s+|old\s+)?(?:device\s+)?(.{2,60}?)(?:\s+device)?$/i.exec(text);
+  if (m && /\b(?:device|phone|iphone|ipad|laptop|computer|mac|tablet|browser|pc)\b|^[0-9a-f]{6,12}$/i.test(`${text} ${m[1]}`)) return { kind: 'revoke', target: m[1].trim() };
+  return null;
+}
+
+// Finds the device the owner named (by id prefix or by name words).
+export function findDevice(data, target) {
+  const p = ensurePlatform(data);
+  const t = String(target || '').trim().toLowerCase();
+  const live = Object.entries(p.devices).filter(([, d]) => !d.revoked_at);
+  if (/^[0-9a-f]{12}$/.test(t)) return live.filter(([, d]) => d.id === t);
+  const words = t.replace(/\b(?:my|the|lost|stolen|old|device)\b/g, ' ').split(/\s+/).filter((w) => w.length > 1);
+  return live.filter(([, d]) => words.length && words.every((w) => String(d.name || '').toLowerCase().includes(w)));
 }
 
 export { OWNER_TENANT_ID };

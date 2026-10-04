@@ -9,6 +9,7 @@ const String _homeBaseUrlKey = 'che.homeBaseUrl';
 extension _CheHomeConnected on _CHEHomeState {
   static const String _lastSeenKey = 'che.home.lastSeenAt';
   static const String _explainKey = 'che.explainLevel';
+  static const String _explainExplicitKey = 'che.explainLevel.explicitDeeper';
 
   Future<Map<String, dynamic>?> _getAgentJson(String path) async {
     final cloud = await _getCloudAgentJson(path);
@@ -106,8 +107,15 @@ extension _CheHomeConnected on _CHEHomeState {
   Future<void> _loadExplainLevel() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final saved = prefs.getString(_explainKey);
-      if (saved != null && mounted) _set(() => _explainLevel = saved);
+      var saved = prefs.getString(_explainKey);
+      // "Tell me more" used to switch every later answer to long ones. Only
+      // an explicit "detailed answers from now on" keeps that setting now.
+      if (saved == 'deeper' && prefs.getBool(_explainExplicitKey) != true) {
+        saved = 'simple';
+        await prefs.setString(_explainKey, saved);
+      }
+      final level = saved;
+      if (level != null && mounted) _set(() => _explainLevel = level);
     } catch (_) {}
   }
 
@@ -116,6 +124,7 @@ extension _CheHomeConnected on _CHEHomeState {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_explainKey, level);
+      await prefs.setBool(_explainExplicitKey, level == 'deeper');
     } catch (_) {}
   }
 
@@ -202,8 +211,16 @@ extension _CheHomeConnected on _CHEHomeState {
       await _setExplainLevel('simple');
       return false;
     }
-    if (RegExp(r'\b(go deeper|more detail|in depth|explain more|tell me more)\b').hasMatch(lower)) {
+    // Long answers by default only when the owner says so explicitly.
+    if (RegExp(r'\b(detailed|long(er)?|in.depth|deeper) (answers|replies|explanations) from now on\b|\balways (give me |use )?(detailed|long(er)?|in.depth) (answers|replies|explanations)\b').hasMatch(lower)) {
       await _setExplainLevel('deeper');
+      await speakText('Okay, detailed answers from now on. Say keep it simple to go back to short ones.');
+      return true;
+    }
+    // "Tell me more", "expand", "expound": this one answer goes deeper; the
+    // next one is short again.
+    if (RegExp(r'\b(go deeper|more detail|in depth|explain more|tell me more|expand( on)?( (that|this|it))?|expound|elaborate|give me (the |more )?details)\b').hasMatch(lower)) {
+      _deeperOnce = true;
       return false;
     }
     if (RegExp(r'\b(normal explanations?|regular detail)\b').hasMatch(lower)) {

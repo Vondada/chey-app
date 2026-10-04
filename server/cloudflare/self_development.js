@@ -446,6 +446,58 @@ export function rankSourcePaths(paths, request, limit = 6) {
   return ranked.slice(0, Math.max(1, limit)).map((item) => item.path);
 }
 
+// ─── Failed-job evidence and recovery ─────────────────────────────────────────
+
+export function engineeringRecord({ request, failedStrategies = [], fingerprints = [], outcomes = [], feedback = '', files = [] }) {
+  const record = {
+    request: String(request || '').slice(0, 4000),
+    failed_strategies: failedStrategies.filter((item) => !item.prior).slice(-12).map((item) => ({
+      engineer: String(item.engineer || ''), outcome: String(item.outcome || ''), why: String(item.why || '').slice(0, 300), edits: (item.edits || []).slice(0, 3).map(String),
+    })),
+    fingerprints: fingerprints.map(String).slice(-30),
+    outcomes: outcomes.slice(-30).map((item) => ({ round: item.round, engineer: item.engineer, outcome: item.outcome, ...(item.detail ? { detail: String(item.detail).slice(0, 200) } : {}) })),
+    feedback: String(feedback || '').slice(0, 1500),
+    files: files.map(String).slice(0, 12),
+    at: new Date().toISOString(),
+  };
+  return { ...record, ...diagnoseFailure(record) };
+}
+
+// Deterministic root-cause classification from what actually happened in the
+// failed attempts (no model call): what went wrong most, and what to change.
+export function diagnoseFailure(record) {
+  const counts = {};
+  for (const item of record?.outcomes || []) counts[item.outcome] = (counts[item.outcome] || 0) + 1;
+  const feedback = `${record?.feedback || ''} ${(record?.failed_strategies || []).map((item) => item.why).join(' ')}`;
+  const top = (...keys) => keys.reduce((sum, key) => sum + (counts[key] || 0), 0);
+  let root_cause = 'review_rejected';
+  let diagnosis = 'Independent review rejected every candidate. Read the reviewer reasons in failed_strategies, fix that exact concern, and keep the change small.';
+  if (top('invalid_json', 'empty') >= Math.max(2, top('review_rejected'))) {
+    root_cause = 'invalid_output';
+    diagnosis = 'Engineers returned unusable output (invalid or truncated JSON). Return fewer, smaller edits (find 1-8 lines, at most 4 edits).';
+  } else if (/does not exist exactly|more than once|already exists; change it with edits/i.test(feedback)) {
+    root_cause = 'edit_anchor';
+    diagnosis = 'Edits did not apply: "find" text was not copied exactly, was not unique, or an existing file was sent as a new file. Copy anchors character-for-character from the inspected source.';
+  } else if (top('agent_evidence_request') >= 2 || /not provided|cannot inspect|missing source/i.test(feedback)) {
+    root_cause = 'missing_source';
+    diagnosis = 'The right source was not in view. Search wider (visible text, symbols, callers, tests) before editing.';
+  } else if (top('duplicate_strategy') >= 2) {
+    root_cause = 'repeated_strategy';
+    diagnosis = 'The crew kept proposing the same approach. Pick a different file, anchor or mechanism.';
+  } else if (/syntax|analy[sz]e|unused|undefined|import/i.test(feedback)) {
+    root_cause = 'validation_failed';
+    diagnosis = 'Candidates failed validation (syntax/imports/unused code). Wire new code into a real call path and keep imports consistent.';
+  }
+  return { root_cause, diagnosis };
+}
+
+// "Diagnose/recover/retry the failed coding job", "reopen the engineering record".
+export function recoveryRequestIntent(message) {
+  const text = String(message || '');
+  return /\b(?:diagnos\w*|recover\w*|reopen|retry|re-?try|revisit|resume|pick up|look (?:again )?at|fix|finish)\b[\s\S]{0,80}\b(?:failed|stopped|previous|last|earlier)\b[\s\S]{0,40}\b(?:job|attempts?|coding|task|change|update|record|run)\b/i.test(text)
+    || /\b(?:reopen|load|use|read)\b[\s\S]{0,30}\bengineering record\b/i.test(text);
+}
+
 // ─── Team memory: every mistake becomes a rule, every find becomes a shortcut ───
 // Stored in the Durable Object (key below). Seeded with lessons learned by hand.
 const LESSONS_KEY = 'che_team_lessons';
@@ -1230,6 +1282,10 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         chat.push({ from: 'CHE', msg: `Deterministic repository fallback selected: ${chosen.join(', ')}` });
       }
     }
+    // Recovery: the files the failed job actually inspected are real context.
+    if (options.priorFailure?.files?.length) {
+      chosen = [...new Set([...chosen, ...options.priorFailure.files.map(String).filter((path) => index.paths.includes(path))])].slice(0, 8);
+    }
     if (!chosen.length) {
       return finish({
         status: 422,
@@ -1289,9 +1345,16 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     const feedbacks = CREW.engineers.map(() => '');
     let result = null;
     const maxRounds = ENGINEER_PROVIDER_ROUNDS.length;
-    const seenStrategies = new Set();
+    // A recovery run starts from the failed job's evidence: its strategies are
+    // already "seen" (an identical retry is rejected as a duplicate) and the
+    // engineers read why each one failed. The round limit is unchanged.
+    const prior = options.priorFailure && typeof options.priorFailure === 'object' ? options.priorFailure : null;
+    const seenStrategies = new Set(prior ? (prior.fingerprints || []).map(String).slice(-30) : []);
     const rejectedNoChange = new Set();
-    const failedStrategies = [];
+    const failedStrategies = prior ? (prior.failed_strategies || []).slice(-8).map((item) => ({ ...item, prior: true })) : [];
+    if (prior) {
+      chat.push({ from: 'CHE', msg: `Recovery of a failed job. Diagnosis: ${prior.diagnosis || diagnoseFailure(prior).diagnosis} Do not repeat the ${failedStrategies.length} failed strategies listed in failed_strategies; choose a materially different approach.` });
+    }
     let widenEvidence = false;
 
     const inspectedEvidence = (budget, extraAnchors = new Map()) => packEvidence(sources, {
@@ -1621,6 +1684,16 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         failure_class: FAILURE_CLASS.INTERNAL,
         detail: `The coding team exhausted ${maxRounds} implementation passes and re-inspected the source but could not produce a safe reviewed change. ${engineering || 'No safe diff passed review.'}`.slice(0, 800),
         owner_message: ownerEngineeringMessage(FAILURE_CLASS.INTERNAL),
+        // Retained so a later "diagnose/recover that job" builds on this
+        // evidence instead of restarting the same attempts.
+        engineering_record: engineeringRecord({
+          request: String(options.intentRequest || task),
+          failedStrategies,
+          fingerprints: [...seenStrategies],
+          outcomes: ctx.outcomes,
+          feedback: engineering,
+          files: [...sources.keys()],
+        }),
       });
     }
 

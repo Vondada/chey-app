@@ -64,12 +64,17 @@ export function namedRepoStudyIntent(message) {
   const text = String(message || '').trim();
   if (!/\b(?:study|research|read|look\s+(?:in|into|through|at|for)|go\s+(?:through|into)|dig\s+into|learn\s+from)\b/i.test(text)) return null;
   let repo = /github\.com\/([\w.-]+\/[\w.-]+?)(?:\.git)?(?=[/\s#?).,;:!"']|$)/i.exec(text)?.[1] || '';
+  let evidence = repo ? 'url' : '';
   if (!repo) {
     for (const [pattern, alias] of REPO_ALIASES) {
-      if (pattern.test(text)) { repo = alias; break; }
+      if (pattern.test(text)) { repo = alias; evidence = 'alias'; break; }
     }
   }
-  if (!repo && /\b(?:repo|repository|github|readme)\b/i.test(text)) {
+  // A bare "word/word" is weak evidence: English uses slashes too ("file/path",
+  // "engineering/research"). It is only considered when the request is not
+  // about CHE's own code, and callers must confirm it exists on GitHub before
+  // treating it as a repository (see startTopicStudy).
+  if (!repo && /\b(?:repo|repository|github|readme)\b/i.test(text) && !aboutOwnCode(text)) {
     for (const match of text.matchAll(/(?:^|[\s("'`])([A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*)(?=[\s).,:;!?"'`]|$)/g)) {
       const candidate = match[1].replace(/[.]+$/, '');
       if (NOT_A_REPO.test(candidate)) continue;
@@ -77,13 +82,21 @@ export function namedRepoStudyIntent(message) {
       if (/^(?:lib|server|test|tests|docs|ios|android|web|tool|mailbox|scripts|\.github)\//i.test(candidate)) continue;
       if (!/[a-z]/i.test(candidate.split('/')[0]) || !/[a-z]/i.test(candidate.split('/')[1])) continue;
       repo = candidate;
+      evidence = 'bare';
       break;
     }
   }
   if (!repo) return null;
   const implement = /\b(?:implement|integrate|apply|build|add|put|use)\b[\s\S]{0,120}\b(?:your|her|che'?s?|my|the)\s+(?:own\s+)?(?:code|codebase|app|system|features?)\b/i.test(text)
     || /\b(?:implement|integrate)\b[\s\S]{0,60}\b(?:it|them|that|each|what\s+you\s+learn)\b/i.test(text);
-  return { repo, implement };
+  return { repo, implement, evidence };
+}
+
+// The request is about CHE's own repository or a coding job / engineering
+// record, so a slash in it is a path or prose, not another repository.
+// ("Study owner/repo and implement it in your code" still counts.)
+function aboutOwnCode(text) {
+  return /\b(?:your|che'?s|her)\s+(?:own\s+)?(?:repo(?:sitory)?|codebase|source(?:\s+code)?)\b|\b(?:engineering record|coding (?:job|task|crew|team)|failed (?:job|attempts?|coding)|previous (?:attempts?|job))\b/i.test(text);
 }
 
 function cleanHeading(raw) {
