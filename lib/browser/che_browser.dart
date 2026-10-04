@@ -11,7 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-import '../che_app_portal.dart' show cheAppForName, cheIsTradeSeaUrl, cheTradeSeaEmbedUrl;
+import '../che_app_portal.dart' show cheAppForName, cheIsTradeSeaUrl, cheTradeSeaEmbedUrl, cheTradeSeaUserAgent;
 import '../security/che_password_vault.dart';
 import '../security/che_vault_auth.dart';
 import 'che_embedded_app_shell.dart';
@@ -151,11 +151,6 @@ class _BrowserTab {
         },
         onPageStarted: (u) {
           url = u;
-          if (cheIsTradeSeaUrl(u)) {
-            unawaited(controller.runJavaScript(
-              "window.__webView=true;try{if(!new URLSearchParams(location.search).get('source')){var u=new URL(location.href);u.searchParams.set('source','mobile-app');u.searchParams.set('theme',u.searchParams.get('theme')||'dark');history.replaceState(null,'',u.toString());}}catch(e){}",
-            ));
-          }
           onChanged();
         },
         onPageFinished: (u) async {
@@ -177,8 +172,8 @@ class _BrowserTab {
             return NavigationDecision.prevent;
           }
           if (uri.scheme == 'http' || uri.scheme == 'https' || uri.scheme == 'about') {
-            // Keep TradeSea's mobile-app embed flag across SPA/OAuth returns so
-            // the site does not replace login with the App Store / Play sheet.
+            // TradeSea runs as its regular web app: a link back into the
+            // native-app embed mode (source=mobile-app) is opened without it.
             if (uri.scheme != 'about' && cheIsTradeSeaUrl(uri.toString())) {
               final embedded = cheTradeSeaEmbedUrl(uri.toString());
               if (embedded != uri.toString()) {
@@ -192,6 +187,9 @@ class _BrowserTab {
           return NavigationDecision.prevent;
         },
       ))
+      // TradeSea gets the full web app (no "download the app" sheet, no
+      // native-app embed mode that leaves its trading area empty).
+      ..setUserAgent(cheIsTradeSeaUrl(url) ? cheTradeSeaUserAgent : null)
       ..loadRequest(Uri.parse(cheIsTradeSeaUrl(url) ? cheTradeSeaEmbedUrl(url) : url));
   }
 

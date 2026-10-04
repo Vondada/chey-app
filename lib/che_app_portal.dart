@@ -35,7 +35,7 @@ const List<CheAppDefinition> cheAppCatalog = [
   CheAppDefinition(name: 'GitHub', webUrl: 'https://github.com', icon: Icons.code, aliases: ['github', 'git hub']),
   CheAppDefinition(name: 'TradingView', webUrl: 'https://www.tradingview.com', icon: Icons.show_chart, aliases: ['tradingview', 'trading view']),
   CheAppDefinition(name: 'NinjaTrader', webUrl: 'https://web-trader.ninjatrader.com/', icon: Icons.candlestick_chart, aliases: ['ninjatrader', 'ninja trader']),
-  CheAppDefinition(name: 'TradeSea', webUrl: 'https://app.tradesea.ai/login?source=mobile-app&theme=dark', icon: Icons.ssid_chart, aliases: ['tradesea', 'trade sea', 'trade sea ai']),
+  CheAppDefinition(name: 'TradeSea', webUrl: 'https://app.tradesea.ai/login?theme=dark', icon: Icons.ssid_chart, aliases: ['tradesea', 'trade sea', 'trade sea ai']),
   // Web versions CHE can use when a phone app can't be controlled directly.
   CheAppDefinition(name: 'Gmail', webUrl: 'https://mail.google.com', icon: Icons.mail_outline, aliases: ['gmail', 'google mail']),
   CheAppDefinition(name: 'Outlook', webUrl: 'https://outlook.live.com/mail', icon: Icons.mark_email_unread_outlined, aliases: ['outlook', 'hotmail']),
@@ -114,19 +114,25 @@ bool cheIsTradeSeaUrl(String url) {
   return host.contains('tradesea.ai');
 }
 
-/// TradeSea's SPA treats mobile UAs (CHE's WKWebView) as a phone browser and
-/// shows only a "download the app" sheet unless `source=mobile-app` (or
-/// `window.__webView`) is set — that is how their native WebViewBridge embeds.
-/// CHE Apps must open with that flag or sign-in never appears.
+/// TradeSea's web app shows phones a "download the app" sheet, and its
+/// `source=mobile-app` / `window.__webView` mode expects TradeSea's own native
+/// app around it: signed in, the trading area stayed empty and the balance
+/// read "--". CHE opens TradeSea as the regular web app instead (desktop
+/// Safari user agent, see [cheTradeSeaUserAgent]) and strips the embed flag,
+/// including from older saved links.
 String cheTradeSeaEmbedUrl(String url) {
   final uri = Uri.tryParse(url);
   if (uri == null || !cheIsTradeSeaUrl(url)) return url;
-  final next = Map<String, String>.from(uri.queryParameters);
-  if (next['source'] == 'mobile-app') return uri.toString();
-  next['source'] = 'mobile-app';
-  next.putIfAbsent('theme', () => 'dark');
-  return uri.replace(queryParameters: next).toString();
+  if (uri.queryParameters['source'] != 'mobile-app') return uri.toString();
+  final next = Map<String, String>.from(uri.queryParameters)..remove('source');
+  if (next.isNotEmpty) return uri.replace(queryParameters: next).toString();
+  return Uri(scheme: uri.scheme, host: uri.host, port: uri.hasPort ? uri.port : null, path: uri.path, fragment: uri.hasFragment ? uri.fragment : null).toString();
 }
+
+/// The user agent CHE's browser uses on TradeSea: the full web app, as Safari
+/// on a Mac gets it.
+const String cheTradeSeaUserAgent =
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
 
 /// Phone apps with no usable web version. CHE says so plainly instead of
 /// pretending she can get in.
