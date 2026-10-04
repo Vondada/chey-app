@@ -180,6 +180,8 @@ extension _CheHomeStreaming on _CHEHomeState {
     );
 
     request.headers.addAll(_authHeaders);
+    final explainLevel = _deeperOnce ? 'deeper' : _explainLevel;
+    _deeperOnce = false;
     request.body = jsonEncode({
       'message': userMessage,
       'history': history,
@@ -204,7 +206,7 @@ extension _CheHomeStreaming on _CHEHomeState {
       },
       'agent_mode': _homeMode == 0 ? 'full' : 'chat',
       'proactive_mode': true,
-      'explain_level': _explainLevel,
+      'explain_level': explainLevel,
       'reply_language': _replyLanguage,
       'plugin_recommendations': true,
       'client': {
