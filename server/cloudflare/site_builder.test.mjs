@@ -60,3 +60,32 @@ test('sites are stored, versioned on edit, and served sandboxed with no network 
   assert.equal((await serveSite(new Request('https://che.example/site/0000000000000000'), storage)).status, 404);
   assert.equal(await serveSite(new Request('https://che.example/api/chat'), storage), null);
 });
+
+
+test('accessibility checks reject unnamed controls and buttons', () => {
+  const unlabeled = GOOD.replace('<p>Walk-ins welcome.</p>', '<input id="name"><button><span></span></button>');
+  const problems = checkHtml(unlabeled);
+  assert.ok(problems.some((p) => /form control.*accessible label/i.test(p)));
+  assert.ok(problems.some((p) => /button.*accessible name/i.test(p)));
+  const labeled = GOOD.replace('<p>Walk-ins welcome.</p>', '<label for="name">Name</label><input id="name"><button>Save</button>');
+  assert.deepEqual(checkHtml(labeled), []);
+});
+
+test('large stored pages are never truncated during edit', async () => {
+  const huge = GOOD.replace('Walk-ins welcome.', 'x'.repeat(61_000));
+  let calls = 0;
+  const env = { AI: { run: async () => { calls += 1; return { response: GOOD }; } } };
+  const out = await writeSite(env, { previousHtml: huge, change: 'make it dark' }, 'm');
+  assert.equal(out.html, huge);
+  assert.equal(calls, 0);
+  assert.match(out.problems[0], /too large.*No changes were saved/i);
+});
+
+test('hosted sites cannot open popups or navigate away', async () => {
+  const storage = memory();
+  const first = await saveSite(storage, { brief: 'barbershop', html: GOOD });
+  const res = await serveSite(new Request(`https://che.example/site/${first.id}`), storage);
+  const csp = res.headers.get('Content-Security-Policy');
+  assert.doesNotMatch(csp, /allow-popups/);
+  assert.match(csp, /navigate-to 'none'/);
+});
