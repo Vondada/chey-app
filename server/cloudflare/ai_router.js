@@ -603,6 +603,17 @@ async function callProvider(env, provider, strongModel, input, fetcher, modelOve
   }
 }
 
+// True when a Workers AI result carries something a caller can use.
+export function hasAnswer(out) {
+  if (typeof out === 'string') return out.trim().length > 0;
+  if (!out || typeof out !== 'object') return false;
+  const response = out.response;
+  if (typeof response === 'string' ? response.trim() : response && typeof response === 'object') return true;
+  if (String(out.choices?.[0]?.message?.content || '').trim()) return true;
+  return (Array.isArray(out.tool_calls) && out.tool_calls.length > 0)
+    || (Array.isArray(out.choices?.[0]?.message?.tool_calls) && out.choices[0].message.tool_calls.length > 0);
+}
+
 async function storedValue(storage, key) {
   if (!storage?.get) return null;
   try { return await storage.get(key); } catch (_) { return null; }
@@ -652,6 +663,8 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   const audit = input?.che_audit && typeof input.che_audit === 'object' ? input.che_audit : null;
   const strictProvider = input?.che_provider_strict === true;
   const minInputChars = Math.max(0, Number(input?.che_min_input_chars) || 0);
+  // Engines that just returned unusable output for this same request.
+  const avoid = new Set((Array.isArray(input?.che_avoid_providers) ? input.che_avoid_providers : []).map((id) => String(id).split(':')[0].toLowerCase()));
   // Emergency = the owner must get an answer: the reserve may be used.
   const emergency = input?.che_emergency === true || ownerChat;
   const office = input?.che_agent_id
@@ -688,6 +701,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
 
   const tryCloudflare = async () => {
     if (needs.local_only) return null;
+    if (avoid.has('cloudflare')) { errors.push('cloudflare: skipped after an unusable answer'); return null; }
     if (env.AI && now >= cloudflareExhaustedUntil) {
       if (!emergency && await isPastDailyBudget(env, usageStorage, 'cloudflare', now, { ownerChat, emergency })) {
         errors.push('cloudflare: daily budget in reserve');
@@ -700,6 +714,14 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
       try {
         const out = await env.AI.run(model, shaped.input);
         await addEstimatedUsage(env, usageStorage, 'cloudflare', estimateTotalTokens(shaped.input, out), now);
+        // An empty answer is a failed engine, exactly like the keyed engines
+        // (callProvider): routing continues instead of handing "" to the
+        // caller as if it were a reply.
+        if (!hasAnswer(out)) {
+          errors.push('cloudflare: returned no text');
+          noteHealth('cloudflare', { ok: false, error: 'empty answer' });
+          return null;
+        }
         noteHealth('cloudflare', { ok: true, latencyMs: Date.now() - t0 });
         used = shaped;
         return out && typeof out === 'object' ? { ...out, engine: out.engine || 'cloudflare', model: out.model || model } : out;
@@ -748,6 +770,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
       if (Date.now() - started > DEADLINE_MS) { errors.push('deadline reached; stopped trying engines'); break; }
       if (!providerEnabled(env, provider)) continue;
       if (provider.keyless && !keyless) continue;
+      if (avoid.has(provider.id.split(':')[0].toLowerCase())) continue;
       if ((providerCooldownUntil.get(provider.id) || 0) > now) {
         const earlier = providerLastError.get(provider.id);
         errors.push(

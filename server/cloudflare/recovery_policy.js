@@ -128,7 +128,10 @@ export class AgentBudget {
     this.now = now;
     this.startedAt = now();
     this.errorCounts = {};
-    this.stageLimits = { planner: 2, engineer: 6, reviewer: 16, recovery: 3, ...stageLimits };
+    // engineer: 3 genuine passes + 2 passes that produced nothing, 2 engineers
+    // each; format_retry: one re-request per unusable answer. maxCalls still
+    // caps the whole job.
+    this.stageLimits = { planner: 2, engineer: 10, format_retry: 6, reviewer: 16, recovery: 3, ...stageLimits };
     this.calls = 0;
     this.tokens = 0;
     this.byStage = {};

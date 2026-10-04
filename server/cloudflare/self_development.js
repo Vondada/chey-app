@@ -285,7 +285,7 @@ function note(ctx, entry) {
   if (ctx.diagnostics.length > 80) ctx.diagnostics.shift();
 }
 
-async function runAgent(ctx, { stage, role, assignment, payload, maxTokens = 2200, provider = '' }) {
+async function runAgent(ctx, { stage, role, assignment, payload, maxTokens = 2200, provider = '', avoid = [] }) {
   const { env } = ctx;
   const system = [
     `You are ${role}, an internal CHE software-engineering sub-agent.`,
@@ -319,6 +319,8 @@ async function runAgent(ctx, { stage, role, assignment, payload, maxTokens = 220
         // Ask engines for strict JSON so patches parse ("not valid JSON" failures).
         response_format: { type: 'json_object' },
         ...(provider ? { che_provider: provider } : {}),
+        // Engines that already returned unusable output for this request.
+        ...(avoid.length ? { che_avoid_providers: avoid } : {}),
       },
     );
   } catch (error) {
@@ -331,31 +333,56 @@ async function runAgent(ctx, { stage, role, assignment, payload, maxTokens = 220
     throw wrapped;
   }
   const text = modelText(answer);
+  const engine = String(answer?.engine || '');
   ctx.budget.addOutput(Math.ceil(text.length / 4));
   if (!text) {
+    note(ctx, { stage, role: role.split(',')[0], provider, engine, failure_class: FAILURE_CLASS.INTERNAL, kind: 'empty' });
     const empty = new Error(`${role} returned no work.`);
     empty.failure_class = FAILURE_CLASS.INTERNAL;
+    empty.empty_output = true;
+    empty.engine = engine;
     throw empty;
   }
-  return text;
+  return { text, engine };
 }
 
-// Runs an agent and parses its JSON. Returns { ok, value } or
-// { ok:false, failure:'invalid_json'|'unavailable'|'budget', failure_class }.
-async function agentJson(ctx, opts) {
+// Runs an agent and parses its JSON. Returns { ok, value, engine } or
+// { ok:false, failure:'empty'|'invalid_json'|'unavailable'|'budget', failure_class, engine }.
+async function agentJsonOnce(ctx, opts) {
   try {
-    const text = await runAgent(ctx, opts);
+    const { text, engine } = await runAgent(ctx, opts);
     const value = jsonObject(text);
     if (!value) {
-      note(ctx, { stage: opts.stage, provider: opts.provider, failure_class: FAILURE_CLASS.INTERNAL, kind: 'invalid_json', sample: text.slice(0, 160) });
-      return { ok: false, failure: 'invalid_json', failure_class: FAILURE_CLASS.INTERNAL, raw: text };
+      note(ctx, { stage: opts.stage, provider: opts.provider, engine, failure_class: FAILURE_CLASS.INTERNAL, kind: 'invalid_json', sample: text.slice(0, 160) });
+      return { ok: false, failure: 'invalid_json', failure_class: FAILURE_CLASS.INTERNAL, raw: text, engine };
     }
-    return { ok: true, value, raw: text };
+    return { ok: true, value, raw: text, engine };
   } catch (error) {
     if (error?.budget_exhausted) return { ok: false, failure: 'budget', failure_class: FAILURE_CLASS.INTERNAL };
+    if (error?.empty_output) return { ok: false, failure: 'empty', failure_class: FAILURE_CLASS.INTERNAL, raw: '', engine: error.engine || '' };
     const failureClass = error?.failure_class || FAILURE_CLASS.TEMPORARY_EXTERNAL;
     return { ok: false, failure: failureClass === FAILURE_CLASS.INTERNAL ? 'empty' : 'unavailable', failure_class: failureClass };
   }
+}
+
+const UNUSABLE = new Set(['empty', 'invalid_json']);
+
+// An empty or unparseable answer is a model/transport failure, not an
+// engineering strategy. With `formatRetry`, the same request (same job, same
+// evidence) is asked once more on a different engine, with the concrete format
+// problem; the engine that failed is avoided. Never more than one re-request.
+async function agentJson(ctx, opts) {
+  const first = await agentJsonOnce(ctx, opts);
+  if (first.ok || !opts.formatRetry || !UNUSABLE.has(first.failure)) return first;
+  if (!ctx.budget.canSpend('format_retry', 2000)) return first;
+  const avoid = [...new Set([...(opts.avoid || []), opts.provider, first.engine].filter(Boolean))];
+  const hint = first.failure === 'empty'
+    ? 'FORMAT: another engine returned an empty answer for this exact request. Return the complete JSON object now.'
+    : `FORMAT: another engine's answer was unusable. ${jsonProblem(first.raw)}`;
+  note(ctx, { stage: opts.stage, kind: 'format_retry', provider: opts.provider, engine: first.engine, failure: first.failure, avoid });
+  const second = await agentJsonOnce(ctx, { ...opts, stage: 'format_retry', provider: '', avoid, assignment: `${opts.assignment}\n${hint}` });
+  if (second.ok) return { ...second, recovered_from: first.failure };
+  return UNUSABLE.has(second.failure) ? { ...second, raw: second.raw || first.raw } : second;
 }
 
 // ─── Repository access ───────────────────────────────────────────────────────
@@ -1020,12 +1047,14 @@ function reviewNotes(review) {
 async function reviewWithRecovery(ctx, member, buildCall) {
   const providers = [member.provider, REVIEW_FALLBACK[member.provider] || ''].filter((p, i, list) => p !== undefined && list.indexOf(p) === i);
   let lastFailure = 'unavailable';
+  const avoid = [];
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const provider = providers[attempt] ?? '';
-    const res = await agentJson(ctx, buildCall(provider, attempt));
+    const res = await agentJson(ctx, { ...buildCall(provider, attempt), avoid: [...avoid] });
     if (!res.ok) {
       lastFailure = res.failure;
       if (res.failure === 'budget') break;
+      if (UNUSABLE.has(res.failure) && res.engine) avoid.push(res.engine);
       continue;
     }
     const review = res.value;
@@ -1120,8 +1149,12 @@ const ENGINEER_PROVIDER_ROUNDS = [
   ['github', 'huggingface'],
 ];
 
+// Extra passes allowed when a pass produced no implementation at all (empty,
+// malformed or unavailable engines). They never count as strategies.
+const MAX_UNPRODUCTIVE_PASSES = 2;
+
 function engineerForRound(member, index, round) {
-  const provider = ENGINEER_PROVIDER_ROUNDS[round]?.[index] || member.provider;
+  const provider = ENGINEER_PROVIDER_ROUNDS[round % ENGINEER_PROVIDER_ROUNDS.length]?.[index] || member.provider;
   return { ...member, provider };
 }
 
@@ -1356,6 +1389,13 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       chat.push({ from: 'CHE', msg: `Recovery of a failed job. Diagnosis: ${prior.diagnosis || diagnoseFailure(prior).diagnosis} Do not repeat the ${failedStrategies.length} failed strategies listed in failed_strategies; choose a materially different approach.` });
     }
     let widenEvidence = false;
+    // Passes in which at least one engineer actually produced an implementation
+    // (a parsed answer). Only those count toward the three-pass safety limit.
+    const producedRounds = new Set();
+    const formatFeedback = new Set();
+    let genuinePasses = 0;
+    let unproductivePasses = 0;
+    let enginesFailed = false;
 
     const inspectedEvidence = (budget, extraAnchors = new Map()) => packEvidence(sources, {
       terms,
@@ -1394,6 +1434,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         }),
         maxTokens: 6000,
         provider: member.provider,
+        formatRetry: true,
       });
       if (!res.ok) {
         if (res.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL) {
@@ -1401,10 +1442,14 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
           return null;
         }
         if (res.failure === 'budget') { record(round, member, 'budget_exhausted'); return null; }
+        // No implementation was produced (empty/unparseable even after the
+        // re-request): a model-format failure, never a strategy.
         feedbacks[i] = jsonProblem(res.raw);
-        record(round, member, 'invalid_json', feedbacks[i]);
+        formatFeedback.add(feedbacks[i]);
+        record(round, member, res.failure === 'empty' ? 'empty' : 'invalid_json', feedbacks[i]);
         return null;
       }
+      producedRounds.add(round);
       const answer = res.value;
       const claimText = [answer.summary, ...(Array.isArray(answer.evidence) ? answer.evidence : [])].map(String).join(' ');
       if (isEvidenceRequest(claimText) && !(Array.isArray(answer.edits) && answer.edits.length)) {
@@ -1566,7 +1611,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       return { next: applied.sources, files: checked.files, review: reviews, diff, discussion: chat.slice(-30), summary: String(answer.summary || 'CHE update').slice(0, 1800), engineer: member.name };
     };
 
-    for (let round = 0; round < maxRounds && !result; round++) {
+    for (let round = 0; genuinePasses < maxRounds && !result; round++) {
       const roundEngineers = CREW.engineers.map((member, i) => engineerForRound(member, i, round));
       const attempts = await Promise.all(roundEngineers.map((member, i) => attemptOnce(round, member, i)));
 
@@ -1616,11 +1661,22 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         }
       }
 
-      if (round >= maxRounds - 1) break;
+      // A pass where no engineer produced any implementation (every answer
+      // was empty, unparseable or an engine outage) is not a failed strategy:
+      // it does not count toward the three-pass limit. At most
+      // MAX_UNPRODUCTIVE_PASSES such passes run, each on the next engine pair.
+      const produced = producedRounds.has(round);
+      if (produced) genuinePasses += 1;
+      else unproductivePasses += 1;
+      if (genuinePasses >= maxRounds) break;
+      if (!produced && unproductivePasses > MAX_UNPRODUCTIVE_PASSES) { enginesFailed = true; break; }
       if (!ctx.budget.canSpend('engineer', 4000)) break;
       // A valid change could not be reviewed even after reviewer fallback:
       // engines are down (class B). Stop now instead of burning more rounds.
       if (ctx.outcomes.some((o) => o.round === round + 1 && o.outcome === 'review_unavailable')) break;
+      // Nothing was implemented, so there is nothing to re-locate: the next
+      // pass simply runs on the next engine pair with the same evidence.
+      if (!produced) continue;
 
       // Failed pass: refresh the base, ask a different architect to
       // re-locate the real source, then fetch newly suggested files before
@@ -1667,22 +1723,28 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       // Temporary (B) when a valid candidate existed but could not be
       // reviewed, or when every real attempt failed for provider reasons.
       const real = outcomes.filter((outcome) => outcome !== 'duplicate_strategy');
+      // Temporary also when the engines stopped producing usable output
+      // before the crew finished its three genuine passes: no strategy was
+      // exhausted, so the saved job retries later (bounded by job retries).
       const temporary = outcomes.includes('review_unavailable')
-        || (real.length > 0 && real.every((outcome) => outcome === 'provider_unavailable'));
-      const engineering = [...new Set(feedbacks.filter(Boolean))].join(' | ');
+        || (real.length > 0 && real.every((outcome) => outcome === 'provider_unavailable'))
+        || (enginesFailed && genuinePasses < maxRounds);
+      const engineering = [...new Set(feedbacks.filter((f) => f && !formatFeedback.has(f)))].join(' | ');
       if (temporary) {
         return finish({
           status: 503,
           failure_class: FAILURE_CLASS.TEMPORARY_EXTERNAL,
           retryable: true,
-          detail: 'AI engines were unavailable for implementation or independent review; no unreviewed change was proposed.',
+          detail: enginesFailed
+            ? `AI engines returned no usable implementation (empty or malformed answers) in ${unproductivePasses} passes after ${genuinePasses} genuine attempts; nothing was changed and the job retries later.`
+            : 'AI engines were unavailable for implementation or independent review; no unreviewed change was proposed.',
           owner_message: ownerEngineeringMessage(FAILURE_CLASS.TEMPORARY_EXTERNAL),
         });
       }
       return finish({
         status: 422,
         failure_class: FAILURE_CLASS.INTERNAL,
-        detail: `The coding team exhausted ${maxRounds} implementation passes and re-inspected the source but could not produce a safe reviewed change. ${engineering || 'No safe diff passed review.'}`.slice(0, 800),
+        detail: `The coding team exhausted ${genuinePasses} implementation passes and re-inspected the source but could not produce a safe reviewed change. ${engineering || 'No safe diff passed review.'}`.slice(0, 800),
         owner_message: ownerEngineeringMessage(FAILURE_CLASS.INTERNAL),
         // Retained so a later "diagnose/recover that job" builds on this
         // evidence instead of restarting the same attempts.

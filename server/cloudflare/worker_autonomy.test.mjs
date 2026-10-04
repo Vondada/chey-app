@@ -11,7 +11,7 @@ writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), '
 ), 'utf8');
 let mod;
 try { mod = await import(generated.href + '?t=' + Date.now()); } finally { try { unlinkSync(generated); } catch (_) {} }
-const { default: worker, CheState, busyError, enqueueJob, selfUpdateChatIntent, isExistingChangeCommand, selectReadyJobs, shouldHandleSelfUpdateAction, MAX_JOB_ATTEMPTS } = mod;
+const { default: worker, CheState, busyError, enqueueJob, selfUpdateChatIntent, isExistingChangeCommand, selectReadyJobs, shouldHandleSelfUpdateAction, MAX_JOB_ATTEMPTS, MAX_JOB_RETRIES } = mod;
 
 function storageFor(saved, alarms = []) {
   return {
@@ -1112,4 +1112,76 @@ test('"set up the memory database" → steps; owner connects it in Keys; memory 
   } finally {
     globalThis.fetch = original;
   }
+});
+
+// ─── Saved coding jobs vs. engines that return nothing (Oct 3 recording) ─────
+function emptyEngineEnv(mode) {
+  const counter = { engineer: 0 };
+  const env = {
+    CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_DISABLE_KEYLESS_AI: '1',
+    AI: {
+      run: async (_m, input) => {
+        const system = String(input.messages?.[0]?.content || '');
+        if (system.includes('Architect')) return { response: JSON.stringify({ plan: 'banner', search_terms: ['Ready. Type or speak a request.'], paths: ['lib/main.dart'] }) };
+        if (system.includes('Review')) return { response: JSON.stringify({ approved: true, target_correct: true, notes: [] }) };
+        if (system.includes('Engineer')) {
+          counter.engineer += 1;
+          return mode.value === 'empty' ? { response: '' } : { response: JSON.stringify({ summary: 'Friendlier banner', edits: [{ path: 'lib/main.dart', find: "'Ready. Type or speak a request.'", replace: "'Ready when you are.'" }] }) };
+        }
+        return { response: 'ok' };
+      },
+    },
+  };
+  return { env, counter };
+}
+const BANNER_FILES = { 'lib/main.dart': "class A {\n  String s = 'Ready. Type or speak a request.';\n}\n" };
+const dueNow = (saved) => { const data = saved.get('che'); for (const job of data.jobs) if (job.status === 'queued') job.retry_at = 0; saved.set('che', data); };
+
+test('7/8. a saved coding job whose engines return nothing is requeued (not failed), resumes by itself, and is never duplicated', async () => {
+  const saved = new Map();
+  const mode = { value: 'empty' };
+  const { env } = emptyEngineEnv(mode);
+  const state = new CheState({ storage: storageFor(saved) }, env);
+  const original = globalThis.fetch;
+  globalThis.fetch = GITHUB_OK(BANNER_FILES);
+  try {
+    const request = 'Update your code: make the ready banner friendlier';
+    const { job } = await state.queueSelfDevelopment({ request });
+    dueNow(saved);
+    await state.processJobs();
+    let stored = saved.get('che').jobs.find((j) => j.id === job.id);
+    assert.equal(stored.status, 'queued', 'empty engine output is retryable, not a terminal failure');
+    assert.equal(stored.retry_count, 1);
+    assert.ok(stored.retry_at > Date.now(), 'backs off before resuming');
+    assert.doesNotMatch(String(stored.error), /exhausted|Your last answer was empty/);
+    // The owner (or a handoff) asking again does not create a second job.
+    const again = await state.queueSelfDevelopment({ request });
+    assert.equal(again.deduplicated, true);
+    assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'self_development').length, 1);
+    // Engines recover: the same job resumes on its own and finishes reviewed.
+    mode.value = 'good';
+    dueNow(saved);
+    await state.processJobs();
+    stored = saved.get('che').jobs.find((j) => j.id === job.id);
+    assert.equal(stored.status, 'complete', stored.error);
+    assert.equal(saved.get('pending_self_update').from_job, job.id);
+    assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'self_development').length, 1);
+  } finally { globalThis.fetch = original; }
+});
+
+test('9. engines that never produce usable output cannot loop: the saved job stops after its retry limit', async () => {
+  const saved = new Map();
+  const { env, counter } = emptyEngineEnv({ value: 'empty' });
+  const state = new CheState({ storage: storageFor(saved) }, env);
+  const original = globalThis.fetch;
+  globalThis.fetch = GITHUB_OK(BANNER_FILES);
+  try {
+    const { job } = await state.queueSelfDevelopment({ request: 'Update your code: make the ready banner friendlier' });
+    for (let i = 0; i < 8; i += 1) { dueNow(saved); await state.processJobs(); }
+    const stored = saved.get('che').jobs.find((j) => j.id === job.id);
+    assert.equal(stored.status, 'failed');
+    assert.equal(stored.dead_letter, true);
+    assert.equal(stored.retry_count, MAX_JOB_RETRIES);
+    assert.ok(counter.engineer <= (MAX_JOB_RETRIES + 1) * 12, `engineer calls ${counter.engineer}`);
+  } finally { globalThis.fetch = original; }
 });
