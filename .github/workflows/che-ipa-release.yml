@@ -1,0 +1,54 @@
+name: CHE IPA public release
+
+# Publishes each successful iPhone build as a public GitHub Release asset so
+# SideStore can install it from a link in one tap (Actions artifacts need a
+# GitHub login and cannot be opened by SideStore).
+on:
+  workflow_run:
+    workflows: ["CHE iPhone IPA"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: CHE iPhone IPA run id to publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - name: Download IPA from the build run
+        uses: actions/download-artifact@v4
+        with:
+          pattern: CHE-unsigned-ipa-*
+          path: ipa
+          merge-multiple: true
+          run-id: ${{ inputs.run_id || github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
+        run: |
+          set -eu
+          test -s ipa/CHE-unsigned.ipa || { echo "::error::No IPA in run $RUN_ID"; exit 1; }
+          version=$(sed -n 's/^version: //p' pubspec.yaml | head -1)
+          tag="ipa-${version}-run${RUN_ID}"
+          gh release delete "$tag" --yes --cleanup-tag >/dev/null 2>&1 || true
+          gh release create "$tag" ipa/CHE-unsigned.ipa \
+            --title "CHE ${version} (iPhone)" \
+            --notes "Unsigned IPA for SideStore, built by run ${RUN_ID}." \
+            --latest
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/CHE-unsigned.ipa"
+          echo "::notice title=SideStore install link::sidestore://install?url=${url}"
+          echo "IPA: $url" >> "$GITHUB_STEP_SUMMARY"
