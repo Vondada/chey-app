@@ -81,8 +81,16 @@ function openAiKey(env) {
   return env.OPENAI_API_KEY || env.CHE_OPENAI_API_KEY || '';
 }
 
+function missingPaidSwitch(env) {
+  if (!/^(?:1|true|yes|on)$/i.test(String(env.CHE_ALLOW_PAID_MEDIA || '').trim())) return 'paid media';
+  if (!/^(?:1|true|yes)$/i.test(String(env.CHE_ALLOW_PAID_AI || '').trim())) return 'paid AI';
+  return '';
+}
+
 function paidMediaEnabled(env) {
-  return /^(?:1|true|yes|on)$/i.test(String(env.CHE_ALLOW_PAID_MEDIA || '').trim());
+  // Paid media also needs the owner's paid-AI switch (free engines only by default).
+  return /^(?:1|true|yes|on)$/i.test(String(env.CHE_ALLOW_PAID_MEDIA || '').trim())
+    && /^(?:1|true|yes)$/i.test(String(env.CHE_ALLOW_PAID_AI || '').trim());
 }
 
 async function openAiImage(env, prompt, draft, fetcher) {
@@ -227,7 +235,7 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
     return {
       status: engines.length ? 502 : paidReady ? 402 : 503,
       detail: paidReady
-        ? 'HD image generation is connected but disabled until the owner explicitly enables paid media.'
+        ? `HD image generation is connected but disabled until the owner explicitly enables ${missingPaidSwitch(env)}.`
         : `All image engines failed (${errors.join(' | ') || 'none configured'}).`,
       requires_owner_confirmation: paidReady,
     };
@@ -282,7 +290,7 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
     return {
       status: engines.length ? 502 : paidReady ? 402 : 503,
       detail: paidReady
-        ? 'HD video generation is connected but disabled until the owner explicitly enables paid media.'
+        ? `HD video generation is connected but disabled until the owner explicitly enables ${missingPaidSwitch(env)}.`
         : `All video engines failed (${errors.join(' | ') || 'none configured'}).`,
       requires_owner_confirmation: paidReady,
     };

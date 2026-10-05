@@ -77,7 +77,9 @@ extension _CheHomeStreaming on _CHEHomeState {
       r'^(?:(?:chay|chey|shay|che)[, ]+)?(?:please\s+)?(?:fix|repair)\s+(?:this|that|it)\b',
       caseSensitive: false,
     ).hasMatch(trimmedRequest);
-    final codeRequest = fixThis || cheIsSelfUpdateRequest(trimmedRequest);
+    final terminalChatOnly = cheIsTerminalChatOnlyRequest(trimmedRequest);
+    final codeRequest = !terminalChatOnly &&
+        (fixThis || cheIsSelfUpdateRequest(trimmedRequest));
 
     final projectMatch = RegExp(
       r'\b(?:build|create|develop|write|start|make)\s+'
@@ -86,7 +88,7 @@ extension _CheHomeStreaming on _CHEHomeState {
       caseSensitive: false,
     ).firstMatch(trimmedRequest);
 
-    if (!codeRequest && projectMatch != null) {
+    if (!terminalChatOnly && !codeRequest && projectMatch != null) {
       var projectType = projectMatch.group(1)!.toLowerCase();
       if (projectType == 'site') projectType = 'website';
       if (projectType == 'story') projectType = 'book';
@@ -112,9 +114,16 @@ extension _CheHomeStreaming on _CHEHomeState {
       final project = result?['project'];
       await _loadAgentState(silent: true);
 
-      final projectTitle = project is Map
-          ? project['title']?.toString() ?? title
-          : title;
+      // Only a project the Worker actually returned may be announced.
+      final chatReply = result?['reply']?.toString() ?? '';
+      if (project is! Map) {
+        final reply = chatReply.isNotEmpty
+            ? chatReply
+            : 'I did not create a project for that, sir. Nothing was saved.';
+        onPartial(reply);
+        return reply;
+      }
+      final projectTitle = project['title']?.toString() ?? title;
       final reply =
           'I created “$projectTitle” in Creator Studio, sir. Open Create whenever you want to keep developing it.';
       onPartial(reply);
@@ -395,4 +404,3 @@ extension _CheHomeStreaming on _CHEHomeState {
     return text.length > 3900 ? text.substring(0, 3900) : text;
   }
 }
-

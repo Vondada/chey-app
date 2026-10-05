@@ -192,7 +192,7 @@ export class AgentBudget {
 export function ownerEngineeringMessage(failureClass, kind = '') {
   switch (failureClass) {
     case FAILURE_CLASS.TEMPORARY_EXTERNAL:
-      return 'My AI engines or GitHub are temporarily unavailable, sir. I saved the coding job and will continue it automatically when they recover. Nothing was changed.';
+      return 'I saved that coding job, sir, and I am continuing it automatically. Nothing was changed yet.';
     case FAILURE_CLASS.PERMANENT_EXTERNAL:
       return kind === 'authentication'
         ? 'GitHub rejected CHE’s credentials, sir. The CHE GitHub token on the Worker needs to be renewed before I can continue. Nothing was changed.'

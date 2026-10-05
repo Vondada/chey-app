@@ -29,7 +29,7 @@ import { fineTuneDisclosure, setProviderPermission } from './privacy_policy.js';
 import {
   accountsView, approveProviderPlugin, authorizeProvider, ensureAiState, proposeProviderPlugin,
 } from './provider_registry.js';
-import { discoverKeylessModels, engineStatus, routedEnv } from './ai_router.js';
+import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv } from './ai_router.js';
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
@@ -49,7 +49,7 @@ import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
-import { newestStarredIntent, speakNewestStarred, autoImproveScan, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
+import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { webAppPage } from './web_app.js';
 import { lastSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, siteUrl, speakSiteResult, writeSite } from './site_builder.js';
 import { changeHistoryIntent, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
@@ -691,7 +691,8 @@ async function voiceSynthesisResponse(env, text) {
   }
 
   // Premium voices only when secrets exist.
-  if (env.ELEVENLABS_API_KEY && env.CHE_ELEVENLABS_VOICE_ID) {
+  // ElevenLabs is a paid voice: free engines only unless paid AI is on.
+  if (env.ELEVENLABS_API_KEY && env.CHE_ELEVENLABS_VOICE_ID && paidAllowed(env)) {
     if (voiceProviderCooling('elevenlabs')) {
       voiceFailures.push('elevenlabs: cooling down after quota');
     } else {
@@ -746,7 +747,8 @@ async function voiceSynthesisResponse(env, text) {
 
   // Fallback 2: OpenAI neural voice using the key stored only on the server.
   // The iPhone never receives the standard API key.
-  if (env.CHE_OPENAI_API_KEY) {
+  // Paid voice stays off unless the owner turned paid AI on (CHE_ALLOW_PAID_AI).
+  if (env.CHE_OPENAI_API_KEY && paidAllowed(env)) {
     if (voiceProviderCooling('openai')) {
       voiceFailures.push('openai: cooling down after quota');
     } else {
@@ -1133,7 +1135,7 @@ export function selectReadyJobs(jobs, now = Date.now(), limit = 4) {
   }
   return selected;
 }
-const BUSY_REPLY = "I'm having trouble reaching my cloud engines, sir. I saved this as a background job and I'll finish it when a healthy engine returns.";
+const BUSY_REPLY = "I'm on it, sir. I'll have your full answer for you shortly.";
 const WORK_POLICY = 'ACCESSIBILITY: support typing OR voice, numbered options, large text for all speech, visible status plus distinct haptics. Never depend on hearing or sight alone. AUTONOMY: finish authorized queued and multi-step work; stand by pauses it and Chay, resume restarts it. OWNER PERMISSION (Sep 28, 2026): CHE has the owner’s full standing permission to act, including sending messages and emails; ask first only when something costs money (paying, buying, ordering, subscribing, transferring), before deleting or removing anything, or when a decision is genuinely the owner’s. App-specific permission is still required before acting in an app. Report what was done afterward. HONESTY: never claim completion without a real result. Busy work is saved and retried with exponential backoff (5, 10, then 20 minutes; at most 3 retries) and then moved to a terminal dead-letter state; report exhaustion honestly. Use available fallback engines, and say which capability failed only after all options fail. LINKS (permanent rule): when you send the owner to a website, page, sign-up, dashboard, documentation or GitHub item, include its full https:// address once, only if you know it is real (never guess one); CHE’s chat turns it into an “Open …” action that opens inside CHE, and he can say “open it” or “open link 2”. Name the destination (“Open Supabase”), never tell him to copy or paste a URL, and do not add links that are not needed.';
 
 function ragReference(query, vectorMemoryContext, maxChars = 9000) {
@@ -1192,7 +1194,14 @@ function mediaUnderstandingPrompt(mediaType, query) {
   return `The owner attached an image and said: "${owner}". Describe exactly what is visible, including readable text, buttons, errors and layout, then answer what is relevant to the owner's message. Do not guess beyond what is shown.`;
 }
 
+// Paid media needs both the paid-media switch and the owner's paid-AI switch.
+function paidMediaOn(env) {
+  return /^(?:1|true|yes|on)$/i.test(String(env?.CHE_ALLOW_PAID_MEDIA || '').trim()) && paidAllowed(env);
+}
+
 function openAiMediaKey(env) {
+  // Owner rule: free engines only, unless paid AI is turned on on purpose.
+  if (!paidAllowed(env)) return '';
   return env.OPENAI_API_KEY || env.CHE_OPENAI_API_KEY || '';
 }
 
@@ -2354,7 +2363,7 @@ export async function handleSelfUpdateChatAction(env, storage, intent, ops = {})
         ok: false,
         opened,
         message: temporary
-          ? `${why} The reviewed change is still saved; I will rebuild it against the current code when my engines are back.`
+          ? `${why} The reviewed change is still saved; I will rebuild it against the current code shortly.`
           : `The code changed on GitHub after that update was reviewed, so I did not write it, sir. ${why} The old version is no longer waiting for approval.`,
       };
     }
@@ -2482,6 +2491,22 @@ export async function handleSelfUpdateChatAction(env, storage, intent, ops = {})
 
 export async function dispatchChange(env, body, memory = null, options = {}) {
   const request = String(body.request || '').trim();
+  // This endpoint is also called by older clients whose local classifier can
+  // mistake an evaluation *about* coding for permission to change the repo.
+  // Enforce the current-turn boundary here, before reading pending changes,
+  // failed jobs, checkpoints, or any other durable engineering state.
+  if (currentTurnActionPolicy(request).terminalChatOnly) {
+    if (options.answerChatOnly) {
+      const answer = await options.answerChatOnly(request);
+      if (answer) return json({ message: answer, chat_only: true, code_review_passed: false, owner_approval_required: false });
+    }
+    return json({
+      detail: 'This is a chat-only request and was not accepted by the repository-action endpoint.',
+      route_to_chat: true,
+      code_review_passed: false,
+      owner_approval_required: false,
+    }, 409);
+  }
   // Commands about an existing change ("show me the code", "create the PR",
   // "merge it", "PR status") are never new coding requests, even when an app
   // build routes them here. Running the coding team on "show me the code"
@@ -2580,7 +2605,7 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
         return json({ message: 'I am already recovering that coding job, sir. I will tell you how it ends; I did not start it twice.', code_review_passed: false, owner_approval_required: false });
       }
       if (Number(record.recovery_runs || 0) >= MAX_RECOVERY_RUNS) {
-        return json({ message: `I already ran ${MAX_RECOVERY_RUNS} recovery passes on that job, sir, and none passed review, so I stopped instead of burning more engines. What went wrong: ${record.diagnosis} Tell me a different approach or a smaller change and I will build that.`, code_review_passed: false, owner_approval_required: false, failure_class: FAILURE_CLASS.INTERNAL });
+        return json({ message: `I already ran ${MAX_RECOVERY_RUNS} recovery passes on that job, sir, and none passed review, so I stopped instead of repeating it. What went wrong: ${record.diagnosis} Tell me a different approach or a smaller change and I will build that.`, code_review_passed: false, owner_approval_required: false, failure_class: FAILURE_CLASS.INTERNAL });
       }
       priorFailure = record;
       await memory.put(FAILED_ENGINEERING_KEY, { ...record, recovery_runs: Number(record.recovery_runs || 0) + 1, recovery_lock_until: Date.now() + RECOVERY_LOCK_MS });
@@ -2665,7 +2690,7 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
       if (queued?.job) {
         return json({
           message: queued.deduplicated
-            ? 'That coding job is already saved and will continue automatically when my engines recover, sir. Nothing was changed yet.'
+            ? 'That coding job is already saved and I am continuing it, sir. Nothing was changed yet.'
             : ownerEngineeringMessage(FAILURE_CLASS.TEMPORARY_EXTERNAL),
           background_job_id: queued.job.id,
           background_job_status: queued.job.status,
@@ -2684,7 +2709,7 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
     // Nothing was queued here (a recovery run, or saving failed): never say
     // the job was saved.
     const failedText = prepared.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL
-      ? 'My AI engines gave no usable answer just now, sir. Nothing was changed and nothing was saved; ask me again in a few minutes.'
+      ? 'I could not finish that just now, sir. Nothing was changed and nothing was saved; ask me again in a few minutes.'
       : stripOwnerHomework(prepared.owner_message || ownerEngineeringMessage(prepared.failure_class || FAILURE_CLASS.INTERNAL))
         || ownerEngineeringMessage(FAILURE_CLASS.INTERNAL);
     // One consistent state: this attempt failed, AND an earlier reviewed
@@ -3602,7 +3627,7 @@ export class CheState extends DurableObject {
           from: 'che',
           to: sender,
           text: retryable
-            ? 'I received your Flagstaff message. My reply engine hit a temporary problem, so I saved it and I am retrying automatically.'
+            ? 'I received your Flagstaff message. I saved it and I am finishing my reply.'
             : 'I received your Flagstaff message, but I could not complete the detailed reply after repeated attempts. The owner can see this failure and the message is preserved.',
           reply_to: id,
         }, this.env).catch(() => ({ status: 502 }));
@@ -4052,8 +4077,8 @@ export class CheState extends DurableObject {
       }
 
       if (request.method === 'POST' && path === '/api/live/token') {
-        if (!this.env.CHE_OPENAI_API_KEY) {
-          return json({ detail: 'OpenAI Realtime voice needs CHE_OPENAI_API_KEY configured as a CHE server secret.' }, 503);
+        if (!this.env.CHE_OPENAI_API_KEY || !paidAllowed(this.env)) {
+          return json({ detail: 'Live voice is not available right now, sir. I am listening the normal way.' }, 503);
         }
 
         const memories = Array.isArray(data.memories) ? data.memories.slice(-30) : [];
@@ -4281,8 +4306,8 @@ export class CheState extends DurableObject {
             background_jobs: true,
             agent_identity: true,
             service_accounts: true,
-            natural_voice: Boolean((this.env.ELEVENLABS_API_KEY && this.env.CHE_ELEVENLABS_VOICE_ID) || this.env.CHE_OPENAI_API_KEY || this.env.AI || this.env.CHE_VOICE_URL || this.env.GEMINI_API_KEY),
-            openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY),
+            natural_voice: Boolean((paidAllowed(this.env) && ((this.env.ELEVENLABS_API_KEY && this.env.CHE_ELEVENLABS_VOICE_ID) || this.env.CHE_OPENAI_API_KEY)) || this.env.AI || this.env.CHE_VOICE_URL || this.env.GEMINI_API_KEY),
+            openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY && paidAllowed(this.env)),
             porcupine_wake_word: Boolean(this.env.CHE_PICOVOICE_ACCESS_KEY && this.env.CHE_PICOVOICE_KEYWORD_PPN_B64),
             apple_vocal_shortcut: true,
             quantum_compute: Boolean(this.env.CHE_QUANTUM_URL),
@@ -4296,11 +4321,11 @@ export class CheState extends DurableObject {
             image_generation: Boolean(
               this.env.CHE_IMAGE_GEN_URL ||
               this.env.AI ||
-              (/^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim()) && (this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY))
+              (paidMediaOn(this.env) && (this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY))
             ),
             video_generation: Boolean(
               this.env.CHE_VIDEO_GEN_URL ||
-              (/^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim()) && this.env.GEMINI_API_KEY)
+              (paidMediaOn(this.env) && this.env.GEMINI_API_KEY)
             ),
             model_panel: Boolean(
               this.env.CHE_OPENAI_MODEL_URL ||
@@ -4312,7 +4337,7 @@ export class CheState extends DurableObject {
             screen_capture: Boolean(this.env.CHE_SCREEN_URL),
             face_verify: Boolean(this.env.CHE_FACE_VERIFY_URL),
             data_recognition: Boolean(this.env.CHE_DATA_RECOGNITION_URL),
-            multimodal: Boolean(this.env.CHE_MULTIMODAL_URL || this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY),
+            multimodal: Boolean(this.env.CHE_MULTIMODAL_URL || this.env.GEMINI_API_KEY || openAiMediaKey(this.env)),
             market_data: Boolean(this.env.CHE_MARKET_DATA_URL),
             backtesting: Boolean(this.env.CHE_BACKTEST_URL),
             broker: Boolean(this.env.CHE_BROKER_URL),
@@ -4414,7 +4439,7 @@ export class CheState extends DurableObject {
 
       // ─── Art Studio media (real images, versions, honest upscaling) ────
       if (path === '/api/media' && request.method === 'GET') {
-        const paidMedia = /^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim());
+        const paidMedia = paidMediaOn(this.env);
         const imageEngine = this.env.CHE_IMAGE_GEN_URL
           ? 'connector'
           : (paidMedia && (this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY))
@@ -5515,7 +5540,7 @@ export class CheState extends DurableObject {
       if (path === '/api/objective/create') {
         let objective;
         try {
-          objective = createObjective({ objective: body.objective, nodes: body.nodes, repo_sha: body.repo_sha });
+          objective = createObjective({ objective: body.objective, nodes: body.nodes, repo_sha: body.repo_sha, owner_authorized: ownerDevice });
         } catch (error) {
           return json({ detail: String(error.message || error) }, 400);
         }
@@ -5528,6 +5553,8 @@ export class CheState extends DurableObject {
       if (path === '/api/objective/replan') {
         const objective = (data.objectives || []).find((o) => o.id === String(body.id || ''));
         if (!objective) return json({ detail: 'Objective not found.' }, 404);
+        const targetNode = objective.nodes?.find((node) => node.id === String(body.node_id || ''));
+        if (targetNode?.kind === 'self_development' && !ownerDevice) return json({ detail: 'Owner authorization required for self-development objectives.' }, 403);
         const out = replanNode(objective, String(body.node_id || ''), { prompt: body.prompt });
         if (!out.ok) return json({ detail: out.reason }, 409);
         const started = advanceObjectives(data, (fields) => enqueueJob(data, fields));
@@ -5751,6 +5778,16 @@ export class CheState extends DurableObject {
         const type = String(body.type || 'general').trim().slice(0, 40);
         const brief = String(body.brief || '').trim().slice(0, 6000);
         if (!title) return json({ detail: 'Project title required.' }, 400);
+        // Compatibility boundary for installed clients that pre-route a
+        // foreground chat-only turn to project creation before /api/chat can
+        // apply the authoritative current-turn policy.
+        if (brief && currentTurnActionPolicy(brief).terminalChatOnly) {
+          const reply = await this.answerTerminalChatOnly(brief);
+          // Non-2xx on purpose: installed clients throw on it and speak
+          // `detail` (the answer) instead of announcing a project that was
+          // never created. Nothing is persisted.
+          return json({ ok: false, chat_only: true, project_created: false, reply, detail: reply }, 409);
+        }
 
         let content = '';
         if (brief) {
@@ -6026,6 +6063,7 @@ export class CheState extends DurableObject {
         topicStudy: (intent, text) => this.startTopicStudy(intent, text),
         advanceStudyBuilds: () => this.advanceStudyBuilds(),
         batchStudies: () => this.batchStudies(),
+        answerChatOnly: (message) => this.answerTerminalChatOnly(message),
         ops: { queueJob: async (fields) => { const fresh = await this.loadData(); const queued = enqueueJob(fresh, fields); await this.ctx.storage.put('che', fresh); await this.scheduleWork(); return queued; } },
       });
       if (path === '/api/chat') {
@@ -6063,6 +6101,12 @@ export class CheState extends DurableObject {
         } catch (_) { savedResourceList = null; }
         const learnedHearing = correctionsContext(corrections);
 
+        // Explicit chat-only evaluations are terminal for action routing. The
+        // question may discuss coding, PRs, deployment or collaboration, but
+        // those words are subject matter, not permission to act.
+        const turnActionPolicy = currentTurnActionPolicy(message);
+        const chatOnlyEvaluation = turnActionPolicy.terminalChatOnly;
+
         // GitHub/self-development commands are real tool actions, never generic
         // model guesses about credentials. "Create the PR" works by voice/text.
         if (playbookIntent(message)) {
@@ -6071,7 +6115,7 @@ export class CheState extends DurableObject {
         // "What are my 5 newest starred repos?": read from GitHub (newest
         // first), said aloud, kept as a memory, and sent to Claude in the
         // mailbox so the coding AIs can integrate them.
-        const newestStars = ownerDevice ? newestStarredIntent(message) : null;
+        const newestStars = ownerDevice && !chatOnlyEvaluation ? newestStarredIntent(message) : null;
         if (newestStars) {
           const result = await listOwnerStarredRepos(this.keyEnv || this.env, fetch, { limit: Math.max(30, newestStars.count) });
           if (result.error) return ndjsonReply(`I could not read your GitHub stars, sir. ${result.error} Nothing was changed.`, { source: 'che_starred_newest', ok: false });
@@ -6088,7 +6132,7 @@ export class CheState extends DurableObject {
         }
         // "Study <repo>: these topics, then implement them": real reading of
         // the reference first, one topic at a time, before any coding.
-        if (ownerDevice && starredLibraryIntent(message)) {
+        if (ownerDevice && !chatOnlyEvaluation && starredLibraryIntent(message)) {
           const live = await listOwnerStarredRepos(this.keyEnv || this.env, fetch, { limit: 100 }).catch(() => null);
           const targets = starredStudyTargets(live);
           if (targets.live && !targets.names.length) return ndjsonReply('GitHub shows no starred repositories on your account, sir. Nothing was started.', { source: 'che_topic_study', ok: true });
@@ -6105,7 +6149,7 @@ export class CheState extends DurableObject {
             { source: 'che_topic_study', repository_research: true, background_job_ids: [study.job.id] },
           );
         }
-        const namedStudy = namedRepoStudyIntent(message);
+        const namedStudy = chatOnlyEvaluation ? null : namedRepoStudyIntent(message);
         if (namedStudy && namedStudy.repo.toLowerCase() !== String(this.env.CHE_GITHUB_REPO || '').toLowerCase()) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can start a repository study.', { source: 'che_topic_study', ok: false });
           const started = await this.startTopicStudy(namedStudy, message);
@@ -6113,22 +6157,22 @@ export class CheState extends DurableObject {
         }
         // "Batch them": the studies and builds already lined up run together.
         // Without lined-up study work this falls through to the usual routes.
-        if (ownerDevice && studyBatchIntent(message)) {
+        if (ownerDevice && !chatOnlyEvaluation && studyBatchIntent(message)) {
           const batched = await this.batchStudies();
           if (batched) return ndjsonReply(batched, { source: 'che_topic_study', batch: true });
         }
         // "Build me a website for …" / "change the website: …": CHE writes a
         // complete page, checks it, and hosts it on her own Worker.
-        const siteEdit = ownerDevice ? siteEditIntent(message) : null;
+        const siteEdit = ownerDevice && !chatOnlyEvaluation ? siteEditIntent(message) : null;
         const siteEditTarget = siteEdit ? await lastSite(this.ctx.storage) : null;
-        const siteBuild = ownerDevice && !siteEditTarget ? siteBuildIntent(message) : null;
+        const siteBuild = ownerDevice && !chatOnlyEvaluation && !siteEditTarget ? siteBuildIntent(message) : null;
         if (siteBuild || siteEditTarget) {
           const model = this.env.CHE_STRONG_MODEL || STRONG_MODEL;
           const written = await writeSite(this.env, siteEditTarget
             ? { previousHtml: siteEditTarget.html, change: siteEdit.change }
             : { brief: siteBuild.brief }, model).catch((error) => ({ html: '', problems: [String(error?.message || error).slice(0, 200)] }));
           if (!written.html) {
-            return ndjsonReply(`I could not finish ${siteEditTarget ? 'that change to the site' : 'the site'}, sir: my engines did not return a complete page. Nothing was published${siteEditTarget ? ', and the current version is unchanged' : ''}. Ask me again and I will retry.`, { source: 'che_site_builder', ok: false });
+            return ndjsonReply(`I could not finish ${siteEditTarget ? 'that change to the site' : 'the site'}, sir: I did not get a complete page. Nothing was published${siteEditTarget ? ', and the current version is unchanged' : ''}. Ask me again and I will retry.`, { source: 'che_site_builder', ok: false });
           }
           const record = await saveSite(this.ctx.storage, siteEditTarget
             ? { id: siteEditTarget.id, html: written.html, change: siteEdit.change }
@@ -6163,7 +6207,7 @@ export class CheState extends DurableObject {
         // "Run the five layer exam": layers 1-4 are reasoning problems graded
         // deterministically; layer 5 is autonomy exam level 5, a real
         // self-patch through the coding pipeline under injected failures.
-        const fiveLayer = ownerDevice ? fiveLayerIntent(message) : null;
+        const fiveLayer = ownerDevice && !chatOnlyEvaluation ? fiveLayerIntent(message) : null;
         if (fiveLayer?.kind === 'results') {
           const [reasoning, coding] = await Promise.all([LAYER_RESULTS_KEY, EXAM_RESULTS_KEY].map((key) => Promise.resolve().then(() => this.ctx.storage.get(key)).catch(() => null)));
           return ndjsonReply(speakFiveLayerResults(reasoning || {}, coding || {}), { source: 'che_five_layer_exam' });
@@ -6210,11 +6254,11 @@ export class CheState extends DurableObject {
           await this.ctx.storage.put(LAYER_RESULTS_KEY, { run_id: runId, coding_run_id: codingRunId, results: carried, started_at: new Date().toISOString() });
           await this.ctx.storage.put('che', fresh);
           await this.scheduleWork();
-          return ndjsonReply(`I started the five-layer exam, sir: ${layers.map((n) => `layer ${n}`).join(', ')}. Layers 1 to 4 are reasoning problems graded by fixed checks; layer 5 is a real practice self-patch of my own code under injected failures, so nothing is changed. If an engine goes down, that layer is retried, not failed.${skipped} Say "five layer exam results" anytime.${fresh.autonomy === false ? ' Autonomy is paused right now; say "resume" so the jobs can run.' : ''}`, { source: 'che_five_layer_exam', background_job_ids: ids });
+          return ndjsonReply(`I started the five-layer exam, sir: ${layers.map((n) => `layer ${n}`).join(', ')}. Layers 1 to 4 are reasoning problems graded by fixed checks; layer 5 is a real practice self-patch of my own code under injected failures, so nothing is changed. If a layer is interrupted, it is retried, not failed.${skipped} Say "five layer exam results" anytime.${fresh.autonomy === false ? ' Autonomy is paused right now; say "resume" so the jobs can run.' : ''}`, { source: 'che_five_layer_exam', background_job_ids: ids });
         }
         // "Run the autonomy exam" (5 levels, each harder): real coding runs in
         // dry-run mode, graded deterministically. "Autonomy exam results".
-        const exam = ownerDevice && !isExistingChangeCommand(selfUpdateChatIntent(message)) ? examIntent(message) : null;
+        const exam = ownerDevice && !chatOnlyEvaluation && !isExistingChangeCommand(selfUpdateChatIntent(message)) ? examIntent(message) : null;
         if (exam?.kind === 'results') {
           const results = await Promise.resolve().then(() => this.ctx.storage.get(EXAM_RESULTS_KEY)).catch(() => null);
           return ndjsonReply(speakExamResults(results || {}), { source: 'che_autonomy_exam' });
@@ -6259,14 +6303,14 @@ export class CheState extends DurableObject {
         // pipeline, which builds on the retained failure evidence.
         // A command about the existing change ("Create the PR. Then fix the
         // previous job…") is that command first; it never becomes a recovery run.
-        if (ownerDevice && !isExistingChangeCommand(selfUpdateChatIntent(message)) && recoveryRequestIntent(message) && (await this.ctx.storage.get(FAILED_ENGINEERING_KEY).catch(() => null))?.request) {
+        if (ownerDevice && !chatOnlyEvaluation && !isExistingChangeCommand(selfUpdateChatIntent(message)) && recoveryRequestIntent(message) && (await this.ctx.storage.get(FAILED_ENGINEERING_KEY).catch(() => null))?.request) {
           return this.selfDevelopmentReply(message, { vectorRecall: {} });
         }
         // "What changed?": only real, recorded updates are read back.
         if (changeHistoryIntent(message)) {
           return ndjsonReply(speakChangeHistory(await loadChangeHistory(this.ctx.storage)), { source: 'che_change_history' });
         }
-        const selfUpdateAction = selfUpdateChatIntent(message);
+        const selfUpdateAction = chatOnlyEvaluation ? null : selfUpdateChatIntent(message);
         if (selfUpdateAction && !ownerDevice && ['open-pr', 'merge', 'ship-update', 'discard'].includes(selfUpdateAction.kind)) {
           return ndjsonReply('Only the CHE owner can open, merge or deploy code changes.', { source: 'che_self_update', ok: false });
         }
@@ -6303,7 +6347,7 @@ export class CheState extends DurableObject {
         }
 
         // Office skills: give them for real, and report them from stored data.
-        const skillImport = skillImportIntent(message);
+        const skillImport = chatOnlyEvaluation ? null : skillImportIntent(message);
         if (skillImport) return this.startSkillImport(skillImport, data);
         if (skillsReportIntent(message)) {
           const selected = await Promise.resolve().then(() => this.ctx.storage.get('code_scout_selected')).catch(() => null);
@@ -6548,11 +6592,20 @@ export class CheState extends DurableObject {
           // no research call, model panel or chat model runs behind it.
           const plainCaps = (Array.isArray(body.requested_capabilities) ? body.requested_capabilities : []).map(String)
             .every((cap) => cap === 'web_research');
-          // Only pure research turns qualify: a message that also asks CHE to
-          // do something ("email John the current price") always runs the
-          // full path so the action and its permission checks happen.
-          const actionAsk = /\b(?:email|e-mail|send|text|message|call|post|tweet|share|buy|sell|order|pay|transfer|book|schedule|remind|create|make|write|draft|open|launch|delete|remove|save|add|set|turn|start|stop|trade)\b/i.test(message);
-          const researched = !rememberFact && plainCaps && !actionAsk
+          // A message-only research-cache key is safe only when no conversation
+          // context is needed to resolve pronouns/subjects ("research it").
+          const conversationContext = Array.isArray(body.history)
+            ? body.history.some((turn) => String(turn?.content ?? turn?.text ?? '').trim())
+            : false;
+          // Only actual imperative external actions suppress the research
+          // shortcut. Vocabulary inside an informational query ("research how
+          // to make sourdough", "find the latest blog post") is not an action.
+          // A verb that opens a clause is an action: at the start, after
+          // and/then/also or a comma/semicolon, or addressed to CHE ("can you email").
+          const actionAsk = /^(?:(?:chay|chey|shay|che)[, ]+)?(?:please\s+)?(?:email|e-mail|send|text|message|call|tweet|share|buy|sell|order|pay|transfer|book|schedule|remind|open|launch|delete|remove|trade)\b/i.test(message)
+            || /(?:\b(?:and|then|also)|[,;])\s+(?:then\s+|also\s+)?(?:please\s+)?(?:email|e-mail|send|text|message|call|tweet|share|buy|sell|order|pay|transfer|book|schedule|remind|open|launch|delete|remove|trade)\b/i.test(message)
+            || /\byou\s+(?:to\s+|please\s+)?(?:email|e-mail|send|text|message|call|tweet|share|buy|sell|order|pay|transfer|book|schedule|remind|open|launch|delete|remove|trade)\b/i.test(message);
+          const researched = !rememberFact && plainCaps && !conversationContext && !actionAsk
             ? await researchHit(this.ctx.storage, message).catch(() => null)
             : null;
           if (researched?.pure === true) {
@@ -6682,7 +6735,7 @@ export class CheState extends DurableObject {
           } catch (_) { return []; }
         })();
         // Share Flagstaff: "share the Flagstaff link with ChatGPT and Grok".
-        const share = shareIntent(message);
+        const share = chatOnlyEvaluation ? null : shareIntent(message);
         if (share) {
           await openMailbox(this.ctx.storage);
           const link = mailboxLink(new URL(request.url).origin, await mailboxCode(this.ctx.storage));
@@ -6695,7 +6748,7 @@ export class CheState extends DurableObject {
         }
 
         // "scout the app" / "look for upgrades" → scan all vision areas now.
-        if (/\b(?:scout|check|look)\b[\s\S]{0,30}\b(?:the app|for upgrades|for improvements|our (?:code|vision))\b/i.test(message) && message.length < 90) {
+        if (!chatOnlyEvaluation && /\b(?:scout|check|look)\b[\s\S]{0,30}\b(?:the app|for upgrades|for improvements|our (?:code|vision))\b/i.test(message) && message.length < 90) {
           const found = await autoImproveScan(this.env, this.ctx.storage, fileLetter, fileTech);
           return ndjsonReply(found.length
             ? `I scanned for upgrades to the whole app, sir, and filed ${found.length} new reusable finds under free tech: ${found.slice(0, 4).map((f) => f.full_name).join(', ')}. Say "what's in free tech" to review.`
@@ -6705,13 +6758,42 @@ export class CheState extends DurableObject {
         // GitHub mailbox into a real reviewed coding job. Owner-only, and each
         // handoff message id launches at most once (no duplicate job cycles).
         // "coding status": short spoken summary of the latest OpenCode session.
-        if (/^\s*(?:che[,:]?\s*)?(?:what(?:'s| is) the\s+)?coding (?:job )?status\??\s*$|^\s*how(?:'s| is) (?:the|my) coding job( going)?\??\s*$/i.test(message)) {
+        if (/^\s*(?:che[,:]?\s*)?(?:(?:what(?:'s| is)\s+)?(?:the|my)\s+)?(?:coding job|coding)\s+status\??\s*$|^\s*what is the status of (?:the|my) coding job\??\s*$|^\s*how(?:'s| is) (?:the|my) coding job( going)?\??\s*$/i.test(message)) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status.', { source: 'che_coding_status', ok: false });
+          const current = await this.loadData();
+          // enqueueJob uses unshift, so the first match is the newest. Report
+          // whichever is newer: the active built-in job or the runtime session
+          // (an unstamped legacy session counts as older work).
+          const activeJob = current.jobs.find((item) => item.kind === 'self_development' && ['queued', 'running'].includes(item.status));
+          const jobReply = () => ndjsonReply(`The latest coding job is ${activeJob.status}, sir.${activeJob.checkpoint ? ' Its recovery checkpoint is saved.' : ''}`, { source: 'che_coding_status', background_job_id: activeJob.id, background_job_status: activeJob.status });
           const id = await this.ctx.storage.get('che_runtime_last_session');
-          if (!id) return ndjsonReply('No OpenCode coding job has started yet, sir.', { source: 'che_coding_status' });
-          const status = await new CheCodingRuntime(this.env).getStatus(id);
-          return ndjsonReply(status.status === 200 ? speakRuntimeStatus(status) : String(status.detail || 'I could not read the coding job status.'), { source: 'che_coding_status', session_id: id, state: status.state || null });
+          const runtimeAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
+          const runtimeIsNewer = Boolean(id) && (!activeJob || (runtimeAt && runtimeAt > String(activeJob.created_at || '')));
+          if (activeJob && !runtimeIsNewer) return jobReply();
+          if (id) {
+            const status = await new CheCodingRuntime(this.env).getStatus(id);
+            if (status.status === 200) return ndjsonReply(speakRuntimeStatus(status), { source: 'che_coding_status', session_id: id, state: status.state || null });
+          }
+          if (activeJob) return jobReply();
+          const job = current.jobs.find((item) => item.kind === 'self_development');
+          if (!job) return ndjsonReply('No coding job has started yet, sir.', { source: 'che_coding_status' });
+          const checkpoint = job.checkpoint ? ' Its recovery checkpoint is saved.' : '';
+          return ndjsonReply(`The latest coding job is ${job.status}, sir.${checkpoint}`, { source: 'che_coding_status', background_job_id: job.id, background_job_status: job.status });
         }
-        const handoff = handoffIntent(message);
+        if (/^\s*(?:che[,:]?\s*)?(?:please\s+)?resume (?:the|my|that) coding job[.!]?\s*$/i.test(message)) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can resume coding jobs.', { source: 'che_coding_resume', ok: false });
+          const current = await this.loadData();
+          const job = current.jobs.find((item) => item.kind === 'self_development' && item.status === 'queued');
+          if (!job) return ndjsonReply('There is no saved coding job waiting to resume, sir.', { source: 'che_coding_resume', ok: false });
+          if (current.autonomy === false) {
+            return ndjsonReply(`That coding job is saved, sir, but autonomy is paused, so I did not change its retry time.${job.checkpoint ? ' Its recovery checkpoint is still saved.' : ''}`, { source: 'che_coding_resume', ok: false, background_job_id: job.id, background_job_status: job.status });
+          }
+          job.retry_at = Date.now();
+          await this.ctx.storage.put('che', current);
+          await this.scheduleWork();
+          return ndjsonReply(`I resumed the same saved coding job, sir.${job.checkpoint ? ' It will continue from its checkpoint.' : ''}`, { source: 'che_coding_resume', background_job_id: job.id, background_job_status: job.status });
+        }
+        const handoff = chatOnlyEvaluation ? null : handoffIntent(message);
         if (handoff) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can start a handoff.', { source: 'che_handoff', ok: false });
           const thread = await readThread(this.env, handoff.peer).catch(() => ({ messages: [] }));
@@ -6731,7 +6813,7 @@ export class CheState extends DurableObject {
         // Explicit implementation requests win over repository discovery. This
         // is what lets "Update your code: use Study 1 and 2..." actually build
         // and save a reviewed proposal instead of stopping at research.
-        if (repositoryImplementationIntent(message)) {
+        if (!chatOnlyEvaluation && repositoryImplementationIntent(message)) {
           return ownerDevice
             ? this.selfDevelopmentReply(message, { vectorRecall })
             : ndjsonReply('Only the CHE owner can ask me to change my code.', { source: 'che_self_development', ok: false });
@@ -6739,7 +6821,7 @@ export class CheState extends DurableObject {
 
         // Owner's starred GitHub library / Inspirations: pure research requests
         // inspect first, then let the "study N" flow hand candidates to the crew.
-        const starredResearch = starredRepoIntent(message);
+        const starredResearch = chatOnlyEvaluation ? null : starredRepoIntent(message);
         if (starredResearch) {
           const result = await listOwnerStarredRepos(this.env, fetch, {
             limit: 300,
@@ -6761,7 +6843,7 @@ export class CheState extends DurableObject {
         }
 
         // Scout GitHub for top, reusable code that matches a need.
-        const scout = codeScoutIntent(message);
+        const scout = chatOnlyEvaluation ? null : codeScoutIntent(message);
         if (scout) {
           const result = await scoutCode(this.env, scout.need);
           if (result.repos?.length) {
@@ -6773,7 +6855,7 @@ export class CheState extends DurableObject {
           return ndjsonReply(speakScout(scout.need, result), { source: 'che_code_scout' });
         }
         // Multi-repository study selection feeds the next upgrade request.
-        const studySelection = studySelectionIntent(message);
+        const studySelection = chatOnlyEvaluation ? null : studySelectionIntent(message);
         if (studySelection) {
           const selected = await selectStudyRepos(this.ctx.storage, studySelection);
           if (selected.error) {
@@ -6790,8 +6872,8 @@ export class CheState extends DurableObject {
 
         // Engineering status and collaboration are answered from receipts and
         // real actions, never from model narration.
-        const collab = collaborationIntent(message);
-        const batch = parallelPreference(message);
+        const collab = chatOnlyEvaluation ? null : collaborationIntent(message);
+        const batch = chatOnlyEvaluation ? null : parallelPreference(message);
         if (collab || batch) {
           const reply = await this.startCollaboration(message, { peers: collab?.peers || (batch ? ['claude', 'chatgpt'] : []), batch });
           if (reply) return reply;
@@ -6806,7 +6888,7 @@ export class CheState extends DurableObject {
         }
 
         // Talk to other AIs right now: "ask Gemini and ChatGPT about …".
-        const consult = consultIntent(message);
+        const consult = chatOnlyEvaluation ? null : consultIntent(message);
         if (consult) {
           const consultModel = this.env.CHE_STRONG_MODEL || STRONG_MODEL;
           const results = await Promise.all(consult.peers.map((peer) => consultEngine(this.env, peer, consult.question, consultModel)));
@@ -6983,7 +7065,7 @@ export class CheState extends DurableObject {
           /\b(?:change|update|upgrade|redesign|restyle|modify|fix|add|remove|move|rearrange|rebuild|improve|make)\b[\s\S]{0,120}\b(?:che(?:'s)?|your(?:self| app| ui| interface| code| screen| page| layout| navigation)|the che app|this (?:che )?(?:screen|page))\b/i.test(message) ||
           /\b(?:che(?:'s)?|your)\b[\s\S]{0,80}\b(?:ui|interface|screen|page|layout|navigation|code|app)\b[\s\S]{0,80}\b(?:change|update|redesign|fix|move|add|remove|improve)\b/i.test(message) ||
           /\b(?:add|apply|put|install|merge)\b[\s\S]{0,100}\b(?:this|the)\s+code\b[\s\S]{0,100}\b(?:to|into)\s+(?:che|your app|yourself)\b/i.test(message));
-        if (selfChangeRequest) {
+        if (!chatOnlyEvaluation && selfChangeRequest) {
           // Same reviewed pipeline as every other coding route: the proposal
           // is saved for "create the PR" (no code is put in chat unless asked),
           // and failures are classified instead of dumped into chat.
@@ -7049,7 +7131,7 @@ export class CheState extends DurableObject {
         // this turn as ordinary chat but identifies self_development, do the
         // real repository inspection/engineering flow here. Never let a model
         // narrate fake branches, PRs, SHAs, tests, or "I can't access the repo".
-        if (requestedCapabilities.includes('self_development')) {
+        if (!chatOnlyEvaluation && requestedCapabilities.includes('self_development')) {
           return ownerDevice
             ? this.selfDevelopmentReply(message, { vectorRecall })
             : ndjsonReply('Only the CHE owner can ask me to change my code.', { source: 'che_self_development', ok: false });
@@ -7184,7 +7266,7 @@ export class CheState extends DurableObject {
           ? await optionalMediaGeneration(this.env, 'image', message, vectorMemoryContext)
           : null;
         if (requestedCapabilities.includes('image_generation') && !this.env.CHE_IMAGE_GEN_URL &&
-            (this.env.AI || (/^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim()) && (this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY)))) {
+            (this.env.AI || (paidMediaOn(this.env) && (this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY)))) {
           const made = await generateImage(this.env, this.ctx.storage, {
             prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 6000),
             title: message.slice(0, 60),
@@ -7197,7 +7279,7 @@ export class CheState extends DurableObject {
           ? await optionalMediaGeneration(this.env, 'video', message, vectorMemoryContext)
           : null;
         if (requestedCapabilities.includes('video_generation') && !this.env.CHE_VIDEO_GEN_URL &&
-            /^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim()) && this.env.GEMINI_API_KEY) {
+            paidMediaOn(this.env) && this.env.GEMINI_API_KEY) {
           const made = await generateVideo(this.env, this.ctx.storage, {
             prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 8000),
             title: message.slice(0, 60),
@@ -7503,8 +7585,8 @@ export class CheState extends DurableObject {
                 web_research: true,
                 public_records: Boolean(this.env.CHE_PUBLIC_RECORDS_URL),
                 rendering: Boolean(this.env.CHE_RENDER_URL),
-                image_generation: Boolean(this.env.CHE_IMAGE_GEN_URL || this.env.AI || this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY),
-                video_generation: Boolean(this.env.CHE_VIDEO_GEN_URL || this.env.GEMINI_API_KEY),
+                image_generation: Boolean(this.env.CHE_IMAGE_GEN_URL || this.env.AI || (paidMediaOn(this.env) && (this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY))),
+                video_generation: Boolean(this.env.CHE_VIDEO_GEN_URL || (paidMediaOn(this.env) && this.env.GEMINI_API_KEY)),
                 model_panel: Boolean(
                   this.env.CHE_OPENAI_MODEL_URL ||
                   this.env.CHE_ANTHROPIC_MODEL_URL ||
@@ -7515,7 +7597,7 @@ export class CheState extends DurableObject {
                 screen_capture: Boolean(this.env.CHE_SCREEN_URL),
                 face_verify: Boolean(this.env.CHE_FACE_VERIFY_URL),
                 data_recognition: Boolean(this.env.CHE_DATA_RECOGNITION_URL),
-                multimodal: Boolean(this.env.CHE_MULTIMODAL_URL || this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY),
+                multimodal: Boolean(this.env.CHE_MULTIMODAL_URL || this.env.GEMINI_API_KEY || openAiMediaKey(this.env)),
                 market_data: Boolean(this.env.CHE_MARKET_DATA_URL),
                 backtesting: Boolean(this.env.CHE_BACKTEST_URL),
                 broker: Boolean(this.env.CHE_BROKER_URL),
@@ -7531,8 +7613,8 @@ export class CheState extends DurableObject {
                 windows: Boolean(this.env.CHE_WINDOWS_URL),
                 car: Boolean(this.env.CHE_CAR_URL),
                 smart_home: Boolean(this.env.CHE_SMART_HOME_URL),
-                natural_voice: Boolean((this.env.ELEVENLABS_API_KEY && this.env.CHE_ELEVENLABS_VOICE_ID) || this.env.CHE_OPENAI_API_KEY || this.env.AI || this.env.CHE_VOICE_URL || this.env.GEMINI_API_KEY),
-                openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY),
+                natural_voice: Boolean((paidAllowed(this.env) && ((this.env.ELEVENLABS_API_KEY && this.env.CHE_ELEVENLABS_VOICE_ID) || this.env.CHE_OPENAI_API_KEY)) || this.env.AI || this.env.CHE_VOICE_URL || this.env.GEMINI_API_KEY),
+                openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY && paidAllowed(this.env)),
                 background_jobs: true,
                 quantum_compute: Boolean(this.env.CHE_QUANTUM_URL),
                 fine_tuning: fineTuneReadiness(this.env),
@@ -7677,7 +7759,10 @@ export class CheState extends DurableObject {
           await this.ctx.storage.put('che', fresh);
           await this.scheduleWork();
           return json({
-            detail: BUSY_REPLY,
+            // A paused autonomy never runs the saved job: say so instead of "shortly".
+            detail: fresh.autonomy === false
+              ? 'I saved that, sir, but autonomy is paused, so I will finish it when you say "resume".'
+              : BUSY_REPLY,
             category: 'temporary_cloud_unavailable',
             retryable: true,
             background_job_id: job.id,
@@ -7818,7 +7903,7 @@ export class CheState extends DurableObject {
       console.error('CHE request failed', error?.name, error?.message, error?.diagnostic || '');
       const safe = error?.owner_safe
         ? String(error.message || '').slice(0, 220)
-        : "I'm having trouble reaching my cloud engines, sir. I'm switching to another route.";
+        : "I couldn't finish that just now, sir. Nothing was saved; please ask me again.";
       return json({
         detail: safe,
         category: error?.category || 'temporary_cloud_unavailable',
@@ -8568,6 +8653,21 @@ export class CheState extends DurableObject {
     return { job, deduplicated, paused: !data.autonomy };
   }
 
+  // Compatibility path for installed clients that selected the legacy coding
+  // endpoint before the server could apply its authoritative turn policy.
+  // It answers the foreground question but deliberately receives no mutation
+  // tools and never reads or changes durable engineering state.
+  async answerTerminalChatOnly(message) {
+    const answer = await this.env.AI.run(this.env.CHE_STRONG_MODEL || STRONG_MODEL, {
+      messages: [
+        { role: 'system', content: `${WORK_POLICY}\nThis turn is terminal chat-only. Answer every requested part directly. Do not start, resume, alter, or report a coding job as the answer. Do not claim any action, test, review, repository change, PR, deployment, or production verification occurred. Code snippets in the chat are allowed when requested.` },
+        { role: 'user', content: String(message).slice(0, 16000) },
+      ],
+      max_tokens: 7000,
+    });
+    return String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim();
+  }
+
   // Owner chat reply for a coding request. Proposal → short summary;
   // failures → one human-level sentence (diagnostics stay on the Worker).
   async selfDevelopmentReply(message, { vectorRecall = {}, onAccepted = null } = {}) {
@@ -8622,6 +8722,7 @@ export class CheState extends DurableObject {
     });
     if (started.status === 202) {
       await this.ctx.storage.put('che_runtime_last_session', started.session_id);
+      await this.ctx.storage.put('che_runtime_last_session_at', new Date().toISOString());
     }
     return started;
   }
@@ -9062,4 +9163,3 @@ export default {
     return env.CHE_STATE.getByName('owner').fetch(request);
   },
 };
-

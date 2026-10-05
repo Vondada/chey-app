@@ -30,7 +30,8 @@ test('honors Retry-After and does not leak raw dumps to the owner', () => {
   });
   assert.equal(error.owner_safe, true);
   assert.doesNotMatch(error.message, /All AI engines failed|ENOSPC|llama-3.3/);
-  assert.match(sanitizeOwnerText('All AI engines failed (huge dump)'), /switching to another route|temporarily unavailable/i);
+  assert.match(sanitizeOwnerText('All AI engines failed (huge dump)'), /still working on that/i);
+  assert.doesNotMatch(sanitizeOwnerText('All AI engines failed (huge dump)'), /engine|route|provider/i, 'the owner never hears about engines');
 });
 
 test('capacity reserve holds background work before owner chat', () => {

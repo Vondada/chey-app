@@ -65,12 +65,96 @@ function starredScore(repo, focus = []) {
 // Repository-library requests must be researched before they are sent to the
 // exact source-patch lane. Keep autonomy repair/test requests on the implementation lane. This prevents broad GitHub jobs from being treated
 // like "find this on-screen text" edits.
-export function repositoryImplementationIntent(message) {
+// A terminal response-mode directive: the owner is explicitly asking for an
+// answer/evaluation in chat and explicitly forbidding repository actions.
+// Keep this narrow: "build a chat-only feature; do not deploy" is engineering.
+function explicitRepositoryImplementationAuthorization(message) {
   const text = String(message || '').trim();
   if (!text) return false;
   if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?update\s+your\s+code\s*:/i.test(text)) return true;
+  // Accept ordinary owner preambles without treating explanatory phrases such
+  // as "explain how to implement" as action authorization.
+  return /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:for|in)\s+(?:this|the)\s+(?:task|change|update)[,:]?\s*)?(?:(?:please|now)\s+|go\s+ahead\s+and\s+|i\s+(?:want|need)\s+you\s+to\s+|(?:can|could|would)\s+you\s+)?(?:implement|integrate|adapt|apply|install|add|upgrade|update|rewrite|refactor|build|change|modify|patch|fix|repair)\b[\s\S]{0,220}\b(?:your|che(?:'s)?|the)\s+(?:code|codebase|repo(?:sitory)?|app|flutter\s+app|ui|interface|worker|system|workflow|architecture)\b/i.test(text);
+}
 
-  const implementation = /\b(?:implement|integrate|adapt|apply|install|add|upgrade|improve|rewrite|refactor|build|change|modify|patch|fix|repair|debug|test|stress[- ]?test|audit|verify)\b/i.test(text);
+// "Implement this, but do not deploy yet": an imperative on the thing under
+// discussion authorizes the change; a delivery hold only limits delivery.
+function imperativeImplementation(text) {
+  return /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:for|in)\s+(?:this|the)\s+(?:task|change|update)[,:]?\s*)?(?:(?:please|now)\s+|go\s+ahead\s+and\s+|i\s+(?:want|need)\s+you\s+to\s+|(?:can|could|would)\s+you\s+)?(?:implement|fix|build|add|update|apply)\s+(?:this|that|it)\b/i.test(String(text || '').trim());
+}
+
+// A whole-repository prohibition ("do not modify it", "do not make any code
+// changes", "without changing anything") is final for this turn, whatever
+// implementation vocabulary appears around it.
+function globalRepositoryProhibition(text) {
+  // A scoped limit ("no changes outside that screen", "without changing
+  // anything else") restricts the change; it is not a prohibition.
+  return /\b(?:do\s+not|don['’]t|never|make\s+no)\s+(?:make\s+)?(?:any\s+)?(?:modify|modifying|change|changes|changing|touch|edit|alter)\s+(?:to\s+)?(?:your\s+|any\s+|the\s+)?(?:source\s+)?(?:code|codebase|repo(?:sitory)?)\b(?!\s+(?:else\b|outside\b|elsewhere\b|beyond\b|except\b|apart\s+from\b|other\s+(?:files?|screens?|parts?|features?|code)\b|to\s+(?:anything\s+else|any\s+other|other)\b))/i.test(text)
+    || /\b(?:do\s+not|don['’]t|never)\s+make\s+(?:any\s+)?(?:code\s+)?changes\b(?!\s+(?:else\b|outside\b|elsewhere\b|beyond\b|except\b|apart\s+from\b|other\s+(?:files?|screens?|parts?|features?|code)\b|to\s+(?:anything\s+else|any\s+other|other)\b))/i.test(text)
+    || /\bwithout\s+(?:changing|modifying|touching|editing)\s+anything\b(?!\s+(?:else\b|outside\b|elsewhere\b|beyond\b|except\b|apart\s+from\b|other\s+(?:files?|screens?|parts?|features?|code)\b|to\s+(?:anything\s+else|any\s+other|other)\b))/i.test(text)
+    || (/\b(?:do\s+not|don['’]t|never)\s+(?:modify|change|touch|edit|alter)\s+(?:it|anything)\b(?!\s+(?:else\b|outside\b|elsewhere\b|beyond\b|except\b|apart\s+from\b|other\s+(?:files?|screens?|parts?|features?|code)\b|to\s+(?:anything\s+else|any\s+other|other)\b))/i.test(text) && /\b(?:code|codebase|repo(?:sitory)?|app)\b/i.test(text))
+    || /\b(?:do\s+not|don['’]t|never)\s+(?:create|build|make)\s+(?:anything|it|a\s+project|the\s+project)\b/i.test(text)
+    || /\b(?:no|zero)\s+(?:repository|repo|code)\s+changes?\b/i.test(text);
+}
+
+function hardRepositoryActionProhibition(text) {
+  return /\b(?:do\s+not|don['’]t|never|without|make\s+no)\b[\s\S]{0,180}(?:(?:modify|alter|touch|edit|changes?)\b[\s\S]{0,60}\b(?:source\s+code|code|codebase|repo(?:sitory)?)\b|write(?:\s+any)?\s+code\b|start(?:\s+(?:a|the))?\s+(?:coding|self[- ]development)(?:\s+(?:job|request|process))?\b|create(?:\s+(?:a|the))?\s+(?:branch|commit)\b|open(?:\s+(?:a|the))?\s+(?:pr|pull\s+request)\b|(?:source\s+code|code|codebase|repo(?:sitory)?|repository)\s+changes?\b)/i.test(text)
+    || /\b(?:no|zero)\s+(?:repository|repo|code)\s+changes?\b/i.test(text);
+}
+
+// Quoted text is an example under discussion ("recognize the phrase \"do not
+// modify your code\""), never this turn's own instruction.
+function withoutQuotedText(text) {
+  const stripped = text.replace(/["“”][^"“”]{0,400}["“”]/g, ' "" ').trim();
+  return /[a-z]/i.test(stripped.replace(/""/g, '')) ? stripped : text;
+}
+
+export function chatOnlyResponseIntent(message) {
+  const text = withoutQuotedText(String(message || '').trim());
+  if (!text) return false;
+  const responseDirective = /\b(?:answer|respond|reply)\b[\s\S]{0,80}\b(?:in\s+(?:this\s+)?chat|chat[- ]only|without\s+(?:changing|modifying|editing)\s+(?:your\s+)?code)\b/i.test(text)
+    || /\bchat[- ]only\s+(?:test|exam|evaluation)\b/i.test(text)
+    || /\b(?:this\s+is\s+)?(?:an?\s+)?evaluation\b[\s\S]{0,50}\bnot\s+(?:a\s+)?(?:coding|self[- ]development)\s+request\b/i.test(text);
+  // An explicit prohibition on repository/code mutation is authoritative even
+  // if the sentence also contains implementation wording as a hypothetical.
+  if (globalRepositoryProhibition(text)) return true;
+  if (responseDirective && hardRepositoryActionProhibition(text)) return true;
+  // "This is an evaluation, not a coding request" stands on its own.
+  if (/\b(?:this\s+is\s+)?(?:an?\s+)?(?:evaluation|exam|test\s+question)\b[\s\S]{0,50}\bnot\s+(?:a\s+)?(?:coding|self[- ]development)\s+request\b/i.test(text)) return true;
+  // A real implementation command may constrain only delivery ("do not merge
+  // or deploy yet") while still authorizing the code change.
+  if (explicitRepositoryImplementationAuthorization(text) || imperativeImplementation(text)) return false;
+  // "Answer this in this chat only" needs no separate prohibition.
+  if (/\b(?:in\s+this\s+chat\s+only|chat[- ]only)\b/i.test(text) && !/\bchat[- ]only\s+(?:feature|mode|screen|button|setting)\b/i.test(text)) return true;
+  const prohibition = /\b(?:do\s+not|don['’]t|never|make\s+no|without)\b[\s\S]{0,220}\b(?:modify|alter|touch|changes?|edit|write(?:\s+any)?\s+code|start|create|open|merge|deploy|coding|self[- ]development|branch|commit|pull\s+request|\bpr\b|repository\s+changes?)\b/i.test(text)
+    || /\b(?:no|zero)\s+(?:repository|repo|code)\s+changes?\b/i.test(text);
+  return responseDirective && prohibition;
+}
+
+// One authoritative foreground-turn boundary for every repository-action
+// entry point. Durable jobs describe background state; they never grant the
+// current message permission to enter an action lane.
+export function currentTurnActionPolicy(message) {
+  const terminalChatOnly = chatOnlyResponseIntent(message);
+  return Object.freeze({
+    terminalChatOnly,
+    repositoryMutationAllowed: !terminalChatOnly && repositoryImplementationIntent(message),
+  });
+}
+
+export function repositoryImplementationIntent(message) {
+  const text = String(message || '').trim();
+  if (!text) return false;
+
+  // Explicit chat/evaluation instructions outrank engineering words quoted
+  // inside the question. Without this guard, an exam asking CHE to explain
+  // patch/test/PR steps can be misrouted into the real self-development lane.
+  if (chatOnlyResponseIntent(text)) return false;
+
+  if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?update\s+your\s+code\s*:/i.test(text)) return true;
+  if (explicitRepositoryImplementationAuthorization(text) || imperativeImplementation(text)) return true;
+
+  const implementation = /\b(?:implement|integrate|adapt|apply|install|add|upgrade|update|improve|rewrite|refactor|build|change|modify|patch|fix|repair|debug|test|stress[- ]?test|audit|verify)\b/i.test(text);
   const target = /\b(?:che(?:'s)?|your)\s+(?:code|codebase|repo(?:sitory)?|app|office|agents?|system|workflow|architecture|autonomy|coding|runner|pipeline)\b/i.test(text)
     || /\b(?:into|inside|to|against)\s+(?:che|the\s+(?:current\s+)?(?:repo(?:sitory)?|codebase|main\s+branch))\b/i.test(text);
   const receipts = /\b(?:draft\s+pr|pull\s+request|commit\s+sha|files\s+changed|run\s+tests?|regression\s+tests?|failure[- ]?injection|current\s+main|test\s+branch|implement\s+now|do\s+the\s+implementation)\b/i.test(text);

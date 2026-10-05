@@ -76,3 +76,26 @@ test('objective graph: a failure touches only the affected step; finished steps 
   recordNodeOutcome(o, 'research', { id: 'late', status: 'failed' });
   assert.equal(o.nodes.find((x) => x.id === 'research').status, 'complete', 'a late failure cannot undo a completed step');
 });
+
+
+test('objective graph: self-development nodes never enter the queue without durable owner authorization', () => {
+  const unauthorized = createObjective({
+    objective: 'Change CHE',
+    nodes: [{ id: 'build', prompt: 'edit the worker', kind: 'self_development' }],
+  });
+  const data = { jobs: [], objectives: [unauthorized] };
+  const enqueue = (fields) => { const job = { id: 'should-not-exist', status: 'queued', ...fields }; data.jobs.push(job); return { job }; };
+  assert.equal(advanceObjectives(data, enqueue), 0);
+  assert.equal(data.jobs.length, 0);
+  assert.equal(unauthorized.nodes[0].status, 'failed');
+  assert.match(unauthorized.nodes[0].evidence.join(' '), /owner authorization required/);
+
+  const authorized = createObjective({
+    objective: 'Change CHE',
+    owner_authorized: true,
+    nodes: [{ id: 'build', prompt: 'edit the worker', kind: 'self_development' }],
+  });
+  const ok = { jobs: [], objectives: [authorized] };
+  assert.equal(advanceObjectives(ok, (fields) => { const job = { id: 'j1', status: 'queued', ...fields }; ok.jobs.push(job); return { job }; }), 1);
+  assert.equal(ok.jobs[0].kind, 'self_development');
+});
