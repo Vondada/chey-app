@@ -6119,7 +6119,7 @@ export class CheState extends DurableObject {
         // complete page, checks it, and hosts it on her own Worker.
         const siteEdit = ownerDevice && !chatOnlyEvaluation ? siteEditIntent(message) : null;
         const siteEditTarget = siteEdit ? await lastSite(this.ctx.storage) : null;
-        const siteBuild = ownerDevice && !siteEditTarget ? siteBuildIntent(message) : null;
+        const siteBuild = ownerDevice && !chatOnlyEvaluation && !siteEditTarget ? siteBuildIntent(message) : null;
         if (siteBuild || siteEditTarget) {
           const model = this.env.CHE_STRONG_MODEL || STRONG_MODEL;
           const written = await writeSite(this.env, siteEditTarget
@@ -6264,7 +6264,7 @@ export class CheState extends DurableObject {
         if (changeHistoryIntent(message)) {
           return ndjsonReply(speakChangeHistory(await loadChangeHistory(this.ctx.storage)), { source: 'che_change_history' });
         }
-        const selfUpdateAction = selfUpdateChatIntent(message);
+        const selfUpdateAction = chatOnlyEvaluation ? null : selfUpdateChatIntent(message);
         if (selfUpdateAction && !ownerDevice && ['open-pr', 'merge', 'ship-update', 'discard'].includes(selfUpdateAction.kind)) {
           return ndjsonReply('Only the CHE owner can open, merge or deploy code changes.', { source: 'che_self_update', ok: false });
         }
@@ -6301,7 +6301,7 @@ export class CheState extends DurableObject {
         }
 
         // Office skills: give them for real, and report them from stored data.
-        const skillImport = skillImportIntent(message);
+        const skillImport = chatOnlyEvaluation ? null : skillImportIntent(message);
         if (skillImport) return this.startSkillImport(skillImport, data);
         if (skillsReportIntent(message)) {
           const selected = await Promise.resolve().then(() => this.ctx.storage.get('code_scout_selected')).catch(() => null);
@@ -6660,7 +6660,7 @@ export class CheState extends DurableObject {
           } catch (_) { return []; }
         })();
         // Share Flagstaff: "share the Flagstaff link with ChatGPT and Grok".
-        const share = shareIntent(message);
+        const share = chatOnlyEvaluation ? null : shareIntent(message);
         if (share) {
           await openMailbox(this.ctx.storage);
           const link = mailboxLink(new URL(request.url).origin, await mailboxCode(this.ctx.storage));
@@ -6673,7 +6673,7 @@ export class CheState extends DurableObject {
         }
 
         // "scout the app" / "look for upgrades" → scan all vision areas now.
-        if (/\b(?:scout|check|look)\b[\s\S]{0,30}\b(?:the app|for upgrades|for improvements|our (?:code|vision))\b/i.test(message) && message.length < 90) {
+        if (!chatOnlyEvaluation && /\b(?:scout|check|look)\b[\s\S]{0,30}\b(?:the app|for upgrades|for improvements|our (?:code|vision))\b/i.test(message) && message.length < 90) {
           const found = await autoImproveScan(this.env, this.ctx.storage, fileLetter, fileTech);
           return ndjsonReply(found.length
             ? `I scanned for upgrades to the whole app, sir, and filed ${found.length} new reusable finds under free tech: ${found.slice(0, 4).map((f) => f.full_name).join(', ')}. Say "what's in free tech" to review.`
@@ -6689,7 +6689,7 @@ export class CheState extends DurableObject {
           const status = await new CheCodingRuntime(this.env).getStatus(id);
           return ndjsonReply(status.status === 200 ? speakRuntimeStatus(status) : String(status.detail || 'I could not read the coding job status.'), { source: 'che_coding_status', session_id: id, state: status.state || null });
         }
-        const handoff = handoffIntent(message);
+        const handoff = chatOnlyEvaluation ? null : handoffIntent(message);
         if (handoff) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can start a handoff.', { source: 'che_handoff', ok: false });
           const thread = await readThread(this.env, handoff.peer).catch(() => ({ messages: [] }));
@@ -6961,7 +6961,7 @@ export class CheState extends DurableObject {
           /\b(?:change|update|upgrade|redesign|restyle|modify|fix|add|remove|move|rearrange|rebuild|improve|make)\b[\s\S]{0,120}\b(?:che(?:'s)?|your(?:self| app| ui| interface| code| screen| page| layout| navigation)|the che app|this (?:che )?(?:screen|page))\b/i.test(message) ||
           /\b(?:che(?:'s)?|your)\b[\s\S]{0,80}\b(?:ui|interface|screen|page|layout|navigation|code|app)\b[\s\S]{0,80}\b(?:change|update|redesign|fix|move|add|remove|improve)\b/i.test(message) ||
           /\b(?:add|apply|put|install|merge)\b[\s\S]{0,100}\b(?:this|the)\s+code\b[\s\S]{0,100}\b(?:to|into)\s+(?:che|your app|yourself)\b/i.test(message));
-        if (selfChangeRequest) {
+        if (!chatOnlyEvaluation && selfChangeRequest) {
           // Same reviewed pipeline as every other coding route: the proposal
           // is saved for "create the PR" (no code is put in chat unless asked),
           // and failures are classified instead of dumped into chat.
