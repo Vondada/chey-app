@@ -77,3 +77,18 @@ test('catalog cache: fetched once, served from storage, stale copy only when Git
   _clearCatalogCache();
   assert.ok((await loadCatalog({ get: async () => null }, 'apis', { fetcher: down })).error);
 });
+
+test('review fixes: negations and build requests are not lookups', () => {
+  for (const q of ['I want to build an MCP server for GitHub', "I don't need an MCP server for GitHub", 'create an api for weather', 'I want to write a book on Rust programming']) assert.equal(resourceIntent(q), null, q);
+  assert.equal(resourceIntent('is there an MCP server for GitHub')?.catalog, 'mcp');
+});
+
+test('review fixes: downloads are capped and spoken choices map to saved URLs', async () => {
+  const { readCapped, resourceChoice, resultLinks } = await import('./resource_catalogs.js');
+  const big = new Response('x'.repeat(5000));
+  assert.equal((await readCapped(big, 1000)).length, 1000);
+  assert.equal(resourceChoice('open number two'), 2);
+  assert.equal(resourceChoice('open link 3'), 3);
+  assert.equal(resourceChoice('open the app'), null);
+  assert.deepEqual(resultLinks([{ name: 'a', url: 'https://a.example' }, { name: 'b', url: 'javascript:alert(1)' }]), [{ n: 1, name: 'a', url: 'https://a.example' }]);
+});

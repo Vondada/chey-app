@@ -1578,6 +1578,9 @@ test('resource finder through chat: answered from the real list with zero AI cal
     assert.match(reply, /From awesome-mcp-servers, 1 MCP server match for "notion", sir: 1, notion-mcp/);
     assert.equal(aiCalls, 0);
     assert.ok(fetched.every((u) => u.includes('raw.githubusercontent.com')), 'only the list itself was read');
+    const opened = replyFromNdjson(await (await chat('open number one')).text());
+    assert.match(opened, /Number 1, notion-mcp, sir: https:\/\/github\.com\/x\/notion-mcp/);
+    assert.equal(aiCalls, 0, 'a spoken choice costs no AI either');
     await (await chat('is there an MCP server for Zzyzx')).text();
     assert.ok(aiCalls > 0 || fetched.some((u) => !u.includes('raw.githubusercontent.com')), 'no match: the normal path answers instead of a dead end');
   } finally {

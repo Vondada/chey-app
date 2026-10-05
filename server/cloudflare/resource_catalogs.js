@@ -68,13 +68,37 @@ export function chunkBySize(entries, maxBytes = CHUNK_BYTES) {
   return chunks;
 }
 
+// Third-party lists are untrusted: never buffer more than this.
+const MAX_BYTES = 2_000_000;
+const MAX_ENTRIES = 6000;
+
+export async function readCapped(response, maxBytes = MAX_BYTES) {
+  if (!response.body?.getReader) return (await response.text()).slice(0, maxBytes);
+  const reader = response.body.getReader();
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const room = maxBytes - size;
+    chunks.push(value.length > room ? value.subarray(0, room) : value);
+    size += Math.min(value.length, room);
+    if (size >= maxBytes) { await reader.cancel().catch(() => {}); break; }
+  }
+  const all = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) { all.set(c, at); at += c.length; }
+  return new TextDecoder().decode(all);
+}
+
 async function fetchCatalog(id, fetcher) {
   const spec = CATALOGS[id];
   const entries = [];
   for (const file of spec.files) {
     const response = await fetcher(`https://raw.githubusercontent.com/${spec.repo}/HEAD/${file}`, { headers: { 'User-Agent': 'CHE-resource-finder' }, signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw new Error(`${spec.label} answered ${response.status}`);
-    entries.push(...parseCatalog(await response.text()));
+    entries.push(...parseCatalog(await readCapped(response, MAX_BYTES)));
+    if (entries.length > MAX_ENTRIES) entries.length = MAX_ENTRIES;
   }
   if (!entries.length) throw new Error(`${spec.label} had no entries I could read`);
   return entries;
@@ -159,6 +183,10 @@ export function resourceIntent(message) {
     // A bare request such as "security learning resources for web apps".
     || /\b(?:best|top)\b/.test(text) || /\b(?:resources?|librar(?:y|ies)|apis?|books?|apps?|servers?)\s+(?:for|on|about)\b/.test(text) || /^(?:free|public)\s/.test(text.trim());
   if (!asks) return null;
+  // Negations and build/create requests are not lookups ("I don't need an MCP
+  // server", "I want to build an MCP server for GitHub").
+  if (/\b(?:don'?t|do\s+not|doesn'?t|never|no\s+longer)\s+(?:need|want|use|like)\b/.test(text)) return null;
+  if (/\b(?:build|create|make|write|develop|code|set\s+up|deploy|install|configure|implement)\s+(?:me\s+)?(?:an?|the|my|our)?\s*(?:own\s+|new\s+|custom\s+)?(?:mcp|api|app|server|library|tool|book|site|website)\b/.test(text)) return null;
   // A problem report ("the app for my Mac crashed") is not a shopping request.
   if (/\b(?:crash(?:ed|es|ing)?|broke(?:n)?|not working|doesn'?t work|won'?t|error|bug|fix|stuck|frozen)\b/.test(text)) return null;
   const pick = (id) => ({ catalog: id, query: text });
@@ -185,6 +213,20 @@ export function speakResults(id, query, results, loaded) {
   const age = loaded.stale ? ` This copy of the list is from ${new Date(loaded.at).toISOString().slice(0, 10)}, because GitHub did not answer.` : '';
   const careful = id === 'security' ? ' These are for learning to defend your own systems; I only help with legal, authorized testing.' : '';
   return `From ${spec.label}, ${results.length} ${spec.what} match${results.length === 1 ? '' : 'es'} for "${terms}", sir: ${lines.join(' ')}${careful}${age}`;
+}
+
+// "open number two", "open link 2", "open result three": the numbered list
+// CHE just spoke is saved, so a spoken choice maps to the real URL.
+export const LAST_RESULTS_KEY = 'che_last_resource_results';
+const ORDINAL = { one: 1, first: 1, two: 2, second: 2, three: 3, third: 3, four: 4, fourth: 4, five: 5, fifth: 5 };
+export function resourceChoice(message) {
+  const m = /\b(?:open|show|go\s+to|pick|choose|select)\s+(?:the\s+)?(?:number|link|result|option|item)?\s*(\d|one|two|three|four|five|first|second|third|fourth|fifth)\b/i.exec(String(message || ''));
+  if (!m) return null;
+  const n = ORDINAL[m[1].toLowerCase()] || Number(m[1]);
+  return n >= 1 && n <= 5 ? n : null;
+}
+export function resultLinks(results) {
+  return results.map((r, i) => ({ n: i + 1, name: r.name, url: /^https:\/\//.test(r.url) ? r.url : '' })).filter((r) => r.url);
 }
 
 export function _clearCatalogCache() { MEMORY.clear(); }
