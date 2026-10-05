@@ -251,7 +251,11 @@ export function condenseHistory(history = [], { keep = 12, maxCondensedChars = 1
   const clean = (Array.isArray(history) ? history : [])
     .filter((item) => item && ['user', 'assistant'].includes(item.role))
     .map((item) => ({ role: item.role, content: String(item.content ?? item.text ?? '') }));
-  const recent = clean.slice(-keep).map((t) => ({ ...t, content: t.content.slice(0, maxTurnChars) }));
+  // Recent turns are the live conversational state. Never clip their tail:
+  // final constraints commonly occur at the end of a long owner request.
+  // maxTurnChars is retained for API compatibility but intentionally applies
+  // only to older deterministic condensation, not the live recent turns.
+  const recent = clean.slice(-keep).map((t) => ({ ...t }));
   const older = clean.slice(0, Math.max(0, clean.length - keep));
   if (!older.length) return { turns: recent, condensed: '', dropped: 0 };
   const seen = new Set();
