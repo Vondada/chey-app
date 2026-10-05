@@ -1950,6 +1950,10 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         chat.push({ from: 'CHE', msg: `Deterministic repository fallback selected: ${chosen.join(', ')}` });
       }
     }
+    // Resuming a checkpoint after an engine switch: the files that job read.
+    if (options.checkpoint?.files?.length) {
+      chosen = [...new Set([...chosen, ...options.checkpoint.files.map(String).filter((path) => index.paths.includes(path))])].slice(0, 8);
+    }
     // Recovery: the files the failed job actually inspected are real context.
     if (options.priorFailure?.files?.length) {
       chosen = [...new Set([...chosen, ...options.priorFailure.files.map(String).filter((path) => index.paths.includes(path))])].slice(0, 8);
@@ -2076,7 +2080,19 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     // (a parsed answer). Only those count toward the three-pass safety limit.
     const producedRounds = new Set();
     const formatFeedback = new Set();
-    let genuinePasses = 0;
+    // A checkpoint (saved when engines stopped answering mid-job) resumes the
+    // SAME job: passes already used stay used, tried strategies stay tried,
+    // so a provider outage never buys extra attempts or repeats a strategy.
+    const checkpoint = options.checkpoint && typeof options.checkpoint === 'object' ? options.checkpoint : null;
+    let genuinePasses = checkpoint ? Math.max(0, Math.min(maxRounds - 1, Number(checkpoint.genuine_passes) || 0)) : 0;
+    if (checkpoint) {
+      for (const fp of (checkpoint.fingerprints || []).map(String).slice(-30)) seenStrategies.add(fp);
+      for (const item of (checkpoint.failed_strategies || []).slice(-8)) failedStrategies.push({ ...item, prior: true });
+      if (checkpoint.feedback) feedbacks.fill(String(checkpoint.feedback).slice(0, 1500));
+      chat.push({ from: 'CHE', msg: `Resuming the same job from its checkpoint after an engine switch: ${genuinePasses} implementation pass(es) already used; ${failedStrategies.length} strategies already tried will not be repeated.` });
+    }
+    const roundOffset = checkpoint ? Math.max(0, Number(checkpoint.round_offset) || 0) : 0;
+    let lastRound = 0;
     let unproductivePasses = 0;
     let enginesFailed = false;
     let budgetStop = false;
@@ -2099,7 +2115,8 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
 
     // Autonomy exam level 5 injects real failure classes (never in normal use).
     const faults = options.faults && typeof options.faults === 'object' ? options.faults : {};
-    const faultsUsed = { malformed: false, anchor: false };
+    // Injected exam faults fire once per job, including across a resume.
+    const faultsUsed = { malformed: false, anchor: false, ...(checkpoint?.faults_used || {}) };
     const attemptOnce = async (round, member, i) => {
       if (faults.malformedOnce && !faultsUsed.malformed) {
         faultsUsed.malformed = true;
@@ -2326,7 +2343,9 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       if (unreviewed.length) {
         // Not a code rejection, no lesson, not the engineer's fault.
         record(round, member, 'review_unavailable', unreviewed.map((r) => `${r.reviewer}:${r.agent_failure}`).join(','));
-        seenStrategies.delete(fingerprint);
+        // The pass and its strategy stay consumed (they were genuine); the
+        // checkpoint carries them so the resumed job cannot get them back.
+        failedStrategies.push({ engineer: member.name, outcome: 'review_unavailable', why: 'Valid change could not be reviewed (reviewer engines unavailable); the pass stays used.', edits: (answer.edits || []).map((e) => `${e?.path}: ${String(e?.find || '').slice(0, 80)}`).slice(0, 3) });
         return null;
       }
       const passed = reviews.every((r) => r.approved === true && r.target_correct !== false);
@@ -2343,7 +2362,9 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     };
 
     for (let round = 0; genuinePasses < maxRounds && !result; round++) {
-      const roundEngineers = CREW.engineers.map((member, i) => engineerForRound(member, i, round));
+      lastRound = round;
+      // A resumed job continues on the NEXT engine pair, not the one that went empty.
+      const roundEngineers = CREW.engineers.map((member, i) => engineerForRound(member, i, round + roundOffset));
       const attempts = await Promise.all(roundEngineers.map((member, i) => attemptOnce(round, member, i)));
 
       const winner = attempts.find((attempt) => attempt && !attempt.no_change);
@@ -2479,7 +2500,42 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       // outage is already temporary above). A model that keeps returning
       // malformed JSON is an honest final failure.
       const enginesUnusable = enginesFailed && genuinePasses === 0 && outcomes.includes('empty');
-      const temporary = outcomes.includes('review_unavailable')
+      // Engines stopped answering (empty/malformed/outage) after some real
+      // passes but before the three-pass limit: that is infrastructure, not a
+      // failed implementation. Save a checkpoint and resume the SAME job on
+      // the next engines, at most 3 times, so this can never loop forever.
+      const resumes = Number(checkpoint?.resumes || 0);
+      // The durable state a retry of THIS job continues from: passes already
+      // consumed, strategies tried, exam faults already injected. Every
+      // temporary stop saves it, so no outage (engine, reviewer or provider)
+      // can reset the pass allowance or re-inject a consumed exam fault.
+      const saveCheckpoint = () => ({
+        genuine_passes: genuinePasses,
+        fingerprints: [...seenStrategies].slice(-30),
+        failed_strategies: failedStrategies.filter((item) => !item.prior || checkpoint).slice(-8),
+        feedback: [...new Set(feedbacks.filter((f) => f && !formatFeedback.has(f)))].join(' | ').slice(0, 1500),
+        files: [...sources.keys()].slice(0, 8),
+        base: index.base || '',
+        repo_sha: index.head_sha || '',
+        resumes: resumes + 1,
+        round_offset: roundOffset + lastRound + 1,
+        faults_used: { ...faultsUsed },
+        saved_at: new Date().toISOString(),
+      });
+      if (enginesFailed && !budgetStop && genuinePasses > 0 && genuinePasses < maxRounds && resumes < 3) {
+        return finish({
+          status: 503,
+          failure_class: FAILURE_CLASS.TEMPORARY_EXTERNAL,
+          retryable: true,
+          engines_unusable: true,
+          checkpoint: saveCheckpoint(),
+          detail: `Engines returned no usable output after ${genuinePasses} implementation pass(es); the job saved a checkpoint and resumes on other engines with ${maxRounds - genuinePasses} pass(es) left. Nothing was changed.`,
+          owner_message: ownerEngineeringMessage(FAILURE_CLASS.TEMPORARY_EXTERNAL),
+        });
+      }
+      // Once every genuine pass is used, an outage is not a reason to retry:
+      // a resume would only buy the job passes beyond its limit.
+      const temporary = (outcomes.includes('review_unavailable') && genuinePasses < maxRounds)
         || (real.length > 0 && real.every((outcome) => outcome === 'provider_unavailable'))
         || enginesUnusable;
       const engineering = [...new Set(feedbacks.filter((f) => f && !formatFeedback.has(f)))].join(' | ');
@@ -2489,6 +2545,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
           failure_class: FAILURE_CLASS.TEMPORARY_EXTERNAL,
           retryable: true,
           ...(enginesUnusable ? { engines_unusable: true } : {}),
+          checkpoint: saveCheckpoint(),
           detail: enginesUnusable
             ? `AI engines returned no usable implementation (empty answers or outages) in ${unproductivePasses} passes; no strategy was tried, nothing was changed and the job retries later.`
             : 'AI engines were unavailable for implementation or independent review; no unreviewed change was proposed.',

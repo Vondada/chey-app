@@ -99,7 +99,7 @@ export function capacityMode(used, limit) {
   if (!limit) return 'normal';
   const ratio = used / limit;
   if (ratio >= 0.95) return 'emergency';
-  if (ratio >= 0.80) return 'reserve';
+  if (ratio >= 0.70) return 'reserve';
   return 'normal';
 }
 

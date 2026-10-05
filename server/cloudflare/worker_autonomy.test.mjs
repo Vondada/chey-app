@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { replyFromNdjson } from './brain_memory.js';
+import { researchKey, isSafeToStore, rememberKnowledge } from './knowledge_cache.js';
 
 const generated = new URL('./.worker_autonomy.test.generated.mjs', import.meta.url);
 writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
@@ -147,7 +148,7 @@ async function pairedChat(env, saved) {
     body: JSON.stringify(body),
   }), env);
   const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
-  return { state, chat: (message) => send('/api/chat', { message }, token) };
+  return { state, chat: (message) => send('/api/chat', { message }, token), api: (path, body) => send(path, body, token) };
 }
 
 const GITHUB_OK = (files) => async (url) => {
@@ -1329,4 +1330,231 @@ test('autonomy exam runs its levels back to back: each finished level starts the
   // A single level runs alone.
   assert.match(await say('run autonomy exam level 3'), /started the autonomy exam, sir: level 3\./);
   assert.deepEqual(examJobs().find((j) => j.status === 'queued').exam_next, []);
+});
+
+test('memory-first: a verified owner fact is answered with zero AI engine calls', async () => {
+  const saved = new Map();
+  let aiCalls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { aiCalls += 1; return { response: 'model reply' }; } } };
+  const { chat } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  let providerCalls = 0;
+  globalThis.fetch = async () => { providerCalls += 1; return new Response('{}', { status: 500 }); };
+  try {
+    // Remembering a fact that contains a URL saves it (it is not fetched as a page).
+    assert.equal(replyFromNdjson(await (await chat('Remember that my Worker URL is https://che.example.workers.dev')).text()), 'I’ll remember that, sir.');
+    assert.equal(aiCalls + providerCalls, 0, 'remembering a plain fact costs no AI either');
+    aiCalls = 0;
+    providerCalls = 0;
+    const reply = replyFromNdjson(await (await chat("What's my Worker URL?")).text());
+    assert.equal(reply, 'Your worker url is https://che.example.workers.dev, sir.');
+    assert.equal(aiCalls, 0, 'no Workers AI call');
+    assert.equal(providerCalls, 0, 'no external provider call');
+    const ledger = saved.get('che_reliability_ledger');
+    assert.equal(ledger.totals.memory_answers, 1);
+    assert.ok(ledger.totals.tokens_saved > 0);
+    assert.match(replyFromNdjson(await (await chat('reliability report')).text()), /1 answers from memory with no AI call/);
+    // The memory list stays the authority: once the memory is deleted the
+    // cached fact is no longer spoken.
+    const d = saved.get('che');
+    d.memories = [];
+    saved.set('che', d);
+    assert.notEqual(replyFromNdjson(await (await chat("What's my Worker URL?")).text()), 'Your worker url is https://che.example.workers.dev, sir.');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('control plane: a job interrupted by an engine failure keeps its checkpoint and the retry continues the same job quietly', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' };
+  const { state } = await pairedChat(env, saved);
+  const data = saved.get('che');
+  data.jobs = [{ id: 'job-1', kind: 'self_development', status: 'queued', prompt: 'change the home status wording', retry_count: 0, attempts: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }];
+  saved.set('che', data);
+  const seen = [];
+  state.runSelfDevelopmentJob = async (job) => {
+    seen.push(job.checkpoint || null);
+    if (!job.checkpoint) {
+      const error = new Error('Engines returned no usable output after 1 implementation pass(es).');
+      error.failure_class = 'B'; // FAILURE_CLASS.TEMPORARY_EXTERNAL
+      error.checkpoint = { genuine_passes: 1, fingerprints: ['fp-1'], resumes: 1 };
+      throw error;
+    }
+    return { id: job.id, status: 'complete', result: 'done', owner_message: 'done', error: '' };
+  };
+  await state.processJobs();
+  let job = saved.get('che').jobs.find((j) => j.id === 'job-1');
+  assert.equal(job.status, 'queued', 'retried, not failed');
+  assert.deepEqual(job.checkpoint, { genuine_passes: 1, fingerprints: ['fp-1'], resumes: 1 });
+  assert.ok(!job.owner_message, 'a recoverable engine failure is not announced');
+  job.retry_at = 0;
+  const d = saved.get('che');
+  d.jobs = d.jobs.map((j) => (j.id === 'job-1' ? job : j));
+  saved.set('che', d);
+  await state.processJobs();
+  job = saved.get('che').jobs.find((j) => j.id === 'job-1');
+  assert.equal(job.status, 'complete');
+  assert.deepEqual(seen[1], { genuine_passes: 1, fingerprints: ['fp-1'], resumes: 1 }, 'the same job resumed from its checkpoint');
+  assert.equal(job.checkpoint, undefined, 'a finished job drops its checkpoint');
+  const ledger = saved.get('che_reliability_ledger');
+  assert.equal(ledger.totals.jobs_completed, 1);
+  assert.equal(ledger.totals.recoveries, 1);
+  assert.equal(ledger.totals.retries, 1, 'each retry is counted once, not re-added every pass');
+  assert.equal(ledger.totals.owner_visible_failures, 0);
+});
+
+test('control plane keeps exam isolation: a late job from an older run cannot overwrite the current run, and a pass is never downgraded', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1' }; // no GitHub: the level grades as failed
+  const { state } = await pairedChat(env, saved);
+  const pass = { level: 1, passed: true, checks: [], failed_checks: [] };
+  saved.set('che_autonomy_exam', { run_id: 'run-b', results: { 1: pass } });
+  const late = await state.runAutonomyExamJob({ id: 'old', exam_level: 1, exam_run_id: 'run-a' });
+  assert.match(late.result, /Stale autonomy exam result ignored/);
+  assert.deepEqual(saved.get('che_autonomy_exam').results[1], pass, 'older run did not overwrite');
+  await state.runAutonomyExamJob({ id: 'same', exam_level: 1, exam_run_id: 'run-b' });
+  assert.equal(saved.get('che_autonomy_exam').results[1].passed, true, 'a later failure in the same run cannot downgrade a pass');
+});
+
+test('autonomy exam: single levels queue behind a running exam and re-tests keep the other levels\' scores', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' };
+  const { state, chat } = await pairedChat(env, saved);
+  const say = async (m) => replyFromNdjson(await (await chat(m)).text());
+  assert.match(await say('run autonomy exam level 3'), /started the autonomy exam, sir: level 3\./);
+  assert.match(await say('run autonomy exam level 5'), /lined up level 5 right after it/);
+  const running = saved.get('che').jobs.find((j) => j.kind === 'autonomy_exam' && j.status === 'queued');
+  assert.deepEqual(running.exam_next, [5]);
+  const runId = saved.get('che_autonomy_exam').run_id;
+  state.runAutonomyExamJob = async (job) => {
+    const stored = saved.get('che_autonomy_exam');
+    stored.results[job.exam_level] = { level: job.exam_level, passed: job.exam_level === 3, failed_checks: [] };
+    saved.set('che_autonomy_exam', stored);
+    return { id: job.id, status: 'complete', result: 'graded', owner_message: '', error: '' };
+  };
+  for (let i = 0; i < 3; i++) await state.processJobs();
+  const scores = saved.get('che_autonomy_exam');
+  assert.equal(scores.run_id, runId);
+  assert.deepEqual(Object.keys(scores.results).sort(), ['3', '5'], 'level 5 ran in the same run and level 3 was kept');
+  // Re-testing level 5 alone keeps level 3's score and replaces only level 5.
+  assert.match(await say('run autonomy exam level 5'), /started the autonomy exam, sir: level 5\./);
+  const retest = saved.get('che_autonomy_exam');
+  assert.notEqual(retest.run_id, runId);
+  assert.deepEqual(Object.keys(retest.results), ['3']);
+  // A full exam starts a clean score.
+  for (let i = 0; i < 2; i++) await state.processJobs();
+  assert.match(await say('run the autonomy exam'), /level 1, level 2, level 3, level 4, level 5/);
+  assert.deepEqual(saved.get('che_autonomy_exam').results, {});
+});
+
+test('final review: a verified research-cache hit ends the turn with zero research, panel or model calls', async () => {
+  const saved = new Map();
+  let aiCalls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { aiCalls += 1; return { response: 'model reply' }; } } };
+  const { chat } = await pairedChat(env, saved);
+  const question = 'Research and compare sources on the latest provider limits';
+  const now = Date.now();
+  saved.set(`kc:${researchKey(question)}`, { key: researchKey(question), answer: 'Groq allows 30 requests a minute on the free tier.', source: 'research_library', sources: ['https://console.groq.com/docs/rate-limits'], limitation: '', confidence: 0.85, verified_at: now - 60_000, expires_at: now + 3600_000, volatile: true, pure: true });
+  const original = globalThis.fetch;
+  let providerCalls = 0;
+  globalThis.fetch = async () => { providerCalls += 1; return new Response('{}', { status: 500 }); };
+  try {
+    const reply = replyFromNdjson(await (await chat(question)).text());
+    assert.match(reply, /Groq allows 30 requests a minute/);
+    assert.match(reply, /console\.groq\.com/);
+    assert.equal(aiCalls, 0, 'no Workers AI call (no model panel, no chat model)');
+    assert.equal(providerCalls, 0, 'no research fetch or provider call');
+    assert.equal(saved.get('che_reliability_ledger').totals.memory_answers, 1);
+    // A request to DO something with the same facts is never short-circuited:
+    // the action and its permission checks must run.
+    const actionQ = 'Email John the latest provider limits';
+    saved.set(`kc:${researchKey(actionQ)}`, { ...saved.get(`kc:${researchKey(question)}`), key: researchKey(actionQ) });
+    await (await chat(actionQ)).text();
+    assert.ok(aiCalls + providerCalls > 0, 'an action request runs the full path');
+    aiCalls = 0; providerCalls = 0;
+    // A cached result from a turn that also ran actions (not marked pure) is not reused alone.
+    const mixedQ = 'Research the current GPU prices';
+    saved.set(`kc:${researchKey(mixedQ)}`, { ...saved.get(`kc:${researchKey(question)}`), key: researchKey(mixedQ), pure: false });
+    await (await chat(mixedQ)).text();
+    assert.ok(aiCalls + providerCalls > 0, 'only pure research answers are reused without inference');
+    // Expired volatile research is not reused: the normal path runs again.
+    saved.set(`kc:${researchKey(question)}`, { ...saved.get(`kc:${researchKey(question)}`), verified_at: now - 2 * 3600_000 });
+    await (await chat(question)).text();
+    assert.ok(aiCalls + providerCalls > 0, 'stale knowledge is re-checked, never spoken as current');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('final review: the knowledge cache checks the WHOLE stored value for secrets, not just its first 500 characters', async () => {
+  const late = `${'Long research summary. '.repeat(60)} The admin password is hunter2 and the api key is sk-live-abc.`;
+  assert.ok(late.indexOf('password') > 500);
+  assert.equal(isSafeToStore(late), false);
+
+  const m = new Map();
+  const storage = { get: async (k) => m.get(k), put: async (k, v) => m.set(k, v), delete: async (k) => m.delete(k) };
+  assert.equal(await rememberKnowledge(storage, { key: 'research:x', answer: late }), null);
+  assert.equal(m.size, 0, 'nothing was persisted');
+  assert.equal(await rememberKnowledge(storage, { key: 'research:y', answer: 'fine', limitation: `${'x '.repeat(400)} seed phrase: alpha beta` }), null, 'the limitation is persisted too, so it is checked too');
+  assert.ok(await rememberKnowledge(storage, { key: 'research:z', answer: `${'Rate limits per minute vary by plan. '.repeat(40)}` }), 'ordinary long research still caches');
+});
+
+test('five-layer exam end to end: a layer queues as a job, an engine outage retries it ungraded, a real answer is graded and spoken', async () => {
+  const saved = new Map();
+  let answer = null;
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { if (!answer) throw Object.assign(new Error('provider 503'), { status: 503 }); return { response: answer }; } } };
+  const { state, chat } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{}', { status: 500 });
+  try {
+    assert.match(replyFromNdjson(await (await chat('run the five layer exam layer 1')).text()), /five-layer exam, sir: layer 1/);
+    let job = saved.get('che').jobs.find((j) => j.kind === 'reasoning_exam');
+    assert.equal(job.exam_layer, 1);
+    await state.processJobs();
+    job = saved.get('che').jobs.find((j) => j.id === job.id);
+    assert.equal(job.status, 'queued', 'an outage is retried, not scored');
+    assert.deepEqual(saved.get('che_reasoning_exam').results, {}, 'no grade was recorded during the outage');
+    answer = 'Using h = 1/2 g t^2: 45 = 5 t^2, so t = 3 s and v = g t = 30 m/s.\nASSERT time_s=3 speed_ms=30';
+    const d = saved.get('che');
+    d.jobs = d.jobs.map((j) => (j.id === job.id ? { ...j, retry_at: 0 } : j));
+    saved.set('che', d);
+    await state.processJobs();
+    job = saved.get('che').jobs.find((j) => j.id === job.id);
+    assert.equal(job.status, 'complete');
+    assert.equal(saved.get('che_reasoning_exam').results[1].passed, true);
+    assert.match(replyFromNdjson(await (await chat('five layer exam results')).text()), /Layer 1, Constraint reasoning: passed/);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('objective graph through the Worker: steps run as real jobs, independent ones together, and the objective completes', async () => {
+  const saved = new Map();
+  const prompts = [];
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async (model, input) => { const p = JSON.stringify(input.messages || input); prompts.push(p); return { response: p.includes('Compare the two notes') ? 'Comparison written.' : 'Note written.' }; } } };
+  const { state, api } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{}', { status: 500 });
+  try {
+    const bad = await api('/api/objective/create', { objective: 'loop', nodes: [{ id: 'a', prompt: 'x', depends_on: ['b'] }, { id: 'b', prompt: 'y', depends_on: ['a'] }] });
+    assert.equal(bad.status, 400, 'a cyclic plan is refused');
+    const res = await (await api('/api/objective/create', { objective: 'Two notes and a comparison', nodes: [
+      { id: 'a', prompt: 'Write a short note about apples' },
+      { id: 'b', prompt: 'Write a short note about pears' },
+      { id: 'c', prompt: 'Compare the two notes', depends_on: ['a', 'b'] },
+    ] })).json();
+    assert.equal(res.started, 2, 'the two independent steps start together');
+    await state.processJobs();
+    let o = saved.get('che').objectives[0];
+    assert.deepEqual(o.nodes.map((n) => n.status), ['complete', 'complete', 'running'], 'the dependent step starts only after both');
+    await state.processJobs();
+    o = saved.get('che').objectives[0];
+    assert.equal(o.status, 'complete');
+    assert.equal(o.nodes[2].output, 'Comparison written.');
+    assert.ok(prompts.some((p) => p.includes('Compare the two notes') && p.includes('Note written.')), 'the dependent step received the verified upstream results');
+    assert.match((await (await api('/api/objectives', {})).json()).spoken[0], /3 of 3 steps done/);
+  } finally {
+    globalThis.fetch = original;
+  }
 });
