@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { codeScoutIntent, inspirationUpgradeContext, listOwnerStarredRepos, repositoryImplementationIntent, reusableLicense, scoutCode, selectStudyRepos, shouldUseInspirationWorkflow, speakScout, speakStarredRepos, starredRepoIntent, studySelectionIntent } from './code_scout.js';
+import { chatOnlyResponseIntent, codeScoutIntent, inspirationUpgradeContext, listOwnerStarredRepos, repositoryImplementationIntent, reusableLicense, scoutCode, selectStudyRepos, shouldUseInspirationWorkflow, speakScout, speakStarredRepos, starredRepoIntent, studySelectionIntent } from './code_scout.js';
 
 test('intent parses code-scout phrasings', () => {
   assert.deepEqual(codeScoutIntent('find code for offline speech to text'), { need: 'offline speech to text' });
@@ -48,6 +48,11 @@ Answer all 5 questions directly in THIS CHAT in one response.
 AUTONOMY TEST: Explain how YOU, CHE would safely improve one inefficient part of your own code.
 Give the real sequence: source discovery → checkpoint → patch → tests → independent verification → rollback/recovery on failure → PR → approved merge/deployment → production verification.`;
   assert.equal(repositoryImplementationIntent(chatOnlyExam), false);
+  assert.equal(chatOnlyResponseIntent(chatOnlyExam), true);
+  assert.equal(chatOnlyResponseIntent('CHAT-ONLY TEST. Never modify your code or create a PR. Explain how you would improve your code and run tests.'), true);
+  assert.equal(repositoryImplementationIntent('CHAT-ONLY TEST. Never modify your code or create a PR. Explain how you would improve your code and run tests.'), false);
+  assert.equal(chatOnlyResponseIntent('Update your code: Build a chat-only evaluation mode. Do not deploy it until tests pass.'), false);
+  assert.equal(repositoryImplementationIntent('Update your code: Build a chat-only evaluation mode. Do not deploy it until tests pass.'), true);
   assert.equal(starredRepoIntent('change the text on my home screen'), null);
 });
 
