@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { AUTONOMY_EXAM, examIntent, gradeLevel, speakExamResults } from './autonomy_exam.js';
+import { AUTONOMY_EXAM, examIntent, gradeLevel, mergeExamResult, speakExamResults, ungradableEngineFailure } from './autonomy_exam.js';
 import { prepareSelfUpdate } from './self_development.js';
 
 const real = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
@@ -97,4 +97,22 @@ test('voice sync: every new owner-facing autonomy/recovery line follows CHE\'s v
     assert.doesNotMatch(line, /\btap\b|```|As an AI/i, line);
     assert.ok(line.length <= 700, `speakable length: ${line.length}`);
   }
+});
+
+
+test('exam results are isolated by run and a pass cannot be downgraded', () => {
+  const pass = { level: 1, name: 'L1', passed: true, checks: [], failed_checks: [], failed_details: [] };
+  const fail = { ...pass, passed: false };
+  const first = mergeExamResult({}, 'run-a', 1, pass);
+  assert.equal(first.results[1].passed, true);
+  const downgrade = mergeExamResult(first, 'run-a', 1, fail);
+  assert.equal(downgrade.results[1].passed, true);
+  const nextRun = mergeExamResult(first, 'run-b', 1, fail);
+  assert.equal(nextRun.run_id, 'run-b');
+  assert.equal(nextRun.results[1].passed, false);
+});
+
+test('format-only engine failures before implementation are ungradable', () => {
+  assert.equal(ungradableEngineFailure({ status: 422, detail: 'stopped after 0 implementation passes because the engines then returned no usable output (empty or malformed answers).', engineering_record: { failed_strategies: [] }, diagnostics: { outcomes: [{ outcome: 'invalid_json' }] } }), true);
+  assert.equal(ungradableEngineFailure({ status: 422, detail: 'review rejected', engineering_record: { failed_strategies: [{ outcome: 'review_rejected' }] }, diagnostics: { outcomes: [{ outcome: 'review_rejected' }] } }), false);
 });
