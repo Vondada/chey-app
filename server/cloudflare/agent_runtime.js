@@ -192,6 +192,10 @@ function nextName(data) {
   return AGENT_NAMES.find((item) => !used.has(item)) || `Agent ${data.team.length + 1}`;
 }
 
+export function validateAgent(agent) {
+  return !!(agent && agent.id && agent.name && agent.role);
+}
+
 export function createAgent(data, spec) {
   const role = clip(spec.role, 80);
   if (!role) return { error: 'Agent role required.' };

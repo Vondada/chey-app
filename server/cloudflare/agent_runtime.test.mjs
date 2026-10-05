@@ -15,6 +15,13 @@ function state() {
   return { team: [], team_tasks: [], meetings: [], owner_context: [], office_skills: [] };
 }
 
+import { validateAgent } from './agent_runtime.js';
+
+test('validateAgent verifies agent state', () => {
+  assert.strictEqual(validateAgent({ id: '1', name: 'A', role: 'Dev' }), true);
+  assert.strictEqual(validateAgent({}), false);
+});
+
 test('CHE Office can learn and expose reusable workflows', () => {
   const data = state();
   const taught = teachOfficeSkill(data, {
