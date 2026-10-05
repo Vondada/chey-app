@@ -6,7 +6,7 @@
 
 export const EXAM_RESULTS_KEY = 'che_autonomy_exam';
 
-// Exam runs are isolated. A late job from an older run must never overwrite
+// Exam runs are isolated and monotonic. A late job from an older run must never overwrite
 // the score the owner is currently watching, and a recorded pass is monotonic.
 export function mergeExamResult(stored, runId, level, result) {
   const current = stored && typeof stored === 'object' ? stored : {};
