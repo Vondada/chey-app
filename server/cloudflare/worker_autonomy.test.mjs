@@ -1261,6 +1261,13 @@ test('foreground full autonomy exam cannot be hijacked by a checkpointed coding 
     assert.equal(rerouted.chat_only, true);
     assert.match(rerouted.message, /both arrive simultaneously/);
 
+    const hypothetical = await api('/api/change/request', {
+      request: 'Fix your code only as a hypothetical example; answer in this chat only and do not modify your code.',
+    });
+    assert.equal(hypothetical.status, 200, 'hard repository prohibition stays chat-only on the legacy route');
+    assert.equal((await hypothetical.json()).chat_only, true);
+    assert.equal(saved.get('che').jobs.length, 1, 'contradictory hypothetical wording creates no coding job');
+
     mode.value = 'good';
     dueNow(saved);
     await state.processJobs();
