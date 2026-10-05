@@ -129,3 +129,11 @@ test('context-rot defense: old turns condense to constraints, decisions, failure
   assert.match(bounded.condensed, /thing number 55/, 'the newest constraints win when over budget');
   assert.equal(estimateTokens('abcd'.repeat(10)), 10);
 });
+
+
+test('context-rot defense preserves the tail of long recent owner turns', () => {
+  const long = 'A'.repeat(2600) + ' FINAL CONSTRAINT: never deploy without review.';
+  const out = condenseHistory([{ role: 'user', content: long }, { role: 'assistant', content: 'Understood.' }], { keep: 12, maxTurnChars: 2000 });
+  assert.equal(out.turns[0].content, long, 'recent owner turns are not clipped at 2,000 characters');
+  assert.match(out.turns[0].content, /FINAL CONSTRAINT: never deploy without review\.$/);
+});

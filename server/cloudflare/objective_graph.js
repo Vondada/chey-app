@@ -16,7 +16,7 @@ const clip = (value, n) => String(value ?? '').slice(0, n);
 const fingerprint = (prompt) => String(stableHash(String(prompt || '').toLowerCase().replace(/\s+/g, ' ').trim())).slice(0, 16);
 
 /** Validates and builds a new objective. Throws on a malformed graph. */
-export function createObjective({ objective, nodes, repo_sha = '' } = {}, now = new Date().toISOString()) {
+export function createObjective({ objective, nodes, repo_sha = '', owner_authorized = false } = {}, now = new Date().toISOString()) {
   const goal = clip(objective, 1000).trim();
   if (!goal) throw new Error('An objective needs a goal.');
   if (!Array.isArray(nodes) || !nodes.length || nodes.length > MAX_NODES) throw new Error(`An objective needs 1 to ${MAX_NODES} steps.`);
@@ -60,7 +60,7 @@ export function createObjective({ objective, nodes, repo_sha = '' } = {}, now = 
     for (const n of built) if (n.depends_on.includes(id)) { indegree.set(n.id, indegree.get(n.id) - 1); if (!indegree.get(n.id)) queue.push(n.id); }
   }
   if (seen !== built.length) throw new Error('The steps contain a dependency cycle.');
-  return { id: crypto.randomUUID(), objective: goal, repo_sha: clip(repo_sha, 64), status: 'active', created_at: now, updated_at: now, nodes: built };
+  return { id: crypto.randomUUID(), objective: goal, repo_sha: clip(repo_sha, 64), owner_authorized: owner_authorized === true, status: 'active', created_at: now, updated_at: now, nodes: built };
 }
 
 /** Nodes whose prerequisites are all complete and that have not started. */
@@ -152,6 +152,14 @@ export function advanceObjectives(data, enqueue, now = new Date().toISOString())
       if (job) recordNodeOutcome(objective, node.id, job, now);
     }
     for (const node of runnableNodes(objective)) {
+      // Repository-changing objective nodes are owner-only even when an old or
+      // externally supplied objective reaches the durable queue later.
+      if (node.kind === 'self_development' && objective.owner_authorized !== true) {
+        node.status = 'failed';
+        node.failure_class = 'A';
+        node.evidence = [...node.evidence, 'self-development objective rejected: owner authorization required'].slice(-6);
+        continue;
+      }
       const upstream = objective.nodes.filter((n) => node.depends_on.includes(n.id))
         .map((n) => `- ${n.title}: ${n.output.slice(0, 1200)}`).join('\n');
       const { job } = enqueue({

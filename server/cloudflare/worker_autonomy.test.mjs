@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { replyFromNdjson } from './brain_memory.js';
-import { researchKey, isSafeToStore, rememberKnowledge } from './knowledge_cache.js';
+import { researchKey, isSafeToStore, rememberKnowledge, markPureResearch } from './knowledge_cache.js';
 
 const generated = new URL('./.worker_autonomy.test.generated.mjs', import.meta.url);
 writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
@@ -148,7 +148,7 @@ async function pairedChat(env, saved) {
     body: JSON.stringify(body),
   }), env);
   const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
-  return { state, chat: (message) => send('/api/chat', { message }, token), api: (path, body) => send(path, body, token) };
+  return { state, chat: (message, extra = {}) => send('/api/chat', { message, ...extra }, token), api: (path, body) => send(path, body, token) };
 }
 
 const GITHUB_OK = (files) => async (url) => {
@@ -1554,6 +1554,44 @@ test('objective graph through the Worker: steps run as real jobs, independent on
     assert.equal(o.nodes[2].output, 'Comparison written.');
     assert.ok(prompts.some((p) => p.includes('Compare the two notes') && p.includes('Note written.')), 'the dependent step received the verified upstream results');
     assert.match((await (await api('/api/objectives', {})).json()).spoken[0], /3 of 3 steps done/);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('research cache: informational verbs still hit with zero inference, but conversation-dependent queries do not', async () => {
+  const saved = new Map();
+  let aiCalls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { aiCalls += 1; return { response: 'fresh model answer' }; } } };
+  const { chat } = await pairedChat(env, saved);
+  const storage = storageFor(saved);
+  const question = 'research how to make sourdough';
+  await rememberKnowledge(storage, { key: researchKey(question), answer: 'Use a mature starter.', source: 'research_library', confidence: 0.95, ttl_ms: 60000 }, Date.now());
+  await markPureResearch(storage, question);
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{}', { status: 500 });
+  try {
+    const cached = replyFromNdjson(await (await chat(question)).text());
+    assert.match(cached, /mature starter/);
+    assert.equal(aiCalls, 0, 'make inside an informational research query is not misclassified as an external action');
+
+    for (const mixed of ['research how to make sourdough and email it to John', 'research how to make sourdough, then text Sam', 'can you research how to make sourdough and share it']) {
+      await rememberKnowledge(storage, { key: researchKey(mixed), answer: 'Use a mature starter.', source: 'research_library', confidence: 0.95, ttl_ms: 60000 }, Date.now());
+      await markPureResearch(storage, mixed);
+      aiCalls = 0;
+      await (await chat(mixed)).text();
+      assert.ok(aiCalls > 0, `a research turn with a chained action is never answered from cache: ${mixed}`);
+    }
+
+    aiCalls = 0;
+    const contextual = replyFromNdjson(await (await chat('research it', {
+      history: [
+        { role: 'user', content: 'We are discussing project B.' },
+        { role: 'assistant', content: 'Understood.' },
+      ],
+    })).text());
+    assert.notEqual(contextual, 'Use a mature starter.', 'a message-only cache entry cannot answer a context-dependent query');
+    assert.ok(aiCalls > 0, 'conversation context falls through to reasoning instead of the zero-inference shortcut');
   } finally {
     globalThis.fetch = original;
   }

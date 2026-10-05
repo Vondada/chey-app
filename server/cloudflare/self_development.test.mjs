@@ -1191,3 +1191,39 @@ test('tiered grounding keeps existing War Room architecture in a broad complex r
   assert.ok(out.files.find((file) => file.path === 'lib/agents/che_office_floor_screen.dart').references.includes('lib/agents/che_war_room_screen.dart'));
 });
 
+
+test('reviewer outage on the final genuine pass checkpoints the candidate and resumes review without another implementation pass', async () => {
+  let implementationCalls = 0;
+  let reviewersAvailable = false;
+  const env = {
+    CHE_GITHUB_TOKEN: 't',
+    CHE_GITHUB_REPO: 'o/r',
+    AI: {
+      run: async (_model, input) => {
+        const system = input.messages[0].content;
+        if (system.includes('Architect')) return { response: JSON.stringify({ plan: 'change banner', search_terms: ['Ready. Type or speak a request.'], paths: ['lib/main.dart'] }) };
+        if (system.includes('Source Recovery Architect')) return { response: JSON.stringify({ plan: 'same verified target', search_terms: ['Ready. Type or speak a request.'], paths: ['lib/main.dart'] }) };
+        if (system.includes('Review')) {
+          if (!reviewersAvailable) return { response: '' };
+          return { response: JSON.stringify({ approved: true, target_correct: true, notes: [], repair_instructions: '', lesson: '' }) };
+        }
+        implementationCalls++;
+        return { response: JSON.stringify({ summary: 'Ready banner', edits: [{ path: 'lib/main.dart', find: "'Ready. Type or speak a request.'", replace: "'Ready, sir.'" }] }) };
+      },
+    },
+  };
+
+  const first = await prepareSelfUpdate(env, 'make the Ready banner say Ready, sir', fakeGitHub(), memoryStore(), {
+    checkpoint: { genuine_passes: 2, fingerprints: [], failed_strategies: [], resumes: 0, round_offset: 2, faults_used: {} },
+  });
+  assert.equal(first.status, 503, first.detail);
+  assert.equal(first.checkpoint.genuine_passes, 3, 'the third implementation pass stays consumed');
+  assert.ok(first.checkpoint.pending_review?.changed_files?.length, 'the valid candidate survives the reviewer outage');
+  const callsAfterCandidate = implementationCalls;
+
+  reviewersAvailable = true;
+  const resumed = await prepareSelfUpdate(env, 'make the Ready banner say Ready, sir', fakeGitHub(), memoryStore(), { checkpoint: first.checkpoint });
+  assert.equal(resumed.status, 200, resumed.detail);
+  assert.equal(implementationCalls, callsAfterCandidate, 'resume retries review only; it does not grant a fourth implementation pass');
+  assert.match(resumed.proposal.files[0].content, /Ready, sir/);
+});
