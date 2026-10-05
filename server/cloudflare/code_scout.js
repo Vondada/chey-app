@@ -68,6 +68,14 @@ function starredScore(repo, focus = []) {
 export function repositoryImplementationIntent(message) {
   const text = String(message || '').trim();
   if (!text) return false;
+
+  // Explicit chat/evaluation instructions outrank engineering words quoted
+  // inside the question. Without this guard, an exam asking CHE to explain
+  // patch/test/PR steps can be misrouted into the real self-development lane.
+  const chatOnlyEvaluation = /\b(?:chat[- ]only|answer\s+(?:all\s+)?(?:questions?\s+)?(?:directly\s+)?in\s+(?:this\s+)?chat|evaluation,?\s+not\s+(?:a\s+)?coding)\b/i.test(text)
+    && /\b(?:do\s+not|don't|zero)\b[\s\S]{0,160}\b(?:modify|coding|self[- ]development|branch|commit|pull\s+request|\bpr\b|merge|deploy|repository\s+changes?)\b/i.test(text);
+  if (chatOnlyEvaluation) return false;
+
   if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?update\s+your\s+code\s*:/i.test(text)) return true;
 
   const implementation = /\b(?:implement|integrate|adapt|apply|install|add|upgrade|improve|rewrite|refactor|build|change|modify|patch|fix|repair|debug|test|stress[- ]?test|audit|verify)\b/i.test(text);
