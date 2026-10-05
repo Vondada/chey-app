@@ -72,18 +72,28 @@ function explicitRepositoryImplementationAuthorization(message) {
   const text = String(message || '').trim();
   if (!text) return false;
   if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?update\s+your\s+code\s*:/i.test(text)) return true;
-  return /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:please)\s+|i\s+(?:want|need)\s+you\s+to\s+)?(?:implement|integrate|adapt|apply|install|add|upgrade|rewrite|refactor|build|change|modify|patch|fix|repair)\b[\s\S]{0,220}\b(?:your|che(?:'s)?|the)\s+(?:code|codebase|repo(?:sitory)?|app|flutter\s+app|ui|interface|worker|system|workflow|architecture)\b/i.test(text);
+  // Accept ordinary owner preambles without treating explanatory phrases such
+  // as "explain how to implement" as action authorization.
+  return /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:for|in)\s+(?:this|the)\s+(?:task|change|update)[,:]?\s*)?(?:(?:please|now)\s+|go\s+ahead\s+and\s+|i\s+(?:want|need)\s+you\s+to\s+|(?:can|could|would)\s+you\s+)?(?:implement|integrate|adapt|apply|install|add|upgrade|rewrite|refactor|build|change|modify|patch|fix|repair)\b[\s\S]{0,220}\b(?:your|che(?:'s)?|the)\s+(?:code|codebase|repo(?:sitory)?|app|flutter\s+app|ui|interface|worker|system|workflow|architecture)\b/i.test(text);
+}
+
+function hardRepositoryActionProhibition(text) {
+  return /\b(?:do\s+not|don['’]t|never|without|make\s+no)\b[\s\S]{0,180}(?:(?:modify|alter|touch|edit|change)\b[\s\S]{0,60}\b(?:source\s+code|code|codebase|repo(?:sitory)?)\b|write(?:\s+any)?\s+code\b|start(?:\s+(?:a|the))?\s+(?:coding|self[- ]development)(?:\s+(?:job|request|process))?\b|create(?:\s+(?:a|the))?\s+(?:branch|commit)\b|open(?:\s+(?:a|the))?\s+(?:pr|pull\s+request)\b|repository\s+changes?\b)/i.test(text)
+    || /\b(?:no|zero)\s+(?:repository|repo|code)\s+changes?\b/i.test(text);
 }
 
 export function chatOnlyResponseIntent(message) {
   const text = String(message || '').trim();
   if (!text) return false;
-  // A real implementation command may constrain delivery ("do not deploy
-  // yet") while still authorizing the code change. That is not chat-only.
-  if (explicitRepositoryImplementationAuthorization(text)) return false;
   const responseDirective = /\b(?:answer|respond|reply)\b[\s\S]{0,80}\b(?:in\s+(?:this\s+)?chat|chat[- ]only|without\s+(?:changing|modifying|editing)\s+(?:your\s+)?code)\b/i.test(text)
     || /\bchat[- ]only\s+(?:test|exam|evaluation)\b/i.test(text)
     || /\b(?:this\s+is\s+)?(?:an?\s+)?evaluation\b[\s\S]{0,50}\bnot\s+(?:a\s+)?(?:coding|self[- ]development)\s+request\b/i.test(text);
+  // An explicit prohibition on repository/code mutation is authoritative even
+  // if the sentence also contains implementation wording as a hypothetical.
+  if (responseDirective && hardRepositoryActionProhibition(text)) return true;
+  // A real implementation command may constrain only delivery ("do not merge
+  // or deploy yet") while still authorizing the code change.
+  if (explicitRepositoryImplementationAuthorization(text)) return false;
   const prohibition = /\b(?:do\s+not|don['’]t|never|make\s+no|without)\b[\s\S]{0,220}\b(?:modify|alter|touch|changes?|edit|write(?:\s+any)?\s+code|start|create|open|merge|deploy|coding|self[- ]development|branch|commit|pull\s+request|\bpr\b|repository\s+changes?)\b/i.test(text)
     || /\b(?:no|zero)\s+(?:repository|repo|code)\s+changes?\b/i.test(text);
   return responseDirective && prohibition;
