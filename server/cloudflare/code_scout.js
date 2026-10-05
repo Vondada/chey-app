@@ -63,7 +63,7 @@ function starredScore(repo, focus = []) {
 }
 
 // Repository-library requests must be researched before they are sent to the
-// exact source-patch lane. This prevents broad GitHub jobs from being treated
+// exact source-patch lane. Keep autonomy repair/test requests on the implementation lane. This prevents broad GitHub jobs from being treated
 // like "find this on-screen text" edits.
 export function repositoryImplementationIntent(message) {
   const text = String(message || '').trim();
