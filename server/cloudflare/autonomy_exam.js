@@ -6,6 +6,29 @@
 
 export const EXAM_RESULTS_KEY = 'che_autonomy_exam';
 
+// Exam runs are isolated. A late job from an older run must never overwrite
+// the score the owner is currently watching, and a recorded pass is monotonic.
+export function mergeExamResult(stored, runId, level, result) {
+  const current = stored && typeof stored === 'object' ? stored : {};
+  const sameRun = current.run_id === runId;
+  const results = sameRun && current.results && typeof current.results === 'object' ? { ...current.results } : {};
+  const prior = results[level];
+  if (!prior?.passed || result?.passed) results[level] = result;
+  return { run_id: runId, results, updated_at: new Date().toISOString() };
+}
+
+// Empty/malformed provider output before any genuine implementation strategy
+// is infrastructure noise, not an exam grade. Let the durable job retry/fail
+// over normally instead of turning all five levels into false negatives.
+export function ungradableEngineFailure(prepared) {
+  if (!prepared || prepared.status === 200) return false;
+  const genuine = Array.isArray(prepared?.engineering_record?.failed_strategies)
+    ? prepared.engineering_record.failed_strategies.length : 0;
+  const outcomes = Array.isArray(prepared?.diagnostics?.outcomes) ? prepared.diagnostics.outcomes : [];
+  const formatOnly = outcomes.length > 0 && outcomes.every((item) => ['empty', 'invalid_json', 'engine_unavailable'].includes(String(item?.outcome || '')));
+  return genuine === 0 && (formatOnly || /0 implementation passes.*no usable output|empty or malformed/i.test(String(prepared.detail || '')));
+}
+
 const DEAD_FILES = ['assets/office3d/warroom.html', 'assets/office3d/che3d-agents.js'];
 
 export const AUTONOMY_EXAM = [
@@ -124,7 +147,8 @@ export function gradeLevel(spec, prepared) {
 }
 
 export function speakExamResults(results) {
-  const list = AUTONOMY_EXAM.map((spec) => results?.[spec.level]).filter(Boolean);
+  const scores = results?.results && typeof results.results === 'object' ? results.results : results;
+  const list = AUTONOMY_EXAM.map((spec) => scores?.[spec.level]).filter(Boolean);
   if (!list.length) return 'No autonomy exam has finished yet, sir. Say "run the autonomy exam" to start it.';
   const passed = list.filter((item) => item.passed).length;
   const lines = list.map((item) => { const why = item.failed_details?.length ? item.failed_details.slice(0, 2).join('; ') : item.failed_checks.slice(0, 2).join('; '); return `Level ${item.level}, ${item.name}: ${item.passed ? 'passed' : `failed (${why})`}${item.passes ? ` in ${item.passes} pass${item.passes === 1 ? '' : 'es'}` : ''}.`; });
