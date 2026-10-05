@@ -523,6 +523,28 @@ test('coding status and resume use the newest built-in job and stay truthful whe
   assert.equal(saved.get('che').jobs[0].retry_at, pausedRetry, 'paused job is not falsely accelerated');
 });
 
+test('coding status reports a newer OpenCode session over an older queued built-in job', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => ({ response: 'ok' }) } };
+  const { chat } = await pairedChat(env, saved);
+  const textOf = async (res) => (await res.text()).trim().split('\n').map((line) => JSON.parse(line)).filter((line) => line.type === 'delta').map((line) => line.delta).join('');
+  const data = saved.get('che');
+  const older = new Date(Date.now() - 120_000).toISOString();
+  data.jobs = [{ id: 'old-builtin', kind: 'self_development', status: 'queued', retry_at: Date.now() + 600_000, created_at: older, updated_at: older }];
+  saved.set('che', data);
+  saved.set('che_runtime_last_session', 'ocr-1234abcd');
+  saved.set('che_runtime_last_session_at', new Date().toISOString());
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => String(url).includes('/contents/') ? new Response('{}', { status: 404 }) : realFetch(url, init);
+  try {
+    assert.match(await textOf(await chat('coding status')), /OpenCode runner/);
+    saved.set('che_runtime_last_session_at', new Date(Date.now() - 600_000).toISOString());
+    assert.match(await textOf(await chat('coding status')), /latest coding job is queued/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 test('merge with a change-caused CI failure is refused and CHE starts the repair herself', async () => {
   const saved = new Map();
   const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => ({ response: 'ok' }) } };

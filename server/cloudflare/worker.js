@@ -6723,19 +6723,20 @@ export class CheState extends DurableObject {
         if (/^\s*(?:che[,:]?\s*)?(?:(?:what(?:'s| is)\s+)?(?:the|my)\s+)?(?:coding job|coding)\s+status\??\s*$|^\s*what is the status of (?:the|my) coding job\??\s*$|^\s*how(?:'s| is) (?:the|my) coding job( going)?\??\s*$/i.test(message)) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status.', { source: 'che_coding_status', ok: false });
           const current = await this.loadData();
-          // enqueueJob uses unshift, so the first match is the newest. Prefer a
-          // real active built-in job over a remembered runtime session that may
-          // belong to older work.
+          // enqueueJob uses unshift, so the first match is the newest. Report
+          // whichever is newer: the active built-in job or the runtime session
+          // (an unstamped legacy session counts as older work).
           const activeJob = current.jobs.find((item) => item.kind === 'self_development' && ['queued', 'running'].includes(item.status));
-          if (activeJob) {
-            const checkpoint = activeJob.checkpoint ? ' Its recovery checkpoint is saved.' : '';
-            return ndjsonReply(`The latest coding job is ${activeJob.status}, sir.${checkpoint}`, { source: 'che_coding_status', background_job_id: activeJob.id, background_job_status: activeJob.status });
-          }
+          const jobReply = () => ndjsonReply(`The latest coding job is ${activeJob.status}, sir.${activeJob.checkpoint ? ' Its recovery checkpoint is saved.' : ''}`, { source: 'che_coding_status', background_job_id: activeJob.id, background_job_status: activeJob.status });
           const id = await this.ctx.storage.get('che_runtime_last_session');
+          const runtimeAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
+          const runtimeIsNewer = Boolean(id) && (!activeJob || (runtimeAt && runtimeAt > String(activeJob.created_at || '')));
+          if (activeJob && !runtimeIsNewer) return jobReply();
           if (id) {
             const status = await new CheCodingRuntime(this.env).getStatus(id);
             if (status.status === 200) return ndjsonReply(speakRuntimeStatus(status), { source: 'che_coding_status', session_id: id, state: status.state || null });
           }
+          if (activeJob) return jobReply();
           const job = current.jobs.find((item) => item.kind === 'self_development');
           if (!job) return ndjsonReply('No coding job has started yet, sir.', { source: 'che_coding_status' });
           const checkpoint = job.checkpoint ? ' Its recovery checkpoint is saved.' : '';
@@ -8683,6 +8684,7 @@ export class CheState extends DurableObject {
     });
     if (started.status === 202) {
       await this.ctx.storage.put('che_runtime_last_session', started.session_id);
+      await this.ctx.storage.put('che_runtime_last_session_at', new Date().toISOString());
     }
     return started;
   }

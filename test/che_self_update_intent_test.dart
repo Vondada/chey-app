@@ -203,4 +203,15 @@ Again: ANSWER IN CHAT ONLY. ZERO REPOSITORY CHANGES. NO PR.''';
       expect(cheIsSelfUpdateRequest(q), isTrue, reason: q);
     }
   });
+
+  test('quoted prohibitions are examples, not this turn\'s instruction', () {
+    const q = 'Update your code to recognize the phrase "do not modify your code" as chat-only.';
+    expect(cheIsTerminalChatOnlyRequest(q), isFalse);
+    expect(cheIsSelfUpdateRequest(q), isTrue);
+    expect(
+      cheIsTerminalChatOnlyRequest('Update your code to recognize \u201cdo not modify your code\u201d as chat-only.'),
+      isFalse,
+    );
+    expect(cheIsTerminalChatOnlyRequest('Explain "chat-only" mode. Do not modify your code.'), isTrue);
+  });
 }

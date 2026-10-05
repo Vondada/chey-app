@@ -102,8 +102,15 @@ function hardRepositoryActionProhibition(text) {
     || /\b(?:no|zero)\s+(?:repository|repo|code)\s+changes?\b/i.test(text);
 }
 
+// Quoted text is an example under discussion ("recognize the phrase \"do not
+// modify your code\""), never this turn's own instruction.
+function withoutQuotedText(text) {
+  const stripped = text.replace(/["“”][^"“”]{0,400}["“”]/g, ' "" ').trim();
+  return /[a-z]/i.test(stripped.replace(/""/g, '')) ? stripped : text;
+}
+
 export function chatOnlyResponseIntent(message) {
-  const text = String(message || '').trim();
+  const text = withoutQuotedText(String(message || '').trim());
   if (!text) return false;
   const responseDirective = /\b(?:answer|respond|reply)\b[\s\S]{0,80}\b(?:in\s+(?:this\s+)?chat|chat[- ]only|without\s+(?:changing|modifying|editing)\s+(?:your\s+)?code)\b/i.test(text)
     || /\bchat[- ]only\s+(?:test|exam|evaluation)\b/i.test(text)

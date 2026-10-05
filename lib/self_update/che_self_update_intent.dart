@@ -160,8 +160,19 @@ bool _cheHasHardRepositoryActionProhibition(String text) {
   ).hasMatch(text);
 }
 
+// Quoted text is an example under discussion, never this turn's instruction.
+String _cheWithoutQuotedText(String text) {
+  final stripped = text
+      .replaceAll(RegExp('["\u201c\u201d][^"\u201c\u201d]{0,400}["\u201c\u201d]'), ' "" ')
+      .trim();
+  return RegExp(r'[a-z]', caseSensitive: false)
+          .hasMatch(stripped.replaceAll('""', ''))
+      ? stripped
+      : text;
+}
+
 bool cheIsTerminalChatOnlyRequest(String raw) {
-  final text = raw.trim();
+  final text = _cheWithoutQuotedText(raw.trim());
   final responseDirective = RegExp(
     r'\b(?:answer|respond|reply)\b[\s\S]{0,80}\b(?:in\s+(?:this\s+)?chat|chat[- ]only|without\s+(?:changing|modifying|editing)\s+(?:your\s+)?code)\b|\bchat[- ]only\s+(?:test|exam|evaluation)\b|\b(?:this\s+is\s+)?(?:an?\s+)?evaluation\b[\s\S]{0,50}\bnot\s+(?:a\s+)?(?:coding|self[- ]development)\s+request\b',
     caseSensitive: false,
