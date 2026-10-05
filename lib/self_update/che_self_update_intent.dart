@@ -128,7 +128,7 @@ bool _cheHasExplicitImplementationAuthorization(String text) {
 
 bool _cheHasHardRepositoryActionProhibition(String text) {
   return RegExp(
-    r"\b(?:do\s+not|don['’]t|never|without|make\s+no)\b[\s\S]{0,180}(?:(?:modify|alter|touch|edit|change)\b[\s\S]{0,60}\b(?:source\s+code|code|codebase|repo(?:sitory)?)\b|write(?:\s+any)?\s+code\b|start(?:\s+(?:a|the))?\s+(?:coding|self[- ]development)(?:\s+(?:job|request|process))?\b|create(?:\s+(?:a|the))?\s+(?:branch|commit)\b|open(?:\s+(?:a|the))?\s+(?:pr|pull\s+request)\b|repository\s+changes?\b)|\b(?:no|zero)\s+(?:repository|repo|code)\s+changes?\b",
+    r"\b(?:do\s+not|don['’]t|never|without|make\s+no)\b[\s\S]{0,180}(?:(?:modify|alter|touch|edit|changes?)\b[\s\S]{0,60}\b(?:source\s+code|code|codebase|repo(?:sitory)?)\b|write(?:\s+any)?\s+code\b|start(?:\s+(?:a|the))?\s+(?:coding|self[- ]development)(?:\s+(?:job|request|process))?\b|create(?:\s+(?:a|the))?\s+(?:branch|commit)\b|open(?:\s+(?:a|the))?\s+(?:pr|pull\s+request)\b|repository\s+changes?\b)|\b(?:no|zero)\s+(?:repository|repo|code)\s+changes?\b",
     caseSensitive: false,
   ).hasMatch(text);
 }
