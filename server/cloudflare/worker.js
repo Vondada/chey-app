@@ -120,7 +120,7 @@ import {
   listMemoryNotes,
   writeResearchMemoryNote,
 } from './research_memory.js';
-import { advanceObjectives, createObjective, replanNode, speakObjective } from './objective_graph.js';
+import { advanceObjectives, applyMissionEvent, createObjective, mutateObjective, replanNode, resolveKnownNodes, speakObjective } from './objective_graph.js';
 import { LAST_RESULTS_KEY, loadCatalog, resourceChoice, resourceIntent, resultLinks, searchCatalog, speakResults } from './resource_catalogs.js';
 import { fiveLayerIntent, LAYER_RESULTS_KEY, reasoningLayer, runReasoningLayer, speakFiveLayerResults } from './reasoning_exam.js';
 import { AUTONOMY_EXAM, EXAM_RESULTS_KEY, examIntent, examLevel, gradeLevel, mergeExamResult, speakExamResults, ungradableEngineFailure } from './autonomy_exam.js';
@@ -5540,12 +5540,12 @@ export class CheState extends DurableObject {
       if (path === '/api/objective/create') {
         let objective;
         try {
-          objective = createObjective({ objective: body.objective, nodes: body.nodes, repo_sha: body.repo_sha, owner_authorized: ownerDevice });
+          objective = createObjective({ objective: body.objective, nodes: body.nodes, repo_sha: body.repo_sha, constraints: body.constraints, owner_authorized: ownerDevice });
         } catch (error) {
           return json({ detail: String(error.message || error) }, 400);
         }
         data.objectives = [objective, ...(Array.isArray(data.objectives) ? data.objectives : []).filter((o) => o.status !== 'complete').slice(0, 9), ...(data.objectives || []).filter((o) => o.status === 'complete').slice(0, 10)];
-        const started = advanceObjectives(data, (fields) => enqueueJob(data, fields));
+        const started = await this.advanceMissions(data);
         await this.ctx.storage.put('che', data);
         await this.scheduleWork();
         return json({ objective, started, spoken: speakObjective(objective) });
@@ -5557,10 +5557,24 @@ export class CheState extends DurableObject {
         if (targetNode?.kind === 'self_development' && !ownerDevice) return json({ detail: 'Owner authorization required for self-development objectives.' }, 403);
         const out = replanNode(objective, String(body.node_id || ''), { prompt: body.prompt });
         if (!out.ok) return json({ detail: out.reason }, 409);
-        const started = advanceObjectives(data, (fields) => enqueueJob(data, fields));
+        const started = await this.advanceMissions(data);
         await this.ctx.storage.put('che', data);
         await this.scheduleWork();
         return json({ objective, started, spoken: speakObjective(objective) });
+      }
+      // New evidence or a deterministic event (CI failed, review failed,
+      // repository changed) mutates the durable graph; only the affected
+      // nodes change, and the next pass recovers them without the owner.
+      if (path === '/api/objective/mutate' || path === '/api/objective/event') {
+        if (!ownerDevice) return json({ detail: 'Owner authorization required to change an objective.' }, 403);
+        const objective = (data.objectives || []).find((o) => o.id === String(body.id || ''));
+        if (!objective) return json({ detail: 'Objective not found.' }, 404);
+        const out = path === '/api/objective/mutate' ? mutateObjective(objective, body.ops) : applyMissionEvent(objective, body.event || {});
+        if (!out.ok) return json({ detail: out.reason }, 409);
+        const started = await this.advanceMissions(data);
+        await this.ctx.storage.put('che', data);
+        await this.scheduleWork();
+        return json({ objective, started, duplicate: out.duplicate === true, spoken: speakObjective(objective) });
       }
       if (path === '/api/objectives') {
         const list = Array.isArray(data.objectives) ? data.objectives : [];
@@ -6757,6 +6771,12 @@ export class CheState extends DurableObject {
         // "CHE, do Claude's handoff": turn the latest handoff an AI left in the
         // GitHub mailbox into a real reviewed coding job. Owner-only, and each
         // handoff message id launches at most once (no duplicate job cycles).
+        // "mission status": the durable objective graphs, spoken.
+        if (/^\s*(?:che[,:]?\s*)?(?:(?:what(?:'s| is)\s+)?(?:the|my)\s+)?(?:mission|objective)s?\s+status\??\s*$|^\s*how(?:'s| is| are) (?:the|my) (?:mission|objective)s?(?: going)?\??\s*$/i.test(message)) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read mission status.', { source: 'che_mission_status', ok: false });
+          const active = ((await this.loadData()).objectives || []).filter((o) => o.status !== 'complete').slice(0, 3);
+          return ndjsonReply(active.length ? `${active.map(speakObjective).join(' ')} Sir.` : 'No mission is in progress, sir.', { source: 'che_mission_status', model_calls: 0 });
+        }
         // "coding status": short spoken summary of the latest OpenCode session.
         if (/^\s*(?:che[,:]?\s*)?(?:(?:what(?:'s| is)\s+)?(?:the|my)\s+)?(?:coding job|coding)\s+status\??\s*$|^\s*what is the status of (?:the|my) coding job\??\s*$|^\s*how(?:'s| is) (?:the|my) coding job( going)?\??\s*$/i.test(message)) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status.', { source: 'che_coding_status', ok: false });
@@ -8727,6 +8747,18 @@ export class CheState extends DurableObject {
     return started;
   }
 
+  // One deterministic pass of the mission loop. Pre-inference first: steps
+  // CHE already knows from verified memory finish with zero model calls;
+  // then sync, bounded recovery and queueing (objective_graph.js).
+  async advanceMissions(data) {
+    await resolveKnownNodes(data, async (question) => {
+      const research = await researchHit(this.ctx.storage, question).catch(() => null);
+      if (research?.answer) return { answer: research.answer, source: research.source || 'research_cache', verified_at: research.verified_at };
+      return knownAnswer(this.ctx.storage, question, { memories: data.memories || [] });
+    }).catch(() => 0);
+    return advanceObjectives(data, (fields) => enqueueJob(data, fields));
+  }
+
   async processJobs() {
     const data = await this.loadData();
     // Pausing Office autonomy never strands an update the owner explicitly
@@ -8753,7 +8785,7 @@ export class CheState extends DurableObject {
     }
     // A level the sweep above just dead-lettered still starts the next one.
     advanceExamChains(data);
-    advanceObjectives(data, (fields) => enqueueJob(data, fields));
+    await this.advanceMissions(data);
     const queued = selectReadyJobs(ownerApprovedOnly ? data.jobs.filter((job) => OWNER_APPROVED_JOB_KINDS.has(job.kind)) : data.jobs, now, 4);
     if (!queued.length) { await this.ctx.storage.put('che', data); await this.scheduleWork(); return false; }
 
@@ -8875,7 +8907,7 @@ export class CheState extends DurableObject {
     }
     advanceExamChains(fresh);
     // Objective graphs: record finished steps, start the steps they unblocked.
-    advanceObjectives(fresh, (fields) => enqueueJob(fresh, fields));
+    await this.advanceMissions(fresh);
     await this.ctx.storage.put('che', fresh);
     // Reliability ledger + quiet recovery: a job that will retry on its own
     // is recorded but not announced; final failures stay owner-visible.

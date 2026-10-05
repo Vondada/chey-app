@@ -1907,3 +1907,102 @@ test('engines busy while autonomy is paused: CHE says the request is saved and p
     globalThis.fetch = original;
   }
 });
+
+// ---- Mission acceptance through the Worker (cognitive-execution mission) ----
+
+test('A5 + A18 + A6: an engine outage mid-mission keeps the mission; the SAME node resumes after a Worker restart and the mission completes', async () => {
+  const saved = new Map();
+  let calls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => {
+    calls += 1;
+    if (calls === 1) { const e = new Error('503 Service Unavailable: engine overloaded'); e.status = 503; e.category = 'temporary_cloud_unavailable'; throw e; }
+    return { response: 'Step done.' };
+  } } };
+  const { state, api } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{}', { status: 500 });
+  try {
+    const created = await (await api('/api/objective/create', { objective: 'Two-step mission', nodes: [{ id: 'a', prompt: 'Draft the plan' }, { id: 'b', prompt: 'Review the plan', depends_on: ['a'] }] })).json();
+    assert.equal(created.started, 1);
+    await state.processJobs();
+    let data = saved.get('che');
+    let node = data.objectives[0].nodes[0];
+    const job = data.jobs.find((j) => j.id === node.job_id);
+    assert.equal(job.status, 'queued', 'the outage is retried, not failed');
+    assert.equal(node.status, 'running', 'the mission still holds the same node');
+    // Worker restart/redeploy: a brand-new Durable Object instance on the same storage.
+    const restarted = new CheState({ storage: storageFor(saved) }, env);
+    job.retry_at = 0;
+    data.jobs = data.jobs.map((j) => (j.id === job.id ? job : j));
+    saved.set('che', data);
+    await restarted.processJobs();
+    data = saved.get('che');
+    node = data.objectives[0].nodes[0];
+    assert.equal(node.status, 'complete');
+    assert.equal(node.job_id, job.id, 'the same node and job resumed; nothing restarted');
+    assert.equal(data.jobs.filter((j) => j.node_id === 'a').length, 1, 'no duplicate job for the node');
+    await restarted.processJobs();
+    assert.equal(saved.get('che').objectives[0].status, 'complete');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('A7: a mission step already answered in verified research memory finishes with zero model calls', async () => {
+  const saved = new Map();
+  let calls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { calls += 1; return { response: 'model' }; } } };
+  const { api } = await pairedChat(env, saved);
+  const question = 'What is the capital of Australia?';
+  await rememberKnowledge(storageFor(saved), { key: researchKey(question), answer: 'Canberra is the capital of Australia.', source: 'research_library', confidence: 0.9 });
+  const before = calls;
+  const res = await (await api('/api/objective/create', { objective: 'Geography', nodes: [{ id: 'q', prompt: question }] })).json();
+  assert.equal(res.started, 0, 'nothing queued');
+  const node = saved.get('che').objectives[0].nodes[0];
+  assert.equal(node.status, 'complete');
+  assert.equal(node.output, 'Canberra is the capital of Australia.');
+  assert.equal(node.verification.by, 'verified_memory');
+  assert.equal(calls, before, 'zero model calls');
+  assert.equal(saved.get('che').objectives[0].status, 'complete');
+});
+
+test('A8: a CI-failed event repairs only the affected node by itself; non-owners cannot change a mission', async () => {
+  const saved = new Map();
+  const prompts = [];
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async (_m, input) => { prompts.push(JSON.stringify(input.messages)); return { response: 'Done.' }; } } };
+  const { state, api } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{}', { status: 500 });
+  try {
+    const { objective } = await (await api('/api/objective/create', { objective: 'Fix X', nodes: [{ id: 'fix', prompt: 'Fix X' }, { id: 'note', prompt: 'Write release note' }] })).json();
+    await state.processJobs();
+    assert.equal(saved.get('che').objectives[0].status, 'complete');
+    const out = await (await api('/api/objective/event', { id: objective.id, event: { id: 'ci-77', type: 'ci_failed', node_id: 'fix', evidence: 'Worker tests failed: health route' } })).json();
+    assert.equal(out.started, 1, 'the failed node is requeued with a recovery strategy');
+    const dup = await (await api('/api/objective/event', { id: objective.id, event: { id: 'ci-77', type: 'ci_failed', node_id: 'fix', evidence: 'Worker tests failed: health route' } })).json();
+    assert.equal(dup.duplicate, true, 'the same CI event is handled once');
+    await state.processJobs();
+    const o = saved.get('che').objectives[0];
+    assert.equal(o.status, 'complete');
+    assert.equal(o.nodes.find((n) => n.id === 'fix').strategy, 'fix_reported_failure');
+    assert.ok(prompts.some((p) => p.includes('failed verification') && p.includes('health route')), 'the repair saw the CI evidence');
+    assert.equal(saved.get('che').jobs.filter((j) => j.node_id === 'note').length, 1, 'the healthy node was not re-run');
+    // Owner boundary: a non-owner tenant cannot mutate or inject events.
+    const guest = await worker.fetch(new Request('https://che.example/api/objective/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: objective.id, event: { type: 'ci_failed', node_id: 'fix' } }) }), env);
+    assert.ok([401, 403].includes(guest.status));
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('voice: "mission status" speaks the live mission graph with zero model calls', async () => {
+  const saved = new Map();
+  let calls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { calls += 1; return { response: 'x' }; } } };
+  const { chat, api } = await pairedChat(env, saved);
+  assert.match(replyFromNdjson(await (await chat('mission status')).text()), /No mission is in progress/);
+  await api('/api/objective/create', { objective: 'Fix the microphone problem', nodes: [{ id: 'a', prompt: 'find it' }, { id: 'b', prompt: 'fix it', depends_on: ['a'] }] });
+  const before = calls;
+  assert.match(replyFromNdjson(await (await chat("how's my mission going?")).text()), /Fix the microphone problem: 0 of 2 steps done, 1 running/);
+  assert.equal(calls, before);
+});
