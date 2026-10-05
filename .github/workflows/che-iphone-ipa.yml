@@ -72,7 +72,11 @@ jobs:
         env:
           SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
         run: |
-          shorebird release ios --no-codesign -- --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
+          build_number="$((GITHUB_RUN_ID * 100 + GITHUB_RUN_ATTEMPT))"
+          echo "Shorebird iOS build number: $build_number"
+          shorebird release ios --no-codesign -- \\
+            --build-number="$build_number" \\
+            --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
 
       - name: Build unsigned iPhone app (plain, not patchable)
         if: steps.shorebird.outputs.ready != 'true'

@@ -720,6 +720,73 @@ test('recovery re-fetches an already-inspected target before retrying', async ()
   assert.match(out.proposal.files[0].content, /Recovered, sir/);
 });
 
+
+test('missing exact-find anchor is refreshed before recovery search and the next proposal uses current source', async () => {
+  let mainReads = 0;
+  let recoveryCalls = 0;
+  const fetcher = async (url) => {
+    const u = String(url);
+    const ok = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (u.includes('/search/code')) return ok({ items: [] }); // recovery search deliberately cannot help
+    if (u.endsWith('/o/r')) return ok({ default_branch: 'main' });
+    if (u.includes('/git/ref/')) return ok({ object: { sha: 'abc' } });
+    if (u.includes('/git/trees/')) return ok({ tree: [{ type: 'blob', path: 'lib/main.dart' }] });
+    if (u.includes('/contents/lib/main.dart?ref=')) {
+      mainReads++;
+      const source = mainReads === 1
+        ? "class Home {\n  String status = 'Old inspected anchor';\n}\n"
+        : "class Home {\n  String status = 'Fresh current anchor';\n}\n";
+      return ok({ content: btoa(source) });
+    }
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  let engineerCalls = 0;
+  const env = {
+    CHE_GITHUB_TOKEN: 't',
+    CHE_GITHUB_REPO: 'o/r',
+    AI: {
+      run: async (_model, input) => {
+        const system = input.messages[0].content;
+        const payload = JSON.parse(input.messages[1].content);
+        if (system.includes('Source Recovery Architect')) {
+          recoveryCalls++;
+          return { response: JSON.stringify({
+            plan: 'Search elsewhere; intentionally omit the failed file.',
+            search_terms: ['unrelated recovery term'],
+            paths: [],
+          }) };
+        }
+        if (system.includes('Architect')) return { response: JSON.stringify({
+          plan: 'Inspect home status.',
+          search_terms: ['Old inspected anchor'],
+          paths: ['lib/main.dart'],
+        }) };
+        if (system.includes('Review')) return { response: JSON.stringify({
+          approved: true, target_correct: true, notes: [], repair_instructions: '',
+        }) };
+        engineerCalls++;
+        const inspected = JSON.stringify(payload.inspected || []);
+        if (inspected.includes('Fresh current anchor')) return { response: JSON.stringify({
+          summary: 'Use refreshed source',
+          edits: [{ path: 'lib/main.dart', find: "'Fresh current anchor'", replace: "'Recovered, sir.'" }],
+        }) };
+        return { response: JSON.stringify({
+          summary: 'Stale exact anchor',
+          edits: [{ path: 'lib/main.dart', find: "'Anchor that never existed'", replace: "'Recovered, sir.'" }],
+        }) };
+      },
+    },
+  };
+
+  const out = await prepareSelfUpdate(env, 'change the home status wording', fetcher, memoryStore());
+  assert.equal(out.status, 200, out.detail);
+  assert.ok(recoveryCalls >= 1, 'recovery planning still runs');
+  assert.ok(mainReads >= 2, 'the failed anchor file is fetched again before recovery discovery');
+  assert.ok(engineerCalls >= 2, 'a new implementation strategy is attempted');
+  assert.match(out.proposal.files[0].content, /Recovered, sir/);
+});
+
+
 test('no-op helpers fingerprint exact strategies and diagnose identical replacements', () => {
   const answer = { edits: [{ path: 'lib/a.dart', find: 'x', replace: 'x' }] };
   assert.equal(attemptFingerprint(answer), attemptFingerprint(structuredClone(answer)));
