@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chatOnlyResponseIntent, codeScoutIntent, inspirationUpgradeContext, listOwnerStarredRepos, repositoryImplementationIntent, reusableLicense, scoutCode, selectStudyRepos, shouldUseInspirationWorkflow, speakScout, speakStarredRepos, starredRepoIntent, studySelectionIntent } from './code_scout.js';
+import { chatOnlyResponseIntent, codeScoutIntent, currentTurnActionPolicy, inspirationUpgradeContext, listOwnerStarredRepos, repositoryImplementationIntent, reusableLicense, scoutCode, selectStudyRepos, shouldUseInspirationWorkflow, speakScout, speakStarredRepos, starredRepoIntent, studySelectionIntent } from './code_scout.js';
 
 test('intent parses code-scout phrasings', () => {
   assert.deepEqual(codeScoutIntent('find code for offline speech to text'), { need: 'offline speech to text' });
