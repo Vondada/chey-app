@@ -40,100 +40,24 @@ Then, on GitHub:
 
 ---
 
-## 2. Current position (updated by: Claude, 2026-10-04 19:10 UTC)
+## 2. Current position (updated by: Claude, 2026-10-05 22:50 UTC)
 
-**Merged to main today**, on the owner's "merge". Every merge with a Worker change carried `[worker-deploy]`.
+**Merged to main 2026-10-05** (each Worker change carried `[worker-deploy]`; Deploy CHE Worker runs succeeded):
 
-| PR | Merge SHA | What |
-|---|---|---|
-| #170 | 1af29cf | Voice: no mic on launch (hands-free opt-in), longer end-of-turn waits, fluent Kokoro prefetch, Hide-keyboard button |
-| #169 | d437935 | Agent group chats and the CHE World globe |
-| #168 | 5c93bb1 | Brain: brain-shaped living neural network, every owner chat turn becomes a memory (`brain_memory.js`), 3D orbs, inverted offline brain, callout card |
-| #167 | 60f2de1 | Trading Room live chart, voice switching, spoken price |
-| #171 | dbf370b | This live-handoff rule in AGENTS.md and CHE's self-knowledge |
+| PR | Merge SHA | What | Deploy run |
+|---|---|---|---|
+| #202 | 8aa8fcf | Free engines only; CHE never talks about engines | #127 success |
+| #198 | 08e9291 | Chat-only turns isolated from coding jobs; legacy /api/project/create returns 409 for chat-only | #128 success |
+| #194 | 13cc892 | Resource finder: curated GitHub lists searched without AI; "open number N" opens the link | #129 started (check it) |
 
-**State of main (dbf370b):**
-- `dart analyze --fatal-infos`: clean.
-- `flutter test`: 201 pass.
-- Worker `npm test`: 497 pass.
+#199 and #201 (Copilot import fixes stacked on #198) were closed as superseded.
 
-**Pending checks:**
-- The Shorebird OTA patch (`che-shorebird.yml`, `mode=patch`) was dispatched on main. Check that the run went green.
-- The Swift end-of-turn timing in #170 needs a full app build to reach the phone.
-- The Worker deploys (from `[worker-deploy]`) are not yet confirmed. Check the Deploy workflow runs.
+**Open: PR #203** `claude/che-cognitive-loop` (head 8d097bb): mission loop on the existing objective graph. It adds mutation, bounded auto-recovery by failure kind, mission events, safe file lanes, zero-call known steps, 70% condensation, and "mission status" by voice. `npm test` passes 646/646. A self code review found 8 issues; all are fixed with tests.
+- **Next:** wait for CI on #203, then merge only with the owner's go-ahead, then check its deploy.
+- **Not done:** A20 as a real production run; wrapping chat coding requests in a mission graph.
 
-**Not Claude's:** #166 (`chatgpt/autonomy-orchestration-hardening`) belongs to ChatGPT.
-
-**Since then (2026-10-04 evening):**
-- #175 merged (c8804a1): Codex review fixes for the group chats. Shorebird OTA patch dispatched.
-- ChatGPT merged #173 and #174 earlier; Claude reviewed both, no conflicts.
-- **Open PR #176** (`claude/autonomy-edit-recovery`, head 8d15113; adds deterministic code-graph discovery `traceSourceGraph` + the autonomy exam `discovery_exam.test.mjs`, 524 Worker tests pass. GROUND TRUTH: the War Room renders through lib/widgets/che_native_scene_world.dart; assets/office3d/warroom.html is DEAD, never edit it). Owner said "do NOT merge yet". It fixes the live War Room autonomy stress-test failure at its root causes:
-  - evidence packing hid the target file's real code;
-  - failed anchors gave no usable feedback;
-  - "Create the PR. Continue…" started a new job;
-  - status contradicted itself (stale receipts, a failed job beside a waiting change, stale pending changes);
-  - false "three approaches" failure wording.
-  Worker tests: 519 pass. Needs `[worker-deploy]`, then re-run the War Room stress test live.
-- **Owner's starred repos**, from his screenshots, in GitHub's order:
-  - affaan-m/ECC (agent harness: skills, instincts, memory, security);
-  - Panniantong/Agent-Reach (agent web reading/search CLI);
-  - fffaraz/awesome-cpp;
-  - papers-we-love/papers-we-love;
-  - jaywcjlove/awesome-mac;
-  - Hack-with-Github/Awesome-Hacking.
-  Verify exact names on GitHub before integrating (queue item 4).
-- **Note:** "Chase" means **CHE**.
-
-**#176 MERGED** (3dd9f0d, 2026-10-04 18:36Z) with `[worker-deploy]`. The "Deploy CHE Worker" run 37225113065 succeeded: tests, deploy and key sync.
-- **Live now:**
-  - code-graph discovery and the recovery fixes;
-  - CHE opens the PR herself after review (merging stays the owner's);
-  - the 5-level autonomy exam.
-- **Next for the owner:** say "CHE, run the autonomy exam", then "autonomy exam results".
-- **Next for any AI:** read the exam results (key `che_autonomy_exam`, or ask CHE) and fix the first failed level at its root cause.
-
-**#177 MERGED** (c7fd384, 18:53Z) with `[worker-deploy]`. Deploy run 37226167474 succeeded.
-- CHE's private code search is live: one tarball per commit, searched on the Worker, so she is no longer bound by GitHub's 10-per-minute code-search limit.
-- Exam levels now run 3 minutes apart.
-
-**#178 MERGED** (1ca27c0, 19:07Z, `[worker-deploy]`, Deploy run 37227070882; 545 Worker tests). Codex review fixes are included: the held-back test never selects or ranks, the hourly alarm is included in `scheduleWork`, re-found skills are not announced as new, and zero stars counts as live:
-- Queue item 1, the trading learning engine, as first cut. Details:
-  - 63 skills = 7 signals × 3 filters × 3 targets.
-  - Hourly, each market tests 12 of them.
-  - History is split 60/20/20 (choose, confirm, held-back test). A skill must have profit factor > 1.15 in all three parts.
-  - All skills are re-tested every 30 days. A skill that loses 5 in a row is benched.
-  - ES/NQ (MES/MNQ by name) are added once, on Stooq daily data, which is delayed. These are swing trades, not intraday.
-  - Futures trades show dollars per contract and per micro.
-  - Voice: "what have you learned about trading".
-  - LIMIT: intraday ES/NQ ("many trades a day") needs a real-time futures data feed or key.
-- Starred-repo study now reads the owner's live GitHub stars, newest 25. Study focus was added for the new stars and the trading repos (freqtrade, qlib, FinRL, nautilus_trader, Lean, TradingAgents, backtesting.py, vectorbt, ML-for-trading). Copyleft repos are learn-only.
-
-**Later on 2026-10-04 (Claude):**
-- **#179 MERGED** (d7fc484): CHE tests all 63 trading skills in one pass and re-tests them daily. A skill that loses 5 in a row is benched for 30 days.
-- **#180 MERGED** (44314e8): the trading desk (`trading_desk.js`, `broker_tradovate.js`).
-  - One spoken switch between paper, sim and live: "switch to sim/live/paper trading".
-  - ES/NQ entry alerts are said before CHE's next reply.
-  - Sim: CHE places the entries herself. Live: she places them only after the owner says "take the trade".
-  - Live orders go only to the account the owner named: "list my trading accounts", then "use account N".
-  - Orders are a limit entry with stop and target attached (placeoso). Each alert is claimed before the broker call, so it can't be placed twice.
-  - Sign-in is Tradovate OAuth, so the password never reaches CHE.
-  - **Owner setup still needed:** Tradovate must issue OAuth app credentials for the redirect URI `<worker>/broker/tradovate/callback`. They go in the Worker secrets CHE_TRADOVATE_OAUTH_CLIENT_ID and CHE_TRADOVATE_OAUTH_CLIENT_SECRET. Then he says "connect NinjaTrader" and tests in sim first.
-  - Not yet run against Tradovate's real servers.
-- **Owner's platforms:** NinjaTrader and Tradovate. Funded firm: FundYourEdge. A search result says FYE allows automated strategies; this is unverified, and the owner should confirm. Tradesea has no public order API, so it is alerts only.
-
-**REPO INTEGRATION MISSION (Claude, 2026-10-04 ~23:55 UTC):** the owner asked to study and integrate ~30 repos into CHE. The full plan, per-repo status and the exact next step are in `mailbox/briefs/2026-10-04-repo-integration-plan.md`. Continue it there.
-- Also merged today: #181 (exam level 3 contract), #185 (exam levels back to back).
-
-**SUPER-AI CONTROL PLANE: MERGED (Claude, 2026-10-05 ~06:00 UTC).** PR #193 was squash-merged on the owner's "Merge and deploy" as main b495411, from the exact head 84540b7.
-- Analyze CI passed on 84540b7, and 603 Worker tests passed.
-- The Deploy CHE Worker run #124 on b495411 succeeded: tests, a tagged wrangler deploy, and the key sync.
-- Not verified: production `/health` and a smoke test. The Claude sandbox's network policy blocks workers.dev. Next AI, or the owner: open https://chey-app.henryjavoni.workers.dev/health and confirm the version tag b495411d3629.
-- Not reviewed: the Codex re-review on 84540b7 had not arrived when the owner ordered the merge. If it posts findings later, fix them in a new PR.
-- Next proof steps: the owner says "run the five layer exam" and, separately, "reliability report".
-- The repo-integration mission (paused for #193) is now NEXT. A WIP resource finder is on branch `claude/che-repo-integration`, not wired in yet; the plan is in `2026-10-04-repo-integration-plan.md`.
-
-**Owner answers still pending (don't guess):**
-- The exact NinjaTrader login error text.
+**Not verified:** production `/health`. The sandbox proxy blocks workers.dev.
+**Codex:** at its review usage limit as of 2026-10-05 22:10 UTC.
 
 ## 3. Queue: the owner's open requests, in order
 
