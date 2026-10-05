@@ -6702,21 +6702,34 @@ export class CheState extends DurableObject {
         // handoff message id launches at most once (no duplicate job cycles).
         // "coding status": short spoken summary of the latest OpenCode session.
         if (/^\s*(?:che[,:]?\s*)?(?:(?:what(?:'s| is)\s+)?(?:the|my)\s+)?(?:coding job|coding)\s+status\??\s*$|^\s*what is the status of (?:the|my) coding job\??\s*$|^\s*how(?:'s| is) (?:the|my) coding job( going)?\??\s*$/i.test(message)) {
-          const id = await this.ctx.storage.get('che_runtime_last_session');
-          if (!id) {
-            const current = await this.loadData();
-            const job = [...current.jobs].reverse().find((item) => item.kind === 'self_development');
-            if (!job) return ndjsonReply('No coding job has started yet, sir.', { source: 'che_coding_status' });
-            const checkpoint = job.checkpoint ? ' Its recovery checkpoint is saved.' : '';
-            return ndjsonReply(`The latest coding job is ${job.status}, sir.${checkpoint}`, { source: 'che_coding_status', background_job_id: job.id, background_job_status: job.status });
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status.', { source: 'che_coding_status', ok: false });
+          const current = await this.loadData();
+          // enqueueJob uses unshift, so the first match is the newest. Prefer a
+          // real active built-in job over a remembered runtime session that may
+          // belong to older work.
+          const activeJob = current.jobs.find((item) => item.kind === 'self_development' && ['queued', 'running'].includes(item.status));
+          if (activeJob) {
+            const checkpoint = activeJob.checkpoint ? ' Its recovery checkpoint is saved.' : '';
+            return ndjsonReply(`The latest coding job is ${activeJob.status}, sir.${checkpoint}`, { source: 'che_coding_status', background_job_id: activeJob.id, background_job_status: activeJob.status });
           }
-          const status = await new CheCodingRuntime(this.env).getStatus(id);
-          return ndjsonReply(status.status === 200 ? speakRuntimeStatus(status) : String(status.detail || 'I could not read the coding job status.'), { source: 'che_coding_status', session_id: id, state: status.state || null });
+          const id = await this.ctx.storage.get('che_runtime_last_session');
+          if (id) {
+            const status = await new CheCodingRuntime(this.env).getStatus(id);
+            if (status.status === 200) return ndjsonReply(speakRuntimeStatus(status), { source: 'che_coding_status', session_id: id, state: status.state || null });
+          }
+          const job = current.jobs.find((item) => item.kind === 'self_development');
+          if (!job) return ndjsonReply('No coding job has started yet, sir.', { source: 'che_coding_status' });
+          const checkpoint = job.checkpoint ? ' Its recovery checkpoint is saved.' : '';
+          return ndjsonReply(`The latest coding job is ${job.status}, sir.${checkpoint}`, { source: 'che_coding_status', background_job_id: job.id, background_job_status: job.status });
         }
         if (/^\s*(?:che[,:]?\s*)?(?:please\s+)?resume (?:the|my|that) coding job[.!]?\s*$/i.test(message)) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can resume coding jobs.', { source: 'che_coding_resume', ok: false });
           const current = await this.loadData();
-          const job = [...current.jobs].reverse().find((item) => item.kind === 'self_development' && item.status === 'queued');
+          const job = current.jobs.find((item) => item.kind === 'self_development' && item.status === 'queued');
           if (!job) return ndjsonReply('There is no saved coding job waiting to resume, sir.', { source: 'che_coding_resume', ok: false });
+          if (current.autonomy === false) {
+            return ndjsonReply(`That coding job is saved, sir, but autonomy is paused, so I did not change its retry time.${job.checkpoint ? ' Its recovery checkpoint is still saved.' : ''}`, { source: 'che_coding_resume', ok: false, background_job_id: job.id, background_job_status: job.status });
+          }
           job.retry_at = Date.now();
           await this.ctx.storage.put('che', current);
           await this.scheduleWork();
