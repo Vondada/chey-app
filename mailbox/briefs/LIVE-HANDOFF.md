@@ -124,6 +124,11 @@ Then, on GitHub:
 **REPO INTEGRATION MISSION (Claude, 2026-10-04 ~23:55 UTC):** the owner asked to study and integrate ~30 repos into CHE. The full plan, per-repo status and the exact next step are in `mailbox/briefs/2026-10-04-repo-integration-plan.md`. Continue it there.
 - Also merged today: #181 (exam level 3 contract), #185 (exam levels back to back).
 
+**SUPER-AI CONTROL PLANE (Claude, 2026-10-05 ~04:50 UTC):** the owner asked Claude to finish ChatGPT's PR #193 (`chatgpt/super-ai-control-plane`) and authorized the merge once it is genuinely complete, green and reviewed.
+- Pushed c500630: governor wired into routing, memory-first bypass, 70% drain, checkpointed recovery, reliability ledger. 581 Worker tests pass locally.
+- Waiting on: CI on c500630, Codex review, and an independent review agent. After that: fix the findings, merge with the expected SHA and `[worker-deploy]`, verify the deploy run, `/health` and a smoke test.
+- The repo-integration mission is PAUSED for this. A WIP resource finder is on branch `claude/che-repo-integration`, not wired in yet; the plan is in `2026-10-04-repo-integration-plan.md`.
+
 **Owner answers still pending (don't guess):**
 - The exact NinjaTrader login error text.
 

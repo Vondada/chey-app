@@ -61,3 +61,12 @@ The owner asked: "Read and study all of these repositories, then integrate them 
 - 2026-10-04 23:59 UTC: #185 merged (faster exam).
 - Repos studied (READMEs, licenses, trees). This plan written.
 - Next: Phase 1 on branch `claude/che-repo-integration`.
+
+## Update 2026-10-05 ~04:50 UTC
+- PAUSED for the owner's Super-AI control plane (#193).
+- Phase 1 WIP is committed on `claude/che-repo-integration`: `server/cloudflare/resource_catalogs.js`. It has the parser, search and spoken answers, verified by hand on the real lists (public-apis: 2050 entries, awesome-mcp-servers: 4101, awesome-mac: 1349, awesome-cpp: 1393, free-for-dev: 1320, free-programming-books: 838).
+- **Next step:**
+  1. Fix `resourceIntent` for "security learning resources for X" (it currently returns null).
+  2. Add tests.
+  3. Wire `resourceIntent` into the `/api/chat` intents before AI, using `loadCatalog(this.ctx.storage, id)`.
+  4. Open a PR with `[worker-deploy]`.
