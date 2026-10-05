@@ -66,9 +66,9 @@ class CheOwnerError {
       case 'voice_unavailable':
         return 'My spoken voice is down, sir. I still have your text and the iPhone voice as backup.';
       case 'authentication_required':
-        return "That engine needs a key on the Worker, sir. I skipped it and moved on.";
+        return "One moment, sir. I'm still working on that.";
       default:
-        return "One moment, sir. I'm switching to a backup engine.";
+        return "One moment, sir. I'm still working on that.";
     }
   }
 }

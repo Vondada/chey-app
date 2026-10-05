@@ -29,7 +29,7 @@ import { fineTuneDisclosure, setProviderPermission } from './privacy_policy.js';
 import {
   accountsView, approveProviderPlugin, authorizeProvider, ensureAiState, proposeProviderPlugin,
 } from './provider_registry.js';
-import { discoverKeylessModels, engineStatus, routedEnv } from './ai_router.js';
+import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv } from './ai_router.js';
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
@@ -745,7 +745,8 @@ async function voiceSynthesisResponse(env, text) {
 
   // Fallback 2: OpenAI neural voice using the key stored only on the server.
   // The iPhone never receives the standard API key.
-  if (env.CHE_OPENAI_API_KEY) {
+  // Paid voice stays off unless the owner turned paid AI on (CHE_ALLOW_PAID_AI).
+  if (env.CHE_OPENAI_API_KEY && paidAllowed(env)) {
     if (voiceProviderCooling('openai')) {
       voiceFailures.push('openai: cooling down after quota');
     } else {
@@ -1132,7 +1133,7 @@ export function selectReadyJobs(jobs, now = Date.now(), limit = 4) {
   }
   return selected;
 }
-const BUSY_REPLY = "I'm having trouble reaching my cloud engines, sir. I saved this as a background job and I'll finish it when a healthy engine returns.";
+const BUSY_REPLY = "I'm on it, sir. I'll have your full answer for you shortly.";
 const WORK_POLICY = 'ACCESSIBILITY: support typing OR voice, numbered options, large text for all speech, visible status plus distinct haptics. Never depend on hearing or sight alone. AUTONOMY: finish authorized queued and multi-step work; stand by pauses it and Chay, resume restarts it. OWNER PERMISSION (Sep 28, 2026): CHE has the owner’s full standing permission to act, including sending messages and emails; ask first only when something costs money (paying, buying, ordering, subscribing, transferring), before deleting or removing anything, or when a decision is genuinely the owner’s. App-specific permission is still required before acting in an app. Report what was done afterward. HONESTY: never claim completion without a real result. Busy work is saved and retried with exponential backoff (5, 10, then 20 minutes; at most 3 retries) and then moved to a terminal dead-letter state; report exhaustion honestly. Use available fallback engines, and say which capability failed only after all options fail. LINKS (permanent rule): when you send the owner to a website, page, sign-up, dashboard, documentation or GitHub item, include its full https:// address once, only if you know it is real (never guess one); CHE’s chat turns it into an “Open …” action that opens inside CHE, and he can say “open it” or “open link 2”. Name the destination (“Open Supabase”), never tell him to copy or paste a URL, and do not add links that are not needed.';
 
 function ragReference(query, vectorMemoryContext, maxChars = 9000) {
@@ -1192,6 +1193,8 @@ function mediaUnderstandingPrompt(mediaType, query) {
 }
 
 function openAiMediaKey(env) {
+  // Owner rule: free engines only, unless paid AI is turned on on purpose.
+  if (!paidAllowed(env)) return '';
   return env.OPENAI_API_KEY || env.CHE_OPENAI_API_KEY || '';
 }
 
@@ -2664,7 +2667,7 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
       if (queued?.job) {
         return json({
           message: queued.deduplicated
-            ? 'That coding job is already saved and will continue automatically when my engines recover, sir. Nothing was changed yet.'
+            ? 'That coding job is already saved and I am continuing it, sir. Nothing was changed yet.'
             : ownerEngineeringMessage(FAILURE_CLASS.TEMPORARY_EXTERNAL),
           background_job_id: queued.job.id,
           background_job_status: queued.job.status,
@@ -2683,7 +2686,7 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
     // Nothing was queued here (a recovery run, or saving failed): never say
     // the job was saved.
     const failedText = prepared.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL
-      ? 'My AI engines gave no usable answer just now, sir. Nothing was changed and nothing was saved; ask me again in a few minutes.'
+      ? 'I could not finish that just now, sir. Nothing was changed and nothing was saved; ask me again in a few minutes.'
       : stripOwnerHomework(prepared.owner_message || ownerEngineeringMessage(prepared.failure_class || FAILURE_CLASS.INTERNAL))
         || ownerEngineeringMessage(FAILURE_CLASS.INTERNAL);
     // One consistent state: this attempt failed, AND an earlier reviewed
@@ -3601,7 +3604,7 @@ export class CheState extends DurableObject {
           from: 'che',
           to: sender,
           text: retryable
-            ? 'I received your Flagstaff message. My reply engine hit a temporary problem, so I saved it and I am retrying automatically.'
+            ? 'I received your Flagstaff message. I saved it and I am finishing my reply.'
             : 'I received your Flagstaff message, but I could not complete the detailed reply after repeated attempts. The owner can see this failure and the message is preserved.',
           reply_to: id,
         }, this.env).catch(() => ({ status: 502 }));
@@ -4051,8 +4054,8 @@ export class CheState extends DurableObject {
       }
 
       if (request.method === 'POST' && path === '/api/live/token') {
-        if (!this.env.CHE_OPENAI_API_KEY) {
-          return json({ detail: 'OpenAI Realtime voice needs CHE_OPENAI_API_KEY configured as a CHE server secret.' }, 503);
+        if (!this.env.CHE_OPENAI_API_KEY || !paidAllowed(this.env)) {
+          return json({ detail: 'Live voice is not available right now, sir. I am listening the normal way.' }, 503);
         }
 
         const memories = Array.isArray(data.memories) ? data.memories.slice(-30) : [];
@@ -6126,7 +6129,7 @@ export class CheState extends DurableObject {
             ? { previousHtml: siteEditTarget.html, change: siteEdit.change }
             : { brief: siteBuild.brief }, model).catch((error) => ({ html: '', problems: [String(error?.message || error).slice(0, 200)] }));
           if (!written.html) {
-            return ndjsonReply(`I could not finish ${siteEditTarget ? 'that change to the site' : 'the site'}, sir: my engines did not return a complete page. Nothing was published${siteEditTarget ? ', and the current version is unchanged' : ''}. Ask me again and I will retry.`, { source: 'che_site_builder', ok: false });
+            return ndjsonReply(`I could not finish ${siteEditTarget ? 'that change to the site' : 'the site'}, sir: I did not get a complete page. Nothing was published${siteEditTarget ? ', and the current version is unchanged' : ''}. Ask me again and I will retry.`, { source: 'che_site_builder', ok: false });
           }
           const record = await saveSite(this.ctx.storage, siteEditTarget
             ? { id: siteEditTarget.id, html: written.html, change: siteEdit.change }
@@ -7645,6 +7648,12 @@ export class CheState extends DurableObject {
             if (rescued) answer = rescue;
           } catch (_) { /* fall through to the saved job */ }
         }
+        // No engine answered, but research CHE already gathered for this
+        // turn is a real answer: give it rather than a "busy" message.
+        if (!answer && research?.summary && String(research.summary).trim().length > 40) {
+          const sources = Array.isArray(research.sources) && research.sources.length ? `\n\nSources: ${research.sources.slice(0, 3).join(', ')}` : '';
+          answer = { response: `${String(research.summary).trim()}${sources}` };
+        }
         if (!answer) {
           const error = new Error('all engines busy');
           const fresh = await this.loadData();
@@ -7796,7 +7805,7 @@ export class CheState extends DurableObject {
       console.error('CHE request failed', error?.name, error?.message, error?.diagnostic || '');
       const safe = error?.owner_safe
         ? String(error.message || '').slice(0, 220)
-        : "I'm having trouble reaching my cloud engines, sir. I'm switching to another route.";
+        : "One moment, sir. I'm still working on that.";
       return json({
         detail: safe,
         category: error?.category || 'temporary_cloud_unavailable',

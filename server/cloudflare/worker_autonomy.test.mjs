@@ -13,7 +13,7 @@ writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), '
 ), 'utf8');
 let mod;
 try { mod = await import(generated.href + '?t=' + Date.now()); } finally { try { unlinkSync(generated); } catch (_) {} }
-const { default: worker, CheState, busyError, enqueueJob, selfUpdateChatIntent, isExistingChangeCommand, selectReadyJobs, shouldHandleSelfUpdateAction, MAX_JOB_ATTEMPTS, MAX_JOB_RETRIES } = mod;
+const { default: worker, openAiVision, CheState, busyError, enqueueJob, selfUpdateChatIntent, isExistingChangeCommand, selectReadyJobs, shouldHandleSelfUpdateAction, MAX_JOB_ATTEMPTS, MAX_JOB_RETRIES } = mod;
 
 function storageFor(saved, alarms = []) {
   return {
@@ -178,7 +178,8 @@ test('chat: engines down during a coding request → saved background job and a 
     const text = (await res.text()).trim().split('\n').map((l) => JSON.parse(l)).filter((l) => l.type === 'delta').map((l) => l.delta).join('');
     assert.equal(res.status, 200);
     assert.doesNotMatch(text, /429|503|groq|gemini|diagnostic|token|provide the source|filename/i);
-    assert.match(text, /saved the coding job|continue/i);
+    assert.match(text, /saved that coding job|continuing/i);
+    assert.doesNotMatch(text, /engine/i, 'no engine talk to the owner');
     const job = saved.get('che').jobs.find((j) => j.kind === 'self_development');
     assert.ok(job, 'coding job checkpointed');
     // Asking again does not create a second job.
@@ -1592,6 +1593,47 @@ test('research cache: informational verbs still hit with zero inference, but con
     })).text());
     assert.notEqual(contextual, 'Use a mature starter.', 'a message-only cache entry cannot answer a context-dependent query');
     assert.ok(aiCalls > 0, 'conversation context falls through to reasoning instead of the zero-inference shortcut');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('free engines only: a stored OpenAI key is never used for vision, voice or live voice unless paid AI is turned on', async () => {
+  const calls = [];
+  const fetcher = async (url) => { calls.push(String(url)); return new Response('{}', { status: 200 }); };
+  const out = await openAiVision({ OPENAI_API_KEY: 'sk-test' }, { name: 'a.png', mediaType: 'image/png', base64: 'AAAA' }, 'what is this', fetcher);
+  assert.ok(out.error, 'no paid vision call');
+  assert.equal(calls.length, 0);
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_OPENAI_API_KEY: 'sk-test', AI: { run: async () => ({ response: 'ok' }) } };
+  const { api } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = async (url) => { seen.push(String(url)); return new Response('{}', { status: 200 }); };
+  try {
+    const live = await api('/api/live/token', {});
+    assert.equal(live.status, 503);
+    assert.doesNotMatch(JSON.stringify(await live.json()), /openai|engine|key/i);
+    assert.ok(!seen.some((u) => u.includes('api.openai.com')), 'no paid live-voice session was created');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('engines all busy: CHE answers from research she already has, with no word about engines', async () => {
+  const saved = new Map();
+  const busy = () => { const e = new Error('all engines busy'); e.category = 'temporary_cloud_unavailable'; e.status = 503; throw e; };
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => busy() } };
+  const { chat } = await pairedChat(env, saved);
+  const question = 'research the boiling point of water at sea level';
+  const now = Date.now();
+  saved.set(`kc:${researchKey(question)}`, { key: researchKey(question), answer: 'Water boils at 100 degrees Celsius (212 Fahrenheit) at sea level.', source: 'research_library', sources: ['https://en.wikipedia.org/wiki/Boiling_point'], limitation: '', confidence: 0.85, verified_at: now - 60_000, expires_at: now + 3600_000, volatile: false });
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{}', { status: 503 });
+  try {
+    const res = await chat(`${question} and explain why`);
+    const text = res.status === 200 ? replyFromNdjson(await res.text()) : JSON.stringify(await res.json());
+    assert.doesNotMatch(text, /engine|route|provider|switching/i, 'never about engines');
   } finally {
     globalThis.fetch = original;
   }

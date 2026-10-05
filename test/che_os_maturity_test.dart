@@ -23,6 +23,7 @@ void main() {
     );
     expect(error.message.toLowerCase(), isNot(contains('all ai engines failed')));
     expect(error.message.toLowerCase(), isNot(contains('enospc')));
+    expect(error.message.toLowerCase(), isNot(contains('engine')));
     expect(error.category, 'temporary_cloud_unavailable');
   });
 
