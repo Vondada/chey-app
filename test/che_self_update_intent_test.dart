@@ -81,6 +81,20 @@ Again: ANSWER IN CHAT ONLY. ZERO REPOSITORY CHANGES. NO PR.''';
     expect(cheIsSelfUpdateRequest(request), isFalse);
   });
 
+  test('natural implementation preambles still authorize code before a deploy hold', () {
+    const request =
+        'For this task, implement this in your app and answer in this chat when finished; do not deploy yet.';
+    expect(cheIsTerminalChatOnlyRequest(request), isFalse);
+    expect(cheIsSelfUpdateRequest(request), isTrue);
+  });
+
+  test('hard repository prohibition wins over hypothetical implementation wording', () {
+    const request =
+        'Fix your code only as a hypothetical example; answer in this chat only and do not modify your code.';
+    expect(cheIsTerminalChatOnlyRequest(request), isTrue);
+    expect(cheIsSelfUpdateRequest(request), isFalse);
+  });
+
   test('update your code routes to controlled self-update', () {
     expect(cheIsSelfUpdateRequest('CHE, update your code so voice responds faster'), isTrue);
     expect(cheIsSelfUpdateRequest('update yourself'), isTrue);
