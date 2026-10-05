@@ -67,6 +67,13 @@ Again: ANSWER IN CHAT ONLY. ZERO REPOSITORY CHANGES. NO PR.''';
     expect(cheIsSelfUpdateRequest(autonomyExam), isFalse);
   });
 
+  test('plural hard code prohibition outranks implementation wording', () {
+    const request =
+        'Fix your code only as a hypothetical example; answer in this chat only and do not make any changes to your code.';
+    expect(cheIsTerminalChatOnlyRequest(request), isTrue);
+    expect(cheIsSelfUpdateRequest(request), isFalse);
+  });
+
   test('explicit implementation authorization outranks a delivery-only hold', () {
     const request =
         'Implement this in your app and answer in this chat when finished; do not deploy yet.';
