@@ -75,7 +75,7 @@ export function chatOnlyResponseIntent(message) {
   const responseDirective = /\b(?:answer|respond|reply)\b[\s\S]{0,80}\b(?:in\s+(?:this\s+)?chat|chat[- ]only|without\s+(?:changing|modifying|editing)\s+(?:your\s+)?code)\b/i.test(text)
     || /\bchat[- ]only\s+(?:test|exam|evaluation)\b/i.test(text)
     || /\b(?:this\s+is\s+)?(?:an?\s+)?evaluation\b[\s\S]{0,50}\bnot\s+(?:a\s+)?(?:coding|self[- ]development)\s+request\b/i.test(text);
-  const prohibition = /\b(?:do\s+not|don['’]t|never|make\s+no|without)\b[\s\S]{0,220}\b(?:modify|alter|touch|changes?|edit|start|create|open|merge|deploy|coding|self[- ]development|branch|commit|pull\s+request|\bpr\b|repository\s+changes?)\b/i.test(text)
+  const prohibition = /\b(?:do\s+not|don['’]t|never|make\s+no|without)\b[\s\S]{0,220}\b(?:modify|alter|touch|changes?|edit|write(?:\s+any)?\s+code|start|create|open|merge|deploy|coding|self[- ]development|branch|commit|pull\s+request|\bpr\b|repository\s+changes?)\b/i.test(text)
     || /\b(?:no|zero)\s+(?:repository|repo|code)\s+changes?\b/i.test(text);
   return responseDirective && prohibition;
 }
