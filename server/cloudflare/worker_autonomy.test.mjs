@@ -1558,3 +1558,29 @@ test('objective graph through the Worker: steps run as real jobs, independent on
     globalThis.fetch = original;
   }
 });
+
+test('resource finder through chat: answered from the real list with zero AI calls; no match falls through to the normal path', async () => {
+  const saved = new Map();
+  let aiCalls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { aiCalls += 1; return { response: 'model reply' }; } } };
+  const { chat } = await pairedChat(env, saved);
+  const { _clearCatalogCache } = await import('./resource_catalogs.js');
+  _clearCatalogCache();
+  const original = globalThis.fetch;
+  const fetched = [];
+  globalThis.fetch = async (url) => {
+    fetched.push(String(url));
+    if (String(url).includes('raw.githubusercontent.com/punkpeye/awesome-mcp-servers')) return new Response('## Productivity\n- [notion-mcp](https://github.com/x/notion-mcp) - MCP server for Notion pages and databases\n', { status: 200 });
+    return new Response('{}', { status: 500 });
+  };
+  try {
+    const reply = replyFromNdjson(await (await chat('is there an MCP server for Notion')).text());
+    assert.match(reply, /From awesome-mcp-servers, 1 MCP server match for "notion", sir: 1, notion-mcp/);
+    assert.equal(aiCalls, 0);
+    assert.ok(fetched.every((u) => u.includes('raw.githubusercontent.com')), 'only the list itself was read');
+    await (await chat('is there an MCP server for Zzyzx')).text();
+    assert.ok(aiCalls > 0 || fetched.some((u) => !u.includes('raw.githubusercontent.com')), 'no match: the normal path answers instead of a dead end');
+  } finally {
+    globalThis.fetch = original;
+  }
+});

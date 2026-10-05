@@ -121,6 +121,7 @@ import {
   writeResearchMemoryNote,
 } from './research_memory.js';
 import { advanceObjectives, createObjective, replanNode, speakObjective } from './objective_graph.js';
+import { loadCatalog, resourceIntent, searchCatalog, speakResults } from './resource_catalogs.js';
 import { fiveLayerIntent, LAYER_RESULTS_KEY, reasoningLayer, runReasoningLayer, speakFiveLayerResults } from './reasoning_exam.js';
 import { AUTONOMY_EXAM, EXAM_RESULTS_KEY, examIntent, examLevel, gradeLevel, mergeExamResult, speakExamResults, ungradableEngineFailure } from './autonomy_exam.js';
 import { conversationMemoryCount, listConversationMemories, recallMemories, recordConversationMemory, rememberThread, rememberedText, replyFromNdjson, syncWarRoomMemories } from './brain_memory.js';
@@ -6551,6 +6552,19 @@ export class CheState extends DurableObject {
             const sources = researched.sources?.length ? `\n\nSources: ${researched.sources.join(', ')}` : '';
             const limit = researched.limitation ? `\n\n${researched.limitation}` : '';
             return ndjsonReply(`${researched.answer}${limit}${sources}`, { source: 'che_research_cache', model_calls: 0, verified_at: new Date(researched.verified_at).toISOString() });
+          }
+        }
+        // RESOURCE FINDER: "find a free API for weather", "is there an MCP
+        // server for Notion" are answered from the curated GitHub lists
+        // themselves (searched deterministically, no AI). With no match, the
+        // normal path answers instead.
+        const resource = ownerDevice && !body.attachment ? resourceIntent(message) : null;
+        if (resource) {
+          const loaded = await loadCatalog(this.ctx.storage, resource.catalog).catch((error) => ({ error: String(error?.message || error) }));
+          const results = loaded.error ? [] : searchCatalog(loaded.entries, resource.query);
+          if (results.length) {
+            await recordReliability(this.ctx.storage, { kind: 'retrieval', workflow: 'research', outcome: 'completed', tokens_saved: 1500 });
+            return ndjsonReply(speakResults(resource.catalog, resource.query, results, loaded), { source: 'che_resource_finder', model_calls: 0, catalog: resource.catalog });
           }
         }
         if (ownerDevice && reliabilityIntent(message)) {

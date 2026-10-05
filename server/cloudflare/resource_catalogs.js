@@ -15,7 +15,8 @@ export const CATALOGS = {
 };
 
 const TTL_MS = 7 * 86400000;
-const CHUNK = 1500;
+// Durable Object values are limited to 128 KiB: chunk by serialized size.
+const CHUNK_BYTES = 100_000;
 const MEMORY = new Map(); // id -> { at, entries } while the Durable Object is warm
 
 const LINK = /\[([^\]]{1,120})\]\((https?:\/\/[^)\s]+)\)/;
@@ -53,6 +54,20 @@ export function parseCatalog(markdown) {
   return entries;
 }
 
+export function chunkBySize(entries, maxBytes = CHUNK_BYTES) {
+  const chunks = [];
+  let current = [];
+  let size = 2;
+  for (const entry of entries) {
+    const bytes = new TextEncoder().encode(JSON.stringify(entry)).length + 1;
+    if (current.length && size + bytes > maxBytes) { chunks.push(current); current = []; size = 2; }
+    current.push(entry);
+    size += bytes;
+  }
+  if (current.length) chunks.push(current);
+  return chunks;
+}
+
 async function fetchCatalog(id, fetcher) {
   const spec = CATALOGS[id];
   const entries = [];
@@ -84,9 +99,9 @@ export async function loadCatalog(storage, id, { fetcher = fetch, now = Date.now
     const loaded = { at: now, entries };
     MEMORY.set(id, loaded);
     if (storage?.put) {
-      const chunks = Math.ceil(entries.length / CHUNK);
-      for (let i = 0; i < chunks; i += 1) await storage.put(`catalog:${id}:${i}`, entries.slice(i * CHUNK, (i + 1) * CHUNK));
-      await storage.put(`catalog_meta:${id}`, { at: now, chunks, count: entries.length });
+      const chunks = chunkBySize(entries);
+      for (let i = 0; i < chunks.length; i += 1) await storage.put(`catalog:${id}:${i}`, chunks[i]);
+      await storage.put(`catalog_meta:${id}`, { at: now, chunks: chunks.length, count: entries.length });
     }
     return loaded;
   } catch (error) {
@@ -140,8 +155,12 @@ export function searchCatalog(entries, query, limit = 5) {
 // "a C++ library for JSON", "free book on Rust", "security learning resources".
 export function resourceIntent(message) {
   const text = String(message || '').toLowerCase();
-  const asks = /\b(?:find|look\s*up|search|is there|are there|recommend|suggest|any|what(?:'s| is| are)?\s+(?:a |the )?(?:good|best)|give me|show me|list|need|want)\b/.test(text);
+  const asks = /\b(?:find|look\s*up|search|is there|are there|recommend|suggest|any|what(?:'s| is| are)?\s+(?:a |the )?(?:good|best)|give me|show me|list|need|want)\b/.test(text)
+    // A bare request such as "security learning resources for web apps".
+    || /\b(?:best|top)\b/.test(text) || /\b(?:resources?|librar(?:y|ies)|apis?|books?|apps?|servers?)\s+(?:for|on|about)\b/.test(text) || /^(?:free|public)\s/.test(text.trim());
   if (!asks) return null;
+  // A problem report ("the app for my Mac crashed") is not a shopping request.
+  if (/\b(?:crash(?:ed|es|ing)?|broke(?:n)?|not working|doesn'?t work|won'?t|error|bug|fix|stuck|frozen)\b/.test(text)) return null;
   const pick = (id) => ({ catalog: id, query: text });
   if (/\bmcp\b/.test(text)) return pick('mcp');
   if (/\b(?:mac|macos|osx)\s+(?:apps?|software|tools?|utilit(?:y|ies))\b|\bapps?\s+for\s+(?:my\s+)?mac\b/.test(text)) return pick('mac');
