@@ -10,14 +10,17 @@ import { routeText } from './ai_router.js';
 
 export const LAYER_RESULTS_KEY = 'che_reasoning_exam';
 
-const BATCH_CODE = `def batch_average_sensor_readings(batches):
-    results = []
-    for batch in batches:
-        values = []
-        for reading in batch:
-            values.append(reading)
-        results.append(sum(values) / len(values))
-    return results`;
+const BATCH_CODE = `def batch_average_sensor_readings(data_packets, default_bias=0.0):
+    """Memory-efficient average calculation using generator expression."""
+    from typing import Iterable, Dict, Optional
+    results: Dict[str, float] = {}
+    counts: Dict[str, int] = {}
+    for packet in data_packets:
+        for sensor_id, val in packet.items():
+            if val is not None:
+                results[sensor_id] = results.get(sensor_id, 0.0) + (val - default_bias)
+                counts[sensor_id] = counts.get(sensor_id, 0) + 1
+    return {k: results[k] / counts[k] for k in results if counts[k] > 0}`;
 
 const THRUSTER_CODE = `import threading
 
