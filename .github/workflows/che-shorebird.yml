@@ -7,7 +7,7 @@ name: CHE Shorebird
 # One-time setup: create a Shorebird API key at https://console.shorebird.dev,
 # save it as the SHOREBIRD_TOKEN repository secret, and the "CHE Shorebird
 # setup" workflow runs `shorebird init` and commits shorebird.yaml.
-# Merged "che/update-*" pull requests patch automatically once configured.
+# Every merge to main that changes app code patches automatically once configured.
 
 on:
   workflow_dispatch:
@@ -18,18 +18,22 @@ on:
         default: patch
         type: choice
         options: [patch, release]
-  pull_request:
-    types: [closed]
+  # Every merge that changes app code ships as a patch, whoever wrote it.
+  push:
     branches: [main]
+    paths: ['lib/**', 'pubspec.yaml', 'pubspec.lock', 'assets/**']
 
 permissions:
   contents: read
 
+# One patch at a time; a newer merge waits instead of racing the older one.
+concurrency:
+  group: che-shorebird
+  cancel-in-progress: false
+
 jobs:
   shorebird:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.merged == true && (startsWith(github.event.pull_request.head.ref, 'che/update-') || startsWith(github.event.pull_request.head.ref, 'che/auto/')))
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     runs-on: macos-15
     timeout-minutes: 60
     env:

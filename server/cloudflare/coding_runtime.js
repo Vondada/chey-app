@@ -59,7 +59,7 @@ export function runtimeSessionId({ repo = '', baseSha = '', targetBranch = '', o
   return `ocr-${fingerprint}`;
 }
 
-async function gh(env, method, path, body, fetcher) {
+export async function gh(env, method, path, body, fetcher = fetch) {
   const repo = repoOf(env);
   if (!repo) return { ok: false, status: 503, data: { message: 'GitHub runtime is not configured.' } };
   let response;

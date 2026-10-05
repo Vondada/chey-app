@@ -120,6 +120,7 @@ import {
   listMemoryNotes,
   writeResearchMemoryNote,
 } from './research_memory.js';
+import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, createObjective, mutateObjective, replanNode, resolveKnownNodes, speakObjective } from './objective_graph.js';
 import { LAST_RESULTS_KEY, loadCatalog, resourceChoice, resourceIntent, resultLinks, searchCatalog, speakResults } from './resource_catalogs.js';
 import { fiveLayerIntent, LAYER_RESULTS_KEY, reasoningLayer, runReasoningLayer, speakFiveLayerResults } from './reasoning_exam.js';
@@ -1101,7 +1102,7 @@ export function enqueueJob(data, fields) {
 // Two imports both update office_skills/team and must never race snapshots.
 // Jobs the owner authorized directly ("Update CHE", "merge it"); they run even
 // while Office autonomy is paused.
-const OWNER_APPROVED_JOB_KINDS = new Set(['merge_pr', 'verify_deploy']);
+const OWNER_APPROVED_JOB_KINDS = new Set(['merge_pr', 'verify_deploy', 'verify_app_build']);
 
 export function selectReadyJobs(jobs, now = Date.now(), limit = 4) {
   const all = Array.isArray(jobs) ? jobs : [];
@@ -6774,6 +6775,29 @@ export class CheState extends DurableObject {
         // "CHE, do Claude's handoff": turn the latest handoff an AI left in the
         // GitHub mailbox into a real reviewed coding job. Owner-only, and each
         // handoff message id launches at most once (no duplicate job cycles).
+        // "update my phone" / "build a new iPhone app" / "app build status":
+        // CHE runs her own app build workflows and reports the real result.
+        const appBuild = !chatOnlyEvaluation ? appBuildIntent(message) : null;
+        if (appBuild) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can build the app.', { source: 'che_app_build', ok: false });
+          if (appBuild.mode === 'status') {
+            const last = await this.ctx.storage.get(APP_BUILD_KEY);
+            if (!last) return ndjsonReply('No app build has been started, sir.', { source: 'che_app_build' });
+            const live = ['shipped', 'failed', 'not_shipped'].includes(last.state) ? last : await appBuildRun(this.env, last.mode, last.dispatched_at).catch(() => ({ state: 'unknown' }));
+            return ndjsonReply(speakAppBuild(last.mode, live), { source: 'che_app_build', state: live.state, run_url: live.html_url || last.html_url || '' });
+          }
+          const dispatchedAt = new Date().toISOString();
+          const sent = await dispatchAppBuild(this.env, appBuild.mode);
+          if (!sent.ok) return ndjsonReply(`I could not start the ${appBuild.mode === 'patch' ? 'app update' : 'iPhone build'}, sir. ${sent.detail} Nothing was changed.`, { source: 'che_app_build', ok: false });
+          await this.ctx.storage.put(APP_BUILD_KEY, { mode: appBuild.mode, dispatched_at: dispatchedAt, state: 'dispatched' });
+          const current = await this.loadData();
+          enqueueJob(current, { kind: 'verify_app_build', title: `Verify ${appBuild.mode === 'patch' ? 'app update' : 'iPhone build'}`, prompt: dispatchedAt, build_mode: appBuild.mode, dispatched_at: dispatchedAt, idempotency_key: `app_build:${appBuild.mode}:${dispatchedAt}`, retry_at: Date.now() + 120_000 });
+          await this.ctx.storage.put('che', current);
+          await this.scheduleWork();
+          return ndjsonReply(appBuild.mode === 'patch'
+            ? 'I started your app update, sir. It usually takes 15 to 30 minutes. I will tell you when it is ready; then close and reopen me to get it.'
+            : 'I started a new iPhone app build, sir. It takes up to an hour. I will tell you when it finishes or if it fails.', { source: 'che_app_build', workflow: sent.workflow });
+        }
         // "mission status": the durable objective graphs, spoken.
         if (/^\s*(?:che[,:]?\s*)?(?:(?:what(?:'s| is)\s+)?(?:the|my)\s+)?(?:mission|objective)s?\s+status\??\s*$|^\s*how(?:'s| is| are) (?:the|my) (?:mission|objective)s?(?: going)?\??\s*$/i.test(message)) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read mission status.', { source: 'che_mission_status', ok: false });
@@ -8814,6 +8838,7 @@ export class CheState extends DurableObject {
           if (job.kind === 'repo_study') return await this.runRepoStudyJob(job);
           if (job.kind === 'office_skill_import') return await this.runOfficeSkillImportJob(job);
           if (job.kind === 'verify_deploy') return await this.runVerifyDeployJob(job);
+          if (job.kind === 'verify_app_build') return await this.runVerifyAppBuildJob(job);
           if (!job.steps?.length && /\b(then|multi.step|step.by.step|end.to.end)\b/i.test(job.prompt)) {
             const plan = await this.env.AI.run(this.env.CHE_FAST_MODEL || FAST_MODEL, {
               messages: [
@@ -9042,6 +9067,46 @@ export class CheState extends DurableObject {
       return { id: job.id, status: 'failed', result: '', error: 'Deployment not verified within 45 minutes.', owner_message: `I could not verify the deploy for PR #${job.pr_number} within 45 minutes, sir, so I am not calling it deployed.` };
     }
     return this.waitOutcome(job, 90_000, `deploy ${status.workflow}`);
+  }
+
+  // Watches an app build CHE started; never calls it shipped until the run
+  // and its real ship step succeeded. A code failure starts a repair job.
+  async runVerifyAppBuildJob(job) {
+    const mode = job.build_mode === 'release' ? 'release' : 'patch';
+    const result = await appBuildRun(this.env, mode, job.dispatched_at).catch(() => ({ state: 'unknown' }));
+    const save = (state) => this.ctx.storage.put(APP_BUILD_KEY, { mode, dispatched_at: job.dispatched_at, state, html_url: result.html_url || '', failed_steps: result.failed_steps || [], checked_at: new Date().toISOString() });
+    const spoken = speakAppBuild(mode, result);
+    if (result.state === 'shipped') {
+      await save('shipped');
+      await this.notifyOwner(mode === 'patch' ? 'App update ready' : 'iPhone build ready', spoken);
+      return { id: job.id, status: 'complete', result: spoken, error: '', owner_message: spoken };
+    }
+    if (result.state === 'not_shipped') {
+      await save('not_shipped');
+      await this.notifyOwner('App build shipped nothing', spoken, 'warning');
+      return { id: job.id, status: 'failed', result: '', error: 'Build run finished without shipping.', failure_class: FAILURE_CLASS.PERMANENT_EXTERNAL, owner_message: spoken };
+    }
+    if (result.state === 'failed') {
+      await save('failed');
+      const steps = (result.failed_steps || []).join(', ');
+      // Toolchain/runner steps are infrastructure; analyze/build steps are code.
+      const codeFailure = !steps || /analy[sz]e|build|bootstrap|patch|release|package|runtime bridge|tuning bridge/i.test(steps);
+      let repair = '';
+      if (codeFailure) {
+        const d = await this.loadData();
+        const request = `The ${mode === 'patch' ? 'Shorebird app update' : 'CHE iPhone IPA'} build failed${steps ? ` at: ${steps}` : ''} (${result.html_url || 'GitHub Actions'}). Find the cause in the app code and fix it so the build passes. Do not change workflow secrets.`;
+        const queued = enqueueJob(d, { kind: 'self_development', title: 'Repair the iPhone build', prompt: request, request, idempotency_key: `repair:app_build:${result.run_id || job.dispatched_at}`, retry_at: Date.now() });
+        await this.ctx.storage.put('che', d);
+        if (queued.job) repair = ' I started the repair myself and will bring you the fix.';
+      }
+      await this.notifyOwner('App build failed', `${spoken}${repair}`, 'danger');
+      return { id: job.id, status: 'failed', result: '', error: `App build failed${steps ? `: ${steps}` : ''}.`, failure_class: FAILURE_CLASS.PERMANENT_EXTERNAL, owner_message: `${spoken}${repair}` };
+    }
+    if (Date.now() - Date.parse(job.dispatched_at || job.created_at || 0) > 100 * 60_000) {
+      await save('unverified');
+      return { id: job.id, status: 'failed', result: '', error: 'App build not verified within 100 minutes.', owner_message: 'I could not confirm the app build finished within 100 minutes, sir, so I am not calling it done.' };
+    }
+    return this.waitOutcome(job, 120_000, `app build ${result.state}`);
   }
 
   // Background continuation of an owner coding request that hit a temporary
