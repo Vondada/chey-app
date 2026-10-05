@@ -7490,8 +7490,8 @@ export class CheState extends DurableObject {
                 web_research: true,
                 public_records: Boolean(this.env.CHE_PUBLIC_RECORDS_URL),
                 rendering: Boolean(this.env.CHE_RENDER_URL),
-                image_generation: Boolean(this.env.CHE_IMAGE_GEN_URL || this.env.AI || this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY),
-                video_generation: Boolean(this.env.CHE_VIDEO_GEN_URL || this.env.GEMINI_API_KEY),
+                image_generation: Boolean(this.env.CHE_IMAGE_GEN_URL || this.env.AI || (paidMediaOn(this.env) && (this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY))),
+                video_generation: Boolean(this.env.CHE_VIDEO_GEN_URL || (paidMediaOn(this.env) && this.env.GEMINI_API_KEY)),
                 model_panel: Boolean(
                   this.env.CHE_OPENAI_MODEL_URL ||
                   this.env.CHE_ANTHROPIC_MODEL_URL ||
@@ -7654,13 +7654,6 @@ export class CheState extends DurableObject {
             if (rescued) answer = rescue;
           } catch (_) { /* fall through to the saved job */ }
         }
-        // No engine answered, but research CHE already gathered for this
-        // turn is a real answer: give it rather than a "busy" message.
-        if (!answer && research?.summary && String(research.summary).trim().length > 40
-          && !/\b(?:explain|why|how|compare|write|draft|summari[sz]e|analy[sz]e|plan|and|then|also)\b/i.test(message.replace(/^\s*(?:please\s+)?(?:research|look\s+up|find)\s+/i, ''))) {
-          const sources = Array.isArray(research.sources) && research.sources.length ? `\n\nSources: ${research.sources.slice(0, 3).join(', ')}` : '';
-          answer = { response: `${String(research.summary).trim()}${sources}` };
-        }
         if (!answer) {
           const error = new Error('all engines busy');
           const fresh = await this.loadData();
@@ -7671,7 +7664,10 @@ export class CheState extends DurableObject {
           await this.ctx.storage.put('che', fresh);
           await this.scheduleWork();
           return json({
-            detail: BUSY_REPLY,
+            // A paused autonomy never runs the saved job: say so instead of "shortly".
+            detail: fresh.autonomy === false
+              ? 'I saved that, sir, but autonomy is paused, so I will finish it when you say "resume".'
+              : BUSY_REPLY,
             category: 'temporary_cloud_unavailable',
             retryable: true,
             background_job_id: job.id,

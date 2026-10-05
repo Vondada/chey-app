@@ -94,6 +94,12 @@ function connectedProviders(env, data) {
     }));
 }
 
+function missingPaidSwitch(env) {
+  if (!/^(?:1|true|yes|on)$/i.test(String(env.CHE_ALLOW_PAID_MEDIA || '').trim())) return 'CHE_ALLOW_PAID_MEDIA';
+  if (!/^(?:1|true|yes)$/i.test(String(env.CHE_ALLOW_PAID_AI || '').trim())) return 'CHE_ALLOW_PAID_AI';
+  return '';
+}
+
 export function runtimeCapabilityRegistry(env, data = {}) {
   const providers = connectedProviders(env, data);
   const providerCaps = new Set(providers.flatMap((provider) => provider.capabilities));
@@ -151,7 +157,7 @@ export function runtimeCapabilityRegistry(env, data = {}) {
       tool: 'media_generation',
       providers: providerIdsFor('image_generation'),
       limitations: !hasImage && (env.GEMINI_API_KEY || env.OPENAI_API_KEY || env.CHE_OPENAI_API_KEY)
-        ? 'Paid HD provider is connected but CHE_ALLOW_PAID_MEDIA is not owner-enabled.'
+        ? `Paid HD provider is connected but ${missingPaidSwitch(env)} is not owner-enabled.`
         : '',
     },
     video_generation: {
@@ -159,7 +165,7 @@ export function runtimeCapabilityRegistry(env, data = {}) {
       tool: 'media_generation',
       providers: providerIdsFor('video_generation'),
       limitations: !hasVideo && env.GEMINI_API_KEY
-        ? 'Gemini Omni video is paid-tier only; enable CHE_ALLOW_PAID_MEDIA only after owner approval.'
+        ? `Gemini Omni video is paid-tier only; enable ${missingPaidSwitch(env)} only after owner approval.`
         : '',
     },
     provider_routing: { available: true, tool: 'capability_router' },

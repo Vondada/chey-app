@@ -79,3 +79,10 @@ test('free engines only: an OpenAI key alone does not advertise vision while pai
   const byId = Object.fromEntries(registry.capabilities.map((item) => [item.id, item]));
   assert.equal(byId.vision?.available ?? false, false);
 });
+
+test('capability limitations name the paid switch that is actually off', () => {
+  const registry = runtimeCapabilityRegistry({ GEMINI_API_KEY: 'g', CHE_ALLOW_PAID_MEDIA: '1' }, {});
+  const byId = Object.fromEntries(registry.capabilities.map((item) => [item.id, item]));
+  assert.match(byId.image_generation.limitations, /CHE_ALLOW_PAID_AI/);
+  assert.match(byId.video_generation.limitations, /CHE_ALLOW_PAID_AI/);
+});

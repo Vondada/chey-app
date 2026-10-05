@@ -1673,3 +1673,21 @@ test('engines busy on a compound research request: no partial answer is passed o
     globalThis.fetch = original;
   }
 });
+
+test('engines busy while autonomy is paused: CHE says the request is saved and paused, never "shortly"', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { const e = new Error('all engines busy'); e.category = 'temporary_cloud_unavailable'; e.status = 503; throw e; } } };
+  const { chat } = await pairedChat(env, saved);
+  const d = saved.get('che'); d.autonomy = false; saved.set('che', d);
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{}', { status: 503 });
+  try {
+    const res = await chat('Why is the sky blue in the evening?');
+    const body = await res.json();
+    assert.match(body.detail, /paused/i);
+    assert.match(body.detail, /resume/i);
+    assert.doesNotMatch(body.detail, /shortly|engine/i);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
