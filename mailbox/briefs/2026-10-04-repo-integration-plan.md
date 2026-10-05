@@ -19,7 +19,7 @@ The owner asked: "Read and study all of these repositories, then integrate them 
 
 | Repo | License | Integration into CHE | Phase | Status |
 |---|---|---|---|---|
-| public-apis/public-apis | MIT | Resource finder: "find a free API for X" | 1 | planned |
+| public-apis/public-apis | MIT | Resource finder: "find a free API for X" | 1 | PR #194 |
 | ripienaar/free-for-dev | none stated | Resource finder: "free hosting / free tier for X" (facts and links only) | 1 | planned |
 | punkpeye/awesome-mcp-servers | MIT | Resource finder: "is there an MCP server for X" | 1 | planned |
 | jaywcjlove/awesome-mac | CC0/MIT | Resource finder: "best Mac app for X" | 1 | planned |
@@ -70,3 +70,8 @@ The owner asked: "Read and study all of these repositories, then integrate them 
   2. Add tests.
   3. Wire `resourceIntent` into the `/api/chat` intents before AI, using `loadCatalog(this.ctx.storage, id)`.
   4. Open a PR with `[worker-deploy]`.
+
+## Update 2026-10-05 ~06:20 UTC
+- #193 merged (b495411) and deployed. Codex post-merge review: no major issues.
+- Phase 1 DONE in code: PR #194 (`claude/che-repo-integration`, 9aa24ed). The resource finder is wired into chat before any AI call; chunks are size-safe; 610 Worker tests pass. Waiting on CI and the owner's "merge".
+- Next: Phase 2 (Whisper `transcribeAudio` + `/api/transcribe`) on a new branch from main after #194 merges.
