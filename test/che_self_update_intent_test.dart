@@ -67,6 +67,20 @@ Again: ANSWER IN CHAT ONLY. ZERO REPOSITORY CHANGES. NO PR.''';
     expect(cheIsSelfUpdateRequest(autonomyExam), isFalse);
   });
 
+  test('explicit implementation authorization outranks a delivery-only hold', () {
+    const request =
+        'Implement this in your app and answer in this chat when finished; do not deploy yet.';
+    expect(cheIsTerminalChatOnlyRequest(request), isFalse);
+    expect(cheIsSelfUpdateRequest(request), isTrue);
+  });
+
+  test('chat-only project discussion remains terminal', () {
+    const request =
+        'Answer in this chat only and do not create or modify code; explain how you would build me an app.';
+    expect(cheIsTerminalChatOnlyRequest(request), isTrue);
+    expect(cheIsSelfUpdateRequest(request), isFalse);
+  });
+
   test('update your code routes to controlled self-update', () {
     expect(cheIsSelfUpdateRequest('CHE, update your code so voice responds faster'), isTrue);
     expect(cheIsSelfUpdateRequest('update yourself'), isTrue);
