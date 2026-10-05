@@ -39,7 +39,7 @@ import { MODE_NAME, chooseAccount, deskIntent, rememberListed, deskTick, pending
 import { externalGrounding } from './external_grounding.js';
 import { cachedResearch, factKey, forgetKnowledge, knownAnswer, ownerFactQuestion, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
 import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliability } from './reliability_ledger.js';
-import { ownerNotificationPolicy } from './workflow_governor.js';
+import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
@@ -120,6 +120,8 @@ import {
   listMemoryNotes,
   writeResearchMemoryNote,
 } from './research_memory.js';
+import { advanceObjectives, createObjective, replanNode, speakObjective } from './objective_graph.js';
+import { fiveLayerIntent, LAYER_RESULTS_KEY, reasoningLayer, runReasoningLayer, speakFiveLayerResults } from './reasoning_exam.js';
 import { AUTONOMY_EXAM, EXAM_RESULTS_KEY, examIntent, examLevel, gradeLevel, mergeExamResult, speakExamResults, ungradableEngineFailure } from './autonomy_exam.js';
 import { conversationMemoryCount, listConversationMemories, recallMemories, recordConversationMemory, rememberThread, rememberedText, replyFromNdjson, syncWarRoomMemories } from './brain_memory.js';
 import { assertOwnerToCheOnly } from './che_router.js';
@@ -5507,6 +5509,36 @@ export class CheState extends DurableObject {
         return json({ job, deduplicated });
       }
 
+      // Long-horizon objectives: a dependency graph whose steps run as
+      // ordinary background jobs (independent steps in parallel).
+      if (path === '/api/objective/create') {
+        let objective;
+        try {
+          objective = createObjective({ objective: body.objective, nodes: body.nodes, repo_sha: body.repo_sha });
+        } catch (error) {
+          return json({ detail: String(error.message || error) }, 400);
+        }
+        data.objectives = [objective, ...(Array.isArray(data.objectives) ? data.objectives : []).filter((o) => o.status !== 'complete').slice(0, 9), ...(data.objectives || []).filter((o) => o.status === 'complete').slice(0, 10)];
+        const started = advanceObjectives(data, (fields) => enqueueJob(data, fields));
+        await this.ctx.storage.put('che', data);
+        await this.scheduleWork();
+        return json({ objective, started, spoken: speakObjective(objective) });
+      }
+      if (path === '/api/objective/replan') {
+        const objective = (data.objectives || []).find((o) => o.id === String(body.id || ''));
+        if (!objective) return json({ detail: 'Objective not found.' }, 404);
+        const out = replanNode(objective, String(body.node_id || ''), { prompt: body.prompt });
+        if (!out.ok) return json({ detail: out.reason }, 409);
+        const started = advanceObjectives(data, (fields) => enqueueJob(data, fields));
+        await this.ctx.storage.put('che', data);
+        await this.scheduleWork();
+        return json({ objective, started, spoken: speakObjective(objective) });
+      }
+      if (path === '/api/objectives') {
+        const list = Array.isArray(data.objectives) ? data.objectives : [];
+        return json({ objectives: list, spoken: list.map(speakObjective) });
+      }
+
       if (path === '/api/job/cancel') {
         const id = String(body.id || '');
         const job = data.jobs.find((item) => item.id === id);
@@ -6118,6 +6150,58 @@ export class CheState extends DurableObject {
           if (revoked.error) return ndjsonReply(revoked.error === 'cannot_revoke_current_device' ? 'That is the device you are talking to me on, sir, so I did not sign it out.' : 'I could not remove that device, sir.', { source: 'che_devices', ok: false });
           await this.ctx.storage.put('che', data);
           return ndjsonReply(`Done, sir. ${revoked.device.name} is signed out and can no longer reach me. Your memories and settings are safe on my server.`, { source: 'che_devices', ok: true });
+        }
+        // "Run the five layer exam": layers 1-4 are reasoning problems graded
+        // deterministically; layer 5 is autonomy exam level 5, a real
+        // self-patch through the coding pipeline under injected failures.
+        const fiveLayer = ownerDevice ? fiveLayerIntent(message) : null;
+        if (fiveLayer?.kind === 'results') {
+          const [reasoning, coding] = await Promise.all([LAYER_RESULTS_KEY, EXAM_RESULTS_KEY].map((key) => Promise.resolve().then(() => this.ctx.storage.get(key)).catch(() => null)));
+          return ndjsonReply(speakFiveLayerResults(reasoning || {}, coding || {}), { source: 'che_five_layer_exam' });
+        }
+        if (fiveLayer?.kind === 'run') {
+          const fresh = await this.loadData();
+          const layers = fiveLayer.layers;
+          const runId = crypto.randomUUID();
+          const previous = layers.length === 5 ? null : await Promise.resolve().then(() => this.ctx.storage.get(LAYER_RESULTS_KEY)).catch(() => null);
+          const carried = Object.fromEntries(Object.entries(previous?.results || {}).filter(([layer]) => !layers.includes(Number(layer))));
+          let codingRunId = previous?.coding_run_id || '';
+          const ids = [];
+          // Layers 1-4 are independent, so they run in parallel.
+          for (const layer of layers.filter((n) => reasoningLayer(n))) {
+            const queued = enqueueJob(fresh, {
+              kind: 'reasoning_exam',
+              title: `Five-layer exam, layer ${layer}: ${reasoningLayer(layer).name}`,
+              prompt: reasoningLayer(layer).name,
+              exam_layer: layer,
+              exam_run_id: runId,
+              idempotency_key: idempotencyKey('job:reasoning_exam', `layer ${layer} ${runId}`),
+            });
+            ids.push(queued.job.id);
+          }
+          let skipped = '';
+          if (layers.includes(5)) {
+            if (!this.env.CHE_GITHUB_TOKEN || !this.env.CHE_GITHUB_REPO) {
+              skipped = ' Layer 5 needs my GitHub connection, which is not set up, so it was not started.';
+            } else {
+              const inFlight = fresh.jobs.find((job) => job.kind === 'autonomy_exam' && ['queued', 'running'].includes(job.status));
+              if (inFlight) {
+                if (Number(inFlight.exam_level) !== 5 && !(inFlight.exam_next || []).map(Number).includes(5)) inFlight.exam_next = [...(inFlight.exam_next || []), 5];
+                codingRunId = inFlight.exam_run_id || '';
+                ids.push(inFlight.id);
+              } else {
+                codingRunId = crypto.randomUUID();
+                const codingPrev = await Promise.resolve().then(() => this.ctx.storage.get(EXAM_RESULTS_KEY)).catch(() => null);
+                const codingCarried = Object.fromEntries(Object.entries(codingPrev?.results || {}).filter(([level]) => Number(level) !== 5));
+                await this.ctx.storage.put(EXAM_RESULTS_KEY, { run_id: codingRunId, results: codingCarried, started_at: new Date().toISOString() });
+                ids.push(enqueueExamLevel(fresh, 5, [], codingRunId).job.id);
+              }
+            }
+          }
+          await this.ctx.storage.put(LAYER_RESULTS_KEY, { run_id: runId, coding_run_id: codingRunId, results: carried, started_at: new Date().toISOString() });
+          await this.ctx.storage.put('che', fresh);
+          await this.scheduleWork();
+          return ndjsonReply(`I started the five-layer exam, sir: ${layers.map((n) => `layer ${n}`).join(', ')}. Layers 1 to 4 are reasoning problems graded by fixed checks; layer 5 is a real practice self-patch of my own code under injected failures, so nothing is changed. If an engine goes down, that layer is retried, not failed.${skipped} Say "five layer exam results" anytime.${fresh.autonomy === false ? ' Autonomy is paused right now; say "resume" so the jobs can run.' : ''}`, { source: 'che_five_layer_exam', background_job_ids: ids });
         }
         // "Run the autonomy exam" (5 levels, each harder): real coding runs in
         // dry-run mode, graded deterministically. "Autonomy exam results".
@@ -7258,16 +7342,19 @@ export class CheState extends DurableObject {
             headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' },
           });
         }
-        const history = Array.isArray(body.history) ? body.history.slice(-12) : [];
-        const turns = history.filter((item) => item && ['user', 'assistant'].includes(item.role))
-          .map((item) => ({
-            role: item.role,
-            content: String(item.content ?? item.text ?? '').slice(0, 2000),
-          }));
+        // The last 12 turns go verbatim; older turns are condensed without AI
+        // into the constraints, permissions, decisions and failures they set,
+        // so a long conversation never silently forgets them.
+        const history = Array.isArray(body.history) ? body.history.slice(-80) : [];
+        const { turns, condensed: earlierContext } = condenseHistory(history, { keep: 12 });
         if (turns.length &&
             turns[turns.length - 1].role === 'user' &&
             turns[turns.length - 1].content.trim().toLowerCase() === message.trim().toLowerCase()) {
           turns.pop();
+        }
+        if (earlierContext) {
+          if (turns[0]?.role === 'user') turns[0] = { role: 'user', content: `${earlierContext}\n\n${turns[0].content}` };
+          else turns.unshift({ role: 'user', content: earlierContext });
         }
         const needsStrongModel = Boolean(skillResults.length || multimodal || research?.summary || panel.length || specialists.length || officeResults.length || actionResults.length || plugins.length) ||
           /\b(debug|write code|implement|architect|deep analysis|step.by.step plan|backtest|legal analysis|financial analysis|medical analysis|research report)\b/i.test(message);
@@ -8519,6 +8606,7 @@ export class CheState extends DurableObject {
     }
     // A level the sweep above just dead-lettered still starts the next one.
     advanceExamChains(data);
+    advanceObjectives(data, (fields) => enqueueJob(data, fields));
     const queued = selectReadyJobs(ownerApprovedOnly ? data.jobs.filter((job) => OWNER_APPROVED_JOB_KINDS.has(job.kind)) : data.jobs, now, 4);
     if (!queued.length) { await this.ctx.storage.put('che', data); await this.scheduleWork(); return false; }
 
@@ -8539,6 +8627,7 @@ export class CheState extends DurableObject {
         try {
           if (job.kind === 'self_development') return await this.runSelfDevelopmentJob(job);
           if (job.kind === 'autonomy_exam') return await this.runAutonomyExamJob(job);
+          if (job.kind === 'reasoning_exam') return await this.runReasoningExamJob(job);
           if (job.kind === 'merge_pr') return await this.runMergeJob(job);
           if (job.kind === 'repo_study') return await this.runRepoStudyJob(job);
           if (job.kind === 'office_skill_import') return await this.runOfficeSkillImportJob(job);
@@ -8638,6 +8727,8 @@ export class CheState extends DurableObject {
       job.updated_at = finishedAt;
     }
     advanceExamChains(fresh);
+    // Objective graphs: record finished steps, start the steps they unblocked.
+    advanceObjectives(fresh, (fields) => enqueueJob(fresh, fields));
     await this.ctx.storage.put('che', fresh);
     // Reliability ledger + quiet recovery: a job that will retry on its own
     // is recorded but not announced; final failures stay owner-visible.
@@ -8776,6 +8867,27 @@ export class CheState extends DurableObject {
   // produces; nothing is written to GitHub without owner approval.
   // One exam level: CHE's real pipeline on a real task, dry run (no approval
   // slot, no PR), graded deterministically and kept for "exam results".
+  async runReasoningExamJob(job) {
+    const spec = reasoningLayer(job.exam_layer);
+    if (!spec) return { id: job.id, status: 'failed', result: '', owner_message: 'That exam layer does not exist, sir.', error: 'unknown exam layer' };
+    const out = await runReasoningLayer(this.env, spec, { storage: this.ctx.storage });
+    if (out.ungradable) {
+      // No usable answer is infrastructure, not a grade: retry with backoff.
+      const error = new Error(`Exam layer ${spec.layer} could not be graded: ${out.reason}`);
+      error.failure_class = FAILURE_CLASS.TEMPORARY_EXTERNAL;
+      throw error;
+    }
+    const stored = (await Promise.resolve().then(() => this.ctx.storage.get(LAYER_RESULTS_KEY)).catch(() => null)) || {};
+    if (stored.run_id && job.exam_run_id && stored.run_id !== job.exam_run_id) {
+      return { id: job.id, status: 'complete', result: 'Stale five-layer exam result ignored.', owner_message: '', error: '' };
+    }
+    const merged = mergeExamResult(stored, job.exam_run_id || stored.run_id || 'legacy', spec.layer, out.grade);
+    await this.ctx.storage.put(LAYER_RESULTS_KEY, { ...merged, coding_run_id: stored.coding_run_id || '' });
+    const grade = out.grade;
+    const message = `Five-layer exam layer ${spec.layer} (${spec.name}): ${grade.passed ? 'passed' : `failed: ${grade.failed_checks.slice(0, 3).join('; ')}`}, sir.`;
+    return { id: job.id, status: grade.passed ? 'complete' : 'failed', result: message, owner_message: message, error: grade.passed ? '' : grade.failed_checks.join('; ').slice(0, 500) };
+  }
+
   async runAutonomyExamJob(job) {
     const spec = examLevel(job.exam_level);
     if (!spec) return { id: job.id, status: 'failed', result: '', owner_message: 'That exam level does not exist, sir.', error: 'unknown exam level' };

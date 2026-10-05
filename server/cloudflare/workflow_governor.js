@@ -229,3 +229,53 @@ export function minimalContext(items = [], maxChars = 12000) {
   }
   return packed;
 }
+
+// Context-rot defense without an AI summarizer. Recent turns stay verbatim;
+// older turns are condensed deterministically into the lines that must never
+// be lost: owner constraints and permissions, decisions, objectives, failed
+// strategies, verified facts and repository SHAs. Everything else in the old
+// history is dropped (it is completed, and repeating it only costs tokens).
+const PINNED = /\b(?:don'?t|do not|never|always|must|only|stop|permission|allowed|authori[sz]e|approve[ds]?|confirm|forbid|objective|goal|mission|decid(?:e|ed)|plan is|we agreed|remember|failed|tried|didn'?t work|broke|sha\b|commit [0-9a-f]{7}|[0-9a-f]{7,40}\b(?=.*(?:sha|commit|head|main))|unresolved|still need|todo|next step)\b/i;
+
+export function estimateTokens(value) {
+  const text = typeof value === 'string' ? value : JSON.stringify(value ?? '');
+  return Math.ceil(text.length / 4);
+}
+
+/**
+ * history: [{role, content}] oldest first. Returns { turns, condensed, dropped }:
+ * the last `keep` turns verbatim, plus (when older turns exist) one condensed
+ * state block of their pinned sentences, bounded to `maxCondensedChars`.
+ */
+export function condenseHistory(history = [], { keep = 12, maxCondensedChars = 1800, maxTurnChars = 2000 } = {}) {
+  const clean = (Array.isArray(history) ? history : [])
+    .filter((item) => item && ['user', 'assistant'].includes(item.role))
+    .map((item) => ({ role: item.role, content: String(item.content ?? item.text ?? '') }));
+  const recent = clean.slice(-keep).map((t) => ({ ...t, content: t.content.slice(0, maxTurnChars) }));
+  const older = clean.slice(0, Math.max(0, clean.length - keep));
+  if (!older.length) return { turns: recent, condensed: '', dropped: 0 };
+  const seen = new Set();
+  const pinned = [];
+  for (const turn of older) {
+    for (const sentence of turn.content.split(/(?<=[.!?])\s+|\n+/)) {
+      const s = sentence.trim().replace(/\s+/g, ' ');
+      if (s.length < 6 || !PINNED.test(s)) continue;
+      const key = s.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      pinned.push(`${turn.role === 'user' ? 'Owner' : 'CHE'}: ${s.slice(0, 300)}`);
+    }
+  }
+  // Newest pinned lines win when the block is over budget.
+  const lines = [];
+  let used = 0;
+  for (const line of pinned.reverse()) {
+    if (used + line.length + 1 > maxCondensedChars) break;
+    lines.unshift(line);
+    used += line.length + 1;
+  }
+  const condensed = lines.length
+    ? `Earlier in this conversation (condensed by CHE; ${older.length} older turns; constraints and decisions still apply):\n${lines.join('\n')}`
+    : '';
+  return { turns: recent, condensed, dropped: older.length };
+}

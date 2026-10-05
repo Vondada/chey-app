@@ -148,7 +148,7 @@ async function pairedChat(env, saved) {
     body: JSON.stringify(body),
   }), env);
   const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
-  return { state, chat: (message) => send('/api/chat', { message }, token) };
+  return { state, chat: (message) => send('/api/chat', { message }, token), api: (path, body) => send(path, body, token) };
 }
 
 const GITHUB_OK = (files) => async (url) => {
@@ -1486,4 +1486,63 @@ test('final review: the knowledge cache checks the WHOLE stored value for secret
   assert.equal(m.size, 0, 'nothing was persisted');
   assert.equal(await rememberKnowledge(storage, { key: 'research:y', answer: 'fine', limitation: `${'x '.repeat(400)} seed phrase: alpha beta` }), null, 'the limitation is persisted too, so it is checked too');
   assert.ok(await rememberKnowledge(storage, { key: 'research:z', answer: `${'Rate limits per minute vary by plan. '.repeat(40)}` }), 'ordinary long research still caches');
+});
+
+test('five-layer exam end to end: a layer queues as a job, an engine outage retries it ungraded, a real answer is graded and spoken', async () => {
+  const saved = new Map();
+  let answer = null;
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { if (!answer) throw Object.assign(new Error('provider 503'), { status: 503 }); return { response: answer }; } } };
+  const { state, chat } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{}', { status: 500 });
+  try {
+    assert.match(replyFromNdjson(await (await chat('run the five layer exam layer 1')).text()), /five-layer exam, sir: layer 1/);
+    let job = saved.get('che').jobs.find((j) => j.kind === 'reasoning_exam');
+    assert.equal(job.exam_layer, 1);
+    await state.processJobs();
+    job = saved.get('che').jobs.find((j) => j.id === job.id);
+    assert.equal(job.status, 'queued', 'an outage is retried, not scored');
+    assert.deepEqual(saved.get('che_reasoning_exam').results, {}, 'no grade was recorded during the outage');
+    answer = 'Using h = 1/2 g t^2: 45 = 5 t^2, so t = 3 s and v = g t = 30 m/s.\nASSERT time_s=3 speed_ms=30';
+    const d = saved.get('che');
+    d.jobs = d.jobs.map((j) => (j.id === job.id ? { ...j, retry_at: 0 } : j));
+    saved.set('che', d);
+    await state.processJobs();
+    job = saved.get('che').jobs.find((j) => j.id === job.id);
+    assert.equal(job.status, 'complete');
+    assert.equal(saved.get('che_reasoning_exam').results[1].passed, true);
+    assert.match(replyFromNdjson(await (await chat('five layer exam results')).text()), /Layer 1, Constraint reasoning: passed/);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('objective graph through the Worker: steps run as real jobs, independent ones together, and the objective completes', async () => {
+  const saved = new Map();
+  const prompts = [];
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async (model, input) => { const p = JSON.stringify(input.messages || input); prompts.push(p); return { response: p.includes('Compare the two notes') ? 'Comparison written.' : 'Note written.' }; } } };
+  const { state, api } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{}', { status: 500 });
+  try {
+    const bad = await api('/api/objective/create', { objective: 'loop', nodes: [{ id: 'a', prompt: 'x', depends_on: ['b'] }, { id: 'b', prompt: 'y', depends_on: ['a'] }] });
+    assert.equal(bad.status, 400, 'a cyclic plan is refused');
+    const res = await (await api('/api/objective/create', { objective: 'Two notes and a comparison', nodes: [
+      { id: 'a', prompt: 'Write a short note about apples' },
+      { id: 'b', prompt: 'Write a short note about pears' },
+      { id: 'c', prompt: 'Compare the two notes', depends_on: ['a', 'b'] },
+    ] })).json();
+    assert.equal(res.started, 2, 'the two independent steps start together');
+    await state.processJobs();
+    let o = saved.get('che').objectives[0];
+    assert.deepEqual(o.nodes.map((n) => n.status), ['complete', 'complete', 'running'], 'the dependent step starts only after both');
+    await state.processJobs();
+    o = saved.get('che').objectives[0];
+    assert.equal(o.status, 'complete');
+    assert.equal(o.nodes[2].output, 'Comparison written.');
+    assert.ok(prompts.some((p) => p.includes('Compare the two notes') && p.includes('Note written.')), 'the dependent step received the verified upstream results');
+    assert.match((await (await api('/api/objectives', {})).json()).spoken[0], /3 of 3 steps done/);
+  } finally {
+    globalThis.fetch = original;
+  }
 });

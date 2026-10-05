@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { WORKFLOWS, planWorkflow, selectWorkflow, assessTask, chooseKnownAnswer, inferenceDecision, engineCapacityState, shouldSwitchEngine, drainOrder, ownerNotificationPolicy, dedupeEvidence, minimalContext } from './workflow_governor.js';
+import { WORKFLOWS, planWorkflow, selectWorkflow, assessTask, chooseKnownAnswer, inferenceDecision, engineCapacityState, shouldSwitchEngine, drainOrder, ownerNotificationPolicy, dedupeEvidence, minimalContext, condenseHistory, estimateTokens } from './workflow_governor.js';
 
 test('all ten workflows route deterministically to the cheapest capable one', () => {
   const cases = [
@@ -102,4 +102,30 @@ test('review fixes: chores and household problems are not war rooms or bug hunts
   assert.notEqual(selectWorkflow({ text: 'my wifi is not working' }), WORKFLOWS.BUG_HUNT);
   assert.equal(selectWorkflow({ text: 'the app is not working after the update' }), WORKFLOWS.BUG_HUNT);
   assert.equal(selectWorkflow({ text: 'transfer $500 to savings' }), WORKFLOWS.WAR_ROOM);
+});
+
+test('context-rot defense: old turns condense to constraints, decisions, failures and SHAs without AI; recent turns stay verbatim', () => {
+  const history = [
+    { role: 'user', content: 'Never touch che_browser.dart. The objective is a faster voice reply.' },
+    { role: 'assistant', content: 'Understood. I tried caching the prompt and it failed the latency test.' },
+    { role: 'user', content: 'Nice weather today.' },
+    { role: 'assistant', content: 'It is lovely.' },
+    { role: 'user', content: 'Main is at commit 576bb09, base your work on that head.' },
+    ...Array.from({ length: 12 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `recent ${i}` })),
+  ];
+  const out = condenseHistory(history, { keep: 12 });
+  assert.equal(out.turns.length, 12);
+  assert.equal(out.turns[0].content, 'recent 0');
+  assert.equal(out.dropped, 5);
+  assert.match(out.condensed, /Owner: Never touch che_browser\.dart\./);
+  assert.match(out.condensed, /objective is a faster voice reply/);
+  assert.match(out.condensed, /CHE: .*tried caching the prompt and it failed/);
+  assert.match(out.condensed, /576bb09/);
+  assert.doesNotMatch(out.condensed, /weather|lovely/, 'completed small talk is not carried');
+  assert.equal(condenseHistory(history.slice(-4)).condensed, '', 'short conversations are untouched');
+  const huge = Array.from({ length: 60 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `Never do thing number ${i}.` }));
+  const bounded = condenseHistory(huge, { keep: 4, maxCondensedChars: 300 });
+  assert.ok(bounded.condensed.length < 450);
+  assert.match(bounded.condensed, /thing number 55/, 'the newest constraints win when over budget');
+  assert.equal(estimateTokens('abcd'.repeat(10)), 10);
 });
