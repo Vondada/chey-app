@@ -1741,3 +1741,18 @@ test('research cache: informational verbs still hit with zero inference, but con
     globalThis.fetch = original;
   }
 });
+
+test('T17 truthful status: with autonomy paused, "resume the coding job" never claims it resumed and leaves the job untouched', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'x' }) } };
+  const { chat } = await pairedChat(env, saved);
+  const data = saved.get('che');
+  const retryAt = Date.now() + 3600_000;
+  data.autonomy = false;
+  data.jobs = [{ id: 'job-p', kind: 'self_development', status: 'queued', prompt: 'p', retry_count: 1, attempts: 1, retry_at: retryAt, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }];
+  saved.set('che', data);
+  const reply = replyFromNdjson(await (await chat('Resume the coding job')).text());
+  assert.doesNotMatch(reply, /\bI resumed\b/i);
+  assert.match(reply, /paused/i);
+  assert.equal(saved.get('che').jobs[0].retry_at, retryAt, 'paused job not rescheduled');
+});
