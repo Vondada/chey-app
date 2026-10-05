@@ -222,6 +222,7 @@ test('mission T1-T6: chat-only phrasings never mutate; explicit implementation w
     'Explain your failure-recovery system without changing anything.',
     'This is an evaluation, not a coding request.',
     "Explain how you'd build me an app; don't create anything.",
+    'Fix your code only as a hypothetical example; do not modify your code, just explain what else you would change.',
   ]) {
     const p = currentTurnActionPolicy(q);
     assert.equal(p.terminalChatOnly, true, q);

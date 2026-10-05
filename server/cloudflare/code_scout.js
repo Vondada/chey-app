@@ -89,10 +89,10 @@ function imperativeImplementation(text) {
 function globalRepositoryProhibition(text) {
   // A scoped limit ("no changes outside that screen", "without changing
   // anything else") restricts the change; it is not a prohibition.
-  return /\b(?:do\s+not|don['’]t|never|make\s+no)\s+(?:make\s+)?(?:any\s+)?(?:modify|modifying|change|changes|changing|touch|edit|alter)\s+(?:to\s+)?(?:your\s+|any\s+|the\s+)?(?:source\s+)?(?:code|codebase|repo(?:sitory)?)\b(?![^.;]{0,40}\b(?:outside|else|elsewhere|beyond|except|apart\s+from|other\s+(?:files?|screens?|parts?|features?|code)))/i.test(text)
-    || /\b(?:do\s+not|don['’]t|never)\s+make\s+(?:any\s+)?(?:code\s+)?changes\b(?![^.;]{0,40}\b(?:outside|else|elsewhere|beyond|except|apart\s+from|other\s+(?:files?|screens?|parts?|features?|code)))/i.test(text)
-    || /\bwithout\s+(?:changing|modifying|touching|editing)\s+anything\b(?![^.;]{0,40}\b(?:outside|else|elsewhere|beyond|except|apart\s+from|other\s+(?:files?|screens?|parts?|features?|code)))/i.test(text)
-    || (/\b(?:do\s+not|don['’]t|never)\s+(?:modify|change|touch|edit|alter)\s+(?:it|anything)\b(?![^.;]{0,40}\b(?:outside|else|elsewhere|beyond|except|apart\s+from|other\s+(?:files?|screens?|parts?|features?|code)))/i.test(text) && /\b(?:code|codebase|repo(?:sitory)?|app)\b/i.test(text))
+  return /\b(?:do\s+not|don['’]t|never|make\s+no)\s+(?:make\s+)?(?:any\s+)?(?:modify|modifying|change|changes|changing|touch|edit|alter)\s+(?:to\s+)?(?:your\s+|any\s+|the\s+)?(?:source\s+)?(?:code|codebase|repo(?:sitory)?)\b(?!\s+(?:else\b|outside\b|elsewhere\b|beyond\b|except\b|apart\s+from\b|other\s+(?:files?|screens?|parts?|features?|code)\b|to\s+(?:anything\s+else|any\s+other|other)\b))/i.test(text)
+    || /\b(?:do\s+not|don['’]t|never)\s+make\s+(?:any\s+)?(?:code\s+)?changes\b(?!\s+(?:else\b|outside\b|elsewhere\b|beyond\b|except\b|apart\s+from\b|other\s+(?:files?|screens?|parts?|features?|code)\b|to\s+(?:anything\s+else|any\s+other|other)\b))/i.test(text)
+    || /\bwithout\s+(?:changing|modifying|touching|editing)\s+anything\b(?!\s+(?:else\b|outside\b|elsewhere\b|beyond\b|except\b|apart\s+from\b|other\s+(?:files?|screens?|parts?|features?|code)\b|to\s+(?:anything\s+else|any\s+other|other)\b))/i.test(text)
+    || (/\b(?:do\s+not|don['’]t|never)\s+(?:modify|change|touch|edit|alter)\s+(?:it|anything)\b(?!\s+(?:else\b|outside\b|elsewhere\b|beyond\b|except\b|apart\s+from\b|other\s+(?:files?|screens?|parts?|features?|code)\b|to\s+(?:anything\s+else|any\s+other|other)\b))/i.test(text) && /\b(?:code|codebase|repo(?:sitory)?|app)\b/i.test(text))
     || /\b(?:do\s+not|don['’]t|never)\s+(?:create|build|make)\s+(?:anything|it|a\s+project|the\s+project)\b/i.test(text)
     || /\b(?:no|zero)\s+(?:repository|repo|code)\s+changes?\b/i.test(text);
 }

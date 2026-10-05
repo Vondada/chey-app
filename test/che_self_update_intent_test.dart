@@ -184,6 +184,7 @@ Again: ANSWER IN CHAT ONLY. ZERO REPOSITORY CHANGES. NO PR.''';
       'Explain your failure-recovery system without changing anything.',
       'This is an evaluation, not a coding request.',
       "Explain how you'd build me an app; don't create anything.",
+      'Fix your code only as a hypothetical example; do not modify your code, just explain what else you would change.',
     ];
     for (final q in chatOnly) {
       expect(cheIsTerminalChatOnlyRequest(q), isTrue, reason: q);
