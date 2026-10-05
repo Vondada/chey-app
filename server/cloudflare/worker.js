@@ -6069,7 +6069,7 @@ export class CheState extends DurableObject {
         // "What are my 5 newest starred repos?": read from GitHub (newest
         // first), said aloud, kept as a memory, and sent to Claude in the
         // mailbox so the coding AIs can integrate them.
-        const newestStars = ownerDevice ? newestStarredIntent(message) : null;
+        const newestStars = ownerDevice && !chatOnlyEvaluation ? newestStarredIntent(message) : null;
         if (newestStars) {
           const result = await listOwnerStarredRepos(this.keyEnv || this.env, fetch, { limit: Math.max(30, newestStars.count) });
           if (result.error) return ndjsonReply(`I could not read your GitHub stars, sir. ${result.error} Nothing was changed.`, { source: 'che_starred_newest', ok: false });
@@ -6086,7 +6086,7 @@ export class CheState extends DurableObject {
         }
         // "Study <repo>: these topics, then implement them": real reading of
         // the reference first, one topic at a time, before any coding.
-        if (ownerDevice && starredLibraryIntent(message)) {
+        if (ownerDevice && !chatOnlyEvaluation && starredLibraryIntent(message)) {
           const live = await listOwnerStarredRepos(this.keyEnv || this.env, fetch, { limit: 100 }).catch(() => null);
           const targets = starredStudyTargets(live);
           if (targets.live && !targets.names.length) return ndjsonReply('GitHub shows no starred repositories on your account, sir. Nothing was started.', { source: 'che_topic_study', ok: true });
@@ -6103,7 +6103,7 @@ export class CheState extends DurableObject {
             { source: 'che_topic_study', repository_research: true, background_job_ids: [study.job.id] },
           );
         }
-        const namedStudy = namedRepoStudyIntent(message);
+        const namedStudy = chatOnlyEvaluation ? null : namedRepoStudyIntent(message);
         if (namedStudy && namedStudy.repo.toLowerCase() !== String(this.env.CHE_GITHUB_REPO || '').toLowerCase()) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can start a repository study.', { source: 'che_topic_study', ok: false });
           const started = await this.startTopicStudy(namedStudy, message);
@@ -6111,13 +6111,13 @@ export class CheState extends DurableObject {
         }
         // "Batch them": the studies and builds already lined up run together.
         // Without lined-up study work this falls through to the usual routes.
-        if (ownerDevice && studyBatchIntent(message)) {
+        if (ownerDevice && !chatOnlyEvaluation && studyBatchIntent(message)) {
           const batched = await this.batchStudies();
           if (batched) return ndjsonReply(batched, { source: 'che_topic_study', batch: true });
         }
         // "Build me a website for …" / "change the website: …": CHE writes a
         // complete page, checks it, and hosts it on her own Worker.
-        const siteEdit = ownerDevice ? siteEditIntent(message) : null;
+        const siteEdit = ownerDevice && !chatOnlyEvaluation ? siteEditIntent(message) : null;
         const siteEditTarget = siteEdit ? await lastSite(this.ctx.storage) : null;
         const siteBuild = ownerDevice && !siteEditTarget ? siteBuildIntent(message) : null;
         if (siteBuild || siteEditTarget) {
@@ -6161,7 +6161,7 @@ export class CheState extends DurableObject {
         // "Run the five layer exam": layers 1-4 are reasoning problems graded
         // deterministically; layer 5 is autonomy exam level 5, a real
         // self-patch through the coding pipeline under injected failures.
-        const fiveLayer = ownerDevice ? fiveLayerIntent(message) : null;
+        const fiveLayer = ownerDevice && !chatOnlyEvaluation ? fiveLayerIntent(message) : null;
         if (fiveLayer?.kind === 'results') {
           const [reasoning, coding] = await Promise.all([LAYER_RESULTS_KEY, EXAM_RESULTS_KEY].map((key) => Promise.resolve().then(() => this.ctx.storage.get(key)).catch(() => null)));
           return ndjsonReply(speakFiveLayerResults(reasoning || {}, coding || {}), { source: 'che_five_layer_exam' });
@@ -6212,7 +6212,7 @@ export class CheState extends DurableObject {
         }
         // "Run the autonomy exam" (5 levels, each harder): real coding runs in
         // dry-run mode, graded deterministically. "Autonomy exam results".
-        const exam = ownerDevice && !isExistingChangeCommand(selfUpdateChatIntent(message)) ? examIntent(message) : null;
+        const exam = ownerDevice && !chatOnlyEvaluation && !isExistingChangeCommand(selfUpdateChatIntent(message)) ? examIntent(message) : null;
         if (exam?.kind === 'results') {
           const results = await Promise.resolve().then(() => this.ctx.storage.get(EXAM_RESULTS_KEY)).catch(() => null);
           return ndjsonReply(speakExamResults(results || {}), { source: 'che_autonomy_exam' });
@@ -6257,7 +6257,7 @@ export class CheState extends DurableObject {
         // pipeline, which builds on the retained failure evidence.
         // A command about the existing change ("Create the PR. Then fix the
         // previous job…") is that command first; it never becomes a recovery run.
-        if (ownerDevice && !isExistingChangeCommand(selfUpdateChatIntent(message)) && recoveryRequestIntent(message) && (await this.ctx.storage.get(FAILED_ENGINEERING_KEY).catch(() => null))?.request) {
+        if (ownerDevice && !chatOnlyEvaluation && !isExistingChangeCommand(selfUpdateChatIntent(message)) && recoveryRequestIntent(message) && (await this.ctx.storage.get(FAILED_ENGINEERING_KEY).catch(() => null))?.request) {
           return this.selfDevelopmentReply(message, { vectorRecall: {} });
         }
         // "What changed?": only real, recorded updates are read back.
