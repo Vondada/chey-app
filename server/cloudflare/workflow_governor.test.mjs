@@ -73,19 +73,33 @@ test('recoverable failures stay quiet; owner, security, data, money and exhausti
   assert.equal(ownerNotificationPolicy({}).notify, true, 'unknown failures are never hidden');
 });
 
-test('evidence dedupe never drops system, short, image or unique messages', () => {
+test('evidence dedupe never drops system, short, image or unique messages, and keeps turns alternating', () => {
   const big = 'x'.repeat(500);
   const image = { role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:' } }] };
   const msgs = [
     { role: 'system', content: big }, { role: 'system', content: big },
     { role: 'user', content: 'yes' }, { role: 'assistant', content: 'ok' }, { role: 'user', content: 'yes' },
-    { role: 'user', content: big }, image, { role: 'user', content: big },
+    { role: 'assistant', content: big }, image, { role: 'assistant', content: big }, { role: 'user', content: 'go' },
   ];
   const out = dedupeEvidence(msgs);
   assert.equal(out.filter((m) => m.role === 'system').length, 2);
   assert.equal(out.filter((m) => m.content === 'yes').length, 2);
   assert.ok(out.includes(image));
-  assert.equal(out.filter((m) => m.role === 'user' && m.content === big).length, 1);
-  assert.equal(out[out.length - 1].content, big, 'the latest copy is kept');
+  // Dropping either copy here would join two user turns, so both stay.
+  assert.equal(out.filter((m) => m.content === big && m.role === 'assistant').length, 2);
+  // Back-to-back identical evidence is sent once.
+  assert.equal(dedupeEvidence([{ role: 'user', content: big }, { role: 'user', content: big }, { role: 'assistant', content: 'ok' }]).length, 2);
+  for (let i = 1; i < out.length; i += 1) if (out[i].role !== 'system') assert.notEqual(out[i].role, out[i - 1].role, 'no two same-role turns in a row');
+  const joined = dedupeEvidence([{ role: 'user', content: 'a' }, { role: 'assistant', content: big }, { role: 'assistant', content: 'b' }, { role: 'user', content: 'c' }, { role: 'assistant', content: big }]);
+  assert.equal(joined.length, 4, 'here the earlier copy can go without joining turns');
+  for (let i = 1; i < joined.length; i += 1) assert.notEqual(joined[i].role, joined[i - 1].role);
   assert.deepEqual(minimalContext(['abc', 'abc', 'de', 'toolong'], 5), ['abc', 'de']);
+});
+
+test('review fixes: chores and household problems are not war rooms or bug hunts', () => {
+  assert.notEqual(selectWorkflow({ text: 'send the data file to Bob' }), WORKFLOWS.WAR_ROOM);
+  assert.notEqual(selectWorkflow({ text: 'delete the old photos from my account' }), WORKFLOWS.WAR_ROOM);
+  assert.notEqual(selectWorkflow({ text: 'my wifi is not working' }), WORKFLOWS.BUG_HUNT);
+  assert.equal(selectWorkflow({ text: 'the app is not working after the update' }), WORKFLOWS.BUG_HUNT);
+  assert.equal(selectWorkflow({ text: 'transfer $500 to savings' }), WORKFLOWS.WAR_ROOM);
 });

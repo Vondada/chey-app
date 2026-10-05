@@ -36,7 +36,8 @@ import { activityFeed, creations, findCreations, greeting, suggestions, stalledT
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
 import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
 import { MODE_NAME, chooseAccount, deskIntent, rememberListed, deskTick, pendingAlert, readDesk, setMode, setSize, skipTrade, speakAlert, speakDeskStatus, takeAnnouncement, takeTrade } from './trading_desk.js';
-import { cachedResearch, knownAnswer, rememberOwnerFact } from './knowledge_cache.js';
+import { externalGrounding } from './external_grounding.js';
+import { cachedResearch, factKey, forgetKnowledge, knownAnswer, ownerFactQuestion, rememberOwnerFact, researchKey } from './knowledge_cache.js';
 import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliability } from './reliability_ledger.js';
 import { ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
@@ -2547,6 +2548,12 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
     .catch(() => ({ text: '', references: [] }));
   if (inspiration.text) {
     groundedRequest = `${groundedRequest}\n\n${inspiration.text}`.slice(0, 42000);
+  }
+  // A repository or documentation link named in the request is read by CHE
+  // herself before the crew starts (untrusted, bounded, license-gated).
+  const outside = await externalGrounding(env, request).catch(() => ({ text: '', read: [] }));
+  if (outside.text) {
+    groundedRequest = `${groundedRequest}\n\n${outside.text}`.slice(0, 48000);
   }
 
   // "Fix this": look for well-built open-source code doing the same job, so
@@ -6128,11 +6135,27 @@ export class CheState extends DurableObject {
           // engines' rate limits and fail levels for the wrong reason.
           const levels = exam.levels.filter((level) => examLevel(level));
           const inFlight = fresh.jobs.find((job) => job.kind === 'autonomy_exam' && ['queued', 'running'].includes(job.status));
-          if (inFlight) return ndjsonReply(`An autonomy exam is already running, sir (level ${inFlight.exam_level}${inFlight.exam_next?.length ? `, then ${inFlight.exam_next.join(', ')}` : ''}). Say "autonomy exam results" anytime to hear the scores.`, { source: 'che_autonomy_exam', background_job_ids: [inFlight.id] });
+          const fullExam = levels.length === AUTONOMY_EXAM.length;
+          if (inFlight) {
+            // A single level asked for while an exam runs joins the same run
+            // after the levels already lined up (it is never silently refused).
+            const lined = new Set([Number(inFlight.exam_level), ...(inFlight.exam_next || []).map(Number)]);
+            const extra = fullExam ? [] : levels.filter((level) => !lined.has(Number(level)));
+            if (extra.length) {
+              inFlight.exam_next = [...(inFlight.exam_next || []), ...extra];
+              await this.ctx.storage.put('che', fresh);
+              return ndjsonReply(`An exam is running, sir, so I lined up ${extra.map((l) => `level ${l}`).join(' and ')} right after it. Say "autonomy exam results" anytime.`, { source: 'che_autonomy_exam', background_job_ids: [inFlight.id] });
+            }
+            return ndjsonReply(`An autonomy exam is already running, sir (level ${inFlight.exam_level}${inFlight.exam_next?.length ? `, then ${inFlight.exam_next.join(', ')}` : ''}). Say "autonomy exam results" anytime to hear the scores.`, { source: 'che_autonomy_exam', background_job_ids: [inFlight.id] });
+          }
           const runId = crypto.randomUUID();
-          // Reset the visible score atomically for this run. Older jobs carry a
-          // different run id and cannot overwrite these results when they finish late.
-          await this.ctx.storage.put(EXAM_RESULTS_KEY, { run_id: runId, results: {}, started_at: new Date().toISOString() });
+          // A full exam starts a clean score. Re-testing single levels keeps the
+          // other levels' latest scores and replaces only the re-tested ones (so
+          // a regression is never hidden behind an older pass). Older jobs carry
+          // a different run id and cannot overwrite these results when late.
+          const previous = fullExam ? null : await Promise.resolve().then(() => this.ctx.storage.get(EXAM_RESULTS_KEY)).catch(() => null);
+          const carried = Object.fromEntries(Object.entries(previous?.results || {}).filter(([level]) => !levels.includes(Number(level))));
+          await this.ctx.storage.put(EXAM_RESULTS_KEY, { run_id: runId, results: carried, started_at: new Date().toISOString() });
           const queued = levels.length ? enqueueExamLevel(fresh, levels[0], levels.slice(1), runId) : null;
           await this.ctx.storage.put('che', fresh);
           await this.scheduleWork();
@@ -6251,6 +6274,10 @@ export class CheState extends DurableObject {
           }
           if (resil.kind === 'uncache') {
             await forgetAnswer(st, previousText);
+            // Also forget verified knowledge for that question (research and owner fact).
+            await forgetKnowledge(st, researchKey(previousText)).catch(() => null);
+            const subject = ownerFactQuestion(previousText);
+            if (subject) await forgetKnowledge(st, factKey(subject)).catch(() => null);
             return ndjsonReply("Done, sir. I won't reuse that answer.", { source: 'che_cache' });
           }
           if (resil.kind === 'identity') {
@@ -6409,8 +6436,16 @@ export class CheState extends DurableObject {
         // "remember that my X is Y" turn also becomes such a fact.
         if (ownerDevice && !body.attachment) {
           const rememberFact = /^(?:(?:chay|chey|shay|che)[, ]+)?remember(?: that)?\s+(.+)/i.exec(message);
-          if (rememberFact) await rememberOwnerFact(this.ctx.storage, rememberFact[1]).catch(() => null);
-          const known = rememberFact ? null : await knownAnswer(this.ctx.storage, message).catch(() => null);
+          // A plain owner fact is saved right here, before page reading or any
+          // AI step can misread it ("remember that my Worker URL is https://…"
+          // used to be fetched as a web page instead of remembered).
+          const savedFact = rememberFact ? await rememberOwnerFact(this.ctx.storage, rememberFact[1]).catch(() => null) : null;
+          if (savedFact) {
+            const added = addOwnerMemory(data, rememberFact[1].trim().slice(0, 500), { source: 'owner_chat', category: 'Memory', scope: 'owner', confidence: 1 });
+            if (added.added || added.replaced?.length) await this.saveChatData(data);
+            return ndjsonReply('I’ll remember that, sir.', { source: 'che_memory', model_calls: 0 });
+          }
+          const known = rememberFact ? null : await knownAnswer(this.ctx.storage, message, { memories: data.memories }).catch(() => null);
           if (known) {
             await recordReliability(this.ctx.storage, { kind: 'retrieval', workflow: 'instant_answer', outcome: 'answered_from_memory', tokens_saved: 1500 });
             return ndjsonReply(known.answer, { source: 'che_memory', model_calls: 0 });
@@ -8567,6 +8602,7 @@ export class CheState extends DurableObject {
     // Re-read so memories, tasks or jobs added while the model ran survive.
     const fresh = await this.loadData();
     const finishedAt = new Date().toISOString();
+    const priorRetries = new Map(fresh.jobs.map((j) => [j.id, Number(j.retry_count || 0)]));
     for (const outcome of results) {
       const job = fresh.jobs.find((item) => item.id === outcome.id);
       if (!job || job.status === 'cancelled') continue;
@@ -8592,14 +8628,17 @@ export class CheState extends DurableObject {
     // is recorded but not announced; final failures stay owner-visible.
     for (const outcome of results) {
       const job = fresh.jobs.find((item) => item.id === outcome.id);
-      if (!job) continue;
+      if (!job || !['queued', 'complete', 'failed'].includes(job.status)) continue; // cancelled etc.
+      const newRetries = Math.max(0, Number(job.retry_count || 0) - (priorRetries.get(job.id) || 0));
       const retrying = job.status === 'queued';
+      // A job that is only waiting (CI, deploy) is not a recovery event.
+      if (retrying && !newRetries) continue;
       const policy = ownerNotificationPolicy({ recoverable: retrying, recovery_exhausted: job.dead_letter === true });
       await recordReliability(this.ctx.storage, {
         kind: 'job',
         workflow: String(job.kind || 'chat').replace(/[^a-z0-9_]/gi, '_'),
         outcome: retrying ? 'retrying' : job.status === 'complete' ? (Number(job.retry_count || 0) > 0 ? 'recovered' : 'completed') : 'failed',
-        retries: job.retry_count,
+        retries: newRetries,
         recovery_classes: job.failure_class ? [job.failure_class] : [],
         owner_visible_failure: job.status === 'failed' && policy.notify,
       });

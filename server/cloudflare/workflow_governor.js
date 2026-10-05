@@ -48,10 +48,14 @@ const PROFILE = {
 // questions about it: "what is my Worker URL?" is not a coding task).
 const CODE_ACTION = /\b(?:implement|refactor|write (?:the |a |some )?code|code (?:this|it|a|the)|add (?:a |an |the )?(?:function|method|endpoint|route|test|screen|button|feature)|change (?:the |this |your )?(?:code|ui|screen|button|label|layout)|edit (?:the )?(?:code|file)|pull request|open a pr|create the pr|merge (?:it|the pr)|compile|stack trace|unit test|flutter|dart file|\.dart\b|\.js\b|\.ts\b)/i;
 const BUG = /\b(?:bug|broken|crash(?:es|ed|ing)?|exception|stack trace|regression|debug|root cause|not working|doesn'?t work|failing (?:test|check|build)|fix (?:the |this |a )?(?:bug|error|crash|issue|failure|test|build))\b/i;
+// A bug hunt is about CHE's software, not "my wifi is not working".
+const SOFTWARE = /\b(?:app|code|test|tests|build|ci|worker|flutter|dart|screen|function|crash(?:es|ed)?|exception|stack trace|endpoint|api|pr|deploy(?:ment)?|che)\b/i;
 const RESEARCH = /\b(?:research|investigate|find out|look into|sources?|compare|study|prior art|state of the art)\b/i;
 const FRESH = /\b(?:latest|current(?:ly)?|today|tonight|right now|this (?:week|month)|news|price|quote|weather|score|live|breaking|newest|recent(?:ly)?)\b/i;
-// High stakes = a consequential ACTION on money, security, data or production.
-const HIGH_RISK = /\b(?:(?:place|execute|send|transfer|wire|buy|sell|pay|deploy|migrate|delete|drop|wipe|revoke|rotate)\b[\s\S]{0,40}\b(?:money|funds|payment|trade|order|position|contracts?|production|database|account|credentials?|keys?|secrets?|users?|data)|security (?:incident|breach)|compromised|leaked (?:key|secret|password|token)|irreversible)\b/i;
+// High stakes = a consequential ACTION on money, trading, production,
+// credentials or security, not talking about them and not ordinary chores
+// ("send the file to Bob"). Owner confirmation rules still apply everywhere.
+const HIGH_RISK = /\b(?:(?:transfer|wire|pay|send)\b[\s\S]{0,30}(?:\b(?:money|funds|payment)\b|\$\s?\d+)|(?:place|execute|buy|sell|close)\b[\s\S]{0,30}\b(?:orders?|positions?|contracts?|trades?|shares)|(?:deploy|migrate|drop|wipe|truncate)\b[\s\S]{0,40}\b(?:production|prod|database|db)|(?:delete|wipe)\b[\s\S]{0,30}\b(?:production|database|all (?:users|data|accounts))|(?:rotate|revoke)\b[\s\S]{0,30}\b(?:keys?|credentials?|secrets?|tokens?)|security (?:incident|breach)|compromised|leaked (?:keys?|secrets?|passwords?|tokens?)|irreversible)\b/i;
 const COMPLEX = /\b(?:architect(?:ure)?|redesign|system[- ]wide|end[- ]to[- ]end|across (?:the )?(?:app|codebase|system)|entire|complex|multi[- ]step|several files|migration plan|trade[- ]?offs?|prove|derive)\b/i;
 const PARALLEL = /\b(?:in parallel|parallel(?:ize)?|independent (?:agents|tasks)|team up|work together|whole team|several agents|split (?:it|this) up)\b/i;
 const UNCERTAIN = /\b(?:not sure|unsure|maybe|might|could be|which (?:is|one)|should i|best way|why (?:does|is|did))\b|\?\s*$/i;
@@ -103,7 +107,7 @@ export function planWorkflow(input = {}, ctx = {}) {
   else if (input.resume_checkpoint === true || input.recovering === true) workflow = WORKFLOWS.RECOVERY;
   else if (input.war_room === true || s.risk >= 0.8) workflow = WORKFLOWS.WAR_ROOM;
   else if (s.parallelism >= 0.8) workflow = WORKFLOWS.MULTI_AGENT;
-  else if (BUG.test(text)) workflow = WORKFLOWS.BUG_HUNT;
+  else if (BUG.test(text) && SOFTWARE.test(text)) workflow = WORKFLOWS.BUG_HUNT;
   else if (CODE_ACTION.test(text) || input.coding === true) workflow = (s.complexity >= 0.5 || s.est_tokens > 2500) ? WORKFLOWS.DEEP_CODING : WORKFLOWS.FAST_CODING;
   else if (RESEARCH.test(text) || s.freshness >= 0.8) workflow = WORKFLOWS.RESEARCH;
   else if (s.complexity >= 0.5 || s.uncertainty >= 0.6) workflow = WORKFLOWS.DEEP_REASONING;
@@ -195,11 +199,19 @@ export function dedupeEvidence(messages = [], minChars = 400) {
     const t = textOfMessage(m);
     if (m?.role !== 'system' && t && t.length >= minChars) lastIndex.set(t, i);
   });
-  return messages.filter((m, i) => {
+  const keep = messages.map((m, i) => {
     const t = textOfMessage(m);
-    if (m?.role === 'system' || !t || t.length < minChars) return true;
-    return lastIndex.get(t) === i;
+    return m?.role === 'system' || !t || t.length < minChars || lastIndex.get(t) === i;
   });
+  // Never create two same-role turns in a row: an earlier copy is kept when
+  // dropping it would join its neighbours (strict-alternation APIs reject that).
+  for (let i = 0; i < messages.length; i += 1) {
+    if (keep[i]) continue;
+    let prev = i - 1; while (prev >= 0 && !keep[prev]) prev -= 1;
+    let next = i + 1; while (next < messages.length && !keep[next]) next += 1;
+    if (prev >= 0 && next < messages.length && messages[prev]?.role === messages[next]?.role && messages[prev]?.role !== 'system') keep[i] = true;
+  }
+  return messages.filter((_, i) => keep[i]);
 }
 
 /** Distinct context snippets within a character budget (for callers packing evidence). */

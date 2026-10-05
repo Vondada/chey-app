@@ -38,20 +38,28 @@ test('a sick engine is switched away from and the same request completes on anot
   assert.ok(ledger.rows[0].failovers >= 1, 'the failover is recorded');
 });
 
-import { cachedResearch, knownAnswer, rememberOwnerFact, rememberKnowledge, recallKnowledge, VOLATILE_TTL_MS } from './knowledge_cache.js';
+import { cachedResearch, factKey, forgetKnowledge, knownAnswer, rememberOwnerFact, rememberKnowledge, recallKnowledge, VOLATILE_TTL_MS } from './knowledge_cache.js';
 import { recordReliability, reliabilitySummary, speakReliability, sanitizeEvent } from './reliability_ledger.js';
 
-test('verified owner facts answer with no engine; newer statements replace older ones; secrets are never stored', async () => {
+test('verified owner facts answer with no engine; corrections, deletions and secrets are honoured', async () => {
   const s = store();
   await rememberOwnerFact(s, 'my Worker URL is https://old.example.dev', 1000);
   await rememberOwnerFact(s, 'my Worker URL is https://che.example.dev', 2000);
-  const known = await knownAnswer(s, "CHE, what's my Worker URL?", 3000);
+  const memories = ['my Worker URL is https://old.example.dev', 'my Worker URL is https://che.example.dev'];
+  const known = await knownAnswer(s, "CHE, what's my Worker URL?", { now: 3000, memories });
   assert.equal(known.answer, 'Your worker url is https://che.example.dev, sir.');
   assert.equal(known.source, 'owner_memory');
+  // Corrected some other way: the newest memory about it no longer says that value.
+  assert.equal(await knownAnswer(s, "what's my worker url", { now: 3000, memories: [...memories, 'my worker url changed to https://new.example.dev'] }), null);
+  // Deleted from memory: not spoken.
+  assert.equal(await knownAnswer(s, "what's my worker url", { now: 3000, memories: [] }), null);
+  // Forgotten on request.
+  await forgetKnowledge(s, factKey('worker url'));
+  assert.equal(await knownAnswer(s, "what's my worker url", { now: 3000, memories }), null);
   assert.equal(await rememberOwnerFact(s, 'my password is hunter2'), null);
   assert.equal(await rememberOwnerFact(s, 'my api key is sk-live-123'), null);
-  assert.equal(JSON.stringify(s.m.get('che_knowledge_cache')).includes('hunter2'), false);
-  assert.equal(await knownAnswer(s, 'what is the meaning of life'), null);
+  assert.equal(JSON.stringify([...s.m.values()]).includes('hunter2'), false);
+  assert.equal(await knownAnswer(s, 'what is the meaning of life', { memories }), null);
 });
 
 test('research is reused while valid, and stale volatile knowledge never overrides a fresh check', async () => {

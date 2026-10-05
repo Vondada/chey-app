@@ -2091,6 +2091,8 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       if (checkpoint.feedback) feedbacks.fill(String(checkpoint.feedback).slice(0, 1500));
       chat.push({ from: 'CHE', msg: `Resuming the same job from its checkpoint after an engine switch: ${genuinePasses} implementation pass(es) already used; ${failedStrategies.length} strategies already tried will not be repeated.` });
     }
+    const roundOffset = checkpoint ? Math.max(0, Number(checkpoint.round_offset) || 0) : 0;
+    let lastRound = 0;
     let unproductivePasses = 0;
     let enginesFailed = false;
     let budgetStop = false;
@@ -2113,7 +2115,8 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
 
     // Autonomy exam level 5 injects real failure classes (never in normal use).
     const faults = options.faults && typeof options.faults === 'object' ? options.faults : {};
-    const faultsUsed = { malformed: false, anchor: false };
+    // Injected exam faults fire once per job, including across a resume.
+    const faultsUsed = { malformed: false, anchor: false, ...(checkpoint?.faults_used || {}) };
     const attemptOnce = async (round, member, i) => {
       if (faults.malformedOnce && !faultsUsed.malformed) {
         faultsUsed.malformed = true;
@@ -2357,7 +2360,9 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     };
 
     for (let round = 0; genuinePasses < maxRounds && !result; round++) {
-      const roundEngineers = CREW.engineers.map((member, i) => engineerForRound(member, i, round));
+      lastRound = round;
+      // A resumed job continues on the NEXT engine pair, not the one that went empty.
+      const roundEngineers = CREW.engineers.map((member, i) => engineerForRound(member, i, round + roundOffset));
       const attempts = await Promise.all(roundEngineers.map((member, i) => attemptOnce(round, member, i)));
 
       const winner = attempts.find((attempt) => attempt && !attempt.no_change);
@@ -2513,6 +2518,8 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
             base: index.base || '',
             repo_sha: index.head_sha || '',
             resumes: resumes + 1,
+            round_offset: roundOffset + lastRound + 1,
+            faults_used: { ...faultsUsed },
             saved_at: new Date().toISOString(),
           },
           detail: `Engines returned no usable output after ${genuinePasses} implementation pass(es); the job saved a checkpoint and resumes on other engines with ${maxRounds - genuinePasses} pass(es) left. Nothing was changed.`,

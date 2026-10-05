@@ -671,8 +671,9 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   const workflow = plan.workflow;
   needs.workflow = workflow;
   if (ownerChat && !input?.che_capability && !needs.provider && !needs.strongest) {
+    // The governor may only RAISE how hard a turn is, never lower what
+    // inferNeeds already decided.
     if (plan.tier === 'strong' && needs.capability !== 'vision') needs.difficulty = 'hard';
-    else if (plan.tier === 'small' && needs.capability === 'fast_chat') needs.difficulty = 'trivial';
     if (workflow === WORKFLOWS.WAR_ROOM) needs.strongest = true;
   }
   const context = input?.che_context && typeof input.che_context === 'object' ? input.che_context : null;
@@ -729,7 +730,13 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
     const drainAt = Number(env[`CHE_${baseId.toUpperCase()}_DRAIN_AT`]) || 0.70;
     drainStates.set(provider.id, engineCapacityState({
       utilization: limit ? usedTokens / limit : 0,
-      health: Number.isFinite(health[baseId]?.score) ? health[baseId].score : 1,
+      // Only RECENT failures make an engine look sick: an old low score must
+      // not keep a recovered engine (often the free one) demoted forever.
+      health: (() => {
+        const h = health[baseId];
+        const recent = (h?.recent_errors || []).filter((e) => now - Number(e?.at || 0) < 10 * 60_000).length;
+        return recent >= 2 && Number.isFinite(h?.score) ? h.score : 1;
+      })(),
       hard_failure: isUnhealthy(health[baseId], now) || (providerCooldownUntil.get(provider.id) || 0) > now,
     }, drainAt));
   }

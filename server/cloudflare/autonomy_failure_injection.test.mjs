@@ -800,6 +800,7 @@ test('control plane: engines going empty after a genuine pass checkpoint the SAM
   assert.ok(out.checkpoint.fingerprints.length >= 1, 'tried strategies are remembered');
   assert.ok(out.checkpoint.failed_strategies.length >= 1, 'genuine evidence kept');
   assert.equal(out.checkpoint.resumes, 1);
+  assert.ok(out.checkpoint.round_offset >= 2, 'the resume starts on the next engine pair, not the one that went empty');
   // Resume on healthy engines: only the passes that were left are used, and a
   // strategy already tried is rejected as a duplicate instead of re-run.
   let m = 0;

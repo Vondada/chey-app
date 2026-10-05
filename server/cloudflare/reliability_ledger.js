@@ -51,6 +51,21 @@ export async function recordReliability(storage, event = {}) {
   if (!storage?.get || !storage?.put) return null;
   try {
     const row = sanitizeEvent(event);
+    // Several engine calls can run in parallel inside one request: update
+    // inside a storage transaction when available so no count is lost.
+    if (typeof storage.transaction === 'function') {
+      await storage.transaction(async (txn) => { await apply(txn, row); });
+      return row;
+    }
+    await apply(storage, row);
+    return row;
+  } catch (_) {
+    return null; // telemetry never breaks owner work
+  }
+}
+
+async function apply(storage, row) {
+  {
     const ledger = await read(storage);
     const t = { ...emptyTotals(), ...ledger.totals };
     if (row.kind === 'route') t.routes += 1;
@@ -64,9 +79,6 @@ export async function recordReliability(storage, event = {}) {
     t.est_tokens += row.est_tokens;
     if (row.owner_visible_failure) t.owner_visible_failures += 1;
     await storage.put(KEY, { totals: t, rows: [row, ...ledger.rows].slice(0, MAX_ROWS) });
-    return row;
-  } catch (_) {
-    return null; // telemetry never breaks owner work
   }
 }
 

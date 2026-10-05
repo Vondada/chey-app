@@ -1340,7 +1340,9 @@ test('memory-first: a verified owner fact is answered with zero AI engine calls'
   let providerCalls = 0;
   globalThis.fetch = async () => { providerCalls += 1; return new Response('{}', { status: 500 }); };
   try {
-    await (await chat('Remember that my Worker URL is https://che.example.workers.dev')).text();
+    // Remembering a fact that contains a URL saves it (it is not fetched as a page).
+    assert.equal(replyFromNdjson(await (await chat('Remember that my Worker URL is https://che.example.workers.dev')).text()), 'I’ll remember that, sir.');
+    assert.equal(aiCalls + providerCalls, 0, 'remembering a plain fact costs no AI either');
     aiCalls = 0;
     providerCalls = 0;
     const reply = replyFromNdjson(await (await chat("What's my Worker URL?")).text());
@@ -1351,6 +1353,12 @@ test('memory-first: a verified owner fact is answered with zero AI engine calls'
     assert.equal(ledger.totals.memory_answers, 1);
     assert.ok(ledger.totals.tokens_saved > 0);
     assert.match(replyFromNdjson(await (await chat('reliability report')).text()), /1 answers from memory with no AI call/);
+    // The memory list stays the authority: once the memory is deleted the
+    // cached fact is no longer spoken.
+    const d = saved.get('che');
+    d.memories = [];
+    saved.set('che', d);
+    assert.notEqual(replyFromNdjson(await (await chat("What's my Worker URL?")).text()), 'Your worker url is https://che.example.workers.dev, sir.');
   } finally {
     globalThis.fetch = original;
   }
@@ -1391,6 +1399,7 @@ test('control plane: a job interrupted by an engine failure keeps its checkpoint
   const ledger = saved.get('che_reliability_ledger');
   assert.equal(ledger.totals.jobs_completed, 1);
   assert.equal(ledger.totals.recoveries, 1);
+  assert.equal(ledger.totals.retries, 1, 'each retry is counted once, not re-added every pass');
   assert.equal(ledger.totals.owner_visible_failures, 0);
 });
 
@@ -1405,4 +1414,35 @@ test('control plane keeps exam isolation: a late job from an older run cannot ov
   assert.deepEqual(saved.get('che_autonomy_exam').results[1], pass, 'older run did not overwrite');
   await state.runAutonomyExamJob({ id: 'same', exam_level: 1, exam_run_id: 'run-b' });
   assert.equal(saved.get('che_autonomy_exam').results[1].passed, true, 'a later failure in the same run cannot downgrade a pass');
+});
+
+test('autonomy exam: single levels queue behind a running exam and re-tests keep the other levels\' scores', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' };
+  const { state, chat } = await pairedChat(env, saved);
+  const say = async (m) => replyFromNdjson(await (await chat(m)).text());
+  assert.match(await say('run autonomy exam level 3'), /started the autonomy exam, sir: level 3\./);
+  assert.match(await say('run autonomy exam level 5'), /lined up level 5 right after it/);
+  const running = saved.get('che').jobs.find((j) => j.kind === 'autonomy_exam' && j.status === 'queued');
+  assert.deepEqual(running.exam_next, [5]);
+  const runId = saved.get('che_autonomy_exam').run_id;
+  state.runAutonomyExamJob = async (job) => {
+    const stored = saved.get('che_autonomy_exam');
+    stored.results[job.exam_level] = { level: job.exam_level, passed: job.exam_level === 3, failed_checks: [] };
+    saved.set('che_autonomy_exam', stored);
+    return { id: job.id, status: 'complete', result: 'graded', owner_message: '', error: '' };
+  };
+  for (let i = 0; i < 3; i++) await state.processJobs();
+  const scores = saved.get('che_autonomy_exam');
+  assert.equal(scores.run_id, runId);
+  assert.deepEqual(Object.keys(scores.results).sort(), ['3', '5'], 'level 5 ran in the same run and level 3 was kept');
+  // Re-testing level 5 alone keeps level 3's score and replaces only level 5.
+  assert.match(await say('run autonomy exam level 5'), /started the autonomy exam, sir: level 5\./);
+  const retest = saved.get('che_autonomy_exam');
+  assert.notEqual(retest.run_id, runId);
+  assert.deepEqual(Object.keys(retest.results), ['3']);
+  // A full exam starts a clean score.
+  for (let i = 0; i < 2; i++) await state.processJobs();
+  assert.match(await say('run the autonomy exam'), /level 1, level 2, level 3, level 4, level 5/);
+  assert.deepEqual(saved.get('che_autonomy_exam').results, {});
 });

@@ -12,12 +12,11 @@
 
 import { isSafeMemoryText } from './research_memory.js';
 
-const KEY = 'che_knowledge_cache';
 const MAX = 300;
 export const DAY = 86400000;
 export const RESEARCH_TTL_MS = 7 * DAY;
 export const VOLATILE_TTL_MS = 30 * 60_000;
-const VOLATILE = /\b(?:latest|current(?:ly)?|today|tonight|right now|now|this (?:week|month|year)|news|price|prices|quote|weather|forecast|score|scores|live|breaking|stock|bitcoin|btc|eth|market|rate|rates|traffic)\b/i;
+const VOLATILE = /\b(?:latest|current(?:ly)?|today|tonight|yesterday|last night|this (?:morning|week|month|year)|right now|now|news|price|prices|quote|weather|forecast|scores?|won|winners?|results?|election|standings|live|breaking|stock|bitcoin|btc|eth|market|rates?|traffic|recent(?:ly)?)\b/i;
 const SECRET = /\b(?:password|passcode|pin|security code|social security|ssn|credit card|card number|cvv|api[_ -]?key|secret|token|private key|seed phrase)\b/i;
 
 export function isVolatile(text) {
@@ -54,42 +53,55 @@ export function ownerFactQuestion(text) {
   return m ? normalizeQuestion(m[1]) : null;
 }
 
-async function readAll(storage) {
-  const saved = storage?.get ? await storage.get(KEY) : null;
-  return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
-}
+// One storage value per entry (kc:<key>) plus a small index used only for
+// pruning, so no single value grows toward the Durable Object size limit.
+const INDEX = 'che_knowledge_index';
+const entryKey = (key) => `kc:${key}`;
 
 /** Saves a verified answer. Secrets are never stored. Newest verification wins. */
 export async function rememberKnowledge(storage, entry, now = Date.now()) {
   if (!storage?.put) return null;
   const key = String(entry.key || '').slice(0, 220);
-  const answer = String(entry.answer || '').trim().slice(0, 4000);
+  const answer = String(entry.answer || '').trim().slice(0, 12000);
   if (!key || !answer || SECRET.test(key) || !isSafeMemoryText(answer)) return null;
-  const all = await readAll(storage);
   const record = {
     key,
     answer,
     source: String(entry.source || 'knowledge_cache').slice(0, 40),
     sources: (Array.isArray(entry.sources) ? entry.sources : []).map(String).filter((u) => /^https:\/\//.test(u)).slice(0, 5),
+    limitation: String(entry.limitation || '').slice(0, 300),
     confidence: Math.max(0, Math.min(1, Number.isFinite(entry.confidence) ? entry.confidence : 0.9)),
     verified_at: now,
     expires_at: Number.isFinite(entry.ttl_ms) ? now + entry.ttl_ms : null,
     volatile: entry.volatile === true,
   };
-  all[key] = record;
-  const keys = Object.keys(all);
+  await storage.put(entryKey(key), record);
+  const index = (await storage.get(INDEX)) || {};
+  index[key] = now;
+  const keys = Object.keys(index);
   if (keys.length > MAX) {
-    keys.sort((a, b) => (all[a].verified_at || 0) - (all[b].verified_at || 0));
-    for (const old of keys.slice(0, keys.length - MAX)) delete all[old];
+    keys.sort((a, b) => index[a] - index[b]);
+    for (const old of keys.slice(0, keys.length - MAX)) {
+      delete index[old];
+      await storage.delete?.(entryKey(old));
+    }
   }
-  await storage.put(KEY, all);
+  await storage.put(INDEX, index);
   return record;
+}
+
+/** Forgets what CHE knows for this key (owner said "don't reuse that answer"). */
+export async function forgetKnowledge(storage, key) {
+  if (!key || !storage?.delete) return;
+  await storage.delete(entryKey(key));
+  const index = (await storage.get(INDEX)) || {};
+  if (key in index) { delete index[key]; await storage.put(INDEX, index); }
 }
 
 /** A trustworthy cached answer for this exact key, or null. */
 export async function recallKnowledge(storage, key, { now = Date.now(), minConfidence = 0.8 } = {}) {
-  if (!key) return null;
-  const record = (await readAll(storage))[key];
+  if (!key || !storage?.get) return null;
+  const record = await storage.get(entryKey(key));
   if (!record) return null;
   if (record.confidence < minConfidence) return null;
   if (Number.isFinite(record.expires_at) && now > record.expires_at) return null;
@@ -108,7 +120,7 @@ export function researchKey(question) { return `research:${normalizeQuestion(que
 export async function cachedResearch(storage, question, research, now = Date.now()) {
   const key = researchKey(question);
   const hit = await recallKnowledge(storage, key, { now });
-  if (hit) return { summary: hit.answer, sources: hit.sources, cached: true, verified_at: hit.verified_at };
+  if (hit) return { summary: hit.answer, sources: hit.sources, limitation: hit.limitation || undefined, cached: true, verified_at: hit.verified_at };
   const fresh = await research();
   if (fresh?.summary) {
     const volatile = isVolatile(question);
@@ -116,6 +128,7 @@ export async function cachedResearch(storage, question, research, now = Date.now
       key,
       answer: fresh.summary,
       sources: fresh.sources,
+      limitation: fresh.limitation,
       source: 'research_library',
       confidence: 0.85,
       ttl_ms: volatile ? VOLATILE_TTL_MS : RESEARCH_TTL_MS,
@@ -127,13 +140,22 @@ export async function cachedResearch(storage, question, research, now = Date.now
 
 /**
  * Memory-first: a question CHE can answer from a verified owner fact, with no
- * AI engine. Returns { answer, source, verified_at } or null.
+ * AI engine. The owner's memory list stays the authority: the newest memory
+ * that mentions the subject must still say the stored value, so a fact the
+ * owner corrected some other way ("my locker changed to 40") or deleted is
+ * never spoken again; such questions fall through to the normal path.
+ * Returns { answer, source, verified_at } or null.
  */
-export async function knownAnswer(storage, message, now = Date.now()) {
+export async function knownAnswer(storage, message, { now = Date.now(), memories = [] } = {}) {
   const subject = ownerFactQuestion(message);
   if (!subject) return null;
   const record = await recallKnowledge(storage, factKey(subject), { now });
   if (!record) return null;
+  const words = subject.split(' ').filter((w) => w.length > 1);
+  const mentions = (Array.isArray(memories) ? memories : []).map((m) => String(m?.text ?? m ?? '').toLowerCase())
+    .filter((text) => words.every((w) => text.includes(w)));
+  const newest = mentions[mentions.length - 1];
+  if (!newest || !newest.includes(record.answer.toLowerCase())) return null;
   return { answer: `Your ${subject} is ${record.answer}, sir.`, source: record.source, verified_at: record.verified_at };
 }
 
