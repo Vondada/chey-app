@@ -164,6 +164,24 @@ const GITHUB_OK = (files) => async (url) => {
   return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
 };
 
+test('legacy project-create route honors terminal chat-only isolation', async () => {
+  const saved = new Map();
+  let aiCalls = 0;
+  const env = {
+    CHE_PAIR_CODE: '123456',
+    AI: { run: async () => { aiCalls += 1; return { response: 'I would build it safely in chat only.' }; } },
+  };
+  const { api } = await pairedChat(env, saved);
+  const brief = 'Answer in this chat only and do not create or modify code; explain how you would build me an app.';
+  const res = await api('/api/project/create', { title: 'Hypothetical app', type: 'app', brief });
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.chat_only, true);
+  assert.match(body.reply, /build it safely/i);
+  assert.equal((saved.get('che').projects || []).length, 0, 'chat-only compatibility route persists no project');
+  assert.equal(aiCalls, 1, 'only the terminal chat answer runs');
+});
+
 test('chat: engines down during a coding request → saved background job and a human sentence, no traces', async () => {
   const saved = new Map();
   const env = {
