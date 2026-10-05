@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chatOnlyResponseIntent, codeScoutIntent, inspirationUpgradeContext, listOwnerStarredRepos, repositoryImplementationIntent, reusableLicense, scoutCode, selectStudyRepos, shouldUseInspirationWorkflow, speakScout, speakStarredRepos, starredRepoIntent, studySelectionIntent } from './code_scout.js';
+import { chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, inspirationUpgradeContext, listOwnerStarredRepos, repositoryImplementationIntent, reusableLicense, scoutCode, selectStudyRepos, shouldUseInspirationWorkflow, speakScout, speakStarredRepos, starredRepoIntent, studySelectionIntent } from './code_scout.js';
 
 test('intent parses code-scout phrasings', () => {
   assert.deepEqual(codeScoutIntent('find code for offline speech to text'), { need: 'offline speech to text' });
@@ -53,6 +53,16 @@ Give the real sequence: source discovery → checkpoint → patch → tests → 
   assert.equal(repositoryImplementationIntent('CHAT-ONLY TEST. Never modify your code or create a PR. Explain how you would improve your code and run tests.'), false);
   assert.equal(chatOnlyResponseIntent('Update your code: Build a chat-only evaluation mode. Do not deploy it until tests pass.'), false);
   assert.equal(repositoryImplementationIntent('Update your code: Build a chat-only evaluation mode. Do not deploy it until tests pass.'), true);
+  assert.equal(chatOnlyResponseIntent('Fix your code only as a hypothetical example; answer in this chat only and do not make any code changes.'), true);
+  assert.equal(currentTurnActionPolicy('Fix your code only as a hypothetical example; answer in this chat only and do not make any code changes.').repositoryMutationAllowed, false);
+  assert.equal(chatOnlyResponseIntent('Fix your code only as a hypothetical example; answer in this chat only and do not make any changes to your code.'), true);
+  assert.equal(currentTurnActionPolicy('Fix your code only as a hypothetical example; answer in this chat only and do not make any changes to your code.').repositoryMutationAllowed, false);
+  assert.equal(chatOnlyResponseIntent('Implement this in your app and answer in this chat when finished; do not deploy yet.'), false);
+  assert.equal(repositoryImplementationIntent('Implement this in your app and answer in this chat when finished; do not deploy yet.'), true);
+  assert.equal(chatOnlyResponseIntent('For this task, implement this in your app and answer in this chat when finished; do not deploy yet.'), false);
+  assert.equal(repositoryImplementationIntent('For this task, implement this in your app and answer in this chat when finished; do not deploy yet.'), true);
+  assert.equal(chatOnlyResponseIntent('Fix your code only as a hypothetical example; answer in this chat only and do not modify your code.'), true);
+  assert.equal(repositoryImplementationIntent('Fix your code only as a hypothetical example; answer in this chat only and do not modify your code.'), false);
   assert.equal(chatOnlyResponseIntent('CHAT-ONLY TEST. Make no changes to your code. Answer directly in this chat: explain how you would improve your code and run tests.'), true);
   assert.equal(chatOnlyResponseIntent('CHAT-ONLY TEST. No code changes. Answer directly in this chat: explain how you would improve your code and run tests.'), true);
   assert.equal(chatOnlyResponseIntent('CHAT-ONLY TEST. Don’t modify your code. Answer directly in this chat: explain how you would improve your code and run tests.'), true);
@@ -201,4 +211,42 @@ test('newest starred repos: owner phrases, count, spoken list', async () => {
   assert.equal(newestStarredIntent('what is the newest iPhone'), null);
   const spoken = speakNewestStarred([{ full_name: 'a/b', description: 'Agents' }, { full_name: 'c/d', description: '' }]);
   assert.match(spoken, /1\. a\/b: Agents\n2\. c\/d/);
+});
+
+test('mission T1-T6: chat-only phrasings never mutate; explicit implementation with a delivery hold does', () => {
+  for (const q of [
+    'Explain how you would improve your code. Do not modify it.',
+    'Answer this in this chat only.',
+    'Do not make any changes to your code.',
+    'Do not make any code changes.',
+    'Explain your failure-recovery system without changing anything.',
+    'This is an evaluation, not a coding request.',
+    "Explain how you'd build me an app; don't create anything.",
+    'Fix your code only as a hypothetical example; do not modify your code, just explain what else you would change.',
+  ]) {
+    const p = currentTurnActionPolicy(q);
+    assert.equal(p.terminalChatOnly, true, q);
+    assert.equal(p.repositoryMutationAllowed, false, q);
+  }
+  for (const q of [
+    'Implement this in your app.',
+    'Fix this in your code.',
+    'Update your code to support dark mode.',
+    'Implement this, but do not deploy yet.',
+    'For this task, implement this in your app and answer in this chat when finished; do not deploy yet.',
+    'Fix the login screen in your app but do not modify the auth code.',
+    'Fix the login screen in your app, but do not make changes outside that screen.',
+    'Implement dark mode in your app without changing anything else.',
+  ]) {
+    const p = currentTurnActionPolicy(q);
+    assert.equal(p.terminalChatOnly, false, q);
+    assert.equal(p.repositoryMutationAllowed, true, q);
+  }
+});
+
+test('quoted prohibitions are examples, not this turn\'s instruction', () => {
+  const quoted = 'Update your code to recognize the phrase "do not modify your code" as chat-only.';
+  assert.deepEqual({ ...currentTurnActionPolicy(quoted) }, { terminalChatOnly: false, repositoryMutationAllowed: true });
+  assert.equal(currentTurnActionPolicy('Update your code to recognize \u201cdo not modify your code\u201d as chat-only.').repositoryMutationAllowed, true);
+  assert.equal(currentTurnActionPolicy('Explain "chat-only" mode. Do not modify your code.').terminalChatOnly, true);
 });

@@ -63,9 +63,15 @@ bool cheIsSelfUpdateCommand(String raw) {
 
 bool cheIsSelfUpdateRequest(String raw) {
   final text = raw.trim();
+  if (cheIsTerminalChatOnlyRequest(text)) return false;
   if (cheIsRepositoryResearchRequest(text)) return false;
   // Commands about an existing change are not new coding requests.
   if (cheIsSelfUpdateCommand(text)) return false;
+  // Explicit authorization, including "Implement this, but do not deploy yet".
+  if (_cheHasExplicitImplementationAuthorization(text) ||
+      _cheImperativeImplementation(text)) {
+    return true;
+  }
   final direct = RegExp(
     r'^(?:(?:chay|chey|shay|che)[, ]+)?'
     r'(?:(?:add|change|update|remove|fix|repair|improve|upgrade|build|redesign|modify|move|restyle)\s+.+\s+'
@@ -108,4 +114,92 @@ bool cheIsSelfUpdateRequest(String raw) {
   ).hasMatch(text);
 
   return implementationVerb && (selfTarget || engineeringReceipts);
+}
+
+/// A current-turn instruction to answer in conversation while forbidding
+/// repository work. Background job state must never change this decision.
+bool _cheHasExplicitImplementationAuthorization(String text) {
+  if (RegExp(
+    r'^(?:(?:chay|chey|shay|che)[, ]+)?update\s+your\s+code\s*:',
+    caseSensitive: false,
+  ).hasMatch(text)) {
+    return true;
+  }
+  return RegExp(
+    r"^(?:(?:chay|chey|shay|che)[,:]?\s*)?(?:(?:for|in)\s+(?:this|the)\s+(?:task|change|update)[,:]?\s*)?(?:(?:please|now)\s+|go\s+ahead\s+and\s+|i\s+(?:want|need)\s+you\s+to\s+|(?:can|could|would)\s+you\s+)?(?:implement|integrate|adapt|apply|install|add|upgrade|update|rewrite|refactor|build|change|modify|patch|fix|repair)\b[\s\S]{0,220}\b(?:your|che(?:'s)?|the)\s+(?:code|codebase|repo(?:sitory)?|app|flutter\s+app|ui|interface|worker|system|workflow|architecture)\b",
+    caseSensitive: false,
+  ).hasMatch(text);
+}
+
+/// "Implement this, but do not deploy yet" authorizes the change; the hold
+/// only limits delivery. Mirrors imperativeImplementation in code_scout.js.
+bool _cheImperativeImplementation(String text) {
+  return RegExp(
+    r"^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:for|in)\s+(?:this|the)\s+(?:task|change|update)[,:]?\s*)?(?:(?:please|now)\s+|go\s+ahead\s+and\s+|i\s+(?:want|need)\s+you\s+to\s+|(?:can|could|would)\s+you\s+)?(?:implement|fix|build|add|update|apply)\s+(?:this|that|it)\b",
+    caseSensitive: false,
+  ).hasMatch(text.trim());
+}
+
+/// Whole-repository prohibitions are final for the turn. Mirrors
+/// globalRepositoryProhibition in code_scout.js.
+bool _cheHasGlobalRepositoryProhibition(String text) {
+  bool m(String pattern) => RegExp(pattern, caseSensitive: false).hasMatch(text);
+  // Scoped limits ("outside that screen", "anything else") are not prohibitions.
+  return m(r"\b(?:do\s+not|don['’]t|never|make\s+no)\s+(?:make\s+)?(?:any\s+)?(?:modify|modifying|change|changes|changing|touch|edit|alter)\s+(?:to\s+)?(?:your\s+|any\s+|the\s+)?(?:source\s+)?(?:code|codebase|repo(?:sitory)?)\b(?!\s+(?:else\b|outside\b|elsewhere\b|beyond\b|except\b|apart\s+from\b|other\s+(?:files?|screens?|parts?|features?|code)\b|to\s+(?:anything\s+else|any\s+other|other)\b))") ||
+      m(r"\b(?:do\s+not|don['’]t|never)\s+make\s+(?:any\s+)?(?:code\s+)?changes\b(?!\s+(?:else\b|outside\b|elsewhere\b|beyond\b|except\b|apart\s+from\b|other\s+(?:files?|screens?|parts?|features?|code)\b|to\s+(?:anything\s+else|any\s+other|other)\b))") ||
+      m(r"\bwithout\s+(?:changing|modifying|touching|editing)\s+anything\b(?!\s+(?:else\b|outside\b|elsewhere\b|beyond\b|except\b|apart\s+from\b|other\s+(?:files?|screens?|parts?|features?|code)\b|to\s+(?:anything\s+else|any\s+other|other)\b))") ||
+      (m(r"\b(?:do\s+not|don['’]t|never)\s+(?:modify|change|touch|edit|alter)\s+(?:it|anything)\b(?!\s+(?:else\b|outside\b|elsewhere\b|beyond\b|except\b|apart\s+from\b|other\s+(?:files?|screens?|parts?|features?|code)\b|to\s+(?:anything\s+else|any\s+other|other)\b))") && m(r"\b(?:code|codebase|repo(?:sitory)?|app)\b")) ||
+      m(r"\b(?:do\s+not|don['’]t|never)\s+(?:create|build|make)\s+(?:anything|it|a\s+project|the\s+project)\b") ||
+      m(r"\b(?:no|zero)\s+(?:repository|repo|code)\s+changes?\b");
+}
+
+bool _cheHasHardRepositoryActionProhibition(String text) {
+  return RegExp(
+    r"\b(?:do\s+not|don['’]t|never|without|make\s+no)\b[\s\S]{0,180}(?:(?:modify|alter|touch|edit|changes?)\b[\s\S]{0,60}\b(?:source\s+code|code|codebase|repo(?:sitory)?)\b|write(?:\s+any)?\s+code\b|start(?:\s+(?:a|the))?\s+(?:coding|self[- ]development)(?:\s+(?:job|request|process))?\b|create(?:\s+(?:a|the))?\s+(?:branch|commit)\b|open(?:\s+(?:a|the))?\s+(?:pr|pull\s+request)\b|(?:source\s+code|code|codebase|repo(?:sitory)?|repository)\s+changes?\b)|\b(?:no|zero)\s+(?:repository|repo|code)\s+changes?\b",
+    caseSensitive: false,
+  ).hasMatch(text);
+}
+
+// Quoted text is an example under discussion, never this turn's instruction.
+String _cheWithoutQuotedText(String text) {
+  final stripped = text
+      .replaceAll(RegExp('["\u201c\u201d][^"\u201c\u201d]{0,400}["\u201c\u201d]'), ' "" ')
+      .trim();
+  return RegExp(r'[a-z]', caseSensitive: false)
+          .hasMatch(stripped.replaceAll('""', ''))
+      ? stripped
+      : text;
+}
+
+bool cheIsTerminalChatOnlyRequest(String raw) {
+  final text = _cheWithoutQuotedText(raw.trim());
+  final responseDirective = RegExp(
+    r'\b(?:answer|respond|reply)\b[\s\S]{0,80}\b(?:in\s+(?:this\s+)?chat|chat[- ]only|without\s+(?:changing|modifying|editing)\s+(?:your\s+)?code)\b|\bchat[- ]only\s+(?:test|exam|evaluation)\b|\b(?:this\s+is\s+)?(?:an?\s+)?evaluation\b[\s\S]{0,50}\bnot\s+(?:a\s+)?(?:coding|self[- ]development)\s+request\b',
+    caseSensitive: false,
+  ).hasMatch(text);
+  if (_cheHasGlobalRepositoryProhibition(text)) return true;
+  if (responseDirective && _cheHasHardRepositoryActionProhibition(text)) {
+    return true;
+  }
+  if (RegExp(
+    r'\b(?:this\s+is\s+)?(?:an?\s+)?(?:evaluation|exam|test\s+question)\b[\s\S]{0,50}\bnot\s+(?:a\s+)?(?:coding|self[- ]development)\s+request\b',
+    caseSensitive: false,
+  ).hasMatch(text)) {
+    return true;
+  }
+  // A real implementation command can still say "do not deploy yet". That
+  // delivery hold does not revoke the owner's authorization to implement.
+  if (_cheHasExplicitImplementationAuthorization(text) ||
+      _cheImperativeImplementation(text)) {
+    return false;
+  }
+  if (RegExp(r'\b(?:in\s+this\s+chat\s+only|chat[- ]only)\b', caseSensitive: false).hasMatch(text) &&
+      !RegExp(r'\bchat[- ]only\s+(?:feature|mode|screen|button|setting)\b', caseSensitive: false).hasMatch(text)) {
+    return true;
+  }
+  final prohibition = RegExp(
+    r"\b(?:do\s+not|don['’]t|never|make\s+no|without)\b[\s\S]{0,220}\b(?:modify|alter|touch|changes?|edit|write(?:\s+any)?\s+code|start|create|open|merge|deploy|coding|self[- ]development|branch|commit|pull\s+request|\bpr\b|repository\s+changes?)\b|\b(?:no|zero)\s+(?:repository|repo|code)\s+changes?\b",
+    caseSensitive: false,
+  ).hasMatch(text);
+  return responseDirective && prohibition;
 }

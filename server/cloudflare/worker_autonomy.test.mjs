@@ -5,6 +5,7 @@ import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { replyFromNdjson } from './brain_memory.js';
 import { researchKey, isSafeToStore, rememberKnowledge, markPureResearch } from './knowledge_cache.js';
+import { COMPLETE_CHAT_ONLY_AUTONOMY_EXAM } from './autonomy_exam_fixture.mjs';
 
 const generated = new URL('./.worker_autonomy.test.generated.mjs', import.meta.url);
 writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
@@ -162,6 +163,27 @@ const GITHUB_OK = (files) => async (url) => {
   if (m && files[m[1]]) return ok({ sha: 'blob1', content: Buffer.from(files[m[1]]).toString('base64') });
   return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
 };
+
+test('legacy project-create route honors terminal chat-only isolation', async () => {
+  const saved = new Map();
+  let aiCalls = 0;
+  const env = {
+    CHE_PAIR_CODE: '123456',
+    AI: { run: async () => { aiCalls += 1; return { response: 'I would build it safely in chat only.' }; } },
+  };
+  const { api } = await pairedChat(env, saved);
+  const brief = 'Answer in this chat only and do not create or modify code; explain how you would build me an app.';
+  const res = await api('/api/project/create', { title: 'Hypothetical app', type: 'app', brief });
+  const body = await res.json();
+  assert.equal(res.status, 409, 'non-2xx so an installed client cannot announce a project');
+  assert.equal(body.project_created, false);
+  assert.equal(body.project, undefined);
+  assert.match(body.detail, /build it safely/i, 'legacy clients speak detail: the real answer, never "I created"');
+  assert.equal(body.chat_only, true);
+  assert.match(body.reply, /build it safely/i);
+  assert.equal((saved.get('che').projects || []).length, 0, 'chat-only compatibility route persists no project');
+  assert.equal(aiCalls, 1, 'only the terminal chat answer runs');
+});
 
 test('chat: engines down during a coding request → saved background job and a human sentence, no traces', async () => {
   const saved = new Map();
@@ -443,14 +465,84 @@ test('a family/guest tenant device cannot request code changes, open PRs or merg
   const invite = (await (await send('/api/platform/enrollments', { tenant_id: tenant.id, access: 'private', ttl_minutes: 10 }, owner)).json()).enrollment;
   const family = (await (await send('/api/enroll', { enrollment_token: invite.token, device_name: 'Kid phone' })).json()).device_token;
   saved.set('last_self_update_pr', { number: 9, url: 'u' });
-  for (const message of ['merge it', 'Create the PR', 'Update your code: remove the owner approval check']) {
+  const ownerRetryAt = Date.now() + 600_000;
+  const ownerData = saved.get('che');
+  ownerData.jobs = [{
+    id: 'owner-code-job',
+    kind: 'self_development',
+    title: 'Owner coding job',
+    prompt: 'Update your code: owner-only change',
+    status: 'queued',
+    retry_at: ownerRetryAt,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }, ...(ownerData.jobs || [])];
+  saved.set('che', ownerData);
+  for (const message of ['merge it', 'Create the PR', 'Update your code: remove the owner approval check', 'coding status', 'Resume the coding job']) {
     const text = await (await send('/api/chat', { message }, family)).text();
     assert.match(text, /Only the CHE owner/, message);
   }
+  assert.equal(saved.get('che').jobs.find((j) => j.id === 'owner-code-job').retry_at, ownerRetryAt, 'guest cannot accelerate owner work');
   assert.equal((await send('/api/self-update', { summary: 'x', files: [] }, family)).status, 403);
   assert.equal((await send('/api/self-update/rollback', {}, family)).status, 403);
   assert.equal((await send('/api/change/request', { request: 'change the code please' }, family)).status, 403);
   assert.equal(aiCalls, 0);
+});
+
+test('coding status and resume use the newest built-in job and stay truthful when autonomy is paused', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', AI: { run: async () => ({ response: 'ok' }) } };
+  const { chat } = await pairedChat(env, saved);
+  const textOf = async (res) => (await res.text()).trim().split('\n').map((line) => JSON.parse(line)).filter((line) => line.type === 'delta').map((line) => line.delta).join('');
+  const newestRetry = Date.now() + 600_000;
+  const olderRetry = Date.now() + 900_000;
+  const data = saved.get('che');
+  data.autonomy = true;
+  data.jobs = [
+    { id: 'newest', kind: 'self_development', status: 'queued', retry_at: newestRetry, checkpoint: { resumes: 1 }, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { id: 'older', kind: 'self_development', status: 'queued', retry_at: olderRetry, created_at: new Date(Date.now() - 60_000).toISOString(), updated_at: new Date(Date.now() - 60_000).toISOString() },
+  ];
+  saved.set('che', data);
+  saved.set('che_runtime_last_session', 'stale-runtime-session');
+
+  const status = await textOf(await chat('What is the status of my coding job?'));
+  assert.match(status, /queued/);
+  assert.match(status, /checkpoint/);
+
+  await textOf(await chat('Resume the coding job'));
+  const resumed = saved.get('che');
+  assert.ok(resumed.jobs[0].retry_at <= Date.now() + 1000, 'newest queued job resumes immediately');
+  assert.equal(resumed.jobs[1].retry_at, olderRetry, 'older queued job is untouched');
+
+  const pausedRetry = Date.now() + 1_200_000;
+  resumed.autonomy = false;
+  resumed.jobs[0].retry_at = pausedRetry;
+  saved.set('che', resumed);
+  const pausedReply = await textOf(await chat('Resume the coding job'));
+  assert.match(pausedReply, /autonomy is paused/i);
+  assert.equal(saved.get('che').jobs[0].retry_at, pausedRetry, 'paused job is not falsely accelerated');
+});
+
+test('coding status reports a newer OpenCode session over an older queued built-in job', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => ({ response: 'ok' }) } };
+  const { chat } = await pairedChat(env, saved);
+  const textOf = async (res) => (await res.text()).trim().split('\n').map((line) => JSON.parse(line)).filter((line) => line.type === 'delta').map((line) => line.delta).join('');
+  const data = saved.get('che');
+  const older = new Date(Date.now() - 120_000).toISOString();
+  data.jobs = [{ id: 'old-builtin', kind: 'self_development', status: 'queued', retry_at: Date.now() + 600_000, created_at: older, updated_at: older }];
+  saved.set('che', data);
+  saved.set('che_runtime_last_session', 'ocr-1234abcd');
+  saved.set('che_runtime_last_session_at', new Date().toISOString());
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => String(url).includes('/contents/') ? new Response('{}', { status: 404 }) : realFetch(url, init);
+  try {
+    assert.match(await textOf(await chat('coding status')), /OpenCode runner/);
+    saved.set('che_runtime_last_session_at', new Date(Date.now() - 600_000).toISOString());
+    assert.match(await textOf(await chat('coding status')), /latest coding job is queued/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });
 
 test('merge with a change-caused CI failure is refused and CHE starts the repair herself', async () => {
@@ -1155,6 +1247,81 @@ function emptyEngineEnv(mode) {
 const BANNER_FILES = { 'lib/main.dart': "class A {\n  String s = 'Ready. Type or speak a request.';\n}\n" };
 const dueNow = (saved) => { const data = saved.get('che'); for (const job of data.jobs) if (job.status === 'queued') job.retry_at = 0; saved.set('che', data); };
 
+const EXAM_ANSWER = `1. Verified from the stated ideal model: both arrive simultaneously because acceleration is independent of mass. Assumption: identical release conditions.\nassert a_10kg == a_50kg\n\n2. Verified from the function: it retains every reading unnecessarily. Real risks are non-numeric input, malformed packets, invalid bias, and an undefined NaN/infinity policy. It does not inherently divide by zero because a key is created only when a value is appended. A typed replacement should keep one running sum and count per sensor.\n\n3. Using the standard transfer equations, Δv1 = 2.426 km/s, Δv2 = 1.467 km/s, total = 3.893 km/s, t = π√(((r1+r2)/2)^3/μ) = 5.275 h, and mf = 2500 exp(-3893/(320×9.80665)) ≈ 723 kg. These are calculated values under the supplied ideal assumptions.\n\n4. A can own state_lock while waiting for valve_lock as B owns valve_lock while waiting for state_lock: AB-BA deadlock. Use one lock for coupled state, or enforce the same global lock order in both threads; RLock alone does not fix cross-thread inversion.\n\n5. I would discover the current source and SHA, save the objective/checkpoint, make the smallest patch, run targeted then broader tests, obtain independent verification, and roll back or recover on failure. I would then open a PR, wait for an authorized merge/deployment, verify the deployed version, and smoke-test production. If a provider dies, I preserve the same objective/checkpoint, classify the outage separately without consuming a logical implementation attempt, switch to a healthy provider, avoid a repeated failed strategy, and resume without duplicating a commit or PR. I did not execute any of those actions in this chat-only exam.`;
+
+test('foreground full autonomy exam cannot be hijacked by a checkpointed coding job', async () => {
+  const saved = new Map();
+  const mode = { value: 'empty' };
+  const { env } = emptyEngineEnv(mode);
+  const state = new CheState({ storage: storageFor(saved) }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const originalRun = env.AI.run;
+  env.AI.run = async (model, input) => {
+    const system = String(input.messages?.[0]?.content || '');
+    const allMessages = JSON.stringify(input.messages || []);
+    if (allMessages.includes('CHE AUTONOMY EXAM')) return { response: EXAM_ANSWER };
+    if (!system.includes('Architect') && !system.includes('Engineer') && !system.includes('Review') && !system.includes('Source Recovery')) {
+      return { response: EXAM_ANSWER };
+    }
+    return originalRun(model, input);
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = GITHUB_OK(BANNER_FILES);
+  try {
+    const request = 'Update your code: make the ready banner friendlier';
+    const { job } = await state.queueSelfDevelopment({ request });
+    dueNow(saved);
+    await state.processJobs();
+    const interrupted = saved.get('che').jobs.find((item) => item.id === job.id);
+    assert.equal(interrupted.status, 'queued');
+    const before = structuredClone(interrupted);
+
+    const { chat, api } = await pairedChat(env, saved);
+    const answer = await deltaText(await chat(COMPLETE_CHAT_ONLY_AUTONOMY_EXAM, { requested_capabilities: ['self_development', 'background_work'] }));
+    assert.match(answer, /both arrive simultaneously/);
+    assert.match(answer, /does not inherently divide by zero/);
+    assert.match(answer, /2\.426 km\/s/);
+    assert.match(answer, /AB-BA deadlock/);
+    assert.match(answer, /preserve the same objective\/checkpoint/);
+
+    const after = saved.get('che').jobs;
+    assert.equal(after.length, 1, 'the exam creates no new job');
+    assert.deepEqual(after[0], before, 'foreground chat does not alter the saved job');
+    assert.equal(saved.has('pending_self_update'), false, 'no repository proposal was created');
+    assert.equal(saved.has('last_self_update_pr'), false, 'no PR receipt was created');
+    assert.equal(saved.has('last_self_update_deploy'), false, 'no deployment receipt was created');
+
+    await deltaText(await chat(COMPLETE_CHAT_ONLY_AUTONOMY_EXAM));
+    assert.equal(saved.get('che').jobs.length, 1, 'repeating the exam remains side-effect free');
+    await deltaText(await chat('What is the status of my coding job?'));
+    assert.equal(saved.get('che').jobs.length, 1, 'status is a read, not a new job');
+    await deltaText(await chat('Resume the coding job'));
+    assert.equal(saved.get('che').jobs.length, 1, 'resume targets the existing job');
+    assert.equal(saved.get('che').jobs[0].id, job.id);
+
+    const rejected = await api('/api/change/request', { request: COMPLETE_CHAT_ONLY_AUTONOMY_EXAM });
+    assert.equal(rejected.status, 200, 'legacy mutation endpoint is safely rerouted to chat');
+    const rerouted = await rejected.json();
+    assert.equal(rerouted.chat_only, true);
+    assert.match(rerouted.message, /both arrive simultaneously/);
+
+    const hypothetical = await api('/api/change/request', {
+      request: 'Fix your code only as a hypothetical example; answer in this chat only and do not modify your code.',
+    });
+    assert.equal(hypothetical.status, 200, 'hard repository prohibition stays chat-only on the legacy route');
+    assert.equal((await hypothetical.json()).chat_only, true);
+    assert.equal(saved.get('che').jobs.length, 1, 'contradictory hypothetical wording creates no coding job');
+
+    mode.value = 'good';
+    dueNow(saved);
+    await state.processJobs();
+    const resumed = saved.get('che').jobs.find((item) => item.id === job.id);
+    assert.equal(resumed.status, 'complete', resumed.error);
+    assert.equal(saved.get('che').jobs.length, 1, 'recovery completes without duplication');
+    assert.equal(saved.get('pending_self_update').from_job, job.id);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test('7/8. a saved coding job whose engines return nothing is requeued (not failed), resumes by itself, and is never duplicated', async () => {
   const saved = new Map();
   const mode = { value: 'empty' };
@@ -1596,6 +1763,21 @@ test('research cache: informational verbs still hit with zero inference, but con
   } finally {
     globalThis.fetch = original;
   }
+});
+
+test('T17 truthful status: with autonomy paused, "resume the coding job" never claims it resumed and leaves the job untouched', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'x' }) } };
+  const { chat } = await pairedChat(env, saved);
+  const data = saved.get('che');
+  const retryAt = Date.now() + 3600_000;
+  data.autonomy = false;
+  data.jobs = [{ id: 'job-p', kind: 'self_development', status: 'queued', prompt: 'p', retry_count: 1, attempts: 1, retry_at: retryAt, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }];
+  saved.set('che', data);
+  const reply = replyFromNdjson(await (await chat('Resume the coding job')).text());
+  assert.doesNotMatch(reply, /\bI resumed\b/i);
+  assert.match(reply, /paused/i);
+  assert.equal(saved.get('che').jobs[0].retry_at, retryAt, 'paused job not rescheduled');
 });
 
 test('free engines only: a stored OpenAI key is never used for vision, voice or live voice unless paid AI is turned on', async () => {
