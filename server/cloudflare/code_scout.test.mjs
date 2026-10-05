@@ -56,6 +56,8 @@ Give the real sequence: source discovery → checkpoint → patch → tests → 
   assert.equal(chatOnlyResponseIntent('CHAT-ONLY TEST. Make no changes to your code. Answer directly in this chat: explain how you would improve your code and run tests.'), true);
   assert.equal(chatOnlyResponseIntent('CHAT-ONLY TEST. No code changes. Answer directly in this chat: explain how you would improve your code and run tests.'), true);
   assert.equal(chatOnlyResponseIntent('CHAT-ONLY TEST. Don’t modify your code. Answer directly in this chat: explain how you would improve your code and run tests.'), true);
+  assert.equal(chatOnlyResponseIntent('CHAT-ONLY TEST. Do not touch your repository. Answer directly in this chat: explain how you would improve your code and test it.'), true);
+  assert.equal(chatOnlyResponseIntent('CHAT-ONLY TEST. Do not alter your code. Answer directly in this chat: explain how you would improve your code and test it.'), true);
   assert.equal(starredRepoIntent('change the text on my home screen'), null);
 });
 
