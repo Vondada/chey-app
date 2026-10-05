@@ -488,7 +488,7 @@ test('AI router compacts old conversation history before provider calls', async 
 
 test('image relay falls from FLUX to Gemini and keeps the returned MIME type', async () => {
   const storage = memStorage(); const calls = [];
-  const result = await generateImage({ GEMINI_API_KEY: 'key', CHE_ALLOW_PAID_MEDIA: '1', AI: {run: async () => {calls.push('flux'); throw new Error('quota');}} }, storage, {prompt:'A tree'}, async (url, init) => {
+  const result = await generateImage({ GEMINI_API_KEY: 'key', CHE_ALLOW_PAID_MEDIA: '1', CHE_ALLOW_PAID_AI: '1', AI: {run: async () => {calls.push('flux'); throw new Error('quota');}} }, storage, {prompt:'A tree'}, async (url, init) => {
     calls.push('gemini');
     assert.equal(init.headers['x-goog-api-key'], 'key');
     return Response.json({candidates:[{content:{parts:[{inlineData:{data:'YQ==',mimeType:'image/png'}}]}}]});

@@ -630,7 +630,8 @@ test('chat recovers when the model rejects the full prompt, and reports real err
   const bad = await send('/api/chat', { message: 'Why' }, token);
   assert.equal(bad.status, 503);
   const badBody = await bad.json();
-  assert.match(String(badBody.detail || ''), /having trouble reaching my cloud engines|background job/i);
+  assert.match(String(badBody.detail || ''), /on it, sir/i);
+  assert.doesNotMatch(String(badBody.detail || ''), /engine|route|provider/i, 'the owner never hears about engines');
   assert.equal(badBody.retryable, true);
   assert.equal(badBody.background_job_status, 'queued');
   const queued = JSON.parse(saved.get('che')).jobs[0];
@@ -815,7 +816,8 @@ test('Flagstaff live replies queue retry instead of failing on temporary engine 
   assert.equal(visible[0].from, 'che');
   assert.equal(visible[0].to, 'chatgpt');
   assert.equal(visible[0].reply_to, message.id);
-  assert.match(visible[0].text, /retrying automatically/i);
+  assert.match(visible[0].text, /saved it and I am finishing my reply/i);
+  assert.doesNotMatch(visible[0].text, /engine/i);
 
   const immediate = await state.replyToFlagstaffMessage(message);
   assert.equal(immediate.queued, true);

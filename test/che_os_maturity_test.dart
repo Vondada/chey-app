@@ -23,7 +23,19 @@ void main() {
     );
     expect(error.message.toLowerCase(), isNot(contains('all ai engines failed')));
     expect(error.message.toLowerCase(), isNot(contains('enospc')));
+    expect(error.message.toLowerCase(), isNot(contains('engine')));
     expect(error.category, 'temporary_cloud_unavailable');
+  });
+
+  test('a final failure keeps the Worker owner-safe detail instead of "still working"', () {
+    final error = CheOwnerError.fromRaw(
+      'CHE Agent error 503: {"detail":"I can\'t do that one right now, sir. Nothing was done, and I won\'t keep you waiting on it.","category":"authentication_required"}',
+      status: 503,
+    );
+    expect(error.message, contains('Nothing was done'));
+    expect(error.message.toLowerCase(), isNot(contains('still working')));
+    final raw = CheOwnerError.fromRaw('CHE Agent error 503: {"detail":"All AI engines failed: groq 429"}', status: 503);
+    expect(raw.message.toLowerCase(), isNot(contains('engine')));
   });
 
   test('capability registry distinguishes connected tools', () {
