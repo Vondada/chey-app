@@ -1824,6 +1824,8 @@ function listForBudget(paths, budget) {
 }
 
 
+const PENDING_REVIEW_MAX_CHARS = 300_000;
+
 export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = null, options = {}) {
   if (!repoOf(env)) {
     return {
@@ -2378,7 +2380,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     // candidate was checkpointed, retry only independent review on the exact
     // repository SHA it was built from.
     if (pendingReview && !result) {
-      if (pendingReview.repo_sha && pendingReview.repo_sha !== index.head_sha) {
+      if (!pendingReview.repo_sha || pendingReview.repo_sha !== index.head_sha) {
         ctx.outcomes.push({ round: 0, engineer: pendingReview.engineer || 'CHE', provider: 'checkpoint', outcome: 'stale_source', detail: 'Pending review candidate was built from a different repository SHA.' });
         pendingReview = null;
       } else {
@@ -2563,6 +2565,13 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       // consumed, strategies tried, exam faults already injected. Every
       // temporary stop saves it, so no outage (engine, reviewer or provider)
       // can reset the pass allowance or re-inject a consumed exam fault.
+      // All jobs share one Durable Object value (2 MB cap). An oversized
+      // candidate is not checkpointed: the job ends with an honest final result.
+      const pendingReviewFits = () => {
+        if (!pendingReview) return false;
+        try { return JSON.stringify(pendingReview).length <= PENDING_REVIEW_MAX_CHARS; } catch { return false; }
+      };
+      if (pendingReview && !pendingReviewFits()) pendingReview = null;
       const saveCheckpoint = () => ({
         genuine_passes: genuinePasses,
         fingerprints: [...seenStrategies].slice(-30),
@@ -2574,7 +2583,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         resumes: resumes + 1,
         round_offset: roundOffset + lastRound + 1,
         faults_used: { ...faultsUsed },
-        ...(pendingReview ? { pending_review: pendingReview } : {}),
+        ...(pendingReviewFits() ? { pending_review: pendingReview } : {}),
         saved_at: new Date().toISOString(),
       });
       if (enginesFailed && !budgetStop && genuinePasses > 0 && genuinePasses < maxRounds && resumes < 3) {

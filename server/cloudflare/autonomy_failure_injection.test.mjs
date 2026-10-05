@@ -907,15 +907,37 @@ test('final review: injected exam faults fire exactly once across durable checkp
   }
 });
 
-test('review fix: a reviewer outage on the LAST pass is a final result, never a retry that buys extra passes', async () => {
+test('review fix: a reviewer outage on the LAST pass never buys extra implementation passes', async () => {
   let n = 0;
   const ai = scriptedAI({
     engineer: () => { n += 1; return variantEdit(n + 40); },
     review: () => { const e = new Error('provider 503'); e.status = 503; throw e; },
   });
-  const checkpoint = { genuine_passes: 2, fingerprints: [], failed_strategies: [], resumes: 1, round_offset: 2, faults_used: {} };
-  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore(), { checkpoint });
-  assert.equal(out.status, 422, 'all three passes are used: honest final result');
+  let checkpoint = { genuine_passes: 2, fingerprints: [], failed_strategies: [], resumes: 1, round_offset: 2, faults_used: {} };
+  let out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore(), { checkpoint });
+  assert.equal(out.status, 503, 'the valid final candidate is checkpointed for review-only resume');
+  assert.equal(out.checkpoint.genuine_passes, 3, 'the final pass stays consumed');
+  assert.ok(out.checkpoint.pending_review);
+  const coded = n;
+  // Reviewers stay down: resumes retry review only, then end honestly.
+  for (let i = 0; i < 4 && out.status === 503; i++) {
+    out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore(), { checkpoint: out.checkpoint });
+  }
+  assert.equal(n, coded, 'no resume grants another implementation pass');
+  assert.equal(out.status, 422, 'bounded resumes end in an honest final result');
   assert.notEqual(out.failure_class, FAILURE_CLASS.TEMPORARY_EXTERNAL);
   assert.equal(out.proposal, undefined);
+});
+
+test('review fix: an oversized final candidate is not checkpointed into shared job storage; the job ends honestly', async () => {
+  const ai = scriptedAI({
+    engineer: () => variantEdit(41),
+    review: () => { const e = new Error('provider 503'); e.status = 503; throw e; },
+  });
+  const big = MAIN + `\n// ${'x'.repeat(190_000 - MAIN.length)}\n`;
+  const checkpoint = { genuine_passes: 2, fingerprints: [], failed_strategies: [], resumes: 0, round_offset: 2, faults_used: {} };
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub({ files: { 'lib/main.dart': big, 'lib/helper.dart': HELPER } }), memoryStore(), { checkpoint });
+  assert.ok(!out.diagnostics.outcomes.some((o) => o.outcome === 'validation_failed'), 'the candidate itself is valid');
+  assert.equal(out.status, 422, out.detail);
+  assert.equal(out.checkpoint?.pending_review, undefined);
 });
