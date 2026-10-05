@@ -1653,3 +1653,23 @@ test('free engines only: the paid ElevenLabs voice is never called unless paid A
     globalThis.fetch = original;
   }
 });
+
+test('engines busy on a compound research request: no partial answer is passed off as complete; the full request is queued', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { const e = new Error('all engines busy'); e.category = 'temporary_cloud_unavailable'; e.status = 503; throw e; } } };
+  const { chat } = await pairedChat(env, saved);
+  const q = 'research the boiling point of water at sea level and explain why';
+  const now = Date.now();
+  saved.set(`kc:${researchKey(q)}`, { key: researchKey(q), answer: 'Water boils at 100 degrees Celsius (212 Fahrenheit) at sea level.', source: 'research_library', sources: [], limitation: '', confidence: 0.85, verified_at: now - 60_000, expires_at: now + 3600_000, volatile: false });
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{}', { status: 503 });
+  try {
+    const res = await chat(q);
+    const body = res.status === 200 ? replyFromNdjson(await res.text()) : JSON.stringify(await res.json());
+    assert.doesNotMatch(body, /engine/i);
+    if (res.status === 200) assert.ok(false, 'a partial research fact must not be returned as the full answer');
+    assert.ok((saved.get('che').jobs || []).some((j) => j.prompt === q), 'the full request continues as a background job');
+  } finally {
+    globalThis.fetch = original;
+  }
+});

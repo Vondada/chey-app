@@ -73,3 +73,9 @@ test('free engines only: the paid-media switch alone never advertises paid image
   assert.equal(byId.image_generation.available, false);
   assert.equal(byId.video_generation.available, false);
 });
+
+test('free engines only: an OpenAI key alone does not advertise vision while paid AI is off', () => {
+  const registry = runtimeCapabilityRegistry({ OPENAI_API_KEY: 'o' }, {});
+  const byId = Object.fromEntries(registry.capabilities.map((item) => [item.id, item]));
+  assert.equal(byId.vision?.available ?? false, false);
+});

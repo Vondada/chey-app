@@ -4320,7 +4320,7 @@ export class CheState extends DurableObject {
             screen_capture: Boolean(this.env.CHE_SCREEN_URL),
             face_verify: Boolean(this.env.CHE_FACE_VERIFY_URL),
             data_recognition: Boolean(this.env.CHE_DATA_RECOGNITION_URL),
-            multimodal: Boolean(this.env.CHE_MULTIMODAL_URL || this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY),
+            multimodal: Boolean(this.env.CHE_MULTIMODAL_URL || this.env.GEMINI_API_KEY || openAiMediaKey(this.env)),
             market_data: Boolean(this.env.CHE_MARKET_DATA_URL),
             backtesting: Boolean(this.env.CHE_BACKTEST_URL),
             broker: Boolean(this.env.CHE_BROKER_URL),
@@ -7502,7 +7502,7 @@ export class CheState extends DurableObject {
                 screen_capture: Boolean(this.env.CHE_SCREEN_URL),
                 face_verify: Boolean(this.env.CHE_FACE_VERIFY_URL),
                 data_recognition: Boolean(this.env.CHE_DATA_RECOGNITION_URL),
-                multimodal: Boolean(this.env.CHE_MULTIMODAL_URL || this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY),
+                multimodal: Boolean(this.env.CHE_MULTIMODAL_URL || this.env.GEMINI_API_KEY || openAiMediaKey(this.env)),
                 market_data: Boolean(this.env.CHE_MARKET_DATA_URL),
                 backtesting: Boolean(this.env.CHE_BACKTEST_URL),
                 broker: Boolean(this.env.CHE_BROKER_URL),
@@ -7656,7 +7656,8 @@ export class CheState extends DurableObject {
         }
         // No engine answered, but research CHE already gathered for this
         // turn is a real answer: give it rather than a "busy" message.
-        if (!answer && research?.summary && String(research.summary).trim().length > 40) {
+        if (!answer && research?.summary && String(research.summary).trim().length > 40
+          && !/\b(?:explain|why|how|compare|write|draft|summari[sz]e|analy[sz]e|plan|and|then|also)\b/i.test(message.replace(/^\s*(?:please\s+)?(?:research|look\s+up|find)\s+/i, ''))) {
           const sources = Array.isArray(research.sources) && research.sources.length ? `\n\nSources: ${research.sources.slice(0, 3).join(', ')}` : '';
           answer = { response: `${String(research.summary).trim()}${sources}` };
         }
@@ -7811,7 +7812,7 @@ export class CheState extends DurableObject {
       console.error('CHE request failed', error?.name, error?.message, error?.diagnostic || '');
       const safe = error?.owner_safe
         ? String(error.message || '').slice(0, 220)
-        : "One moment, sir. I'm still working on that.";
+        : "I couldn't finish that just now, sir. Nothing was saved; please ask me again.";
       return json({
         detail: safe,
         category: error?.category || 'temporary_cloud_unavailable',

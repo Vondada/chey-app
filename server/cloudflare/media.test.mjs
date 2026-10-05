@@ -105,3 +105,9 @@ test('free engines only: the paid-media switch alone never reaches a paid image 
   ).catch(() => null);
   assert.ok(!calls.some((u) => /api\.openai\.com|generativelanguage\.googleapis\.com/.test(u)), 'no paid image call without CHE_ALLOW_PAID_AI');
 });
+
+test('paid media error names the switch that is actually off', async () => {
+  const out = await generateImage({ OPENAI_API_KEY: 'k', CHE_ALLOW_PAID_MEDIA: '1' }, { put: async () => {}, get: async () => null }, { prompt: 'A tree' }, async () => new Response('{}', { status: 500 }));
+  assert.equal(out.status, 402);
+  assert.match(out.detail, /enables paid AI\./);
+});

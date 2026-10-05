@@ -77,9 +77,14 @@ export function inferTurnCapabilities(message, attachment = null) {
   return [...found];
 }
 
+const PAID_PROVIDERS = new Set(['openai', 'xai', 'anthropic']);
+
 function connectedProviders(env, data) {
+  const paid = /^(?:1|true|yes)$/i.test(String(env?.CHE_ALLOW_PAID_AI || '').trim());
   return registryView(env, data)
     .filter((provider) => provider.state === 'connected')
+    // Free engines only: a stored paid key does not make a capability available.
+    .filter((provider) => paid || !PAID_PROVIDERS.has(String(provider.id).split(':')[0]))
     .map((provider) => ({
       id: provider.id,
       name: provider.name,
