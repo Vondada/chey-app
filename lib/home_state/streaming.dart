@@ -88,7 +88,7 @@ extension _CheHomeStreaming on _CHEHomeState {
       caseSensitive: false,
     ).firstMatch(trimmedRequest);
 
-    if (!codeRequest && projectMatch != null) {
+    if (!terminalChatOnly && !codeRequest && projectMatch != null) {
       var projectType = projectMatch.group(1)!.toLowerCase();
       if (projectType == 'site') projectType = 'website';
       if (projectType == 'story') projectType = 'book';
