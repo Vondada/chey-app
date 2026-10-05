@@ -5,6 +5,7 @@ import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { replyFromNdjson } from './brain_memory.js';
 import { researchKey, isSafeToStore, rememberKnowledge, markPureResearch } from './knowledge_cache.js';
+import { COMPLETE_CHAT_ONLY_AUTONOMY_EXAM } from './autonomy_exam_fixture.mjs';
 
 const generated = new URL('./.worker_autonomy.test.generated.mjs', import.meta.url);
 writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
@@ -1153,6 +1154,74 @@ function emptyEngineEnv(mode) {
 }
 const BANNER_FILES = { 'lib/main.dart': "class A {\n  String s = 'Ready. Type or speak a request.';\n}\n" };
 const dueNow = (saved) => { const data = saved.get('che'); for (const job of data.jobs) if (job.status === 'queued') job.retry_at = 0; saved.set('che', data); };
+
+const EXAM_ANSWER = `1. Verified from the stated ideal model: both arrive simultaneously because acceleration is independent of mass. Assumption: identical release conditions.\nassert a_10kg == a_50kg\n\n2. Verified from the function: it retains every reading unnecessarily. Real risks are non-numeric input, malformed packets, invalid bias, and an undefined NaN/infinity policy. It does not inherently divide by zero because a key is created only when a value is appended. A typed replacement should keep one running sum and count per sensor.\n\n3. Using the standard transfer equations, Δv1 = 2.426 km/s, Δv2 = 1.467 km/s, total = 3.893 km/s, t = π√(((r1+r2)/2)^3/μ) = 5.275 h, and mf = 2500 exp(-3893/(320×9.80665)) ≈ 723 kg. These are calculated values under the supplied ideal assumptions.\n\n4. A can own state_lock while waiting for valve_lock as B owns valve_lock while waiting for state_lock: AB-BA deadlock. Use one lock for coupled state, or enforce the same global lock order in both threads; RLock alone does not fix cross-thread inversion.\n\n5. I would discover the current source and SHA, save the objective/checkpoint, make the smallest patch, run targeted then broader tests, obtain independent verification, and roll back or recover on failure. I would then open a PR, wait for an authorized merge/deployment, verify the deployed version, and smoke-test production. If a provider dies, I preserve the same objective/checkpoint, classify the outage separately without consuming a logical implementation attempt, switch to a healthy provider, avoid a repeated failed strategy, and resume without duplicating a commit or PR. I did not execute any of those actions in this chat-only exam.`;
+
+test('foreground full autonomy exam cannot be hijacked by a checkpointed coding job', async () => {
+  const saved = new Map();
+  const mode = { value: 'empty' };
+  const { env } = emptyEngineEnv(mode);
+  const state = new CheState({ storage: storageFor(saved) }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const originalRun = env.AI.run;
+  env.AI.run = async (model, input) => {
+    const system = String(input.messages?.[0]?.content || '');
+    const allMessages = JSON.stringify(input.messages || []);
+    if (allMessages.includes('CHE AUTONOMY EXAM')) return { response: EXAM_ANSWER };
+    if (!system.includes('Architect') && !system.includes('Engineer') && !system.includes('Review') && !system.includes('Source Recovery')) {
+      return { response: EXAM_ANSWER };
+    }
+    return originalRun(model, input);
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = GITHUB_OK(BANNER_FILES);
+  try {
+    const request = 'Update your code: make the ready banner friendlier';
+    const { job } = await state.queueSelfDevelopment({ request });
+    dueNow(saved);
+    await state.processJobs();
+    const interrupted = saved.get('che').jobs.find((item) => item.id === job.id);
+    assert.equal(interrupted.status, 'queued');
+    const before = structuredClone(interrupted);
+
+    const { chat, api } = await pairedChat(env, saved);
+    const answer = await deltaText(await chat(COMPLETE_CHAT_ONLY_AUTONOMY_EXAM, { requested_capabilities: ['self_development', 'background_work'] }));
+    assert.match(answer, /both arrive simultaneously/);
+    assert.match(answer, /does not inherently divide by zero/);
+    assert.match(answer, /2\.426 km\/s/);
+    assert.match(answer, /AB-BA deadlock/);
+    assert.match(answer, /preserve the same objective\/checkpoint/);
+
+    const after = saved.get('che').jobs;
+    assert.equal(after.length, 1, 'the exam creates no new job');
+    assert.deepEqual(after[0], before, 'foreground chat does not alter the saved job');
+    assert.equal(saved.has('pending_self_update'), false, 'no repository proposal was created');
+    assert.equal(saved.has('last_self_update_pr'), false, 'no PR receipt was created');
+    assert.equal(saved.has('last_self_update_deploy'), false, 'no deployment receipt was created');
+
+    await deltaText(await chat(COMPLETE_CHAT_ONLY_AUTONOMY_EXAM));
+    assert.equal(saved.get('che').jobs.length, 1, 'repeating the exam remains side-effect free');
+    await deltaText(await chat('What is the status of my coding job?'));
+    assert.equal(saved.get('che').jobs.length, 1, 'status is a read, not a new job');
+    await deltaText(await chat('Resume the coding job'));
+    assert.equal(saved.get('che').jobs.length, 1, 'resume targets the existing job');
+    assert.equal(saved.get('che').jobs[0].id, job.id);
+
+    const rejected = await api('/api/change/request', { request: COMPLETE_CHAT_ONLY_AUTONOMY_EXAM });
+    assert.equal(rejected.status, 200, 'legacy mutation endpoint is safely rerouted to chat');
+    const rerouted = await rejected.json();
+    assert.equal(rerouted.chat_only, true);
+    assert.match(rerouted.message, /both arrive simultaneously/);
+
+    mode.value = 'good';
+    dueNow(saved);
+    await state.processJobs();
+    const resumed = saved.get('che').jobs.find((item) => item.id === job.id);
+    assert.equal(resumed.status, 'complete', resumed.error);
+    assert.equal(saved.get('che').jobs.length, 1, 'recovery completes without duplication');
+    assert.equal(saved.get('pending_self_update').from_job, job.id);
+  } finally { globalThis.fetch = originalFetch; }
+});
 
 test('7/8. a saved coding job whose engines return nothing is requeued (not failed), resumes by itself, and is never duplicated', async () => {
   const saved = new Map();
