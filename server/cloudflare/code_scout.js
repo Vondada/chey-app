@@ -80,6 +80,17 @@ export function chatOnlyResponseIntent(message) {
   return responseDirective && prohibition;
 }
 
+// One authoritative foreground-turn boundary for every repository-action
+// entry point. Durable jobs describe background state; they never grant the
+// current message permission to enter an action lane.
+export function currentTurnActionPolicy(message) {
+  const terminalChatOnly = chatOnlyResponseIntent(message);
+  return Object.freeze({
+    terminalChatOnly,
+    repositoryMutationAllowed: !terminalChatOnly && repositoryImplementationIntent(message),
+  });
+}
+
 export function repositoryImplementationIntent(message) {
   const text = String(message || '').trim();
   if (!text) return false;
