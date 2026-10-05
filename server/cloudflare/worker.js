@@ -5514,7 +5514,7 @@ export class CheState extends DurableObject {
       if (path === '/api/objective/create') {
         let objective;
         try {
-          objective = createObjective({ objective: body.objective, nodes: body.nodes, repo_sha: body.repo_sha });
+          objective = createObjective({ objective: body.objective, nodes: body.nodes, repo_sha: body.repo_sha, owner_authorized: ownerDevice });
         } catch (error) {
           return json({ detail: String(error.message || error) }, 400);
         }
@@ -5527,6 +5527,8 @@ export class CheState extends DurableObject {
       if (path === '/api/objective/replan') {
         const objective = (data.objectives || []).find((o) => o.id === String(body.id || ''));
         if (!objective) return json({ detail: 'Objective not found.' }, 404);
+        const targetNode = objective.nodes?.find((node) => node.id === String(body.node_id || ''));
+        if (targetNode?.kind === 'self_development' && !ownerDevice) return json({ detail: 'Owner authorization required for self-development objectives.' }, 403);
         const out = replanNode(objective, String(body.node_id || ''), { prompt: body.prompt });
         if (!out.ok) return json({ detail: out.reason }, 409);
         const started = advanceObjectives(data, (fields) => enqueueJob(data, fields));
@@ -6539,11 +6541,17 @@ export class CheState extends DurableObject {
           // no research call, model panel or chat model runs behind it.
           const plainCaps = (Array.isArray(body.requested_capabilities) ? body.requested_capabilities : []).map(String)
             .every((cap) => cap === 'web_research');
-          // Only pure research turns qualify: a message that also asks CHE to
-          // do something ("email John the current price") always runs the
-          // full path so the action and its permission checks happen.
-          const actionAsk = /\b(?:email|e-mail|send|text|message|call|post|tweet|share|buy|sell|order|pay|transfer|book|schedule|remind|create|make|write|draft|open|launch|delete|remove|save|add|set|turn|start|stop|trade)\b/i.test(message);
-          const researched = !rememberFact && plainCaps && !actionAsk
+          // A message-only research-cache key is safe only when no conversation
+          // context is needed to resolve pronouns/subjects ("research it").
+          const conversationContext = Array.isArray(body.history)
+            ? body.history.some((turn) => String(turn?.content ?? turn?.text ?? '').trim())
+            : false;
+          // Only actual imperative external actions suppress the research
+          // shortcut. Vocabulary inside an informational query ("research how
+          // to make sourdough", "find the latest blog post") is not an action.
+          const actionAsk = /^(?:(?:chay|chey|shay|che)[, ]+)?(?:please\s+)?(?:email|e-mail|send|text|message|call|tweet|share|buy|sell|order|pay|transfer|book|schedule|remind|open|launch|delete|remove|trade)\b/i.test(message)
+            || /\b(?:then|and then)\s+(?:email|e-mail|send|text|message|call|tweet|share|buy|sell|order|pay|transfer|book|schedule|remind|open|launch|delete|remove|trade)\b/i.test(message);
+          const researched = !rememberFact && plainCaps && !conversationContext && !actionAsk
             ? await researchHit(this.ctx.storage, message).catch(() => null)
             : null;
           if (researched?.pure === true) {
