@@ -118,7 +118,9 @@ bool cheIsTerminalChatOnlyRequest(String raw) {
   if (RegExp(
     r'^(?:(?:chay|chey|shay|che)[, ]+)?update\s+your\s+code\s*:',
     caseSensitive: false,
-  ).hasMatch(text)) return false;
+  ).hasMatch(text)) {
+    return false;
+  }
   final responseDirective = RegExp(
     r'\b(?:answer|respond|reply)\b[\s\S]{0,80}\b(?:in\s+(?:this\s+)?chat|chat[- ]only|without\s+(?:changing|modifying|editing)\s+(?:your\s+)?code)\b|\bchat[- ]only\s+(?:test|exam|evaluation)\b|\b(?:this\s+is\s+)?(?:an?\s+)?evaluation\b[\s\S]{0,50}\bnot\s+(?:a\s+)?(?:coding|self[- ]development)\s+request\b',
     caseSensitive: false,
