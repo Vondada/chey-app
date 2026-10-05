@@ -5768,6 +5768,13 @@ export class CheState extends DurableObject {
         const type = String(body.type || 'general').trim().slice(0, 40);
         const brief = String(body.brief || '').trim().slice(0, 6000);
         if (!title) return json({ detail: 'Project title required.' }, 400);
+        // Compatibility boundary for installed clients that pre-route a
+        // foreground chat-only turn to project creation before /api/chat can
+        // apply the authoritative current-turn policy.
+        if (brief && currentTurnActionPolicy(brief).terminalChatOnly) {
+          const reply = await this.answerTerminalChatOnly(brief);
+          return json({ ok: true, chat_only: true, reply });
+        }
 
         let content = '';
         if (brief) {
