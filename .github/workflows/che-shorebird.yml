@@ -88,8 +88,8 @@ jobs:
         run: |
           build_number="$((GITHUB_RUN_ID * 100 + GITHUB_RUN_ATTEMPT))"
           echo "Shorebird iOS build number: $build_number"
-          shorebird release ios --no-codesign -- \\
-            --build-number="$build_number" \\
+          shorebird release ios --no-codesign -- \
+            --build-number="$build_number" \
             --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
 
       - name: Shorebird patch
