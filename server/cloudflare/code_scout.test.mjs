@@ -53,6 +53,8 @@ Give the real sequence: source discovery → checkpoint → patch → tests → 
   assert.equal(repositoryImplementationIntent('CHAT-ONLY TEST. Never modify your code or create a PR. Explain how you would improve your code and run tests.'), false);
   assert.equal(chatOnlyResponseIntent('Update your code: Build a chat-only evaluation mode. Do not deploy it until tests pass.'), false);
   assert.equal(repositoryImplementationIntent('Update your code: Build a chat-only evaluation mode. Do not deploy it until tests pass.'), true);
+  assert.equal(chatOnlyResponseIntent('Implement this in your app and answer in this chat when finished; do not deploy yet.'), false);
+  assert.equal(repositoryImplementationIntent('Implement this in your app and answer in this chat when finished; do not deploy yet.'), true);
   assert.equal(chatOnlyResponseIntent('CHAT-ONLY TEST. Make no changes to your code. Answer directly in this chat: explain how you would improve your code and run tests.'), true);
   assert.equal(chatOnlyResponseIntent('CHAT-ONLY TEST. No code changes. Answer directly in this chat: explain how you would improve your code and run tests.'), true);
   assert.equal(chatOnlyResponseIntent('CHAT-ONLY TEST. Don’t modify your code. Answer directly in this chat: explain how you would improve your code and run tests.'), true);
