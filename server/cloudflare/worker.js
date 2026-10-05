@@ -49,7 +49,7 @@ import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
-import { newestStarredIntent, speakNewestStarred, autoImproveScan, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
+import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyResponseIntent, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { webAppPage } from './web_app.js';
 import { lastSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, siteUrl, speakSiteResult, writeSite } from './site_builder.js';
 import { changeHistoryIntent, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
@@ -6056,6 +6056,11 @@ export class CheState extends DurableObject {
         }
         const learnedHearing = correctionsContext(corrections);
 
+        // Explicit chat-only evaluations are terminal for action routing. The
+        // question may discuss coding, PRs, deployment or collaboration, but
+        // those words are subject matter, not permission to act.
+        const chatOnlyEvaluation = chatOnlyResponseIntent(message);
+
         // GitHub/self-development commands are real tool actions, never generic
         // model guesses about credentials. "Create the PR" works by voice/text.
         if (playbookIntent(message)) {
@@ -6064,7 +6069,7 @@ export class CheState extends DurableObject {
         // "What are my 5 newest starred repos?": read from GitHub (newest
         // first), said aloud, kept as a memory, and sent to Claude in the
         // mailbox so the coding AIs can integrate them.
-        const newestStars = ownerDevice ? newestStarredIntent(message) : null;
+        const newestStars = ownerDevice && !chatOnlyEvaluation ? newestStarredIntent(message) : null;
         if (newestStars) {
           const result = await listOwnerStarredRepos(this.keyEnv || this.env, fetch, { limit: Math.max(30, newestStars.count) });
           if (result.error) return ndjsonReply(`I could not read your GitHub stars, sir. ${result.error} Nothing was changed.`, { source: 'che_starred_newest', ok: false });
@@ -6081,7 +6086,7 @@ export class CheState extends DurableObject {
         }
         // "Study <repo>: these topics, then implement them": real reading of
         // the reference first, one topic at a time, before any coding.
-        if (ownerDevice && starredLibraryIntent(message)) {
+        if (ownerDevice && !chatOnlyEvaluation && starredLibraryIntent(message)) {
           const live = await listOwnerStarredRepos(this.keyEnv || this.env, fetch, { limit: 100 }).catch(() => null);
           const targets = starredStudyTargets(live);
           if (targets.live && !targets.names.length) return ndjsonReply('GitHub shows no starred repositories on your account, sir. Nothing was started.', { source: 'che_topic_study', ok: true });
@@ -6098,7 +6103,7 @@ export class CheState extends DurableObject {
             { source: 'che_topic_study', repository_research: true, background_job_ids: [study.job.id] },
           );
         }
-        const namedStudy = namedRepoStudyIntent(message);
+        const namedStudy = chatOnlyEvaluation ? null : namedRepoStudyIntent(message);
         if (namedStudy && namedStudy.repo.toLowerCase() !== String(this.env.CHE_GITHUB_REPO || '').toLowerCase()) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can start a repository study.', { source: 'che_topic_study', ok: false });
           const started = await this.startTopicStudy(namedStudy, message);
@@ -6106,15 +6111,15 @@ export class CheState extends DurableObject {
         }
         // "Batch them": the studies and builds already lined up run together.
         // Without lined-up study work this falls through to the usual routes.
-        if (ownerDevice && studyBatchIntent(message)) {
+        if (ownerDevice && !chatOnlyEvaluation && studyBatchIntent(message)) {
           const batched = await this.batchStudies();
           if (batched) return ndjsonReply(batched, { source: 'che_topic_study', batch: true });
         }
         // "Build me a website for …" / "change the website: …": CHE writes a
         // complete page, checks it, and hosts it on her own Worker.
-        const siteEdit = ownerDevice ? siteEditIntent(message) : null;
+        const siteEdit = ownerDevice && !chatOnlyEvaluation ? siteEditIntent(message) : null;
         const siteEditTarget = siteEdit ? await lastSite(this.ctx.storage) : null;
-        const siteBuild = ownerDevice && !siteEditTarget ? siteBuildIntent(message) : null;
+        const siteBuild = ownerDevice && !chatOnlyEvaluation && !siteEditTarget ? siteBuildIntent(message) : null;
         if (siteBuild || siteEditTarget) {
           const model = this.env.CHE_STRONG_MODEL || STRONG_MODEL;
           const written = await writeSite(this.env, siteEditTarget
@@ -6156,7 +6161,7 @@ export class CheState extends DurableObject {
         // "Run the five layer exam": layers 1-4 are reasoning problems graded
         // deterministically; layer 5 is autonomy exam level 5, a real
         // self-patch through the coding pipeline under injected failures.
-        const fiveLayer = ownerDevice ? fiveLayerIntent(message) : null;
+        const fiveLayer = ownerDevice && !chatOnlyEvaluation ? fiveLayerIntent(message) : null;
         if (fiveLayer?.kind === 'results') {
           const [reasoning, coding] = await Promise.all([LAYER_RESULTS_KEY, EXAM_RESULTS_KEY].map((key) => Promise.resolve().then(() => this.ctx.storage.get(key)).catch(() => null)));
           return ndjsonReply(speakFiveLayerResults(reasoning || {}, coding || {}), { source: 'che_five_layer_exam' });
@@ -6207,7 +6212,7 @@ export class CheState extends DurableObject {
         }
         // "Run the autonomy exam" (5 levels, each harder): real coding runs in
         // dry-run mode, graded deterministically. "Autonomy exam results".
-        const exam = ownerDevice && !isExistingChangeCommand(selfUpdateChatIntent(message)) ? examIntent(message) : null;
+        const exam = ownerDevice && !chatOnlyEvaluation && !isExistingChangeCommand(selfUpdateChatIntent(message)) ? examIntent(message) : null;
         if (exam?.kind === 'results') {
           const results = await Promise.resolve().then(() => this.ctx.storage.get(EXAM_RESULTS_KEY)).catch(() => null);
           return ndjsonReply(speakExamResults(results || {}), { source: 'che_autonomy_exam' });
@@ -6252,14 +6257,14 @@ export class CheState extends DurableObject {
         // pipeline, which builds on the retained failure evidence.
         // A command about the existing change ("Create the PR. Then fix the
         // previous job…") is that command first; it never becomes a recovery run.
-        if (ownerDevice && !isExistingChangeCommand(selfUpdateChatIntent(message)) && recoveryRequestIntent(message) && (await this.ctx.storage.get(FAILED_ENGINEERING_KEY).catch(() => null))?.request) {
+        if (ownerDevice && !chatOnlyEvaluation && !isExistingChangeCommand(selfUpdateChatIntent(message)) && recoveryRequestIntent(message) && (await this.ctx.storage.get(FAILED_ENGINEERING_KEY).catch(() => null))?.request) {
           return this.selfDevelopmentReply(message, { vectorRecall: {} });
         }
         // "What changed?": only real, recorded updates are read back.
         if (changeHistoryIntent(message)) {
           return ndjsonReply(speakChangeHistory(await loadChangeHistory(this.ctx.storage)), { source: 'che_change_history' });
         }
-        const selfUpdateAction = selfUpdateChatIntent(message);
+        const selfUpdateAction = chatOnlyEvaluation ? null : selfUpdateChatIntent(message);
         if (selfUpdateAction && !ownerDevice && ['open-pr', 'merge', 'ship-update', 'discard'].includes(selfUpdateAction.kind)) {
           return ndjsonReply('Only the CHE owner can open, merge or deploy code changes.', { source: 'che_self_update', ok: false });
         }
@@ -6296,7 +6301,7 @@ export class CheState extends DurableObject {
         }
 
         // Office skills: give them for real, and report them from stored data.
-        const skillImport = skillImportIntent(message);
+        const skillImport = chatOnlyEvaluation ? null : skillImportIntent(message);
         if (skillImport) return this.startSkillImport(skillImport, data);
         if (skillsReportIntent(message)) {
           const selected = await Promise.resolve().then(() => this.ctx.storage.get('code_scout_selected')).catch(() => null);
@@ -6655,7 +6660,7 @@ export class CheState extends DurableObject {
           } catch (_) { return []; }
         })();
         // Share Flagstaff: "share the Flagstaff link with ChatGPT and Grok".
-        const share = shareIntent(message);
+        const share = chatOnlyEvaluation ? null : shareIntent(message);
         if (share) {
           await openMailbox(this.ctx.storage);
           const link = mailboxLink(new URL(request.url).origin, await mailboxCode(this.ctx.storage));
@@ -6668,7 +6673,7 @@ export class CheState extends DurableObject {
         }
 
         // "scout the app" / "look for upgrades" → scan all vision areas now.
-        if (/\b(?:scout|check|look)\b[\s\S]{0,30}\b(?:the app|for upgrades|for improvements|our (?:code|vision))\b/i.test(message) && message.length < 90) {
+        if (!chatOnlyEvaluation && /\b(?:scout|check|look)\b[\s\S]{0,30}\b(?:the app|for upgrades|for improvements|our (?:code|vision))\b/i.test(message) && message.length < 90) {
           const found = await autoImproveScan(this.env, this.ctx.storage, fileLetter, fileTech);
           return ndjsonReply(found.length
             ? `I scanned for upgrades to the whole app, sir, and filed ${found.length} new reusable finds under free tech: ${found.slice(0, 4).map((f) => f.full_name).join(', ')}. Say "what's in free tech" to review.`
@@ -6684,7 +6689,7 @@ export class CheState extends DurableObject {
           const status = await new CheCodingRuntime(this.env).getStatus(id);
           return ndjsonReply(status.status === 200 ? speakRuntimeStatus(status) : String(status.detail || 'I could not read the coding job status.'), { source: 'che_coding_status', session_id: id, state: status.state || null });
         }
-        const handoff = handoffIntent(message);
+        const handoff = chatOnlyEvaluation ? null : handoffIntent(message);
         if (handoff) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can start a handoff.', { source: 'che_handoff', ok: false });
           const thread = await readThread(this.env, handoff.peer).catch(() => ({ messages: [] }));
@@ -6704,7 +6709,7 @@ export class CheState extends DurableObject {
         // Explicit implementation requests win over repository discovery. This
         // is what lets "Update your code: use Study 1 and 2..." actually build
         // and save a reviewed proposal instead of stopping at research.
-        if (repositoryImplementationIntent(message)) {
+        if (!chatOnlyEvaluation && repositoryImplementationIntent(message)) {
           return ownerDevice
             ? this.selfDevelopmentReply(message, { vectorRecall })
             : ndjsonReply('Only the CHE owner can ask me to change my code.', { source: 'che_self_development', ok: false });
@@ -6712,7 +6717,7 @@ export class CheState extends DurableObject {
 
         // Owner's starred GitHub library / Inspirations: pure research requests
         // inspect first, then let the "study N" flow hand candidates to the crew.
-        const starredResearch = starredRepoIntent(message);
+        const starredResearch = chatOnlyEvaluation ? null : starredRepoIntent(message);
         if (starredResearch) {
           const result = await listOwnerStarredRepos(this.env, fetch, {
             limit: 300,
@@ -6734,7 +6739,7 @@ export class CheState extends DurableObject {
         }
 
         // Scout GitHub for top, reusable code that matches a need.
-        const scout = codeScoutIntent(message);
+        const scout = chatOnlyEvaluation ? null : codeScoutIntent(message);
         if (scout) {
           const result = await scoutCode(this.env, scout.need);
           if (result.repos?.length) {
@@ -6746,7 +6751,7 @@ export class CheState extends DurableObject {
           return ndjsonReply(speakScout(scout.need, result), { source: 'che_code_scout' });
         }
         // Multi-repository study selection feeds the next upgrade request.
-        const studySelection = studySelectionIntent(message);
+        const studySelection = chatOnlyEvaluation ? null : studySelectionIntent(message);
         if (studySelection) {
           const selected = await selectStudyRepos(this.ctx.storage, studySelection);
           if (selected.error) {
@@ -6763,8 +6768,8 @@ export class CheState extends DurableObject {
 
         // Engineering status and collaboration are answered from receipts and
         // real actions, never from model narration.
-        const collab = collaborationIntent(message);
-        const batch = parallelPreference(message);
+        const collab = chatOnlyEvaluation ? null : collaborationIntent(message);
+        const batch = chatOnlyEvaluation ? null : parallelPreference(message);
         if (collab || batch) {
           const reply = await this.startCollaboration(message, { peers: collab?.peers || (batch ? ['claude', 'chatgpt'] : []), batch });
           if (reply) return reply;
@@ -6779,7 +6784,7 @@ export class CheState extends DurableObject {
         }
 
         // Talk to other AIs right now: "ask Gemini and ChatGPT about …".
-        const consult = consultIntent(message);
+        const consult = chatOnlyEvaluation ? null : consultIntent(message);
         if (consult) {
           const consultModel = this.env.CHE_STRONG_MODEL || STRONG_MODEL;
           const results = await Promise.all(consult.peers.map((peer) => consultEngine(this.env, peer, consult.question, consultModel)));
@@ -6956,7 +6961,7 @@ export class CheState extends DurableObject {
           /\b(?:change|update|upgrade|redesign|restyle|modify|fix|add|remove|move|rearrange|rebuild|improve|make)\b[\s\S]{0,120}\b(?:che(?:'s)?|your(?:self| app| ui| interface| code| screen| page| layout| navigation)|the che app|this (?:che )?(?:screen|page))\b/i.test(message) ||
           /\b(?:che(?:'s)?|your)\b[\s\S]{0,80}\b(?:ui|interface|screen|page|layout|navigation|code|app)\b[\s\S]{0,80}\b(?:change|update|redesign|fix|move|add|remove|improve)\b/i.test(message) ||
           /\b(?:add|apply|put|install|merge)\b[\s\S]{0,100}\b(?:this|the)\s+code\b[\s\S]{0,100}\b(?:to|into)\s+(?:che|your app|yourself)\b/i.test(message));
-        if (selfChangeRequest) {
+        if (!chatOnlyEvaluation && selfChangeRequest) {
           // Same reviewed pipeline as every other coding route: the proposal
           // is saved for "create the PR" (no code is put in chat unless asked),
           // and failures are classified instead of dumped into chat.
@@ -7022,7 +7027,7 @@ export class CheState extends DurableObject {
         // this turn as ordinary chat but identifies self_development, do the
         // real repository inspection/engineering flow here. Never let a model
         // narrate fake branches, PRs, SHAs, tests, or "I can't access the repo".
-        if (requestedCapabilities.includes('self_development')) {
+        if (!chatOnlyEvaluation && requestedCapabilities.includes('self_development')) {
           return ownerDevice
             ? this.selfDevelopmentReply(message, { vectorRecall })
             : ndjsonReply('Only the CHE owner can ask me to change my code.', { source: 'che_self_development', ok: false });
