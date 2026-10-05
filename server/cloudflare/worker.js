@@ -116,7 +116,7 @@ import {
   listMemoryNotes,
   writeResearchMemoryNote,
 } from './research_memory.js';
-import { AUTONOMY_EXAM, EXAM_RESULTS_KEY, examIntent, examLevel, gradeLevel, speakExamResults } from './autonomy_exam.js';
+import { AUTONOMY_EXAM, EXAM_RESULTS_KEY, examIntent, examLevel, gradeLevel, mergeExamResult, speakExamResults, ungradableEngineFailure } from './autonomy_exam.js';
 import { conversationMemoryCount, listConversationMemories, recallMemories, recordConversationMemory, rememberThread, rememberedText, replyFromNdjson, syncWarRoomMemories } from './brain_memory.js';
 import { assertOwnerToCheOnly } from './che_router.js';
 import { assertAgentMayRun, permissionBlocker } from './agent_permissions.js';
@@ -219,12 +219,12 @@ function advanceExamChains(data) {
     if (!['complete', 'failed'].includes(job.status)) continue;
     const next = job.exam_next;
     job.exam_next = [];
-    enqueueExamLevel(data, next[0], next.slice(1));
+    enqueueExamLevel(data, next[0], next.slice(1), job.exam_run_id);
   }
 }
 
 // Queues one autonomy exam level; `next` are the levels to run after it.
-function enqueueExamLevel(data, level, next = []) {
+function enqueueExamLevel(data, level, next = [], runId = '') {
   const spec = examLevel(level);
   return enqueueJob(data, {
     kind: 'autonomy_exam',
@@ -232,6 +232,7 @@ function enqueueExamLevel(data, level, next = []) {
     prompt: spec.request,
     exam_level: level,
     exam_next: next,
+    exam_run_id: runId,
     idempotency_key: idempotencyKey('job:autonomy_exam', `level ${level}`),
   });
 }
@@ -6125,7 +6126,11 @@ export class CheState extends DurableObject {
           const levels = exam.levels.filter((level) => examLevel(level));
           const inFlight = fresh.jobs.find((job) => job.kind === 'autonomy_exam' && ['queued', 'running'].includes(job.status));
           if (inFlight) return ndjsonReply(`An autonomy exam is already running, sir (level ${inFlight.exam_level}${inFlight.exam_next?.length ? `, then ${inFlight.exam_next.join(', ')}` : ''}). Say "autonomy exam results" anytime to hear the scores.`, { source: 'che_autonomy_exam', background_job_ids: [inFlight.id] });
-          const queued = levels.length ? enqueueExamLevel(fresh, levels[0], levels.slice(1)) : null;
+          const runId = crypto.randomUUID();
+          // Reset the visible score atomically for this run. Older jobs carry a
+          // different run id and cannot overwrite these results when they finish late.
+          await this.ctx.storage.put(EXAM_RESULTS_KEY, { run_id: runId, results: {}, started_at: new Date().toISOString() });
+          const queued = levels.length ? enqueueExamLevel(fresh, levels[0], levels.slice(1), runId) : null;
           await this.ctx.storage.put('che', fresh);
           await this.scheduleWork();
           const list = levels.map((level) => `level ${level}`).join(', ');
@@ -8680,16 +8685,22 @@ export class CheState extends DurableObject {
     const spec = examLevel(job.exam_level);
     if (!spec) return { id: job.id, status: 'failed', result: '', owner_message: 'That exam level does not exist, sir.', error: 'unknown exam level' };
     const prepared = await prepareSelfUpdate(this.env, spec.request, fetch, this.ctx.storage, { ownerInitiated: true, intentRequest: spec.request, faults: spec.faults });
-    if (prepared.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL) {
-      // An engine/GitHub outage is not a grade: the job retries later.
+    if (prepared.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL || ungradableEngineFailure(prepared)) {
+      // Provider outages and format-only failures before a real implementation
+      // strategy are not grades. The durable job retries with normal backoff.
       const error = new Error(prepared.detail || 'Engines unavailable for the exam.');
       error.failure_class = FAILURE_CLASS.TEMPORARY_EXTERNAL;
       throw error;
     }
     const grade = gradeLevel(spec, prepared);
     const stored = (await Promise.resolve().then(() => this.ctx.storage.get(EXAM_RESULTS_KEY)).catch(() => null)) || {};
-    stored[spec.level] = { ...grade, owner_message: String(prepared.owner_message || '').slice(0, 400), detail: String(prepared.detail || '').slice(0, 600) };
-    await this.ctx.storage.put(EXAM_RESULTS_KEY, stored);
+    // A stale job from an older exam run may finish, but it cannot rewrite the
+    // current run's score. Within one run a completed pass cannot downgrade.
+    if (stored.run_id && job.exam_run_id && stored.run_id !== job.exam_run_id) {
+      return { id: job.id, status: 'complete', result: 'Stale autonomy exam result ignored.', owner_message: '', error: '' };
+    }
+    const result = { ...grade, owner_message: String(prepared.owner_message || '').slice(0, 400), detail: String(prepared.detail || '').slice(0, 600) };
+    await this.ctx.storage.put(EXAM_RESULTS_KEY, mergeExamResult(stored, job.exam_run_id || stored.run_id || 'legacy', spec.level, result));
     const message = `Autonomy exam level ${spec.level} (${spec.name}): ${grade.passed ? 'passed' : `failed: ${grade.failed_checks.slice(0, 3).join('; ')}`}${grade.passes ? `, in ${grade.passes} pass${grade.passes === 1 ? '' : 'es'}` : ''}, sir. Nothing was changed; it was a practice run.`;
     return { id: job.id, status: grade.passed ? 'complete' : 'failed', result: message, owner_message: message, error: grade.passed ? '' : grade.failed_checks.join('; ').slice(0, 500) };
   }
