@@ -17,6 +17,7 @@
 
 import { inferNeeds, orderByCapability, pickCatalogModel, recordHealth } from './capability_router.js';
 import { selectWorkflow, minimalContext } from './workflow_governor.js';
+import { recordReliability } from './reliability_ledger.js';
 import { BUILTIN_PROVIDER_MANIFESTS } from './provider_registry.js';
 import { appendAudit, auditEntry } from './privacy_policy.js';
 import { storedKeys, withStoredKeys } from './resilience.js';
@@ -708,11 +709,13 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   let healthChanged = false;
   const cooldownExtras = {};
   const noteHealth = (providerId, outcome) => {
+    if (outcome?.ok === false) failedProviderAttempts += 1;
     recordHealth(health, String(providerId).split(':')[0], outcome);
     noteProviderOutcome(health, providerId, outcome);
     healthChanged = true;
   };
   let used = { provided: [], withheld: [] };
+  let failedProviderAttempts = 0;
   const started = Date.now();
   // Answer or fail before the app's 75s timeout: stop trying new engines at 40s.
   const DEADLINE_MS = Number(env.CHE_ROUTER_DEADLINE_MS) || 40000;
@@ -928,6 +931,14 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   };
 
   const finish = async (answer) => {
+    await recordReliability(usageStorage, {
+      workflow,
+      outcome: answer ? 'completed' : 'failed',
+      engine: answer?.engine || '',
+      failovers: failedProviderAttempts,
+      recovered: Boolean(answer && failedProviderAttempts),
+      latency_ms: Date.now() - started,
+    });
     if (healthChanged && usageStorage?.put) {
       await saveHealth(usageStorage, health);
     }
