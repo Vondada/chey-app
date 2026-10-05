@@ -446,6 +446,7 @@ class CheCodingJobStatus {
         'implemented' => 'Implemented',
         'pr_open' => 'PR open',
         'reviewing' => 'Reviewing',
+        'approved_waiting_owner' => 'Ready for your approval',
         'merged' => 'Merged',
         'review_rejected' => 'Review rejected',
         'tests_failed' => 'Tests failed',
