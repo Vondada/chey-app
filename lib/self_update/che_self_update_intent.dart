@@ -63,6 +63,7 @@ bool cheIsSelfUpdateCommand(String raw) {
 
 bool cheIsSelfUpdateRequest(String raw) {
   final text = raw.trim();
+  if (cheIsTerminalChatOnlyRequest(text)) return false;
   if (cheIsRepositoryResearchRequest(text)) return false;
   // Commands about an existing change are not new coding requests.
   if (cheIsSelfUpdateCommand(text)) return false;
@@ -108,4 +109,23 @@ bool cheIsSelfUpdateRequest(String raw) {
   ).hasMatch(text);
 
   return implementationVerb && (selfTarget || engineeringReceipts);
+}
+
+/// A current-turn instruction to answer in conversation while forbidding
+/// repository work. Background job state must never change this decision.
+bool cheIsTerminalChatOnlyRequest(String raw) {
+  final text = raw.trim();
+  if (RegExp(
+    r'^(?:(?:chay|chey|shay|che)[, ]+)?update\s+your\s+code\s*:',
+    caseSensitive: false,
+  ).hasMatch(text)) return false;
+  final responseDirective = RegExp(
+    r'\b(?:answer|respond|reply)\b[\s\S]{0,80}\b(?:in\s+(?:this\s+)?chat|chat[- ]only|without\s+(?:changing|modifying|editing)\s+(?:your\s+)?code)\b|\bchat[- ]only\s+(?:test|exam|evaluation)\b|\b(?:this\s+is\s+)?(?:an?\s+)?evaluation\b[\s\S]{0,50}\bnot\s+(?:a\s+)?(?:coding|self[- ]development)\s+request\b',
+    caseSensitive: false,
+  ).hasMatch(text);
+  final prohibition = RegExp(
+    r"\b(?:do\s+not|don['’]t|never|make\s+no|without)\b[\s\S]{0,220}\b(?:modify|alter|touch|changes?|edit|write(?:\s+any)?\s+code|start|create|open|merge|deploy|coding|self[- ]development|branch|commit|pull\s+request|\bpr\b|repository\s+changes?)\b|\b(?:no|zero)\s+(?:repository|repo|code)\s+changes?\b",
+    caseSensitive: false,
+  ).hasMatch(text);
+  return responseDirective && prohibition;
 }
