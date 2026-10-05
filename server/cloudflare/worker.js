@@ -7027,7 +7027,7 @@ export class CheState extends DurableObject {
         // this turn as ordinary chat but identifies self_development, do the
         // real repository inspection/engineering flow here. Never let a model
         // narrate fake branches, PRs, SHAs, tests, or "I can't access the repo".
-        if (requestedCapabilities.includes('self_development')) {
+        if (!chatOnlyEvaluation && requestedCapabilities.includes('self_development')) {
           return ownerDevice
             ? this.selfDevelopmentReply(message, { vectorRecall })
             : ndjsonReply('Only the CHE owner can ask me to change my code.', { source: 'che_self_development', ok: false });
