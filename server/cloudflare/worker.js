@@ -49,7 +49,7 @@ import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
-import { newestStarredIntent, speakNewestStarred, autoImproveScan, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
+import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyResponseIntent, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { webAppPage } from './web_app.js';
 import { lastSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, siteUrl, speakSiteResult, writeSite } from './site_builder.js';
 import { changeHistoryIntent, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
@@ -6056,6 +6056,11 @@ export class CheState extends DurableObject {
         }
         const learnedHearing = correctionsContext(corrections);
 
+        // Explicit chat-only evaluations are terminal for action routing. The
+        // question may discuss coding, PRs, deployment or collaboration, but
+        // those words are subject matter, not permission to act.
+        const chatOnlyEvaluation = chatOnlyResponseIntent(message);
+
         // GitHub/self-development commands are real tool actions, never generic
         // model guesses about credentials. "Create the PR" works by voice/text.
         if (playbookIntent(message)) {
@@ -6704,7 +6709,7 @@ export class CheState extends DurableObject {
         // Explicit implementation requests win over repository discovery. This
         // is what lets "Update your code: use Study 1 and 2..." actually build
         // and save a reviewed proposal instead of stopping at research.
-        if (repositoryImplementationIntent(message)) {
+        if (!chatOnlyEvaluation && repositoryImplementationIntent(message)) {
           return ownerDevice
             ? this.selfDevelopmentReply(message, { vectorRecall })
             : ndjsonReply('Only the CHE owner can ask me to change my code.', { source: 'che_self_development', ok: false });
@@ -6712,7 +6717,7 @@ export class CheState extends DurableObject {
 
         // Owner's starred GitHub library / Inspirations: pure research requests
         // inspect first, then let the "study N" flow hand candidates to the crew.
-        const starredResearch = starredRepoIntent(message);
+        const starredResearch = chatOnlyEvaluation ? null : starredRepoIntent(message);
         if (starredResearch) {
           const result = await listOwnerStarredRepos(this.env, fetch, {
             limit: 300,
@@ -6734,7 +6739,7 @@ export class CheState extends DurableObject {
         }
 
         // Scout GitHub for top, reusable code that matches a need.
-        const scout = codeScoutIntent(message);
+        const scout = chatOnlyEvaluation ? null : codeScoutIntent(message);
         if (scout) {
           const result = await scoutCode(this.env, scout.need);
           if (result.repos?.length) {
@@ -6746,7 +6751,7 @@ export class CheState extends DurableObject {
           return ndjsonReply(speakScout(scout.need, result), { source: 'che_code_scout' });
         }
         // Multi-repository study selection feeds the next upgrade request.
-        const studySelection = studySelectionIntent(message);
+        const studySelection = chatOnlyEvaluation ? null : studySelectionIntent(message);
         if (studySelection) {
           const selected = await selectStudyRepos(this.ctx.storage, studySelection);
           if (selected.error) {
@@ -6763,8 +6768,8 @@ export class CheState extends DurableObject {
 
         // Engineering status and collaboration are answered from receipts and
         // real actions, never from model narration.
-        const collab = collaborationIntent(message);
-        const batch = parallelPreference(message);
+        const collab = chatOnlyEvaluation ? null : collaborationIntent(message);
+        const batch = chatOnlyEvaluation ? null : parallelPreference(message);
         if (collab || batch) {
           const reply = await this.startCollaboration(message, { peers: collab?.peers || (batch ? ['claude', 'chatgpt'] : []), batch });
           if (reply) return reply;
@@ -6779,7 +6784,7 @@ export class CheState extends DurableObject {
         }
 
         // Talk to other AIs right now: "ask Gemini and ChatGPT about …".
-        const consult = consultIntent(message);
+        const consult = chatOnlyEvaluation ? null : consultIntent(message);
         if (consult) {
           const consultModel = this.env.CHE_STRONG_MODEL || STRONG_MODEL;
           const results = await Promise.all(consult.peers.map((peer) => consultEngine(this.env, peer, consult.question, consultModel)));
