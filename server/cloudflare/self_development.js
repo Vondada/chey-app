@@ -1066,7 +1066,7 @@ export function honestFailureMessage({ outcomes = [], genuinePasses = 0, budgetS
   const tail = 'Nothing was changed, and I kept the engineering record so the next attempt starts from it.';
   const passes = `${genuinePasses} implementation pass${genuinePasses === 1 ? '' : 'es'}`;
   if (budgetStop) return `My coding team reached its engineering budget after ${passes} without a change that passed review, sir. ${tail}`;
-  if (enginesFailed) return `My AI engines stopped giving usable answers after ${passes}, sir. ${tail}`;
+  if (enginesFailed) return `I could not finish that change after ${passes}, sir. ${tail}`;
   const count = (name) => outcomes.filter((item) => item?.outcome === name).length;
   const anchors = count('missing_anchor') + count('ambiguous_anchor');
   const reviewed = count('review_rejected');

@@ -29,7 +29,7 @@ import { fineTuneDisclosure, setProviderPermission } from './privacy_policy.js';
 import {
   accountsView, approveProviderPlugin, authorizeProvider, ensureAiState, proposeProviderPlugin,
 } from './provider_registry.js';
-import { discoverKeylessModels, engineStatus, routedEnv } from './ai_router.js';
+import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv } from './ai_router.js';
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
@@ -690,7 +690,8 @@ async function voiceSynthesisResponse(env, text) {
   }
 
   // Premium voices only when secrets exist.
-  if (env.ELEVENLABS_API_KEY && env.CHE_ELEVENLABS_VOICE_ID) {
+  // ElevenLabs is a paid voice: free engines only unless paid AI is on.
+  if (env.ELEVENLABS_API_KEY && env.CHE_ELEVENLABS_VOICE_ID && paidAllowed(env)) {
     if (voiceProviderCooling('elevenlabs')) {
       voiceFailures.push('elevenlabs: cooling down after quota');
     } else {
@@ -745,7 +746,8 @@ async function voiceSynthesisResponse(env, text) {
 
   // Fallback 2: OpenAI neural voice using the key stored only on the server.
   // The iPhone never receives the standard API key.
-  if (env.CHE_OPENAI_API_KEY) {
+  // Paid voice stays off unless the owner turned paid AI on (CHE_ALLOW_PAID_AI).
+  if (env.CHE_OPENAI_API_KEY && paidAllowed(env)) {
     if (voiceProviderCooling('openai')) {
       voiceFailures.push('openai: cooling down after quota');
     } else {
@@ -1132,7 +1134,7 @@ export function selectReadyJobs(jobs, now = Date.now(), limit = 4) {
   }
   return selected;
 }
-const BUSY_REPLY = "I'm having trouble reaching my cloud engines, sir. I saved this as a background job and I'll finish it when a healthy engine returns.";
+const BUSY_REPLY = "I'm on it, sir. I'll have your full answer for you shortly.";
 const WORK_POLICY = 'ACCESSIBILITY: support typing OR voice, numbered options, large text for all speech, visible status plus distinct haptics. Never depend on hearing or sight alone. AUTONOMY: finish authorized queued and multi-step work; stand by pauses it and Chay, resume restarts it. OWNER PERMISSION (Sep 28, 2026): CHE has the owner’s full standing permission to act, including sending messages and emails; ask first only when something costs money (paying, buying, ordering, subscribing, transferring), before deleting or removing anything, or when a decision is genuinely the owner’s. App-specific permission is still required before acting in an app. Report what was done afterward. HONESTY: never claim completion without a real result. Busy work is saved and retried with exponential backoff (5, 10, then 20 minutes; at most 3 retries) and then moved to a terminal dead-letter state; report exhaustion honestly. Use available fallback engines, and say which capability failed only after all options fail. LINKS (permanent rule): when you send the owner to a website, page, sign-up, dashboard, documentation or GitHub item, include its full https:// address once, only if you know it is real (never guess one); CHE’s chat turns it into an “Open …” action that opens inside CHE, and he can say “open it” or “open link 2”. Name the destination (“Open Supabase”), never tell him to copy or paste a URL, and do not add links that are not needed.';
 
 function ragReference(query, vectorMemoryContext, maxChars = 9000) {
@@ -1191,7 +1193,14 @@ function mediaUnderstandingPrompt(mediaType, query) {
   return `The owner attached an image and said: "${owner}". Describe exactly what is visible, including readable text, buttons, errors and layout, then answer what is relevant to the owner's message. Do not guess beyond what is shown.`;
 }
 
+// Paid media needs both the paid-media switch and the owner's paid-AI switch.
+function paidMediaOn(env) {
+  return /^(?:1|true|yes|on)$/i.test(String(env?.CHE_ALLOW_PAID_MEDIA || '').trim()) && paidAllowed(env);
+}
+
 function openAiMediaKey(env) {
+  // Owner rule: free engines only, unless paid AI is turned on on purpose.
+  if (!paidAllowed(env)) return '';
   return env.OPENAI_API_KEY || env.CHE_OPENAI_API_KEY || '';
 }
 
@@ -2353,7 +2362,7 @@ export async function handleSelfUpdateChatAction(env, storage, intent, ops = {})
         ok: false,
         opened,
         message: temporary
-          ? `${why} The reviewed change is still saved; I will rebuild it against the current code when my engines are back.`
+          ? `${why} The reviewed change is still saved; I will rebuild it against the current code shortly.`
           : `The code changed on GitHub after that update was reviewed, so I did not write it, sir. ${why} The old version is no longer waiting for approval.`,
       };
     }
@@ -2579,7 +2588,7 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
         return json({ message: 'I am already recovering that coding job, sir. I will tell you how it ends; I did not start it twice.', code_review_passed: false, owner_approval_required: false });
       }
       if (Number(record.recovery_runs || 0) >= MAX_RECOVERY_RUNS) {
-        return json({ message: `I already ran ${MAX_RECOVERY_RUNS} recovery passes on that job, sir, and none passed review, so I stopped instead of burning more engines. What went wrong: ${record.diagnosis} Tell me a different approach or a smaller change and I will build that.`, code_review_passed: false, owner_approval_required: false, failure_class: FAILURE_CLASS.INTERNAL });
+        return json({ message: `I already ran ${MAX_RECOVERY_RUNS} recovery passes on that job, sir, and none passed review, so I stopped instead of repeating it. What went wrong: ${record.diagnosis} Tell me a different approach or a smaller change and I will build that.`, code_review_passed: false, owner_approval_required: false, failure_class: FAILURE_CLASS.INTERNAL });
       }
       priorFailure = record;
       await memory.put(FAILED_ENGINEERING_KEY, { ...record, recovery_runs: Number(record.recovery_runs || 0) + 1, recovery_lock_until: Date.now() + RECOVERY_LOCK_MS });
@@ -2664,7 +2673,7 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
       if (queued?.job) {
         return json({
           message: queued.deduplicated
-            ? 'That coding job is already saved and will continue automatically when my engines recover, sir. Nothing was changed yet.'
+            ? 'That coding job is already saved and I am continuing it, sir. Nothing was changed yet.'
             : ownerEngineeringMessage(FAILURE_CLASS.TEMPORARY_EXTERNAL),
           background_job_id: queued.job.id,
           background_job_status: queued.job.status,
@@ -2683,7 +2692,7 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
     // Nothing was queued here (a recovery run, or saving failed): never say
     // the job was saved.
     const failedText = prepared.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL
-      ? 'My AI engines gave no usable answer just now, sir. Nothing was changed and nothing was saved; ask me again in a few minutes.'
+      ? 'I could not finish that just now, sir. Nothing was changed and nothing was saved; ask me again in a few minutes.'
       : stripOwnerHomework(prepared.owner_message || ownerEngineeringMessage(prepared.failure_class || FAILURE_CLASS.INTERNAL))
         || ownerEngineeringMessage(FAILURE_CLASS.INTERNAL);
     // One consistent state: this attempt failed, AND an earlier reviewed
@@ -3601,7 +3610,7 @@ export class CheState extends DurableObject {
           from: 'che',
           to: sender,
           text: retryable
-            ? 'I received your Flagstaff message. My reply engine hit a temporary problem, so I saved it and I am retrying automatically.'
+            ? 'I received your Flagstaff message. I saved it and I am finishing my reply.'
             : 'I received your Flagstaff message, but I could not complete the detailed reply after repeated attempts. The owner can see this failure and the message is preserved.',
           reply_to: id,
         }, this.env).catch(() => ({ status: 502 }));
@@ -4051,8 +4060,8 @@ export class CheState extends DurableObject {
       }
 
       if (request.method === 'POST' && path === '/api/live/token') {
-        if (!this.env.CHE_OPENAI_API_KEY) {
-          return json({ detail: 'OpenAI Realtime voice needs CHE_OPENAI_API_KEY configured as a CHE server secret.' }, 503);
+        if (!this.env.CHE_OPENAI_API_KEY || !paidAllowed(this.env)) {
+          return json({ detail: 'Live voice is not available right now, sir. I am listening the normal way.' }, 503);
         }
 
         const memories = Array.isArray(data.memories) ? data.memories.slice(-30) : [];
@@ -4280,8 +4289,8 @@ export class CheState extends DurableObject {
             background_jobs: true,
             agent_identity: true,
             service_accounts: true,
-            natural_voice: Boolean((this.env.ELEVENLABS_API_KEY && this.env.CHE_ELEVENLABS_VOICE_ID) || this.env.CHE_OPENAI_API_KEY || this.env.AI || this.env.CHE_VOICE_URL || this.env.GEMINI_API_KEY),
-            openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY),
+            natural_voice: Boolean((paidAllowed(this.env) && ((this.env.ELEVENLABS_API_KEY && this.env.CHE_ELEVENLABS_VOICE_ID) || this.env.CHE_OPENAI_API_KEY)) || this.env.AI || this.env.CHE_VOICE_URL || this.env.GEMINI_API_KEY),
+            openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY && paidAllowed(this.env)),
             porcupine_wake_word: Boolean(this.env.CHE_PICOVOICE_ACCESS_KEY && this.env.CHE_PICOVOICE_KEYWORD_PPN_B64),
             apple_vocal_shortcut: true,
             quantum_compute: Boolean(this.env.CHE_QUANTUM_URL),
@@ -4295,11 +4304,11 @@ export class CheState extends DurableObject {
             image_generation: Boolean(
               this.env.CHE_IMAGE_GEN_URL ||
               this.env.AI ||
-              (/^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim()) && (this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY))
+              (paidMediaOn(this.env) && (this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY))
             ),
             video_generation: Boolean(
               this.env.CHE_VIDEO_GEN_URL ||
-              (/^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim()) && this.env.GEMINI_API_KEY)
+              (paidMediaOn(this.env) && this.env.GEMINI_API_KEY)
             ),
             model_panel: Boolean(
               this.env.CHE_OPENAI_MODEL_URL ||
@@ -4311,7 +4320,7 @@ export class CheState extends DurableObject {
             screen_capture: Boolean(this.env.CHE_SCREEN_URL),
             face_verify: Boolean(this.env.CHE_FACE_VERIFY_URL),
             data_recognition: Boolean(this.env.CHE_DATA_RECOGNITION_URL),
-            multimodal: Boolean(this.env.CHE_MULTIMODAL_URL || this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY),
+            multimodal: Boolean(this.env.CHE_MULTIMODAL_URL || this.env.GEMINI_API_KEY || openAiMediaKey(this.env)),
             market_data: Boolean(this.env.CHE_MARKET_DATA_URL),
             backtesting: Boolean(this.env.CHE_BACKTEST_URL),
             broker: Boolean(this.env.CHE_BROKER_URL),
@@ -4413,7 +4422,7 @@ export class CheState extends DurableObject {
 
       // ─── Art Studio media (real images, versions, honest upscaling) ────
       if (path === '/api/media' && request.method === 'GET') {
-        const paidMedia = /^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim());
+        const paidMedia = paidMediaOn(this.env);
         const imageEngine = this.env.CHE_IMAGE_GEN_URL
           ? 'connector'
           : (paidMedia && (this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY))
@@ -6126,7 +6135,7 @@ export class CheState extends DurableObject {
             ? { previousHtml: siteEditTarget.html, change: siteEdit.change }
             : { brief: siteBuild.brief }, model).catch((error) => ({ html: '', problems: [String(error?.message || error).slice(0, 200)] }));
           if (!written.html) {
-            return ndjsonReply(`I could not finish ${siteEditTarget ? 'that change to the site' : 'the site'}, sir: my engines did not return a complete page. Nothing was published${siteEditTarget ? ', and the current version is unchanged' : ''}. Ask me again and I will retry.`, { source: 'che_site_builder', ok: false });
+            return ndjsonReply(`I could not finish ${siteEditTarget ? 'that change to the site' : 'the site'}, sir: I did not get a complete page. Nothing was published${siteEditTarget ? ', and the current version is unchanged' : ''}. Ask me again and I will retry.`, { source: 'che_site_builder', ok: false });
           }
           const record = await saveSite(this.ctx.storage, siteEditTarget
             ? { id: siteEditTarget.id, html: written.html, change: siteEdit.change }
@@ -6208,7 +6217,7 @@ export class CheState extends DurableObject {
           await this.ctx.storage.put(LAYER_RESULTS_KEY, { run_id: runId, coding_run_id: codingRunId, results: carried, started_at: new Date().toISOString() });
           await this.ctx.storage.put('che', fresh);
           await this.scheduleWork();
-          return ndjsonReply(`I started the five-layer exam, sir: ${layers.map((n) => `layer ${n}`).join(', ')}. Layers 1 to 4 are reasoning problems graded by fixed checks; layer 5 is a real practice self-patch of my own code under injected failures, so nothing is changed. If an engine goes down, that layer is retried, not failed.${skipped} Say "five layer exam results" anytime.${fresh.autonomy === false ? ' Autonomy is paused right now; say "resume" so the jobs can run.' : ''}`, { source: 'che_five_layer_exam', background_job_ids: ids });
+          return ndjsonReply(`I started the five-layer exam, sir: ${layers.map((n) => `layer ${n}`).join(', ')}. Layers 1 to 4 are reasoning problems graded by fixed checks; layer 5 is a real practice self-patch of my own code under injected failures, so nothing is changed. If a layer is interrupted, it is retried, not failed.${skipped} Say "five layer exam results" anytime.${fresh.autonomy === false ? ' Autonomy is paused right now; say "resume" so the jobs can run.' : ''}`, { source: 'che_five_layer_exam', background_job_ids: ids });
         }
         // "Run the autonomy exam" (5 levels, each harder): real coding runs in
         // dry-run mode, graded deterministically. "Autonomy exam results".
@@ -7162,7 +7171,7 @@ export class CheState extends DurableObject {
           ? await optionalMediaGeneration(this.env, 'image', message, vectorMemoryContext)
           : null;
         if (requestedCapabilities.includes('image_generation') && !this.env.CHE_IMAGE_GEN_URL &&
-            (this.env.AI || (/^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim()) && (this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY)))) {
+            (this.env.AI || (paidMediaOn(this.env) && (this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY)))) {
           const made = await generateImage(this.env, this.ctx.storage, {
             prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 6000),
             title: message.slice(0, 60),
@@ -7175,7 +7184,7 @@ export class CheState extends DurableObject {
           ? await optionalMediaGeneration(this.env, 'video', message, vectorMemoryContext)
           : null;
         if (requestedCapabilities.includes('video_generation') && !this.env.CHE_VIDEO_GEN_URL &&
-            /^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim()) && this.env.GEMINI_API_KEY) {
+            paidMediaOn(this.env) && this.env.GEMINI_API_KEY) {
           const made = await generateVideo(this.env, this.ctx.storage, {
             prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 8000),
             title: message.slice(0, 60),
@@ -7481,8 +7490,8 @@ export class CheState extends DurableObject {
                 web_research: true,
                 public_records: Boolean(this.env.CHE_PUBLIC_RECORDS_URL),
                 rendering: Boolean(this.env.CHE_RENDER_URL),
-                image_generation: Boolean(this.env.CHE_IMAGE_GEN_URL || this.env.AI || this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY),
-                video_generation: Boolean(this.env.CHE_VIDEO_GEN_URL || this.env.GEMINI_API_KEY),
+                image_generation: Boolean(this.env.CHE_IMAGE_GEN_URL || this.env.AI || (paidMediaOn(this.env) && (this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY))),
+                video_generation: Boolean(this.env.CHE_VIDEO_GEN_URL || (paidMediaOn(this.env) && this.env.GEMINI_API_KEY)),
                 model_panel: Boolean(
                   this.env.CHE_OPENAI_MODEL_URL ||
                   this.env.CHE_ANTHROPIC_MODEL_URL ||
@@ -7493,7 +7502,7 @@ export class CheState extends DurableObject {
                 screen_capture: Boolean(this.env.CHE_SCREEN_URL),
                 face_verify: Boolean(this.env.CHE_FACE_VERIFY_URL),
                 data_recognition: Boolean(this.env.CHE_DATA_RECOGNITION_URL),
-                multimodal: Boolean(this.env.CHE_MULTIMODAL_URL || this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY),
+                multimodal: Boolean(this.env.CHE_MULTIMODAL_URL || this.env.GEMINI_API_KEY || openAiMediaKey(this.env)),
                 market_data: Boolean(this.env.CHE_MARKET_DATA_URL),
                 backtesting: Boolean(this.env.CHE_BACKTEST_URL),
                 broker: Boolean(this.env.CHE_BROKER_URL),
@@ -7509,8 +7518,8 @@ export class CheState extends DurableObject {
                 windows: Boolean(this.env.CHE_WINDOWS_URL),
                 car: Boolean(this.env.CHE_CAR_URL),
                 smart_home: Boolean(this.env.CHE_SMART_HOME_URL),
-                natural_voice: Boolean((this.env.ELEVENLABS_API_KEY && this.env.CHE_ELEVENLABS_VOICE_ID) || this.env.CHE_OPENAI_API_KEY || this.env.AI || this.env.CHE_VOICE_URL || this.env.GEMINI_API_KEY),
-                openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY),
+                natural_voice: Boolean((paidAllowed(this.env) && ((this.env.ELEVENLABS_API_KEY && this.env.CHE_ELEVENLABS_VOICE_ID) || this.env.CHE_OPENAI_API_KEY)) || this.env.AI || this.env.CHE_VOICE_URL || this.env.GEMINI_API_KEY),
+                openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY && paidAllowed(this.env)),
                 background_jobs: true,
                 quantum_compute: Boolean(this.env.CHE_QUANTUM_URL),
                 fine_tuning: fineTuneReadiness(this.env),
@@ -7655,7 +7664,10 @@ export class CheState extends DurableObject {
           await this.ctx.storage.put('che', fresh);
           await this.scheduleWork();
           return json({
-            detail: BUSY_REPLY,
+            // A paused autonomy never runs the saved job: say so instead of "shortly".
+            detail: fresh.autonomy === false
+              ? 'I saved that, sir, but autonomy is paused, so I will finish it when you say "resume".'
+              : BUSY_REPLY,
             category: 'temporary_cloud_unavailable',
             retryable: true,
             background_job_id: job.id,
@@ -7796,7 +7808,7 @@ export class CheState extends DurableObject {
       console.error('CHE request failed', error?.name, error?.message, error?.diagnostic || '');
       const safe = error?.owner_safe
         ? String(error.message || '').slice(0, 220)
-        : "I'm having trouble reaching my cloud engines, sir. I'm switching to another route.";
+        : "I couldn't finish that just now, sir. Nothing was saved; please ask me again.";
       return json({
         detail: safe,
         category: error?.category || 'temporary_cloud_unavailable',

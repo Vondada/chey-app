@@ -37,6 +37,7 @@ test('runtime registry reports only capabilities with a real configured path', (
       CHE_PGVECTOR_REST_URL: 'https://example.supabase.co/rest/v1',
       CHE_PGVECTOR_TOKEN: 'pg-test',
       CHE_ALLOW_PAID_MEDIA: '1',
+      CHE_ALLOW_PAID_AI: '1',
     },
     {},
   );
@@ -64,4 +65,24 @@ test('capability prompt tells CHE to choose tools automatically', () => {
   const line = capabilityPromptLine(registry);
   assert.match(line, /choose the appropriate available capability automatically/i);
   assert.match(line, /do not require the owner to know tool or model names/i);
+});
+
+test('free engines only: the paid-media switch alone never advertises paid image or video generation', () => {
+  const registry = runtimeCapabilityRegistry({ GEMINI_API_KEY: 'g', OPENAI_API_KEY: 'o', CHE_ALLOW_PAID_MEDIA: '1' }, {});
+  const byId = Object.fromEntries(registry.capabilities.map((item) => [item.id, item]));
+  assert.equal(byId.image_generation.available, false);
+  assert.equal(byId.video_generation.available, false);
+});
+
+test('free engines only: an OpenAI key alone does not advertise vision while paid AI is off', () => {
+  const registry = runtimeCapabilityRegistry({ OPENAI_API_KEY: 'o' }, {});
+  const byId = Object.fromEntries(registry.capabilities.map((item) => [item.id, item]));
+  assert.equal(byId.vision?.available ?? false, false);
+});
+
+test('capability limitations name the paid switch that is actually off', () => {
+  const registry = runtimeCapabilityRegistry({ GEMINI_API_KEY: 'g', CHE_ALLOW_PAID_MEDIA: '1' }, {});
+  const byId = Object.fromEntries(registry.capabilities.map((item) => [item.id, item]));
+  assert.match(byId.image_generation.limitations, /CHE_ALLOW_PAID_AI/);
+  assert.match(byId.video_generation.limitations, /CHE_ALLOW_PAID_AI/);
 });
