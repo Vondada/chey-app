@@ -1967,6 +1967,9 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     // each file's blob SHA is kept so a later write can prove freshness.
     const sources = new Map();
     const blobShas = new Map();
+    // Exact-find failures identify files whose cached evidence cannot be trusted for
+    // the next implementation pass. Refresh them independently of recovery search.
+    const failedAnchorPaths = new Set();
     let baseSha = index.head_sha;
     const readInto = async (paths) => {
       const reads = await Promise.all([...new Set(paths)].map(async (path) => ({ path, file: await readFile(env, baseSha, path, fetcher) })));
@@ -2246,6 +2249,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       if (applied.error) {
         if (applied.anchor_path) {
           focusFiles.add(applied.anchor_path);
+          failedAnchorPaths.add(applied.anchor_path);
           if (Array.isArray(applied.anchor_lines)) {
             const [from, to] = applied.anchor_lines;
             const list = anchorHints.get(applied.anchor_path) || [];
@@ -2413,6 +2417,18 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       // re-locate the real source, then fetch newly suggested files before
       // the next provider pair runs.
       await refreshBase();
+      // A missing/ambiguous exact anchor means the engineer's evidence for that
+      // file is stale or insufficient. Re-read every implicated file at the
+      // refreshed base before asking any recovery architect or search to help.
+      // This guarantees the next engineer sees current source even when recovery
+      // discovery omits the file or ranks another candidate first.
+      if (failedAnchorPaths.size) {
+        const anchorPaths = [...failedAnchorPaths].filter((path) => index.paths.includes(path));
+        await readInto(anchorPaths);
+        architecture.paths = [...new Set([...anchorPaths, ...architecture.paths])];
+        chat.push({ from: 'CHE', msg: `Refreshed failed edit anchors from current source: ${anchorPaths.join(', ')}` });
+        failedAnchorPaths.clear();
+      }
       const feedback = [...new Set(feedbacks.filter((f) => f && !formatFeedback.has(f)))].join(' || ');
       const recoveryMember = CREW.planners[(round + 1) % CREW.planners.length];
       const recovery = feedback
