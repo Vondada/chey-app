@@ -265,7 +265,37 @@ test('A11 + A12: a replacement engine gets a compact structured slice; condensin
   assert.equal(out.condensed, true);
   assert.ok(out.after < out.before);
   assert.equal(JSON.stringify({ objective: o.objective, constraints: o.constraints, auth: o.owner_authorized, sha: o.repo_sha, graph: o.nodes.map((n) => [n.id, n.status, n.depends_on, n.fingerprints, n.failed_strategies, n.checkpoint, n.verify, n.prompt]) }), keep, 'mission-critical state survives');
-  assert.match(h.node('find').output, /\[condensed\]$/);
+  assert.doesNotMatch(h.node('find').output, /\[condensed\]/, 'an output a pending step still reads is never shortened');
+  h.finish('fix');
+  h.advance();
+  condenseObjective(o, { budgetTokens: 2000 });
+  assert.match(h.node('find').output, /\[condensed\]$/, 'once consumed, finished output is condensed');
+});
+
+test('review fixes: events never orphan a running job; only verification evidence reopens a finished step; old event ids stay deduplicated; owner keeps his replans', () => {
+  const o = createObjective({ objective: 'Fix X', nodes: [{ id: 'a', prompt: 'do a' }, { id: 'b', prompt: 'do b', depends_on: ['a'] }] });
+  const h = harness(o);
+  h.advance();
+  assert.equal(applyMissionEvent(o, { id: 'r1', type: 'ci_failed', node_id: 'a' }).reason, 'step_running');
+  assert.equal(mutateObjective(o, [{ op: 'add_verification', id: 'a', requirement: 'x' }]).reason, 'step_running');
+  h.finish('a');
+  h.advance();
+  assert.equal(applyMissionEvent(o, { id: 'r2', type: 'task_failed', node_id: 'a' }).reason, 'step_complete');
+  // Rejected mutation: no evidence is left behind.
+  const before = JSON.stringify(o.nodes);
+  assert.equal(applyMissionEvent(o, { id: 'r3', type: 'new_evidence', node_id: 'b', evidence: 'e', ops: [{ op: 'set_dependencies', id: 'b', depends_on: ['nope'] }] }).ok, false);
+  assert.equal(JSON.stringify(o.nodes), before);
+  // An old event id stays recognised after the visible log is trimmed.
+  assert.equal(applyMissionEvent(o, { id: 'old-1', type: 'ci_passed' }).ok, true);
+  for (let i = 0; i < 60; i += 1) applyMissionEvent(o, { id: `n${i}`, type: 'provider_degraded' });
+  assert.equal(applyMissionEvent(o, { id: 'old-1', type: 'ci_passed' }).duplicate, true);
+  // Automatic recovery does not use up the owner's replans.
+  const p = createObjective({ objective: 'Y', nodes: [{ id: 'y', prompt: 'do y' }] });
+  const hp = harness(p);
+  hp.advance();
+  for (let i = 0; i < 3; i += 1) { hp.finish('y', { status: 'failed', error: `wrong ${i}` }); hp.advance(); }
+  assert.equal(hp.node('y').recovery, 'exhausted');
+  assert.equal(replanNode(p, 'y', { prompt: 'owner idea 1' }).ok, true);
 });
 
 test('A7: a step CHE already knows from verified memory completes with zero model calls', async () => {

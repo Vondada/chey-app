@@ -2958,6 +2958,9 @@ export class CheState extends DurableObject {
     }
     if (data.autonomy) {
       if (data.meetings.some(m => ['drafting', 'cross_check', 'synthesizing'].includes(m.status))) times.push(Date.now() + 250);
+      // A mission step waiting out a recovery cooldown wakes on time.
+      times.push(...(data.objectives || []).filter((o) => o.status !== 'complete')
+        .flatMap((o) => o.nodes.filter((n) => n.status === 'pending' && Number(n.not_before) > Date.now()).map((n) => Number(n.not_before) + 1000)));
     }
     // Watchdog: revisit a running job when it would count as interrupted, so
     // one cut off by a Worker eviction is never left "running" forever.

@@ -15,7 +15,11 @@ import { estimateTokens } from './workflow_governor.js';
 
 const MAX_NODES = 30;
 const MAX_TOTAL_NODES = 40; // including split/cancelled nodes kept for audit
-const MAX_NODE_STRATEGIES = 3;
+// Strategy budgets per node: the automatic ladder and the owner's own
+// replans are bounded separately, so recovery never uses up the owner's turn.
+const MAX_AUTO_RECOVERIES = 2;
+const MAX_OWNER_REPLANS = 2;
+const MAX_PROCESSED_EVENTS = 200;
 const MAX_EVENTS = 40;
 // Nodes run through job kinds that already enforce CHE's permission model.
 const NODE_KINDS = new Set(['chat', 'self_development']);
@@ -269,7 +273,7 @@ export function recoverNode(objective, node, learning = {}, now = Date.now()) {
   if (node.status !== 'failed' || node.recovery === 'exhausted' || node.recovery === 'needs_owner') return null;
   const kind = node.failure_kind || 'ENGINEERING';
   if (OWNER_KINDS.has(kind)) { node.recovery = 'needs_owner'; return null; }
-  if (node.fingerprints.length >= MAX_NODE_STRATEGIES) { node.recovery = 'exhausted'; return null; }
+  if (Number(node.auto_recoveries || 0) >= MAX_AUTO_RECOVERIES) { node.recovery = 'exhausted'; return null; }
   node.base_prompt = node.base_prompt || node.prompt;
   for (const strategy of rankStrategies(kind, learning)) {
     if ((node.failed_strategies || []).some((f) => f.strategy === strategy.id) || node.strategy === strategy.id) continue;
@@ -280,6 +284,7 @@ export function recoverNode(objective, node, learning = {}, now = Date.now()) {
     node.prompt = clip(next.prompt, 8000);
     node.fingerprints = [...node.fingerprints, fp];
     node.strategy = strategy.id;
+    node.auto_recoveries = Number(node.auto_recoveries || 0) + 1;
     node.recovering_from = kind;
     node.not_before = next.not_before || 0;
     node.status = 'pending';
@@ -332,9 +337,10 @@ export function replanNode(objective, nodeId, { prompt } = {}, now = new Date().
   if (!next) return { ok: false, reason: 'prompt_required' };
   const fp = fingerprint(next);
   if (node.fingerprints.includes(fp)) return { ok: false, reason: 'duplicate_strategy' };
-  if (node.fingerprints.length >= MAX_NODE_STRATEGIES) return { ok: false, reason: 'strategies_exhausted' };
+  if (Number(node.owner_replans || 0) >= MAX_OWNER_REPLANS) return { ok: false, reason: 'strategies_exhausted' };
   node.prompt = next;
   node.base_prompt = next;
+  node.owner_replans = Number(node.owner_replans || 0) + 1;
   node.fingerprints = [...node.fingerprints, fp];
   node.strategy = 'owner_replan';
   node.recovery = '';
@@ -373,7 +379,7 @@ export function mutateObjective(objective, ops, now = new Date().toISOString()) 
     const node = find(op?.id);
     if (!node) return { ok: false, reason: 'unknown_step' };
     if (node.status === 'cancelled') return { ok: false, reason: 'step_cancelled' };
-    if (kind !== 'add_verification' && (node.status === 'complete' || node.status === 'running')) return { ok: false, reason: `step_${node.status}` };
+    if (node.status === 'running' || (kind !== 'add_verification' && node.status === 'complete')) return { ok: false, reason: `step_${node.status}` };
     if (kind === 'split_node') {
       const parts = Array.isArray(op.into) ? op.into : [];
       if (parts.length < 2) return { ok: false, reason: 'split_needs_two_parts' };
@@ -403,7 +409,7 @@ export function mutateObjective(objective, ops, now = new Date().toISOString()) 
         // and unfinished dependents wait for it.
         const count = nodes.filter((n) => n.id.startsWith(`${node.id}_verify`)).length;
         const check = buildNode({ id: `${node.id}_verify${count || ''}`, kind: 'chat', prompt: `Verify this finished step's result: ${requirement}\n\nStep: ${node.title}\nResult: ${String(node.output || '').slice(0, 1200)}`, depends_on: [node.id], priority: node.priority }, nodes.length);
-        for (const n of nodes) if (n.depends_on.includes(node.id) && n.status !== 'complete') n.depends_on = [...new Set([...n.depends_on, check.id])];
+        for (const n of nodes) if (n.depends_on.includes(node.id) && ['pending', 'blocked'].includes(n.status)) n.depends_on = [...new Set([...n.depends_on, check.id])];
         nodes.push(check);
       } else {
         node.verify = [...(node.verify || []), requirement].slice(-6);
@@ -431,24 +437,47 @@ export function mutateObjective(objective, ops, now = new Date().toISOString()) 
 export function applyMissionEvent(objective, event = {}, now = new Date().toISOString()) {
   const type = String(event.type || '');
   const key = clip(event.id || '', 120);
-  if (key && (objective.events || []).some((e) => e.key === `evt:${key}`)) return { ok: true, duplicate: true };
-  const done = (result) => { if (result.ok && key) recordMissionEvent(objective, type, { node_id: clip(event.node_id, 40), key: `evt:${key}` }, now); return result; };
+  // Processed ids live apart from the trimmed event log, so a webhook resent
+  // much later is still recognised as the same event.
+  objective.processed_events = Array.isArray(objective.processed_events) ? objective.processed_events : [];
+  if (key && objective.processed_events.includes(key)) return { ok: true, duplicate: true };
+  const done = (result) => {
+    if (result.ok && key) {
+      objective.processed_events = [...objective.processed_events, key].slice(-MAX_PROCESSED_EVENTS);
+      recordMissionEvent(objective, type, { node_id: clip(event.node_id, 40), key: `evt:${key}` }, now);
+    }
+    return result;
+  };
+  const addEvidence = (node, text) => {
+    const line = clip(text, 300);
+    if (node && text && node.evidence[node.evidence.length - 1] !== line) node.evidence = [...node.evidence, line].slice(-6);
+  };
   if (type === 'new_evidence') {
-    const node = event.node_id ? objective.nodes.find((n) => n.id === cleanId(event.node_id)) : null;
-    if (node && event.evidence) node.evidence = [...node.evidence, clip(`evidence: ${event.evidence}`, 300)].slice(-6);
-    if (!Array.isArray(event.ops) || !event.ops.length) { refreshStatus(objective, now); return done({ ok: true }); }
-    return done(mutateObjective(objective, event.ops, now));
+    if (event.node_id && !objective.nodes.some((n) => n.id === cleanId(event.node_id))) return { ok: false, reason: 'unknown_step' };
+    // All-or-nothing: evidence is recorded only once the mutation succeeded.
+    const result = Array.isArray(event.ops) && event.ops.length ? mutateObjective(objective, event.ops, now) : { ok: true };
+    if (!result.ok) return result;
+    if (event.evidence) addEvidence(objective.nodes.find((n) => n.id === cleanId(event.node_id)), `evidence: ${event.evidence}`);
+    refreshStatus(objective, now);
+    return done(result);
   }
   const failureKinds = { ci_failed: 'TEST_FAILURE', review_failed: 'REVIEW_FAILURE', tool_failed: 'TOOL_FAILURE', deployment_failed: 'TOOL_FAILURE', task_failed: '' };
   if (Object.hasOwn(failureKinds, type)) {
     const node = objective.nodes.find((n) => n.id === cleanId(event.node_id));
     if (!node) return { ok: false, reason: 'unknown_step' };
     if (node.status === 'cancelled') return { ok: false, reason: 'step_cancelled' };
+    // A running step reports through its own job; failing it here would
+    // orphan that job and start a second writer on the same files.
+    if (node.status === 'running') return { ok: false, reason: 'step_running' };
+    // Only deterministic verification evidence (CI, review, deploy) may
+    // reopen a finished step: it proves the step was not actually done.
+    if (node.status === 'complete' && !['ci_failed', 'review_failed', 'deployment_failed'].includes(type)) return { ok: false, reason: 'step_complete' };
+    if (node.status === 'complete') node.verification = { ...(node.verification || {}), status: 'falsified', by: type, at: now };
     node.status = 'failed';
     node.job_id = null;
     node.recovery = '';
     node.failure_kind = failureKinds[type] || missionFailureKind(String(event.evidence || ''));
-    node.evidence = [...node.evidence, clip(`${type}: ${event.evidence || ''}`, 300)].slice(-6);
+    addEvidence(node, `${type}: ${event.evidence || ''}`);
     refreshStatus(objective, now);
     return done({ ok: true });
   }
@@ -489,7 +518,9 @@ export function condenseObjective(objective, { budgetTokens = 12000, ratio = 0.7
   if (before <= budgetTokens * ratio) return { condensed: false, before, after: before };
   for (const n of objective.nodes) {
     if (n.status !== 'complete' && n.status !== 'cancelled') continue;
-    if (n.output && n.output.length > 600) n.output = `${n.output.slice(0, 600)} [condensed]`;
+    // An output is condensed only once every step that reads it has finished.
+    const consumed = objective.nodes.every((d) => !d.depends_on.includes(n.id) || ['complete', 'cancelled'].includes(d.status));
+    if (consumed && n.output && n.output.length > 600) n.output = `${n.output.slice(0, 600)} [condensed]`;
     n.evidence = n.evidence.slice(-2);
   }
   objective.events = (objective.events || []).slice(-12);
