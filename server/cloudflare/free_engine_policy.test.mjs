@@ -14,6 +14,7 @@ test('owner chat stays short; coding may use more, still capped', () => {
   assert.equal(thriftyMaxTokens({}), 280);
 });
 
-test('paid engines stay off even if the old opt-in flag is set', () => {
-  assert.equal(paidAllowed({ CHE_ALLOW_PAID_AI: '1', XAI_API_KEY: 'x' }), false);
+test('paid engines stay off unless the owner deliberately opts in', () => {
+  assert.equal(paidAllowed({ XAI_API_KEY: 'x' }), false);
+  assert.equal(paidAllowed({ CHE_ALLOW_PAID_AI: '1' }), true);
 });
