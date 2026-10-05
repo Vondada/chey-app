@@ -2006,3 +2006,72 @@ test('voice: "mission status" speaks the live mission graph with zero model call
   assert.match(replyFromNdjson(await (await chat("how's my mission going?")).text()), /Fix the microphone problem: 0 of 2 steps done, 1 running/);
   assert.equal(calls, before);
 });
+
+test('app builds by voice: CHE starts the build herself, reports only the real result, and repairs a code failure on her own', async () => {
+  const saved = new Map();
+  let aiCalls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => { aiCalls += 1; return { response: 'x' }; } } };
+  const { state, chat } = await pairedChat(env, saved);
+  const say = async (m) => replyFromNdjson(await (await chat(m)).text());
+  const dispatched = [];
+  let runState = { status: 'in_progress', conclusion: null };
+  let steps = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    if (u.endsWith('/dispatches')) { dispatched.push({ u, body: JSON.parse(init.body) }); return new Response(null, { status: 204 }); }
+    if (u.includes('/runs?event=workflow_dispatch')) return new Response(JSON.stringify({ workflow_runs: [{ id: 41, html_url: 'https://github.com/o/r/actions/runs/41', head_sha: 'abc1234', created_at: new Date().toISOString(), ...runState }] }), { status: 200 });
+    if (u.includes('/actions/runs/41/jobs')) return new Response(JSON.stringify({ jobs: [{ steps }] }), { status: 200 });
+    return new Response('{}', { status: 500 });
+  };
+  const advance = async () => {
+    const d = saved.get('che');
+    for (const j of d.jobs) if (j.kind === 'verify_app_build' && j.status === 'queued') j.retry_at = 0;
+    saved.set('che', d);
+    await state.processJobs();
+  };
+  try {
+    assert.match(await say('update my phone'), /started your app update/);
+    assert.equal(dispatched[0].u, 'https://api.github.com/repos/o/r/actions/workflows/che-shorebird.yml/dispatches');
+    assert.match(await say('is the app build done yet?'), /still building/);
+    await advance();
+    assert.equal(saved.get('che').jobs.find((j) => j.kind === 'verify_app_build').status, 'queued', 'still waiting; not called done');
+    runState = { status: 'completed', conclusion: 'success' };
+    steps = [{ name: 'Shorebird patch', conclusion: 'success' }];
+    await advance();
+    const done = saved.get('che').jobs.find((j) => j.kind === 'verify_app_build');
+    assert.equal(done.status, 'complete');
+    assert.match(done.owner_message, /Close and reopen me/);
+    assert.match(await say('app build status'), /ready, sir/);
+    // A full build that fails in the app code: CHE starts the repair herself.
+    assert.match(await say('build a new iPhone app'), /started a new iPhone app build/);
+    assert.equal(dispatched[1].u, 'https://api.github.com/repos/o/r/actions/workflows/che-iphone-ipa.yml/dispatches');
+    runState = { status: 'completed', conclusion: 'failure' };
+    steps = [{ name: 'Flutter analyze', conclusion: 'failure' }];
+    await advance();
+    const failed = saved.get('che').jobs.find((j) => j.kind === 'verify_app_build' && j.build_mode === 'release');
+    assert.equal(failed.status, 'failed');
+    assert.match(failed.owner_message, /failed, sir, at: Flutter analyze[\s\S]*started the repair myself/);
+    const repair = saved.get('che').jobs.find((j) => j.kind === 'self_development' && j.title === 'Repair the iPhone build');
+    assert.ok(repair, 'a repair job was queued');
+    assert.match(repair.prompt, /Flutter analyze[\s\S]*actions\/runs\/41/);
+    assert.equal(aiCalls, 0, 'building and checking cost no AI');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('app builds: a refused dispatch is reported honestly and nothing is queued', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => ({ response: 'x' }) } };
+  const { chat } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ message: 'Resource not accessible by integration' }), { status: 403 });
+  try {
+    const out = replyFromNdjson(await (await chat('update my phone')).text());
+    assert.match(out, /could not start the app update[\s\S]*403[\s\S]*Nothing was changed/);
+    assert.ok(!saved.get('che').jobs.some((j) => j.kind === 'verify_app_build'));
+  } finally {
+    globalThis.fetch = original;
+  }
+});
