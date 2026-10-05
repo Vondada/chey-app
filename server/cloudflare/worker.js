@@ -37,7 +37,7 @@ import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, cha
 import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
 import { MODE_NAME, chooseAccount, deskIntent, rememberListed, deskTick, pendingAlert, readDesk, setMode, setSize, skipTrade, speakAlert, speakDeskStatus, takeAnnouncement, takeTrade } from './trading_desk.js';
 import { externalGrounding } from './external_grounding.js';
-import { cachedResearch, factKey, forgetKnowledge, knownAnswer, ownerFactQuestion, rememberOwnerFact, researchKey } from './knowledge_cache.js';
+import { cachedResearch, factKey, forgetKnowledge, knownAnswer, ownerFactQuestion, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
 import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliability } from './reliability_ledger.js';
 import { ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
@@ -6449,6 +6449,21 @@ export class CheState extends DurableObject {
           if (known) {
             await recordReliability(this.ctx.storage, { kind: 'retrieval', workflow: 'instant_answer', outcome: 'answered_from_memory', tokens_saved: 1500 });
             return ndjsonReply(known.answer, { source: 'che_memory', model_calls: 0 });
+          }
+          // A research question CHE already answered and verified (still
+          // fresh: 30 minutes for prices/news, 7 days otherwise) ends here:
+          // no research call, model panel or chat model runs behind it.
+          const plainCaps = (Array.isArray(body.requested_capabilities) ? body.requested_capabilities : []).map(String)
+            .every((cap) => cap === 'web_research');
+          // Only questions that went through research ever have an entry.
+          const researched = !rememberFact && plainCaps
+            ? await researchHit(this.ctx.storage, message).catch(() => null)
+            : null;
+          if (researched) {
+            await recordReliability(this.ctx.storage, { kind: 'retrieval', workflow: 'research', outcome: 'answered_from_memory', tokens_saved: 3000 });
+            const sources = researched.sources?.length ? `\n\nSources: ${researched.sources.join(', ')}` : '';
+            const limit = researched.limitation ? `\n\n${researched.limitation}` : '';
+            return ndjsonReply(`${researched.answer}${limit}${sources}`, { source: 'che_research_cache', model_calls: 0, verified_at: new Date(researched.verified_at).toISOString() });
           }
         }
         if (ownerDevice && reliabilityIntent(message)) {

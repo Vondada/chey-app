@@ -2343,7 +2343,9 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       if (unreviewed.length) {
         // Not a code rejection, no lesson, not the engineer's fault.
         record(round, member, 'review_unavailable', unreviewed.map((r) => `${r.reviewer}:${r.agent_failure}`).join(','));
-        seenStrategies.delete(fingerprint);
+        // The pass and its strategy stay consumed (they were genuine); the
+        // checkpoint carries them so the resumed job cannot get them back.
+        failedStrategies.push({ engineer: member.name, outcome: 'review_unavailable', why: 'Valid change could not be reviewed (reviewer engines unavailable); the pass stays used.', edits: (answer.edits || []).map((e) => `${e?.path}: ${String(e?.find || '').slice(0, 80)}`).slice(0, 3) });
         return null;
       }
       const passed = reviews.every((r) => r.approved === true && r.target_correct !== false);
@@ -2503,25 +2505,30 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       // failed implementation. Save a checkpoint and resume the SAME job on
       // the next engines, at most 3 times, so this can never loop forever.
       const resumes = Number(checkpoint?.resumes || 0);
+      // The durable state a retry of THIS job continues from: passes already
+      // consumed, strategies tried, exam faults already injected. Every
+      // temporary stop saves it, so no outage (engine, reviewer or provider)
+      // can reset the pass allowance or re-inject a consumed exam fault.
+      const saveCheckpoint = () => ({
+        genuine_passes: genuinePasses,
+        fingerprints: [...seenStrategies].slice(-30),
+        failed_strategies: failedStrategies.filter((item) => !item.prior || checkpoint).slice(-8),
+        feedback: [...new Set(feedbacks.filter((f) => f && !formatFeedback.has(f)))].join(' | ').slice(0, 1500),
+        files: [...sources.keys()].slice(0, 8),
+        base: index.base || '',
+        repo_sha: index.head_sha || '',
+        resumes: resumes + 1,
+        round_offset: roundOffset + lastRound + 1,
+        faults_used: { ...faultsUsed },
+        saved_at: new Date().toISOString(),
+      });
       if (enginesFailed && !budgetStop && genuinePasses > 0 && genuinePasses < maxRounds && resumes < 3) {
         return finish({
           status: 503,
           failure_class: FAILURE_CLASS.TEMPORARY_EXTERNAL,
           retryable: true,
           engines_unusable: true,
-          checkpoint: {
-            genuine_passes: genuinePasses,
-            fingerprints: [...seenStrategies].slice(-30),
-            failed_strategies: failedStrategies.filter((item) => !item.prior || checkpoint).slice(-8),
-            feedback: [...new Set(feedbacks.filter((f) => f && !formatFeedback.has(f)))].join(' | ').slice(0, 1500),
-            files: [...sources.keys()].slice(0, 8),
-            base: index.base || '',
-            repo_sha: index.head_sha || '',
-            resumes: resumes + 1,
-            round_offset: roundOffset + lastRound + 1,
-            faults_used: { ...faultsUsed },
-            saved_at: new Date().toISOString(),
-          },
+          checkpoint: saveCheckpoint(),
           detail: `Engines returned no usable output after ${genuinePasses} implementation pass(es); the job saved a checkpoint and resumes on other engines with ${maxRounds - genuinePasses} pass(es) left. Nothing was changed.`,
           owner_message: ownerEngineeringMessage(FAILURE_CLASS.TEMPORARY_EXTERNAL),
         });
@@ -2536,6 +2543,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
           failure_class: FAILURE_CLASS.TEMPORARY_EXTERNAL,
           retryable: true,
           ...(enginesUnusable ? { engines_unusable: true } : {}),
+          checkpoint: saveCheckpoint(),
           detail: enginesUnusable
             ? `AI engines returned no usable implementation (empty answers or outages) in ${unproductivePasses} passes; no strategy was tried, nothing was changed and the job retries later.`
             : 'AI engines were unavailable for implementation or independent review; no unreviewed change was proposed.',

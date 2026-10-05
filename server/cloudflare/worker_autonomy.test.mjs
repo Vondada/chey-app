@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { replyFromNdjson } from './brain_memory.js';
+import { researchKey, isSafeToStore, rememberKnowledge } from './knowledge_cache.js';
 
 const generated = new URL('./.worker_autonomy.test.generated.mjs', import.meta.url);
 writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
@@ -1445,4 +1446,44 @@ test('autonomy exam: single levels queue behind a running exam and re-tests keep
   for (let i = 0; i < 2; i++) await state.processJobs();
   assert.match(await say('run the autonomy exam'), /level 1, level 2, level 3, level 4, level 5/);
   assert.deepEqual(saved.get('che_autonomy_exam').results, {});
+});
+
+test('final review: a verified research-cache hit ends the turn with zero research, panel or model calls', async () => {
+  const saved = new Map();
+  let aiCalls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { aiCalls += 1; return { response: 'model reply' }; } } };
+  const { chat } = await pairedChat(env, saved);
+  const question = 'Research and compare sources on the latest provider limits';
+  const now = Date.now();
+  saved.set(`kc:${researchKey(question)}`, { key: researchKey(question), answer: 'Groq allows 30 requests a minute on the free tier.', source: 'research_library', sources: ['https://console.groq.com/docs/rate-limits'], limitation: '', confidence: 0.85, verified_at: now - 60_000, expires_at: now + 3600_000, volatile: true });
+  const original = globalThis.fetch;
+  let providerCalls = 0;
+  globalThis.fetch = async () => { providerCalls += 1; return new Response('{}', { status: 500 }); };
+  try {
+    const reply = replyFromNdjson(await (await chat(question)).text());
+    assert.match(reply, /Groq allows 30 requests a minute/);
+    assert.match(reply, /console\.groq\.com/);
+    assert.equal(aiCalls, 0, 'no Workers AI call (no model panel, no chat model)');
+    assert.equal(providerCalls, 0, 'no research fetch or provider call');
+    assert.equal(saved.get('che_reliability_ledger').totals.memory_answers, 1);
+    // Expired volatile research is not reused: the normal path runs again.
+    saved.set(`kc:${researchKey(question)}`, { ...saved.get(`kc:${researchKey(question)}`), verified_at: now - 2 * 3600_000 });
+    await (await chat(question)).text();
+    assert.ok(aiCalls + providerCalls > 0, 'stale knowledge is re-checked, never spoken as current');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('final review: the knowledge cache checks the WHOLE stored value for secrets, not just its first 500 characters', async () => {
+  const late = `${'Long research summary. '.repeat(60)} The admin password is hunter2 and the api key is sk-live-abc.`;
+  assert.ok(late.indexOf('password') > 500);
+  assert.equal(isSafeToStore(late), false);
+
+  const m = new Map();
+  const storage = { get: async (k) => m.get(k), put: async (k, v) => m.set(k, v), delete: async (k) => m.delete(k) };
+  assert.equal(await rememberKnowledge(storage, { key: 'research:x', answer: late }), null);
+  assert.equal(m.size, 0, 'nothing was persisted');
+  assert.equal(await rememberKnowledge(storage, { key: 'research:y', answer: 'fine', limitation: `${'x '.repeat(400)} seed phrase: alpha beta` }), null, 'the limitation is persisted too, so it is checked too');
+  assert.ok(await rememberKnowledge(storage, { key: 'research:z', answer: `${'Rate limits per minute vary by plan. '.repeat(40)}` }), 'ordinary long research still caches');
 });

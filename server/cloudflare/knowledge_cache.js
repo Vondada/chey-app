@@ -19,6 +19,17 @@ export const VOLATILE_TTL_MS = 30 * 60_000;
 const VOLATILE = /\b(?:latest|current(?:ly)?|today|tonight|yesterday|last night|this (?:morning|week|month|year)|right now|now|news|price|prices|quote|weather|forecast|scores?|won|winners?|results?|election|standings|live|breaking|stock|bitcoin|btc|eth|market|rates?|traffic|recent(?:ly)?)\b/i;
 const SECRET = /\b(?:password|passcode|pin|security code|social security|ssn|credit card|card number|cvv|api[_ -]?key|secret|token|private key|seed phrase)\b/i;
 
+// isSafeMemoryText inspects at most 500 characters, so a long answer is
+// checked in overlapping windows: the WHOLE value that is stored is checked.
+export function isSafeToStore(text) {
+  const value = String(text || '');
+  if (!value.trim()) return false;
+  for (let at = 0; at < value.length; at += 400) {
+    if (!isSafeMemoryText(value.slice(at, at + 500))) return false;
+  }
+  return true;
+}
+
 export function isVolatile(text) {
   return VOLATILE.test(String(text || ''));
 }
@@ -43,7 +54,7 @@ export function ownerFactFromStatement(text) {
   if (!m) return null;
   const subject = normalizeQuestion(m[1]);
   const value = m[2].trim().replace(/[.!]+$/, '');
-  if (!subject || !value || SECRET.test(subject) || SECRET.test(value) || !isSafeMemoryText(value)) return null;
+  if (!subject || !value || SECRET.test(subject) || SECRET.test(value) || !isSafeToStore(value)) return null;
   return { subject, value };
 }
 
@@ -63,7 +74,7 @@ export async function rememberKnowledge(storage, entry, now = Date.now()) {
   if (!storage?.put) return null;
   const key = String(entry.key || '').slice(0, 220);
   const answer = String(entry.answer || '').trim().slice(0, 12000);
-  if (!key || !answer || SECRET.test(key) || !isSafeMemoryText(answer)) return null;
+  if (!key || !answer || SECRET.test(key) || !isSafeToStore(answer) || !isSafeToStore(entry.limitation || 'ok')) return null;
   const record = {
     key,
     answer,
@@ -117,6 +128,11 @@ export function researchKey(question) { return `research:${normalizeQuestion(que
  * cache, otherwise one fresh call to `research()` whose result replaces the
  * cache. `cached` says which happened; a failed call never erases the cache.
  */
+/** A still-valid verified research result for exactly this question, or null. */
+export async function researchHit(storage, question, now = Date.now()) {
+  return recallKnowledge(storage, researchKey(question), { now });
+}
+
 export async function cachedResearch(storage, question, research, now = Date.now()) {
   const key = researchKey(question);
   const hit = await recallKnowledge(storage, key, { now });
