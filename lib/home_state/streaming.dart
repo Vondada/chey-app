@@ -77,7 +77,9 @@ extension _CheHomeStreaming on _CHEHomeState {
       r'^(?:(?:chay|chey|shay|che)[, ]+)?(?:please\s+)?(?:fix|repair)\s+(?:this|that|it)\b',
       caseSensitive: false,
     ).hasMatch(trimmedRequest);
-    final codeRequest = fixThis || cheIsSelfUpdateRequest(trimmedRequest);
+    final terminalChatOnly = cheIsTerminalChatOnlyRequest(trimmedRequest);
+    final codeRequest = !terminalChatOnly &&
+        (fixThis || cheIsSelfUpdateRequest(trimmedRequest));
 
     final projectMatch = RegExp(
       r'\b(?:build|create|develop|write|start|make)\s+'
@@ -382,4 +384,3 @@ extension _CheHomeStreaming on _CHEHomeState {
     return text.length > 3900 ? text.substring(0, 3900) : text;
   }
 }
-
