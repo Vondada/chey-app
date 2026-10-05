@@ -637,8 +637,11 @@ async function runComputerWorkspace(env, agent, task, fetcher = fetch) {
   });
   const raw = (await response.text()).slice(0, 24000);
   let data;
-  try { data = JSON.parse(raw); } catch (_) { data = { detail: raw }; }
-  if (!response.ok) return { status: 'failed', detail: clip(data?.detail || raw || `HTTP ${response.status}`, 1200) };
+  try {
+    data = JSON.parse(raw);
+    if (data === null || typeof data !== 'object' || Array.isArray(data)) throw new Error('invalid_schema');
+  } catch (_) { data = { detail: raw }; }
+  if (!response.ok || !data || data.detail === raw) return { status: 'failed', detail: clip(data?.detail || raw || `HTTP ${response.status}`, 1200) };
   return { status: 'ok', data };
 }
 
