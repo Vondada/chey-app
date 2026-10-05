@@ -19,10 +19,10 @@ const OWNER_MESSAGES = {
   network_offline: "I can't reach the internet right now, sir. I'll keep going with what I have on this phone.",
   voice_unavailable: "My spoken voice is down, sir. I still have your text and the iPhone voice as backup.",
   capability_missing: "That tool isn't connected right now, sir.",
-  authentication_required: "One moment, sir. I'm still working on that.",
+  authentication_required: "I can't do that one right now, sir. Nothing was done, and I won't keep you waiting on it.",
   owner_action_required: "I need you for this next step, sir.",
-  permanent_provider_failure: "One moment, sir. I'm still working on that.",
-  model_retired: "One moment, sir. I'm still working on that.",
+  permanent_provider_failure: "I can't do that one right now, sir. Nothing was done, and I won't keep you waiting on it.",
+  model_retired: "I can't do that one right now, sir. Nothing was done, and I won't keep you waiting on it.",
 };
 
 export function classifyHttpStatus(status, message = '') {

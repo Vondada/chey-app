@@ -82,7 +82,9 @@ function openAiKey(env) {
 }
 
 function paidMediaEnabled(env) {
-  return /^(?:1|true|yes|on)$/i.test(String(env.CHE_ALLOW_PAID_MEDIA || '').trim());
+  // Paid media also needs the owner's paid-AI switch (free engines only by default).
+  return /^(?:1|true|yes|on)$/i.test(String(env.CHE_ALLOW_PAID_MEDIA || '').trim())
+    && /^(?:1|true|yes)$/i.test(String(env.CHE_ALLOW_PAID_AI || '').trim());
 }
 
 async function openAiImage(env, prompt, draft, fetcher) {

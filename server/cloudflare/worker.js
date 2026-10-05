@@ -690,7 +690,8 @@ async function voiceSynthesisResponse(env, text) {
   }
 
   // Premium voices only when secrets exist.
-  if (env.ELEVENLABS_API_KEY && env.CHE_ELEVENLABS_VOICE_ID) {
+  // ElevenLabs is a paid voice: free engines only unless paid AI is on.
+  if (env.ELEVENLABS_API_KEY && env.CHE_ELEVENLABS_VOICE_ID && paidAllowed(env)) {
     if (voiceProviderCooling('elevenlabs')) {
       voiceFailures.push('elevenlabs: cooling down after quota');
     } else {
@@ -2356,7 +2357,7 @@ export async function handleSelfUpdateChatAction(env, storage, intent, ops = {})
         ok: false,
         opened,
         message: temporary
-          ? `${why} The reviewed change is still saved; I will rebuild it against the current code when my engines are back.`
+          ? `${why} The reviewed change is still saved; I will rebuild it against the current code shortly.`
           : `The code changed on GitHub after that update was reviewed, so I did not write it, sir. ${why} The old version is no longer waiting for approval.`,
       };
     }
@@ -2582,7 +2583,7 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
         return json({ message: 'I am already recovering that coding job, sir. I will tell you how it ends; I did not start it twice.', code_review_passed: false, owner_approval_required: false });
       }
       if (Number(record.recovery_runs || 0) >= MAX_RECOVERY_RUNS) {
-        return json({ message: `I already ran ${MAX_RECOVERY_RUNS} recovery passes on that job, sir, and none passed review, so I stopped instead of burning more engines. What went wrong: ${record.diagnosis} Tell me a different approach or a smaller change and I will build that.`, code_review_passed: false, owner_approval_required: false, failure_class: FAILURE_CLASS.INTERNAL });
+        return json({ message: `I already ran ${MAX_RECOVERY_RUNS} recovery passes on that job, sir, and none passed review, so I stopped instead of repeating it. What went wrong: ${record.diagnosis} Tell me a different approach or a smaller change and I will build that.`, code_review_passed: false, owner_approval_required: false, failure_class: FAILURE_CLASS.INTERNAL });
       }
       priorFailure = record;
       await memory.put(FAILED_ENGINEERING_KEY, { ...record, recovery_runs: Number(record.recovery_runs || 0) + 1, recovery_lock_until: Date.now() + RECOVERY_LOCK_MS });
@@ -6211,7 +6212,7 @@ export class CheState extends DurableObject {
           await this.ctx.storage.put(LAYER_RESULTS_KEY, { run_id: runId, coding_run_id: codingRunId, results: carried, started_at: new Date().toISOString() });
           await this.ctx.storage.put('che', fresh);
           await this.scheduleWork();
-          return ndjsonReply(`I started the five-layer exam, sir: ${layers.map((n) => `layer ${n}`).join(', ')}. Layers 1 to 4 are reasoning problems graded by fixed checks; layer 5 is a real practice self-patch of my own code under injected failures, so nothing is changed. If an engine goes down, that layer is retried, not failed.${skipped} Say "five layer exam results" anytime.${fresh.autonomy === false ? ' Autonomy is paused right now; say "resume" so the jobs can run.' : ''}`, { source: 'che_five_layer_exam', background_job_ids: ids });
+          return ndjsonReply(`I started the five-layer exam, sir: ${layers.map((n) => `layer ${n}`).join(', ')}. Layers 1 to 4 are reasoning problems graded by fixed checks; layer 5 is a real practice self-patch of my own code under injected failures, so nothing is changed. If a layer is interrupted, it is retried, not failed.${skipped} Say "five layer exam results" anytime.${fresh.autonomy === false ? ' Autonomy is paused right now; say "resume" so the jobs can run.' : ''}`, { source: 'che_five_layer_exam', background_job_ids: ids });
         }
         // "Run the autonomy exam" (5 levels, each harder): real coding runs in
         // dry-run mode, graded deterministically. "Autonomy exam results".

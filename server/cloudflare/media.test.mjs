@@ -24,7 +24,7 @@ test('HD image generation uses current OpenAI GPT Image when a key is configured
   };
 
   const result = await generateImage(
-    { OPENAI_API_KEY: 'test-key', CHE_ALLOW_PAID_MEDIA: '1' },
+    { OPENAI_API_KEY: 'test-key', CHE_ALLOW_PAID_MEDIA: '1', CHE_ALLOW_PAID_AI: '1' },
     storage,
     { prompt: 'A vivid cinematic CHE interface' },
     fakeFetch,
@@ -76,7 +76,7 @@ test('Gemini Omni video generation stores MP4 output in R2', async () => {
   };
 
   const result = await generateVideo(
-    { GEMINI_API_KEY: 'test-key', CHE_DATA_BUCKET: bucket, CHE_ALLOW_PAID_MEDIA: '1' },
+    { GEMINI_API_KEY: 'test-key', CHE_DATA_BUCKET: bucket, CHE_ALLOW_PAID_MEDIA: '1', CHE_ALLOW_PAID_AI: '1' },
     storage,
     { prompt: 'A short cinematic orbit around the CHE logo' },
     fakeFetch,
@@ -93,4 +93,15 @@ test('Gemini Omni video generation stores MP4 output in R2', async () => {
   assert.match(result.item.blob_key, /\.mp4$/);
   assert.equal(writes.length, 1);
   assert.equal(writes[0].options.httpMetadata.contentType, 'video/mp4');
+});
+
+test('free engines only: the paid-media switch alone never reaches a paid image engine', async () => {
+  const calls = [];
+  await generateImage(
+    { OPENAI_API_KEY: 'test-key', GEMINI_API_KEY: 'g', CHE_ALLOW_PAID_MEDIA: '1' },
+    { put: async () => {}, get: async () => null },
+    { prompt: 'A tree' },
+    async (url) => { calls.push(String(url)); return new Response('{}', { status: 500 }); },
+  ).catch(() => null);
+  assert.ok(!calls.some((u) => /api\.openai\.com|generativelanguage\.googleapis\.com/.test(u)), 'no paid image call without CHE_ALLOW_PAID_AI');
 });

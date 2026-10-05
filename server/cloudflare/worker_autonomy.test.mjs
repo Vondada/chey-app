@@ -1638,3 +1638,18 @@ test('engines all busy: CHE answers from research she already has, with no word 
     globalThis.fetch = original;
   }
 });
+
+test('free engines only: the paid ElevenLabs voice is never called unless paid AI is on', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', ELEVENLABS_API_KEY: 'el', CHE_ELEVENLABS_VOICE_ID: 'v', AI: { run: async () => { throw new Error('tts down'); } } };
+  const { api } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = async (url) => { seen.push(String(url)); return new Response('{}', { status: 500 }); };
+  try {
+    await api('/api/voice/synthesize', { text: 'hello sir' });
+    assert.ok(!seen.some((u) => u.includes('elevenlabs.io')), 'no paid voice call');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
