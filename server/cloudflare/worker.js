@@ -6805,7 +6805,7 @@ export class CheState extends DurableObject {
           return ndjsonReply(active.length ? `${active.map(speakObjective).join(' ')} Sir.` : 'No mission is in progress, sir.', { source: 'che_mission_status', model_calls: 0 });
         }
         // "coding status": short spoken summary of the latest OpenCode session.
-        if (/^\s*(?:che[,:]?\s*)?(?:(?:what(?:'s| is)\s+)?(?:the|my)\s+)?(?:coding job|coding)\s+status\??\s*$|^\s*what is the status of (?:the|my) coding job\??\s*$|^\s*how(?:'s| is) (?:the|my) coding job( going)?\??\s*$/i.test(message)) {
+        if (/^\s*(?:che[,:]?\s*)?(?:(?:what(?:'s| is)\s+)?(?:the|my)\s+)?(?:coding job|coding)\s+status\??\s*$|^\s*what is the status of (?:the|my) coding job\??\s*$|^\s*how(?:'s| is) (?:the|my) coding job( going)?\??\s*$|^\s*what happened (?:to|with) (?:the|my|that) coding job\??\s*$|^\s*check (?:the )?(?:coding|opencode) (?:logs?|job)\??\s*$/i.test(message)) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status.', { source: 'che_coding_status', ok: false });
           const current = await this.loadData();
           // enqueueJob uses unshift, so the first match is the newest. Report
@@ -6815,11 +6815,17 @@ export class CheState extends DurableObject {
           const jobReply = () => ndjsonReply(`The latest coding job is ${activeJob.status}, sir.${activeJob.checkpoint ? ' Its recovery checkpoint is saved.' : ''}`, { source: 'che_coding_status', background_job_id: activeJob.id, background_job_status: activeJob.status });
           const id = await this.ctx.storage.get('che_runtime_last_session');
           const runtimeAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
+          const runtimeSummary = String(await this.ctx.storage.get('che_runtime_last_request_summary') || '').trim();
+          const runtimeReply = (status) => {
+            const spoken = speakRuntimeStatus(status);
+            const prefix = runtimeSummary ? `Your latest coding job — ${runtimeSummary} — is the one I checked. ` : '';
+            return ndjsonReply(`${prefix}${spoken}`, { source: 'che_coding_status', session_id: id, state: status.state || null });
+          };
           const runtimeIsNewer = Boolean(id) && (!activeJob || (runtimeAt && runtimeAt > String(activeJob.created_at || '')));
           if (activeJob && !runtimeIsNewer) return jobReply();
           if (id) {
             const status = await new CheCodingRuntime(this.env).getStatus(id);
-            if (status.status === 200) return ndjsonReply(speakRuntimeStatus(status), { source: 'che_coding_status', session_id: id, state: status.state || null });
+            if (status.status === 200) return runtimeReply(status);
           }
           if (activeJob) return jobReply();
           const job = current.jobs.find((item) => item.kind === 'self_development');
@@ -8770,6 +8776,7 @@ export class CheState extends DurableObject {
     if (started.status === 202) {
       await this.ctx.storage.put('che_runtime_last_session', started.session_id);
       await this.ctx.storage.put('che_runtime_last_session_at', new Date().toISOString());
+      await this.ctx.storage.put('che_runtime_last_request_summary', String(message || '').replace(/\s+/g, ' ').trim().slice(0, 140));
     }
     return started;
   }
