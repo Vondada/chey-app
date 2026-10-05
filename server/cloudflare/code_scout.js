@@ -65,6 +65,21 @@ function starredScore(repo, focus = []) {
 // Repository-library requests must be researched before they are sent to the
 // exact source-patch lane. Keep autonomy repair/test requests on the implementation lane. This prevents broad GitHub jobs from being treated
 // like "find this on-screen text" edits.
+// A terminal response-mode directive: the owner is explicitly asking for an
+// answer/evaluation in chat and explicitly forbidding repository actions.
+// Keep this narrow: "build a chat-only feature; do not deploy" is engineering.
+export function chatOnlyResponseIntent(message) {
+  const text = String(message || '').trim();
+  if (!text) return false;
+  if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?update\s+your\s+code\s*:/i.test(text)) return false;
+  const responseDirective = /\b(?:answer|respond|reply)\b[\s\S]{0,80}\b(?:in\s+(?:this\s+)?chat|chat[- ]only|without\s+(?:changing|modifying|editing)\s+(?:your\s+)?code)\b/i.test(text)
+    || /\bchat[- ]only\s+(?:test|exam|evaluation)\b/i.test(text)
+    || /\b(?:this\s+is\s+)?(?:an?\s+)?evaluation\b[\s\S]{0,50}\bnot\s+(?:a\s+)?(?:coding|self[- ]development)\s+request\b/i.test(text);
+  const prohibition = /\b(?:do\s+not|don't|never|make\s+no|without)\b[\s\S]{0,220}\b(?:modify|change|edit|start|create|open|merge|deploy|coding|self[- ]development|branch|commit|pull\s+request|\bpr\b|repository\s+changes?)\b/i.test(text)
+    || /\bzero\s+(?:repository|repo|code)\s+changes?\b/i.test(text);
+  return responseDirective && prohibition;
+}
+
 export function repositoryImplementationIntent(message) {
   const text = String(message || '').trim();
   if (!text) return false;
@@ -72,9 +87,7 @@ export function repositoryImplementationIntent(message) {
   // Explicit chat/evaluation instructions outrank engineering words quoted
   // inside the question. Without this guard, an exam asking CHE to explain
   // patch/test/PR steps can be misrouted into the real self-development lane.
-  const chatOnlyEvaluation = /\b(?:chat[- ]only|answer\s+(?:all\s+)?(?:questions?\s+)?(?:directly\s+)?in\s+(?:this\s+)?chat|evaluation,?\s+not\s+(?:a\s+)?coding)\b/i.test(text)
-    && /\b(?:do\s+not|don't|zero)\b[\s\S]{0,160}\b(?:modify|coding|self[- ]development|branch|commit|pull\s+request|\bpr\b|merge|deploy|repository\s+changes?)\b/i.test(text);
-  if (chatOnlyEvaluation) return false;
+  if (chatOnlyResponseIntent(text)) return false;
 
   if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?update\s+your\s+code\s*:/i.test(text)) return true;
 
