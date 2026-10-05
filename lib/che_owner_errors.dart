@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 /// Owner-facing error sanitizer. Raw router dumps stay out of Chat.
 class CheOwnerError {
   const CheOwnerError({
@@ -24,6 +26,16 @@ class CheOwnerError {
   ];
 
   static CheOwnerError fromRaw(String raw, {int? status}) {
+    // The Worker already sends owner-safe wording in `detail` (for example
+    // "Nothing was done" on a final failure). Keep it rather than replacing
+    // it with a generic "still working" line.
+    final serverDetail = _safeServerDetail(raw);
+    if (serverDetail != null) {
+      return CheOwnerError(
+        category: 'temporary_cloud_unavailable',
+        message: serverDetail,
+      );
+    }
     final lower = raw.toLowerCase();
     var category = 'temporary_cloud_unavailable';
     if (lower.contains('offline') || lower.contains('socket') || lower.contains('network')) {
@@ -51,6 +63,24 @@ class CheOwnerError {
   }
 
   static bool _looksRaw(String lower) => _raw.any(lower.contains);
+
+  static String? _safeServerDetail(String raw) {
+    final start = raw.indexOf('{');
+    if (start < 0) return null;
+    try {
+      final decoded = jsonDecode(raw.substring(start));
+      if (decoded is! Map) return null;
+      final detail = decoded['detail']?.toString().trim() ?? '';
+      if (detail.isEmpty || detail.length > 280) return null;
+      final lower = detail.toLowerCase();
+      if (_looksRaw(lower) || _technical.hasMatch(detail) || lower.contains('engine')) {
+        return null;
+      }
+      return detail;
+    } catch (_) {
+      return null;
+    }
+  }
 
   // Status codes, exceptions and timeouts are engine plumbing, not something
   // the owner should ever have to read.

@@ -98,7 +98,8 @@ export function runtimeCapabilityRegistry(env, data = {}) {
 
   const hasText = Boolean(env.AI) || providerCaps.has('text');
   const hasVision = Boolean(env.CHE_MULTIMODAL_URL || env.GEMINI_API_KEY) || providerCaps.has('vision');
-  const paidMedia = /^(?:1|true|yes|on)$/i.test(String(env.CHE_ALLOW_PAID_MEDIA || '').trim());
+  const paidMedia = /^(?:1|true|yes|on)$/i.test(String(env.CHE_ALLOW_PAID_MEDIA || '').trim())
+    && /^(?:1|true|yes)$/i.test(String(env.CHE_ALLOW_PAID_AI || '').trim());
   const hasImage = Boolean(
     env.CHE_IMAGE_GEN_URL ||
     env.AI ||

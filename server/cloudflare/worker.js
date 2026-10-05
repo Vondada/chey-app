@@ -1193,6 +1193,11 @@ function mediaUnderstandingPrompt(mediaType, query) {
   return `The owner attached an image and said: "${owner}". Describe exactly what is visible, including readable text, buttons, errors and layout, then answer what is relevant to the owner's message. Do not guess beyond what is shown.`;
 }
 
+// Paid media needs both the paid-media switch and the owner's paid-AI switch.
+function paidMediaOn(env) {
+  return /^(?:1|true|yes|on)$/i.test(String(env?.CHE_ALLOW_PAID_MEDIA || '').trim()) && paidAllowed(env);
+}
+
 function openAiMediaKey(env) {
   // Owner rule: free engines only, unless paid AI is turned on on purpose.
   if (!paidAllowed(env)) return '';
@@ -4284,8 +4289,8 @@ export class CheState extends DurableObject {
             background_jobs: true,
             agent_identity: true,
             service_accounts: true,
-            natural_voice: Boolean((this.env.ELEVENLABS_API_KEY && this.env.CHE_ELEVENLABS_VOICE_ID) || this.env.CHE_OPENAI_API_KEY || this.env.AI || this.env.CHE_VOICE_URL || this.env.GEMINI_API_KEY),
-            openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY),
+            natural_voice: Boolean((paidAllowed(this.env) && ((this.env.ELEVENLABS_API_KEY && this.env.CHE_ELEVENLABS_VOICE_ID) || this.env.CHE_OPENAI_API_KEY)) || this.env.AI || this.env.CHE_VOICE_URL || this.env.GEMINI_API_KEY),
+            openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY && paidAllowed(this.env)),
             porcupine_wake_word: Boolean(this.env.CHE_PICOVOICE_ACCESS_KEY && this.env.CHE_PICOVOICE_KEYWORD_PPN_B64),
             apple_vocal_shortcut: true,
             quantum_compute: Boolean(this.env.CHE_QUANTUM_URL),
@@ -4299,11 +4304,11 @@ export class CheState extends DurableObject {
             image_generation: Boolean(
               this.env.CHE_IMAGE_GEN_URL ||
               this.env.AI ||
-              (/^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim()) && (this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY))
+              (paidMediaOn(this.env) && (this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY))
             ),
             video_generation: Boolean(
               this.env.CHE_VIDEO_GEN_URL ||
-              (/^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim()) && this.env.GEMINI_API_KEY)
+              (paidMediaOn(this.env) && this.env.GEMINI_API_KEY)
             ),
             model_panel: Boolean(
               this.env.CHE_OPENAI_MODEL_URL ||
@@ -4417,7 +4422,7 @@ export class CheState extends DurableObject {
 
       // ─── Art Studio media (real images, versions, honest upscaling) ────
       if (path === '/api/media' && request.method === 'GET') {
-        const paidMedia = /^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim());
+        const paidMedia = paidMediaOn(this.env);
         const imageEngine = this.env.CHE_IMAGE_GEN_URL
           ? 'connector'
           : (paidMedia && (this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY))
@@ -7166,7 +7171,7 @@ export class CheState extends DurableObject {
           ? await optionalMediaGeneration(this.env, 'image', message, vectorMemoryContext)
           : null;
         if (requestedCapabilities.includes('image_generation') && !this.env.CHE_IMAGE_GEN_URL &&
-            (this.env.AI || (/^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim()) && (this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY)))) {
+            (this.env.AI || (paidMediaOn(this.env) && (this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY)))) {
           const made = await generateImage(this.env, this.ctx.storage, {
             prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 6000),
             title: message.slice(0, 60),
@@ -7179,7 +7184,7 @@ export class CheState extends DurableObject {
           ? await optionalMediaGeneration(this.env, 'video', message, vectorMemoryContext)
           : null;
         if (requestedCapabilities.includes('video_generation') && !this.env.CHE_VIDEO_GEN_URL &&
-            /^(?:1|true|yes|on)$/i.test(String(this.env.CHE_ALLOW_PAID_MEDIA || '').trim()) && this.env.GEMINI_API_KEY) {
+            paidMediaOn(this.env) && this.env.GEMINI_API_KEY) {
           const made = await generateVideo(this.env, this.ctx.storage, {
             prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 8000),
             title: message.slice(0, 60),
@@ -7513,8 +7518,8 @@ export class CheState extends DurableObject {
                 windows: Boolean(this.env.CHE_WINDOWS_URL),
                 car: Boolean(this.env.CHE_CAR_URL),
                 smart_home: Boolean(this.env.CHE_SMART_HOME_URL),
-                natural_voice: Boolean((this.env.ELEVENLABS_API_KEY && this.env.CHE_ELEVENLABS_VOICE_ID) || this.env.CHE_OPENAI_API_KEY || this.env.AI || this.env.CHE_VOICE_URL || this.env.GEMINI_API_KEY),
-                openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY),
+                natural_voice: Boolean((paidAllowed(this.env) && ((this.env.ELEVENLABS_API_KEY && this.env.CHE_ELEVENLABS_VOICE_ID) || this.env.CHE_OPENAI_API_KEY)) || this.env.AI || this.env.CHE_VOICE_URL || this.env.GEMINI_API_KEY),
+                openai_live_voice: Boolean(this.env.CHE_OPENAI_API_KEY && paidAllowed(this.env)),
                 background_jobs: true,
                 quantum_compute: Boolean(this.env.CHE_QUANTUM_URL),
                 fine_tuning: fineTuneReadiness(this.env),
