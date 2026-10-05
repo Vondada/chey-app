@@ -113,14 +113,24 @@ bool cheIsSelfUpdateRequest(String raw) {
 
 /// A current-turn instruction to answer in conversation while forbidding
 /// repository work. Background job state must never change this decision.
-bool cheIsTerminalChatOnlyRequest(String raw) {
-  final text = raw.trim();
+bool _cheHasExplicitImplementationAuthorization(String text) {
   if (RegExp(
     r'^(?:(?:chay|chey|shay|che)[, ]+)?update\s+your\s+code\s*:',
     caseSensitive: false,
   ).hasMatch(text)) {
-    return false;
+    return true;
   }
+  return RegExp(
+    r"^(?:(?:chay|chey|shay|che)[,:]?\s*)?(?:(?:please)\s+|i\s+(?:want|need)\s+you\s+to\s+)?(?:implement|integrate|adapt|apply|install|add|upgrade|rewrite|refactor|build|change|modify|patch|fix|repair)\b[\s\S]{0,220}\b(?:your|che(?:'s)?|the)\s+(?:code|codebase|repo(?:sitory)?|app|flutter\s+app|ui|interface|worker|system|workflow|architecture)\b",
+    caseSensitive: false,
+  ).hasMatch(text);
+}
+
+bool cheIsTerminalChatOnlyRequest(String raw) {
+  final text = raw.trim();
+  // A real implementation command can still say "do not deploy yet". That
+  // delivery hold does not revoke the owner's authorization to implement.
+  if (_cheHasExplicitImplementationAuthorization(text)) return false;
   final responseDirective = RegExp(
     r'\b(?:answer|respond|reply)\b[\s\S]{0,80}\b(?:in\s+(?:this\s+)?chat|chat[- ]only|without\s+(?:changing|modifying|editing)\s+(?:your\s+)?code)\b|\bchat[- ]only\s+(?:test|exam|evaluation)\b|\b(?:this\s+is\s+)?(?:an?\s+)?evaluation\b[\s\S]{0,50}\bnot\s+(?:a\s+)?(?:coding|self[- ]development)\s+request\b',
     caseSensitive: false,
