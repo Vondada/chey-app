@@ -49,7 +49,7 @@ import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
-import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyResponseIntent, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
+import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { webAppPage } from './web_app.js';
 import { lastSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, siteUrl, speakSiteResult, writeSite } from './site_builder.js';
 import { changeHistoryIntent, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
@@ -2481,6 +2481,22 @@ export async function handleSelfUpdateChatAction(env, storage, intent, ops = {})
 
 export async function dispatchChange(env, body, memory = null, options = {}) {
   const request = String(body.request || '').trim();
+  // This endpoint is also called by older clients whose local classifier can
+  // mistake an evaluation *about* coding for permission to change the repo.
+  // Enforce the current-turn boundary here, before reading pending changes,
+  // failed jobs, checkpoints, or any other durable engineering state.
+  if (currentTurnActionPolicy(request).terminalChatOnly) {
+    if (options.answerChatOnly) {
+      const answer = await options.answerChatOnly(request);
+      if (answer) return json({ message: answer, chat_only: true, code_review_passed: false, owner_approval_required: false });
+    }
+    return json({
+      detail: 'This is a chat-only request and was not accepted by the repository-action endpoint.',
+      route_to_chat: true,
+      code_review_passed: false,
+      owner_approval_required: false,
+    }, 409);
+  }
   // Commands about an existing change ("show me the code", "create the PR",
   // "merge it", "PR status") are never new coding requests, even when an app
   // build routes them here. Running the coding team on "show me the code"
@@ -6027,6 +6043,7 @@ export class CheState extends DurableObject {
         topicStudy: (intent, text) => this.startTopicStudy(intent, text),
         advanceStudyBuilds: () => this.advanceStudyBuilds(),
         batchStudies: () => this.batchStudies(),
+        answerChatOnly: (message) => this.answerTerminalChatOnly(message),
         ops: { queueJob: async (fields) => { const fresh = await this.loadData(); const queued = enqueueJob(fresh, fields); await this.ctx.storage.put('che', fresh); await this.scheduleWork(); return queued; } },
       });
       if (path === '/api/chat') {
@@ -6059,7 +6076,8 @@ export class CheState extends DurableObject {
         // Explicit chat-only evaluations are terminal for action routing. The
         // question may discuss coding, PRs, deployment or collaboration, but
         // those words are subject matter, not permission to act.
-        const chatOnlyEvaluation = chatOnlyResponseIntent(message);
+        const turnActionPolicy = currentTurnActionPolicy(message);
+        const chatOnlyEvaluation = turnActionPolicy.terminalChatOnly;
 
         // GitHub/self-development commands are real tool actions, never generic
         // model guesses about credentials. "Create the PR" works by voice/text.
@@ -6683,11 +6701,26 @@ export class CheState extends DurableObject {
         // GitHub mailbox into a real reviewed coding job. Owner-only, and each
         // handoff message id launches at most once (no duplicate job cycles).
         // "coding status": short spoken summary of the latest OpenCode session.
-        if (/^\s*(?:che[,:]?\s*)?(?:what(?:'s| is) the\s+)?coding (?:job )?status\??\s*$|^\s*how(?:'s| is) (?:the|my) coding job( going)?\??\s*$/i.test(message)) {
+        if (/^\s*(?:che[,:]?\s*)?(?:(?:what(?:'s| is)\s+)?(?:the|my)\s+)?(?:coding job|coding)\s+status\??\s*$|^\s*what is the status of (?:the|my) coding job\??\s*$|^\s*how(?:'s| is) (?:the|my) coding job( going)?\??\s*$/i.test(message)) {
           const id = await this.ctx.storage.get('che_runtime_last_session');
-          if (!id) return ndjsonReply('No OpenCode coding job has started yet, sir.', { source: 'che_coding_status' });
+          if (!id) {
+            const current = await this.loadData();
+            const job = [...current.jobs].reverse().find((item) => item.kind === 'self_development');
+            if (!job) return ndjsonReply('No coding job has started yet, sir.', { source: 'che_coding_status' });
+            const checkpoint = job.checkpoint ? ' Its recovery checkpoint is saved.' : '';
+            return ndjsonReply(`The latest coding job is ${job.status}, sir.${checkpoint}`, { source: 'che_coding_status', background_job_id: job.id, background_job_status: job.status });
+          }
           const status = await new CheCodingRuntime(this.env).getStatus(id);
           return ndjsonReply(status.status === 200 ? speakRuntimeStatus(status) : String(status.detail || 'I could not read the coding job status.'), { source: 'che_coding_status', session_id: id, state: status.state || null });
+        }
+        if (/^\s*(?:che[,:]?\s*)?(?:please\s+)?resume (?:the|my|that) coding job[.!]?\s*$/i.test(message)) {
+          const current = await this.loadData();
+          const job = [...current.jobs].reverse().find((item) => item.kind === 'self_development' && item.status === 'queued');
+          if (!job) return ndjsonReply('There is no saved coding job waiting to resume, sir.', { source: 'che_coding_resume', ok: false });
+          job.retry_at = Date.now();
+          await this.ctx.storage.put('che', current);
+          await this.scheduleWork();
+          return ndjsonReply(`I resumed the same saved coding job, sir.${job.checkpoint ? ' It will continue from its checkpoint.' : ''}`, { source: 'che_coding_resume', background_job_id: job.id, background_job_status: job.status });
         }
         const handoff = chatOnlyEvaluation ? null : handoffIntent(message);
         if (handoff) {
@@ -8546,6 +8579,21 @@ export class CheState extends DurableObject {
     return { job, deduplicated, paused: !data.autonomy };
   }
 
+  // Compatibility path for installed clients that selected the legacy coding
+  // endpoint before the server could apply its authoritative turn policy.
+  // It answers the foreground question but deliberately receives no mutation
+  // tools and never reads or changes durable engineering state.
+  async answerTerminalChatOnly(message) {
+    const answer = await this.env.AI.run(this.env.CHE_STRONG_MODEL || STRONG_MODEL, {
+      messages: [
+        { role: 'system', content: `${WORK_POLICY}\nThis turn is terminal chat-only. Answer every requested part directly. Do not start, resume, alter, or report a coding job as the answer. Do not claim any action, test, review, repository change, PR, deployment, or production verification occurred. Code snippets in the chat are allowed when requested.` },
+        { role: 'user', content: String(message).slice(0, 16000) },
+      ],
+      max_tokens: 7000,
+    });
+    return String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim();
+  }
+
   // Owner chat reply for a coding request. Proposal → short summary;
   // failures → one human-level sentence (diagnostics stay on the Worker).
   async selfDevelopmentReply(message, { vectorRecall = {}, onAccepted = null } = {}) {
@@ -9040,4 +9088,3 @@ export default {
     return env.CHE_STATE.getByName('owner').fetch(request);
   },
 };
-
