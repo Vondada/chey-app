@@ -1575,6 +1575,14 @@ test('research cache: informational verbs still hit with zero inference, but con
     assert.match(cached, /mature starter/);
     assert.equal(aiCalls, 0, 'make inside an informational research query is not misclassified as an external action');
 
+    for (const mixed of ['research how to make sourdough and email it to John', 'research how to make sourdough, then text Sam', 'can you research how to make sourdough and share it']) {
+      await rememberKnowledge(storage, { key: researchKey(mixed), answer: 'Use a mature starter.', source: 'research_library', confidence: 0.95, ttl_ms: 60000 }, Date.now());
+      await markPureResearch(storage, mixed);
+      aiCalls = 0;
+      await (await chat(mixed)).text();
+      assert.ok(aiCalls > 0, `a research turn with a chained action is never answered from cache: ${mixed}`);
+    }
+
     aiCalls = 0;
     const contextual = replyFromNdjson(await (await chat('research it', {
       history: [

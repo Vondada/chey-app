@@ -6549,8 +6549,11 @@ export class CheState extends DurableObject {
           // Only actual imperative external actions suppress the research
           // shortcut. Vocabulary inside an informational query ("research how
           // to make sourdough", "find the latest blog post") is not an action.
+          // A verb that opens a clause is an action: at the start, after
+          // and/then/also or a comma/semicolon, or addressed to CHE ("can you email").
           const actionAsk = /^(?:(?:chay|chey|shay|che)[, ]+)?(?:please\s+)?(?:email|e-mail|send|text|message|call|tweet|share|buy|sell|order|pay|transfer|book|schedule|remind|open|launch|delete|remove|trade)\b/i.test(message)
-            || /\b(?:then|and then)\s+(?:email|e-mail|send|text|message|call|tweet|share|buy|sell|order|pay|transfer|book|schedule|remind|open|launch|delete|remove|trade)\b/i.test(message);
+            || /(?:\b(?:and|then|also)|[,;])\s+(?:then\s+|also\s+)?(?:please\s+)?(?:email|e-mail|send|text|message|call|tweet|share|buy|sell|order|pay|transfer|book|schedule|remind|open|launch|delete|remove|trade)\b/i.test(message)
+            || /\byou\s+(?:to\s+|please\s+)?(?:email|e-mail|send|text|message|call|tweet|share|buy|sell|order|pay|transfer|book|schedule|remind|open|launch|delete|remove|trade)\b/i.test(message);
           const researched = !rememberFact && plainCaps && !conversationContext && !actionAsk
             ? await researchHit(this.ctx.storage, message).catch(() => null)
             : null;
