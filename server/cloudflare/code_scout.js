@@ -68,10 +68,19 @@ function starredScore(repo, focus = []) {
 // A terminal response-mode directive: the owner is explicitly asking for an
 // answer/evaluation in chat and explicitly forbidding repository actions.
 // Keep this narrow: "build a chat-only feature; do not deploy" is engineering.
+function explicitRepositoryImplementationAuthorization(message) {
+  const text = String(message || '').trim();
+  if (!text) return false;
+  if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?update\s+your\s+code\s*:/i.test(text)) return true;
+  return /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:please)\s+|i\s+(?:want|need)\s+you\s+to\s+)?(?:implement|integrate|adapt|apply|install|add|upgrade|rewrite|refactor|build|change|modify|patch|fix|repair)\b[\s\S]{0,220}\b(?:your|che(?:'s)?|the)\s+(?:code|codebase|repo(?:sitory)?|app|flutter\s+app|ui|interface|worker|system|workflow|architecture)\b/i.test(text);
+}
+
 export function chatOnlyResponseIntent(message) {
   const text = String(message || '').trim();
   if (!text) return false;
-  if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?update\s+your\s+code\s*:/i.test(text)) return false;
+  // A real implementation command may constrain delivery ("do not deploy
+  // yet") while still authorizing the code change. That is not chat-only.
+  if (explicitRepositoryImplementationAuthorization(text)) return false;
   const responseDirective = /\b(?:answer|respond|reply)\b[\s\S]{0,80}\b(?:in\s+(?:this\s+)?chat|chat[- ]only|without\s+(?:changing|modifying|editing)\s+(?:your\s+)?code)\b/i.test(text)
     || /\bchat[- ]only\s+(?:test|exam|evaluation)\b/i.test(text)
     || /\b(?:this\s+is\s+)?(?:an?\s+)?evaluation\b[\s\S]{0,50}\bnot\s+(?:a\s+)?(?:coding|self[- ]development)\s+request\b/i.test(text);
