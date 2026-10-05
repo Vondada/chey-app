@@ -194,6 +194,8 @@ Again: ANSWER IN CHAT ONLY. ZERO REPOSITORY CHANGES. NO PR.''';
       'Fix this in your code.',
       'Update your code to support dark mode.',
       'Implement this, but do not deploy yet.',
+      'Fix the login screen in your app, but do not make changes outside that screen.',
+      'Implement dark mode in your app without changing anything else.',
     ];
     for (final q in implement) {
       expect(cheIsTerminalChatOnlyRequest(q), isFalse, reason: q);

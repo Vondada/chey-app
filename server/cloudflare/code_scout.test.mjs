@@ -234,6 +234,8 @@ test('mission T1-T6: chat-only phrasings never mutate; explicit implementation w
     'Implement this, but do not deploy yet.',
     'For this task, implement this in your app and answer in this chat when finished; do not deploy yet.',
     'Fix the login screen in your app but do not modify the auth code.',
+    'Fix the login screen in your app, but do not make changes outside that screen.',
+    'Implement dark mode in your app without changing anything else.',
   ]) {
     const p = currentTurnActionPolicy(q);
     assert.equal(p.terminalChatOnly, false, q);

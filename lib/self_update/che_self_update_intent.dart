@@ -144,11 +144,11 @@ bool _cheImperativeImplementation(String text) {
 /// globalRepositoryProhibition in code_scout.js.
 bool _cheHasGlobalRepositoryProhibition(String text) {
   bool m(String pattern) => RegExp(pattern, caseSensitive: false).hasMatch(text);
-  return m(r"\b(?:do\s+not|don['’]t|never|make\s+no)\s+(?:make\s+)?(?:any\s+)?(?:modify|modifying|change|changes|changing|touch|edit|alter)\s+(?:to\s+)?(?:your\s+|any\s+|the\s+)?(?:source\s+)?(?:code|codebase|repo(?:sitory)?)\b") ||
-      m(r"\b(?:do\s+not|don['’]t|never)\s+make\s+(?:any\s+)?(?:code\s+)?changes\b") ||
-      (m(r"\b(?:do\s+not|don['’]t|never)\s+(?:modify|change|touch|edit|alter)\s+(?:it|anything)\b") &&
-          m(r"\b(?:code|codebase|repo(?:sitory)?|app)\b")) ||
-      m(r"\bwithout\s+(?:changing|modifying|touching|editing)\s+anything\b") ||
+  // Scoped limits ("outside that screen", "anything else") are not prohibitions.
+  return m(r"\b(?:do\s+not|don['’]t|never|make\s+no)\s+(?:make\s+)?(?:any\s+)?(?:modify|modifying|change|changes|changing|touch|edit|alter)\s+(?:to\s+)?(?:your\s+|any\s+|the\s+)?(?:source\s+)?(?:code|codebase|repo(?:sitory)?)\b(?![^.;]{0,40}\b(?:outside|else|elsewhere|beyond|except|apart\s+from|other\s+(?:files?|screens?|parts?|features?|code)))") ||
+      m(r"\b(?:do\s+not|don['’]t|never)\s+make\s+(?:any\s+)?(?:code\s+)?changes\b(?![^.;]{0,40}\b(?:outside|else|elsewhere|beyond|except|apart\s+from|other\s+(?:files?|screens?|parts?|features?|code)))") ||
+      m(r"\bwithout\s+(?:changing|modifying|touching|editing)\s+anything\b(?![^.;]{0,40}\b(?:outside|else|elsewhere|beyond|except|apart\s+from|other\s+(?:files?|screens?|parts?|features?|code)))") ||
+      (m(r"\b(?:do\s+not|don['’]t|never)\s+(?:modify|change|touch|edit|alter)\s+(?:it|anything)\b(?![^.;]{0,40}\b(?:outside|else|elsewhere|beyond|except|apart\s+from|other\s+(?:files?|screens?|parts?|features?|code)))") && m(r"\b(?:code|codebase|repo(?:sitory)?|app)\b")) ||
       m(r"\b(?:do\s+not|don['’]t|never)\s+(?:create|build|make)\s+(?:anything|it|a\s+project|the\s+project)\b") ||
       m(r"\b(?:no|zero)\s+(?:repository|repo|code)\s+changes?\b");
 }
