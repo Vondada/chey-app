@@ -16,6 +16,7 @@
 // doesn't care which engine answered.
 
 import { inferNeeds, orderByCapability, pickCatalogModel, recordHealth } from './capability_router.js';
+import { selectWorkflow, minimalContext } from './workflow_governor.js';
 import { BUILTIN_PROVIDER_MANIFESTS } from './provider_registry.js';
 import { appendAudit, auditEntry } from './privacy_policy.js';
 import { storedKeys, withStoredKeys } from './resilience.js';
@@ -659,6 +660,10 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   const ownerChat = input?.che_owner_chat === true || quality || input?.che_emergency === true;
   const casual = !quality && isShortCasualRequest(model, input);
   const needs = inferNeeds(input);
+  // Decide how CHE should work before selecting a provider. The selected
+  // workflow is deterministic and travels only as router metadata.
+  const workflow = selectWorkflow(input);
+  needs.workflow = workflow;
   const context = input?.che_context && typeof input.che_context === 'object' ? input.che_context : null;
   const audit = input?.che_audit && typeof input.che_audit === 'object' ? input.che_audit : null;
   const strictProvider = input?.che_provider_strict === true;
@@ -671,6 +676,19 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
     ? { agent_id: String(input.che_agent_id).slice(0, 80), thread_id: String(input.che_thread_id || '').slice(0, 200) }
     : null;
   const engineInput = compactEngineInput(input);
+  // Keep repeated evidence from bloating model context. This preserves message
+  // structure while removing exact duplicate text messages.
+  if (Array.isArray(engineInput.messages)) {
+    const packed = minimalContext(engineInput.messages.map((m) => ({ text: contentText(m?.content) })), 60000);
+    const allowed = new Set(packed);
+    const seen = new Set();
+    engineInput.messages = engineInput.messages.filter((m) => {
+      const text = contentText(m?.content).trim();
+      if (!text || !allowed.has(text) || seen.has(text)) return false;
+      seen.add(text);
+      return true;
+    });
+  }
   for (const key of Object.keys(engineInput)) if (key.startsWith('che_')) delete engineInput[key];
   if (quality) {
     const firstConversation = engineInput.messages.findIndex((message) => message?.role !== 'system');
