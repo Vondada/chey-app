@@ -2084,7 +2084,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     // SAME job: passes already used stay used, tried strategies stay tried,
     // so a provider outage never buys extra attempts or repeats a strategy.
     const checkpoint = options.checkpoint && typeof options.checkpoint === 'object' ? options.checkpoint : null;
-    let genuinePasses = checkpoint ? Math.max(0, Math.min(maxRounds - 1, Number(checkpoint.genuine_passes) || 0)) : 0;
+    let genuinePasses = checkpoint ? Math.max(0, Math.min(maxRounds, Number(checkpoint.genuine_passes) || 0)) : 0;
     if (checkpoint) {
       for (const fp of (checkpoint.fingerprints || []).map(String).slice(-30)) seenStrategies.add(fp);
       for (const item of (checkpoint.failed_strategies || []).slice(-8)) failedStrategies.push({ ...item, prior: true });
@@ -2096,6 +2096,11 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     let unproductivePasses = 0;
     let enginesFailed = false;
     let budgetStop = false;
+    // A valid implementation whose independent reviewers were temporarily
+    // unavailable is durable state. Resume its REVIEW, not another coding pass.
+    let pendingReview = checkpoint?.pending_review && typeof checkpoint.pending_review === 'object'
+      ? checkpoint.pending_review
+      : null;
 
     // Files whose edits failed to apply are shown whole (or around the real
     // lines nearest the failed anchor) on every later attempt.
@@ -2346,6 +2351,14 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         // The pass and its strategy stay consumed (they were genuine); the
         // checkpoint carries them so the resumed job cannot get them back.
         failedStrategies.push({ engineer: member.name, outcome: 'review_unavailable', why: 'Valid change could not be reviewed (reviewer engines unavailable); the pass stays used.', edits: (answer.edits || []).map((e) => `${e?.path}: ${String(e?.find || '').slice(0, 80)}`).slice(0, 3) });
+        pendingReview = {
+          changed_files: changedFiles,
+          files: checked.files,
+          diff,
+          summary: String(answer.summary || 'CHE update').slice(0, 1800),
+          engineer: member.name,
+          repo_sha: index.head_sha || '',
+        };
         return null;
       }
       const passed = reviews.every((r) => r.approved === true && r.target_correct !== false);
@@ -2360,6 +2373,47 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       }
       return { next: applied.sources, files: checked.files, review: reviews, diff, discussion: chat.slice(-30), summary: String(answer.summary || 'CHE update').slice(0, 1800), engineer: member.name };
     };
+
+    // Reviewer outages do not buy another implementation pass. If a valid
+    // candidate was checkpointed, retry only independent review on the exact
+    // repository SHA it was built from.
+    if (pendingReview && !result) {
+      if (pendingReview.repo_sha && pendingReview.repo_sha !== index.head_sha) {
+        ctx.outcomes.push({ round: 0, engineer: pendingReview.engineer || 'CHE', provider: 'checkpoint', outcome: 'stale_source', detail: 'Pending review candidate was built from a different repository SHA.' });
+        pendingReview = null;
+      } else {
+        const changedFiles = Array.isArray(pendingReview.changed_files) ? pendingReview.changed_files : [];
+        const anchors = new Map(changedFiles.map((file) => [file.path, changedLines(sources.get(file.path), file.content)]));
+        const after = new Map([...sources, ...changedFiles.map((file) => [file.path, file.content])]);
+        const evidence = {
+          changed: (budget) => packEvidence(after, { terms: [], anchors, budget, paths: changedFiles.map((f) => f.path) }),
+          inspected: (budget) => packEvidence(sources, { terms, hits, anchors, budget, paths: changedFiles.map((f) => f.path).filter((p) => sources.has(p)) }),
+        };
+        const reviewArgs = { request: task, architecture, diff: String(pendingReview.diff || ''), uiTask, lessons, chat, evidence };
+        const first = await Promise.all(CREW.reviewers.map((reviewer) => reviewProposal(ctx, { ...reviewArgs, member: reviewer })));
+        const reviews = await settleReviews(ctx, reviewArgs, first);
+        const unavailable = reviews.filter((review) => review.agent_failure);
+        if (!unavailable.length && reviews.every((review) => review.approved === true && review.target_correct !== false)) {
+          result = {
+            next: after,
+            files: Array.isArray(pendingReview.files) ? pendingReview.files : changedFiles,
+            review: reviews,
+            diff: String(pendingReview.diff || ''),
+            discussion: chat.slice(-30),
+            summary: String(pendingReview.summary || 'CHE update').slice(0, 1800),
+            engineer: pendingReview.engineer || 'CHE',
+          };
+          pendingReview = null;
+        } else if (!unavailable.length) {
+          const why = stripOwnerHomework(reviews.map((review) => reviewNotes(review)).join(' | ')) || 'Independent review rejected the checkpointed candidate.';
+          feedbacks[0] = `Independent review rejected it: ${why}`.slice(0, 1500);
+          ctx.outcomes.push({ round: 0, engineer: pendingReview.engineer || 'CHE', provider: 'checkpoint', outcome: 'review_rejected', detail: why.slice(0, 300) });
+          pendingReview = null;
+        } else {
+          ctx.outcomes.push({ round: 0, engineer: pendingReview.engineer || 'CHE', provider: 'checkpoint', outcome: 'review_unavailable', detail: unavailable.map((review) => `${review.reviewer}:${review.agent_failure}`).join(',').slice(0, 300) });
+        }
+      }
+    }
 
     for (let round = 0; genuinePasses < maxRounds && !result; round++) {
       lastRound = round;
@@ -2520,6 +2574,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         resumes: resumes + 1,
         round_offset: roundOffset + lastRound + 1,
         faults_used: { ...faultsUsed },
+        ...(pendingReview ? { pending_review: pendingReview } : {}),
         saved_at: new Date().toISOString(),
       });
       if (enginesFailed && !budgetStop && genuinePasses > 0 && genuinePasses < maxRounds && resumes < 3) {
@@ -2535,7 +2590,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       }
       // Once every genuine pass is used, an outage is not a reason to retry:
       // a resume would only buy the job passes beyond its limit.
-      const temporary = (outcomes.includes('review_unavailable') && genuinePasses < maxRounds)
+      const temporary = (outcomes.includes('review_unavailable') && Boolean(pendingReview) && resumes < 3)
         || (real.length > 0 && real.every((outcome) => outcome === 'provider_unavailable'))
         || enginesUnusable;
       const engineering = [...new Set(feedbacks.filter((f) => f && !formatFeedback.has(f)))].join(' | ');
