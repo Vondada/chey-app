@@ -111,3 +111,10 @@ test('layer 5 is only reported from the autonomy-exam run this five-layer run st
   assert.match(speakFiveLayerResults({ run_id: 'r1', coding_run_id: 'c1', results: {} }, coding), /Layer 5, Autonomous self-patching: passed/);
   assert.doesNotMatch(speakFiveLayerResults({ run_id: 'r1', coding_run_id: 'old', results: { 1: { level: 1, name: 'x', passed: true } } }, coding), /Layer 5/);
 });
+
+test('review fixes: the graded code is the LAST block, and "with a, b:" lock lists are fully analysed', () => {
+  const quoted = `The original:\n\`\`\`python\n${reasoningLayer(4).prompt.split('```python').pop().split('```')[0]}\`\`\`\n${GOOD[4]}`;
+  assert.equal(gradeReasoningLayer(L(4), quoted).passed, true, 'quoting the buggy code first does not fail a correct fix');
+  assert.equal(hasLockOrderInversion('def fire(self):\n    with self.fuel_lock, self.nozzle_lock:\n        pass\ndef gimbal(self):\n    with self.nozzle_lock, self.fuel_lock:\n        pass'), true);
+  assert.equal(fiveLayerIntent('what is the five layer exam?'), null, 'a question about the exam never starts a paid run');
+});

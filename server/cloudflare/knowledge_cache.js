@@ -133,6 +133,14 @@ export async function researchHit(storage, question, now = Date.now()) {
   return recallKnowledge(storage, researchKey(question), { now });
 }
 
+/** Marks a cached research result as a pure answer (no action rode on that turn). */
+export async function markPureResearch(storage, question) {
+  if (!storage?.get || !storage?.put) return;
+  const key = entryKey(researchKey(question));
+  const record = await storage.get(key);
+  if (record && !record.pure) await storage.put(key, { ...record, pure: true });
+}
+
 export async function cachedResearch(storage, question, research, now = Date.now()) {
   const key = researchKey(question);
   const hit = await recallKnowledge(storage, key, { now });

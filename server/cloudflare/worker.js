@@ -37,7 +37,7 @@ import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, cha
 import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
 import { MODE_NAME, chooseAccount, deskIntent, rememberListed, deskTick, pendingAlert, readDesk, setMode, setSize, skipTrade, speakAlert, speakDeskStatus, takeAnnouncement, takeTrade } from './trading_desk.js';
 import { externalGrounding } from './external_grounding.js';
-import { cachedResearch, factKey, forgetKnowledge, knownAnswer, ownerFactQuestion, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
+import { cachedResearch, factKey, forgetKnowledge, knownAnswer, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
 import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliability } from './reliability_ledger.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
@@ -6539,11 +6539,14 @@ export class CheState extends DurableObject {
           // no research call, model panel or chat model runs behind it.
           const plainCaps = (Array.isArray(body.requested_capabilities) ? body.requested_capabilities : []).map(String)
             .every((cap) => cap === 'web_research');
-          // Only questions that went through research ever have an entry.
-          const researched = !rememberFact && plainCaps
+          // Only pure research turns qualify: a message that also asks CHE to
+          // do something ("email John the current price") always runs the
+          // full path so the action and its permission checks happen.
+          const actionAsk = /\b(?:email|e-mail|send|text|message|call|post|tweet|share|buy|sell|order|pay|transfer|book|schedule|remind|create|make|write|draft|open|launch|delete|remove|save|add|set|turn|start|stop|trade)\b/i.test(message);
+          const researched = !rememberFact && plainCaps && !actionAsk
             ? await researchHit(this.ctx.storage, message).catch(() => null)
             : null;
-          if (researched) {
+          if (researched?.pure === true) {
             await recordReliability(this.ctx.storage, { kind: 'retrieval', workflow: 'research', outcome: 'answered_from_memory', tokens_saved: 3000 });
             const sources = researched.sources?.length ? `\n\nSources: ${researched.sources.join(', ')}` : '';
             const limit = researched.limitation ? `\n\n${researched.limitation}` : '';
@@ -7207,6 +7210,11 @@ export class CheState extends DurableObject {
           actionPanel(this.env, requestedCapabilities, message),
           pluginResults(this.env, data.plugin_enabled, message),
         ]);
+        // A fresh research result may answer this exact question again with no
+        // AI call only when nothing but research happened on this turn.
+        if (research?.summary && !research.cached && !actionResults.length && !officeResults.length && !specialists.length && !plugins.length) {
+          await markPureResearch(this.ctx.storage, message).catch(() => null);
+        }
         const awaitingApproval = actionResults.filter(a => a.requires_owner_confirmation);
         if (awaitingApproval.length) {
           const fresh = await this.loadData();

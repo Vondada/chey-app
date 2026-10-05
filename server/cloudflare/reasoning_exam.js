@@ -75,7 +75,8 @@ const num = (text, name) => {
 };
 const near = (value, expected, tolerance) => Number.isFinite(value) && Math.abs(value - expected) <= Math.abs(expected) * tolerance;
 const lastLine = (text) => String(text || '').trim().split('\n').map((l) => l.trim()).filter(Boolean).pop() || '';
-const pythonBlock = (text) => (/```(?:python|py)?\s*\n([\s\S]*?)```/i.exec(String(text || '')) || [])[1] || '';
+// The LAST code block is the answer (the first is often the quoted original).
+const pythonBlock = (text) => [...String(text || '').matchAll(/```(?:python|py)?\s*\n([\s\S]*?)```/gi)].map((m) => m[1]).pop() || '';
 
 // Lock acquisition order per method: [['fire', ['fuel_lock', 'nozzle_lock']], ...].
 export function lockOrders(code) {
@@ -85,7 +86,10 @@ export function lockOrders(code) {
     const def = /^\s*def\s+(\w+)/.exec(line);
     if (def) { current = { name: def[1], locks: [] }; methods.push(current); continue; }
     if (!current) continue;
-    for (const m of line.matchAll(/(?:with\s+self\.(\w+)|self\.(\w+)\.acquire\s*\()/g)) current.locks.push(m[1] || m[2]);
+    // "with self.a, self.b:" takes both, in order.
+    const withItems = /^\s*(?:async\s+)?with\s+(.+?):\s*$/.exec(line);
+    if (withItems) for (const m of withItems[1].matchAll(/self\.(\w+)/g)) current.locks.push(m[1]);
+    for (const m of line.matchAll(/self\.(\w+)\.acquire\s*\(/g)) current.locks.push(m[1]);
   }
   return methods;
 }
@@ -184,6 +188,8 @@ export function fiveLayerIntent(message) {
   const text = String(message || '').toLowerCase();
   if (!/\b(?:five|5)[- ]layer\b|\breasoning exam\b/.test(text)) return null;
   if (/\b(?:results?|score|how did|status|report)\b/.test(text) && !/\b(?:run|start|do|take|begin)\b/.test(text)) return { kind: 'results' };
+  // Only an explicit request starts a run ("what is the five layer exam?" does not).
+  if (!/\b(?:run|start|do|take|begin|retake|redo)\b/.test(text)) return null;
   const layer = /\blayer\s*([1-5])\b/.exec(text)?.[1];
   return { kind: 'run', layers: layer ? [Number(layer)] : [1, 2, 3, 4, 5] };
 }

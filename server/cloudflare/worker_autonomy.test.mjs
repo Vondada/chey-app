@@ -1455,7 +1455,7 @@ test('final review: a verified research-cache hit ends the turn with zero resear
   const { chat } = await pairedChat(env, saved);
   const question = 'Research and compare sources on the latest provider limits';
   const now = Date.now();
-  saved.set(`kc:${researchKey(question)}`, { key: researchKey(question), answer: 'Groq allows 30 requests a minute on the free tier.', source: 'research_library', sources: ['https://console.groq.com/docs/rate-limits'], limitation: '', confidence: 0.85, verified_at: now - 60_000, expires_at: now + 3600_000, volatile: true });
+  saved.set(`kc:${researchKey(question)}`, { key: researchKey(question), answer: 'Groq allows 30 requests a minute on the free tier.', source: 'research_library', sources: ['https://console.groq.com/docs/rate-limits'], limitation: '', confidence: 0.85, verified_at: now - 60_000, expires_at: now + 3600_000, volatile: true, pure: true });
   const original = globalThis.fetch;
   let providerCalls = 0;
   globalThis.fetch = async () => { providerCalls += 1; return new Response('{}', { status: 500 }); };
@@ -1466,6 +1466,18 @@ test('final review: a verified research-cache hit ends the turn with zero resear
     assert.equal(aiCalls, 0, 'no Workers AI call (no model panel, no chat model)');
     assert.equal(providerCalls, 0, 'no research fetch or provider call');
     assert.equal(saved.get('che_reliability_ledger').totals.memory_answers, 1);
+    // A request to DO something with the same facts is never short-circuited:
+    // the action and its permission checks must run.
+    const actionQ = 'Email John the latest provider limits';
+    saved.set(`kc:${researchKey(actionQ)}`, { ...saved.get(`kc:${researchKey(question)}`), key: researchKey(actionQ) });
+    await (await chat(actionQ)).text();
+    assert.ok(aiCalls + providerCalls > 0, 'an action request runs the full path');
+    aiCalls = 0; providerCalls = 0;
+    // A cached result from a turn that also ran actions (not marked pure) is not reused alone.
+    const mixedQ = 'Research the current GPU prices';
+    saved.set(`kc:${researchKey(mixedQ)}`, { ...saved.get(`kc:${researchKey(question)}`), key: researchKey(mixedQ), pure: false });
+    await (await chat(mixedQ)).text();
+    assert.ok(aiCalls + providerCalls > 0, 'only pure research answers are reused without inference');
     // Expired volatile research is not reused: the normal path runs again.
     saved.set(`kc:${researchKey(question)}`, { ...saved.get(`kc:${researchKey(question)}`), verified_at: now - 2 * 3600_000 });
     await (await chat(question)).text();

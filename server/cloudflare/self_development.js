@@ -2533,7 +2533,9 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
           owner_message: ownerEngineeringMessage(FAILURE_CLASS.TEMPORARY_EXTERNAL),
         });
       }
-      const temporary = outcomes.includes('review_unavailable')
+      // Once every genuine pass is used, an outage is not a reason to retry:
+      // a resume would only buy the job passes beyond its limit.
+      const temporary = (outcomes.includes('review_unavailable') && genuinePasses < maxRounds)
         || (real.length > 0 && real.every((outcome) => outcome === 'provider_unavailable'))
         || enginesUnusable;
       const engineering = [...new Set(feedbacks.filter((f) => f && !formatFeedback.has(f)))].join(' | ');

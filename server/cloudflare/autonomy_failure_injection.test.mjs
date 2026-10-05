@@ -906,3 +906,16 @@ test('final review: injected exam faults fire exactly once across durable checkp
     assert.ok(!resumed.diagnostics.outcomes.some(injected), 'no consumed fault fires again');
   }
 });
+
+test('review fix: a reviewer outage on the LAST pass is a final result, never a retry that buys extra passes', async () => {
+  let n = 0;
+  const ai = scriptedAI({
+    engineer: () => { n += 1; return variantEdit(n + 40); },
+    review: () => { const e = new Error('provider 503'); e.status = 503; throw e; },
+  });
+  const checkpoint = { genuine_passes: 2, fingerprints: [], failed_strategies: [], resumes: 1, round_offset: 2, faults_used: {} };
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore(), { checkpoint });
+  assert.equal(out.status, 422, 'all three passes are used: honest final result');
+  assert.notEqual(out.failure_class, FAILURE_CLASS.TEMPORARY_EXTERNAL);
+  assert.equal(out.proposal, undefined);
+});
