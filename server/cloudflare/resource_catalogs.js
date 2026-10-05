@@ -151,6 +151,8 @@ export function searchCatalog(entries, query, limit = 5) {
   if (!terms.length) return [];
   const scored = [];
   for (const entry of entries) {
+    // Every spoken option must be openable, so plain-http entries never rank.
+    if (!/^https:\/\//.test(entry.url || '')) continue;
     const name = entry.name.toLowerCase();
     const category = entry.category.toLowerCase();
     const description = entry.description.toLowerCase();
@@ -186,7 +188,7 @@ export function resourceIntent(message) {
   // Negations and build/create requests are not lookups ("I don't need an MCP
   // server", "I want to build an MCP server for GitHub").
   if (/\b(?:don'?t|do\s+not|doesn'?t|never|no\s+longer)\s+(?:need|want|use|like)\b/.test(text)) return null;
-  if (/\b(?:build|create|make|write|develop|code|set\s+up|deploy|install|configure|implement)\s+(?:me\s+)?(?:an?|the|my|our)?\s*(?:own\s+|new\s+|custom\s+)?(?:mcp|api|app|server|library|tool|book|site|website)\b/.test(text)) return null;
+  if (/\b(?:build(?:ing)?|creat(?:e|ing)|mak(?:e|ing)|writ(?:e|ing)|develop(?:ing)?|cod(?:e|ing)|set(?:ting)?\s+up|deploy(?:ing)?|install(?:ing)?|configur(?:e|ing)|implement(?:ing)?)\s+(?:me\s+)?(?:an?|the|my|our)?\s*(?:own\s+|new\s+|custom\s+)?(?:mcp|api|app|server|library|tool|book|site|website)\b/.test(text)) return null;
   // A problem report ("the app for my Mac crashed") is not a shopping request.
   if (/\b(?:crash(?:ed|es|ing)?|broke(?:n)?|not working|doesn'?t work|won'?t|error|bug|fix|stuck|frozen)\b/.test(text)) return null;
   const pick = (id) => ({ catalog: id, query: text });

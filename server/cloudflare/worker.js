@@ -6053,6 +6053,14 @@ export class CheState extends DurableObject {
           const esc = correction.heard.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           message = previousText.replace(new RegExp(`\\b${esc}\\b`, 'gi'), correction.meant);
         }
+        // A spoken resource list is choosable only on the very next turn; any
+        // other reply in between retires it, so "open number one" never maps
+        // to an older list.
+        let savedResourceList = null;
+        try {
+          savedResourceList = await this.ctx.storage.get(LAST_RESULTS_KEY);
+          if (savedResourceList) await this.ctx.storage.put(LAST_RESULTS_KEY, null);
+        } catch (_) { savedResourceList = null; }
         const learnedHearing = correctionsContext(corrections);
 
         // GitHub/self-development commands are real tool actions, never generic
@@ -6562,9 +6570,15 @@ export class CheState extends DurableObject {
         // to the saved URL (only within 30 minutes of that list).
         const choice = ownerDevice ? resourceChoice(message) : null;
         if (choice) {
-          const last = await this.ctx.storage.get(LAST_RESULTS_KEY).catch(() => null);
+          const last = savedResourceList;
           const pick = last && Date.now() - last.at < 30 * 60_000 ? (last.links || []).find((l) => l.n === choice) : null;
-          if (pick) return ndjsonReply(`Number ${choice}, ${pick.name}, sir: ${pick.url}`, { source: 'che_resource_finder', model_calls: 0, open_url: pick.url, links: [pick] });
+          if (pick) {
+            // The same list stays choosable for another pick.
+            await this.ctx.storage.put(LAST_RESULTS_KEY, last);
+            // Only an explicit "open"/"go to" asks the app to open the link.
+            const open = /\b(?:open|go\s+to)\b/i.test(message);
+            return ndjsonReply(`Number ${choice}, ${pick.name}, sir: ${pick.url}`, { source: 'che_resource_finder', model_calls: 0, ...(open ? { open_url: pick.url } : {}), links: [pick] });
+          }
         }
         const resource = ownerDevice && !body.attachment ? resourceIntent(message) : null;
         if (resource) {

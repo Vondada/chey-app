@@ -1570,7 +1570,7 @@ test('resource finder through chat: answered from the real list with zero AI cal
   const fetched = [];
   globalThis.fetch = async (url) => {
     fetched.push(String(url));
-    if (String(url).includes('raw.githubusercontent.com/punkpeye/awesome-mcp-servers')) return new Response('## Productivity\n- [notion-mcp](https://github.com/x/notion-mcp) - MCP server for Notion pages and databases\n', { status: 200 });
+    if (String(url).includes('raw.githubusercontent.com/punkpeye/awesome-mcp-servers')) return new Response('## Productivity\n- [notion-mcp](https://github.com/x/notion-mcp) - MCP server for Notion pages and databases\n- [notion-plain](http://plain.example/notion) - Notion MCP server over plain http\n', { status: 200 });
     return new Response('{}', { status: 500 });
   };
   try {
@@ -1578,11 +1578,16 @@ test('resource finder through chat: answered from the real list with zero AI cal
     assert.match(reply, /From awesome-mcp-servers, 1 MCP server match for "notion", sir: 1, notion-mcp/);
     assert.equal(aiCalls, 0);
     assert.ok(fetched.every((u) => u.includes('raw.githubusercontent.com')), 'only the list itself was read');
-    const opened = replyFromNdjson(await (await chat('open number one')).text());
-    assert.match(opened, /Number 1, notion-mcp, sir: https:\/\/github\.com\/x\/notion-mcp/);
+    const openedRaw = await (await chat('open number one')).text();
+    assert.match(replyFromNdjson(openedRaw), /Number 1, notion-mcp, sir: https:\/\/github\.com\/x\/notion-mcp/);
+    assert.ok(openedRaw.includes('"open_url":"https://github.com/x/notion-mcp"'), 'the app receives the link to open');
     assert.equal(aiCalls, 0, 'a spoken choice costs no AI either');
+    const picked = await (await chat('pick number one')).text();
+    assert.match(replyFromNdjson(picked), /Number 1, notion-mcp/);
+    assert.ok(!picked.includes('open_url'), 'only "open" asks the app to open a link');
     await (await chat('is there an MCP server for Zzyzx')).text();
     assert.ok(aiCalls > 0 || fetched.some((u) => !u.includes('raw.githubusercontent.com')), 'no match: the normal path answers instead of a dead end');
+    assert.doesNotMatch(replyFromNdjson(await (await chat('open number one')).text()), /notion-mcp/, 'an intervening reply retires the older list');
   } finally {
     globalThis.fetch = original;
   }

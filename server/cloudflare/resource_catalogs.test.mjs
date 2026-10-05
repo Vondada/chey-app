@@ -79,7 +79,7 @@ test('catalog cache: fetched once, served from storage, stale copy only when Git
 });
 
 test('review fixes: negations and build requests are not lookups', () => {
-  for (const q of ['I want to build an MCP server for GitHub', "I don't need an MCP server for GitHub", 'create an api for weather', 'I want to write a book on Rust programming']) assert.equal(resourceIntent(q), null, q);
+  for (const q of ['I want to build an MCP server for GitHub', "I don't need an MCP server for GitHub", 'create an api for weather', 'I want to write a book on Rust programming', 'I need help creating an MCP server', 'I want help building an MCP server', 'I need help setting up an API for my app']) assert.equal(resourceIntent(q), null, q);
   assert.equal(resourceIntent('is there an MCP server for GitHub')?.catalog, 'mcp');
 });
 
