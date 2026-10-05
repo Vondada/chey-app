@@ -135,7 +135,7 @@ bool _cheHasExplicitImplementationAuthorization(String text) {
 /// only limits delivery. Mirrors imperativeImplementation in code_scout.js.
 bool _cheImperativeImplementation(String text) {
   return RegExp(
-    r"^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:for|in)\s+(?:this|the)\s+(?:task|change|update)[,:]?\s*)?(?:(?:please|now)\s+|go\s+ahead\s+and\s+|i\s+(?:want|need)\s+you\s+to\s+|(?:can|could|would)\s+you\s+)?(?:implement|fix|build|add|update|apply)\\s+(?:this|that|it)\\b",
+    r"^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:for|in)\s+(?:this|the)\s+(?:task|change|update)[,:]?\s*)?(?:(?:please|now)\s+|go\s+ahead\s+and\s+|i\s+(?:want|need)\s+you\s+to\s+|(?:can|could|would)\s+you\s+)?(?:implement|fix|build|add|update|apply)\s+(?:this|that|it)\b",
     caseSensitive: false,
   ).hasMatch(text.trim());
 }
@@ -144,13 +144,13 @@ bool _cheImperativeImplementation(String text) {
 /// globalRepositoryProhibition in code_scout.js.
 bool _cheHasGlobalRepositoryProhibition(String text) {
   bool m(String pattern) => RegExp(pattern, caseSensitive: false).hasMatch(text);
-  return m(r"\\b(?:do\\s+not|don['’]t|never|make\\s+no)\\s+(?:make\\s+)?(?:any\\s+)?(?:modify|modifying|change|changes|changing|touch|edit|alter)\\s+(?:to\\s+)?(?:your\\s+|any\\s+|the\\s+)?(?:source\\s+)?(?:code|codebase|repo(?:sitory)?)\\b") ||
-      m(r"\\b(?:do\\s+not|don['’]t|never)\\s+make\\s+(?:any\\s+)?(?:code\\s+)?changes\\b") ||
-      (m(r"\\b(?:do\\s+not|don['’]t|never)\\s+(?:modify|change|touch|edit|alter)\\s+(?:it|anything)\\b") &&
-          m(r"\\b(?:code|codebase|repo(?:sitory)?|app)\\b")) ||
-      m(r"\\bwithout\\s+(?:changing|modifying|touching|editing)\\s+anything\\b") ||
-      m(r"\\b(?:do\\s+not|don['’]t|never)\\s+(?:create|build|make)\\s+(?:anything|it|a\\s+project|the\\s+project)\\b") ||
-      m(r"\\b(?:no|zero)\\s+(?:repository|repo|code)\\s+changes?\\b");
+  return m(r"\b(?:do\s+not|don['’]t|never|make\s+no)\s+(?:make\s+)?(?:any\s+)?(?:modify|modifying|change|changes|changing|touch|edit|alter)\s+(?:to\s+)?(?:your\s+|any\s+|the\s+)?(?:source\s+)?(?:code|codebase|repo(?:sitory)?)\b") ||
+      m(r"\b(?:do\s+not|don['’]t|never)\s+make\s+(?:any\s+)?(?:code\s+)?changes\b") ||
+      (m(r"\b(?:do\s+not|don['’]t|never)\s+(?:modify|change|touch|edit|alter)\s+(?:it|anything)\b") &&
+          m(r"\b(?:code|codebase|repo(?:sitory)?|app)\b")) ||
+      m(r"\bwithout\s+(?:changing|modifying|touching|editing)\s+anything\b") ||
+      m(r"\b(?:do\s+not|don['’]t|never)\s+(?:create|build|make)\s+(?:anything|it|a\s+project|the\s+project)\b") ||
+      m(r"\b(?:no|zero)\s+(?:repository|repo|code)\s+changes?\b");
 }
 
 bool _cheHasHardRepositoryActionProhibition(String text) {
