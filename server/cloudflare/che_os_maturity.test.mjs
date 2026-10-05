@@ -34,7 +34,9 @@ test('honors Retry-After and does not leak raw dumps to the owner', () => {
 });
 
 test('capacity reserve holds background work before owner chat', () => {
-  assert.equal(capacityMode(70, 100), 'normal');
+  // Owner policy: engines drain at 70% of their daily budget.
+  assert.equal(capacityMode(69, 100), 'normal');
+  assert.equal(capacityMode(70, 100), 'reserve');
   assert.equal(capacityMode(85, 100), 'reserve');
   assert.equal(shouldHoldCapacity({ used: 85, limit: 100, ownerChat: false }), true);
   assert.equal(shouldHoldCapacity({ used: 85, limit: 100, ownerChat: true }), false);

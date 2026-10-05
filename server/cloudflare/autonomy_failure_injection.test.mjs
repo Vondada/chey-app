@@ -785,17 +785,38 @@ test('10. reviewer rejection stays distinct from a reviewer that returned nothin
 // ─── Independent review findings on the empty-output fix ─────────────────────
 const variantEdit = (n) => json({ summary: 'v', edits: [{ path: 'lib/main.dart', find: "'Ready. Type or speak a request.'", replace: `'Ready ${n}.'` }] });
 
-test('review: genuine strategies followed by empty engines stay a final failure with evidence (a retry never gets extra strategies)', async () => {
+test('control plane: engines going empty after a genuine pass checkpoint the SAME job; resuming never adds strategies or repeats one', async () => {
   let n = 0;
   const ai = scriptedAI({
     engineer: () => { n += 1; return n <= 2 ? variantEdit(n) : { response: '' }; },
     review: () => json({ approved: false, target_correct: true, notes: ['Breaks the VoiceOver label.'] }),
   });
   const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore());
-  assert.equal(out.status, 422);
-  assert.equal(out.failure_class, FAILURE_CLASS.INTERNAL);
-  assert.match(out.detail, /stopped after 1 implementation passes because the engines then returned no usable output/);
-  assert.ok(out.engineering_record.failed_strategies.length >= 1, 'genuine evidence kept for recovery');
+  // Empty engines are infrastructure, not a failed implementation attempt.
+  assert.equal(out.status, 503);
+  assert.equal(out.failure_class, FAILURE_CLASS.TEMPORARY_EXTERNAL);
+  assert.equal(out.retryable, true);
+  assert.equal(out.checkpoint.genuine_passes, 1);
+  assert.ok(out.checkpoint.fingerprints.length >= 1, 'tried strategies are remembered');
+  assert.ok(out.checkpoint.failed_strategies.length >= 1, 'genuine evidence kept');
+  assert.equal(out.checkpoint.resumes, 1);
+  // Resume on healthy engines: only the passes that were left are used, and a
+  // strategy already tried is rejected as a duplicate instead of re-run.
+  let m = 0;
+  const resumedAI = scriptedAI({
+    engineer: () => { m += 1; return variantEdit(m); },
+    review: () => json({ approved: false, target_correct: true, notes: ['Still breaks the label.'] }),
+  });
+  const resumed = await prepareSelfUpdate(env(resumedAI), 'change the home status wording', fakeGitHub(), memoryStore(), { checkpoint: out.checkpoint });
+  assert.equal(resumed.status, 422);
+  assert.match(resumed.detail, /exhausted 3 implementation passes/, 'the same three-pass limit, not three more');
+  assert.ok(resumed.diagnostics.outcomes.some((o) => o.outcome === 'duplicate_strategy'), 'the earlier strategy is not repeated');
+  // Bounded: after three resumes the job stops instead of looping.
+  let k = 0;
+  const emptyAgain = scriptedAI({ engineer: () => { k += 1; return k <= 2 ? variantEdit(k + 10) : { response: '' }; }, review: () => json({ approved: false, target_correct: true, notes: ['no'] }) });
+  const capped = await prepareSelfUpdate(env(emptyAgain), 'change the home status wording', fakeGitHub(), memoryStore(), { checkpoint: { ...out.checkpoint, resumes: 3 } });
+  assert.equal(capped.status, 422);
+  assert.notEqual(capped.failure_class, FAILURE_CLASS.TEMPORARY_EXTERNAL);
 });
 
 test('review: a model that always returns cut-off JSON is an honest final failure, not an outage retried four times', async () => {

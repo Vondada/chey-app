@@ -15,8 +15,8 @@
 // Every provider returns `{ response }` like Workers AI, so the rest of CHE
 // doesn't care which engine answered.
 
-import { inferNeeds, orderByCapability, pickCatalogModel, recordHealth } from './capability_router.js';
-import { selectWorkflow, minimalContext } from './workflow_governor.js';
+import { inferNeeds, isUnhealthy, orderByCapability, pickCatalogModel, recordHealth } from './capability_router.js';
+import { WORKFLOWS, dedupeEvidence, drainOrder, engineCapacityState, planWorkflow, shouldSwitchEngine } from './workflow_governor.js';
 import { recordReliability } from './reliability_ledger.js';
 import { BUILTIN_PROVIDER_MANIFESTS } from './provider_registry.js';
 import { appendAudit, auditEntry } from './privacy_policy.js';
@@ -661,10 +661,20 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   const ownerChat = input?.che_owner_chat === true || quality || input?.che_emergency === true;
   const casual = !quality && isShortCasualRequest(model, input);
   const needs = inferNeeds(input);
-  // Decide how CHE should work before selecting a provider. The selected
-  // workflow is deterministic and travels only as router metadata.
-  const workflow = selectWorkflow(input);
+  // Decide how CHE should work before selecting a provider: a deterministic
+  // workflow (no inference) sets how strong an engine the turn needs. Explicit
+  // capability/provider/strongest hints from the caller always win, and only
+  // owner conversations are re-tiered: internal pipelines (coding crew,
+  // Office agents) already choose their own engines and must not get pricier
+  // because their evidence happens to mention "production" or "deploy".
+  const plan = planWorkflow(input);
+  const workflow = plan.workflow;
   needs.workflow = workflow;
+  if (ownerChat && !input?.che_capability && !needs.provider && !needs.strongest) {
+    if (plan.tier === 'strong' && needs.capability !== 'vision') needs.difficulty = 'hard';
+    else if (plan.tier === 'small' && needs.capability === 'fast_chat') needs.difficulty = 'trivial';
+    if (workflow === WORKFLOWS.WAR_ROOM) needs.strongest = true;
+  }
   const context = input?.che_context && typeof input.che_context === 'object' ? input.che_context : null;
   const audit = input?.che_audit && typeof input.che_audit === 'object' ? input.che_audit : null;
   const strictProvider = input?.che_provider_strict === true;
@@ -677,19 +687,9 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
     ? { agent_id: String(input.che_agent_id).slice(0, 80), thread_id: String(input.che_thread_id || '').slice(0, 200) }
     : null;
   const engineInput = compactEngineInput(input);
-  // Keep repeated evidence from bloating model context. This preserves message
-  // structure while removing exact duplicate text messages.
-  if (Array.isArray(engineInput.messages)) {
-    const packed = minimalContext(engineInput.messages.map((m) => ({ text: contentText(m?.content) })), 60000);
-    const allowed = new Set(packed);
-    const seen = new Set();
-    engineInput.messages = engineInput.messages.filter((m) => {
-      const text = contentText(m?.content).trim();
-      if (!text || !allowed.has(text) || seen.has(text)) return false;
-      seen.add(text);
-      return true;
-    });
-  }
+  // Repeated large evidence blocks are sent once (the latest copy); system,
+  // short and non-text messages are never dropped.
+  if (Array.isArray(engineInput.messages)) engineInput.messages = dedupeEvidence(engineInput.messages);
   for (const key of Object.keys(engineInput)) if (key.startsWith('che_')) delete engineInput[key];
   if (quality) {
     const firstConversation = engineInput.messages.findIndex((message) => message?.role !== 'system');
@@ -717,6 +717,23 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   let used = { provided: [], withheld: [] };
   let failedProviderAttempts = 0;
   const started = Date.now();
+  // Healthy → Caution → Draining (70% of the daily budget by default, or poor
+  // health) → Offline. Draining engines are tried only after healthy ones, so
+  // CHE moves to another engine before one is exhausted.
+  const drainStates = new Map();
+  for (const provider of [{ id: 'cloudflare' }, ...orderedProviders(env, casual || quality).filter((p) => providerEnabled(env, p))]) {
+    const baseId = String(provider.id).split(':')[0];
+    if (drainStates.has(provider.id)) continue;
+    const limit = dailyTokenLimit(env, provider.id);
+    const usedTokens = limit && usageStorage ? (await usageRecord(usageStorage, provider.id, now).catch(() => ({ estimated_tokens: 0 }))).estimated_tokens : 0;
+    const drainAt = Number(env[`CHE_${baseId.toUpperCase()}_DRAIN_AT`]) || 0.70;
+    drainStates.set(provider.id, engineCapacityState({
+      utilization: limit ? usedTokens / limit : 0,
+      health: Number.isFinite(health[baseId]?.score) ? health[baseId].score : 1,
+      hard_failure: isUnhealthy(health[baseId], now) || (providerCooldownUntil.get(provider.id) || 0) > now,
+    }, drainAt));
+  }
+  const stateOf = (provider) => drainStates.get(provider.id) || 'healthy';
   // Answer or fail before the app's 75s timeout: stop trying new engines at 40s.
   const DEADLINE_MS = Number(env.CHE_ROUTER_DEADLINE_MS) || 40000;
 
@@ -762,7 +779,8 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
     return null;
   };
 
-  const providerOrder = () => {
+  const providerOrder = () => drainOrder(capabilityOrder(), stateOf);
+  const capabilityOrder = () => {
     const base = orderedProviders(env, casual || quality);
     const enabled = base.filter((provider) => providerEnabled(env, provider));
     if (needs.local_only) return enabled.filter((provider) => provider.local);
@@ -931,12 +949,19 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   };
 
   const finish = async (answer) => {
+    // Engines that were actually tried and failed (not skipped or resting).
+    const failedEngines = [...new Set(errors
+      .filter((e) => !/skipped|resting|daily budget|context budget|deadline|cooldown active/i.test(e))
+      .map((e) => String(e).split(':')[0].trim()).filter(Boolean))];
+    const failovers = Math.max(failedProviderAttempts, failedEngines.length);
     await recordReliability(usageStorage, {
+      kind: 'route',
       workflow,
       outcome: answer ? 'completed' : 'failed',
-      engine: answer?.engine || '',
-      failovers: failedProviderAttempts,
-      recovered: Boolean(answer && failedProviderAttempts),
+      engines: [...failedEngines, answer?.engine || ''].filter(Boolean),
+      est_tokens: plan.scores.est_tokens,
+      failovers,
+      recovery_classes: failovers ? ['provider_failover'] : [],
       latency_ms: Date.now() - started,
     });
     if (healthChanged && usageStorage?.put) {
@@ -975,9 +1000,12 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   // Quality or an explicitly chosen provider: keyed engines → Cloudflare →
   // any remaining configured fallbacks. Everything else: Cloudflare first.
   const keyedFirst = quality || Boolean(needs.provider) || needs.strongest;
+  const cloudflareDraining = shouldSwitchEngine(drainStates.get('cloudflare'));
   const answer = keyedFirst
     ? (await tryProviders(false)) || (strictProvider ? null : (await tryCloudflare()) || (await tryProviders(true)))
-    : (await tryCloudflare()) || (await tryProviders(true));
+    : cloudflareDraining
+      ? (await tryProviders(true)) || (await tryCloudflare())
+      : (await tryCloudflare()) || (await tryProviders(true));
   if (answer) return finish(answer);
 
   // About to fail: refresh provider model catalogues and give the configured

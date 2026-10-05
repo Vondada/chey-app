@@ -1330,3 +1330,79 @@ test('autonomy exam runs its levels back to back: each finished level starts the
   assert.match(await say('run autonomy exam level 3'), /started the autonomy exam, sir: level 3\./);
   assert.deepEqual(examJobs().find((j) => j.status === 'queued').exam_next, []);
 });
+
+test('memory-first: a verified owner fact is answered with zero AI engine calls', async () => {
+  const saved = new Map();
+  let aiCalls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { aiCalls += 1; return { response: 'model reply' }; } } };
+  const { chat } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  let providerCalls = 0;
+  globalThis.fetch = async () => { providerCalls += 1; return new Response('{}', { status: 500 }); };
+  try {
+    await (await chat('Remember that my Worker URL is https://che.example.workers.dev')).text();
+    aiCalls = 0;
+    providerCalls = 0;
+    const reply = replyFromNdjson(await (await chat("What's my Worker URL?")).text());
+    assert.equal(reply, 'Your worker url is https://che.example.workers.dev, sir.');
+    assert.equal(aiCalls, 0, 'no Workers AI call');
+    assert.equal(providerCalls, 0, 'no external provider call');
+    const ledger = saved.get('che_reliability_ledger');
+    assert.equal(ledger.totals.memory_answers, 1);
+    assert.ok(ledger.totals.tokens_saved > 0);
+    assert.match(replyFromNdjson(await (await chat('reliability report')).text()), /1 answers from memory with no AI call/);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('control plane: a job interrupted by an engine failure keeps its checkpoint and the retry continues the same job quietly', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' };
+  const { state } = await pairedChat(env, saved);
+  const data = saved.get('che');
+  data.jobs = [{ id: 'job-1', kind: 'self_development', status: 'queued', prompt: 'change the home status wording', retry_count: 0, attempts: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }];
+  saved.set('che', data);
+  const seen = [];
+  state.runSelfDevelopmentJob = async (job) => {
+    seen.push(job.checkpoint || null);
+    if (!job.checkpoint) {
+      const error = new Error('Engines returned no usable output after 1 implementation pass(es).');
+      error.failure_class = 'B'; // FAILURE_CLASS.TEMPORARY_EXTERNAL
+      error.checkpoint = { genuine_passes: 1, fingerprints: ['fp-1'], resumes: 1 };
+      throw error;
+    }
+    return { id: job.id, status: 'complete', result: 'done', owner_message: 'done', error: '' };
+  };
+  await state.processJobs();
+  let job = saved.get('che').jobs.find((j) => j.id === 'job-1');
+  assert.equal(job.status, 'queued', 'retried, not failed');
+  assert.deepEqual(job.checkpoint, { genuine_passes: 1, fingerprints: ['fp-1'], resumes: 1 });
+  assert.ok(!job.owner_message, 'a recoverable engine failure is not announced');
+  job.retry_at = 0;
+  const d = saved.get('che');
+  d.jobs = d.jobs.map((j) => (j.id === 'job-1' ? job : j));
+  saved.set('che', d);
+  await state.processJobs();
+  job = saved.get('che').jobs.find((j) => j.id === 'job-1');
+  assert.equal(job.status, 'complete');
+  assert.deepEqual(seen[1], { genuine_passes: 1, fingerprints: ['fp-1'], resumes: 1 }, 'the same job resumed from its checkpoint');
+  assert.equal(job.checkpoint, undefined, 'a finished job drops its checkpoint');
+  const ledger = saved.get('che_reliability_ledger');
+  assert.equal(ledger.totals.jobs_completed, 1);
+  assert.equal(ledger.totals.recoveries, 1);
+  assert.equal(ledger.totals.owner_visible_failures, 0);
+});
+
+test('control plane keeps exam isolation: a late job from an older run cannot overwrite the current run, and a pass is never downgraded', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1' }; // no GitHub: the level grades as failed
+  const { state } = await pairedChat(env, saved);
+  const pass = { level: 1, passed: true, checks: [], failed_checks: [] };
+  saved.set('che_autonomy_exam', { run_id: 'run-b', results: { 1: pass } });
+  const late = await state.runAutonomyExamJob({ id: 'old', exam_level: 1, exam_run_id: 'run-a' });
+  assert.match(late.result, /Stale autonomy exam result ignored/);
+  assert.deepEqual(saved.get('che_autonomy_exam').results[1], pass, 'older run did not overwrite');
+  await state.runAutonomyExamJob({ id: 'same', exam_level: 1, exam_run_id: 'run-b' });
+  assert.equal(saved.get('che_autonomy_exam').results[1].passed, true, 'a later failure in the same run cannot downgrade a pass');
+});

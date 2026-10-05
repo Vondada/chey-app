@@ -1950,6 +1950,10 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         chat.push({ from: 'CHE', msg: `Deterministic repository fallback selected: ${chosen.join(', ')}` });
       }
     }
+    // Resuming a checkpoint after an engine switch: the files that job read.
+    if (options.checkpoint?.files?.length) {
+      chosen = [...new Set([...chosen, ...options.checkpoint.files.map(String).filter((path) => index.paths.includes(path))])].slice(0, 8);
+    }
     // Recovery: the files the failed job actually inspected are real context.
     if (options.priorFailure?.files?.length) {
       chosen = [...new Set([...chosen, ...options.priorFailure.files.map(String).filter((path) => index.paths.includes(path))])].slice(0, 8);
@@ -2076,7 +2080,17 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     // (a parsed answer). Only those count toward the three-pass safety limit.
     const producedRounds = new Set();
     const formatFeedback = new Set();
-    let genuinePasses = 0;
+    // A checkpoint (saved when engines stopped answering mid-job) resumes the
+    // SAME job: passes already used stay used, tried strategies stay tried,
+    // so a provider outage never buys extra attempts or repeats a strategy.
+    const checkpoint = options.checkpoint && typeof options.checkpoint === 'object' ? options.checkpoint : null;
+    let genuinePasses = checkpoint ? Math.max(0, Math.min(maxRounds - 1, Number(checkpoint.genuine_passes) || 0)) : 0;
+    if (checkpoint) {
+      for (const fp of (checkpoint.fingerprints || []).map(String).slice(-30)) seenStrategies.add(fp);
+      for (const item of (checkpoint.failed_strategies || []).slice(-8)) failedStrategies.push({ ...item, prior: true });
+      if (checkpoint.feedback) feedbacks.fill(String(checkpoint.feedback).slice(0, 1500));
+      chat.push({ from: 'CHE', msg: `Resuming the same job from its checkpoint after an engine switch: ${genuinePasses} implementation pass(es) already used; ${failedStrategies.length} strategies already tried will not be repeated.` });
+    }
     let unproductivePasses = 0;
     let enginesFailed = false;
     let budgetStop = false;
@@ -2479,6 +2493,32 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       // outage is already temporary above). A model that keeps returning
       // malformed JSON is an honest final failure.
       const enginesUnusable = enginesFailed && genuinePasses === 0 && outcomes.includes('empty');
+      // Engines stopped answering (empty/malformed/outage) after some real
+      // passes but before the three-pass limit: that is infrastructure, not a
+      // failed implementation. Save a checkpoint and resume the SAME job on
+      // the next engines, at most 3 times, so this can never loop forever.
+      const resumes = Number(checkpoint?.resumes || 0);
+      if (enginesFailed && !budgetStop && genuinePasses > 0 && genuinePasses < maxRounds && resumes < 3) {
+        return finish({
+          status: 503,
+          failure_class: FAILURE_CLASS.TEMPORARY_EXTERNAL,
+          retryable: true,
+          engines_unusable: true,
+          checkpoint: {
+            genuine_passes: genuinePasses,
+            fingerprints: [...seenStrategies].slice(-30),
+            failed_strategies: failedStrategies.filter((item) => !item.prior || checkpoint).slice(-8),
+            feedback: [...new Set(feedbacks.filter((f) => f && !formatFeedback.has(f)))].join(' | ').slice(0, 1500),
+            files: [...sources.keys()].slice(0, 8),
+            base: index.base || '',
+            repo_sha: index.head_sha || '',
+            resumes: resumes + 1,
+            saved_at: new Date().toISOString(),
+          },
+          detail: `Engines returned no usable output after ${genuinePasses} implementation pass(es); the job saved a checkpoint and resumes on other engines with ${maxRounds - genuinePasses} pass(es) left. Nothing was changed.`,
+          owner_message: ownerEngineeringMessage(FAILURE_CLASS.TEMPORARY_EXTERNAL),
+        });
+      }
       const temporary = outcomes.includes('review_unavailable')
         || (real.length > 0 && real.every((outcome) => outcome === 'provider_unavailable'))
         || enginesUnusable;
