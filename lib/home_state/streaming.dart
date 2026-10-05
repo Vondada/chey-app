@@ -114,9 +114,16 @@ extension _CheHomeStreaming on _CHEHomeState {
       final project = result?['project'];
       await _loadAgentState(silent: true);
 
-      final projectTitle = project is Map
-          ? project['title']?.toString() ?? title
-          : title;
+      // Only a project the Worker actually returned may be announced.
+      final chatReply = result?['reply']?.toString() ?? '';
+      if (project is! Map) {
+        final reply = chatReply.isNotEmpty
+            ? chatReply
+            : 'I did not create a project for that, sir. Nothing was saved.';
+        onPartial(reply);
+        return reply;
+      }
+      final projectTitle = project['title']?.toString() ?? title;
       final reply =
           'I created “$projectTitle” in Creator Studio, sir. Open Create whenever you want to keep developing it.';
       onPartial(reply);

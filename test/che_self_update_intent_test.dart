@@ -174,4 +174,30 @@ Again: ANSWER IN CHAT ONLY. ZERO REPOSITORY CHANGES. NO PR.''';
     expect(cheIsSelfUpdateRequest('Merge the search feature into your code'), isTrue);
     expect(cheIsSelfUpdateRequest('Update your code: show the code view in a bigger font'), isTrue);
   });
+
+  test('mission T1-T6: chat-only phrasings never code; explicit implementation with a delivery hold does', () {
+    const chatOnly = [
+      'Explain how you would improve your code. Do not modify it.',
+      'Answer this in this chat only.',
+      'Do not make any changes to your code.',
+      'Do not make any code changes.',
+      'Explain your failure-recovery system without changing anything.',
+      'This is an evaluation, not a coding request.',
+      "Explain how you'd build me an app; don't create anything.",
+    ];
+    for (final q in chatOnly) {
+      expect(cheIsTerminalChatOnlyRequest(q), isTrue, reason: q);
+      expect(cheIsSelfUpdateRequest(q), isFalse, reason: q);
+    }
+    const implement = [
+      'Implement this in your app.',
+      'Fix this in your code.',
+      'Update your code to support dark mode.',
+      'Implement this, but do not deploy yet.',
+    ];
+    for (final q in implement) {
+      expect(cheIsTerminalChatOnlyRequest(q), isFalse, reason: q);
+      expect(cheIsSelfUpdateRequest(q), isTrue, reason: q);
+    }
+  });
 }

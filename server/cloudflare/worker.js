@@ -5773,7 +5773,10 @@ export class CheState extends DurableObject {
         // apply the authoritative current-turn policy.
         if (brief && currentTurnActionPolicy(brief).terminalChatOnly) {
           const reply = await this.answerTerminalChatOnly(brief);
-          return json({ ok: true, chat_only: true, reply });
+          // Non-2xx on purpose: installed clients throw on it and speak
+          // `detail` (the answer) instead of announcing a project that was
+          // never created. Nothing is persisted.
+          return json({ ok: false, chat_only: true, project_created: false, reply, detail: reply }, 409);
         }
 
         let content = '';

@@ -175,7 +175,10 @@ test('legacy project-create route honors terminal chat-only isolation', async ()
   const brief = 'Answer in this chat only and do not create or modify code; explain how you would build me an app.';
   const res = await api('/api/project/create', { title: 'Hypothetical app', type: 'app', brief });
   const body = await res.json();
-  assert.equal(res.status, 200);
+  assert.equal(res.status, 409, 'non-2xx so an installed client cannot announce a project');
+  assert.equal(body.project_created, false);
+  assert.equal(body.project, undefined);
+  assert.match(body.detail, /build it safely/i, 'legacy clients speak detail: the real answer, never "I created"');
   assert.equal(body.chat_only, true);
   assert.match(body.reply, /build it safely/i);
   assert.equal((saved.get('che').projects || []).length, 0, 'chat-only compatibility route persists no project');

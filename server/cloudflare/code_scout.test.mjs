@@ -212,3 +212,31 @@ test('newest starred repos: owner phrases, count, spoken list', async () => {
   const spoken = speakNewestStarred([{ full_name: 'a/b', description: 'Agents' }, { full_name: 'c/d', description: '' }]);
   assert.match(spoken, /1\. a\/b: Agents\n2\. c\/d/);
 });
+
+test('mission T1-T6: chat-only phrasings never mutate; explicit implementation with a delivery hold does', () => {
+  for (const q of [
+    'Explain how you would improve your code. Do not modify it.',
+    'Answer this in this chat only.',
+    'Do not make any changes to your code.',
+    'Do not make any code changes.',
+    'Explain your failure-recovery system without changing anything.',
+    'This is an evaluation, not a coding request.',
+    "Explain how you'd build me an app; don't create anything.",
+  ]) {
+    const p = currentTurnActionPolicy(q);
+    assert.equal(p.terminalChatOnly, true, q);
+    assert.equal(p.repositoryMutationAllowed, false, q);
+  }
+  for (const q of [
+    'Implement this in your app.',
+    'Fix this in your code.',
+    'Update your code to support dark mode.',
+    'Implement this, but do not deploy yet.',
+    'For this task, implement this in your app and answer in this chat when finished; do not deploy yet.',
+    'Fix the login screen in your app but do not modify the auth code.',
+  ]) {
+    const p = currentTurnActionPolicy(q);
+    assert.equal(p.terminalChatOnly, false, q);
+    assert.equal(p.repositoryMutationAllowed, true, q);
+  }
+});
