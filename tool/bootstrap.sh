@@ -150,7 +150,7 @@ private final class CHEVoiceStreamHandler: NSObject, FlutterStreamHandler {
   }
 }
 
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 struct WakeCHEIntent: AppIntent {
   static let title: LocalizedStringResource = "Wake CHE"
   static let description = IntentDescription(
@@ -170,7 +170,7 @@ struct WakeCHEIntent: AppIntent {
   }
 }
 
-@available(iOS 16.0, *)
+@available(iOS 17.0, *)
 struct CHEAppShortcuts: AppShortcutsProvider {
   static var appShortcuts: [AppShortcut] {
     AppShortcut(
@@ -651,7 +651,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
       // Echo cancellation: CHE doesn't hear her own voice as the owner.
       try? inputNode.setVoiceProcessingEnabled(true)
     }
-    if #available(iOS 17.0, *) {
+    if #available(iOS 26.0, *) {
       // Push other phone audio (music, videos) way down while she listens,
       // so the microphone only hears the owner.
       inputNode.voiceProcessingOtherAudioDuckingConfiguration =
