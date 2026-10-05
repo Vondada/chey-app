@@ -6,7 +6,8 @@ const MAX = 500;
 export async function recordReliability(storage, event = {}) {
   if (!storage?.get || !storage?.put) return;
   try {
-    const rows = Array.isArray(await storage.get(KEY)) ? await storage.get(KEY) : [];
+    const saved = await storage.get(KEY);
+  const rows = Array.isArray(saved) ? saved : [];
     rows.unshift({
       at: new Date().toISOString(),
       workflow: String(event.workflow || 'unknown').slice(0, 40),
