@@ -352,6 +352,19 @@ extension _CheHomeStreaming on _CHEHomeState {
           _streamMediaUrl = mediaUrl;
           _streamMediaType = mediaType;
         }
+        // "Open number two": the owner asked for this link by voice in this
+        // turn; open it and report the actual outcome aloud.
+        final openUrl = data['open_url']?.toString().trim() ?? '';
+        final openUri = Uri.tryParse(openUrl);
+        if (openUrl.startsWith('https://') && openUri != null) {
+          var opened = false;
+          try {
+            opened = await launchUrl(openUri, mode: LaunchMode.externalApplication);
+          } catch (_) {}
+          if (complete.isNotEmpty) complete.write('\n');
+          complete.write(opened ? 'Opened it, sir.' : 'I could not open that link on this iPhone, sir.');
+          onPartial(complete.toString());
+        }
       }
     }
 

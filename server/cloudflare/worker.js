@@ -121,6 +121,7 @@ import {
   writeResearchMemoryNote,
 } from './research_memory.js';
 import { advanceObjectives, createObjective, replanNode, speakObjective } from './objective_graph.js';
+import { LAST_RESULTS_KEY, loadCatalog, resourceChoice, resourceIntent, resultLinks, searchCatalog, speakResults } from './resource_catalogs.js';
 import { fiveLayerIntent, LAYER_RESULTS_KEY, reasoningLayer, runReasoningLayer, speakFiveLayerResults } from './reasoning_exam.js';
 import { AUTONOMY_EXAM, EXAM_RESULTS_KEY, examIntent, examLevel, gradeLevel, mergeExamResult, speakExamResults, ungradableEngineFailure } from './autonomy_exam.js';
 import { conversationMemoryCount, listConversationMemories, recallMemories, recordConversationMemory, rememberThread, rememberedText, replyFromNdjson, syncWarRoomMemories } from './brain_memory.js';
@@ -6090,6 +6091,14 @@ export class CheState extends DurableObject {
           const esc = correction.heard.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           message = previousText.replace(new RegExp(`\\b${esc}\\b`, 'gi'), correction.meant);
         }
+        // A spoken resource list is choosable only on the very next turn; any
+        // other reply in between retires it, so "open number one" never maps
+        // to an older list.
+        let savedResourceList = null;
+        try {
+          savedResourceList = await this.ctx.storage.get(LAST_RESULTS_KEY);
+          if (savedResourceList) await this.ctx.storage.put(LAST_RESULTS_KEY, null);
+        } catch (_) { savedResourceList = null; }
         const learnedHearing = correctionsContext(corrections);
 
         // Explicit chat-only evaluations are terminal for action routing. The
@@ -6604,6 +6613,35 @@ export class CheState extends DurableObject {
             const sources = researched.sources?.length ? `\n\nSources: ${researched.sources.join(', ')}` : '';
             const limit = researched.limitation ? `\n\n${researched.limitation}` : '';
             return ndjsonReply(`${researched.answer}${limit}${sources}`, { source: 'che_research_cache', model_calls: 0, verified_at: new Date(researched.verified_at).toISOString() });
+          }
+        }
+        // RESOURCE FINDER: "find a free API for weather", "is there an MCP
+        // server for Notion" are answered from the curated GitHub lists
+        // themselves (searched deterministically, no AI). With no match, the
+        // normal path answers instead.
+        // "Open number two" right after a resource list: the spoken choice maps
+        // to the saved URL (only within 30 minutes of that list).
+        const choice = ownerDevice ? resourceChoice(message) : null;
+        if (choice) {
+          const last = savedResourceList;
+          const pick = last && Date.now() - last.at < 30 * 60_000 ? (last.links || []).find((l) => l.n === choice) : null;
+          if (pick) {
+            // The same list stays choosable for another pick.
+            await this.ctx.storage.put(LAST_RESULTS_KEY, last);
+            // Only an explicit "open"/"go to" asks the app to open the link.
+            const open = /\b(?:open|go\s+to)\b/i.test(message);
+            return ndjsonReply(`Number ${choice}, ${pick.name}, sir: ${pick.url}`, { source: 'che_resource_finder', model_calls: 0, ...(open ? { open_url: pick.url } : {}), links: [pick] });
+          }
+        }
+        const resource = ownerDevice && !body.attachment ? resourceIntent(message) : null;
+        if (resource) {
+          const loaded = await loadCatalog(this.ctx.storage, resource.catalog).catch((error) => ({ error: String(error?.message || error) }));
+          const results = loaded.error ? [] : searchCatalog(loaded.entries, resource.query);
+          if (results.length) {
+            await recordReliability(this.ctx.storage, { kind: 'retrieval', workflow: 'research', outcome: 'completed', tokens_saved: 1500 });
+            const links = resultLinks(results);
+            await this.ctx.storage.put(LAST_RESULTS_KEY, { at: Date.now(), links });
+            return ndjsonReply(speakResults(resource.catalog, resource.query, results, loaded), { source: 'che_resource_finder', model_calls: 0, catalog: resource.catalog, links });
           }
         }
         if (ownerDevice && reliabilityIntent(message)) {
