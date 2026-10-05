@@ -124,9 +124,13 @@ Then, on GitHub:
 **REPO INTEGRATION MISSION (Claude, 2026-10-04 ~23:55 UTC):** the owner asked to study and integrate ~30 repos into CHE. The full plan, per-repo status and the exact next step are in `mailbox/briefs/2026-10-04-repo-integration-plan.md`. Continue it there.
 - Also merged today: #181 (exam level 3 contract), #185 (exam levels back to back).
 
-**SUPER-AI CONTROL PLANE (Claude, 2026-10-05 ~04:50 UTC):** the owner asked Claude to finish ChatGPT's PR #193 (`chatgpt/super-ai-control-plane`) and authorized the merge once it is genuinely complete, green and reviewed.
-- Pushed c500630: governor wired into routing, memory-first bypass, 70% drain, checkpointed recovery, reliability ledger. 581 Worker tests pass locally.
-- Waiting on: CI on c500630, Codex review, and an independent review agent. After that: fix the findings, merge with the expected SHA and `[worker-deploy]`, verify the deploy run, `/health` and a smoke test.
+**SUPER-AI CONTROL PLANE (Claude, updated 2026-10-05 ~05:45 UTC):** the owner asked Claude to finish ChatGPT's PR #193 (`chatgpt/super-ai-control-plane`) and authorized the merge once it is genuinely complete, green and reviewed.
+- Pushed c500630, e58fa27, b2adb8a and 505ca68 (2026-10-05 ~05:40 UTC). 601 Worker tests pass locally.
+  - All Codex findings on 77cbfd7 and 2afabf0 are fixed, replied and resolved, each with a regression test that fails on the old code.
+  - Fixes: full-value secret check; a reviewer outage keeps the consumed pass in the checkpoint; exam faults fire once across resumes; a research-cache hit means zero inference; ledger retry deltas.
+  - Added: five-layer exam (`reasoning_exam.js`; "run the five layer exam"); objective dependency graph (`objective_graph.js`, `/api/objective/create|replan`, `/api/objectives`); `condenseHistory` (old chat turns condensed without AI).
+- Waiting on: analyze CI on 505ca68, the Codex re-review requested on 505ca68, and an independent review agent. Then merge with the expected SHA and `[worker-deploy]`, and verify the deploy run, `/health` and a smoke test.
+- Not proven yet: the five-layer exam has not been run against production engines. The owner says "run the five layer exam" after the deploy.
 - The repo-integration mission is PAUSED for this. A WIP resource finder is on branch `claude/che-repo-integration`, not wired in yet; the plan is in `2026-10-04-repo-integration-plan.md`.
 
 **Owner answers still pending (don't guess):**
