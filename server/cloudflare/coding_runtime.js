@@ -167,6 +167,7 @@ export class CheCodingRuntime {
     try {
       const parsed = JSON.parse(decodeBase64Utf8(found.data?.content));
       if (parsed?.session_id !== id) throw new Error('session mismatch');
+      if (parsed?.state === 'running' && parsed?.progress >= 100) parsed.state = 'completed';
       if (parsed.status === 'complete' && parsed.state === 'running') parsed.state = 'complete';
       return { status: 200, runtime: 'opencode', ...parsed };
     } catch (_) {
