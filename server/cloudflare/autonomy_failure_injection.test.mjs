@@ -13,6 +13,7 @@ import { dartStaticCheck, staticRegression, jsStaticCheck } from './dart_check.j
 import { mergeSelfUpdatePr, openSelfUpdatePr, selfUpdateStatus, updateBranchName, validateUpdateFiles, workerDeploymentStatus } from './self_update.js';
 import { fitToBudget, resetRouterForTests, routeText, routedEnv } from './ai_router.js';
 import { _clearCodeIndexCache, cachedCodeIndex } from './code_index.js';
+import { gradeLevel } from './autonomy_exam.js';
 
 const HOMEWORK = /(?:provide|send|paste|share|copy)\s+(?:me\s+)?(?:the\s+)?(?:source|code|file|filename|exact text|line)|source (?:code )?(?:was|is) not provided|cannot inspect|tell me the file|token|stack trace|retry trace|\b429\b|\b503\b/i;
 
@@ -367,6 +368,10 @@ test('four rounds of invalid anchors never consume genuine passes; changing repl
   assert.ok(out.diagnostics.outcomes.some((o) => o.outcome === 'duplicate_anchor'));
   assert.ok(readLog.filter((r) => r.path === 'lib/main.dart').length >= 5);
   assert.equal(calls, 10, 'stays inside the existing engineer call ceiling');
+  assert.equal(out.diagnostics.genuine_passes, 1);
+  const grade = gradeLevel({ level: 1, name: 'Anchor recovery', mustTouch: [['lib/main.dart']], allowed: [/^lib\//] }, out);
+  assert.equal(grade.passed, true, JSON.stringify(grade.failed_checks));
+  assert.equal(grade.passes, 1, 'the autonomy grader counts applicable strategies, not invalid-anchor rounds');
 });
 
 test('endlessly invalid anchors stop at the existing budget with zero genuine implementation passes', async () => {

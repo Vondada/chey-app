@@ -1847,7 +1847,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
   if (!task || !ownerIntent) return { status: 400, detail: 'Describe the requested app change.' };
   const ctx = createContext(env, task, options);
   // Every result carries the crew's conversation (shown to the owner as a group chat).
-  const finish = (result) => ({ ...result, discussion: result.discussion || (ctx.chat || []).slice(-30), diagnostics: { budget: ctx.budget.snapshot(), events: ctx.diagnostics.slice(-40), outcomes: ctx.outcomes.slice(-30) } });
+  const finish = (result) => ({ ...result, discussion: result.discussion || (ctx.chat || []).slice(-30), diagnostics: { budget: ctx.budget.snapshot(), genuine_passes: ctx.genuinePasses || 0, events: ctx.diagnostics.slice(-40), outcomes: ctx.outcomes.slice(-30) } });
 
   try {
     const lessons = await loadLessons(memory);
@@ -2122,6 +2122,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     const failedAnchors = new Set((checkpoint?.failed_anchors || prior?.failed_anchors || []).map(String).slice(-30));
     let sourceRefreshFailed = false;
     let genuinePasses = checkpoint ? Math.max(0, Math.min(maxRounds, Number(checkpoint.genuine_passes) || 0)) : 0;
+    ctx.genuinePasses = genuinePasses;
     if (checkpoint) {
       for (const fp of (checkpoint.fingerprints || []).map(String).slice(-30)) seenStrategies.add(fp);
       for (const item of (checkpoint.failed_strategies || []).slice(-8)) failedStrategies.push({ ...item, prior: true });
@@ -2476,6 +2477,9 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       // A resumed job continues on the NEXT engine pair, not the one that went empty.
       const roundEngineers = CREW.engineers.map((member, i) => engineerForRound(member, i, round + roundOffset));
       const attempts = await Promise.all(roundEngineers.map((member, i) => attemptOnce(round, member, i)));
+      const produced = applicableRounds.has(round) || attempts.some((attempt) => attempt?.no_change);
+      if (produced) genuinePasses += 1;
+      ctx.genuinePasses = genuinePasses;
 
       const winner = attempts.find((attempt) => attempt && !attempt.no_change);
       if (winner) {
@@ -2527,9 +2531,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       // was empty, unparseable or an engine outage) is not a failed strategy:
       // it does not count toward the three-pass limit. At most
       // MAX_UNPRODUCTIVE_PASSES such passes run, each on the next engine pair.
-      const produced = applicableRounds.has(round) || noChangeClaims.length > 0;
-      if (produced) genuinePasses += 1;
-      else if (!producedRounds.has(round)) unproductivePasses += 1;
+      if (!producedRounds.has(round)) unproductivePasses += 1;
       if (genuinePasses >= maxRounds) break;
       // The engineering budget ran out: a budget stop, never "engines failed".
       if (ctx.outcomes.some((o) => o.round === round + 1 && o.outcome === 'budget_exhausted') || !ctx.budget.canSpend('engineer', 7000)) {

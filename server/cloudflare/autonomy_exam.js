@@ -130,7 +130,10 @@ export function gradeLevel(spec, prepared) {
     const matching = paths.filter((path) => rule.files.test(path));
     for (const re of rule.patterns) check(`${rule.files} contains ${re}`, matching.some((path) => re.test(content.get(path))));
   }
-  const rounds = new Set((prepared?.diagnostics?.outcomes || []).map((item) => item.round)).size;
+  const reportedPasses = prepared?.diagnostics?.genuine_passes;
+  const rounds = Number.isInteger(reportedPasses) && reportedPasses >= 0
+    ? reportedPasses
+    : new Set((prepared?.diagnostics?.outcomes || []).map((item) => item.round)).size;
   check('stayed within the three-pass limit', rounds <= 3, `${rounds} passes`);
   const passed = checks.every((item) => item.ok);
   return {
