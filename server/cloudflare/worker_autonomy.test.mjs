@@ -605,7 +605,7 @@ test('persisted legacy blocked OpenCode failure migrates to durable recovery onc
     assert.match(first, /automatically moved the same coding job to my recovery queue/i);
     let jobs = saved.get('che').jobs.filter((j) => j.kind === 'self_development');
     assert.equal(jobs.length, 1);
-    assert.match(jobs[0].request, /preserve the full original owner request beyond the spoken summary/);
+    assert.equal(jobs[0].request, 'Fix coding status state reporting', 'legacy records recover from the only request text they persisted');
     const second = await textOf(await chat('coding status'));
     assert.match(second, /latest coding job is queued/i);
     jobs = saved.get('che').jobs.filter((j) => j.kind === 'self_development');
