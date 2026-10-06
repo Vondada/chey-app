@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CheCodingRuntime, codingRuntimeEnabled, runtimeSessionId, validateRuntimeRequest } from './coding_runtime.js';
+import { CheCodingRuntime, codingRuntimeEnabled, recoverableRuntimeFailure, runtimeSessionId, runtimeState, runtimeStateClass, speakRuntimeStatus, validateRuntimeRequest } from './coding_runtime.js';
 
 function response(status, data = null) {
   return new Response(data === null ? null : JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
@@ -62,4 +62,24 @@ test('getStatus treats no result as queued and validates finished JSON', async (
   const done = await runtime.getStatus(id);
   assert.equal(done.state, 'done');
   assert.equal(done.changed_files, 2);
+});
+
+
+test('runtime lifecycle normalizes legacy blocked failures and never calls active work stopped', () => {
+  assert.equal(runtimeState({ state: 'blocked', failure: 'opencode_failed' }), 'opencode_failed');
+  assert.equal(runtimeStateClass({ state: 'blocked', failure: 'opencode_failed' }), 'failed');
+  assert.equal(recoverableRuntimeFailure({ state: 'blocked', failure: 'opencode_failed' }), true);
+  for (const state of ['queued', 'dispatching', 'running', 'retrying', 'recovering']) {
+    const spoken = speakRuntimeStatus({ state });
+    assert.doesNotMatch(spoken, /stopped/i, `${state} must remain active`);
+    assert.equal(runtimeStateClass({ state }), 'active');
+  }
+  assert.match(speakRuntimeStatus({ state: 'running' }), /running/i);
+  assert.match(speakRuntimeStatus({ state: 'mystery_state' }), /status is mystery state/i);
+  assert.doesNotMatch(speakRuntimeStatus({ state: 'mystery_state' }), /stopped/i);
+});
+
+test('unsafe runtime blockers are not automatically retried as coding failures', () => {
+  assert.equal(recoverableRuntimeFailure({ state: 'blocked', failure: 'unsafe_files' }), false);
+  assert.equal(recoverableRuntimeFailure({ state: 'blocked', failure: 'invalid_base_sha' }), false);
 });

@@ -64,7 +64,7 @@ import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSna
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
-import { CheCodingRuntime, codingRuntimeEnabled, speakRuntimeStatus } from './coding_runtime.js';
+import { CheCodingRuntime, codingRuntimeEnabled, recoverableRuntimeFailure, runtimeState, runtimeStateClass, speakRuntimeStatus } from './coding_runtime.js';
 import { handoffIntent, latestHandoff, unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
 import { LA_AGENCIA_ROLES, agentActionGuard, ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
@@ -2971,6 +2971,13 @@ export class CheState extends DurableObject {
     // The AI only runs when a genuinely new message addressed to CHE appears.
     const flagstaffInitialized = Boolean(await this.ctx.storage.get('web_mailbox_code'));
     if (flagstaffInitialized && await flagstaffOpen(this.ctx.storage)) times.push(Date.now() + 30_000);
+    // OpenCode is an execution attempt, not the durable owner mission. While an
+    // attempt is active, wake periodically so a terminal runner failure is
+    // recovered without waiting for the owner to ask for status.
+    const runtimeMonitorUntil = Number(await this.ctx.storage.get('che_runtime_monitor_until')) || 0;
+    const runtimeSessionAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
+    if (runtimeSessionAt && runtimeMonitorUntil > Date.now()) times.push(Date.now() + 60_000);
+
     const outboxPending = await Promise.resolve().then(() => this.ctx.storage.get('web_mailbox_outbox')).catch(() => null);
     if (Array.isArray(outboxPending) && outboxPending.some((m) => m.state !== 'failed')) times.push(Date.now() + 60_000);
     // Paper trading learns every hour (deterministic, no AI tokens, no money).
@@ -6812,10 +6819,19 @@ export class CheState extends DurableObject {
           // whichever is newer: the active built-in job or the runtime session
           // (an unstamped legacy session counts as older work).
           const activeJob = current.jobs.find((item) => item.kind === 'self_development' && ['queued', 'running'].includes(item.status));
-          const jobReply = () => ndjsonReply(`The latest coding job is ${activeJob.status}, sir.${activeJob.checkpoint ? ' Its recovery checkpoint is saved.' : ''}`, { source: 'che_coding_status', background_job_id: activeJob.id, background_job_status: activeJob.status });
+          const jobReply = () => {
+            const state = String(activeJob.status || 'queued');
+            const spoken = state === 'running'
+              ? 'The latest coding job is running, sir.'
+              : state === 'queued' && Number(activeJob.retry_count || 0) > 0
+                ? 'The latest coding job is retrying automatically, sir.'
+                : 'The latest coding job is queued, sir.';
+            return ndjsonReply(`${spoken}${activeJob.checkpoint ? ' Its recovery checkpoint is saved.' : ''}`, { source: 'che_coding_status', background_job_id: activeJob.id, background_job_status: state });
+          };
           const id = await this.ctx.storage.get('che_runtime_last_session');
           const runtimeAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
           const runtimeSummary = String(await this.ctx.storage.get('che_runtime_last_request_summary') || '').trim();
+          const runtimeRequest = String(await this.ctx.storage.get('che_runtime_last_request') || runtimeSummary).trim();
           const runtimeReply = (status) => {
             const spoken = speakRuntimeStatus(status);
             const prefix = runtimeSummary ? `Your latest coding job — ${runtimeSummary} — is the one I checked. ` : '';
@@ -6826,22 +6842,21 @@ export class CheState extends DurableObject {
           if (id) {
             const status = await new CheCodingRuntime(this.env).getStatus(id);
             if (status.status === 200) {
-              const runtimeState = String(status.state || 'queued');
-              const recoverableRuntimeFailure = ['opencode_failed', 'tests_failed', 'review_rejected'].includes(runtimeState);
-              if (recoverableRuntimeFailure && runtimeSummary) {
+              const runtimeLifecycle = runtimeState(status);
+              if (recoverableRuntimeFailure(status) && runtimeRequest) {
                 // A terminal external-runner attempt is not the end of the owner's
                 // coding mission. Hand the same request to CHE's durable built-in
                 // recovery queue, whose idempotency key prevents duplicate jobs.
                 const queued = await this.queueSelfDevelopment({
-                  request: runtimeSummary,
-                  groundedRequest: runtimeSummary,
+                  request: runtimeRequest,
+                  groundedRequest: runtimeRequest,
                 });
                 await this.ctx.storage.put('che_runtime_last_session_at', '');
                 const checkpoint = queued.job?.checkpoint ? ' Its recovery checkpoint is saved.' : '';
                 return ndjsonReply(`The OpenCode attempt failed, sir, so I automatically moved the same coding job to my recovery queue. It is ${queued.job?.status || 'queued'} now.${checkpoint}`, {
                   source: 'che_coding_status',
                   session_id: id,
-                  state: runtimeState,
+                  state: runtimeLifecycle,
                   background_job_id: queued.job?.id,
                   background_job_status: queued.job?.status || 'queued',
                   recovering: true,
@@ -6855,7 +6870,8 @@ export class CheState extends DurableObject {
           const job = current.jobs.find((item) => item.kind === 'self_development');
           if (!job) return ndjsonReply('No coding job has started yet, sir.', { source: 'che_coding_status' });
           const checkpoint = job.checkpoint ? ' Its recovery checkpoint is saved.' : '';
-          return ndjsonReply(`The latest coding job is ${job.status}, sir.${checkpoint}`, { source: 'che_coding_status', background_job_id: job.id, background_job_status: job.status });
+          const terminal = job.dead_letter ? 'dead letter' : String(job.status || 'unknown').replace(/_/g, ' ');
+          return ndjsonReply(`The latest coding job status is ${terminal}, sir.${checkpoint}`, { source: 'che_coding_status', background_job_id: job.id, background_job_status: job.status });
         }
         if (/^\s*(?:che[,:]?\s*)?(?:please\s+)?resume (?:the|my|that) coding job[.!]?\s*$/i.test(message)) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can resume coding jobs.', { source: 'che_coding_resume', ok: false });
@@ -8070,6 +8086,7 @@ export class CheState extends DurableObject {
     // Paper trading keeps learning even when autonomy is off (no money moves).
     await this.tradingTick().catch(() => null);
     if ((await this.loadData()).autonomy) {
+      await this.recoverOpenCodeFailure().catch((error) => console.error('OpenCode recovery watch failed:', error?.message || error));
       await this.processJobs();
       await processAgentWork({
         env: this.env,
@@ -8790,17 +8807,34 @@ export class CheState extends DurableObject {
   async startOpenCodeSession(message) {
     const runtime = new CheCodingRuntime(this.env);
     const baseSha = await runtime.headSha('main');
+    const ownerRequest = String(message || '').replace(/^\s*update your code\s*:?\s*/i, '');
+    // The logical owner mission is stable across duplicate submissions. The
+    // runtime session remains an execution attempt, but identical active work
+    // cannot spend a second runner merely because the owner repeated it.
+    const missionKey = idempotencyKey('opencode:mission', ownerRequest);
+    const priorKey = String(await this.ctx.storage.get('che_runtime_last_mission_key') || '');
+    const priorSession = String(await this.ctx.storage.get('che_runtime_last_session') || '');
+    if (priorKey === missionKey && priorSession) {
+      const prior = await runtime.getStatus(priorSession).catch(() => null);
+      if (prior?.status === 200 && ['queued', 'dispatching', 'running', 'retrying', 'recovering', 'implemented', 'pr_open', 'reviewing', 'approved_waiting_owner'].includes(runtimeState(prior))) {
+        return { status: 202, runtime: 'opencode', session_id: priorSession, state: runtimeState(prior), deduplicated: true };
+      }
+    }
     const jobId = crypto.randomUUID();
     const started = await runtime.createSession({
       jobId,
-      ownerRequest: String(message || '').replace(/^\s*update your code\s*:?\s*/i, ''),
+      ownerRequest,
       baseSha,
       targetBranch: `che/auto/${jobId.slice(0, 8)}`,
     });
     if (started.status === 202) {
       await this.ctx.storage.put('che_runtime_last_session', started.session_id);
       await this.ctx.storage.put('che_runtime_last_session_at', new Date().toISOString());
-      await this.ctx.storage.put('che_runtime_last_request_summary', String(message || '').replace(/\s+/g, ' ').trim().slice(0, 140));
+      await this.ctx.storage.put('che_runtime_last_mission_key', missionKey);
+      await this.ctx.storage.put('che_runtime_last_request', ownerRequest.slice(0, 16000));
+      await this.ctx.storage.put('che_runtime_last_request_summary', ownerRequest.replace(/\s+/g, ' ').trim().slice(0, 140));
+      await this.ctx.storage.put('che_runtime_monitor_until', Date.now() + 60 * 60_000);
+      await this.scheduleWork();
     }
     return started;
   }
@@ -8815,6 +8849,28 @@ export class CheState extends DurableObject {
       return knownAnswer(this.ctx.storage, question, { memories: data.memories || [] });
     }).catch(() => 0);
     return advanceObjectives(data, (fields) => enqueueJob(data, fields));
+  }
+
+  async recoverOpenCodeFailure() {
+    const id = String(await this.ctx.storage.get('che_runtime_last_session') || '');
+    const runtimeAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
+    if (!id || !runtimeAt) return null;
+    const status = await new CheCodingRuntime(this.env).getStatus(id).catch(() => null);
+    if (!status || status.status !== 200) return null;
+    const state = runtimeState(status);
+    if (recoverableRuntimeFailure(status)) {
+      const summary = String(await this.ctx.storage.get('che_runtime_last_request_summary') || '').trim();
+      const request = String(await this.ctx.storage.get('che_runtime_last_request') || summary).trim();
+      if (!request) return { status, state, recovered: false };
+      const queued = await this.queueSelfDevelopment({ request, groundedRequest: request });
+      await this.ctx.storage.put('che_runtime_last_session_at', '');
+      await this.ctx.storage.put('che_runtime_monitor_until', 0);
+      return { status, state, recovered: true, queued };
+    }
+    if (['complete', 'failed'].includes(runtimeStateClass(status))) {
+      await this.ctx.storage.put('che_runtime_monitor_until', 0);
+    }
+    return { status, state, recovered: false };
   }
 
   async processJobs() {
