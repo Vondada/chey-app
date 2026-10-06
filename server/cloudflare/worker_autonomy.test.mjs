@@ -1555,7 +1555,8 @@ test('zero-pass unusable engine output is recoverable instead of terminal', asyn
   await state.processJobs();
   const job = saved.get('che').jobs.find((j) => j.id === 'job-zero');
   assert.equal(job.status, 'queued');
-  assert.equal(job.failure_class, 'B');
+  assert.equal(job.retry_count, 1, 'the zero-pass outage consumed one bounded recovery retry');
+  assert.match(job.error, /0 implementation passes/, 'the real failure remains recorded');
   assert.equal(job.checkpoint.genuine_passes, 0);
   assert.ok(!job.owner_message, 'pre-implementation engine outage stays quiet while CHE retries');
 });
