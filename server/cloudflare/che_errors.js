@@ -96,5 +96,9 @@ export function sanitizeOwnerText(text) {
   if (/all ai engines failed|retry limit reached/i.test(raw)) {
     return ownerFacingMessage('temporary_cloud_unavailable');
   }
+  // Provider/model failover is internal recovery state, not owner-facing progress.
+  if (/switch(?:ing)? to (?:a )?(?:backup|fallback|different|another) (?:ai )?(?:engine|provider|model)|backup (?:engine|provider|model)/i.test(raw)) {
+    return '';
+  }
   return raw.slice(0, 280);
 }
