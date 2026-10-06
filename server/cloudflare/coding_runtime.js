@@ -176,13 +176,43 @@ export class CheCodingRuntime {
 
 // Short spoken summary of a runtime session: found, changed, tests, review,
 // what remains. Never reads logs aloud.
+export function runtimeState(result = {}) {
+  const raw = String(result.state || 'queued').trim().toLowerCase();
+  // Older runtime publishers stored the lifecycle in failure while leaving
+  // state as the generic "blocked". Normalize both shapes in one place.
+  const failure = String(result.failure || '').trim().toLowerCase();
+  if (raw === 'blocked' && failure === 'opencode_failed') return 'opencode_failed';
+  if (raw === 'blocked' && failure === 'deliver_failed') return 'deliver_failed';
+  return raw || 'queued';
+}
+
+export function runtimeStateClass(result = {}) {
+  const state = runtimeState(result);
+  if (['queued', 'dispatching', 'running', 'retrying', 'recovering'].includes(state)) return 'active';
+  if (['implemented', 'pr_open', 'reviewing', 'approved_waiting_owner'].includes(state)) return 'progress';
+  if (['merged', 'no_change', 'rolled_back'].includes(state)) return 'complete';
+  if (['opencode_failed', 'deliver_failed', 'tests_failed', 'review_rejected', 'failed', 'cancelled', 'dead_letter'].includes(state)) return 'failed';
+  return 'unknown';
+}
+
+export function recoverableRuntimeFailure(result = {}) {
+  const state = runtimeState(result);
+  // Unsafe-file guards and authorization failures are deliberately excluded:
+  // they need policy/owner handling, not an automatic coding retry.
+  return ['opencode_failed', 'deliver_failed', 'tests_failed', 'review_rejected'].includes(state);
+}
+
 export function speakRuntimeStatus(result = {}) {
-  const state = String(result.state || 'queued');
+  const state = runtimeState(result);
   const files = Number(result.changed_files || 0);
   const changed = files ? `changed ${files} file${files === 1 ? '' : 's'} (+${Number(result.additions || 0)}/-${Number(result.deletions || 0)})` : 'no files changed yet';
   const parts = [];
   switch (state) {
     case 'queued': parts.push('The coding job is queued on my OpenCode runner.'); break;
+    case 'dispatching': parts.push('The coding job is being dispatched to my OpenCode runner.'); break;
+    case 'running': parts.push('The coding job is running on my OpenCode runner.'); break;
+    case 'retrying': parts.push('The coding job is retrying automatically.'); break;
+    case 'recovering': parts.push('The coding job is recovering automatically.'); break;
     case 'implemented': parts.push(`My coding runner ${changed}.`); break;
     case 'pr_open': parts.push(`I ${changed} and opened pull request ${result.pr_number || ''}. Tests are running.`); break;
     case 'reviewing': parts.push(`Tests passed. My reviewer is checking pull request ${result.pr_number || ''}.`); break;
@@ -192,7 +222,11 @@ export function speakRuntimeStatus(result = {}) {
     case 'tests_failed': parts.push(`Tests failed on pull request ${result.pr_number || ''}, so I did not merge it.`); break;
     case 'rolled_back': parts.push('A merged change broke main, so I rolled it back automatically.'); break;
     case 'no_change': parts.push('My runner found nothing that needed changing.'); break;
-    default: parts.push(`The coding job stopped: ${String(result.failure || state).replace(/_/g, ' ')}.`);
+    case 'opencode_failed': parts.push('The OpenCode attempt failed. I am recovering the coding job automatically.'); break;
+    case 'deliver_failed': parts.push('The coding change could not be delivered. I am recovering the coding job automatically.'); break;
+    case 'failed': case 'cancelled': case 'dead_letter':
+      parts.push(`The coding job stopped: ${state.replace(/_/g, ' ')}.`); break;
+    default: parts.push(`The coding job status is ${state.replace(/_/g, ' ')}.`);
   }
   if (result.remaining) parts.push(`Still remaining: ${String(result.remaining).slice(0, 200)}.`);
   return parts.join(' ');
