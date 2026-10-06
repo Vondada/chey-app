@@ -1276,13 +1276,16 @@ test('recovery can succeed with a materially different strategy, and the record 
 
 test('an engine outage during recovery neither queues a blind job nor spends the recovery budget', async () => {
   const saved = new Map();
-  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { const e = new Error('engines down'); e.category = 'temporary_cloud_unavailable'; throw e; } } };
+  const attemptsAtAiStart = [];
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { attemptsAtAiStart.push(saved.get('che_failed_engineering').recovery_runs); const e = new Error('engines down'); e.category = 'temporary_cloud_unavailable'; throw e; } } };
   const { chat } = await pairedChat(env, saved);
   const original = globalThis.fetch;
   globalThis.fetch = GITHUB_OK({ 'lib/main.dart': "class A { String s = 'Ready'; }\n" });
   try {
     saved.set('che_failed_engineering', { request: 'Update your code: make the ready banner friendlier', failed_strategies: [], fingerprints: [], files: ['lib/main.dart'], diagnosis: 'x', recovery_runs: 1, recovery_lock_until: 0 });
     await deltaText(await chat('Diagnose and recover the failed coding job'));
+    assert.ok(attemptsAtAiStart.length > 0, 'AI work started');
+    assert.ok(attemptsAtAiStart.every((runs) => runs === 2), 'the next recovery attempt was persisted before AI work');
     assert.equal((saved.get('che')?.jobs || []).filter((j) => j.kind === 'self_development').length, 0, 'no blind background job');
     assert.equal(saved.get('che_failed_engineering').recovery_runs, 1, 'outage did not spend the budget');
     assert.equal(saved.get('che_failed_engineering').recovery_lock_until, 0);
