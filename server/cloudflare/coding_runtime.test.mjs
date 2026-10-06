@@ -70,7 +70,7 @@ test('getStatus normalizes a completed result that still reports running', async
   const value = Buffer.from(JSON.stringify({ session_id: id, status: 'complete', state: 'running', changed_files: 1 })).toString('base64');
   const runtime = new CheCodingRuntime(env, { fetcher: async () => response(200, { content: value }) });
   const out = await runtime.getStatus(id);
-  assert.equal(out.status, 200);
+  assert.equal(out.status, 'complete');
   assert.equal(out.state, 'complete');
   assert.equal(runtimeStateClass(out), 'complete');
   assert.doesNotMatch(speakRuntimeStatus(out), /running|stopped/i);
