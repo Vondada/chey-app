@@ -2610,7 +2610,7 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
         return json({ message: `I already ran ${MAX_RECOVERY_RUNS} recovery passes on that job, sir, and none passed review, so I stopped instead of repeating it. What went wrong: ${record.diagnosis} Tell me a different approach or a smaller change and I will build that.`, code_review_passed: false, owner_approval_required: false, failure_class: FAILURE_CLASS.INTERNAL });
       }
       priorFailure = record;
-      await memory.put(FAILED_ENGINEERING_KEY, { ...record, recovery_runs: Number(record.recovery_runs || 0) + 1, recovery_lock_until: Date.now() + RECOVERY_LOCK_MS });
+      await memory.put(FAILED_ENGINEERING_KEY, { ...record, recovery_lock_until: Date.now() + RECOVERY_LOCK_MS });
     }
   }
   let prepared;
@@ -2641,9 +2641,9 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
             root_cause: record.root_cause,
             diagnosis: record.diagnosis,
           } : {}),
-          // An engine outage is not a recovery attempt: it does not use up the
-          // recovery budget.
-          recovery_runs: Number(priorFailure.recovery_runs || 0) + (prepared?.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL && !prepared?.engines_unusable ? 0 : 1),
+          // A temporary engine outage is not a recovery attempt: it does not
+          // use up the recovery budget.
+          recovery_runs: Number(priorFailure.recovery_runs || 0) + (prepared?.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL ? 0 : 1),
           recovery_lock_until: 0,
         }).catch(() => null);
     } else if (prepared?.engineering_record) {
