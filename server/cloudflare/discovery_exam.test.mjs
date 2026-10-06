@@ -5,15 +5,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { explicitPaths, rankSourcePaths, traceSourceGraph } from './self_development.js';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 function walk(dir, out = []) {
   for (const name of readdirSync(join(ROOT, dir))) {
     const path = join(dir, name);
     if (/node_modules|\.dart_tool|build$|three\.min\.js$/.test(path)) continue;
     if (statSync(join(ROOT, path)).isDirectory()) walk(path, out);
-    else if (/\.(?:dart|m?js|html)$/.test(name)) out.push(relative(ROOT, join(ROOT, path)));
+    else if (/\.(?:dart|m?js|html)$/.test(name)) out.push(relative(ROOT, join(ROOT, path)).replace(/\\/g, '/'));
   }
   return out;
 }

@@ -85,6 +85,12 @@ export function makeIndex(sha, entries) {
     text: (path) => files.get(path) ?? null,
     blobSha: (path) => blobs.get(path) || null,
     paths: () => [...files.keys()],
+    // A verified contents read supersedes cached evidence for this exact SHA.
+    refreshFile(path, text, blobSha) {
+      files.set(path, text);
+      lower.set(path, text.toLowerCase());
+      if (blobSha) blobs.set(path, blobSha); else blobs.delete(path);
+    },
     // Exact, case-insensitive substring search (what GitHub code search was
     // used for), every file at this commit, no limit.
     search(needle, { limit = 50, filter = null } = {}) {

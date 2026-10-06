@@ -76,6 +76,17 @@ test('getStatus normalizes a completed result that still reports running', async
 });
 
 
+test('running at numeric progress 100 uses canonical complete; partial and malformed progress stay active', async () => {
+  const id = 'ocr-deadbeef';
+  for (const [progress, state] of [[100, 'complete'], [110, 'complete'], [99, 'running'], ['100', 'running'], [null, 'running']]) {
+    const value = Buffer.from(JSON.stringify({ session_id: id, state: 'running', progress })).toString('base64');
+    const runtime = new CheCodingRuntime(env, { fetcher: async () => response(200, { content: value }) });
+    const out = await runtime.getStatus(id);
+    assert.equal(out.state, state);
+    assert.equal(runtimeStateClass(out), state === 'complete' ? 'complete' : 'active');
+  }
+});
+
 test('runtime lifecycle normalizes legacy blocked failures and never calls active work stopped', () => {
   assert.equal(runtimeState({ state: 'blocked', failure: 'opencode_failed' }), 'opencode_failed');
   assert.equal(runtimeStateClass({ state: 'blocked', failure: 'opencode_failed' }), 'failed');

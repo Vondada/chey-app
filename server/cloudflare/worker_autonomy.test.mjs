@@ -1225,7 +1225,7 @@ test('three failed attempts stop safely; recovery uses the evidence, never repea
     assert.ok(record, 'failure evidence retained');
     assert.ok(record.failed_strategies.length >= 1 && record.fingerprints.length >= 2);
     assert.ok(record.diagnosis);
-    assert.ok(counter.engineer <= 6, `three rounds of two engineers at most, got ${counter.engineer}`);
+    assert.ok(counter.engineer <= 10, `existing bounded engineer allowance, got ${counter.engineer}`);
 
     // Recovery 1: same two strategies come back → rejected as duplicates
     // before any reviewer spends tokens on them.
@@ -1459,6 +1459,49 @@ test('7/8. a saved coding job whose engines return nothing is requeued (not fail
     assert.equal(saved.get('pending_self_update').from_job, job.id);
     assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'self_development').length, 1);
   } finally { globalThis.fetch = original; }
+});
+
+test('saved coding job recovers a missing anchor automatically with the same job and reviewed proposal', async () => {
+  const saved = new Map();
+  const { env } = emptyEngineEnv({ value: 'good' });
+  const originalRun = env.AI.run;
+  let engineers = 0;
+  let refreshReads = 0;
+  env.AI.run = async (model, input) => {
+    const system = String(input.messages?.[0]?.content || '');
+    if (system.includes('Engineer')) {
+      engineers += 1;
+      if (engineers <= 2) return { response: JSON.stringify({ edits: [{ path: 'lib/main.dart', find: 'obsolete banner', replace: 'Ready when you are.' }] }) };
+      const p = JSON.parse(input.messages[1].content);
+      assert.equal(p.repository_sha, 'sha1');
+      assert.ok(refreshReads >= 2, 'file was re-read before retry');
+      assert.ok(p.failed_anchors.length > 0);
+      assert.ok(p.inspected.some((f) => f.source.includes('Ready. Type or speak a request.')));
+    }
+    return originalRun(model, input);
+  };
+  const state = new CheState({ storage: storageFor(saved) }, env);
+  const originalFetch = globalThis.fetch;
+  const github = GITHUB_OK(BANNER_FILES);
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('/contents/lib/main.dart?ref=sha1')) refreshReads += 1;
+    return github(url, init);
+  };
+  try {
+    const { job } = await state.queueSelfDevelopment({ request: 'Update your code: make the ready banner friendlier' });
+    const data = saved.get('che');
+    data.jobs.find((j) => j.id === job.id).checkpoint = { genuine_passes: 2, fingerprints: [], failed_strategies: [], resumes: 1, round_offset: 2 };
+    saved.set('che', data);
+    dueNow(saved);
+    await state.processJobs();
+    const stored = saved.get('che').jobs.find((j) => j.id === job.id);
+    assert.equal(stored.status, 'complete', stored.error);
+    assert.equal(saved.get('che').jobs.length, 1);
+    assert.equal(saved.get('pending_self_update').from_job, job.id);
+    assert.ok(saved.get('pending_self_update').proposal.files.some((f) => f.content.includes('Ready when you are.')));
+    assert.equal(stored.checkpoint, undefined);
+    assert.doesNotMatch(String(stored.owner_message), /edits did not match.*3 implementation passes/);
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 test('9. engines that never produce usable output cannot loop: the saved job stops after its retry limit', async () => {

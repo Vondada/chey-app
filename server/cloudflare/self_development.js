@@ -446,17 +446,21 @@ async function sourceIndex(env, fetcher) {
 }
 
 // Reads one file at the exact inspected commit. Returns { text, sha } or null.
-async function readFile(env, ref, path, fetcher) {
+async function readFile(env, ref, path, fetcher, fresh = false) {
   if (!isSelfUpdateReadablePath(path)) return null;
   // CHE's own index of this exact commit: no GitHub request at all.
   const local = cachedCodeIndex(ref);
-  if (local?.has(path)) {
+  if (!fresh && local?.has(path)) {
     const text = local.text(path);
     return { text, sha: local.blobSha(path) || await gitBlobSha(text) };
   }
   const found = await ghRead(env, `/contents/${path}?ref=${encodeURIComponent(ref)}`, fetcher);
   if (!found.ok || typeof found.data?.content !== 'string' || !found.data.content) return null;
-  try { return { text: decodeBase64Utf8(found.data.content), sha: String(found.data.sha || '') || null }; } catch (_) { return null; }
+  try {
+    const file = { text: decodeBase64Utf8(found.data.content), sha: String(found.data.sha || '') || null };
+    if (fresh) local?.refreshFile(path, file.text, file.sha);
+    return file;
+  } catch (_) { return null; }
 }
 
 export function isUiTask(request) {
@@ -989,7 +993,7 @@ async function apiBridge({ files, texts, load, allPaths, publicSymbols, search }
     if (seen.has(`${call.client_method}|${prefix}`)) continue;
     seen.add(`${call.client_method}|${prefix}`);
     const found = await search(prefix);
-    const servers = found.paths.filter((p) => p.startsWith('server/') && !/\.test\.m?js$|\.fixtures\.mjs$/.test(p) && allPaths.has(p));
+    const servers = found.paths.filter((p) => p.startsWith('server/') && !/\.test(?:\.generated)?\.m?js$|\.fixtures\.mjs$/.test(p) && allPaths.has(p));
     const routes = [];
     for (const serverFile of servers.slice(0, 2)) {
       const text = texts.get(serverFile) || await load(serverFile);
@@ -1017,13 +1021,14 @@ async function apiBridge({ files, texts, load, allPaths, publicSymbols, search }
 
 // ─── Failed-job evidence and recovery ─────────────────────────────────────────
 
-export function engineeringRecord({ request, failedStrategies = [], fingerprints = [], outcomes = [], feedback = '', files = [] }) {
+export function engineeringRecord({ request, failedStrategies = [], fingerprints = [], failedAnchors = [], outcomes = [], feedback = '', files = [] }) {
   const record = {
     request: String(request || '').slice(0, 4000),
     failed_strategies: failedStrategies.filter((item) => !item.prior).slice(-12).map((item) => ({
       engineer: String(item.engineer || ''), outcome: String(item.outcome || ''), why: String(item.why || '').slice(0, 300), edits: (item.edits || []).slice(0, 3).map(String),
     })),
     fingerprints: fingerprints.map(String).slice(-30),
+    failed_anchors: failedAnchors.map(String).slice(-30),
     outcomes: outcomes.slice(-30).map((item) => ({ round: item.round, engineer: item.engineer, outcome: item.outcome, ...(item.detail ? { detail: String(item.detail).slice(0, 200) } : {}) })),
     feedback: String(feedback || '').slice(0, 1500),
     files: files.map(String).slice(0, 12),
@@ -1272,7 +1277,8 @@ export function fallbackTreeCandidates(request, index, terms = [], limit = 6) {
     .map((item) => item.path);
 }
 
-const looseLine = (line) => String(line).trim().replace(/\s+/g, ' ');
+// Re-indentation is safe; whitespace inside strings or expressions is source.
+const looseLine = (line) => String(line).trim();
 
 // The unique run of lines equal to `find` once whitespace is normalized
 // (indentation, trailing spaces, tabs). Models often re-indent a correct
@@ -1348,7 +1354,7 @@ export function applyEdits(sources, edits) {
         ...(near ? { anchor_lines: [near.from - 1, near.to - 1] } : {}),
       };
     }
-    if (current.indexOf(find, first + find.length) >= 0) return { error: `In ${path}, the proposed edit is ambiguous because it matches more than once. Re-read the surrounding function or widget and regenerate a uniquely anchored edit.`, anchor_path: path };
+    if (current.indexOf(find, first + 1) >= 0) return { error: `In ${path}, the proposed edit is ambiguous because it matches more than once. Re-read the surrounding function or widget and regenerate a uniquely anchored edit.`, anchor_path: path };
     next.set(path, current.slice(0, first) + replace + current.slice(first + find.length));
   }
   return { sources: next };
@@ -1787,7 +1793,7 @@ function engineerForRound(member, index, round) {
   return { ...member, provider };
 }
 
-async function recoveryPlan(ctx, { task, architecture, feedback, index, lessons, member, chat }) {
+async function recoveryPlan(ctx, { task, architecture, feedback, index, lessons, member, chat, evidence }) {
   const res = await agentJson(ctx, {
     stage: 'recovery',
     role: who(member, 'CHE Source Recovery Architect'),
@@ -1801,7 +1807,9 @@ async function recoveryPlan(ctx, { task, architecture, feedback, index, lessons,
       request: task,
       previous_architecture: architecture,
       previous_failure: String(feedback || '').slice(0, 2000),
-      editable_source_files: listForBudget(index.editable_paths, Math.floor(budget * 0.6)),
+      inspected: evidence ? evidence(Math.floor(budget * 0.35)) : undefined,
+      repository_sha: index.head_sha,
+      editable_source_files: listForBudget(index.editable_paths, Math.floor(budget * (evidence ? 0.25 : 0.6))),
       readable_source_files: listForBudget(index.paths.filter((p) => !isSelfUpdateEditablePath(p)), Math.floor(budget * 0.15)),
       team_lessons: lessonText(lessons),
       team_chat: chat.slice(-24),
@@ -1840,7 +1848,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
   if (!task || !ownerIntent) return { status: 400, detail: 'Describe the requested app change.' };
   const ctx = createContext(env, task, options);
   // Every result carries the crew's conversation (shown to the owner as a group chat).
-  const finish = (result) => ({ ...result, discussion: result.discussion || (ctx.chat || []).slice(-30), diagnostics: { budget: ctx.budget.snapshot(), events: ctx.diagnostics.slice(-40), outcomes: ctx.outcomes.slice(-30) } });
+  const finish = (result) => ({ ...result, discussion: result.discussion || (ctx.chat || []).slice(-30), diagnostics: { budget: ctx.budget.snapshot(), genuine_passes: ctx.genuinePasses || 0, events: ctx.diagnostics.slice(-40), outcomes: ctx.outcomes.slice(-30) } });
 
   try {
     const lessons = await loadLessons(memory);
@@ -1977,16 +1985,16 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     // the next implementation pass. Refresh them independently of recovery search.
     const failedAnchorPaths = new Set();
     let baseSha = index.head_sha;
-    const readInto = async (paths) => {
-      const reads = await Promise.all([...new Set(paths)].map(async (path) => ({ path, file: await readFile(env, baseSha, path, fetcher) })));
+    const readInto = async (paths, fresh = false) => {
+      const reads = await Promise.all([...new Set(paths)].map(async (path) => ({ path, file: await readFile(env, baseSha, path, fetcher, fresh) })));
       for (const { path, file } of reads) {
-        if (!file) { note(ctx, { stage: 'read', kind: 'read_failed', path }); continue; }
+        if (!file) { sources.delete(path); blobShas.delete(path); note(ctx, { stage: 'read', kind: 'read_failed', path }); continue; }
         sources.set(path, file.text);
         blobShas.set(path, file.sha);
       }
       return reads.filter((item) => item.file).map((item) => item.path);
     };
-    await readInto(chosen);
+    await readInto(chosen, Boolean(options.checkpoint || options.priorFailure));
     if (!sources.size) {
       // First reads failed (wrong/unreadable files): try the tree fallback once.
       await readInto(fallbackTreeCandidates(task, index, terms, 4).filter((path) => !chosen.includes(path)));
@@ -2005,7 +2013,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
     // hop from what search found, find who uses each file, and drop dead
     // files from the work (a dead copy named after the feature is how the
     // War Room stress test edited a page the app never loads).
-    const graph = await traceSourceGraph(env, {
+    let graph = await traceSourceGraph(env, {
       index,
       request: ownerIntent,
       seeds: [...sources.keys()],
@@ -2036,27 +2044,51 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       }
       if (!sources.size) await readInto(liveFeatureFiles.length ? liveFeatureFiles : chosen.filter((path) => !deadFiles.has(path)));
     }
-    const discovery = graph ? {
+    const describeGraph = () => graph ? {
       live_files: graph.files.filter((file) => file.live === true && !file.test).map((file) => ({ path: file.path, callers: file.callers.slice(0, 4), tests: file.tests })).slice(0, 10),
       dead_files: [...deadFiles],
       contradiction: graph.contradiction,
       api_routes: graph.api.map((call) => ({ client: `${call.client_file}#${call.client_method}`, route: `${call.http} ${call.route}`, server: call.server.map((r) => `${r.server_file}:${r.line} ${r.handlers.map((h) => `${h.fn}@${h.module}`).join(', ')}`) })).slice(0, 8),
       notes: graph.notes,
     } : null;
+    let discovery = describeGraph();
 
     // Main moved while CHE was working: re-read at the new head so nothing is
     // planned or written against stale source.
     const refreshBase = async () => {
       const head = await readHead(env, index.base, fetcher);
-      if (head.error || head.sha === baseSha) return false;
+      if (head.error) throw Object.assign(new Error('Could not refresh the repository head.'), { status: head.error.status || 503 });
+      if (head.sha === baseSha) return false;
+      const tree = await ghRead(env, `/git/trees/${encodeURIComponent(head.sha)}?recursive=1`, fetcher);
+      if (!tree.ok) throw Object.assign(new Error('Could not refresh the repository tree.'), { status: tree.status || 503 });
       note(ctx, { stage: 'base', kind: 'base_moved', from: baseSha, to: head.sha });
       baseSha = head.sha;
+      index.head_sha = baseSha;
+      index.paths = (tree.data?.tree || []).filter((item) => item?.type === 'blob' && isSelfUpdateReadablePath(String(item.path || ''))).map((item) => String(item.path)).slice(0, 4000);
+      index.editable_paths = index.paths.filter(isSelfUpdateEditablePath);
       const moved = await loadCodeIndex(memory, env, head.sha, fetcher).catch(() => null);
       ctx.codeSha = moved ? head.sha : '';
       const paths = [...sources.keys()];
       sources.clear();
       blobShas.clear();
-      await readInto(paths);
+      await readInto(paths.filter((path) => index.paths.includes(path)), true);
+      // The old graph is evidence too: a moved target must not leave dead/live
+      // decisions or route/caller context from the previous commit in prompts.
+      graph = await traceSourceGraph(env, {
+        index, request: ownerIntent,
+        seeds: sources.size ? [...sources.keys()] : fallbackTreeCandidates(task, index, terms, 6),
+        known: sources,
+        read: async (path) => (await readFile(env, baseSha, path, fetcher, true))?.text ?? null,
+        fetcher, maxSearches: 8, apiSearches: 3,
+      }).catch(() => null);
+      deadFiles.clear();
+      for (const path of graph?.dead || []) if (!ownerNamed.has(path)) { deadFiles.add(path); sources.delete(path); blobShas.delete(path); }
+      liveFeatureFiles.splice(0, liveFeatureFiles.length, ...(graph?.files || []).filter((file) => file.live === true && file.feature_match && !file.test).map((file) => file.path));
+      liveImplementation.splice(0, liveImplementation.length, ...liveFeatureFiles, ...(graph?.files || []).filter((file) => file.live === true && !file.test && file.callers.some((caller) => liveFeatureFiles.includes(caller))).map((file) => file.path));
+      discovery = describeGraph();
+      hits.clear();
+      architecture.paths = architecture.paths.filter((path) => index.paths.includes(path) && !deadFiles.has(path));
+      await readInto([...new Set([...liveImplementation, ...fallbackTreeCandidates(task, index, terms, 4)])].filter((path) => !sources.has(path)).slice(0, 4), true);
       chat.push({ from: 'CHE', msg: `${index.base} moved while we worked; every inspected file was re-read at the new head.` });
       return true;
     };
@@ -2078,15 +2110,20 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       chat.push({ from: 'CHE', msg: `Recovery of a failed job. Diagnosis: ${prior.diagnosis || diagnoseFailure(prior).diagnosis} Do not repeat the ${failedStrategies.length} failed strategies listed in failed_strategies; choose a materially different approach.` });
     }
     let widenEvidence = false;
-    // Passes in which at least one engineer actually produced an implementation
-    // (a parsed answer). Only those count toward the three-pass safety limit.
+    // Parsing a proposal is not an implementation. Anchor failures trigger
+    // evidence repair without consuming the genuine implementation allowance.
     const producedRounds = new Set();
+    const applicableRounds = new Set();
     const formatFeedback = new Set();
     // A checkpoint (saved when engines stopped answering mid-job) resumes the
     // SAME job: passes already used stay used, tried strategies stay tried,
     // so a provider outage never buys extra attempts or repeats a strategy.
     const checkpoint = options.checkpoint && typeof options.checkpoint === 'object' ? options.checkpoint : null;
+    const anchorKey = (edit) => strategyFingerprint({ edits: [{ path: edit?.path, find: edit?.find, replace: '' }] });
+    const failedAnchors = new Set((checkpoint?.failed_anchors || prior?.failed_anchors || []).map(String).slice(-30));
+    let sourceRefreshFailed = false;
     let genuinePasses = checkpoint ? Math.max(0, Math.min(maxRounds, Number(checkpoint.genuine_passes) || 0)) : 0;
+    ctx.genuinePasses = genuinePasses;
     if (checkpoint) {
       for (const fp of (checkpoint.fingerprints || []).map(String).slice(-30)) seenStrategies.add(fp);
       for (const item of (checkpoint.failed_strategies || []).slice(-8)) failedStrategies.push({ ...item, prior: true });
@@ -2149,6 +2186,8 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
           request: task,
           architecture,
           inspected: inspectedEvidence(Math.floor(budget * 0.7)),
+          repository_sha: baseSha,
+          failed_anchors: [...failedAnchors].slice(-12),
           other_repository_files: listForBudget(index.editable_paths.filter((p) => !sources.has(p)), Math.floor(budget * 0.06)),
           previous_attempt_problem: feedbacks[i] || '',
           discovery: discovery || undefined,
@@ -2214,6 +2253,13 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         return { no_change: true, summary: noChangeSummary, evidence, engineer: member.name, provider: member.provider, fingerprint };
       }
       const fingerprint = strategyFingerprint(answer);
+      const repeatedAnchor = (Array.isArray(answer.edits) ? answer.edits : []).find((edit) => failedAnchors.has(anchorKey(edit)));
+      if (repeatedAnchor) {
+        failedAnchorPaths.add(String(repeatedAnchor.path));
+        feedbacks[i] = `The exact anchor in ${repeatedAnchor.path} already failed. Copy a different unique anchor from the refreshed inspected source; changing only the replacement is not a new strategy.`;
+        record(round, member, 'duplicate_anchor', feedbacks[i]);
+        return null;
+      }
       if (seenStrategies.has(fingerprint)) {
         feedbacks[i] =
           'This exact implementation strategy was already attempted. ' +
@@ -2263,6 +2309,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       if (unseen.length) {
         const fetched = await readInto(unseen);
         if (fetched.length < unseen.length) {
+          seenStrategies.delete(fingerprint);
           feedbacks[i] = `CHE could not read ${unseen.filter((p) => !fetched.includes(p)).join(', ')} from GitHub right now; work from the inspected files.`;
           record(round, member, 'read_failed');
           return null;
@@ -2272,6 +2319,14 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       const applied = applyEdits(sources, requestedEdits);
       if (applied.error) {
         if (applied.anchor_path) {
+          for (const edit of requestedEdits) {
+            const check = applyEdits(sources, [edit]);
+            if (check.anchor_path) {
+              failedAnchors.add(anchorKey(edit));
+              failedAnchorPaths.add(check.anchor_path);
+              focusFiles.add(check.anchor_path);
+            }
+          }
           focusFiles.add(applied.anchor_path);
           failedAnchorPaths.add(applied.anchor_path);
           if (Array.isArray(applied.anchor_lines)) {
@@ -2305,6 +2360,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       }
       // Deterministic validation runs BEFORE any reviewer is paid for, and an
       // AI approval can never override it.
+      applicableRounds.add(round);
       const changedFiles = [...applied.sources.entries()]
         .filter(([path, content]) => sources.get(path) !== content)
         .map(([path, content]) => ({ path, content }));
@@ -2422,6 +2478,9 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       // A resumed job continues on the NEXT engine pair, not the one that went empty.
       const roundEngineers = CREW.engineers.map((member, i) => engineerForRound(member, i, round + roundOffset));
       const attempts = await Promise.all(roundEngineers.map((member, i) => attemptOnce(round, member, i)));
+      const produced = applicableRounds.has(round) || attempts.some((attempt) => attempt?.no_change);
+      if (produced) genuinePasses += 1;
+      ctx.genuinePasses = genuinePasses;
 
       const winner = attempts.find((attempt) => attempt && !attempt.no_change);
       if (winner) {
@@ -2473,27 +2532,30 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       // was empty, unparseable or an engine outage) is not a failed strategy:
       // it does not count toward the three-pass limit. At most
       // MAX_UNPRODUCTIVE_PASSES such passes run, each on the next engine pair.
-      const produced = producedRounds.has(round);
-      if (produced) genuinePasses += 1;
-      else unproductivePasses += 1;
+      if (!producedRounds.has(round)) unproductivePasses += 1;
       if (genuinePasses >= maxRounds) break;
       // The engineering budget ran out: a budget stop, never "engines failed".
       if (ctx.outcomes.some((o) => o.round === round + 1 && o.outcome === 'budget_exhausted') || !ctx.budget.canSpend('engineer', 7000)) {
         budgetStop = true;
         break;
       }
-      if (!produced && unproductivePasses >= MAX_UNPRODUCTIVE_PASSES) { enginesFailed = true; break; }
+      if (!producedRounds.has(round) && unproductivePasses >= MAX_UNPRODUCTIVE_PASSES) { enginesFailed = true; break; }
       // A valid change could not be reviewed even after reviewer fallback:
       // engines are down (class B). Stop now instead of burning more rounds.
       if (ctx.outcomes.some((o) => o.round === round + 1 && o.outcome === 'review_unavailable')) break;
       // Nothing was implemented, so there is nothing to re-locate: the next
       // pass simply runs on the next engine pair with the same evidence.
-      if (!produced) continue;
+      if (!producedRounds.has(round) && !failedAnchorPaths.size) continue;
 
       // Failed pass: refresh the base, ask a different architect to
       // re-locate the real source, then fetch newly suggested files before
       // the next provider pair runs.
-      await refreshBase();
+      try { await refreshBase(); } catch (error) {
+        const classified = classifyFailure(error);
+        if (classified.failure_class !== FAILURE_CLASS.TEMPORARY_EXTERNAL) throw error;
+        sourceRefreshFailed = true;
+        break;
+      }
       // A missing/ambiguous exact anchor means the engineer's evidence for that
       // file is stale or insufficient. Re-read every implicated file at the
       // refreshed base before asking any recovery architect or search to help.
@@ -2501,7 +2563,14 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       // discovery omits the file or ranks another candidate first.
       if (failedAnchorPaths.size) {
         const anchorPaths = [...failedAnchorPaths].filter((path) => index.paths.includes(path));
-        await readInto(anchorPaths);
+        for (const path of failedAnchorPaths) { sources.delete(path); blobShas.delete(path); }
+        const refreshed = await readInto(anchorPaths, true);
+        if (refreshed.length !== anchorPaths.length) { sourceRefreshFailed = true; break; }
+        for (const path of refreshed) {
+          const failed = failedStrategies.filter((item) => item.edits?.some((edit) => edit.startsWith(`${path}:`)));
+          const near = nearestSource(sources.get(path), failed.map((item) => item.edits.join(' ')).join(' ') || task);
+          if (near) anchorHints.set(path, Array.from({ length: near.to - near.from + 1 }, (_, k) => near.from - 1 + k));
+        }
         architecture.paths = [...new Set([...anchorPaths, ...architecture.paths])];
         chat.push({ from: 'CHE', msg: `Refreshed failed edit anchors from current source: ${anchorPaths.join(', ')}` });
         failedAnchorPaths.clear();
@@ -2509,7 +2578,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       const feedback = [...new Set(feedbacks.filter((f) => f && !formatFeedback.has(f)))].join(' || ');
       const recoveryMember = CREW.planners[(round + 1) % CREW.planners.length];
       const recovery = feedback
-        ? await recoveryPlan(ctx, { task, architecture, feedback, index, lessons, member: recoveryMember, chat })
+        ? await recoveryPlan(ctx, { task, architecture, feedback, index, lessons, member: recoveryMember, chat, evidence: inspectedEvidence })
         : null;
 
       if (recovery) {
@@ -2576,9 +2645,10 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       const saveCheckpoint = () => ({
         genuine_passes: genuinePasses,
         fingerprints: [...seenStrategies].slice(-30),
+        failed_anchors: [...failedAnchors].slice(-30),
         failed_strategies: failedStrategies.filter((item) => !item.prior || checkpoint).slice(-8),
         feedback: [...new Set(feedbacks.filter((f) => f && !formatFeedback.has(f)))].join(' | ').slice(0, 1500),
-        files: [...sources.keys()].slice(0, 8),
+        files: [...new Set([...failedAnchorPaths, ...sources.keys()])].slice(0, 8),
         base: index.base || '',
         repo_sha: index.head_sha || '',
         resumes: resumes + 1,
@@ -2600,7 +2670,8 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       }
       // Once every genuine pass is used, an outage is not a reason to retry:
       // a resume would only buy the job passes beyond its limit.
-      const temporary = (outcomes.includes('review_unavailable') && Boolean(pendingReview) && resumes < 3)
+      const temporary = (sourceRefreshFailed && resumes < 3)
+        || (outcomes.includes('review_unavailable') && Boolean(pendingReview) && resumes < 3)
         || (real.length > 0 && real.every((outcome) => outcome === 'provider_unavailable'))
         || enginesUnusable;
       const engineering = [...new Set(feedbacks.filter((f) => f && !formatFeedback.has(f)))].join(' | ');
@@ -2611,7 +2682,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
           retryable: true,
           ...(enginesUnusable ? { engines_unusable: true } : {}),
           checkpoint: saveCheckpoint(),
-          detail: enginesUnusable
+          detail: sourceRefreshFailed ? 'Current source could not be refreshed; the same job is checkpointed without reusing stale evidence.' : enginesUnusable
             ? `AI engines returned no usable implementation (empty answers, malformed answers, or outages) in ${unproductivePasses} passes; no strategy was tried, nothing was changed and the job retries later.`
             : 'AI engines were unavailable for implementation or independent review; no unreviewed change was proposed.',
           owner_message: ownerEngineeringMessage(FAILURE_CLASS.TEMPORARY_EXTERNAL),
@@ -2632,6 +2703,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
           request: String(options.intentRequest || task),
           failedStrategies,
           fingerprints: [...seenStrategies],
+          failedAnchors: [...failedAnchors],
           outcomes: ctx.outcomes,
           feedback: engineering,
           files: [...sources.keys()],

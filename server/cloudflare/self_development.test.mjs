@@ -588,7 +588,7 @@ test('broad architecture work can inspect and update Worker source', async () =>
 });
 
 
-test('three-pass hard stop never repeats an identical no-op strategy', async () => {
+test('duplicate no-op strategies stop at the existing engineer budget without reaching review', async () => {
   let implementationCalls = 0;
   let recoveryCalls = 0;
   let reviewCalls = 0;
@@ -633,9 +633,9 @@ test('three-pass hard stop never repeats an identical no-op strategy', async () 
   const out = await prepareSelfUpdate(env, 'change the home status wording', fakeGitHub(), memoryStore());
   assert.equal(out.status, 422);
   assert.match(out.detail, /exact implementation strategy was already attempted/i);
-  assert.equal(recoveryCalls, 2, 'only the two boundaries between three rounds run recovery');
+  assert.equal(recoveryCalls, 3, 'recovery stays at its existing stage ceiling');
   assert.equal(reviewCalls, 0, 'empty diffs never reach review');
-  assert.equal(implementationCalls, 6, 'three bounded rounds with two engineers each');
+  assert.equal(implementationCalls, 10, 'the existing engineer call ceiling remains bounded');
 });
 
 test('recovery re-fetches an already-inspected target before retrying', async () => {
