@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CheCodingRuntime, codingRuntimeEnabled, recoverableRuntimeFailure, runtimeSessionId, runtimeState, runtimeStateClass, speakRuntimeStatus, validateRuntimeRequest } from './coding_runtime.js';
+import { CheCodingRuntime, codingRuntimeEnabled, ownerRequiresMergeApproval, recoverableRuntimeFailure, runtimeSessionId, runtimeState, runtimeStateClass, speakRuntimeStatus, validateRuntimeRequest } from './coding_runtime.js';
 
 function response(status, data = null) {
   return new Response(data === null ? null : JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
@@ -12,6 +12,18 @@ const env = {
   CHE_GITHUB_TOKEN: 'test-token',
   CHE_OPENCODE_MODEL: 'openrouter/openai/gpt-oss-20b:free',
 };
+
+test('owner merge holds cannot dispatch the runtime auto-merge workflow through any caller', async () => {
+  for (const hold of ['Do not merge without my authorization.', "Don't deploy yet.", 'Never automatically merge.', 'Merge only after my approval.']) {
+    assert.equal(ownerRequiresMergeApproval(hold), true, hold);
+    let dispatched = false;
+    const runtime = new CheCodingRuntime(env, { fetcher: async () => { dispatched = true; return response(204); } });
+    const out = await runtime.createSession({ ownerRequest: `Fix a real low-risk defect. ${hold}`, baseSha: 'a'.repeat(40), targetBranch: 'che/auto/test' });
+    assert.equal(out.status, 409);
+    assert.equal(dispatched, false);
+  }
+  assert.equal(ownerRequiresMergeApproval('Implement a merger for records.'), false);
+});
 
 test('runtime is feature flagged off by default', async () => {
   assert.equal(codingRuntimeEnabled({}), false);

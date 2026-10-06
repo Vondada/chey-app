@@ -22,6 +22,14 @@ export function codingRuntimeEnabled(env = {}) {
   return codingRuntimeMode(env) === 'opencode';
 }
 
+// The current OpenCode workflow feeds auto-merge. A delivery hold must use
+// the built-in reviewed-PR lane, where merge is a separate owner command.
+export function ownerRequiresMergeApproval(request) {
+  const text = String(request || '');
+  return /\b(?:do\s+not|don['’]t|never|must\s+not)\s+(?:automatically\s+)?(?:merge|ship|deploy)\b/i.test(text)
+    || /\b(?:merge|ship|deploy)\b[^.!?\n]{0,80}\b(?:only\s+(?:after|with)|without|await|wait\s+for)\b[^.!?\n]{0,50}\b(?:authoriz\w*|approv\w*|permission|confirmation)\b/i.test(text);
+}
+
 function repoOf(env) {
   const repo = String(env?.CHE_GITHUB_REPO || '').trim();
   return env?.CHE_GITHUB_TOKEN && /^[\w.-]+\/[\w.-]+$/.test(repo) ? repo : '';
@@ -113,6 +121,7 @@ export class CheCodingRuntime {
     if (!repo) return { status: 503, detail: 'OpenCode runtime needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the Worker.' };
     const request = validateRuntimeRequest(ownerRequest);
     if (request.error) return { status: 400, detail: request.error };
+    if (ownerRequiresMergeApproval(request.text)) return { status: 409, detail: 'This request requires a separate owner merge decision; use the built-in reviewed-PR lane.' };
     // "auto" lets the runner pick the first provider whose key is configured.
     const resolvedModel = String(model || this.env.CHE_OPENCODE_MODEL || 'auto').trim();
     if (resolvedModel !== 'auto' && !/^[A-Za-z0-9._-]+\/[A-Za-z0-9._:@\/-]+$/.test(resolvedModel)) {

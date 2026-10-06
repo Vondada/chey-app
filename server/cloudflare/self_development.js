@@ -577,7 +577,7 @@ function evidenceScore(path, source, request) {
 // This never edits source and never treats another AI's message as owner
 // authorization. It gives CHE facts she can safely use before discussing a
 // coding lane: the exact live commit, real paths/symbols and open PRs.
-export async function inspectRepositoryContext(env, request, fetcher = fetch) {
+export async function inspectRepositoryContext(env, request, fetcher = fetch, { trace = false } = {}) {
   if (!repoOf(env)) {
     return { ok: false, failure_class: FAILURE_CLASS.PERMANENT_EXTERNAL, detail: 'CHE_GITHUB_TOKEN or CHE_GITHUB_REPO is missing.' };
   }
@@ -639,6 +639,15 @@ export async function inspectRepositoryContext(env, request, fetcher = fetch) {
   }).slice(0, 12);
   await loadBatch(testNeighbors);
 
+  const discovery = trace ? await traceSourceGraph(env, {
+    index, request, seeds: wanted.slice(0, 6), fetcher,
+    known: new Map([...loaded].map(([path, file]) => [path, file.text])),
+    read: async (path) => {
+      await loadBatch([path]);
+      return loaded.get(path)?.text ?? null;
+    },
+  }) : null;
+
   const paths = [...loaded.keys()].sort((a, b) =>
     evidenceScore(b, loaded.get(b).text, request) - evidenceScore(a, loaded.get(a).text, request)
     || a.localeCompare(b)
@@ -673,6 +682,7 @@ export async function inspectRepositoryContext(env, request, fetcher = fetch) {
     repository: String(env.CHE_GITHUB_REPO),
     base: index.base,
     head_sha: index.head_sha,
+    ...(discovery ? { discovery } : {}),
     files,
     open_prs,
     open_prs_status: pulls.ok ? 'verified' : 'unavailable:' + String(pulls.status || 0),

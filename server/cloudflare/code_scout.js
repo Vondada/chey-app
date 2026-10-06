@@ -163,6 +163,13 @@ export function repositoryImplementationIntent(message) {
   return (implementation && (target || receipts)) || autonomyWork;
 }
 
+export function repositoryInspectionIntent(message) {
+  const text = withoutQuotedText(String(message || '').trim());
+  return /\b(?:your|che(?:'s)?)\s+(?:current\s+)?(?:repo(?:sitory)?|codebase|source|code)\b/i.test(text)
+    && /\b(?:inspect|find|locate|trace|show|identify)\b/i.test(text)
+    && !repositoryImplementationIntent(text);
+}
+
 export function starredRepoIntent(message) {
   const text = String(message || '').trim().replace(/^(?:che|chay|chey|shay)[,:]?\s+/i, '');
   const collection = /\b(?:starred(?:\s+github)?\s+(?:repos?|repositories)|github\s+starred\s+(?:repos?|repositories)|github\s+stars?|(?:repos?|repositories)\s+(?:i\s+)?(?:have\s+)?starred|inspirations?(?:\s+(?:list|tab|collection))?)\b/i.test(text);

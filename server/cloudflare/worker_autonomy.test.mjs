@@ -164,6 +164,73 @@ const GITHUB_OK = (files) => async (url) => {
   return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
 };
 
+const OWNER_DISCOVERY_QUESTION = 'CHE, inspect your current repository and find the existing War Room implementation. Tell me the exact files/components responsible for it. Do not create or propose replacement architecture.';
+const OWNER_SAFE_CODING_QUESTION = 'CHE, find one small, real improvement or missing regression test in your current codebase. Implement it using the current exact source, validate it, independently review it, and prepare one PR. Do not merge without my authorization.';
+
+test('owner capability test: GPS reasoning stays in the reasoning lane without starting code or PR work', async () => {
+  const saved = new Map();
+  const question = 'CHE, explain why GPS satellites need corrections from both special and general relativity. Keep it understandable, but verify your reasoning.';
+  let sawQuestion = false;
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async (_model, input) => {
+    sawQuestion ||= input.messages.some((message) => String(message.content).includes(question));
+    return { response: 'Satellite speed slows its clock, while weaker gravity speeds its clock. Both effects change the timestamps used to measure distance.' };
+  } } };
+  const { chat } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{}', { status: 503 });
+  try {
+    const reply = replyFromNdjson(await (await chat(question)).text());
+    assert.equal(sawQuestion, true);
+    assert.match(reply, /Satellite speed/);
+    assert.ok(!(saved.get('che').jobs || []).some((job) => ['self_development', 'merge_pr'].includes(job.kind)));
+    assert.equal(saved.get('pending_self_update'), undefined);
+  } finally { globalThis.fetch = original; }
+});
+
+test('owner capability test: repository discovery reads exact source without dispatching coding or inventing files', async () => {
+  const saved = new Map();
+  let aiCalls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_CODING_RUNTIME: 'opencode', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { aiCalls++; return { response: 'I cannot inspect your repository.' }; } } };
+  const { chat } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  const calls = [];
+  const files = {
+    'lib/main.dart': "import 'agents/che_war_room_screen.dart';\nvoid main() { CheWarRoomScreen(); }",
+    'lib/agents/che_war_room_screen.dart': "import '../widgets/che_native_scene_world.dart';\nclass CheWarRoomScreen { CheNativeSceneWorld build() => CheNativeSceneWorld(); }",
+    'lib/widgets/che_native_scene_world.dart': 'class CheNativeSceneWorld { final scene = "War Room"; }',
+    'assets/office3d/warroom.html': '<h1>Unused War Room copy</h1>',
+  };
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), method: init.method || 'GET' });
+    if (String(url).includes('/search/code')) {
+      const query = new URL(String(url)).searchParams.get('q').match(/^"(.*?)"/)?.[1] || '';
+      return new Response(JSON.stringify({ items: Object.entries(files).filter(([, content]) => content.toLowerCase().includes(query.toLowerCase())).map(([path]) => ({ path })) }));
+    }
+    return GITHUB_OK(files)(url, init);
+  };
+  try {
+    const response = await chat(OWNER_DISCOVERY_QUESTION);
+    const text = replyFromNdjson(await response.text());
+    assert.match(text, /lib\/agents\/che_war_room_screen\.dart/);
+    assert.match(text, /lib\/widgets\/che_native_scene_world\.dart/);
+    assert.match(text, /sha1/);
+    assert.equal(aiCalls, 0);
+    assert.ok(calls.some((c) => c.url.includes('/contents/')));
+    assert.ok(calls.every((c) => c.method === 'GET'));
+    assert.ok(!(saved.get('che').jobs || []).length);
+  } finally { globalThis.fetch = original; }
+});
+
+test('owner capability test: a PR-only request never reaches the auto-merging OpenCode workflow', async () => {
+  const saved = new Map();
+  const state = new CheState({ storage: storageFor(saved) }, { CHE_CODING_RUNTIME: 'opencode' });
+  saved.set('che', { autonomy: true, jobs: [], devices: {}, memories: [] });
+  let dispatches = 0;
+  state.startOpenCodeSession = async () => { dispatches++; return { status: 202, session_id: 'ocr-1234abcd' }; };
+  await state.selfDevelopmentReply(OWNER_SAFE_CODING_QUESTION);
+  assert.equal(dispatches, 0, 'the runtime auto-merge lane cannot satisfy the owner merge hold');
+});
+
 test('legacy project-create route honors terminal chat-only isolation', async () => {
   const saved = new Map();
   let aiCalls = 0;
@@ -313,7 +380,8 @@ test('end-to-end: "make one small real improvement" → recover → review → a
   const replyOf = async (res) => (await res.text()).trim().split('\n').map((l) => JSON.parse(l)).filter((l) => l.type === 'delta').map((l) => l.delta).join('');
   try {
     // 1. Vague owner request, no filename or guidance.
-    const proposal = await replyOf(await chat('CHE, make one small real improvement to your code.'));
+    env.CHE_CODING_RUNTIME = 'opencode';
+    const proposal = await replyOf(await chat(OWNER_SAFE_CODING_QUESTION));
     assert.doesNotMatch(proposal, /```|export default/);
     assert.doesNotMatch(proposal, /provide|paste|filename|not provided|cannot inspect|503/i);
     // 2. Full autonomy: after independent review CHE opens the draft PR
