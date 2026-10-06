@@ -1539,6 +1539,28 @@ test('memory-first: a verified owner fact is answered with zero AI engine calls'
   }
 });
 
+test('zero-pass unusable engine output is recoverable instead of terminal', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' };
+  const { state } = await pairedChat(env, saved);
+  const data = saved.get('che');
+  data.jobs = [{ id: 'job-zero', kind: 'self_development', status: 'queued', prompt: 'fix the coding recovery path', retry_count: 0, attempts: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }];
+  saved.set('che', data);
+  state.runSelfDevelopmentJob = async (job) => {
+    const error = new Error('stopped after 0 implementation passes because the engines then returned no usable output (empty or malformed answers).');
+    error.failure_class = 'B';
+    error.checkpoint = { genuine_passes: 0, fingerprints: [], failed_strategies: [], resumes: 1 };
+    throw error;
+  };
+  await state.processJobs();
+  const job = saved.get('che').jobs.find((j) => j.id === 'job-zero');
+  assert.equal(job.status, 'queued');
+  assert.equal(job.retry_count, 1, 'the zero-pass outage consumed one bounded recovery retry');
+  assert.match(job.error, /0 implementation passes/, 'the real failure remains recorded');
+  assert.equal(job.checkpoint.genuine_passes, 0);
+  assert.ok(!job.owner_message, 'pre-implementation engine outage stays quiet while CHE retries');
+});
+
 test('control plane: a job interrupted by an engine failure keeps its checkpoint and the retry continues the same job quietly', async () => {
   const saved = new Map();
   const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' };

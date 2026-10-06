@@ -9229,7 +9229,12 @@ export class CheState extends DurableObject {
     if (prepared.status === 200 && prepared.already_satisfied) {
       return { id: job.id, status: 'complete', result: String(prepared.summary || ''), owner_message: 'The coding job finished, sir: the team verified the app already does that, so no change was needed.', error: '' };
     }
-    if (prepared.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL) {
+    // A pre-implementation engine failure is recoverable even when the
+    // preparation layer classified the aggregate result as INTERNAL. With zero
+    // genuine passes there is no rejected implementation to terminate: keep
+    // this exact job/checkpoint alive so the next run can use another engine.
+    const zeroPassEngineFailure = ungradableEngineFailure(prepared);
+    if (prepared.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL || zeroPassEngineFailure) {
       const error = new Error(prepared.detail || 'Temporary engineering outage.');
       error.failure_class = FAILURE_CLASS.TEMPORARY_EXTERNAL;
       // The retry continues this job from its checkpoint on other engines.
