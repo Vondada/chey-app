@@ -229,6 +229,6 @@ export function speakRuntimeStatus(result = {}) {
       parts.push(`The coding job stopped: ${state.replace(/_/g, ' ')}.`); break;
     default: parts.push(`The coding job status is ${state.replace(/_/g, ' ')}.`);
   }
-  if (result.remaining) parts.push(`Still remaining: ${String(result.remaining).slice(0, 200)}.`);
+  if (result.remaining && !['failed', 'cancelled', 'dead_letter'].includes(state)) parts.push(`Still remaining: ${String(result.remaining).slice(0, 200)}.`);
   return parts.join(' ');
 }
