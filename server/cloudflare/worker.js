@@ -41,6 +41,7 @@ import { cachedResearch, factKey, forgetKnowledge, knownAnswer, ownerFactQuestio
 import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliability } from './reliability_ledger.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
+import { sanitizeOwnerText } from './che_errors.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
@@ -7971,9 +7972,7 @@ export class CheState extends DurableObject {
             text: item.ok ? `✓ Used ${item.plugin} · ${item.tool}` : `${item.plugin} · ${item.tool} failed: ${item.error}`,
           })),
         ];
-        // Sentence-sized deltas: the Flutter client paints/speaks the first
-        // sentence as soon as it arrives instead of waiting for one big blob.
-        const deltaLines = splitReplyDeltas(reply).map((delta) => JSON.stringify({ type: 'delta', delta }));
+        // Final owner-facing boundary: keep internal provider/model failover chatter out of chat and TTS.\n        reply = sanitizeOwnerText(reply);\n        // Sentence-sized deltas: the Flutter client paints/speaks the first\n        // sentence as soon as it arrives instead of waiting for one big blob.\n        const deltaLines = splitReplyDeltas(reply).map((delta) => JSON.stringify({ type: 'delta', delta }));
         return new Response(steps.map((item) => JSON.stringify(item)).concat(deltaLines).concat([
           JSON.stringify({
             type: 'done',
