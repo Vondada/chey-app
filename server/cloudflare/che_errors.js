@@ -96,9 +96,6 @@ export function sanitizeOwnerText(text) {
   if (/all ai engines failed|retry limit reached/i.test(raw)) {
     return ownerFacingMessage('temporary_cloud_unavailable');
   }
-  // Provider/model failover is internal recovery state, not owner-facing progress.
-  if (/switch(?:ing)? to (?:a )?(?:backup|fallback|different|another) (?:ai )?(?:engine|provider|model)|backup (?:engine|provider|model)/i.test(raw)) {
-    return '';
-  }
+  // Provider/model failover is internal recovery state, not owner-facing progress.\n  // Only suppress a standalone switch notice; legitimate discussion of backup models stays visible.\n  if (/^\\s*(?:one moment,?\\s*(?:sir[,.]?)?\\s*)?(?:i(?:'m| am)\\s+)?switch(?:ing)? to (?:a )?(?:backup|fallback|different|another) (?:ai )?(?:engine|provider|model)[.!]?\\s*$/i.test(raw)) {\n    return '';\n  }
   return raw.slice(0, 280);
 }
