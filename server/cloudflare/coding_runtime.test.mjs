@@ -66,7 +66,7 @@ test('getStatus treats no result as queued and validates finished JSON', async (
 
 
 test('getStatus normalizes a completed result that still reports running', async () => {
-  const id = 'ocr-complete-running';
+  const id = 'ocr-deadbeef';
   const value = Buffer.from(JSON.stringify({ session_id: id, status: 'complete', state: 'running', changed_files: 1 })).toString('base64');
   const runtime = new CheCodingRuntime(env, { fetcher: async () => response(200, { content: value }) });
   const out = await runtime.getStatus(id);
