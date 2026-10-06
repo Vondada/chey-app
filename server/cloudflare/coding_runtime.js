@@ -210,7 +210,7 @@ export function speakRuntimeStatus(result = {}) {
   switch (state) {
     case 'queued': parts.push('The coding job is queued on my OpenCode runner.'); break;
     case 'dispatching': parts.push('The coding job is being dispatched to my OpenCode runner.'); break;
-    case 'running': parts.push('The coding job is running on my OpenCode runner.'); break;
+    case 'running': parts.push('The coding job is currently running on my OpenCode runner.'); break;
     case 'retrying': parts.push('The coding job is retrying automatically.'); break;
     case 'recovering': parts.push('The coding job is recovering automatically.'); break;
     case 'implemented': parts.push(`My coding runner ${changed}.`); break;
