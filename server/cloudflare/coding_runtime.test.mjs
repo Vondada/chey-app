@@ -64,6 +64,17 @@ test('getStatus treats no result as queued and validates finished JSON', async (
   assert.equal(done.changed_files, 2);
 });
 
+test('getStatus normalizes a completed result that still reports running', async () => {
+  const id = 'ocr-deadbeef';
+  const value = Buffer.from(JSON.stringify({ session_id: id, status: 'complete', state: 'running', changed_files: 1 })).toString('base64');
+  const runtime = new CheCodingRuntime(env, { fetcher: async () => response(200, { content: value }) });
+  const out = await runtime.getStatus(id);
+  assert.equal(out.status, 'complete');
+  assert.equal(out.state, 'complete');
+  assert.equal(runtimeStateClass(out), 'complete');
+  assert.doesNotMatch(speakRuntimeStatus(out), /running|stopped/i);
+});
+
 
 test('runtime lifecycle normalizes legacy blocked failures and never calls active work stopped', () => {
   assert.equal(runtimeState({ state: 'blocked', failure: 'opencode_failed' }), 'opencode_failed');

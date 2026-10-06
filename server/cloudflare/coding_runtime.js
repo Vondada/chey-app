@@ -167,6 +167,7 @@ export class CheCodingRuntime {
     try {
       const parsed = JSON.parse(decodeBase64Utf8(found.data?.content));
       if (parsed?.session_id !== id) throw new Error('session mismatch');
+      if (parsed.status === 'complete' && parsed.state === 'running') parsed.state = 'complete';
       return { status: 200, runtime: 'opencode', ...parsed };
     } catch (_) {
       return { status: 502, detail: 'OpenCode runtime result is not valid compact JSON.' };
@@ -190,7 +191,7 @@ export function runtimeStateClass(result = {}) {
   const state = runtimeState(result);
   if (['queued', 'dispatching', 'running', 'retrying', 'recovering'].includes(state)) return 'active';
   if (['implemented', 'pr_open', 'reviewing', 'approved_waiting_owner'].includes(state)) return 'progress';
-  if (['merged', 'no_change', 'rolled_back'].includes(state)) return 'complete';
+  if (['complete', 'merged', 'no_change', 'rolled_back'].includes(state)) return 'complete';
   if (['opencode_failed', 'deliver_failed', 'tests_failed', 'review_rejected', 'failed', 'cancelled', 'dead_letter'].includes(state)) return 'failed';
   return 'unknown';
 }
