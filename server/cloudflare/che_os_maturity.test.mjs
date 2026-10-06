@@ -41,6 +41,11 @@ test('network outage wording never claims an on-phone fallback can finish cloud 
   assert.doesNotMatch(error.message, /keep going with what I have on this phone/i);
 });
 
+test('internal provider failover is silent in owner chat', () => {
+  assert.equal(sanitizeOwnerText("One moment, sir. I'm switching to a backup engine."), '');
+  assert.equal(sanitizeOwnerText('Switching to another provider.'), '');
+});
+
 test('capacity reserve holds background work before owner chat', () => {
   // Owner policy: engines drain at 70% of their daily budget.
   assert.equal(capacityMode(69, 100), 'normal');
