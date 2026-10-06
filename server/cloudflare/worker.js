@@ -2609,8 +2609,8 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
       if (Number(record.recovery_runs || 0) >= MAX_RECOVERY_RUNS) {
         return json({ message: `I already ran ${MAX_RECOVERY_RUNS} recovery passes on that job, sir, and none passed review, so I stopped instead of repeating it. What went wrong: ${record.diagnosis} Tell me a different approach or a smaller change and I will build that.`, code_review_passed: false, owner_approval_required: false, failure_class: FAILURE_CLASS.INTERNAL });
       }
-      priorFailure = record;
-      await memory.put(FAILED_ENGINEERING_KEY, { ...record, recovery_lock_until: Date.now() + RECOVERY_LOCK_MS });
+      priorFailure = { ...record, recovery_runs: Number(record.recovery_runs || 0) + 1 };
+      await memory.put(FAILED_ENGINEERING_KEY, { ...priorFailure, recovery_lock_until: Date.now() + RECOVERY_LOCK_MS });
     }
   }
   let prepared;
@@ -2631,7 +2631,7 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
       // failed again so the next recovery knows every strategy tried.
       const record = prepared?.engineering_record;
       await memory.put(FAILED_ENGINEERING_KEY, prepared?.status === 200
-        ? { ...priorFailure, recovery_runs: Number(priorFailure.recovery_runs || 0) + 1, recovery_lock_until: 0, resolved_at: new Date().toISOString() }
+        ? { ...priorFailure, recovery_lock_until: 0, resolved_at: new Date().toISOString() }
         : {
           ...priorFailure,
           ...(record ? {
@@ -2643,7 +2643,7 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
           } : {}),
           // A temporary engine outage is not a recovery attempt: it does not
           // use up the recovery budget.
-          recovery_runs: Number(priorFailure.recovery_runs || 0) + (prepared?.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL ? 0 : 1),
+          recovery_runs: Number(priorFailure.recovery_runs || 0) - (prepared?.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL ? 1 : 0),
           recovery_lock_until: 0,
         }).catch(() => null);
     } else if (prepared?.engineering_record) {
