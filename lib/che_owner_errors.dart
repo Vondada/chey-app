@@ -92,7 +92,7 @@ class CheOwnerError {
   static String _messageFor(String category) {
     switch (category) {
       case 'network_offline':
-        return "I can't reach the internet right now, sir. I'll keep going with what I have on this phone.";
+        return "I lost the network connection, sir. I saved the job and will resume it automatically when the connection returns.";
       case 'voice_unavailable':
         return 'My spoken voice is down, sir. I still have your text and the iPhone voice as backup.';
       case 'authentication_required':

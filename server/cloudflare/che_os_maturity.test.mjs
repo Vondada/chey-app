@@ -34,6 +34,13 @@ test('honors Retry-After and does not leak raw dumps to the owner', () => {
   assert.doesNotMatch(sanitizeOwnerText('All AI engines failed (huge dump)'), /engine|route|provider/i, 'the owner never hears about engines');
 });
 
+test('network outage wording never claims an on-phone fallback can finish cloud work', () => {
+  const error = makeEngineError({ category: 'network_offline', diagnostic: 'fetch failed', configured: true });
+  assert.match(error.message, /saved the job/i);
+  assert.match(error.message, /resume it automatically/i);
+  assert.doesNotMatch(error.message, /keep going with what I have on this phone/i);
+});
+
 test('capacity reserve holds background work before owner chat', () => {
   // Owner policy: engines drain at 70% of their daily budget.
   assert.equal(capacityMode(69, 100), 'normal');
