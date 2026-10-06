@@ -30,7 +30,11 @@ export function ownerRequiresMergeApproval(request) {
     || /\b(?:merge|ship|deploy)\b[^.!?\n]{0,80}\b(?:only\s+(?:after|with)|without|await|wait\s+for)\b[^.!?\n]{0,50}\b(?:authoriz\w*|approv\w*|permission|confirmation)\b/i.test(text)
     || /\b(?:wait|stop|hold)\b[^.!?\n]{0,120}\b(?:merg(?:e|ing)|ship(?:ping)?|deploy(?:ing)?)\b/i.test(text)
     || /\b(?:approv\w*|authoriz\w*|permission|confirmation)\b[^.!?\n]{0,80}\b(?:before|prior\s+to)\s+(?:merg(?:e|ing)|ship(?:ping)?|deploy(?:ing)?)\b/i.test(text)
-    || /\b(?:unmerged|pr[- ]only|pull[- ]request[- ]only)\b/i.test(text);
+    || /\b(?:unmerged|pr[- ]only|pull[- ]request[- ]only)\b/i.test(text)
+    || /\bno\s+(?:automatic\s+|auto[- ]?)?merg(?:e|ing)\b/i.test(text)
+    || /\b(?:prepare|open|create|draft)\b[^.!?\n]{0,80}\b(?:pr|pull\s+request)\b/i.test(text)
+    || /\b(?:merg(?:e|ing)|ship(?:ping)?|deploy(?:ing)?)\b[^.!?\n]{0,80}\b(?:to\s+me|only\s+(?:when|if)\s+i)\b/i.test(text)
+    || /\bi\s+(?:will|'ll|want\s+to|am\s+going\s+to)\s+merg(?:e|ing)\b/i.test(text);
 }
 
 function repoOf(env) {

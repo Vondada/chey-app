@@ -16,7 +16,7 @@ const env = {
 };
 
 test('owner merge holds cannot dispatch the runtime auto-merge workflow through any caller', async () => {
-  for (const hold of ['Do not merge without my authorization.', "Don't deploy yet.", 'Never automatically merge.', 'Merge only after my approval.', 'Wait for me to approve before merging.', 'Stop before merging.', 'Leave the PR unmerged.', 'Prepare a PR-only change.']) {
+  for (const hold of ['Do not merge without my authorization.', "Don't deploy yet.", 'Never automatically merge.', 'Merge only after my approval.', 'Wait for me to approve before merging.', 'Stop before merging.', 'Leave the PR unmerged.', 'Prepare a PR-only change.', 'Prepare a draft PR.', 'Prepare a PR but no merge.', 'Open a PR and leave merging to me.', 'I will merge it.', 'Merge only when I say so.']) {
     assert.equal(ownerRequiresMergeApproval(hold), true, hold);
     let dispatched = false;
     const runtime = new CheCodingRuntime(env, { fetcher: async () => { dispatched = true; return response(204); } });
