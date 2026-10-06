@@ -551,6 +551,37 @@ test('coding status reports a newer OpenCode session over an older queued built-
   }
 });
 
+test('terminal OpenCode failure automatically falls back to the same durable coding request', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => ({ response: 'ok' }) } };
+  const { chat } = await pairedChat(env, saved);
+  const textOf = async (res) => (await res.text()).trim().split('\n').map((line) => JSON.parse(line)).filter((line) => line.type === 'delta').map((line) => line.delta).join('');
+  saved.set('che_runtime_last_session', 'ocr-1234abcd');
+  saved.set('che_runtime_last_session_at', new Date().toISOString());
+  saved.set('che_runtime_last_request_summary', 'Fix coding status state reporting');
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    const path = String(url).replace('https://api.github.com/repos/o/r', '');
+    if (path.includes('/contents/mailbox/runtime/ocr-1234abcd.json')) {
+      const payload = btoa(JSON.stringify({ session_id: 'ocr-1234abcd', state: 'opencode_failed', failure: 'opencode failed' }));
+      return new Response(JSON.stringify({ content: payload }), { status: 200 });
+    }
+    return original(url, init);
+  };
+  try {
+    const status = await textOf(await chat('coding status'));
+    assert.match(status, /automatically moved the same coding job to my recovery queue/i);
+    const jobs = saved.get('che').jobs.filter((j) => j.kind === 'self_development');
+    assert.equal(jobs.length, 1);
+    assert.equal(jobs[0].request, 'Fix coding status state reporting');
+    const again = await textOf(await chat('coding status'));
+    assert.match(again, /latest coding job is queued/i);
+    assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'self_development').length, 1, 'status polling does not duplicate recovery jobs');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test('merge with a change-caused CI failure is refused and CHE starts the repair herself', async () => {
   const saved = new Map();
   const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => ({ response: 'ok' }) } };
