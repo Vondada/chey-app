@@ -64,7 +64,7 @@ import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSna
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
-import { CheCodingRuntime, codingRuntimeEnabled, speakRuntimeStatus } from './coding_runtime.js';
+import { CheCodingRuntime, codingRuntimeEnabled, recoverableRuntimeFailure, runtimeState, speakRuntimeStatus } from './coding_runtime.js';
 import { handoffIntent, latestHandoff, unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
 import { LA_AGENCIA_ROLES, agentActionGuard, ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
@@ -6812,7 +6812,15 @@ export class CheState extends DurableObject {
           // whichever is newer: the active built-in job or the runtime session
           // (an unstamped legacy session counts as older work).
           const activeJob = current.jobs.find((item) => item.kind === 'self_development' && ['queued', 'running'].includes(item.status));
-          const jobReply = () => ndjsonReply(`The latest coding job is ${activeJob.status}, sir.${activeJob.checkpoint ? ' Its recovery checkpoint is saved.' : ''}`, { source: 'che_coding_status', background_job_id: activeJob.id, background_job_status: activeJob.status });
+          const jobReply = () => {
+            const state = String(activeJob.status || 'queued');
+            const spoken = state === 'running'
+              ? 'The latest coding job is running, sir.'
+              : state === 'queued' && Number(activeJob.retry_count || 0) > 0
+                ? 'The latest coding job is retrying automatically, sir.'
+                : 'The latest coding job is queued, sir.';
+            return ndjsonReply(`${spoken}${activeJob.checkpoint ? ' Its recovery checkpoint is saved.' : ''}`, { source: 'che_coding_status', background_job_id: activeJob.id, background_job_status: state });
+          };
           const id = await this.ctx.storage.get('che_runtime_last_session');
           const runtimeAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
           const runtimeSummary = String(await this.ctx.storage.get('che_runtime_last_request_summary') || '').trim();
@@ -6826,9 +6834,8 @@ export class CheState extends DurableObject {
           if (id) {
             const status = await new CheCodingRuntime(this.env).getStatus(id);
             if (status.status === 200) {
-              const runtimeState = String(status.state || 'queued');
-              const recoverableRuntimeFailure = ['opencode_failed', 'tests_failed', 'review_rejected'].includes(runtimeState);
-              if (recoverableRuntimeFailure && runtimeSummary) {
+              const runtimeLifecycle = runtimeState(status);
+              if (recoverableRuntimeFailure(status) && runtimeSummary) {
                 // A terminal external-runner attempt is not the end of the owner's
                 // coding mission. Hand the same request to CHE's durable built-in
                 // recovery queue, whose idempotency key prevents duplicate jobs.
@@ -6841,7 +6848,7 @@ export class CheState extends DurableObject {
                 return ndjsonReply(`The OpenCode attempt failed, sir, so I automatically moved the same coding job to my recovery queue. It is ${queued.job?.status || 'queued'} now.${checkpoint}`, {
                   source: 'che_coding_status',
                   session_id: id,
-                  state: runtimeState,
+                  state: runtimeLifecycle,
                   background_job_id: queued.job?.id,
                   background_job_status: queued.job?.status || 'queued',
                   recovering: true,
@@ -6855,7 +6862,8 @@ export class CheState extends DurableObject {
           const job = current.jobs.find((item) => item.kind === 'self_development');
           if (!job) return ndjsonReply('No coding job has started yet, sir.', { source: 'che_coding_status' });
           const checkpoint = job.checkpoint ? ' Its recovery checkpoint is saved.' : '';
-          return ndjsonReply(`The latest coding job is ${job.status}, sir.${checkpoint}`, { source: 'che_coding_status', background_job_id: job.id, background_job_status: job.status });
+          const terminal = job.dead_letter ? 'dead letter' : String(job.status || 'unknown').replace(/_/g, ' ');
+          return ndjsonReply(`The latest coding job status is ${terminal}, sir.${checkpoint}`, { source: 'che_coding_status', background_job_id: job.id, background_job_status: job.status });
         }
         if (/^\s*(?:che[,:]?\s*)?(?:please\s+)?resume (?:the|my|that) coding job[.!]?\s*$/i.test(message)) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can resume coding jobs.', { source: 'che_coding_resume', ok: false });
