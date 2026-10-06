@@ -6825,7 +6825,31 @@ export class CheState extends DurableObject {
           if (activeJob && !runtimeIsNewer) return jobReply();
           if (id) {
             const status = await new CheCodingRuntime(this.env).getStatus(id);
-            if (status.status === 200) return runtimeReply(status);
+            if (status.status === 200) {
+              const runtimeState = String(status.state || 'queued');
+              const recoverableRuntimeFailure = ['opencode_failed', 'tests_failed', 'review_rejected'].includes(runtimeState);
+              if (recoverableRuntimeFailure && runtimeSummary) {
+                // A terminal external-runner attempt is not the end of the owner's
+                // coding mission. Hand the same request to CHE's durable built-in
+                // recovery queue, whose idempotency key prevents duplicate jobs.
+                const queued = await this.queueSelfDevelopment({
+                  request: runtimeSummary,
+                  groundedRequest: runtimeSummary,
+                });
+                await this.ctx.storage.put('che_runtime_last_session_at', '');
+                const checkpoint = queued.job?.checkpoint ? ' Its recovery checkpoint is saved.' : '';
+                return ndjsonReply(`The OpenCode attempt failed, sir, so I automatically moved the same coding job to my recovery queue. It is ${queued.job?.status || 'queued'} now.${checkpoint}`, {
+                  source: 'che_coding_status',
+                  session_id: id,
+                  state: runtimeState,
+                  background_job_id: queued.job?.id,
+                  background_job_status: queued.job?.status || 'queued',
+                  recovering: true,
+                  deduplicated: queued.deduplicated === true,
+                });
+              }
+              return runtimeReply(status);
+            }
           }
           if (activeJob) return jobReply();
           const job = current.jobs.find((item) => item.kind === 'self_development');
