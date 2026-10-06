@@ -7973,7 +7973,7 @@ export class CheState extends DurableObject {
           })),
         ];
         // Final owner-facing boundary: keep internal provider/model failover chatter out of chat and TTS.
-        reply = sanitizeOwnerText(reply);
+        reply = sanitizeOwnerText(reply, { truncate: false });
         // Sentence-sized deltas: the Flutter client paints/speaks the first
         // sentence as soon as it arrives instead of waiting for one big blob.
         const deltaLines = splitReplyDeltas(reply).map((delta) => JSON.stringify({ type: 'delta', delta }));

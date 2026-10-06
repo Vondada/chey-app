@@ -51,6 +51,12 @@ test('internal provider failover is silent in owner chat', () => {
   );
 });
 
+test('final owner replies can be sanitized without truncation', () => {
+  const reply = 'A complete answer. '.repeat(20);
+  assert.equal(sanitizeOwnerText(reply), reply.slice(0, 280));
+  assert.equal(sanitizeOwnerText(reply, { truncate: false }), reply);
+});
+
 test('capacity reserve holds background work before owner chat', () => {
   // Owner policy: engines drain at 70% of their daily budget.
   assert.equal(capacityMode(69, 100), 'normal');
