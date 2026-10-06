@@ -64,7 +64,7 @@ import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSna
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
-import { CheCodingRuntime, codingRuntimeEnabled, recoverableRuntimeFailure, runtimeState, speakRuntimeStatus } from './coding_runtime.js';
+import { CheCodingRuntime, codingRuntimeEnabled, recoverableRuntimeFailure, runtimeState, runtimeStateClass, speakRuntimeStatus } from './coding_runtime.js';
 import { handoffIntent, latestHandoff, unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
 import { LA_AGENCIA_ROLES, agentActionGuard, ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
@@ -2971,6 +2971,13 @@ export class CheState extends DurableObject {
     // The AI only runs when a genuinely new message addressed to CHE appears.
     const flagstaffInitialized = Boolean(await this.ctx.storage.get('web_mailbox_code'));
     if (flagstaffInitialized && await flagstaffOpen(this.ctx.storage)) times.push(Date.now() + 30_000);
+    // OpenCode is an execution attempt, not the durable owner mission. While an
+    // attempt is active, wake periodically so a terminal runner failure is
+    // recovered without waiting for the owner to ask for status.
+    const runtimeMonitorUntil = Number(await this.ctx.storage.get('che_runtime_monitor_until')) || 0;
+    const runtimeSessionAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
+    if (runtimeSessionAt && runtimeMonitorUntil > Date.now()) times.push(Date.now() + 60_000);
+
     const outboxPending = await Promise.resolve().then(() => this.ctx.storage.get('web_mailbox_outbox')).catch(() => null);
     if (Array.isArray(outboxPending) && outboxPending.some((m) => m.state !== 'failed')) times.push(Date.now() + 60_000);
     // Paper trading learns every hour (deterministic, no AI tokens, no money).
@@ -8079,6 +8086,7 @@ export class CheState extends DurableObject {
     // Paper trading keeps learning even when autonomy is off (no money moves).
     await this.tradingTick().catch(() => null);
     if ((await this.loadData()).autonomy) {
+      await this.recoverOpenCodeFailure().catch((error) => console.error('OpenCode recovery watch failed:', error?.message || error));
       await this.processJobs();
       await processAgentWork({
         env: this.env,
@@ -8825,6 +8833,8 @@ export class CheState extends DurableObject {
       await this.ctx.storage.put('che_runtime_last_mission_key', missionKey);
       await this.ctx.storage.put('che_runtime_last_request', ownerRequest.slice(0, 16000));
       await this.ctx.storage.put('che_runtime_last_request_summary', ownerRequest.replace(/\s+/g, ' ').trim().slice(0, 140));
+      await this.ctx.storage.put('che_runtime_monitor_until', Date.now() + 60 * 60_000);
+      await this.scheduleWork();
     }
     return started;
   }
@@ -8839,6 +8849,28 @@ export class CheState extends DurableObject {
       return knownAnswer(this.ctx.storage, question, { memories: data.memories || [] });
     }).catch(() => 0);
     return advanceObjectives(data, (fields) => enqueueJob(data, fields));
+  }
+
+  async recoverOpenCodeFailure() {
+    const id = String(await this.ctx.storage.get('che_runtime_last_session') || '');
+    const runtimeAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
+    if (!id || !runtimeAt) return null;
+    const status = await new CheCodingRuntime(this.env).getStatus(id).catch(() => null);
+    if (!status || status.status !== 200) return null;
+    const state = runtimeState(status);
+    if (recoverableRuntimeFailure(status)) {
+      const summary = String(await this.ctx.storage.get('che_runtime_last_request_summary') || '').trim();
+      const request = String(await this.ctx.storage.get('che_runtime_last_request') || summary).trim();
+      if (!request) return { status, state, recovered: false };
+      const queued = await this.queueSelfDevelopment({ request, groundedRequest: request });
+      await this.ctx.storage.put('che_runtime_last_session_at', '');
+      await this.ctx.storage.put('che_runtime_monitor_until', 0);
+      return { status, state, recovered: true, queued };
+    }
+    if (['complete', 'failed'].includes(runtimeStateClass(status))) {
+      await this.ctx.storage.put('che_runtime_monitor_until', 0);
+    }
+    return { status, state, recovered: false };
   }
 
   async processJobs() {
