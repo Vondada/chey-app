@@ -6824,6 +6824,7 @@ export class CheState extends DurableObject {
           const id = await this.ctx.storage.get('che_runtime_last_session');
           const runtimeAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
           const runtimeSummary = String(await this.ctx.storage.get('che_runtime_last_request_summary') || '').trim();
+          const runtimeRequest = String(await this.ctx.storage.get('che_runtime_last_request') || runtimeSummary).trim();
           const runtimeReply = (status) => {
             const spoken = speakRuntimeStatus(status);
             const prefix = runtimeSummary ? `Your latest coding job — ${runtimeSummary} — is the one I checked. ` : '';
@@ -6835,13 +6836,13 @@ export class CheState extends DurableObject {
             const status = await new CheCodingRuntime(this.env).getStatus(id);
             if (status.status === 200) {
               const runtimeLifecycle = runtimeState(status);
-              if (recoverableRuntimeFailure(status) && runtimeSummary) {
+              if (recoverableRuntimeFailure(status) && runtimeRequest) {
                 // A terminal external-runner attempt is not the end of the owner's
                 // coding mission. Hand the same request to CHE's durable built-in
                 // recovery queue, whose idempotency key prevents duplicate jobs.
                 const queued = await this.queueSelfDevelopment({
-                  request: runtimeSummary,
-                  groundedRequest: runtimeSummary,
+                  request: runtimeRequest,
+                  groundedRequest: runtimeRequest,
                 });
                 await this.ctx.storage.put('che_runtime_last_session_at', '');
                 const checkpoint = queued.job?.checkpoint ? ' Its recovery checkpoint is saved.' : '';
@@ -8798,17 +8799,32 @@ export class CheState extends DurableObject {
   async startOpenCodeSession(message) {
     const runtime = new CheCodingRuntime(this.env);
     const baseSha = await runtime.headSha('main');
+    const ownerRequest = String(message || '').replace(/^\s*update your code\s*:?\s*/i, '');
+    // The logical owner mission is stable across duplicate submissions. The
+    // runtime session remains an execution attempt, but identical active work
+    // cannot spend a second runner merely because the owner repeated it.
+    const missionKey = idempotencyKey('opencode:mission', ownerRequest);
+    const priorKey = String(await this.ctx.storage.get('che_runtime_last_mission_key') || '');
+    const priorSession = String(await this.ctx.storage.get('che_runtime_last_session') || '');
+    if (priorKey === missionKey && priorSession) {
+      const prior = await runtime.getStatus(priorSession).catch(() => null);
+      if (prior?.status === 200 && ['queued', 'dispatching', 'running', 'retrying', 'recovering', 'implemented', 'pr_open', 'reviewing', 'approved_waiting_owner'].includes(runtimeState(prior))) {
+        return { status: 202, runtime: 'opencode', session_id: priorSession, state: runtimeState(prior), deduplicated: true };
+      }
+    }
     const jobId = crypto.randomUUID();
     const started = await runtime.createSession({
       jobId,
-      ownerRequest: String(message || '').replace(/^\s*update your code\s*:?\s*/i, ''),
+      ownerRequest,
       baseSha,
       targetBranch: `che/auto/${jobId.slice(0, 8)}`,
     });
     if (started.status === 202) {
       await this.ctx.storage.put('che_runtime_last_session', started.session_id);
       await this.ctx.storage.put('che_runtime_last_session_at', new Date().toISOString());
-      await this.ctx.storage.put('che_runtime_last_request_summary', String(message || '').replace(/\s+/g, ' ').trim().slice(0, 140));
+      await this.ctx.storage.put('che_runtime_last_mission_key', missionKey);
+      await this.ctx.storage.put('che_runtime_last_request', ownerRequest.slice(0, 16000));
+      await this.ctx.storage.put('che_runtime_last_request_summary', ownerRequest.replace(/\s+/g, ' ').trim().slice(0, 140));
     }
     return started;
   }
