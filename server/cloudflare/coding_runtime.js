@@ -167,7 +167,7 @@ export class CheCodingRuntime {
     try {
       const parsed = JSON.parse(decodeBase64Utf8(found.data?.content));
       if (parsed?.session_id !== id) throw new Error('session mismatch');
-      if (parsed.status === 'complete' && parsed.state === 'running') parsed.state = 'complete';
+      if (parsed.state === 'running' && (parsed.status === 'complete' || (typeof parsed.progress === 'number' && Number.isFinite(parsed.progress) && parsed.progress >= 100))) parsed.state = 'complete';
       return { status: 200, runtime: 'opencode', ...parsed };
     } catch (_) {
       return { status: 502, detail: 'OpenCode runtime result is not valid compact JSON.' };

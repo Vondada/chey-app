@@ -4,7 +4,7 @@
 // (or stops cleanly with the right failure class) without owner homework.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { packEvidence, prepareSelfUpdate, focusView } from './self_development.js';
+import { applyEdits, packEvidence, prepareSelfUpdate, focusView } from './self_development.js';
 import {
   AgentBudget, FAILURE_CLASS, classifyFailure, isEvidenceRequest, ownerEngineeringMessage,
   stripOwnerHomework, strategyFingerprint, backoffMs, idempotencyKey,
@@ -12,6 +12,7 @@ import {
 import { dartStaticCheck, staticRegression, jsStaticCheck } from './dart_check.js';
 import { mergeSelfUpdatePr, openSelfUpdatePr, selfUpdateStatus, updateBranchName, validateUpdateFiles, workerDeploymentStatus } from './self_update.js';
 import { fitToBudget, resetRouterForTests, routeText, routedEnv } from './ai_router.js';
+import { _clearCodeIndexCache, cachedCodeIndex } from './code_index.js';
 
 const HOMEWORK = /(?:provide|send|paste|share|copy)\s+(?:me\s+)?(?:the\s+)?(?:source|code|file|filename|exact text|line)|source (?:code )?(?:was|is) not provided|cannot inspect|tell me the file|token|stack trace|retry trace|\b429\b|\b503\b/i;
 
@@ -253,6 +254,119 @@ test('nonexistent, protected, missing-anchor, ambiguous and identical edits each
   assert.equal(out.status, 200, out.detail);
   const outcomes = out.diagnostics.outcomes.map((o) => o.outcome);
   for (const expected of ['nonexistent_path', 'protected_path', 'missing_anchor', 'no_diff', 'ambiguous_anchor']) assert.ok(outcomes.includes(expected), expected);
+});
+
+test('live missing-anchor failure refreshes exact-head source before the next engineer and recovery architect', async () => {
+  let calls = 0;
+  let recoveries = 0;
+  const readLog = [];
+  const current = MAIN.replace('Ready. Type or speak a request.', 'Current ready banner.');
+  const bad = { summary: 'stale banner', edits: [{ path: 'lib/main.dart', find: "'Old ready banner.'", replace: "'Ready when you are.'" }] };
+  const ai = scriptedAI({
+    recovery: (input) => {
+      recoveries += 1;
+      const p = payloadOf(input);
+      assert.equal(p.repository_sha, 'sha2');
+      assert.ok(p.inspected.some((f) => f.source.includes('Current ready banner.')));
+      assert.ok(!p.inspected.some((f) => f.source.includes('Type or speak a request.')));
+      return json({ plan: 'use current _statusBanner', paths: ['lib/main.dart'], search_terms: ['_statusBanner'] });
+    },
+    engineer: (input) => {
+      calls += 1;
+      if (calls <= 2) return json(bad);
+      const p = payloadOf(input);
+      assert.equal(p.repository_sha, 'sha2');
+      assert.ok(readLog.some((r) => r.ref === 'sha2' && r.path === 'lib/main.dart'));
+      assert.ok(p.failed_anchors.length > 0);
+      assert.ok(p.inspected.some((f) => f.source.includes('Current ready banner.')));
+      return json({ summary: 'Current banner', edits: [{ path: 'lib/main.dart', find: "'Current ready banner.'", replace: "'Ready when you are.'" }] });
+    },
+  });
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub({ heads: ['sha1', 'sha2'], filesAt: { sha1: { 'lib/main.dart': MAIN }, sha2: { 'lib/main.dart': current } }, readLog }), memoryStore());
+  assert.equal(out.status, 200, out.detail);
+  assert.ok(recoveries > 0);
+  assert.equal(out.proposal.expected_base_sha, 'sha2');
+  assert.equal(out.proposal.base_files['lib/main.dart'], 'blob-sha2-lib/main.dart');
+  assert.ok(out.proposal.files[0].content.includes('Ready when you are.'));
+  assert.equal(out.validation.deterministic, 'passed');
+  assert.ok(out.review.every((r) => r.approved));
+  assertNoHomework(out);
+});
+
+test('anchor recovery bypasses and replaces cached source, including same-SHA search evidence', async () => {
+  _clearCodeIndexCache();
+  const mem = memoryStore();
+  const sha = 'cached-anchor-recovery';
+  mem.m.set('codeidx_meta', { sha, chunks: 1 });
+  mem.m.set('codeidx:0', [['lib/main.dart', MAIN.replace('Ready. Type or speak a request.', 'Obsolete evidence.'), 'obsolete-blob']]);
+  let calls = 0;
+  const ai = scriptedAI({ engineer: (input) => {
+    if (++calls <= 2) return json({ summary: 'bad anchor', edits: [{ path: 'lib/main.dart', find: 'No such banner', replace: 'Hi' }] });
+    assert.ok(payloadOf(input).inspected.some((f) => f.source.includes('Type or speak a request.')));
+    assert.deepEqual(cachedCodeIndex(sha).search('Obsolete evidence'), []);
+    return json(GOOD_EDIT);
+  } });
+  try {
+    const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub({ heads: [sha] }), mem);
+    assert.equal(out.status, 200, out.detail);
+    assert.equal(out.proposal.base_files['lib/main.dart'], `blob-${sha}-lib/main.dart`);
+  } finally { _clearCodeIndexCache(); }
+});
+
+test('source refresh outage checkpoints zero genuine passes and resumes without reusing the failed anchor', async () => {
+  let calls = 0;
+  let sourceReads = 0;
+  let outage = true;
+  const github = fakeGitHub();
+  const fetcher = async (url, init) => {
+    if (String(url).includes('/contents/lib/main.dart?ref=sha1') && ++sourceReads > 1 && outage) return { ok: false, status: 503, json: async () => ({}) };
+    return github(url, init);
+  };
+  const ai = scriptedAI({ engineer: () => ++calls <= 2 ? json({ edits: [{ path: 'lib/main.dart', find: 'obsolete source', replace: 'Hi' }] }) : json(GOOD_EDIT) });
+  const first = await prepareSelfUpdate(env(ai), 'change the home status wording', fetcher, memoryStore());
+  assert.equal(first.status, 503, first.detail);
+  assert.equal(first.checkpoint.genuine_passes, 0);
+  assert.ok(first.checkpoint.failed_anchors.length > 0);
+  assert.ok(first.checkpoint.files.includes('lib/main.dart'));
+  outage = false;
+  const resumed = await prepareSelfUpdate(env(ai), 'change the home status wording', fetcher, memoryStore(), { checkpoint: first.checkpoint });
+  assert.equal(resumed.status, 200, resumed.detail);
+});
+
+test('four rounds of invalid anchors never consume genuine passes; changing replacement cannot reuse an anchor', async () => {
+  let calls = 0;
+  const readLog = [];
+  const ai = scriptedAI({ engineer: () => {
+    const round = Math.floor(calls++ / 2);
+    if (round < 4) return json({ summary: 'invalid', edits: [{ path: 'lib/main.dart', find: round === 0 ? 'String' : 'stale banner', replace: `different replacement ${round}` }] });
+    return json(GOOD_EDIT);
+  } });
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub({ readLog }), memoryStore());
+  assert.equal(out.status, 200, out.detail);
+  assert.ok(out.diagnostics.outcomes.some((o) => o.outcome === 'ambiguous_anchor'));
+  assert.ok(out.diagnostics.outcomes.some((o) => o.outcome === 'missing_anchor'));
+  assert.ok(out.diagnostics.outcomes.some((o) => o.outcome === 'duplicate_anchor'));
+  assert.ok(readLog.filter((r) => r.path === 'lib/main.dart').length >= 5);
+  assert.equal(calls, 10, 'stays inside the existing engineer call ceiling');
+});
+
+test('endlessly invalid anchors stop at the existing budget with zero genuine implementation passes', async () => {
+  let calls = 0;
+  const ai = scriptedAI({ engineer: () => json({ summary: 'invalid', edits: [{ path: 'lib/main.dart', find: `missing-${calls++}`, replace: 'replacement' }] }) });
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore());
+  assert.equal(out.status, 422);
+  assert.equal(calls, 10);
+  assert.match(out.detail, /engineering budget after 0 implementation passes/);
+  assert.doesNotMatch(out.owner_message, /3 implementation passes/);
+  assert.ok(out.engineering_record.failed_anchors.length > 0);
+});
+
+test('overlapping exact matches are ambiguous and whitespace rebasing requires a unique real source span', () => {
+  assert.ok(applyEdits(new Map([['lib/a.dart', 'aaa']]), [{ path: 'lib/a.dart', find: 'aa', replace: 'b' }]).error);
+  const source = 'class A {\n  String banner = \'Ready\';\n}\n';
+  const rebased = applyEdits(new Map([['lib/a.dart', source]]), [{ path: 'lib/a.dart', find: "String banner = 'Ready';", replace: "  String banner = 'Hi';" }]);
+  assert.equal(rebased.error, undefined);
+  assert.ok(rebased.sources.get('lib/a.dart').includes("'Hi'"));
 });
 
 test('deterministic validation rejects a broken edit before any reviewer is paid', async () => {

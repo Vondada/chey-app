@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { _clearCodeIndexCache, buildCodeIndex, loadCodeIndex, parseTar } from './code_index.js';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 // A real GitHub-style tarball of this repository (top folder + pax header).
-const TARBALL = execSync('git archive --format=tar.gz --prefix=Vondada-chey-app-abc1234/ HEAD', { cwd: ROOT, maxBuffer: 64 * 1024 * 1024 });
+const TARBALL = execSync('git -c core.autocrlf=false archive --format=tar.gz --prefix=Vondada-chey-app-abc1234/ HEAD', { cwd: ROOT, maxBuffer: 64 * 1024 * 1024 });
 const HEAD_SHA = execSync('git rev-parse HEAD', { cwd: ROOT }).toString().trim();
 const ENV = { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' };
 

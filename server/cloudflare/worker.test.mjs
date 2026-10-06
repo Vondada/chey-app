@@ -1286,7 +1286,7 @@ test('a failed new job never hides a reviewed change that is still waiting (no c
     const res = await dispatchChange(env, { request: 'Update your code: make the War Room central table pulse gently.' }, memory, {});
     const body = await res.json();
     assert.equal(res.status, 422);
-    assert.match(body.detail, /edits did not match the current source/);
+    assert.match(body.detail, /engineering budget after 0 implementation passes/);
     assert.match(body.detail, /earlier reviewed change \(War Room table pulse\) is still waiting/);
     assert.equal(memory.m.get('che_failed_engineering').root_cause, 'edit_anchor');
   } finally {

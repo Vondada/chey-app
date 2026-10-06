@@ -2637,6 +2637,7 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
           ...(record ? {
             failed_strategies: [...(priorFailure.failed_strategies || []), ...(record.failed_strategies || [])].slice(-16),
             fingerprints: [...new Set([...(priorFailure.fingerprints || []), ...(record.fingerprints || [])])].slice(-40),
+            failed_anchors: [...new Set([...(priorFailure.failed_anchors || []), ...(record.failed_anchors || [])])].slice(-30),
             outcomes: [...(priorFailure.outcomes || []), ...(record.outcomes || [])].slice(-40),
             root_cause: record.root_cause,
             diagnosis: record.diagnosis,
