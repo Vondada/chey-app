@@ -6134,7 +6134,7 @@ export class CheState extends DurableObject {
         const turnActionPolicy = currentTurnActionPolicy(message);
         const chatOnlyEvaluation = turnActionPolicy.terminalChatOnly;
 
-        if (!chatOnlyEvaluation && repositoryInspectionIntent(message)) {
+        if (repositoryInspectionIntent(message)) {
           if (!ownerDevice) return ownerOnly();
           const inspected = await inspectRepositoryContext(this.env, message, fetch, { trace: true });
           if (!inspected.ok) return ndjsonReply(`I could not verify the current repository source, sir. ${inspected.detail}`, { source: 'che_repository_inspection', ok: false });

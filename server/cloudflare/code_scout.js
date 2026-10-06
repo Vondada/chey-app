@@ -165,8 +165,9 @@ export function repositoryImplementationIntent(message) {
 
 export function repositoryInspectionIntent(message) {
   const text = withoutQuotedText(String(message || '').trim());
-  return /\b(?:your|che(?:'s)?)\s+(?:current\s+)?(?:repo(?:sitory)?|codebase|source|code)\b/i.test(text)
-    && /\b(?:inspect|find|locate|trace|show|identify)\b/i.test(text)
+  if (/\b(?:do\s+not|don['’]t|never)\s+(?:access|inspect|read|fetch|use)\b[^.!?\n]{0,60}\b(?:repo(?:sitory)?|source|code)\b/i.test(text)) return false;
+  return /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+|(?:can|could|will)\s+you\s+)?(?:inspect|find|locate|trace|show|identify)\b/i.test(text)
+    && /\b(?:your|che(?:'s)?)\s+(?:current\s+)?(?:repo(?:sitory)?|codebase|source|code)\b/i.test(text)
     && !repositoryImplementationIntent(text);
 }
 

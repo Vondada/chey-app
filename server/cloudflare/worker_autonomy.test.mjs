@@ -218,6 +218,12 @@ test('owner capability test: repository discovery reads exact source without dis
     assert.ok(calls.some((c) => c.url.includes('/contents/')));
     assert.ok(calls.every((c) => c.method === 'GET'));
     assert.ok(!(saved.get('che').jobs || []).length);
+    const prohibitedMutation = replyFromNdjson(await (await chat('CHE, inspect your current repository and find the War Room files; do not make any code changes.')).text());
+    assert.match(prohibitedMutation, /lib\/agents\/che_war_room_screen\.dart/);
+    assert.match(prohibitedMutation, /sha1/);
+    assert.equal(aiCalls, 0);
+    assert.ok(calls.every((c) => c.method === 'GET'));
+    assert.ok(!(saved.get('che').jobs || []).length);
   } finally { globalThis.fetch = original; }
 });
 

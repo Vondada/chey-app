@@ -27,7 +27,10 @@ export function codingRuntimeEnabled(env = {}) {
 export function ownerRequiresMergeApproval(request) {
   const text = String(request || '');
   return /\b(?:do\s+not|don['’]t|never|must\s+not)\s+(?:automatically\s+)?(?:merge|ship|deploy)\b/i.test(text)
-    || /\b(?:merge|ship|deploy)\b[^.!?\n]{0,80}\b(?:only\s+(?:after|with)|without|await|wait\s+for)\b[^.!?\n]{0,50}\b(?:authoriz\w*|approv\w*|permission|confirmation)\b/i.test(text);
+    || /\b(?:merge|ship|deploy)\b[^.!?\n]{0,80}\b(?:only\s+(?:after|with)|without|await|wait\s+for)\b[^.!?\n]{0,50}\b(?:authoriz\w*|approv\w*|permission|confirmation)\b/i.test(text)
+    || /\b(?:wait|stop|hold)\b[^.!?\n]{0,120}\b(?:merg(?:e|ing)|ship(?:ping)?|deploy(?:ing)?)\b/i.test(text)
+    || /\b(?:approv\w*|authoriz\w*|permission|confirmation)\b[^.!?\n]{0,80}\b(?:before|prior\s+to)\s+(?:merg(?:e|ing)|ship(?:ping)?|deploy(?:ing)?)\b/i.test(text)
+    || /\b(?:unmerged|pr[- ]only|pull[- ]request[- ]only)\b/i.test(text);
 }
 
 function repoOf(env) {

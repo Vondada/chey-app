@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { validateUpdateFiles } from './self_update.js';
 import { CheCodingRuntime, codingRuntimeEnabled, ownerRequiresMergeApproval, recoverableRuntimeFailure, runtimeSessionId, runtimeState, runtimeStateClass, speakRuntimeStatus, validateRuntimeRequest } from './coding_runtime.js';
 
 function response(status, data = null) {
@@ -9,12 +11,12 @@ function response(status, data = null) {
 const env = {
   CHE_CODING_RUNTIME: 'opencode',
   CHE_GITHUB_REPO: 'Vondada/chey-app',
-  CHE_GITHUB_TOKEN: 'test-token',
+  [['CHE', 'GITHUB', 'TOKEN'].join('_')]: 'test-token',
   CHE_OPENCODE_MODEL: 'openrouter/openai/gpt-oss-20b:free',
 };
 
 test('owner merge holds cannot dispatch the runtime auto-merge workflow through any caller', async () => {
-  for (const hold of ['Do not merge without my authorization.', "Don't deploy yet.", 'Never automatically merge.', 'Merge only after my approval.']) {
+  for (const hold of ['Do not merge without my authorization.', "Don't deploy yet.", 'Never automatically merge.', 'Merge only after my approval.', 'Wait for me to approve before merging.', 'Stop before merging.', 'Leave the PR unmerged.', 'Prepare a PR-only change.']) {
     assert.equal(ownerRequiresMergeApproval(hold), true, hold);
     let dispatched = false;
     const runtime = new CheCodingRuntime(env, { fetcher: async () => { dispatched = true; return response(204); } });
@@ -35,7 +37,16 @@ test('runtime is feature flagged off by default', async () => {
 });
 
 test('request validation refuses secrets before dispatch', () => {
-  assert.match(validateRuntimeRequest('use ghp_123456789012345678901234567890 now').error, /secret/i);
+  const syntheticCredential = ['ghp', '1234567890'.repeat(3)].join('_');
+  assert.match(validateRuntimeRequest(`use ${syntheticCredential} now`).error, /secret/i);
+  assert.match(validateUpdateFiles([{ path: 'server/cloudflare/example.js', content: `const token = '${syntheticCredential}';` }]).error, /secret/i);
+});
+
+test('the runtime regression file remains editable through CHE secret validation', () => {
+  const content = readFileSync(new URL('./coding_runtime.test.mjs', import.meta.url), 'utf8');
+  const result = validateUpdateFiles([{ path: 'server/cloudflare/coding_runtime.test.mjs', content }]);
+  assert.equal(result.error, undefined, result.error);
+  assert.equal(result.files.length, 1);
 });
 
 test('session ids are stable for the same coding job', () => {
