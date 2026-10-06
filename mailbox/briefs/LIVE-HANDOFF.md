@@ -40,26 +40,13 @@ Then, on GitHub:
 
 ---
 
-## 2. Current position (updated by: Copilot, 2026-10-06 19:21 UTC)
+## 2. Current position (updated by: Codex, 2026-10-06)
 
-**Current task: fix failing Actions job #37517098888 / PR #210.** The Cloudflare test `getStatus normalizes a completed result that still reports running` failed because the lifecycle classifier returned `unknown` for canonical `complete`. On branch `copilot/fix-github-actions-job-yet-again`, commit `c827290` normalizes that stale state to `complete` and classifies it as terminal. Added the regression test. `cd server/cloudflare && npm test`: 659/659 pass; parallel validation: no review findings and 0 CodeQL alerts. **Next:** check the new branch's Actions run; investigate/fix any remaining failures. No code changes are pending.
+**Owner's current-source autonomous coding repair is merged: PR #222.** Final tested PR head `8508fbd4df80cacb84eaf7ac56671a18b63da865`; main merge `79b7f783c722f432d36af12a0940afea6c9654a1` with `[worker-deploy]`. Invalid/stale anchors no longer consume genuine passes; affected source/cache/tree/graph is refreshed at current exact SHA, failed anchors cannot repeat, safe whitespace rebasing preserves literals, and recovery keeps the same checkpoint/job under existing bounds. Canonical progress>=100 normalization uses `complete` (PR #215's unsupported `completed` should not be merged). PR #216's three CI failures were audited; current main's existing repairs are retained. A reproducible request-ID collision and Windows discovery-test portability were also fixed.
 
-**Merged to main 2026-10-05** (each Worker change carried `[worker-deploy]`; Deploy CHE Worker runs succeeded):
+**Proof:** Worker 671/671, Flutter 215/215, analyzer clean. Exact-head Actions runs [37544218475](https://github.com/Vondada/chey-app/actions/runs/37544218475) and [37544218531](https://github.com/Vondada/chey-app/actions/runs/37544218531) succeeded before merge. [Deploy CHE Worker 37544681309](https://github.com/Vondada/chey-app/actions/runs/37544681309) succeeded: tagged code upload version `422d9cd1-eace-4de7-95ac-9711cf2c0cec` followed by successful secret sync. Three live `/health` reads HTTP200 report new version `edb196d9-5f92-4bab-ae5a-1be364f76663`. Secret sync creates a successor version with empty tag, so live SHA attribution uses workflow sequence rather than tag comparison. Existing non-required Cloudflare Builds preview failure persists; established fallback deployed successfully.
 
-| PR | Merge SHA | What | Deploy run |
-|---|---|---|---|
-| #202 | 8aa8fcf | Free engines only; CHE never talks about engines | #127 success |
-| #198 | 08e9291 | Chat-only turns isolated from coding jobs; legacy /api/project/create returns 409 for chat-only | #128 success |
-| #194 | 13cc892 | Resource finder: curated GitHub lists searched without AI; "open number N" opens the link | #129 started (check it) |
-
-#199 and #201 (Copilot import fixes stacked on #198) were closed as superseded.
-
-**Open: PR #203** `claude/che-cognitive-loop` (head 8d097bb): mission loop on the existing objective graph. It adds mutation, bounded auto-recovery by failure kind, mission events, safe file lanes, zero-call known steps, 70% condensation, and "mission status" by voice. `npm test` passes 646/646. A self code review found 8 issues; all are fixed with tests.
-- **Next:** wait for CI on #203, then merge only with the owner's go-ahead, then check its deploy.
-- **Not done:** A20 as a real production run; wrapping chat coding requests in a mission graph.
-
-**Not verified:** production `/health`. The sandbox proxy blocks workers.dev.
-**Codex:** at its review usage limit as of 2026-10-05 22:10 UTC.
+**Next:** owner can rerun the autonomy test. The deterministic saved-job regression completed automatically with an applicable reviewed patch. No live autonomy exam was initiated in this session and no production five-level score is claimed. No repair code is pending. Preserve unrelated queue below; verify GitHub before continuing older work.
 
 ## 3. Queue: the owner's open requests, in order
 
