@@ -534,10 +534,16 @@ test('coding status reports a newer OpenCode session over an older queued built-
   saved.set('che', data);
   saved.set('che_runtime_last_session', 'ocr-1234abcd');
   saved.set('che_runtime_last_session_at', new Date().toISOString());
+  saved.set('che_runtime_last_request_summary', 'Get the newest CHE IPA onto my iPhone');
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url, init) => String(url).includes('/contents/') ? new Response('{}', { status: 404 }) : realFetch(url, init);
   try {
-    assert.match(await textOf(await chat('coding status')), /OpenCode runner/);
+    const status = await textOf(await chat('coding status'));
+    assert.match(status, /Get the newest CHE IPA onto my iPhone/);
+    assert.match(status, /OpenCode runner/);
+    assert.doesNotMatch(status, /old-builtin/);
+    assert.match(await textOf(await chat('What happened to my coding job?')), /Get the newest CHE IPA onto my iPhone/);
+    assert.match(await textOf(await chat('check the coding logs')), /Get the newest CHE IPA onto my iPhone/);
     saved.set('che_runtime_last_session_at', new Date(Date.now() - 600_000).toISOString());
     assert.match(await textOf(await chat('coding status')), /latest coding job is queued/);
   } finally {
