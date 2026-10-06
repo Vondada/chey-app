@@ -559,6 +559,7 @@ test('terminal OpenCode failure automatically falls back to the same durable cod
   saved.set('che_runtime_last_session', 'ocr-1234abcd');
   saved.set('che_runtime_last_session_at', new Date().toISOString());
   saved.set('che_runtime_last_request_summary', 'Fix coding status state reporting');
+  saved.set('che_runtime_last_request', 'Fix coding status state reporting and preserve the full original owner request beyond the spoken summary.');
   const original = globalThis.fetch;
   globalThis.fetch = async (url, init = {}) => {
     const path = String(url).replace('https://api.github.com/repos/o/r', '');
@@ -604,7 +605,7 @@ test('persisted legacy blocked OpenCode failure migrates to durable recovery onc
     assert.match(first, /automatically moved the same coding job to my recovery queue/i);
     let jobs = saved.get('che').jobs.filter((j) => j.kind === 'self_development');
     assert.equal(jobs.length, 1);
-    assert.equal(jobs[0].request, 'Fix coding status state reporting');
+    assert.match(jobs[0].request, /preserve the full original owner request beyond the spoken summary/);
     const second = await textOf(await chat('coding status'));
     assert.match(second, /latest coding job is queued/i);
     jobs = saved.get('che').jobs.filter((j) => j.kind === 'self_development');
