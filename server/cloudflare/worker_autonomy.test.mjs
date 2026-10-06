@@ -216,6 +216,7 @@ test('owner capability test: repository discovery reads exact source without dis
     assert.match(text, /sha1/);
     assert.equal(aiCalls, 0);
     assert.ok(calls.some((c) => c.url.includes('/contents/')));
+    assert.ok(!calls.some((c) => c.url.includes('/search/code')), 'when the pinned archive is unavailable, unpinned GitHub search cannot supply graph evidence');
     assert.ok(calls.every((c) => c.method === 'GET'));
     assert.ok(!(saved.get('che').jobs || []).length);
     const prohibitedMutation = replyFromNdjson(await (await chat('CHE, inspect your current repository and find the War Room files; do not make any code changes.')).text());

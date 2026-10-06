@@ -16,7 +16,7 @@ const env = {
 };
 
 test('owner merge holds cannot dispatch the runtime auto-merge workflow through any caller', async () => {
-  for (const hold of ['Do not merge without my authorization.', "Don't deploy yet.", 'Never automatically merge.', 'Merge only after my approval.', 'Wait for me to approve before merging.', 'Stop before merging.', 'Leave the PR unmerged.', 'Prepare a PR-only change.', 'Prepare a draft PR.', 'Prepare a PR but no merge.', 'Open a PR and leave merging to me.', 'I will merge it.', 'Merge only when I say so.']) {
+  for (const hold of ['Do not merge without my authorization.', "Don't deploy yet.", 'Never automatically merge.', 'Merge only after my approval.', 'Wait for me to approve before merging.', 'Stop before merging.', 'Leave the PR unmerged.', 'Prepare a PR-only change.', 'Prepare a draft PR.', 'Prepare a PR but no merge.', 'Open a PR and leave merging to me.', 'I will merge it.', 'Merge only when I say so.', "Implement the fix, but don't auto-merge it.", 'Do not auto merge it.', "I'll merge it myself."]) {
     assert.equal(ownerRequiresMergeApproval(hold), true, hold);
     let dispatched = false;
     const runtime = new CheCodingRuntime(env, { fetcher: async () => { dispatched = true; return response(204); } });
@@ -34,6 +34,18 @@ test('runtime is feature flagged off by default', async () => {
   const out = await runtime.createSession({ ownerRequest: 'Fix the voice bug safely.', baseSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', targetBranch: 'che/test' });
   assert.equal(out.disabled, true);
   assert.equal(called, false);
+});
+
+test('explicit merge authorization survives PR preparation wording; a simultaneous prohibition still wins', async () => {
+  for (const request of ['Open a PR and merge it after tests pass.', 'Prepare a PR. Merge it after tests pass.', 'Create a pull request, then ship it after CI.']) {
+    assert.equal(ownerRequiresMergeApproval(request), false, request);
+    let dispatched = false;
+    const runtime = new CheCodingRuntime(env, { fetcher: async () => { dispatched = true; return response(204); } });
+    const out = await runtime.createSession({ ownerRequest: request, baseSha: 'a'.repeat(40), targetBranch: 'che/auto/test' });
+    assert.equal(out.status, 202);
+    assert.equal(dispatched, true);
+  }
+  assert.equal(ownerRequiresMergeApproval('Open a PR and merge it after tests pass, but do not merge without my authorization.'), true);
 });
 
 test('request validation refuses secrets before dispatch', () => {
