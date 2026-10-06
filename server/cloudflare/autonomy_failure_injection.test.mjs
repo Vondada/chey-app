@@ -54,7 +54,10 @@ function fakeGitHub({
       refReads += 1;
       return ok({ object: { sha } });
     }
-    if (u.includes('/git/trees/')) return ok({ tree: Object.keys(files).map((path) => ({ type: 'blob', path })) });
+    if (u.includes('/git/trees/')) {
+      const sha = /\/git\/trees\/([^?]+)/.exec(u)?.[1];
+      return ok({ tree: Object.keys(filesAt?.[sha] || files).map((path) => ({ type: 'blob', path })) });
+    }
     const m = /\/contents\/(.+)\?ref=(.+)$/.exec(u);
     if (m) {
       const path = m[1];
@@ -291,6 +294,22 @@ test('live missing-anchor failure refreshes exact-head source before the next en
   assert.equal(out.validation.deterministic, 'passed');
   assert.ok(out.review.every((r) => r.approved));
   assertNoHomework(out);
+});
+
+test('a target moved to a new file is rediscovered from the current tree and graph after anchor failure', async () => {
+  let calls = 0;
+  const ai = scriptedAI({ engineer: (input) => {
+    if (++calls <= 2) return json({ edits: [{ path: 'lib/main.dart', find: 'obsolete banner', replace: 'Hi' }] });
+    const p = payloadOf(input);
+    assert.equal(p.repository_sha, 'sha2');
+    assert.ok(p.inspected.some((f) => f.path === 'lib/home.dart' && f.source.includes('_statusBanner')));
+    assert.ok(!p.inspected.some((f) => f.path === 'lib/main.dart' && f.source.includes('_statusBanner')));
+    return json({ ...GOOD_EDIT, edits: GOOD_EDIT.edits.map((e) => ({ ...e, path: 'lib/home.dart' })) });
+  } });
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub({ heads: ['sha1', 'sha2'], filesAt: { sha1: { 'lib/main.dart': MAIN }, sha2: { 'lib/main.dart': "import 'home.dart';\nvoid main() { Home(); }\n", 'lib/home.dart': MAIN } } }), memoryStore());
+  assert.equal(out.status, 200, out.detail);
+  assert.deepEqual(out.proposal.files.map((f) => f.path), ['lib/home.dart']);
+  assert.equal(out.proposal.expected_base_sha, 'sha2');
 });
 
 test('anchor recovery bypasses and replaces cached source, including same-SHA search evidence', async () => {

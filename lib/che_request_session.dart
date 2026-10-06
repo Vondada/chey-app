@@ -21,6 +21,7 @@ class CheRequestSession {
 }
 
 class CheRequestGate {
+  static int _nextRequest = 0;
   CheRequestSession? _current;
 
   CheRequestSession get current {
@@ -49,5 +50,5 @@ class CheRequestGate {
 
   void cancelCurrent() => _current?.cancel();
 
-  String _newId() => 'req_${DateTime.now().microsecondsSinceEpoch}';
+  String _newId() => 'req_${DateTime.now().microsecondsSinceEpoch}_${_nextRequest++}';
 }

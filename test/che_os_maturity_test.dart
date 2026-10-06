@@ -17,6 +17,19 @@ void main() {
     expect(gate.acceptLate(second.requestId), isTrue);
   });
 
+  test('rapid requests never accept an obsolete answer', () {
+    final gate = CheRequestGate();
+    final requests = List.generate(1000, (_) => gate.begin());
+    expect(requests.map((r) => r.requestId).toSet(), hasLength(1000));
+    for (final previous in requests.take(999)) {
+      expect(gate.acceptLate(previous.requestId), isFalse);
+      gate.complete(previous.requestId, 'obsolete');
+    }
+    expect(gate.current.visibleText, isEmpty);
+    gate.complete(requests.last.requestId, 'current');
+    expect(gate.current.visibleText, 'current');
+  });
+
   test('owner chat never shows raw engine dumps', () {
     final error = CheOwnerError.fromRaw(
       'All AI engines failed (Groq 404 llama-3.3-70b-versatile | Pollinations ENOSPC no space left)',
