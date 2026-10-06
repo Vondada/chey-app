@@ -388,9 +388,12 @@ test('endlessly invalid anchors stop at the existing budget with zero genuine im
 test('overlapping exact matches are ambiguous and whitespace rebasing requires a unique real source span', () => {
   assert.ok(applyEdits(new Map([['lib/a.dart', 'aaa']]), [{ path: 'lib/a.dart', find: 'aa', replace: 'b' }]).error);
   const source = 'class A {\n  String banner = \'Ready\';\n}\n';
-  const rebased = applyEdits(new Map([['lib/a.dart', source]]), [{ path: 'lib/a.dart', find: "String banner = 'Ready';", replace: "  String banner = 'Hi';" }]);
+  const rebased = applyEdits(new Map([['lib/a.dart', source]]), [{ path: 'lib/a.dart', find: "    String banner = 'Ready';", replace: "  String banner = 'Hi';" }]);
   assert.equal(rebased.error, undefined);
   assert.ok(rebased.sources.get('lib/a.dart').includes("'Hi'"));
+  assert.equal(rebased.sources.get('lib/a.dart'), "class A {\n  String banner = 'Hi';\n}\n");
+  const differentLiteral = source.replace("'Ready'", "'Ready  now'");
+  assert.ok(applyEdits(new Map([['lib/a.dart', differentLiteral]]), [{ path: 'lib/a.dart', find: "String banner = 'Ready now';", replace: "String banner = 'Hi';" }]).error, 'literal whitespace must never be guessed away');
 });
 
 test('deterministic validation rejects a broken edit before any reviewer is paid', async () => {

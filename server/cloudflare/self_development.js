@@ -1277,7 +1277,8 @@ export function fallbackTreeCandidates(request, index, terms = [], limit = 6) {
     .map((item) => item.path);
 }
 
-const looseLine = (line) => String(line).trim().replace(/\s+/g, ' ');
+// Re-indentation is safe; whitespace inside strings or expressions is source.
+const looseLine = (line) => String(line).trim();
 
 // The unique run of lines equal to `find` once whitespace is normalized
 // (indentation, trailing spaces, tabs). Models often re-indent a correct
