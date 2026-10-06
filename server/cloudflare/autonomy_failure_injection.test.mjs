@@ -691,6 +691,7 @@ test('malformed-only zero-pass engine output stays retryable with the same check
   assert.equal(out.checkpoint.genuine_passes, 0);
   assert.equal(out.checkpoint.resumes, 1);
   assert.match(out.detail, /retries later/i);
+  assert.match(out.detail, /malformed answers/);
   assert.ok(out.diagnostics.outcomes.every((o) => o.outcome === 'invalid_json'));
 });
 
@@ -832,15 +833,17 @@ test('control plane: engines going empty after a genuine pass checkpoint the SAM
   assert.notEqual(capped.failure_class, FAILURE_CLASS.TEMPORARY_EXTERNAL);
 });
 
-test('review: a model that always returns cut-off JSON is an honest final failure, not an outage retried four times', async () => {
+test('review: a model that always returns cut-off JSON is retryable before any implementation pass', async () => {
   const ai = scriptedAI({ engineer: () => ({ response: '{"summary":"x","edits":[{"path":"lib/main.dart","find":"Ready' }) });
   const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore());
-  assert.equal(out.status, 422);
-  assert.equal(out.failure_class, FAILURE_CLASS.INTERNAL);
+  assert.equal(out.status, 503);
+  assert.equal(out.failure_class, FAILURE_CLASS.TEMPORARY_EXTERNAL);
+  assert.equal(out.retryable, true);
+  assert.equal(out.engines_unusable, true);
   assert.ok(out.diagnostics.outcomes.every((o) => o.outcome === 'invalid_json'));
 });
 
-test('review: a re-request that cannot run keeps the real format failure (not "engines down")', async () => {
+test('review: a re-request outage stays retryable when malformed output came before any implementation pass', async () => {
   const ai = scriptedAI({
     engineer: (input) => {
       if (input.che_avoid_providers) { const e = new Error('all engines resting'); e.category = 'temporary_cloud_unavailable'; throw e; }
@@ -849,7 +852,10 @@ test('review: a re-request that cannot run keeps the real format failure (not "e
   });
   const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore());
   assert.ok(out.diagnostics.outcomes.every((o) => o.outcome === 'invalid_json'), JSON.stringify(out.diagnostics.outcomes));
-  assert.equal(out.failure_class, FAILURE_CLASS.INTERNAL);
+  assert.equal(out.status, 503);
+  assert.equal(out.failure_class, FAILURE_CLASS.TEMPORARY_EXTERNAL);
+  assert.equal(out.retryable, true);
+  assert.equal(out.engines_unusable, true);
 });
 
 test('review: hitting the engineering budget is reported as a budget stop, never "engines failed" or "exhausted"', async () => {

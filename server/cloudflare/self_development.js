@@ -2551,10 +2551,9 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       // before the crew finished its three genuine passes: no strategy was
       // exhausted, so the saved job retries later (bounded by job retries).
       // Engines that gave no usable output make the run temporary only when
-      // no genuine strategy was tried at all (so a retried job never gets
-      // extra strategies) and at least one answer came back empty (a pure
-      // outage is already temporary above). A model that keeps returning
-      // malformed JSON is an honest final failure.
+      // no genuine strategy was tried at all, so a retried job never gets
+      // extra strategies. Empty, malformed, and unavailable-provider answers
+      // all qualify.
       const enginesUnusable = enginesFailed && genuinePasses === 0
         && outcomes.length > 0
         && outcomes.every((outcome) => ['empty', 'invalid_json', 'provider_unavailable'].includes(outcome));
@@ -2613,7 +2612,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
           ...(enginesUnusable ? { engines_unusable: true } : {}),
           checkpoint: saveCheckpoint(),
           detail: enginesUnusable
-            ? `AI engines returned no usable implementation (empty answers or outages) in ${unproductivePasses} passes; no strategy was tried, nothing was changed and the job retries later.`
+            ? `AI engines returned no usable implementation (empty answers, malformed answers, or outages) in ${unproductivePasses} passes; no strategy was tried, nothing was changed and the job retries later.`
             : 'AI engines were unavailable for implementation or independent review; no unreviewed change was proposed.',
           owner_message: ownerEngineeringMessage(FAILURE_CLASS.TEMPORARY_EXTERNAL),
         });
