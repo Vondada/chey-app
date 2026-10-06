@@ -43,7 +43,13 @@ test('network outage wording never claims an on-phone fallback can finish cloud 
 
 test('internal provider failover is silent in owner chat', () => {
   assert.equal(sanitizeOwnerText("One moment, sir. I'm switching to a backup engine."), '');
-  assert.equal(sanitizeOwnerText('Switching to another provider.'), '');\n  assert.equal(sanitizeOwnerText('The backup model is Gemini.'), 'The backup model is Gemini.');\n});
+  assert.equal(sanitizeOwnerText('Switching to another provider.'), '');
+  assert.equal(sanitizeOwnerText('The backup model is Gemini.'), 'The backup model is Gemini.');
+  assert.equal(
+    sanitizeOwnerText('The backup provider is available, so we can continue.'),
+    'The backup provider is available, so we can continue.',
+  );
+});
 
 test('capacity reserve holds background work before owner chat', () => {
   // Owner policy: engines drain at 70% of their daily budget.

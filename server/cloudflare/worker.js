@@ -7972,7 +7972,11 @@ export class CheState extends DurableObject {
             text: item.ok ? `✓ Used ${item.plugin} · ${item.tool}` : `${item.plugin} · ${item.tool} failed: ${item.error}`,
           })),
         ];
-        // Final owner-facing boundary: keep internal provider/model failover chatter out of chat and TTS.\n        reply = sanitizeOwnerText(reply);\n        // Sentence-sized deltas: the Flutter client paints/speaks the first\n        // sentence as soon as it arrives instead of waiting for one big blob.\n        const deltaLines = splitReplyDeltas(reply).map((delta) => JSON.stringify({ type: 'delta', delta }));
+        // Final owner-facing boundary: keep internal provider/model failover chatter out of chat and TTS.
+        reply = sanitizeOwnerText(reply);
+        // Sentence-sized deltas: the Flutter client paints/speaks the first
+        // sentence as soon as it arrives instead of waiting for one big blob.
+        const deltaLines = splitReplyDeltas(reply).map((delta) => JSON.stringify({ type: 'delta', delta }));
         return new Response(steps.map((item) => JSON.stringify(item)).concat(deltaLines).concat([
           JSON.stringify({
             type: 'done',
