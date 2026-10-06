@@ -41,6 +41,22 @@ test('network outage wording never claims an on-phone fallback can finish cloud 
   assert.doesNotMatch(error.message, /keep going with what I have on this phone/i);
 });
 
+test('internal provider failover is silent in owner chat', () => {
+  assert.equal(sanitizeOwnerText("One moment, sir. I'm switching to a backup engine."), '');
+  assert.equal(sanitizeOwnerText('Switching to another provider.'), '');
+  assert.equal(sanitizeOwnerText('The backup model is Gemini.'), 'The backup model is Gemini.');
+  assert.equal(
+    sanitizeOwnerText('The backup provider is available, so we can continue.'),
+    'The backup provider is available, so we can continue.',
+  );
+});
+
+test('final owner replies can be sanitized without truncation', () => {
+  const reply = 'A complete answer. '.repeat(20);
+  assert.equal(sanitizeOwnerText(reply), reply.slice(0, 280));
+  assert.equal(sanitizeOwnerText(reply, { truncate: false }), reply);
+});
+
 test('capacity reserve holds background work before owner chat', () => {
   // Owner policy: engines drain at 70% of their daily budget.
   assert.equal(capacityMode(69, 100), 'normal');

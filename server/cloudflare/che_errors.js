@@ -86,7 +86,7 @@ export function makeEngineError({
   return error;
 }
 
-export function sanitizeOwnerText(text) {
+export function sanitizeOwnerText(text, { truncate = true } = {}) {
   const raw = String(text || '');
   if (!raw) return ownerFacingMessage('temporary_cloud_unavailable');
   if (/all ai engines failed|enospc|stack trace|<html|pollinations|llm7|401|402|404|429|gsk_|sk-|AIza|Bearer /i.test(raw)
@@ -96,5 +96,10 @@ export function sanitizeOwnerText(text) {
   if (/all ai engines failed|retry limit reached/i.test(raw)) {
     return ownerFacingMessage('temporary_cloud_unavailable');
   }
-  return raw.slice(0, 280);
+  // Provider/model failover is internal recovery state, not owner-facing progress.
+  // Only suppress a standalone switch notice; legitimate discussion of backup models stays visible.
+  if (/^\s*(?:one moment,?\s*(?:sir[,.]?)?\s*)?(?:i(?:'m| am)\s+)?switch(?:ing)? to (?:a )?(?:backup|fallback|different|another) (?:ai )?(?:engine|provider|model)[.!]?\s*$/i.test(raw)) {
+    return '';
+  }
+  return truncate ? raw.slice(0, 280) : raw;
 }
