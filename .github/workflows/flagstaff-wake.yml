@@ -1,0 +1,65 @@
+name: Wake CHE for Flagstaff mail
+
+on:
+  push:
+    branches:
+      - che-mailbox
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flagstaff-wake
+  cancel-in-progress: false
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Read mailbox commit
+        uses: actions/checkout@v4
+        with:
+          ref: che-mailbox
+          fetch-depth: 2
+
+      - name: Find newest mailbox message
+        id: message
+        shell: bash
+        run: |
+          set -euo pipefail
+          file="$(git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" -- 'mailbox/*.jsonl' | head -n 1 || true)"
+          if [ -z "$file" ] || [ ! -f "$file" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          message_id="$(tail -n 1 "$file" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')"
+          if [ -z "$message_id" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "message_id=$message_id" >> "$GITHUB_OUTPUT"
+
+      - name: Wake CHE
+        if: steps.message.outputs.skip != 'true'
+        env:
+          MESSAGE_ID: ${{ steps.message.outputs.message_id }}
+          HEAD_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="$(python3 - <<'PY'
+          import json, os
+          print(json.dumps({
+              "head_sha": os.environ["HEAD_SHA"],
+              "message_id": os.environ["MESSAGE_ID"],
+          }))
+          PY
+          )"
+          curl --fail-with-body --silent --show-error \
+            --retry 2 --retry-delay 1 \
+            -X POST \
+            -H 'Content-Type: application/json' \
+            --data "$body" \
+            https://chey-app.henryjavoni.workers.dev/api/flagstaff/wake
