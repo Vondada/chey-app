@@ -682,6 +682,18 @@ test('2. non-JSON engineer answer is re-requested with the concrete format probl
   assert.ok(hints.slice(2).every((h) => /FORMAT: another engine's answer was unusable\. Your last answer contained no JSON object/.test(h)));
 });
 
+test('malformed-only zero-pass engine output stays retryable with the same checkpoint', async () => {
+  const ai = scriptedAI({ engineer: () => ({ response: 'not json' }) });
+  const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore());
+  assert.equal(out.status, 503, out.detail);
+  assert.equal(out.retryable, true);
+  assert.equal(out.engines_unusable, true);
+  assert.equal(out.checkpoint.genuine_passes, 0);
+  assert.equal(out.checkpoint.resumes, 1);
+  assert.match(out.detail, /retries later/i);
+  assert.ok(out.diagnostics.outcomes.every((o) => o.outcome === 'invalid_json'));
+});
+
 test('3. valid structured answer: no re-request, one engineer call each', async () => {
   let engineerCalls = 0;
   const ai = scriptedAI({ engineer: () => { engineerCalls += 1; return json(GOOD_EDIT); } });
