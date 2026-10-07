@@ -142,7 +142,9 @@ function ownerBuildAuthorization(message) {
   // authorized change, not a new inferred coding request.
   if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:please|now)\s+)?(?:create|open)\s+(?:the\s+)?(?:pr|pull\s+request)\b/i.test(text)
     || /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:please|now)\s+)?(?:merge|ship)\s+(?:it|the\s+(?:pr|pull\s+request|update))\b/i.test(text)
-    || /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:please|now)\s+)?(?:resume|continue|retry|recover|finish)\s+(?:the\s+|my\s+)?(?:previous\s+|last\s+)?(?:authorized\s+)?(?:coding|implementation|self[- ]development)?\s*(?:job|task|work)\b/i.test(text)) return true;
+    || /^(?:(?:che|chay|chey|shay)[,:]?\s*)?update\s+che\b/i.test(text)
+    || /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:please|now)\s+)?(?:resume|continue|retry|recover|finish)\s+(?:the\s+|my\s+)?(?:previous\s+|last\s+)?(?:authorized\s+)?(?:coding|implementation|self[- ]development)?\s*(?:job|task|work)\b/i.test(text)
+    || /\b(?:diagnose\s+and\s+recover|reopen\b[\s\S]{0,80}\band\s+recover|retry|recover)\b[\s\S]{0,100}\b(?:failed\s+)?(?:coding\s+|engineering\s+)?job\b/i.test(text)) return true;
 
   const direct = explicitRepositoryImplementationAuthorization(text)
     || imperativeImplementation(text)
