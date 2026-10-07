@@ -7950,7 +7950,15 @@ export class CheState extends DurableObject {
             let note = '';
             if (guarded.homework) {
               const last = await Promise.resolve().then(() => this.ctx.storage.get(LAST_ENGINEERING_REQUEST_KEY)).catch(() => null);
-              if (last?.request && this.env.CHE_GITHUB_TOKEN && turnActionPolicy.codingJobAllowed) {
+              const lastAt = Date.parse(last?.at || '');
+              const lastAuthorized = Boolean(
+                last?.request
+                && last?.integrate === true
+                && (!Number.isFinite(lastAt) || Date.now() - lastAt < 6 * 3600_000)
+              );
+              const explicitContinuation = /\b(?:what\s+do\s+you\s+need\s+from\s+me|continue|resume|finish|repo\s+upgrade|coding\s+job|engineering\s+job)\b/i.test(message);
+              if (last?.request && this.env.CHE_GITHUB_TOKEN
+                && (turnActionPolicy.codingJobAllowed || (!chatOnlyEvaluation && lastAuthorized && explicitContinuation))) {
                 const queued = await this.queueSelfDevelopment({ request: last.request, groundedRequest: last.request });
                 await recordReceipt(this.ctx.storage, { kind: 'job_started', key: `job:${queued.job.id}`, job_id: queued.job.id, job_kind: 'self_development' });
                 note = `I'll read my own source from GitHub. Coding job ${queued.job.id.slice(0, 8)} is ${queued.job.status === 'running' ? 'running' : 'queued'} for your request.`;
@@ -8675,14 +8683,23 @@ export class CheState extends DurableObject {
   // only what was actually sent and started.
   async startCollaboration(message, { peers = [], batch = false } = {}) {
     const last = await Promise.resolve().then(() => this.ctx.storage.get(LAST_ENGINEERING_REQUEST_KEY)).catch(() => null);
-    const ownRequest = collaborationIntent(message) || parallelPreference(message)
-      ? String(last?.request || '').trim()
+    const lastAt = Date.parse(last?.at || '');
+    const lastAuthorized = Boolean(
+      last?.request
+      && last?.integrate === true
+      && (!Number.isFinite(lastAt) || Date.now() - lastAt < 6 * 3600_000)
+    );
+    const ownRequest = (collaborationIntent(message) || parallelPreference(message)) && lastAuthorized
+      ? String(last.request || '').trim()
       : '';
-    // A substantive message is its own request; a bare "work with Claude"
-    // applies to the last engineering request.
+    // A substantive implementation message is its own request. A bare
+    // collaboration continuation may reuse only a still-valid authorized job.
     const stripped = message.replace(/\b(?:work|collaborate|coordinate|team up|pair|partner|sync)\b[^.?!]{0,30}\bwith\b[^.?!]{0,40}/i, '').trim();
-    const request = (stripped.length > 40 && repositoryImplementationIntent(message)) || !ownRequest ? message : ownRequest;
-    if (!request || request.length < 8) return null;
+    const substantiveBuild = stripped.length > 40 && repositoryImplementationIntent(message);
+    const request = substantiveBuild ? message : ownRequest;
+    if (!request || request.length < 8) {
+      return ndjsonReply('I do not have a current authorized coding job to hand to the collaboration lane, sir. Tell me what to build or which active coding job to resume.', { source: 'che_collaboration', ok: false });
+    }
     if (!this.env.CHE_GITHUB_TOKEN || !this.env.CHE_GITHUB_REPO) {
       return ndjsonReply('I cannot reach the shared AI mailbox or my repository right now, sir, because GitHub is not connected on my server. I have not contacted anyone.', { source: 'che_collaboration' });
     }
