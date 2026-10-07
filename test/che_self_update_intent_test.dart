@@ -231,6 +231,7 @@ Again: ANSWER IN CHAT ONLY. ZERO REPOSITORY CHANGES. NO PR.''';
       'Show your repository.',
       'Examine your architecture.',
       'Explain your routing.',
+      'What is the current status of your code?',
     ]) {
       expect(cheRequiresVerifiedRemoteEvidence(prompt), isTrue, reason: prompt);
     }
