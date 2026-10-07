@@ -204,6 +204,26 @@ Again: ANSWER IN CHAT ONLY. ZERO REPOSITORY CHANGES. NO PR.''';
     }
   });
 
+  test('live CHE repository diagnostics require connected verified evidence', () {
+    const diagnostic =
+        'CHE, inspect your current GitHub main branch and investigate why your previous self-diagnostic entered the coding pipeline. Do not modify code, start a coding job, create a PR, merge, or deploy. Report only verified findings, and clearly separate anything inferred or unknown.';
+    expect(cheRequiresVerifiedRemoteEvidence(diagnostic), isTrue);
+    expect(
+      cheRequiresVerifiedRemoteEvidence(
+        'CHE, verify the exact current main SHA and inspect your routing source.',
+      ),
+      isTrue,
+    );
+    expect(
+      cheRequiresVerifiedRemoteEvidence('What does pull request mean?'),
+      isFalse,
+    );
+    expect(
+      cheRequiresVerifiedRemoteEvidence('Explain how GitHub branches work.'),
+      isFalse,
+    );
+  });
+
   test('quoted prohibitions are examples, not this turn\'s instruction', () {
     const q = 'Update your code to recognize the phrase "do not modify your code" as chat-only.';
     expect(cheIsTerminalChatOnlyRequest(q), isFalse);
