@@ -291,4 +291,12 @@ test('explicit chat-only evaluations bypass repository inspection', () => {
   const exam = 'CHE AUTONOMY EXAM — CHAT-ONLY TEST. This is an evaluation, NOT a coding or self-development request. Answer all questions directly in THIS CHAT in one response. Do not modify your source code, start a coding job, create a PR, merge or deploy.';
   assert.equal(currentTurnActionPolicy(exam).terminalChatOnly, true);
   assert.equal(repositoryInspectionIntent(exam), false);
+
+  const chatOnlyTest = 'CHAT-ONLY TEST. Never modify your code or create a PR. Explain how you would improve your code and run tests.';
+  assert.equal(currentTurnActionPolicy(chatOnlyTest).terminalChatOnly, true);
+  assert.equal(repositoryInspectionIntent(chatOnlyTest), false);
+
+  const readOnlyInspection = 'CHE, inspect your current repository for this evaluation, not a coding request. Report verified findings and do not modify code.';
+  assert.equal(currentTurnActionPolicy(readOnlyInspection).terminalChatOnly, true);
+  assert.equal(repositoryInspectionIntent(readOnlyInspection), true);
 });

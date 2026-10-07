@@ -120,11 +120,16 @@ export function readOnlyDiagnosticIntent(message) {
   return investigation && (explicitReadOnly || noMutation || globalRepositoryProhibition(text));
 }
 
+function explicitChatOnlyResponseDirective(text) {
+  return /\b(?:answer|respond|reply)\b[\s\S]{0,80}\b(?:in\s+(?:this\s+)?chat|chat[- ]only)\b/i.test(text)
+    || /\bchat[- ]only\s+(?:test|exam|evaluation)\b/i.test(text)
+}
+
 export function chatOnlyResponseIntent(message) {
   const text = withoutQuotedText(String(message || '').trim());
   if (!text) return false;
-  const responseDirective = /\b(?:answer|respond|reply)\b[\s\S]{0,80}\b(?:in\s+(?:this\s+)?chat|chat[- ]only|without\s+(?:changing|modifying|editing)\s+(?:your\s+)?code)\b/i.test(text)
-    || /\bchat[- ]only\s+(?:test|exam|evaluation)\b/i.test(text)
+  const responseDirective = explicitChatOnlyResponseDirective(text)
+    || /\b(?:answer|respond|reply)\b[\s\S]{0,80}\bwithout\s+(?:changing|modifying|editing)\s+(?:your\s+)?code\b/i.test(text)
     || /\b(?:this\s+is\s+)?(?:an?\s+)?evaluation\b[\s\S]{0,50}\bnot\s+(?:a\s+)?(?:coding|self[- ]development)\s+request\b/i.test(text);
   // An explicit prohibition on repository/code mutation is authoritative even
   // if the sentence also contains implementation wording as a hypothetical.
@@ -174,8 +179,7 @@ export function repositoryImplementationIntent(message) {
 
 export function repositoryInspectionIntent(message) {
   const text = withoutQuotedText(String(message || '').trim());
-  if (chatOnlyResponseIntent(text)
-    && /\b(?:evaluation|exam|test(?:\s+question)?)\b[\s\S]{0,80}\bnot\s+(?:(?:a|an)\s+)?(?:coding(?:\s+or\s+self[- ]development)?|self[- ]development)\s+request\b/i.test(text)) return false;
+  if (explicitChatOnlyResponseDirective(text)) return false;
   if (/\b(?:do\s+not|don['’]t|never)\s+(?:ever\s+)?trace\b/i.test(text)
     || /\b(?:do\s+not|don['’]t|never)\s+(?:access|inspect|read|fetch|use)\b[^.!?\n]{0,60}\b(?:repo(?:sitory)?|codebase|source|code)\b/i.test(text)) return false;
   const asksInspection = /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+|(?:can|could|will)\s+you\s+)?(?:inspect|find|locate|trace|show|identify)\b/i.test(text);
