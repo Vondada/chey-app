@@ -221,8 +221,7 @@ test('owner capability test: repository and autonomy discovery reads source with
     assert.ok(!(saved.get('che').jobs || []).length);
     const callsBeforeAutonomyDiscovery = calls.length;
     await chat('CHE, find the autonomy and coding-runner implementation in your current codebase. Tell me the exact files/components responsible.');
-    assert.ok(calls.length > callsBeforeAutonomyDiscovery, 'read-only autonomy discovery should inspect the pinned source');
-    assert.ok(calls.some((c) => c.url.includes('/contents/')));
+    assert.ok(calls.slice(callsBeforeAutonomyDiscovery).some((c) => /\/git\/ref\/heads\/main|\/git\/trees\/|\/contents\/(?:lib|server)\//.test(c.url)), 'read-only autonomy discovery should inspect the pinned source');
     assert.equal(aiCalls, 0);
     assert.ok(calls.every((c) => c.method === 'GET'));
     assert.ok(!(saved.get('che').jobs || []).length);
