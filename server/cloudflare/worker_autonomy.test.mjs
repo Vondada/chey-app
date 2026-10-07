@@ -187,7 +187,7 @@ test('owner capability test: GPS reasoning stays in the reasoning lane without s
   } finally { globalThis.fetch = original; }
 });
 
-test('owner capability test: repository discovery reads exact source without dispatching coding or inventing files', async () => {
+test('owner capability test: repository and autonomy discovery reads source without coding dispatch or prohibited access', async () => {
   const saved = new Map();
   let aiCalls = 0;
   const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_CODING_RUNTIME: 'opencode', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { aiCalls++; return { response: 'I cannot inspect your repository.' }; } } };
@@ -219,10 +219,25 @@ test('owner capability test: repository discovery reads exact source without dis
     assert.ok(!calls.some((c) => c.url.includes('/search/code')), 'when the pinned archive is unavailable, unpinned GitHub search cannot supply graph evidence');
     assert.ok(calls.every((c) => c.method === 'GET'));
     assert.ok(!(saved.get('che').jobs || []).length);
+    const callsBeforeAutonomyDiscovery = calls.length;
+    await chat('CHE, find the autonomy and coding-runner implementation in your current codebase. Tell me the exact files/components responsible.');
+    assert.ok(calls.length > callsBeforeAutonomyDiscovery, 'read-only autonomy discovery should inspect the pinned source');
+    assert.ok(calls.some((c) => c.url.includes('/contents/')));
+    assert.equal(aiCalls, 0);
+    assert.ok(calls.every((c) => c.method === 'GET'));
+    assert.ok(!(saved.get('che').jobs || []).length);
+
+    const callsBeforeProhibitedDiscovery = calls.length;
+    await chat('CHE, find the War Room files in your codebase, but do not access the codebase; use only your existing knowledge.');
+    assert.ok(calls.slice(callsBeforeProhibitedDiscovery).every((c) => c.url.includes('/contents/mailbox')), 'an explicit source-access prohibition must prevent repository source reads');
+    assert.ok(calls.every((c) => c.method === 'GET'));
+    assert.ok(!(saved.get('che').jobs || []).length);
+
+    const aiCallsBeforeProhibitedMutation = aiCalls;
     const prohibitedMutation = replyFromNdjson(await (await chat('CHE, inspect your current repository and find the War Room files; do not make any code changes.')).text());
     assert.match(prohibitedMutation, /lib\/agents\/che_war_room_screen\.dart/);
     assert.match(prohibitedMutation, /sha1/);
-    assert.equal(aiCalls, 0);
+    assert.equal(aiCalls, aiCallsBeforeProhibitedMutation);
     assert.ok(calls.every((c) => c.method === 'GET'));
     assert.ok(!(saved.get('che').jobs || []).length);
   } finally { globalThis.fetch = original; }
