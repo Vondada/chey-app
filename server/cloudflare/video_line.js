@@ -1,4 +1,4 @@
-// One Office pass: Scout fills a topic, the desk writes the package, the line
+// One Office pass: Atlas fills a topic, the desk writes the package, the line
 // renders, upload returns a link. The board row is the return value. A missing
 // tool stops the pass. Nothing is marked uploaded without a link.
 
@@ -19,7 +19,11 @@ export async function runVideoLine(env = {}, fetcher = fetch) {
       board: [{ title: topic.title, source: topic.source, status: 'script_only' }],
     };
   }
-  const uploaded = await uploadYouTube(env, { media_url: rendered.media_url, title: topic.title, description: topic.why }, fetcher);
+  const uploaded = await uploadYouTube(
+    env,
+    { media_url: rendered.media_url, title: topic.title, description: topic.why },
+    fetcher,
+  );
   if (!uploaded.ok) {
     return {
       ok: false,
@@ -31,6 +35,12 @@ export async function runVideoLine(env = {}, fetcher = fetch) {
   return {
     ok: true,
     stage: 'uploaded',
-    board: [{ title: topic.title, source: topic.source, status: 'uploaded', link: uploaded.link }],
+    board: [{
+      title: topic.title,
+      source: topic.source,
+      status: 'uploaded',
+      media_url: rendered.media_url,
+      link: uploaded.link,
+    }],
   };
 }
