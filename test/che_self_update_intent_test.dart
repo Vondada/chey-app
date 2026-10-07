@@ -226,6 +226,14 @@ Again: ANSWER IN CHAT ONLY. ZERO REPOSITORY CHANGES. NO PR.''';
       cheRequiresVerifiedRemoteEvidence('CHE, review your code.'),
       isTrue,
     );
+    for (final prompt in [
+      'Analyze your code.',
+      'Show your repository.',
+      'Examine your architecture.',
+      'Explain your routing.',
+    ]) {
+      expect(cheRequiresVerifiedRemoteEvidence(prompt), isTrue, reason: prompt);
+    }
     expect(
       cheRequiresVerifiedRemoteEvidence('What does pull request mean?'),
       isFalse,
