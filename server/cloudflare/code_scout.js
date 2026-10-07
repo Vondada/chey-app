@@ -158,14 +158,12 @@ export function repositoryImplementationIntent(message) {
   const target = /\b(?:che(?:'s)?|your)\s+(?:code|codebase|repo(?:sitory)?|app|office|agents?|system|workflow|architecture|autonomy|coding|runner|pipeline)\b/i.test(text)
     || /\b(?:into|inside|to|against)\s+(?:che|the\s+(?:current\s+)?(?:repo(?:sitory)?|codebase|main\s+branch))\b/i.test(text);
   const receipts = /\b(?:draft\s+pr|pull\s+request|commit\s+sha|files\s+changed|run\s+tests?|regression\s+tests?|failure[- ]?injection|current\s+main|test\s+branch|implement\s+now|do\s+the\s+implementation)\b/i.test(text);
-  const autonomyWork = /\b(?:autonom(?:y|ous)|coding\s+(?:job|runner|pipeline)|background\s+job|failure[- ]?injection|stress[- ]?test)\b/i.test(text)
-    && /\b(?:repo(?:sitory)?|code|main|branch|tests?|workflow|runner|pipeline|job)\b/i.test(text);
-  return (implementation && (target || receipts)) || autonomyWork;
+  return implementation && (target || receipts);
 }
 
 export function repositoryInspectionIntent(message) {
   const text = withoutQuotedText(String(message || '').trim());
-  if (/\b(?:do\s+not|don['’]t|never)\s+(?:access|inspect|read|fetch|use)\b[^.!?\n]{0,60}\b(?:repo(?:sitory)?|source|code)\b/i.test(text)) return false;
+  if (/\b(?:do\s+not|don['’]t|never)\s+(?:access|inspect|read|fetch|use)\b[^.!?\n]{0,60}\b(?:repo(?:sitory)?|codebase|source|code)\b/i.test(text)) return false;
   return /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+|(?:can|could|will)\s+you\s+)?(?:inspect|find|locate|trace|show|identify)\b/i.test(text)
     && /\b(?:your|che(?:'s)?)\s+(?:current\s+)?(?:repo(?:sitory)?|codebase|source|code)\b/i.test(text)
     && !repositoryImplementationIntent(text);

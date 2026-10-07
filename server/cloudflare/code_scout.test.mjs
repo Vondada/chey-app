@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, inspirationUpgradeContext, listOwnerStarredRepos, repositoryImplementationIntent, reusableLicense, scoutCode, selectStudyRepos, shouldUseInspirationWorkflow, speakScout, speakStarredRepos, starredRepoIntent, studySelectionIntent } from './code_scout.js';
+import { chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, inspirationUpgradeContext, listOwnerStarredRepos, repositoryImplementationIntent, repositoryInspectionIntent, reusableLicense, scoutCode, selectStudyRepos, shouldUseInspirationWorkflow, speakScout, speakStarredRepos, starredRepoIntent, studySelectionIntent } from './code_scout.js';
 
 test('intent parses code-scout phrasings', () => {
   assert.deepEqual(codeScoutIntent('find code for offline speech to text'), { need: 'offline speech to text' });
@@ -40,6 +40,18 @@ test('starred GitHub intent distinguishes research from implementation', () => {
   assert.equal(repositoryImplementationIntent('Run a comprehensive autonomy stress test against the current main branch and verify background job recovery.'), true);
   assert.equal(repositoryImplementationIntent("Audit CHE's coding runner and fix any faulty workflow you find."), true);
   assert.equal(repositoryImplementationIntent('Tell me what autonomous coding means.'), false);
+  for (const request of [
+    'Find the autonomy implementation in your current repository.',
+    'Locate the coding runner in your codebase.',
+  ]) {
+    assert.equal(repositoryInspectionIntent(request), true, request);
+    assert.equal(repositoryImplementationIntent(request), false, request);
+    assert.equal(currentTurnActionPolicy(request).repositoryMutationAllowed, false, request);
+  }
+  assert.equal(repositoryImplementationIntent('Inspect your autonomy codebase, then implement a fix.'), true);
+  const restrictedInspection = 'CHE, find the War Room files in your codebase, but do not access the codebase; use only your existing knowledge.';
+  assert.equal(repositoryInspectionIntent(restrictedInspection), false);
+  assert.equal(currentTurnActionPolicy(restrictedInspection).repositoryMutationAllowed, false);
   const chatOnlyExam = `CHE AUTONOMY EXAM — CHAT-ONLY TEST
 
 IMPORTANT: This is an evaluation, NOT a coding or self-development request.

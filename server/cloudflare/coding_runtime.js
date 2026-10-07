@@ -29,10 +29,14 @@ export function ownerRequiresMergeApproval(request) {
   const hold = /\b(?:do\s+not|don['’]t|never|must\s+not)\s+(?:auto(?:matically)?[- ]?)?(?:merge|ship|deploy)\b/i.test(text)
     || /\b(?:merge|ship|deploy)\b[^.!?\n]{0,80}\b(?:only\s+(?:after|with)|without|await|wait\s+for)\b[^.!?\n]{0,50}\b(?:authoriz\w*|approv\w*|permission|confirmation)\b/i.test(text)
     || /\b(?:wait|stop|hold)\b[^.!?\n]{0,120}\b(?:merg(?:e|ing)|ship(?:ping)?|deploy(?:ing)?)\b/i.test(text)
-    || /\b(?:approv\w*|authoriz\w*|permission|confirmation)\b[^.!?\n]{0,80}\b(?:before|prior\s+to)\s+(?:merg(?:e|ing)|ship(?:ping)?|deploy(?:ing)?)\b/i.test(text)
+    || /\b(?:approv\w*|authoriz\w*|permission|confirmation)\b[^.!?\n]{0,80}\b(?:before|prior\s+to)\s+(?:you\s+)?(?:merg(?:e|ing)|ship(?:ping)?|deploy(?:ing)?)\b/i.test(text)
     || /\b(?:unmerged|pr[- ]only|pull[- ]request[- ]only)\b/i.test(text)
     || /\bno\s+(?:automatic\s+|auto[- ]?)?merg(?:e|ing)\b/i.test(text)
     || /\b(?:merg(?:e|ing)|ship(?:ping)?|deploy(?:ing)?)\b[^.!?\n]{0,80}\b(?:to\s+me|only\s+(?:when|if)\s+i)\b/i.test(text)
+    || /\b(?:only\s+)?(?:merge|ship|deploy)\b[^\.\!\?\n]{0,100}\b(?:after|until|once)\b[^\.\!\?\n]{0,50}\b(?:i\s+)?(?:approv\w*|authoriz\w*|permission|confirmation)\b/i.test(text)
+    || /\b(?:ask|check\s+with)\s+me\b[^\.\!\?\n]{0,60}\b(?:before|prior\s+to)\s+(?:you\s+)?(?:merg(?:e|ing)|ship(?:ping)?|deploy(?:ing)?)\b/i.test(text)
+    || /\bno\s+(?:automatic\s+|auto[- ]?)?(?:merg(?:e|ing)|ship(?:ping)?|deploy(?:ment|ing)?)\b[^\.\!\?\n]{0,80}\b(?:until|unless)\b[^\.\!\?\n]{0,50}\b(?:approv\w*|authoriz\w*|permission|confirmation)\b/i.test(text)
+    || /\bi(?:\s+(?:will|want\s+to|am\s+going\s+to)|['’]ll)\s+(?:merg(?:e|ing)|ship(?:ping)?|deploy(?:ing)?)\b[^\.\!\?\n]{0,40}\bmyself\b/i.test(text)
     || /\bi(?:\s+(?:will|want\s+to|am\s+going\s+to)|['’]ll)\s+merg(?:e|ing)\b/i.test(text);
   if (hold) return true;
   const authorizedMerge = /(?:\b(?:and|then|also)\s+|[.!?,]\s*)(?:automatically\s+)?(?:merge|ship|deploy)\s+(?:it|(?:the|that|this)\s+(?:pr|pull\s+request|change|update))\b/i.test(text);
