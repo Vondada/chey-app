@@ -9,16 +9,23 @@ class CheVideoPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final realVideos = videos
+        .where((video) => (video['media_url'] ?? '').trim().isNotEmpty)
+        .toList(growable: false);
     return Scaffold(
       appBar: AppBar(title: const Text('Recent videos')),
-      body: videos.isEmpty
-          ? const Center(child: Text('No videos yet. A file has not come back.'))
+      body: realVideos.isEmpty
+          ? const Center(child: Text('No videos yet.'))
           : ListView(
               children: [
-                for (final video in videos)
-                  ListTile(
-                    title: Text(video['title'] ?? 'Untitled'),
-                    subtitle: Text(video['link']?.isNotEmpty == true ? video['link']! : (video['media_url'] ?? '')),
+                for (final video in realVideos)
+                  Semantics(
+                    label:
+                        '${video['title'] ?? 'Untitled'} video file. ${video['media_url']}',
+                    child: ListTile(
+                      title: Text(video['title'] ?? 'Untitled'),
+                      subtitle: Text(video['media_url']!),
+                    ),
                   ),
               ],
             ),
