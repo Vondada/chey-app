@@ -290,13 +290,21 @@ test('read-only self-diagnostic cannot start a coding job, including exact owner
   assert.equal(currentTurnActionPolicy('CHE, inspect your repository and then fix the bugs in your code.').repositoryMutationAllowed, true);
 });
 
-
 test('explicit chat-only evaluations bypass repository inspection', () => {
   const exam = 'CHE AUTONOMY EXAM — CHAT-ONLY TEST. This is an evaluation, NOT a coding or self-development request. Answer all questions directly in THIS CHAT in one response. Do not modify your source code, start a coding job, create a PR, merge or deploy.';
   const policy = currentTurnActionPolicy(exam);
+  assert.equal(policy.terminalChatOnly, true);
   assert.equal(policy.mode, 'EXPLORE');
   assert.equal(policy.codingJobAllowed, false);
   assert.equal(repositoryInspectionIntent(exam), false);
+
+  const chatOnlyTest = 'CHAT-ONLY TEST. Never modify your code or create a PR. Explain how you would improve your code and run tests.';
+  assert.equal(currentTurnActionPolicy(chatOnlyTest).terminalChatOnly, true);
+  assert.equal(repositoryInspectionIntent(chatOnlyTest), false);
+
+  const readOnlyInspection = 'CHE, inspect your current repository for this evaluation, not a coding request. Report verified findings and do not modify code.';
+  assert.equal(currentTurnActionPolicy(readOnlyInspection).terminalChatOnly, true);
+  assert.equal(repositoryInspectionIntent(readOnlyInspection), true);
 });
 
 test('authoritative policy separates EXPLORE PLAN and BUILD with scoped delivery restrictions', () => {

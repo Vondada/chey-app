@@ -224,12 +224,19 @@ export function readOnlyDiagnosticIntent(message) {
     || /\b(?:read[- ]only|no\s+code\s+changes?|reasoning\s+correction,?\s+not\s+a\s+coding\s+assignment)\b/i.test(text);
 }
 
+function explicitChatOnlyResponseDirective(text) {
+  return /\b(?:answer|respond|reply)\b[\s\S]{0,80}\b(?:in\s+(?:this\s+)?chat|chat[- ]only)\b/i.test(text)
+    || /\bchat[- ]only\s+(?:test|exam|evaluation)\b/i.test(text)
+}
+
 export function chatOnlyResponseIntent(message) {
   const text = withoutQuotedText(String(message || '').trim());
   if (!text) return false;
-  const responseDirective = /\b(?:answer|respond|reply)\b[\s\S]{0,80}\b(?:in\s+(?:this\s+)?chat|chat[- ]only|without\s+(?:changing|modifying|editing)\s+(?:your\s+)?code)\b/i.test(text)
-    || /\bchat[- ]only\s+(?:test|exam|evaluation)\b/i.test(text)
+  const responseDirective = explicitChatOnlyResponseDirective(text)
+    || /\b(?:answer|respond|reply)\b[\s\S]{0,80}\bwithout\s+(?:changing|modifying|editing)\s+(?:your\s+)?code\b/i.test(text)
     || /\b(?:this\s+is\s+)?(?:(?:a|an)\s+)?evaluation\b[\s\S]{0,60}\bnot\s+(?:(?:a|an)\s+)?(?:coding|self[- ]development)\s+request\b/i.test(text);
+  // An explicit prohibition on repository/code mutation is authoritative even
+  // if the sentence also contains implementation wording as a hypothetical.
   if (globalRepositoryProhibition(text)) return true;
   // A real implementation command can still hold PR/merge/deploy delivery.
   if (ownerBuildAuthorization(text)) return false;
@@ -299,6 +306,7 @@ export function repositoryImplementationIntent(message) {
 
 export function repositoryInspectionIntent(message) {
   const text = withoutQuotedText(String(message || '').trim());
+  if (explicitChatOnlyResponseDirective(text)) return false;
   const policy = currentTurnActionPolicy(text);
   if (policy.mode === EXECUTION_MODE.BUILD) return false;
 
@@ -309,9 +317,6 @@ export function repositoryInspectionIntent(message) {
     || /\bwhat\s+happened\s+to\s+(?:my|the)\s+coding\s+job\b/i.test(text);
   if (controlStatus) return false;
 
-  // A pure chat-only exam asks for an answer, not a repository crawl.
-  if (policy.terminalChatOnly
-    && /\b(?:evaluation|exam|test(?:\s+question)?)\b[\s\S]{0,90}\bnot\s+(?:(?:a|an)\s+)?(?:coding(?:\s+or\s+self[- ]development)?|self[- ]development)\s+request\b/i.test(text)) return false;
   if (/\b(?:do\s+not|don['’]t|never)\s+(?:ever\s+)?trace\b/i.test(text)
     || /\b(?:do\s+not|don['’]t|never)\s+(?:access|inspect|read|fetch|use)\b[^.!?\n]{0,60}\b(?:repo(?:sitory)?|codebase|source|code)\b/i.test(text)) return false;
 
