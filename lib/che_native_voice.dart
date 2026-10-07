@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'che_kokoro_voice.dart';
+import 'che_speech_style.dart';
 
 /// On-device iPhone text fallback for CHE.
 class CheLocalAI {
@@ -23,7 +24,7 @@ class CheLocalAI {
         'memory_context': memoryContext.take(12).toList(growable: false),
       });
       final text = value?.trim();
-      return text == null || text.isEmpty ? null : text;
+      return text == null || text.isEmpty ? null : stripButler(text);
     } on MissingPluginException {
       return null;
     } catch (_) {
@@ -41,17 +42,11 @@ class CheLocalAI {
 }
 
 /// Native iOS voice bridge (`che/native_voice`).
-///
-/// The SideStore zip often has no Swift Runner yet. Every method channel call
-/// must tolerate [MissingPluginException] so the Flutter `speech_to_text`
-/// fallback in `lib/home_state/voice.dart` can take over without crashing.
 class CheNativeVoice {
   static const MethodChannel _methods = MethodChannel('che/native_voice');
   static const EventChannel _events = EventChannel('che/native_voice_events');
   static final CheKokoroVoice _kokoro = CheKokoroVoice(_methods);
 
-  /// True after a successful native call in this process; false when the
-  /// Swift Runner plugin is missing (expected until owner bootstraps iOS).
   static bool bridgePresent = true;
 
   static Future<T?> _invoke<T>(String method, [dynamic arguments]) async {
@@ -75,17 +70,17 @@ class CheNativeVoice {
   static const String _signatureVersionKey = 'che.voice.chazeSignatureVersion';
 
   static const List<Map<String, Object>> localVoiceOptions = [
-    {'id': 0, 'name': 'Chaze — Signature (Local)', 'speaker': 'af'},
-    {'id': 1, 'name': 'American Feminine — Bella', 'speaker': 'af_bella'},
-    {'id': 2, 'name': 'American Feminine — Nicole', 'speaker': 'af_nicole'},
-    {'id': 3, 'name': 'American Feminine — Sarah', 'speaker': 'af_sarah'},
-    {'id': 4, 'name': 'American Feminine — Sky', 'speaker': 'af_sky'},
-    {'id': 5, 'name': 'American Masculine — Adam', 'speaker': 'am_adam'},
-    {'id': 6, 'name': 'American Masculine — Michael', 'speaker': 'am_michael'},
-    {'id': 7, 'name': 'British Feminine — Emma', 'speaker': 'bf_emma'},
-    {'id': 8, 'name': 'British Feminine — Isabella', 'speaker': 'bf_isabella'},
-    {'id': 9, 'name': 'British Masculine — George', 'speaker': 'bm_george'},
-    {'id': 10, 'name': 'British Masculine — Lewis', 'speaker': 'bm_lewis'},
+    {'id': 0, 'name': 'Chaze \u2014 Signature (Local)', 'speaker': 'af'},
+    {'id': 1, 'name': 'American Feminine \u2014 Bella', 'speaker': 'af_bella'},
+    {'id': 2, 'name': 'American Feminine \u2014 Nicole', 'speaker': 'af_nicole'},
+    {'id': 3, 'name': 'American Feminine \u2014 Sarah', 'speaker': 'af_sarah'},
+    {'id': 4, 'name': 'American Feminine \u2014 Sky', 'speaker': 'af_sky'},
+    {'id': 5, 'name': 'American Masculine \u2014 Adam', 'speaker': 'am_adam'},
+    {'id': 6, 'name': 'American Masculine \u2014 Michael', 'speaker': 'am_michael'},
+    {'id': 7, 'name': 'British Feminine \u2014 Emma', 'speaker': 'bf_emma'},
+    {'id': 8, 'name': 'British Feminine \u2014 Isabella', 'speaker': 'bf_isabella'},
+    {'id': 9, 'name': 'British Masculine \u2014 George', 'speaker': 'bm_george'},
+    {'id': 10, 'name': 'British Masculine \u2014 Lewis', 'speaker': 'bm_lewis'},
   ];
 
   static Stream<Map<String, dynamic>>? _cachedEvents;
@@ -101,9 +96,6 @@ class CheNativeVoice {
 
   static Future<Map<String, dynamic>> voiceSettings() async {
     final prefs = await SharedPreferences.getInstance();
-
-    // One-time migration to CHE's Chaze signature profile. This is fully
-    // on-device and unmetered: no account, API key, or per-character billing.
     if ((prefs.getInt(_signatureVersionKey) ?? 0) < 1) {
       await prefs.setInt(_speakerKey, 0);
       await prefs.setDouble(_speedKey, 0.94);
@@ -112,7 +104,6 @@ class CheNativeVoice {
       await prefs.setDouble(_nativeRateKey, 0.96);
       await prefs.setInt(_signatureVersionKey, 1);
     }
-
     return {
       'speakerId': prefs.getInt(_speakerKey) ?? 0,
       'speed': prefs.getDouble(_speedKey) ?? 0.94,
@@ -131,38 +122,19 @@ class CheNativeVoice {
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final current = await voiceSettings();
-
-    final sid =
-        (speakerId ?? current['speakerId'] as int).clamp(0, 10).toInt();
-    final localSpeed =
-        (speed ?? current['speed'] as double).clamp(0.70, 1.35).toDouble();
-    final localPause = (pauseScale ?? current['pauseScale'] as double)
-        .clamp(0.05, 0.35)
-        .toDouble();
-    final fallbackPitch = (nativePitch ?? current['nativePitch'] as double)
-        .clamp(0.75, 1.25)
-        .toDouble();
-    final fallbackRate = (nativeRate ?? current['nativeRate'] as double)
-        .clamp(0.70, 1.25)
-        .toDouble();
-
+    final sid = (speakerId ?? current['speakerId'] as int).clamp(0, 10).toInt();
+    final localSpeed = (speed ?? current['speed'] as double).clamp(0.70, 1.35).toDouble();
+    final localPause = (pauseScale ?? current['pauseScale'] as double).clamp(0.05, 0.35).toDouble();
+    final fallbackPitch = (nativePitch ?? current['nativePitch'] as double).clamp(0.75, 1.25).toDouble();
+    final fallbackRate = (nativeRate ?? current['nativeRate'] as double).clamp(0.70, 1.25).toDouble();
     await prefs.setInt(_speakerKey, sid);
     await prefs.setDouble(_speedKey, localSpeed);
     await prefs.setDouble(_pauseKey, localPause);
     await prefs.setDouble(_nativePitchKey, fallbackPitch);
     await prefs.setDouble(_nativeRateKey, fallbackRate);
-
-    _kokoro.configure(
-      speakerId: sid,
-      speed: localSpeed,
-      pauseScale: localPause,
-    );
-
+    _kokoro.configure(speakerId: sid, speed: localSpeed, pauseScale: localPause);
     try {
-      await _invoke<void>('configureVoice', {
-        'pitch': fallbackPitch,
-        'rate': fallbackRate,
-      });
+      await _invoke<void>('configureVoice', {'pitch': fallbackPitch, 'rate': fallbackRate});
     } catch (_) {}
   }
 
@@ -174,10 +146,7 @@ class CheNativeVoice {
       pauseScale: s['pauseScale'] as double,
     );
     try {
-      await _invoke<void>('configureVoice', {
-        'pitch': s['nativePitch'],
-        'rate': s['nativeRate'],
-      });
+      await _invoke<void>('configureVoice', {'pitch': s['nativePitch'], 'rate': s['nativeRate']});
     } catch (_) {}
   }
 
@@ -202,22 +171,17 @@ class CheNativeVoice {
   }
 
   static Future<bool> speakText(String text) async {
-    final clean = text.trim();
+    final clean = stripButler(text);
     if (clean.isEmpty) return false;
-
     await _applyStoredSettings();
     try {
       if (await _kokoro.speak(clean)) return true;
     } catch (_) {}
-
     return (await _invoke<bool>('speakText', {'text': clean})) ?? false;
   }
 
-  /// Speaks with the on-device Kokoro neural voice only. Returns false (and
-  /// starts preparing the voice pack in the background) until it is ready,
-  /// so callers can use a smooth cloud voice instead of the basic one.
   static Future<bool> speakNeural(String text) async {
-    final clean = text.trim();
+    final clean = stripButler(text);
     if (clean.isEmpty) return false;
     await _applyStoredSettings();
     if (!_kokoro.isReady) {
@@ -231,10 +195,8 @@ class CheNativeVoice {
     }
   }
 
-  /// On-device Kokoro audio for [text] without playing it, so the next chunk
-  /// is ready the moment the current one ends. Null until the voice is ready.
   static Future<Uint8List?> synthesizeNeural(String text) async {
-    final clean = text.trim();
+    final clean = stripButler(text);
     if (clean.isEmpty) return null;
     await _applyStoredSettings();
     if (!_kokoro.isReady) {
@@ -248,12 +210,9 @@ class CheNativeVoice {
     }
   }
 
-  static Future<bool> previewVoice() => speakText(
-        'Hey, I’m CHE. You’re hearing my Chaze signature voice, sir.',
-      );
+  static Future<bool> previewVoice() => speakText('Hey, I\u2019m CHE. You\u2019re hearing my Chaze signature voice.');
 
-  static Future<bool> playAudio(Uint8List bytes) async =>
-      (await _invoke<bool>('playAudio', bytes)) ?? false;
+  static Future<bool> playAudio(Uint8List bytes) async => (await _invoke<bool>('playAudio', bytes)) ?? false;
 
   static Future<bool> stopAudio() async => (await _invoke<bool>('stopAudio')) ?? false;
 
