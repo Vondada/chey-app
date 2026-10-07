@@ -305,9 +305,8 @@ export function repositoryInspectionIntent(message) {
   const repoTarget = /\b(?:your|che(?:'s)?)\s+(?:current\s+)?(?:github\s+)?(?:main\s+branch|repo(?:sitory)?|codebase|source|code|routing|router|worker|coding\s+(?:job|pipeline|runtime)|architecture)\b/i.test(text)
     || /\b(?:current|exact)\s+main\s+(?:branch\s+)?sha\b/i.test(text)
     || /\b(?:coding\s+(?:job|pipeline|runtime)|cloudflare\s+worker|github\s+main)\b/i.test(text);
-  const explicitSourceTrace = /\b(?:inspect|trace|read|search|examine|review)\b[\s\S]{0,120}\b(?:github|repo(?:sitory)?|codebase|source|worker|routing|router|files?|functions?|execution|coding\s+(?:job|pipeline|runtime))\b/i.test(text);
   const selfDiagnosticSource = /\bself[- ]diagnostic\b[\s\S]{0,260}\b(?:github|main\s+sha|repo(?:sitory)?|source|coding[- ]job|routing|worker)\b/i.test(text);
-  return Boolean((directInspection && repoTarget) || explicitSourceTrace || selfDiagnosticSource);
+  return Boolean((directInspection && repoTarget) || selfDiagnosticSource);
 }
 
 export function starredRepoIntent(message) {
