@@ -202,6 +202,19 @@ function deliveryRestrictions(text) {
   return { noPr, noMerge, noDeploy, noCommitPush };
 }
 
+function explicitMergeAuthorization(text) {
+  const value = String(text || '');
+  return /\b(?:merge|ship)\b[\s\S]{0,100}\b(?:it|pr|pull\s+request|change|update|when\s+green|after\s+(?:ci|tests?))\b/i.test(value)
+    || /\b(?:merge|ship)\s+(?:when|once|after|if)\b/i.test(value)
+    || /^(?:(?:che|chay|chey|shay)[,:]?\s*)?update\s+che\b/i.test(value);
+}
+
+function explicitDeploymentAuthorization(text) {
+  const value = String(text || '');
+  return /\b(?:deploy|release|publish|ship)\b/i.test(value)
+    || /^(?:(?:che|chay|chey|shay)[,:]?\s*)?update\s+che\b/i.test(value);
+}
+
 // A read-only diagnosis is a question about the system, not permission to
 // start the engineering runner.
 export function readOnlyDiagnosticIntent(message) {
@@ -244,9 +257,8 @@ export function currentTurnActionPolicy(message) {
   const codingJobAllowed = repositoryMutationAllowed;
   const githubMutationAllowed = repositoryMutationAllowed && !delivery.noCommitPush;
   const prCreationAllowed = githubMutationAllowed && !delivery.noPr;
-  const mergeAllowed = prCreationAllowed && !delivery.noMerge;
-  const deploymentAllowed = mergeAllowed && !delivery.noDeploy
-    && /\b(?:deploy|ship|release|publish)\b/i.test(text);
+  const mergeAllowed = prCreationAllowed && !delivery.noMerge && explicitMergeAuthorization(text);
+  const deploymentAllowed = mergeAllowed && !delivery.noDeploy && explicitDeploymentAuthorization(text);
   const allowedToolClasses = mode === EXECUTION_MODE.BUILD
     ? Object.freeze(['repository-read', 'reasoning', 'coding-job', 'repository-write'])
     : mode === EXECUTION_MODE.PLAN
