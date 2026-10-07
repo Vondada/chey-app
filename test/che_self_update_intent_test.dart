@@ -215,6 +215,18 @@ Again: ANSWER IN CHAT ONLY. ZERO REPOSITORY CHANGES. NO PR.''';
       isTrue,
     );
     expect(
+      cheRequiresVerifiedRemoteEvidence('What is the exact current main branch SHA?'),
+      isTrue,
+    );
+    expect(
+      cheRequiresVerifiedRemoteEvidence('CHE, inspect your current architecture.'),
+      isTrue,
+    );
+    expect(
+      cheRequiresVerifiedRemoteEvidence('CHE, review your code.'),
+      isTrue,
+    );
+    expect(
       cheRequiresVerifiedRemoteEvidence('What does pull request mean?'),
       isFalse,
     );
