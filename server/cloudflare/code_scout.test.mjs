@@ -269,3 +269,20 @@ test('repository inspection routes current-main SHA and source-trace owner quest
   assert.equal(repositoryInspectionIntent('CHE, trace one real owner chat request from the Flutter interface through the Cloudflare Worker routing and back to the owner response. Give me the important files/functions in execution order and distinguish anything you verified from anything you inferred.'), true);
   assert.equal(repositoryInspectionIntent("Don't trace the worker request."), false);
 });
+
+test('read-only self-diagnostic cannot start a coding job, including exact owner request', () => {
+  const questions = [
+    'CHE, perform an autonomous self-diagnostic and reasoning-correction exercise. Retrieve the current GitHub main SHA, inspect source, trace the coding-job lifecycle, have reviewers verify your conclusions. Do not create a PR or modify code for this diagnostic.',
+    'CHE, this is a reasoning correction, NOT a coding assignment. Investigate your coding status bug, report verified findings. Do not start a coding job, create a PR, modify files, or merge anything.',
+    'CHE, investigate why coding jobs produce delayed responses. This is READ-ONLY. Do not start a coding job, create a PR, modify files, or merge anything.',
+    'Audit your coding pipeline and explain any flaws without modifying anything.',
+  ];
+  for (const q of questions) {
+    assert.equal(currentTurnActionPolicy(q).terminalChatOnly, true, q);
+    assert.equal(currentTurnActionPolicy(q).repositoryMutationAllowed, false, q);
+    assert.equal(repositoryImplementationIntent(q), false, q);
+    assert.equal(repositoryInspectionIntent(q), true, q);
+  }
+  assert.equal(currentTurnActionPolicy('CHE, fix your coding pipeline and run regression tests.').repositoryMutationAllowed, true);
+  assert.equal(currentTurnActionPolicy('CHE, inspect your repository and then fix the bugs in your code.').repositoryMutationAllowed, true);
+});
