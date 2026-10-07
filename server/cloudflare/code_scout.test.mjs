@@ -258,7 +258,10 @@ test('mission T1-T6: chat-only phrasings never mutate; explicit implementation w
 
 test('quoted prohibitions are examples, not this turn\'s instruction', () => {
   const quoted = 'Update your code to recognize the phrase "do not modify your code" as chat-only.';
-  assert.deepEqual({ ...currentTurnActionPolicy(quoted) }, { terminalChatOnly: false, repositoryMutationAllowed: true });
+  const policy = currentTurnActionPolicy(quoted);
+  assert.equal(policy.mode, 'BUILD');
+  assert.equal(policy.terminalChatOnly, false);
+  assert.equal(policy.repositoryMutationAllowed, true);
   assert.equal(currentTurnActionPolicy('Update your code to recognize \u201cdo not modify your code\u201d as chat-only.').repositoryMutationAllowed, true);
   assert.equal(currentTurnActionPolicy('Explain "chat-only" mode. Do not modify your code.').terminalChatOnly, true);
 });
