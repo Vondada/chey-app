@@ -126,7 +126,10 @@ export class CheCodingRuntime {
     return codingRuntimeEnabled(this.env);
   }
 
-  async createSession({ jobId = '', ownerRequest = '', baseSha = '', targetBranch = '', model = '', workflowRef = 'main' } = {}) {
+  async createSession({ jobId = '', ownerRequest = '', baseSha = '', targetBranch = '', model = '', workflowRef = 'main', executionMode = 'BUILD' } = {}) {
+    if (String(executionMode || '').toUpperCase() !== 'BUILD') {
+      return { status: 403, denied: true, runtime: 'opencode', detail: 'OpenCode mutation runtime accepts BUILD-authorized turns only.' };
+    }
     if (!this.enabled) {
       return { status: 409, disabled: true, runtime: 'builtin', detail: 'OpenCode runtime is disabled; CHE keeps using the current coding path.' };
     }
