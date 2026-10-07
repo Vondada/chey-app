@@ -243,6 +243,13 @@ test('owner capability test: repository and autonomy discovery reads source with
     assert.ok(calls.slice(callsBeforeExactSha).some((c) => /\/git\/ref\/heads\/main|\/git\/trees\//.test(c.url)), 'exact-SHA question refreshes repository evidence');
     assert.ok(!(saved.get('che').jobs || []).length, 'exact-SHA question creates no coding job');
 
+    const callsBeforeLatestSha = calls.length;
+    const latestShaReply = replyFromNdjson(await (await chat('Verify the latest main branch SHA.')).text());
+    assert.match(latestShaReply, /sha1/, 'latest-SHA imperative must come from the pinned repository head');
+    assert.equal(aiCalls, 0, 'latest-SHA imperative bypasses generic model generation');
+    assert.ok(calls.slice(callsBeforeLatestSha).some((c) => /\/git\/ref\/heads\/main|\/git\/trees\//.test(c.url)), 'latest-SHA imperative refreshes repository evidence');
+    assert.ok(!(saved.get('che').jobs || []).length, 'latest-SHA imperative creates no coding job');
+
     const callsBeforeFollowUp = calls.length;
     const followUpReply = replyFromNdjson(await (await chat('Is that still current?', {
       history: [
