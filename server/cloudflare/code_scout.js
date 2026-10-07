@@ -156,11 +156,13 @@ function ownerBuildAuthorization(message) {
   // with the mutation verb ("study X and implement what you learn", "can you
   // improve your code..."). Planning/hypothetical framing still wins.
   const mutationVerb = /\b(?:implement|integrate|adapt|apply|install|add|upgrade|update|improve|rewrite|refactor|build|change|modify|patch|fix|repair)\b/i.test(text);
-  const mutationTarget = /\b(?:your|che(?:'s)?|my)\s+(?:code|codebase|repo(?:sitory)?|app|flutter\s+app|ui|interface|worker|system|workflow|architecture|routing|router|pipeline|agent|coding\s+system)\b/i.test(text)
+  const mutationTarget = /\b(?:your|che(?:'s)?|my)\s+(?:own\s+)?(?:code|codebase|repo(?:sitory)?|app|flutter\s+app|ui|interface|worker|system|workflow|architecture|routing|router|pipeline|agent|coding\s+system)\b/i.test(text)
     || /\b(?:into|inside|to)\s+(?:che|the\s+(?:current\s+)?(?:repo(?:sitory)?|codebase))\b/i.test(text);
   const hypothetical = /\b(?:explain|describe|tell\s+me)\b[\s\S]{0,50}\b(?:how|what)\b[\s\S]{0,80}\b(?:would|should|could)\b/i.test(text)
     || /\b(?:hypothetical|plan\s+only|planning\s+only|proposal\s+only)\b/i.test(text);
   if (mutationVerb && mutationTarget && !hypothetical) return true;
+  if (/\bmake\b[\s\S]{0,80}\b(?:improvement|improvements)\b[\s\S]{0,80}\b(?:to|in)\s+(?:your|che(?:'s)?)\s+(?:own\s+)?(?:code|app|worker|system|routing|workflow)\b/i.test(text)
+    && !hypothetical) return true;
   if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:can|could|would)\s+you\s+|please\s+)?(?:add|implement|build|create)\s+(?:the\s+)?(?:ability|capability|support)\b[\s\S]{0,180}\b(?:github|pull\s+request|voice|api|tool|integration)\b/i.test(text)
     && !hypothetical) return true;
 
