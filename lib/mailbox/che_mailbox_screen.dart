@@ -41,6 +41,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
   String? _openThread;
   bool _loading = true;
   String _status = '';
+  String _keySearch = '';
 
   @override
   void initState() {
@@ -478,6 +479,78 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         _ => s,
       };
 
+  Widget _keysTab() {
+    final query = _keySearch.trim().toLowerCase();
+    final providers = query.isEmpty
+        ? _providers
+        : _providers
+            .where((provider) =>
+                '${provider['name'] ?? ''}'.toLowerCase().contains(query))
+            .toList(growable: false);
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+          child: Semantics(
+            textField: true,
+            label: 'Search keys by provider name',
+            child: TextField(
+              onChanged: (value) => setState(() => _keySearch = value),
+              decoration: const InputDecoration(
+                labelText: 'Search keys',
+                hintText: 'Provider name',
+                prefixIcon: Icon(Icons.search_rounded),
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ),
+        ),
+        Expanded(
+          child: providers.isEmpty
+              ? const Center(
+                  child: Text('No matching key providers.',
+                      style: CheType.bodyDim),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                  itemCount: providers.length,
+                  itemBuilder: (_, i) {
+                    final p = providers[i];
+                    final status = '${p['status']}';
+                    final ok =
+                        status == 'healthy' || status == 'rate-limited';
+                    return Semantics(
+                      button: true,
+                      label:
+                          '${p['name']}: ${_statusWords(status)}. Double tap to add or replace the key.',
+                      child: Card(
+                        color: CheColors.surface,
+                        child: ListTile(
+                          leading: Icon(
+                            ok
+                                ? Icons.vpn_key_rounded
+                                : Icons.key_off_rounded,
+                            color:
+                                ok ? CheColors.success : CheColors.warning,
+                          ),
+                          title: Text('${p['name']}', style: CheType.label),
+                          subtitle: Text(
+                            '${_statusWords(status)}${'${p['last4']}'.isNotEmpty ? ' · ends ${p['last4']}' : ''}',
+                            style: CheType.caption,
+                          ),
+                          trailing: const Icon(Icons.add_rounded),
+                          onTap: () => _addKey(p),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
@@ -550,32 +623,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
                               );
                             },
                           ),
-                    ListView.builder(
-                      padding: const EdgeInsets.all(12),
-                      itemCount: _providers.length,
-                      itemBuilder: (_, i) {
-                        final p = _providers[i];
-                        final status = '${p['status']}';
-                        final ok = status == 'healthy' || status == 'rate-limited';
-                        return Semantics(
-                          button: true,
-                          label: '${p['name']}: ${_statusWords(status)}. Double tap to add or replace the key.',
-                          child: Card(
-                            color: CheColors.surface,
-                            child: ListTile(
-                              leading: Icon(ok ? Icons.vpn_key_rounded : Icons.key_off_rounded, color: ok ? CheColors.success : CheColors.warning),
-                              title: Text('${p['name']}', style: CheType.label),
-                              subtitle: Text(
-                                '${_statusWords(status)}${'${p['last4']}'.isNotEmpty ? ' · ends ${p['last4']}' : ''}',
-                                style: CheType.caption,
-                              ),
-                              trailing: const Icon(Icons.add_rounded),
-                              onTap: () => _addKey(p),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+                    _keysTab(),
                   ]),
                 ),
               ]),
