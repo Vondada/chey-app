@@ -109,6 +109,17 @@ function withoutQuotedText(text) {
   return /[a-z]/i.test(stripped.replace(/""/g, '')) ? stripped : text;
 }
 
+// A read-only diagnosis is a question about the system, not permission to
+// start the engineering runner. Treat negative action constraints as binding
+// even when the owner asks CHE to investigate bugs, audit or verify code.
+export function readOnlyDiagnosticIntent(message) {
+  const text = withoutQuotedText(String(message || '').trim());
+  const investigation = /\b(?:inspect|investigate|diagnos(?:e|tic)|trace|audit|analy[sz]e|review|verify|explain|identify|report|self[- ]diagnostic|reasoning[- ]correction|find(?:ings)?|root cause)\b/i.test(text);
+  const explicitReadOnly = /\b(?:read[- ]only|no code changes?|not (?:a |an? )?(?:coding|implementation) (?:assignment|request|task)|reasoning correction,? not a coding assignment)\b/i.test(text);
+  const noMutation = /\b(?:do not|don't|never|without)\s+(?:(?:start|create|open|modify|change|edit|merge|deploy|write|apply|push)\b[\s\S]{0,65}\b(?:coding job|code|files?|pr|pull request|branch|commit|anything|changes?|deployment|repository)|(?:make|perform)\s+(?:any\s+)?(?:code|repository|repo)?\s*changes?)\b/i.test(text);
+  return investigation && (explicitReadOnly || noMutation || globalRepositoryProhibition(text));
+}
+
 export function chatOnlyResponseIntent(message) {
   const text = withoutQuotedText(String(message || '').trim());
   if (!text) return false;
@@ -117,7 +128,7 @@ export function chatOnlyResponseIntent(message) {
     || /\b(?:this\s+is\s+)?(?:an?\s+)?evaluation\b[\s\S]{0,50}\bnot\s+(?:a\s+)?(?:coding|self[- ]development)\s+request\b/i.test(text);
   // An explicit prohibition on repository/code mutation is authoritative even
   // if the sentence also contains implementation wording as a hypothetical.
-  if (globalRepositoryProhibition(text)) return true;
+  if (globalRepositoryProhibition(text) || readOnlyDiagnosticIntent(text)) return true;
   if (responseDirective && hardRepositoryActionProhibition(text)) return true;
   // "This is an evaluation, not a coding request" stands on its own.
   if (/\b(?:this\s+is\s+)?(?:an?\s+)?(?:evaluation|exam|test\s+question)\b[\s\S]{0,50}\bnot\s+(?:a\s+)?(?:coding|self[- ]development)\s+request\b/i.test(text)) return true;
@@ -169,7 +180,7 @@ export function repositoryInspectionIntent(message) {
   const asksCurrentRepo = /\b(?:your|che(?:'s)?)\s+(?:current\s+)?(?:github\s+)?(?:main\s+branch|repo(?:sitory)?|codebase|source|code)\b/i.test(text)
     || /\b(?:current|exact)\s+main\s+(?:branch\s+)?sha\b/i.test(text);
   const asksSourceTrace = /\btrace\b[\s\S]{0,100}\b(?:flutter|cloudflare|worker|request|route|source|files?|functions?|execution)\b/i.test(text);
-  return (asksInspection && asksCurrentRepo || asksSourceTrace) && !repositoryImplementationIntent(text);
+  const readOnlyRepoDiagnostic = readOnlyDiagnosticIntent(text) && /\b(?:github|repo(?:sitory)?|source|code|coding|worker|main|job|routing|runtime|pipeline|status)\b/i.test(text);\n  return (asksInspection && asksCurrentRepo || asksSourceTrace || readOnlyRepoDiagnostic) && !repositoryImplementationIntent(text);
 }
 
 export function starredRepoIntent(message) {
