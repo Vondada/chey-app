@@ -34,8 +34,9 @@ class CheEdgeVoice {
           .timeout(const Duration(seconds: 12));
       final type = response.headers['content-type'] ?? '';
       if (response.statusCode != 200 || response.bodyBytes.isEmpty) return null;
-      if (!type.contains('audio') && !type.contains('octet-stream'))
+      if (!type.contains('audio') && !type.contains('octet-stream')) {
         return null;
+      }
       return response.bodyBytes;
     } catch (_) {
       return null;
