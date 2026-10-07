@@ -109,15 +109,72 @@ function withoutQuotedText(text) {
   return /[a-z]/i.test(stripped.replace(/""/g, '')) ? stripped : text;
 }
 
+// Current-turn repository authorization. The newest owner turn is the only
+// authority here; quoted/history text is stripped before classification.
+export const EXECUTION_MODE = Object.freeze({
+  EXPLORE: 'EXPLORE',
+  PLAN: 'PLAN',
+  BUILD: 'BUILD',
+});
+
+function buildProhibition(text) {
+  const value = String(text || '');
+  return globalRepositoryProhibition(value)
+    || /\b(?:read[- ]only|investigate\s+only|inspection\s+only|plan\s+only|planning\s+only|analysis\s+only|review\s+only)\b/i.test(value)
+    || /\bnot\s+(?:(?:a|an)\s+)?(?:coding|implementation|self[- ]development)(?:\s+(?:assignment|request|task|job))?\b/i.test(value)
+    || /\b(?:no|do\s+not|don['’]?t|never)\s+(?:start|create|run)?\s*(?:(?:a|the)\s+)?(?:coding|implementation|self[- ]development)(?:\s+(?:job|task|process))?\b/i.test(value)
+    || /\b(?:do\s+not|don['’]?t|never)\s+(?:fix|repair|implement|change|modify|edit|update|patch)\s+(?:it|anything|the\s+(?:code|repo(?:sitory)?|system))?(?:\s+yet)?\b/i.test(value)
+    || /\bdon['’]?t\s+(?:change|modify|edit|fix)\s+(?:nothing|anything)\b/i.test(value);
+}
+
+function compoundImplementationAuthorization(text) {
+  const value = String(text || '').trim();
+  const compound = /\b(?:inspect|investigate|diagnos(?:e|tic)|check|trace|review|find)\b[\s\S]{0,220}\b(?:then\s+|and\s+|if\s+(?:it|anything|something)\s+(?:is|looks?)\s+)?(?:fix|repair|implement|patch|change|update|apply)\b/i.test(value);
+  const direct = /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:please|now)\s+|go\s+ahead\s+(?:and\s+)?|i\s+(?:want|need)\s+you\s+to\s+|(?:can|could|would)\s+you\s+)?(?:fix|repair|implement|build|update|patch|refactor|change|modify|add)\b[\s\S]{0,120}\b(?:router|routing|worker|app|code|repo(?:sitory)?|system|workflow|feature|screen|ui|bug|defect|pipeline|test|file|function|class|agent|opencode)\b/i.test(value);
+  return compound || direct;
+}
+
+function ownerBuildAuthorization(message) {
+  const text = withoutQuotedText(String(message || '').trim());
+  if (!text || buildProhibition(text)) return false;
+  return explicitRepositoryImplementationAuthorization(text)
+    || imperativeImplementation(text)
+    || compoundImplementationAuthorization(text);
+}
+
+function planningIntent(text) {
+  const value = String(text || '');
+  return /\b(?:plan|planning|propose|proposal|compare|tradeoffs?|alternatives?|design\s+(?:a|the)?\s*(?:fix|solution|approach|architecture)|reasoning[- ](?:self[- ]?)?diagnostic|reasoning[- ]correction|challenge\s+(?:the|a)?\s*hypothesis)\b/i.test(value)
+    || /\b(?:how|what)\s+(?:would|should|could)\b[\s\S]{0,100}\b(?:fix|repair|implement|change|redesign|improve)\b/i.test(value)
+    || /\b(?:analy[sz]e|diagnose)\b[\s\S]{0,120}\b(?:and\s+)?(?:propose|compare|design|recommend)\b/i.test(value)
+    || /\bperform\b[\s\S]{0,60}\b(?:reasoning\s+)?self[- ]diagnostic\b/i.test(value);
+}
+
+function explorationIntent(text) {
+  const value = String(text || '');
+  return /\b(?:inspect|investigate|diagnos(?:e|is|tic)|trace|audit|review|examine|look\s+at|search|locate|identify|verify|find(?:ings)?|root\s+cause|what\s+happened|why\b[\s\S]{0,80}\bfailed|status)\b/i.test(value)
+    || /\bexplain\b[\s\S]{0,100}\b(?:architecture|routing|router|workflow|pipeline|source|code|worker|job|runtime)\b/i.test(value);
+}
+
+function deliveryRestrictions(text) {
+  const value = String(text || '');
+  const noPr = /\b(?:do\s+not|don['’]?t|never|without)\b[\s\S]{0,80}\b(?:create|open)\b[\s\S]{0,30}\b(?:pr|pull\s+request)\b/i.test(value)
+    || /\bno\s+(?:pr|pull\s+request)\b/i.test(value);
+  const noMerge = /\b(?:do\s+not|don['’]?t|never|without)\b[\s\S]{0,70}\bmerge\b/i.test(value)
+    || /\bno\s+merge\b/i.test(value);
+  const noDeploy = /\b(?:do\s+not|don['’]?t|never|without)\b[\s\S]{0,70}\bdeploy\b/i.test(value)
+    || /\bno\s+deploy(?:ment)?\b/i.test(value);
+  const noCommitPush = /\b(?:do\s+not|don['’]?t|never|without)\b[\s\S]{0,70}\b(?:commit|push|create\s+(?:a\s+)?branch)\b/i.test(value);
+  return { noPr, noMerge, noDeploy, noCommitPush };
+}
+
 // A read-only diagnosis is a question about the system, not permission to
-// start the engineering runner. Treat negative action constraints as binding
-// even when the owner asks CHE to investigate bugs, audit or verify code.
+// start the engineering runner.
 export function readOnlyDiagnosticIntent(message) {
   const text = withoutQuotedText(String(message || '').trim());
-  const investigation = /\b(?:inspect|investigate|diagnos(?:e|tic)|trace|audit|analy[sz]e|review|verify|explain|identify|report|self[- ]diagnostic|reasoning[- ]correction|find(?:ings)?|root cause)\b/i.test(text);
-  const explicitReadOnly = /\b(?:read[- ]only|no code changes?|not (?:a |an? )?(?:coding|implementation) (?:assignment|request|task)|reasoning correction,? not a coding assignment)\b/i.test(text);
-  const noMutation = /\b(?:do not|don't|never|without)\s+(?:(?:start|create|open|modify|change|edit|merge|deploy|write|apply|push)\b[\s\S]{0,65}\b(?:coding job|code|files?|pr|pull request|branch|commit|anything|changes?|deployment|repository)|(?:make|perform)\s+(?:any\s+)?(?:code|repository|repo)?\s*changes?)\b/i.test(text);
-  return investigation && (explicitReadOnly || noMutation || globalRepositoryProhibition(text));
+  if (!explorationIntent(text) && !planningIntent(text)) return false;
+  return buildProhibition(text)
+    || /\b(?:read[- ]only|no\s+code\s+changes?|reasoning\s+correction,?\s+not\s+a\s+coding\s+assignment)\b/i.test(text);
 }
 
 export function chatOnlyResponseIntent(message) {
@@ -125,63 +182,90 @@ export function chatOnlyResponseIntent(message) {
   if (!text) return false;
   const responseDirective = /\b(?:answer|respond|reply)\b[\s\S]{0,80}\b(?:in\s+(?:this\s+)?chat|chat[- ]only|without\s+(?:changing|modifying|editing)\s+(?:your\s+)?code)\b/i.test(text)
     || /\bchat[- ]only\s+(?:test|exam|evaluation)\b/i.test(text)
-    || /\b(?:this\s+is\s+)?(?:an?\s+)?evaluation\b[\s\S]{0,50}\bnot\s+(?:a\s+)?(?:coding|self[- ]development)\s+request\b/i.test(text);
-  // An explicit prohibition on repository/code mutation is authoritative even
-  // if the sentence also contains implementation wording as a hypothetical.
-  if (globalRepositoryProhibition(text) || readOnlyDiagnosticIntent(text)) return true;
+    || /\b(?:this\s+is\s+)?(?:(?:a|an)\s+)?evaluation\b[\s\S]{0,60}\bnot\s+(?:(?:a|an)\s+)?(?:coding|self[- ]development)\s+request\b/i.test(text);
+  if (globalRepositoryProhibition(text)) return true;
+  // A real implementation command can still hold PR/merge/deploy delivery.
+  if (ownerBuildAuthorization(text)) return false;
   if (responseDirective && hardRepositoryActionProhibition(text)) return true;
-  // "This is an evaluation, not a coding request" stands on its own.
-  if (/\b(?:this\s+is\s+)?(?:an?\s+)?(?:evaluation|exam|test\s+question)\b[\s\S]{0,50}\bnot\s+(?:a\s+)?(?:coding|self[- ]development)\s+request\b/i.test(text)) return true;
-  // A real implementation command may constrain only delivery ("do not merge
-  // or deploy yet") while still authorizing the code change.
-  if (explicitRepositoryImplementationAuthorization(text) || imperativeImplementation(text)) return false;
-  // "Answer this in this chat only" needs no separate prohibition.
+  if (/\b(?:this\s+is\s+)?(?:(?:a|an)\s+)?(?:evaluation|exam|test\s+question)\b[\s\S]{0,70}\bnot\s+(?:(?:a|an)\s+)?(?:coding(?:\s+or\s+self[- ]development)?|self[- ]development)\s+request\b/i.test(text)) return true;
   if (/\b(?:in\s+this\s+chat\s+only|chat[- ]only)\b/i.test(text) && !/\bchat[- ]only\s+(?:feature|mode|screen|button|setting)\b/i.test(text)) return true;
-  const prohibition = /\b(?:do\s+not|don['’]t|never|make\s+no|without)\b[\s\S]{0,220}\b(?:modify|alter|touch|changes?|edit|write(?:\s+any)?\s+code|start|create|open|merge|deploy|coding|self[- ]development|branch|commit|pull\s+request|\bpr\b|repository\s+changes?)\b/i.test(text)
-    || /\b(?:no|zero)\s+(?:repository|repo|code)\s+changes?\b/i.test(text);
-  return responseDirective && prohibition;
+  return responseDirective && buildProhibition(text);
 }
 
-// One authoritative foreground-turn boundary for every repository-action
-// entry point. Durable jobs describe background state; they never grant the
-// current message permission to enter an action lane.
+// One authoritative foreground-turn boundary for repository engineering.
+// Durable/background state can describe prior work but never grants this turn
+// permission to mutate source.
 export function currentTurnActionPolicy(message) {
-  const terminalChatOnly = chatOnlyResponseIntent(message);
+  const text = withoutQuotedText(String(message || '').trim());
+  const terminalChatOnly = chatOnlyResponseIntent(text);
+  const ownerAuthorizedBuild = !terminalChatOnly && ownerBuildAuthorization(text);
+  const mode = ownerAuthorizedBuild
+    ? EXECUTION_MODE.BUILD
+    : planningIntent(text)
+      ? EXECUTION_MODE.PLAN
+      : EXECUTION_MODE.EXPLORE;
+  const delivery = deliveryRestrictions(text);
+  const repositoryMutationAllowed = mode === EXECUTION_MODE.BUILD;
+  const codingJobAllowed = repositoryMutationAllowed;
+  const githubMutationAllowed = repositoryMutationAllowed && !delivery.noCommitPush;
+  const prCreationAllowed = githubMutationAllowed && !delivery.noPr;
+  const mergeAllowed = prCreationAllowed && !delivery.noMerge;
+  const deploymentAllowed = mergeAllowed && !delivery.noDeploy
+    && /\b(?:deploy|ship|release|publish)\b/i.test(text);
+  const allowedToolClasses = mode === EXECUTION_MODE.BUILD
+    ? Object.freeze(['repository-read', 'reasoning', 'coding-job', 'repository-write'])
+    : mode === EXECUTION_MODE.PLAN
+      ? Object.freeze(['repository-read', 'reasoning'])
+      : Object.freeze(['repository-read']);
+  const reason = mode === EXECUTION_MODE.BUILD
+    ? 'Current owner turn affirmatively authorizes implementation.'
+    : mode === EXECUTION_MODE.PLAN
+      ? 'Current owner turn requests analysis/planning without implementation authorization.'
+      : explorationIntent(text)
+        ? 'Current owner turn requests read-only investigation without implementation authorization.'
+        : 'No current owner implementation authorization is present; repository actions stay read-only.';
   return Object.freeze({
+    mode,
     terminalChatOnly,
-    repositoryMutationAllowed: !terminalChatOnly && repositoryImplementationIntent(message),
+    ownerAuthorizedBuild,
+    repositoryMutationAllowed,
+    codingJobAllowed,
+    githubMutationAllowed,
+    prCreationAllowed,
+    mergeAllowed,
+    deploymentAllowed,
+    allowedToolClasses,
+    restrictions: Object.freeze({
+      repositoryReadOnly: !repositoryMutationAllowed,
+      noPr: delivery.noPr,
+      noMerge: delivery.noMerge,
+      noDeploy: delivery.noDeploy,
+      noCommitPush: delivery.noCommitPush,
+    }),
+    reason,
   });
 }
 
 export function repositoryImplementationIntent(message) {
-  const text = String(message || '').trim();
-  if (!text) return false;
-
-  // Explicit chat/evaluation instructions outrank engineering words quoted
-  // inside the question. Without this guard, an exam asking CHE to explain
-  // patch/test/PR steps can be misrouted into the real self-development lane.
-  if (chatOnlyResponseIntent(text)) return false;
-
-  if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?update\s+your\s+code\s*:/i.test(text)) return true;
-  if (explicitRepositoryImplementationAuthorization(text) || imperativeImplementation(text)) return true;
-
-  const implementation = /\b(?:implement|integrate|adapt|apply|install|add|upgrade|update|improve|rewrite|refactor|build|change|modify|patch|fix|repair|debug|test|stress[- ]?test|audit|verify)\b/i.test(text);
-  const target = /\b(?:che(?:'s)?|your)\s+(?:code|codebase|repo(?:sitory)?|app|office|agents?|system|workflow|architecture|autonomy|coding|runner|pipeline)\b/i.test(text)
-    || /\b(?:into|inside|to|against)\s+(?:che|the\s+(?:current\s+)?(?:repo(?:sitory)?|codebase|main\s+branch))\b/i.test(text);
-  const receipts = /\b(?:draft\s+pr|pull\s+request|commit\s+sha|files\s+changed|run\s+tests?|regression\s+tests?|failure[- ]?injection|current\s+main|test\s+branch|implement\s+now|do\s+the\s+implementation)\b/i.test(text);
-  return implementation && (target || receipts);
+  return currentTurnActionPolicy(message).codingJobAllowed;
 }
 
 export function repositoryInspectionIntent(message) {
   const text = withoutQuotedText(String(message || '').trim());
+  const policy = currentTurnActionPolicy(text);
+  if (policy.mode === EXECUTION_MODE.BUILD) return false;
+  // A pure chat-only exam asks for an answer, not a repository crawl.
+  if (policy.terminalChatOnly
+    && /\b(?:evaluation|exam|test(?:\s+question)?)\b[\s\S]{0,90}\bnot\s+(?:(?:a|an)\s+)?(?:coding(?:\s+or\s+self[- ]development)?|self[- ]development)\s+request\b/i.test(text)) return false;
   if (/\b(?:do\s+not|don['’]t|never)\s+(?:ever\s+)?trace\b/i.test(text)
     || /\b(?:do\s+not|don['’]t|never)\s+(?:access|inspect|read|fetch|use)\b[^.!?\n]{0,60}\b(?:repo(?:sitory)?|codebase|source|code)\b/i.test(text)) return false;
-  const asksInspection = /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+|(?:can|could|will)\s+you\s+)?(?:inspect|find|locate|trace|show|identify)\b/i.test(text);
-  const asksCurrentRepo = /\b(?:your|che(?:'s)?)\s+(?:current\s+)?(?:github\s+)?(?:main\s+branch|repo(?:sitory)?|codebase|source|code)\b/i.test(text)
+  const asksInspection = /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+|(?:can|could|will)\s+you\s+)?(?:inspect|find|locate|trace|show|identify|investigate|diagnose|audit|review|examine|verify|analy[sz]e)\b/i.test(text);
+  const asksCurrentRepo = /\b(?:your|che(?:'s)?)\s+(?:current\s+)?(?:github\s+)?(?:main\s+branch|repo(?:sitory)?|codebase|source|code|routing|router|worker|coding\s+(?:job|pipeline|runtime))\b/i.test(text)
     || /\b(?:current|exact)\s+main\s+(?:branch\s+)?sha\b/i.test(text);
-  const asksSourceTrace = /\btrace\b[\s\S]{0,100}\b(?:flutter|cloudflare|worker|request|route|source|files?|functions?|execution)\b/i.test(text);
-  const readOnlyRepoDiagnostic = readOnlyDiagnosticIntent(text) && /\b(?:github|repo(?:sitory)?|source|code|coding|worker|main|job|routing|runtime|pipeline|status)\b/i.test(text);
-  return (asksInspection && asksCurrentRepo || asksSourceTrace || readOnlyRepoDiagnostic) && !repositoryImplementationIntent(text);
+  const asksSourceTrace = /\btrace\b[\s\S]{0,120}\b(?:flutter|cloudflare|worker|request|route|source|files?|functions?|execution|coding\s+job|runtime)\b/i.test(text);
+  const repoDiagnostic = (explorationIntent(text) || planningIntent(text) || readOnlyDiagnosticIntent(text))
+    && /\b(?:github|repo(?:sitory)?|source|code|coding|worker|main|job|routing|router|runtime|pipeline|status|architecture)\b/i.test(text);
+  return (asksInspection && asksCurrentRepo || asksSourceTrace || repoDiagnostic);
 }
 
 export function starredRepoIntent(message) {
