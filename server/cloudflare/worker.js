@@ -2497,14 +2497,22 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
   // mistake an evaluation *about* coding for permission to change the repo.
   // Enforce the current-turn boundary here, before reading pending changes,
   // failed jobs, checkpoints, or any other durable engineering state.
-  if (currentTurnActionPolicy(request).terminalChatOnly) {
+  const turnPolicy = currentTurnActionPolicy(request);
+  if (!turnPolicy.codingJobAllowed) {
     if (options.answerChatOnly) {
       const answer = await options.answerChatOnly(request);
-      if (answer) return json({ message: answer, chat_only: true, code_review_passed: false, owner_approval_required: false });
+      if (answer) return json({
+        message: answer,
+        chat_only: true,
+        execution_mode: turnPolicy.mode,
+        code_review_passed: false,
+        owner_approval_required: false,
+      });
     }
     return json({
-      detail: 'This is a chat-only request and was not accepted by the repository-action endpoint.',
+      detail: `This is a ${turnPolicy.mode} request and was not accepted by the repository-mutation endpoint.`,
       route_to_chat: true,
+      execution_mode: turnPolicy.mode,
       code_review_passed: false,
       owner_approval_required: false,
     }, 409);
@@ -6860,26 +6868,8 @@ export class CheState extends DurableObject {
             const status = await new CheCodingRuntime(this.env).getStatus(id);
             if (status.status === 200) {
               const runtimeLifecycle = runtimeState(status);
-              if (recoverableRuntimeFailure(status) && runtimeRequest) {
-                // A terminal external-runner attempt is not the end of the owner's
-                // coding mission. Hand the same request to CHE's durable built-in
-                // recovery queue, whose idempotency key prevents duplicate jobs.
-                const queued = await this.queueSelfDevelopment({
-                  request: runtimeRequest,
-                  groundedRequest: runtimeRequest,
-                });
-                await this.ctx.storage.put('che_runtime_last_session_at', '');
-                const checkpoint = queued.job?.checkpoint ? ' Its recovery checkpoint is saved.' : '';
-                return ndjsonReply(`The OpenCode attempt failed, sir, so I automatically moved the same coding job to my recovery queue. It is ${queued.job?.status || 'queued'} now.${checkpoint}`, {
-                  source: 'che_coding_status',
-                  session_id: id,
-                  state: runtimeLifecycle,
-                  background_job_id: queued.job?.id,
-                  background_job_status: queued.job?.status || 'queued',
-                  recovering: true,
-                  deduplicated: queued.deduplicated === true,
-                });
-              }
+              // Status is a read. Automatic recovery runs from the alarm path,
+              // never as a side effect of asking what happened to a job.
               return runtimeReply(status);
             }
           }
@@ -6923,7 +6913,7 @@ export class CheState extends DurableObject {
         // Explicit implementation requests win over repository discovery. This
         // is what lets "Update your code: use Study 1 and 2..." actually build
         // and save a reviewed proposal instead of stopping at research.
-        if (!chatOnlyEvaluation && repositoryImplementationIntent(message)) {
+        if (turnActionPolicy.codingJobAllowed) {
           return ownerDevice
             ? this.selfDevelopmentReply(message, { vectorRecall })
             : ndjsonReply('Only the CHE owner can ask me to change my code.', { source: 'che_self_development', ok: false });
@@ -6984,7 +6974,10 @@ export class CheState extends DurableObject {
         // real actions, never from model narration.
         const collab = chatOnlyEvaluation ? null : collaborationIntent(message);
         const batch = chatOnlyEvaluation ? null : parallelPreference(message);
-        if (collab || batch) {
+        // Collaboration packets in this function also create CHE's own coding
+        // job. A read-only review/diagnostic may consult peers elsewhere, but
+        // it cannot inherit an older engineering request and silently BUILD.
+        if ((collab || batch) && turnActionPolicy.codingJobAllowed) {
           const reply = await this.startCollaboration(message, { peers: collab?.peers || (batch ? ['claude', 'chatgpt'] : []), batch });
           if (reply) return reply;
         }
@@ -7241,7 +7234,7 @@ export class CheState extends DurableObject {
         // this turn as ordinary chat but identifies self_development, do the
         // real repository inspection/engineering flow here. Never let a model
         // narrate fake branches, PRs, SHAs, tests, or "I can't access the repo".
-        if (!chatOnlyEvaluation && requestedCapabilities.includes('self_development')) {
+        if (turnActionPolicy.codingJobAllowed && requestedCapabilities.includes('self_development')) {
           return ownerDevice
             ? this.selfDevelopmentReply(message, { vectorRecall })
             : ndjsonReply('Only the CHE owner can ask me to change my code.', { source: 'che_self_development', ok: false });
@@ -7955,7 +7948,7 @@ export class CheState extends DurableObject {
             let note = '';
             if (guarded.homework) {
               const last = await Promise.resolve().then(() => this.ctx.storage.get(LAST_ENGINEERING_REQUEST_KEY)).catch(() => null);
-              if (last?.request && this.env.CHE_GITHUB_TOKEN) {
+              if (last?.request && this.env.CHE_GITHUB_TOKEN && turnActionPolicy.codingJobAllowed) {
                 const queued = await this.queueSelfDevelopment({ request: last.request, groundedRequest: last.request });
                 await recordReceipt(this.ctx.storage, { kind: 'job_started', key: `job:${queued.job.id}`, job_id: queued.job.id, job_kind: 'self_development' });
                 note = `I'll read my own source from GitHub. Coding job ${queued.job.id.slice(0, 8)} is ${queued.job.status === 'running' ? 'running' : 'queued'} for your request.`;
@@ -8784,6 +8777,15 @@ export class CheState extends DurableObject {
   // Owner chat reply for a coding request. Proposal → short summary;
   // failures → one human-level sentence (diagnostics stay on the Worker).
   async selfDevelopmentReply(message, { vectorRecall = {}, onAccepted = null } = {}) {
+    const policy = currentTurnActionPolicy(message);
+    if (!policy.codingJobAllowed) {
+      const answer = await this.answerTerminalChatOnly(message);
+      return ndjsonReply(answer || 'I treated that as read-only and did not start a coding job, sir.', {
+        source: 'che_read_only',
+        execution_mode: policy.mode,
+        ok: true,
+      });
+    }
     // OpenCode runtime first when it is switched on; the built-in coding team
     // is the automatic fallback whenever the runner cannot start.
     if (codingRuntimeEnabled(this.env) && !ownerRequiresMergeApproval(message)) {
@@ -8824,6 +8826,10 @@ export class CheState extends DurableObject {
   }
 
   async startOpenCodeSession(message) {
+    const policy = currentTurnActionPolicy(message);
+    if (!policy.codingJobAllowed) {
+      return { status: 403, denied: true, execution_mode: policy.mode, detail: `OpenCode BUILD denied: current turn is ${policy.mode}.` };
+    }
     const runtime = new CheCodingRuntime(this.env);
     const baseSha = await runtime.headSha('main');
     const ownerRequest = String(message || '').replace(/^\s*update your code\s*:?\s*/i, '');
@@ -8845,6 +8851,7 @@ export class CheState extends DurableObject {
       ownerRequest,
       baseSha,
       targetBranch: `che/auto/${jobId.slice(0, 8)}`,
+      executionMode: policy.mode,
     });
     if (started.status === 202) {
       await this.ctx.storage.put('che_runtime_last_session', started.session_id);
