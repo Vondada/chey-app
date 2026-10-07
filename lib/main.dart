@@ -27,6 +27,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'che_mic_supervisor.dart';
 import 'che_ui/che_ui_voice_command.dart';
 import 'che_native_voice.dart';
+import 'che_edge_voice.dart';
 import 'che_speech_pipeline.dart';
 import 'che_notifications.dart';
 import 'platform/che_platform_client.dart';
@@ -75,6 +76,7 @@ import 'che_ui/che_agents.dart' show CheAgent, CheAgentStatusLabel;
 import 'che_ui/che_agent_chat.dart' show CheOrb, CheOrbState, CheOrbStateLabel;
 import 'che_ui/che_log.dart' show CheTranscriptScreen;
 import 'home/che_home_chat.dart';
+import 'home/screen_command.dart';
 import 'home/che_inline_preview.dart';
 import 'home/che_grok_chat_screen.dart';
 import 'home/che_mockup_home.dart';
@@ -243,6 +245,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   // Connected world (lib/home_state/connected.dart).
   String? _homeGreeting;
   List<String> _homeSuggestions = const [];
+  bool _screenChipsHidden = false;
+  bool _screenGreetingHidden = false;
   bool _greetedThisLaunch = false;
   String _explainLevel = 'simple';
   // "Tell me more" / "expand": the next reply only goes deeper.
@@ -1332,7 +1336,9 @@ OWNER AGENCY
 
   Widget _buildHomeTab(List<CheAgent> agents) {
     final listening = _realtimeVoice?.connected == true || isListening;
-    final greeting = _homeGreeting ?? (suggestions.isEmpty ? null : suggestions.first) ?? '';
+    final greeting = _screenGreetingHidden
+        ? ''
+        : (_homeGreeting ?? (suggestions.isEmpty ? null : suggestions.first) ?? '');
     return CheMockupHome(
       che: _officeRuntime.che,
       agents: agents,
@@ -1365,8 +1371,9 @@ OWNER AGENCY
   }
 
   Widget _buildChatTab(List<CheAgent> agents) {
-    final postReplyActions =
-        _homeSuggestions.isNotEmpty ? _homeSuggestions : _skillPlugins.quickActions();
+    final postReplyActions = _screenChipsHidden
+        ? const <String>[]
+        : (_homeSuggestions.isNotEmpty ? _homeSuggestions : _skillPlugins.quickActions());
     final chat = Column(
       children: [
         Expanded(

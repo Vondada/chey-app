@@ -897,7 +897,7 @@ async function runOneTask(ctx) {
   }
   // A La Agencia job whose tool has no owner credential on the server stops
   // here with an honest blocker; CHE reads it aloud from the board.
-  const blocker = agentActionGuard(agent, task.task) || (isLaAgenciaAgent(agent) ? officeToolBlocker(env, agent) : '');
+  const blocker = agentActionGuard(agent, task.task) || (isLaAgenciaAgent(agent) ? officeToolBlocker(env, agent, task.task) : '');
   if (blocker) {
     task.status = 'blocked';
     task.error = blocker;

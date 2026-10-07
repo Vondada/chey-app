@@ -380,6 +380,8 @@ extension _CheHomeVoice on _CHEHomeState {
       ready: _prepareSpeechOutput(),
       synthesize: (text) async {
         if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return null;
+        final edge = await CheEdgeVoice.speak(text);
+        if (edge != null && edge.isNotEmpty) return CheVoiceClip(edge, 'edge-ava');
         final server = await _synthesizeServerVoice(text);
         if (server != null) return server;
         // Fluent reading: prepare the on-device neural voice here (ahead of
