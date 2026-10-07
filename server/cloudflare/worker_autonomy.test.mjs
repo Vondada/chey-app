@@ -132,6 +132,27 @@ test('merge intent needs an explicit command; negations and questions do not mer
   assert.equal(selfUpdateChatIntent('is it deployed?')?.kind, 'deploy-status');
 });
 
+test('screen-command media routes return only real Edge audio or a real MoneyPrinter error', async () => {
+  const saved = new Map();
+  const state = new CheState({ storage: storageFor(saved) }, {});
+  const video = await state.handleRequest(new Request('https://che.example/api/video/line', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ topic: 'how the printing press started' }),
+  }));
+  assert.equal(video.status, 424);
+  const videoBody = await video.json();
+  assert.match(String(videoBody.error || ''), /MoneyPrinter is not connected/i);
+  assert.match(String(videoBody.error || ''), /CHE_VIDEO_GEN_URL/);
+
+  const edge = await state.handleRequest(new Request('https://che.example/api/voice/edge', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: '' }),
+  }));
+  assert.equal(edge.status, 204);
+});
+
 test('/health reports the running version for deployment verification', async () => {
   const res = await worker.fetch(new Request('https://che.example/health'), { CF_VERSION_METADATA: { id: 'v-1', tag: 'abc123def456' } });
   const body = await res.json();
