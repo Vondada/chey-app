@@ -76,13 +76,13 @@ jobs:
           echo "Shorebird iOS build number: $build_number"
           shorebird release ios --no-codesign -- \
             --build-number="$build_number" \
-            --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
+            --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-https://chey-app.henryjavoni.workers.dev}"
 
       - name: Build unsigned iPhone app (plain, not patchable)
         if: steps.shorebird.outputs.ready != 'true'
         run: |
           flutter build ios --release --no-codesign \
-            --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-}"
+            --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-https://chey-app.henryjavoni.workers.dev}"
 
       - name: Package unsigned IPA
         run: |

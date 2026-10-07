@@ -1,8 +1,5 @@
 name: CHE IPA public release
 
-# Publishes each successful iPhone build as a public GitHub Release asset so
-# SideStore can install it from a link in one tap (Actions artifacts need a
-# GitHub login and cannot be opened by SideStore).
 on:
   workflow_run:
     workflows: ["CHE iPhone IPA"]
@@ -10,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: CHE iPhone IPA run id to publish
+        description: Successful main-branch CHE iPhone IPA run to publish
         required: true
         type: string
 
@@ -18,37 +15,61 @@ permissions:
   contents: write
   actions: read
 
+concurrency:
+  group: che-ipa-publication
+  cancel-in-progress: false
+
 jobs:
   publish:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-      - name: Download IPA from the build run
+          ref: main
+      - name: Verify trusted successful build
+        id: build
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > run.json
+          jq -e '.conclusion == "success" and .head_branch == "main" and .path == ".github/workflows/che-iphone-ipa.yml" and (.event == "push" or .event == "workflow_dispatch")' run.json
+          echo "commit=$(jq -r .head_sha run.json)" >> "$GITHUB_OUTPUT"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" > artifacts.json
+          count=$(jq '[.artifacts[] | select(.name | startswith("CHE-unsigned-ipa-"))] | length' artifacts.json)
+          [[ "$count" == "1" ]]
+          name=$(jq -r '.artifacts[] | select(.name | startswith("CHE-unsigned-ipa-")) | .name' artifacts.json)
+          echo "artifact=$name" >> "$GITHUB_OUTPUT"
+          if [[ "$name" == "CHE-unsigned-ipa-self-updating" ]]; then
+            echo 'patchable=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'patchable=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Download verified build artifact
         uses: actions/download-artifact@v4
         with:
-          pattern: CHE-unsigned-ipa-*
+          name: ${{ steps.build.outputs.artifact }}
           path: ipa
-          merge-multiple: true
-          run-id: ${{ inputs.run_id || github.event.workflow_run.id }}
+          run-id: ${{ env.RUN_ID }}
           github-token: ${{ github.token }}
-      - name: Create release
+      - name: Publish verified CHE update
         env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
+          BUILD_COMMIT: ${{ steps.build.outputs.commit }}
+          PATCHABLE: ${{ steps.build.outputs.patchable }}
         run: |
-          set -eu
-          test -s ipa/CHE-unsigned.ipa || { echo "::error::No IPA in run $RUN_ID"; exit 1; }
-          version=$(sed -n 's/^version: //p' pubspec.yaml | head -1)
-          tag="ipa-${version}-run${RUN_ID}"
-          gh release delete "$tag" --yes --cleanup-tag >/dev/null 2>&1 || true
-          gh release create "$tag" ipa/CHE-unsigned.ipa \
-            --title "CHE ${version} (iPhone)" \
-            --notes "Unsigned IPA for SideStore, built by run ${RUN_ID}." \
-            --latest
-          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/CHE-unsigned.ipa"
-          echo "::notice title=SideStore install link::sidestore://install?url=${url}"
-          echo "IPA: $url" >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          python3 -m unittest discover -s tool -p test_ipa_metadata.py
+          tag=$(python3 tool/ipa_metadata.py ipa/CHE-unsigned.ipa "$BUILD_COMMIT" "$PATCHABLE" ipa/CHE-update.json)
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" ipa/CHE-unsigned.ipa ipa/CHE-update.json \
+              --draft --target "$BUILD_COMMIT" --title "CHE iPhone $tag" --notes-file ipa/CHE-update.md
+          fi
+          remote=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.assets[] | select(.name == "CHE-unsigned.ipa") | .digest')
+          expected="sha256:$(jq -r .sha256 ipa/CHE-update.json)"
+          [[ "$remote" == "$expected" ]] || { echo '::error::IPA digest mismatch; release not published'; exit 1; }
+          gh release edit "$tag" --draft=false --latest --notes-file ipa/CHE-update.md
+          echo "Published verified CHE update $tag" >> "$GITHUB_STEP_SUMMARY"
