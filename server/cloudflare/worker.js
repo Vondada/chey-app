@@ -6144,9 +6144,23 @@ export class CheState extends DurableObject {
         const turnActionPolicy = currentTurnActionPolicy(message);
         const chatOnlyEvaluation = turnActionPolicy.terminalChatOnly;
 
-        if (repositoryInspectionIntent(message)) {
+        const directRepositoryInspection = repositoryInspectionIntent(message);
+        const recentRepositoryEvidenceRequest = [...ownerHistory]
+          .reverse()
+          .filter((item) => item?.role === 'user')
+          .map((item) => String(item?.content || item?.text || '').slice(0, 2000))
+          .find((item) => repositoryInspectionIntent(item)) || '';
+        const repositoryEvidenceFollowUp = !directRepositoryInspection
+          && /^(?:is|are)\s+(?:that|this|it|those|these)\s+(?:still\s+)?(?:current|accurate|correct|live|latest|valid)\??$|^(?:still\s+current|same\s+sha|same\s+commit|has\s+that\s+changed|did\s+that\s+change)\??$/i.test(message.trim())
+          && Boolean(recentRepositoryEvidenceRequest);
+        const repositoryInspectionRequest = directRepositoryInspection
+          ? message
+          : repositoryEvidenceFollowUp
+            ? `${recentRepositoryEvidenceRequest}\nFollow-up: ${message}`
+            : '';
+        if (repositoryInspectionRequest) {
           if (!ownerDevice) return ownerOnly();
-          const inspected = await inspectRepositoryContext(this.env, message, fetch, { trace: true });
+          const inspected = await inspectRepositoryContext(this.env, repositoryInspectionRequest, fetch, { trace: true });
           if (!inspected.ok) return ndjsonReply(`I could not verify the current repository source, sir. ${inspected.detail}`, { source: 'che_repository_inspection', ok: false });
           const graph = inspected.discovery;
           const byPath = new Map(inspected.files.map((file) => [file.path, file]));
@@ -6156,7 +6170,29 @@ export class CheState extends DurableObject {
             return `${i + 1}. ${file.path}${symbols.length ? ` — ${symbols.join(', ')}` : ''}${file.live !== true ? ' (runtime use not verified)' : ''}${file.callers?.length ? `. Used by ${file.callers.join(', ')}` : ''}.`;
           });
           const routes = graph.api.map((route) => `${route.http} ${route.route}: ${route.server.map((server) => `${server.server_file}${server.handlers?.length ? ` → ${server.handlers.map((handler) => `${handler.module}: ${handler.fn}`).join(', ')}` : ''}`).join(', ')}`);
-          return ndjsonReply(`I inspected ${inspected.repository} at exact commit ${inspected.head_sha}, sir.\n${lines.length ? lines.join('\n') : 'I could not verify an implementation for that target.'}${routes.length ? `\nRoutes: ${routes.join('; ')}` : ''}${graph.dead.length ? `\nUnreferenced candidates: ${graph.dead.join(', ')}.` : ''}`, { source: 'che_repository_inspection', repository_research: true, repository_sha: inspected.head_sha });
+          const historicalCauseRequested = /\b(?:previous|earlier|last)\b[\s\S]{0,160}\b(?:self[- ]diagnostic|diagnostic|coding\s+(?:job|pipeline|runtime))\b|\bwhy\b[\s\S]{0,160}\b(?:entered|started|triggered|routed)\b[\s\S]{0,100}\b(?:coding|pipeline|job)\b/i.test(repositoryInspectionRequest);
+          const verifiedLines = [
+            'VERIFIED',
+            `- I inspected ${inspected.repository} at exact current commit ${inspected.head_sha}.`,
+            ...(lines.length ? lines.map((line) => `- ${line.replace(/^\d+\.\s*/, '')}`) : ['- I could not verify an implementation for that target in the pinned source I inspected.']),
+            ...(routes.length ? [`- Routes: ${routes.join('; ')}`] : []),
+            ...(graph.dead.length ? [`- Unreferenced candidates: ${graph.dead.join(', ')}.`] : []),
+          ];
+          const diagnosisLimits = historicalCauseRequested
+            ? [
+                'INFERRED',
+                '- None. This read-only path does not promote model guesses or source-name guesses to facts.',
+                'UNKNOWN',
+                '- The exact historical trigger that sent a previous diagnostic into coding is not proven by current repository source alone. A matching request/job receipt or runtime log is required to verify that cause, so I will not invent a workflow, file, flag, or job name.',
+              ]
+            : [];
+          return ndjsonReply([...verifiedLines, ...diagnosisLimits].join('\n'), {
+            source: 'che_repository_inspection',
+            repository_research: true,
+            repository_sha: inspected.head_sha,
+            evidence_mode: 'pinned_repository',
+            execution_mode: turnActionPolicy.mode,
+          });
         }
 
         // Explicit foreground chat-only evaluations are terminal. Answer them

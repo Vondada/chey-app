@@ -322,11 +322,14 @@ export function repositoryInspectionIntent(message) {
 
   const directInspection = /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+|(?:can|could|will)\s+you\s+)?(?:inspect|find|locate|trace|show|identify|investigate|diagnose|audit|review|examine|verify|analy[sz]e|explain)\b/i.test(text);
   const repoTarget = /\b(?:your|che(?:'s)?)\s+(?:current\s+)?(?:github\s+)?(?:main\s+branch|repo(?:sitory)?|codebase|source|code|routing|router|worker|coding\s+(?:job|pipeline|runtime)|architecture)\b/i.test(text)
-    || /\b(?:current|exact)\s+main\s+(?:branch\s+)?sha\b/i.test(text)
+    || /\b(?:current|exact|latest)\s+main\s+(?:branch\s+)?sha\b/i.test(text)
     || /\b(?:coding\s+(?:job|pipeline|runtime)|cloudflare\s+worker|github\s+main)\b/i.test(text);
   const selfDiagnosticSource = /\bself[- ]diagnostic\b[\s\S]{0,260}\b(?:github|main\s+sha|repo(?:sitory)?|source|coding[- ]job|routing|worker)\b/i.test(text);
+  const exactHeadQuestion = /\b(?:what(?:'s|\s+is)|give\s+me|show\s+me|tell\s+me)\b[\s\S]{0,80}\b(?:current|exact|latest)\s+(?:github\s+)?main\s+(?:branch\s+)?sha\b/i.test(text);
+  const repositoryStateQuestion = repoTarget
+    && /\b(?:status|state|current|latest|exact)\b/i.test(text);
   const guardedDiagnostic = readOnlyDiagnosticIntent(text) && repoTarget;
-  return Boolean((directInspection && repoTarget) || guardedDiagnostic || selfDiagnosticSource);
+  return Boolean((directInspection && repoTarget) || exactHeadQuestion || repositoryStateQuestion || guardedDiagnostic || selfDiagnosticSource);
 }
 
 export function starredRepoIntent(message) {

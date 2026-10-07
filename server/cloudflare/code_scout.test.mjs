@@ -270,6 +270,10 @@ test('quoted prohibitions are examples, not this turn\'s instruction', () => {
 test('repository inspection routes current-main SHA and source-trace owner questions', () => {
   assert.equal(repositoryInspectionIntent('CHE, inspect your current GitHub main branch. Give me the exact current main SHA, then locate the existing War Room implementation and name the actual files and major components involved.'), true);
   assert.equal(repositoryInspectionIntent('CHE, trace one real owner chat request from the Flutter interface through the Cloudflare Worker routing and back to the owner response. Give me the important files/functions in execution order and distinguish anything you verified from anything you inferred.'), true);
+  assert.equal(repositoryInspectionIntent('What is the exact current main branch SHA?'), true);
+  assert.equal(repositoryInspectionIntent('Verify the latest main branch SHA.'), true);
+  assert.equal(repositoryInspectionIntent('Inspect the latest main SHA.'), true);
+  assert.equal(repositoryInspectionIntent('What is the current status of your code?'), true);
   assert.equal(repositoryInspectionIntent("Don't trace the worker request."), false);
 });
 

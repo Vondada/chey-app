@@ -226,6 +226,42 @@ test('owner capability test: repository and autonomy discovery reads source with
     assert.ok(calls.every((c) => c.method === 'GET'));
     assert.ok(!(saved.get('che').jobs || []).length);
 
+    const diagnosticPrompt = 'CHE, inspect your current GitHub main branch and investigate why your previous self-diagnostic entered the coding pipeline. Do not modify code, start a coding job, create a PR, merge, or deploy. Report only verified findings, and clearly separate anything inferred or unknown.';
+    const diagnosticReply = replyFromNdjson(await (await chat(diagnosticPrompt)).text());
+    assert.match(diagnosticReply, /VERIFIED/);
+    assert.match(diagnosticReply, /INFERRED/);
+    assert.match(diagnosticReply, /UNKNOWN/);
+    assert.match(diagnosticReply, /sha1/, 'diagnostic must use the exact pinned repository head');
+    assert.doesNotMatch(diagnosticReply, /health_check\.yml|diagnostic-tool|auto-remediate|build-manifest\.json|fix-version-mismatch/i, 'unsupported repository facts can never reach owner chat');
+    assert.equal(aiCalls, 0, 'verified repository diagnostics bypass generic model generation');
+    assert.ok(!(saved.get('che').jobs || []).length, 'read-only diagnostic creates no coding job');
+
+    const callsBeforeExactSha = calls.length;
+    const exactShaReply = replyFromNdjson(await (await chat('What is the exact current main branch SHA?')).text());
+    assert.match(exactShaReply, /sha1/, 'exact-SHA question must come from the pinned repository head');
+    assert.equal(aiCalls, 0, 'exact-SHA question bypasses generic model generation');
+    assert.ok(calls.slice(callsBeforeExactSha).some((c) => /\/git\/ref\/heads\/main|\/git\/trees\//.test(c.url)), 'exact-SHA question refreshes repository evidence');
+    assert.ok(!(saved.get('che').jobs || []).length, 'exact-SHA question creates no coding job');
+
+    const callsBeforeLatestSha = calls.length;
+    const latestShaReply = replyFromNdjson(await (await chat('Verify the latest main branch SHA.')).text());
+    assert.match(latestShaReply, /sha1/, 'latest-SHA imperative must come from the pinned repository head');
+    assert.equal(aiCalls, 0, 'latest-SHA imperative bypasses generic model generation');
+    assert.ok(calls.slice(callsBeforeLatestSha).some((c) => /\/git\/ref\/heads\/main|\/git\/trees\//.test(c.url)), 'latest-SHA imperative refreshes repository evidence');
+    assert.ok(!(saved.get('che').jobs || []).length, 'latest-SHA imperative creates no coding job');
+
+    const callsBeforeFollowUp = calls.length;
+    const followUpReply = replyFromNdjson(await (await chat('Is that still current?', {
+      history: [
+        { role: 'user', content: diagnosticPrompt },
+        { role: 'assistant', content: diagnosticReply },
+      ],
+    })).text());
+    assert.match(followUpReply, /sha1/, 'repository follow-up re-verifies the pinned head');
+    assert.equal(aiCalls, 0, 'repository follow-up bypasses generic model generation');
+    assert.ok(calls.slice(callsBeforeFollowUp).some((c) => /\/git\/ref\/heads\/main|\/git\/trees\//.test(c.url)), 'repository follow-up performs a fresh evidence read');
+    assert.ok(!(saved.get('che').jobs || []).length, 'repository follow-up creates no coding job');
+
     const callsBeforeProhibitedDiscovery = calls.length;
     await chat('CHE, find the War Room files in your codebase, but do not access the codebase; use only your existing knowledge.');
     assert.ok(calls.slice(callsBeforeProhibitedDiscovery).every((c) => c.url.includes('/contents/mailbox')), 'an explicit source-access prohibition must prevent repository source reads');
