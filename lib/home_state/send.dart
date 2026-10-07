@@ -459,6 +459,16 @@ extension _CheHomeSend on _CHEHomeState {
         : typedMessage;
     if (message.isEmpty) return;
 
+    final videoTopic = RegExp(r'(?:make|create|generate)(?: me)?(?: an?| the)? (?:faceless |info |stick figure )?video(?: about| on)? (.+)', caseSensitive: false).firstMatch(message.trim());
+    if (videoTopic != null && _pendingAttachment == null) {
+      final topic = videoTopic.group(1)!.replaceAll(RegExp(r'[.!?]+$'), '').trim();
+      final result = await CheVideo.make(topic);
+      final reply = result.startsWith('http') ? 'Video file: $result' : result;
+      if (mounted) _set(() => messages..add({'role': 'user', 'text': message})..add({'role': 'assistant', 'text': reply}));
+      await speakText(reply, record: false);
+      return;
+    }
+
     // Password vault: handled entirely on the phone. The words never go to
     // the CHE server, an AI provider, chat history or memory.
     final vaultCommand = CheVaultCommand.parse(message);
