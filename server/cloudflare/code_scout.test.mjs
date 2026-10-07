@@ -37,7 +37,7 @@ test('starred GitHub intent distinguishes research from implementation', () => {
   assert.equal(intent.integrate, true);
   assert.equal(repositoryImplementationIntent(implementationText), true);
   assert.equal(repositoryImplementationIntent('Inspect my starred GitHub repos for agent and RAG systems.'), false);
-  assert.equal(repositoryImplementationIntent('Run a comprehensive autonomy stress test against the current main branch and verify background job recovery.'), true);
+  assert.equal(repositoryImplementationIntent('Run a comprehensive autonomy stress test against the current main branch and verify background job recovery.'), false, 'testing language alone is not source-mutation authorization');
   assert.equal(repositoryImplementationIntent("Audit CHE's coding runner and fix any faulty workflow you find."), true);
   assert.equal(repositoryImplementationIntent('Tell me what autonomous coding means.'), false);
   for (const request of [
@@ -285,4 +285,63 @@ test('read-only self-diagnostic cannot start a coding job, including exact owner
   }
   assert.equal(currentTurnActionPolicy('CHE, fix your coding pipeline and run regression tests.').repositoryMutationAllowed, true);
   assert.equal(currentTurnActionPolicy('CHE, inspect your repository and then fix the bugs in your code.').repositoryMutationAllowed, true);
+});
+
+
+test('explicit chat-only evaluations bypass repository inspection', () => {
+  const exam = 'CHE AUTONOMY EXAM — CHAT-ONLY TEST. This is an evaluation, NOT a coding or self-development request. Answer all questions directly in THIS CHAT in one response. Do not modify your source code, start a coding job, create a PR, merge or deploy.';
+  const policy = currentTurnActionPolicy(exam);
+  assert.equal(policy.mode, 'EXPLORE');
+  assert.equal(policy.codingJobAllowed, false);
+  assert.equal(repositoryInspectionIntent(exam), false);
+});
+
+test('authoritative policy separates EXPLORE PLAN and BUILD with scoped delivery restrictions', () => {
+  const cases = [
+    ['Inspect your current GitHub main branch.', 'EXPLORE', false],
+    ['Investigate why your coding job failed.', 'EXPLORE', false],
+    ['Explain your routing architecture.', 'EXPLORE', false],
+    ['Perform a reasoning self-diagnostic.', 'PLAN', false],
+    ['Compare three ways to repair the router.', 'PLAN', false],
+    ['Explain how you would implement the feature.', 'PLAN', false],
+    ['Fix the router.', 'BUILD', true],
+    ['Implement the feature in your app.', 'BUILD', true],
+    ['Inspect the router and then fix whatever is broken.', 'BUILD', true],
+    ['Check it then fix it.', 'BUILD', true],
+    ["CHE check your code and tell me what's wrong don't change nothing", 'EXPLORE', false],
+    ["Shay look at the GitHub and see why the last job failed but don't fix it yet", 'EXPLORE', false],
+  ];
+  for (const [message, mode, build] of cases) {
+    const p = currentTurnActionPolicy(message);
+    assert.equal(p.mode, mode, message);
+    assert.equal(p.ownerAuthorizedBuild, build, message);
+    assert.equal(p.repositoryMutationAllowed, build, message);
+    assert.equal(p.codingJobAllowed, build, message);
+  }
+
+  const held = currentTurnActionPolicy('Investigate and fix this in your code, but do not deploy.');
+  assert.equal(held.mode, 'BUILD');
+  assert.equal(held.repositoryMutationAllowed, true);
+  assert.equal(held.deploymentAllowed, false);
+  assert.equal(held.restrictions.noDeploy, true);
+
+  const scoped = currentTurnActionPolicy('Fix the login screen in your app but do not change authentication.');
+  assert.equal(scoped.mode, 'BUILD');
+  assert.equal(scoped.repositoryMutationAllowed, true);
+
+  const noPr = currentTurnActionPolicy('Fix the router in your code, but do not create a PR yet.');
+  assert.equal(noPr.mode, 'BUILD');
+  assert.equal(noPr.prCreationAllowed, false);
+});
+
+test('quoted and historical implementation instructions never grant current BUILD authority', () => {
+  for (const message of [
+    'The previous command said "fix the routing and create a PR." Why did it fail?',
+    "Tell me why you previously said 'implement the fix'. Do not modify your code.",
+    'Review PR #231 and tell me whether it fixes the bug.',
+  ]) {
+    const p = currentTurnActionPolicy(message);
+    assert.notEqual(p.mode, 'BUILD', message);
+    assert.equal(p.codingJobAllowed, false, message);
+  }
 });
