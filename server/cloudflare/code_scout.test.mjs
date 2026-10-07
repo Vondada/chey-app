@@ -337,6 +337,28 @@ test('authoritative policy separates EXPLORE PLAN and BUILD with scoped delivery
   assert.equal(noPr.prCreationAllowed, false);
 });
 
+test('legitimate natural-language BUILD continuations remain BUILD', () => {
+  for (const message of [
+    'CHE, make one small real improvement to your code.',
+    'Can you add the ability to create a GitHub pull request from voice?',
+    "Work with Claude who is already working in the repo and compare progress without stumbling over each other's work then tell me when you are ready",
+    'Batch it fast and use the other AIs',
+    'Update CHE',
+    'Diagnose and recover the failed coding job',
+  ]) {
+    const p = currentTurnActionPolicy(message);
+    assert.equal(p.mode, 'BUILD', message);
+    assert.equal(p.codingJobAllowed, true, message);
+  }
+});
+
+test('topic-study implementation prompts are BUILD-authorized but not hijacked by repository inspection', () => {
+  const message = 'CHE, study codecrafters-io/build-your-own-x on GitHub and implement what you learn into your own code, one topic at a time. For each topic, read its tutorials and compare them with your real code.';
+  const p = currentTurnActionPolicy(message);
+  assert.equal(p.mode, 'BUILD');
+  assert.equal(repositoryInspectionIntent(message), false);
+});
+
 test('quoted and historical implementation instructions never grant current BUILD authority', () => {
   for (const message of [
     'The previous command said "fix the routing and create a PR." Why did it fail?',
