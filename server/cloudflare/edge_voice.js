@@ -58,28 +58,3 @@ export async function edgeSpeak(env, text) {
     return { ok: false, error: String(error.message || error), voice };
   }
 }
-
-
-export async function handleEdgeVoice(request, env) {
-  if (request.method !== 'POST') {
-    return new Response('Method not allowed', { status: 405 });
-  }
-  let body = {};
-  try {
-    body = await request.json();
-  } catch (_) {
-    body = {};
-  }
-  const result = await edgeSpeak(env, body.text || '');
-  if (!result.ok || !(result.mp3 instanceof Uint8Array) || result.mp3.length === 0) {
-    return new Response(null, { status: 204 });
-  }
-  return new Response(result.mp3, {
-    status: 200,
-    headers: {
-      'content-type': 'audio/mpeg',
-      'cache-control': 'no-store',
-      'x-che-voice': result.voice || VOICE,
-    },
-  });
-}
