@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'che_edge_voice.dart';
 import 'che_kokoro_voice.dart';
 import 'che_speech_style.dart';
 
@@ -172,11 +171,8 @@ class CheNativeVoice {
   static Future<bool> speakText(String text) async {
     final clean = stripButler(text);
     if (clean.isEmpty) return false;
-    final audio = await CheEdgeVoice.speak(clean);
-    if (audio != null && audio.isNotEmpty) {
-      final played = await playAudio(audio);
-      if (played) return true;
-    }
+    // This is the on-device fallback. Server voice is selected by the existing
+    // speech pipeline before this method, with its own cooldown and cancellation.
     await _applyStoredSettings();
     try {
       if (await _kokoro.speak(clean)) return true;
