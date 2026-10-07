@@ -32,6 +32,8 @@ import {
 import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv } from './ai_router.js';
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
+import { handleEdgeVoice } from './edge_voice.js';
+import { handleVideoLine } from './video_route.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
 import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
@@ -3806,6 +3808,12 @@ export class CheState extends DurableObject {
     await this.refreshKeyEnv();
     try {
       const path = new URL(request.url).pathname;
+      if (path === '/api/voice/edge' && request.method === 'POST') {
+        return handleEdgeVoice(request, this.keyEnv || this.env);
+      }
+      if (path === '/api/video/line' && request.method === 'POST') {
+        return handleVideoLine(request, this.keyEnv || this.env);
+      }
       const data = (await this.ctx.storage.get('che')) || {
         devices: {}, memories: [], failures: {},
       };
