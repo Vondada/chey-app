@@ -63,6 +63,15 @@ test('exam (complex): the live War Room from screen to Worker routes, the dead H
   assert.ok(meeting.server.some((r) => /\\\/api\\\/meetings\\\//.test(r.route)), 'the regex route is found too');
 });
 
+test('owner exact discovery question traces the existing War Room on the real current repository', async () => {
+  const g = await run('CHE, inspect your current repository and find the existing War Room implementation. Tell me the exact files/components responsible for it. Do not create or propose replacement architecture.');
+  for (const path of ['lib/agents/che_war_room_screen.dart', 'lib/widgets/che_native_scene_world.dart', 'lib/agents/che_agent_runtime.dart']) {
+    assert.equal(g.files.find((file) => file.path === path)?.live, true, path);
+  }
+  assert.ok(g.dead.includes('assets/office3d/warroom.html'));
+  assert.ok(g.api.some((route) => route.route === '/api/meetings' && route.server.some((server) => server.handlers.some((handler) => handler.fn === 'conveneMeeting'))));
+});
+
 test('exam level 3 end to end on the real repo: the pipeline edits the live renderer and the grader passes it', async () => {
   const { AUTONOMY_EXAM, gradeLevel } = await import('./autonomy_exam.js');
   const { prepareSelfUpdate } = await import('./self_development.js');

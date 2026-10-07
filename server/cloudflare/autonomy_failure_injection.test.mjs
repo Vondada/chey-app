@@ -470,6 +470,29 @@ test('both engineers wrongly claiming no-change are overruled by evidence-based 
   assert.equal(out.already_satisfied, undefined);
 });
 
+test('owner open-ended defect audit can conclude no-change only after both engineers and independent source reviewers agree', async () => {
+  const request = 'CHE, inspect your current autonomy/coding system for one real, low-risk defect that is not already fixed. Prove the defect exists, fix it, add a regression test, run validation and independent review, and prepare one PR. Do not invent a defect just to satisfy this test. If no defect exists, prove that instead.';
+  let reviewers = 0;
+  const ai = scriptedAI({
+    planner: () => json({ plan: 'Inspect the limited fixture for a supported defect.', search_terms: ['Helper', 'add'], paths: ['lib/main.dart', 'lib/helper.dart'] }),
+    engineer: (input) => {
+      assert.ok(payloadOf(input).inspected.length > 0);
+      return json({ no_change: true, summary: 'No supported defect in the inspected fixture.', evidence: ['lib/main.dart Home._statusBanner already contains a visible ready status; no failing case was found in the inspected scope.'] });
+    },
+    noChange: (input) => {
+      reviewers++;
+      assert.ok(payloadOf(input).inspected_source.some((file) => file.path === 'lib/main.dart' && file.source.includes('String _statusBanner')));
+      return json({ approved: true, notes: ['Verified the limited inspected scope; no invented patch.'] });
+    },
+  });
+  const out = await prepareSelfUpdate(env(ai), request, fakeGitHub(), memoryStore());
+  assert.equal(out.status, 200, JSON.stringify(out));
+  assert.equal(out.already_satisfied, true);
+  assert.equal(out.proposal, undefined);
+  assert.equal(reviewers, 2);
+  assert.ok(out.evidence.length > 0);
+});
+
 test('all AI engines down → class B retryable result, nothing proposed, no raw traces for the owner', async () => {
   const ai = {
     run: async () => {

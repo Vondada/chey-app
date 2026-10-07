@@ -577,7 +577,7 @@ function evidenceScore(path, source, request) {
 // This never edits source and never treats another AI's message as owner
 // authorization. It gives CHE facts she can safely use before discussing a
 // coding lane: the exact live commit, real paths/symbols and open PRs.
-export async function inspectRepositoryContext(env, request, fetcher = fetch) {
+export async function inspectRepositoryContext(env, request, fetcher = fetch, { trace = false } = {}) {
   if (!repoOf(env)) {
     return { ok: false, failure_class: FAILURE_CLASS.PERMANENT_EXTERNAL, detail: 'CHE_GITHUB_TOKEN or CHE_GITHUB_REPO is missing.' };
   }
@@ -639,6 +639,15 @@ export async function inspectRepositoryContext(env, request, fetcher = fetch) {
   }).slice(0, 12);
   await loadBatch(testNeighbors);
 
+  const discovery = trace ? await traceSourceGraph(env, {
+    index, request, seeds: wanted.slice(0, 6), fetcher, requirePinnedSearch: true,
+    known: new Map([...loaded].map(([path, file]) => [path, file.text])),
+    read: async (path) => {
+      await loadBatch([path]);
+      return loaded.get(path)?.text ?? null;
+    },
+  }) : null;
+
   const paths = [...loaded.keys()].sort((a, b) =>
     evidenceScore(b, loaded.get(b).text, request) - evidenceScore(a, loaded.get(a).text, request)
     || a.localeCompare(b)
@@ -673,6 +682,7 @@ export async function inspectRepositoryContext(env, request, fetcher = fetch) {
     repository: String(env.CHE_GITHUB_REPO),
     base: index.base,
     head_sha: index.head_sha,
+    ...(discovery ? { discovery } : {}),
     files,
     open_prs,
     open_prs_status: pulls.ok ? 'verified' : 'unavailable:' + String(pulls.status || 0),
@@ -783,11 +793,16 @@ async function exactSearch(env, text, fetcher, sha = '') {
  */
 // GitHub code search allows ~10 requests a minute: budgets are small, and a
 // failed or skipped search makes a file "unknown", never "dead".
-export async function traceSourceGraph(env, { index, request, seeds = [], read, known = new Map(), fetcher = fetch, maxFiles = 10, maxSearches = 20, apiSearches = 6 } = {}) {
+export async function traceSourceGraph(env, { index, request, seeds = [], read, known = new Map(), fetcher = fetch, maxFiles = 10, maxSearches = 20, apiSearches = 6, requirePinnedSearch = false } = {}) {
   const allPaths = new Set(index?.paths || []);
   // With CHE's own index there is no GitHub search limit to ration.
   if (cachedCodeIndex(index?.head_sha)) { maxSearches = 1e6; apiSearches = 1e6; }
   const texts = new Map(known);
+  // GitHub's search endpoint is not revision-pinned. Read-only reports may
+  // use the exact-SHA index or observed imports, never that fallback search.
+  const searchSource = (needle) => requirePinnedSearch && !cachedCodeIndex(index?.head_sha)
+    ? Promise.resolve({ ok: false, paths: [] })
+    : exactSearch(env, needle, fetcher, index?.head_sha);
   const load = async (path) => {
     if (texts.has(path)) return texts.get(path);
     // Minified vendor bundles (three.min.js) carry no feature code to map.
@@ -852,7 +867,7 @@ export async function traceSourceGraph(env, { index, request, seeds = [], read, 
     for (const needle of [path.split('/').pop(), ...publicSymbols(path, text)]) {
       if (searches >= maxSearches || callers.get(path).size) break;
       searches += 1;
-      const found = await exactSearch(env, needle, fetcher, index?.head_sha);
+      const found = await searchSource(needle);
       ok = ok || found.ok;
       for (const hit of found.paths) addCaller(path, hit);
     }
@@ -869,7 +884,7 @@ export async function traceSourceGraph(env, { index, request, seeds = [], read, 
       let dynamic = searches >= maxSearches; // no budget left: assume it might be
       if (!dynamic) {
         searches += 1;
-        const found = await exactSearch(env, dir, fetcher, index?.head_sha);
+        const found = await searchSource(dir);
         dynamic = !found.ok;
         const escaped = dir.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
         const builds = new RegExp(`['"\`]${escaped}['"\`]?\\s*\\+|['"\`]${escaped}\\$`);
@@ -937,7 +952,7 @@ export async function traceSourceGraph(env, { index, request, seeds = [], read, 
     // Broaden to how the feature is spelled in live code before anyone edits.
     notes.push(`Discovery contradiction: every file named after ${features.join(', ') || 'the feature'} is dead. Broadening to the feature's code spellings.`);
     for (const spelling of spellings.filter((item) => !item.includes(' ')).slice(0, Math.max(0, maxSearches - searches))) {
-      const found = await exactSearch(env, spelling, fetcher, index?.head_sha);
+      const found = await searchSource(spelling);
       for (const hit of found.paths) {
         if (!allPaths.has(hit) || files.some((file) => file.path === hit) || files.length >= maxFiles + 4) continue;
         files.push({ path: hit, live: null, references: [], callers: [], tests: tests(hit), feature_match: false, found_by: spelling });
@@ -947,7 +962,7 @@ export async function traceSourceGraph(env, { index, request, seeds = [], read, 
   const api = await apiBridge({ files, texts, load, allPaths, publicSymbols, search: async (text) => {
     if (searches >= maxSearches + apiSearches) return { ok: false, paths: [] };
     searches += 1;
-    return exactSearch(env, text, fetcher, index?.head_sha);
+    return searchSource(text);
   } });
   return { features, files, dead, contradiction, notes, api, texts };
 }

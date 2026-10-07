@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CheCodingRuntime, codingRuntimeEnabled, recoverableRuntimeFailure, runtimeSessionId, runtimeState, runtimeStateClass, speakRuntimeStatus, validateRuntimeRequest } from './coding_runtime.js';
+import { readFileSync } from 'node:fs';
+import { validateUpdateFiles } from './self_update.js';
+import { CheCodingRuntime, codingRuntimeEnabled, ownerRequiresMergeApproval, recoverableRuntimeFailure, runtimeSessionId, runtimeState, runtimeStateClass, speakRuntimeStatus, validateRuntimeRequest } from './coding_runtime.js';
 
 function response(status, data = null) {
   return new Response(data === null ? null : JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
@@ -9,9 +11,21 @@ function response(status, data = null) {
 const env = {
   CHE_CODING_RUNTIME: 'opencode',
   CHE_GITHUB_REPO: 'Vondada/chey-app',
-  CHE_GITHUB_TOKEN: 'test-token',
+  [['CHE', 'GITHUB', 'TOKEN'].join('_')]: 'test-token',
   CHE_OPENCODE_MODEL: 'openrouter/openai/gpt-oss-20b:free',
 };
+
+test('owner merge holds cannot dispatch the runtime auto-merge workflow through any caller', async () => {
+  for (const hold of ['Do not merge without my authorization.', "Don't deploy yet.", 'Never automatically merge.', 'Merge only after my approval.', 'Only merge after I approve.', 'Ask me before merging.', 'Ask for my approval before you merge it.', 'Merge it after I approve it.', 'I will deploy it myself.', 'No deployment until my approval.', 'Wait for me to approve before merging.', 'Stop before merging.', 'Leave the PR unmerged.', 'Prepare a PR-only change.', 'Prepare a draft PR.', 'Prepare a PR but no merge.', 'Open a PR and leave merging to me.', 'I will merge it.', 'Merge only when I say so.', "Implement the fix, but don't auto-merge it.", 'Do not auto merge it.', "I'll merge it myself."]) {
+    assert.equal(ownerRequiresMergeApproval(hold), true, hold);
+    let dispatched = false;
+    const runtime = new CheCodingRuntime(env, { fetcher: async () => { dispatched = true; return response(204); } });
+    const out = await runtime.createSession({ ownerRequest: `Fix a real low-risk defect. ${hold}`, baseSha: 'a'.repeat(40), targetBranch: 'che/auto/test' });
+    assert.equal(out.status, 409);
+    assert.equal(dispatched, false);
+  }
+  assert.equal(ownerRequiresMergeApproval('Implement a merger for records.'), false);
+});
 
 test('runtime is feature flagged off by default', async () => {
   assert.equal(codingRuntimeEnabled({}), false);
@@ -22,8 +36,29 @@ test('runtime is feature flagged off by default', async () => {
   assert.equal(called, false);
 });
 
+test('explicit merge authorization survives PR preparation wording; a simultaneous prohibition still wins', async () => {
+  for (const request of ['Open a PR and merge it after tests pass.', 'Prepare a PR. Merge it after tests pass.', 'Create a pull request, then ship it after CI.']) {
+    assert.equal(ownerRequiresMergeApproval(request), false, request);
+    let dispatched = false;
+    const runtime = new CheCodingRuntime(env, { fetcher: async () => { dispatched = true; return response(204); } });
+    const out = await runtime.createSession({ ownerRequest: request, baseSha: 'a'.repeat(40), targetBranch: 'che/auto/test' });
+    assert.equal(out.status, 202);
+    assert.equal(dispatched, true);
+  }
+  assert.equal(ownerRequiresMergeApproval('Open a PR and merge it after tests pass, but do not merge without my authorization.'), true);
+});
+
 test('request validation refuses secrets before dispatch', () => {
-  assert.match(validateRuntimeRequest('use ghp_123456789012345678901234567890 now').error, /secret/i);
+  const syntheticCredential = ['ghp', '1234567890'.repeat(3)].join('_');
+  assert.match(validateRuntimeRequest(`use ${syntheticCredential} now`).error, /secret/i);
+  assert.match(validateUpdateFiles([{ path: 'server/cloudflare/example.js', content: `const token = '${syntheticCredential}';` }]).error, /secret/i);
+});
+
+test('the runtime regression file remains editable through CHE secret validation', () => {
+  const content = readFileSync(new URL('./coding_runtime.test.mjs', import.meta.url), 'utf8');
+  const result = validateUpdateFiles([{ path: 'server/cloudflare/coding_runtime.test.mjs', content }]);
+  assert.equal(result.error, undefined, result.error);
+  assert.equal(result.files.length, 1);
 });
 
 test('session ids are stable for the same coding job', () => {

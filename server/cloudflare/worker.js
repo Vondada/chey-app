@@ -50,7 +50,7 @@ import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
-import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
+import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { webAppPage } from './web_app.js';
 import { lastSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, siteUrl, speakSiteResult, writeSite } from './site_builder.js';
 import { changeHistoryIntent, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
@@ -65,7 +65,7 @@ import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSna
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
-import { CheCodingRuntime, codingRuntimeEnabled, recoverableRuntimeFailure, runtimeState, runtimeStateClass, speakRuntimeStatus } from './coding_runtime.js';
+import { CheCodingRuntime, codingRuntimeEnabled, ownerRequiresMergeApproval, recoverableRuntimeFailure, runtimeState, runtimeStateClass, speakRuntimeStatus } from './coding_runtime.js';
 import { handoffIntent, latestHandoff, unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
 import { LA_AGENCIA_ROLES, agentActionGuard, ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
@@ -6134,6 +6134,21 @@ export class CheState extends DurableObject {
         const turnActionPolicy = currentTurnActionPolicy(message);
         const chatOnlyEvaluation = turnActionPolicy.terminalChatOnly;
 
+        if (repositoryInspectionIntent(message)) {
+          if (!ownerDevice) return ownerOnly();
+          const inspected = await inspectRepositoryContext(this.env, message, fetch, { trace: true });
+          if (!inspected.ok) return ndjsonReply(`I could not verify the current repository source, sir. ${inspected.detail}`, { source: 'che_repository_inspection', ok: false });
+          const graph = inspected.discovery;
+          const byPath = new Map(inspected.files.map((file) => [file.path, file]));
+          const candidates = graph.files.filter((file) => file.live !== false && !file.test);
+          const lines = candidates.map((file, i) => {
+            const symbols = byPath.get(file.path)?.symbols || [];
+            return `${i + 1}. ${file.path}${symbols.length ? ` — ${symbols.join(', ')}` : ''}${file.live !== true ? ' (runtime use not verified)' : ''}${file.callers?.length ? `. Used by ${file.callers.join(', ')}` : ''}.`;
+          });
+          const routes = graph.api.map((route) => `${route.http} ${route.route}: ${route.server.map((server) => `${server.server_file}${server.handlers?.length ? ` → ${server.handlers.map((handler) => `${handler.module}: ${handler.fn}`).join(', ')}` : ''}`).join(', ')}`);
+          return ndjsonReply(`I inspected ${inspected.repository} at exact commit ${inspected.head_sha}, sir.\n${lines.length ? lines.join('\n') : 'I could not verify an implementation for that target.'}${routes.length ? `\nRoutes: ${routes.join('; ')}` : ''}${graph.dead.length ? `\nUnreferenced candidates: ${graph.dead.join(', ')}.` : ''}`, { source: 'che_repository_inspection', repository_research: true, repository_sha: inspected.head_sha });
+        }
+
         // GitHub/self-development commands are real tool actions, never generic
         // model guesses about credentials. "Create the PR" works by voice/text.
         if (playbookIntent(message)) {
@@ -8771,7 +8786,7 @@ export class CheState extends DurableObject {
   async selfDevelopmentReply(message, { vectorRecall = {}, onAccepted = null } = {}) {
     // OpenCode runtime first when it is switched on; the built-in coding team
     // is the automatic fallback whenever the runner cannot start.
-    if (codingRuntimeEnabled(this.env)) {
+    if (codingRuntimeEnabled(this.env) && !ownerRequiresMergeApproval(message)) {
       const started = await this.startOpenCodeSession(message).catch((error) => ({ status: 0, detail: String(error?.message || error) }));
       if (started.status === 202) {
         await Promise.resolve(onAccepted?.()).catch(() => null);
