@@ -325,8 +325,9 @@ export function repositoryInspectionIntent(message) {
     || /\b(?:current|exact)\s+main\s+(?:branch\s+)?sha\b/i.test(text)
     || /\b(?:coding\s+(?:job|pipeline|runtime)|cloudflare\s+worker|github\s+main)\b/i.test(text);
   const selfDiagnosticSource = /\bself[- ]diagnostic\b[\s\S]{0,260}\b(?:github|main\s+sha|repo(?:sitory)?|source|coding[- ]job|routing|worker)\b/i.test(text);
+  const exactHeadQuestion = /\b(?:what(?:'s|\s+is)|give\s+me|show\s+me|tell\s+me)\b[\s\S]{0,80}\b(?:current|exact|latest)\s+(?:github\s+)?main\s+(?:branch\s+)?sha\b/i.test(text);
   const guardedDiagnostic = readOnlyDiagnosticIntent(text) && repoTarget;
-  return Boolean((directInspection && repoTarget) || guardedDiagnostic || selfDiagnosticSource);
+  return Boolean((directInspection && repoTarget) || exactHeadQuestion || guardedDiagnostic || selfDiagnosticSource);
 }
 
 export function starredRepoIntent(message) {
