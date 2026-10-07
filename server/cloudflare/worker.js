@@ -6144,9 +6144,18 @@ export class CheState extends DurableObject {
         const turnActionPolicy = currentTurnActionPolicy(message);
         const chatOnlyEvaluation = turnActionPolicy.terminalChatOnly;
 
-        if (repositoryInspectionIntent(message)) {
+        const directRepositoryInspection = repositoryInspectionIntent(message);
+        const repositoryEvidenceFollowUp = !directRepositoryInspection
+          && /^(?:is|are)\s+(?:that|this|it|those|these)\s+(?:still\s+)?(?:current|accurate|correct|live|latest|valid)\??$|^(?:still\s+current|same\s+sha|same\s+commit|has\s+that\s+changed|did\s+that\s+change)\??$/i.test(message.trim())
+          && repositoryInspectionIntent(previousText);
+        const repositoryInspectionRequest = directRepositoryInspection
+          ? message
+          : repositoryEvidenceFollowUp
+            ? `${previousText}\nFollow-up: ${message}`
+            : '';
+        if (repositoryInspectionRequest) {
           if (!ownerDevice) return ownerOnly();
-          const inspected = await inspectRepositoryContext(this.env, message, fetch, { trace: true });
+          const inspected = await inspectRepositoryContext(this.env, repositoryInspectionRequest, fetch, { trace: true });
           if (!inspected.ok) return ndjsonReply(`I could not verify the current repository source, sir. ${inspected.detail}`, { source: 'che_repository_inspection', ok: false });
           const graph = inspected.discovery;
           const byPath = new Map(inspected.files.map((file) => [file.path, file]));
@@ -6156,7 +6165,7 @@ export class CheState extends DurableObject {
             return `${i + 1}. ${file.path}${symbols.length ? ` — ${symbols.join(', ')}` : ''}${file.live !== true ? ' (runtime use not verified)' : ''}${file.callers?.length ? `. Used by ${file.callers.join(', ')}` : ''}.`;
           });
           const routes = graph.api.map((route) => `${route.http} ${route.route}: ${route.server.map((server) => `${server.server_file}${server.handlers?.length ? ` → ${server.handlers.map((handler) => `${handler.module}: ${handler.fn}`).join(', ')}` : ''}`).join(', ')}`);
-          const historicalCauseRequested = /\b(?:previous|earlier|last)\b[\s\S]{0,160}\b(?:self[- ]diagnostic|diagnostic|coding\s+(?:job|pipeline|runtime))\b|\bwhy\b[\s\S]{0,160}\b(?:entered|started|triggered|routed)\b[\s\S]{0,100}\b(?:coding|pipeline|job)\b/i.test(message);
+          const historicalCauseRequested = /\b(?:previous|earlier|last)\b[\s\S]{0,160}\b(?:self[- ]diagnostic|diagnostic|coding\s+(?:job|pipeline|runtime))\b|\bwhy\b[\s\S]{0,160}\b(?:entered|started|triggered|routed)\b[\s\S]{0,100}\b(?:coding|pipeline|job)\b/i.test(repositoryInspectionRequest);
           const verifiedLines = [
             'VERIFIED',
             `- I inspected ${inspected.repository} at exact current commit ${inspected.head_sha}.`,
