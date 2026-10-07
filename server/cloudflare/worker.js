@@ -2772,7 +2772,7 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
       reviewed_at: new Date().toISOString(),
     }).catch(() => null);
   }
-  if (options.autoOpenPr && memory?.put) {
+  if (options.autoOpenPr && turnPolicy.prCreationAllowed && memory?.put) {
     const auto = await autoOpenReviewedPr(env, memory, prepared.proposal, options.ops || {});
     return json({
       message: auto.message,
@@ -8788,7 +8788,7 @@ export class CheState extends DurableObject {
     }
     // OpenCode runtime first when it is switched on; the built-in coding team
     // is the automatic fallback whenever the runner cannot start.
-    if (codingRuntimeEnabled(this.env) && !ownerRequiresMergeApproval(message)) {
+    if (codingRuntimeEnabled(this.env) && policy.prCreationAllowed && policy.mergeAllowed && !ownerRequiresMergeApproval(message)) {
       const started = await this.startOpenCodeSession(message).catch((error) => ({ status: 0, detail: String(error?.message || error) }));
       if (started.status === 202) {
         await Promise.resolve(onAccepted?.()).catch(() => null);
