@@ -179,6 +179,9 @@ class CheLocalBrain {
     List<Map<String, String>> history = const [],
     List<String> memory = const [],
   }) async {
+    if (cheRequiresLiveRepositoryEvidence(prompt)) {
+      return cheLocalRepositoryEvidenceUnavailableReply;
+    }
     final packet = bootstrap ??
         CheBootstrapPacket(
           request: prompt,
