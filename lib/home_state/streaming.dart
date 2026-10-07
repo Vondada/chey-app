@@ -11,7 +11,7 @@ extension _CheHomeStreaming on _CHEHomeState {
     // Live repository/status claims require receipts from the connected
     // Worker/GitHub path. Never let an offline model invent files, workflows,
     // SHAs, jobs, or deployment state when that evidence is unavailable.
-    if (cheRequiresVerifiedRemoteEvidence(userMessage)) return null;
+    if (cheTurnRequiresVerifiedRemoteEvidence(userMessage, history)) return null;
 
     // Saved library passages first: the owner asked CHE to remember these.
     final library = await _offlineLibrary.search(userMessage);
@@ -69,6 +69,8 @@ extension _CheHomeStreaming on _CHEHomeState {
     final hasConversationContext = history.any(
       (item) => (item['content'] ?? item['text'] ?? '').trim().isNotEmpty,
     );
+    final requiresVerifiedRemoteEvidence =
+        cheTurnRequiresVerifiedRemoteEvidence(trimmedRequest, history);
     final turnCapabilities = _homeMode == 0
         ? _requestedCapabilitiesForTurn(trimmedRequest, history)
         : const <String>[];
@@ -161,7 +163,7 @@ extension _CheHomeStreaming on _CHEHomeState {
     // the on-phone brain combine saved notes) before spending cloud credits.
     if (_pendingAttachment == null &&
         !hasConversationContext &&
-        !cheRequiresVerifiedRemoteEvidence(trimmedRequest) &&
+        !requiresVerifiedRemoteEvidence &&
         CheKnowledgeCache.cacheable(trimmedRequest)) {
       final saved = await _knowledge.answer(
         trimmedRequest,
