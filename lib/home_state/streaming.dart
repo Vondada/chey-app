@@ -8,6 +8,10 @@ extension _CheHomeStreaming on _CHEHomeState {
     required void Function(String text) onPartial,
   }) async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return null;
+    // Live repository/status claims require receipts from the connected
+    // Worker/GitHub path. Never let an offline model invent files, workflows,
+    // SHAs, jobs, or deployment state when that evidence is unavailable.
+    if (cheRequiresVerifiedRemoteEvidence(userMessage)) return null;
 
     // Saved library passages first: the owner asked CHE to remember these.
     final library = await _offlineLibrary.search(userMessage);
