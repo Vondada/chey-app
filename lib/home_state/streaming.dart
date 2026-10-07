@@ -372,7 +372,7 @@ extension _CheHomeStreaming on _CHEHomeState {
     final hadAttachment = _pendingAttachment != null;
     _pendingAttachment = null;
     if (mounted) _set(() {});
-    final finalText = complete.toString().trim();
+    final finalText = CheOwnerError.sanitizeReply(complete.toString());
     if (!hadAttachment && _streamMediaUrl == null) {
       unawaited(_knowledge.remember(trimmedRequest, finalText));
     }
