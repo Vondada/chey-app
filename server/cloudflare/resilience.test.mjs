@@ -33,6 +33,21 @@ test('a key is only saved after it passes a live test, and joins the rotation', 
   assert.ok(!JSON.stringify(letters).includes('goodgoodgood'), 'letters never contain the key');
 });
 
+test('YouTube owner token uses the same server-only Keys storage without exposing the token', async () => {
+  const s = store();
+  const token = 'ya29.owner-channel-token-1234567890';
+  const saved = await saveKey(s, 'youtube', token, okFetch(200));
+  assert.equal(saved.ok, true);
+  assert.equal(saved.provider, 'youtube');
+  assert.equal(saved.last4, '7890');
+  const keys = await storedKeys(s);
+  assert.equal(keys.CHE_YOUTUBE_TOKEN, token);
+  assert.equal(JSON.stringify(saved).includes(token), false, 'save response never returns the token');
+  assert.equal(JSON.stringify(await listLetters(s)).includes(token), false, 'letters never contain the token');
+  const env = withStoredKeys({}, keys);
+  assert.equal(env.CHE_YOUTUBE_TOKEN, token);
+});
+
 test('health watch spots a dead key and files one action letter', async () => {
   const s = store();
   const health = await checkAllKeys({ CEREBRAS_API_KEY: 'csk-x1234567890', GROQ_API_KEY: 'gsk-y1234567890' }, s, async (url) => new Response('{}', { status: String(url).includes('cerebras') ? 401 : 429 }));

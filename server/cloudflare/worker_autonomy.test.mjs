@@ -132,6 +132,22 @@ test('merge intent needs an explicit command; negations and questions do not mer
   assert.equal(selfUpdateChatIntent('is it deployed?')?.kind, 'deploy-status');
 });
 
+test('screen-command media routes require pairing and use the parsed authenticated body', async () => {
+  const saved = new Map();
+  const { state, api } = await pairedChat({ CHE_PAIR_CODE: '123456' }, saved);
+  for (const path of ['/api/video/line', '/api/voice/edge']) {
+    const denied = await state.handleRequest(new Request(`https://che.example${path}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    }));
+    assert.equal(denied.status, 401);
+  }
+  const video = await api('/api/video/line', { topic: 'how the printing press started' });
+  assert.equal(video.status, 424);
+  assert.match((await video.json()).error, /MoneyPrinter is not connected/i);
+  const edge = await api('/api/voice/edge', { text: '' });
+  assert.equal(edge.status, 204);
+});
+
 test('/health reports the running version for deployment verification', async () => {
   const res = await worker.fetch(new Request('https://che.example/health'), { CF_VERSION_METADATA: { id: 'v-1', tag: 'abc123def456' } });
   const body = await res.json();

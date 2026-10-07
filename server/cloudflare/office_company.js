@@ -1,8 +1,9 @@
 // Canonical La Agencia roster (report to CHE, the Office Boss). Existing matching agents keep their IDs,
 // workspaces and task history; this only fills/updates company responsibilities.
+// Scout is not a separate person. Atlas is the scout.
 export const LA_AGENCIA_ROLES = {
   Nova: { role: 'Product / listings', specialty: 'Product offers, listings and sales-page drafts', provider_preference: 'openai', capability_requirements: ['coding'] },
-  Atlas: { role: 'Research', specialty: 'Research, sourcing and competitive checks', provider_preference: 'auto', capability_requirements: ['deep_reasoning'] },
+  Atlas: { role: 'Research / scout', specialty: 'Research, sourcing, competitive checks, and trend topics from connected feeds. Does not invent demand.', provider_preference: 'auto', capability_requirements: ['deep_reasoning'] },
   Mira: { role: 'Customer / support copy', specialty: 'Customer-facing support, service copy, and translation / multilingual drafts', provider_preference: 'auto', capability_requirements: ['text'] },
   Knox: { role: 'Engineering / Codex jobs', specialty: 'Implementation, tests, Codex packets, and Roblox/Luau experience drafts (games, weapons, UGC clothing, passes)', provider_preference: 'openai', model_preference: 'gpt-5.3-codex', capability_requirements: ['coding'] },
   Sage: { role: 'Finance / Stripe reports', specialty: 'Read-only Stripe reporting and finance summaries', provider_preference: 'auto', capability_requirements: ['payments_read'] },
@@ -12,6 +13,13 @@ export const LA_AGENCIA_ROLES = {
 
 export function ensureLaAgenciaRoster(data) {
   const at = new Date().toISOString();
+  for (const agent of data.team || []) {
+    if (String(agent?.name || '').toLowerCase() === 'scout' && !agent.retired) {
+      agent.retired = true;
+      agent.retired_reason = 'Scout is Atlas.';
+      agent.updated_at = at;
+    }
+  }
   for (const [name, spec] of Object.entries(LA_AGENCIA_ROLES)) {
     let agent = data.team.find((a) => String(a.name || '').toLowerCase() === name.toLowerCase() && !a.retired);
     if (!agent) {
@@ -24,7 +32,7 @@ export function ensureLaAgenciaRoster(data) {
     agent.model_preference = spec.model_preference || agent.model_preference || '';
     agent.capability_requirements = spec.capability_requirements;
     agent.permissions = ['office_workspace', 'che_memory_read_filtered'];
-    agent.reports_to = 'CHE'; // Office Boss — specialists never message the owner directly
+    agent.reports_to = 'CHE';
     agent.owner_messaging = false;
     agent.can_merge_code = false;
     agent.can_spend_money = false;
@@ -36,11 +44,11 @@ export function ensureLaAgenciaRoster(data) {
   return data.team;
 }
 
-// La Agencia agents need their tool on the server (one owner credential each,
-// stored only as Worker secrets). A missing tool blocks the job honestly.
-export function officeToolBlocker(env, agent) {
+export function officeToolBlocker(env, agent, task = '') {
   const pref = String(agent?.provider_preference || '').toLowerCase();
+  const scoutTask = /\b(?:scout|trending|trends|topic|topics)\b/i.test(String(task));
   if (String(agent?.name) === 'Sage' && !env.STRIPE_SECRET_KEY) return 'Blocked: tool not configured (Stripe not connected)';
+  if (String(agent?.name) === 'Atlas' && scoutTask && !env.CHE_TREND_URLS) return 'Blocked: tool not configured (no trend feed)';
   if (pref === 'openai' && !(env.CODEX_OWNER_TOKEN || env.CHE_OPENAI_API_KEY || env.OPENAI_API_KEY)) return 'Blocked: tool not configured (Codex)';
   if (pref === 'xai' && !(env.XAI_API_KEY || env.CHE_XAI_API_KEY || env.GROK_API_KEY || env.CHE_XAI_MODEL_URL)) return 'Blocked: tool not configured (Grok)';
   return '';
@@ -56,25 +64,21 @@ const GOAL_ROUTES = [
   ['Nova', /\b(?:product|listing|listings|offer|pricing|price|sales page|store|shop|roblox\s+pass|game\s*pass|ugc)\b/],
   ['Mira', /\b(?:customer|support|reply|replies|email|faq|help desk|service|translat|locale|language|multilingual)\b/],
   ['Iris', /\b(?:ads?|ad studio|tonight pack|ad creatives?|flyer|banner|paid social|creative brief|caption pack)\b/],
+  ['Atlas', /\b(?:scout|trending|trends|topic|topics|what's hot|what is hot|video ideas|research|competitor|competitors|find|source|compare|market|look up|fiverr|metrics|evaluat|learning notes)\b/],
   ['Lyra', /\b(?:social|post|posts|content|instagram|tiktok|caption|campaign|video|blog|clothing|avatar|ugc)\b/],
-  ['Atlas', /\b(?:research|competitor|competitors|find|source|compare|market|look up|fiverr|scout|metrics|evaluat|learning notes)\b/],
 ];
 
-// CHE splits one owner goal into Office jobs, one per clause, each routed to
-// the La Agencia agent whose role fits. Deterministic so the owner hears
-// exactly what was queued.
 export function splitGoal(goal) {
   const text = String(goal || '').replace(/\s+/g, ' ').trim();
   if (!text) return [];
   const parts = text
-    .split(/(?:[.;]\s+|,?\s+(?:and then|then|and also|also)\s+|,\s+and\s+|\s+and\s+(?=(?:build|write|research|find|make|draft|post|fix|report|create|list|reply|answer|compare|ship)\b))/i)
+    .split(/(?:[.;]\s+|,?\s+(?:and then|then|and also|also)\s+|,\s+and\s+|\s+and\s+(?=(?:build|write|research|find|make|draft|post|fix|report|create|list|reply|answer|compare|ship|scout)\b))/i)
     .map((part) => part.replace(/[.;,]+$/, '').trim())
     .filter((part) => part.split(' ').length >= 2)
     .slice(0, 6);
   const jobs = (parts.length ? parts : [text]).map((part) => {
     const lower = part.toLowerCase();
-    // A leading research verb wins ("research sites like ours" is Atlas's).
-    const hit = /^(?:research|find|compare|look up)\b/.test(lower)
+    const hit = /^(?:research|find|compare|look up|scout|find trending|find topics)\b/.test(lower)
       ? ['Atlas']
       : GOAL_ROUTES.find(([, pattern]) => pattern.test(lower));
     return { agent: hit ? hit[0] : 'Atlas', task: part.charAt(0).toUpperCase() + part.slice(1) };
@@ -82,9 +86,6 @@ export function splitGoal(goal) {
   return jobs;
 }
 
-// Agents never merge code, spend money or open payouts. The roster flags
-// (can_merge_code / can_spend_money / can_open_payouts) are checked here in
-// code before any job runs; only the owner can grant them.
 const RESTRICTED_ACTIONS = [
   { flag: 'can_merge_code', label: 'merge code', pattern: /\bmerg(?:e|es|ing)\b[^.]*\b(?:pr|pull request|branch|code|main)\b|\bpush(?:ing)? (?:it )?(?:straight )?to main\b/i },
   { flag: 'can_open_payouts', label: 'open Stripe payouts or move money', pattern: /\bpayouts?\b|\b(?:transfer|withdraw|wire) (?:the )?(?:money|funds|balance)\b/i },

@@ -32,6 +32,8 @@ import {
 import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv } from './ai_router.js';
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
+import { handleEdgeVoice } from './edge_route.js';
+import { handleVideoLine } from './video_route.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
 import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
@@ -3052,7 +3054,7 @@ export class CheState extends DurableObject {
       }
       const task = queueAgentTask(data, agent, step.task, 'owner_goal', { job_id: goalId });
       task.work_packet = codexWorkPacket(agent, task);
-      let blocker = refused || agentActionGuard(agent, step.task) || officeToolBlocker(this.keyEnv || this.env, agent);
+      let blocker = refused || agentActionGuard(agent, step.task) || officeToolBlocker(this.keyEnv || this.env, agent, task.task);
       // Codex desks get a real work packet: own thread id and workspace,
       // persisted here. The owner Codex token stays on the Worker.
       if (!refused && agent.provider_preference === 'openai') {
@@ -3146,7 +3148,7 @@ export class CheState extends DurableObject {
       const task = queueAgentTask(data, atlas,
         `Retrieve prior ml_eval memory_notes and Brain graph links. Compare to these metrics: ${JSON.stringify(result.metrics).slice(0, 600)}. Distill what was learned (patterns, failure modes). Do not invent numbers.`,
         'ml_eval', { job_id: goalId, kind: 'ml_eval' });
-      let blocker = refused || officeToolBlocker(this.keyEnv || this.env, atlas);
+      let blocker = refused || officeToolBlocker(this.keyEnv || this.env, atlas, task.task);
       if (blocker) { task.status = 'blocked'; task.error = blocker; }
       jobs.push({ id: task.id, agent: atlas.name, task: task.task, status: task.status, blocker });
     }
@@ -3231,7 +3233,7 @@ export class CheState extends DurableObject {
       task.owner_confirm_required = true;
       task.outbound_allowed = false;
       task.auto_publish = false;
-      let blocker = refused || officeToolBlocker(this.keyEnv || this.env, step.agent);
+      let blocker = refused || officeToolBlocker(this.keyEnv || this.env, step.agent, task.task);
       if (blocker) {
         task.status = 'blocked';
         task.error = blocker;
@@ -3339,7 +3341,7 @@ export class CheState extends DurableObject {
       });
       task.owner_confirm_required = true;
       task.outbound_allowed = false;
-      let blocker = refused || officeToolBlocker(this.keyEnv || this.env, step.agent);
+      let blocker = refused || officeToolBlocker(this.keyEnv || this.env, step.agent, task.task);
       if (blocker) {
         task.status = 'blocked';
         task.error = blocker;
@@ -3399,7 +3401,7 @@ export class CheState extends DurableObject {
       task.outbound_allowed = false;
       task.auto_message = false;
       task.auto_buy_inventory = false;
-      let blocker = refused || officeToolBlocker(this.keyEnv || this.env, step.agent);
+      let blocker = refused || officeToolBlocker(this.keyEnv || this.env, step.agent, task.task);
       if (blocker) {
         task.status = 'blocked';
         task.error = blocker;
@@ -4018,6 +4020,13 @@ export class CheState extends DurableObject {
       const ownerDevice = activeTenant?.role === 'owner';
       if (ownerDevice) OWNER_CHAT_REQUESTS.add(request);
       const ownerOnly = () => json({ detail: 'Only the CHE owner can change, merge or deploy CHE’s code.' }, 403);
+
+      if (path === '/api/voice/edge' && request.method === 'POST') {
+        return handleEdgeVoice(request, this.keyEnv || this.env, body);
+      }
+      if (path === '/api/video/line' && ['GET', 'POST'].includes(request.method)) {
+        return handleVideoLine(request, this.keyEnv || this.env, body);
+      }
 
       // CHE Home platform: tenant-scoped identity, devices, notifications and Core.
       if (request.method === 'GET' && path === '/api/platform') {

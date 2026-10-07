@@ -143,6 +143,16 @@ extension _CheHomeSend on _CHEHomeState {
   Future<bool> _handleLocalNavigation(String message) async {
     final lower = message.toLowerCase();
 
+    if (CheVideo.isRecentCommand(message)) {
+      await speakText('Opening recent videos, sir.', record: false);
+      if (!mounted) return true;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => CheVideoPage(videos: List<Map<String, String>>.from(_recentVideos)),
+        ),
+      );
+      return true;
+    }
     final updateCommand = RegExp(
       r'^(?:(?:chay|chey|shay|che)[, ]+)?(?:update yourself|check for (?:an |any )?updates?|check (?:my )?che update|install (?:the )?che update|download (?:the )?che update)\s*[.!?]*$',
       caseSensitive: false,
@@ -390,6 +400,124 @@ extension _CheHomeSend on _CHEHomeState {
     return reply;
   }
 
+  String _applyScreenCommand(ScreenCommand command) {
+    switch (command.op) {
+      case ScreenOp.clearChips:
+        _screenChipsHidden = true;
+        return 'Suggestions hidden, sir.';
+      case ScreenOp.showChips:
+        _screenChipsHidden = false;
+        return 'Suggestions are back, sir.';
+      case ScreenOp.addChip:
+        final label = command.text.trim();
+        final current = _homeSuggestions.isNotEmpty ? _homeSuggestions : _skillPlugins.quickActions();
+        _homeSuggestions = <String>[
+          label,
+          ...current.where((item) => item.toLowerCase() != label.toLowerCase()),
+        ].take(3).toList(growable: false);
+        _screenChipsHidden = false;
+        return 'Added "$label" to the suggestions, sir.';
+      case ScreenOp.removeChip:
+        final label = command.text.trim();
+        final current = _homeSuggestions.isNotEmpty ? _homeSuggestions : _skillPlugins.quickActions();
+        final shown = current.take(3).toList(growable: false);
+        final kept = shown.where((item) => item.toLowerCase() != label.toLowerCase()).toList(growable: false);
+        final removed = kept.length != shown.length;
+        _homeSuggestions = kept;
+        _screenChipsHidden = false;
+        return removed ? 'Removed "$label" from the suggestions, sir.' : 'I do not see "$label" in the suggestions.';
+      case ScreenOp.clearChat:
+        messages.clear();
+        return 'Chat cleared, sir.';
+      case ScreenOp.removeLast:
+        if (messages.isEmpty) return 'There is no message to remove, sir.';
+        messages.removeLast();
+        return 'Removed the last message, sir.';
+      case ScreenOp.hideGreeting:
+        _screenGreetingHidden = true;
+        return 'Greeting hidden, sir.';
+      case ScreenOp.showGreeting:
+        _screenGreetingHidden = false;
+        return 'Greeting is back, sir.';
+    }
+  }
+
+  Future<Map<String, dynamic>> _pollVideoTask(String taskId) async {
+    Map<String, dynamic> last = <String, dynamic>{
+      'ok': true,
+      'pending': true,
+      'task_id': taskId,
+      'error': 'Video is still rendering.',
+    };
+    for (var attempt = 0; attempt < 8; attempt++) {
+      if (attempt > 0) await Future<void>.delayed(const Duration(milliseconds: 1500));
+      final uri = Uri.parse('$cheAgentBaseUrl/api/video/line').replace(queryParameters: {'task_id': taskId});
+      final response = await http.get(uri, headers: _authHeaders).timeout(const Duration(seconds: 10));
+      final decoded = jsonDecode(response.body.isEmpty ? '{}' : response.body);
+      last = decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{};
+      final mediaUrl = '${last['media_url'] ?? ''}'.trim();
+      if (response.statusCode == 200 && last['ok'] == true && CheVideo.isMediaUrl(mediaUrl)) return last;
+      if (response.statusCode != 202 || last['pending'] != true) return last;
+    }
+    return last;
+  }
+
+  Future<bool> _handleVideoGenerationCommand(String message) async {
+    if (_pendingAttachment != null) return false;
+    final topic = CheVideo.topicFromCommand(message);
+    if (topic == null) return false;
+    if (!await _ensurePaired()) return true;
+    if (_isSending) return true;
+    _isSending = true;
+
+    if (mounted) {
+      _set(() {
+        messages.add({'role': 'user', 'text': message});
+        controller.clear();
+      });
+      _scrollToBottom();
+    }
+
+    String reply;
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$cheAgentBaseUrl/api/video/line'),
+            headers: {..._authHeaders, 'Content-Type': 'application/json'},
+            body: jsonEncode({'topic': topic}),
+          )
+          .timeout(const Duration(seconds: 35));
+      final decoded = jsonDecode(response.body.isEmpty ? '{}' : response.body);
+      var data = decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{};
+      var mediaUrl = '${data['media_url'] ?? ''}'.trim();
+      final taskId = '${data['task_id'] ?? ''}'.trim();
+      if (response.statusCode == 202 && data['pending'] == true && taskId.isNotEmpty) {
+        data = await _pollVideoTask(taskId);
+        mediaUrl = '${data['media_url'] ?? ''}'.trim();
+      }
+      if (data['ok'] == true && CheVideo.isMediaUrl(mediaUrl)) {
+        _recentVideos.insert(0, {'title': topic, 'media_url': mediaUrl});
+        reply = 'Video file: $mediaUrl';
+      } else if (data['pending'] == true) {
+        reply = 'The video is still rendering, sir. No finished file is available yet.';
+      } else {
+        final error = '${data['error'] ?? data['detail'] ?? ''}'.trim();
+        reply = error.isNotEmpty ? error : 'The video renderer did not return a finished file.';
+      }
+    } catch (error) {
+      reply = 'The video server did not return a file. Please try again.';
+    } finally {
+      _isSending = false;
+    }
+
+    if (mounted) {
+      _set(() => messages.add({'role': 'assistant', 'text': reply}));
+      _scrollToBottom();
+    }
+    await speakText(reply, record: false);
+    return true;
+  }
+
   Future<void> sendMessage({bool fromVoice = false}) async {
     if (await _controlAutonomy(controller.text.trim())) return;
     if (_isSending) return;
@@ -407,6 +535,26 @@ extension _CheHomeSend on _CHEHomeState {
     if (vaultCommand != null) {
       if (mounted) _set(() => controller.clear());
       await _runVaultCommand(vaultCommand);
+      return;
+    }
+
+    // Direct screen edits are applied on-device before any model routing.
+    final screenCommand = _pendingAttachment == null ? parseScreenCommand(message) : null;
+    if (screenCommand != null) {
+      var reply = '';
+      if (mounted) {
+        _set(() {
+          reply = _applyScreenCommand(screenCommand);
+          controller.clear();
+          messages
+            ..add({'role': 'user', 'text': message})
+            ..add({'role': 'assistant', 'text': reply});
+        });
+      } else {
+        reply = _applyScreenCommand(screenCommand);
+      }
+      HapticFeedback.mediumImpact();
+      await speakText(reply, record: false);
       return;
     }
 
@@ -498,6 +646,8 @@ extension _CheHomeSend on _CHEHomeState {
       controller.clear();
       return;
     }
+
+    if (await _handleVideoGenerationCommand(message)) return;
 
     if (!await _ensurePaired()) return;
 
