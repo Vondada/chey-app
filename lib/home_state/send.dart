@@ -143,10 +143,7 @@ extension _CheHomeSend on _CHEHomeState {
   Future<bool> _handleLocalNavigation(String message) async {
     final lower = message.toLowerCase();
 
-    if (RegExp(
-      r'^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:show|open)(?:\s+me)?\s+(?:my\s+)?recent\s+videos?[.!?]*$',
-      caseSensitive: false,
-    ).hasMatch(message.trim())) {
+    if (CheVideo.isRecentCommand(message)) {
       await speakText('Opening recent videos, sir.', record: false);
       if (!mounted) return true;
       await Navigator.of(context).push(
@@ -403,20 +400,13 @@ extension _CheHomeSend on _CHEHomeState {
     return reply;
   }
 
-  String? _videoTopicFromOwnerCommand(String raw) {
-    final match = RegExp(
-      r"^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+)?(?:make|create|generate)\s+(?:me\s+)?(?:a\s+)?video\s+(?:about|on)\s+(.+?)\s*[.!?]*$",
-      caseSensitive: false,
-    ).firstMatch(raw.trim());
-    final topic = match?.group(1)?.trim() ?? '';
-    return topic.length >= 3 ? topic : null;
-  }
-
   Future<bool> _handleVideoGenerationCommand(String message) async {
     if (_pendingAttachment != null) return false;
-    final topic = _videoTopicFromOwnerCommand(message);
+    final topic = CheVideo.topicFromCommand(message);
     if (topic == null) return false;
     if (!await _ensurePaired()) return true;
+    if (_isSending) return true;
+    _isSending = true;
 
     if (mounted) {
       _set(() {
@@ -438,9 +428,9 @@ extension _CheHomeSend on _CHEHomeState {
       final decoded = jsonDecode(response.body.isEmpty ? '{}' : response.body);
       final data = decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{};
       final mediaUrl = '${data['media_url'] ?? ''}'.trim();
-      if (response.statusCode == 200 && mediaUrl.startsWith('http')) {
+      if (response.statusCode == 200 && data['ok'] == true && CheVideo.isMediaUrl(mediaUrl)) {
         _recentVideos.insert(0, {'title': topic, 'media_url': mediaUrl});
-        reply = mediaUrl;
+        reply = 'Video file: $mediaUrl';
       } else {
         final error = '${data['error'] ?? data['detail'] ?? ''}'.trim();
         reply = error.isNotEmpty
@@ -448,7 +438,9 @@ extension _CheHomeSend on _CHEHomeState {
             : 'Video renderer returned HTTP ${response.statusCode} without a file URL.';
       }
     } catch (error) {
-      reply = 'The video route failed before returning a file: ${error.toString()}';
+      reply = 'The video server did not return a file. Please try again.';
+    } finally {
+      _isSending = false;
     }
 
     if (mounted) {
@@ -469,16 +461,6 @@ extension _CheHomeSend on _CHEHomeState {
         ? 'Analyze this attachment.'
         : typedMessage;
     if (message.isEmpty) return;
-
-    final videoTopic = RegExp(r'(?:make|create|generate)(?: me)?(?: an?| the)? (?:faceless |info |stick figure )?video(?: about| on)? (.+)', caseSensitive: false).firstMatch(message.trim());
-    if (videoTopic != null && _pendingAttachment == null) {
-      final topic = videoTopic.group(1)!.replaceAll(RegExp(r'[.!?]+$'), '').trim();
-      final result = await CheVideo.make(topic);
-      final reply = result.startsWith('http') ? 'Video file: $result' : result;
-      if (mounted) _set(() => messages..add({'role': 'user', 'text': message})..add({'role': 'assistant', 'text': reply}));
-      await speakText(reply, record: false);
-      return;
-    }
 
     // Password vault: handled entirely on the phone. The words never go to
     // the CHE server, an AI provider, chat history or memory.

@@ -1,32 +1,26 @@
-// App call for a faceless video. Returns a file URL or the real error.
-
-import 'dart:convert';
-
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
-
+// Shared command and receipt validation for the authenticated video path.
 class CheVideo {
-  static Future<String> make(String topic) async {
-    final subject = topic.trim();
-    if (subject.length < 3) return 'Name the video.';
-    final prefs = await SharedPreferences.getInstance();
-    final base = prefs.getString('che.server') ?? prefs.getString('che.worker') ?? '';
-    if (base.trim().isEmpty) return 'The app has no server address.';
-    try {
-      final response = await http
-          .post(
-            Uri.parse('${base.replaceAll(RegExp(r'/+$'), '')}/api/video/line'),
-            headers: {'content-type': 'application/json'},
-            body: jsonEncode({'topic': subject}),
-          )
-          .timeout(const Duration(seconds: 30));
-      final data = jsonDecode(response.body.isEmpty ? '{}' : response.body);
-      final url = data is Map ? data['media_url']?.toString() : null;
-      if (url != null && url.startsWith('http')) return url;
-      final error = data is Map ? data['error']?.toString() : null;
-      return error ?? 'No video was made.';
-    } catch (_) {
-      return 'The video server did not respond.';
-    }
+  static bool isRecentCommand(String raw) => RegExp(
+    r'^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:show|open)(?:\s+me)?\s+(?:my\s+)?recent\s+videos?[.!?]*$',
+    caseSensitive: false,
+  ).hasMatch(raw.trim());
+
+  static String? topicFromCommand(String raw) {
+    final match = RegExp(
+      r'^(?:(?:hey\s+)?(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+)?(?:make|create|generate)\s+(?:me\s+)?(?:(?:a|an|the)\s+)?(?:(?:faceless|info|stick figure)\s+)?video\s+(?:(?:about|on)\s+)?(.+?)\s*[.!?]*$',
+      caseSensitive: false,
+    ).firstMatch(raw.trim());
+    final topic = match?.group(1)?.trim() ?? '';
+    return topic.length >= 3 && !{'about', 'on'}.contains(topic.toLowerCase())
+        ? topic
+        : null;
+  }
+
+  static bool isMediaUrl(String raw) {
+    final uri = Uri.tryParse(raw.trim());
+    return uri != null &&
+        (uri.scheme == 'https' || uri.scheme == 'http') &&
+        uri.host.isNotEmpty &&
+        uri.userInfo.isEmpty;
   }
 }

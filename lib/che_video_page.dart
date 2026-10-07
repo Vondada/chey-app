@@ -2,6 +2,8 @@
 
 import 'package:flutter/material.dart';
 
+import 'che_video.dart';
+
 class CheVideoPage extends StatelessWidget {
   const CheVideoPage({super.key, this.videos = const []});
 
@@ -10,7 +12,7 @@ class CheVideoPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final realVideos = videos
-        .where((video) => (video['media_url'] ?? '').trim().isNotEmpty)
+        .where((video) => CheVideo.isMediaUrl(video['media_url'] ?? ''))
         .toList(growable: false);
     return Scaffold(
       appBar: AppBar(title: const Text('Recent videos')),

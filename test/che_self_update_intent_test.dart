@@ -204,6 +204,72 @@ Again: ANSWER IN CHAT ONLY. ZERO REPOSITORY CHANGES. NO PR.''';
     }
   });
 
+  test('live CHE repository diagnostics require connected verified evidence', () {
+    const diagnostic =
+        'CHE, inspect your current GitHub main branch and investigate why your previous self-diagnostic entered the coding pipeline. Do not modify code, start a coding job, create a PR, merge, or deploy. Report only verified findings, and clearly separate anything inferred or unknown.';
+    expect(cheRequiresVerifiedRemoteEvidence(diagnostic), isTrue);
+    expect(
+      cheRequiresVerifiedRemoteEvidence(
+        'CHE, verify the exact current main SHA and inspect your routing source.',
+      ),
+      isTrue,
+    );
+    expect(
+      cheRequiresVerifiedRemoteEvidence('What is the exact current main branch SHA?'),
+      isTrue,
+    );
+    expect(
+      cheRequiresVerifiedRemoteEvidence('CHE, inspect your current architecture.'),
+      isTrue,
+    );
+    expect(
+      cheRequiresVerifiedRemoteEvidence('CHE, review your code.'),
+      isTrue,
+    );
+    for (final prompt in [
+      'Analyze your code.',
+      'Show your repository.',
+      'Examine your architecture.',
+      'Explain your routing.',
+      'What is the current status of your code?',
+    ]) {
+      expect(cheRequiresVerifiedRemoteEvidence(prompt), isTrue, reason: prompt);
+    }
+    expect(
+      cheRequiresVerifiedRemoteEvidence('What does pull request mean?'),
+      isFalse,
+    );
+    expect(
+      cheRequiresVerifiedRemoteEvidence('Explain how GitHub branches work.'),
+      isFalse,
+    );
+    expect(
+      cheTurnRequiresVerifiedRemoteEvidence(
+        'Is that still current?',
+        const [
+          {
+            'role': 'user',
+            'content': 'CHE, inspect your current repository and verify the exact main SHA.',
+          },
+          {
+            'role': 'assistant',
+            'content': 'I inspected the repository.',
+          },
+        ],
+      ),
+      isTrue,
+    );
+    expect(
+      cheTurnRequiresVerifiedRemoteEvidence(
+        'Is that still current?',
+        const [
+          {'role': 'user', 'content': 'Tell me about Hohmann transfers.'},
+        ],
+      ),
+      isFalse,
+    );
+  });
+
   test('quoted prohibitions are examples, not this turn\'s instruction', () {
     const q = 'Update your code to recognize the phrase "do not modify your code" as chat-only.';
     expect(cheIsTerminalChatOnlyRequest(q), isFalse);

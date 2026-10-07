@@ -132,24 +132,19 @@ test('merge intent needs an explicit command; negations and questions do not mer
   assert.equal(selfUpdateChatIntent('is it deployed?')?.kind, 'deploy-status');
 });
 
-test('screen-command media routes return only real Edge audio or a real MoneyPrinter error', async () => {
+test('screen-command media routes require pairing and use the parsed authenticated body', async () => {
   const saved = new Map();
-  const state = new CheState({ storage: storageFor(saved) }, {});
-  const video = await state.handleRequest(new Request('https://che.example/api/video/line', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ topic: 'how the printing press started' }),
-  }));
+  const { state, api } = await pairedChat({ CHE_PAIR_CODE: '123456' }, saved);
+  for (const path of ['/api/video/line', '/api/voice/edge']) {
+    const denied = await state.handleRequest(new Request(`https://che.example${path}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    }));
+    assert.equal(denied.status, 401);
+  }
+  const video = await api('/api/video/line', { topic: 'how the printing press started' });
   assert.equal(video.status, 424);
-  const videoBody = await video.json();
-  assert.match(String(videoBody.error || ''), /MoneyPrinter is not connected/i);
-  assert.match(String(videoBody.error || ''), /CHE_VIDEO_GEN_URL/);
-
-  const edge = await state.handleRequest(new Request('https://che.example/api/voice/edge', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ text: '' }),
-  }));
+  assert.match((await video.json()).error, /MoneyPrinter is not connected/i);
+  const edge = await api('/api/voice/edge', { text: '' });
   assert.equal(edge.status, 204);
 });
 
@@ -247,6 +242,42 @@ test('owner capability test: repository and autonomy discovery reads source with
     assert.ok(calls.every((c) => c.method === 'GET'));
     assert.ok(!(saved.get('che').jobs || []).length);
 
+    const diagnosticPrompt = 'CHE, inspect your current GitHub main branch and investigate why your previous self-diagnostic entered the coding pipeline. Do not modify code, start a coding job, create a PR, merge, or deploy. Report only verified findings, and clearly separate anything inferred or unknown.';
+    const diagnosticReply = replyFromNdjson(await (await chat(diagnosticPrompt)).text());
+    assert.match(diagnosticReply, /VERIFIED/);
+    assert.match(diagnosticReply, /INFERRED/);
+    assert.match(diagnosticReply, /UNKNOWN/);
+    assert.match(diagnosticReply, /sha1/, 'diagnostic must use the exact pinned repository head');
+    assert.doesNotMatch(diagnosticReply, /health_check\.yml|diagnostic-tool|auto-remediate|build-manifest\.json|fix-version-mismatch/i, 'unsupported repository facts can never reach owner chat');
+    assert.equal(aiCalls, 0, 'verified repository diagnostics bypass generic model generation');
+    assert.ok(!(saved.get('che').jobs || []).length, 'read-only diagnostic creates no coding job');
+
+    const callsBeforeExactSha = calls.length;
+    const exactShaReply = replyFromNdjson(await (await chat('What is the exact current main branch SHA?')).text());
+    assert.match(exactShaReply, /sha1/, 'exact-SHA question must come from the pinned repository head');
+    assert.equal(aiCalls, 0, 'exact-SHA question bypasses generic model generation');
+    assert.ok(calls.slice(callsBeforeExactSha).some((c) => /\/git\/ref\/heads\/main|\/git\/trees\//.test(c.url)), 'exact-SHA question refreshes repository evidence');
+    assert.ok(!(saved.get('che').jobs || []).length, 'exact-SHA question creates no coding job');
+
+    const callsBeforeLatestSha = calls.length;
+    const latestShaReply = replyFromNdjson(await (await chat('Verify the latest main branch SHA.')).text());
+    assert.match(latestShaReply, /sha1/, 'latest-SHA imperative must come from the pinned repository head');
+    assert.equal(aiCalls, 0, 'latest-SHA imperative bypasses generic model generation');
+    assert.ok(calls.slice(callsBeforeLatestSha).some((c) => /\/git\/ref\/heads\/main|\/git\/trees\//.test(c.url)), 'latest-SHA imperative refreshes repository evidence');
+    assert.ok(!(saved.get('che').jobs || []).length, 'latest-SHA imperative creates no coding job');
+
+    const callsBeforeFollowUp = calls.length;
+    const followUpReply = replyFromNdjson(await (await chat('Is that still current?', {
+      history: [
+        { role: 'user', content: diagnosticPrompt },
+        { role: 'assistant', content: diagnosticReply },
+      ],
+    })).text());
+    assert.match(followUpReply, /sha1/, 'repository follow-up re-verifies the pinned head');
+    assert.equal(aiCalls, 0, 'repository follow-up bypasses generic model generation');
+    assert.ok(calls.slice(callsBeforeFollowUp).some((c) => /\/git\/ref\/heads\/main|\/git\/trees\//.test(c.url)), 'repository follow-up performs a fresh evidence read');
+    assert.ok(!(saved.get('che').jobs || []).length, 'repository follow-up creates no coding job');
+
     const callsBeforeProhibitedDiscovery = calls.length;
     await chat('CHE, find the War Room files in your codebase, but do not access the codebase; use only your existing knowledge.');
     assert.ok(calls.slice(callsBeforeProhibitedDiscovery).every((c) => c.url.includes('/contents/mailbox')), 'an explicit source-access prohibition must prevent repository source reads');
@@ -261,6 +292,103 @@ test('owner capability test: repository and autonomy discovery reads source with
     assert.ok(calls.every((c) => c.method === 'GET'));
     assert.ok(!(saved.get('che').jobs || []).length);
   } finally { globalThis.fetch = original; }
+});
+
+test('current-turn policy blocks stale capabilities, old jobs and collaboration from escalating read-only work', async () => {
+  const saved = new Map();
+  let aiCalls = 0;
+  const env = {
+    CHE_PAIR_CODE: '123456',
+    CHE_GITHUB_TOKEN: 't',
+    CHE_GITHUB_REPO: 'o/r',
+    CHE_CODING_RUNTIME: 'opencode',
+    CHE_DISABLE_KEYLESS_AI: '1',
+    AI: { run: async () => { aiCalls += 1; return { response: 'VERIFIED: I reviewed the routing without changing it.' }; } },
+  };
+  const { chat, api } = await pairedChat(env, saved);
+  saved.set('che_last_engineering_request', {
+    request: 'Update your code: old authorized work that must not hijack this turn',
+    integrate: true,
+    at: new Date(Date.now() - 60_000).toISOString(),
+  });
+  const original = globalThis.fetch;
+  const files = {
+    'server/cloudflare/worker.js': 'function router() { return "routing"; }',
+    'server/cloudflare/code_scout.js': 'export function currentTurnActionPolicy() { return "EXPLORE"; }',
+  };
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), method: init.method || 'GET' });
+    return GITHUB_OK(files)(url, init);
+  };
+  try {
+    await (await chat(
+      'CHE, inspect your current repository and diagnose why a coding job could hijack a read-only request. Do not modify code or start a coding job.',
+      { requested_capabilities: ['self_development', 'background_work'] },
+    )).text();
+    assert.equal((saved.get('che').jobs || []).filter((j) => j.kind === 'self_development').length, 0);
+    assert.equal(saved.has('che_runtime_last_session'), false);
+    assert.equal(saved.has('pending_self_update'), false);
+    assert.ok(calls.every((c) => c.method === 'GET'), 'read-only inspection never mutates GitHub');
+
+    await (await chat('Work with Claude to review your routing and tell me what is wrong.')).text();
+    assert.equal((saved.get('che').jobs || []).filter((j) => j.kind === 'self_development').length, 0, 'read-only collaboration cannot inherit the stale BUILD request');
+
+    const legacy = await api('/api/change/request', {
+      request: 'Investigate why the coding pipeline failed and report the findings without making code changes.',
+    });
+    assert.equal(legacy.status, 200);
+    const legacyBody = await legacy.json();
+    assert.equal(legacyBody.chat_only, true);
+    assert.equal(legacyBody.execution_mode, 'EXPLORE');
+    assert.equal((saved.get('che').jobs || []).filter((j) => j.kind === 'self_development').length, 0);
+
+    await (await chat("Che check your code and tell me what's wrong don't change nothing", {
+      requested_capabilities: ['self_development'],
+    })).text();
+    assert.equal((saved.get('che').jobs || []).filter((j) => j.kind === 'self_development').length, 0, 'voice-like negation remains authoritative');
+    assert.ok(aiCalls >= 1, 'read-only reasoning can still answer without BUILD');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('authorized BUILD still dispatches exactly one OpenCode mutation session', async () => {
+  const saved = new Map();
+  const env = {
+    CHE_PAIR_CODE: '123456',
+    CHE_GITHUB_TOKEN: 't',
+    CHE_GITHUB_REPO: 'o/r',
+    CHE_CODING_RUNTIME: 'opencode',
+    CHE_OPENCODE_MODEL: 'openrouter/openai/gpt-oss-20b:free',
+    AI: { run: async () => ({ response: 'unused' }) },
+  };
+  const { chat } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  let dispatches = 0;
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    if (u.endsWith('/commits/main')) {
+      return new Response(JSON.stringify({ sha: 'a'.repeat(40) }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    if (u.includes('/actions/workflows/che-opencode-runtime.yml/dispatches')) {
+      dispatches += 1;
+      assert.equal(init.method, 'POST');
+      return new Response(null, { status: 204 });
+    }
+    if (u.includes('/contents/mailbox/runtime/')) return new Response('{}', { status: 404 });
+    return new Response('{}', { status: 404 });
+  };
+  try {
+    const reply = replyFromNdjson(await (await chat('Fix your routing system and merge it if tests pass.')).text());
+    assert.match(reply, /OpenCode coding runner/i);
+    assert.equal(dispatches, 1);
+    assert.match(String(saved.get('che_runtime_last_session') || ''), /^ocr-[0-9a-f]{8}$/);
+    await (await chat('Fix your routing system and merge it if tests pass.')).text();
+    assert.equal(dispatches, 1, 'duplicate active owner request reuses its OpenCode session');
+  } finally {
+    globalThis.fetch = original;
+  }
 });
 
 test('owner capability test: a PR-only request never reaches the auto-merging OpenCode workflow', async () => {
@@ -661,10 +789,10 @@ test('coding status reports a newer OpenCode session over an older queued built-
   }
 });
 
-test('terminal OpenCode failure automatically falls back to the same durable coding request', async () => {
+test('coding status is read-only; failed OpenCode work recovers only through the background recovery path', async () => {
   const saved = new Map();
   const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => ({ response: 'ok' }) } };
-  const { chat } = await pairedChat(env, saved);
+  const { state, chat } = await pairedChat(env, saved);
   const textOf = async (res) => (await res.text()).trim().split('\n').map((line) => JSON.parse(line)).filter((line) => line.type === 'delta').map((line) => line.delta).join('');
   saved.set('che_runtime_last_session', 'ocr-1234abcd');
   saved.set('che_runtime_last_session_at', new Date().toISOString());
@@ -681,22 +809,27 @@ test('terminal OpenCode failure automatically falls back to the same durable cod
   };
   try {
     const status = await textOf(await chat('coding status'));
-    assert.match(status, /automatically moved the same coding job to my recovery queue/i);
+    assert.match(status, /OpenCode attempt failed/i);
+    assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'self_development').length, 0, 'status polling never creates a recovery job');
+
+    const recovered = await state.recoverOpenCodeFailure();
+    assert.equal(recovered.recovered, true);
     const jobs = saved.get('che').jobs.filter((j) => j.kind === 'self_development');
     assert.equal(jobs.length, 1);
     assert.match(jobs[0].request, /preserve the full original owner request beyond the spoken summary/);
+
     const again = await textOf(await chat('coding status'));
     assert.match(again, /latest coding job is queued/i);
-    assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'self_development').length, 1, 'status polling does not duplicate recovery jobs');
+    assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'self_development').length, 1, 'status polling remains side-effect free after recovery');
   } finally {
     globalThis.fetch = original;
   }
 });
 
-test('persisted legacy blocked OpenCode failure migrates to durable recovery once and status polling stays idempotent', async () => {
+test('persisted legacy OpenCode failure is observable without mutation and background recovery remains idempotent', async () => {
   const saved = new Map();
   const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => ({ response: 'ok' }) } };
-  const { chat } = await pairedChat(env, saved);
+  const { state, chat } = await pairedChat(env, saved);
   const textOf = async (res) => (await res.text()).trim().split('\n').map((line) => JSON.parse(line)).filter((line) => line.type === 'delta').map((line) => line.delta).join('');
   saved.set('che_runtime_last_session', 'ocr-1234abcd');
   saved.set('che_runtime_last_session_at', new Date().toISOString());
@@ -712,14 +845,20 @@ test('persisted legacy blocked OpenCode failure migrates to durable recovery onc
   };
   try {
     const first = await textOf(await chat('coding status'));
-    assert.match(first, /automatically moved the same coding job to my recovery queue/i);
+    assert.match(first, /OpenCode attempt failed/i);
+    assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'self_development').length, 0);
+
+    const recovered = await state.recoverOpenCodeFailure();
+    assert.equal(recovered.recovered, true);
     let jobs = saved.get('che').jobs.filter((j) => j.kind === 'self_development');
     assert.equal(jobs.length, 1);
     assert.equal(jobs[0].request, 'Fix coding status state reporting', 'legacy records recover from the only request text they persisted');
+
+    assert.equal(await state.recoverOpenCodeFailure(), null, 'a recovered terminal attempt cannot enqueue twice');
     const second = await textOf(await chat('coding status'));
     assert.match(second, /latest coding job is queued/i);
     jobs = saved.get('che').jobs.filter((j) => j.kind === 'self_development');
-    assert.equal(jobs.length, 1, 'polling cannot create a duplicate recovery job');
+    assert.equal(jobs.length, 1, 'status polling cannot create a duplicate recovery job');
   } finally {
     globalThis.fetch = original;
   }

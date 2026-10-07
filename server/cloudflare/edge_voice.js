@@ -1,60 +1,71 @@
-// Hosted voice. Returns mp3 bytes only when Edge sends them.
-
+// Optional Edge voice. Fail closed to the existing voice fallback when the
+// service is unavailable; never treat protocol headers or partial audio as MP3.
 const TOKEN = '6A5AA1D4EAFF4E9FB37E23D68491D6F4';
-const WSS = `wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=${TOKEN}`;
+const ENDPOINT = `https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=${TOKEN}`;
 const VOICE = 'en-US-AvaNeural';
+const escapeXml = text => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&apos;');
 
-function ssml(text, voice) {
-  const safe = String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  return `<speak version='1.0' xml:lang='en-US'><voice name='${voice}'>${safe}</voice></speak>`;
+export function edgeAudioFrame(buffer) {
+  const bytes = new Uint8Array(buffer);
+  if (bytes.length < 2) throw new Error('Missing Edge frame header.');
+  const length = (bytes[0] << 8) | bytes[1];
+  if (length + 2 > bytes.length) throw new Error('Invalid Edge frame length.');
+  const headers = new TextDecoder().decode(bytes.subarray(2, length + 2));
+  if (!/^Path:audio\r?$/im.test(headers)) return new Uint8Array();
+  return bytes.slice(length + 2);
 }
 
-function concat(chunks) {
-  const size = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const out = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return out;
-}
-
-export async function edgeSpeak(env, text) {
-  const said = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 800);
-  if (!said) return { ok: false, error: 'Nothing to say.' };
+export async function edgeSpeak(env = {}, text, fetcher = fetch) {
+  const said = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!said || said.length > 800) return { ok: false, error: 'Use the existing voice for this text.' };
   const voice = String(env.CHE_EDGE_VOICE || VOICE);
   const requestId = crypto.randomUUID().replace(/-/g, '');
+  let socket;
   try {
-    const socket = new WebSocket(`${WSS}&ConnectionId=${requestId}`);
+    const response = await fetcher(`${ENDPOINT}&ConnectionId=${requestId}`, {
+      headers: { Upgrade: 'websocket' }, signal: AbortSignal.timeout(4000),
+    });
+    socket = response.webSocket;
+    if (!socket) throw new Error('Edge voice unavailable.');
     const chunks = await new Promise((resolve, reject) => {
       const audio = [];
-      const timer = setTimeout(() => reject(new Error('Edge voice timed out.')), 12000);
-      socket.addEventListener('open', () => {
-        socket.send(`X-Timestamp:${new Date().toISOString()}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":false},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}`);
-        socket.send(`X-RequestId:${requestId}\r\nContent-Type:application/ssml+xml\r\nPath:ssml\r\n\r\n${ssml(said, voice)}`);
-      });
-      socket.addEventListener('message', (event) => {
-        if (event.data instanceof ArrayBuffer) {
-          const bytes = new Uint8Array(event.data);
-          const headerEnd = bytes.indexOf(0);
-          audio.push(headerEnd >= 0 ? bytes.slice(headerEnd + 1) : bytes);
-        }
-        if (typeof event.data === 'string' && event.data.includes('Path:turn.end')) {
-          clearTimeout(timer);
-          socket.close();
-          resolve(audio);
-        }
-      });
-      socket.addEventListener('error', () => {
+      let size = 0;
+      let settled = false;
+      const finish = (error) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
-        reject(new Error('Edge voice did not respond.'));
+        if (error) reject(error); else resolve(audio);
+      };
+      const timer = setTimeout(() => finish(new Error('Edge voice timed out.')), 5000);
+      socket.addEventListener('message', event => {
+        try {
+          if (event.data instanceof ArrayBuffer) {
+            const chunk = edgeAudioFrame(event.data);
+            size += chunk.length;
+            if (size > 2 * 1024 * 1024) throw new Error('Edge audio too large.');
+            if (chunk.length) audio.push(chunk);
+          } else if (typeof event.data === 'string' && /(?:^|\r\n)Path:turn.end(?:\r\n|$)/.test(event.data)) {
+            finish();
+          }
+        } catch (error) { finish(error); }
       });
+      socket.addEventListener('error', () => finish(new Error('Edge voice failed.')));
+      socket.addEventListener('close', () => finish(new Error('Edge voice closed before completion.')));
+      socket.accept();
+      try {
+        socket.send(`X-Timestamp:${new Date().toISOString()}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":false},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}`);
+        socket.send(`X-RequestId:${requestId}\r\nContent-Type:application/ssml+xml\r\nPath:ssml\r\n\r\n<speak version='1.0' xml:lang='en-US'><voice name='${escapeXml(voice)}'>${escapeXml(said)}</voice></speak>`);
+      } catch (error) { finish(error); }
     });
-    const mp3 = concat(chunks);
-    if (!mp3.length) return { ok: false, error: 'Edge voice returned no audio.', voice };
+    const mp3 = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+    let offset = 0;
+    for (const chunk of chunks) { mp3.set(chunk, offset); offset += chunk.length; }
+    if (!mp3.length) throw new Error('Edge returned no audio.');
     return { ok: true, voice, mp3 };
   } catch (error) {
     return { ok: false, error: String(error.message || error), voice };
+  } finally {
+    try { socket?.close(); } catch (_) { /* already closed */ }
   }
 }

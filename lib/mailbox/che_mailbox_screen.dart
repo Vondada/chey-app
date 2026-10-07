@@ -514,16 +514,9 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
                 )
               : ListView.builder(
                   padding: const EdgeInsets.all(12),
-                  itemCount: _providers.where((item) => _keyQuery.isEmpty || '${item['name']}'.toLowerCase().contains(_keyQuery)).length + 1,
+                  itemCount: providers.length,
                   itemBuilder: (_, i) {
-                    if (i == 0) {
-                      return TextField(
-                        decoration: const InputDecoration(hintText: 'Search keys', prefixIcon: Icon(Icons.search)),
-                        onChanged: (value) => setState(() => _keyQuery = value.trim().toLowerCase()),
-                      );
-                    }
-                    final shown = _providers.where((item) => _keyQuery.isEmpty || '${item['name']}'.toLowerCase().contains(_keyQuery)).toList();
-                    final p = shown[i - 1];
+                    final p = providers[i];
                     final status = '${p['status']}';
                     final ok =
                         status == 'healthy' || status == 'rate-limited';
