@@ -5,6 +5,35 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'che_kokoro_voice.dart';
 
+const String cheLocalRepositoryEvidenceUnavailableReply =
+    "I can't verify current repository evidence while I'm running locally, sir. I won't guess. Reconnect me to CHE cloud and ask again.";
+
+/// True when answering would require current CHE/GitHub evidence that the
+/// on-device model cannot retrieve or verify. Local inference may explain
+/// general programming concepts, but it must never invent live repository
+/// files, SHAs, job causes, routing state, PR state, or deployment evidence.
+bool cheRequiresLiveRepositoryEvidence(String raw) {
+  final text = raw.trim();
+  if (text.isEmpty) return false;
+  final investigation = RegExp(
+    r'\\b(?:inspect|investigate|diagnos(?:e|is|tic)|trace|audit|review|verify|check|find|locate|examine|explain)\\b',
+    caseSensitive: false,
+  ).hasMatch(text);
+  final repositoryTarget = RegExp(
+    r"\\b(?:github|repo(?:sitory)?|codebase|main\\s+branch|commit\\s+sha|coding\\s+(?:job|pipeline|runtime|system)|routing|router|cloudflare\\s+worker|worker|pull\\s+request|pr)\\b",
+    caseSensitive: false,
+  ).hasMatch(text);
+  final cheScope = RegExp(
+    r"\\b(?:your|che(?:'s)?|chay(?:'s)?|current|latest|previous|last|earlier|main)\\b",
+    caseSensitive: false,
+  ).hasMatch(text);
+  final directLiveFact = RegExp(
+    r"\\b(?:current|latest|exact)\\s+(?:main\\s+)?(?:commit\\s+)?sha\\b|\\b(?:what(?:'s|\\s+is)|show|tell\\s+me)\\b[^.!?\\n]{0,100}\\b(?:coding\\s+job|pull\\s+request|pr|deployment|github)\\s+(?:status|state)\\b",
+    caseSensitive: false,
+  ).hasMatch(text);
+  return directLiveFact || (investigation && repositoryTarget && cheScope);
+}
+
 /// On-device iPhone text fallback for CHE.
 class CheLocalAI {
   static const MethodChannel _channel = MethodChannel('che/local_ai');
@@ -16,6 +45,9 @@ class CheLocalAI {
   }) async {
     final clean = prompt.trim();
     if (clean.isEmpty) return null;
+    if (cheRequiresLiveRepositoryEvidence(clean)) {
+      return cheLocalRepositoryEvidenceUnavailableReply;
+    }
     try {
       final value = await _channel.invokeMethod<String>('respond', {
         'prompt': clean,
