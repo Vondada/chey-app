@@ -164,9 +164,11 @@ export function repositoryImplementationIntent(message) {
 export function repositoryInspectionIntent(message) {
   const text = withoutQuotedText(String(message || '').trim());
   if (/\b(?:do\s+not|don['’]t|never)\s+(?:access|inspect|read|fetch|use)\b[^.!?\n]{0,60}\b(?:repo(?:sitory)?|codebase|source|code)\b/i.test(text)) return false;
-  return /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+|(?:can|could|will)\s+you\s+)?(?:inspect|find|locate|trace|show|identify)\b/i.test(text)
-    && /\b(?:your|che(?:'s)?)\s+(?:current\s+)?(?:repo(?:sitory)?|codebase|source|code)\b/i.test(text)
-    && !repositoryImplementationIntent(text);
+  const asksInspection = /^(?:(?:che|chay|chey|shay)[,:]?\\s*)?(?:please\\s+|(?:can|could|will)\\s+you\\s+)?(?:inspect|find|locate|trace|show|identify)\\b/i.test(text);
+  const asksCurrentRepo = /\\b(?:your|che(?:'s)?)\\s+(?:current\\s+)?(?:github\\s+)?(?:main\\s+branch|repo(?:sitory)?|codebase|source|code)\\b/i.test(text)
+    || /\\b(?:current|exact)\\s+main\\s+(?:branch\\s+)?sha\\b/i.test(text);
+  const asksSourceTrace = /\\btrace\\b[\\s\\S]{0,100}\\b(?:flutter|cloudflare|worker|request|route|source|files?|functions?|execution)\\b/i.test(text);
+  return (asksInspection && asksCurrentRepo || asksSourceTrace) && !repositoryImplementationIntent(text);
 }
 
 export function starredRepoIntent(message) {
