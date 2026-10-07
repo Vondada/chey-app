@@ -174,6 +174,8 @@ export function repositoryImplementationIntent(message) {
 
 export function repositoryInspectionIntent(message) {
   const text = withoutQuotedText(String(message || '').trim());
+  if (chatOnlyResponseIntent(text)
+    && /\b(?:evaluation|exam|test(?:\s+question)?)\b[\s\S]{0,80}\bnot\s+(?:(?:a|an)\s+)?(?:coding(?:\s+or\s+self[- ]development)?|self[- ]development)\s+request\b/i.test(text)) return false;
   if (/\b(?:do\s+not|don['’]t|never)\s+(?:ever\s+)?trace\b/i.test(text)
     || /\b(?:do\s+not|don['’]t|never)\s+(?:access|inspect|read|fetch|use)\b[^.!?\n]{0,60}\b(?:repo(?:sitory)?|codebase|source|code)\b/i.test(text)) return false;
   const asksInspection = /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+|(?:can|could|will)\s+you\s+)?(?:inspect|find|locate|trace|show|identify)\b/i.test(text);
