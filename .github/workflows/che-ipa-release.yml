@@ -64,12 +64,20 @@ jobs:
           set -euo pipefail
           python3 -m unittest discover -s tool -p test_ipa_metadata.py
           tag=$(python3 tool/ipa_metadata.py ipa/CHE-unsigned.ipa "$BUILD_COMMIT" "$PATCHABLE" ipa/CHE-update.json)
-          if ! gh release view "$tag" >/dev/null 2>&1; then
+          release_id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"$tag\") | .id" | head -1)
+          if [[ -z "$release_id" ]]; then
             gh release create "$tag" ipa/CHE-unsigned.ipa ipa/CHE-update.json \
               --draft --target "$BUILD_COMMIT" --title "CHE iPhone $tag" --notes-file ipa/CHE-update.md
+            release_id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq ".[] | select(.tag_name == \"$tag\") | .id" | head -1)
           fi
-          remote=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.assets[] | select(.name == "CHE-unsigned.ipa") | .digest')
+          [[ "$release_id" =~ ^[0-9]+$ ]] || { echo '::error::Draft release id was not found'; exit 1; }
+          remote=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+            --jq '.[] | select(.name == "CHE-unsigned.ipa") | .digest' | head -1)
           expected="sha256:$(jq -r .sha256 ipa/CHE-update.json)"
           [[ "$remote" == "$expected" ]] || { echo '::error::IPA digest mismatch; release not published'; exit 1; }
-          gh release edit "$tag" --draft=false --latest --notes-file ipa/CHE-update.md
+          jq -n --rawfile body ipa/CHE-update.md \
+            '{draft:false, make_latest:"true", body:$body}' \
+            | gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" --input - >/dev/null
           echo "Published verified CHE update $tag" >> "$GITHUB_STEP_SUMMARY"
