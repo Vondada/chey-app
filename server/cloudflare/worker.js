@@ -2498,6 +2498,18 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
   // Enforce the current-turn boundary here, before reading pending changes,
   // failed jobs, checkpoints, or any other durable engineering state.
   const turnPolicy = currentTurnActionPolicy(request);
+  // Existing-change commands are resolved before the coding-job gate. Read
+  // actions such as "show me the code" remain available in EXPLORE, while
+  // GitHub-mutating actions still require current-turn BUILD authorization.
+  const command = selfUpdateChatIntent(request);
+  if (shouldHandleSelfUpdateAction(request, command) && memory) {
+    const mutatingExistingChange = ['open-pr', 'merge', 'ship-update', 'discard'].includes(command?.kind);
+    if (!mutatingExistingChange || turnPolicy.ownerAuthorizedBuild) {
+      const handled = await handleSelfUpdateChatAction(env, memory, command, options.ops || {});
+      const next = handled.ok && (handled.opened || handled.discarded) && options.advanceStudyBuilds ? await options.advanceStudyBuilds().catch(() => null) : null;
+      return json({ message: `${handled.message}${next ? ` ${next}` : ''}`, code_review_passed: false, owner_approval_required: false, self_update_action: command.kind, execution_mode: turnPolicy.mode });
+    }
+  }
   if (!turnPolicy.codingJobAllowed) {
     if (options.answerChatOnly) {
       const answer = await options.answerChatOnly(request);
@@ -2516,16 +2528,6 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
       code_review_passed: false,
       owner_approval_required: false,
     }, 409);
-  }
-  // Commands about an existing change ("show me the code", "create the PR",
-  // "merge it", "PR status") are never new coding requests, even when an app
-  // build routes them here. Running the coding team on "show me the code"
-  // produced a bogus failed job and overwrote the real request.
-  const command = selfUpdateChatIntent(request);
-  if (shouldHandleSelfUpdateAction(request, command) && memory) {
-    const handled = await handleSelfUpdateChatAction(env, memory, command, options.ops || {});
-    const next = handled.ok && (handled.opened || handled.discarded) && options.advanceStudyBuilds ? await options.advanceStudyBuilds().catch(() => null) : null;
-    return json({ message: `${handled.message}${next ? ` ${next}` : ''}`, code_review_passed: false, owner_approval_required: false, self_update_action: command.kind });
   }
   // "Study <repo>: topics…, then implement them" is research first: the app
   // sends it here because it mentions CHE's code, but the coding team must
