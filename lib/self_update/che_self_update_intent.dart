@@ -180,7 +180,7 @@ bool cheRequiresVerifiedRemoteEvidence(String raw) {
   if (text.isEmpty) return false;
 
   final repositoryTarget = RegExp(
-    r"\b(?:(?:your|che(?:'s)?)\s+(?:current\s+)?(?:github\s+)?(?:main(?:\s+branch)?|repo(?:sitory)?|codebase|source(?:\s+code)?|routing|router|worker|coding\s+(?:job|pipeline|runtime))|"
+    r"\b(?:(?:your|che(?:'s)?)\s+(?:current\s+)?(?:github\s+)?(?:main(?:\s+branch)?|repo(?:sitory)?|codebase|source(?:\s+code)?|code|architecture|routing|router|worker|coding\s+(?:job|pipeline|runtime))|"
     r"(?:current|exact|latest)\s+(?:github\s+)?main\s+(?:branch\s+)?sha|"
     r"github\s+main)\b",
     caseSensitive: false,
