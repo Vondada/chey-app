@@ -31,7 +31,7 @@ class CheOwnerError {
     final text = raw.trim();
     if (text.isEmpty) return '';
     final failover = RegExp(
-      r"^(?:one moment,?\\s*(?:sir[,.]?)?\\s*)?(?:i(?:'m| am)\\s+)?switch(?:ing)? to (?:a )?(?:backup|fallback|different|another) (?:ai )?(?:engine|provider|model)[.!]?$",
+      r"^(?:one moment,?\s*(?:sir[,.]?)?\s*)?(?:i(?:'m| am)\s+)?switch(?:ing)? to (?:a )?(?:backup|fallback|different|another) (?:ai )?(?:engine|provider|model)[.!]?$",
       caseSensitive: false,
     );
     return failover.hasMatch(text) ? '' : text;
