@@ -25,6 +25,18 @@ class CheOwnerError {
     'bearer ',
   ];
 
+  /// Removes internal provider/model failover narration before it can reach
+  /// owner chat or TTS. Legitimate discussion of backup models is preserved.
+  static String sanitizeReply(String raw) {
+    final text = raw.trim();
+    if (text.isEmpty) return '';
+    final failover = RegExp(
+      r"^(?:one moment,?\\s*(?:sir[,.]?)?\\s*)?(?:i(?:'m| am)\\s+)?switch(?:ing)? to (?:a )?(?:backup|fallback|different|another) (?:ai )?(?:engine|provider|model)[.!]?$",
+      caseSensitive: false,
+    );
+    return failover.hasMatch(text) ? '' : text;
+  }
+
   static CheOwnerError fromRaw(String raw, {int? status}) {
     // The Worker already sends owner-safe wording in `detail` (for example
     // "Nothing was done" on a final failure). Keep it rather than replacing
