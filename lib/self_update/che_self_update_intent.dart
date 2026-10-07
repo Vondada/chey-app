@@ -171,26 +171,55 @@ String _cheWithoutQuotedText(String text) {
       : text;
 }
 
+bool _cheRepositoryEvidenceTarget(String raw) {
+  final text = _cheWithoutQuotedText(raw.trim());
+  if (text.isEmpty) return false;
+  return RegExp(
+    r"\b(?:(?:your|che(?:'s)?)\s+(?:current\s+)?(?:github\s+)?(?:main(?:\s+branch)?|repo(?:sitory)?|codebase|source(?:\s+code)?|code|architecture|routing|router|worker|coding\s+(?:job|pipeline|runtime))|"
+    r"(?:current|exact|latest)\s+(?:github\s+)?main\s+(?:branch\s+)?sha|"
+    r"github\s+main)\b",
+    caseSensitive: false,
+  ).hasMatch(text);
+}
+
 /// True when answering from an offline/general model could fabricate live CHE
 /// repository state. These turns require the connected Worker/GitHub evidence
 /// path; if it is unavailable the client must report that limitation instead
 /// of substituting an ungrounded local answer.
 bool cheRequiresVerifiedRemoteEvidence(String raw) {
   final text = _cheWithoutQuotedText(raw.trim());
-  if (text.isEmpty) return false;
-
-  final repositoryTarget = RegExp(
-    r"\b(?:(?:your|che(?:'s)?)\s+(?:current\s+)?(?:github\s+)?(?:main(?:\s+branch)?|repo(?:sitory)?|codebase|source(?:\s+code)?|code|architecture|routing|router|worker|coding\s+(?:job|pipeline|runtime))|"
-    r"(?:current|exact|latest)\s+(?:github\s+)?main\s+(?:branch\s+)?sha|"
-    r"github\s+main)\b",
-    caseSensitive: false,
-  ).hasMatch(text);
-  if (!repositoryTarget) return false;
-
+  if (!_cheRepositoryEvidenceTarget(text)) return false;
   return RegExp(
     r"\b(?:inspect|investigate|diagnos(?:e|is|tic)|trace|audit|review|verify|verified|find|locate|identify|exact|current|status|self[- ]diagnostic|what\s+happened|why\b[\s\S]{0,80}\bfailed)\b",
     caseSensitive: false,
   ).hasMatch(text);
+}
+
+/// A short contextual follow-up inherits the live-evidence requirement from a
+/// recent repository discussion instead of letting the local brain answer from
+/// stale chat history.
+bool cheTurnRequiresVerifiedRemoteEvidence(
+  String raw,
+  List<Map<String, String>> history,
+) {
+  if (cheRequiresVerifiedRemoteEvidence(raw)) return true;
+
+  final text = _cheWithoutQuotedText(raw.trim());
+  final contextual = RegExp(
+    r"^(?:is|are)\s+(?:that|this|it|those|these)\s+(?:still\s+)?(?:current|accurate|correct|live|latest|valid)\??$|"
+    r"^(?:still\s+current|same\s+sha|same\s+commit|has\s+that\s+changed|did\s+that\s+change)\??$",
+    caseSensitive: false,
+  ).hasMatch(text);
+  if (!contextual) return false;
+
+  final recent = history.length > 8 ? history.sublist(history.length - 8) : history;
+  for (final item in recent.reversed) {
+    if (item['role'] != 'user') continue;
+    final prior = (item['content'] ?? item['text'] ?? '').trim();
+    if (prior.isEmpty) continue;
+    if (_cheRepositoryEvidenceTarget(prior)) return true;
+  }
+  return false;
 }
 
 bool cheIsTerminalChatOnlyRequest(String raw) {
