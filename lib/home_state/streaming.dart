@@ -33,12 +33,12 @@ extension _CheHomeStreaming on _CHEHomeState {
         history: history,
         memory: packet.memory,
       );
-      final cleanBrain = generated?.trim() ?? '';
+      final cleanBrain = CheOwnerError.sanitizeReply(generated?.trim() ?? '');
       if (cleanBrain.isEmpty) return null;
       onPartial(cleanBrain);
       return cleanBrain;
     }
-    final clean = local.trim();
+    final clean = CheOwnerError.sanitizeReply(local.trim());
     if (clean.isEmpty) return null;
     onPartial(clean);
     return clean;
@@ -329,7 +329,7 @@ extension _CheHomeStreaming on _CHEHomeState {
       }
 
       if (type == 'delta') {
-        final delta = data['delta']?.toString() ?? '';
+        final delta = CheOwnerError.sanitizeReply(data['delta']?.toString() ?? '');
         if (delta.isEmpty) continue;
 
         complete.write(delta);
