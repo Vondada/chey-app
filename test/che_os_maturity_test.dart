@@ -40,6 +40,12 @@ void main() {
     expect(error.category, 'temporary_cloud_unavailable');
   });
 
+  test('owner chat suppresses provider failover narration', () {
+    expect(CheOwnerError.sanitizeReply("One moment, sir. I'm switching to a backup engine."), isEmpty);
+    expect(CheOwnerError.sanitizeReply("I'm switching to another provider."), isEmpty);
+    expect(CheOwnerError.sanitizeReply('Use a backup model for this design.'), 'Use a backup model for this design.');
+  });
+
   test('a final failure keeps the Worker owner-safe detail instead of "still working"', () {
     final error = CheOwnerError.fromRaw(
       'CHE Agent error 503: {"detail":"I can\'t do that one right now, sir. Nothing was done, and I won\'t keep you waiting on it.","category":"authentication_required"}',
