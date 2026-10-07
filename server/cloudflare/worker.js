@@ -6159,6 +6159,27 @@ export class CheState extends DurableObject {
           return ndjsonReply(`I inspected ${inspected.repository} at exact commit ${inspected.head_sha}, sir.\n${lines.length ? lines.join('\n') : 'I could not verify an implementation for that target.'}${routes.length ? `\nRoutes: ${routes.join('; ')}` : ''}${graph.dead.length ? `\nUnreferenced candidates: ${graph.dead.join(', ')}.` : ''}`, { source: 'che_repository_inspection', repository_research: true, repository_sha: inspected.head_sha });
         }
 
+        // Explicit foreground chat-only evaluations are terminal. Answer them
+        // before generic model/background fallback logic so a queued coding job
+        // or provider-retry state can never replace the current owner's answer.
+        // Repository diagnostics still run above this guard when source evidence
+        // was explicitly requested.
+        if (chatOnlyEvaluation && /\b(?:chat[- ]only|this\s+chat\s+only|answer\b[\s\S]{0,80}\bthis\s+chat|zero\s+repository\s+changes?)\b/i.test(message)) {
+          const answer = await this.answerTerminalChatOnly(message).catch(() => '');
+          if (answer) {
+            return ndjsonReply(answer, {
+              source: 'che_chat_only',
+              execution_mode: turnActionPolicy.mode,
+              ok: true,
+            });
+          }
+          return ndjsonReply('I could not complete that read-only evaluation just now, sir. I did not start or alter any coding job.', {
+            source: 'che_chat_only',
+            execution_mode: turnActionPolicy.mode,
+            ok: false,
+          });
+        }
+
         // GitHub/self-development commands are real tool actions, never generic
         // model guesses about credentials. "Create the PR" works by voice/text.
         if (playbookIntent(message)) {
