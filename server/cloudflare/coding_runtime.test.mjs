@@ -67,6 +67,23 @@ test('session ids are stable for the same coding job', () => {
   assert.notEqual(runtimeSessionId(input), runtimeSessionId({ ...input, model: 'groq/openai/gpt-oss-20b' }));
 });
 
+test('OpenCode mutation runtime rejects EXPLORE and PLAN before any workflow dispatch', async () => {
+  for (const executionMode of ['EXPLORE', 'PLAN']) {
+    let called = false;
+    const runtime = new CheCodingRuntime(env, { fetcher: async () => { called = true; return response(204); } });
+    const out = await runtime.createSession({
+      executionMode,
+      jobId: 'job-readonly',
+      ownerRequest: 'Inspect the routing and explain what is wrong.',
+      baseSha: 'b'.repeat(40),
+      targetBranch: 'che/auto/read-only',
+    });
+    assert.equal(out.status, 403, executionMode);
+    assert.equal(out.denied, true, executionMode);
+    assert.equal(called, false, executionMode);
+  }
+});
+
 test('createSession dispatches the pinned workflow with compact inputs', async () => {
   let request;
   const runtime = new CheCodingRuntime(env, { fetcher: async (url, init) => {

@@ -37,7 +37,7 @@ test('starred GitHub intent distinguishes research from implementation', () => {
   assert.equal(intent.integrate, true);
   assert.equal(repositoryImplementationIntent(implementationText), true);
   assert.equal(repositoryImplementationIntent('Inspect my starred GitHub repos for agent and RAG systems.'), false);
-  assert.equal(repositoryImplementationIntent('Run a comprehensive autonomy stress test against the current main branch and verify background job recovery.'), true);
+  assert.equal(repositoryImplementationIntent('Run a comprehensive autonomy stress test against the current main branch and verify background job recovery.'), false, 'testing language alone is not source-mutation authorization');
   assert.equal(repositoryImplementationIntent("Audit CHE's coding runner and fix any faulty workflow you find."), true);
   assert.equal(repositoryImplementationIntent('Tell me what autonomous coding means.'), false);
   for (const request of [
@@ -258,7 +258,10 @@ test('mission T1-T6: chat-only phrasings never mutate; explicit implementation w
 
 test('quoted prohibitions are examples, not this turn\'s instruction', () => {
   const quoted = 'Update your code to recognize the phrase "do not modify your code" as chat-only.';
-  assert.deepEqual({ ...currentTurnActionPolicy(quoted) }, { terminalChatOnly: false, repositoryMutationAllowed: true });
+  const policy = currentTurnActionPolicy(quoted);
+  assert.equal(policy.mode, 'BUILD');
+  assert.equal(policy.terminalChatOnly, false);
+  assert.equal(policy.repositoryMutationAllowed, true);
   assert.equal(currentTurnActionPolicy('Update your code to recognize \u201cdo not modify your code\u201d as chat-only.').repositoryMutationAllowed, true);
   assert.equal(currentTurnActionPolicy('Explain "chat-only" mode. Do not modify your code.').terminalChatOnly, true);
 });
@@ -268,4 +271,115 @@ test('repository inspection routes current-main SHA and source-trace owner quest
   assert.equal(repositoryInspectionIntent('CHE, inspect your current GitHub main branch. Give me the exact current main SHA, then locate the existing War Room implementation and name the actual files and major components involved.'), true);
   assert.equal(repositoryInspectionIntent('CHE, trace one real owner chat request from the Flutter interface through the Cloudflare Worker routing and back to the owner response. Give me the important files/functions in execution order and distinguish anything you verified from anything you inferred.'), true);
   assert.equal(repositoryInspectionIntent("Don't trace the worker request."), false);
+});
+
+test('read-only self-diagnostic cannot start a coding job, including exact owner request', () => {
+  const questions = [
+    'CHE, perform an autonomous self-diagnostic and reasoning-correction exercise. Retrieve the current GitHub main SHA, inspect source, trace the coding-job lifecycle, have reviewers verify your conclusions. Do not create a PR or modify code for this diagnostic.',
+    'CHE, this is a reasoning correction, NOT a coding assignment. Investigate your coding status bug, report verified findings. Do not start a coding job, create a PR, modify files, or merge anything.',
+    'CHE, investigate why coding jobs produce delayed responses. This is READ-ONLY. Do not start a coding job, create a PR, modify files, or merge anything.',
+    'Audit your coding pipeline and explain any flaws without modifying anything.',
+  ];
+  for (const q of questions) {
+    assert.equal(currentTurnActionPolicy(q).terminalChatOnly, true, q);
+    assert.equal(currentTurnActionPolicy(q).repositoryMutationAllowed, false, q);
+    assert.equal(repositoryImplementationIntent(q), false, q);
+    assert.equal(repositoryInspectionIntent(q), true, q);
+  }
+  assert.equal(currentTurnActionPolicy('CHE, fix your coding pipeline and run regression tests.').repositoryMutationAllowed, true);
+  assert.equal(currentTurnActionPolicy('CHE, inspect your repository and then fix the bugs in your code.').repositoryMutationAllowed, true);
+});
+
+
+test('explicit chat-only evaluations bypass repository inspection', () => {
+  const exam = 'CHE AUTONOMY EXAM — CHAT-ONLY TEST. This is an evaluation, NOT a coding or self-development request. Answer all questions directly in THIS CHAT in one response. Do not modify your source code, start a coding job, create a PR, merge or deploy.';
+  const policy = currentTurnActionPolicy(exam);
+  assert.equal(policy.mode, 'EXPLORE');
+  assert.equal(policy.codingJobAllowed, false);
+  assert.equal(repositoryInspectionIntent(exam), false);
+});
+
+test('authoritative policy separates EXPLORE PLAN and BUILD with scoped delivery restrictions', () => {
+  const cases = [
+    ['Inspect your current GitHub main branch.', 'EXPLORE', false],
+    ['Investigate why your coding job failed.', 'EXPLORE', false],
+    ['Explain your routing architecture.', 'EXPLORE', false],
+    ['Perform a reasoning self-diagnostic.', 'PLAN', false],
+    ['Compare three ways to repair the router.', 'PLAN', false],
+    ['Explain how you would implement the feature.', 'PLAN', false],
+    ['Fix the router.', 'BUILD', true],
+    ['Implement the feature in your app.', 'BUILD', true],
+    ['Inspect the router and then fix whatever is broken.', 'BUILD', true],
+    ['Check it then fix it.', 'BUILD', true],
+    ["CHE check your code and tell me what's wrong don't change nothing", 'EXPLORE', false],
+    ["Shay look at the GitHub and see why the last job failed but don't fix it yet", 'EXPLORE', false],
+  ];
+  for (const [message, mode, build] of cases) {
+    const p = currentTurnActionPolicy(message);
+    assert.equal(p.mode, mode, message);
+    assert.equal(p.ownerAuthorizedBuild, build, message);
+    assert.equal(p.repositoryMutationAllowed, build, message);
+    assert.equal(p.codingJobAllowed, build, message);
+  }
+
+  const held = currentTurnActionPolicy('Investigate and fix this in your code, but do not deploy.');
+  assert.equal(held.mode, 'BUILD');
+  assert.equal(held.repositoryMutationAllowed, true);
+  assert.equal(held.deploymentAllowed, false);
+  assert.equal(held.restrictions.noDeploy, true);
+
+  const scoped = currentTurnActionPolicy('Fix the login screen in your app but do not change authentication.');
+  assert.equal(scoped.mode, 'BUILD');
+  assert.equal(scoped.repositoryMutationAllowed, true);
+
+  const noPr = currentTurnActionPolicy('Fix the router in your code, but do not create a PR yet.');
+  assert.equal(noPr.mode, 'BUILD');
+  assert.equal(noPr.prCreationAllowed, false);
+
+  const buildOnly = currentTurnActionPolicy('Fix the router in your code.');
+  assert.equal(buildOnly.mode, 'BUILD');
+  assert.equal(buildOnly.mergeAllowed, false, 'implementation permission alone cannot authorize merge');
+  assert.equal(buildOnly.deploymentAllowed, false, 'implementation permission alone cannot authorize deployment');
+
+  const merge = currentTurnActionPolicy('Fix the router in your code and merge it when tests pass.');
+  assert.equal(merge.mergeAllowed, true);
+  assert.equal(merge.deploymentAllowed, false, 'merge authorization is not deployment authorization');
+
+  const deploy = currentTurnActionPolicy('Fix the router in your code, merge it when green, and deploy it.');
+  assert.equal(deploy.mergeAllowed, true);
+  assert.equal(deploy.deploymentAllowed, true);
+});
+
+test('legitimate natural-language BUILD continuations remain BUILD', () => {
+  for (const message of [
+    'CHE, make one small real improvement to your code.',
+    'Can you add the ability to create a GitHub pull request from voice?',
+    "Work with Claude who is already working in the repo and compare progress without stumbling over each other's work then tell me when you are ready",
+    'Batch it fast and use the other AIs',
+    'Update CHE',
+    'Diagnose and recover the failed coding job',
+  ]) {
+    const p = currentTurnActionPolicy(message);
+    assert.equal(p.mode, 'BUILD', message);
+    assert.equal(p.codingJobAllowed, true, message);
+  }
+});
+
+test('topic-study implementation prompts are BUILD-authorized but not hijacked by repository inspection', () => {
+  const message = 'CHE, study codecrafters-io/build-your-own-x on GitHub and implement what you learn into your own code, one topic at a time. For each topic, read its tutorials and compare them with your real code.';
+  const p = currentTurnActionPolicy(message);
+  assert.equal(p.mode, 'BUILD');
+  assert.equal(repositoryInspectionIntent(message), false);
+});
+
+test('quoted and historical implementation instructions never grant current BUILD authority', () => {
+  for (const message of [
+    'The previous command said "fix the routing and create a PR." Why did it fail?',
+    "Tell me why you previously said 'implement the fix'. Do not modify your code.",
+    'Review PR #231 and tell me whether it fixes the bug.',
+  ]) {
+    const p = currentTurnActionPolicy(message);
+    assert.notEqual(p.mode, 'BUILD', message);
+    assert.equal(p.codingJobAllowed, false, message);
+  }
 });
