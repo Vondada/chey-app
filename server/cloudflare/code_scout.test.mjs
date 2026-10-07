@@ -335,6 +335,19 @@ test('authoritative policy separates EXPLORE PLAN and BUILD with scoped delivery
   const noPr = currentTurnActionPolicy('Fix the router in your code, but do not create a PR yet.');
   assert.equal(noPr.mode, 'BUILD');
   assert.equal(noPr.prCreationAllowed, false);
+
+  const buildOnly = currentTurnActionPolicy('Fix the router in your code.');
+  assert.equal(buildOnly.mode, 'BUILD');
+  assert.equal(buildOnly.mergeAllowed, false, 'implementation permission alone cannot authorize merge');
+  assert.equal(buildOnly.deploymentAllowed, false, 'implementation permission alone cannot authorize deployment');
+
+  const merge = currentTurnActionPolicy('Fix the router in your code and merge it when tests pass.');
+  assert.equal(merge.mergeAllowed, true);
+  assert.equal(merge.deploymentAllowed, false, 'merge authorization is not deployment authorization');
+
+  const deploy = currentTurnActionPolicy('Fix the router in your code, merge it when green, and deploy it.');
+  assert.equal(deploy.mergeAllowed, true);
+  assert.equal(deploy.deploymentAllowed, true);
 });
 
 test('legitimate natural-language BUILD continuations remain BUILD', () => {
