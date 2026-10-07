@@ -234,6 +234,31 @@ Again: ANSWER IN CHAT ONLY. ZERO REPOSITORY CHANGES. NO PR.''';
       cheRequiresVerifiedRemoteEvidence('Explain how GitHub branches work.'),
       isFalse,
     );
+    expect(
+      cheTurnRequiresVerifiedRemoteEvidence(
+        'Is that still current?',
+        const [
+          {
+            'role': 'user',
+            'content': 'CHE, inspect your current repository and verify the exact main SHA.',
+          },
+          {
+            'role': 'assistant',
+            'content': 'I inspected the repository.',
+          },
+        ],
+      ),
+      isTrue,
+    );
+    expect(
+      cheTurnRequiresVerifiedRemoteEvidence(
+        'Is that still current?',
+        const [
+          {'role': 'user', 'content': 'Tell me about Hohmann transfers.'},
+        ],
+      ),
+      isFalse,
+    );
   });
 
   test('quoted prohibitions are examples, not this turn\'s instruction', () {
