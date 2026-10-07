@@ -262,3 +262,9 @@ test('quoted prohibitions are examples, not this turn\'s instruction', () => {
   assert.equal(currentTurnActionPolicy('Update your code to recognize \u201cdo not modify your code\u201d as chat-only.').repositoryMutationAllowed, true);
   assert.equal(currentTurnActionPolicy('Explain "chat-only" mode. Do not modify your code.').terminalChatOnly, true);
 });
+
+
+test('repository inspection routes current-main SHA and source-trace owner questions', () => {
+  assert.equal(repositoryInspectionIntent('CHE, inspect your current GitHub main branch. Give me the exact current main SHA, then locate the existing War Room implementation and name the actual files and major components involved.'), true);
+  assert.equal(repositoryInspectionIntent('CHE, trace one real owner chat request from the Flutter interface through the Cloudflare Worker routing and back to the owner response. Give me the important files/functions in execution order and distinguish anything you verified from anything you inferred.'), true);
+});
