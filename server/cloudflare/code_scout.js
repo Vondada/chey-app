@@ -123,13 +123,14 @@ function buildProhibition(text) {
     || /\b(?:read[- ]only|investigate\s+only|inspection\s+only|plan\s+only|planning\s+only|analysis\s+only|review\s+only)\b/i.test(value)
     || /\bnot\s+(?:(?:a|an)\s+)?(?:coding|implementation|self[- ]development)(?:\s+(?:assignment|request|task|job))?\b/i.test(value)
     || /\b(?:no|do\s+not|don['’]?t|never)\s+(?:start|create|run)?\s*(?:(?:a|the)\s+)?(?:coding|implementation|self[- ]development)(?:\s+(?:job|task|process))?\b/i.test(value)
-    || /\b(?:do\s+not|don['’]?t|never)\s+(?:fix|repair|implement|change|modify|edit|update|patch)\s+(?:it|anything|the\s+(?:code|repo(?:sitory)?|system))?(?:\s+yet)?\b/i.test(value)
-    || /\bdon['’]?t\s+(?:change|modify|edit|fix)\s+(?:nothing|anything)\b/i.test(value);
+    || /\b(?:do\s+not|don['’]?t|never)\s+(?:fix|repair|implement|change|modify|edit|update|patch)\s+(?:it|anything|(?:the\s+)?(?:source\s+)?code|(?:the\s+)?repo(?:sitory)?|(?:the\s+)?system)(?:\s+yet)?\b/i.test(value)
+    || /\bdon['’]?t\s+(?:change|modify|edit|fix)\s+(?:nothing|anything)\b/i.test(value)
+    || /\b(?:do\s+not|don['’]?t|never)\b[^.!?\n]{0,120}\b(?:modify|change|edit|write|patch)\s+(?:your\s+)?(?:source\s+)?(?:code|codebase|repo(?:sitory)?)\b/i.test(value);
 }
 
 function compoundImplementationAuthorization(text) {
   const value = String(text || '').trim();
-  const compound = /\b(?:inspect|investigate|diagnos(?:e|tic)|check|trace|review|find)\b[\s\S]{0,220}\b(?:then\s+|and\s+|if\s+(?:it|anything|something)\s+(?:is|looks?)\s+)?(?:fix|repair|implement|patch|change|update|apply)\b/i.test(value);
+  const compound = /\b(?:inspect|investigate|diagnos(?:e|tic)|check|trace|review|audit|find)\b[\s\S]{0,220}\b(?:then\s+|and\s+|if\s+(?:it|anything|something)\s+(?:is|looks?)\s+)?(?:fix|repair|implement|patch|change|update|apply)\b/i.test(value);
   const direct = /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:please|now)\s+|go\s+ahead\s+(?:and\s+)?|i\s+(?:want|need)\s+you\s+to\s+|(?:can|could|would)\s+you\s+)?(?:fix|repair|implement|build|update|patch|refactor|change|modify|add)\b[\s\S]{0,120}\b(?:router|routing|worker|app|code|repo(?:sitory)?|system|workflow|feature|screen|ui|bug|defect|pipeline|test|file|function|class|agent|opencode)\b/i.test(value);
   return compound || direct;
 }
@@ -137,15 +138,48 @@ function compoundImplementationAuthorization(text) {
 function ownerBuildAuthorization(message) {
   const text = withoutQuotedText(String(message || '').trim());
   if (!text || buildProhibition(text)) return false;
-  return explicitRepositoryImplementationAuthorization(text)
+
+  // Direct repository/GitHub follow-ups are owner actions on an existing
+  // authorized change, not a new inferred coding request.
+  if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:please|now)\s+)?(?:create|open)\s+(?:the\s+)?(?:pr|pull\s+request)\b/i.test(text)
+    || /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:please|now)\s+)?(?:merge|ship)\s+(?:it|the\s+(?:pr|pull\s+request|update))\b/i.test(text)
+    || /^(?:(?:che|chay|chey|shay)[,:]?\s*)?update\s+che\b/i.test(text)
+    || /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:please|now)\s+)?(?:resume|continue|retry|recover|finish)\s+(?:the\s+|my\s+)?(?:previous\s+|last\s+)?(?:authorized\s+)?(?:coding|implementation|self[- ]development)?\s*(?:job|task|work)\b/i.test(text)
+    || /\b(?:diagnose\s+and\s+recover|reopen\b[\s\S]{0,80}\band\s+recover|retry|recover)\b[\s\S]{0,100}\b(?:failed\s+)?(?:coding\s+|engineering\s+)?job\b/i.test(text)) return true;
+
+  const direct = explicitRepositoryImplementationAuthorization(text)
     || imperativeImplementation(text)
     || compoundImplementationAuthorization(text);
+  if (direct) return true;
+
+  // Preserve legitimate natural-language BUILD requests that do not begin
+  // with the mutation verb ("study X and implement what you learn", "can you
+  // improve your code..."). Planning/hypothetical framing still wins.
+  const mutationVerb = /\b(?:implement|integrate|adapt|apply|install|add|upgrade|update|improve|rewrite|refactor|build|change|modify|patch|fix|repair)\b/i.test(text);
+  const mutationTarget = /\b(?:your|che(?:'s)?|my)\s+(?:own\s+)?(?:code|codebase|repo(?:sitory)?|app|flutter\s+app|ui|interface|worker|system|workflow|architecture|routing|router|pipeline|agent|coding\s+system)\b/i.test(text)
+    || /\b(?:into|inside|to)\s+(?:che|the\s+(?:current\s+)?(?:repo(?:sitory)?|codebase))\b/i.test(text);
+  const hypothetical = /\b(?:explain|describe|tell\s+me)\b[\s\S]{0,50}\b(?:how|what)\b[\s\S]{0,80}\b(?:would|should|could)\b/i.test(text)
+    || /\b(?:hypothetical|plan\s+only|planning\s+only|proposal\s+only)\b/i.test(text);
+  if (mutationVerb && mutationTarget && !hypothetical) return true;
+  if (/\bmake\b[\s\S]{0,80}\b(?:improvement|improvements)\b[\s\S]{0,80}\b(?:to|in)\s+(?:your|che(?:'s)?)\s+(?:own\s+)?(?:code|app|worker|system|routing|workflow)\b/i.test(text)
+    && !hypothetical) return true;
+  if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:can|could|would)\s+you\s+|please\s+)?(?:add|implement|build|create)\s+(?:the\s+)?(?:ability|capability|support)\b[\s\S]{0,180}\b(?:github|pull\s+request|voice|api|tool|integration)\b/i.test(text)
+    && !hypothetical) return true;
+
+  // A bare collaboration continuation intentionally resumes the still-valid
+  // engineering lane. Review/investigation wording remains read-only.
+  if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:work|collaborate|coordinate|team\s+up|pair|partner|sync)\b[^.!?]{0,70}\b(?:claude|chatgpt|grok|codex|other\s+ais?|team)\b/i.test(text)
+    && !/\b(?:review|inspect|investigate|diagnose|analy[sz]e|explain|read[- ]only)\b/i.test(text)) return true;
+  if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:batch\s+it|use\s+the\s+other\s+ais?)\b/i.test(text)
+    && !/\b(?:review|inspect|investigate|diagnose|analy[sz]e|explain|read[- ]only)\b/i.test(text)) return true;
+
+  return false;
 }
 
 function planningIntent(text) {
   const value = String(text || '');
   return /\b(?:plan|planning|propose|proposal|compare|tradeoffs?|alternatives?|design\s+(?:a|the)?\s*(?:fix|solution|approach|architecture)|reasoning[- ](?:self[- ]?)?diagnostic|reasoning[- ]correction|challenge\s+(?:the|a)?\s*hypothesis)\b/i.test(value)
-    || /\b(?:how|what)\s+(?:would|should|could)\b[\s\S]{0,100}\b(?:fix|repair|implement|change|redesign|improve)\b/i.test(value)
+    || /\b(?:how\s+(?:you\s+)?(?:would|should|could)|what\s+(?:you\s+)?(?:would|should|could))\b[\s\S]{0,100}\b(?:fix|repair|implement|change|redesign|improve)\b/i.test(value)
     || /\b(?:analy[sz]e|diagnose)\b[\s\S]{0,120}\b(?:and\s+)?(?:propose|compare|design|recommend)\b/i.test(value)
     || /\bperform\b[\s\S]{0,60}\b(?:reasoning\s+)?self[- ]diagnostic\b/i.test(value);
 }
@@ -193,7 +227,7 @@ export function chatOnlyResponseIntent(message) {
   if (globalRepositoryProhibition(text)) return true;
   // A real implementation command can still hold PR/merge/deploy delivery.
   if (ownerBuildAuthorization(text)) return false;
-  if (readOnlyDiagnosticIntent(text)) return true;
+  if (buildProhibition(text)) return true;
   if (responseDirective && hardRepositoryActionProhibition(text)) return true;
   if (/\b(?:this\s+is\s+)?(?:(?:a|an)\s+)?(?:evaluation|exam|test\s+question)\b[\s\S]{0,70}\bnot\s+(?:(?:a|an)\s+)?(?:coding(?:\s+or\s+self[- ]development)?|self[- ]development)\s+request\b/i.test(text)) return true;
   if (/\b(?:in\s+this\s+chat\s+only|chat[- ]only)\b/i.test(text) && !/\bchat[- ]only\s+(?:feature|mode|screen|button|setting)\b/i.test(text)) return true;
@@ -263,15 +297,24 @@ export function repositoryInspectionIntent(message) {
   if (explicitChatOnlyResponseDirective(text)) return false;
   const policy = currentTurnActionPolicy(text);
   if (policy.mode === EXECUTION_MODE.BUILD) return false;
+
+  // Existing status/mission/change controls have dedicated deterministic
+  // routes later in the Worker; source inspection must never hijack them.
+  const controlStatus = /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:mission\s+status|coding\s+status|job\s+status|status|update|progress)\??$/i.test(text)
+    || /\b(?:what(?:'s|\s+is)\s+(?:the\s+)?(?:status|progress)|how(?:'s|\s+is)\s+(?:it|the\s+(?:job|work|coding|mission))\s+going)\b/i.test(text)
+    || /\bwhat\s+happened\s+to\s+(?:my|the)\s+coding\s+job\b/i.test(text);
+  if (controlStatus) return false;
+
   if (/\b(?:do\s+not|don['’]t|never)\s+(?:ever\s+)?trace\b/i.test(text)
     || /\b(?:do\s+not|don['’]t|never)\s+(?:access|inspect|read|fetch|use)\b[^.!?\n]{0,60}\b(?:repo(?:sitory)?|codebase|source|code)\b/i.test(text)) return false;
-  const asksInspection = /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+|(?:can|could|will)\s+you\s+)?(?:inspect|find|locate|trace|show|identify|investigate|diagnose|audit|review|examine|verify|analy[sz]e)\b/i.test(text);
-  const asksCurrentRepo = /\b(?:your|che(?:'s)?)\s+(?:current\s+)?(?:github\s+)?(?:main\s+branch|repo(?:sitory)?|codebase|source|code|routing|router|worker|coding\s+(?:job|pipeline|runtime))\b/i.test(text)
-    || /\b(?:current|exact)\s+main\s+(?:branch\s+)?sha\b/i.test(text);
-  const asksSourceTrace = /\btrace\b[\s\S]{0,120}\b(?:flutter|cloudflare|worker|request|route|source|files?|functions?|execution|coding\s+job|runtime)\b/i.test(text);
-  const repoDiagnostic = (explorationIntent(text) || planningIntent(text) || readOnlyDiagnosticIntent(text))
-    && /\b(?:github|repo(?:sitory)?|source|code|coding|worker|main|job|routing|router|runtime|pipeline|status|architecture)\b/i.test(text);
-  return (asksInspection && asksCurrentRepo || asksSourceTrace || repoDiagnostic);
+
+  const directInspection = /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+|(?:can|could|will)\s+you\s+)?(?:inspect|find|locate|trace|show|identify|investigate|diagnose|audit|review|examine|verify|analy[sz]e|explain)\b/i.test(text);
+  const repoTarget = /\b(?:your|che(?:'s)?)\s+(?:current\s+)?(?:github\s+)?(?:main\s+branch|repo(?:sitory)?|codebase|source|code|routing|router|worker|coding\s+(?:job|pipeline|runtime)|architecture)\b/i.test(text)
+    || /\b(?:current|exact)\s+main\s+(?:branch\s+)?sha\b/i.test(text)
+    || /\b(?:coding\s+(?:job|pipeline|runtime)|cloudflare\s+worker|github\s+main)\b/i.test(text);
+  const selfDiagnosticSource = /\bself[- ]diagnostic\b[\s\S]{0,260}\b(?:github|main\s+sha|repo(?:sitory)?|source|coding[- ]job|routing|worker)\b/i.test(text);
+  const guardedDiagnostic = readOnlyDiagnosticIntent(text) && repoTarget;
+  return Boolean((directInspection && repoTarget) || guardedDiagnostic || selfDiagnosticSource);
 }
 
 export function starredRepoIntent(message) {

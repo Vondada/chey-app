@@ -2498,6 +2498,18 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
   // Enforce the current-turn boundary here, before reading pending changes,
   // failed jobs, checkpoints, or any other durable engineering state.
   const turnPolicy = currentTurnActionPolicy(request);
+  // Existing-change commands are resolved before the coding-job gate. Read
+  // actions such as "show me the code" remain available in EXPLORE, while
+  // GitHub-mutating actions still require current-turn BUILD authorization.
+  const command = selfUpdateChatIntent(request);
+  if (shouldHandleSelfUpdateAction(request, command) && memory) {
+    const mutatingExistingChange = ['open-pr', 'merge', 'ship-update', 'discard'].includes(command?.kind);
+    if (!mutatingExistingChange || turnPolicy.ownerAuthorizedBuild) {
+      const handled = await handleSelfUpdateChatAction(env, memory, command, options.ops || {});
+      const next = handled.ok && (handled.opened || handled.discarded) && options.advanceStudyBuilds ? await options.advanceStudyBuilds().catch(() => null) : null;
+      return json({ message: `${handled.message}${next ? ` ${next}` : ''}`, code_review_passed: false, owner_approval_required: false, self_update_action: command.kind, execution_mode: turnPolicy.mode });
+    }
+  }
   if (!turnPolicy.codingJobAllowed) {
     if (options.answerChatOnly) {
       const answer = await options.answerChatOnly(request);
@@ -2516,16 +2528,6 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
       code_review_passed: false,
       owner_approval_required: false,
     }, 409);
-  }
-  // Commands about an existing change ("show me the code", "create the PR",
-  // "merge it", "PR status") are never new coding requests, even when an app
-  // build routes them here. Running the coding team on "show me the code"
-  // produced a bogus failed job and overwrote the real request.
-  const command = selfUpdateChatIntent(request);
-  if (shouldHandleSelfUpdateAction(request, command) && memory) {
-    const handled = await handleSelfUpdateChatAction(env, memory, command, options.ops || {});
-    const next = handled.ok && (handled.opened || handled.discarded) && options.advanceStudyBuilds ? await options.advanceStudyBuilds().catch(() => null) : null;
-    return json({ message: `${handled.message}${next ? ` ${next}` : ''}`, code_review_passed: false, owner_approval_required: false, self_update_action: command.kind });
   }
   // "Study <repo>: topics…, then implement them" is research first: the app
   // sends it here because it mentions CHE's code, but the coding team must
@@ -2772,7 +2774,7 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
       reviewed_at: new Date().toISOString(),
     }).catch(() => null);
   }
-  if (options.autoOpenPr && memory?.put) {
+  if (options.autoOpenPr && turnPolicy.prCreationAllowed && memory?.put) {
     const auto = await autoOpenReviewedPr(env, memory, prepared.proposal, options.ops || {});
     return json({
       message: auto.message,
@@ -6157,6 +6159,27 @@ export class CheState extends DurableObject {
           return ndjsonReply(`I inspected ${inspected.repository} at exact commit ${inspected.head_sha}, sir.\n${lines.length ? lines.join('\n') : 'I could not verify an implementation for that target.'}${routes.length ? `\nRoutes: ${routes.join('; ')}` : ''}${graph.dead.length ? `\nUnreferenced candidates: ${graph.dead.join(', ')}.` : ''}`, { source: 'che_repository_inspection', repository_research: true, repository_sha: inspected.head_sha });
         }
 
+        // Explicit foreground chat-only evaluations are terminal. Answer them
+        // before generic model/background fallback logic so a queued coding job
+        // or provider-retry state can never replace the current owner's answer.
+        // Repository diagnostics still run above this guard when source evidence
+        // was explicitly requested.
+        if (chatOnlyEvaluation && /\b(?:chat[- ]only|this\s+chat\s+only|answer\b[\s\S]{0,80}\bthis\s+chat|zero\s+repository\s+changes?)\b/i.test(message)) {
+          const answer = await this.answerTerminalChatOnly(message).catch(() => '');
+          if (answer) {
+            return ndjsonReply(answer, {
+              source: 'che_chat_only',
+              execution_mode: turnActionPolicy.mode,
+              ok: true,
+            });
+          }
+          return ndjsonReply('I could not complete that read-only evaluation just now, sir. I did not start or alter any coding job.', {
+            source: 'che_chat_only',
+            execution_mode: turnActionPolicy.mode,
+            ok: false,
+          });
+        }
+
         // GitHub/self-development commands are real tool actions, never generic
         // model guesses about credentials. "Create the PR" works by voice/text.
         if (playbookIntent(message)) {
@@ -6910,10 +6933,12 @@ export class CheState extends DurableObject {
             onAccepted: () => this.ctx.storage.put(doneKey, new Date().toISOString()),
           });
         }
-        // Explicit implementation requests win over repository discovery. This
-        // is what lets "Update your code: use Study 1 and 2..." actually build
-        // and save a reviewed proposal instead of stopping at research.
-        if (turnActionPolicy.codingJobAllowed) {
+        // Explicit implementation requests win over generic research, but
+        // specialized collaboration/batch commands must reach their own route
+        // below instead of being swallowed by the generic coding path.
+        const currentCollaboration = chatOnlyEvaluation ? null : collaborationIntent(message);
+        const currentParallelBatch = chatOnlyEvaluation ? null : parallelPreference(message);
+        if (turnActionPolicy.codingJobAllowed && !currentCollaboration && !currentParallelBatch) {
           return ownerDevice
             ? this.selfDevelopmentReply(message, { vectorRecall })
             : ndjsonReply('Only the CHE owner can ask me to change my code.', { source: 'che_self_development', ok: false });
@@ -6972,8 +6997,8 @@ export class CheState extends DurableObject {
 
         // Engineering status and collaboration are answered from receipts and
         // real actions, never from model narration.
-        const collab = chatOnlyEvaluation ? null : collaborationIntent(message);
-        const batch = chatOnlyEvaluation ? null : parallelPreference(message);
+        const collab = currentCollaboration;
+        const batch = currentParallelBatch;
         // Collaboration packets in this function also create CHE's own coding
         // job. A read-only review/diagnostic may consult peers elsewhere, but
         // it cannot inherit an older engineering request and silently BUILD.
@@ -7948,7 +7973,15 @@ export class CheState extends DurableObject {
             let note = '';
             if (guarded.homework) {
               const last = await Promise.resolve().then(() => this.ctx.storage.get(LAST_ENGINEERING_REQUEST_KEY)).catch(() => null);
-              if (last?.request && this.env.CHE_GITHUB_TOKEN && turnActionPolicy.codingJobAllowed) {
+              const lastAt = Date.parse(last?.at || '');
+              const lastAuthorized = Boolean(
+                last?.request
+                && last?.integrate === true
+                && (!Number.isFinite(lastAt) || Date.now() - lastAt < 6 * 3600_000)
+              );
+              const explicitContinuation = /\b(?:what\s+do\s+you\s+need\s+from\s+me|continue|resume|finish|repo\s+upgrade|coding\s+job|engineering\s+job)\b/i.test(message);
+              if (last?.request && this.env.CHE_GITHUB_TOKEN
+                && (turnActionPolicy.codingJobAllowed || (!chatOnlyEvaluation && lastAuthorized && explicitContinuation))) {
                 const queued = await this.queueSelfDevelopment({ request: last.request, groundedRequest: last.request });
                 await recordReceipt(this.ctx.storage, { kind: 'job_started', key: `job:${queued.job.id}`, job_id: queued.job.id, job_kind: 'self_development' });
                 note = `I'll read my own source from GitHub. Coding job ${queued.job.id.slice(0, 8)} is ${queued.job.status === 'running' ? 'running' : 'queued'} for your request.`;
@@ -8673,14 +8706,23 @@ export class CheState extends DurableObject {
   // only what was actually sent and started.
   async startCollaboration(message, { peers = [], batch = false } = {}) {
     const last = await Promise.resolve().then(() => this.ctx.storage.get(LAST_ENGINEERING_REQUEST_KEY)).catch(() => null);
-    const ownRequest = collaborationIntent(message) || parallelPreference(message)
-      ? String(last?.request || '').trim()
+    const lastAt = Date.parse(last?.at || '');
+    const lastAuthorized = Boolean(
+      last?.request
+      && last?.integrate === true
+      && (!Number.isFinite(lastAt) || Date.now() - lastAt < 6 * 3600_000)
+    );
+    const ownRequest = (collaborationIntent(message) || parallelPreference(message)) && lastAuthorized
+      ? String(last.request || '').trim()
       : '';
-    // A substantive message is its own request; a bare "work with Claude"
-    // applies to the last engineering request.
+    // A substantive implementation message is its own request. A bare
+    // collaboration continuation may reuse only a still-valid authorized job.
     const stripped = message.replace(/\b(?:work|collaborate|coordinate|team up|pair|partner|sync)\b[^.?!]{0,30}\bwith\b[^.?!]{0,40}/i, '').trim();
-    const request = (stripped.length > 40 && repositoryImplementationIntent(message)) || !ownRequest ? message : ownRequest;
-    if (!request || request.length < 8) return null;
+    const substantiveBuild = stripped.length > 40 && repositoryImplementationIntent(stripped);
+    const request = substantiveBuild ? message : ownRequest;
+    if (!request || request.length < 8) {
+      return ndjsonReply('I do not have a current authorized coding job to hand to the collaboration lane, sir. Tell me what to build or which active coding job to resume.', { source: 'che_collaboration', ok: false });
+    }
     if (!this.env.CHE_GITHUB_TOKEN || !this.env.CHE_GITHUB_REPO) {
       return ndjsonReply('I cannot reach the shared AI mailbox or my repository right now, sir, because GitHub is not connected on my server. I have not contacted anyone.', { source: 'che_collaboration' });
     }
@@ -8788,7 +8830,7 @@ export class CheState extends DurableObject {
     }
     // OpenCode runtime first when it is switched on; the built-in coding team
     // is the automatic fallback whenever the runner cannot start.
-    if (codingRuntimeEnabled(this.env) && !ownerRequiresMergeApproval(message)) {
+    if (codingRuntimeEnabled(this.env) && policy.prCreationAllowed && policy.mergeAllowed && !ownerRequiresMergeApproval(message)) {
       const started = await this.startOpenCodeSession(message).catch((error) => ({ status: 0, detail: String(error?.message || error) }));
       if (started.status === 202) {
         await Promise.resolve(onAccepted?.()).catch(() => null);
