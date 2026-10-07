@@ -273,6 +273,7 @@ test('repository inspection routes current-main SHA and source-trace owner quest
   assert.equal(repositoryInspectionIntent('What is the exact current main branch SHA?'), true);
   assert.equal(repositoryInspectionIntent('Verify the latest main branch SHA.'), true);
   assert.equal(repositoryInspectionIntent('Inspect the latest main SHA.'), true);
+  assert.equal(repositoryInspectionIntent('What is the current status of your code?'), true);
   assert.equal(repositoryInspectionIntent("Don't trace the worker request."), false);
 });
 
