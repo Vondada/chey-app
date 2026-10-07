@@ -640,10 +640,10 @@ test('coding status reports a newer OpenCode session over an older queued built-
   }
 });
 
-test('terminal OpenCode failure automatically falls back to the same durable coding request', async () => {
+test('coding status is read-only; failed OpenCode work recovers only through the background recovery path', async () => {
   const saved = new Map();
   const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => ({ response: 'ok' }) } };
-  const { chat } = await pairedChat(env, saved);
+  const { state, chat } = await pairedChat(env, saved);
   const textOf = async (res) => (await res.text()).trim().split('\n').map((line) => JSON.parse(line)).filter((line) => line.type === 'delta').map((line) => line.delta).join('');
   saved.set('che_runtime_last_session', 'ocr-1234abcd');
   saved.set('che_runtime_last_session_at', new Date().toISOString());
@@ -660,22 +660,27 @@ test('terminal OpenCode failure automatically falls back to the same durable cod
   };
   try {
     const status = await textOf(await chat('coding status'));
-    assert.match(status, /automatically moved the same coding job to my recovery queue/i);
+    assert.match(status, /OpenCode attempt failed/i);
+    assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'self_development').length, 0, 'status polling never creates a recovery job');
+
+    const recovered = await state.recoverOpenCodeFailure();
+    assert.equal(recovered.recovered, true);
     const jobs = saved.get('che').jobs.filter((j) => j.kind === 'self_development');
     assert.equal(jobs.length, 1);
     assert.match(jobs[0].request, /preserve the full original owner request beyond the spoken summary/);
+
     const again = await textOf(await chat('coding status'));
     assert.match(again, /latest coding job is queued/i);
-    assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'self_development').length, 1, 'status polling does not duplicate recovery jobs');
+    assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'self_development').length, 1, 'status polling remains side-effect free after recovery');
   } finally {
     globalThis.fetch = original;
   }
 });
 
-test('persisted legacy blocked OpenCode failure migrates to durable recovery once and status polling stays idempotent', async () => {
+test('persisted legacy OpenCode failure is observable without mutation and background recovery remains idempotent', async () => {
   const saved = new Map();
   const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => ({ response: 'ok' }) } };
-  const { chat } = await pairedChat(env, saved);
+  const { state, chat } = await pairedChat(env, saved);
   const textOf = async (res) => (await res.text()).trim().split('\n').map((line) => JSON.parse(line)).filter((line) => line.type === 'delta').map((line) => line.delta).join('');
   saved.set('che_runtime_last_session', 'ocr-1234abcd');
   saved.set('che_runtime_last_session_at', new Date().toISOString());
@@ -691,14 +696,20 @@ test('persisted legacy blocked OpenCode failure migrates to durable recovery onc
   };
   try {
     const first = await textOf(await chat('coding status'));
-    assert.match(first, /automatically moved the same coding job to my recovery queue/i);
+    assert.match(first, /OpenCode attempt failed/i);
+    assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'self_development').length, 0);
+
+    const recovered = await state.recoverOpenCodeFailure();
+    assert.equal(recovered.recovered, true);
     let jobs = saved.get('che').jobs.filter((j) => j.kind === 'self_development');
     assert.equal(jobs.length, 1);
     assert.equal(jobs[0].request, 'Fix coding status state reporting', 'legacy records recover from the only request text they persisted');
+
+    assert.equal(await state.recoverOpenCodeFailure(), null, 'a recovered terminal attempt cannot enqueue twice');
     const second = await textOf(await chat('coding status'));
     assert.match(second, /latest coding job is queued/i);
     jobs = saved.get('che').jobs.filter((j) => j.kind === 'self_development');
-    assert.equal(jobs.length, 1, 'polling cannot create a duplicate recovery job');
+    assert.equal(jobs.length, 1, 'status polling cannot create a duplicate recovery job');
   } finally {
     globalThis.fetch = original;
   }
