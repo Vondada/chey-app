@@ -41,7 +41,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
   String? _openThread;
   bool _loading = true;
   String _status = '';
-  String _keySearch = '';
+  String _keyQuery = '';
 
   @override
   void initState() {
@@ -480,7 +480,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
       };
 
   Widget _keysTab() {
-    final query = _keySearch.trim().toLowerCase();
+    final query = _keyQuery.trim().toLowerCase();
     final providers = query.isEmpty
         ? _providers
         : _providers
@@ -496,7 +496,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
             textField: true,
             label: 'Search keys by provider name',
             child: TextField(
-              onChanged: (value) => setState(() => _keySearch = value),
+              onChanged: (value) => setState(() => _keyQuery = value),
               decoration: const InputDecoration(
                 labelText: 'Search keys',
                 hintText: 'Provider name',
@@ -513,10 +513,17 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
                       style: CheType.bodyDim),
                 )
               : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-                  itemCount: providers.length,
+                  padding: const EdgeInsets.all(12),
+                  itemCount: _providers.where((item) => _keyQuery.isEmpty || '${item['name']}'.toLowerCase().contains(_keyQuery)).length + 1,
                   itemBuilder: (_, i) {
-                    final p = providers[i];
+                    if (i == 0) {
+                      return TextField(
+                        decoration: const InputDecoration(hintText: 'Search keys', prefixIcon: Icon(Icons.search)),
+                        onChanged: (value) => setState(() => _keyQuery = value.trim().toLowerCase()),
+                      );
+                    }
+                    final shown = _providers.where((item) => _keyQuery.isEmpty || '${item['name']}'.toLowerCase().contains(_keyQuery)).toList();
+                    final p = shown[i - 1];
                     final status = '${p['status']}';
                     final ok =
                         status == 'healthy' || status == 'rate-limited';
