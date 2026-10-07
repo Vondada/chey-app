@@ -190,7 +190,7 @@ bool cheRequiresVerifiedRemoteEvidence(String raw) {
   final text = _cheWithoutQuotedText(raw.trim());
   if (!_cheRepositoryEvidenceTarget(text)) return false;
   return RegExp(
-    r"\b(?:inspect|investigate|diagnos(?:e|is|tic)|trace|audit|review|verify|verified|find|locate|identify|exact|current|status|self[- ]diagnostic|what\s+happened|why\b[\s\S]{0,80}\bfailed)\b",
+    r"\b(?:inspect|find|locate|trace|show|identify|investigate|diagnos(?:e|is|tic)|audit|review|examine|verify|verified|analy[sz]e|explain|exact|current|status|self[- ]diagnostic|what\s+happened|why\b[\s\S]{0,80}\bfailed)\b",
     caseSensitive: false,
   ).hasMatch(text);
 }
