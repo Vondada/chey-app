@@ -33,3 +33,11 @@ test('agents cannot merge code, spend money or open payouts', async () => {
   assert.equal(agentActionGuard(knox, 'Build a checkout page where customers buy the course'), '');
   assert.equal(agentActionGuard(knox, 'Write tests for the store'), '');
 });
+
+
+test('Atlas only requires a trend feed for trend-scout work', () => {
+  const data = { team: [] }; ensureLaAgenciaRoster(data);
+  const atlas = data.team.find((a) => a.name === 'Atlas');
+  assert.equal(officeToolBlocker({}, atlas, 'Summarize this owner-provided report'), '');
+  assert.match(officeToolBlocker({}, atlas, 'Scout trending video topics'), /no trend feed/);
+});
