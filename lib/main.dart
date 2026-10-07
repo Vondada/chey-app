@@ -866,6 +866,10 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   // Home conversation. Empty = CHE's welcome state with quick actions.
   final List<Map<String, String>> messages = [];
 
+  // Only successful renderer receipts belong here. A failed/pending render
+  // never appears in Recent Videos and is never described as a made video.
+  final List<Map<String, String>> _recentVideos = [];
+
   // ============================================================
   // C.H.E. IDENTITY / ADAPTABILITY / FUTURE TOOL PROFILE
   // ============================================================
