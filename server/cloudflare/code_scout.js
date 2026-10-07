@@ -124,7 +124,8 @@ function buildProhibition(text) {
     || /\bnot\s+(?:(?:a|an)\s+)?(?:coding|implementation|self[- ]development)(?:\s+(?:assignment|request|task|job))?\b/i.test(value)
     || /\b(?:no|do\s+not|don['’]?t|never)\s+(?:start|create|run)?\s*(?:(?:a|the)\s+)?(?:coding|implementation|self[- ]development)(?:\s+(?:job|task|process))?\b/i.test(value)
     || /\b(?:do\s+not|don['’]?t|never)\s+(?:fix|repair|implement|change|modify|edit|update|patch)\s+(?:it|anything|(?:the\s+)?(?:source\s+)?code|(?:the\s+)?repo(?:sitory)?|(?:the\s+)?system)(?:\s+yet)?\b/i.test(value)
-    || /\bdon['’]?t\s+(?:change|modify|edit|fix)\s+(?:nothing|anything)\b/i.test(value);
+    || /\bdon['’]?t\s+(?:change|modify|edit|fix)\s+(?:nothing|anything)\b/i.test(value)
+    || /\b(?:do\s+not|don['’]?t|never)\b[^.!?\n]{0,120}\b(?:modify|change|edit|write|patch)\s+(?:your\s+)?(?:source\s+)?(?:code|codebase|repo(?:sitory)?)\b/i.test(value);
 }
 
 function compoundImplementationAuthorization(text) {
@@ -160,6 +161,8 @@ function ownerBuildAuthorization(message) {
   const hypothetical = /\b(?:explain|describe|tell\s+me)\b[\s\S]{0,50}\b(?:how|what)\b[\s\S]{0,80}\b(?:would|should|could)\b/i.test(text)
     || /\b(?:hypothetical|plan\s+only|planning\s+only|proposal\s+only)\b/i.test(text);
   if (mutationVerb && mutationTarget && !hypothetical) return true;
+  if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:can|could|would)\s+you\s+|please\s+)?(?:add|implement|build|create)\s+(?:the\s+)?(?:ability|capability|support)\b[\s\S]{0,180}\b(?:github|pull\s+request|voice|api|tool|integration)\b/i.test(text)
+    && !hypothetical) return true;
 
   // A bare collaboration continuation intentionally resumes the still-valid
   // engineering lane. Review/investigation wording remains read-only.
