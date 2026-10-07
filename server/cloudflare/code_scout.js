@@ -180,7 +180,8 @@ export function repositoryInspectionIntent(message) {
   const asksCurrentRepo = /\b(?:your|che(?:'s)?)\s+(?:current\s+)?(?:github\s+)?(?:main\s+branch|repo(?:sitory)?|codebase|source|code)\b/i.test(text)
     || /\b(?:current|exact)\s+main\s+(?:branch\s+)?sha\b/i.test(text);
   const asksSourceTrace = /\btrace\b[\s\S]{0,100}\b(?:flutter|cloudflare|worker|request|route|source|files?|functions?|execution)\b/i.test(text);
-  const readOnlyRepoDiagnostic = readOnlyDiagnosticIntent(text) && /\b(?:github|repo(?:sitory)?|source|code|coding|worker|main|job|routing|runtime|pipeline|status)\b/i.test(text);\n  return (asksInspection && asksCurrentRepo || asksSourceTrace || readOnlyRepoDiagnostic) && !repositoryImplementationIntent(text);
+  const readOnlyRepoDiagnostic = readOnlyDiagnosticIntent(text) && /\b(?:github|repo(?:sitory)?|source|code|coding|worker|main|job|routing|runtime|pipeline|status)\b/i.test(text);
+  return (asksInspection && asksCurrentRepo || asksSourceTrace || readOnlyRepoDiagnostic) && !repositoryImplementationIntent(text);
 }
 
 export function starredRepoIntent(message) {
