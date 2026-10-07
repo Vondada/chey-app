@@ -8718,7 +8718,7 @@ export class CheState extends DurableObject {
     // A substantive implementation message is its own request. A bare
     // collaboration continuation may reuse only a still-valid authorized job.
     const stripped = message.replace(/\b(?:work|collaborate|coordinate|team up|pair|partner|sync)\b[^.?!]{0,30}\bwith\b[^.?!]{0,40}/i, '').trim();
-    const substantiveBuild = stripped.length > 40 && repositoryImplementationIntent(message);
+    const substantiveBuild = stripped.length > 40 && repositoryImplementationIntent(stripped);
     const request = substantiveBuild ? message : ownRequest;
     if (!request || request.length < 8) {
       return ndjsonReply('I do not have a current authorized coding job to hand to the collaboration lane, sir. Tell me what to build or which active coding job to resume.', { source: 'che_collaboration', ok: false });
