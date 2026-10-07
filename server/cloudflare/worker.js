@@ -32,7 +32,7 @@ import {
 import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv } from './ai_router.js';
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
-import { handleEdgeVoice } from './edge_voice.js';
+import { handleEdgeVoice } from './edge_route.js';
 import { handleVideoLine } from './video_route.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
