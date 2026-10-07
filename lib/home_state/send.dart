@@ -390,6 +390,62 @@ extension _CheHomeSend on _CHEHomeState {
     return reply;
   }
 
+  String? _videoTopicFromOwnerCommand(String raw) {
+    final match = RegExp(
+      r"^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+)?(?:make|create|generate)\s+(?:me\s+)?(?:a\s+)?video\s+(?:about|on)\s+(.+?)\s*[.!?]*$",
+      caseSensitive: false,
+    ).firstMatch(raw.trim());
+    final topic = match?.group(1)?.trim() ?? '';
+    return topic.length >= 3 ? topic : null;
+  }
+
+  Future<bool> _handleVideoGenerationCommand(String message) async {
+    if (_pendingAttachment != null) return false;
+    final topic = _videoTopicFromOwnerCommand(message);
+    if (topic == null) return false;
+    if (!await _ensurePaired()) return true;
+
+    if (mounted) {
+      _set(() {
+        messages.add({'role': 'user', 'text': message});
+        controller.clear();
+      });
+      _scrollToBottom();
+    }
+
+    String reply;
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$cheAgentBaseUrl/api/video/line'),
+            headers: {..._authHeaders, 'Content-Type': 'application/json'},
+            body: jsonEncode({'topic': topic}),
+          )
+          .timeout(const Duration(seconds: 35));
+      final decoded = jsonDecode(response.body.isEmpty ? '{}' : response.body);
+      final data = decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{};
+      final mediaUrl = '${data['media_url'] ?? ''}'.trim();
+      if (response.statusCode == 200 && mediaUrl.startsWith('http')) {
+        _recentVideos.insert(0, {'title': topic, 'media_url': mediaUrl});
+        reply = mediaUrl;
+      } else {
+        final error = '${data['error'] ?? data['detail'] ?? ''}'.trim();
+        reply = error.isNotEmpty
+            ? error
+            : 'Video renderer returned HTTP ${response.statusCode} without a file URL.';
+      }
+    } catch (error) {
+      reply = 'The video route failed before returning a file: ${error.toString()}';
+    }
+
+    if (mounted) {
+      _set(() => messages.add({'role': 'assistant', 'text': reply}));
+      _scrollToBottom();
+    }
+    await speakText(reply, record: false);
+    return true;
+  }
+
   Future<void> sendMessage({bool fromVoice = false}) async {
     if (await _controlAutonomy(controller.text.trim())) return;
     if (_isSending) return;
@@ -498,6 +554,8 @@ extension _CheHomeSend on _CHEHomeState {
       controller.clear();
       return;
     }
+
+    if (await _handleVideoGenerationCommand(message)) return;
 
     if (!await _ensurePaired()) return;
 
