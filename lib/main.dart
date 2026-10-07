@@ -44,6 +44,7 @@ import 'che_voice_state.dart';
 import 'che_local_voice_loop.dart';
 import 'che_voice_ui.dart';
 import 'che_app_portal.dart';
+import 'che_video_page.dart';
 import 'che_plugin_manager.dart';
 import 'che_theme.dart';
 import 'che_world_hub.dart';
