@@ -1,18 +1,25 @@
 // Canonical La Agencia roster (report to CHE, the Office Boss). Existing matching agents keep their IDs,
 // workspaces and task history; this only fills/updates company responsibilities.
+// Scout is not a separate person. Atlas is the scout.
 export const LA_AGENCIA_ROLES = {
   Nova: { role: 'Product / listings', specialty: 'Product offers, listings and sales-page drafts', provider_preference: 'openai', capability_requirements: ['coding'] },
-  Atlas: { role: 'Research', specialty: 'Research, sourcing and competitive checks', provider_preference: 'auto', capability_requirements: ['deep_reasoning'] },
+  Atlas: { role: 'Research / scout', specialty: 'Research, sourcing, competitive checks, and trend topics from connected feeds. Does not invent demand.', provider_preference: 'auto', capability_requirements: ['deep_reasoning'] },
   Mira: { role: 'Customer / support copy', specialty: 'Customer-facing support, service copy, and translation / multilingual drafts', provider_preference: 'auto', capability_requirements: ['text'] },
   Knox: { role: 'Engineering / Codex jobs', specialty: 'Implementation, tests, Codex packets, and Roblox/Luau experience drafts (games, weapons, UGC clothing, passes)', provider_preference: 'openai', model_preference: 'gpt-5.3-codex', capability_requirements: ['coding'] },
   Sage: { role: 'Finance / Stripe reports', specialty: 'Read-only Stripe reporting and finance summaries', provider_preference: 'auto', capability_requirements: ['payments_read'] },
   Lyra: { role: 'Content / social', specialty: 'Content, social copy and campaign drafts', provider_preference: 'auto', capability_requirements: ['text'] },
   Iris: { role: 'Ad Studio / paid-social creatives', specialty: 'Ad creatives, visual briefs, captions and same-night social packages', provider_preference: 'auto', capability_requirements: ['text'] },
-  Scout: { role: 'Trend scout', specialty: 'Finds topic titles from connected feeds for the video desk. Does not invent demand.', provider_preference: 'auto', capability_requirements: ['research'] },
 };
 
 export function ensureLaAgenciaRoster(data) {
   const at = new Date().toISOString();
+  for (const agent of data.team || []) {
+    if (String(agent?.name || '').toLowerCase() === 'scout' && !agent.retired) {
+      agent.retired = true;
+      agent.retired_reason = 'Scout is Atlas.';
+      agent.updated_at = at;
+    }
+  }
   for (const [name, spec] of Object.entries(LA_AGENCIA_ROLES)) {
     let agent = data.team.find((a) => String(a.name || '').toLowerCase() === name.toLowerCase() && !a.retired);
     if (!agent) {
@@ -37,12 +44,11 @@ export function ensureLaAgenciaRoster(data) {
   return data.team;
 }
 
-// La Agencia agents need their tool on the server (one owner credential each,
-// stored only as Worker secrets). A missing tool blocks the job honestly.
-export function officeToolBlocker(env, agent) {
+export function officeToolBlocker(env, agent, task = '') {
   const pref = String(agent?.provider_preference || '').toLowerCase();
+  const scoutTask = /\b(?:scout|trending|trends|topic|topics)\b/i.test(String(task));
   if (String(agent?.name) === 'Sage' && !env.STRIPE_SECRET_KEY) return 'Blocked: tool not configured (Stripe not connected)';
-  if (String(agent?.name) === 'Scout' && !env.CHE_TREND_URLS) return 'Blocked: tool not configured (no trend feed)';
+  if (String(agent?.name) === 'Atlas' && scoutTask && !env.CHE_TREND_URLS) return 'Blocked: tool not configured (no trend feed)';
   if (pref === 'openai' && !(env.CODEX_OWNER_TOKEN || env.CHE_OPENAI_API_KEY || env.OPENAI_API_KEY)) return 'Blocked: tool not configured (Codex)';
   if (pref === 'xai' && !(env.XAI_API_KEY || env.CHE_XAI_API_KEY || env.GROK_API_KEY || env.CHE_XAI_MODEL_URL)) return 'Blocked: tool not configured (Grok)';
   return '';
@@ -58,9 +64,8 @@ const GOAL_ROUTES = [
   ['Nova', /\b(?:product|listing|listings|offer|pricing|price|sales page|store|shop|roblox\s+pass|game\s*pass|ugc)\b/],
   ['Mira', /\b(?:customer|support|reply|replies|email|faq|help desk|service|translat|locale|language|multilingual)\b/],
   ['Iris', /\b(?:ads?|ad studio|tonight pack|ad creatives?|flyer|banner|paid social|creative brief|caption pack)\b/],
-  ['Scout', /\b(?:scout|trending|trends|topic|topics|what's hot|what is hot|video ideas)\b/],
+  ['Atlas', /\b(?:scout|trending|trends|topic|topics|what's hot|what is hot|video ideas|research|competitor|competitors|find|source|compare|market|look up|fiverr|metrics|evaluat|learning notes)\b/],
   ['Lyra', /\b(?:social|post|posts|content|instagram|tiktok|caption|campaign|video|blog|clothing|avatar|ugc)\b/],
-  ['Atlas', /\b(?:research|competitor|competitors|find|source|compare|market|look up|fiverr|metrics|evaluat|learning notes)\b/],
 ];
 
 export function splitGoal(goal) {
@@ -73,11 +78,9 @@ export function splitGoal(goal) {
     .slice(0, 6);
   const jobs = (parts.length ? parts : [text]).map((part) => {
     const lower = part.toLowerCase();
-    const hit = /^(?:scout|find trending|find topics)\b/.test(lower)
-      ? ['Scout']
-      : /^(?:research|find|compare|look up)\b/.test(lower)
-        ? ['Atlas']
-        : GOAL_ROUTES.find(([, pattern]) => pattern.test(lower));
+    const hit = /^(?:research|find|compare|look up|scout|find trending|find topics)\b/.test(lower)
+      ? ['Atlas']
+      : GOAL_ROUTES.find(([, pattern]) => pattern.test(lower));
     return { agent: hit ? hit[0] : 'Atlas', task: part.charAt(0).toUpperCase() + part.slice(1) };
   });
   return jobs;
