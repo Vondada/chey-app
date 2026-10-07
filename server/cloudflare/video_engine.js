@@ -1,26 +1,19 @@
-// The video engine generateVideo already runs.
-// First choice: CHE_VIDEO_GEN_URL, a server that returns {"url":"https://...mp4"}.
-// MoneyPrinterTurbo is the repo to run at that URL:
-// https://github.com/harry0703/MoneyPrinterTurbo
-// Second choice, already in media.js: Gemini, only if GEMINI_API_KEY is set
-// and CHE_ALLOW_PAID_MEDIA plus CHE_ALLOW_PAID_AI are on.
-// No URL and no paid switch means no video.
+// Run link for the video engine. CHE does not start this notebook.
+// The Colab page runs in the owner's Google account and dies when the session stops.
 
 export const VIDEO_ENGINE = {
-  id: 'che-video',
-  env: 'CHE_VIDEO_GEN_URL',
+  id: 'money-printer-turbo',
   repo: 'https://github.com/harry0703/MoneyPrinterTurbo',
-  returns: 'url',
+  run: 'https://colab.research.google.com/github/harry0703/MoneyPrinterTurbo/blob/main/docs/MoneyPrinterTurbo.ipynb',
+  local: 'http://127.0.0.1:8501',
+  env: 'CHE_VIDEO_GEN_URL',
 };
 
 export function videoEngineStatus(env = {}) {
   const url = String(env.CHE_VIDEO_GEN_URL || '').trim();
-  const paid = /^(?:1|true|yes|on)$/i.test(String(env.CHE_ALLOW_PAID_MEDIA || ''))
-    && /^(?:1|true|yes)$/i.test(String(env.CHE_ALLOW_PAID_AI || ''))
-    && Boolean(env.GEMINI_API_KEY);
   return {
-    ready: Boolean(url) || paid,
-    engine: url ? 'CHE_VIDEO_GEN_URL' : (paid ? 'gemini' : ''),
-    reason: url || paid ? 'A video engine is configured' : 'No video engine. Set CHE_VIDEO_GEN_URL, or turn on paid media and Gemini.',
+    ...VIDEO_ENGINE,
+    ready: Boolean(url),
+    reason: url ? 'Renderer URL set' : 'Run link is stored. No video server is running.',
   };
 }
