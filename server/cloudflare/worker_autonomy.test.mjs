@@ -228,6 +228,9 @@ test('owner capability test: repository and autonomy discovery reads source with
 
     const diagnosticPrompt = 'CHE, inspect your current GitHub main branch and investigate why your previous self-diagnostic entered the coding pipeline. Do not modify code, start a coding job, create a PR, merge, or deploy. Report only verified findings, and clearly separate anything inferred or unknown.';
     const diagnosticReply = replyFromNdjson(await (await chat(diagnosticPrompt)).text());
+    assert.match(diagnosticReply, /VERIFIED/);
+    assert.match(diagnosticReply, /INFERRED/);
+    assert.match(diagnosticReply, /UNKNOWN/);
     assert.match(diagnosticReply, /sha1/, 'diagnostic must use the exact pinned repository head');
     assert.doesNotMatch(diagnosticReply, /health_check\.yml|diagnostic-tool|auto-remediate|build-manifest\.json|fix-version-mismatch/i, 'unsupported repository facts can never reach owner chat');
     assert.equal(aiCalls, 0, 'verified repository diagnostics bypass generic model generation');
