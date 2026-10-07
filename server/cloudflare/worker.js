@@ -6145,13 +6145,18 @@ export class CheState extends DurableObject {
         const chatOnlyEvaluation = turnActionPolicy.terminalChatOnly;
 
         const directRepositoryInspection = repositoryInspectionIntent(message);
+        const recentRepositoryEvidenceRequest = [...ownerHistory]
+          .reverse()
+          .filter((item) => item?.role === 'user')
+          .map((item) => String(item?.content || item?.text || '').slice(0, 2000))
+          .find((item) => repositoryInspectionIntent(item)) || '';
         const repositoryEvidenceFollowUp = !directRepositoryInspection
           && /^(?:is|are)\s+(?:that|this|it|those|these)\s+(?:still\s+)?(?:current|accurate|correct|live|latest|valid)\??$|^(?:still\s+current|same\s+sha|same\s+commit|has\s+that\s+changed|did\s+that\s+change)\??$/i.test(message.trim())
-          && repositoryInspectionIntent(previousText);
+          && Boolean(recentRepositoryEvidenceRequest);
         const repositoryInspectionRequest = directRepositoryInspection
           ? message
           : repositoryEvidenceFollowUp
-            ? `${previousText}\nFollow-up: ${message}`
+            ? `${recentRepositoryEvidenceRequest}\nFollow-up: ${message}`
             : '';
         if (repositoryInspectionRequest) {
           if (!ownerDevice) return ownerOnly();
