@@ -161,6 +161,7 @@ extension _CheHomeStreaming on _CHEHomeState {
     // the on-phone brain combine saved notes) before spending cloud credits.
     if (_pendingAttachment == null &&
         !hasConversationContext &&
+        !cheRequiresVerifiedRemoteEvidence(trimmedRequest) &&
         CheKnowledgeCache.cacheable(trimmedRequest)) {
       final saved = await _knowledge.answer(
         trimmedRequest,
