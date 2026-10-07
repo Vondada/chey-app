@@ -6912,10 +6912,12 @@ export class CheState extends DurableObject {
             onAccepted: () => this.ctx.storage.put(doneKey, new Date().toISOString()),
           });
         }
-        // Explicit implementation requests win over repository discovery. This
-        // is what lets "Update your code: use Study 1 and 2..." actually build
-        // and save a reviewed proposal instead of stopping at research.
-        if (turnActionPolicy.codingJobAllowed) {
+        // Explicit implementation requests win over generic research, but
+        // specialized collaboration/batch commands must reach their own route
+        // below instead of being swallowed by the generic coding path.
+        const currentCollaboration = chatOnlyEvaluation ? null : collaborationIntent(message);
+        const currentParallelBatch = chatOnlyEvaluation ? null : parallelPreference(message);
+        if (turnActionPolicy.codingJobAllowed && !currentCollaboration && !currentParallelBatch) {
           return ownerDevice
             ? this.selfDevelopmentReply(message, { vectorRecall })
             : ndjsonReply('Only the CHE owner can ask me to change my code.', { source: 'che_self_development', ok: false });
@@ -6974,8 +6976,8 @@ export class CheState extends DurableObject {
 
         // Engineering status and collaboration are answered from receipts and
         // real actions, never from model narration.
-        const collab = chatOnlyEvaluation ? null : collaborationIntent(message);
-        const batch = chatOnlyEvaluation ? null : parallelPreference(message);
+        const collab = currentCollaboration;
+        const batch = currentParallelBatch;
         // Collaboration packets in this function also create CHE's own coding
         // job. A read-only review/diagnostic may consult peers elsewhere, but
         // it cannot inherit an older engineering request and silently BUILD.
