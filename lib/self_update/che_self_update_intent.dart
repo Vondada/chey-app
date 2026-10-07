@@ -171,6 +171,28 @@ String _cheWithoutQuotedText(String text) {
       : text;
 }
 
+/// True when answering from an offline/general model could fabricate live CHE
+/// repository state. These turns require the connected Worker/GitHub evidence
+/// path; if it is unavailable the client must report that limitation instead
+/// of substituting an ungrounded local answer.
+bool cheRequiresVerifiedRemoteEvidence(String raw) {
+  final text = _cheWithoutQuotedText(raw.trim());
+  if (text.isEmpty) return false;
+
+  final repositoryTarget = RegExp(
+    r"\b(?:(?:your|che(?:'s)?)\s+(?:current\s+)?(?:github\s+)?(?:main(?:\s+branch)?|repo(?:sitory)?|codebase|source(?:\s+code)?|routing|router|worker|coding\s+(?:job|pipeline|runtime))|"
+    r"(?:current|exact|latest)\s+(?:github\s+)?main\s+(?:branch\s+)?sha|"
+    r"github\s+main)\b",
+    caseSensitive: false,
+  ).hasMatch(text);
+  if (!repositoryTarget) return false;
+
+  return RegExp(
+    r"\b(?:inspect|investigate|diagnos(?:e|is|tic)|trace|audit|review|verify|verified|find|locate|identify|exact|current|status|self[- ]diagnostic|what\s+happened|why\b[\s\S]{0,80}\bfailed)\b",
+    caseSensitive: false,
+  ).hasMatch(text);
+}
+
 bool cheIsTerminalChatOnlyRequest(String raw) {
   final text = _cheWithoutQuotedText(raw.trim());
   final responseDirective = RegExp(
