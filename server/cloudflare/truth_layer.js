@@ -303,7 +303,35 @@ function stripUnverifiedCode(reply, codeIncludes, removed) {
 const CODE_SPAN = /`([^`\n]{3,200})`/g;
 const looksLikeCode = (span) => /[(){};=]|=>/.test(span) || /^[a-z]+[A-Z][A-Za-z0-9]*$|^[A-Za-z]+_[A-Za-z0-9_]+$/.test(span);
 
-export function guardGroundedFacts(reply, { paths = [], repo = '', jobIds = [], codeIncludes = null } = {}) {
+// A sentence that cites a line ("self_skills.js line 130", "worker.js:971")
+// must match the pinned file: the line must exist, and the identifiers or
+// quoted code the sentence names must be on that line. `fileText(path)`
+// returns the file's text at the pinned commit, or null when not loaded.
+function wrongLineCitation(s, paths, fileText) {
+  if (typeof fileText !== 'function') return '';
+  const cited = [...new Set(paths.filter((p) => s.includes(p)))];
+  const nums = [...s.matchAll(/\bline\s+(\d{1,6})\b|\.(?:dart|m?js|cjs|ts|tsx|py|swift|kt|json|md):(\d{1,6})\b/gi)].map((m) => Number(m[1] || m[2]));
+  if (cited.length !== 1 || !nums.length) return '';
+  const path = cited[0];
+  const text = fileText(path);
+  if (text == null) return '';
+  const lines = String(text).split('\n');
+  // Code-like names the sentence relies on (camelCase, snake_case or backticked),
+  // with the cited paths removed so a file name is not taken for an identifier.
+  const prose = paths.reduce((acc, p) => acc.split(p).join(' '), s);
+  const idents = [...prose.matchAll(/`([^`\n]{4,200})`|\b([a-z]+[A-Z][A-Za-z0-9]*|[A-Za-z]+_[A-Za-z0-9_]+)\b/g)]
+    .map((m) => (m[1] || m[2] || '').trim())
+    .filter((t) => t.length >= 4 && !/\s/.test(t));
+  for (const n of nums) {
+    if (n < 1 || n > lines.length) return `line_out_of_range:${path}:${n}`;
+    const line = lines[n - 1].toLowerCase();
+    const miss = idents.find((t) => !line.includes(t.toLowerCase()));
+    if (miss) return `wrong_line:${path}:${n}:${miss.slice(0, 60)}`;
+  }
+  return '';
+}
+
+export function guardGroundedFacts(reply, { paths = [], repo = '', jobIds = [], codeIncludes = null, fileText = null } = {}) {
   const known = new Set(paths);
   const basenames = new Set(paths.map((p) => p.split('/').pop()));
   const ids = new Set(jobIds.map(String));
@@ -321,6 +349,8 @@ export function guardGroundedFacts(reply, { paths = [], repo = '', jobIds = [], 
         if (looksLikeCode(span) && !paths.includes(span) && !codeIncludes(span)) return `unverified_code:${span.slice(0, 80)}`;
       }
     }
+    const line = wrongLineCitation(s, paths, fileText);
+    if (line) return line;
     const job = /\bjob(?:\s+id)?\s*[:#]?\s*(?:under\s+id\s*[:#]?\s*)?([A-Za-z0-9][\w-]{7,})\b/i.exec(s);
     if (job && /\d/.test(job[1]) && !ids.has(job[1])) return `unknown_job:${job[1]}`;
     return '';
@@ -329,7 +359,7 @@ export function guardGroundedFacts(reply, { paths = [], repo = '', jobIds = [], 
   const parts = splitSentences(reply);
   const kept = [];
   for (const sentence of parts) {
-    const why = paths.length || repo || jobIds.length || codeIncludes ? badFact(sentence) : '';
+    const why = paths.length || repo || jobIds.length || codeIncludes || fileText ? badFact(sentence) : '';
     if (why) { removed.push({ rule: why, sentence: sentence.trim() }); continue; }
     kept.push(sentence);
   }

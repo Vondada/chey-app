@@ -3685,7 +3685,7 @@ export class CheState extends DurableObject {
       const codeIncludes = repoGrounding?.ok
         ? (text) => (codeIndex ? codeIndex.search(text, { limit: 1 }).length > 0 : groundingText.includes(String(text).toLowerCase()))
         : null;
-      const grounded = guardGroundedFacts(guarded.text, { paths: repoGrounding?.all_paths || [], repo: String(this.env.CHE_GITHUB_REPO || ''), jobIds, codeIncludes });
+      const grounded = guardGroundedFacts(guarded.text, { paths: repoGrounding?.all_paths || [], repo: String(this.env.CHE_GITHUB_REPO || ''), jobIds, codeIncludes, fileText: codeIndex ? (path) => codeIndex.text(path) : null });
       const honesty = grounded.removed.length ? ' NOT VERIFIED: I left out a file, link, code quote or job I could not confirm in the repository.' : '';
       const reply = grounded.text ? `${grounded.text}${honesty}` : (raw ? `I received your message. I have not taken any action on it yet; I will report real results here once they exist.${honesty}` : '');
       if (!reply) throw new Error('CHE returned no Flagstaff reply.');
