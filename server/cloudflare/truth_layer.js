@@ -296,7 +296,7 @@ export function guardGroundedFacts(reply, { paths = [], repo = '', jobIds = [] }
       if (hit.includes('/') ? !known.has(hit) : !basenames.has(hit)) return `unknown_file:${hit}`;
     }
     for (const m of s.matchAll(/github\.com\/([\w.\/-]+?)\/(?:pull|issues)\/\d+/gi)) if (!repo || m[1].toLowerCase() !== repo.toLowerCase()) return `foreign_pr:${m[1]}`;
-    const job = /\bjob\s+(?:id\s+|under\s+id\s+)?([A-Za-z0-9][\w-]{7,})\b/i.exec(s);
+    const job = /\bjob(?:\s+id)?\s*[:#]?\s*(?:under\s+id\s*[:#]?\s*)?([A-Za-z0-9][\w-]{7,})\b/i.exec(s);
     if (job && /\d/.test(job[1]) && !ids.has(job[1])) return `unknown_job:${job[1]}`;
     return '';
   };

@@ -591,9 +591,15 @@ extension _CheHomeSend on _CHEHomeState {
     // browser, "read the videos" / "play number one" / "pause" take over.
     final videoCommand = _pendingAttachment == null ? CheVideoVoiceCommand.parse(message) : null;
     if (videoCommand != null) {
-      if (mounted) _set(() => controller.clear());
+      // Shown as large chat text as well as spoken, for a deaf owner too.
+      if (mounted) {
+        _set(() {
+          controller.clear();
+          messages.add({'role': 'user', 'text': message});
+        });
+      }
       HapticFeedback.mediumImpact();
-      await speakText(videoCommand.spoken, record: false);
+      await speakText(videoCommand.spoken);
       if (!mounted) return;
       await Navigator.of(context).push(
         MaterialPageRoute<void>(

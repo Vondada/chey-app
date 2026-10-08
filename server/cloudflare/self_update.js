@@ -87,8 +87,15 @@ export function scanUpdateContent(content, path = '', baseline = '') {
   for (const re of SECRET_CONTENT) {
     // Baseline-relative: only a secret-looking string this edit introduces is
     // refused; one already in the file on main is not the edit's doing.
-    const found = text.match(new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`)) || [];
-    if (found.some((hit) => !before.includes(hit))) return `Refusing ${path || 'file'}: looks like a secret or private key.`;
+    // Counted, not just present: a second copy of an existing secret is new.
+    const global = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
+    const count = (source) => {
+      const tally = new Map();
+      for (const hit of source.match(global) || []) tally.set(hit, (tally.get(hit) || 0) + 1);
+      return tally;
+    };
+    const was = count(before);
+    if ([...count(text)].some(([hit, n]) => n > (was.get(hit) || 0))) return `Refusing ${path || 'file'}: looks like a secret or private key.`;
   }
   for (const re of NATIVE_SMUGGLE) {
     if (re.test(text)) return `Refusing ${path || 'file'}: self-update cannot touch native iOS entitlements or Info.plist.`;
