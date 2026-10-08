@@ -88,4 +88,13 @@ void main() {
     final loc = matchOfficePhrase('Set my language to French');
     expect(loc?.type, CheOfficePhrase.setLocale);
   });
+
+  test('a finished-sounding sentence ends the turn quickly; trailing fillers do not', () {
+    expect(cheSoundsComplete('what time is it'), isTrue);
+    expect(cheSoundsComplete('Play some jazz.'), isTrue);
+    expect(cheSoundsComplete('build me a website and'), isFalse);
+    expect(cheSoundsComplete('so um'), isFalse);
+    expect(cheSoundsComplete('what'), isFalse);
+    expect(cheQuickEndOfTurn < const Duration(milliseconds: 3600), isTrue);
+  });
 }

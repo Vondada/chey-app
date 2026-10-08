@@ -42,3 +42,15 @@ bool cheSoundsUnfinished(String words) {
   };
   return trailing.contains(last);
 }
+
+/// How long a finished-sounding sentence may be followed by silence before
+/// CHE treats the turn as over (the recognizer's own pause window is longer).
+const Duration cheQuickEndOfTurn = Duration(milliseconds: 1500);
+
+/// True when [words] sounds like a whole request: at least two words and no
+/// trailing filler or connector ("um", "and", "the"...).
+bool cheSoundsComplete(String words) {
+  final cleaned = words.toLowerCase().replaceAll(RegExp(r"[^a-z0-9' ]"), ' ').trim();
+  if (cleaned.isEmpty || cleaned.split(RegExp(r'\s+')).length < 2) return false;
+  return !cheSoundsUnfinished(words);
+}

@@ -441,6 +441,36 @@ extension _CheHomeMicrophone on _CHEHomeState {
             selection: TextSelection.collapsed(offset: spokenWords.length),
           );
 
+          // Quick end of turn: a finished-sounding sentence followed by a
+          // short silence is sent without waiting out the long pauseFor
+          // window, which stays the fallback for mid-thought pauses. Stopping
+          // the recognizer delivers its final result to the path below.
+          _quickEndTimer?.cancel();
+          if (!result.finalResult &&
+              !_autoSentCurrentTurn &&
+              !_isSending &&
+              cheSoundsComplete(spokenWords)) {
+            _quickEndTimer = Timer(cheQuickEndOfTurn, () {
+              if (!mounted || _autoSentCurrentTurn || _isSending || !speech.isListening) return;
+              debugPrint('CHE voice: quick end of turn');
+              unawaited(_localVoice.runMicOp(() async {
+                await speech.stop();
+              }));
+              // If the recognizer ends without a final result, send what
+              // was heard rather than leaving the turn hanging.
+              Future<void>.delayed(const Duration(milliseconds: 800), () async {
+                if (!mounted || _autoSentCurrentTurn || _isSending) return;
+                if (controller.text.trim().isEmpty) return;
+                _autoSentCurrentTurn = true;
+                _heldSpeech = '';
+                _heldSpeechRestarts = 0;
+                _localVoice.goThinking();
+                _set(() => isListening = false);
+                await sendMessage(fromVoice: true);
+              });
+            });
+          }
+
           // He trailed off ("um", "and", "so...") — he is still thinking, not
           // finished. Keep the turn open and keep listening instead of sending.
           if (result.finalResult &&

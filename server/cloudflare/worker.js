@@ -1014,27 +1014,31 @@ async function connectorResearch(env, query) {
 
 // These sources provide reference facts, not exhaustive live web coverage.
 export async function publicResearch(query, fetcher = fetch) {
+  // Both engines run at once with a short timeout; Wikipedia wins when both
+  // answer. Sequential 15-second waits used to stall replies.
+  const q = encodeURIComponent(String(query || '').slice(0, 1000));
+  const lookup = async (engine) => {
+    const url = engine === 'wikipedia'
+      ? `https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${q}&gsrlimit=3&prop=extracts|info&exintro=1&explaintext=1&inprop=url&format=json`
+      : `https://api.duckduckgo.com/?q=${q}&format=json&no_html=1&skip_disambig=1`;
+    const response = await fetcher(url, { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    const pages = Object.values(data?.query?.pages || {});
+    const summary = engine === 'wikipedia'
+      ? pages.filter(p => p.extract?.trim()).map(p => `${p.title}: ${p.extract}`).join('\n').slice(0, 10000)
+      : String(data.AbstractText || data.Answer || (data.RelatedTopics || []).map(t => t.Text || '').filter(Boolean).slice(0, 5).join('\n')).slice(0, 10000);
+    if (!summary.trim()) throw new Error('No reference result');
+    const sources = engine === 'wikipedia' ? pages.map(p => p.fullurl).filter(Boolean) : [data.AbstractURL, ...(data.RelatedTopics || []).map(t => t.FirstURL)].filter(Boolean).slice(0, 8);
+    return { summary, sources, engine, limitation: 'Reference summaries; not exhaustive or real-time news.' };
+  };
+  const engines = ['wikipedia', 'duckduckgo'];
+  const results = await Promise.allSettled(engines.map(lookup));
   const errors = [];
-  for (const engine of ['wikipedia', 'duckduckgo']) {
-    try {
-      const q = encodeURIComponent(String(query || '').slice(0, 1000));
-      const url = engine === 'wikipedia'
-        ? `https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${q}&gsrlimit=3&prop=extracts|info&exintro=1&explaintext=1&inprop=url&format=json`
-        : `https://api.duckduckgo.com/?q=${q}&format=json&no_html=1&skip_disambig=1`;
-      const response = await fetcher(url, { signal: AbortSignal.timeout(15000) });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      const pages = Object.values(data?.query?.pages || {});
-      const summary = engine === 'wikipedia'
-        ? pages.filter(p => p.extract?.trim()).map(p => `${p.title}: ${p.extract}`).join('\n').slice(0, 10000)
-        : String(data.AbstractText || data.Answer || (data.RelatedTopics || []).map(t => t.Text || '').filter(Boolean).slice(0, 5).join('\n')).slice(0, 10000);
-      if (!summary.trim()) throw new Error('No reference result');
-      const sources = engine === 'wikipedia' ? pages.map(p => p.fullurl).filter(Boolean) : [data.AbstractURL, ...(data.RelatedTopics || []).map(t => t.FirstURL)].filter(Boolean).slice(0, 8);
-      return { summary, sources, engine, limitation: 'Reference summaries; not exhaustive or real-time news.' };
-    } catch (error) {
-      errors.push(`${engine}: ${error.message}`);
-      console.log('CHE research error:', engine, error.message);
-    }
+  for (const [i, result] of results.entries()) {
+    if (result.status === 'fulfilled') return result.value;
+    errors.push(`${engines[i]}: ${result.reason?.message || result.reason}`);
+    console.log('CHE research error:', engines[i], result.reason?.message || result.reason);
   }
   return { error: `All research engines failed (${errors.join(' | ')}).` };
 }
@@ -2926,6 +2930,41 @@ export class CheState extends DurableObject {
     // Every text model call goes through CHE's free-engine router. Persist
     // per-engine daily usage estimates in this owner's Durable Object.
     this.env = routedEnv(env, fetch, state.storage);
+  }
+
+  // Mail news found by the last background check, delivered once.
+  async takeMailNews() {
+    let pending = null;
+    try {
+      pending = await this.ctx.storage.get('mail_news_pending');
+      if (pending) await this.ctx.storage.delete('mail_news_pending');
+    } catch (_) { /* nothing pending */ }
+    if (!pending) return { claudeNews: [], flagNews: [] };
+    return { claudeNews: pending.claude || [], flagNews: pending.flag || [] };
+  }
+
+  // Background GitHub check for new mailbox replies (never awaited by chat).
+  refreshMailNews() {
+    if (this.mailRefresh) return this.mailRefresh;
+    this.mailRefresh = (async () => {
+      const claude = await unseenReplies(this.env, this.ctx.storage, 'claude').catch(() => []);
+      let flag = [];
+      try {
+        const seen = String((await this.ctx.storage.get('flag_seen_id')) || '');
+        const board = (await readWebMail(this.ctx.storage, 30, this.env)).filter((m) => m.from !== 'che');
+        const idx = seen ? board.findIndex((m) => m.id === seen) : -1;
+        const fresh = idx >= 0 ? board.slice(idx + 1) : (seen ? [] : board.slice(-3));
+        flag = fresh.filter((m) => !looksLikeAttack(m.text));
+        if (fresh.length) await this.ctx.storage.put('flag_seen_id', fresh[fresh.length - 1].id);
+      } catch (_) { /* next turn retries */ }
+      if (!claude.length && !flag.length) return;
+      const pending = (await this.ctx.storage.get('mail_news_pending')) || {};
+      await this.ctx.storage.put('mail_news_pending', {
+        claude: [...(pending.claude || []), ...claude].slice(-5),
+        flag: [...(pending.flag || []), ...flag].slice(-5),
+      });
+    })().catch(() => {}).finally(() => { this.mailRefresh = null; });
+    return this.mailRefresh;
   }
 
   async loadData() {
@@ -6883,21 +6922,12 @@ export class CheState extends DurableObject {
           return ndjsonReply(`${fresh ? 'New ' : ''}Flagstaff 369 link, sir. Give it to any AI and it can read my mailbox and post to me, no account needed:\n${mailboxLink(origin, code)}\nAnyone with the link can read it, so I never put your private details there.${fresh ? ' The old link no longer works.' : ''}`, { source: 'che_flagstaff' });
         }
 
-        // Mailbox: "tell Claude …", "check the mailbox".
-        const claudeNews = await unseenReplies(this.env, this.ctx.storage, 'claude').catch(() => []);
-        // Any AI that posted to Flagstaff since CHE last told the owner.
-        const flagNews = await (async () => {
-          try {
-            const seen = String((await this.ctx.storage.get('flag_seen_id')) || '');
-            const board = (await readWebMail(this.ctx.storage, 30, this.env)).filter((m) => m.from !== 'che');
-            if (!board.length) return [];
-            const idx = seen ? board.findIndex((m) => m.id === seen) : -1;
-            const fresh = idx >= 0 ? board.slice(idx + 1) : (seen ? [] : board.slice(-3));
-            const safe = fresh.filter((m) => !looksLikeAttack(m.text));
-            if (fresh.length) await this.ctx.storage.put('flag_seen_id', fresh[fresh.length - 1].id);
-            return safe;
-          } catch (_) { return []; }
-        })();
+        // Mailbox: "tell Claude …", "check the mailbox". New replies from
+        // Claude and other AIs are fetched from GitHub in the background and
+        // told on the owner's next turn, so a mailbox read never delays a
+        // reply.
+        const { claudeNews, flagNews } = await this.takeMailNews();
+        this.refreshMailNews();
         // Share Flagstaff: "share the Flagstaff link with ChatGPT and Grok".
         const share = chatOnlyEvaluation ? null : shareIntent(message);
         if (share) {

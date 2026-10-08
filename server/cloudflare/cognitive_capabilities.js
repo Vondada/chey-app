@@ -22,7 +22,11 @@ export function inferTurnCapabilities(message, attachment = null) {
   const add = (...ids) => ids.forEach((id) => found.add(id));
 
   if (any(value, [
-    /\b(latest|current|today|tonight|this week|right now|recent|news|online)\b/,
+    /\b(latest|current|recent|news|online)\b/,
+    // "Today"/"tonight" alone is personal chat ("how are you doing today?");
+    // it means a lookup only next to something that changes in the world.
+    /\b(today|tonight|this week|right now)\b[^.?!]{0,60}\b(weather|forecast|news|score|game|price|happen|event|open|closed|traffic|release|announce|election|stock|market|rate|playing|showing)/,
+    /\b(weather|forecast|news|score|game|price|happen|event|open|closed|traffic|release|announce|election|stock|market|rate|playing|showing)\w*\b[^.?!]{0,60}\b(today|tonight|this week|right now)\b/,
     /\b(search|look up|find online|research|source|citation|verify|fact[- ]?check)\b/,
     /\bwhat happened\b/,
   ])) add('web_research');
