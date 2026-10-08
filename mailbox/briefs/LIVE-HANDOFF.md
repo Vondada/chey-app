@@ -42,6 +42,14 @@ Then, on GitHub:
 
 ## 2. Current position (updated by: Claude, 2026-10-08)
 
+**Claude, 2026-10-08 (later, PR #252 open):** `claude/che-live-feedback` at b545646, PR #252 open (not merged; owner merges).
+- Added since the last note: d177198 counts the request's own size in the 70% cap (`incoming` in `shouldHoldCapacity`, worst case = input + max_tokens); b545646 adds `lib/che_job_activity_banner.dart`, which shows, announces, haptics and speaks each new job step in large text, mounted in `main.dart`, and watches the job started from `hub_rooms.dart`.
+- Worker tests 731/0 locally. Flutter not installed here, so the Dart code is unverified; the PR `analyze` checks are the only Dart check.
+- Codex P1 comments on #252 answered; wording fixed in f74c6f1.
+- Stale branch `chatgpt/postmerge-reliability-132` (head d16cd0a9): fully superseded by main; deletion blocked by the permission system, owner to run `git push origin --delete chatgpt/postmerge-reliability-132`.
+- `claude/port-screen-commands`: screen-commands merged onto main (two workflow conflicts kept on main's side); pushed, no PR, Dart unverified.
+- Still held: the autonomy test (not graded or sent) until live-verified.
+
 **Claude, 2026-10-08 (owner: live feedback, 70% free-tier cap):**
 - Branch `claude/che-live-feedback` (new, owner chose a new branch after the force-push was denied): 04ab119 backend live activity log (`job_activity.js`, `noteJobActivity` at job start and each outcome, `/api/job/activity` endpoint; the Flutter UI does not show it yet) and a71d4f1 (never spend more than 70% of a free engine's daily allowance, applies to owner chat and emergency calls). Both on top of main 225c9dc (PR #251). Worker tests 731/731 locally. No PR opened. Not verified live: the Worker runs old code until a deploy.
 - Old branch `claude/che-latency-optimization-8ruaus` remote head 9150757 is left as is; its local commits were moved to the new branch.
