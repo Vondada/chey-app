@@ -47,7 +47,7 @@ import { sanitizeOwnerText } from './che_errors.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
-import { inspectRepositoryContext, prepareSelfUpdate, recordLesson, recoveryRequestIntent } from './self_development.js';
+import { definitionAnswer, inspectRepositoryContext, prepareSelfUpdate, recordLesson, recoveryRequestIntent } from './self_development.js';
 import { cachedCodeIndex } from './code_index.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
@@ -3646,7 +3646,9 @@ export class CheState extends DurableObject {
           text: String(item.text || '').slice(0, 500),
         }));
 
-      const answer = await this.env.AI.run(this.env.CHE_STRONG_MODEL || STRONG_MODEL, {
+      // A definition the index already holds is answered directly, not guessed.
+      const directAnswer = definitionAnswer(incoming, repoGrounding);
+      const answer = directAnswer ? { response: directAnswer } : await this.env.AI.run(this.env.CHE_STRONG_MODEL || STRONG_MODEL, {
         messages: [
           {
             role: 'system',

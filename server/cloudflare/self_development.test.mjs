@@ -1279,3 +1279,11 @@ test('grounding finds an unquoted function by name with its body, and shows name
   assert.equal(q5.named_files[0].path, 'server/cloudflare/self_skills.js');
   assert.match(q5.named_files[0].text, /normalizeSkills/);
 });
+
+test('a named definition the index holds is answered directly, with its real path and line', async () => {
+  const { definitionAnswer } = await import('./self_development.js');
+  const grounding = { exact_matches: [{ kind: 'definition', path: 'server/cloudflare/worker.js', line: 1017, text: 'export async function publicResearch(query, fetcher = fetch) {' }] };
+  assert.equal(definitionAnswer('Round 4, Q2 of 6. In Vondada/chey-app on main, which file defines the function publicResearch? Give the exact path only.', grounding), 'server/cloudflare/worker.js defines publicResearch (line 1017).');
+  assert.equal(definitionAnswer('what is the default limit of search?', grounding), '');
+  assert.equal(definitionAnswer('which file defines the function otherThing?', grounding), '');
+});
