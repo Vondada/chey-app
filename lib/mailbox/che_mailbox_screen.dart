@@ -625,9 +625,14 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
 
   Widget _keysTab() {
     final query = _keyQuery.trim().toLowerCase();
+    // YouTube connects through Connect YouTube above, never a pasted key.
+    final keyProviders = _providers
+        .where((provider) =>
+            !'${provider['name'] ?? ''}'.toLowerCase().contains('youtube'))
+        .toList(growable: false);
     final providers = query.isEmpty
-        ? _providers
-        : _providers
+        ? keyProviders
+        : keyProviders
             .where((provider) =>
                 '${provider['name'] ?? ''}'.toLowerCase().contains(query))
             .toList(growable: false);
