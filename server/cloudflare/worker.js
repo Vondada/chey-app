@@ -54,6 +54,7 @@ import { applyCorrections, correctionsContext, detectCorrection, learnCorrection
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { webAppPage } from './web_app.js';
+import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachmentText, condenseSkills, loadLearnedSkills, READ_FOR_SKILLS, saveLearnedSkills, speakLearned, speakSkillList } from './self_skills.js';
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { changeHistoryIntent, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
@@ -6279,6 +6280,26 @@ export class CheState extends DurableObject {
           const batched = await this.batchStudies();
           if (batched) return ndjsonReply(batched, { source: 'che_topic_study', batch: true });
         }
+        // "Learn this" with a document or screenshot, or "learn this skill: …":
+        // CHE reads it, keeps the skills it describes, and follows them.
+        const learnSkill = ownerDevice && !chatOnlyEvaluation ? learnSkillIntent(message, Boolean(body.attachment)) : null;
+        if (learnSkill) {
+          const sourceName = learnSkill.source === 'text' ? 'what you told me' : String(body.attachment?.name || 'your attachment').slice(0, 120);
+          let sourceText = learnSkill.source === 'text' ? learnSkill.text : attachmentText(body.attachment);
+          if (!sourceText && learnSkill.source === 'attachment') {
+            const read = await optionalMultimodal(this.env, body.attachment, READ_FOR_SKILLS).catch((error) => ({ error: String(error?.message || error) }));
+            if (!read?.summary) {
+              return ndjsonReply(`I could not read ${sourceName}, sir${read?.error ? `: ${read.error}` : ''}. I did not learn anything from it. Paste the words and say "learn this skill:" before them, and I will learn from the text.`, { source: 'che_self_skills', ok: false });
+            }
+            sourceText = read.summary;
+          }
+          const learned = await condenseSkills(this.env, sourceText, sourceName, this.env.CHE_STRONG_MODEL || STRONG_MODEL);
+          if (learned.length) await saveLearnedSkills(this.ctx.storage, learned);
+          return ndjsonReply(speakLearned(learned, sourceName), { source: 'che_self_skills', ok: learned.length > 0, learned: learned.map((s) => s.name) });
+        }
+        if (ownerDevice && learnedSkillsIntent(message)) {
+          return ndjsonReply(speakSkillList(await loadLearnedSkills(this.ctx.storage)), { source: 'che_self_skills' });
+        }
         // "Publish the website" / "show me the website": the preview gate.
         // Builds and edits stay drafts until the owner says to publish.
         if (ownerDevice && !chatOnlyEvaluation && (sitePublishIntent(message) || sitePreviewIntent(message))) {
@@ -7459,6 +7480,8 @@ export class CheState extends DurableObject {
         const multimodal = body.attachment
           ? await optionalMultimodal(this.env, body.attachment, message)
           : null;
+        const learnedSkillList = await loadLearnedSkills(this.ctx.storage);
+        const learnedSkills = learnedSkillsContext(learnedSkillList, message);
 
         let imageGeneration = requestedCapabilities.includes('image_generation')
           ? await optionalMediaGeneration(this.env, 'image', message, vectorMemoryContext)
@@ -7823,6 +7846,7 @@ export class CheState extends DurableObject {
                 : multimodal?.error
                   ? `Multimodal status: ${multimodal.error} Do not pretend the attachment was analyzed.`
                   : 'No multimodal attachment analysis is available for this turn.',
+              learnedSkills || 'The owner has not taught you any skills yet.',
               panel.length
                 ? `Connected multi-model advisory panel: ${JSON.stringify(panel).slice(0, 24000)}`
                 : 'No external model-panel answers were available for this turn.',
@@ -7920,7 +7944,9 @@ export class CheState extends DurableObject {
             skillResults,
             memories: data.memories,
             remembered: rememberedContext,
-          }).replace(/POSTGRES \+ PGVECTOR RAG[\s\S]*?(?=\n(?:Office results|Plugin tool results|Owner memories))/, ''),
+          }).replace(/POSTGRES \+ PGVECTOR RAG[\s\S]*?(?=\n(?:Office results|Plugin tool results|Owner memories))/, '')
+            // Fast turns carry only the taught skills that fit this message.
+            + (learnedSkillList.length ? `\n${learnedSkillsContext(learnedSkillList, message, 2, { onlyFit: true })}` : ''),
           turns,
           message,
           cheContext,

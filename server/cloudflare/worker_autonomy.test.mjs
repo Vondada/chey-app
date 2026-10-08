@@ -1411,6 +1411,31 @@ test('"build me a website" → CHE writes, checks and hosts a real page; "change
   assert.match(await (await worker.fetch(new Request(url), env)).text(), /Open late/);
 });
 
+test('"learn this" with a document → CHE keeps the skills and uses them in later replies', async () => {
+  const saved = new Map();
+  const prompts = [];
+  const env = {
+    CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1',
+    AI: { run: async (_m, input) => {
+      const system = String(input.messages?.[0]?.content || '');
+      prompts.push(input.messages.map((m) => String(m.content)).join('\n'));
+      if (/turn a document the owner gave you into skills/.test(system)) {
+        return { response: '{"skills":[{"name":"Website reviews","when":"reviewing a website","steps":["Check the page on a phone first","Read every heading aloud"]}]}' };
+      }
+      return { response: 'ok' };
+    } },
+  };
+  const { chat } = await pairedChat(env, saved);
+  const deltaText = async (res) => (await res.text()).trim().split('\n').map((l) => JSON.parse(l)).filter((l) => l.type === 'delta').map((l) => l.delta).join('');
+  const doc = Buffer.from('# Website reviews\n- Check the page on a phone first\n- Read every heading aloud').toString('base64');
+  const text = await deltaText(await chat('Take these skills and apply them to yourself', { attachment: { name: 'reviews.md', media_type: 'document', base64: doc } }));
+  assert.match(text, /I learned one skill from reviews\.md, sir.*\n1\. Website reviews: use when reviewing a website/, text);
+  assert.match(await deltaText(await chat('What skills have you learned?')), /1\. Website reviews, from reviews\.md/);
+  prompts.length = 0;
+  await (await chat('Can you review my website for me?')).text();
+  assert.ok(prompts.some((p) => /SKILLS THE OWNER TAUGHT YOU[\s\S]*Read every heading aloud/.test(p)), 'the skill reaches her later replies');
+});
+
 test('a request to ADD a GitHub capability reaches the coding pipeline (no "vectorRecall before initialization" crash)', async () => {
   const saved = new Map();
   const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { const e = new Error('engines down'); e.category = 'temporary_cloud_unavailable'; throw e; } } };
