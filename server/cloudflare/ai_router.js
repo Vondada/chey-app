@@ -757,7 +757,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
     if (needs.local_only) return null;
     if (avoid.has('cloudflare')) { errors.push('cloudflare: skipped after an unusable answer'); return null; }
     if (env.AI && now >= cloudflareExhaustedUntil) {
-      if (!emergency && await isPastDailyBudget(env, usageStorage, 'cloudflare', now, { ownerChat, emergency })) {
+      if (await isPastDailyBudget(env, usageStorage, 'cloudflare', now, { ownerChat, emergency })) {
         errors.push('cloudflare: daily budget in reserve');
         return null;
       }
@@ -835,7 +835,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
         );
         continue;
       }
-      if (!emergency && await isPastDailyBudget(env, usageStorage, provider.id, now, { ownerChat, emergency })) {
+      if (await isPastDailyBudget(env, usageStorage, provider.id, now, { ownerChat, emergency })) {
         errors.push(`${provider.id}: daily budget in reserve`);
         continue;
       }

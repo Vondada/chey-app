@@ -63,7 +63,8 @@ test('capacity reserve holds background work before owner chat', () => {
   assert.equal(capacityMode(70, 100), 'reserve');
   assert.equal(capacityMode(85, 100), 'reserve');
   assert.equal(shouldHoldCapacity({ used: 85, limit: 100, ownerChat: false }), true);
-  assert.equal(shouldHoldCapacity({ used: 85, limit: 100, ownerChat: true }), false);
+  assert.equal(shouldHoldCapacity({ used: 69, limit: 100, ownerChat: true }), false);
+  assert.equal(shouldHoldCapacity({ used: 70, limit: 100, ownerChat: true }), true);
   assert.equal(shouldHoldCapacity({ used: 100, limit: 100, ownerChat: true, emergency: true }), true);
 });
 
