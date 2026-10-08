@@ -42,6 +42,8 @@ Then, on GitHub:
 
 ## 2. Current position (updated by: Claude, 2026-10-08)
 
+**Claude, 2026-10-08 (YouTube connection, PR #253 MERGED as f7921c0 with [worker-deploy]):** Squash-merged at head 8b2f4af (analyze green; Cloudflare check skipped per owner). Deploy run 37836179612 was queued at last check; result not yet confirmed. Tests 751/0. NOT verified: live Google sign-in, the deployed endpoints (sandbox egress returns 403 for chey-app.henryjavoni.workers.dev), and a real upload. OWNER ACTIONS: (1) Cloudflare Worker `chey-app` secrets: CHE_YOUTUBE_CLIENT_ID, CHE_YOUTUBE_CLIENT_SECRET (from the Google OAuth Web client), CHE_OAUTH_SECRET (32+ random characters). (2) Google OAuth client: Authorized redirect URI exactly https://chey-app.henryjavoni.workers.dev/api/youtube/callback; YouTube Data API v3 enabled; test users valid. Next: after the owner sets secrets, read /api/youtube/status, connect, check, do one unlisted test upload, disconnect. Flutter Keys card is not built into an IPA yet.
+
 **Claude, 2026-10-08 (later, PR #252 open):** `claude/che-live-feedback` at b545646, PR #252 open (not merged; owner merges).
 - Added since the last note: d177198 counts the request's own size in the 70% cap (`incoming` in `shouldHoldCapacity`, worst case = input + max_tokens); b545646 adds `lib/che_job_activity_banner.dart`, which shows, announces, haptics and speaks each new job step in large text, mounted in `main.dart`, and watches the job started from `hub_rooms.dart`.
 - Worker tests 731/0 locally. Flutter not installed here, so the Dart code is unverified; the PR `analyze` checks are the only Dart check.
