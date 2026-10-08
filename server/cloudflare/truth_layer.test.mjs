@@ -453,3 +453,20 @@ test('grounded-fact guard: invented files, foreign PR links and unknown job ids 
   const real = guardGroundedFacts('It lives in server/cloudflare/worker.js and objective_graph.js. See https://github.com/Vondada/chey-app/pull/203. It runs on Node.js.', { paths, repo: 'Vondada/chey-app' });
   assert.equal(real.removed.length, 0);
 });
+
+test('quoted code that is not in the repository is removed (live test Q3 invented a Promise.all line)', async () => {
+  const { guardGroundedFacts } = await import('./truth_layer.js');
+  const repo = 'const results = await Promise.allSettled(engines.map(lookup));\nexport async function publicResearch(query) {';
+  const codeIncludes = (t) => repo.toLowerCase().includes(String(t).toLowerCase());
+  const invented = 'It queries two engines at the same time. The line is:\n```js\nconst [searchResult, knowledgeResult] = await Promise.all([searchEngine(query), knowledgeEngine(query)]);\n```\nIt calls `searchEngine` first.';
+  const out = guardGroundedFacts(invented, { paths: ['server/cloudflare/worker.js'], codeIncludes });
+  assert.doesNotMatch(out.text, /searchResult|searchEngine/);
+  assert.ok(out.removed.some((r) => r.rule === 'unverified_code'));
+  const real = guardGroundedFacts('The line is:\n```js\nconst results = await Promise.allSettled(engines.map(lookup));\n```\nSee `publicResearch`.', { paths: ['server/cloudflare/worker.js'], codeIncludes });
+  assert.equal(real.removed.length, 0);
+  assert.match(real.text, /allSettled/);
+  // A block of only short invented statements is checked too (Codex on #247).
+  const short = guardGroundedFacts('Like this:\n```js\nhack();\nship();\n}\n```\nDone.', { paths: [], codeIncludes });
+  assert.doesNotMatch(short.text, /hack|ship/);
+  assert.ok(short.removed.some((r) => r.rule === 'unverified_code'));
+});

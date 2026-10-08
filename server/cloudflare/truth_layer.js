@@ -284,7 +284,26 @@ export function guardOwnerReply(reply, state, ctx = {}) {
  * link to another repository, or a job id CHE does not hold is removed, and
  * so is any "I verified it" sentence in a reply that needed such removal.
  */
-export function guardGroundedFacts(reply, { paths = [], repo = '', jobIds = [] } = {}) {
+// Quoted code must exist in the repository. `codeIncludes(text)` answers
+// whether the exact text appears anywhere in the pinned commit; without it
+// code quotes are not checked.
+function stripUnverifiedCode(reply, codeIncludes, removed) {
+  if (typeof codeIncludes !== 'function') return reply;
+  return String(reply || '').replace(/```[^\n]*\n([\s\S]*?)```/g, (block, body) => {
+    // Every line with a real word is checked, short statements included;
+    // lone braces, blank lines and "..." are not evidence either way.
+    const lines = body.split('\n').map((l) => l.trim()).filter((l) => /[A-Za-z_$][\w$]{2,}/.test(l) && !/^(?:\/\/\s*)?\.\.\.$/.test(l));
+    const missing = lines.find((l) => !codeIncludes(l));
+    if (!missing) return block;
+    removed.push({ rule: 'unverified_code', sentence: missing.slice(0, 200) });
+    return '';
+  });
+}
+
+const CODE_SPAN = /`([^`\n]{3,200})`/g;
+const looksLikeCode = (span) => /[(){};=]|=>/.test(span) || /^[a-z]+[A-Z][A-Za-z0-9]*$|^[A-Za-z]+_[A-Za-z0-9_]+$/.test(span);
+
+export function guardGroundedFacts(reply, { paths = [], repo = '', jobIds = [], codeIncludes = null } = {}) {
   const known = new Set(paths);
   const basenames = new Set(paths.map((p) => p.split('/').pop()));
   const ids = new Set(jobIds.map(String));
@@ -296,14 +315,21 @@ export function guardGroundedFacts(reply, { paths = [], repo = '', jobIds = [] }
       if (hit.includes('/') ? !known.has(hit) : !basenames.has(hit)) return `unknown_file:${hit}`;
     }
     for (const m of s.matchAll(/github\.com\/([\w.\/-]+?)\/(?:pull|issues)\/\d+/gi)) if (!repo || m[1].toLowerCase() !== repo.toLowerCase()) return `foreign_pr:${m[1]}`;
+    if (typeof codeIncludes === 'function') {
+      for (const m of s.matchAll(CODE_SPAN)) {
+        const span = m[1].trim();
+        if (looksLikeCode(span) && !paths.includes(span) && !codeIncludes(span)) return `unverified_code:${span.slice(0, 80)}`;
+      }
+    }
     const job = /\bjob(?:\s+id)?\s*[:#]?\s*(?:under\s+id\s*[:#]?\s*)?([A-Za-z0-9][\w-]{7,})\b/i.exec(s);
     if (job && /\d/.test(job[1]) && !ids.has(job[1])) return `unknown_job:${job[1]}`;
     return '';
   };
+  reply = stripUnverifiedCode(reply, codeIncludes, removed);
   const parts = splitSentences(reply);
   const kept = [];
   for (const sentence of parts) {
-    const why = paths.length || repo || jobIds.length ? badFact(sentence) : '';
+    const why = paths.length || repo || jobIds.length || codeIncludes ? badFact(sentence) : '';
     if (why) { removed.push({ rule: why, sentence: sentence.trim() }); continue; }
     kept.push(sentence);
   }
