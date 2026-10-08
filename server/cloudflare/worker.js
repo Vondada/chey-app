@@ -9270,7 +9270,7 @@ export class CheState extends DurableObject {
       noteJobActivity(job, outcome.error
         ? `Problem: ${outcome.error}${outcome.status === 'queued' ? ' Trying again.' : ''}`
         : outcome.status === 'complete'
-          ? 'Finished and checked the result.'
+          ? 'Finished. Result received.'
           : outcome.status === 'queued' && outcome.step_index
             ? `Step ${outcome.step_index} done. Moving to the next step.`
             : 'Result received.');
