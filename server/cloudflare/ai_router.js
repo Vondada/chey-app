@@ -65,47 +65,56 @@ export async function discoverKeylessModels(fetcher = fetch, { force = false, st
       for (const [id, pick] of Object.entries(saved || {})) keylessModelCache.set(id, pick);
     } catch (_) {}
   }
-  const prefer = [/deepseek/i, /gemini/i, /gemma/i, /mistral|nemo/i, /qwen/i, /llama/i, /gpt/i];
-  // Keyless engines can be switched off, but the keyed model check below
-  // still runs so CHE never calls a model her own keys no longer offer.
-  for (const engine of keylessOff ? [] : KEYLESS_POOL) {
-    if (!engine.modelsUrl) continue;
-    try {
-      const response = await fetcher(engine.modelsUrl, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(4000) });
-      if (!response.ok) continue;
-      const data = await response.json();
-      const ids = (Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [])
-        .map((m) => String(m?.id || m?.name || m || ''))
-        .filter((id) => id && !/embed|whisper|tts|image|vision-only|moderation/i.test(id));
-      if (!ids.length) continue;
-      const ranked = [...ids].sort((a, b) => {
-        const ra = prefer.findIndex((re) => re.test(a));
-        const rb = prefer.findIndex((re) => re.test(b));
-        return (ra < 0 ? 99 : ra) - (rb < 0 ? 99 : rb);
-      });
-      const fast = ranked.find((id) => /flash|lite|nano|mini|small|nemo/i.test(id)) || ranked[0];
-      keylessModelCache.set(engine.id, { fast, strong: ranked[0], models: ids.slice(0, 40), at: now });
-    } catch (_) { /* leave the old pick in place */ }
+  // Model lists come from the network; with a saved list already loaded
+  // they refresh in the background so no reply waits on them.
+  const refresh = (async () => {
+    const prefer = [/deepseek/i, /gemini/i, /gemma/i, /mistral|nemo/i, /qwen/i, /llama/i, /gpt/i];
+    // Keyless engines can be switched off, but the keyed model check below
+    // still runs so CHE never calls a model her own keys no longer offer.
+    await Promise.all((keylessOff ? [] : KEYLESS_POOL).map(async (engine) => {
+      if (!engine.modelsUrl) return;
+      try {
+        const response = await fetcher(engine.modelsUrl, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(4000) });
+        if (!response.ok) return;
+        const data = await response.json();
+        const ids = (Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [])
+          .map((m) => String(m?.id || m?.name || m || ''))
+          .filter((id) => id && !/embed|whisper|tts|image|vision-only|moderation/i.test(id));
+        if (!ids.length) return;
+        const ranked = [...ids].sort((a, b) => {
+          const ra = prefer.findIndex((re) => re.test(a));
+          const rb = prefer.findIndex((re) => re.test(b));
+          return (ra < 0 ? 99 : ra) - (rb < 0 ? 99 : rb);
+        });
+        const fast = ranked.find((id) => /flash|lite|nano|mini|small|nemo/i.test(id)) || ranked[0];
+        keylessModelCache.set(engine.id, { fast, strong: ranked[0], models: ids.slice(0, 40), at: now });
+      } catch (_) { /* leave the old pick in place */ }
+    }));
+    // Which models Groq and Gemini offer right now (with the owner's free keys),
+    // so the extra per-model batons only include models that still exist.
+    await Promise.all([
+      ['groq', 'https://api.groq.com/openai/v1/models', 'GROQ_API_KEY'],
+      ['gemini', 'https://generativelanguage.googleapis.com/v1beta/openai/models', 'GEMINI_API_KEY'],
+    ].map(async ([base, url, keyName]) => {
+      const key = env?.[keyName];
+      if (!key) return;
+      try {
+        const response = await fetcher(url, { headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' }, signal: AbortSignal.timeout(4000) });
+        if (!response.ok) return;
+        const data = await response.json();
+        const models = (Array.isArray(data?.data) ? data.data : []).map((m) => String(m?.id || '').replace(/^models\//, '')).filter(Boolean);
+        if (models.length) keylessModelCache.set(`avail:${base}`, { models, at: now });
+      } catch (_) {}
+    }));
+    if (storage?.put) {
+      try { await storage.put('keyless_models', Object.fromEntries(keylessModelCache)); } catch (_) {}
+    }
+  })();
+  if (!force && keylessModelCache.size) {
+    refresh.catch(() => {});
+    return [...keylessModelCache.entries()];
   }
-  // Which models Groq and Gemini offer right now (with the owner's free keys),
-  // so the extra per-model batons only include models that still exist.
-  for (const [base, url, keyName] of [
-    ['groq', 'https://api.groq.com/openai/v1/models', 'GROQ_API_KEY'],
-    ['gemini', 'https://generativelanguage.googleapis.com/v1beta/openai/models', 'GEMINI_API_KEY'],
-  ]) {
-    const key = env?.[keyName];
-    if (!key) continue;
-    try {
-      const response = await fetcher(url, { headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' }, signal: AbortSignal.timeout(4000) });
-      if (!response.ok) continue;
-      const data = await response.json();
-      const models = (Array.isArray(data?.data) ? data.data : []).map((m) => String(m?.id || '').replace(/^models\//, '')).filter(Boolean);
-      if (models.length) keylessModelCache.set(`avail:${base}`, { models, at: now });
-    } catch (_) {}
-  }
-  if (storage?.put) {
-    try { await storage.put('keyless_models', Object.fromEntries(keylessModelCache)); } catch (_) {}
-  }
+  await refresh;
   return [...keylessModelCache.entries()];
 }
 

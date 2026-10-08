@@ -389,6 +389,9 @@ extension _CheHomeMicrophone on _CHEHomeState {
           // OPEN CONVERSATION MODE. CHE is already awake, so every sentence
           // is treated as a command — no wake word required per turn.
           // ----------------------------------------------------------------
+          // The turn was already sent (quick end of turn): a late final
+          // result from the stopped recognizer must not refill the composer.
+          if (_autoSentCurrentTurn) return;
           var spokenWords = rawWords;
 
           // If the owner still says "Chay" out of habit before a command,
@@ -440,6 +443,42 @@ extension _CheHomeMicrophone on _CHEHomeState {
             text: spokenWords,
             selection: TextSelection.collapsed(offset: spokenWords.length),
           );
+
+          // Quick end of turn: a finished-sounding sentence followed by a
+          // short silence is sent without waiting out the long pauseFor
+          // window, which stays the fallback for mid-thought pauses. Stopping
+          // the recognizer delivers its final result to the path below.
+          _quickEndTimer?.cancel();
+          if (!result.finalResult &&
+              !_autoSentCurrentTurn &&
+              !_isSending &&
+              cheSoundsComplete(spokenWords)) {
+            _quickEndTimer = Timer(cheQuickEndOfTurn, () async {
+              if (!mounted || _autoSentCurrentTurn || _isSending || !speech.isListening) return;
+              final heard = controller.text.trim();
+              if (heard.isEmpty) return;
+              debugPrint('CHE voice: quick end of turn');
+              // Commit the turn before stopping, so the recognizer's
+              // "done" status does not restart the mic and no later result
+              // can replace the words being sent.
+              _autoSentCurrentTurn = true;
+              _heldSpeech = '';
+              _heldSpeechRestarts = 0;
+              _localVoice.goThinking();
+              await _localVoice.runMicOp(() async {
+                await speech.stop();
+              });
+              if (!mounted) return;
+              _set(() {
+                isListening = false;
+                controller.value = TextEditingValue(
+                  text: heard,
+                  selection: TextSelection.collapsed(offset: heard.length),
+                );
+              });
+              await sendMessage(fromVoice: true);
+            });
+          }
 
           // He trailed off ("um", "and", "so...") — he is still thinking, not
           // finished. Keep the turn open and keep listening instead of sending.

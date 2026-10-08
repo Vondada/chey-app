@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { checkHtml, extractHtml, lastSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, writeSite } from './site_builder.js';
+import { checkHtml, extractHtml, lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 
 const GOOD = '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Fade Kings Barbershop</title><style>body{margin:0}</style></head><body><header><h1>Fade Kings</h1></header><main><section><p>Walk-ins welcome.</p><img src="data:image/png;base64,AA" alt="Shop chair"></section></main><footer>Open daily</footer><script>document.body.dataset.ok="1"</script></body></html>';
 
@@ -48,7 +48,7 @@ test('sites are stored, versioned on edit, and served sandboxed with no network 
   const storage = memory();
   const first = await saveSite(storage, { brief: 'barbershop', html: GOOD });
   assert.equal(first.title, 'Fade Kings Barbershop');
-  const edited = await saveSite(storage, { id: first.id, html: GOOD.replace('Open daily', 'Open late'), change: 'open late' });
+  const edited = await saveSite(storage, { id: first.id, html: GOOD.replace('Open daily', 'Open late'), change: 'open late', publish: true });
   assert.equal(edited.versions, 2);
   assert.equal((await lastSite(storage)).id, first.id);
   const res = await serveSite(new Request(`https://che.example/site/${first.id}`), storage);
@@ -83,9 +83,47 @@ test('large stored pages are never truncated during edit', async () => {
 
 test('hosted sites cannot open popups or navigate away', async () => {
   const storage = memory();
-  const first = await saveSite(storage, { brief: 'barbershop', html: GOOD });
+  const first = await saveSite(storage, { brief: 'barbershop', html: GOOD, publish: true });
   const res = await serveSite(new Request(`https://che.example/site/${first.id}`), storage);
   const csp = res.headers.get('Content-Security-Policy');
   assert.doesNotMatch(csp, /allow-popups/);
   assert.match(csp, /navigate-to 'none'/);
+});
+
+test('builds stay a preview until the owner says publish', async () => {
+  const storage = memory();
+  const draft = await saveSite(storage, { brief: 'barbershop', html: GOOD });
+  assert.equal(draft.html, '');
+  assert.equal((await serveSite(new Request(`https://che.example/site/${draft.id}`), storage)).status, 404);
+  const preview = await serveSite(new Request(`https://che.example/site/${draft.id}/preview`), storage);
+  assert.equal(preview.status, 200);
+  assert.equal(preview.headers.get('X-Robots-Tag'), 'noindex');
+  assert.match(preview.headers.get('Content-Security-Policy'), /connect-src 'none'/);
+  assert.match(speakSiteResult({ record: draft, url: 'u', problems: [], edited: false }), /preview only\. Nothing is published yet/);
+
+  const live = await publishSite(storage, await lastSite(storage));
+  assert.equal(live.draft_html, '');
+  assert.match(await (await serveSite(new Request(`https://che.example/site/${draft.id}`), storage)).text(), /Open daily/);
+  assert.equal(await publishSite(storage, live), null);
+
+  // An edit of a live site is a new draft: the live page is untouched.
+  const edit = await saveSite(storage, { id: draft.id, html: GOOD.replace('Open daily', 'Open late'), change: 'late' });
+  assert.match(workingHtml(edit), /Open late/);
+  assert.match(await (await serveSite(new Request(`https://che.example/site/${draft.id}`), storage)).text(), /Open daily/);
+  assert.match(await (await serveSite(new Request(`https://che.example/site/${draft.id}/preview`), storage)).text(), /Open late/);
+});
+
+test('publish and preview voice commands', () => {
+  for (const said of ['publish the website', 'Che, publish my site.', 'okay, put the website live', 'looks good publish the site now', 'go live with the website']) {
+    assert.ok(sitePublishIntent(said), said);
+  }
+  for (const said of ['publish it', 'publish the video', 'publish my youtube video', 'change the website: make it dark']) {
+    assert.equal(sitePublishIntent(said), false, said);
+  }
+  for (const said of ['show me the website', 'show me the preview', 'let me see the site', 'Che, can you show me the website preview?']) {
+    assert.ok(sitePreviewIntent(said), said);
+  }
+  assert.equal(sitePreviewIntent('show me the weather'), false);
+  assert.ok(wantsImmediatePublish('build me a website for my barbershop and publish it'));
+  assert.equal(wantsImmediatePublish('build me a website about publishing'), false);
 });

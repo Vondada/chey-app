@@ -54,7 +54,8 @@ import { applyCorrections, correctionsContext, detectCorrection, learnCorrection
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { webAppPage } from './web_app.js';
-import { lastSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, siteUrl, speakSiteResult, writeSite } from './site_builder.js';
+import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachmentText, condenseSkills, loadLearnedSkills, READ_FOR_SKILLS, redactSensitive, saveLearnedSkills, speakLearned, speakSkillList } from './self_skills.js';
+import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { changeHistoryIntent, guardGroundedFacts, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
@@ -1013,27 +1014,31 @@ async function connectorResearch(env, query) {
 
 // These sources provide reference facts, not exhaustive live web coverage.
 export async function publicResearch(query, fetcher = fetch) {
+  // Both engines run at once with a short timeout; Wikipedia wins when both
+  // answer. Sequential 15-second waits used to stall replies.
+  const q = encodeURIComponent(String(query || '').slice(0, 1000));
+  const lookup = async (engine) => {
+    const url = engine === 'wikipedia'
+      ? `https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${q}&gsrlimit=3&prop=extracts|info&exintro=1&explaintext=1&inprop=url&format=json`
+      : `https://api.duckduckgo.com/?q=${q}&format=json&no_html=1&skip_disambig=1`;
+    const response = await fetcher(url, { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    const pages = Object.values(data?.query?.pages || {});
+    const summary = engine === 'wikipedia'
+      ? pages.filter(p => p.extract?.trim()).map(p => `${p.title}: ${p.extract}`).join('\n').slice(0, 10000)
+      : String(data.AbstractText || data.Answer || (data.RelatedTopics || []).map(t => t.Text || '').filter(Boolean).slice(0, 5).join('\n')).slice(0, 10000);
+    if (!summary.trim()) throw new Error('No reference result');
+    const sources = engine === 'wikipedia' ? pages.map(p => p.fullurl).filter(Boolean) : [data.AbstractURL, ...(data.RelatedTopics || []).map(t => t.FirstURL)].filter(Boolean).slice(0, 8);
+    return { summary, sources, engine, limitation: 'Reference summaries; not exhaustive or real-time news.' };
+  };
+  const engines = ['wikipedia', 'duckduckgo'];
+  const results = await Promise.allSettled(engines.map(lookup));
   const errors = [];
-  for (const engine of ['wikipedia', 'duckduckgo']) {
-    try {
-      const q = encodeURIComponent(String(query || '').slice(0, 1000));
-      const url = engine === 'wikipedia'
-        ? `https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${q}&gsrlimit=3&prop=extracts|info&exintro=1&explaintext=1&inprop=url&format=json`
-        : `https://api.duckduckgo.com/?q=${q}&format=json&no_html=1&skip_disambig=1`;
-      const response = await fetcher(url, { signal: AbortSignal.timeout(15000) });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      const pages = Object.values(data?.query?.pages || {});
-      const summary = engine === 'wikipedia'
-        ? pages.filter(p => p.extract?.trim()).map(p => `${p.title}: ${p.extract}`).join('\n').slice(0, 10000)
-        : String(data.AbstractText || data.Answer || (data.RelatedTopics || []).map(t => t.Text || '').filter(Boolean).slice(0, 5).join('\n')).slice(0, 10000);
-      if (!summary.trim()) throw new Error('No reference result');
-      const sources = engine === 'wikipedia' ? pages.map(p => p.fullurl).filter(Boolean) : [data.AbstractURL, ...(data.RelatedTopics || []).map(t => t.FirstURL)].filter(Boolean).slice(0, 8);
-      return { summary, sources, engine, limitation: 'Reference summaries; not exhaustive or real-time news.' };
-    } catch (error) {
-      errors.push(`${engine}: ${error.message}`);
-      console.log('CHE research error:', engine, error.message);
-    }
+  for (const [i, result] of results.entries()) {
+    if (result.status === 'fulfilled') return result.value;
+    errors.push(`${engines[i]}: ${result.reason?.message || result.reason}`);
+    console.log('CHE research error:', engines[i], result.reason?.message || result.reason);
   }
   return { error: `All research engines failed (${errors.join(' | ')}).` };
 }
@@ -2925,6 +2930,41 @@ export class CheState extends DurableObject {
     // Every text model call goes through CHE's free-engine router. Persist
     // per-engine daily usage estimates in this owner's Durable Object.
     this.env = routedEnv(env, fetch, state.storage);
+  }
+
+  // Mail news found by the last background check, delivered once.
+  async takeMailNews() {
+    let pending = null;
+    try {
+      pending = await this.ctx.storage.get('mail_news_pending');
+      if (pending) await this.ctx.storage.delete('mail_news_pending');
+    } catch (_) { /* nothing pending */ }
+    if (!pending) return { claudeNews: [], flagNews: [] };
+    return { claudeNews: pending.claude || [], flagNews: pending.flag || [] };
+  }
+
+  // Background GitHub check for new mailbox replies (never awaited by chat).
+  refreshMailNews() {
+    if (this.mailRefresh) return this.mailRefresh;
+    this.mailRefresh = (async () => {
+      const claude = await unseenReplies(this.env, this.ctx.storage, 'claude').catch(() => []);
+      let flag = [];
+      try {
+        const seen = String((await this.ctx.storage.get('flag_seen_id')) || '');
+        const board = (await readWebMail(this.ctx.storage, 30, this.env)).filter((m) => m.from !== 'che');
+        const idx = seen ? board.findIndex((m) => m.id === seen) : -1;
+        const fresh = idx >= 0 ? board.slice(idx + 1) : (seen ? [] : board.slice(-3));
+        flag = fresh.filter((m) => !looksLikeAttack(m.text));
+        if (fresh.length) await this.ctx.storage.put('flag_seen_id', fresh[fresh.length - 1].id);
+      } catch (_) { /* next turn retries */ }
+      if (!claude.length && !flag.length) return;
+      const pending = (await this.ctx.storage.get('mail_news_pending')) || {};
+      await this.ctx.storage.put('mail_news_pending', {
+        claude: [...(pending.claude || []), ...claude].slice(-5),
+        flag: [...(pending.flag || []), ...flag].slice(-5),
+      });
+    })().catch(() => {}).finally(() => { this.mailRefresh = null; });
+    return this.mailRefresh;
   }
 
   async loadData() {
@@ -6284,25 +6324,71 @@ export class CheState extends DurableObject {
           const batched = await this.batchStudies();
           if (batched) return ndjsonReply(batched, { source: 'che_topic_study', batch: true });
         }
+        // "Learn this" with a document or screenshot, or "learn this skill: …":
+        // CHE reads it, keeps the skills it describes, and follows them.
+        const learnSkill = ownerDevice && !chatOnlyEvaluation ? learnSkillIntent(message, Boolean(body.attachment)) : null;
+        if (learnSkill) {
+          const sourceName = learnSkill.source === 'text' ? 'what you told me' : String(body.attachment?.name || 'your attachment').slice(0, 120);
+          let sourceText = learnSkill.source === 'text' ? learnSkill.text : attachmentText(body.attachment);
+          if (!sourceText && learnSkill.source === 'attachment') {
+            const read = await optionalMultimodal(this.env, body.attachment, READ_FOR_SKILLS).catch((error) => ({ error: String(error?.message || error) }));
+            if (!read?.summary) {
+              return ndjsonReply(`I could not read ${sourceName}, sir${read?.error ? `: ${read.error}` : ''}. I did not learn anything from it. Paste the words and say "learn this skill:" before them, and I will learn from the text.`, { source: 'che_self_skills', ok: false });
+            }
+            sourceText = read.summary;
+          }
+          const { removed: redacted } = redactSensitive(sourceText);
+          const learned = await condenseSkills(this.env, sourceText, sourceName, this.env.CHE_STRONG_MODEL || STRONG_MODEL);
+          const { saved, refused } = learned.length ? await saveLearnedSkills(this.ctx.storage, learned) : { saved: [], refused: [] };
+          return ndjsonReply(speakLearned(saved, sourceName, { refused, redacted }), { source: 'che_self_skills', ok: saved.length > 0, learned: saved.map((s) => s.name) });
+        }
+        if (ownerDevice && learnedSkillsIntent(message)) {
+          return ndjsonReply(speakSkillList(await loadLearnedSkills(this.ctx.storage)), { source: 'che_self_skills' });
+        }
+        // "Publish the website" / "show me the website": the preview gate.
+        // Builds and edits stay drafts until the owner says to publish.
+        if (ownerDevice && !chatOnlyEvaluation && (sitePublishIntent(message) || sitePreviewIntent(message))) {
+          const site = await lastSite(this.ctx.storage);
+          const origin = new URL(request.url).origin;
+          if (!site) return ndjsonReply('I have not built a website yet, sir. Say "build me a website for" and what it is for.', { source: 'che_site_builder', ok: false });
+          if (sitePublishIntent(message)) {
+            const published = await publishSite(this.ctx.storage, site);
+            if (!published) {
+              return ndjsonReply(site.html
+                ? `"${site.title}" is already published with no changes waiting, sir. It is live at ${siteUrl(origin, site.id)}.`
+                : `I have no draft of "${site.title}" to publish, sir. Say "change the website:" and what you want.`, { source: 'che_site_builder', ok: Boolean(site.html), site_id: site.id });
+            }
+            const url = siteUrl(origin, published.id);
+            return ndjsonReply(speakSitePublished(published, url), { source: 'che_site_builder', ok: true, site_id: published.id, media_url: url, media_type: 'page', published: true });
+          }
+          const draft = Boolean(site.draft_html);
+          const url = siteUrl(origin, site.id, { preview: true });
+          return ndjsonReply(draft
+            ? `Here is the preview of "${site.title}", sir. It is not published yet. Say "publish the website" to put it live, or "change the website:" and what you want different.`
+            : `Here is "${site.title}", sir. It is published and has no unpublished changes.`, { source: 'che_site_builder', ok: true, site_id: site.id, media_url: url, media_type: 'page', published: !draft });
+        }
         // "Build me a website for …" / "change the website: …": CHE writes a
-        // complete page, checks it, and hosts it on her own Worker.
+        // complete page, checks it, and keeps it as a preview until the owner
+        // says to publish ("…and publish it" publishes at once).
         const siteEdit = ownerDevice && !chatOnlyEvaluation ? siteEditIntent(message) : null;
         const siteEditTarget = siteEdit ? await lastSite(this.ctx.storage) : null;
         const siteBuild = ownerDevice && !chatOnlyEvaluation && !siteEditTarget ? siteBuildIntent(message) : null;
         if (siteBuild || siteEditTarget) {
           const model = this.env.CHE_STRONG_MODEL || STRONG_MODEL;
           const written = await writeSite(this.env, siteEditTarget
-            ? { previousHtml: siteEditTarget.html, change: siteEdit.change }
-            : { brief: siteBuild.brief }, model).catch((error) => ({ html: '', problems: [String(error?.message || error).slice(0, 200)] }));
+            ? { previousHtml: workingHtml(siteEditTarget), change: siteEdit.change.replace(/[,\s]+(?:and|then)\s+(?:publish|launch)\s+it\b.*$/i, '') }
+            : { brief: siteBuild.brief.replace(/[,\s]+(?:and|then)\s+(?:publish|launch)\s+it\b.*$/i, '') }, model).catch((error) => ({ html: '', problems: [String(error?.message || error).slice(0, 200)] }));
           if (!written.html) {
             return ndjsonReply(`I could not finish ${siteEditTarget ? 'that change to the site' : 'the site'}, sir: I did not get a complete page. Nothing was published${siteEditTarget ? ', and the current version is unchanged' : ''}. Ask me again and I will retry.`, { source: 'che_site_builder', ok: false });
           }
+          // A page that failed its checks is never published without a look.
+          const publish = wantsImmediatePublish(message) && !written.problems.length;
           const record = await saveSite(this.ctx.storage, siteEditTarget
-            ? { id: siteEditTarget.id, html: written.html, change: siteEdit.change }
-            : { brief: siteBuild.brief, html: written.html });
-          const url = siteUrl(new URL(request.url).origin, record.id);
-          return ndjsonReply(speakSiteResult({ record, url, problems: written.problems, edited: Boolean(siteEditTarget) }), {
-            source: 'che_site_builder', ok: true, site_id: record.id, media_url: url, media_type: 'page',
+            ? { id: siteEditTarget.id, html: written.html, change: siteEdit.change, publish }
+            : { brief: siteBuild.brief, html: written.html, publish });
+          const url = siteUrl(new URL(request.url).origin, record.id, { preview: !publish });
+          return ndjsonReply(speakSiteResult({ record, url, problems: written.problems, edited: Boolean(siteEditTarget), published: publish }), {
+            source: 'che_site_builder', ok: true, site_id: record.id, media_url: url, media_type: 'page', published: publish,
           });
         }
         // "List my devices" / "remove my lost iPhone": owner device control
@@ -6842,21 +6928,12 @@ export class CheState extends DurableObject {
           return ndjsonReply(`${fresh ? 'New ' : ''}Flagstaff 369 link, sir. Give it to any AI and it can read my mailbox and post to me, no account needed:\n${mailboxLink(origin, code)}\nAnyone with the link can read it, so I never put your private details there.${fresh ? ' The old link no longer works.' : ''}`, { source: 'che_flagstaff' });
         }
 
-        // Mailbox: "tell Claude …", "check the mailbox".
-        const claudeNews = await unseenReplies(this.env, this.ctx.storage, 'claude').catch(() => []);
-        // Any AI that posted to Flagstaff since CHE last told the owner.
-        const flagNews = await (async () => {
-          try {
-            const seen = String((await this.ctx.storage.get('flag_seen_id')) || '');
-            const board = (await readWebMail(this.ctx.storage, 30, this.env)).filter((m) => m.from !== 'che');
-            if (!board.length) return [];
-            const idx = seen ? board.findIndex((m) => m.id === seen) : -1;
-            const fresh = idx >= 0 ? board.slice(idx + 1) : (seen ? [] : board.slice(-3));
-            const safe = fresh.filter((m) => !looksLikeAttack(m.text));
-            if (fresh.length) await this.ctx.storage.put('flag_seen_id', fresh[fresh.length - 1].id);
-            return safe;
-          } catch (_) { return []; }
-        })();
+        // Mailbox: "tell Claude …", "check the mailbox". New replies from
+        // Claude and other AIs are fetched from GitHub in the background and
+        // told on the owner's next turn, so a mailbox read never delays a
+        // reply.
+        const { claudeNews, flagNews } = await this.takeMailNews();
+        this.refreshMailNews();
         // Share Flagstaff: "share the Flagstaff link with ChatGPT and Grok".
         const share = chatOnlyEvaluation ? null : shareIntent(message);
         if (share) {
@@ -7439,6 +7516,8 @@ export class CheState extends DurableObject {
         const multimodal = body.attachment
           ? await optionalMultimodal(this.env, body.attachment, message)
           : null;
+        const learnedSkillList = await loadLearnedSkills(this.ctx.storage);
+        const learnedSkills = learnedSkillsContext(learnedSkillList, message);
 
         let imageGeneration = requestedCapabilities.includes('image_generation')
           ? await optionalMediaGeneration(this.env, 'image', message, vectorMemoryContext)
@@ -7803,6 +7882,7 @@ export class CheState extends DurableObject {
                 : multimodal?.error
                   ? `Multimodal status: ${multimodal.error} Do not pretend the attachment was analyzed.`
                   : 'No multimodal attachment analysis is available for this turn.',
+              learnedSkills || 'The owner has not taught you any skills yet.',
               panel.length
                 ? `Connected multi-model advisory panel: ${JSON.stringify(panel).slice(0, 24000)}`
                 : 'No external model-panel answers were available for this turn.',
@@ -7900,7 +7980,9 @@ export class CheState extends DurableObject {
             skillResults,
             memories: data.memories,
             remembered: rememberedContext,
-          }).replace(/POSTGRES \+ PGVECTOR RAG[\s\S]*?(?=\n(?:Office results|Plugin tool results|Owner memories))/, ''),
+          }).replace(/POSTGRES \+ PGVECTOR RAG[\s\S]*?(?=\n(?:Office results|Plugin tool results|Owner memories))/, '')
+            // Fast turns carry only the taught skills that fit this message.
+            + (learnedSkillList.length ? `\n${learnedSkillsContext(learnedSkillList, message, 2, { onlyFit: true })}` : ''),
           turns,
           message,
           cheContext,

@@ -1386,16 +1386,54 @@ test('"build me a website" → CHE writes, checks and hosts a real page; "change
   };
   const built = await replyOf(await chat('Build me a website for my barbershop called Fade Kings'));
   assert.match(built.text, /Your site "Fade Kings" is built, sir\. It passed my checks/, built.text);
+  assert.match(built.text, /preview only\. Nothing is published yet/, built.text);
   assert.equal(built.done.media_type, 'page');
-  const url = built.done.media_url;
-  assert.match(url, /^https:\/\/che\.example\/site\/[a-f0-9]{20}$/);
-  const hosted = await worker.fetch(new Request(url), env);
-  assert.equal(hosted.status, 200);
-  assert.match(await hosted.text(), /Open daily/);
+  assert.equal(built.done.published, false);
+  const preview = built.done.media_url;
+  assert.match(preview, /^https:\/\/che\.example\/site\/[a-f0-9]{20}\/preview$/);
+  const url = preview.replace(/\/preview$/, '');
+  assert.match(await (await worker.fetch(new Request(preview), env)).text(), /Open daily/);
+  assert.equal((await worker.fetch(new Request(url), env)).status, 404, 'nothing is live before the owner says publish');
+
+  const live = await replyOf(await chat('Publish the website'));
+  assert.match(live.text, /Published, sir\. "Fade Kings" is live at/, live.text);
+  assert.equal(live.done.media_url, url);
+  assert.match(await (await worker.fetch(new Request(url), env)).text(), /Open daily/);
+
   const edited = await replyOf(await chat('change the website: say we are open late'));
-  assert.match(edited.text, /I updated "Fade Kings" \(version 2\)/, edited.text);
-  assert.equal(edited.done.media_url, url, 'same link after an edit');
+  assert.match(edited.text, /I made that change to "Fade Kings" \(version 2\)/, edited.text);
+  assert.equal(edited.done.media_url, preview, 'same link after an edit');
+  assert.match(await (await worker.fetch(new Request(preview), env)).text(), /Open late/);
+  assert.match(await (await worker.fetch(new Request(url), env)).text(), /Open daily/, 'live page unchanged until publish');
+  const shown = await replyOf(await chat('show me the website'));
+  assert.match(shown.text, /preview of "Fade Kings".*not published yet/, shown.text);
+  await chat('okay, publish the site');
   assert.match(await (await worker.fetch(new Request(url), env)).text(), /Open late/);
+});
+
+test('"learn this" with a document → CHE keeps the skills and uses them in later replies', async () => {
+  const saved = new Map();
+  const prompts = [];
+  const env = {
+    CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1',
+    AI: { run: async (_m, input) => {
+      const system = String(input.messages?.[0]?.content || '');
+      prompts.push(input.messages.map((m) => String(m.content)).join('\n'));
+      if (/turn a document the owner gave you into skills/.test(system)) {
+        return { response: '{"skills":[{"name":"Website reviews","when":"reviewing a website","steps":["Check the page on a phone first","Read every heading aloud"]}]}' };
+      }
+      return { response: 'ok' };
+    } },
+  };
+  const { chat } = await pairedChat(env, saved);
+  const deltaText = async (res) => (await res.text()).trim().split('\n').map((l) => JSON.parse(l)).filter((l) => l.type === 'delta').map((l) => l.delta).join('');
+  const doc = Buffer.from('# Website reviews\n- Check the page on a phone first\n- Read every heading aloud').toString('base64');
+  const text = await deltaText(await chat('Take these skills and apply them to yourself', { attachment: { name: 'reviews.md', media_type: 'document', base64: doc } }));
+  assert.match(text, /I learned one skill from reviews\.md, sir.*\n1\. Website reviews: use when reviewing a website/, text);
+  assert.match(await deltaText(await chat('What skills have you learned?')), /1\. Website reviews, from reviews\.md/);
+  prompts.length = 0;
+  await (await chat('Can you review my website for me?')).text();
+  assert.ok(prompts.some((p) => /SKILLS THE OWNER TAUGHT YOU[\s\S]*Read every heading aloud/.test(p)), 'the skill reaches her later replies');
 });
 
 test('a request to ADD a GitHub capability reaches the coding pipeline (no "vectorRecall before initialization" crash)', async () => {
