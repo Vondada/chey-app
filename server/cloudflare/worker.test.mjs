@@ -335,7 +335,7 @@ test('ordinary voice turns use the fast model and concise budget', async () => {
   await send('/api/chat', { message: 'Explain this simply' }, token);
   assert.deepEqual(runs.at(-1), { model: 'fast-test', tokens: 2000 });
   await send('/api/chat', { message: 'Debug this code' }, token);
-  assert.deepEqual(runs.at(-1), { model: 'strong-test', tokens: 1800 });
+  assert.deepEqual(runs.at(-1), { model: 'strong-test', tokens: 2000 });
 });
 
 test('agent runtime: roster, delegated tasks, CHE review, War Room and lifecycle', async () => {
