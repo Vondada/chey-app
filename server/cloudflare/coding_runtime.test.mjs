@@ -128,6 +128,15 @@ test('getStatus normalizes a completed result that still reports running', async
 });
 
 
+test('getStatus turns a running result that reports failed into failed', async () => {
+  const id = 'ocr-facefeed';
+  const value = Buffer.from(JSON.stringify({ session_id: id, status: 'failed', state: 'running', progress: 40 })).toString('base64');
+  const runtime = new CheCodingRuntime(env, { fetcher: async () => response(200, { content: value }) });
+  const out = await runtime.getStatus(id);
+  assert.equal(out.state, 'failed');
+  assert.notEqual(runtimeStateClass(out), 'complete');
+});
+
 test('running at numeric progress 100 uses canonical complete; partial and malformed progress stay active', async () => {
   const id = 'ocr-deadbeef';
   for (const [progress, state] of [[100, 'complete'], [110, 'complete'], [99, 'running'], ['100', 'running'], [null, 'running']]) {
