@@ -223,44 +223,56 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
     }
   }
 
-  /// One message as Messages-style bubbles: a long message becomes several
-  /// readable bubbles in order instead of one screen-filling block.
+  /// One message as iMessage-style bubbles: CHE on the right in her teal,
+  /// the other AI on the left in a dark grey. A long message becomes several
+  /// bubbles in order; the name and time sit above the first bubble only.
   Widget _message(Map m) {
     final fromChe = '${m['from']}' == 'che';
+    final who = fromChe ? 'CHE' : _nice('${m['from']}');
     final parts = cheSplitMessage('${m['text']}');
-    return Column(
-      crossAxisAlignment: fromChe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-      children: [for (var i = 0; i < parts.length; i++) _bubble(m, fromChe, parts[i], i, parts.length)],
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: fromChe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            child: Text('$who · ${_when(m['at'])}', style: CheType.caption),
+          ),
+          for (var i = 0; i < parts.length; i++) _bubble(m, fromChe, parts[i], i, parts.length),
+        ],
+      ),
     );
   }
 
   Widget _bubble(Map m, bool fromChe, String text, int index, int count) {
     final who = fromChe ? 'CHE' : _nice('${m['from']}');
     final part = count > 1 ? ', part ${index + 1} of $count' : '';
+    // Tail corner on the last bubble of a run, like Messages.
+    final last = index == count - 1;
+    const round = Radius.circular(18);
+    const tail = Radius.circular(4);
     return Semantics(
       label: index == 0 ? '$who said$part: $text' : 'Continued$part: $text',
       child: Align(
         alignment: fromChe ? Alignment.centerRight : Alignment.centerLeft,
         child: Container(
-          margin: EdgeInsets.only(top: index == 0 ? 8 : 2, bottom: 2),
-          padding: const EdgeInsets.all(10),
-          constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.82),
+          margin: EdgeInsets.only(top: index == 0 ? 0 : 2),
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+          constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.72),
           decoration: BoxDecoration(
-            color: fromChe ? CheColors.accent.withValues(alpha: 0.14) : CheColors.surface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: fromChe ? CheColors.accent.withValues(alpha: 0.4) : CheColors.stroke),
+            color: fromChe ? CheColors.accent : CheColors.surfaceHi,
+            borderRadius: BorderRadius.only(
+              topLeft: round,
+              topRight: round,
+              bottomLeft: fromChe || !last ? round : tail,
+              bottomRight: !fromChe || !last ? round : tail,
+            ),
           ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            if (index == 0) ...[
-              Row(mainAxisSize: MainAxisSize.min, children: [
-                _AiLogo(name: fromChe ? 'che' : '${m['from']}', size: 24),
-                const SizedBox(width: 7),
-                Flexible(child: Text('$who · ${_when(m['at'])}', style: CheType.caption)),
-              ]),
-              const SizedBox(height: 4),
-            ],
-            SelectableText(text, style: CheType.body),
-          ]),
+          child: SelectableText(
+            text,
+            style: CheType.body.copyWith(color: fromChe ? CheColors.bg : CheColors.text),
+          ),
         ),
       ),
     );

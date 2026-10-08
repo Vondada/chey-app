@@ -470,3 +470,18 @@ test('quoted code that is not in the repository is removed (live test Q3 invente
   assert.doesNotMatch(short.text, /hack|ship/);
   assert.ok(short.removed.some((r) => r.rule === 'unverified_code'));
 });
+
+test('grounded guard rejects a line citation that does not match the pinned file', async () => {
+  const { guardGroundedFacts } = await import('./truth_layer.js');
+  const paths = ['server/cloudflare/self_skills.js'];
+  const fileText = (p) => (p === paths[0] ? Array.from({ length: 140 }, (_, i) => (i === 61 ? 'export function normalizeSkills(raw, sourceName) {' : 'line ' + i)).join('\n') : null);
+  // Wrong line: normalizeSkills is defined on line 62, not 130.
+  const wrong = guardGroundedFacts('The file server/cloudflare/self_skills.js has a weakness at line 130 in normalizeSkills.', { paths, fileText });
+  assert.equal(wrong.text, '');
+  assert.match(wrong.removed[0].rule, /^wrong_line:server\/cloudflare\/self_skills\.js:130/);
+  // Line beyond the end of the file.
+  assert.equal(guardGroundedFacts('server/cloudflare/self_skills.js line 999 is empty.', { paths, fileText }).removed[0].rule, 'line_out_of_range:server/cloudflare/self_skills.js:999');
+  // Correct citation and a plain file mention both stay.
+  assert.match(guardGroundedFacts('normalizeSkills is at line 62 in server/cloudflare/self_skills.js.', { paths, fileText }).text, /line 62/);
+  assert.match(guardGroundedFacts('It lives in server/cloudflare/self_skills.js.', { paths, fileText }).text, /self_skills/);
+});
