@@ -62,6 +62,7 @@ import { webAppPage } from './web_app.js';
 import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachmentText, condenseSkills, loadLearnedSkills, READ_FOR_SKILLS, redactSensitive, saveLearnedSkills, speakLearned, speakSkillList } from './self_skills.js';
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { noteJobActivity } from './job_activity.js';
+import { PENDING_OWNER_ACTION_KEY, PENDING_OWNER_ACTION_MS, gateOwnerAction, isOwnerYes } from './owner_action_gate.js';
 import { changeHistoryIntent, guardGroundedFacts, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
@@ -6302,6 +6303,25 @@ export class CheState extends DurableObject {
           const esc = correction.heard.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           message = previousText.replace(new RegExp(`\\b${esc}\\b`, 'gi'), correction.meant);
         }
+        // Owner rule: money and delete/remove need an explicit yes. The hold is
+        // enforced here in code. A plain yes on the next turn releases exactly
+        // the held request, once; anything else replaces it.
+        let ownerGrant = {};
+        let heldAction = null;
+        try { heldAction = await this.ctx.storage.get(PENDING_OWNER_ACTION_KEY); } catch (_) { heldAction = null; }
+        if (heldAction) {
+          await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, null).catch(() => null);
+          if (isOwnerYes(message) && Date.now() - Number(heldAction.at || 0) < PENDING_OWNER_ACTION_MS) {
+            ownerGrant = { [heldAction.kind]: true };
+            message = String(heldAction.text || message);
+          }
+        }
+        const ownerGate = gateOwnerAction(message, ownerGrant);
+        if (!ownerGate.allowed) {
+          await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, { kind: ownerGate.kind, text: message, at: Date.now() }).catch(() => null);
+          return json({ message: ownerGate.ask, reply: ownerGate.ask, held_for_owner: true, owner_action_kind: ownerGate.kind, code_review_passed: false, owner_approval_required: true });
+        }
+
         // A spoken resource list is choosable only on the very next turn; any
         // other reply in between retires it, so "open number one" never maps
         // to an older list.

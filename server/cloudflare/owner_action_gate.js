@@ -51,3 +51,15 @@ export function gateAppAccess(appName, allowedApps = []) {
     ask: `You have not given me permission to use ${name} yet. Say yes to allow it, and I will open it.`,
   };
 }
+
+// A held request waits in Durable Object storage under this key until the owner
+// answers. Only a plain yes at the start of the next turn releases it.
+export const PENDING_OWNER_ACTION_KEY = 'che:pending_owner_action';
+export const PENDING_OWNER_ACTION_MS = 10 * 60 * 1000;
+
+const YES_PHRASES = new Set(['yes', 'yeah', 'yep', 'yup', 'sure', 'confirm', 'confirmed', 'go ahead', 'do it', 'yes go ahead', 'yes do it', 'please do it', 'yes please do it']);
+
+export function isOwnerYes(text) {
+  const t = String(text || '').toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+  return YES_PHRASES.has(t);
+}

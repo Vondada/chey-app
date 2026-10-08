@@ -54,3 +54,11 @@ test('apps are refused until the owner grants them', () => {
   assert.equal(gateAppAccess('Notes', ['notes']).allowed, true);
   assert.equal(gateAppAccess('', ['notes']).allowed, false);
 });
+
+test('a held request is released only by a plain yes', async () => {
+  const { isOwnerYes } = await import('./owner_action_gate.js');
+  assert.equal(isOwnerYes('yes'), true);
+  assert.equal(isOwnerYes('Yes, go ahead.'), true);
+  assert.equal(isOwnerYes('yes and also delete the other one'), false);
+  assert.equal(isOwnerYes('no'), false);
+});
