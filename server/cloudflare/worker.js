@@ -57,6 +57,7 @@ import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyRespo
 import { webAppPage } from './web_app.js';
 import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachmentText, condenseSkills, loadLearnedSkills, READ_FOR_SKILLS, redactSensitive, saveLearnedSkills, speakLearned, speakSkillList } from './self_skills.js';
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
+import { noteJobActivity } from './job_activity.js';
 import { changeHistoryIntent, guardGroundedFacts, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
@@ -5708,6 +5709,14 @@ export class CheState extends DurableObject {
         return json({ objectives: list, spoken: list.map(speakObjective) });
       }
 
+      if (path === '/api/job/activity') {
+        const id = String(body.id || new URL(request.url).searchParams.get('id') || '');
+        const job = data.jobs.find((item) => item.id === id);
+        if (!job) return json({ detail: 'Background job not found.' }, 404);
+        const activity = Array.isArray(job.activity) ? job.activity : [];
+        const latest = activity.at(-1)?.text || '';
+        return json({ id: job.id, status: job.status, title: job.title, activity, spoken: latest ? `${latest}` : 'No activity yet.' });
+      }
       if (path === '/api/job/cancel') {
         const id = String(body.id || '');
         const job = data.jobs.find((item) => item.id === id);
@@ -9158,6 +9167,9 @@ export class CheState extends DurableObject {
       job.status = 'running';
       job.attempts = Number(job.attempts || 0) + 1;
       job.updated_at = startedAt;
+      noteJobActivity(job, job.steps?.length
+        ? `Starting step ${(job.step_index || 0) + 1} of ${job.steps.length}: ${job.steps[job.step_index || 0]}`
+        : `Starting: ${job.title || job.prompt}`);
     }
     // Durable checkpoint BEFORE any AI is spent: a crash from here on still
     // counts against the job's attempt ceiling.
@@ -9255,6 +9267,13 @@ export class CheState extends DurableObject {
       const job = fresh.jobs.find((item) => item.id === outcome.id);
       if (!job || job.status === 'cancelled') continue;
       if (outcome.step_results) { job.step_results = outcome.step_results; job.step_index = outcome.step_index; }
+      noteJobActivity(job, outcome.error
+        ? `Problem: ${outcome.error}${outcome.status === 'queued' ? ' Trying again.' : ''}`
+        : outcome.status === 'complete'
+          ? 'Finished. Result received.'
+          : outcome.status === 'queued' && outcome.step_index
+            ? `Step ${outcome.step_index} done. Moving to the next step.`
+            : 'Result received.');
       if (outcome.attempts !== undefined) job.attempts = outcome.attempts;
       job.retry_count = outcome.retry_count ?? job.retry_count ?? 0;
       job.retry_at = outcome.retry_at || null;

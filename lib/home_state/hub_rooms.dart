@@ -322,7 +322,9 @@ extension _CheHomeHubRooms on _CHEHomeState {
   Future<void> _startCloudJob(String title, String prompt) async {
     if (!await _ensurePaired() || !mounted) return;
     try {
-      await _postAgentJson('/api/job/create', {'title': title, 'prompt': prompt});
+      final created = await _postAgentJson('/api/job/create', {'title': title, 'prompt': prompt});
+      final job = created?['job'];
+      if (job is Map && job['id'] is String) cheWatchedJobId.value = job['id'] as String;
       await _loadAgentState(silent: true);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
