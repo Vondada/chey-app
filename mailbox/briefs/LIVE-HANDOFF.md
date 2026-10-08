@@ -62,6 +62,8 @@ Then, on GitHub:
 
 **2026-10-08 Claude ("wrong answers" fix):** Causes found: named files were cut at their first 7000 characters (worker.js is 556 KB, so line 3525 was never shown); definition search matched test fixtures before real source (D1); source had no line numbers. Fix on claude/che-latency-optimization-8ruaus, commit 1c352d7 (pushed, no PR): `sourceWindow` shows numbered windows around request terms, named function bodies first; `isTestPath` searches tests last; SOURCE lines are numbered in the prompt. 728/728 Worker tests locally. Not verified live. Known limit: the definitionAnswer call site (worker.js ~3650) doesn't fit the window budget for C2.
 
+**2026-10-08 Claude (owner: think for yourself, no refusals):** Root cause of "I don't know yet": the owner-facing truth rule in ai_router.js told CHE to say it for any unverified fact; changed. Added THINK FOR YOURSELF (answer knowledge questions, memory before research, honest view, workarounds). Flagstaff fallback no longer refuses. Pushed to claude/che-latency-optimization-8ruaus, commit with message 'CHE: think for herself instead of refusing knowledge questions'. 728/728 Worker tests locally. Not verified live. Next: confirm the vault/memory-first wording with the owner and re-run Round 5 live.
+
 ## 3. Queue: the owner's open requests, in order
 
 Do them top to bottom. Mark each one `DONE (PR #, SHA)` or `WIP (branch, next step)` here.
