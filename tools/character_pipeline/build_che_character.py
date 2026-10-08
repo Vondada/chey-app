@@ -69,9 +69,9 @@ bone("pelvis", (0, 0, 0.95), (0, 0, 1.08))
 bone("spine", (0, 0, 1.08), (0, 0, 1.22), "pelvis")
 bone("chest", (0, 0, 1.22), (0, 0, 1.40), "spine")
 bone("neck", (0, 0, 1.40), (0, 0, 1.52), "chest")
-bone("head", (0, 0, 1.52), (0, 0, 1.84), "neck")
-bone("eye.L", (0.075, -0.165, 1.665), (0.075, -0.165, 1.70), "head")
-bone("eye.R", (-0.075, -0.165, 1.665), (-0.075, -0.165, 1.70), "head")
+bone("head", (0, 0, 1.52), (0, 0, 1.92), "neck")
+bone("eye.L", (0.085, -0.20, 1.67), (0.085, -0.20, 1.72), "head")
+bone("eye.R", (-0.085, -0.20, 1.67), (-0.085, -0.20, 1.72), "head")
 FINGER_BONES = {
     "thumb": ((0.26, -0.02, 0.76), (0.23, -0.04, 0.72)),
     "index": ((0.285, -0.02, 0.72), (0.29, -0.02, 0.64)),
@@ -187,7 +187,8 @@ def body_parts(mb, inflate=0.0, legs=True):
         add_ball(mb, (0.245 * sx, 0, 1.07), 0.056 + i)                 # elbow
         add_capsule(mb, (0.25 * sx, 0, 1.06), (0.28 * sx, 0, 0.83), 0.05 + i)   # forearm
         add_ball(mb, (0.285 * sx, 0, 0.80), 0.058 + i)                 # wrist
-        add_capsule(mb, (0.285 * sx, 0, 0.80), (0.29 * sx, 0, 0.70), 0.052 + i)  # palm
+        add_capsule(mb, (0.285 * sx, 0, 0.80), (0.29 * sx, 0, 0.70), 0.06 + i)   # palm
+        add_ball(mb, (0.29 * sx, -0.01, 0.73), 0.065 + i)          # knuckle mass
         if legs:
             add_capsule(mb, (0.10 * sx, 0, 0.92), (0.11 * sx, 0, 0.50), 0.10 + i)  # thigh
             add_ball(mb, (0.11 * sx, 0, 0.48), 0.075 + i)              # knee
@@ -196,9 +197,9 @@ def body_parts(mb, inflate=0.0, legs=True):
 
 
 def head_parts(mb):
-    add_ball(mb, (0, 0, 1.66), 0.20)            # skull
-    add_ball(mb, (0, 0.02, 1.62), 0.17)         # cranium back
-    add_ball(mb, (0, -0.02, 1.575), 0.13, 1.5)  # jaw and chin
+    add_ball(mb, (0, 0, 1.68), 0.245)           # skull (chibi head ratio)
+    add_ball(mb, (0, 0.02, 1.64), 0.21)         # cranium back
+    add_ball(mb, (0, -0.02, 1.57), 0.165, 1.5)  # jaw and chin
     add_capsule(mb, (0, 0, 1.42), (0, 0, 1.56), 0.065)  # neck
 
 
@@ -223,24 +224,30 @@ trousers.name = "CHE_trousers"
 
 # Long hair: a cap, a back drape and a fringe. Rigid on the head bone.
 mb, mo = meta_object("CHE_hair")
-add_ball(mb, (0, 0.0, 1.74), 0.215)
-add_capsule(mb, (0, 0.13, 1.42), (0, 0.15, 1.72), 0.16)
-add_capsule(mb, (0, 0.13, 1.12), (0, 0.15, 1.42), 0.12)
-add_capsule(mb, (-0.10, -0.15, 1.82), (0.10, -0.15, 1.82), 0.085)
+add_ball(mb, (0, 0.01, 1.80), 0.25)                       # crown
+add_capsule(mb, (0, 0.12, 1.50), (0, 0.16, 1.82), 0.20)   # back volume
+add_capsule(mb, (0, 0.16, 1.18), (0, 0.18, 1.50), 0.16)   # back curls drop
+add_ball(mb, (-0.13, -0.04, 1.98), 0.09)                  # top curls
+add_ball(mb, (0.13, -0.04, 1.98), 0.09)
+add_ball(mb, (0, 0.14, 1.97), 0.10)
+for fx in (-0.12, 0.0, 0.12):
+    add_ball(mb, (fx, -0.15, 1.87), 0.095)                # fringe curls
 for sx in (1, -1):
-    add_capsule(mb, (0.20 * sx, -0.02, 1.66), (0.19 * sx, 0.04, 1.36), 0.065)
+    add_ball(mb, (0.22 * sx, 0.02, 1.62), 0.11)           # side curl
+    add_ball(mb, (0.23 * sx, 0.07, 1.42), 0.10)
+    add_capsule(mb, (0.22 * sx, 0.00, 1.70), (0.20 * sx, 0.06, 1.44), 0.09)
 hair = convert_meta(mo, MAT["hair"])
 hair.name = "CHE_hair"
 rigid(hair, "head")
 
 # ---------------------------------------------------------------- rigid parts
 for s, sx in (("L", 1), ("R", -1)):
-    cx = 0.075 * sx
+    cx = 0.085 * sx
     for o in (
-        sphere_obj(f"eye_sclera.{s}", (cx, -0.165, 1.665), 0.068, MAT["sclera"]),
-        sphere_obj(f"eye_iris.{s}", (cx, -0.212, 1.665), 0.042, MAT["iris"]),
-        sphere_obj(f"eye_pupil.{s}", (cx, -0.248, 1.665), 0.02, MAT["pupil"]),
-        sphere_obj(f"eye_glint.{s}", (cx + 0.012 * sx, -0.262, 1.68), 0.009, MAT["glint"]),
+        sphere_obj(f"eye_sclera.{s}", (cx, -0.20, 1.67), 0.08, MAT["sclera"]),
+        sphere_obj(f"eye_iris.{s}", (cx, -0.25, 1.67), 0.05, MAT["iris"]),
+        sphere_obj(f"eye_pupil.{s}", (cx, -0.287, 1.67), 0.026, MAT["pupil"]),
+        sphere_obj(f"eye_glint.{s}", (cx + 0.016 * sx, -0.30, 1.69), 0.012, MAT["glint"]),
     ):
         rigid(o, f"eye.{s}")
     shoe = capsule_mesh(f"shoe.{s}", (0.11 * sx, 0.03, 0.07), (0.11 * sx, -0.13, 0.07), 0.075, MAT["shoe"])
@@ -248,7 +255,7 @@ for s, sx in (("L", 1), ("R", -1)):
     for fname, (h, t) in FINGER_BONES.items():
         bb = arm.data.bones[f"{fname}.{s}"]
         fm = capsule_mesh(f"{fname}_finger.{s}", bb.head_local, bb.tail_local,
-                          0.016 if fname == "thumb" else 0.013, MAT["skin"])
+                          0.02 if fname == "thumb" else 0.016, MAT["skin"])
         rigid(fm, f"{fname}.{s}")
 
 # ---------------------------------------------------------------- skinning
