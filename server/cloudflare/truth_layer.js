@@ -287,7 +287,7 @@ export function guardOwnerReply(reply, state, ctx = {}) {
 // Quoted code must exist in the repository. `codeIncludes(text)` answers
 // whether the exact text appears anywhere in the pinned commit; without it
 // code quotes are not checked.
-function stripUnverifiedCode(reply, codeIncludes, removed) {
+function stripUnverifiedCode(reply, codeIncludes, removed, flagOnly = false) {
   if (typeof codeIncludes !== 'function') return reply;
   return String(reply || '').replace(/```[^\n]*\n([\s\S]*?)```/g, (block, body) => {
     // Every line with a real word is checked, short statements included;
@@ -296,7 +296,7 @@ function stripUnverifiedCode(reply, codeIncludes, removed) {
     const missing = lines.find((l) => !codeIncludes(l));
     if (!missing) return block;
     removed.push({ rule: 'unverified_code', sentence: missing.slice(0, 200) });
-    return '';
+    return flagOnly ? `${NOT_VERIFIED} ${block}` : '';
   });
 }
 
@@ -331,7 +331,12 @@ function wrongLineCitation(s, paths, fileText) {
   return '';
 }
 
-export function guardGroundedFacts(reply, { paths = [], repo = '', jobIds = [], codeIncludes = null, fileText = null } = {}) {
+const NOT_VERIFIED = '[NOT VERIFIED]';
+
+/**
+ * Grounded-fact guard. Default: a failing sentence is removed. flagOnly: it is kept and marked [NOT VERIFIED].
+ */
+export function guardGroundedFacts(reply, { paths = [], repo = '', jobIds = [], codeIncludes = null, fileText = null, flagOnly = false } = {}) {
   const known = new Set(paths);
   const basenames = new Set(paths.map((p) => p.split('/').pop()));
   const ids = new Set(jobIds.map(String));
@@ -355,14 +360,19 @@ export function guardGroundedFacts(reply, { paths = [], repo = '', jobIds = [], 
     if (job && /\d/.test(job[1]) && !ids.has(job[1])) return `unknown_job:${job[1]}`;
     return '';
   };
-  reply = stripUnverifiedCode(reply, codeIncludes, removed);
+  reply = stripUnverifiedCode(reply, codeIncludes, removed, flagOnly);
   const parts = splitSentences(reply);
   const kept = [];
   for (const sentence of parts) {
     const why = paths.length || repo || jobIds.length || codeIncludes || fileText ? badFact(sentence) : '';
-    if (why) { removed.push({ rule: why, sentence: sentence.trim() }); continue; }
+    if (why) {
+      removed.push({ rule: why, sentence: sentence.trim() });
+      // flagOnly keeps the sentence and marks it, so nothing the owner asked for is cut off.
+      if (flagOnly && sentence.trim()) kept.push(`${NOT_VERIFIED} ${sentence.trim()} `);
+      continue;
+    }
     kept.push(sentence);
   }
-  const text = (removed.length ? kept.filter((s) => !/\b(?:verified|confirmed|checked)\b/i.test(s)) : kept).join('').replace(/\n{3,}/g, '\n\n').trim();
+  const text = (removed.length && !flagOnly ? kept.filter((s) => !/\b(?:verified|confirmed|checked)\b/i.test(s)) : kept).join('').replace(/\n{3,}/g, '\n\n').trim();
   return { text, removed };
 }

@@ -436,6 +436,17 @@ test('status is about now: old merges are not "updated", a merged PR is not "ope
   assert.doesNotMatch(both, /complete|repository (?:was|is) updated/i);
 });
 
+test('grounded-fact guard flagOnly keeps every sentence and marks the unverified one', async () => {
+  const { guardGroundedFacts } = await import('./truth_layer.js');
+  const paths = ['server/cloudflare/worker.js'];
+  const reply = 'The sum runs to n - 1 in the loop. The file is src/voice/intentHandler.js. The capital is Canberra.';
+  const out = guardGroundedFacts(reply, { paths, repo: 'Vondada/chey-app', jobIds: [], flagOnly: true });
+  assert.match(out.text, /The sum runs to n - 1 in the loop\./);
+  assert.match(out.text, /The capital is Canberra\./);
+  assert.match(out.text, /\[NOT VERIFIED\] The file is src\/voice\/intentHandler\.js\./);
+  assert.equal(out.removed.length, 1);
+});
+
 test('grounded-fact guard: invented files, foreign PR links and unknown job ids never reach another AI', async () => {
   const { guardGroundedFacts } = await import('./truth_layer.js');
   const paths = ['server/cloudflare/worker.js', 'server/cloudflare/objective_graph.js', 'lib/main.dart'];
