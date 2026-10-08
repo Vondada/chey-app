@@ -62,7 +62,7 @@ import { webAppPage } from './web_app.js';
 import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachmentText, condenseSkills, loadLearnedSkills, READ_FOR_SKILLS, redactSensitive, saveLearnedSkills, speakLearned, speakSkillList } from './self_skills.js';
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { noteJobActivity } from './job_activity.js';
-import { changeHistoryIntent, guardGroundedFacts, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
+import { changeHistoryIntent, guardGroundedFacts, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, requestedCodeNames, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
 import { describeTopicStudyStart, starredStudyTargets, matchTopicSections, namedRepoStudyIntent, starredLibraryIntent, readTutorial, readmeSections, sectionTutorials, studyBatchIntent, topicBuildRequest, topicTitles, wantsSerialStudy } from './topic_study.js';
@@ -3701,7 +3701,7 @@ export class CheState extends DurableObject {
       // files, foreign PR links or unknown job ids.
       const checked = (text) => {
         const guarded = verified ? guardOwnerReply(text, verified, { repoAvailable: true }) : { text, removed: [] };
-        return guardGroundedFacts(guarded.text, { paths: repoGrounding?.all_paths || [], repo: String(this.env.CHE_GITHUB_REPO || ''), jobIds, codeIncludes, fileText: codeIndex ? (path) => codeIndex.text(path) : null, flagOnly: true });
+        return guardGroundedFacts(guarded.text, { paths: repoGrounding?.all_paths || [], repo: String(this.env.CHE_GITHUB_REPO || ''), jobIds, codeIncludes, fileText: codeIndex ? (path) => codeIndex.text(path) : null, flagOnly: true, authoredNames: requestedCodeNames(incoming) });
       };
       let raw = directAnswer || modelText(await callModel());
       let grounded = checked(raw);
@@ -3711,7 +3711,8 @@ export class CheState extends DurableObject {
         raw = modelText(await callModel(SOURCE_RETRY_NOTE));
         grounded = checked(raw);
       }
-      const honesty = grounded.removed.length ? ' NOT VERIFIED: I left out a file, link, code quote or job I could not confirm in the repository.' : '';
+      // flagOnly keeps every sentence, so the note explains the marks instead of claiming a cut.
+      const honesty = grounded.removed.length ? ' Anything marked [NOT VERIFIED] is a file, link, code quote or job I could not confirm in the repository.' : '';
       // Never a bare refusal: when nothing can be pinned, say where to look.
       const searchTerms = [...new Set(incoming.match(/[A-Za-z_$][\w$]{3,}/g) || [])].slice(0, 4).join(', ') || 'the key words of the question';
       const reply = grounded.text ? `${grounded.text}${honesty}` : `I can't pin the exact line from the source I read. To check it, search the pinned commit for: ${searchTerms}.${honesty}`;
