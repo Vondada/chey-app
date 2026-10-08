@@ -677,15 +677,36 @@ export async function inspectRepositoryContext(env, request, fetcher = fetch, { 
       }))
     : [];
 
+  // Exact search: a quoted phrase in the request ("mission status") is looked
+  // up across the whole indexed commit, so CHE quotes real lines instead of
+  // guessing a file that merely sounds right.
+  const phrases = [...String(request || '').matchAll(/["\u201c]([^"\u201d\n]{3,80})["\u201d]/g)].map((m) => m[1].toLowerCase());
+  const code = cachedCodeIndex(index.head_sha);
+  const exact_matches = [];
+  if (phrases.length) {
+    for (const path of index.paths) {
+      if (exact_matches.length >= 12) break;
+      const text = code?.has(path) ? code.text(path) : loaded.get(path)?.text;
+      if (!text) continue;
+      const lines = text.split('\n');
+      for (let i = 0; i < lines.length && exact_matches.length < 12; i += 1) {
+        if (phrases.some((p) => lines[i].toLowerCase().includes(p))) exact_matches.push({ path, line: i + 1, text: lines[i].trim().slice(0, 240) });
+      }
+    }
+  }
+
   return {
     ok: true,
     repository: String(env.CHE_GITHUB_REPO),
     base: index.base,
     head_sha: index.head_sha,
     ...(discovery ? { discovery } : {}),
+    ...(phrases.length ? { exact_matches, exact_search: exact_matches.length ? 'found' : 'no match in the indexed commit' } : {}),
     files,
     open_prs,
     open_prs_status: pulls.ok ? 'verified' : 'unavailable:' + String(pulls.status || 0),
+    // Every file path in the commit, for the reply guard (never sent to the model).
+    all_paths: index.paths,
   };
 }
 

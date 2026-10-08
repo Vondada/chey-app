@@ -586,6 +586,23 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // One-step video search in CHE's own browser: "search YouTube for jazz",
+    // "find new videos about Mars", "play lofi beats video". Inside the
+    // browser, "read the videos" / "play number one" / "pause" take over.
+    final videoCommand = _pendingAttachment == null ? CheVideoVoiceCommand.parse(message) : null;
+    if (videoCommand != null) {
+      if (mounted) _set(() => controller.clear());
+      HapticFeedback.mediumImpact();
+      await speakText(videoCommand.spoken, record: false);
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => CheBrowserScreen(initialUrl: videoCommand.url, title: 'YouTube'),
+        ),
+      );
+      return;
+    }
+
     // Links CHE just gave: "open Supabase", "open it", "open link 2",
     // "open it in Safari", "what's the link".
     final linkCommand = _pendingAttachment == null ? CheLinkVoiceCommand.parse(message, _recentChatLinks()) : null;

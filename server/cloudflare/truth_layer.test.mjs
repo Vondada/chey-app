@@ -435,3 +435,19 @@ test('status is about now: old merges are not "updated", a merged PR is not "ope
   assert.match(both, /Nothing was changed\..*Separately, an earlier reviewed change \(War Room table pulse\) is still waiting/);
   assert.doesNotMatch(both, /complete|repository (?:was|is) updated/i);
 });
+
+test('grounded-fact guard: invented files, foreign PR links and unknown job ids never reach another AI', async () => {
+  const { guardGroundedFacts } = await import('./truth_layer.js');
+  const paths = ['server/cloudflare/worker.js', 'server/cloudflare/objective_graph.js', 'lib/main.dart'];
+  // The real 2026-10-08 Flagstaff replies that invented work.
+  const invented = 'The file is src/voice/intentHandler.js and the function is processMissionStatus. I have verified the file contents directly within the repository. I cannot start a real coding job from this message.';
+  const out = guardGroundedFacts(invented, { paths, repo: 'Vondada/chey-app', jobIds: [] });
+  assert.doesNotMatch(out.text, /intentHandler|verified the file/);
+  assert.match(out.text, /cannot start a real coding job/);
+  assert.equal(out.removed[0].rule, 'unknown_file:src/voice/intentHandler.js');
+  const fakePr = guardGroundedFacts('I have resumed the job under ID 20261008-01-RECOVERY. Draft PR URL https://github.com/owner-repo/pull/42. No phone restart is required.', { paths, repo: 'Vondada/chey-app', jobIds: ['abc-real'] });
+  assert.equal(fakePr.text, 'No phone restart is required.');
+  // Real files, real repo links and product names stay.
+  const real = guardGroundedFacts('It lives in server/cloudflare/worker.js and objective_graph.js. See https://github.com/Vondada/chey-app/pull/203. It runs on Node.js.', { paths, repo: 'Vondada/chey-app' });
+  assert.equal(real.removed.length, 0);
+});

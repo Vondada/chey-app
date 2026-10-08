@@ -25,7 +25,9 @@ const SECRET_CONTENT = [
   /\bBEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY\b/,
   /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b/,
   /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/,
-  /\b(?:CHE_GITHUB_TOKEN|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET|OLLAMA_API_KEY|CHE_OPENAI_API_KEY|XAI_API_KEY)\s*[:=]/,
+  // A named secret assigned a real-looking value; test fixtures such as
+  // `CHE_GITHUB_TOKEN: 't'` and `env.CHE_GITHUB_TOKEN` are not secrets.
+  /\b(?:CHE_GITHUB_TOKEN|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET|OLLAMA_API_KEY|CHE_OPENAI_API_KEY|XAI_API_KEY)\s*[:=]\s*['"`]?[A-Za-z0-9_\-./+]{16,}/,
   /\bAIza[0-9A-Za-z_-]{20,}\b/,
   /\bxai-[A-Za-z0-9]{20,}\b/,
 ];
@@ -79,10 +81,14 @@ export function isSelfUpdateReadablePath(path) {
     || /^(?:README|LICENSE|CHANGELOG|CODEOWNERS)(?:\.[A-Za-z0-9_-]+)?$/i.test(value);
 }
 
-export function scanUpdateContent(content, path = '') {
+export function scanUpdateContent(content, path = '', baseline = '') {
   const text = String(content || '');
+  const before = String(baseline || '');
   for (const re of SECRET_CONTENT) {
-    if (re.test(text)) return `Refusing ${path || 'file'}: looks like a secret or private key.`;
+    // Baseline-relative: only a secret-looking string this edit introduces is
+    // refused; one already in the file on main is not the edit's doing.
+    const found = text.match(new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`)) || [];
+    if (found.some((hit) => !before.includes(hit))) return `Refusing ${path || 'file'}: looks like a secret or private key.`;
   }
   for (const re of NATIVE_SMUGGLE) {
     if (re.test(text)) return `Refusing ${path || 'file'}: self-update cannot touch native iOS entitlements or Info.plist.`;
@@ -111,7 +117,7 @@ export function validateUpdateFiles(files, { baseline = null } = {}) {
     if (bytes > MAX_FILE_BYTES) return { error: `${path} is too large.` };
     totalBytes += bytes;
     if (totalBytes > MAX_FILE_BYTES * 3) return { error: 'Update is too large overall; split into a narrower change.' };
-    const smuggle = scanUpdateContent(content, path);
+    const smuggle = scanUpdateContent(content, path, before(path));
     if (smuggle) return { error: smuggle };
     const staticError = staticRegression(path, before(path), content);
     if (staticError) return { error: staticError, static_check_failed: true };
