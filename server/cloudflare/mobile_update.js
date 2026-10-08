@@ -184,8 +184,8 @@ async function releases(env, fetcher = fetch) {
         !item?.draft &&
         !item?.prerelease &&
         releaseToUpdate(item, 'https://che.invalid') != null
-      ).filter((item) => /^\\d+\\.\\d+\\.\\d+$/.test(releaseToUpdate(item, 'https://che.invalid').version) &&
-        /^\\d+$/.test(releaseToUpdate(item, 'https://che.invalid').build_number))
+      ).filter((item) => /^\d+\.\d+\.\d+$/.test(releaseToUpdate(item, 'https://che.invalid').version) &&
+        /^\d+$/.test(releaseToUpdate(item, 'https://che.invalid').build_number))
         .sort(compareMobileReleases)
     : [];
 }
