@@ -24,6 +24,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:url_launcher/url_launcher.dart';
+import 'che_job_activity_banner.dart';
 import 'che_mic_supervisor.dart';
 import 'che_ui/che_ui_voice_command.dart';
 import 'che_native_voice.dart';
@@ -1290,6 +1291,10 @@ OWNER AGENCY
       mainAxisSize: MainAxisSize.min,
       children: [
         const ChePatchBanner(),
+        CheJobActivityBanner(
+          fetch: (path, body) => _postAgentJson(path, body),
+          speak: (text) => speakText(text),
+        ),
         ChePriorityNotificationBanner(
           gateway: chePlatformGateway(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders),
           onOpen: () => unawaited(_openPlatformNotifications()),

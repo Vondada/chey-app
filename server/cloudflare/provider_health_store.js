@@ -103,10 +103,11 @@ export function capacityMode(used, limit) {
   return 'normal';
 }
 
-export function shouldHoldCapacity({ used = 0, limit = 0, ownerChat = false, emergency = false } = {}) {
+// Owner rule: CHE never spends more than 70% of a free engine's daily
+// allowance. Owner chat and emergency calls get no exception; they move on to
+// the next engine instead.
+export const FREE_TOKEN_CAP = 0.70;
+export function shouldHoldCapacity({ used = 0, incoming = 0, limit = 0 } = {}) {
   if (!limit) return false;
-  const mode = capacityMode(used, limit);
-  if (mode === 'normal') return false;
-  if (emergency || ownerChat) return mode === 'emergency' && used >= limit;
-  return true;
+  return used + Math.max(0, Number(incoming) || 0) >= limit * FREE_TOKEN_CAP;
 }

@@ -34,6 +34,10 @@ import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry 
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { handleEdgeVoice } from './edge_route.js';
 import { handleVideoLine } from './video_route.js';
+import {
+  YOUTUBE_CALLBACK_PATH, disconnectYouTube, finishYouTubeConnect, startYouTubeConnect,
+  youtubeAccessToken, youtubeResultPage, youtubeStatus,
+} from './youtube_connection.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
 import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
@@ -57,7 +61,8 @@ import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyRespo
 import { webAppPage } from './web_app.js';
 import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachmentText, condenseSkills, loadLearnedSkills, READ_FOR_SKILLS, redactSensitive, saveLearnedSkills, speakLearned, speakSkillList } from './self_skills.js';
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
-import { changeHistoryIntent, guardGroundedFacts, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
+import { noteJobActivity } from './job_activity.js';
+import { changeHistoryIntent, guardGroundedFacts, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, requestedCodeNames, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
 import { describeTopicStudyStart, starredStudyTargets, matchTopicSections, namedRepoStudyIntent, starredLibraryIntent, readTutorial, readmeSections, sectionTutorials, studyBatchIntent, topicBuildRequest, topicTitles, wantsSerialStudy } from './topic_study.js';
@@ -3696,7 +3701,7 @@ export class CheState extends DurableObject {
       // files, foreign PR links or unknown job ids.
       const checked = (text) => {
         const guarded = verified ? guardOwnerReply(text, verified, { repoAvailable: true }) : { text, removed: [] };
-        return guardGroundedFacts(guarded.text, { paths: repoGrounding?.all_paths || [], repo: String(this.env.CHE_GITHUB_REPO || ''), jobIds, codeIncludes, fileText: codeIndex ? (path) => codeIndex.text(path) : null, flagOnly: true });
+        return guardGroundedFacts(guarded.text, { paths: repoGrounding?.all_paths || [], repo: String(this.env.CHE_GITHUB_REPO || ''), jobIds, codeIncludes, fileText: codeIndex ? (path) => codeIndex.text(path) : null, flagOnly: true, authoredNames: requestedCodeNames(incoming) });
       };
       let raw = directAnswer || modelText(await callModel());
       let grounded = checked(raw);
@@ -3706,7 +3711,8 @@ export class CheState extends DurableObject {
         raw = modelText(await callModel(SOURCE_RETRY_NOTE));
         grounded = checked(raw);
       }
-      const honesty = grounded.removed.length ? ' NOT VERIFIED: I left out a file, link, code quote or job I could not confirm in the repository.' : '';
+      // flagOnly keeps every sentence, so the note explains the marks instead of claiming a cut.
+      const honesty = grounded.removed.length ? ' Anything marked [NOT VERIFIED] is a file, link, code quote or job I could not confirm in the repository.' : '';
       // Never a bare refusal: when nothing can be pinned, say where to look.
       const searchTerms = [...new Set(incoming.match(/[A-Za-z_$][\w$]{3,}/g) || [])].slice(0, 4).join(', ') || 'the key words of the question';
       const reply = grounded.text ? `${grounded.text}${honesty}` : `I can't pin the exact line from the source I read. To check it, search the pinned commit for: ${searchTerms}.${honesty}`;
@@ -3909,6 +3915,30 @@ export class CheState extends DurableObject {
     return response;
   }
 
+  // One Office video pass. It reloads the store so it sees the uploads of the
+  // pass before it. The YouTube token is checked before any render, and fetched
+  // again right before the upload, so a long render cannot outlive it.
+  async runOfficeVideoPass(request, body) {
+    const env = this.keyEnv || this.env;
+    const data = await this.loadData();
+    const access = await youtubeAccessToken(env, data, fetch);
+    if (access.changed) await this.ctx.storage.put('che', data);
+    if (!access.ok) {
+      return json({ ok: false, stage: 'upload', error: access.error, board: [] }, 424);
+    }
+    const youtube = {
+      uploads: (data.youtube_uploads ||= {}),
+      accessToken: async () => {
+        const fresh = await youtubeAccessToken(env, data, fetch);
+        if (fresh.changed) await this.ctx.storage.put('che', data);
+        return fresh.ok ? fresh.token : '';
+      },
+    };
+    const reply = await handleVideoLine(request, env, body, youtube);
+    await this.ctx.storage.put('che', data);
+    return reply;
+  }
+
   async handleRequest(request) {
     await this.refreshKeyEnv();
     try {
@@ -4086,6 +4116,18 @@ export class CheState extends DurableObject {
       // A signed-by-possession, short-lived, single-use enrollment is public by
       // necessity. It can only mint a device for the tenant/access scope already
       // fixed by an owner-created invite; it cannot choose another tenant.
+      // Google sends the owner's browser back here after sign-in. No device
+      // token is possible on that redirect; the one-time state protects it.
+      if (request.method === 'GET' && path === YOUTUBE_CALLBACK_PATH) {
+        const url = new URL(request.url);
+        const result = await finishYouTubeConnect(
+          this.keyEnv || this.env, data, Object.fromEntries(url.searchParams), fetch, url.origin,
+        );
+        await this.ctx.storage.put('che', data);
+        return youtubeResultPage(result.ok, result.ok
+          ? `Connected to ${result.channel.title || 'your YouTube channel'}.`
+          : result.error);
+      }
       if (request.method === 'POST' && path === '/api/enroll') {
         const consumed = consumeEnrollment(data, body.enrollment_token, body.device_name);
         if (consumed.error) return json({ detail: 'Enrollment invitation is invalid or expired.' }, 403);
@@ -4119,10 +4161,31 @@ export class CheState extends DurableObject {
       if (path === '/api/voice/edge' && request.method === 'POST') {
         return handleEdgeVoice(request, this.keyEnv || this.env, body);
       }
-      if (path === '/api/video/line' && ['GET', 'POST'].includes(request.method)) {
-        return handleVideoLine(request, this.keyEnv || this.env, body);
+      if (request.method === 'POST' && path === '/api/youtube/connect/start') {
+        const started = await startYouTubeConnect(this.keyEnv || this.env, data, new URL(request.url).origin);
+        await this.ctx.storage.put('che', data);
+        return started.ok ? json({ url: started.url }) : json({ detail: started.error }, 400);
       }
-
+      if (request.method === 'GET' && path === '/api/youtube/status') {
+        return json(await youtubeStatus(this.keyEnv || this.env, data));
+      }
+      if (request.method === 'POST' && path === '/api/youtube/disconnect') {
+        const removed = await disconnectYouTube(this.keyEnv || this.env, data, fetch);
+        await this.ctx.storage.put('che', data);
+        return json(removed);
+      }
+      if (path === '/api/video/line' && ['GET', 'POST'].includes(request.method)) {
+        if (request.method === 'POST' && body?.office === true) {
+          // Office passes run one at a time, so a duplicate check and its upload
+          // can never interleave with another pass.
+          const pass = (this.videoLineQueue || Promise.resolve()).then(() => this.runOfficeVideoPass(request, body));
+          this.videoLineQueue = pass.catch(() => {});
+          return pass;
+        }
+        const videoReply = await handleVideoLine(request, this.keyEnv || this.env, body, { uploads: (data.youtube_uploads ||= {}) });
+        await this.ctx.storage.put('che', data);
+        return videoReply;
+      }
       // CHE Home platform: tenant-scoped identity, devices, notifications and Core.
       if (request.method === 'GET' && path === '/api/platform') {
         return json(platformView(data, activeTenant.id, tokenHash));
@@ -5708,6 +5771,14 @@ export class CheState extends DurableObject {
         return json({ objectives: list, spoken: list.map(speakObjective) });
       }
 
+      if (path === '/api/job/activity') {
+        const id = String(body.id || new URL(request.url).searchParams.get('id') || '');
+        const job = data.jobs.find((item) => item.id === id);
+        if (!job) return json({ detail: 'Background job not found.' }, 404);
+        const activity = Array.isArray(job.activity) ? job.activity : [];
+        const latest = activity.at(-1)?.text || '';
+        return json({ id: job.id, status: job.status, title: job.title, activity, spoken: latest ? `${latest}` : 'No activity yet.' });
+      }
       if (path === '/api/job/cancel') {
         const id = String(body.id || '');
         const job = data.jobs.find((item) => item.id === id);
@@ -9158,6 +9229,9 @@ export class CheState extends DurableObject {
       job.status = 'running';
       job.attempts = Number(job.attempts || 0) + 1;
       job.updated_at = startedAt;
+      noteJobActivity(job, job.steps?.length
+        ? `Starting step ${(job.step_index || 0) + 1} of ${job.steps.length}: ${job.steps[job.step_index || 0]}`
+        : `Starting: ${job.title || job.prompt}`);
     }
     // Durable checkpoint BEFORE any AI is spent: a crash from here on still
     // counts against the job's attempt ceiling.
@@ -9255,6 +9329,13 @@ export class CheState extends DurableObject {
       const job = fresh.jobs.find((item) => item.id === outcome.id);
       if (!job || job.status === 'cancelled') continue;
       if (outcome.step_results) { job.step_results = outcome.step_results; job.step_index = outcome.step_index; }
+      noteJobActivity(job, outcome.error
+        ? `Problem: ${outcome.error}${outcome.status === 'queued' ? ' Trying again.' : ''}`
+        : outcome.status === 'complete'
+          ? 'Finished. Result received.'
+          : outcome.status === 'queued' && outcome.step_index
+            ? `Step ${outcome.step_index} done. Moving to the next step.`
+            : 'Result received.');
       if (outcome.attempts !== undefined) job.attempts = outcome.attempts;
       job.retry_count = outcome.retry_count ?? job.retry_count ?? 0;
       job.retry_at = outcome.retry_at || null;

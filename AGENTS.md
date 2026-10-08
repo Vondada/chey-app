@@ -1,6 +1,6 @@
 # CHE owner requirements
 
-The owner uses CHE voice-first, as if blind. Every feature must be fully usable by voice OR typing, including by a blind or deaf owner. Show every spoken reply as large text, and pair status feedback with a visible banner and haptic pattern.
+The owner uses CHE voice-first, as if blind. Every feature must be fully usable by voice OR typing, including by a blind or deaf owner. Show every spoken reply as large text, and pair status feedback with a visible banner and haptic pattern. Owner rule (October 8, 2026): live working-step lines (CHE's job activity) appear as quiet, muted subtext like Claude's working status, not large text; they must still be spoken aloud and announced to screen readers.
 
 - CHE describes the current screen aloud, based on actual available screen context.
 - Read options aloud as a numbered list and support spoken choices.

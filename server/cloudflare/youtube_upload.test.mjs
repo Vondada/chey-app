@@ -5,8 +5,8 @@ import { uploadYouTube } from './youtube_upload.js';
 test('YouTube uploader sends the rendered media stream through a resumable session', async () => {
   const calls = [];
   const result = await uploadYouTube(
-    { CHE_YOUTUBE_TOKEN: 'token' },
     { media_url: 'https://cdn.example/video.mp4', title: 'A real video' },
+    'token',
     async (url, options = {}) => {
       calls.push({ url: String(url), method: options.method || 'GET' });
       if (String(url).includes('cdn.example')) {
@@ -31,12 +31,23 @@ test('YouTube uploader sends the rendered media stream through a resumable sessi
 
 test('YouTube uploader rejects an unsafe upload-session redirect', async () => {
   const result = await uploadYouTube(
-    { CHE_YOUTUBE_TOKEN: 'token' },
     { media_url: 'https://cdn.example/video.mp4', title: 'A real video' },
+    'token',
     async (url) => String(url).includes('cdn.example')
       ? new Response(Uint8Array.from([1]), { headers: { 'content-type': 'video/mp4' } })
       : new Response('', { headers: { location: 'https://evil.example/upload' } }),
   );
   assert.equal(result.ok, false);
   assert.match(result.error, /upload session/i);
+});
+
+test('YouTube uploader refuses to upload without a connected access token', async () => {
+  let called = false;
+  const result = await uploadYouTube({ media_url: 'https://cdn.example/video.mp4', title: 'x' }, '', async () => {
+    called = true;
+    return new Response('');
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /not connected/i);
+  assert.equal(called, false);
 });

@@ -482,6 +482,45 @@ test('quoted code that is not in the repository is removed (live test Q3 invente
   assert.ok(short.removed.some((r) => r.rule === 'unverified_code'));
 });
 
+test('code CHE writes herself is not flagged as an unverified repository quote (Round 7 exam)', async () => {
+  const { guardGroundedFacts, requestedCodeNames } = await import('./truth_layer.js');
+  const repo = 'const results = await Promise.allSettled(engines.map(lookup));\nexport async function publicResearch(query) {';
+  const codeIncludes = (t) => repo.toLowerCase().includes(String(t).toLowerCase());
+  const request = 'L1 write a JavaScript function vowelCount(s). L2 this code is wrong. function sumTo(n) { ... } Give the fixed code.';
+  assert.deepEqual([...requestedCodeNames(request)].sort(), ['sumTo', 'vowelCount']);
+  const opts = { paths: ['server/cloudflare/worker.js'], codeIncludes, flagOnly: true, authoredNames: requestedCodeNames(request) };
+  // Level 1: the function the sender asked for, not in the repository.
+  const l1 = guardGroundedFacts('Level 1:\n```js\nfunction vowelCount(s) {\n  return (s.match(/[aeiou]/gi) || []).length;\n}\n```\nIt counts vowels.', opts);
+  assert.equal(l1.removed.length, 0);
+  assert.doesNotMatch(l1.text, /NOT VERIFIED/);
+  // Level 2: a fix announced as hers, even when the block has no definition line.
+  const l2 = guardGroundedFacts('The loop stopped one short. Here is my fix:\n```js\nfor (let i = 1; i <= n; i++) total += i;\n```\nNow it sums up to n.', opts);
+  assert.equal(l2.removed.length, 0);
+  assert.match(l2.text, /i <= n/);
+  // A quote of repository code that does not exist is still marked.
+  const fake = guardGroundedFacts('The line in worker.js is:\n```js\nconst [a, b] = await Promise.all([one(), two()]);\n```', opts);
+  assert.ok(fake.removed.some((r) => r.rule === 'unverified_code'));
+  assert.match(fake.text, /NOT VERIFIED/);
+  // A "new" function that reuses a real repository name is treated as a quote and checked.
+  const reused = guardGroundedFacts('It is:\n```js\nexport async function publicResearch(query) {\n  return fetchEverything(query);\n}\n```', opts);
+  assert.ok(reused.removed.some((r) => r.rule === 'unverified_code'));
+  // A requested name presented as existing code is a quote and is checked.
+  const asQuote = guardGroundedFacts('The current code in worker.js is:\n```js\nfunction sumTo(n) { return magic(n); }\n```', opts);
+  assert.ok(asQuote.removed.some((r) => r.rule === 'unverified_code'));
+  // A name merely missing from the repository is not authorship (Codex on #257).
+  const invented = guardGroundedFacts('The repository defines:\n```js\nfunction imaginaryHandler(req) {\n  return route(req);\n}\n```', opts);
+  assert.ok(invented.removed.some((r) => r.rule === 'unverified_code'));
+  // A cue covers only the block it introduces, not a later quote (Codex on #257).
+  const two = guardGroundedFacts('Here is my fix:\n```js\nfor (let i = 1; i <= n; i++) total += i;\n```\nFor comparison, the repository code is:\n```js\nconst fake = await inventedThing();\n```', opts);
+  assert.equal(two.removed.length, 1);
+  assert.match(two.text, /i <= n/);
+  assert.match(two.text, /\[NOT VERIFIED\] ```js\nconst fake/);
+  // Inline backticks inside her own code (a template literal) are not re-checked as quotes (Codex on #257).
+  const tpl = guardGroundedFacts('Here is my solution:\n```js\nfunction greet(name) {\n  return `Hello ${name}`;\n}\n```\nDone.', opts);
+  assert.equal(tpl.removed.length, 0);
+  assert.match(tpl.text, /`Hello \$\{name\}`/);
+});
+
 test('grounded guard rejects a line citation that does not match the pinned file', async () => {
   const { guardGroundedFacts } = await import('./truth_layer.js');
   const paths = ['server/cloudflare/self_skills.js'];
@@ -495,4 +534,11 @@ test('grounded guard rejects a line citation that does not match the pinned file
   // Correct citation and a plain file mention both stay.
   assert.match(guardGroundedFacts('normalizeSkills is at line 62 in server/cloudflare/self_skills.js.', { paths, fileText }).text, /line 62/);
   assert.match(guardGroundedFacts('It lives in server/cloudflare/self_skills.js.', { paths, fileText }).text, /self_skills/);
+});
+
+test('requestedCodeNames catches a name written with parentheses, not only "function NAME"', async () => {
+  const { requestedCodeNames } = await import('./truth_layer.js');
+  const names = requestedCodeNames('Write canAttempt(state, kind, limits) and recordAttempt(state, kind). kind is semantic or format.');
+  assert.ok(names.has('canAttempt'));
+  assert.ok(names.has('recordAttempt'));
 });

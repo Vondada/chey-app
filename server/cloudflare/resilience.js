@@ -17,7 +17,7 @@ export const KEY_PROVIDERS = {
   openai: { name: 'OpenAI (Codex)', env: 'CHE_OPENAI_API_KEY', page: 'https://platform.openai.com/api-keys', test: 'https://api.openai.com/v1/models', accounts: 'uses your OpenAI account (paid, separate from a ChatGPT subscription)' },
   xai: { name: 'xAI (Grok)', env: 'XAI_API_KEY', page: 'https://console.x.ai', test: 'https://api.x.ai/v1/models', accounts: 'uses your X/xAI account' },
   huggingface: { name: 'Hugging Face', env: 'HF_TOKEN', page: 'https://huggingface.co/settings/tokens', test: 'https://huggingface.co/api/whoami-v2', accounts: 'one account per person' },
-  youtube: { name: 'YouTube · @Cognitive.Horizon.Engine', env: 'CHE_YOUTUBE_TOKEN', page: 'https://console.cloud.google.com/apis/credentials', test: 'https://www.googleapis.com/youtube/v3/channels?part=id&mine=true', accounts: 'uses the owner YouTube channel authorization' },
+  youtube: { name: 'YouTube · @Cognitive.Horizon.Engine', env: 'YOUTUBE_GOOGLE_SIGNIN', page: 'https://console.cloud.google.com/apis/credentials', test: null, accounts: 'connected with Google sign-in (Connect YouTube), not a pasted key' },
 };
 
 const STORED_KEYS = 'provider_keys';
@@ -93,6 +93,8 @@ export async function saveKey(storage, provider, key, fetcher = fetch) {
   const p = KEY_PROVIDERS[provider];
   const clean = String(key || '').trim();
   if (!p) return { ok: false, detail: 'Unknown provider.' };
+  // YouTube publishing needs the owner's Google sign-in, not a pasted key.
+  if (provider === 'youtube') return { ok: false, detail: 'YouTube is connected with Google sign-in, not a pasted key. Use Connect YouTube.' };
   if (clean.length < 12 || /\s/.test(clean)) return { ok: false, detail: 'That does not look like an API key.' };
   const test = await testKey(provider, clean, fetcher);
   if (test.status !== 'healthy' && test.status !== 'rate-limited') {
