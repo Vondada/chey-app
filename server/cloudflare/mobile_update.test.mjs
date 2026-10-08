@@ -202,3 +202,28 @@ test('direct downloads reject a release whose verified metadata does not match t
   );
   assert.equal(response.status, 404);
 });
+
+test('latest IPA is the highest numeric version even if another builder publishes later', async () => {
+  const high = {
+    ...release,
+    tag_name: 'che-ios-v1.4.1024200000-b3769039753601',
+    body: release.body.replaceAll('1.4.5', '1.4.1024200000').replaceAll('1200001', '3769039753601'),
+    published_at: '2026-10-07T20:00:00Z',
+  };
+  const low = {
+    ...release,
+    tag_name: 'che-ios-v1.4.1000371-b19000371',
+    body: release.body.replaceAll('1.4.5', '1.4.1000371').replaceAll('1200001', '19000371'),
+    published_at: '2026-10-07T21:00:00Z',
+  };
+  const fetcher = async (url) => new Response(
+    JSON.stringify(String(url).includes('/releases?') ? [low, high] : {}),
+    { status: 200 },
+  );
+  const latest = await handleMobileUpdateRequest(new Request('https://che.example/api/update/latest'), {}, fetcher);
+  assert.equal((await latest.json()).version, '1.4.1024200000');
+  const history = await handleMobileUpdateRequest(new Request('https://che.example/api/update/history'), {}, fetcher);
+  assert.deepEqual((await history.json()).builds.map((item) => item.version), [
+    '1.4.1024200000', '1.4.1000371',
+  ]);
+});

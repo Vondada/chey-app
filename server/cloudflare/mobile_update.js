@@ -159,6 +159,24 @@ export function sourceFromUpdates(updates, origin) {
   };
 }
 
+// Releases from different iPhone builders may finish out of order. GitHub's
+// published_at ordering is not SideStore's numeric marketing-version ordering.
+function compareMobileReleases(a, b) {
+  const av = releaseToUpdate(a, 'https://che.invalid');
+  const bv = releaseToUpdate(b, 'https://che.invalid');
+  const numbers = (value) => String(value).split('.').map((x) => BigInt(x));
+  const aa = numbers(av.version);
+  const bb = numbers(bv.version);
+  for (let i = 0; i < Math.max(aa.length, bb.length); i++) {
+    const left = aa[i] ?? 0n;
+    const right = bb[i] ?? 0n;
+    if (left !== right) return left > right ? -1 : 1;
+  }
+  const buildA = BigInt(av.build_number);
+  const buildB = BigInt(bv.build_number);
+  return buildA === buildB ? 0 : buildA > buildB ? -1 : 1;
+}
+
 async function releases(env, fetcher = fetch) {
   const items = await githubJson('/releases?per_page=30', env, fetcher);
   return Array.isArray(items)
@@ -166,7 +184,9 @@ async function releases(env, fetcher = fetch) {
         !item?.draft &&
         !item?.prerelease &&
         releaseToUpdate(item, 'https://che.invalid') != null
-      )
+      ).filter((item) => /^\d+\.\d+\.\d+$/.test(releaseToUpdate(item, 'https://che.invalid').version) &&
+        /^\d+$/.test(releaseToUpdate(item, 'https://che.invalid').build_number))
+        .sort(compareMobileReleases)
     : [];
 }
 

@@ -73,15 +73,19 @@ jobs:
           SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
         run: |
           build_number="$((GITHUB_RUN_ID * 100 + GITHUB_RUN_ATTEMPT))"
-          echo "Shorebird iOS build number: $build_number"
-          shorebird release ios --no-codesign -- \
+          build_name="$(python3 tool/mobile_version.py)"
+          echo "Shorebird iOS version: $build_name, build: $build_number"
+          shorebird release ios --no-codesign --build-name="$build_name" -- \
             --build-number="$build_number" \
             --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-https://chey-app.henryjavoni.workers.dev}"
 
       - name: Build unsigned iPhone app (plain, not patchable)
         if: steps.shorebird.outputs.ready != 'true'
         run: |
+          build_number="$((GITHUB_RUN_ID * 100 + GITHUB_RUN_ATTEMPT))"
+          build_name="$(python3 tool/mobile_version.py)"
           flutter build ios --release --no-codesign \
+            --build-name="$build_name" --build-number="$build_number" \
             --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-https://chey-app.henryjavoni.workers.dev}"
 
       - name: Package unsigned IPA

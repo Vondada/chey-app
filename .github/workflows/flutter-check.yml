@@ -50,6 +50,8 @@ jobs:
             for(const [id,m] of Object.entries(errs)) console.log("::error title="+(names[id]||id).replace(/[\n:,]/g," ").slice(0,200)+"::"+((logs[id]||[]).join("\n").match(/EXCEPTION CAUGHT[\s\S]{0,900}/)||[m.join(" | ")])[0].replace(/%/g,"%25").replace(/\r?\n/g,"%0A"));
           '
           exit $code
+      - name: iPhone version-ordering regression tests
+        run: python3 -m unittest discover -s tool -p 'test_mobile_version.py'
       - run: for f in server/cloudflare/*.js; do node --check "$f"; done
       - run: node --test server/cloudflare/*.test.mjs
 

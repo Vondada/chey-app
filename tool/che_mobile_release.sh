@@ -37,7 +37,9 @@ fi
 # SideStore's current source schema has one public version field and no separate
 # buildVersion field. Give every full IPA a unique three-part marketing version
 # that also goes into CFBundleShortVersionString, so SideStore can detect it.
-FULL_VERSION="${VERSION_MAJOR}.${VERSION_MINOR}.$((VERSION_PATCH * 1000000 + CM_SEQ))"
+# The GitHub Actions IPA path uses the same marketing version generator.
+# SideStore compares this version, not the separate build number.
+FULL_VERSION="$(python3 tool/mobile_version.py)"
 FULL_BUILD=$((BASE_BUILD * 1000000 + CM_SEQ))
 AGENT_URL="${CHE_AGENT_URL:-https://chey-app.henryjavoni.workers.dev}"
 IPA="build/ios/ipa/CHE-unsigned.ipa"
