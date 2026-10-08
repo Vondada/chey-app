@@ -1287,3 +1287,14 @@ test('a named definition the index holds is answered directly, with its real pat
   assert.equal(definitionAnswer('what is the default limit of search?', grounding), '');
   assert.equal(definitionAnswer('which file defines the function otherThing?', grounding), '');
 });
+
+test('lookupAnswer answers a named constant value from its own line and refusesAnswer catches refusals', async () => {
+  const { lookupAnswer, refusesAnswer } = await import('./self_development.js');
+  const grounding = { named_files: [{ path: 'server/cloudflare/self_skills.js', text: 'const x = 1;\nconst MAX_SOURCE = 24_000;\n' }] };
+  assert.equal(lookupAnswer('In server/cloudflare/self_skills.js, what is the value of MAX_SOURCE, the largest source text?', grounding), 'server/cloudflare/self_skills.js sets MAX_SOURCE = 24_000 (line 2).');
+  assert.equal(lookupAnswer('what is the value of OTHER_THING?', grounding), '');
+  assert.equal(lookupAnswer('which file defines function normalizeSkills?', { named_files: [{ path: 'a/self_skills.js', text: 'export function normalizeSkills(raw) {\n}' }] }), 'a/self_skills.js defines normalizeSkills (line 1).');
+  assert.equal(refusesAnswer("I don't know yet."), true);
+  assert.equal(refusesAnswer("I couldn't confirm an answer from the repository."), true);
+  assert.equal(refusesAnswer('server/cloudflare/self_skills.js sets MAX_SOURCE = 24_000 (line 11).'), false);
+});

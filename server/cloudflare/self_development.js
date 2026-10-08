@@ -587,6 +587,42 @@ export function definitionAnswer(request, grounding) {
   return `${hit.path} defines ${ident} (line ${hit.line}).`;
 }
 
+// A named constant or function in a file the request names is answered from
+// its own line ("what is the value of MAX_SOURCE in self_skills.js"). Only
+// lookups whose answer is on that line are answered; anything else goes on to
+// the model.
+export function lookupAnswer(request, grounding) {
+  const text = String(request || '');
+  const files = (grounding?.named_files || []).filter((f) => f.path && f.text);
+  if (!files.length) return '';
+  const asksValue = /\b(?:value|set\s+to|equal|what\s+is|what's)\b/i.test(text);
+  const asksFile = /\b(?:which|what)\s+file\s+(?:defines?|declares?|contains?)\b/i.test(text);
+  if (!asksValue && !asksFile) return '';
+  const ids = [...new Set([...text.matchAll(/\b([A-Za-z_$][\w$]*)\b/g)].map((m) => m[1]))].filter((id) => id.length >= 4);
+  for (const file of files) {
+    const lines = file.text.split('\n');
+    for (const id of ids) {
+      const esc = id.replace(/\$/g, '\\$');
+      const constant = new RegExp(`^\\s*(?:export\\s+)?(?:const|let|var)\\s+${esc}\\s*=\\s*(.+?);?\\s*$`);
+      const fn = new RegExp(`^\\s*(?:export\\s+)?(?:async\\s+)?function\\s+${esc}\\b`);
+      for (let i = 0; i < lines.length; i += 1) {
+        const value = lines[i].match(constant)?.[1] || '';
+        if (asksValue && value && !/[{(\[]$|=>|function/.test(value)) return `${file.path} sets ${id} = ${value} (line ${i + 1}).`;
+        if (asksFile && (value || fn.test(lines[i]))) return `${file.path} defines ${id} (line ${i + 1}).`;
+      }
+    }
+  }
+  return '';
+}
+
+// A draft that says it does not know, or cannot confirm, is retried once with
+// the source re-read. It is never an answer while the source is in hand.
+const REFUSAL = /\b(?:i\s+(?:do\s+not|don['’]t)\s+(?:know|have\s+(?:the\s+)?(?:exact|that|this|enough))|i\s+(?:can['’]t|cannot|could\s+not|couldn['’]t)\s+(?:confirm|verify|find|see|tell|pull)|not\s+(?:sure|able\s+to\s+(?:confirm|find|verify))|NOT VERIFIED)/i;
+export function refusesAnswer(text) {
+  return REFUSAL.test(String(text || ''));
+}
+export const SOURCE_RETRY_NOTE = 'Your draft said you did not know or could not confirm the answer. The answer is in REPOSITORY GROUNDING and SOURCE above if it exists in the repository. Read those sections again and answer the question directly with the exact file path and line. Say that something does not exist only when it is absent from every SOURCE excerpt, and then say what you searched.';
+
 // Read-only repository grounding for CHE's Flagstaff collaboration replies.
 // This never edits source and never treats another AI's message as owner
 // authorization. It gives CHE facts she can safely use before discussing a
