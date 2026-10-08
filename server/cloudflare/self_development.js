@@ -587,13 +587,67 @@ export function definitionAnswer(request, grounding) {
   return `${hit.path} defines ${ident} (line ${hit.line}).`;
 }
 
+// Test files hold fixtures that look like code. They are searched last, so a
+// definition in real source wins over the same words inside a test.
+export function isTestPath(path) {
+  return /\.test\.(?:mjs|js|dart)$|^test\//.test(String(path));
+}
+
+const WINDOW_STOP = new Set(['which', 'what', 'where', 'when', 'file', 'files', 'give', 'exact', 'their', 'there', 'about', 'does', 'should', 'names', 'name', 'path', 'line', 'lines', 'function', 'value', 'source', 'trace', 'answer']);
+
+// The part of a source file a question is about, numbered so the model can cite
+// real line numbers. A file that fits is shown whole. A longer file shows its
+// opening lines, then the windows around lines that match the request's words
+// (best matches first, within the budget), and the body of a named function.
+export function sourceWindow(text, request, budget = 7000) {
+  const source = String(text || '');
+  const lines = source.split('\n');
+  if (source.length <= budget) return lines.map((line, i) => `${i + 1}: ${line}`).join('\n');
+  const terms = [...new Set(String(request || '').toLowerCase().match(/[a-z_$][a-z0-9_$]{3,}/g) || [])].filter((t) => !WINDOW_STOP.has(t));
+  const picked = new Set();
+  let size = 0;
+  const add = (from, to) => {
+    const fresh = [];
+    for (let j = Math.max(0, from); j <= Math.min(lines.length - 1, to); j += 1) if (!picked.has(j)) fresh.push(j);
+    const cost = fresh.reduce((n, j) => n + lines[j].length + 10, 0);
+    if (size + cost > budget) return false;
+    fresh.forEach((j) => picked.add(j));
+    size += cost;
+    return true;
+  };
+  add(0, 19);
+  // A named function or method is shown with its body first.
+  lines.forEach((line, i) => {
+    const named = terms.some((t) => new RegExp(`^\\s*(?:export\\s+)?(?:async\\s+)?(?:function\\s+)?${t.replace(/\$/g, '\\$')}\\s*\\([^)]*\\)\\s*\\{\\s*$`, 'i').test(line));
+    if (named) [60, 40, 25, 12].some((n) => add(i, i + n));
+  });
+  // Then the lines that match the request's words. Identifiers (camelCase,
+  // snake_case, digits) count more than common words such as "worker".
+  const weight = (t) => (/[_$\d]|[a-z][A-Z]/.test(t) ? 3 : 1);
+  const scored = [];
+  lines.forEach((line, i) => {
+    const lower = line.toLowerCase();
+    const score = terms.reduce((n, t) => n + (lower.includes(t) ? weight(t) : 0), 0);
+    if (score) scored.push([score, i]);
+  });
+  scored.sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+  for (const [, i] of scored) add(i - 8, i + 8);
+  const rendered = [];
+  let previous = -2;
+  for (const i of [...picked].sort((a, b) => a - b)) {
+    rendered.push(`${i !== previous + 1 ? '...\n' : ''}${i + 1}: ${lines[i]}`);
+    previous = i;
+  }
+  return rendered.join('\n');
+}
+
 // A named constant or function in a file the request names is answered from
 // its own line ("what is the value of MAX_SOURCE in self_skills.js"). Only
 // lookups whose answer is on that line are answered; anything else goes on to
 // the model.
-export function lookupAnswer(request, grounding) {
+export function lookupAnswer(request, grounding, fileText = null) {
   const text = String(request || '');
-  const files = (grounding?.named_files || []).filter((f) => f.path && f.text);
+  const files = (grounding?.named_files || []).filter((f) => f.path && f.text).map((f) => ({ path: f.path, text: (fileText && fileText(f.path)) || f.text }));
   if (!files.length) return '';
   const asksValue = /\b(?:value|set\s+to|equal|what\s+is|what's)\b/i.test(text);
   const asksFile = /\b(?:which|what)\s+file\s+(?:defines?|declares?|contains?)\b/i.test(text);
@@ -750,7 +804,7 @@ export async function inspectRepositoryContext(env, request, fetcher = fetch, { 
   // Where a named function, class or constant is defined comes first.
   const defines = identifiers.map((id) => new RegExp(`(?:\\b(?:function|class|const|let|var|def|final|void|Future<[^>]*>)\\s+\\*?\\s*${id}\\b|\\b${id}\\s*(?:=|:)\\s*(?:async\\s*)?(?:function|\\())`));
   if (defines.length) {
-    for (const path of index.paths) {
+    for (const path of [...index.paths].sort((a, b) => Number(isTestPath(a)) - Number(isTestPath(b)))) {
       const text = code?.has(path) ? code.text(path) : loaded.get(path)?.text;
       if (!text) continue;
       const lines = text.split('\n');
@@ -782,7 +836,7 @@ export async function inspectRepositoryContext(env, request, fetcher = fetch, { 
     ...(phrases.length ? { exact_matches, exact_search: exact_matches.length ? 'found' : 'no match in the indexed commit' } : {}),
     // Real source for files the request named, so CHE can quote and review
     // them instead of guessing.
-    ...(named.length ? { named_files: named.map((path) => ({ path, text: String((code?.has(path) ? code.text(path) : loaded.get(path)?.text) || '').slice(0, 7000) })).filter((f) => f.text) } : {}),
+    ...(named.length ? { named_files: named.map((path) => ({ path, text: sourceWindow(String((code?.has(path) ? code.text(path) : loaded.get(path)?.text) || ''), request) })).filter((f) => f.text) } : {}),
     files,
     open_prs,
     open_prs_status: pulls.ok ? 'verified' : 'unavailable:' + String(pulls.status || 0),

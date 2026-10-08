@@ -1298,3 +1298,18 @@ test('lookupAnswer answers a named constant value from its own line and refusesA
   assert.equal(refusesAnswer("I couldn't confirm an answer from the repository."), true);
   assert.equal(refusesAnswer('server/cloudflare/self_skills.js sets MAX_SOURCE = 24_000 (line 11).'), false);
 });
+
+test('sourceWindow numbers source lines, keeps a named function and a matching constant, and isTestPath separates tests', async () => {
+  const { sourceWindow, isTestPath } = await import('./self_development.js');
+  const filler = Array.from({ length: 400 }, (_, i) => `const filler${i} = ${i};`).join('\n');
+  const body = Array.from({ length: 30 }, (_, i) => `    step${i}();`).join('\n');
+  const text = `${filler}\nexport class Runner {\n  async replyToRunner(message) {\n${body}\n  }\n}\nconst STATUS_LIMIT = 9;\n`;
+  const window = sourceWindow(text, 'what does replyToRunner do with STATUS_LIMIT?');
+  assert.match(window, /\d+: +async replyToRunner\(message\)/);
+  assert.match(window, /\d+: const STATUS_LIMIT = 9;/);
+  assert.ok(window.length <= 7000);
+  assert.equal(sourceWindow('const a = 1;', 'x'), '1: const a = 1;');
+  assert.equal(isTestPath('server/cloudflare/x.test.mjs'), true);
+  assert.equal(isTestPath('server/cloudflare/x.js'), false);
+});
+
