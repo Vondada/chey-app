@@ -277,3 +277,36 @@ export function guardOwnerReply(reply, state, ctx = {}) {
   }
   return { text: kept.join('').replace(/\n{3,}/g, '\n\n').trim(), removed, homework };
 }
+
+/**
+ * Grounded-fact guard for replies built on a repository inspection: a
+ * sentence naming a file that is not in the inspected commit, a pull request
+ * link to another repository, or a job id CHE does not hold is removed, and
+ * so is any "I verified it" sentence in a reply that needed such removal.
+ */
+export function guardGroundedFacts(reply, { paths = [], repo = '', jobIds = [] } = {}) {
+  const known = new Set(paths);
+  const basenames = new Set(paths.map((p) => p.split('/').pop()));
+  const ids = new Set(jobIds.map(String));
+  const removed = [];
+  const PATH = /(?:[\w.-]+\/)+[\w.-]+\.(?:dart|m?js|cjs|ts|tsx|py|swift|kt|ya?ml|json|md|html|css)\b|\b[\w-]+\.(?:dart|m?js|cjs|ts|tsx|py|swift)\b/g;
+  const badFact = (s) => {
+    for (const hit of s.match(PATH) || []) {
+      if (/^(?:node|next|vue|react|three|express|d3|chart|moment|socket\.io)\.js$/i.test(hit)) continue; // product names, not files
+      if (hit.includes('/') ? !known.has(hit) : !basenames.has(hit)) return `unknown_file:${hit}`;
+    }
+    for (const m of s.matchAll(/github\.com\/([\w.\/-]+?)\/(?:pull|issues)\/\d+/gi)) if (!repo || m[1].toLowerCase() !== repo.toLowerCase()) return `foreign_pr:${m[1]}`;
+    const job = /\bjob(?:\s+id)?\s*[:#]?\s*(?:under\s+id\s*[:#]?\s*)?([A-Za-z0-9][\w-]{7,})\b/i.exec(s);
+    if (job && /\d/.test(job[1]) && !ids.has(job[1])) return `unknown_job:${job[1]}`;
+    return '';
+  };
+  const parts = splitSentences(reply);
+  const kept = [];
+  for (const sentence of parts) {
+    const why = paths.length || repo || jobIds.length ? badFact(sentence) : '';
+    if (why) { removed.push({ rule: why, sentence: sentence.trim() }); continue; }
+    kept.push(sentence);
+  }
+  const text = (removed.length ? kept.filter((s) => !/\b(?:verified|confirmed|checked)\b/i.test(s)) : kept).join('').replace(/\n{3,}/g, '\n\n').trim();
+  return { text, removed };
+}

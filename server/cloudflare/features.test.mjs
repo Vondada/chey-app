@@ -497,3 +497,13 @@ test('image relay falls from FLUX to Gemini and keeps the returned MIME type', a
   assert.equal(result.status, 200); assert.equal(result.item.mime_type, 'image/png');
   assert.equal(result.item.engine, 'gemini-image');
 });
+
+test('secret scan is baseline-relative and ignores obvious test fixtures', () => {
+  const fixture = "const env = { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' };\n";
+  assert.equal(scanUpdateContent(fixture, 'server/cloudflare/worker.test.mjs'), null, 'a one-letter fixture is not a secret');
+  assert.match(scanUpdateContent("CHE_GITHUB_TOKEN = 'ghx_abcdefghijklmnopqrstuvwx'", 'a.js') || '', /secret/);
+  const existing = 'const k = "sk_live_abcdefghijklmnopqrstuvwxyz";\n';
+  assert.equal(scanUpdateContent(`${existing}// new line\n`, 'a.js', existing), null, 'a pre-existing string is not the edit\'s doing');
+  assert.match(scanUpdateContent(`${existing}const k2 = "sk_live_zzzzzzzzzzzzzzzzzzzzzz";\n`, 'a.js', existing) || '', /secret/, 'a new secret is still refused');
+  assert.match(scanUpdateContent(`${existing}console.log("sk_live_abcdefghijklmnopqrstuvwxyz");\n`, 'a.js', existing) || '', /secret/, 'a second copy of an existing secret is refused');
+});

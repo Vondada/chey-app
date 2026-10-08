@@ -1227,3 +1227,26 @@ test('reviewer outage on the final genuine pass checkpoints the candidate and re
   assert.equal(implementationCalls, callsAfterCandidate, 'resume retries review only; it does not grant a fourth implementation pass');
   assert.match(resumed.proposal.files[0].content, /Ready, sir/);
 });
+
+test('grounding answers a quoted phrase with the real file and line, and lists every path for the reply guard', async () => {
+  const sha = 'd'.repeat(40);
+  const files = {
+    'server/cloudflare/worker.js': 'const a = 1;\n// "mission status": the durable objective graphs, spoken.\nif (/mission status/i.test(m)) speak();\n',
+    'lib/main.dart': 'void main() {}\n',
+  };
+  const fetcher = async (url) => {
+    const u = String(url);
+    const ok = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (u.endsWith('/o/r')) return ok({ default_branch: 'main' });
+    if (u.includes('/git/ref/heads/main')) return ok({ object: { sha } });
+    if (u.includes('/git/trees/')) return ok({ tree: Object.keys(files).map((path) => ({ type: 'blob', path })) });
+    if (u.includes('/pulls?state=open')) return ok([]);
+    const m = /\/contents\/(.+)\?ref=/.exec(u);
+    if (m && files[m[1]]) return ok({ content: btoa(files[m[1]]), sha: 'blob-' + m[1] });
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const out = await inspectRepositoryContext({ CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' }, 'Which file answers the voice command "mission status"?', fetcher);
+  assert.equal(out.exact_search, 'found');
+  assert.deepEqual(out.exact_matches.map((m) => [m.path, m.line]), [['server/cloudflare/worker.js', 2], ['server/cloudflare/worker.js', 3]]);
+  assert.deepEqual(out.all_paths.sort(), Object.keys(files).sort());
+});
