@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>CHE character prototype</title>
+<title>CHE Office Crew</title>
 <link rel="icon" href="data:,">
 <style>
 :root{color-scheme:dark;--bg:#04090b;--panel:rgba(8,22,25,.9);--line:#1b5558;--fg:#e8fbfa;--muted:#93bdbb;--accent:#2ee6d6;--accent-ink:#03201e}
@@ -19,6 +19,8 @@ button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);bor
 button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 #pad{position:fixed;left:16px;bottom:calc(150px + env(safe-area-inset-bottom,0px));width:132px;height:132px;border-radius:50%;border:2px solid var(--line);background:rgba(8,22,25,.55);touch-action:none}
 #knob{position:absolute;left:50%;top:50%;width:52px;height:52px;margin:-26px 0 0 -26px;border-radius:50%;background:var(--accent);box-shadow:0 0 18px rgba(46,230,214,.6);pointer-events:none}
+#crew{position:fixed;right:16px;top:calc(76px + env(safe-area-inset-top,0px));display:flex;flex-direction:column;gap:6px;max-width:44vw}
+#crew button{min-height:44px;padding:6px 10px;font-size:14px;text-align:left}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 </style>
 </head>
@@ -26,6 +28,7 @@ button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 <div id="stage" aria-hidden="true"></div>
 <div id="status" role="status" aria-live="polite">CHE loading…<small id="sub">Rigged 3D prototype</small></div>
 <div id="pad" role="application" aria-label="Movement joystick. Drag to walk; push further to run. Keyboard: arrow keys." tabindex="0"><div id="knob"></div></div>
+<div id="crew" role="group" aria-label="Office crew. Choose an agent to hear their role."></div>
 <div id="dock">
   <div id="clips" role="group" aria-label="CHE animations"></div>
 </div>
@@ -41,7 +44,17 @@ const CLIPS = [
 ];
 const ONE_SHOT = new Set(['sit', 'stand']);
 const ROOM = 5.5;
-const DESK = { x: 2.2, z: -2.5, hx: 1.2, hz: 0.5 };
+const DESK = { x: 2.2, z: -2.5, hx: 0.8, hz: 0.35 };
+// CHE's office agents (roles from lib/che_ui/che_brain.dart), each at a spot with a looping clip.
+const CREW = [
+  { id: 'nova', name: 'Nova', role: 'Product and listings', at: [-2.2, -2.2], clip: 'talk', face: 0.6 },
+  { id: 'atlas', name: 'Atlas', role: 'Research and sourcing', at: [-0.9, -3.0], clip: 'think', face: 0.2 },
+  { id: 'mira', name: 'Mira', role: 'Support copy and translation', at: [0.6, -3.2], clip: 'idle', face: 0 },
+  { id: 'knox', name: 'Knox', role: 'Engineering', at: [2.2, -1.6], clip: 'nod', face: -0.6 },
+  { id: 'sage', name: 'Sage', role: 'Finance reports, read only', at: [3.0, 0.2], clip: 'think', face: -1.2 },
+  { id: 'lyra', name: 'Lyra', role: 'Content and social', at: [-3.0, 0.0], clip: 'talk', face: 1.2 },
+  { id: 'iris', name: 'Iris', role: 'Ad Studio', at: [-2.4, 1.6], clip: 'idle', face: 2.2 },
+];
 
 const $status = document.getElementById('status');
 const $sub = document.getElementById('sub');
@@ -88,15 +101,15 @@ wall.receiveShadow = true;
 scene.add(wall);
 
 const deskMat = new THREE.MeshStandardMaterial({ color: 0x0f2a2e, roughness: 0.5, metalness: 0.2 });
-const desk = new THREE.Mesh(new THREE.BoxGeometry(DESK.hx * 2, 0.76, DESK.hz * 2), deskMat);
-desk.position.set(DESK.x, 0.38, DESK.z);
+const desk = new THREE.Mesh(new THREE.BoxGeometry(DESK.hx * 2, 0.46, DESK.hz * 2), deskMat);
+desk.position.set(DESK.x, 0.23, DESK.z);
 desk.castShadow = desk.receiveShadow = true;
 scene.add(desk);
-const screen = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.55, 0.04), new THREE.MeshStandardMaterial({ color: 0x06302f, emissive: 0x2ee6d6, emissiveIntensity: 0.8 }));
-screen.position.set(DESK.x, 1.0, DESK.z - 0.2);
+const screen = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.36, 0.03), new THREE.MeshStandardMaterial({ color: 0x06302f, emissive: 0x2ee6d6, emissiveIntensity: 0.8 }));
+screen.position.set(DESK.x, 0.66, DESK.z - 0.15);
 scene.add(screen);
 
-const ring = new THREE.Mesh(new THREE.RingGeometry(0.36, 0.42, 48), new THREE.MeshBasicMaterial({ color: 0x2ee6d6, transparent: true, opacity: 0.85, side: THREE.DoubleSide }));
+const ring = new THREE.Mesh(new THREE.RingGeometry(0.26, 0.31, 48), new THREE.MeshBasicMaterial({ color: 0x2ee6d6, transparent: true, opacity: 0.85, side: THREE.DoubleSide }));
 ring.rotation.x = -Math.PI / 2;
 ring.visible = false;
 scene.add(ring);
@@ -113,7 +126,7 @@ let heading = 0;
 const pos = new THREE.Vector3(0, 0, 1.2);
 const yawRef = { yaw: 0 };
 
-new GLTFLoader().load('./che_proto.glb', (gltf) => {
+new GLTFLoader().load('./crew/che.glb', (gltf) => {
   const root = gltf.scene;
   root.traverse((o) => {
     if (o.isMesh || o.isSkinnedMesh) {
@@ -164,6 +177,40 @@ function choose(name) {
   say(`CHE: ${name}`, '');
 }
 
+// ---------- the office crew: each agent loops a clip; choosing one makes them wave
+const $crew = document.getElementById('crew');
+const crew = [];
+const loader = new GLTFLoader();
+for (const a of CREW) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = a.name;
+  b.setAttribute('aria-label', `${a.name}, ${a.role}`);
+  b.addEventListener('click', () => greet(a.id));
+  $crew.appendChild(b);
+  loader.load(`./crew/${a.id}.glb`, (gltf) => {
+    const root = gltf.scene;
+    root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
+    root.position.set(a.at[0], 0, a.at[1]);
+    root.rotation.y = a.face;
+    scene.add(root);
+    const m = new THREE.AnimationMixer(root);
+    const acts = Object.fromEntries(gltf.animations.map((c) => [c.name, m.clipAction(c)]));
+    acts[a.clip].play();
+    crew.push({ ...a, root, mixer: m, acts, cur: acts[a.clip] });
+  });
+}
+function greet(id) {
+  const c = crew.find((x) => x.id === id);
+  const a = CREW.find((x) => x.id === id);
+  say(`${a.name}: ${a.role}`, c ? `${a.name} waves at you.` : `${a.name} is still loading.`);
+  if (!c) return;
+  const w = c.acts.wave;
+  c.cur.fadeOut(0.25);
+  w.reset().fadeIn(0.25).play();
+  setTimeout(() => { w.fadeOut(0.3); c.cur.reset().fadeIn(0.3).play(); }, 2600);
+}
+
 // ---------- joystick (pointer + keyboard)
 const pad = document.getElementById('pad');
 const knob = document.getElementById('knob');
@@ -199,6 +246,8 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
   const r = renderer.domElement.getBoundingClientRect();
   ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   ray.setFromCamera(ndc, camera);
+  const hitAgent = crew.find((c) => ray.intersectObject(c.root, true).length);
+  if (hitAgent) { greet(hitAgent.id); return; }
   if (ray.intersectObject(hero, true).length) {
     selected = !selected;
     ring.visible = selected;
@@ -207,10 +256,11 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
 });
 
 // ---------- movement, collision, camera
-const MOVE = { walk: 1.1, run: 2.7 };
+const MOVE = { walk: 0.75, run: 1.8 };
 let camYaw = 0;
 function blocked(x, z) {
-  return Math.abs(x - DESK.x) < DESK.hx + 0.3 && Math.abs(z - DESK.z) < DESK.hz + 0.3;
+  if (crew.some((c) => Math.hypot(x - c.at[0], z - c.at[1]) < 0.45)) return true;
+  return Math.abs(x - DESK.x) < DESK.hx + 0.25 && Math.abs(z - DESK.z) < DESK.hz + 0.25;
 }
 function update(dt) {
   let sx = stick.x, sy = stick.y;
@@ -243,9 +293,10 @@ function update(dt) {
   hero.rotation.y = heading;
   ring.position.set(pos.x, 0.01, pos.z);
   if (mixer) mixer.update(dt);
+  for (const c of crew) c.mixer.update(dt);
   // Camera: follows CHE from behind, orbit by dragging empty space.
-  const target = new THREE.Vector3(pos.x, 1.0, pos.z);
-  const want = new THREE.Vector3(target.x + Math.sin(camYaw) * 3.4, 1.9, target.z + Math.cos(camYaw) * 3.4);
+  const target = new THREE.Vector3(pos.x, 0.62, pos.z);
+  const want = new THREE.Vector3(target.x + Math.sin(camYaw) * 2.7, 1.45, target.z + Math.cos(camYaw) * 2.7);
   camera.position.lerp(want, 1 - Math.pow(0.02, dt));
   camera.lookAt(target);
 }
@@ -279,6 +330,8 @@ requestAnimationFrame(frame);
 window.CHE = {
   play: (name) => choose(name),
   stick: (x, y) => setStick(x, y),
+  greet: (id) => greet(id),
+  get crewLoaded() { return crew.length; },
   get state() { return { clip: current && Object.keys(actions).find((k) => actions[k] === current), pos: pos.toArray(), sitting, selected }; },
 };
 </script>
