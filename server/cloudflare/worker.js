@@ -62,7 +62,7 @@ import { webAppPage } from './web_app.js';
 import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachmentText, condenseSkills, loadLearnedSkills, READ_FOR_SKILLS, redactSensitive, saveLearnedSkills, speakLearned, speakSkillList } from './self_skills.js';
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { noteJobActivity } from './job_activity.js';
-import { PENDING_OWNER_ACTION_KEY, PENDING_OWNER_ACTION_MS, gateOwnerAction, isOwnerYes } from './owner_action_gate.js';
+import { PENDING_OWNER_ACTION_KEY, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes } from './owner_action_gate.js';
 import { changeHistoryIntent, guardGroundedFacts, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
@@ -6309,17 +6309,22 @@ export class CheState extends DurableObject {
         let ownerGrant = {};
         let heldAction = null;
         try { heldAction = await this.ctx.storage.get(PENDING_OWNER_ACTION_KEY); } catch (_) { heldAction = null; }
-        if (heldAction) {
-          await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, null).catch(() => null);
-          if (isOwnerYes(message) && Date.now() - Number(heldAction.at || 0) < PENDING_OWNER_ACTION_MS) {
-            ownerGrant = { [heldAction.kind]: true };
-            message = String(heldAction.text || message);
+        try {
+          if (heldAction) {
+            await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, null);
+            if (isOwnerYes(message) && Date.now() - Number(heldAction.at || 0) < PENDING_OWNER_ACTION_MS) {
+              ownerGrant = grantForKinds(heldAction.kinds);
+              message = String(heldAction.text || message);
+            }
           }
-        }
-        const ownerGate = gateOwnerAction(message, ownerGrant);
-        if (!ownerGate.allowed) {
-          await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, { kind: ownerGate.kind, text: message, at: Date.now() }).catch(() => null);
-          return json({ message: ownerGate.ask, reply: ownerGate.ask, held_for_owner: true, owner_action_kind: ownerGate.kind, code_review_passed: false, owner_approval_required: true });
+          const ownerGate = gateOwnerAction(message, ownerGrant);
+          if (!ownerGate.allowed) {
+            await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, { kinds: ownerGate.kinds, text: message, at: Date.now() });
+            return json({ message: ownerGate.ask, reply: ownerGate.ask, held_for_owner: true, owner_action_kind: ownerGate.kind, owner_action_kinds: ownerGate.kinds, code_review_passed: false, owner_approval_required: true });
+          }
+        } catch (_) {
+          // Fail closed: if the hold cannot be recorded, nothing gated runs.
+          return json({ message: 'I could not record that safely, so I did not act. Please say it again.', reply: 'I could not record that safely, so I did not act. Please say it again.', code_review_passed: false, owner_approval_required: true }, 503);
         }
 
         // A spoken resource list is choosable only on the very next turn; any

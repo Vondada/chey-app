@@ -1241,10 +1241,13 @@ test('"Discard that change" removes the saved change and starts the next study b
   }
   const saved = new Map();
   const { chat } = await pairedChat({ CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'x' }) } }, saved);
-  assert.match(await (await chat('Discard that change')).text(), /no saved change waiting/);
+  // Discarding is removing, so CHE holds it and asks first; the owner's yes releases it once.
+  const discard = async () => { await chat('Discard that change'); return chat('yes'); };
+  assert.match(await (await chat('Discard that change')).text(), /Before I delete or remove anything/);
+  assert.match(await (await chat('yes')).text(), /no saved change waiting/);
   saved.set('pending_self_update', { proposal: { summary: 'Agent cache', files: [{ path: 'lib/agents/che_office_store.dart', content: 'x' }] }, request: 'r', from_job: 'j1' });
   saved.set('study_build_queue', [{ id: 's:1', order: 1, topic: 'Search Engine', request: 'Topic 1 of 6: Search Engine build', status: 'waiting', at: new Date().toISOString() }]);
-  const text = await (await chat('Discard that change')).text();
+  const text = await (await discard()).text();
   assert.match(text, /Discarded, sir\. The saved change to lib\/agents\/che_office_store\.dart is gone and nothing from it was merged\./);
   assert.match(text, /My coding team started building Search Engine/);
   assert.equal(saved.has('pending_self_update'), false);
@@ -1335,7 +1338,7 @@ test('a reviewed change never overwrites one the owner has not decided on; it wa
     assert.match(job.owner_message, /The Database build finished and passed review, sir\. It waits behind the change you have not decided on yet/);
     assert.equal(saved.get('pending_self_update').from_job, 'build-1', 'the first change is untouched');
     assert.equal(saved.get('ready_self_updates').length, 1);
-    const text = await (await chat('Discard that change')).text();
+    await chat('Discard that change'); const text = await (await chat('yes')).text();
     assert.match(text, /Discarded, sir\./);
     assert.match(text, /The next reviewed change is ready, sir, for Database: Friendlier banner/);
     assert.match(text, /create the PR\\?" to open it/);

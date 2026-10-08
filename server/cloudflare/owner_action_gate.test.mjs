@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyOwnerAction, gateOwnerAction, gateAppAccess } from './owner_action_gate.js';
+import { classifyOwnerAction, classifyOwnerActions, gateOwnerAction, gateAppAccess, grantForKinds } from './owner_action_gate.js';
 
 test('money verbs are classified as money', () => {
   assert.equal(classifyOwnerAction('buy the domain chey-test.com'), 'money');
@@ -20,9 +20,29 @@ test('ordinary requests are not gated', () => {
   assert.equal(classifyOwnerAction(''), '');
 });
 
-test('a verb in the middle of a sentence does not trigger the gate', () => {
-  assert.equal(classifyOwnerAction('write a listing customers can buy'), '');
-  assert.equal(classifyOwnerAction('explain how to remove duplicates from a list'), '');
+test('verbs anywhere in the request are gated (a false hold costs one yes)', () => {
+  assert.equal(classifyOwnerAction('can you delete my notes'), 'delete');
+  assert.equal(classifyOwnerAction('go ahead and delete the skills'), 'delete');
+  assert.equal(classifyOwnerAction('pls delete it'), 'delete');
+  assert.equal(classifyOwnerAction('"delete the note"'), 'delete');
+  assert.equal(classifyOwnerAction('I want to pay the bill'), 'money');
+  assert.equal(classifyOwnerAction('charge my card for the domain'), 'money');
+  assert.equal(classifyOwnerAction('upgrade to the pro plan'), 'money');
+  assert.equal(classifyOwnerAction('reset my learned skills'), 'delete');
+  assert.equal(classifyOwnerAction('uninstall the app'), 'delete');
+});
+
+test('a mixed request lists every kind and needs a grant for each', () => {
+  const mixed = 'buy the domain then delete the old key';
+  assert.deepEqual(classifyOwnerActions(mixed), ['money', 'delete']);
+  assert.equal(gateOwnerAction(mixed, { money: true }).allowed, false);
+  assert.equal(gateOwnerAction(mixed, { money: true }).kind, 'delete');
+  assert.equal(gateOwnerAction(mixed, { money: true, delete: true }).allowed, true);
+  assert.deepEqual(grantForKinds(['money', 'delete']), { money: true, delete: true });
+});
+
+test('ordinary requests with no action verb are not gated', () => {
+  assert.deepEqual(classifyOwnerActions('tell me about the weather'), []);
 });
 
 test('money and delete actions are held without an explicit yes', () => {
@@ -44,7 +64,7 @@ test('an explicit yes for that kind allows the action', () => {
 });
 
 test('ordinary requests pass without a grant', () => {
-  assert.deepEqual(gateOwnerAction('read my last note'), { allowed: true, kind: '' });
+  assert.deepEqual(gateOwnerAction('read my last note'), { allowed: true, kind: '', kinds: [] });
 });
 
 test('apps are refused until the owner grants them', () => {
