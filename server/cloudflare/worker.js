@@ -62,7 +62,7 @@ import { webAppPage } from './web_app.js';
 import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachmentText, condenseSkills, loadLearnedSkills, READ_FOR_SKILLS, redactSensitive, saveLearnedSkills, speakLearned, speakSkillList } from './self_skills.js';
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { noteJobActivity } from './job_activity.js';
-import { changeHistoryIntent, guardGroundedFacts, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
+import { changeHistoryIntent, guardGroundedFacts, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, requestedCodeNames, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
 import { describeTopicStudyStart, starredStudyTargets, matchTopicSections, namedRepoStudyIntent, starredLibraryIntent, readTutorial, readmeSections, sectionTutorials, studyBatchIntent, topicBuildRequest, topicTitles, wantsSerialStudy } from './topic_study.js';
@@ -3701,7 +3701,7 @@ export class CheState extends DurableObject {
       // files, foreign PR links or unknown job ids.
       const checked = (text) => {
         const guarded = verified ? guardOwnerReply(text, verified, { repoAvailable: true }) : { text, removed: [] };
-        return guardGroundedFacts(guarded.text, { paths: repoGrounding?.all_paths || [], repo: String(this.env.CHE_GITHUB_REPO || ''), jobIds, codeIncludes, fileText: codeIndex ? (path) => codeIndex.text(path) : null, flagOnly: true });
+        return guardGroundedFacts(guarded.text, { paths: repoGrounding?.all_paths || [], repo: String(this.env.CHE_GITHUB_REPO || ''), jobIds, codeIncludes, fileText: codeIndex ? (path) => codeIndex.text(path) : null, flagOnly: true, authoredNames: requestedCodeNames(incoming) });
       };
       let raw = directAnswer || modelText(await callModel());
       let grounded = checked(raw);

@@ -288,25 +288,45 @@ export function guardOwnerReply(reply, state, ctx = {}) {
 // whether the exact text appears anywhere in the pinned commit; without it
 // code quotes are not checked.
 // Code CHE writes herself (an exam answer, a proposed fix) is not a quote, so
-// it is not checked against the repository: the text just before the block
-// says so ("here is my fix", "I wrote"), or the block defines a function whose
-// name appears nowhere in the pinned commit.
+// it is not checked against the repository. That needs affirmative context:
+// the line introducing this block says so ("here is my fix", "I wrote"), or
+// the block defines a function the sender asked her to write or fix and the
+// introducing line does not present it as existing code ("the current code
+// is"). A name merely missing from the repository is not evidence of
+// authorship (it is what a hallucinated quote looks like).
 const NEW_CODE_CUE = /\b(?:here(?:'s| is) (?:my|the|a|an) (?:fix|fixed|new|corrected|solution|implementation|version|function|answer|code)|I (?:wrote|write|would write|have written|fixed|rewrote|corrected)|my (?:fix|solution|version|implementation|code|answer)|(?:fixed|corrected|new|proposed|suggested|rewritten) (?:version|code|function|implementation|loop))\b/i;
 const DEFINES = /^\s*(?:export\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)|^\s*def\s+([A-Za-z_]\w*)|^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/m;
 
-function isOwnCode(before, body, codeIncludes) {
-  const lead = String(before).slice(-240).split(/(?<=[.!?:])\s+(?=\S)/).slice(-2).join(' ');
-  if (NEW_CODE_CUE.test(lead)) return true;
+const QUOTE_CUE = /\b(?:current(?:ly)?|existing|repository|repo|codebase|pinned|defined (?:as|in)|the (?:line|code|source) (?:is|reads|says)|looks like this|in [\w./-]+\.(?:dart|m?js|cjs|ts|tsx|py|swift|kt))\b/i;
+
+function isOwnCode(intro, body, authoredNames) {
+  if (NEW_CODE_CUE.test(intro)) return true;
   const m = DEFINES.exec(body);
   const name = m && (m[1] || m[2] || m[3]);
-  return Boolean(name && name.length >= 3 && !codeIncludes(name));
+  return Boolean(name && authoredNames.has(name) && !QUOTE_CUE.test(intro));
 }
 
-function stripUnverifiedCode(reply, codeIncludes, removed, flagOnly = false) {
+/**
+ * Function names a request asks CHE to write or fix: "write a function
+ * vowelCount(s)", or a `function sumTo(` given in a request about a bug.
+ */
+export function requestedCodeNames(request) {
+  const text = String(request || '');
+  const names = new Set();
+  for (const m of text.matchAll(/\b(?:write|implement|create|code|build)\b[^.\n]{0,60}?\bfunction\s+([A-Za-z_$][\w$]*)/gi)) names.add(m[1]);
+  if (/\b(?:fix|bug|wrong|correct)/i.test(text)) for (const m of text.matchAll(/\bfunction\s+([A-Za-z_$][\w$]*)\s*\(/g)) names.add(m[1]);
+  return names;
+}
+
+function stripUnverifiedCode(reply, codeIncludes, removed, flagOnly = false, authoredNames = new Set()) {
   if (typeof codeIncludes !== 'function') return reply;
   const text = String(reply || '');
+  let lastEnd = 0;
   return text.replace(/```[^\n]*\n([\s\S]*?)```/g, (block, body, at) => {
-    if (isOwnCode(text.slice(0, at), body, codeIncludes)) return block;
+    // Only the line that introduces this block counts, not a cue for an earlier block.
+    const intro = text.slice(lastEnd, at).trim().split('\n').pop().slice(-200);
+    lastEnd = at + block.length;
+    if (isOwnCode(intro, body, authoredNames)) return block;
     // Every line with a real word is checked, short statements included;
     // lone braces, blank lines and "..." are not evidence either way.
     const lines = body.split('\n').map((l) => l.trim()).filter((l) => /[A-Za-z_$][\w$]{2,}/.test(l) && !/^(?:\/\/\s*)?\.\.\.$/.test(l));
@@ -353,7 +373,7 @@ const NOT_VERIFIED = '[NOT VERIFIED]';
 /**
  * Grounded-fact guard. Default: a failing sentence is removed. flagOnly: it is kept and marked [NOT VERIFIED].
  */
-export function guardGroundedFacts(reply, { paths = [], repo = '', jobIds = [], codeIncludes = null, fileText = null, flagOnly = false } = {}) {
+export function guardGroundedFacts(reply, { paths = [], repo = '', jobIds = [], codeIncludes = null, fileText = null, flagOnly = false, authoredNames = new Set() } = {}) {
   const known = new Set(paths);
   const basenames = new Set(paths.map((p) => p.split('/').pop()));
   const ids = new Set(jobIds.map(String));
@@ -377,7 +397,11 @@ export function guardGroundedFacts(reply, { paths = [], repo = '', jobIds = [], 
     if (job && /\d/.test(job[1]) && !ids.has(job[1])) return `unknown_job:${job[1]}`;
     return '';
   };
-  reply = stripUnverifiedCode(reply, codeIncludes, removed, flagOnly);
+  reply = stripUnverifiedCode(reply, codeIncludes, removed, flagOnly, authoredNames);
+  // Fenced code was judged above as a whole block; the sentence checks below
+  // are for prose (a template literal inside code is not a repository quote).
+  const fences = [];
+  if (typeof codeIncludes === 'function') reply = reply.replace(/```[\s\S]*?```/g, (m) => `\u0000${fences.push(m) - 1}\u0000`);
   const parts = splitSentences(reply);
   const kept = [];
   for (const sentence of parts) {
@@ -390,6 +414,7 @@ export function guardGroundedFacts(reply, { paths = [], repo = '', jobIds = [], 
     }
     kept.push(sentence);
   }
-  const text = (removed.length && !flagOnly ? kept.filter((s) => !/\b(?:verified|confirmed|checked)\b/i.test(s)) : kept).join('').replace(/\n{3,}/g, '\n\n').trim();
+  const text = (removed.length && !flagOnly ? kept.filter((s) => !/\b(?:verified|confirmed|checked)\b/i.test(s)) : kept).join('')
+    .replace(/\u0000(\d+)\u0000/g, (_, i) => fences[Number(i)]).replace(/\n{3,}/g, '\n\n').trim();
   return { text, removed };
 }
