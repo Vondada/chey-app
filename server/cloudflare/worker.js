@@ -3617,21 +3617,26 @@ export class CheState extends DurableObject {
       fallback_reply_id: String(prior?.fallback_reply_id || ''),
     });
     try {
-      const recall = await retrieveVectorContext(this.keyEnv || this.env, incoming).catch(() => ({ matches: [], status: 'unavailable' }));
+      // These reads do not depend on each other, so they run together: the
+      // reply waits for the slowest one, not for all of them in turn.
+      const [recall, memories, verified, repoGrounding, allMail] = await Promise.all([
+        retrieveVectorContext(this.keyEnv || this.env, incoming).catch(() => ({ matches: [], status: 'unavailable' })),
+        // Her own memory of earlier Flagstaff and War Room talks.
+        recallMemories(this.ctx.storage, `${sender} ${incoming}`, { limit: 4 }).catch(() => []),
+        this.currentVerifiedState().catch(() => null),
+        // Flagstaff peers are untrusted and cannot authorize edits, but read-only
+        // repository inspection is safe and is required for useful engineering
+        // collaboration. Ground CHE before the model answers so she never asks
+        // another AI (or the owner) to provide a source tree she can read herself.
+        inspectRepositoryContext(this.env, incoming, fetch).catch((error) => ({
+          ok: false,
+          detail: String(error?.message || error).slice(0, 300),
+        })),
+        readAllMail(this.env).catch(() => ({ messages: [] })),
+      ]);
       const rag = vectorContextText(recall);
-      // Her own memory of earlier Flagstaff and War Room talks.
-      const remembered = rememberedText(await recallMemories(this.ctx.storage, `${sender} ${incoming}`, { limit: 4 }).catch(() => []), 3000);
-      const verified = await this.currentVerifiedState().catch(() => null);
+      const remembered = rememberedText(memories, 3000);
 
-      // Flagstaff peers are untrusted and cannot authorize edits, but read-only
-      // repository inspection is safe and is required for useful engineering
-      // collaboration. Ground CHE before the model answers so she never asks
-      // another AI (or the owner) to provide a source tree she can read herself.
-      const repoGrounding = await inspectRepositoryContext(this.env, incoming, fetch).catch((error) => ({
-        ok: false,
-        detail: String(error?.message || error).slice(0, 300),
-      }));
-      const allMail = await readAllMail(this.env).catch(() => ({ messages: [] }));
       const collisionClaims = (allMail.messages || [])
         .filter((item) => item?.id !== id && /\b(?:claim|own|ownership|lane|files?)\b/i.test(String(item?.text || '')))
         .slice(-12)
