@@ -9,12 +9,15 @@
 // inside a coding instruction are subject matter, not an owner request to spend
 // or delete. Negated forms ("do not delete") are never gated.
 
-const LEAD = String.raw`^(?:(?:please|pls|now|then|also|and|ok|okay|just|to|let's|lets|can you|could you|would you|will you|go ahead and|i want to|i'd like to|id like to|i need you to)\s+)*["'(]?`;
-const MONEY_VERB = String.raw`(?:buy|purchase|pay|subscribe(?:\s+to)?|donate(?:\s+to)?|charge|checkout|upgrade\s+to|renew|top\s+up|sign\s+up\s+for|spend)`;
-const MONEY_ORDER = String.raw`order\s+(?:me\s+|us\s+)?(?:a|an|another|more|some|\d|\$)`;
-const MONEY_TRANSFER = String.raw`(?:transfer|wire)\s+(?:\$|\d|money|funds|dollars?|to\s)`;
+const VOCATIVE = String.raw`(?:(?:hey|hi|ok|okay)\s+(?:chey|che|chay)\s*,?\s*)?`;
+const LEAD = String.raw`^(?:${VOCATIVE}(?:(?:please|pls|plz|now|then|also|and|ok|okay|just|to|let's|lets|let\s+us|can you|could you|would you|will you|i want you to|i need you to|i want to|i'd like to|id like to|i am going to|i'm going to|im going to|go ahead and|you should|you must)\s+)*)["'(]?`;
+// Verb forms are written out in full so "delete", "deleting", "pays" and
+// "purchased" all match without matching unrelated words.
+const MONEY_VERB = String.raw`(?:bought|buy(?:s|ing)?|purchas(?:e|es|ed|ing)|pay(?:s|ing)?|paid|subscrib(?:e|es|ed|ing)(?:\s+to)?|donat(?:e|es|ed|ing)(?:\s+to)?|charg(?:e|es|ed|ing)|checkout|upgrad(?:e|es|ed|ing)\s+to|renew(?:s|ed|ing)?|top\s+up|sign\s+up\s+for|spend(?:s|ing)?|make\s+a\s+purchase|place\s+an?\s+order|send(?:s|ing)?\s+(?:money|\$))`;
+const MONEY_ORDER = String.raw`order(?:s|ed|ing)?\s+(?:me\s+|us\s+)?(?:a|an|another|more|some|\d|\$)`;
+const MONEY_TRANSFER = String.raw`(?:transfer(?:s|red|ring)?|wire(?:s|d|ing)?)\s+(?:\$|\d|money|funds|dollars?|to\s)`;
 const MONEY_RE = new RegExp(`${LEAD}(?:${MONEY_VERB}\\b|${MONEY_ORDER}|${MONEY_TRANSFER})`, 'i');
-const DELETE_VERB = String.raw`(?:delete|remove|erase|wipe|clear(?:\s+out)?|forget|reset|cancel|discard|trash|uninstall|drop|unpublish|revoke|get\s+rid\s+of|throw\s+away)`;
+const DELETE_VERB = String.raw`(?:delet(?:e|es|ed|ing)|remov(?:e|es|ed|ing)|eras(?:e|es|ed|ing)|wip(?:e|es|ed|ing)|clear(?:s|ed|ing)?(?:\s+out)?|forget(?:s|ting)?|reset(?:s|ting)?|cancel(?:s|ed|ling|ing)?|discard(?:s|ed|ing)?|trash(?:es|ed|ing)?|uninstall(?:s|ed|ing)?|drop(?:s|ped|ping)?|unpublish(?:es|ed|ing)?|revok(?:e|es|ed|ing)|get\s+rid\s+of|throw\s+away)`;
 const DELETE_RE = new RegExp(`${LEAD}${DELETE_VERB}\\b`, 'i');
 const NEGATED_RE = /\b(?:do\s+not|don't|dont|never|not|no)\s+$/i;
 

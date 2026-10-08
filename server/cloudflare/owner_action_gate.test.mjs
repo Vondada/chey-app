@@ -82,3 +82,19 @@ test('a held request is released only by a plain yes', async () => {
   assert.equal(isOwnerYes('yes and also delete the other one'), false);
   assert.equal(isOwnerYes('no'), false);
 });
+
+test('reviewer phrasings are held: vocative, I want you to, gerunds, purchase forms', () => {
+  for (const [text, kind] of [
+    ['hey CHE delete my notes', 'delete'], ['I want you to delete the notes', 'delete'],
+    ['I am going to pay the bill', 'money'], ['let us pay the bill', 'money'],
+    ['make a purchase of the domain', 'money'], ['place an order for pizza', 'money'],
+    ['send money to Sam', 'money'], ['send $50 to Sam', 'money'],
+    ['deleting my notes', 'delete'], ['paying the electric bill', 'money'],
+  ]) assert.equal(classifyOwnerAction(text), kind, text);
+});
+
+test('ordinary questions with the same nouns are not held', () => {
+  for (const text of ['summarize my notes', 'what is the cost of the domain', 'tell me about checkout', 'routing order', 'calculate transfer time']) {
+    assert.deepEqual(classifyOwnerActions(text), [], text);
+  }
+});
