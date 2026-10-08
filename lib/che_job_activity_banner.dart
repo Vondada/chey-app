@@ -114,10 +114,11 @@ class _CheJobActivityBannerState extends State<CheJobActivityBanner> {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
           child: Row(
             children: [
-              Icon(
-                done ? Icons.check_circle_outline : Icons.autorenew,
-                color: scheme.onSecondaryContainer,
-                excludeFromSemantics: true,
+              ExcludeSemantics(
+                child: Icon(
+                  done ? Icons.check_circle_outline : Icons.autorenew,
+                  color: scheme.onSecondaryContainer,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
