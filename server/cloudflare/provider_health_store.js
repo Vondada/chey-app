@@ -107,7 +107,7 @@ export function capacityMode(used, limit) {
 // allowance. Owner chat and emergency calls get no exception; they move on to
 // the next engine instead.
 export const FREE_TOKEN_CAP = 0.70;
-export function shouldHoldCapacity({ used = 0, limit = 0 } = {}) {
+export function shouldHoldCapacity({ used = 0, incoming = 0, limit = 0 } = {}) {
   if (!limit) return false;
-  return used >= limit * FREE_TOKEN_CAP;
+  return used + Math.max(0, Number(incoming) || 0) >= limit * FREE_TOKEN_CAP;
 }

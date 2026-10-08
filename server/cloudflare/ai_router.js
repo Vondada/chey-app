@@ -411,6 +411,11 @@ function compactEngineInput(input) {
   };
 }
 
+// Worst case for one call: the input plus the most output it may produce.
+function requestTokenCost(input) {
+  return estimateInputTokens(input) + Math.max(0, Number(input?.max_tokens || 0));
+}
+
 function estimateTotalTokens(input, output) {
   return estimateInputTokens(input) + Math.max(1, Math.ceil(responseText(output).length / 4));
 }
@@ -472,12 +477,13 @@ async function usageRecord(storage, providerId, now) {
   };
 }
 
-async function isPastDailyBudget(env, storage, providerId, now, { ownerChat = false, emergency = false } = {}) {
+async function isPastDailyBudget(env, storage, providerId, now, { ownerChat = false, emergency = false, incoming = 0 } = {}) {
   const limit = dailyTokenLimit(env, providerId);
   if (!storage || !limit) return false;
   const usage = await usageRecord(storage, providerId, now);
   return shouldHoldCapacity({
     used: usage.estimated_tokens,
+    incoming,
     limit,
     ownerChat,
     emergency,
@@ -757,7 +763,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
     if (needs.local_only) return null;
     if (avoid.has('cloudflare')) { errors.push('cloudflare: skipped after an unusable answer'); return null; }
     if (env.AI && now >= cloudflareExhaustedUntil) {
-      if (await isPastDailyBudget(env, usageStorage, 'cloudflare', now, { ownerChat, emergency })) {
+      if (await isPastDailyBudget(env, usageStorage, 'cloudflare', now, { ownerChat, emergency, incoming: requestTokenCost(engineInput) })) {
         errors.push('cloudflare: daily budget in reserve');
         return null;
       }
@@ -835,7 +841,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
         );
         continue;
       }
-      if (await isPastDailyBudget(env, usageStorage, provider.id, now, { ownerChat, emergency })) {
+      if (await isPastDailyBudget(env, usageStorage, provider.id, now, { ownerChat, emergency, incoming: requestTokenCost(engineInput) })) {
         errors.push(`${provider.id}: daily budget in reserve`);
         continue;
       }

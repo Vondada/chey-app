@@ -66,6 +66,8 @@ test('capacity reserve holds background work before owner chat', () => {
   assert.equal(shouldHoldCapacity({ used: 69, limit: 100, ownerChat: true }), false);
   assert.equal(shouldHoldCapacity({ used: 70, limit: 100, ownerChat: true }), true);
   assert.equal(shouldHoldCapacity({ used: 100, limit: 100, ownerChat: true, emergency: true }), true);
+  assert.equal(shouldHoldCapacity({ used: 50, incoming: 19, limit: 100 }), false);
+  assert.equal(shouldHoldCapacity({ used: 50, incoming: 20, limit: 100 }), true);
 });
 
 test('bootstrap packet keeps CHE identity across engines', () => {

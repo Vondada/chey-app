@@ -426,7 +426,7 @@ test('AI router stores daily usage budgets and puts a fast free engine before pa
     AI: { run: async () => { cfCalls += 1; throw new Error('4006 neurons'); } },
     CHE_ALLOW_PAID_AI: '1', CHE_OPENAI_API_KEY: 'paid',
     GROQ_API_KEY: 'free',
-    CHE_GROQ_DAILY_TOKEN_LIMIT: '10',
+    CHE_GROQ_DAILY_TOKEN_LIMIT: '1000',
   };
   const input = { messages: [{ role: 'user', content: 'hey what\'s up' }], max_tokens: 120 };
   const fetcher = async (url, init) => {
@@ -449,6 +449,8 @@ test('AI router stores daily usage budgets and puts a fast free engine before pa
   assert.ok(usage.reset_at > Date.now());
 
   calls.length = 0;
+  // Groq is now at 99% of its daily allowance: the next call must move on.
+  storage.raw.get('ai_usage:groq').estimated_tokens = 990;
   const second = await routeText(env, '@cf/meta/llama-3.2-3b-instruct', input, fetcher, storage);
   assert.equal(second.engine, 'openai');
   assert.equal(new URL(calls[0].url).hostname, 'api.openai.com');
