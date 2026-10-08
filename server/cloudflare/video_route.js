@@ -12,7 +12,7 @@ function statusFor(result) {
   return 424;
 }
 
-export async function handleVideoLine(request, env, parsedBody) {
+export async function handleVideoLine(request, env, parsedBody, youtube = {}) {
   if (!['GET', 'POST'].includes(request.method)) {
     return new Response('Method not allowed', { status: 405 });
   }
@@ -23,7 +23,7 @@ export async function handleVideoLine(request, env, parsedBody) {
   } else {
     const body = parsedBody ?? await request.json().catch(() => ({}));
     result = body.office === true
-      ? await runVideoLine(env)
+      ? await runVideoLine(env, fetch, youtube)
       : await moneyPrinterVideo(env, body.topic || body.prompt || '');
   }
   return new Response(JSON.stringify(result), {

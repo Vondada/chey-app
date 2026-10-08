@@ -93,6 +93,8 @@ export async function saveKey(storage, provider, key, fetcher = fetch) {
   const p = KEY_PROVIDERS[provider];
   const clean = String(key || '').trim();
   if (!p) return { ok: false, detail: 'Unknown provider.' };
+  // YouTube publishing needs the owner's Google sign-in, not a pasted key.
+  if (provider === 'youtube') return { ok: false, detail: 'YouTube is connected with Google sign-in, not a pasted key. Use Connect YouTube.' };
   if (clean.length < 12 || /\s/.test(clean)) return { ok: false, detail: 'That does not look like an API key.' };
   const test = await testKey(provider, clean, fetcher);
   if (test.status !== 'healthy' && test.status !== 'rate-limited') {

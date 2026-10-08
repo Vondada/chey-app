@@ -33,19 +33,13 @@ test('a key is only saved after it passes a live test, and joins the rotation', 
   assert.ok(!JSON.stringify(letters).includes('goodgoodgood'), 'letters never contain the key');
 });
 
-test('YouTube owner token uses the same server-only Keys storage without exposing the token', async () => {
+test('YouTube is never stored as a pasted key; it must use Google sign-in', async () => {
   const s = store();
-  const token = 'ya29.owner-channel-token-1234567890';
-  const saved = await saveKey(s, 'youtube', token, okFetch(200));
-  assert.equal(saved.ok, true);
-  assert.equal(saved.provider, 'youtube');
-  assert.equal(saved.last4, '7890');
+  const saved = await saveKey(s, 'youtube', 'ya29.owner-channel-token-1234567890', okFetch(200));
+  assert.equal(saved.ok, false);
+  assert.match(saved.detail, /Connect YouTube/);
   const keys = await storedKeys(s);
-  assert.equal(keys.CHE_YOUTUBE_TOKEN, token);
-  assert.equal(JSON.stringify(saved).includes(token), false, 'save response never returns the token');
-  assert.equal(JSON.stringify(await listLetters(s)).includes(token), false, 'letters never contain the token');
-  const env = withStoredKeys({}, keys);
-  assert.equal(env.CHE_YOUTUBE_TOKEN, token);
+  assert.equal(keys.CHE_YOUTUBE_TOKEN, undefined);
 });
 
 test('health watch spots a dead key and files one action letter', async () => {

@@ -6,7 +6,9 @@ import { scoutTopics } from './topic_scout.js';
 import { createFacelessVideo } from './faceless_video.js';
 import { uploadYouTube } from './youtube_upload.js';
 
-export async function runVideoLine(env = {}, fetcher = fetch) {
+// `youtube` carries the owner's connection token and the record of uploads, so
+// the same rendered file is never uploaded twice.
+export async function runVideoLine(env = {}, fetcher = fetch, youtube = {}) {
   const scout = await scoutTopics(env, fetcher);
   if (!scout.ok) return { ok: false, stage: 'scout', error: scout.error, board: [] };
   const topic = scout.topics[0];
@@ -19,11 +21,22 @@ export async function runVideoLine(env = {}, fetcher = fetch) {
       board: [{ title: topic.title, source: topic.source, status: 'script_only' }],
     };
   }
+  const uploads = youtube.uploads || {};
+  const earlier = uploads[rendered.media_url];
+  if (earlier?.link) {
+    return {
+      ok: true,
+      stage: 'uploaded',
+      duplicate: true,
+      board: [{ title: topic.title, source: topic.source, status: 'uploaded', media_url: rendered.media_url, link: earlier.link }],
+    };
+  }
   const uploaded = await uploadYouTube(
-    env,
     { media_url: rendered.media_url, title: topic.title, description: topic.why },
+    youtube.accessToken || '',
     fetcher,
   );
+  if (uploaded.ok) uploads[rendered.media_url] = { link: uploaded.link, video_id: uploaded.video_id, at: new Date().toISOString() };
   if (!uploaded.ok) {
     return {
       ok: false,
