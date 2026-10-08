@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>CHE character prototype</title>
+<link rel="icon" href="data:,">
+<style>
+:root{color-scheme:dark;--bg:#04090b;--panel:rgba(8,22,25,.9);--line:#1b5558;--fg:#e8fbfa;--muted:#93bdbb;--accent:#2ee6d6;--accent-ink:#03201e}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden}
+#stage{position:fixed;inset:0}
+#stage canvas{display:block;width:100%;height:100%;touch-action:none}
+#status{position:fixed;top:0;left:0;right:0;padding:calc(12px + env(safe-area-inset-top,0px)) 16px 10px;background:linear-gradient(var(--bg),transparent);font-size:20px;font-weight:600}
+#status small{display:block;margin-top:2px;font-size:14px;font-weight:400;color:var(--muted)}
+#dock{position:fixed;left:0;right:0;bottom:0;padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px));background:linear-gradient(transparent,var(--bg) 35%)}
+#clips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+button{font:inherit;min-height:44px;min-width:44px;padding:8px 14px;border-radius:12px;border:1px solid var(--line);background:var(--panel);color:var(--fg);cursor:pointer}
+button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+#pad{position:fixed;left:16px;bottom:calc(150px + env(safe-area-inset-bottom,0px));width:132px;height:132px;border-radius:50%;border:2px solid var(--line);background:rgba(8,22,25,.55);touch-action:none}
+#knob{position:absolute;left:50%;top:50%;width:52px;height:52px;margin:-26px 0 0 -26px;border-radius:50%;background:var(--accent);box-shadow:0 0 18px rgba(46,230,214,.6);pointer-events:none}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+</style>
+</head>
+<body>
+<div id="stage" aria-hidden="true"></div>
+<div id="status" role="status" aria-live="polite">CHE loading…<small id="sub">Rigged 3D prototype</small></div>
+<div id="pad" role="application" aria-label="Movement joystick. Drag to walk; push further to run. Keyboard: arrow keys." tabindex="0"><div id="knob"></div></div>
+<div id="dock">
+  <div id="clips" role="group" aria-label="CHE animations"></div>
+</div>
+<script type="importmap">{"imports":{"three":"./vendor/three.module.js"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from './vendor/GLTFLoader.js';
+
+const CLIPS = [
+  ['idle', 'Idle'], ['walk', 'Walk'], ['run', 'Run'], ['wave', 'Wave'], ['talk', 'Talk'],
+  ['think', 'Think'], ['celebrate', 'Celebrate'], ['nod', 'Nod'], ['shake', 'Shake head'],
+  ['sit', 'Sit'], ['stand', 'Stand'],
+];
+const ONE_SHOT = new Set(['sit', 'stand']);
+const ROOM = 5.5;
+const DESK = { x: 2.2, z: -2.5, hx: 1.2, hz: 0.5 };
+
+const $status = document.getElementById('status');
+const $sub = document.getElementById('sub');
+const $clips = document.getElementById('clips');
+const say = (main, sub = '') => { $status.firstChild.textContent = main; $sub.textContent = sub; };
+
+// ---------- renderer, camera, room
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.getElementById('stage').appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x04090b);
+scene.fog = new THREE.Fog(0x04090b, 12, 26);
+const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 60);
+
+scene.add(new THREE.HemisphereLight(0x9ff5ee, 0x05080a, 0.9));
+const key = new THREE.DirectionalLight(0xffffff, 2.2);
+key.position.set(3, 6, 4);
+key.castShadow = true;
+key.shadow.mapSize.set(1024, 1024);
+Object.assign(key.shadow.camera, { left: -4, right: 4, top: 4, bottom: -4, near: 1, far: 16 });
+scene.add(key);
+const rim = new THREE.PointLight(0x2ee6d6, 14, 9, 1.6);
+rim.position.set(-2.5, 2.2, -2.5);
+scene.add(rim);
+
+const floorMat = new THREE.MeshStandardMaterial({ color: 0x0b1d20, roughness: 0.85, metalness: 0.05 });
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM * 2, ROOM * 2), floorMat);
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
+scene.add(floor);
+const grid = new THREE.GridHelper(ROOM * 2, 22, 0x1b5558, 0x123a3d);
+grid.position.y = 0.002;
+grid.material.transparent = true;
+grid.material.opacity = 0.5;
+scene.add(grid);
+const wall = new THREE.Mesh(new THREE.PlaneGeometry(ROOM * 2, 4), new THREE.MeshStandardMaterial({ color: 0x08171a, roughness: 1 }));
+wall.position.set(0, 2, -ROOM);
+wall.receiveShadow = true;
+scene.add(wall);
+
+const deskMat = new THREE.MeshStandardMaterial({ color: 0x0f2a2e, roughness: 0.5, metalness: 0.2 });
+const desk = new THREE.Mesh(new THREE.BoxGeometry(DESK.hx * 2, 0.76, DESK.hz * 2), deskMat);
+desk.position.set(DESK.x, 0.38, DESK.z);
+desk.castShadow = desk.receiveShadow = true;
+scene.add(desk);
+const screen = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.55, 0.04), new THREE.MeshStandardMaterial({ color: 0x06302f, emissive: 0x2ee6d6, emissiveIntensity: 0.8 }));
+screen.position.set(DESK.x, 1.0, DESK.z - 0.2);
+scene.add(screen);
+
+const ring = new THREE.Mesh(new THREE.RingGeometry(0.36, 0.42, 48), new THREE.MeshBasicMaterial({ color: 0x2ee6d6, transparent: true, opacity: 0.85, side: THREE.DoubleSide }));
+ring.rotation.x = -Math.PI / 2;
+ring.visible = false;
+scene.add(ring);
+
+// ---------- character
+const hero = new THREE.Group();
+scene.add(hero);
+let mixer = null;
+const actions = {};
+let current = null;
+let selected = false;
+let sitting = false;
+let heading = 0;
+const pos = new THREE.Vector3(0, 0, 1.2);
+const yawRef = { yaw: 0 };
+
+new GLTFLoader().load('./che_proto.glb', (gltf) => {
+  const root = gltf.scene;
+  root.traverse((o) => {
+    if (o.isMesh || o.isSkinnedMesh) {
+      o.castShadow = true;
+      o.frustumCulled = false;
+    }
+  });
+  hero.add(root);
+  mixer = new THREE.AnimationMixer(root);
+  for (const clip of gltf.animations) actions[clip.name] = mixer.clipAction(clip);
+  buildButtons();
+  play('idle');
+  say('CHE is ready', 'Drag the pad to walk. Tap CHE to select her. Use the buttons to play an animation.');
+}, undefined, (err) => say('Could not load CHE', String(err && err.message || err)));
+
+function play(name, { fade = 0.25 } = {}) {
+  const next = actions[name];
+  if (!next) return;
+  if (current === next) return;
+  next.reset();
+  next.setLoop(ONE_SHOT.has(name) ? THREE.LoopOnce : THREE.LoopRepeat, Infinity);
+  next.clampWhenFinished = ONE_SHOT.has(name);
+  next.enabled = true;
+  if (current) current.fadeOut(fade);
+  next.fadeIn(fade).play();
+  current = next;
+  for (const b of $clips.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.clip === name));
+}
+
+function buildButtons() {
+  for (const [name, label] of CLIPS) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.clip = name;
+    b.textContent = label;
+    b.setAttribute('aria-label', `Play ${label} animation`);
+    b.setAttribute('aria-pressed', 'false');
+    b.addEventListener('click', () => choose(name));
+    $clips.appendChild(b);
+  }
+}
+
+function choose(name) {
+  if (name === 'sit') { sitting = true; play('sit'); say('CHE is sitting down', 'Say or tap Stand to get up.'); return; }
+  if (name === 'stand') { sitting = false; play('stand'); setTimeout(() => { if (!sitting) play('idle'); }, 1200); say('CHE is standing up'); return; }
+  sitting = false;
+  play(name);
+  say(`CHE: ${name}`, '');
+}
+
+// ---------- joystick (pointer + keyboard)
+const pad = document.getElementById('pad');
+const knob = document.getElementById('knob');
+const stick = { x: 0, y: 0 };
+let dragging = false;
+function setStick(x, y) {
+  const len = Math.hypot(x, y);
+  const k = len > 1 ? 1 / len : 1;
+  stick.x = x * k;
+  stick.y = y * k;
+  knob.style.transform = `translate(${stick.x * 40}px, ${stick.y * 40}px)`;
+}
+function fromPointer(e) {
+  const r = pad.getBoundingClientRect();
+  const x = ((e.clientX - r.left) / r.width) * 2 - 1;
+  const y = ((e.clientY - r.top) / r.height) * 2 - 1;
+  setStick(x, y);
+}
+pad.addEventListener('pointerdown', (e) => { dragging = true; pad.setPointerCapture(e.pointerId); fromPointer(e); });
+pad.addEventListener('pointermove', (e) => { if (dragging) fromPointer(e); });
+const endDrag = () => { dragging = false; setStick(0, 0); };
+pad.addEventListener('pointerup', endDrag);
+pad.addEventListener('pointercancel', endDrag);
+const keys = new Set();
+window.addEventListener('keydown', (e) => { if (e.key.startsWith('Arrow')) { keys.add(e.key); e.preventDefault(); } });
+window.addEventListener('keyup', (e) => keys.delete(e.key));
+
+// ---------- tap CHE to select her (keeps the ring and status in sync)
+const ray = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (!mixer) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  if (ray.intersectObject(hero, true).length) {
+    selected = !selected;
+    ring.visible = selected;
+    say(selected ? 'CHE selected' : 'CHE deselected', selected ? 'Drag the pad to walk her around the room.' : '');
+  }
+});
+
+// ---------- movement, collision, camera
+const MOVE = { walk: 1.1, run: 2.7 };
+let camYaw = 0;
+function blocked(x, z) {
+  return Math.abs(x - DESK.x) < DESK.hx + 0.3 && Math.abs(z - DESK.z) < DESK.hz + 0.3;
+}
+function update(dt) {
+  let sx = stick.x, sy = stick.y;
+  if (keys.has('ArrowLeft')) sx -= 1;
+  if (keys.has('ArrowRight')) sx += 1;
+  if (keys.has('ArrowUp')) sy -= 1;
+  if (keys.has('ArrowDown')) sy += 1;
+  const mag = Math.min(1, Math.hypot(sx, sy));
+  if (mag > 0.12 && !sitting) {
+    const fx = -Math.sin(camYaw), fz = -Math.cos(camYaw);
+    const rx = Math.cos(camYaw), rz = -Math.sin(camYaw);
+    const dx = rx * sx + fx * -sy;
+    const dz = rz * sx + fz * -sy;
+    const len = Math.hypot(dx, dz) || 1;
+    const running = mag > 0.8;
+    const speed = running ? MOVE.run : MOVE.walk * Math.min(1, (mag - 0.12) / 0.5 + 0.4);
+    const nx = pos.x + (dx / len) * speed * dt;
+    const nz = pos.z + (dz / len) * speed * dt;
+    if (!blocked(nx, nz)) { pos.x = nx; pos.z = nz; }
+    pos.x = Math.max(-ROOM + 0.5, Math.min(ROOM - 0.5, pos.x));
+    pos.z = Math.max(-ROOM + 0.5, Math.min(ROOM - 0.5, pos.z));
+    heading = Math.atan2(dx, dz);
+    const want = running ? 'run' : 'walk';
+    if (mixer && current !== actions[want]) { play(want, { fade: 0.2 }); say(running ? 'CHE is running' : 'CHE is walking', 'Push the pad further to run.'); }
+  } else if (mixer && !sitting && current && (current === actions.walk || current === actions.run)) {
+    play('idle', { fade: 0.2 });
+    say('CHE is standing still', '');
+  }
+  hero.position.copy(pos);
+  hero.rotation.y = heading;
+  ring.position.set(pos.x, 0.01, pos.z);
+  if (mixer) mixer.update(dt);
+  // Camera: follows CHE from behind, orbit by dragging empty space.
+  const target = new THREE.Vector3(pos.x, 1.0, pos.z);
+  const want = new THREE.Vector3(target.x + Math.sin(camYaw) * 3.4, 1.9, target.z + Math.cos(camYaw) * 3.4);
+  camera.position.lerp(want, 1 - Math.pow(0.02, dt));
+  camera.lookAt(target);
+}
+
+// Orbit the camera by dragging anywhere that is not the pad or a button.
+let orbit = null;
+renderer.domElement.addEventListener('pointerdown', (e) => { if (!selected) orbit = e.clientX; });
+window.addEventListener('pointermove', (e) => { if (orbit !== null) { camYaw -= (e.clientX - orbit) * 0.008; orbit = e.clientX; } });
+window.addEventListener('pointerup', () => { orbit = null; });
+
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  update(dt);
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// Small hook for tests and for later voice or touch wiring.
+window.CHE = {
+  play: (name) => choose(name),
+  stick: (x, y) => setStick(x, y),
+  get state() { return { clip: current && Object.keys(actions).find((k) => actions[k] === current), pos: pos.toArray(), sitting, selected }; },
+};
+</script>
+</body>
+</html>
