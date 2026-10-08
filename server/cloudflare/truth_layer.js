@@ -287,9 +287,26 @@ export function guardOwnerReply(reply, state, ctx = {}) {
 // Quoted code must exist in the repository. `codeIncludes(text)` answers
 // whether the exact text appears anywhere in the pinned commit; without it
 // code quotes are not checked.
+// Code CHE writes herself (an exam answer, a proposed fix) is not a quote, so
+// it is not checked against the repository: the text just before the block
+// says so ("here is my fix", "I wrote"), or the block defines a function whose
+// name appears nowhere in the pinned commit.
+const NEW_CODE_CUE = /\b(?:here(?:'s| is) (?:my|the|a|an) (?:fix|fixed|new|corrected|solution|implementation|version|function|answer|code)|I (?:wrote|write|would write|have written|fixed|rewrote|corrected)|my (?:fix|solution|version|implementation|code|answer)|(?:fixed|corrected|new|proposed|suggested|rewritten) (?:version|code|function|implementation|loop))\b/i;
+const DEFINES = /^\s*(?:export\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)|^\s*def\s+([A-Za-z_]\w*)|^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/m;
+
+function isOwnCode(before, body, codeIncludes) {
+  const lead = String(before).slice(-240).split(/(?<=[.!?:])\s+(?=\S)/).slice(-2).join(' ');
+  if (NEW_CODE_CUE.test(lead)) return true;
+  const m = DEFINES.exec(body);
+  const name = m && (m[1] || m[2] || m[3]);
+  return Boolean(name && name.length >= 3 && !codeIncludes(name));
+}
+
 function stripUnverifiedCode(reply, codeIncludes, removed, flagOnly = false) {
   if (typeof codeIncludes !== 'function') return reply;
-  return String(reply || '').replace(/```[^\n]*\n([\s\S]*?)```/g, (block, body) => {
+  const text = String(reply || '');
+  return text.replace(/```[^\n]*\n([\s\S]*?)```/g, (block, body, at) => {
+    if (isOwnCode(text.slice(0, at), body, codeIncludes)) return block;
     // Every line with a real word is checked, short statements included;
     // lone braces, blank lines and "..." are not evidence either way.
     const lines = body.split('\n').map((l) => l.trim()).filter((l) => /[A-Za-z_$][\w$]{2,}/.test(l) && !/^(?:\/\/\s*)?\.\.\.$/.test(l));

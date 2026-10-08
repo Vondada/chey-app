@@ -3711,7 +3711,8 @@ export class CheState extends DurableObject {
         raw = modelText(await callModel(SOURCE_RETRY_NOTE));
         grounded = checked(raw);
       }
-      const honesty = grounded.removed.length ? ' NOT VERIFIED: I left out a file, link, code quote or job I could not confirm in the repository.' : '';
+      // flagOnly keeps every sentence, so the note explains the marks instead of claiming a cut.
+      const honesty = grounded.removed.length ? ' Anything marked [NOT VERIFIED] is a file, link, code quote or job I could not confirm in the repository.' : '';
       // Never a bare refusal: when nothing can be pinned, say where to look.
       const searchTerms = [...new Set(incoming.match(/[A-Za-z_$][\w$]{3,}/g) || [])].slice(0, 4).join(', ') || 'the key words of the question';
       const reply = grounded.text ? `${grounded.text}${honesty}` : `I can't pin the exact line from the source I read. To check it, search the pinned commit for: ${searchTerms}.${honesty}`;

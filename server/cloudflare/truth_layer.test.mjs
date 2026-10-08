@@ -482,6 +482,28 @@ test('quoted code that is not in the repository is removed (live test Q3 invente
   assert.ok(short.removed.some((r) => r.rule === 'unverified_code'));
 });
 
+test('code CHE writes herself is not flagged as an unverified repository quote (Round 7 exam)', async () => {
+  const { guardGroundedFacts } = await import('./truth_layer.js');
+  const repo = 'const results = await Promise.allSettled(engines.map(lookup));\nexport async function publicResearch(query) {';
+  const codeIncludes = (t) => repo.toLowerCase().includes(String(t).toLowerCase());
+  const opts = { paths: ['server/cloudflare/worker.js'], codeIncludes, flagOnly: true };
+  // Level 1: a new function whose name is nowhere in the repository.
+  const l1 = guardGroundedFacts('Level 1:\n```js\nfunction vowelCount(s) {\n  return (s.match(/[aeiou]/gi) || []).length;\n}\n```\nIt counts vowels.', opts);
+  assert.equal(l1.removed.length, 0);
+  assert.doesNotMatch(l1.text, /NOT VERIFIED/);
+  // Level 2: a fix announced as hers, even when the block has no definition line.
+  const l2 = guardGroundedFacts('The loop stopped one short. Here is my fix:\n```js\nfor (let i = 1; i <= n; i++) total += i;\n```\nNow it sums up to n.', opts);
+  assert.equal(l2.removed.length, 0);
+  assert.match(l2.text, /i <= n/);
+  // A quote of repository code that does not exist is still marked.
+  const fake = guardGroundedFacts('The line in worker.js is:\n```js\nconst [a, b] = await Promise.all([one(), two()]);\n```', opts);
+  assert.ok(fake.removed.some((r) => r.rule === 'unverified_code'));
+  assert.match(fake.text, /NOT VERIFIED/);
+  // A "new" function that reuses a real repository name is treated as a quote and checked.
+  const reused = guardGroundedFacts('It is:\n```js\nexport async function publicResearch(query) {\n  return fetchEverything(query);\n}\n```', opts);
+  assert.ok(reused.removed.some((r) => r.rule === 'unverified_code'));
+});
+
 test('grounded guard rejects a line citation that does not match the pinned file', async () => {
   const { guardGroundedFacts } = await import('./truth_layer.js');
   const paths = ['server/cloudflare/self_skills.js'];
