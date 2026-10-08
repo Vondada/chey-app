@@ -98,3 +98,18 @@ test('ordinary questions with the same nouns are not held', () => {
     assert.deepEqual(classifyOwnerActions(text), [], text);
   }
 });
+
+test('withdrawals and cash-outs are money; order with a bare noun is money', () => {
+  for (const text of ['withdraw money', 'withdraw $20 from my bank', 'take out $20', 'cash out', 'order pizza']) {
+    assert.equal(classifyOwnerAction(text), 'money', text);
+  }
+});
+
+test('weak delete verbs need a data object; ordinary chat is not held', () => {
+  assert.equal(classifyOwnerAction('reset my learned skills'), 'delete');
+  assert.equal(classifyOwnerAction('clear my notes'), 'delete');
+  assert.equal(classifyOwnerAction('cancel my 3pm meeting'), 'delete');
+  for (const text of ['reset my thoughts for a second', 'clear the screen', 'reset the timer', 'I paid attention to the meeting', 'send me a summary']) {
+    assert.deepEqual(classifyOwnerActions(text), [], text);
+  }
+});
