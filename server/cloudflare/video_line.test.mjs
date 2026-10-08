@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { runVideoLine } from './video_line.js';
+import { runVideoLine, topicKey } from './video_line.js';
 
 test('missing renderer does not invent an upload', async () => {
   const out = await runVideoLine(
@@ -90,9 +90,23 @@ test('no connected YouTube token means no upload, and the same file is never upl
   const uploads = {};
   const first = await runVideoLine(env, renderFetch, { accessToken: 'owner-token', uploads });
   assert.equal(first.ok, true);
-  assert.equal(uploads['https://cdn.example/rome.mp4'].link, 'https://www.youtube.com/watch?v=vid2');
+  assert.equal(uploads[topicKey('Why Rome fell')].link, 'https://www.youtube.com/watch?v=vid2');
   const second = await runVideoLine(env, renderFetch, { accessToken: 'owner-token', uploads });
   assert.equal(second.ok, true);
   assert.equal(second.duplicate, true);
   assert.equal(second.board[0].link, 'https://www.youtube.com/watch?v=vid2');
+});
+
+test('a topic that is already being produced is refused until its reservation goes stale', async () => {
+  const env = { CHE_TREND_URLS: 'https://feeds.example/top', CHE_VIDEO_RENDER_URL: 'https://render.example/video' };
+  const feed = async (url) => String(url).includes('feeds.example')
+    ? { ok: true, text: async () => '<rss><channel><item><title>Why Rome fell</title></item></channel></rss>' }
+    : new Response('', { status: 404 });
+  const busy = { [topicKey('Why Rome fell')]: { status: 'rendering', at: new Date().toISOString() } };
+  const refused = await runVideoLine(env, feed, { accessToken: 'owner-token', uploads: busy });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.stage, 'busy');
+  const stale = { [topicKey('Why Rome fell')]: { status: 'rendering', at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() } };
+  const retried = await runVideoLine(env, feed, { accessToken: 'owner-token', uploads: stale });
+  assert.notEqual(retried.stage, 'busy', 'a stale reservation does not block a retry');
 });

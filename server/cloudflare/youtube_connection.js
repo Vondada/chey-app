@@ -91,14 +91,25 @@ async function open(env, sealed) {
 }
 
 async function postForm(fetcher, url, fields) {
-  const response = await fetcher(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(fields).toString(),
-    signal: AbortSignal.timeout(15000),
-  });
-  const json = await response.json().catch(() => ({}));
-  return { ok: response.ok, status: response.status, json };
+  try {
+    const response = await fetcher(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(fields).toString(),
+      signal: AbortSignal.timeout(15000),
+    });
+    const json = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, json };
+  } catch {
+    return { ok: false, status: 0, json: { error: 'network_error' } };
+  }
+}
+
+// Best effort: a grant CHE no longer keeps must not stay live at Google.
+async function revokeGrant(fetcher, token) {
+  if (!token) return false;
+  const result = await postForm(fetcher, REVOKE_URL, { token }).catch(() => ({ ok: false }));
+  return result.ok === true;
 }
 
 // Step 1: the Google sign-in address for the app to open in the browser.
@@ -127,10 +138,15 @@ export async function startYouTubeConnect(env, data, origin, now = Date.now()) {
 }
 
 async function channelFor(accessToken, fetcher) {
-  const response = await fetcher(CHANNEL_URL, {
-    headers: { authorization: `Bearer ${accessToken}` },
-    signal: AbortSignal.timeout(12000),
-  });
+  let response;
+  try {
+    response = await fetcher(CHANNEL_URL, {
+      headers: { authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(12000),
+    });
+  } catch {
+    return { ok: false, error: 'YouTube did not respond while CHE checked your channel. Try Connect YouTube again.' };
+  }
   const json = await response.json().catch(() => ({}));
   if (response.status === 403) {
     return { ok: false, error: 'Google did not allow CHE to read your channel. Approve the YouTube permissions on the Google screen again.' };
@@ -147,11 +163,15 @@ async function channelFor(accessToken, fetcher) {
 // request, which is then discarded so the link works only once.
 export async function finishYouTubeConnect(env, data, params, fetcher = fetch, origin = '', now = Date.now()) {
   const pending = data.youtube_oauth;
-  delete data.youtube_oauth;
-  if (params.error) return { ok: false, error: googleErrorMessage(params.error) };
-  if (!pending || !params.state || params.state !== pending.state || now - pending.created_at > PENDING_TTL_MS) {
+  const matches = Boolean(pending && params.state && params.state === pending.state
+    && now - pending.created_at <= PENDING_TTL_MS);
+  // A callback with the wrong state (a forged or stale link) must not cancel
+  // the owner's real pending sign-in, so nothing is deleted on a mismatch.
+  if (!matches) {
     return { ok: false, error: 'This sign-in link is no longer valid. Start Connect YouTube again.' };
   }
+  delete data.youtube_oauth;
+  if (params.error) return { ok: false, error: googleErrorMessage(params.error) };
   const config = clientConfig(env, origin);
   if (config.error) return { ok: false, error: config.error };
   if (!(await sealingKey(env))) {
@@ -169,15 +189,25 @@ export async function finishYouTubeConnect(env, data, params, fetcher = fetch, o
   });
   if (!token.ok) return { ok: false, error: googleErrorMessage(token.json.error) };
   if (!token.json.refresh_token) {
+    await revokeGrant(fetcher, token.json.access_token);
     return { ok: false, error: 'Google did not give CHE a long-term permission. Remove CHE from your Google account permissions, then connect again.' };
   }
   const granted = String(token.json.scope || '').split(' ');
   if (!granted.includes(YOUTUBE_SCOPES[0])) {
+    await revokeGrant(fetcher, token.json.refresh_token);
     return { ok: false, error: 'The YouTube upload permission was not approved. Connect again and approve it.' };
   }
 
   const channel = await channelFor(token.json.access_token, fetcher);
-  if (!channel.ok) return channel;
+  if (!channel.ok) {
+    await revokeGrant(fetcher, token.json.refresh_token);
+    return channel;
+  }
+  // Reconnecting replaces the old grant, so the old one is revoked at Google.
+  const previousRefresh = await open(env, data.youtube?.refresh).catch(() => '');
+  if (previousRefresh && previousRefresh !== token.json.refresh_token) {
+    await revokeGrant(fetcher, previousRefresh);
+  }
 
   data.youtube = {
     status: 'connected',
@@ -231,9 +261,18 @@ export async function youtubeAccessToken(env, data, fetcher = fetch, now = Date.
 }
 
 // What the app may show. No tokens, ever.
-export function youtubeStatus(data) {
+export async function youtubeStatus(env, data) {
   const conn = data.youtube;
   if (!conn) return { connected: false, status: 'not_connected' };
+  const readable = Boolean(await open(env, conn.refresh));
+  if (conn.status === 'connected' && !readable) {
+    return {
+      connected: false,
+      status: 'needs_reconnect',
+      channel_title: conn.channel_title,
+      error: 'The stored YouTube authorization cannot be read with the current CHE secret. Reconnect YouTube.',
+    };
+  }
   return {
     connected: conn.status === 'connected',
     status: conn.status,
@@ -248,12 +287,8 @@ export function youtubeStatus(data) {
 export async function disconnectYouTube(env, data, fetcher = fetch) {
   const conn = data.youtube;
   if (!conn) return { ok: true, revoked_at_google: false, was_connected: false };
-  let revoked = false;
   const refreshToken = await open(env, conn.refresh).catch(() => '');
-  if (refreshToken) {
-    const result = await postForm(fetcher, REVOKE_URL, { token: refreshToken }).catch(() => ({ ok: false }));
-    revoked = result.ok === true;
-  }
+  const revoked = await revokeGrant(fetcher, refreshToken);
   delete data.youtube;
   return { ok: true, was_connected: true, revoked_at_google: revoked };
 }

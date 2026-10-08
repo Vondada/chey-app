@@ -94,7 +94,7 @@ test('a successful sign-in verifies the channel and stores only encrypted tokens
   assert.equal(stored.includes('refresh-secret-value'), false, 'refresh token is encrypted at rest');
   assert.equal(stored.includes('access-1'), false, 'access token is encrypted at rest');
   assert.equal(data.youtube_oauth, undefined, 'the pending sign-in is used up');
-  const status = youtubeStatus(data);
+  const status = await youtubeStatus(env, data);
   assert.equal(status.connected, true);
   assert.equal(status.channel_id, 'UC123');
   assert.equal(JSON.stringify(status).includes('refresh'), false);
@@ -107,8 +107,9 @@ test('a sign-in link works only once and a wrong state is refused', async () => 
   const bad = await finishYouTubeConnect(env, data, { code: 'c', state: 'forged' }, fetcher, ORIGIN);
   assert.equal(bad.ok, false);
   assert.match(bad.error, /no longer valid/);
-  const again = await finishYouTubeConnect(env, data, { code: 'c', state: data.youtube_oauth?.state || 'x' }, fetcher, ORIGIN);
-  assert.equal(again.ok, false, 'the pending request was discarded after a mismatch');
+  // A forged callback must not cancel the owner's real pending sign-in.
+  const real = await finishYouTubeConnect(env, data, { code: 'c', state: data.youtube_oauth.state }, fetcher, ORIGIN);
+  assert.equal(real.ok, true, real.error);
 });
 
 test('an expired sign-in link is refused', async () => {
@@ -218,7 +219,7 @@ test('a revoked grant is marked for reconnection and not silently retried', asyn
   assert.equal(result.ok, false);
   assert.equal(result.changed, true);
   assert.match(result.error, /Reconnect YouTube/);
-  assert.equal(youtubeStatus(data).status, 'needs_reconnect');
+  assert.equal((await youtubeStatus(env, data)).status, 'needs_reconnect');
 });
 
 test('an unconnected owner gets a clear message, never a token', async () => {

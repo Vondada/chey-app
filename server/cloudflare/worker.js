@@ -3914,6 +3914,30 @@ export class CheState extends DurableObject {
     return response;
   }
 
+  // One Office video pass. It reloads the store so it sees the uploads of the
+  // pass before it. The YouTube token is checked before any render, and fetched
+  // again right before the upload, so a long render cannot outlive it.
+  async runOfficeVideoPass(request, body) {
+    const env = this.keyEnv || this.env;
+    const data = await this.loadData();
+    const access = await youtubeAccessToken(env, data, fetch);
+    if (access.changed) await this.ctx.storage.put('che', data);
+    if (!access.ok) {
+      return json({ ok: false, stage: 'upload', error: access.error, board: [] }, 424);
+    }
+    const youtube = {
+      uploads: (data.youtube_uploads ||= {}),
+      accessToken: async () => {
+        const fresh = await youtubeAccessToken(env, data, fetch);
+        if (fresh.changed) await this.ctx.storage.put('che', data);
+        return fresh.ok ? fresh.token : '';
+      },
+    };
+    const reply = await handleVideoLine(request, env, body, youtube);
+    await this.ctx.storage.put('che', data);
+    return reply;
+  }
+
   async handleRequest(request) {
     await this.refreshKeyEnv();
     try {
@@ -4142,7 +4166,7 @@ export class CheState extends DurableObject {
         return started.ok ? json({ url: started.url }) : json({ detail: started.error }, 400);
       }
       if (request.method === 'GET' && path === '/api/youtube/status') {
-        return json(youtubeStatus(data));
+        return json(await youtubeStatus(this.keyEnv || this.env, data));
       }
       if (request.method === 'POST' && path === '/api/youtube/disconnect') {
         const removed = await disconnectYouTube(this.keyEnv || this.env, data, fetch);
@@ -4150,16 +4174,14 @@ export class CheState extends DurableObject {
         return json(removed);
       }
       if (path === '/api/video/line' && ['GET', 'POST'].includes(request.method)) {
-        // Office uploads need the owner's connected YouTube channel. Check it
-        // before a render starts, so a missing connection never wastes a render.
-        const youtube = { uploads: (data.youtube_uploads ||= {}) };
         if (request.method === 'POST' && body?.office === true) {
-          const access = await youtubeAccessToken(this.keyEnv || this.env, data, fetch);
-          if (access.changed) await this.ctx.storage.put('che', data);
-          if (!access.ok) return json({ ok: false, stage: 'upload', error: access.error, board: [] }, 424);
-          youtube.accessToken = access.token;
+          // Office passes run one at a time, so a duplicate check and its upload
+          // can never interleave with another pass.
+          const pass = (this.videoLineQueue || Promise.resolve()).then(() => this.runOfficeVideoPass(request, body));
+          this.videoLineQueue = pass.catch(() => {});
+          return pass;
         }
-        const videoReply = await handleVideoLine(request, this.keyEnv || this.env, body, youtube);
+        const videoReply = await handleVideoLine(request, this.keyEnv || this.env, body, { uploads: (data.youtube_uploads ||= {}) });
         await this.ctx.storage.put('che', data);
         return videoReply;
       }
