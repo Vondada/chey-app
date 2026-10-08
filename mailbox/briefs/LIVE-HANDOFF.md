@@ -60,6 +60,8 @@ Then, on GitHub:
 
 **2026-10-08 Claude ("I don't know" fix):** Cause: named-file source reached the model, but the model still refused and the grounding guard could drop the whole reply, so the sender got "I couldn't confirm... I won't guess". Fix on claude/che-latency-optimization-8ruaus, commit e041b20 (pushed, no PR): `lookupAnswer` answers named constants and functions from their own line; a refusal or empty guarded reply is retried once with `SOURCE_RETRY_NOTE`; the last-resort reply says nothing in the pinned commit answers. Worker tests 727/727 locally. Not yet verified live or on main. Still open: the "Working on it" follow-up stall (needs live Worker logs) and K1 (coding test) still unanswered in substance.
 
+**2026-10-08 Claude ("wrong answers" fix):** Causes found: named files were cut at their first 7000 characters (worker.js is 556 KB, so line 3525 was never shown); definition search matched test fixtures before real source (D1); source had no line numbers. Fix on claude/che-latency-optimization-8ruaus, commit 1c352d7 (pushed, no PR): `sourceWindow` shows numbered windows around request terms, named function bodies first; `isTestPath` searches tests last; SOURCE lines are numbered in the prompt. 728/728 Worker tests locally. Not verified live. Known limit: the definitionAnswer call site (worker.js ~3650) doesn't fit the window budget for C2.
+
 ## 3. Queue: the owner's open requests, in order
 
 Do them top to bottom. Mark each one `DONE (PR #, SHA)` or `WIP (branch, next step)` here.
