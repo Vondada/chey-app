@@ -1296,7 +1296,7 @@ export async function recordLesson(memory, kind, text) {
     const kept = list.filter((item) => item.kind !== 'technique' || techniques-- <= MAX_TECHNIQUE_LESSONS);
     await memory.put(LESSONS_KEY, kept.slice(-50));
     // Every lesson also goes to CHE's brain, which all agents read from.
-    await remember(memory, { kind: kind === 'technique' || kind === 'location' || kind === 'mistake' ? kind : 'lesson', text: clean, agent: 'CHE team' });
+    await remember(memory, { kind: kind === 'technique' || kind === 'location' || kind === 'mistake' ? kind : 'lesson', text: clean, agent: 'CHE team', scope: 'shared' });
   } catch (_) {}
 }
 
