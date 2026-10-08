@@ -39,6 +39,8 @@ flutter:
   assets:
     - assets/office3d/
     - assets/avatars/
+    - assets/characters/app/
+    - assets/characters/crew/
     - shorebird.yaml
 
 flutter_launcher_icons:
