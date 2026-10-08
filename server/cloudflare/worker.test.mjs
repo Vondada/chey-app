@@ -333,7 +333,7 @@ test('ordinary voice turns use the fast model and concise budget', async () => {
   }), env);
   const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
   await send('/api/chat', { message: 'Explain this simply' }, token);
-  assert.deepEqual(runs.at(-1), { model: 'fast-test', tokens: 360 });
+  assert.deepEqual(runs.at(-1), { model: 'fast-test', tokens: 2000 });
   await send('/api/chat', { message: 'Debug this code' }, token);
   assert.deepEqual(runs.at(-1), { model: 'strong-test', tokens: 1800 });
 });

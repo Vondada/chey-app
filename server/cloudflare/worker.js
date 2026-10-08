@@ -8037,7 +8037,7 @@ export class CheState extends DurableObject {
           message,
           cheContext,
           cheProvider,
-          maxTokens: needsStrongModel ? 1800 : 360,
+          maxTokens: 2000,
           // Prefer compact+fast whenever this turn did not need specialist
           // tools/research — even if the message was slightly longer than the
           // early casual heuristic — so time-to-first-token stays low.
@@ -8051,7 +8051,7 @@ export class CheState extends DurableObject {
             const light = `You are CHE, the owner's voice-first assistant. Answer directly and briefly. ${WORK_POLICY}`;
             const rescue = await this.env.AI.run(FAST_MODEL, {
               messages: [{ role: 'system', content: light }, ...turns.slice(-4), { role: 'user', content: message }],
-              max_tokens: 900,
+              max_tokens: 2000,
               che_emergency: true,
               che_audit: { task: String(message).slice(0, 160), agent: 'CHE', route: 'owner_chat_rescue' },
             });
@@ -8101,7 +8101,7 @@ export class CheState extends DurableObject {
                 ...turns.slice(-4),
                 { role: 'user', content: message },
               ],
-              max_tokens: needsStrongModel ? 900 : 420,
+              max_tokens: 2000,
               che_emergency: true,
               che_audit: {
                 task: String(message).slice(0, 160),

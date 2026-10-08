@@ -510,7 +510,7 @@ function isShortCasualRequest(model, input) {
   const latestUser = [...messages].reverse().find((item) => item?.role === 'user');
   const text = contentText(latestUser?.content).trim();
   const totalChars = messages.reduce((sum, item) => sum + contentText(item?.content).length, 0);
-  if (!text || text.length > 240 || totalChars > 1600 || Number(input?.max_tokens || 0) > 500) return false;
+  if (!text || text.length > 240 || totalChars > 1600 || Number(input?.max_tokens || 0) > 2000) return false;
   return !/\b(debug|code|implement|architect|research|analy[sz]e|analysis|report|backtest|legal|financial|medical|compare|plan|design|build|fix|investigate)\b/i.test(text);
 }
 
@@ -573,7 +573,7 @@ async function callProvider(env, provider, strongModel, input, fetcher, modelOve
       body: JSON.stringify(((modelName) => ({
         model: modelName,
         messages: input.messages,
-        max_tokens: input.max_tokens || 800,
+        max_tokens: input.max_tokens || 2000,
         ...(input.response_format && !provider.keyless ? { response_format: input.response_format } : {}),
         // Reasoning models spend tokens "thinking"; keep that short so the
         // reply arrives fast and isn't cut off.
