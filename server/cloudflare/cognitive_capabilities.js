@@ -23,8 +23,11 @@ export function inferTurnCapabilities(message, attachment = null) {
 
   if (any(value, [
     /\b(latest|current|recent|news|online)\b/,
-    // "Today"/"tonight" alone is personal chat ("how are you doing today?");
-    // it means a lookup only next to something that changes in the world.
+    // "Today"/"right now" asks about the world ("who is president right
+    // now?") unless the sentence is about the owner or CHE ("how are you
+    // doing today?", "what should I eat tonight?").
+    ...(/\b(i|i'm|im|me|my|mine|we|we're|us|our|let's|you|you're|your|yourself)\b/.test(value) ? [] : [/\b(today|tonight|this week|right now)\b/]),
+    // With a world subject it is a lookup even in a personal sentence.
     /\b(today|tonight|this week|right now)\b[^.?!]{0,60}\b(weather|forecast|news|score|game|price|happen|event|open|closed|traffic|release|announce|election|stock|market|rate|playing|showing)/,
     /\b(weather|forecast|news|score|game|price|happen|event|open|closed|traffic|release|announce|election|stock|market|rate|playing|showing)\w*\b[^.?!]{0,60}\b(today|tonight|this week|right now)\b/,
     /\b(search|look up|find online|research|source|citation|verify|fact[- ]?check)\b/,

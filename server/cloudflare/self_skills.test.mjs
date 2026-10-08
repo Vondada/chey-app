@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attachmentText, condenseSkills, learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, loadLearnedSkills, normalizeSkills, saveLearnedSkills, skillsFromOutline, speakLearned } from './self_skills.js';
+import { attachmentText, condenseSkills, redactSensitive, learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, loadLearnedSkills, normalizeSkills, saveLearnedSkills, skillsFromOutline, speakLearned } from './self_skills.js';
 
 const memory = () => { const m = new Map(); return { get: async (k) => m.get(k), put: async (k, v) => { m.set(k, v); } }; };
 const b64 = (text) => btoa(String.fromCharCode(...new TextEncoder().encode(text)));
@@ -48,9 +48,28 @@ test('learned skills are stored, replaced by name, and the fitting ones reach th
   await saveLearnedSkills(storage, [{ name: 'Website reviews', when: 'reviewing a website', steps: ['Check on a phone'], source: 'a.md' }]);
   await saveLearnedSkills(storage, [{ name: 'Website reviews', when: 'reviewing a website', steps: ['Check on a phone', 'Read headings aloud'], source: 'b.md' }, { name: 'Good night', when: 'owner says good night', steps: ['Read tomorrow calendar'], source: 'b.md' }]);
   const skills = await loadLearnedSkills(storage);
-  assert.equal(skills.length, 2);
+  assert.equal(skills.length, 3, 'learning never deletes or replaces an older skill');
   const context = learnedSkillsContext(skills, 'please review my website');
   assert.match(context, /Website reviews.*Read headings aloud/);
   assert.doesNotMatch(context, /Read tomorrow calendar/);
   assert.match(context, /never override the owner rules/);
+});
+
+test('private lines never reach the model, and a full list refuses instead of evicting', async () => {
+  const doc = 'Morning routine\n- Read the weather aloud\nmy bank password: hunter2\napi key sk_live_abcdefghijklmnopqrstuv\n- Then read my calendar';
+  const { text, removed } = redactSensitive(doc);
+  assert.equal(removed, 2);
+  assert.doesNotMatch(text, /hunter2|sk_live/);
+  const sent = [];
+  await condenseSkills({ AI: { run: async (_m, input) => { sent.push(JSON.stringify(input.messages)); return { response: '{"skills":[]}' }; } } }, doc, 'notes.md', 'm');
+  assert.doesNotMatch(sent.join(''), /hunter2|sk_live/);
+
+  const storage = memory();
+  const many = Array.from({ length: 200 }, (_, i) => ({ name: `Skill ${i}`, when: 'x', steps: ['step one'], source: 'a.md' }));
+  await saveLearnedSkills(storage, many);
+  const out = await saveLearnedSkills(storage, [{ name: 'One more', when: 'x', steps: ['step one'], source: 'b.md' }]);
+  assert.equal(out.saved.length, 0);
+  assert.equal(out.refused.length, 1);
+  assert.equal((await loadLearnedSkills(storage))[0].name, 'Skill 0', 'nothing old was evicted');
+  assert.match(speakLearned([], 'b.md', { refused: out.refused }), /list is full.*did not remove any old skills/);
 });

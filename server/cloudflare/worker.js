@@ -54,7 +54,7 @@ import { applyCorrections, correctionsContext, detectCorrection, learnCorrection
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { webAppPage } from './web_app.js';
-import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachmentText, condenseSkills, loadLearnedSkills, READ_FOR_SKILLS, saveLearnedSkills, speakLearned, speakSkillList } from './self_skills.js';
+import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachmentText, condenseSkills, loadLearnedSkills, READ_FOR_SKILLS, redactSensitive, saveLearnedSkills, speakLearned, speakSkillList } from './self_skills.js';
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { changeHistoryIntent, guardGroundedFacts, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
@@ -6337,9 +6337,10 @@ export class CheState extends DurableObject {
             }
             sourceText = read.summary;
           }
+          const { removed: redacted } = redactSensitive(sourceText);
           const learned = await condenseSkills(this.env, sourceText, sourceName, this.env.CHE_STRONG_MODEL || STRONG_MODEL);
-          if (learned.length) await saveLearnedSkills(this.ctx.storage, learned);
-          return ndjsonReply(speakLearned(learned, sourceName), { source: 'che_self_skills', ok: learned.length > 0, learned: learned.map((s) => s.name) });
+          const { saved, refused } = learned.length ? await saveLearnedSkills(this.ctx.storage, learned) : { saved: [], refused: [] };
+          return ndjsonReply(speakLearned(saved, sourceName, { refused, redacted }), { source: 'che_self_skills', ok: saved.length > 0, learned: saved.map((s) => s.name) });
         }
         if (ownerDevice && learnedSkillsIntent(message)) {
           return ndjsonReply(speakSkillList(await loadLearnedSkills(this.ctx.storage)), { source: 'che_self_skills' });

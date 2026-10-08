@@ -389,6 +389,9 @@ extension _CheHomeMicrophone on _CHEHomeState {
           // OPEN CONVERSATION MODE. CHE is already awake, so every sentence
           // is treated as a command — no wake word required per turn.
           // ----------------------------------------------------------------
+          // The turn was already sent (quick end of turn): a late final
+          // result from the stopped recognizer must not refill the composer.
+          if (_autoSentCurrentTurn) return;
           var spokenWords = rawWords;
 
           // If the owner still says "Chay" out of habit before a command,
@@ -450,24 +453,30 @@ extension _CheHomeMicrophone on _CHEHomeState {
               !_autoSentCurrentTurn &&
               !_isSending &&
               cheSoundsComplete(spokenWords)) {
-            _quickEndTimer = Timer(cheQuickEndOfTurn, () {
+            _quickEndTimer = Timer(cheQuickEndOfTurn, () async {
               if (!mounted || _autoSentCurrentTurn || _isSending || !speech.isListening) return;
+              final heard = controller.text.trim();
+              if (heard.isEmpty) return;
               debugPrint('CHE voice: quick end of turn');
-              unawaited(_localVoice.runMicOp(() async {
+              // Commit the turn before stopping, so the recognizer's
+              // "done" status does not restart the mic and no later result
+              // can replace the words being sent.
+              _autoSentCurrentTurn = true;
+              _heldSpeech = '';
+              _heldSpeechRestarts = 0;
+              _localVoice.goThinking();
+              await _localVoice.runMicOp(() async {
                 await speech.stop();
-              }));
-              // If the recognizer ends without a final result, send what
-              // was heard rather than leaving the turn hanging.
-              Future<void>.delayed(const Duration(milliseconds: 800), () async {
-                if (!mounted || _autoSentCurrentTurn || _isSending) return;
-                if (controller.text.trim().isEmpty) return;
-                _autoSentCurrentTurn = true;
-                _heldSpeech = '';
-                _heldSpeechRestarts = 0;
-                _localVoice.goThinking();
-                _set(() => isListening = false);
-                await sendMessage(fromVoice: true);
               });
+              if (!mounted) return;
+              _set(() {
+                isListening = false;
+                controller.value = TextEditingValue(
+                  text: heard,
+                  selection: TextSelection.collapsed(offset: heard.length),
+                );
+              });
+              await sendMessage(fromVoice: true);
             });
           }
 
