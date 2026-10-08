@@ -1386,15 +1386,28 @@ test('"build me a website" → CHE writes, checks and hosts a real page; "change
   };
   const built = await replyOf(await chat('Build me a website for my barbershop called Fade Kings'));
   assert.match(built.text, /Your site "Fade Kings" is built, sir\. It passed my checks/, built.text);
+  assert.match(built.text, /preview only\. Nothing is published yet/, built.text);
   assert.equal(built.done.media_type, 'page');
-  const url = built.done.media_url;
-  assert.match(url, /^https:\/\/che\.example\/site\/[a-f0-9]{20}$/);
-  const hosted = await worker.fetch(new Request(url), env);
-  assert.equal(hosted.status, 200);
-  assert.match(await hosted.text(), /Open daily/);
+  assert.equal(built.done.published, false);
+  const preview = built.done.media_url;
+  assert.match(preview, /^https:\/\/che\.example\/site\/[a-f0-9]{20}\/preview$/);
+  const url = preview.replace(/\/preview$/, '');
+  assert.match(await (await worker.fetch(new Request(preview), env)).text(), /Open daily/);
+  assert.equal((await worker.fetch(new Request(url), env)).status, 404, 'nothing is live before the owner says publish');
+
+  const live = await replyOf(await chat('Publish the website'));
+  assert.match(live.text, /Published, sir\. "Fade Kings" is live at/, live.text);
+  assert.equal(live.done.media_url, url);
+  assert.match(await (await worker.fetch(new Request(url), env)).text(), /Open daily/);
+
   const edited = await replyOf(await chat('change the website: say we are open late'));
-  assert.match(edited.text, /I updated "Fade Kings" \(version 2\)/, edited.text);
-  assert.equal(edited.done.media_url, url, 'same link after an edit');
+  assert.match(edited.text, /I made that change to "Fade Kings" \(version 2\)/, edited.text);
+  assert.equal(edited.done.media_url, preview, 'same link after an edit');
+  assert.match(await (await worker.fetch(new Request(preview), env)).text(), /Open late/);
+  assert.match(await (await worker.fetch(new Request(url), env)).text(), /Open daily/, 'live page unchanged until publish');
+  const shown = await replyOf(await chat('show me the website'));
+  assert.match(shown.text, /preview of "Fade Kings".*not published yet/, shown.text);
+  await chat('okay, publish the site');
   assert.match(await (await worker.fetch(new Request(url), env)).text(), /Open late/);
 });
 

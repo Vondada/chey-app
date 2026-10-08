@@ -54,7 +54,7 @@ import { applyCorrections, correctionsContext, detectCorrection, learnCorrection
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { webAppPage } from './web_app.js';
-import { lastSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, siteUrl, speakSiteResult, writeSite } from './site_builder.js';
+import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { changeHistoryIntent, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
@@ -6279,25 +6279,50 @@ export class CheState extends DurableObject {
           const batched = await this.batchStudies();
           if (batched) return ndjsonReply(batched, { source: 'che_topic_study', batch: true });
         }
+        // "Publish the website" / "show me the website": the preview gate.
+        // Builds and edits stay drafts until the owner says to publish.
+        if (ownerDevice && !chatOnlyEvaluation && (sitePublishIntent(message) || sitePreviewIntent(message))) {
+          const site = await lastSite(this.ctx.storage);
+          const origin = new URL(request.url).origin;
+          if (!site) return ndjsonReply('I have not built a website yet, sir. Say "build me a website for" and what it is for.', { source: 'che_site_builder', ok: false });
+          if (sitePublishIntent(message)) {
+            const published = await publishSite(this.ctx.storage, site);
+            if (!published) {
+              return ndjsonReply(site.html
+                ? `"${site.title}" is already published with no changes waiting, sir. It is live at ${siteUrl(origin, site.id)}.`
+                : `I have no draft of "${site.title}" to publish, sir. Say "change the website:" and what you want.`, { source: 'che_site_builder', ok: Boolean(site.html), site_id: site.id });
+            }
+            const url = siteUrl(origin, published.id);
+            return ndjsonReply(speakSitePublished(published, url), { source: 'che_site_builder', ok: true, site_id: published.id, media_url: url, media_type: 'page', published: true });
+          }
+          const draft = Boolean(site.draft_html);
+          const url = siteUrl(origin, site.id, { preview: true });
+          return ndjsonReply(draft
+            ? `Here is the preview of "${site.title}", sir. It is not published yet. Say "publish the website" to put it live, or "change the website:" and what you want different.`
+            : `Here is "${site.title}", sir. It is published and has no unpublished changes.`, { source: 'che_site_builder', ok: true, site_id: site.id, media_url: url, media_type: 'page', published: !draft });
+        }
         // "Build me a website for …" / "change the website: …": CHE writes a
-        // complete page, checks it, and hosts it on her own Worker.
+        // complete page, checks it, and keeps it as a preview until the owner
+        // says to publish ("…and publish it" publishes at once).
         const siteEdit = ownerDevice && !chatOnlyEvaluation ? siteEditIntent(message) : null;
         const siteEditTarget = siteEdit ? await lastSite(this.ctx.storage) : null;
         const siteBuild = ownerDevice && !chatOnlyEvaluation && !siteEditTarget ? siteBuildIntent(message) : null;
         if (siteBuild || siteEditTarget) {
           const model = this.env.CHE_STRONG_MODEL || STRONG_MODEL;
           const written = await writeSite(this.env, siteEditTarget
-            ? { previousHtml: siteEditTarget.html, change: siteEdit.change }
-            : { brief: siteBuild.brief }, model).catch((error) => ({ html: '', problems: [String(error?.message || error).slice(0, 200)] }));
+            ? { previousHtml: workingHtml(siteEditTarget), change: siteEdit.change.replace(/[,\s]+(?:and|then)\s+(?:publish|launch)\s+it\b.*$/i, '') }
+            : { brief: siteBuild.brief.replace(/[,\s]+(?:and|then)\s+(?:publish|launch)\s+it\b.*$/i, '') }, model).catch((error) => ({ html: '', problems: [String(error?.message || error).slice(0, 200)] }));
           if (!written.html) {
             return ndjsonReply(`I could not finish ${siteEditTarget ? 'that change to the site' : 'the site'}, sir: I did not get a complete page. Nothing was published${siteEditTarget ? ', and the current version is unchanged' : ''}. Ask me again and I will retry.`, { source: 'che_site_builder', ok: false });
           }
+          // A page that failed its checks is never published without a look.
+          const publish = wantsImmediatePublish(message) && !written.problems.length;
           const record = await saveSite(this.ctx.storage, siteEditTarget
-            ? { id: siteEditTarget.id, html: written.html, change: siteEdit.change }
-            : { brief: siteBuild.brief, html: written.html });
-          const url = siteUrl(new URL(request.url).origin, record.id);
-          return ndjsonReply(speakSiteResult({ record, url, problems: written.problems, edited: Boolean(siteEditTarget) }), {
-            source: 'che_site_builder', ok: true, site_id: record.id, media_url: url, media_type: 'page',
+            ? { id: siteEditTarget.id, html: written.html, change: siteEdit.change, publish }
+            : { brief: siteBuild.brief, html: written.html, publish });
+          const url = siteUrl(new URL(request.url).origin, record.id, { preview: !publish });
+          return ndjsonReply(speakSiteResult({ record, url, problems: written.problems, edited: Boolean(siteEditTarget), published: publish }), {
+            source: 'che_site_builder', ok: true, site_id: record.id, media_url: url, media_type: 'page', published: publish,
           });
         }
         // "List my devices" / "remove my lost iPhone": owner device control

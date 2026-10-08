@@ -135,7 +135,10 @@ export async function writeSite(env, { brief, previousHtml = '', change = '' }, 
   return { html, problems };
 }
 
-export async function saveSite(storage, { id = '', brief, html, change = '' }) {
+// Every build or edit is a draft first: the owner sees the preview and says
+// "publish the website" before anything goes live at /site/<id>. `html` is
+// always the published page; `draft_html` is the unpublished preview.
+export async function saveSite(storage, { id = '', brief, html, change = '', publish = false }) {
   const now = new Date().toISOString();
   const siteId = id || crypto.randomUUID().replace(/-/g, '').slice(0, 20);
   const prior = id ? await storage.get(`${SITE_PREFIX}${siteId}`).catch(() => null) : null;
@@ -143,11 +146,13 @@ export async function saveSite(storage, { id = '', brief, html, change = '' }) {
     id: siteId,
     title: titleOf(html, String(brief || 'CHE site').slice(0, 80)),
     brief: String(prior?.brief || brief || '').slice(0, 2000),
-    html,
+    html: publish ? html : String(prior?.html || ''),
+    draft_html: publish ? '' : html,
     versions: (prior?.versions || 0) + 1,
     last_change: String(change || '').slice(0, 500),
     created_at: prior?.created_at || now,
     updated_at: now,
+    published_at: publish ? now : (prior?.published_at || ''),
   };
   await storage.put(`${SITE_PREFIX}${siteId}`, record);
   const index = (await storage.get(SITE_INDEX_KEY).catch(() => null)) || [];
@@ -157,24 +162,43 @@ export async function saveSite(storage, { id = '', brief, html, change = '' }) {
   return record;
 }
 
+// The page an edit should start from: the unpublished draft when there is
+// one, otherwise the live page.
+export function workingHtml(record) {
+  return String(record?.draft_html || record?.html || '');
+}
+
+// "Publish the website": the draft goes live. Returns null when there is no
+// draft waiting.
+export async function publishSite(storage, record) {
+  if (!record?.draft_html) return null;
+  const now = new Date().toISOString();
+  const published = { ...record, html: record.draft_html, draft_html: '', published_at: now, updated_at: now };
+  await storage.put(`${SITE_PREFIX}${record.id}`, published);
+  return published;
+}
+
 export async function lastSite(storage) {
   const index = (await storage.get(SITE_INDEX_KEY).catch(() => null)) || [];
   const latest = Array.isArray(index) ? index.at(-1) : null;
   return latest ? storage.get(`${SITE_PREFIX}${latest.id}`).catch(() => null) : null;
 }
 
-export function siteUrl(origin, id) {
-  return `${String(origin).replace(/\/+$/, '')}/site/${id}`;
+export function siteUrl(origin, id, { preview = false } = {}) {
+  return `${String(origin).replace(/\/+$/, '')}/site/${id}${preview ? '/preview' : ''}`;
 }
 
-// GET /site/<id>: the hosted page, sandboxed. Returns null for other paths.
+// GET /site/<id>: the published page; /site/<id>/preview: the draft (or the
+// live page when no draft is waiting). Both sandboxed. Null for other paths.
 export async function serveSite(request, storage) {
-  const match = /^\/site\/([a-f0-9]{8,32})\/?$/.exec(new URL(request.url).pathname);
+  const match = /^\/site\/([a-f0-9]{8,32})(\/preview)?\/?$/.exec(new URL(request.url).pathname);
   if (!match || !['GET', 'HEAD'].includes(request.method)) return null;
   const record = await storage.get(`${SITE_PREFIX}${match[1]}`).catch(() => null);
-  if (!record?.html) return new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
-  return new Response(request.method === 'HEAD' ? null : record.html, {
+  const page = match[2] ? workingHtml(record) : String(record?.html || '');
+  if (!page) return new Response(record && !match[2] ? 'Not published yet' : 'Not found', { status: 404, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+  return new Response(request.method === 'HEAD' ? null : page, {
     headers: {
+      ...(match[2] ? { 'X-Robots-Tag': 'noindex' } : {}),
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
       // Opaque-origin sandbox + no network: the page cannot reach CHE's API,
@@ -186,12 +210,34 @@ export async function serveSite(request, storage) {
   });
 }
 
-export function speakSiteResult({ record, url, problems, edited }) {
+// "Publish the website" / "put the site live" / "go live with the website".
+export function sitePublishIntent(message) {
+  const text = String(message || '').trim().replace(/[.!]+$/, '');
+  return new RegExp(`^(?:(?:che|chay|chey|shay)[,:]?\\s*)?(?:please\\s+)?(?:(?:ok(?:ay)?|yes|looks good)[,.]?\\s+)?(?:publish|launch|go\\s+live\\s+with|put)\\s+(?:the|my|that|your)\\s+(?:site|${KIND})(?:\\s+(?:live|online|up))?(?:\\s+now)?$`, 'i').test(text);
+}
+
+// "Show me the website" / "show me the preview" / "let me see the site".
+export function sitePreviewIntent(message) {
+  const text = String(message || '').trim().replace(/[.!?]+$/, '');
+  return new RegExp(`^(?:(?:che|chay|chey|shay)[,:]?\\s*)?(?:please\\s+)?(?:can\\s+you\\s+)?(?:show|let)\\s+me\\s+(?:see\\s+)?(?:the|my|that|your)\\s+(?:(?:site|website)\\s+)?(?:preview|draft|${KIND}|site)$`, 'i').test(text);
+}
+
+// "…and publish it" at the end of a build/edit request skips the preview stop.
+export function wantsImmediatePublish(message) {
+  return /\b(?:and|then)\s+(?:publish|launch)\s+it(?:\s+(?:live|now|right away))?[.!]?\s*$/i.test(String(message || ''));
+}
+
+export function speakSiteResult({ record, url, problems, edited, published = false }) {
   const lead = edited
-    ? `Done, sir. I updated "${record.title}" (version ${record.versions}).`
+    ? `Done, sir. I made that change to "${record.title}" (version ${record.versions}).`
     : `Your site "${record.title}" is built, sir.`;
   const check = problems.length
-    ? ` It still has ${problems.length === 1 ? 'one issue' : `${problems.length} issues`} I could not fix: ${problems.join(' ')} Say "change the website:" and what to fix.`
+    ? ` It still has ${problems.length === 1 ? 'one issue' : `${problems.length} issues`} I could not fix: ${problems.join(' ')}`
     : ' It passed my checks: mobile layout, accessibility labels, no outside scripts.';
-  return `${lead}${check} It is live at ${url} and shows below. Say "change the website:" and what you want different to change it.`;
+  if (published) return `${lead}${check} It is published and live at ${url}. Say "change the website:" and what you want different.`;
+  return `${lead}${check} This is a preview only. Nothing is published yet. The preview shows below, at ${url}. Say "publish the website" to put it live, or "change the website:" and what you want different.`;
+}
+
+export function speakSitePublished(record, url) {
+  return `Published, sir. "${record.title}" is live at ${url}.`;
 }
