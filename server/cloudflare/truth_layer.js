@@ -314,8 +314,12 @@ export function requestedCodeNames(request) {
   const text = String(request || '');
   const names = new Set();
   for (const m of text.matchAll(/\b(?:write|implement|create|code|build)\b[^.\n]{0,60}?\bfunction\s+([A-Za-z_$][\w$]*)/gi)) names.add(m[1]);
-  // "Write canAttempt(state, kind)": a name called with parentheses counts too.
-  for (const m of text.matchAll(/\b(?:write|implement|create|code|build)\b[^.\n]{0,60}?\b([A-Za-z_$][\w$]*)\s*\(/gi)) names.add(m[1]);
+  // "Write canAttempt(state, kind) and recordAttempt(state, kind)": every name
+  // called in a sentence that asks for writing counts, not only the first.
+  for (const sentence of text.split(/[.;\n]/)) {
+    if (!/\b(?:write|implement|create|code|build)\b/i.test(sentence)) continue;
+    for (const m of sentence.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g)) names.add(m[1]);
+  }
   if (/\b(?:fix|bug|wrong|correct)/i.test(text)) for (const m of text.matchAll(/\bfunction\s+([A-Za-z_$][\w$]*)\s*\(/g)) names.add(m[1]);
   return names;
 }
