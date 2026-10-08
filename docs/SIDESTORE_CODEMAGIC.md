@@ -22,6 +22,19 @@ CHE uses SideStore's documented remote-install URL scheme to hand the verified
 IPA directly to SideStore. iOS/SideStore still owns the final install
 confirmation; CHE never claims it silently installed an unsigned IPA.
 
+## Cross-builder version ordering
+
+GitHub Actions and Codemagic both generate the SideStore-visible marketing
+version using `tool/mobile_version.py`: base major/minor plus an increasing
+UTC timestamp-derived patch component. This prevents the earlier mismatch where
+Codemagic installed `1.4.1000371` but GitHub advertised `1.4.10`, making
+CHE say "up to date" even with a newer verified IPA available. The separate
+CFBundleVersion build number remains tied to each provider's build run.
+
+The Worker serves the highest verified numeric app version, not merely the last
+release that finished uploading. A full IPA still needs owner confirmation in
+SideStore; Shorebird-supported Dart patches can apply without reinstalling.
+
 ## Two update lanes
 
 ### Fast update — Shorebird

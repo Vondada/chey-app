@@ -32,4 +32,17 @@ void main() {
     expect(CheMobileUpdateInfo.compareVersion('2.0.0', '10.0.0'), lessThan(0));
     expect(CheMobileUpdateInfo.compareVersion('1.4.5', '1.4.5'), 0);
   });
+
+  test('cross-pipeline IPA versions are newer than the installed Codemagic build', () {
+    final latest = CheMobileUpdateInfo.fromJson({
+      'version': '1.4.1024200000',
+      'build_number': '3769039753601',
+      'download_url': 'https://che.example/api/update/download/latest',
+    });
+    expect(latest.isNewerThan(const CheInstalledBuild('1.4.1000371', '19000371')), isTrue);
+    expect(latest.isNewerThan(const CheInstalledBuild('1.4.1000337', '19000337')), isTrue);
+    expect(latest.isNewerThan(const CheInstalledBuild('1.4.1024200000', '3769039753601')), isFalse);
+    expect(latest.isNewerThan(const CheInstalledBuild('1.4.1024200000', '3769039753700')), isFalse);
+    expect(latest.isNewerThan(const CheInstalledBuild('1.4.1024200000', 'invalid')), isFalse);
+  });
 }

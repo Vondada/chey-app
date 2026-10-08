@@ -85,7 +85,8 @@ class CheMobileUpdateInfo {
     final mine = int.tryParse(buildNumber);
     final theirs = int.tryParse(installed.build);
     if (mine != null && theirs != null) return mine > theirs;
-    return buildNumber != installed.build;
+    // An unparseable build number is not proof that a release is newer.
+    return false;
   }
 
   static int compareVersion(String a, String b) {
