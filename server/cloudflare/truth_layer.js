@@ -290,7 +290,9 @@ export function guardOwnerReply(reply, state, ctx = {}) {
 function stripUnverifiedCode(reply, codeIncludes, removed) {
   if (typeof codeIncludes !== 'function') return reply;
   return String(reply || '').replace(/```[^\n]*\n([\s\S]*?)```/g, (block, body) => {
-    const lines = body.split('\n').map((l) => l.trim()).filter((l) => l.replace(/\s/g, '').length >= 12);
+    // Every line with a real word is checked, short statements included;
+    // lone braces, blank lines and "..." are not evidence either way.
+    const lines = body.split('\n').map((l) => l.trim()).filter((l) => /[A-Za-z_$][\w$]{2,}/.test(l) && !/^(?:\/\/\s*)?\.\.\.$/.test(l));
     const missing = lines.find((l) => !codeIncludes(l));
     if (!missing) return block;
     removed.push({ rule: 'unverified_code', sentence: missing.slice(0, 200) });

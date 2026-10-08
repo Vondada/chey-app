@@ -465,4 +465,8 @@ test('quoted code that is not in the repository is removed (live test Q3 invente
   const real = guardGroundedFacts('The line is:\n```js\nconst results = await Promise.allSettled(engines.map(lookup));\n```\nSee `publicResearch`.', { paths: ['server/cloudflare/worker.js'], codeIncludes });
   assert.equal(real.removed.length, 0);
   assert.match(real.text, /allSettled/);
+  // A block of only short invented statements is checked too (Codex on #247).
+  const short = guardGroundedFacts('Like this:\n```js\nhack();\nship();\n}\n```\nDone.', { paths: [], codeIncludes });
+  assert.doesNotMatch(short.text, /hack|ship/);
+  assert.ok(short.removed.some((r) => r.rule === 'unverified_code'));
 });
