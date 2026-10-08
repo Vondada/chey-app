@@ -3679,11 +3679,11 @@ export class CheState extends DurableObject {
           },
           { role: 'user', content: `${sender} says in Flagstaff:\n${incoming}` },
         ],
-        max_tokens: 900,
+        max_tokens: 2000,
         che_route: 'quality',
         che_audit: { task: incoming.slice(0, 160), agent: 'CHE', route: 'flagstaff_live_reply', peer: sender },
       });
-      const modelText = (res) => String(res?.response || res?.choices?.[0]?.message?.content || '').trim().slice(0, 3900);
+      const modelText = (res) => String(res?.response || res?.choices?.[0]?.message?.content || '').trim().slice(0, 12000);
       const jobIds = ((await this.loadData().catch(() => null))?.jobs || []).map((j) => j.id);
       // Quoted code must be real: checked against the pinned commit's index,
       // or the grounding text when the index is not loaded.
@@ -3696,7 +3696,7 @@ export class CheState extends DurableObject {
       // files, foreign PR links or unknown job ids.
       const checked = (text) => {
         const guarded = verified ? guardOwnerReply(text, verified, { repoAvailable: true }) : { text, removed: [] };
-        return guardGroundedFacts(guarded.text, { paths: repoGrounding?.all_paths || [], repo: String(this.env.CHE_GITHUB_REPO || ''), jobIds, codeIncludes, fileText: codeIndex ? (path) => codeIndex.text(path) : null });
+        return guardGroundedFacts(guarded.text, { paths: repoGrounding?.all_paths || [], repo: String(this.env.CHE_GITHUB_REPO || ''), jobIds, codeIncludes, fileText: codeIndex ? (path) => codeIndex.text(path) : null, flagOnly: true });
       };
       let raw = directAnswer || modelText(await callModel());
       let grounded = checked(raw);
@@ -8037,7 +8037,7 @@ export class CheState extends DurableObject {
           message,
           cheContext,
           cheProvider,
-          maxTokens: needsStrongModel ? 1800 : 360,
+          maxTokens: 2000,
           // Prefer compact+fast whenever this turn did not need specialist
           // tools/research — even if the message was slightly longer than the
           // early casual heuristic — so time-to-first-token stays low.
@@ -8051,7 +8051,7 @@ export class CheState extends DurableObject {
             const light = `You are CHE, the owner's voice-first assistant. Answer directly and briefly. ${WORK_POLICY}`;
             const rescue = await this.env.AI.run(FAST_MODEL, {
               messages: [{ role: 'system', content: light }, ...turns.slice(-4), { role: 'user', content: message }],
-              max_tokens: 900,
+              max_tokens: 2000,
               che_emergency: true,
               che_audit: { task: String(message).slice(0, 160), agent: 'CHE', route: 'owner_chat_rescue' },
             });
@@ -8101,7 +8101,7 @@ export class CheState extends DurableObject {
                 ...turns.slice(-4),
                 { role: 'user', content: message },
               ],
-              max_tokens: needsStrongModel ? 900 : 420,
+              max_tokens: 2000,
               che_emergency: true,
               che_audit: {
                 task: String(message).slice(0, 160),
