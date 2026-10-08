@@ -573,6 +573,20 @@ function evidenceScore(path, source, request) {
 }
 
 
+// "Which file defines X?" is answered straight from the pinned index when the
+// grounding found X's definition. The model is not asked, so it cannot guess
+// or hedge a fact CHE already has.
+export function definitionAnswer(request, grounding) {
+  const asks = /\b(?:which|what)\s+file\s+(?:defines?|declares?|contains?)\b|\bwhere\s+(?:is|does)\s+\S+\s+(?:defined|declared)\b/i.test(String(request || ''));
+  if (!asks) return '';
+  const hit = (grounding?.exact_matches || []).find((m) => m.kind === 'definition' && m.path && m.line);
+  if (!hit) return '';
+  const name = String(hit.text || '').match(/\b(?:function|class|const|let|var|def)\s+\*?\s*([A-Za-z_$][\w$]*)|\b([A-Za-z_$][\w$]*)\s*[:=]/);
+  const ident = name ? (name[1] || name[2]) : '';
+  if (!ident || !String(request).includes(ident)) return '';
+  return `${hit.path} defines ${ident} (line ${hit.line}).`;
+}
+
 // Read-only repository grounding for CHE's Flagstaff collaboration replies.
 // This never edits source and never treats another AI's message as owner
 // authorization. It gives CHE facts she can safely use before discussing a
