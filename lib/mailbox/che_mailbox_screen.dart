@@ -36,6 +36,7 @@ class CheMailboxScreen extends StatefulWidget {
 class _CheMailboxScreenState extends State<CheMailboxScreen> {
   List<Map<String, dynamic>> _letters = const [];
   List<Map<String, dynamic>> _providers = const [];
+  Map<String, dynamic> _youtube = const {};
   Map<String, dynamic> _flag = const {};
   List<Map<String, dynamic>> _archive = const [];
   String? _openThread;
@@ -62,11 +63,13 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         http.get(Uri.parse('${widget.baseUrl}/api/keys'), headers: widget.headers()),
         http.get(Uri.parse('${widget.baseUrl}/api/flagstaff'), headers: widget.headers()),
         http.get(Uri.parse('${widget.baseUrl}/api/flagstaff/archive'), headers: widget.headers()),
+        http.get(Uri.parse('${widget.baseUrl}/api/youtube/status'), headers: widget.headers()),
       ]).timeout(const Duration(seconds: 20));
       final letters = jsonDecode(responses[0].body);
       final keys = jsonDecode(responses[1].body);
       final flag = jsonDecode(responses[2].body);
       final archive = jsonDecode(responses[3].body);
+      final youtube = jsonDecode(responses[4].body);
       if (!mounted) return;
       setState(() {
         _flag = flag is Map ? Map<String, dynamic>.from(flag) : const {};
@@ -79,6 +82,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         _providers = keys is Map && keys['providers'] is List
             ? (keys['providers'] as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
             : const [];
+        _youtube = youtube is Map ? Map<String, dynamic>.from(youtube) : const {};
         _loading = false;
       });
       final unread = _letters.where((l) => l['read'] != true).length;
@@ -491,6 +495,134 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         _ => s,
       };
 
+  String _youtubeLine() {
+    final title = '${_youtube['channel_title'] ?? ''}';
+    if (_youtube['connected'] == true) {
+      return 'YouTube is connected to ${title.isEmpty ? 'your channel' : title}.';
+    }
+    if (_youtube['status'] == 'needs_reconnect') {
+      return 'YouTube needs you to reconnect. Google no longer accepts the permission.';
+    }
+    return 'YouTube is not connected yet.';
+  }
+
+  // Google sign-in happens on Google's own page. CHE only opens it and then
+  // checks the server, which holds the tokens.
+  Future<void> _connectYouTube() async {
+    _say('Opening Google sign-in for YouTube. Choose your YouTube account and approve the permissions.');
+    try {
+      final response = await http.post(
+        Uri.parse('${widget.baseUrl}/api/youtube/connect/start'),
+        headers: {...widget.headers(), 'Content-Type': 'application/json'},
+        body: '{}',
+      ).timeout(const Duration(seconds: 20));
+      final data = jsonDecode(response.body);
+      final url = data is Map ? '${data['url'] ?? ''}' : '';
+      if (response.statusCode != 200 || url.isEmpty) {
+        HapticFeedback.heavyImpact();
+        _say(data is Map ? '${data['detail'] ?? 'YouTube sign-in could not start.'}' : 'YouTube sign-in could not start.');
+        return;
+      }
+      final opened = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      if (!opened) {
+        _say('I could not open Google sign-in on this device. Nothing was connected.');
+        return;
+      }
+      _say('When Google finishes, come back here and tap Check connection.');
+    } catch (_) {
+      _say('I could not reach my server to start YouTube sign-in. Nothing was connected.');
+    }
+  }
+
+  Future<void> _checkYouTube({bool speak = true}) async {
+    try {
+      final response = await http.get(
+        Uri.parse('${widget.baseUrl}/api/youtube/status'),
+        headers: widget.headers(),
+      ).timeout(const Duration(seconds: 15));
+      final data = jsonDecode(response.body);
+      if (!mounted) return;
+      setState(() => _youtube = data is Map ? Map<String, dynamic>.from(data) : const {});
+      if (speak) _say(_youtubeLine());
+    } catch (_) {
+      if (speak) _say('I could not check YouTube just now.');
+    }
+  }
+
+  Future<void> _disconnectYouTube() async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Disconnect YouTube?'),
+        content: const Text('CHE will stop publishing to your channel and Google access is revoked.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Keep connected')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Disconnect')),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+    try {
+      final response = await http.post(
+        Uri.parse('${widget.baseUrl}/api/youtube/disconnect'),
+        headers: {...widget.headers(), 'Content-Type': 'application/json'},
+        body: '{}',
+      ).timeout(const Duration(seconds: 20));
+      final data = jsonDecode(response.body);
+      await _checkYouTube(speak: false);
+      _say(data is Map && data['revoked_at_google'] == true
+          ? 'YouTube is disconnected and Google access was revoked.'
+          : 'YouTube is disconnected here. Google could not confirm the revoke, so remove CHE in your Google account permissions.');
+    } catch (_) {
+      _say('I could not disconnect YouTube. Nothing changed.');
+    }
+  }
+
+  Widget _youtubeCard() {
+    final connected = _youtube['connected'] == true;
+    final needsReconnect = _youtube['status'] == 'needs_reconnect';
+    final title = '${_youtube['channel_title'] ?? ''}';
+    final line = connected
+        ? 'Connected to ${title.isEmpty ? 'your channel' : title}.'
+        : needsReconnect
+            ? 'Google needs you to reconnect YouTube.'
+            : 'Not connected.';
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('YouTube', style: CheType.label),
+            const SizedBox(height: 4),
+            Text(line, style: CheType.bodyDim),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (!connected)
+                  FilledButton(
+                    onPressed: () => _connectYouTube(),
+                    child: Text(needsReconnect ? 'Reconnect YouTube' : 'Connect YouTube'),
+                  ),
+                OutlinedButton(
+                  onPressed: () => _checkYouTube(),
+                  child: const Text('Check connection'),
+                ),
+                if (connected)
+                  OutlinedButton(
+                    onPressed: () => _disconnectYouTube(),
+                    child: const Text('Disconnect'),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _keysTab() {
     final query = _keyQuery.trim().toLowerCase();
     final providers = query.isEmpty
@@ -502,6 +634,10 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
 
     return Column(
       children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+          child: _youtubeCard(),
+        ),
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
           child: Semantics(

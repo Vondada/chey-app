@@ -34,6 +34,10 @@ import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry 
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { handleEdgeVoice } from './edge_route.js';
 import { handleVideoLine } from './video_route.js';
+import {
+  YOUTUBE_CALLBACK_PATH, disconnectYouTube, finishYouTubeConnect, startYouTubeConnect,
+  youtubeAccessToken, youtubeResultPage, youtubeStatus,
+} from './youtube_connection.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
 import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
@@ -3910,6 +3914,30 @@ export class CheState extends DurableObject {
     return response;
   }
 
+  // One Office video pass. It reloads the store so it sees the uploads of the
+  // pass before it. The YouTube token is checked before any render, and fetched
+  // again right before the upload, so a long render cannot outlive it.
+  async runOfficeVideoPass(request, body) {
+    const env = this.keyEnv || this.env;
+    const data = await this.loadData();
+    const access = await youtubeAccessToken(env, data, fetch);
+    if (access.changed) await this.ctx.storage.put('che', data);
+    if (!access.ok) {
+      return json({ ok: false, stage: 'upload', error: access.error, board: [] }, 424);
+    }
+    const youtube = {
+      uploads: (data.youtube_uploads ||= {}),
+      accessToken: async () => {
+        const fresh = await youtubeAccessToken(env, data, fetch);
+        if (fresh.changed) await this.ctx.storage.put('che', data);
+        return fresh.ok ? fresh.token : '';
+      },
+    };
+    const reply = await handleVideoLine(request, env, body, youtube);
+    await this.ctx.storage.put('che', data);
+    return reply;
+  }
+
   async handleRequest(request) {
     await this.refreshKeyEnv();
     try {
@@ -4087,6 +4115,18 @@ export class CheState extends DurableObject {
       // A signed-by-possession, short-lived, single-use enrollment is public by
       // necessity. It can only mint a device for the tenant/access scope already
       // fixed by an owner-created invite; it cannot choose another tenant.
+      // Google sends the owner's browser back here after sign-in. No device
+      // token is possible on that redirect; the one-time state protects it.
+      if (request.method === 'GET' && path === YOUTUBE_CALLBACK_PATH) {
+        const url = new URL(request.url);
+        const result = await finishYouTubeConnect(
+          this.keyEnv || this.env, data, Object.fromEntries(url.searchParams), fetch, url.origin,
+        );
+        await this.ctx.storage.put('che', data);
+        return youtubeResultPage(result.ok, result.ok
+          ? `Connected to ${result.channel.title || 'your YouTube channel'}.`
+          : result.error);
+      }
       if (request.method === 'POST' && path === '/api/enroll') {
         const consumed = consumeEnrollment(data, body.enrollment_token, body.device_name);
         if (consumed.error) return json({ detail: 'Enrollment invitation is invalid or expired.' }, 403);
@@ -4120,10 +4160,31 @@ export class CheState extends DurableObject {
       if (path === '/api/voice/edge' && request.method === 'POST') {
         return handleEdgeVoice(request, this.keyEnv || this.env, body);
       }
-      if (path === '/api/video/line' && ['GET', 'POST'].includes(request.method)) {
-        return handleVideoLine(request, this.keyEnv || this.env, body);
+      if (request.method === 'POST' && path === '/api/youtube/connect/start') {
+        const started = await startYouTubeConnect(this.keyEnv || this.env, data, new URL(request.url).origin);
+        await this.ctx.storage.put('che', data);
+        return started.ok ? json({ url: started.url }) : json({ detail: started.error }, 400);
       }
-
+      if (request.method === 'GET' && path === '/api/youtube/status') {
+        return json(await youtubeStatus(this.keyEnv || this.env, data));
+      }
+      if (request.method === 'POST' && path === '/api/youtube/disconnect') {
+        const removed = await disconnectYouTube(this.keyEnv || this.env, data, fetch);
+        await this.ctx.storage.put('che', data);
+        return json(removed);
+      }
+      if (path === '/api/video/line' && ['GET', 'POST'].includes(request.method)) {
+        if (request.method === 'POST' && body?.office === true) {
+          // Office passes run one at a time, so a duplicate check and its upload
+          // can never interleave with another pass.
+          const pass = (this.videoLineQueue || Promise.resolve()).then(() => this.runOfficeVideoPass(request, body));
+          this.videoLineQueue = pass.catch(() => {});
+          return pass;
+        }
+        const videoReply = await handleVideoLine(request, this.keyEnv || this.env, body, { uploads: (data.youtube_uploads ||= {}) });
+        await this.ctx.storage.put('che', data);
+        return videoReply;
+      }
       // CHE Home platform: tenant-scoped identity, devices, notifications and Core.
       if (request.method === 'GET' && path === '/api/platform') {
         return json(platformView(data, activeTenant.id, tokenHash));

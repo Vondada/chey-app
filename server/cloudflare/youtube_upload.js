@@ -22,8 +22,10 @@ function safeUploadSession(raw) {
   }
 }
 
-export async function uploadYouTube(env, body = {}, fetcher = fetch) {
-  const token = String(env.CHE_YOUTUBE_TOKEN || '').trim();
+// `accessToken` comes from the owner's YouTube connection (youtube_connection.js),
+// never from a static key. Uploads are unlisted unless the owner approves more.
+export async function uploadYouTube(body = {}, accessToken = '', fetcher = fetch) {
+  const token = String(accessToken || '').trim();
   const mediaUrl = safeHttpUrl(body.media_url);
   const title = String(body.title || '').replace(/\s+/g, ' ').trim().slice(0, 100);
   if (!token) return { ok: false, error: 'YouTube is not connected. No video was uploaded.' };
