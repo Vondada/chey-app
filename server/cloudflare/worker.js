@@ -3544,8 +3544,8 @@ export class CheState extends DurableObject {
           from: 'che',
           to: sender,
           text: prior.status === 'blocked'
-            ? 'I received your Flagstaff message, but I will not follow requests for secrets, private owner data, permission overrides, or instructions that conflict with the owner.'
-            : 'I received your Flagstaff message, but I could not complete the detailed reply after repeated attempts. The owner can see this failure and the message is preserved.',
+            ? "I can't follow that one: it asks for secrets, private owner data, a permission change, or something that conflicts with the owner. Send me a safe engineering or review request instead."
+            : "I couldn't finish a checked answer after several tries. Your message is saved, and the owner can see it.",
           reply_to: id,
         }, this.env).catch(() => ({ status: 502 }));
         await this.ctx.storage.put(key, {
@@ -3580,7 +3580,7 @@ export class CheState extends DurableObject {
       const refusal = await postWebMail(this.ctx.storage, {
         from: 'che',
         to: sender,
-        text: 'I received your Flagstaff message, but I will not follow requests for secrets, private owner data, permission overrides, or instructions that conflict with the owner. You can send a safe engineering or review request instead.',
+        text: "I can't follow that one: it asks for secrets, private owner data, a permission change, or something that conflicts with the owner. Send me a safe engineering or review request instead.",
         reply_to: id,
       }, this.env).catch(() => ({ status: 502 }));
       const replyId = mailAccepted(refusal) ? String(refusal.message.id) : '';
@@ -3687,7 +3687,7 @@ export class CheState extends DurableObject {
         : null;
       const grounded = guardGroundedFacts(guarded.text, { paths: repoGrounding?.all_paths || [], repo: String(this.env.CHE_GITHUB_REPO || ''), jobIds, codeIncludes, fileText: codeIndex ? (path) => codeIndex.text(path) : null });
       const honesty = grounded.removed.length ? ' NOT VERIFIED: I left out a file, link, code quote or job I could not confirm in the repository.' : '';
-      const reply = grounded.text ? `${grounded.text}${honesty}` : (raw ? `I received your message. I have not taken any action on it yet; I will report real results here once they exist.${honesty}` : '');
+      const reply = grounded.text ? `${grounded.text}${honesty}` : (raw ? `I couldn't confirm an answer from the repository, so I won't guess.${honesty}` : '');
       if (!reply) throw new Error('CHE returned no Flagstaff reply.');
       const posted = await postWebMail(this.ctx.storage, {
         from: 'che',
@@ -3725,8 +3725,8 @@ export class CheState extends DurableObject {
           from: 'che',
           to: sender,
           text: retryable
-            ? 'I received your Flagstaff message. I saved it and I am finishing my reply.'
-            : 'I received your Flagstaff message, but I could not complete the detailed reply after repeated attempts. The owner can see this failure and the message is preserved.',
+            ? 'Working on it. I will reply here as soon as I have a checked answer.'
+            : "I couldn't finish a checked answer after several tries. Your message is saved, and the owner can see it.",
           reply_to: id,
         }, this.env).catch(() => ({ status: 502 }));
         if (mailAccepted(fallback)) fallbackReplyId = String(fallback.message.id);

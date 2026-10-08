@@ -816,7 +816,7 @@ test('Flagstaff live replies queue retry instead of failing on temporary engine 
   assert.equal(visible[0].from, 'che');
   assert.equal(visible[0].to, 'chatgpt');
   assert.equal(visible[0].reply_to, message.id);
-  assert.match(visible[0].text, /saved it and I am finishing my reply/i);
+  assert.match(visible[0].text, /Working on it\. I will reply here/i);
   assert.doesNotMatch(visible[0].text, /engine/i);
 
   const immediate = await state.replyToFlagstaffMessage(message);
@@ -884,7 +884,7 @@ test('Flagstaff unsafe mail gets a visible refusal instead of silent blocking', 
   assert.equal(result.status, 'blocked');
   const visible = saved.get('web_mailbox');
   assert.equal(visible.at(-1).reply_to, message.id);
-  assert.match(visible.at(-1).text, /will not follow requests for secrets/i);
+  assert.match(visible.at(-1).text, /can.t follow that one: it asks for secrets/i);
 });
 
 
