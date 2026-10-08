@@ -48,6 +48,9 @@ Then, on GitHub:
 
 **Next:** rerun the exact owner acceptance prompt against the live app. PASS requires a grounded repository answer from the pinned Worker path with no fabricated workflow/file/tool names and no coding job. If it still fails, capture the exact returned text and determine whether the request bypassed `/api/chat` (for example a realtime voice-only path) before changing routing again. No duplicate repair PR is pending.
 
+
+**2026-10-08 live autonomy retry (ChatGPT):** Owner authorized a real test after three failed implementation passes. Flagstaff record 2026-10-08T02:47:36.109Z reports deterministic rejection of `server/cloudflare/worker.test.mjs` as looking like a secret/private key; exact edit has not been inspected, so false positive versus sensitive content is unknown. Relay committed to `mailbox/chatgpt.jsonl` at `465f4b13504fe280b0a7f4cb34ab1e4c36e6c8d4`; web POST returned HTTP 403, so GitHub mailbox was used. CHE must resume the existing job, retain secret checks, use safe synthetic fixtures, perform real validation/review and produce a draft PR only. No execution acknowledgement/job ID or new PR verified yet. Latest verified main `63cb8cd7bec9b26ef55fa7118edcea39e61dfed1`, PR #244 merged; Flutter, Worker deployment, iPhone IPA, public release and Shorebird workflows succeeded; live health version tag matches `63cb8cd7bec9`. iPhone installation and live autonomy remain unverified. Next: retrieve CHE's acknowledgement and engineering record, inspect exact rejection, and verify real execution receipts.
+
 ## 3. Queue: the owner's open requests, in order
 
 Do them top to bottom. Mark each one `DONE (PR #, SHA)` or `WIP (branch, next step)` here.
