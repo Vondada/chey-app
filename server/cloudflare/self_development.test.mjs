@@ -1250,3 +1250,32 @@ test('grounding answers a quoted phrase with the real file and line, and lists e
   assert.deepEqual(out.exact_matches.map((m) => [m.path, m.line]), [['server/cloudflare/worker.js', 2], ['server/cloudflare/worker.js', 3]]);
   assert.deepEqual(out.all_paths.sort(), Object.keys(files).sort());
 });
+
+test('grounding finds an unquoted function by name with its body, and shows named files in full (live test Q2/Q5)', async () => {
+  const sha = 'e'.repeat(40);
+  const files = {
+    'server/cloudflare/worker.js': 'const x = 1;\nexport async function publicResearch(query, fetcher = fetch) {\n  const results = await Promise.allSettled(engines.map(lookup));\n}\nawait publicResearch(q);\n',
+    'server/cloudflare/self_skills.js': 'export function normalizeSkills(raw) {\n  return raw;\n}\n',
+    'lib/main.dart': 'void main() {}\n',
+  };
+  const fetcher = async (url) => {
+    const u = String(url);
+    const ok = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (u.endsWith('/o/r')) return ok({ default_branch: 'main' });
+    if (u.includes('/git/ref/heads/main')) return ok({ object: { sha } });
+    if (u.includes('/git/trees/')) return ok({ tree: Object.keys(files).map((path) => ({ type: 'blob', path })) });
+    if (u.includes('/pulls?state=open')) return ok([]);
+    const m = /\/contents\/(.+)\?ref=/.exec(u);
+    if (m && files[m[1]]) return ok({ content: btoa(files[m[1]]), sha: 'blob-' + m[1] });
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const env = { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' };
+  const q2 = await inspectRepositoryContext(env, 'Which file defines the function publicResearch? Give the exact path only.', fetcher);
+  assert.equal(q2.exact_matches[0].path, 'server/cloudflare/worker.js');
+  assert.equal(q2.exact_matches[0].line, 2);
+  assert.equal(q2.exact_matches[0].kind, 'definition');
+  assert.match(q2.exact_matches[0].body, /Promise\.allSettled/);
+  const q5 = await inspectRepositoryContext(env, 'Read server/cloudflare/self_skills.js on main and find one weakness.', fetcher);
+  assert.equal(q5.named_files[0].path, 'server/cloudflare/self_skills.js');
+  assert.match(q5.named_files[0].text, /normalizeSkills/);
+});

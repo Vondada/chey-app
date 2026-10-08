@@ -605,7 +605,16 @@ export async function inspectRepositoryContext(env, request, fetcher = fetch, { 
     && /\.(?:dart|js|mjs)$/.test(path)
     && /\b(?:war|room|office|agent|chat|navigation|router|worker|self_development)\b/i.test(path.replace(/[_/.-]+/g, ' '))
   ).slice(0, 24);
-  const seeds = [...new Set([...wanted, ...fallback])].slice(0, 24);
+  // Files the request names (by path, or by a file name only one path has)
+  // are always read, and their source is shown to the model.
+  const requestText = String(request || '');
+  const named = index.paths.filter((path) => {
+    if (requestText.includes(path)) return true;
+    const base = path.split('/').pop();
+    return base.length > 6 && new RegExp(`(?:^|[\\s\`'"(])${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(requestText)
+      && index.paths.filter((other) => other.endsWith(`/${base}`) || other === base).length === 1;
+  }).slice(0, 3);
+  const seeds = [...new Set([...named, ...wanted, ...fallback])].slice(0, 24);
   const allPaths = new Set(index.paths);
   const loaded = new Map();
 
@@ -680,9 +689,27 @@ export async function inspectRepositoryContext(env, request, fetcher = fetch, { 
   // Exact search: a quoted phrase in the request ("mission status") is looked
   // up across the whole indexed commit, so CHE quotes real lines instead of
   // guessing a file that merely sounds right.
-  const phrases = [...String(request || '').matchAll(/["\u201c]([^"\u201d\n]{3,80})["\u201d]/g)].map((m) => m[1].toLowerCase());
+  const quoted = [...String(request || '').matchAll(/["\u201c]([^"\u201d\n]{3,80})["\u201d]/g)].map((m) => m[1].toLowerCase());
+  // Code names said without quotes count too: camelCase, snake_case and
+  // PascalCase identifiers ("which file defines publicResearch?").
+  const identifiers = [...new Set([...String(request || '').matchAll(/\b([a-z]+[A-Z][A-Za-z0-9]*|[A-Za-z]+_[A-Za-z0-9_]+|[A-Z][a-z]+[A-Z][A-Za-z0-9]*)\b/g)].map((m) => m[1]))]
+    .filter((id) => id.length >= 5 && !/^(?:chey_app|GitHub|JavaScript|TypeScript|YouTube|ChatGPT|OpenAI|iPhone|WhatsApp|PayPal|LinkedIn|TikTok)$/i.test(id)).slice(0, 6);
+  const phrases = [...new Set([...quoted, ...identifiers.map((id) => id.toLowerCase())])];
   const code = cachedCodeIndex(index.head_sha);
   const exact_matches = [];
+  // Where a named function, class or constant is defined comes first.
+  const defines = identifiers.map((id) => new RegExp(`(?:\\b(?:function|class|const|let|var|def|final|void|Future<[^>]*>)\\s+\\*?\\s*${id}\\b|\\b${id}\\s*(?:=|:)\\s*(?:async\\s*)?(?:function|\\())`));
+  if (defines.length) {
+    for (const path of index.paths) {
+      const text = code?.has(path) ? code.text(path) : loaded.get(path)?.text;
+      if (!text) continue;
+      const lines = text.split('\n');
+      for (let i = 0; i < lines.length && exact_matches.length < 6; i += 1) {
+        if (defines.some((re) => re.test(lines[i]))) exact_matches.push({ path, line: i + 1, text: lines[i].trim().slice(0, 240), kind: 'definition', body: lines.slice(i, i + 45).join('\n').slice(0, 3000) });
+      }
+      if (exact_matches.length >= 6) break;
+    }
+  }
   if (phrases.length) {
     for (const path of index.paths) {
       if (exact_matches.length >= 12) break;
@@ -690,6 +717,7 @@ export async function inspectRepositoryContext(env, request, fetcher = fetch, { 
       if (!text) continue;
       const lines = text.split('\n');
       for (let i = 0; i < lines.length && exact_matches.length < 12; i += 1) {
+        if (exact_matches.some((m) => m.path === path && m.line === i + 1)) continue;
         if (phrases.some((p) => lines[i].toLowerCase().includes(p))) exact_matches.push({ path, line: i + 1, text: lines[i].trim().slice(0, 240) });
       }
     }
@@ -702,6 +730,9 @@ export async function inspectRepositoryContext(env, request, fetcher = fetch, { 
     head_sha: index.head_sha,
     ...(discovery ? { discovery } : {}),
     ...(phrases.length ? { exact_matches, exact_search: exact_matches.length ? 'found' : 'no match in the indexed commit' } : {}),
+    // Real source for files the request named, so CHE can quote and review
+    // them instead of guessing.
+    ...(named.length ? { named_files: named.map((path) => ({ path, text: String((code?.has(path) ? code.text(path) : loaded.get(path)?.text) || '').slice(0, 7000) })).filter((f) => f.text) } : {}),
     files,
     open_prs,
     open_prs_status: pulls.ok ? 'verified' : 'unavailable:' + String(pulls.status || 0),
