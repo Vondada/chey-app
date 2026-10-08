@@ -40,7 +40,16 @@ Then, on GitHub:
 
 ---
 
-## 2. Current position (updated by: ChatGPT, 2026-10-07)
+## 2. Current position (updated by: Claude, 2026-10-08)
+
+**Claude, 2026-10-08 (owner: live feedback, 70% free-tier cap):**
+- Branch `claude/che-live-feedback` (new, owner chose a new branch after the force-push was denied): 04ab119 backend live activity log (`job_activity.js`, `noteJobActivity` at job start and each outcome, `/api/job/activity` endpoint; the Flutter UI does not show it yet) and a71d4f1 (never spend more than 70% of a free engine's daily allowance, applies to owner chat and emergency calls). Both on top of main 225c9dc (PR #251). Worker tests 731/731 locally. No PR opened. Not verified live: the Worker runs old code until a deploy.
+- Old branch `claude/che-latency-optimization-8ruaus` remote head 9150757 is left as is; its local commits were moved to the new branch.
+- Still open: Flutter UI and spoken activity from `/api/job/activity`; 70% check does not yet count the current request's own size; coding_runtime.js steps not logged; shorthand tokens not built; the autonomy test stays HELD (not graded or sent) until these are live-verified.
+
+---
+
+**Previous (ChatGPT, 2026-10-07):**
 
 **Owner's failed read-only grounding acceptance test is fixed and deployed: PR #240.** Main is `dc31429482180fb1f16c6eb26c63c42996f396f3`; PR head `19ea92b95b527cede0ca2237974bba7e7ece4b48`. The failure was factual grounding, not mutation: CHE invented `.github/workflows/health_check.yml`, `diagnostic-tool`, `auto-remediate`, `docs/build-manifest.json`, and `fix-version-mismatch`, none of which exist. PR #240 blocks iPhone local/offline fallback for live repository diagnostics, forces those turns through connected GitHub evidence, and makes the Worker answer repository diagnostics deterministically from pinned source as VERIFIED / INFERRED / UNKNOWN. The exact failed owner prompt is a regression test; it asserts zero generic-model calls, zero coding jobs, exact pinned SHA evidence, and rejects the invented names.
 
