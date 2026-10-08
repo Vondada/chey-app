@@ -10,6 +10,7 @@
 // outages are class B and come back as a retryable result; credentials and
 // permission problems are class C; owner approval is class D.
 
+import { remember } from './che_brain.js';
 import { isSelfUpdateEditablePath, isSelfUpdateReadablePath, validateUpdateFiles } from './self_update.js';
 import { cachedCodeIndex, gitBlobSha, loadCodeIndex } from './code_index.js';
 import { ENGINEERING_PLAYBOOK } from './engineering_playbook.js';
@@ -1294,6 +1295,8 @@ export async function recordLesson(memory, kind, text) {
     let techniques = list.filter((item) => item.kind === 'technique').length;
     const kept = list.filter((item) => item.kind !== 'technique' || techniques-- <= MAX_TECHNIQUE_LESSONS);
     await memory.put(LESSONS_KEY, kept.slice(-50));
+    // Every lesson also goes to CHE's brain, which all agents read from.
+    await remember(memory, { kind: kind === 'technique' || kind === 'location' || kind === 'mistake' ? kind : 'lesson', text: clean, agent: 'CHE team' });
   } catch (_) {}
 }
 
