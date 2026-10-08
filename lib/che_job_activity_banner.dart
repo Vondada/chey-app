@@ -104,35 +104,32 @@ class _CheJobActivityBannerState extends State<CheJobActivityBanner> {
   Widget build(BuildContext context) {
     if (_jobId == null || _line.isEmpty) return const SizedBox.shrink();
     final done = _finishedStatuses.contains(_status);
-    final scheme = Theme.of(context).colorScheme;
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    // Quiet working subtext, like Claude's status line: small and muted.
     return Semantics(
       liveRegion: true,
       label: 'CHE: $_line',
-      child: Material(
-        color: scheme.secondaryContainer,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-          child: Row(
-            children: [
-              ExcludeSemantics(
-                child: Icon(
-                  done ? Icons.check_circle_outline : Icons.autorenew,
-                  color: scheme.onSecondaryContainer,
-                ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+        child: Row(
+          children: [
+            ExcludeSemantics(
+              child: Icon(
+                done ? Icons.check_circle_outline : Icons.autorenew,
+                size: 14,
+                color: muted,
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  _line,
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w600,
-                    color: scheme.onSecondaryContainer,
-                  ),
-                ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                _line,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12, color: muted),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
