@@ -6,6 +6,7 @@
 import { moneyPrinterStatus, moneyPrinterVideo } from './moneyprinter.js';
 import { runVideoLine } from './video_line.js';
 import { probeVideoEngine } from './video_engine.js';
+import { githubVideoConfigured, startGithubVideo, githubVideoStatus } from './github_video_renderer.js';
 
 function statusFor(result) {
   if (result?.pending) return 202;
@@ -27,7 +28,9 @@ export async function handleVideoLine(request, env, parsedBody, youtube = {}) {
       });
     }
     const taskId = new URL(request.url).searchParams.get('task_id') || '';
-    result = await moneyPrinterStatus(env, taskId);
+    result = taskId.startsWith('gha_')
+      ? await githubVideoStatus(env, taskId)
+      : await moneyPrinterStatus(env, taskId);
   } else {
     const body = parsedBody ?? await request.json().catch(() => ({}));
     if (body.office === true && body.approve_upload !== true) {
@@ -38,7 +41,11 @@ export async function handleVideoLine(request, env, parsedBody, youtube = {}) {
     }
     result = body.office === true
       ? await runVideoLine(env, fetch, youtube)
-      : await moneyPrinterVideo(env, body.topic || body.prompt || '');
+      : env.CHE_VIDEO_GEN_URL
+        ? await moneyPrinterVideo(env, body.topic || body.prompt || '')
+        : githubVideoConfigured(env)
+          ? await startGithubVideo(env, body.topic || body.prompt || '', Number(body.seconds) || 15)
+          : { ok: false, error: 'No video renderer is connected.' };
   }
   return new Response(JSON.stringify(result), {
     status: statusFor(result),
