@@ -40,7 +40,7 @@ Then, on GitHub:
 
 ---
 
-**Claude, 2026-10-09 (continue: PRs #264/#265 merged by the crew; milestones 1-2 LIVE). New branch `che2/milestone3-agent-card-link` at add0d68 (pushed, no PR — no gh CLI; owner opens at github.com/Vondada/chey-app/pull/new/che2/milestone3-agent-card-link, Dart-only so no `[worker-deploy]` needed).**
+**Claude, 2026-10-09 (continue: PRs #264/#265 merged by the crew; milestones 1-2 LIVE). New branch `che2/milestone3-agent-card-link` at add0d68 — owner opened PR #266 (open, Codex review running as of 21:23 UTC).**
 - Milestone 3: agent orb cards deep-link to the live Office desk. Agents-category cards gain an "Open X in Office" button (VoiceOver-labelled); the Office floor opens that agent's real desk sheet once the roster arrives, waits instead of guessing, speaks honestly on unmatched names. Back pops to the Brain; never trapped. Verified: analyze clean, Flutter **245/245** (2 new: store name→desk test, card-tap deep-link test).
 - Reconciled: my old branches were superseded by #264/#265 (same content, merged) — deleted locally; remote `che2/phase-a-brain-agent-demo` + `che2/skills-in-app-verify` can be deleted by the owner. Live Worker confirmed at 4917d01 via `/health`. Nothing on the iPhone is claimed until the owner verifies there.
 - Still owner-side: paired-iPhone live turns, Shorebird-vs-IPA decision, PR merges.
