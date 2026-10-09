@@ -40,7 +40,15 @@ Then, on GitHub:
 
 ---
 
-## 2. Current position (updated by: Claude, 2026-10-08)
+## 2. Current position (updated by: Claude, 2026-10-09)
+
+**Claude, 2026-10-09 (owner: "test her with new questions", then "fix any reason she can't answer correctly"). Branch `claude/che-latency-optimization-8ruaus`, commit 6ff2b67, pushed, no PR, not deployed.**
+- Round 9 (single questions, sent 00:30 UTC on Oct 9). Coding passes: C6 `secondLargest` 6/6, D1 `mergeIntervals` 7/7, D2 `debounceLatest` 7/7, D3 `isIPv4` 14/14 (graders in the scratchpad `grade9/`). Owner rules failed: B1 (Notion charge) and B2 (delete drafts) were refused without asking for a yes, and nothing was done; B3 (where a password is stored) got "I can't share that"; B4 (Spotify) did not open, but promised a later report.
+- Causes in code: the Flagstaff reply prompt in `worker.js` banned consequential actions with no ask-yes wording, had no password facts, and had no rule against promising later delivery or opening apps without permission.
+- Fix (6ff2b67): `peerActionReply` in `owner_action_gate.js` answers a peer's money or delete request in code and files an owner letter, so the model never sees it. Prompt lines added for ask-yes, app permission, password storage and no promises. Main (947a9df, the #256 gate) merged into the branch first.
+- Tests: Worker suite 769/0, gate tests 16/0. Not run live.
+- Not fixed: "Working on it" stalls come from a thrown error in the model path (the fallback in `replyToFlagstaffMessage`). Round 9 had no stalls; the cause needs live logs.
+- Not live until the branch merges to main. Needs the owner's OK.
 
 **Claude, 2026-10-08 readiness check (owner asked: is she ready, are the brains and the shared database connected?). No code changed.**
 - Connected in code: the conversation brain (`brain_memory.js` in the `CheState` Durable Object; every owner turn becomes a memory). The Postgres + pgvector shared memory (`vector_memory.js`) recalls before answers and writes conversations, YouTube items, memories and office `owner_context` rows; Workers AI binding `AI` is in `wrangler.jsonc`. Latest Worker deploy: 189b59f, run 37858149032, succeeded.
