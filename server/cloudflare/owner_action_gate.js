@@ -87,6 +87,17 @@ export function gateAppAccess(appName, allowedApps = []) {
   };
 }
 
+// Another AI's money or delete request is never carried out, whatever it says.
+// The reply names what did not happen and the owner's next step, instead of a
+// bare refusal. Returns '' when the request has no money or delete action.
+export function peerActionReply(text) {
+  const kinds = classifyOwnerActions(text);
+  if (!kinds.length) return '';
+  const done = kinds.length > 1 ? "spent, bought or deleted" : kinds[0] === 'money' ? 'spent or bought' : 'deleted';
+  const need = kinds.length > 1 ? 'Those need' : kinds[0] === 'money' ? 'Spending money needs' : 'Deleting needs';
+  return `I haven't ${done} anything. ${need} the owner's direct yes, and I don't act on requests from other AIs. If the owner wants it, the owner can ask me directly, and I'll confirm exactly what I'll do before I do it.`;
+}
+
 // A held request waits in Durable Object storage under this key until the owner
 // answers. Only a plain yes at the start of the next turn releases it.
 export const PENDING_OWNER_ACTION_KEY = 'che:pending_owner_action';

@@ -535,3 +535,10 @@ test('grounded guard rejects a line citation that does not match the pinned file
   assert.match(guardGroundedFacts('normalizeSkills is at line 62 in server/cloudflare/self_skills.js.', { paths, fileText }).text, /line 62/);
   assert.match(guardGroundedFacts('It lives in server/cloudflare/self_skills.js.', { paths, fileText }).text, /self_skills/);
 });
+
+test('requestedCodeNames catches a name written with parentheses, not only "function NAME"', async () => {
+  const { requestedCodeNames } = await import('./truth_layer.js');
+  const names = requestedCodeNames('Write canAttempt(state, kind, limits) and recordAttempt(state, kind). kind is semantic or format.');
+  assert.ok(names.has('canAttempt'));
+  assert.ok(names.has('recordAttempt'));
+});

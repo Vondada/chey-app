@@ -15,6 +15,7 @@ import '../che_ui/che_agents.dart';
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_voice_actions.dart';
+import '../rooms/che_characters_room.dart';
 import 'che_agent_runtime.dart';
 import 'che_office_store.dart';
 import 'che_war_room_screen.dart';
@@ -615,7 +616,14 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
         appBar: AppBar(
           backgroundColor: Colors.transparent,
           title: const Text('The Office'),
-          actions: _actions(),
+          actions: [
+            ..._actions(),
+            IconButton(
+              tooltip: 'Open the 3D crew',
+              icon: const Icon(Icons.view_in_ar),
+              onPressed: () => CheCharactersRoom.open(context),
+            ),
+          ],
         ),
         body: SafeArea(
           top: false,
