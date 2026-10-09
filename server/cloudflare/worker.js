@@ -3956,7 +3956,7 @@ export class CheState extends DurableObject {
         return fresh.ok ? fresh.token : '';
       },
     };
-    const reply = await handleVideoLine(request, env, body, youtube);
+    const reply = await handleVideoLine(request, env, body, youtube, this.ctx.storage);
     await this.ctx.storage.put('che', data);
     return reply;
   }
@@ -4211,7 +4211,7 @@ export class CheState extends DurableObject {
           this.videoLineQueue = pass.catch(() => {});
           return pass;
         }
-        const videoReply = await handleVideoLine(request, this.keyEnv || this.env, body, { uploads: (data.youtube_uploads ||= {}) });
+        const videoReply = await handleVideoLine(request, this.keyEnv || this.env, body, { uploads: (data.youtube_uploads ||= {}) }, this.ctx.storage);
         await this.ctx.storage.put('che', data);
         return videoReply;
       }
@@ -7769,7 +7769,6 @@ export class CheState extends DurableObject {
               duration_seconds: checked.item.duration_seconds || null,
               duration_verified: checked.item.duration_verified === true,
               thumbnail_error: checked.item.thumbnail_error || null,
-              duration_verified: false,
               storage_warning: checked.item.storage_warning || null,
             });
           }
