@@ -139,6 +139,15 @@ Then, on GitHub:
 - **HONEST OPEN ACCEPTANCE:** An actual paired iPhone owner-triggered POST through the live Worker has not yet been exercised. The existing CHE_GITHUB_TOKEN is configured but its GitHub **Actions:write** permission is unverified; if POST dispatch returns 403, that permission is the owner-resolvable blocker. Test in CHE chat: `Create a faceless video about 3 surprising space facts`; if initially pending ask `Is my video ready?`. Expect a real video/thumbnail receipt, NOT a model-written fake link. No auto YouTube publishing.
 - **Storage/security:** Default GitHub Actions artifacts expire in 30 days and may be visible to viewers of a public repo; do not create sensitive/private videos through this fallback. Permanent private R2 storage still requires an R2 binding, optional for first render. Original procedural visuals/basic offline TTS, not cinematic AI footage.
 
+### ChatGPT, 2026-10-09 — CHE neural narration + dispatch 403 recovery, deployed
+
+- **Owner observed:** Video plays on iPhone but the offline eSpeak voice sounds robotic. CHE failed to dispatch GitHub video via workflow_dispatch with HTTP 403.
+- **PR #261** `chatgpt/video-repository-dispatch-fallback` merged as `185dd59b3a9b96335970064e975486953e0a6398`, deployed and live health SHA verified by [GitHub Actions run 37897277022](https://github.com/Vondada/chey-app/actions/runs/37897277022). **788/788 Worker tests pass.** Separate CF preview builds have unrelated/undisclosed failures; production GitHub Worker deploy succeeded.
+- **Code:** `server/cloudflare/github_video_renderer.js` now falls back from 403/404 workflow_dispatch (Actions:write) to repository_dispatch (Contents:write); workflow `.github/workflows/che-video-render.yml` handles both triggers and renders `github.event.client_payload`; polling searches both event types; regression tests added.
+- **Narration:** `tools/che_video_render.py` now uses free **Piper neural en_US-kristin-medium**, a US female voice with public-domain LibriVox dataset (see Rhasspy model card). No commercial/paid voice needed and no YouTube uploads. GitHub [run 37896728986](https://github.com/Vondada/chey-app/actions/runs/37896728986) generated a real 15s 720x1280 MP4, 1280x720 PNG, neural narration length 14.280272s, real artifact 11601010499, all verified. Existing MP4 will not retroactively get new voice; must rerender.
+- **OPEN LIVE ACCEPTANCE:** CHE owner must retry `Create a faceless video about 3 surprising space facts` in paired CHE app. **Permission fallback not yet independently exercised** with owner's CHE_GITHUB_TOKEN. If both 403, require GitHub token with Actions:write OR Contents:write for Vondada/chey-app and secure secret update; no token value in chat. Never invent completion links.
+- **Storage caveat:** GitHub Actions artifacts retained 30 days; no R2 bucket provisioned in this mission. Public repo artifacts must not be used for secret/private videos.
+
 ## 3. Queue: the owner's open requests, in order
 
 Do them top to bottom. Mark each one `DONE (PR #, SHA)` or `WIP (branch, next step)` here.
