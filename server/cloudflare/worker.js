@@ -62,7 +62,7 @@ import { webAppPage } from './web_app.js';
 import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachmentText, condenseSkills, loadLearnedSkills, READ_FOR_SKILLS, redactSensitive, saveLearnedSkills, speakLearned, speakSkillList } from './self_skills.js';
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { noteJobActivity } from './job_activity.js';
-import { PENDING_OWNER_ACTION_KEY, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen } from './owner_action_gate.js';
+import { PENDING_OWNER_ACTION_KEY, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
 import { changeHistoryIntent, guardGroundedFacts, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, requestedCodeNames, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
@@ -6435,19 +6435,21 @@ export class CheState extends DurableObject {
             const merged = [...new Set([...stored, ...sentGrants])];
             if (merged.length !== stored.length) await this.ctx.storage.put(APPS_GRANTED_KEY, merged);
           }
-          const explicitApp = classifyExplicitAppOpen(message);
-          const needApp = explicitApp || classifyAppNeed(message);
-          if (needApp) {
-            let allowedApps = await this.ctx.storage.get(APPS_GRANTED_KEY) || [];
-            if (explicitApp && !allowedApps.includes(explicitApp)) {
-              // The owner just named the app himself: those words are the permission.
-              allowedApps = [...allowedApps, explicitApp];
+          const { explicit, required } = classifyAppAccesses(message);
+          if (explicit.length || required.length) {
+            const allowedApps = await this.ctx.storage.get(APPS_GRANTED_KEY) || [];
+            const additions = explicit.filter((app) => !allowedApps.includes(app));
+            if (additions.length) {
+              allowedApps.push(...additions);
               await this.ctx.storage.put(APPS_GRANTED_KEY, allowedApps);
             }
-            const appGate = gateAppAccess(needApp, allowedApps);
-            if (!appGate.allowed) {
-              await this.ctx.storage.put(PENDING_APP_ACTION_KEY, { app: appGate.app, text: message, at: Date.now() });
-              return json({ message: appGate.ask, reply: appGate.ask, held_for_owner: true, owner_action_kind: 'app', app_name: appGate.app, code_review_passed: false, owner_approval_required: true });
+            // Never skip a second app just because the owner opened the first.
+            for (const app of required) {
+              const appGate = gateAppAccess(app, allowedApps);
+              if (!appGate.allowed) {
+                await this.ctx.storage.put(PENDING_APP_ACTION_KEY, { app: appGate.app, text: message, at: Date.now() });
+                return json({ message: appGate.ask, reply: appGate.ask, held_for_owner: true, owner_action_kind: 'app', app_name: appGate.app, code_review_passed: false, owner_approval_required: true });
+              }
             }
           }
         } catch (_) {
