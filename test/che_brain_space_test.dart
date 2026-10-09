@@ -117,6 +117,33 @@ void main() {
       expect(layout.find('supabase')!.id, 'n1');
       expect(layout.find('zz'), isNull);
     });
+
+    test('live agent tasks get their own Agents lobe with real status', () {
+      final dots = cheBuildMemoryDots(
+        savedMemories: const [],
+        memoryNotes: const [
+          {
+            'id': 'agent-task-abc',
+            'title': 'Atlas · Scout public research on neural interfaces',
+            'body': 'Status: running. Atlas is working on: Scout public research on neural interfaces',
+            'kind': 'agent_task',
+            'region': 'Office Agents',
+            'agent': 'Atlas',
+            'status': 'running',
+            'task_id': 'abc',
+          },
+        ],
+        learnedPersonality: const [],
+        learnedKnowledge: const [],
+      );
+      expect(dots, hasLength(1));
+      expect(dots.first.category, 'Agents');
+      expect(dots.first.source, 'Atlas');
+      final layout = CheBrainLayout.build(dots);
+      expect(layout.clusters['Agents'], isNotNull);
+      expect(layout.byId['agent-task-abc'], isNotNull);
+      expect(cheBrainShape(layout.nodes.single.position), lessThan(1));
+    });
   });
 
   group('camera', () {
@@ -187,6 +214,69 @@ void main() {
         c.tick(1 / 60);
       }
       expect(c.camera.distance, CheBrainCamera.overview);
+      c.dispose();
+    });
+
+    List<CheMemoryDot> agentDots() => cheBuildMemoryDots(
+          savedMemories: const [],
+          memoryNotes: const [
+            {
+              'id': 'agent-task-a1',
+              'title': 'Atlas · Scout public research on neural interfaces',
+              'body': 'Status: running. Atlas is working on: Scout public research on neural interfaces',
+              'kind': 'agent_task',
+              'region': 'Office Agents',
+              'agent': 'Atlas',
+              'status': 'running',
+              'task_id': 'a1',
+            },
+            {
+              'id': 'agent-task-m1',
+              'title': 'Mira · Draft support copy for the new release',
+              'body': 'Status: queued. Mira is working on: Draft support copy for the new release',
+              'kind': 'agent_task',
+              'region': 'Office Agents',
+              'agent': 'Mira',
+              'status': 'queued',
+              'task_id': 'm1',
+            },
+          ],
+          learnedPersonality: const [],
+          learnedKnowledge: const [],
+        );
+
+    test('agent-status commands parse to the crew member', () {
+      expect(CheBrainCommand.parse('what is Atlas working on')!.agent, 'atlas');
+      expect(CheBrainCommand.parse('CHE, show me what Nova is doing')!.agent, 'nova');
+      expect(CheBrainCommand.parse('is Knox busy')!.agent, 'knox');
+      final all = CheBrainCommand.parse('who is working')!;
+      expect(all.action, CheBrainAction.agentStatus);
+      expect(all.agent, isNull);
+      for (final other in ['what is the weather', 'what is Atlas', 'show me Tesla', 'who is Atlas']) {
+        expect(CheBrainCommand.parse(other), isNull, reason: other);
+      }
+    });
+
+    test('agent status is spoken from live orbs, honestly when idle', () {
+      final c = CheBrainSpaceController(agentDots());
+      final status = c.execute(CheBrainCommand.parse('what is Atlas working on')!);
+      expect(status, contains('Atlas is working on:'));
+      expect(status, contains('Status: running'));
+      expect(c.selectedId, 'agent-task-a1', reason: 'camera flies to the live orb');
+      expect(c.execute(CheBrainCommand.parse('who is working')!), contains('Atlas'));
+      expect(c.execute(CheBrainCommand.parse('who is working')!), contains('Mira'));
+      expect(c.execute(CheBrainCommand.parse('what is Sage working on')!), 'Sage has no live work in the brain right now.');
+      final empty = CheBrainSpaceController(_memories());
+      expect(empty.execute(CheBrainCommand.parse('who is working')!), 'No agent has live work in the brain right now.');
+      expect(empty.execute(CheBrainCommand.parse('what is Atlas working on')!), 'Atlas has no live work in the brain right now.');
+      c.dispose();
+      empty.dispose();
+    });
+
+    test('agent work filters to its own lobe in its own color', () {
+      final c = CheBrainSpaceController(agentDots());
+      expect(c.execute(CheBrainCommand.parse('show agent memories')!), 'Showing your Agents memories: 2.');
+      expect(cheMemoryCategoryColor('Agents'), const Color(0xFFFFB54D));
       c.dispose();
     });
   });

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   addOwnerMemory,
+  buildAgentTaskNodes,
+  buildBrainGraph,
   distillResearchNote,
   isResearchStyleJob,
   isSafeMemoryText,
@@ -82,4 +84,62 @@ test('write-back updates memories + memory_notes via shared add path', () => {
   assert.deepEqual(correctedFavorite.replaced, ['Favorite drink: Cola']);
   assert.equal(data.memories.some((m) => /cola/i.test(m)), false);
   assert.equal(data.memories.some((m) => /favorite drink is sprite/i.test(m)), true);
+});
+
+test('live agent task nodes show only real queued/running/reviewing work', () => {
+  assert.deepEqual(buildAgentTaskNodes({}), []);
+  assert.deepEqual(buildAgentTaskNodes({ team_tasks: '' }), []);
+  const data = {
+    team_tasks: [
+      { id: 't-run', partner_name: 'Atlas', task: 'Scout public research on neural interfaces', status: 'running', created_at: '2026-10-09T00:00:00.000Z', updated_at: '2026-10-09T00:01:00.000Z' },
+      { id: 't-done', partner_name: 'Nova', task: 'Old finished listing work', status: 'complete' },
+      { id: 't-fail', partner_name: 'Knox', task: 'Old failed build', status: 'failed' },
+      { id: 't-queue', partner_name: 'Mira', task: 'Draft support copy for the new release', status: 'queued', created_at: '2026-10-09T00:02:00.000Z' },
+    ],
+  };
+  const nodes = buildAgentTaskNodes(data);
+  assert.equal(nodes.length, 2);
+  assert.ok(nodes.every((n) => n.region === 'Office Agents' && n.kind === 'agent_task'));
+  assert.match(nodes[0].title, /Atlas/);
+  assert.match(nodes[0].body, /running/);
+  assert.equal(nodes[0].task_id, 't-run');
+  assert.ok(!nodes.some((n) => n.task_id === 't-done' || n.task_id === 't-fail'));
+
+  const capped = buildAgentTaskNodes({
+    team_tasks: Array.from({ length: 30 }, (_, i) => ({ id: `t-${i}`, partner_name: 'Atlas', task: `research item ${i}`, status: 'queued' })),
+  }, { max: 5 });
+  assert.equal(capped.length, 5);
+});
+
+test('brain graph links live agent nodes to related memory notes', () => {
+  const data = {
+    memory_notes: [
+      { id: 'n1', title: 'Neural interface research roundup', bullets: ['Public labs publish open neural interface benchmarks'], kind: 'research' },
+    ],
+    learned_knowledge: [],
+    team_tasks: [
+      { id: 't1', partner_name: 'Atlas', task: 'Scout public research on neural interfaces and benchmarks', status: 'running' },
+    ],
+  };
+  const base = buildBrainGraph(data);
+  assert.equal(base.counts.live, 0);
+  assert.ok(base.nodes.every((n) => n.kind !== 'agent_task'));
+
+  const live = buildBrainGraph(data, { liveNodes: buildAgentTaskNodes(data) });
+  assert.equal(live.counts.live, 1);
+  const taskNode = live.nodes.find((n) => n.id === 'agent-task-t1');
+  assert.ok(taskNode);
+  assert.ok(live.links.some((l) => (l.source === 'agent-task-t1' && l.target === 'n1') || (l.source === 'n1' && l.target === 'agent-task-t1')));
+});
+
+test('bounded brain graph does not falsely hide an agent behind another agent batch', () => {
+  const team_tasks = Array.from({ length: 35 }, (_, i) => ({
+    id: `atlas-${i}`, partner_name: 'Atlas', partner_id: 'atlas-id',
+    task: `Atlas queue ${i}`, status: 'queued',
+  }));
+  team_tasks.push({ id: 'sage-live', partner_name: 'Sage', partner_id: 'sage-id', task: 'Verify accounts', status: 'running' });
+  const nodes = buildAgentTaskNodes({ team_tasks });
+  assert.equal(nodes.length, 20);
+  assert.ok(nodes.some((n) => n.agent === 'Sage' && n.task_id === 'sage-live'));
+  assert.ok(nodes.some((n) => n.agent === 'Atlas'));
 });

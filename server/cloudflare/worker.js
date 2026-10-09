@@ -9,6 +9,7 @@ import {
   normalizeAgent,
   processAgentWork,
   queueAgentTask,
+  recordAgentWork,
   recoverStaleWork,
   runtimeSnapshot,
   updateAgent,
@@ -126,6 +127,7 @@ import {
 } from './opportunity_scout.js';
 import {
   addOwnerMemory,
+  buildAgentTaskNodes,
   buildBrainGraph,
   enrichNoteForBrain,
   isSafeMemoryText,
@@ -4488,7 +4490,7 @@ export class CheState extends DurableObject {
           memory_notes: listMemoryNotes(data),
           conversation_memories: ownerDevice ? await listConversationMemories(this.ctx.storage).catch(() => []) : [],
           conversation_memory_total: ownerDevice ? await conversationMemoryCount(this.ctx.storage).catch(() => 0) : 0,
-          brain_graph: buildBrainGraph(data),
+          brain_graph: buildBrainGraph(data, { liveNodes: buildAgentTaskNodes(data) }),
           preference_memory: data.preference_memory,
           owner_context: data.owner_context.map(ownerContextPreview),
           personal_sources: {
@@ -6053,9 +6055,10 @@ export class CheState extends DurableObject {
         return json(mlReadiness(this.env));
       }
 
-      // Brain room neural map — unlimited memory_notes nodes + related links.
+      // Brain room neural map — unlimited memory_notes nodes + related links,
+      // plus live Office agent tasks (real queued/running/reviewing work only).
       if (path === '/api/brain/graph' && request.method === 'GET') {
-        return json(buildBrainGraph(data));
+        return json(buildBrainGraph(data, { liveNodes: buildAgentTaskNodes(data) }));
       }
 
       if (path === '/api/translate' && request.method === 'POST') {
@@ -8021,7 +8024,7 @@ export class CheState extends DurableObject {
               partner.status = result.error ? 'available' : 'available';
               partner.updated_at = now;
             }
-            data.team_tasks.unshift({
+            const completedTask = {
               id: crypto.randomUUID(),
               partner_id: result.partner_id,
               partner_name: result.partner_name,
@@ -8035,6 +8038,17 @@ export class CheState extends DurableObject {
               verified_by_che: !result.error && Boolean(result.result),
               created_at: now,
               updated_at: now,
+            };
+            data.team_tasks.unshift(completedTask);
+            // Chat-triggered Office work finishes synchronously rather than
+            // through runOneTask; record its result in the same durable,
+            // sanitized agent history instead of silently omitting it.
+            recordAgentWork(data, {
+              task: completedTask,
+              agent: partner || { id: result.partner_id, name: result.partner_name },
+              outcome: completedTask.status,
+              verified: completedTask.verified_by_che,
+              error: completedTask.error,
             });
           }
           data.team_tasks = data.team_tasks.slice(0, 100);

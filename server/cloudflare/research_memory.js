@@ -318,6 +318,57 @@ export function writeResearchMemoryNote(data, opts = {}) {
 
 // ─── Brain room: neural nodes + related links ───────────────────────────────
 
+// Live Office agent work as brain nodes. Only tasks that are really queued,
+// running or under CHE review appear; anything else would be decoration.
+const LIVE_TASK_STATUSES = new Set(['queued', 'running', 'reviewing']);
+const MAX_LIVE_TASK_NODES = 20;
+
+/**
+ * Newest-first live agent tasks → brain-graph nodes (region "Office Agents").
+ * Pure bookkeeping over data.team_tasks: no model calls, no invented work.
+ */
+export function buildAgentTaskNodes(data = {}, { max = MAX_LIVE_TASK_NODES } = {}) {
+  const tasks = Array.isArray(data.team_tasks) ? data.team_tasks : [];
+  const cap = Number.isFinite(Number(max)) && Number(max) > 0 ? Math.min(Number(max), 60) : MAX_LIVE_TASK_NODES;
+  const active = tasks.filter((task) => LIVE_TASK_STATUSES.has(String(task?.status || '')));
+  // Reserve a slot for each agent before filling the remaining visual slots.
+  // Otherwise a large batch for Atlas could hide Sage's active work and CHE
+  // would falsely announce that Sage is idle.
+  const covered = new Set();
+  const agentKeys = new Set();
+  for (const task of active) {
+    const key = String(task.partner_id || task.partner_name || 'Office agent').toLowerCase();
+    if (agentKeys.has(key)) continue;
+    covered.add(task);
+    agentKeys.add(key);
+  }
+  const selected = [...active.filter((task) => covered.has(task)),
+    ...active.filter((task) => !covered.has(task))].slice(0, cap);
+  const nodes = [];
+  for (const task of selected) {
+    const status = String(task.status || '');
+    const who = clip(task?.partner_name || 'Office agent', 40) || 'Office agent';
+    const what = clip(task?.task || '', 120) || 'working';
+    const detail = clip(task?.result || task?.error || '', 200);
+    nodes.push({
+      id: `agent-task-${clip(task?.id, 80) || nodes.length}`,
+      title: clip(`${who} · ${what}`, 160),
+      body: clip(`Status: ${status}. ${who} is working on: ${task?.task || ''}${detail ? ` — ${detail}` : ''}`, 500),
+      kind: 'agent_task',
+      locale: null,
+      cluster_id: null,
+      metrics: null,
+      created_at: task?.created_at || null,
+      region: 'Office Agents',
+      agent: who,
+      status,
+      task_id: clip(task?.id, 80),
+      updated_at: task?.updated_at || null,
+    });
+  }
+  return nodes;
+}
+
 function noteTextBlob(note) {
   const bullets = Array.isArray(note?.bullets) ? note.bullets.join(' ') : '';
   return clip(`${note?.title || ''} ${bullets} ${note?.kind || ''} ${note?.locale || ''} ${note?.cluster_id || ''}`, 1200).toLowerCase();
@@ -339,7 +390,7 @@ function jaccard(a, b) {
  * plus related links from shared kind/cluster/locale or token overlap.
  * Phone visualizes nodes as neural dots.
  */
-export function buildBrainGraph(data = {}, { maxLinksPerNode = 4, minSimilarity = 0.12 } = {}) {
+export function buildBrainGraph(data = {}, { maxLinksPerNode = 4, minSimilarity = 0.12, liveNodes = [] } = {}) {
   const notes = listMemoryNotes(data);
   const nodes = [];
   const links = [];
@@ -390,6 +441,32 @@ export function buildBrainGraph(data = {}, { maxLinksPerNode = 4, minSimilarity 
       region: 'Learned Knowledge',
     });
     byId.set(id, { node: nodes[nodes.length - 1], tokens: tokenSet(text) });
+  }
+
+  // Live nodes (e.g. active Office agent tasks): real activity only, linked
+  // into the graph by the same token-overlap pass below.
+  const live = Array.isArray(liveNodes) ? liveNodes : [];
+  for (const item of live) {
+    const id = clip(item?.id, 120);
+    if (!id || byId.has(id)) continue;
+    const node = {
+      id,
+      title: clip(item?.title || 'Live activity', 160),
+      body: clip(item?.body || '', 500),
+      kind: clip(item?.kind || 'live', 40) || 'live',
+      locale: item?.locale || null,
+      cluster_id: item?.cluster_id != null ? String(item.cluster_id) : null,
+      metrics: item?.metrics || null,
+      created_at: item?.created_at || null,
+      region: clip(item?.region || 'Live', 40) || 'Live',
+    };
+    for (const [key, value] of Object.entries(item || {})) {
+      if (!(key in node) && value != null && ['string', 'number', 'boolean'].includes(typeof value)) {
+        node[key] = typeof value === 'string' ? clip(value, 120) : value;
+      }
+    }
+    nodes.push(node);
+    byId.set(id, { node, tokens: tokenSet(`${node.title} ${node.body} ${node.kind}`) });
   }
 
   // Related links: same cluster_id, same kind+locale, or token Jaccard
@@ -447,6 +524,7 @@ export function buildBrainGraph(data = {}, { maxLinksPerNode = 4, minSimilarity 
       links: links.length,
       memory_notes: notes.length,
       learned_knowledge: knowledge.length,
+      live: live.length,
     },
   };
 }

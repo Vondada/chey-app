@@ -7,6 +7,7 @@ import {
   handoffAgentTask,
   officeSkillsView,
   queueAgentTask,
+  recordAgentWork,
   steerAgentTask,
   teachOfficeSkill,
 } from './agent_runtime.js';
@@ -128,4 +129,45 @@ test('agent detail exposes stable identity, saved appearance, and only assigned 
   assert.equal(detail.skills.length, 1);
   assert.equal(detail.skills[0].name, 'Listing review');
   assert.equal(detail.skills[0].source.repo, 'owner/reference');
+});
+
+test('every finished agent task leaves a provenance work-log entry', () => {
+  const data = state();
+  const agent = createAgent(data, { name: 'Atlas', role: 'Research Partner' }).agent;
+  const task = queueAgentTask(data, agent, 'Scout public research on neural interfaces', 'owner');
+  const entry = recordAgentWork(data, { task, agent, outcome: 'complete', verified: true, memoryNoteId: 'note-1' });
+  assert.equal(entry.agent, 'Atlas');
+  assert.equal(entry.task_id, task.id);
+  assert.equal(entry.status, 'complete');
+  assert.equal(entry.verified_by_che, true);
+  assert.equal(entry.memory_note_id, 'note-1');
+  assert.equal(entry.task, 'See owner-authorized task history');
+  assert.ok(entry.at);
+  assert.equal(agent.last_work.task_id, task.id);
+
+  recordAgentWork(data, { task: { ...task, id: 't-fail' }, agent, outcome: 'failed', error: 'provider timeout' });
+  const detail = agentDetail(data, agent);
+  assert.equal(detail.work_log.length, 2);
+  assert.equal(detail.work_log[0].status, 'failed');
+  assert.equal(detail.work_log[0].error, 'Failure recorded; details in owner-authorized task history');
+
+  for (let i = 0; i < 150; i++) {
+    recordAgentWork(data, { task: { ...task, id: `t-${i}` }, agent, outcome: 'complete' });
+  }
+  assert.equal(data.agent_work_log.length, 120);
+});
+
+test('agent work ledger never persists owner secrets or provider error bodies', () => {
+  const data = state();
+  const agent = createAgent(data, { name: 'Mira', role: 'Support Partner' }).agent;
+  const task = queueAgentTask(data, agent, 'Send token=private-password-999 to the provider', 'owner');
+  const entry = recordAgentWork(data, {
+    task, agent, outcome: 'failed',
+    error: 'Provider echoed private-password-999 and bearer abcdefghijklmnop',
+  });
+  assert.ok(entry.task_id);
+  assert.equal(entry.status, 'failed');
+  assert.ok(!JSON.stringify(data.agent_work_log).includes('private-password-999'));
+  assert.ok(!JSON.stringify(data.agent_work_log).includes('abcdefghijklmnop'));
+  assert.equal(entry.agent, 'Mira');
 });

@@ -998,7 +998,7 @@ extension _CheHomeSend on _CHEHomeState {
   /// Returns false when the command needs the Brain on screen and it is not,
   /// so ordinary phrases ("back out") fall through to other handlers.
   Future<bool> _runBrainCommand(String message, CheBrainCommand command) async {
-    const needsBrainOnScreen = {CheBrainAction.backOut, CheBrainAction.openSelected, CheBrainAction.expand, CheBrainAction.collapse};
+    const needsBrainOnScreen = {CheBrainAction.backOut, CheBrainAction.openSelected, CheBrainAction.expand, CheBrainAction.collapse, CheBrainAction.agentStatus};
     var space = CheBrainSpaceController.current;
     if (space == null) {
       // Off the Brain screen only explicit brain/memory phrases open it, so
