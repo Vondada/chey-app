@@ -30,7 +30,24 @@ export function videoEngineStatus(env = {}) {
 export async function probeVideoEngine(env = {}, fetcher = fetch) {
   const status = videoEngineStatus(env);
   if (!status.configured) return status;
-  if (!env.CHE_VIDEO_GEN_URL) return { ...status, reason: 'Legacy renderer has no standard health endpoint. Render a test to confirm it is online.' };
+  if (!env.CHE_VIDEO_GEN_URL && !env.CHE_VIDEO_RENDER_URL &&
+      env.CHE_GITHUB_TOKEN && env.CHE_GITHUB_REPO === 'Vondada/chey-app') {
+    try {
+      const response = await fetcher('https://api.github.com/repos/Vondada/chey-app/actions/workflows/che-video-render.yml', {
+        headers: {
+          'Authorization': 'Bearer ' + env.CHE_GITHUB_TOKEN,
+          'Accept': 'application/vnd.github+json',
+        },
+        signal: AbortSignal.timeout(12000),
+      });
+      return { ...status, ready: response.ok, reason: response.ok
+        ? 'Free GitHub video workflow is reachable; render output must still be verified.'
+        : 'GitHub video workflow returned HTTP ' + response.status + '.' };
+    } catch {
+      return { ...status, reason: 'GitHub video workflow could not be reached.' };
+    }
+  }
+  if (!env.CHE_VIDEO_GEN_URL) return { ...status, reason: 'Legacy renderer requires a real render to verify it is online.' };
   try {
     const origin = new URL(String(env.CHE_VIDEO_GEN_URL).trim());
     if (origin.protocol !== 'https:') return { ...status, reason: 'Video renderer requires HTTPS.' };
