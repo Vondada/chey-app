@@ -95,8 +95,11 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
   }
 
   void _openInitialAgent() {
-    final want = _pendingAgentName;
-    if (want == null || _store.deskOrder.value.isEmpty) return;
+    // The board/coding polls notify independently of the roster fetch; only
+    // the loaded roster can resolve the name, otherwise a placeholder desk
+    // would falsely report the agent as absent.
+    if (_pendingAgentName == null || !_runtime.loaded) return;
+    final want = _pendingAgentName!;
     _pendingAgentName = null;
     final id = _store.deskIdForAgentName(want);
     if (id != null) {
