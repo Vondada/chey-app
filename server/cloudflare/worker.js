@@ -9,6 +9,7 @@ import {
   normalizeAgent,
   processAgentWork,
   queueAgentTask,
+  recordAgentWork,
   recoverStaleWork,
   runtimeSnapshot,
   updateAgent,
@@ -8023,7 +8024,7 @@ export class CheState extends DurableObject {
               partner.status = result.error ? 'available' : 'available';
               partner.updated_at = now;
             }
-            data.team_tasks.unshift({
+            const completedTask = {
               id: crypto.randomUUID(),
               partner_id: result.partner_id,
               partner_name: result.partner_name,
@@ -8037,6 +8038,17 @@ export class CheState extends DurableObject {
               verified_by_che: !result.error && Boolean(result.result),
               created_at: now,
               updated_at: now,
+            };
+            data.team_tasks.unshift(completedTask);
+            // Chat-triggered Office work finishes synchronously rather than
+            // through runOneTask; record its result in the same durable,
+            // sanitized agent history instead of silently omitting it.
+            recordAgentWork(data, {
+              task: completedTask,
+              agent: partner || { id: result.partner_id, name: result.partner_name },
+              outcome: completedTask.status,
+              verified: completedTask.verified_by_che,
+              error: completedTask.error,
             });
           }
           data.team_tasks = data.team_tasks.slice(0, 100);
