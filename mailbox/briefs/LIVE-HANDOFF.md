@@ -120,14 +120,15 @@ Then, on GitHub:
 
 **2026-10-08 Claude (owner: think for yourself, no refusals):** Root cause of "I don't know yet": the owner-facing truth rule in ai_router.js told CHE to say it for any unverified fact; changed. Added THINK FOR YOURSELF (answer knowledge questions, memory before research, honest view, workarounds). Flagstaff fallback no longer refuses. Pushed to claude/che-latency-optimization-8ruaus, commit with message 'CHE: think for herself instead of refusing knowledge questions'. 728/728 Worker tests locally. Not verified live. Next: confirm the vault/memory-first wording with the owner and re-run Round 5 live.
 
-### ChatGPT, 2026-10-09 — owner faceless-video repair (open; not production)
+### ChatGPT, 2026-10-09 — owner faceless-video repair (merged and deployed; live renderer unverified)
 
 - Live main inspected: `43130bb67ddd96e6f90d2b6e973bf792c2ece9a7`, no competing open PR at mission start. Source and tests, AGENTS.md and CHE mailbox read.
 - Work branch: `chatgpt/faceless-video-truth-and-render`; PR **#259** https://github.com/Vondada/chey-app/pull/259; last pushed head `74d4d6f0967380a71d435986d311f312ce54420e`.
 - Fixed: MoneyPrinterTurbo task API integration and pending polling; MP4 signature/access check before completion; legacy faceless renderer; durable R2 archive if binding exists (external-only warning otherwise); thumbnail generation only after completed video (dimensions not verified); deterministic no-file owner replies, persistent resumable job ID, no implied YouTube upload, explicit approved upload gate, provider status probe, optional secret sync. Flutter Creator comments and video capability discovery aligned. Paid media not enabled.
 - Unit/syntax CI on previous revision: **776 pass, 0 fail**; on latest head Worker unit check success, Flutter checks pending at handoff time. Cloudflare Workers Builds preview failed on prior commits; details require Cloudflare dashboard. Exact PR check status must be refreshed before any merge.
 - **Owner-resolvable runtime blockers:** no independently verified live renderer URL / provider or R2 binding in repository config. A real 15-second MP4 and 1280x720 PNG cannot be proven from simulated tests; neither exists from this mission. Real video generation costs may require separate explicit permission; never activate paid media or publish without approval.
-- Next: verify newest CI, inspect CF preview failure, correct any real regressions, obtain/verify reachable HTTPS renderer and R2 if archival desired, run real 15-second render + real 1280x720 thumbnail/duration/playback checks, then merge/deploy only after required checks and visual acceptance. Do not fabricate artifacts or declare full task complete.
+- **Verified merge/deploy update (2026-10-09):** PR #259 squash-merged to main commit `3c3194eed228c41e6f3f80548c748d4e78b2ffea`. GitHub Actions deploy run 37891768047 SUCCESS (Worker tests 780 passed/0 failed; secret sync; Wrangler deploy; live health confirmed version tag `3c3194eed228`, version `b9b49378-d2e9-4397-b338-2e0eefb82c8d`). Prior Cloudflare Workers Builds preview check remained failed; Github production deploy independently succeeded.
+- Next: obtain/verify reachable HTTPS renderer and optional R2 binding, then run a real 15s video + 1280x720 thumbnail/duration/playback acceptance test. No file generated, no YouTube upload, no paid media activated in this mission. Do not fabricate media completion claims.
 
 ## 3. Queue: the owner's open requests, in order
 
