@@ -56,8 +56,9 @@ extension _CheHomeStreaming on _CHEHomeState {
     List<Map<String, String>> history, {
     required void Function(String text) onPartial,
   }) async {
+    debugPrint('TRACE skill: enter _streamCheResponse');
     await _cognitionReady;
-
+    debugPrint('TRACE skill: cognition ready');
     if (!await _ensurePaired()) {
       final local = await _tryLocalOfflineResponse(
         userMessage,
@@ -199,6 +200,7 @@ extension _CheHomeStreaming on _CHEHomeState {
       'POST',
       Uri.parse('$cheAgentBaseUrl/api/chat'),
     );
+    debugPrint('TRACE skill: request built');
 
     request.headers.addAll(_authHeaders);
     final explainLevel = _deeperOnce ? 'deeper' : _explainLevel;
@@ -378,14 +380,7 @@ extension _CheHomeStreaming on _CHEHomeState {
           final ok = data['ok'] == true;
           // The delta pipeline speaks the result. This receipt adds visible
           // and screen-reader status without starting another spoken turn.
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Semantics(
-              liveRegion: true,
-              child: Text(ok
-                  ? 'Skill request completed.'
-                  : 'Skill request could not be completed.'),
-            ),
-          ));
+          ScaffoldMessenger.of(context).showSnackBar(cheInstalledSkillReceiptBar(ok));
           unawaited(_statusHaptic(ok ? 3 : 4));
         }
         final mediaUrl = data['media_url']?.toString().trim() ?? '';

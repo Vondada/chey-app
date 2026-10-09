@@ -15,7 +15,7 @@ if (process.argv.includes('--local')) {
   let mod;
   try { mod = await import(generated.href); } finally { unlinkSync(generated); }
   const values = new Map();
-  const env = { CHE_PAIR_CODE: 'local-acceptance-only', AI: { run: async () => { throw new Error('Skill execution must use the adapter, not a model'); } } };
+  const env = { CHE_PAIR_CODE: '123456', AI: { run: async () => { throw new Error('Skill execution must use the adapter, not a model'); } } };
   const state = new mod.CheState({ storage: { get: async (k) => values.get(k), put: async (k, v) => values.set(k, v), setAlarm: async () => {} } }, env);
   env.CHE_STATE = { getByName: () => state };
   const send = (path, body, token = '') => mod.default.fetch(new Request(`https://che.example${path}`, {

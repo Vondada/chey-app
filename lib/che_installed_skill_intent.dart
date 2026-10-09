@@ -1,6 +1,8 @@
 // Installed skills are Worker capabilities, never offline/general knowledge.
 // Anchor at the owner's command so quoted examples and human-skill discussion
 // do not turn into tool requests.
+import 'package:flutter/material.dart';
+
 final _installedSkillRequest = RegExp(
   r'^(?:(?:che|chay|chey)[,:]?\s+)?'
   r'(?:(?:please\s+)?can\s+you\s+(?:please\s+)?|please\s+)?'
@@ -18,4 +20,15 @@ final _installedSkillRequest = RegExp(
 
 bool isInstalledSkillRequest(String message) => _installedSkillRequest.hasMatch(
   message.trim().replaceFirst(RegExp(r'[.!?]+$'), '').trim(),
+);
+
+/// Visible outcome of a Worker skill turn. The streamed reply itself is
+/// spoken by the normal pipeline; this banner only adds the success/failure
+/// receipt as large text in a screen-reader live region, without starting
+/// another spoken turn.
+SnackBar cheInstalledSkillReceiptBar(bool ok) => SnackBar(
+  content: Semantics(
+    liveRegion: true,
+    child: Text(ok ? 'Skill request completed.' : 'Skill request could not be completed.'),
+  ),
 );

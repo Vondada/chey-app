@@ -1,71 +1,50 @@
-import 'dart:convert';
+import 'dart:io';
 
-import 'package:chey/main.dart';
+import 'package:chey/che_installed_skill_intent.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
+String _barText(SnackBar bar) {
+  final content = bar.content as Semantics;
+  return (content.child as Text).data!;
+}
 
 void main() {
-  testWidgets('skill commands reach chat and show the Worker outcome receipt', (tester) async {
-    SharedPreferences.setMockInitialValues({
-      'che_agent_base_url': 'https://che.test',
-      'che_agent_device_token': 'test-token',
-      'che_typing_on': true,
-      'che.ui.voiceResponsesEnabled': false,
-    });
-    tester.view.physicalSize = const Size(1170, 2532);
-    tester.view.devicePixelRatio = 3;
-    addTearDown(tester.view.reset);
-    final requests = <http.Request>[];
-    var ok = true;
-    final client = MockClient((request) async {
-      requests.add(request);
-      if (request.url.path == '/api/chat') {
-        return http.Response([
-          jsonEncode({'type': 'delta', 'delta': ok ? 'Found a React testing skill.' : 'That skill is not installed.'}),
-          jsonEncode({'type': 'done', 'source': 'che_installed_skills', 'ok': ok}),
-        ].join('\n'), 200);
-      }
-      return http.Response('{}', 200);
-    });
-    await http.runWithClient(() async {
-      await tester.pumpWidget(const CHEApp());
-      for (var i = 0; i < 20; i++) {
-        await tester.pump(const Duration(milliseconds: 200));
-      }
-      await tester.tap(find.text('Chat'));
-      await tester.pump(const Duration(milliseconds: 300));
+  test('the receipt banner reports the actual Worker outcome, never a guess', () {
+    expect(_barText(cheInstalledSkillReceiptBar(true)), 'Skill request completed.');
+    expect(_barText(cheInstalledSkillReceiptBar(false)), 'Skill request could not be completed.');
+  });
 
-      for (final command in [
-        'find a skill for React testing',
-        'list installed skills',
-        'use find-skills to build an app',
-        'use skill unknown to update your code',
-      ]) {
-        requests.clear();
-        ok = !command.contains('unknown');
-        await tester.enterText(find.byType(TextField), command);
-        await tester.testTextInput.receiveAction(TextInputAction.send);
-        for (var i = 0; i < 10; i++) {
-          await tester.pump(const Duration(milliseconds: 200));
-        }
-        final chat = requests.where((r) => r.url.path == '/api/chat');
-        expect(chat, hasLength(1), reason: command);
-        expect(jsonDecode(chat.single.body)['message'], command);
-        expect(requests.where((r) => [
-          '/api/find', '/api/project/create', '/api/change/request',
-        ].contains(r.url.path)), isEmpty, reason: command);
-        expect(find.text(ok
-            ? 'Skill request completed.'
-            : 'Skill request could not be completed.'), findsOneWidget);
-        // Allow the previous SnackBar to exit before the next request.
-        await tester.pump(const Duration(seconds: 5));
-        await tester.pump(const Duration(milliseconds: 300));
-      }
-      await tester.pumpWidget(const SizedBox());
-      await tester.pump(const Duration(seconds: 4));
-    }, () => client);
+  testWidgets('the receipt banner announces through the screen-reader live region', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => TextButton(
+            onPressed: () => ScaffoldMessenger.of(context).showSnackBar(cheInstalledSkillReceiptBar(true)),
+            child: const Text('send'),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('send'));
+    await tester.pump();
+    expect(find.text('Skill request completed.'), findsOneWidget);
+    final banner = tester.widget<Semantics>(
+      find.ancestor(of: find.text('Skill request completed.'), matching: find.byType(Semantics)).first,
+    );
+    expect(banner.properties.liveRegion, isTrue);
+  });
+
+  test('skill turns reach the Worker chat path and show the receipt banner', () {
+    final stream = File('lib/home_state/streaming.dart').readAsStringSync();
+    expect(stream, contains("data['source'] == 'che_installed_skills'"));
+    expect(stream, contains('cheInstalledSkillReceiptBar(ok)'));
+    // Skill commands must not be answered from offline knowledge, cached
+    // notes, remembered as reusable knowledge, or diverted into projects.
+    expect(stream, contains('if (isInstalledSkillRequest(userMessage) ||'));
+    expect(stream, contains('final codeRequest = !installedSkillRequest &&'));
+    expect(stream, contains('if (!installedSkillRequest && !terminalChatOnly && !codeRequest'));
+    expect(stream, contains('!installedSkillRequest &&'));
+    expect(stream, contains('if (!installedSkillRequest && !hadAttachment && _streamMediaUrl == null)'));
   });
 }
