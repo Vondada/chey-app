@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyOwnerAction, classifyOwnerActions, gateOwnerAction, gateAppAccess, grantForKinds, peerActionReply, classifyAppNeed, classifyExplicitAppOpen } from './owner_action_gate.js';
+import { classifyOwnerAction, classifyOwnerActions, gateOwnerAction, gateAppAccess, grantForKinds, peerActionReply, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
 
 test('money verbs are classified as money', () => {
   assert.equal(classifyOwnerAction('buy the domain chey-test.com'), 'money');
@@ -161,4 +161,21 @@ test('GitHub repo research through CHE\'s own API is never held', () => {
   assert.equal(classifyAppNeed('is that still current on github'), '');
   // The owner's explicit "open github" still grants the app.
   assert.equal(classifyExplicitAppOpen('open github'), 'github');
+});
+
+test('owner opening a report does not accidentally grant an unrelated Notes app', () => {
+  const statement = 'open the report and tell me why the Notes app is slow';
+  assert.equal(classifyExplicitAppOpen(statement), '');
+  assert.equal(classifyAppNeed(statement), 'notes');
+  assert.deepEqual(classifyAppAccesses(statement), { explicit: [], required: ['notes'] });
+});
+
+test('compound requests track explicit opens and independent ungranted apps', () => {
+  const request = 'open YouTube and read my last note in Notes';
+  assert.deepEqual(classifyAppAccesses(request), { explicit: ['youtube'], required: ['notes'] });
+  assert.equal(classifyAppNeed(request), 'notes');
+  assert.deepEqual(classifyAppAccesses('open YouTube and open Spotify'),
+    { explicit: ['youtube', 'spotify'], required: [] });
+  assert.deepEqual(classifyAppAccesses('open the Notes app and read the latest in Spotify'),
+    { explicit: ['notes'], required: ['spotify'] });
 });
