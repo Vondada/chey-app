@@ -1,6 +1,7 @@
 // CHE Art Studio media: real image generation with versions.
 import { moneyPrinterVideo, moneyPrinterStatus, verifyVideoMedia } from './moneyprinter.js';
 import { createFacelessVideo } from './faceless_video.js';
+import { githubVideoConfigured, startGithubVideo, githubVideoStatus, githubVideoFile } from './github_video_renderer.js';
 //   - Owner image connector (CHE_IMAGE_GEN_URL) wins when configured.
 //   - Otherwise Workers AI FLUX.1 [schnell] generates the image on the CHE
 //     server itself (highest step count unless the owner picks draft).
@@ -52,6 +53,20 @@ async function storeBlob(env, storage, id, base64, mimeType = 'image/jpeg', kind
 }
 
 export async function readBlob(env, storage, item) {
+  if (item.blob === 'github-artifact') {
+    try {
+      const bytes = await githubVideoFile(env, item.github_artifact_id, item.github_filename);
+      if (!bytes) return null;
+      if (item.github_filename === 'video.mp4') {
+        if (bytes.length < 12 || String.fromCharCode(...bytes.slice(4, 8)) !== 'ftyp') return null;
+      } else if (item.github_filename === 'thumbnail.png') {
+        if (bytes.length < 24 || bytes[0] !== 137 || bytes[1] !== 80 || bytes[2] !== 78 || bytes[3] !== 71) return null;
+      }
+      return bytes;
+    } catch {
+      return null; // Expired artifact or unavailable GitHub download.
+    }
+  }
   if (item.blob === 'r2' && env.CHE_DATA_BUCKET) {
     const key = item.blob_key || `media/${item.id}.jpg`;
     const object = await env.CHE_DATA_BUCKET.get(key);
@@ -255,6 +270,53 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
   if (renderTaskId) {
     const earlier = (await listMedia(storage)).find((item) => item.render_task_id === renderTaskId && item.verified);
     if (earlier) return { status: 200, item: earlier, duplicate: true };
+    if (renderTaskId.startsWith('gha_')) {
+      const result = await githubVideoStatus(env, renderTaskId, fetcher);
+      if (result.pending) return { status: 202, pending: true, job_id: renderTaskId, detail: 'Offline GitHub video is rendering. No finished MP4 exists yet.' };
+      if (!result.ok || !result.verified) return { status: 502, detail: result.error || 'GitHub video was not verified.' };
+      const vidId = crypto.randomUUID(), thumbId = crypto.randomUUID();
+      const base = {
+        engine: 'github-actions-offline', github_artifact_id: result.artifact_id,
+        render_task_id: renderTaskId, verified: true,
+        duration_verified: result.duration_verified, duration_seconds: result.duration_seconds,
+        paid_media: false, youtube_uploaded: false, created_at: now(),
+        durability: env.CHE_DATA_BUCKET ? 'r2' : 'github-artifact-30-days',
+      };
+      const videoItem = {
+        ...base, id: vidId, root_id: vidId, kind: 'video', mode: 'video',
+        title: result.title || String(body.title || prompt).slice(0, 80),
+        prompt: prompt.slice(0, 8000), description: result.description,
+        mime_type: 'video/mp4', thumbnail_media_id: thumbId,
+        width: result.video_width, height: result.video_height,
+        blob: 'github-artifact', github_filename: 'video.mp4',
+      };
+      const thumbnailItem = {
+        ...base, id: thumbId, root_id: thumbId, parent_id: vidId,
+        kind: 'image', mode: 'thumbnail', title: 'Thumbnail for ' + videoItem.title,
+        prompt: videoItem.prompt, mime_type: 'image/png',
+        width: result.thumbnail_width, height: result.thumbnail_height,
+        blob: 'github-artifact', github_filename: 'thumbnail.png',
+      };
+      if (env.CHE_DATA_BUCKET) {
+        try {
+          const [videoBytes, imageBytes] = await Promise.all([
+            githubVideoFile(env, result.artifact_id, 'video.mp4', fetcher),
+            githubVideoFile(env, result.artifact_id, 'thumbnail.png', fetcher),
+          ]);
+          if (!videoBytes || !imageBytes) throw new Error('Artifact files missing.');
+          await Promise.all([
+            env.CHE_DATA_BUCKET.put('media/' + vidId + '.mp4', videoBytes, { httpMetadata: { contentType: 'video/mp4' } }),
+            env.CHE_DATA_BUCKET.put('media/' + thumbId + '.png', imageBytes, { httpMetadata: { contentType: 'image/png' } }),
+          ]);
+          videoItem.blob = 'r2'; videoItem.blob_key = 'media/' + vidId + '.mp4';
+          thumbnailItem.blob = 'r2'; thumbnailItem.blob_key = 'media/' + thumbId + '.png';
+        } catch {
+          return { status: 502, detail: 'Video rendered but could not be archived. No finished video was recorded.' };
+        }
+      }
+      await saveIndex(storage, [videoItem, thumbnailItem, ...await listMedia(storage)]);
+      return { status: 200, item: videoItem, thumbnail: thumbnailItem };
+    }
   }
   const id = crypto.randomUUID();
   const record = {
@@ -289,6 +351,13 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
       }, fetcher);
       if (!result.ok || !result.verified) throw new Error(result.error || 'No verified MP4.');
       return { url: result.media_url, verified: true };
+    } });
+  }
+  if (githubVideoConfigured(env) && !renderTaskId) {
+    engines.push({ id: 'github-actions-offline', run: async () => {
+      const result = await startGithubVideo(env, prompt, Number(body.seconds || body.duration_seconds) || 15, fetcher);
+      if (!result.ok) throw new Error(result.error || 'GitHub offline renderer unavailable.');
+      return { pending: true, task_id: result.task_id };
     } });
   }
   if (paidMediaEnabled(env) && env.GEMINI_API_KEY) {

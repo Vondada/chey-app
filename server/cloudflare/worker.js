@@ -3956,7 +3956,7 @@ export class CheState extends DurableObject {
         return fresh.ok ? fresh.token : '';
       },
     };
-    const reply = await handleVideoLine(request, env, body, youtube);
+    const reply = await handleVideoLine(request, env, body, youtube, this.ctx.storage);
     await this.ctx.storage.put('che', data);
     return reply;
   }
@@ -4211,7 +4211,22 @@ export class CheState extends DurableObject {
           this.videoLineQueue = pass.catch(() => {});
           return pass;
         }
-        const videoReply = await handleVideoLine(request, this.keyEnv || this.env, body, { uploads: (data.youtube_uploads ||= {}) });
+        const videoReply = await handleVideoLine(request, this.keyEnv || this.env, body, { uploads: (data.youtube_uploads ||= {}) }, this.ctx.storage);
+        // Direct typed/voice video commands poll only briefly on iPhone. Keep
+        // the exact job identity so "is my video ready?" can finish it later.
+        const videoStatus = await videoReply.clone().json().catch(() => null);
+        if (request.method === 'POST' && body?.office !== true &&
+            videoStatus?.pending && videoStatus?.task_id) {
+          await this.ctx.storage.put('che_video_pending', {
+            task_id: videoStatus.task_id,
+            prompt: String(body?.topic || body?.prompt || '').slice(0, 8000),
+            title: String(body?.topic || 'Video').slice(0, 60),
+            created_at: new Date().toISOString(),
+          });
+        } else if (request.method === 'GET' && videoStatus?.verified && videoStatus?.media_url) {
+          const stored = await this.ctx.storage.get('che_video_pending');
+          if (stored?.task_id === videoStatus.task_id) await this.ctx.storage.delete('che_video_pending');
+        }
         await this.ctx.storage.put('che', data);
         return videoReply;
       }
@@ -4666,11 +4681,13 @@ export class CheState extends DurableObject {
             : this.env.AI
               ? 'workers_ai'
               : (paidMedia && this.env.GEMINI_API_KEY) ? 'gemini-image' : 'none';
-        const videoEngine = this.env.CHE_VIDEO_GEN_URL
+        const videoEngine = (this.keyEnv || this.env).CHE_VIDEO_GEN_URL
           ? 'moneyprinter-turbo'
-          : this.env.CHE_VIDEO_RENDER_URL
+          : (this.keyEnv || this.env).CHE_VIDEO_RENDER_URL
             ? 'faceless-renderer'
-            : (paidMedia && this.env.GEMINI_API_KEY) ? 'gemini-omni' : 'none';
+            : ((this.keyEnv || this.env).CHE_GITHUB_TOKEN && (this.keyEnv || this.env).CHE_GITHUB_REPO === 'Vondada/chey-app')
+              ? 'github-actions-offline'
+              : (paidMedia && this.env.GEMINI_API_KEY) ? 'gemini-omni' : 'none';
         return json({
           items: await listMedia(this.ctx.storage),
           engine: imageEngine,
@@ -4695,8 +4712,8 @@ export class CheState extends DurableObject {
       if (path === '/api/media/generate' && request.method === 'POST') {
         const mediaType = String(body.type || body.kind || 'image').toLowerCase();
         const result = mediaType === 'video'
-          ? await generateVideo(this.env, this.ctx.storage, body)
-          : await generateImage(this.env, this.ctx.storage, body);
+          ? await generateVideo(this.keyEnv || this.env, this.ctx.storage, body)
+          : await generateImage(this.keyEnv || this.env, this.ctx.storage, body);
         const { status, ...rest } = result;
         return json(rest, status);
       }
@@ -4707,10 +4724,33 @@ export class CheState extends DurableObject {
           const item = (await listMedia(this.ctx.storage)).find((entry) => entry.id === mediaId);
           if (!item) return json({ detail: 'Piece not found.' }, 404);
           if (item.url) return Response.redirect(item.url, 302);
-          const bytes = await readBlob(this.env, this.ctx.storage, item);
+          const bytes = await readBlob(this.keyEnv || this.env, this.ctx.storage, item);
           if (!bytes) return json({ detail: 'Media data missing.' }, 404);
           const fallbackType = action === '/video' ? 'video/mp4' : 'image/jpeg';
-          return new Response(bytes, { headers: { 'Content-Type': item.mime_type || fallbackType, 'Cache-Control': 'private, max-age=86400' } });
+          const mime = item.mime_type || fallbackType;
+          const mediaHeaders = { 'Content-Type': mime, 'Cache-Control': 'private, no-store' };
+          if (action === '/video') {
+            mediaHeaders['Accept-Ranges'] = 'bytes';
+            const requestedRange = request.headers.get('range');
+            if (requestedRange) {
+              const match = /^bytes=(\d+)-(\d*)$/.exec(requestedRange.trim());
+              const start = match ? Number(match[1]) : NaN;
+              const end = match && match[2] ? Number(match[2]) : bytes.byteLength - 1;
+              if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
+                  start >= bytes.byteLength || start < 0 || end < start) {
+                return new Response(null, { status: 416, headers: {
+                  ...mediaHeaders, 'Content-Range': 'bytes */' + bytes.byteLength,
+                } });
+              }
+              const last = Math.min(end, bytes.byteLength - 1);
+              return new Response(bytes.slice(start, last + 1), { status: 206, headers: {
+                ...mediaHeaders,
+                'Content-Range': 'bytes ' + start + '-' + last + '/' + bytes.byteLength,
+                'Content-Length': String(last - start + 1),
+              } });
+            }
+          }
+          return new Response(bytes, { headers: mediaHeaders });
         }
         if (action === '/upscale' && request.method === 'POST') {
           const { status, ...rest } = await upscaleImage(this.env, this.ctx.storage, mediaId);
@@ -7724,8 +7764,7 @@ export class CheState extends DurableObject {
         // asking the model to invent a progress report or starting a new job.
         const priorVideo = await this.ctx.storage.get('che_video_pending');
         if (priorVideo?.task_id && /\b(video|render|clip)\b/i.test(message) &&
-            /\b(check|status|ready|finished|done|preview|show)\b/i.test(message) &&
-            !requestedCapabilities.includes('video_generation')) {
+            /\b(check|status|ready|finished|done|preview|show)\b/i.test(message)) {
           const checked = await generateVideo(this.keyEnv || this.env, this.ctx.storage, {
             task_id: priorVideo.task_id, prompt: priorVideo.prompt, title: priorVideo.title, thumbnail: true,
           });
@@ -7740,8 +7779,11 @@ export class CheState extends DurableObject {
               media_id: checked.item.id,
               media_url: `${new URL(request.url).origin}/api/media/${checked.item.id}/video`,
               thumbnail_media_id: checked.item.thumbnail_media_id || null,
+              thumbnail_url: checked.item.thumbnail_media_id
+                ? `${new URL(request.url).origin}/api/media/${checked.item.thumbnail_media_id}/image` : null,
+              duration_seconds: checked.item.duration_seconds || null,
+              duration_verified: checked.item.duration_verified === true,
               thumbnail_error: checked.item.thumbnail_error || null,
-              duration_verified: false,
               storage_warning: checked.item.storage_warning || null,
             });
           }
@@ -7781,37 +7823,13 @@ export class CheState extends DurableObject {
         }
 
         if (requestedCapabilities.includes('video_generation')) {
-          const mediaEnv = this.keyEnv || this.env;
-          if (mediaEnv.CHE_VIDEO_GEN_URL) {
-            const rendered = await moneyPrinterVideo(mediaEnv, message.slice(0, 2000));
-            if (rendered.pending) {
-              return ndjsonReply(
-                `A real video render has started, sir. Job ${rendered.task_id}. No MP4 or thumbnail is ready yet. Check its status before reviewing it.`,
-                { video_status: 'rendering', task_id: rendered.task_id, ok: true },
-              );
-            }
-            videoGeneration = rendered.verified && rendered.media_url
-              ? { url: rendered.media_url, verified: true }
-              : { error: rendered.error || 'No verified MP4 was produced.' };
-          } else if (paidMediaOn(mediaEnv) && mediaEnv.GEMINI_API_KEY) {
-            const made = await generateVideo(mediaEnv, this.ctx.storage, {
-              prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 8000),
-              title: message.slice(0, 60),
-            });
-            videoGeneration = made.item
-              ? { url: `${new URL(request.url).origin}/api/media/${made.item.id}/video` }
-              : { error: made.detail };
-          } else {
-            videoGeneration = { error: 'No active video renderer is configured. CHE_VIDEO_GEN_URL is missing, and paid video generation is not owner-enabled.' };
-          }
-        }
-
-        if (requestedCapabilities.includes('video_generation')) {
           if (videoGeneration?.url) {
             return ndjsonReply(
               'A verified video file is ready for preview, sir. Duration and thumbnail are not yet verified. Nothing was uploaded.',
               { media_type: 'video', media_url: videoGeneration.url, video_status: 'preview',
                 media_id: videoGeneration.media_id, thumbnail_media_id: videoGeneration.thumbnail_id,
+                thumbnail_url: videoGeneration.thumbnail_id
+                  ? `${new URL(request.url).origin}/api/media/${videoGeneration.thumbnail_id}/image` : null,
                 thumbnail_error: videoGeneration.thumbnail_error,
                 storage_warning: videoGeneration.storage_warning, duration_verified: false },
             );
