@@ -32,15 +32,19 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Install offline renderer
         run: |
           python -m pip install --quiet pillow
+          if ! command -v ffmpeg >/dev/null || ! command -v espeak-ng >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg espeak-ng
+          fi
           command -v ffmpeg
           command -v ffprobe
-          if ! command -v espeak-ng >/dev/null && ! ffmpeg -hide_banner -filters 2>/dev/null | grep -q flite; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq espeak-ng
-          fi
+          command -v espeak-ng
       - name: Render and independently probe video and thumbnail
         env:
           TOPIC: ${{ inputs.topic || '3 surprising facts about space' }}
