@@ -330,11 +330,23 @@ const MAX_LIVE_TASK_NODES = 20;
 export function buildAgentTaskNodes(data = {}, { max = MAX_LIVE_TASK_NODES } = {}) {
   const tasks = Array.isArray(data.team_tasks) ? data.team_tasks : [];
   const cap = Number.isFinite(Number(max)) && Number(max) > 0 ? Math.min(Number(max), 60) : MAX_LIVE_TASK_NODES;
+  const active = tasks.filter((task) => LIVE_TASK_STATUSES.has(String(task?.status || '')));
+  // Reserve a slot for each agent before filling the remaining visual slots.
+  // Otherwise a large batch for Atlas could hide Sage's active work and CHE
+  // would falsely announce that Sage is idle.
+  const covered = new Set();
+  const agentKeys = new Set();
+  for (const task of active) {
+    const key = String(task.partner_id || task.partner_name || 'Office agent').toLowerCase();
+    if (agentKeys.has(key)) continue;
+    covered.add(task);
+    agentKeys.add(key);
+  }
+  const selected = [...active.filter((task) => covered.has(task)),
+    ...active.filter((task) => !covered.has(task))].slice(0, cap);
   const nodes = [];
-  for (const task of tasks) {
-    if (nodes.length >= cap) break;
-    const status = String(task?.status || '');
-    if (!LIVE_TASK_STATUSES.has(status)) continue;
+  for (const task of selected) {
+    const status = String(task.status || '');
     const who = clip(task?.partner_name || 'Office agent', 40) || 'Office agent';
     const what = clip(task?.task || '', 120) || 'working';
     const detail = clip(task?.result || task?.error || '', 200);
