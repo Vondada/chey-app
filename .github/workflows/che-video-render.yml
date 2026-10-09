@@ -1,0 +1,60 @@
+name: CHE Free Video Render
+run-name: CHE free render ${{ inputs.job_id || github.sha }}
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: Non-secret task identifier
+        required: true
+        type: string
+      topic:
+        description: Video topic
+        required: true
+        type: string
+      seconds:
+        description: Duration (5-90)
+        required: false
+        type: string
+        default: "15"
+  push:
+    branches: [chatgpt/free-video-render-backend]
+    paths:
+      - ".github/workflows/che-video-render.yml"
+      - "tools/che_video_render.py"
+permissions:
+  contents: read
+concurrency:
+  group: free-video-${{ inputs.job_id || github.sha }}
+  cancel-in-progress: false
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install offline renderer
+        run: |
+          python -m pip install --quiet pillow
+          command -v ffmpeg
+          command -v ffprobe
+          if ! command -v espeak-ng >/dev/null && ! ffmpeg -hide_banner -filters 2>/dev/null | grep -q flite; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq espeak-ng
+          fi
+      - name: Render and independently probe video and thumbnail
+        env:
+          TOPIC: ${{ inputs.topic || '3 surprising facts about space' }}
+          DURATION: ${{ inputs.seconds || '15' }}
+        run: |
+          python tools/che_video_render.py --topic "$TOPIC" --seconds "$DURATION" --out rendered
+      - name: Retain files for authenticated owner preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: che-video-${{ inputs.job_id || github.sha }}
+          path: |
+            rendered/video.mp4
+            rendered/thumbnail.png
+            rendered/manifest.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
