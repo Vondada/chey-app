@@ -40,7 +40,14 @@ Then, on GitHub:
 
 ---
 
-## 2. Current position (updated by: Claude, 2026-10-09)
+## 2. Current position (updated by: OpenCode, 2026-10-09)
+
+**OpenCode, 2026-10-09 (owner: "wire the app-permission gate"). Branch `opencode/app-permission-gate`, commit 219dd2a, pushed, NO PR yet (no gh CLI on this machine; open one at https://github.com/Vondada/chey-app/pull/new/opencode/app-permission-gate). Needs the owner's merge; `server/cloudflare` changed, so the merge title needs `[worker-deploy]`.**
+- The app gate is now enforced in code. `owner_action_gate.js` adds `classifyExplicitAppOpen` (the owner's own "open X" is permission) and `classifyAppNeed` ("read my last note in notes" — the exam L4 wording — needs an app and must be held). `worker.js` `/api/chat` calls them right after the money gate: an ungranted needed app is held under `che:pending_app_action` (10-minute plain-yes window, same pattern as money), a plain yes or an explicit "open X" adds it to `che:allowed_apps` permanently, then the held request runs. GitHub repo research through CHE's own API ("on GitHub", "the github readme") is never held — that false positive broke 6 study tests until fixed.
+- App side: `lib/security/che_app_permissions.dart` records grants from explicit opens (shared_preferences); `send.dart` grants on both open paths; `streaming.dart` sends them as `app_grants` on every `/api/chat` turn, so the Worker never asks twice about one app.
+- Verified locally: Worker **792/792** (`node --test`, 4 new tests), `flutter analyze --fatal-infos lib test` clean, `flutter test` **233/233**. NOT verified: live on the deployed Worker, real voice turns on iPhone, and CI's exact `dart analyze` call (this machine's standalone `dart` cannot resolve `dart:ui`; `flutter analyze` was used instead).
+- Environment note: this machine has NO Node.js (the winget MSI blocked on a UAC prompt). Portable Node v24.20.0 sits at `%LOCALAPPDATA%\nodejs-portable\node-v24.20.0-win-x64\` — use its `node.exe` for Worker tests, no admin needed.
+- Correction to this file (git wins): Claude's 2026-10-09 batch-wake and peer money/delete fixes are NOT waiting for a merge. PR #258 (43130bb) put the `message_ids` wake (worker.js:4031), `peerActionReply` (owner_action_gate.js:93) and the ask-yes/password prompt lines (worker.js:3686-3688) on main, deployed. Verified by grep on `origin/main`.
 
 **Claude, 2026-10-09 (owner: "make her answer instantly"). Branch `claude/che-latency-optimization-8ruaus`, commit 1a6304f; workflow copy on `che-mailbox`, commit 49431a4. Worker change not live until the branch merges to main.**
 - Cause of the slow replies (Round 9 answers came 43 s to 3.5 min after sending): the wake workflow sent only the last line of each mailbox commit, so a batch woke CHE one message at a time, each in a serialized runner.
