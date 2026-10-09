@@ -111,3 +111,22 @@ test('paid media error names the switch that is actually off', async () => {
   assert.equal(out.status, 402);
   assert.match(out.detail, /enables paid AI\./);
 });
+
+test('MoneyPrinter pending render is not stored or reported as completed video', async () => {
+  const storage = memoryStorage();
+  const calls = [];
+  const made = await generateVideo(
+    { CHE_VIDEO_GEN_URL: 'https://renderer.example' }, storage,
+    { prompt: 'Three facts about space', seconds: 15 },
+    async (url) => {
+      calls.push(String(url));
+      return new Response(JSON.stringify(String(url).endsWith('/videos')
+        ? { data: { task_id: 'space15' } } : { data: { state: 1 } }));
+    },
+  );
+  assert.equal(made.status, 202);
+  assert.equal(made.pending, true);
+  assert.equal(made.job_id, 'space15');
+  assert.equal(storage.data.has('media_index'), false);
+  assert.deepEqual(calls, ['https://renderer.example/api/v1/videos', 'https://renderer.example/api/v1/tasks/space15']);
+});

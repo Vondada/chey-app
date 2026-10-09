@@ -22,6 +22,12 @@ export async function handleVideoLine(request, env, parsedBody, youtube = {}) {
     result = await moneyPrinterStatus(env, taskId);
   } else {
     const body = parsedBody ?? await request.json().catch(() => ({}));
+    if (body.office === true && body.approve_upload !== true) {
+      return new Response(JSON.stringify({
+        ok: false, stage: 'approval', requires_owner_confirmation: true,
+        error: 'A YouTube upload requires separate explicit owner approval. No rendering or upload was started.',
+      }), { status: 428, headers: { 'content-type': 'application/json' } });
+    }
     result = body.office === true
       ? await runVideoLine(env, fetch, youtube)
       : await moneyPrinterVideo(env, body.topic || body.prompt || '');

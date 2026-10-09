@@ -10,9 +10,35 @@ function moneyPrinterApiBase(env = {}) {
 function validMediaUrl(raw) {
   try {
     const url = new URL(String(raw || ''));
-    return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password;
+    const host = url.hostname.toLowerCase();
+    return url.protocol === 'https:' && !url.username && !url.password &&
+      !['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(host) &&
+      !host.endsWith('.local') && !/^10\.|^192\.168\.|^169\.254\.|^172\.(1[6-9]|2[0-9]|3[01])\./.test(host);
   } catch {
     return false;
+  }
+}
+
+// A renderer JSON response is not a finished file. Prove that the actual URL
+// serves MP4 bytes before surfacing it to the owner. Read only the first chunk.
+export async function verifyVideoMedia(raw, fetcher = fetch) {
+  if (!validMediaUrl(raw)) return { ok: false, error: 'Renderer returned an unsafe or invalid video address.' };
+  try {
+    const response = await fetcher(raw, {
+      headers: { Range: 'bytes=0-63', Accept: 'video/mp4' },
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!response.ok || !response.body) return { ok: false, error: 'Video file is not accessible.' };
+    const reader = response.body.getReader();
+    const first = await reader.read();
+    await reader.cancel().catch(() => {});
+    const bytes = first.value || new Uint8Array();
+    const mp4 = bytes.length >= 12 && bytes[4] === 0x66 && bytes[5] === 0x74 &&
+      bytes[6] === 0x79 && bytes[7] === 0x70;
+    if (!mp4) return { ok: false, error: 'Renderer did not return a real MP4 file.' };
+    return { ok: true, verified: true, content_type: 'video/mp4' };
+  } catch {
+    return { ok: false, error: 'Could not verify the rendered MP4 file.' };
   }
 }
 
@@ -41,14 +67,18 @@ export async function moneyPrinterStatus(env, taskId, fetcher = fetch) {
       data?.url ||
       '',
     );
-    if (validMediaUrl(mediaUrl)) return { ok: true, task_id: id, media_url: mediaUrl };
+    if (mediaUrl) {
+      const verified = await verifyVideoMedia(mediaUrl, fetcher);
+      if (!verified.ok) return { ok: false, task_id: id, stage: 'verify', error: verified.error };
+      return { ok: true, task_id: id, media_url: mediaUrl, verified: true, duration_verified: false };
+    }
     return { ok: true, pending: true, task_id: id, error: 'Video is still rendering.' };
   } catch {
     return { ok: false, task_id: id, error: 'The video renderer did not respond. No completed file was received.' };
   }
 }
 
-export async function moneyPrinterVideo(env, topic, fetcher = fetch) {
+export async function moneyPrinterVideo(env, topic, fetcher = fetch, options = {}) {
   const base = moneyPrinterApiBase(env);
   const subject = String(topic || '').trim();
   if (!base) return { ok: false, error: 'MoneyPrinter is not connected. Set CHE_VIDEO_GEN_URL.' };
@@ -62,7 +92,12 @@ export async function moneyPrinterVideo(env, topic, fetcher = fetch) {
       method: 'POST',
       headers,
       signal: AbortSignal.timeout(12000),
-      body: JSON.stringify({ video_subject: subject, video_aspect: '9:16' }),
+      body: JSON.stringify({
+        video_subject: subject,
+        video_aspect: '9:16',
+        ...(options.script ? { video_script: String(options.script).slice(0, 8000) } : {}),
+        ...(options.seconds ? { video_clip_duration: 5, paragraph_number: 3 } : {}),
+      }),
     });
     const created = await started.json().catch(() => ({}));
     const taskId = created?.data?.task_id || created?.task_id;

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { moneyPrinterStatus, moneyPrinterVideo } from './moneyprinter.js';
 
 const reply = (body, status = 200) => new Response(JSON.stringify(body), { status });
+const mp4 = () => new Response(Uint8Array.from([0,0,0,24,102,116,121,112,105,115,111,109,0,0,0,0]),
+  { headers: { 'content-type': 'video/mp4' } });
 
 test('MoneyPrinter accepts a server root, uses /api/v1 and returns a finished media receipt', async () => {
   const seen = [];
@@ -13,13 +15,16 @@ test('MoneyPrinter accepts a server root, uses /api/v1 and returns a finished me
       seen.push(String(url));
       return String(url).endsWith('/api/v1/videos')
         ? reply({ data: { task_id: 't1' } })
-        : reply({ data: { videos: ['https://cdn.example/v.mp4'] } });
+        : String(url).endsWith('/api/v1/tasks/t1')
+          ? reply({ data: { videos: ['https://cdn.example/v.mp4'] } })
+          : mp4();
     },
   );
   assert.equal(result.media_url, 'https://cdn.example/v.mp4');
   assert.deepEqual(seen, [
     'https://renderer.example/api/v1/videos',
     'https://renderer.example/api/v1/tasks/t1',
+    'https://cdn.example/v.mp4',
   ]);
 });
 
@@ -39,7 +44,7 @@ test('MoneyPrinter preserves an explicit /api/v1 base and exposes pending task p
   const done = await moneyPrinterStatus(
     env,
     't1',
-    async () => reply({ data: { videos: ['https://cdn.example/done.mp4'] } }),
+    async (url) => String(url).includes('cdn.example') ? mp4() : reply({ data: { videos: ['https://cdn.example/done.mp4'] } }),
   );
   assert.equal(done.media_url, 'https://cdn.example/done.mp4');
 });

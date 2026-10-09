@@ -34,6 +34,7 @@ import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry 
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { handleEdgeVoice } from './edge_route.js';
 import { handleVideoLine } from './video_route.js';
+import { moneyPrinterVideo } from './moneyprinter.js';
 import {
   YOUTUBE_CALLBACK_PATH, disconnectYouTube, finishYouTubeConnect, startYouTubeConnect,
   youtubeAccessToken, youtubeResultPage, youtubeStatus,
@@ -7706,30 +7707,51 @@ export class CheState extends DurableObject {
             ? { url: `${new URL(request.url).origin}/api/media/${made.item.id}/image` }
             : { error: made.detail };
         }
-        let videoGeneration = requestedCapabilities.includes('video_generation')
-          ? await optionalMediaGeneration(this.env, 'video', message, vectorMemoryContext)
-          : null;
-        if (requestedCapabilities.includes('video_generation') && !this.env.CHE_VIDEO_GEN_URL &&
-            paidMediaOn(this.env) && this.env.GEMINI_API_KEY) {
-          const made = await generateVideo(this.env, this.ctx.storage, {
-            prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 8000),
-            title: message.slice(0, 60),
-          });
-          videoGeneration = made.item
-            ? { url: `${new URL(request.url).origin}/api/media/${made.item.id}/video` }
-            : { error: made.detail };
+        // A chat request for an MP4 must run a real engine, not ask the
+        // language model to fabricate a media link after a failed tool call.
+        let videoGeneration = null;
+        if (requestedCapabilities.includes('video_generation')) {
+          const mediaEnv = this.keyEnv || this.env;
+          if (mediaEnv.CHE_VIDEO_GEN_URL) {
+            const rendered = await moneyPrinterVideo(mediaEnv, message.slice(0, 2000));
+            if (rendered.pending) {
+              return ndjsonReply(
+                `A real video render has started, sir. Job ${rendered.task_id}. No MP4 or thumbnail is ready yet. Check its status before reviewing it.`,
+                { video_status: 'rendering', task_id: rendered.task_id, ok: true },
+              );
+            }
+            videoGeneration = rendered.verified && rendered.media_url
+              ? { url: rendered.media_url, verified: true }
+              : { error: rendered.error || 'No verified MP4 was produced.' };
+          } else if (paidMediaOn(mediaEnv) && mediaEnv.GEMINI_API_KEY) {
+            const made = await generateVideo(mediaEnv, this.ctx.storage, {
+              prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 8000),
+              title: message.slice(0, 60),
+            });
+            videoGeneration = made.item
+              ? { url: `${new URL(request.url).origin}/api/media/${made.item.id}/video` }
+              : { error: made.detail };
+          } else {
+            videoGeneration = { error: 'No active video renderer is configured. CHE_VIDEO_GEN_URL is missing, and paid video generation is not owner-enabled.' };
+          }
         }
 
+        if (requestedCapabilities.includes('video_generation')) {
+          if (videoGeneration?.url) {
+            return ndjsonReply(
+              'A verified video file is ready for preview, sir. Duration and thumbnail are not yet verified. Nothing was uploaded.',
+              { media_type: 'video', media_url: videoGeneration.url, video_status: 'preview', duration_verified: false },
+            );
+          }
+          return ndjsonReply(
+            `No video was created, sir. ${videoGeneration?.error || 'The renderer did not return an MP4.'} No thumbnail or YouTube upload is complete.`,
+            { ok: false, video_status: 'not_created', source: 'video_renderer' },
+          );
+        }
         if (imageGeneration?.url) {
           return ndjsonReply(
             'Image generated, sir.',
             { media_type: 'image', media_url: imageGeneration.url },
-          );
-        }
-        if (videoGeneration?.url) {
-          return ndjsonReply(
-            'Video generated, sir.',
-            { media_type: 'video', media_url: videoGeneration.url },
           );
         }
 

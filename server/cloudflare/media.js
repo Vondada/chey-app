@@ -1,4 +1,5 @@
 // CHE Art Studio media: real image generation with versions.
+import { moneyPrinterVideo } from './moneyprinter.js';
 //   - Owner image connector (CHE_IMAGE_GEN_URL) wins when configured.
 //   - Otherwise Workers AI FLUX.1 [schnell] generates the image on the CHE
 //     server itself (highest step count unless the owner picks draft).
@@ -125,22 +126,14 @@ async function openAiImage(env, prompt, draft, fetcher) {
   throw new Error('OpenAI returned no image.');
 }
 
-async function connectorVideo(env, prompt, fetcher) {
-  const url = new URL(env.CHE_VIDEO_GEN_URL);
-  if (url.protocol !== 'https:') throw new Error('Video connector must use HTTPS.');
-  const response = await fetcher(url.toString(), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(env.CHE_VIDEO_GEN_TOKEN ? { Authorization: `Bearer ${env.CHE_VIDEO_GEN_TOKEN}` } : {}),
-    },
-    body: JSON.stringify({ prompt: prompt.slice(0, 5000), type: 'video', quality: 'highest' }),
-  });
-  if (!response.ok) throw new Error(`Video connector returned ${response.status}.`);
-  const data = await response.json();
-  const out = String(data.url || data.output_url || data.video_url || '').trim();
-  if (!out.startsWith('https://')) throw new Error('Video connector returned no video URL.');
-  return out;
+// MoneyPrinterTurbo is an async /api/v1/videos job, not a generic
+// POST {prompt,type} connector. Share its existing adapter and verifier.
+async function connectorVideo(env, prompt, fetcher, seconds = 15) {
+  const rendered = await moneyPrinterVideo(env, prompt, fetcher, { seconds });
+  if (!rendered.ok) throw new Error(rendered.error || 'MoneyPrinter could not render the video.');
+  if (rendered.pending) return { pending: true, task_id: rendered.task_id };
+  if (!rendered.verified || !rendered.media_url) throw new Error('No verified video file was returned.');
+  return { url: rendered.media_url, verified: true };
 }
 
 async function geminiVideo(env, prompt, fetcher) {
@@ -267,7 +260,8 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
   };
   const engines = [];
   if (env.CHE_VIDEO_GEN_URL) {
-    engines.push({ id: 'Your video connector', run: async () => ({ url: await connectorVideo(env, prompt, fetcher) }) });
+    engines.push({ id: 'moneyprinter-turbo', run: async () =>
+      connectorVideo(env, prompt, fetcher, Number(body.seconds || body.duration_seconds) || 15) });
   }
   if (paidMediaEnabled(env) && env.GEMINI_API_KEY) {
     engines.push({ id: 'gemini-omni-video', run: async () => geminiVideo(env, prompt, fetcher) });
@@ -295,8 +289,14 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
       requires_owner_confirmation: paidReady,
     };
   }
+  if (generated.pending) {
+    return { status: 202, pending: true, job_id: generated.task_id,
+      detail: 'Renderer accepted the job. No MP4 or thumbnail exists yet; poll /api/video/line?task_id=' + encodeURIComponent(generated.task_id) + '.' };
+  }
   if (generated.url) {
     record.url = generated.url;
+    record.verified = generated.verified === true;
+    record.duration_verified = false;
   } else {
     record.mime_type = generated.mime_type || 'video/mp4';
     try { Object.assign(record, await storeBlob(env, storage, id, generated.base64, record.mime_type, 'video')); }
