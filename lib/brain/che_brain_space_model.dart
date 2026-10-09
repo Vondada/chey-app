@@ -366,13 +366,19 @@ class CheProjected {
 }
 
 /// Spoken / typed Brain commands.
-enum CheBrainAction { open, inside, overview, backOut, filter, clearFilter, find, openSelected, expand, collapse }
+enum CheBrainAction { open, inside, overview, backOut, filter, clearFilter, find, openSelected, expand, collapse, agentStatus }
 
 class CheBrainCommand {
-  const CheBrainCommand(this.action, {this.category, this.query});
+  const CheBrainCommand(this.action, {this.category, this.query, this.agent});
   final CheBrainAction action;
   final String? category;
   final String? query;
+
+  /// One of the Office crew, for "what is Atlas working on".
+  final String? agent;
+
+  /// CHE plus the Office roster, matched against live agent-task sources.
+  static const List<String> crew = ['che', 'nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris'];
 
   static const Map<String, String> _categoryWords = {
     'research': 'Research',
@@ -388,6 +394,9 @@ class CheBrainCommand {
     'suggestions': 'Suggestion',
     'translation': 'Translation',
     'translations': 'Translation',
+    'agents': 'Agents',
+    'agent': 'Agents',
+    'agent work': 'Agents',
   };
 
   /// "take me inside", "show my research memories", "find my memory about
@@ -416,6 +425,14 @@ class CheBrainCommand {
     if (RegExp(r'^(?:open|read) (?:this|that|the) memory$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.openSelected);
     if (RegExp(r'^(?:expand|open) (?:this|that|the) cluster$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.expand);
     if (RegExp(r'^collapse (?:this|that|the) cluster$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.collapse);
+    // "what is Atlas working on", "show me what Nova is doing", "is Knox
+    // busy", "who is working". Answered from live agent-task orbs only.
+    if (RegExp(r'^who is working\??$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.agentStatus);
+    final doing = RegExp(r"^(?:what is|what's) (\w+) (?:working on|doing|up to)\??$|^(?:show|tell) me what (\w+) is (?:working on|doing)\??$|^is (\w+) (?:working|busy)\??$").firstMatch(t);
+    if (doing != null) {
+      final name = (doing.group(1) ?? doing.group(2) ?? doing.group(3)!).toLowerCase();
+      if (crew.contains(name)) return CheBrainCommand(CheBrainAction.agentStatus, agent: name);
+    }
     return null;
   }
 }

@@ -263,6 +263,7 @@ Color cheMemoryCategoryColor(String category) => switch (category.toLowerCase())
   'knowledge' => const Color(0xFF6E8CFF),
   'suggestion' => const Color(0xFF9DF7C9),
   'translation' => const Color(0xFFEAF6FF),
+  'agents' => const Color(0xFFFFB54D),
   _ => CheColors.accent,
 };
 

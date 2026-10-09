@@ -355,6 +355,27 @@ class CheBrainSpaceController {
     return 'Found it. ${select(node)}';
   }
 
+  /// Live agent work, spoken from real task orbs: "what is Atlas working
+  /// on". A named agent with no live orb says so honestly; "who is working"
+  /// lists every agent with live work, or says the crew is free.
+  String agentStatus(String? agent) {
+    final live = [for (final n in layout.nodes) if (n.dot.category == 'Agents') n];
+    String cap(String s) => s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
+    if (agent != null) {
+      final mine = [for (final n in live) if (n.dot.source.toLowerCase() == agent) n];
+      if (mine.isEmpty) return '${cap(agent)} has no live work in the brain right now.';
+      select(mine.first);
+      final rest = mine.skip(1).map((n) => n.dot.title).join('; ');
+      return '${cap(agent)} is working on: ${mine.first.dot.title}. ${mine.first.dot.body}${rest.isEmpty ? '' : ' Also: $rest'}';
+    }
+    if (live.isEmpty) return 'No agent has live work in the brain right now.';
+    final byAgent = <String, List<CheBrainNode>>{};
+    for (final n in live) {
+      byAgent.putIfAbsent(n.dot.source, () => []).add(n);
+    }
+    return 'Working now: ${byAgent.entries.map((e) => '${e.key} — ${e.value.map((n) => n.dot.title).join('; ')}').join('. ')}.';
+  }
+
   /// Cluster the owner last reached (VoiceOver step, tap, filter).
   String? focusedCluster;
 
@@ -405,6 +426,7 @@ class CheBrainSpaceController {
         CheBrainAction.openSelected => openSelected(),
         CheBrainAction.expand => _targetCluster == null ? 'Every cluster is already open.' : toggleCluster(_targetCluster!, expand: true),
         CheBrainAction.collapse => _targetCluster == null ? 'No cluster is selected.' : toggleCluster(_targetCluster!, expand: false),
+        CheBrainAction.agentStatus => agentStatus(command.agent),
       };
 
   // ─── Hit testing ───────────────────────────────────────────────────────
