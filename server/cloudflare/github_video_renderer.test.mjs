@@ -116,3 +116,30 @@ test('missing GitHub Actions permission or renderer fails without fake previews'
   const missing=await startGithubVideo({},'Space video',15,async()=>{throw Error('must not call')});
   assert.equal(missing.ok,false);
 });
+
+test('voice screen polling finalizes a GitHub render and returns paired preview URLs',async()=>{
+  const { handleVideoLine } = await import('./video_route.js');
+  const id='gha_'+'d'.repeat(32);
+  const records=new Map();
+  const storage={get:async key=>records.get(key),put:async(key,val)=>records.set(key,val)};
+  const fetcher=async url=>{
+    const u=String(url);
+    if(u.includes('/workflows/')&&u.includes('/runs?'))return json({
+      workflow_runs:[{display_title:'CHE free render '+id,status:'completed',conclusion:'success',id:56}]
+    });
+    if(u.includes('/runs/56/artifacts'))return json({artifacts:[{name:'che-video-'+id,id:77,expired:false}]});
+    if(u.includes('/artifacts/77/zip'))return new Response(zip);
+    throw Error('Unexpected API '+u);
+  };
+  const req=new Request('https://che.example/api/video/line?task_id='+id);
+  const response=await handleVideoLine(req,env,null,{},storage,fetcher);
+  const body=await response.json();
+  assert.equal(response.status,200);
+  assert.equal(body.verified,true);
+  assert.equal(body.duration_verified,true);
+  assert.match(body.media_url,/^https:\/\/che\.example\/api\/media\/[a-f0-9-]+\/video$/);
+  assert.match(body.thumbnail_url,/^https:\/\/che\.example\/api\/media\/[a-f0-9-]+\/image$/);
+  assert.equal((await storage.get('media_index')).length,2);
+  const twice=await handleVideoLine(req,env,null,{},storage,fetcher);
+  assert.equal((await twice.json()).media_id,body.media_id,'a repeated poll reuses stored receipt');
+});
