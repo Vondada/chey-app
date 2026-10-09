@@ -3528,7 +3528,7 @@ export class CheState extends DurableObject {
     return this.keyEnv;
   }
 
-  async replyToFlagstaffMessage(message) {
+  async replyToFlagstaffMessage(message, options = {}) {
     const id = String(message?.id || '').trim().slice(0, 160);
     const sender = String(message?.from || '').trim().toLowerCase().replace(/[^a-z0-9 _-]/g, '').slice(0, 30);
     const recipient = String(message?.to || 'che').trim().toLowerCase();
@@ -3655,7 +3655,7 @@ export class CheState extends DurableObject {
           ok: false,
           detail: String(error?.message || error).slice(0, 300),
         })),
-        readAllMail(this.env).catch(() => ({ messages: [] })),
+        options.allMail ? Promise.resolve(options.allMail) : readAllMail(this.env).catch(() => ({ messages: [] })),
       ]);
       const rag = vectorContextText(recall);
       const remembered = rememberedText(memories, 3000);
@@ -4027,12 +4027,14 @@ export class CheState extends DurableObject {
         try { wake = await request.json(); } catch (_) { return json({ detail: 'Invalid JSON.' }, 400); }
         const requestedHead = String(wake.head_sha || '').trim();
         const messageId = String(wake.message_id || '').trim().slice(0, 160);
-        if (!/^[0-9a-f]{40}$/i.test(requestedHead) || !messageId) {
-          return json({ detail: 'head_sha and message_id are required.' }, 400);
+        // A push can add several peer messages at once: answer all of them.
+        const wakeIds = Array.isArray(wake.message_ids) ? wake.message_ids.map((v) => String(v || '').trim().slice(0, 160)).filter(Boolean) : [];
+        if (!/^[0-9a-f]{40}$/i.test(requestedHead) || (!messageId && !wakeIds.length)) {
+          return json({ detail: 'head_sha and message_ids are required.' }, 400);
         }
         const live = await mailboxHead(this.env).catch(() => ({ error: 'Mailbox head lookup failed.', head: '' }));
         if (live.error || !live.head) return json({ detail: live.error || 'Mailbox head unavailable.' }, 503);
-        if (live.head !== requestedHead) return json({ detail: 'Mailbox head moved; retry with the current head.' }, 409);
+        // A moved head is not an error: message content is read from the live branch below, and every reply is deduplicated by message id.
         // The public Flagstaff board may be locked, but GitHub mailbox peers
         // still get replies. The verified mailbox commit is the wake signal.
 
@@ -4041,33 +4043,38 @@ export class CheState extends DurableObject {
         // message id across all AI threads.
         const all = await readAllMail(this.env).catch(() => ({ error: 'Mailbox read failed.', messages: [] }));
         if (all.error) return json({ detail: all.error }, 503);
-        const message = (all.messages || []).find((item) => String(item?.id || '') === messageId);
-        if (!message) return json({ detail: 'Mailbox message not found at the verified head.' }, 404);
+        const requestedIds = [...new Set([messageId, ...wakeIds].filter(Boolean))].slice(0, 20);
+        const found = requestedIds.map((id) => (all.messages || []).find((item) => String(item?.id || '') === id)).filter(Boolean);
+        if (!found.length) return json({ detail: 'Mailbox message not found at the verified head.' }, 404);
 
-        const result = await this.replyToFlagstaffMessage(message);
+        // Every message in this push is answered in parallel, from one mailbox read.
+        const results = await Promise.all(found.map((message) => this.replyToFlagstaffMessage(message, { allMail: all })
+          .catch((error) => ({ error: String(error?.message || error).slice(0, 200) }))));
+        const result = results.find((r) => r?.replied) || results[0];
         // Do not advance the processed mailbox head while another invocation is
         // still working or a retry is queued. Advancing it early is what used
         // to strand messages forever after a processing race.
-        const terminal = Boolean(result?.replied)
-          || (Boolean(result?.skipped) && ['replied', 'blocked', 'failed'].includes(String(result?.status || '')));
-        if (terminal) {
+        const isTerminal = (r) => Boolean(r?.replied)
+          || (Boolean(r?.skipped) && ['replied', 'blocked', 'failed'].includes(String(r?.status || '')));
+        if (results.every(isTerminal)) {
           await this.ctx.storage.put('flagstaff_mailbox_head', live.head);
         } else {
-          const wakeAt = Number(result?.retry_at || 0) || (Date.now() + 30_000);
-          await this.ctx.storage.setAlarm(wakeAt).catch(() => null);
+          const retryTimes = results.map((r) => Number(r?.retry_at || 0)).filter(Boolean);
+          await this.ctx.storage.setAlarm(retryTimes.length ? Math.min(...retryTimes) : Date.now() + 30_000).catch(() => null);
         }
         await this.scheduleWork();
         return json({
           ok: true,
           head_sha: live.head,
           message_id: messageId,
+          message_ids: found.map((message) => String(message.id)),
           checked: true,
-          replied: Boolean(result?.replied),
+          replied: results.some((r) => r?.replied),
           reply_id: result?.reply_id || '',
-          processing: Boolean(result?.processing),
-          queued: Boolean(result?.queued),
-          retry_at: Number(result?.retry_at || 0),
-          skipped: Boolean(result?.skipped),
+          processing: results.some((r) => r?.processing),
+          queued: results.some((r) => r?.queued),
+          retry_at: Math.max(0, ...results.map((r) => Number(r?.retry_at || 0))),
+          skipped: results.every((r) => r?.skipped),
           reply_status: result?.status || '',
         });
       }
