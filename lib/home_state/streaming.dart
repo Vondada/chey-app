@@ -306,6 +306,18 @@ extension _CheHomeStreaming on _CHEHomeState {
       final data = jsonDecode(trimmed);
       final type = data['type']?.toString();
 
+      // Owner-approval holds are ordinary JSON from the Worker, not NDJSON
+      // "delta" events. Always show and speak the actual question instead
+      // of silently discarding it and reporting an empty response.
+      if (type == null && data['held_for_owner'] == true) {
+        final question = data['message']?.toString() ?? data['reply']?.toString() ?? '';
+        if (question.isNotEmpty) {
+          complete.write(question);
+          onPartial(complete.toString());
+        }
+        continue;
+      }
+
       if (type == 'error') {
         final message = data['message']?.toString() ?? 'Unknown CHE Agent error.';
         final lower = message.toLowerCase();
