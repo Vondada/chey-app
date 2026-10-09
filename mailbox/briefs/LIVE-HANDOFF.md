@@ -40,6 +40,13 @@ Then, on GitHub:
 
 ---
 
+**Claude, 2026-10-09 (owner: CHE 2.0 BUILD approved, Phase A + early Brain Matrix/agent demo first). Branch `che2/phase-a-brain-agent-demo`, commit 12f2b8b, pushed (no PR yet).**
+- Milestone 1 done: Brain Matrix shows LIVE agent work + per-agent work log with provenance. `buildAgentTaskNodes` (research_memory.js) maps queued/running/reviewing team_tasks to "Office Agents" graph nodes, linked by the existing token-overlap pass; `/api/brain/graph` and `/api/state` both include them. Flutter renders them in a new Agents lobe (kind `agent_task` → `Agents`, card source = agent name, body = real status). `recordAgentWork` (agent_runtime.js) writes one provenance entry per terminal task outcome (complete/failed, verified flag, memory-note link, error) to durable `data.agent_work_log` (cap 120) + `agent.last_work`; exposed in `agentDetail.work_log`. Reuses existing systems; no new framework, no fake activity, no Flutter change to navigation/permissions.
+- Reconciled: main is 2984227 (#262 + #263 both merged). `claude/che-latency-optimization-8ruaus` is fully SUPERSEDED (batch-wake, peer money/delete, 3D crew all live via #258 43130bb; the branch is stale and missing #259–#263) — do NOT merge it; owner may delete. Answered CHE's 00:39 merge question in claude.jsonl (ea6310f): no PR needed for that branch.
+- Verified: Worker **803/803** (`node --test`, 3 new), `flutter analyze --fatal-infos` clean, `flutter test` **240/240** (1 new). NOT verified: production deploy (no PR/merge yet — needs owner go-ahead with `[worker-deploy]` since `server/cloudflare` changed), paired iPhone voice/graph turns, live agent-task demo on device.
+- Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
+- Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
+
 ## 2. Current position (updated by: ChatGPT, 2026-10-09)
 
 **ChatGPT, 2026-10-09 (owner: "CHE herself uses installed agent skills, starting with find-skills"). MERGED + DEPLOYED. PR #263 squash-merged to main as `2984227` ("CHE: installed agent skills with owner gates [worker-deploy]"). Deploy run 37966068572 SUCCESS; live `/health` confirms `version_tag: 29842278e54d`. Branch `chatgpt/che-approved-agent-skills` (commits a700bee + 2a5da52) keeps full history. Owner gave the merge go-ahead after draft review.**
