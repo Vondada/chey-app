@@ -20,7 +20,9 @@ export function videoEngineStatus(env = {}) {
     ready: false,
     reason: url ? 'MoneyPrinter configured but not checked online.'
       : legacy ? 'Faceless renderer configured; availability not verified.'
-        : 'No video renderer configured or running.',
+        : env.CHE_GITHUB_TOKEN && env.CHE_GITHUB_REPO === 'Vondada/chey-app'
+          ? 'GitHub renderer configured; each job must still be verified.'
+          : 'No video renderer configured or running.',
   };
 }
 
