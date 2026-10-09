@@ -117,3 +117,27 @@ test('CHE paired chat actually dispatches the skill, reports it and preserves nu
     assert.equal(calls.length, 2);
   } finally { globalThis.fetch = original; }
 });
+
+test('app gate holds a skill search that also needs an ungranted app', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', AI: { run: async () => { throw new Error('Skill routes must not use a model'); } } };
+  const state = new CheState({ storage: { get: async (k) => saved.get(k), put: async (k, v) => saved.set(k, v), setAlarm: async () => {} } }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, body, token = '') => worker.fetch(new Request(`https://che.example${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(body),
+  }), env);
+  const { device_token: token } = await (await send('/api/pair', { code: '123456' })).json();
+  const original = globalThis.fetch;
+  globalThis.fetch = () => { throw new Error('Held turn must not fetch'); };
+  try {
+    const held = await (await send('/api/chat', { message: 'Find a skill for tracking and read my last note in notes' }, token)).json();
+    assert.equal(held.held_for_owner, true);
+    assert.equal(held.owner_action_kind, 'app');
+    // A pure skill search on the same pairing still executes the adapter.
+    globalThis.fetch = upstream([]);
+    const response = await (await send('/api/chat', { message: 'Find a skill for React testing' }, token)).text();
+    assert.match(response, /"source":"che_installed_skills"/);
+  } finally { globalThis.fetch = original; }
+});
