@@ -69,7 +69,7 @@ test('Gemini Omni video generation stores MP4 output in R2', async () => {
     request = { url, body: JSON.parse(options.body) };
     return new Response(JSON.stringify({
       output_video: {
-        data: btoa('fake-video-bytes'),
+        data: btoa(String.fromCharCode(0,0,0,24,102,116,121,112,105,115,111,109,0,0,0,0)),
         mime_type: 'video/mp4',
       },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -110,4 +110,65 @@ test('paid media error names the switch that is actually off', async () => {
   const out = await generateImage({ OPENAI_API_KEY: 'k', CHE_ALLOW_PAID_MEDIA: '1' }, { put: async () => {}, get: async () => null }, { prompt: 'A tree' }, async () => new Response('{}', { status: 500 }));
   assert.equal(out.status, 402);
   assert.match(out.detail, /enables paid AI\./);
+});
+
+test('MoneyPrinter pending render is not stored or reported as completed video', async () => {
+  const storage = memoryStorage();
+  const calls = [];
+  const made = await generateVideo(
+    { CHE_VIDEO_GEN_URL: 'https://renderer.example' }, storage,
+    { prompt: 'Three facts about space', seconds: 15 },
+    async (url) => {
+      calls.push(String(url));
+      return new Response(JSON.stringify(String(url).endsWith('/videos')
+        ? { data: { task_id: 'space15' } } : { data: { state: 1 } }));
+    },
+  );
+  assert.equal(made.status, 202);
+  assert.equal(made.pending, true);
+  assert.equal(made.job_id, 'space15');
+  assert.equal(storage.data.has('media_index'), false);
+  assert.deepEqual(calls, ['https://renderer.example/api/v1/videos', 'https://renderer.example/api/v1/tasks/space15']);
+});
+
+test('video completion creates a thumbnail receipt only if an image actually rendered', async () => {
+  const storage = memoryStorage();
+  const env = { CHE_VIDEO_GEN_URL: 'https://renderer.example' };
+  const mp4 = Uint8Array.from([0,0,0,24,102,116,121,112,105,115,111,109]);
+  const created = await generateVideo(env, storage,
+    { prompt: 'Three facts about space', seconds: 15, thumbnail: true },
+    async (url) => {
+      const str = String(url);
+      if (str.endsWith('/videos')) return new Response(JSON.stringify({ data: { task_id: 'finished' } }));
+      if (str.includes('/tasks/')) return new Response(JSON.stringify({ data: { videos: ['https://cdn.example/space.mp4'] } }));
+      return new Response(mp4, { headers: { 'content-type': 'video/mp4' } });
+    },
+  );
+  assert.equal(created.status, 200);
+  assert.equal(created.item.verified, true);
+  assert.equal(created.item.durable, false, 'without R2 this is only an external preview');
+  assert.equal(created.item.thumbnail_media_id, undefined);
+  assert.match(created.item.thumbnail_error, /image engines failed|no image engine/i);
+  assert.equal((await storage.get('media_index')).length, 1);
+});
+
+test('an existing video task finalizes once with a verified media ID, no duplicate render', async () => {
+  const storage = memoryStorage();
+  let starts = 0;
+  const fetcher = async (url) => {
+    const u = String(url);
+    if (u.endsWith('/videos')) { starts++; return new Response(JSON.stringify({ data: { task_id: 'existing' } })); }
+    if (u.includes('/tasks/existing')) return new Response(JSON.stringify({ data: { videos: ['https://cdn.example/space.mp4'] } }));
+    return new Response(Uint8Array.from([0,0,0,24,102,116,121,112,105,115,111,109]),
+      { headers: { 'content-type': 'video/mp4' } });
+  };
+  const body = { task_id: 'existing', prompt: 'Three facts about space' };
+  const first = await generateVideo({ CHE_VIDEO_GEN_URL: 'https://renderer.example' }, storage, body, fetcher);
+  assert.equal(first.status, 200);
+  assert.equal(first.item.verified, true);
+  assert.equal(first.item.render_task_id, 'existing');
+  const again = await generateVideo({ CHE_VIDEO_GEN_URL: 'https://renderer.example' }, storage, body, fetcher);
+  assert.equal(again.duplicate, true);
+  assert.equal(again.item.id, first.item.id);
+  assert.equal(starts, 0, 'finalizing never starts a second video');
 });

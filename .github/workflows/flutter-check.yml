@@ -52,6 +52,18 @@ jobs:
           exit $code
       - name: iPhone version-ordering regression tests
         run: python3 -m unittest discover -s tool -p 'test_mobile_version.py'
-      - run: for f in server/cloudflare/*.js; do node --check "$f"; done
-      - run: node --test server/cloudflare/*.test.mjs
+
+  worker-unit:
+    name: Worker syntax and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check Worker syntax
+        run: for f in server/cloudflare/*.js; do node --check "$f" || exit 1; done
+      - name: Run Worker unit tests
+        run: node --test server/cloudflare/*.test.mjs
 

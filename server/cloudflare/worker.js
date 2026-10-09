@@ -4667,8 +4667,10 @@ export class CheState extends DurableObject {
               ? 'workers_ai'
               : (paidMedia && this.env.GEMINI_API_KEY) ? 'gemini-image' : 'none';
         const videoEngine = this.env.CHE_VIDEO_GEN_URL
-          ? 'connector'
-          : (paidMedia && this.env.GEMINI_API_KEY) ? 'gemini-omni' : 'none';
+          ? 'moneyprinter-turbo'
+          : this.env.CHE_VIDEO_RENDER_URL
+            ? 'faceless-renderer'
+            : (paidMedia && this.env.GEMINI_API_KEY) ? 'gemini-omni' : 'none';
         return json({
           items: await listMedia(this.ctx.storage),
           engine: imageEngine,
@@ -4679,6 +4681,16 @@ export class CheState extends DurableObject {
           paid_video_available: Boolean(this.env.GEMINI_API_KEY),
           upscaler: Boolean(this.env.CHE_UPSCALE_URL),
         });
+      }
+      // Explicit status/finalization for an asynchronous render, with real
+      // archived media IDs. This endpoint never uploads to YouTube.
+      if (path === '/api/media/video/finalize' && request.method === 'POST') {
+        const result = await generateVideo(this.keyEnv || this.env, this.ctx.storage, {
+          task_id: body.task_id, prompt: body.prompt || 'Video render',
+          title: body.title || 'Video render', thumbnail: body.thumbnail === true,
+        });
+        const { status, ...rest } = result;
+        return json(rest, status);
       }
       if (path === '/api/media/generate' && request.method === 'POST') {
         const mediaType = String(body.type || body.kind || 'image').toLowerCase();
@@ -7693,10 +7705,12 @@ export class CheState extends DurableObject {
         const learnedSkillList = await loadLearnedSkills(this.ctx.storage);
         const learnedSkills = learnedSkillsContext(learnedSkillList, message);
 
-        let imageGeneration = requestedCapabilities.includes('image_generation')
+        let imageGeneration = requestedCapabilities.includes('image_generation') &&
+          !requestedCapabilities.includes('video_generation')
           ? await optionalMediaGeneration(this.env, 'image', message, vectorMemoryContext)
           : null;
-        if (requestedCapabilities.includes('image_generation') && !this.env.CHE_IMAGE_GEN_URL &&
+        if (requestedCapabilities.includes('image_generation') &&
+            !requestedCapabilities.includes('video_generation') && !this.env.CHE_IMAGE_GEN_URL &&
             (this.env.AI || (paidMediaOn(this.env) && (this.env.GEMINI_API_KEY || this.env.OPENAI_API_KEY || this.env.CHE_OPENAI_API_KEY)))) {
           const made = await generateImage(this.env, this.ctx.storage, {
             prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 6000),
@@ -7706,30 +7720,111 @@ export class CheState extends DurableObject {
             ? { url: `${new URL(request.url).origin}/api/media/${made.item.id}/image` }
             : { error: made.detail };
         }
-        let videoGeneration = requestedCapabilities.includes('video_generation')
-          ? await optionalMediaGeneration(this.env, 'video', message, vectorMemoryContext)
-          : null;
-        if (requestedCapabilities.includes('video_generation') && !this.env.CHE_VIDEO_GEN_URL &&
-            paidMediaOn(this.env) && this.env.GEMINI_API_KEY) {
-          const made = await generateVideo(this.env, this.ctx.storage, {
-            prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 8000),
-            title: message.slice(0, 60),
+        // A previously accepted asynchronous video can be checked without
+        // asking the model to invent a progress report or starting a new job.
+        const priorVideo = await this.ctx.storage.get('che_video_pending');
+        if (priorVideo?.task_id && /\b(video|render|clip)\b/i.test(message) &&
+            /\b(check|status|ready|finished|done|preview|show)\b/i.test(message) &&
+            !requestedCapabilities.includes('video_generation')) {
+          const checked = await generateVideo(this.keyEnv || this.env, this.ctx.storage, {
+            task_id: priorVideo.task_id, prompt: priorVideo.prompt, title: priorVideo.title, thumbnail: true,
           });
-          videoGeneration = made.item
-            ? { url: `${new URL(request.url).origin}/api/media/${made.item.id}/video` }
-            : { error: made.detail };
+          if (checked.pending) return ndjsonReply(
+            `Your video task ${priorVideo.task_id} is still rendering, sir. No MP4 is ready yet.`,
+            { video_status: 'rendering', task_id: priorVideo.task_id, ok: true },
+          );
+          if (checked.item?.verified) {
+            await this.ctx.storage.delete('che_video_pending');
+            return ndjsonReply('Your MP4 is verified and stored in CHE, sir. Nothing was uploaded. Thumbnail availability is included in the receipt.', {
+              ok: true, video_status: 'preview', media_type: 'video',
+              media_id: checked.item.id,
+              media_url: `${new URL(request.url).origin}/api/media/${checked.item.id}/video`,
+              thumbnail_media_id: checked.item.thumbnail_media_id || null,
+              thumbnail_error: checked.item.thumbnail_error || null,
+              duration_verified: false,
+              storage_warning: checked.item.storage_warning || null,
+            });
+          }
+          return ndjsonReply(`Your video is not ready, sir. ${checked.detail || 'No valid MP4 was returned.'}`,
+            { ok: false, video_status: 'failed', task_id: priorVideo.task_id });
         }
 
+        // Video creation is a tool execution, never a model promise.
+        // The existing media service persists verified completions and
+        // returns real pending job IDs when the renderer is asynchronous.
+        let videoGeneration = null;
+        if (requestedCapabilities.includes('video_generation')) {
+          const mediaEnv = this.keyEnv || this.env;
+          const made = await generateVideo(mediaEnv, this.ctx.storage, {
+            prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 8000),
+            title: message.slice(0, 60),
+            seconds: 15,
+            thumbnail: true,
+          });
+          if (made.pending) {
+            await this.ctx.storage.put('che_video_pending', {
+              task_id: made.job_id, prompt: message.slice(0, 8000), title: message.slice(0, 60),
+              created_at: new Date().toISOString(),
+            });
+            return ndjsonReply(
+              `The video renderer accepted the job, sir. Task ${made.job_id} is rendering. No MP4 or thumbnail is ready yet. Nothing was uploaded.`,
+              { ok: true, video_status: 'rendering', task_id: made.job_id },
+            );
+          }
+          videoGeneration = made.item?.verified
+            ? { url: `${new URL(request.url).origin}/api/media/${made.item.id}/video`,
+                media_id: made.item.id,
+                thumbnail_id: made.item.thumbnail_media_id || null,
+                thumbnail_error: made.item.thumbnail_error || null,
+                storage_warning: made.item.storage_warning || null }
+            : { error: made.detail || 'The video provider returned no verified file.' };
+        }
+
+        if (requestedCapabilities.includes('video_generation')) {
+          const mediaEnv = this.keyEnv || this.env;
+          if (mediaEnv.CHE_VIDEO_GEN_URL) {
+            const rendered = await moneyPrinterVideo(mediaEnv, message.slice(0, 2000));
+            if (rendered.pending) {
+              return ndjsonReply(
+                `A real video render has started, sir. Job ${rendered.task_id}. No MP4 or thumbnail is ready yet. Check its status before reviewing it.`,
+                { video_status: 'rendering', task_id: rendered.task_id, ok: true },
+              );
+            }
+            videoGeneration = rendered.verified && rendered.media_url
+              ? { url: rendered.media_url, verified: true }
+              : { error: rendered.error || 'No verified MP4 was produced.' };
+          } else if (paidMediaOn(mediaEnv) && mediaEnv.GEMINI_API_KEY) {
+            const made = await generateVideo(mediaEnv, this.ctx.storage, {
+              prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 8000),
+              title: message.slice(0, 60),
+            });
+            videoGeneration = made.item
+              ? { url: `${new URL(request.url).origin}/api/media/${made.item.id}/video` }
+              : { error: made.detail };
+          } else {
+            videoGeneration = { error: 'No active video renderer is configured. CHE_VIDEO_GEN_URL is missing, and paid video generation is not owner-enabled.' };
+          }
+        }
+
+        if (requestedCapabilities.includes('video_generation')) {
+          if (videoGeneration?.url) {
+            return ndjsonReply(
+              'A verified video file is ready for preview, sir. Duration and thumbnail are not yet verified. Nothing was uploaded.',
+              { media_type: 'video', media_url: videoGeneration.url, video_status: 'preview',
+                media_id: videoGeneration.media_id, thumbnail_media_id: videoGeneration.thumbnail_id,
+                thumbnail_error: videoGeneration.thumbnail_error,
+                storage_warning: videoGeneration.storage_warning, duration_verified: false },
+            );
+          }
+          return ndjsonReply(
+            `No video was created, sir. ${videoGeneration?.error || 'The renderer did not return an MP4.'} No thumbnail or YouTube upload is complete.`,
+            { ok: false, video_status: 'not_created', source: 'video_renderer' },
+          );
+        }
         if (imageGeneration?.url) {
           return ndjsonReply(
             'Image generated, sir.',
             { media_type: 'image', media_url: imageGeneration.url },
-          );
-        }
-        if (videoGeneration?.url) {
-          return ndjsonReply(
-            'Video generated, sir.',
-            { media_type: 'video', media_url: videoGeneration.url },
           );
         }
 

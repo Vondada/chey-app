@@ -9,6 +9,7 @@
 
 import { scoutTopics } from './topic_scout.js';
 import { createFacelessVideo } from './faceless_video.js';
+import { moneyPrinterStatus } from './moneyprinter.js';
 import { uploadYouTube } from './youtube_upload.js';
 
 const RESERVATION_MS = 30 * 60 * 1000;
@@ -34,20 +35,48 @@ export async function runVideoLine(env = {}, fetcher = fetch, youtube = {}) {
       board: [{ title: topic.title, source: topic.source, status: 'uploaded', link: earlier.link }],
     };
   }
+  if (earlier?.status === 'rendering' && earlier.task_id) {
+    // The existing MoneyPrinter render is resumable. Never start a second render
+    // simply because its first status query returned pending.
+    const state = await moneyPrinterStatus(env, earlier.task_id, fetcher);
+    if (state.pending) return {
+      ok: true, pending: true, stage: 'render', task_id: earlier.task_id,
+      board: [{ title: topic.title, source: topic.source, status: 'rendering', task_id: earlier.task_id }],
+    };
+    if (!state.ok || !state.verified) {
+      delete uploads[key];
+      return { ok: false, stage: 'render', error: state.error || 'The saved render did not finish.', board: [] };
+    }
+    uploads[key] = { ...earlier, status: 'uploading', at: new Date().toISOString() };
+    const completed = await renderAndUpload(env, fetcher, youtube, topic, state);
+    if (completed.ok && !completed.pending) uploads[key] = { status: 'uploaded', link: completed.board[0].link, at: new Date().toISOString() };
+    else if (!completed.pending) delete uploads[key];
+    return completed;
+  }
   if (earlier?.status === 'rendering' && Date.now() - Date.parse(earlier.at) < RESERVATION_MS) {
     return { ok: false, stage: 'busy', error: 'This topic is already being produced.', board: [] };
   }
-  // No await between the check above and this reservation, so two passes
-  // cannot both take the same topic.
+  // Reservation and status transitions are persisted by the owner state.
   uploads[key] = { status: 'rendering', at: new Date().toISOString() };
   const result = await renderAndUpload(env, fetcher, youtube, topic);
-  if (result.ok) uploads[key] = { status: 'uploaded', link: result.board[0].link, at: new Date().toISOString() };
-  else delete uploads[key];
+  if (result.pending && result.task_id) {
+    uploads[key] = { status: 'rendering', task_id: result.task_id, at: new Date().toISOString() };
+  } else if (result.ok) {
+    uploads[key] = { status: 'uploaded', link: result.board[0].link, at: new Date().toISOString() };
+  } else {
+    delete uploads[key];
+  }
   return result;
 }
 
-async function renderAndUpload(env, fetcher, youtube, topic) {
-  const rendered = await createFacelessVideo(env, { topic: topic.title, minutes: 8 }, fetcher);
+async function renderAndUpload(env, fetcher, youtube, topic, resumed = null) {
+  const rendered = resumed || await createFacelessVideo(env, { topic: topic.title, minutes: 8 }, fetcher);
+  if (rendered.pending && rendered.task_id) {
+    return {
+      ok: true, pending: true, stage: 'render', task_id: rendered.task_id,
+      board: [{ title: topic.title, source: topic.source, status: 'rendering', task_id: rendered.task_id }],
+    };
+  }
   if (!rendered.ok || !rendered.media_url) {
     return {
       ok: false,

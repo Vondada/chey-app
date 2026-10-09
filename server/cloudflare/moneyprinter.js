@@ -10,9 +10,46 @@ function moneyPrinterApiBase(env = {}) {
 function validMediaUrl(raw) {
   try {
     const url = new URL(String(raw || ''));
-    return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password;
+    const host = url.hostname.toLowerCase();
+    return url.protocol === 'https:' && !url.username && !url.password &&
+      !['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(host) &&
+      !host.endsWith('.local') && !/^10\.|^192\.168\.|^169\.254\.|^172\.(1[6-9]|2[0-9]|3[01])\./.test(host);
   } catch {
     return false;
+  }
+}
+
+// A renderer JSON response is not a finished file. Verify a real MP4 header
+// before surfacing the URL. Stream chunks need not align with MP4 boxes.
+export async function verifyVideoMedia(raw, fetcher = fetch) {
+  if (!validMediaUrl(raw)) return { ok: false, error: 'Renderer returned an unsafe or invalid video address.' };
+  try {
+    const response = await fetcher(raw, {
+      headers: { Range: 'bytes=0-63', Accept: 'video/mp4' },
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!response.ok || !response.body) return { ok: false, error: 'Video file is not accessible.' };
+    const reader = response.body.getReader();
+    const prefix = new Uint8Array(12);
+    let count = 0;
+    try {
+      while (count < prefix.length) {
+        const next = await reader.read();
+        if (next.done) break;
+        const chunk = next.value || new Uint8Array();
+        const take = Math.min(chunk.length, prefix.length - count);
+        prefix.set(chunk.subarray(0, take), count);
+        count += take;
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+    }
+    const mp4 = count >= 12 && prefix[4] === 0x66 && prefix[5] === 0x74 &&
+      prefix[6] === 0x79 && prefix[7] === 0x70;
+    if (!mp4) return { ok: false, error: 'Renderer did not return a real MP4 file.' };
+    return { ok: true, verified: true, content_type: 'video/mp4' };
+  } catch {
+    return { ok: false, error: 'Could not verify the rendered MP4 file.' };
   }
 }
 
@@ -41,14 +78,18 @@ export async function moneyPrinterStatus(env, taskId, fetcher = fetch) {
       data?.url ||
       '',
     );
-    if (validMediaUrl(mediaUrl)) return { ok: true, task_id: id, media_url: mediaUrl };
+    if (mediaUrl) {
+      const verified = await verifyVideoMedia(mediaUrl, fetcher);
+      if (!verified.ok) return { ok: false, task_id: id, stage: 'verify', error: verified.error };
+      return { ok: true, task_id: id, media_url: mediaUrl, verified: true, duration_verified: false };
+    }
     return { ok: true, pending: true, task_id: id, error: 'Video is still rendering.' };
   } catch {
     return { ok: false, task_id: id, error: 'The video renderer did not respond. No completed file was received.' };
   }
 }
 
-export async function moneyPrinterVideo(env, topic, fetcher = fetch) {
+export async function moneyPrinterVideo(env, topic, fetcher = fetch, options = {}) {
   const base = moneyPrinterApiBase(env);
   const subject = String(topic || '').trim();
   if (!base) return { ok: false, error: 'MoneyPrinter is not connected. Set CHE_VIDEO_GEN_URL.' };
@@ -57,12 +98,19 @@ export async function moneyPrinterVideo(env, topic, fetcher = fetch) {
     'content-type': 'application/json',
     ...(env.CHE_VIDEO_GEN_TOKEN ? { 'X-API-Key': env.CHE_VIDEO_GEN_TOKEN } : {}),
   };
+  const seconds = Number(options.seconds);
+  const targetSeconds = Number.isFinite(seconds) && seconds > 0 ? Math.max(5, Math.min(720, Math.round(seconds))) : null;
   try {
     const started = await fetcher(`${base}/videos`, {
       method: 'POST',
       headers,
       signal: AbortSignal.timeout(12000),
-      body: JSON.stringify({ video_subject: subject, video_aspect: '9:16' }),
+      body: JSON.stringify({
+        video_subject: subject,
+        video_aspect: '9:16',
+        ...(options.script ? { video_script: String(options.script).slice(0, 8000) } : {}),
+        ...(targetSeconds ? { video_clip_duration: 5, paragraph_number: Math.ceil(targetSeconds / 5) } : {}),
+      }),
     });
     const created = await started.json().catch(() => ({}));
     const taskId = created?.data?.task_id || created?.task_id;
