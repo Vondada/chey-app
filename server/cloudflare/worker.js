@@ -4666,11 +4666,11 @@ export class CheState extends DurableObject {
             : this.env.AI
               ? 'workers_ai'
               : (paidMedia && this.env.GEMINI_API_KEY) ? 'gemini-image' : 'none';
-        const videoEngine = this.env.CHE_VIDEO_GEN_URL
+        const videoEngine = (this.keyEnv || this.env).CHE_VIDEO_GEN_URL
           ? 'moneyprinter-turbo'
-          : this.env.CHE_VIDEO_RENDER_URL
+          : (this.keyEnv || this.env).CHE_VIDEO_RENDER_URL
             ? 'faceless-renderer'
-            : (this.env.CHE_GITHUB_TOKEN && this.env.CHE_GITHUB_REPO === 'Vondada/chey-app')
+            : ((this.keyEnv || this.env).CHE_GITHUB_TOKEN && (this.keyEnv || this.env).CHE_GITHUB_REPO === 'Vondada/chey-app')
               ? 'github-actions-offline'
               : (paidMedia && this.env.GEMINI_API_KEY) ? 'gemini-omni' : 'none';
         return json({
@@ -4697,8 +4697,8 @@ export class CheState extends DurableObject {
       if (path === '/api/media/generate' && request.method === 'POST') {
         const mediaType = String(body.type || body.kind || 'image').toLowerCase();
         const result = mediaType === 'video'
-          ? await generateVideo(this.env, this.ctx.storage, body)
-          : await generateImage(this.env, this.ctx.storage, body);
+          ? await generateVideo(this.keyEnv || this.env, this.ctx.storage, body)
+          : await generateImage(this.keyEnv || this.env, this.ctx.storage, body);
         const { status, ...rest } = result;
         return json(rest, status);
       }
@@ -4709,7 +4709,7 @@ export class CheState extends DurableObject {
           const item = (await listMedia(this.ctx.storage)).find((entry) => entry.id === mediaId);
           if (!item) return json({ detail: 'Piece not found.' }, 404);
           if (item.url) return Response.redirect(item.url, 302);
-          const bytes = await readBlob(this.env, this.ctx.storage, item);
+          const bytes = await readBlob(this.keyEnv || this.env, this.ctx.storage, item);
           if (!bytes) return json({ detail: 'Media data missing.' }, 404);
           const fallbackType = action === '/video' ? 'video/mp4' : 'image/jpeg';
           return new Response(bytes, { headers: { 'Content-Type': item.mime_type || fallbackType, 'Cache-Control': 'private, max-age=86400' } });
