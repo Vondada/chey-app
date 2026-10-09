@@ -268,7 +268,7 @@ Color cheMemoryCategoryColor(String category) => switch (category.toLowerCase())
 };
 
 class CheMemoryBrainRoom extends StatefulWidget {
-  const CheMemoryBrainRoom({super.key, required this.dots, this.brainLinks = const [], this.onReadAloud, this.onRefresh, this.embedded = true, this.active = true});
+  const CheMemoryBrainRoom({super.key, required this.dots, this.brainLinks = const [], this.onReadAloud, this.onRefresh, this.embedded = true, this.active = true, this.onOpenAgent});
 
   final List<CheMemoryDot> dots;
 
@@ -280,6 +280,9 @@ class CheMemoryBrainRoom extends StatefulWidget {
 
   /// When false, pause the breathing / pulse AnimationController.
   final bool active;
+
+  /// Deep link for live agent orbs: the agent's name. Null hides the button.
+  final void Function(String agentName)? onOpenAgent;
 
   @override
   State<CheMemoryBrainRoom> createState() => _CheMemoryBrainRoomState();
@@ -485,6 +488,7 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
             onSpeak: _say,
             // The Soul & facts / Log chips float bottom-right in the room.
             cardBottomInset: 56 + media.viewPadding.bottom,
+            onOpenAgent: widget.onOpenAgent,
           );
 
     final child = Column(

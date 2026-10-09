@@ -62,6 +62,18 @@ class CheOfficeStore extends ChangeNotifier {
   /// The live notifier for one desk (CHE is [cheId]).
   ValueNotifier<CheDeskView>? desk(String id) => _desks[id];
 
+  /// Desk id whose agent matches [name] (case-insensitive), for deep links
+  /// from the Brain's live agent orbs. Null when nobody by that name is on
+  /// the floor — the caller must say so honestly instead of opening a desk.
+  String? deskIdForAgentName(String name) {
+    final want = name.trim().toLowerCase();
+    if (want.isEmpty) return null;
+    for (final entry in _desks.entries) {
+      if (entry.value.value.agent.name.toLowerCase() == want) return entry.key;
+    }
+    return null;
+  }
+
   /// Agent desks in floor order (CHE's own desk is separate, front/center).
   List<String> get agentDeskIds => [for (final id in deskOrder.value) if (id != cheId) id];
 

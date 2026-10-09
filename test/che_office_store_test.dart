@@ -135,4 +135,13 @@ void main() {
     expect(cheAgentIsMoving(CheAgentStatus.building), isTrue);
     expect(cheAgentIsMoving(CheAgentStatus.researching), isTrue);
   });
+
+  test('brain deep link resolves an agent name to a desk id, or nothing', () {
+    final store = CheOfficeStore()..setRoster(CheAgent.che(), _roster());
+    expect(store.deskIdForAgentName('Atlas'), 'a');
+    expect(store.deskIdForAgentName('  kNoX '), 'k');
+    expect(store.deskIdForAgentName('Nobody'), isNull);
+    expect(store.deskIdForAgentName(''), isNull);
+    store.dispose();
+  });
 }
