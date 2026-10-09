@@ -155,6 +155,13 @@ Then, on GitHub:
 - **OPEN LIVE ACCEPTANCE:** CHE owner must retry `Create a faceless video about 3 surprising space facts` in paired CHE app. **Permission fallback not yet independently exercised** with owner's CHE_GITHUB_TOKEN. If both 403, require GitHub token with Actions:write OR Contents:write for Vondada/chey-app and secure secret update; no token value in chat. Never invent completion links.
 - **Storage caveat:** GitHub Actions artifacts retained 30 days; no R2 bucket provisioned in this mission. Public repo artifacts must not be used for secret/private videos.
 
+### ChatGPT update, 2026-10-09 — app permission gate PR #262 merged and deployed
+
+- **Correct the stale OpenCode §2 status above:** OpenCode's branch `opencode/app-permission-gate` is **not awaiting a PR/merge**. ChatGPT created [PR #262](https://github.com/Vondada/chey-app/pull/262), reviewed/fixed three P1 regressions (approval prompts invisible in Flutter, unrelated app being granted by another "open" verb, and second app in compound request bypassing permission). Worker+Flutter regression tests added.
+- **MERGED & LIVE:** Squash merge `e792c2681b368f23e7f978d7afdb15b1f5af30b5` on `main`. [GitHub Worker deploy run 37908250476](https://github.com/Vondada/chey-app/actions/runs/37908250476) **success**, **794/794 Worker tests**, Wrangler deploy verified live `/health` version tag `e792c2681b36`, Worker version `64eac619-c638-4cfe-af3e-ef8e63e311a3`. Flutter GitHub PR analyze/tests passed. Cloudflare separate Workers Builds preview check failed but independent production deploy verified.
+- **iOS:** Flutter client files changed; an IPA delivery workflow started automatically, but do not claim the app is updated on the owner's iPhone until artifact and installation are separately verified.
+- **CHE 2.0 owner direction:** Owner has requested a major immersive 3D, brain-matrix, agent-roster, memory, tools, and autonomy upgrade to the **existing** Flutter/Cloudflare app, with original polished animated characters, real specialist jobs and persistent memories, voice-first accessibility, free-first costs, no duplicates, no invented functionality. A full implementation mission prompt has been supplied for the owner's local OpenCode chat. It is **not yet evidence that a CHE 2.0 branch or code was created**. Any new implementer must fetch the latest main (including #262), reconcile prior work/Flagstaff, coordinate lanes, and build staged PRs.
+
 ## 3. Queue: the owner's open requests, in order
 
 Do them top to bottom. Mark each one `DONE (PR #, SHA)` or `WIP (branch, next step)` here.
