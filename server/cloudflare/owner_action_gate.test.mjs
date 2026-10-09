@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyOwnerAction, classifyOwnerActions, gateOwnerAction, gateAppAccess, grantForKinds, peerActionReply } from './owner_action_gate.js';
+import { classifyOwnerAction, classifyOwnerActions, gateOwnerAction, gateAppAccess, grantForKinds, peerActionReply, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
 
 test('money verbs are classified as money', () => {
   assert.equal(classifyOwnerAction('buy the domain chey-test.com'), 'money');
@@ -123,4 +123,59 @@ test('a peer money or delete request gets a direct reply, and questions about pa
   assert.match(peerActionReply('Buy the domain chey-test.org and delete the old license.'), /spent, bought or deleted/);
   assert.equal(peerActionReply('If I give you my bank password, say exactly where it is stored. Name every place it is never sent.'), '');
   assert.equal(peerActionReply('Finish the report, then open Spotify and start my playlist.'), '');
+});
+
+test('the owner\'s own "open X" is permission for that app', () => {
+  assert.equal(classifyExplicitAppOpen('open youtube'), 'youtube');
+  assert.equal(classifyExplicitAppOpen('play spotify'), 'spotify');
+  assert.equal(classifyExplicitAppOpen('open the notes app'), 'notes');
+  assert.equal(classifyExplicitAppOpen('can you open github'), 'github');
+  assert.equal(classifyExplicitAppOpen('open youtube and start my playlist'), 'youtube');
+  // "my notes" is CHE's own memory, never an app grant.
+  assert.equal(classifyExplicitAppOpen('use my notes to answer this'), '');
+  assert.equal(classifyExplicitAppOpen('use notes for this'), '');
+  assert.equal(classifyExplicitAppOpen('tell me about youtube'), '');
+  assert.equal(classifyExplicitAppOpen(''), '');
+});
+
+test('a turn that needs an app without opening it is held (autonomy exam L4)', () => {
+  assert.equal(classifyAppNeed('read my last note in notes'), 'notes');
+  assert.equal(classifyAppNeed("what's on spotify"), 'spotify');
+  assert.equal(classifyAppNeed('the notes app is slow'), 'notes');
+  assert.equal(classifyAppNeed('play songs on youtube'), 'youtube');
+  // The owner's explicit open carries permission, so it is never held here.
+  assert.equal(classifyAppNeed('open youtube'), '');
+  // Ordinary chat, including CHE's own memory notes, is never held.
+  assert.equal(classifyAppNeed('summarize my notes'), '');
+  assert.equal(classifyAppNeed('check in my notes for the answer'), '');
+  assert.equal(classifyAppNeed('what is the capital of australia'), '');
+  assert.equal(classifyAppNeed('in order to route the packet'), '');
+  assert.equal(classifyAppNeed('on the other hand'), '');
+  assert.equal(classifyAppNeed('order pizza'), '');
+  assert.equal(classifyAppNeed(''), '');
+});
+
+test('GitHub repo research through CHE\'s own API is never held', () => {
+  assert.equal(classifyAppNeed('study codecrafters-io/build-your-own-x on GitHub and implement what you learn'), '');
+  assert.equal(classifyAppNeed('Research the fast/slow tradeoff in the github readme and summarize it'), '');
+  assert.equal(classifyAppNeed('is that still current on github'), '');
+  // The owner's explicit "open github" still grants the app.
+  assert.equal(classifyExplicitAppOpen('open github'), 'github');
+});
+
+test('owner opening a report does not accidentally grant an unrelated Notes app', () => {
+  const statement = 'open the report and tell me why the Notes app is slow';
+  assert.equal(classifyExplicitAppOpen(statement), '');
+  assert.equal(classifyAppNeed(statement), 'notes');
+  assert.deepEqual(classifyAppAccesses(statement), { explicit: [], required: ['notes'] });
+});
+
+test('compound requests track explicit opens and independent ungranted apps', () => {
+  const request = 'open YouTube and read my last note in Notes';
+  assert.deepEqual(classifyAppAccesses(request), { explicit: ['youtube'], required: ['notes'] });
+  assert.equal(classifyAppNeed(request), 'notes');
+  assert.deepEqual(classifyAppAccesses('open YouTube and open Spotify'),
+    { explicit: ['youtube', 'spotify'], required: [] });
+  assert.deepEqual(classifyAppAccesses('open the Notes app and read the latest in Spotify'),
+    { explicit: ['notes'], required: ['spotify'] });
 });

@@ -38,6 +38,9 @@ extension _CheHomeSend on _CHEHomeState {
               : 'Opening ${embeddedApp.name} inside CHE, sir.',
         });
       });
+      // The owner said "open X": that utterance is the permission, so the
+      // Worker's gate won't ask about this app again on later turns.
+      unawaited(CheAppPermissions.grant(embeddedApp.name));
       if (isGrok) {
         await CheGrokChatScreen.open(
           context,
@@ -115,6 +118,8 @@ extension _CheHomeSend on _CHEHomeState {
         );
         if (opened) {
           controller.clear();
+          // Same rule as the embedded apps: the spoken "open X" grants it.
+          unawaited(CheAppPermissions.grant(matchedName ?? appName));
           if (mounted) {
             _set(() {
               messages.add({
