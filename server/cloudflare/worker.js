@@ -34,7 +34,6 @@ import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry 
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { handleEdgeVoice } from './edge_route.js';
 import { handleVideoLine } from './video_route.js';
-import { moneyPrinterVideo } from './moneyprinter.js';
 import {
   YOUTUBE_CALLBACK_PATH, disconnectYouTube, finishYouTubeConnect, startYouTubeConnect,
   youtubeAccessToken, youtubeResultPage, youtubeStatus,
@@ -7707,9 +7706,33 @@ export class CheState extends DurableObject {
             ? { url: `${new URL(request.url).origin}/api/media/${made.item.id}/image` }
             : { error: made.detail };
         }
-        // A chat request for an MP4 must run a real engine, not ask the
-        // language model to fabricate a media link after a failed tool call.
+        // Video creation is a tool execution, never a model promise.
+        // The existing media service persists verified completions and
+        // returns real pending job IDs when the renderer is asynchronous.
         let videoGeneration = null;
+        if (requestedCapabilities.includes('video_generation')) {
+          const mediaEnv = this.keyEnv || this.env;
+          const made = await generateVideo(mediaEnv, this.ctx.storage, {
+            prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 8000),
+            title: message.slice(0, 60),
+            seconds: 15,
+            thumbnail: true,
+          });
+          if (made.pending) {
+            return ndjsonReply(
+              `The video renderer accepted the job, sir. Task ${made.job_id} is rendering. No MP4 or thumbnail is ready yet. Nothing was uploaded.`,
+              { ok: true, video_status: 'rendering', task_id: made.job_id },
+            );
+          }
+          videoGeneration = made.item?.verified
+            ? { url: `${new URL(request.url).origin}/api/media/${made.item.id}/video`,
+                media_id: made.item.id,
+                thumbnail_id: made.item.thumbnail_media_id || null,
+                thumbnail_error: made.item.thumbnail_error || null,
+                storage_warning: made.item.storage_warning || null }
+            : { error: made.detail || 'The video provider returned no verified file.' };
+        }
+
         if (requestedCapabilities.includes('video_generation')) {
           const mediaEnv = this.keyEnv || this.env;
           if (mediaEnv.CHE_VIDEO_GEN_URL) {
@@ -7740,7 +7763,10 @@ export class CheState extends DurableObject {
           if (videoGeneration?.url) {
             return ndjsonReply(
               'A verified video file is ready for preview, sir. Duration and thumbnail are not yet verified. Nothing was uploaded.',
-              { media_type: 'video', media_url: videoGeneration.url, video_status: 'preview', duration_verified: false },
+              { media_type: 'video', media_url: videoGeneration.url, video_status: 'preview',
+                media_id: videoGeneration.media_id, thumbnail_media_id: videoGeneration.thumbnail_id,
+                thumbnail_error: videoGeneration.thumbnail_error,
+                storage_warning: videoGeneration.storage_warning, duration_verified: false },
             );
           }
           return ndjsonReply(

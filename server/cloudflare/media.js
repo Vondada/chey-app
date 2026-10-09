@@ -1,5 +1,6 @@
 // CHE Art Studio media: real image generation with versions.
-import { moneyPrinterVideo } from './moneyprinter.js';
+import { moneyPrinterVideo, verifyVideoMedia } from './moneyprinter.js';
+import { createFacelessVideo } from './faceless_video.js';
 //   - Owner image connector (CHE_IMAGE_GEN_URL) wins when configured.
 //   - Otherwise Workers AI FLUX.1 [schnell] generates the image on the CHE
 //     server itself (highest step count unless the owner picks draft).
@@ -262,6 +263,15 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
   if (env.CHE_VIDEO_GEN_URL) {
     engines.push({ id: 'moneyprinter-turbo', run: async () =>
       connectorVideo(env, prompt, fetcher, Number(body.seconds || body.duration_seconds) || 15) });
+  } else if (env.CHE_VIDEO_RENDER_URL) {
+    // Existing synchronous faceless renderer remains supported.
+    engines.push({ id: 'faceless-renderer', run: async () => {
+      const result = await createFacelessVideo(env, {
+        topic: prompt, seconds: Number(body.seconds || body.duration_seconds) || 15,
+      }, fetcher);
+      if (!result.ok || !result.verified) throw new Error(result.error || 'No verified MP4.');
+      return { url: result.media_url, verified: true };
+    } });
   }
   if (paidMediaEnabled(env) && env.GEMINI_API_KEY) {
     engines.push({ id: 'gemini-omni-video', run: async () => geminiVideo(env, prompt, fetcher) });
@@ -293,14 +303,55 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
     return { status: 202, pending: true, job_id: generated.task_id,
       detail: 'Renderer accepted the job. No MP4 or thumbnail exists yet; poll /api/video/line?task_id=' + encodeURIComponent(generated.task_id) + '.' };
   }
+  record.mime_type = 'video/mp4';
+  record.duration_verified = false; // Actual seconds require a media probe/ffprobe, not a request parameter.
   if (generated.url) {
-    record.url = generated.url;
-    record.verified = generated.verified === true;
-    record.duration_verified = false;
+    if (!generated.verified) {
+      const result = await verifyVideoMedia(generated.url, fetcher);
+      if (!result.ok) return { status: 502, detail: result.error };
+    }
+    record.verified = true;
+    if (env.CHE_DATA_BUCKET) {
+      // Archive the verified MP4 under CHE control rather than relying on an
+      // external provider's temporary URL. Never return a made-up preview.
+      const key = `media/${id}.mp4`;
+      try {
+        const response = await fetcher(generated.url, { signal: AbortSignal.timeout(120000) });
+        if (!response.ok || !response.body) throw new Error('MP4 download failed.');
+        await env.CHE_DATA_BUCKET.put(key, response.body, {
+          httpMetadata: { contentType: 'video/mp4' },
+        });
+        record.blob = 'r2';
+        record.blob_key = key;
+        record.durable = true;
+      } catch (_) {
+        return { status: 502, detail: 'MP4 rendered but could not be archived to CHE R2. No finished file was recorded.' };
+      }
+    } else {
+      record.url = generated.url;
+      record.durable = false;
+      record.storage_warning = 'External preview only; configure CHE_DATA_BUCKET (R2) for a durable CHE-hosted file.';
+    }
   } else {
-    record.mime_type = generated.mime_type || 'video/mp4';
-    try { Object.assign(record, await storeBlob(env, storage, id, generated.base64, record.mime_type, 'video')); }
+    const bytes = b64ToBytes(generated.base64 || '');
+    const isMp4 = bytes.length >= 12 && bytes[4] === 102 && bytes[5] === 116 && bytes[6] === 121 && bytes[7] === 112;
+    if (!isMp4) return { status: 502, detail: 'Video provider returned no valid MP4 bytes. Nothing was saved.' };
+    try { Object.assign(record, await storeBlob(env, storage, id, generated.base64, 'video/mp4', 'video')); }
     catch (error) { return { status: 502, detail: `Video generated but could not be saved: ${error.message}` }; }
+    record.verified = true;
+    record.durable = true;
+  }
+  if (body.thumbnail === true) {
+    const thumbnail = await generateImage(env, storage, {
+      prompt: `Premium attention-grabbing 16:9 YouTube thumbnail for: ${prompt.slice(0, 600)}. Cinematic professional original artwork, expressive composition, clear focal point, no copyrighted characters.`,
+      title: `Thumbnail for ${record.title}`,
+    }, fetcher);
+    if (thumbnail.item) {
+      record.thumbnail_media_id = thumbnail.item.id;
+      record.thumbnail_dimensions_verified = false;
+    } else {
+      record.thumbnail_error = thumbnail.detail || 'Thumbnail engine did not produce an image.';
+    }
   }
   const items = await listMedia(storage);
   await saveIndex(storage, [record, ...items]);

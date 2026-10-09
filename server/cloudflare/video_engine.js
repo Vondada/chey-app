@@ -13,7 +13,26 @@ export function videoEngineStatus(env = {}) {
   const url = String(env.CHE_VIDEO_GEN_URL || '').trim();
   return {
     ...VIDEO_ENGINE,
-    ready: Boolean(url),
-    reason: url ? 'Renderer URL set' : 'Run link is stored. No video server is running.',
+    configured: Boolean(url),
+    ready: false,
+    reason: url ? 'Renderer configured but not checked online.' : 'No video renderer configured or running.',
   };
+}
+
+/** A configured URL alone is not proof that a renderer is online. */
+export async function probeVideoEngine(env = {}, fetcher = fetch) {
+  const status = videoEngineStatus(env);
+  if (!status.configured) return status;
+  try {
+    const origin = new URL(String(env.CHE_VIDEO_GEN_URL).trim());
+    if (origin.protocol !== 'https:') return { ...status, reason: 'Video renderer requires HTTPS.' };
+    const base = origin.toString().replace(/\\/+$/, '').replace(/\\/api\\/v1$/, '');
+    const response = await fetcher(`${base}/api/v1/tasks?page=1&page_size=1`, {
+      headers: env.CHE_VIDEO_GEN_TOKEN ? { 'X-API-Key': env.CHE_VIDEO_GEN_TOKEN } : {},
+      signal: AbortSignal.timeout(12000),
+    });
+    return { ...status, ready: response.ok, reason: response.ok ? 'Renderer API responded.' : `Renderer returned HTTP ${response.status}.` };
+  } catch {
+    return { ...status, reason: 'Renderer API was unreachable.' };
+  }
 }

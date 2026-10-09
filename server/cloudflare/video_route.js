@@ -5,6 +5,7 @@
 
 import { moneyPrinterStatus, moneyPrinterVideo } from './moneyprinter.js';
 import { runVideoLine } from './video_line.js';
+import { probeVideoEngine } from './video_engine.js';
 
 function statusFor(result) {
   if (result?.pending) return 202;
@@ -18,6 +19,13 @@ export async function handleVideoLine(request, env, parsedBody, youtube = {}) {
   }
   let result;
   if (request.method === 'GET') {
+    if (new URL(request.url).searchParams.get('engine') === 'status') {
+      const status = await probeVideoEngine(env);
+      return new Response(JSON.stringify(status), {
+        status: status.ready ? 200 : 503,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
     const taskId = new URL(request.url).searchParams.get('task_id') || '';
     result = await moneyPrinterStatus(env, taskId);
   } else {

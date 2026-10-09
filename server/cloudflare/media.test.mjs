@@ -69,7 +69,7 @@ test('Gemini Omni video generation stores MP4 output in R2', async () => {
     request = { url, body: JSON.parse(options.body) };
     return new Response(JSON.stringify({
       output_video: {
-        data: btoa('fake-video-bytes'),
+        data: btoa(String.fromCharCode(0,0,0,24,102,116,121,112,105,115,111,109,0,0,0,0)),
         mime_type: 'video/mp4',
       },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -129,4 +129,25 @@ test('MoneyPrinter pending render is not stored or reported as completed video',
   assert.equal(made.job_id, 'space15');
   assert.equal(storage.data.has('media_index'), false);
   assert.deepEqual(calls, ['https://renderer.example/api/v1/videos', 'https://renderer.example/api/v1/tasks/space15']);
+});
+
+test('video completion creates a thumbnail receipt only if an image actually rendered', async () => {
+  const storage = memoryStorage();
+  const env = { CHE_VIDEO_GEN_URL: 'https://renderer.example' };
+  const mp4 = Uint8Array.from([0,0,0,24,102,116,121,112,105,115,111,109]);
+  const created = await generateVideo(env, storage,
+    { prompt: 'Three facts about space', seconds: 15, thumbnail: true },
+    async (url) => {
+      const str = String(url);
+      if (str.endsWith('/videos')) return new Response(JSON.stringify({ data: { task_id: 'finished' } }));
+      if (str.includes('/tasks/')) return new Response(JSON.stringify({ data: { videos: ['https://cdn.example/space.mp4'] } }));
+      return new Response(mp4, { headers: { 'content-type': 'video/mp4' } });
+    },
+  );
+  assert.equal(created.status, 200);
+  assert.equal(created.item.verified, true);
+  assert.equal(created.item.durable, false, 'without R2 this is only an external preview');
+  assert.equal(created.item.thumbnail_media_id, undefined);
+  assert.match(created.item.thumbnail_error, /image engines failed|no image engine/i);
+  assert.equal((await storage.get('media_index')).length, 1);
 });
