@@ -14,8 +14,9 @@ export function videoEngineStatus(env = {}) {
   const legacy = String(env.CHE_VIDEO_RENDER_URL || '').trim();
   return {
     ...VIDEO_ENGINE,
-    configured: Boolean(url || legacy),
-    backend: url ? 'moneyprinter-turbo' : legacy ? 'faceless-renderer' : 'none',
+    configured: Boolean(url || legacy || (env.CHE_GITHUB_TOKEN && env.CHE_GITHUB_REPO === 'Vondada/chey-app')),
+    backend: url ? 'moneyprinter-turbo' : legacy ? 'faceless-renderer'
+      : (env.CHE_GITHUB_TOKEN && env.CHE_GITHUB_REPO === 'Vondada/chey-app') ? 'github-actions-offline' : 'none',
     ready: false,
     reason: url ? 'MoneyPrinter configured but not checked online.'
       : legacy ? 'Faceless renderer configured; availability not verified.'
