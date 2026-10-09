@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Original offline faceless video + narration + thumbnail. No paid service."""
-import argparse, json, random, shutil, subprocess
+import argparse, json, random, subprocess, sys
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 BOLD='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
@@ -44,8 +44,9 @@ def render(topic, seconds, out):
         facts=[('THE SUN','Contains over 99 percent of the solar system mass.'),
           ('VENUS','Its rotation takes longer than its year.'),
           ('NEUTRON STARS','More mass than the Sun in a city-sized sphere.')]
-        narration=("Three surprising space facts. The Sun contains over ninety-nine percent of our solar system mass. "
-          "On Venus, one rotation lasts longer than a year. And neutron stars pack more mass than the Sun into a city-sized sphere.")
+        narration=("Three surprising space facts! Our Sun holds nearly all the solar system's mass. "
+          "Venus spins more slowly than it orbits the Sun. "
+          "And neutron stars squeeze the mass of a star into a city-sized sphere.")
         title='3 SPACE FACTS THAT SOUND IMPOSSIBLE'
     else:
         t=topic.strip()[:90]
@@ -69,17 +70,22 @@ def render(topic, seconds, out):
     im.save(out/'thumbnail.png')
     (out/'narration.txt').write_text(narration,encoding='utf-8')
     wav=out/'narration.wav'
-    if shutil.which('espeak-ng'):
-        subprocess.run(['espeak-ng','-s','165','-v','en-us','-w',str(wav),narration],check=True)
-    else:
-        check=subprocess.run(['ffmpeg','-hide_banner','-filters'],capture_output=True,text=True)
-        if 'flite' not in check.stdout:raise RuntimeError('Offline TTS missing: install espeak-ng or FFmpeg flite.')
-        subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i',f'flite=textfile={out/"narration.txt"}:voice=slt',str(wav)],check=True)
+    # Neural speech is mandatory for this upgrade; don't silently fall back
+    # to the old robotic eSpeak voice and report a fake quality improvement.
+    subprocess.run([sys.executable,'-m','piper','-m','en_US-kristin-medium',
+        '-f',str(wav),'--',narration],check=True)
+    spoken_duration=float(subprocess.check_output(['ffprobe','-v','error','-show_entries',
+        'format=duration','-of','default=noprint_wrappers=1:nokey=1',str(wav)],text=True).strip())
+    if spoken_duration > seconds * 1.32:
+        raise RuntimeError('Neural narration is too long for the requested video. Shorten the script, do not cut words.')
     command=['ffmpeg','-hide_banner','-loglevel','error','-y']
     for i in range(1,4):command+=['-loop','1','-framerate','24','-t',str(seconds/3),'-i',str(out/f'scene{i}.png')]
     command+=['-i',str(wav)]
     filters=''.join(f'[{i}:v]fps=24,format=yuv420p,setsar=1[v{i}];' for i in range(3))
-    filters+='[v0][v1][v2]concat=n=3:v=1:a=0[v];[3:a]apad,atrim=duration='+str(seconds)+'[a]'
+    # A mild tempo adjustment preserves all spoken words when the neural
+    # narration is slightly longer than the video.
+    tempo=max(1.0,spoken_duration / max(1.0, seconds - .3))
+    filters+='[v0][v1][v2]concat=n=3:v=1:a=0[v];[3:a]atempo='+str(tempo)+',apad,atrim=duration='+str(seconds)+'[a]'
     command+=['-filter_complex',filters,'-map','[v]','-map','[a]','-c:v','libx264','-preset','veryfast','-crf','27','-pix_fmt','yuv420p','-movflags','+faststart','-c:a','aac','-b:a','96k','-t',str(seconds),str(out/'video.mp4')]
     subprocess.run(command,check=True)
     raw=subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration:stream=codec_name,width,height','-of','json',str(out/'video.mp4')],text=True)
@@ -91,7 +97,8 @@ def render(topic, seconds, out):
     if (out/'video.mp4').stat().st_size<20000:raise RuntimeError('MP4 is unexpectedly small')
     manifest={'status':'verified','topic':topic,'title':title,'description':narration,'duration_seconds':duration,
       'video_width':720,'video_height':1280,'thumbnail_width':1280,'thumbnail_height':720,
-      'video_bytes':(out/'video.mp4').stat().st_size,'voice_provider':'offline',
+      'video_bytes':(out/'video.mp4').stat().st_size,'voice_provider':'piper-neural',
+      'voice_model':'en_US-kristin-medium','speech_duration_seconds':spoken_duration,
       'paid_media':False,'youtube_uploaded':False}
     (out/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     print('CHE_RENDER_VERIFIED '+json.dumps(manifest))
