@@ -4212,6 +4212,21 @@ export class CheState extends DurableObject {
           return pass;
         }
         const videoReply = await handleVideoLine(request, this.keyEnv || this.env, body, { uploads: (data.youtube_uploads ||= {}) }, this.ctx.storage);
+        // Direct typed/voice video commands poll only briefly on iPhone. Keep
+        // the exact job identity so "is my video ready?" can finish it later.
+        const videoStatus = await videoReply.clone().json().catch(() => null);
+        if (request.method === 'POST' && body?.office !== true &&
+            videoStatus?.pending && videoStatus?.task_id) {
+          await this.ctx.storage.put('che_video_pending', {
+            task_id: videoStatus.task_id,
+            prompt: String(body?.topic || body?.prompt || '').slice(0, 8000),
+            title: String(body?.topic || 'Video').slice(0, 60),
+            created_at: new Date().toISOString(),
+          });
+        } else if (request.method === 'GET' && videoStatus?.verified && videoStatus?.media_url) {
+          const stored = await this.ctx.storage.get('che_video_pending');
+          if (stored?.task_id === videoStatus.task_id) await this.ctx.storage.delete('che_video_pending');
+        }
         await this.ctx.storage.put('che', data);
         return videoReply;
       }
