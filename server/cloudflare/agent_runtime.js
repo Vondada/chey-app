@@ -398,11 +398,15 @@ export function recordAgentWork(data, { task = {}, agent = {}, outcome = 'comple
     agent: clip(agent.name || task.partner_name || 'Office agent', 40) || 'Office agent',
     agent_id: clip(agent.id || task.partner_id, 80),
     task_id: clip(task.id, 80),
-    task: clip(task.task, 200),
+    // Do not duplicate raw owner prompts or provider errors in the general
+    // per-agent memory log. Both may contain passwords, tokens or private
+    // content. Use the task ID to retrieve details through the existing
+    // owner-authenticated task history instead.
+    task: 'See owner-authorized task history',
     status: clip(outcome, 20) || 'complete',
     verified_by_che: Boolean(verified),
     memory_note_id: clip(memoryNoteId, 120),
-    error: clip(error, 300),
+    error: error ? 'Failure recorded; details in owner-authorized task history' : '',
     at: now(),
   };
   data.agent_work_log.unshift(entry);
@@ -413,7 +417,8 @@ export function recordAgentWork(data, { task = {}, agent = {}, outcome = 'comple
   return entry;
 }
 
-export function queueAgentTask(data, agent, task, source = 'owner', options = {}) {  const at = now();
+export function queueAgentTask(data, agent, task, source = 'owner', options = {}) {
+  const at = now();
   const entry = {
     id: crypto.randomUUID(),
     partner_id: agent.id,
