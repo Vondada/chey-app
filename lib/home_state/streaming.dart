@@ -198,6 +198,9 @@ extension _CheHomeStreaming on _CHEHomeState {
     request.headers.addAll(_authHeaders);
     final explainLevel = _deeperOnce ? 'deeper' : _explainLevel;
     _deeperOnce = false;
+    // The Worker enforces the app ask-first gate against these grants, so
+    // every turn carries what the owner has already said yes to.
+    final appGrants = await CheAppPermissions.granted();
     request.body = jsonEncode({
       'message': userMessage,
       'history': history,
@@ -209,6 +212,7 @@ extension _CheHomeStreaming on _CHEHomeState {
       'requested_capabilities': turnCapabilities,
       'screen_context': _pendingScreenContext,
       'attachment': _pendingAttachment,
+      'app_grants': appGrants.toList(),
       'client_identity_profile': _cheIdentityProfile,
       'client_personality_profile': learnedPersonality,
       'client_memories': savedMemories,

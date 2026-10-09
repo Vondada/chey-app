@@ -62,7 +62,7 @@ import { webAppPage } from './web_app.js';
 import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachmentText, condenseSkills, loadLearnedSkills, READ_FOR_SKILLS, redactSensitive, saveLearnedSkills, speakLearned, speakSkillList } from './self_skills.js';
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { noteJobActivity } from './job_activity.js';
-import { PENDING_OWNER_ACTION_KEY, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply } from './owner_action_gate.js';
+import { PENDING_OWNER_ACTION_KEY, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen } from './owner_action_gate.js';
 import { changeHistoryIntent, guardGroundedFacts, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, requestedCodeNames, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
@@ -6406,6 +6406,53 @@ export class CheState extends DurableObject {
         } catch (_) {
           // Fail closed: if the hold cannot be recorded, nothing gated runs.
           return json({ message: 'I could not record that safely, so I did not act. Please say it again.', reply: 'I could not record that safely, so I did not act. Please say it again.', code_review_passed: false, owner_approval_required: true }, 503);
+        }
+
+        // Owner rule: open or act in an app only after the owner gave explicit
+        // permission for that app. Enforced here in code, exactly like money.
+        // The owner's own "open X" in this request is that permission and is
+        // remembered; a turn that needs an app without opening it ("read my
+        // last note in notes") is held until a plain yes grants that app. The
+        // app sends the grants it has recorded with every turn, so an explicit
+        // "open YouTube" earlier in the conversation counts here too.
+        try {
+          const heldApp = await this.ctx.storage.get(PENDING_APP_ACTION_KEY);
+          if (heldApp) {
+            await this.ctx.storage.put(PENDING_APP_ACTION_KEY, null);
+            if (isOwnerYes(message) && Date.now() - Number(heldApp.at || 0) < PENDING_APP_ACTION_MS) {
+              const grantedName = String(heldApp.app || '').toLowerCase().trim();
+              const storedAfterYes = await this.ctx.storage.get(APPS_GRANTED_KEY) || [];
+              if (grantedName && !storedAfterYes.includes(grantedName)) {
+                await this.ctx.storage.put(APPS_GRANTED_KEY, [...storedAfterYes, grantedName]);
+              }
+              message = String(heldApp.text || message);
+            }
+          }
+          const sentGrants = (Array.isArray(body.app_grants) ? body.app_grants : [])
+            .map((v) => String(v || '').toLowerCase().trim()).filter(Boolean);
+          if (sentGrants.length) {
+            const stored = await this.ctx.storage.get(APPS_GRANTED_KEY) || [];
+            const merged = [...new Set([...stored, ...sentGrants])];
+            if (merged.length !== stored.length) await this.ctx.storage.put(APPS_GRANTED_KEY, merged);
+          }
+          const explicitApp = classifyExplicitAppOpen(message);
+          const needApp = explicitApp || classifyAppNeed(message);
+          if (needApp) {
+            let allowedApps = await this.ctx.storage.get(APPS_GRANTED_KEY) || [];
+            if (explicitApp && !allowedApps.includes(explicitApp)) {
+              // The owner just named the app himself: those words are the permission.
+              allowedApps = [...allowedApps, explicitApp];
+              await this.ctx.storage.put(APPS_GRANTED_KEY, allowedApps);
+            }
+            const appGate = gateAppAccess(needApp, allowedApps);
+            if (!appGate.allowed) {
+              await this.ctx.storage.put(PENDING_APP_ACTION_KEY, { app: appGate.app, text: message, at: Date.now() });
+              return json({ message: appGate.ask, reply: appGate.ask, held_for_owner: true, owner_action_kind: 'app', app_name: appGate.app, code_review_passed: false, owner_approval_required: true });
+            }
+          }
+        } catch (_) {
+          // Fail closed: if the app hold cannot be recorded, nothing gated opens.
+          return json({ message: 'I could not record that safely, so I did not open anything. Please say it again.', reply: 'I could not record that safely, so I did not open anything. Please say it again.', code_review_passed: false, owner_approval_required: true }, 503);
         }
 
         // A spoken resource list is choosable only on the very next turn; any

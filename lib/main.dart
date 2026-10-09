@@ -103,6 +103,7 @@ import 'rooms/che_art_studio.dart';
 import 'rooms/che_room_segments.dart';
 import 'rooms/che_theater_room.dart';
 import 'rooms/che_workshop_room.dart';
+import 'security/che_app_permissions.dart';
 import 'security/che_password_vault.dart';
 import 'security/che_vault_auth.dart';
 import 'browser/che_browser.dart' show CheBrowserActions, CheBrowserScreen;

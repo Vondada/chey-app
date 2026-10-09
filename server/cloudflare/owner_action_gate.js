@@ -87,6 +87,64 @@ export function gateAppAccess(appName, allowedApps = []) {
   };
 }
 
+// Apps CHE can open or act in, in the lowercase names the rest of CHE uses.
+// Short or ambiguous aliases (x, ig, fb, drive, yt) are left out on purpose:
+// matching them would hold innocent turns like "on the x axis". Every false
+// hold costs the owner one yes; a missed grant would skip the ask entirely.
+const KNOWN_APPS = [
+  'app store', 'google calendar', 'google maps', 'google drive', 'google docs', 'microsoft teams',
+  'prime video', 'yahoo mail', 'pluto tv', 'disney+', 'tradingview', 'ninjatrader', 'tradesea',
+  'instagram', 'snapchat', 'facebook', 'linkedin', 'whatsapp', 'messenger', 'telegram',
+  'chatgpt', 'youtube', 'spotify', 'outlook', 'notion', 'pinterest', 'netflix',
+  'weather', 'reminders', 'messages', 'settings', 'safari', 'photos', 'calendar', 'amazon',
+  'paypal', 'reddit', 'discord', 'twitch', 'threads', 'gmail', 'slack', 'zoom', 'hulu', 'tubi',
+  'github', 'grok', 'music', 'notes', 'mail', 'email', 'maps', 'clock', 'camera',
+];
+// Sorted longest first so "google maps" matches before "maps" would.
+const APPS_RE = [...new Set(KNOWN_APPS)].sort((a, b) => b.length - a.length)
+  .map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+// "open X" as the owner says it: the verb names the app outright, with a
+// clean end after it. No "my" or "the" before the name, so "use my notes to
+// answer this" (CHE's own memory, not the Notes app) never grants anything.
+const APP_OPEN_RE = new RegExp(`${LEAD}(?:open|launch|play|go\\s+to|watch|use|show\\s+me)\\s+(${APPS_RE})(?=$|[.,!?;]|\\s+(?:and|to|now|please)\\b)`, 'i');
+const OPEN_VERB_RE = /\b(?:open|launch|play|go\s+to|watch|use|show\s+me)\b/i;
+// "the notes app" and friends: the word "app" makes the name unambiguous.
+const APP_NAMED_RE = new RegExp(`(?:${APPS_RE})\\s+app\\b`, 'i');
+// A turn that needs an app without opening it: "read my last note in notes",
+// "what's on spotify". "my" is never allowed before the name, so "in my notes"
+// (CHE's own memory) stays ordinary chat. GitHub is left out: repo research
+// goes through CHE's own API ("study X on GitHub", "the github readme"), not
+// through the owner's app — only an explicit "open github" grants it.
+const IMPLICIT_APPS_RE = [...new Set(KNOWN_APPS.filter((a) => a !== 'github'))].sort((a, b) => b.length - a.length)
+  .map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+const APP_IN_RE = new RegExp(`\\b(?:in|on)\\s+(?:the\\s+)?(${IMPLICIT_APPS_RE})\\b`, 'i');
+
+// The owner's own "open X" in this request is permission for that app.
+// Returns the lowercase app name, or '' when the request does not open one.
+export function classifyExplicitAppOpen(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!t) return '';
+  const direct = APP_OPEN_RE.exec(t);
+  if (direct) return direct[1].toLowerCase();
+  const named = APP_NAMED_RE.exec(t);
+  if (named && OPEN_VERB_RE.test(t)) return named[0].toLowerCase().replace(/\s+app$/, '');
+  return '';
+}
+
+// A request that needs an app the owner has not opened outright; CHE must ask
+// permission before acting in it. Returns the lowercase app name, or '' for
+// ordinary chat. An explicit "open X" returns '' here: it carries permission.
+export function classifyAppNeed(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!t) return '';
+  if (classifyExplicitAppOpen(t)) return '';
+  const named = APP_NAMED_RE.exec(t);
+  if (named) return named[0].toLowerCase().replace(/\s+app$/, '');
+  const inApp = APP_IN_RE.exec(t);
+  if (inApp) return inApp[1].toLowerCase();
+  return '';
+}
+
 // Another AI's money or delete request is never carried out, whatever it says.
 // The reply names what did not happen and the owner's next step, instead of a
 // bare refusal. Returns '' when the request has no money or delete action.
@@ -102,6 +160,13 @@ export function peerActionReply(text) {
 // answers. Only a plain yes at the start of the next turn releases it.
 export const PENDING_OWNER_ACTION_KEY = 'che:pending_owner_action';
 export const PENDING_OWNER_ACTION_MS = 10 * 60 * 1000;
+
+// The apps the owner has granted, in Durable Object storage, and the held
+// "may I use X" request waiting for his yes. Grants are permanent: one yes,
+// or one explicit "open X", allows that app from then on.
+export const APPS_GRANTED_KEY = 'che:allowed_apps';
+export const PENDING_APP_ACTION_KEY = 'che:pending_app_action';
+export const PENDING_APP_ACTION_MS = 10 * 60 * 1000;
 
 const YES_PHRASES = new Set(['yes', 'yeah', 'yep', 'yup', 'sure', 'confirm', 'confirmed', 'go ahead', 'do it', 'yes go ahead', 'yes do it', 'please do it', 'yes please do it']);
 

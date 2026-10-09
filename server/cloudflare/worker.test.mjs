@@ -204,6 +204,65 @@ test('pairing, owner gate, memories, and revocation', async () => {
   assert.equal((await send('/api/chat', 'POST', { message: 'hi' }, token)).status, 401);
 });
 
+test('app permission: an ungranted app is held until a plain yes, then remembered', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', AI: { run: async () => ({ response: 'Reading your note now, sir.' }) } };
+  const state = new CheState({ storage: {
+    get: (key) => saved.get(key),
+    put: (key, value) => saved.set(key, value),
+    setAlarm: async () => {},
+  } }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, method = 'GET', body = {}, token = '') => worker.fetch(
+    new Request(`https://che.example${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
+    }), env,
+  );
+  const token = (await (await send('/api/pair', 'POST', { code: '123456' })).json()).device_token;
+  const chat = async (body) => {
+    const response = await send('/api/chat', 'POST', body, token);
+    const text = await response.text();
+    return { response, text, json: () => JSON.parse(text) };
+  };
+
+  // Autonomy exam L4: the owner needs the Notes app but never granted it, so
+  // CHE must ask first instead of claiming she opened it.
+  const held = await chat({ message: 'read my last note in notes' });
+  const heldBody = held.json();
+  assert.equal(held.response.status, 200);
+  assert.equal(heldBody.held_for_owner, true);
+  assert.match(heldBody.message, /not given me permission to use notes/);
+  assert.equal(heldBody.app_name, 'notes');
+
+  // Anything but a plain yes drops the hold without granting anything.
+  await chat({ message: 'tell me a joke' });
+  assert.ok(!(saved.get('che:allowed_apps') || []).includes('notes'));
+
+  // It is asked again next time, and a plain yes grants it and runs the held request.
+  const heldAgain = (await chat({ message: 'read my last note in notes' })).json();
+  assert.equal(heldAgain.held_for_owner, true);
+  const released = await chat({ message: 'yes' });
+  assert.match(released.text, /Reading your note now, sir/);
+  assert.deepEqual(saved.get('che:allowed_apps'), ['notes']);
+
+  // The grant is permanent: the same request passes without asking again.
+  const again = await chat({ message: 'read my last note in notes' });
+  assert.doesNotMatch(again.text, /permission/);
+  assert.match(again.text, /Reading your note now, sir/);
+
+  // The owner's own "open X" is permission and is remembered too.
+  const explicit = await chat({ message: 'open spotify' });
+  assert.doesNotMatch(explicit.text, /permission/);
+  assert.ok(saved.get('che:allowed_apps').includes('spotify'));
+
+  // Grants the app recorded (from an explicit open on the phone) arrive with
+  // the next turn and are merged, so the Worker never asks twice.
+  await chat({ message: 'hi', app_grants: ['youtube'] });
+  assert.ok(saved.get('che:allowed_apps').includes('youtube'));
+});
+
 
 test('builtin skill plugins when CHE_PLUGIN_CATALOG is empty', async () => {
   const saved = new Map();
