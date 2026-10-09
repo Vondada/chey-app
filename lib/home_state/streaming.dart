@@ -203,6 +203,9 @@ extension _CheHomeStreaming on _CHEHomeState {
     request.headers.addAll(_authHeaders);
     final explainLevel = _deeperOnce ? 'deeper' : _explainLevel;
     _deeperOnce = false;
+    // The Worker enforces the app ask-first gate against these grants, so
+    // every turn carries what the owner has already said yes to.
+    final appGrants = await CheAppPermissions.granted();
     request.body = jsonEncode({
       'message': userMessage,
       'history': history,
@@ -214,6 +217,7 @@ extension _CheHomeStreaming on _CHEHomeState {
       'requested_capabilities': turnCapabilities,
       'screen_context': _pendingScreenContext,
       'attachment': _pendingAttachment,
+      'app_grants': appGrants.toList(),
       'client_identity_profile': _cheIdentityProfile,
       'client_personality_profile': learnedPersonality,
       'client_memories': savedMemories,
@@ -306,6 +310,18 @@ extension _CheHomeStreaming on _CHEHomeState {
 
       final data = jsonDecode(trimmed);
       final type = data['type']?.toString();
+
+      // Owner-approval holds are ordinary JSON from the Worker, not NDJSON
+      // "delta" events. Always show and speak the actual question instead
+      // of silently discarding it and reporting an empty response.
+      if (type == null && data['held_for_owner'] == true) {
+        final question = data['message']?.toString() ?? data['reply']?.toString() ?? '';
+        if (question.isNotEmpty) {
+          complete.write(question);
+          onPartial(complete.toString());
+        }
+        continue;
+      }
 
       if (type == 'error') {
         final message = data['message']?.toString() ?? 'Unknown CHE Agent error.';
