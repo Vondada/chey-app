@@ -56,3 +56,14 @@ test('MoneyPrinter distinguishes failed and unreachable jobs', async () => {
   const offline = await moneyPrinterVideo(env, 'printing press', async () => { throw new Error('offline'); });
   assert.equal(offline.ok, false);
 });
+
+test('MoneyPrinter never reports a missing or HTML preview as an MP4', async () => {
+  const env = { CHE_VIDEO_GEN_URL: 'https://renderer.example' };
+  const out = await moneyPrinterStatus(env, 'fake', async (url) =>
+    String(url).includes('cdn.example')
+      ? new Response('<html>Not a video</html>', { headers: { 'content-type': 'text/html' } })
+      : reply({ data: { videos: ['https://cdn.example/missing.mp4'] } }));
+  assert.equal(out.ok, false);
+  assert.equal(out.stage, 'verify');
+  assert.equal(out.media_url, undefined);
+});

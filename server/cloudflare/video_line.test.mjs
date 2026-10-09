@@ -35,8 +35,8 @@ test('a real media stream and YouTube id preserve both the file and watch link',
         });
       }
       if (target.includes('cdn.example')) {
-        return new Response(Uint8Array.from([0, 1, 2, 3]), {
-          headers: { 'content-type': 'video/mp4', 'content-length': '4' },
+        return new Response(Uint8Array.from([0,0,0,24,102,116,121,112,105,115,111,109]), {
+          headers: { 'content-type': 'video/mp4', 'content-length': '12' },
         });
       }
       if (target.includes('uploadType=resumable')) {
@@ -72,7 +72,7 @@ test('no connected YouTube token means no upload, and the same file is never upl
       });
     }
     if (target.includes('cdn.example')) {
-      return new Response(Uint8Array.from([0]), { headers: { 'content-type': 'video/mp4', 'content-length': '1' } });
+      return new Response(Uint8Array.from([0,0,0,24,102,116,121,112,105,115,111,109]), { headers: { 'content-type': 'video/mp4', 'content-length': '12' } });
     }
     if (target.includes('uploadType=resumable')) {
       assert.equal(options.headers.authorization, 'Bearer owner-token');
