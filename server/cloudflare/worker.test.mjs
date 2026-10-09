@@ -261,6 +261,18 @@ test('app permission: an ungranted app is held until a plain yes, then remembere
   // the next turn and are merged, so the Worker never asks twice.
   await chat({ message: 'hi', app_grants: ['youtube'] });
   assert.ok(saved.get('che:allowed_apps').includes('youtube'));
+
+  // One explicitly opened app must not authorize a second app in the request.
+  const compound = (await chat({ message: 'open YouTube and read the latest on Slack' })).json();
+  assert.equal(compound.held_for_owner, true);
+  assert.equal(compound.app_name, 'slack');
+  assert.ok(!saved.get('che:allowed_apps').includes('slack'));
+
+  // Merely mentioning an app elsewhere than the action target does not grant it.
+  const unrelated = (await chat({ message: 'open the report and tell me why the Gmail app is slow' })).json();
+  assert.equal(unrelated.held_for_owner, true);
+  assert.equal(unrelated.app_name, 'gmail');
+  assert.ok(!saved.get('che:allowed_apps').includes('gmail'));
 });
 
 
