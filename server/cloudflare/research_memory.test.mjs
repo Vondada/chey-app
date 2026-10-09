@@ -131,3 +131,15 @@ test('brain graph links live agent nodes to related memory notes', () => {
   assert.ok(taskNode);
   assert.ok(live.links.some((l) => (l.source === 'agent-task-t1' && l.target === 'n1') || (l.source === 'n1' && l.target === 'agent-task-t1')));
 });
+
+test('bounded brain graph does not falsely hide an agent behind another agent batch', () => {
+  const team_tasks = Array.from({ length: 35 }, (_, i) => ({
+    id: `atlas-${i}`, partner_name: 'Atlas', partner_id: 'atlas-id',
+    task: `Atlas queue ${i}`, status: 'queued',
+  }));
+  team_tasks.push({ id: 'sage-live', partner_name: 'Sage', partner_id: 'sage-id', task: 'Verify accounts', status: 'running' });
+  const nodes = buildAgentTaskNodes({ team_tasks });
+  assert.equal(nodes.length, 20);
+  assert.ok(nodes.some((n) => n.agent === 'Sage' && n.task_id === 'sage-live'));
+  assert.ok(nodes.some((n) => n.agent === 'Atlas'));
+});
