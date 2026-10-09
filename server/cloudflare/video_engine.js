@@ -26,7 +26,9 @@ export async function probeVideoEngine(env = {}, fetcher = fetch) {
   try {
     const origin = new URL(String(env.CHE_VIDEO_GEN_URL).trim());
     if (origin.protocol !== 'https:') return { ...status, reason: 'Video renderer requires HTTPS.' };
-    const base = origin.toString().replace(/\\/+$/, '').replace(/\\/api\\/v1$/, '');
+    let base = origin.toString();
+    while (base.endsWith('/')) base = base.slice(0, -1);
+    if (base.endsWith('/api/v1')) base = base.slice(0, -7);
     const response = await fetcher(`${base}/api/v1/tasks?page=1&page_size=1`, {
       headers: env.CHE_VIDEO_GEN_TOKEN ? { 'X-API-Key': env.CHE_VIDEO_GEN_TOKEN } : {},
       signal: AbortSignal.timeout(12000),
