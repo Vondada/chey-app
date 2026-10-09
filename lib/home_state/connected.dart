@@ -266,6 +266,9 @@ extension _CheHomeConnected on _CHEHomeState {
       return true;
     }
 
+    // Installed skill commands need the capability router, not artifact search.
+    if (isInstalledSkillRequest(message)) return false;
+
     // Find anything made in any room: "play the song Mira made".
     final made = RegExp(r"^(?:play|show|open|find|read|get)\s+(?:me\s+)?(.+?\b(?:made|created|wrote|drew|did|finished)\b.*)$").firstMatch(lower);
     final find = made ?? RegExp(r'^find\s+(?:me\s+)?(.+)$').firstMatch(lower);

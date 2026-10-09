@@ -11,7 +11,10 @@ extension _CheHomeStreaming on _CHEHomeState {
     // Live repository/status claims require receipts from the connected
     // Worker/GitHub path. Never let an offline model invent files, workflows,
     // SHAs, jobs, or deployment state when that evidence is unavailable.
-    if (cheTurnRequiresVerifiedRemoteEvidence(userMessage, history)) return null;
+    if (isInstalledSkillRequest(userMessage) ||
+        cheTurnRequiresVerifiedRemoteEvidence(userMessage, history)) {
+      return null;
+    }
 
     // Saved library passages first: the owner asked CHE to remember these.
     final library = await _offlineLibrary.search(userMessage);
@@ -66,6 +69,7 @@ extension _CheHomeStreaming on _CHEHomeState {
     }
 
     final trimmedRequest = userMessage.trim();
+    final installedSkillRequest = isInstalledSkillRequest(trimmedRequest);
     final hasConversationContext = history.any(
       (item) => (item['content'] ?? item['text'] ?? '').trim().isNotEmpty,
     );
@@ -84,7 +88,7 @@ extension _CheHomeStreaming on _CHEHomeState {
       caseSensitive: false,
     ).hasMatch(trimmedRequest);
     final terminalChatOnly = cheIsTerminalChatOnlyRequest(trimmedRequest);
-    final codeRequest = !terminalChatOnly &&
+    final codeRequest = !installedSkillRequest && !terminalChatOnly &&
         (fixThis || cheIsSelfUpdateRequest(trimmedRequest));
 
     final projectMatch = RegExp(
@@ -94,7 +98,7 @@ extension _CheHomeStreaming on _CHEHomeState {
       caseSensitive: false,
     ).firstMatch(trimmedRequest);
 
-    if (!terminalChatOnly && !codeRequest && projectMatch != null) {
+    if (!installedSkillRequest && !terminalChatOnly && !codeRequest && projectMatch != null) {
       var projectType = projectMatch.group(1)!.toLowerCase();
       if (projectType == 'site') projectType = 'website';
       if (projectType == 'story') projectType = 'book';
@@ -162,6 +166,7 @@ extension _CheHomeStreaming on _CHEHomeState {
     // Offline knowledge first: answer from what CHE already learned (or let
     // the on-phone brain combine saved notes) before spending cloud credits.
     if (_pendingAttachment == null &&
+        !installedSkillRequest &&
         !hasConversationContext &&
         !requiresVerifiedRemoteEvidence &&
         CheKnowledgeCache.cacheable(trimmedRequest)) {
@@ -353,6 +358,20 @@ extension _CheHomeStreaming on _CHEHomeState {
       }
 
       if (type == 'done') {
+        if (data['source'] == 'che_installed_skills' && mounted) {
+          final ok = data['ok'] == true;
+          // The delta pipeline speaks the result. This receipt adds visible
+          // and screen-reader status without starting another spoken turn.
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Semantics(
+              liveRegion: true,
+              child: Text(ok
+                  ? 'Skill request completed.'
+                  : 'Skill request could not be completed.'),
+            ),
+          ));
+          unawaited(_statusHaptic(ok ? 3 : 4));
+        }
         final mediaUrl = data['media_url']?.toString().trim() ?? '';
         final mediaType = data['media_type']?.toString().trim() ?? '';
         if (mediaUrl.startsWith('https://')) {
@@ -380,7 +399,7 @@ extension _CheHomeStreaming on _CHEHomeState {
     _pendingAttachment = null;
     if (mounted) _set(() {});
     final finalText = complete.toString().trim();
-    if (!hadAttachment && _streamMediaUrl == null) {
+    if (!installedSkillRequest && !hadAttachment && _streamMediaUrl == null) {
       unawaited(_knowledge.remember(trimmedRequest, finalText));
     }
     return finalText;
