@@ -1,6 +1,10 @@
 name: CHE Free Video Render
-run-name: CHE free render ${{ inputs.job_id || github.sha }}
+run-name: CHE free render ${{ github.event.client_payload.job_id || inputs.job_id || github.sha }}
 on:
+  # Uses Contents:write permission as a fallback when the existing token
+  # cannot call workflow_dispatch, which requires Actions:write.
+  repository_dispatch:
+    types: [che_video_render]
   workflow_dispatch:
     inputs:
       job_id:
@@ -17,7 +21,7 @@ on:
         type: string
         default: "15"
   push:
-    branches: [chatgpt/free-video-render-backend]
+    branches: [chatgpt/video-repository-dispatch-fallback]
     paths:
       - ".github/workflows/che-video-render.yml"
       - "tools/che_video_render.py"
@@ -37,7 +41,9 @@ jobs:
           python-version: "3.12"
       - name: Install offline renderer
         run: |
-          python -m pip install --quiet pillow
+          python -m pip install --quiet pillow piper-tts
+          # Kristin is trained on public-domain LibriVox recordings.
+          python -m piper.download_voices en_US-kristin-medium
           if ! command -v ffmpeg >/dev/null || ! command -v espeak-ng >/dev/null; then
             sudo apt-get update -qq
             sudo apt-get install -y -qq ffmpeg espeak-ng
@@ -45,16 +51,17 @@ jobs:
           command -v ffmpeg
           command -v ffprobe
           command -v espeak-ng
+          python -m piper --help >/dev/null
       - name: Render and independently probe video and thumbnail
         env:
-          TOPIC: ${{ inputs.topic || '3 surprising facts about space' }}
-          DURATION: ${{ inputs.seconds || '15' }}
+          TOPIC: ${{ github.event.client_payload.topic || inputs.topic || '3 surprising facts about space' }}
+          DURATION: ${{ github.event.client_payload.seconds || inputs.seconds || '15' }}
         run: |
           python tools/che_video_render.py --topic "$TOPIC" --seconds "$DURATION" --out rendered
       - name: Retain files for authenticated owner preview
         uses: actions/upload-artifact@v4
         with:
-          name: che-video-${{ inputs.job_id || github.sha }}
+          name: che-video-${{ github.event.client_payload.job_id || inputs.job_id || github.sha }}
           path: |
             rendered/video.mp4
             rendered/thumbnail.png
