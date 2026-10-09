@@ -110,3 +110,40 @@ test('a topic that is already being produced is refused until its reservation go
   const retried = await runVideoLine(env, feed, { accessToken: 'owner-token', uploads: stale });
   assert.notEqual(retried.stage, 'busy', 'a stale reservation does not block a retry');
 });
+
+test('MoneyPrinter Office preserves a pending render ID and resumes the same job without starting another video', async () => {
+  const uploads = {};
+  let started = 0, finished = false, uploaded = 0;
+  const env = { CHE_TREND_URLS: 'https://feeds.example/top', CHE_VIDEO_GEN_URL: 'https://renderer.example' };
+  const fetcher = async (url, options = {}) => {
+    const target = String(url);
+    if (target.includes('feeds.example')) return { ok: true, text: async () => '<rss><channel><item><title>Why Rome fell</title></item></channel></rss>' };
+    if (target.endsWith('/api/v1/videos')) { started++; return new Response(JSON.stringify({ data: { task_id: 'persistent1' } })); }
+    if (target.includes('/api/v1/tasks/persistent1'))
+      return new Response(JSON.stringify(finished ? { data: { videos: ['https://cdn.example/rome.mp4'] } } : { data: { state: 1 } }));
+    if (target.includes('cdn.example')) return new Response(Uint8Array.from([0,0,0,24,102,116,121,112,105,115,111,109]));
+    if (target.includes('uploadType=resumable')) {
+      uploaded++;
+      return new Response('', { headers: { location: 'https://www.googleapis.com/upload/youtube/v3/videos?upload_id=p1' } });
+    }
+    if (target.includes('upload_id=p1')) return new Response(JSON.stringify({ id: 'confirmed' }));
+    return new Response('', { status: 404 });
+  };
+  const youtube = { accessToken: 'owner-token', uploads };
+  const first = await runVideoLine(env, fetcher, youtube);
+  assert.equal(first.ok, true);
+  assert.equal(first.pending, true);
+  assert.equal(first.task_id, 'persistent1');
+  assert.equal(uploads[topicKey('Why Rome fell')].task_id, 'persistent1');
+  assert.equal(uploaded, 0);
+  const second = await runVideoLine(env, fetcher, youtube);
+  assert.equal(second.pending, true);
+  assert.equal(started, 1);
+  finished = true;
+  const third = await runVideoLine(env, fetcher, youtube);
+  assert.equal(third.ok, true);
+  assert.equal(third.pending, undefined);
+  assert.equal(third.board[0].link, 'https://www.youtube.com/watch?v=confirmed');
+  assert.equal(started, 1);
+  assert.equal(uploaded, 1);
+});

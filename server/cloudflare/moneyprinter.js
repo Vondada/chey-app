@@ -19,8 +19,8 @@ function validMediaUrl(raw) {
   }
 }
 
-// A renderer JSON response is not a finished file. Prove that the actual URL
-// serves MP4 bytes before surfacing it to the owner. Read only the first chunk.
+// A renderer JSON response is not a finished file. Verify a real MP4 header
+// before surfacing the URL. Stream chunks need not align with MP4 boxes.
 export async function verifyVideoMedia(raw, fetcher = fetch) {
   if (!validMediaUrl(raw)) return { ok: false, error: 'Renderer returned an unsafe or invalid video address.' };
   try {
@@ -30,11 +30,22 @@ export async function verifyVideoMedia(raw, fetcher = fetch) {
     });
     if (!response.ok || !response.body) return { ok: false, error: 'Video file is not accessible.' };
     const reader = response.body.getReader();
-    const first = await reader.read();
-    await reader.cancel().catch(() => {});
-    const bytes = first.value || new Uint8Array();
-    const mp4 = bytes.length >= 12 && bytes[4] === 0x66 && bytes[5] === 0x74 &&
-      bytes[6] === 0x79 && bytes[7] === 0x70;
+    const prefix = new Uint8Array(12);
+    let count = 0;
+    try {
+      while (count < prefix.length) {
+        const next = await reader.read();
+        if (next.done) break;
+        const chunk = next.value || new Uint8Array();
+        const take = Math.min(chunk.length, prefix.length - count);
+        prefix.set(chunk.subarray(0, take), count);
+        count += take;
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+    }
+    const mp4 = count >= 12 && prefix[4] === 0x66 && prefix[5] === 0x74 &&
+      prefix[6] === 0x79 && prefix[7] === 0x70;
     if (!mp4) return { ok: false, error: 'Renderer did not return a real MP4 file.' };
     return { ok: true, verified: true, content_type: 'video/mp4' };
   } catch {
@@ -87,6 +98,8 @@ export async function moneyPrinterVideo(env, topic, fetcher = fetch, options = {
     'content-type': 'application/json',
     ...(env.CHE_VIDEO_GEN_TOKEN ? { 'X-API-Key': env.CHE_VIDEO_GEN_TOKEN } : {}),
   };
+  const seconds = Number(options.seconds);
+  const targetSeconds = Number.isFinite(seconds) && seconds > 0 ? Math.max(5, Math.min(720, Math.round(seconds))) : null;
   try {
     const started = await fetcher(`${base}/videos`, {
       method: 'POST',
@@ -96,7 +109,7 @@ export async function moneyPrinterVideo(env, topic, fetcher = fetch, options = {
         video_subject: subject,
         video_aspect: '9:16',
         ...(options.script ? { video_script: String(options.script).slice(0, 8000) } : {}),
-        ...(options.seconds ? { video_clip_duration: 5, paragraph_number: 3 } : {}),
+        ...(targetSeconds ? { video_clip_duration: 5, paragraph_number: Math.ceil(targetSeconds / 5) } : {}),
       }),
     });
     const created = await started.json().catch(() => ({}));

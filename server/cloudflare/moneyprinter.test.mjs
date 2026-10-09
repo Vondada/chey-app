@@ -67,3 +67,29 @@ test('MoneyPrinter never reports a missing or HTML preview as an MP4', async () 
   assert.equal(out.stage, 'verify');
   assert.equal(out.media_url, undefined);
 });
+
+test('verification accepts a valid MP4 header split across stream chunks', async () => {
+  const { verifyVideoMedia } = await import('./moneyprinter.js');
+  const chunks = [Uint8Array.from([0,0,0,24]), Uint8Array.from([102,116,121,112]), Uint8Array.from([105,115,111,109])];
+  const result = await verifyVideoMedia('https://cdn.example/real.mp4',
+    async () => new Response(new ReadableStream({
+      pull(controller) {
+        if (chunks.length) controller.enqueue(chunks.shift());
+        else controller.close();
+      },
+    })));
+  assert.equal(result.ok, true);
+});
+test('MoneyPrinter translates different requested durations into different paragraph counts', async () => {
+  const sent = [];
+  const fetcher = async (url, options) => {
+    if (String(url).endsWith('/api/v1/videos')) {
+      sent.push(JSON.parse(options.body));
+      return reply({ data: { task_id: 'still-rendering' } });
+    }
+    return reply({ data: { state: 1 } });
+  };
+  for (const seconds of [5, 15, 120])
+    await moneyPrinterVideo({ CHE_VIDEO_GEN_URL: 'https://renderer.example' }, 'Space video', fetcher, { seconds });
+  assert.deepEqual(sent.map(x=>x.paragraph_number), [1,3,24]);
+});
