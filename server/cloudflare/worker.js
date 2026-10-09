@@ -4718,7 +4718,7 @@ export class CheState extends DurableObject {
             mediaHeaders['Accept-Ranges'] = 'bytes';
             const requestedRange = request.headers.get('range');
             if (requestedRange) {
-              const match = /^bytes=(\\d+)-(\\d*)$/.exec(requestedRange.trim());
+              const match = /^bytes=(\d+)-(\d*)$/.exec(requestedRange.trim());
               const start = match ? Number(match[1]) : NaN;
               const end = match && match[2] ? Number(match[2]) : bytes.byteLength - 1;
               if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
