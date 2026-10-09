@@ -7721,8 +7721,8 @@ export class CheState extends DurableObject {
         // A previously accepted asynchronous video can be checked without
         // asking the model to invent a progress report or starting a new job.
         const priorVideo = await this.ctx.storage.get('che_video_pending');
-        if (priorVideo?.task_id && /\\b(video|render|clip)\\b/i.test(message) &&
-            /\\b(check|status|ready|finished|done|preview|show)\\b/i.test(message) &&
+        if (priorVideo?.task_id && /\b(video|render|clip)\b/i.test(message) &&
+            /\b(check|status|ready|finished|done|preview|show)\b/i.test(message) &&
             !requestedCapabilities.includes('video_generation')) {
           const checked = await generateVideo(this.keyEnv || this.env, this.ctx.storage, {
             task_id: priorVideo.task_id, prompt: priorVideo.prompt, title: priorVideo.title, thumbnail: true,
