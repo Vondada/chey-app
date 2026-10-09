@@ -45,6 +45,34 @@ export async function startGithubVideo(env, topic, seconds = 15, fetcher = fetch
   } catch {
     return { ok: false, error: 'GitHub Actions could not be reached. No render was queued.' };
   }
+  if (response.status !== 204 && [403, 404].includes(response.status)) {
+    // Workflow dispatch requires Actions:write. Owner's existing coding token
+    // may already have Contents:write, which is sufficient for
+    // repository_dispatch. Use that permission without creating new tokens.
+    try {
+      const fallback = await fetcher('https://api.github.com/repos/' + REPO + '/dispatches', {
+        method: 'POST',
+        headers: { ...githubHeaders(env), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event_type: 'che_video_render',
+          client_payload: { job_id: taskId, topic: prompt, seconds: String(duration) },
+        }),
+        signal: AbortSignal.timeout(14000),
+      });
+      if (fallback.status === 204) {
+        return { ok: true, pending: true, task_id: taskId,
+          provider: 'github-actions-offline', dispatch_method: 'repository_dispatch', stage: 'queued' };
+      }
+      return { ok: false, error:
+        'GitHub refused both video dispatch methods (workflow HTTP ' + response.status +
+        ', repository HTTP ' + fallback.status +
+        '). The CHE_GITHUB_TOKEN requires Actions:write or Contents:write for Vondada/chey-app.' };
+    } catch {
+      return { ok: false, error:
+        'GitHub blocked the video workflow (HTTP ' + response.status +
+        '), and the Contents-permission fallback was unreachable.' };
+    }
+  }
   if (response.status !== 204) {
     return { ok: false, error: 'GitHub video runner rejected the dispatch (HTTP ' + response.status + '). Confirm Actions permission and the installed workflow.' };
   }
@@ -56,7 +84,7 @@ export async function githubVideoStatus(env, taskId, fetcher = fetch) {
   if (!TASK.test(String(taskId || ''))) return { ok: false, error: 'Invalid GitHub video task ID.' };
   try {
     const root = 'https://api.github.com/repos/' + REPO;
-    const list = await fetcher(root + '/actions/workflows/' + WORKFLOW + '/runs?event=workflow_dispatch&per_page=100', {
+    const list = await fetcher(root + '/actions/workflows/' + WORKFLOW + '/runs?per_page=100', {
       headers: githubHeaders(env), signal: AbortSignal.timeout(15000),
     });
     if (!list.ok) return { ok: false, error: 'Video job lookup failed (HTTP ' + list.status + ').' };

@@ -112,6 +112,7 @@ test('GitHub media records are made only after render and artifact verification'
 test('missing GitHub Actions permission or renderer fails without fake previews',async()=>{
   const denied=await startGithubVideo(env,'Three facts about space',15,async()=>new Response('{}',{status:403}));
   assert.equal(denied.ok,false);
+  assert.match(denied.error,/Actions:write or Contents:write/);
   assert.equal(denied.media_url,undefined);
   const missing=await startGithubVideo({},'Space video',15,async()=>{throw Error('must not call')});
   assert.equal(missing.ok,false);
@@ -142,4 +143,39 @@ test('voice screen polling finalizes a GitHub render and returns paired preview 
   assert.equal((await storage.get('media_index')).length,2);
   const twice=await handleVideoLine(req,env,null,{},storage,fetcher);
   assert.equal((await twice.json()).media_id,body.media_id,'a repeated poll reuses stored receipt');
+});
+
+test('workflow HTTP 403 falls back to Contents-write repository dispatch without a paid provider',async()=>{
+  const calls=[];
+  const result=await startGithubVideo(env,'Three facts about space',15,async(url,options)=>{
+    calls.push({url:String(url),body:JSON.parse(options.body)});
+    return new Response(null,{status:String(url).endsWith('/dispatches') && !String(url).includes('/workflows/') ? 204 : 403});
+  });
+  assert.equal(result.ok,true);
+  assert.equal(result.pending,true);
+  assert.equal(result.dispatch_method,'repository_dispatch');
+  assert.equal(calls.length,2);
+  assert.equal(calls[1].url,'https://api.github.com/repos/Vondada/chey-app/dispatches');
+  assert.equal(calls[1].body.event_type,'che_video_render');
+  assert.equal(calls[1].body.client_payload.job_id,result.task_id);
+  assert.equal(calls[1].body.client_payload.seconds,'15');
+});
+
+test('a workflow-dispatch success does not issue a duplicate repository dispatch',async()=>{
+  let requests=0;
+  const result=await startGithubVideo(env,'Space facts',15,async()=>{requests++;return new Response(null,{status:204});});
+  assert.equal(result.ok,true);
+  assert.equal(requests,1);
+});
+
+test('repository_dispatch runs remain discoverable without workflow_dispatch-only filtering',async()=>{
+  const id='gha_'+'e'.repeat(32);
+  const urls=[];
+  const outcome=await githubVideoStatus(env,id,async(url)=>{
+    urls.push(String(url));
+    return json({workflow_runs:[{display_title:'CHE free render '+id,status:'queued'}]});
+  });
+  assert.equal(outcome.pending,true);
+  assert.equal(outcome.stage,'queued');
+  assert.ok(urls[0].endsWith('/runs?per_page=100'));
 });
