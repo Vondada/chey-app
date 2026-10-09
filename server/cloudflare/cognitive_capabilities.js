@@ -131,6 +131,7 @@ export function runtimeCapabilityRegistry(env, data = {}) {
   const hasVideo = Boolean(
     env.CHE_VIDEO_GEN_URL ||
     env.CHE_VIDEO_RENDER_URL ||
+    (env.CHE_GITHUB_TOKEN && env.CHE_GITHUB_REPO === 'Vondada/chey-app') ||
     (paidMedia && (
       env.GEMINI_API_KEY ||
       providerCaps.has('video_generation')
