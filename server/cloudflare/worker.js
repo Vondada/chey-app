@@ -4712,7 +4712,30 @@ export class CheState extends DurableObject {
           const bytes = await readBlob(this.keyEnv || this.env, this.ctx.storage, item);
           if (!bytes) return json({ detail: 'Media data missing.' }, 404);
           const fallbackType = action === '/video' ? 'video/mp4' : 'image/jpeg';
-          return new Response(bytes, { headers: { 'Content-Type': item.mime_type || fallbackType, 'Cache-Control': 'private, max-age=86400' } });
+          const mime = item.mime_type || fallbackType;
+          const mediaHeaders = { 'Content-Type': mime, 'Cache-Control': 'private, no-store' };
+          if (action === '/video') {
+            mediaHeaders['Accept-Ranges'] = 'bytes';
+            const requestedRange = request.headers.get('range');
+            if (requestedRange) {
+              const match = /^bytes=(\\d+)-(\\d*)$/.exec(requestedRange.trim());
+              const start = match ? Number(match[1]) : NaN;
+              const end = match && match[2] ? Number(match[2]) : bytes.byteLength - 1;
+              if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
+                  start >= bytes.byteLength || start < 0 || end < start) {
+                return new Response(null, { status: 416, headers: {
+                  ...mediaHeaders, 'Content-Range': 'bytes */' + bytes.byteLength,
+                } });
+              }
+              const last = Math.min(end, bytes.byteLength - 1);
+              return new Response(bytes.slice(start, last + 1), { status: 206, headers: {
+                ...mediaHeaders,
+                'Content-Range': 'bytes ' + start + '-' + last + '/' + bytes.byteLength,
+                'Content-Length': String(last - start + 1),
+              } });
+            }
+          }
+          return new Response(bytes, { headers: mediaHeaders });
         }
         if (action === '/upscale' && request.method === 'POST') {
           const { status, ...rest } = await upscaleImage(this.env, this.ctx.storage, mediaId);
