@@ -119,30 +119,41 @@ const IMPLICIT_APPS_RE = [...new Set(KNOWN_APPS.filter((a) => a !== 'github'))].
   .map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
 const APP_IN_RE = new RegExp(`\\b(?:in|on)\\s+(?:the\\s+)?(${IMPLICIT_APPS_RE})\\b`, 'i');
 
-// The owner's own "open X" in this request is permission for that app.
-// Returns the lowercase app name, or '' when the request does not open one.
-export function classifyExplicitAppOpen(text) {
+// An app is explicitly granted only if the open verb targets that exact app.
+// A mention such as "open the report and explain why the Notes app is slow"
+// is not owner permission to access Notes.
+const APP_NAMED_OPEN_RE = new RegExp(
+  LEAD + '(?:open|launch|play|go\\s+to|watch|use|show\\s+me)\\s+(?:the\\s+)?(' +
+    APPS_RE + ')\\s+app(?=$|[.,!?;]|\\s+(?:and|to|now|please)\\b)', 'i',
+);
+
+// Classify each clause independently. A single explicit open must never
+// bypass another app mentioned later in the same owner request.
+export function classifyAppAccesses(text) {
   const t = String(text || '').replace(/\s+/g, ' ').trim();
-  if (!t) return '';
-  const direct = APP_OPEN_RE.exec(t);
-  if (direct) return direct[1].toLowerCase();
-  const named = APP_NAMED_RE.exec(t);
-  if (named && OPEN_VERB_RE.test(t)) return named[0].toLowerCase().replace(/\s+app$/, '');
-  return '';
+  const explicit = [], required = [];
+  if (!t) return { explicit, required };
+  const clauses = t.split(/[.;!?]|\b(?:and then|and|then|also|after that)\b/i);
+  for (const part of clauses) {
+    const clause = part.trim();
+    if (!clause) continue;
+    const direct = APP_OPEN_RE.exec(clause) || APP_NAMED_OPEN_RE.exec(clause);
+    const openApp = direct ? direct[1].toLowerCase() : '';
+    if (openApp && !explicit.includes(openApp)) explicit.push(openApp);
+    const named = APP_NAMED_RE.exec(clause);
+    const implicit = named ? named[0].toLowerCase().replace(/\s+app$/, '')
+      : (APP_IN_RE.exec(clause)?.[1]?.toLowerCase() || '');
+    if (implicit && implicit !== openApp && !required.includes(implicit)) required.push(implicit);
+  }
+  return { explicit, required: required.filter((app) => !explicit.includes(app)) };
 }
 
-// A request that needs an app the owner has not opened outright; CHE must ask
-// permission before acting in it. Returns the lowercase app name, or '' for
-// ordinary chat. An explicit "open X" returns '' here: it carries permission.
+// Retain existing single-app helpers for other call sites.
+export function classifyExplicitAppOpen(text) {
+  return classifyAppAccesses(text).explicit[0] || '';
+}
 export function classifyAppNeed(text) {
-  const t = String(text || '').replace(/\s+/g, ' ').trim();
-  if (!t) return '';
-  if (classifyExplicitAppOpen(t)) return '';
-  const named = APP_NAMED_RE.exec(t);
-  if (named) return named[0].toLowerCase().replace(/\s+app$/, '');
-  const inApp = APP_IN_RE.exec(t);
-  if (inApp) return inApp[1].toLowerCase();
-  return '';
+  return classifyAppAccesses(text).required[0] || '';
 }
 
 // Another AI's money or delete request is never carried out, whatever it says.
