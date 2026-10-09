@@ -11,11 +11,15 @@ export const VIDEO_ENGINE = {
 
 export function videoEngineStatus(env = {}) {
   const url = String(env.CHE_VIDEO_GEN_URL || '').trim();
+  const legacy = String(env.CHE_VIDEO_RENDER_URL || '').trim();
   return {
     ...VIDEO_ENGINE,
-    configured: Boolean(url),
+    configured: Boolean(url || legacy),
+    backend: url ? 'moneyprinter-turbo' : legacy ? 'faceless-renderer' : 'none',
     ready: false,
-    reason: url ? 'Renderer configured but not checked online.' : 'No video renderer configured or running.',
+    reason: url ? 'MoneyPrinter configured but not checked online.'
+      : legacy ? 'Faceless renderer configured; availability not verified.'
+        : 'No video renderer configured or running.',
   };
 }
 
@@ -23,6 +27,7 @@ export function videoEngineStatus(env = {}) {
 export async function probeVideoEngine(env = {}, fetcher = fetch) {
   const status = videoEngineStatus(env);
   if (!status.configured) return status;
+  if (!env.CHE_VIDEO_GEN_URL) return { ...status, reason: 'Legacy renderer has no standard health endpoint. Render a test to confirm it is online.' };
   try {
     const origin = new URL(String(env.CHE_VIDEO_GEN_URL).trim());
     if (origin.protocol !== 'https:') return { ...status, reason: 'Video renderer requires HTTPS.' };
