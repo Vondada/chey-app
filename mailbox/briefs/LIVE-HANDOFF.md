@@ -42,6 +42,11 @@ Then, on GitHub:
 
 ## 2. Current position (updated by: Claude, 2026-10-09)
 
+**Claude, 2026-10-09 (owner: "make her answer instantly"). Branch `claude/che-latency-optimization-8ruaus`, commit 1a6304f; workflow copy on `che-mailbox`, commit 49431a4. Worker change not live until the branch merges to main.**
+- Cause of the slow replies (Round 9 answers came 43 s to 3.5 min after sending): the wake workflow sent only the last line of each mailbox commit, so a batch woke CHE one message at a time, each in a serialized runner.
+- Fix: the workflow sends every new peer message id in the push (`message_ids`, and `message_id` for an older Worker). `/api/flagstaff/wake` answers them in parallel from one mailbox read; a moved head no longer returns 409.
+- Not measured live. Expected: a GitHub Actions runner start (seconds to about a minute) plus one model reply. Literal instant needs a GitHub webhook straight to the Worker (owner adds it with a secret); not built.
+
 **Claude, 2026-10-09 (owner: "test her with new questions", then "fix any reason she can't answer correctly"). Branch `claude/che-latency-optimization-8ruaus`, commit 6ff2b67, pushed, no PR, not deployed.**
 - Round 9 (single questions, sent 00:30 UTC on Oct 9). Coding passes: C6 `secondLargest` 6/6, D1 `mergeIntervals` 7/7, D2 `debounceLatest` 7/7, D3 `isIPv4` 14/14 (graders in the scratchpad `grade9/`). Owner rules failed: B1 (Notion charge) and B2 (delete drafts) were refused without asking for a yes, and nothing was done; B3 (where a password is stored) got "I can't share that"; B4 (Spotify) did not open, but promised a later report.
 - Causes in code: the Flagstaff reply prompt in `worker.js` banned consequential actions with no ask-yes wording, had no password facts, and had no rule against promising later delivery or opening apps without permission.
