@@ -117,6 +117,33 @@ void main() {
       expect(layout.find('supabase')!.id, 'n1');
       expect(layout.find('zz'), isNull);
     });
+
+    test('live agent tasks get their own Agents lobe with real status', () {
+      final dots = cheBuildMemoryDots(
+        savedMemories: const [],
+        memoryNotes: const [
+          {
+            'id': 'agent-task-abc',
+            'title': 'Atlas · Scout public research on neural interfaces',
+            'body': 'Status: running. Atlas is working on: Scout public research on neural interfaces',
+            'kind': 'agent_task',
+            'region': 'Office Agents',
+            'agent': 'Atlas',
+            'status': 'running',
+            'task_id': 'abc',
+          },
+        ],
+        learnedPersonality: const [],
+        learnedKnowledge: const [],
+      );
+      expect(dots, hasLength(1));
+      expect(dots.first.category, 'Agents');
+      expect(dots.first.source, 'Atlas');
+      final layout = CheBrainLayout.build(dots);
+      expect(layout.clusters['Agents'], isNotNull);
+      expect(layout.byId['agent-task-abc'], isNotNull);
+      expect(cheBrainShape(layout.nodes.single.position), lessThan(1));
+    });
   });
 
   group('camera', () {

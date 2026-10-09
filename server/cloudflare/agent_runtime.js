@@ -374,6 +374,9 @@ export function agentDetail(data, agent) {
         updated_at: item.updated_at,
       })),
     handoff_history: agent.handoff_history.slice(-20),
+    work_log: (Array.isArray(data.agent_work_log) ? data.agent_work_log : [])
+      .filter((item) => item.agent_id === agent.id)
+      .slice(0, 10),
     meetings: (data.meetings || [])
       .filter((item) => item.participants.some((p) => p.agent_id === agent.id))
       .slice(0, 10)
@@ -381,8 +384,36 @@ export function agentDetail(data, agent) {
   };
 }
 
-export function queueAgentTask(data, agent, task, source = 'owner', options = {}) {
-  const at = now();
+const MAX_AGENT_WORK_LOG = 120;
+
+/**
+ * Per-agent working memory with provenance: one compact entry per terminal
+ * task outcome (complete / failed), newest first. Lives in the owner's
+ * Durable Object, so an agent's record survives restarts; research-style jobs
+ * additionally keep their full distilled note via writeResearchMemoryNote.
+ */
+export function recordAgentWork(data, { task = {}, agent = {}, outcome = 'complete', verified = false, memoryNoteId = '', error = '' } = {}) {
+  data.agent_work_log = Array.isArray(data.agent_work_log) ? data.agent_work_log : [];
+  const entry = {
+    agent: clip(agent.name || task.partner_name || 'Office agent', 40) || 'Office agent',
+    agent_id: clip(agent.id || task.partner_id, 80),
+    task_id: clip(task.id, 80),
+    task: clip(task.task, 200),
+    status: clip(outcome, 20) || 'complete',
+    verified_by_che: Boolean(verified),
+    memory_note_id: clip(memoryNoteId, 120),
+    error: clip(error, 300),
+    at: now(),
+  };
+  data.agent_work_log.unshift(entry);
+  data.agent_work_log = data.agent_work_log.slice(0, MAX_AGENT_WORK_LOG);
+  if (agent && agent.id) {
+    agent.last_work = { task_id: entry.task_id, status: entry.status, verified: entry.verified_by_che, at: entry.at };
+  }
+  return entry;
+}
+
+export function queueAgentTask(data, agent, task, source = 'owner', options = {}) {  const at = now();
   const entry = {
     id: crypto.randomUUID(),
     partner_id: agent.id,
@@ -1001,6 +1032,9 @@ async function runOneTask(ctx) {
     t1.retry_at = retry ? Date.now() + 300000 : null;
     t1.error = error;
     t1.updated_at = now();
+    if (!retry) {
+      recordAgentWork(data, { task: t1, agent: a1 || agent, outcome: 'failed', verified: false, error: t1.error });
+    }
     if (a1) {
       a1.runtime_status = 'idle';
       a1.runtime_task = null;
@@ -1085,6 +1119,15 @@ async function runOneTask(ctx) {
       t2.memory_written = true;
     }
   }
+  // Per-agent working memory with provenance for every finished task.
+  recordAgentWork(data, {
+    task: t2,
+    agent: a2 || agent,
+    outcome: 'complete',
+    verified: approved,
+    memoryNoteId: t2.memory_note_id || '',
+    error: '',
+  });
   if (approved && t2.teach_as_skill) {
     const skill = teachOfficeSkill(data, {
       name: t2.teach_as_skill,

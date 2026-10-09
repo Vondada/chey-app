@@ -126,6 +126,7 @@ import {
 } from './opportunity_scout.js';
 import {
   addOwnerMemory,
+  buildAgentTaskNodes,
   buildBrainGraph,
   enrichNoteForBrain,
   isSafeMemoryText,
@@ -4488,7 +4489,7 @@ export class CheState extends DurableObject {
           memory_notes: listMemoryNotes(data),
           conversation_memories: ownerDevice ? await listConversationMemories(this.ctx.storage).catch(() => []) : [],
           conversation_memory_total: ownerDevice ? await conversationMemoryCount(this.ctx.storage).catch(() => 0) : 0,
-          brain_graph: buildBrainGraph(data),
+          brain_graph: buildBrainGraph(data, { liveNodes: buildAgentTaskNodes(data) }),
           preference_memory: data.preference_memory,
           owner_context: data.owner_context.map(ownerContextPreview),
           personal_sources: {
@@ -6053,9 +6054,10 @@ export class CheState extends DurableObject {
         return json(mlReadiness(this.env));
       }
 
-      // Brain room neural map — unlimited memory_notes nodes + related links.
+      // Brain room neural map — unlimited memory_notes nodes + related links,
+      // plus live Office agent tasks (real queued/running/reviewing work only).
       if (path === '/api/brain/graph' && request.method === 'GET') {
-        return json(buildBrainGraph(data));
+        return json(buildBrainGraph(data, { liveNodes: buildAgentTaskNodes(data) }));
       }
 
       if (path === '/api/translate' && request.method === 'POST') {

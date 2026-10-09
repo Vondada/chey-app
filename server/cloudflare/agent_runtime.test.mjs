@@ -7,6 +7,7 @@ import {
   handoffAgentTask,
   officeSkillsView,
   queueAgentTask,
+  recordAgentWork,
   steerAgentTask,
   teachOfficeSkill,
 } from './agent_runtime.js';
@@ -128,4 +129,29 @@ test('agent detail exposes stable identity, saved appearance, and only assigned 
   assert.equal(detail.skills.length, 1);
   assert.equal(detail.skills[0].name, 'Listing review');
   assert.equal(detail.skills[0].source.repo, 'owner/reference');
+});
+
+test('every finished agent task leaves a provenance work-log entry', () => {
+  const data = state();
+  const agent = createAgent(data, { name: 'Atlas', role: 'Research Partner' }).agent;
+  const task = queueAgentTask(data, agent, 'Scout public research on neural interfaces', 'owner');
+  const entry = recordAgentWork(data, { task, agent, outcome: 'complete', verified: true, memoryNoteId: 'note-1' });
+  assert.equal(entry.agent, 'Atlas');
+  assert.equal(entry.task_id, task.id);
+  assert.equal(entry.status, 'complete');
+  assert.equal(entry.verified_by_che, true);
+  assert.equal(entry.memory_note_id, 'note-1');
+  assert.ok(entry.at);
+  assert.equal(agent.last_work.task_id, task.id);
+
+  recordAgentWork(data, { task: { ...task, id: 't-fail' }, agent, outcome: 'failed', error: 'provider timeout' });
+  const detail = agentDetail(data, agent);
+  assert.equal(detail.work_log.length, 2);
+  assert.equal(detail.work_log[0].status, 'failed');
+  assert.match(detail.work_log[0].error, /provider timeout/);
+
+  for (let i = 0; i < 150; i++) {
+    recordAgentWork(data, { task: { ...task, id: `t-${i}` }, agent, outcome: 'complete' });
+  }
+  assert.equal(data.agent_work_log.length, 120);
 });

@@ -105,7 +105,11 @@ List<CheMemoryDot> cheBuildMemoryDots({
     ].where((s) => s.trim().isNotEmpty).join('\n');
     if (body.trim().isEmpty) continue;
     final kind = '${n['kind'] ?? n['region'] ?? ''}'.toLowerCase();
-    final category = kind.contains('ml') || kind.contains('classif') || kind.contains('cluster')
+    // Live specialist work from the Worker's brain graph (kind agent_task,
+    // region Office Agents) gets its own lobe; never lumped into Learning.
+    final category = kind.contains('agent_task') || '${n['region'] ?? ''}'.toLowerCase().contains('office agent')
+        ? 'Agents'
+        : kind.contains('ml') || kind.contains('classif') || kind.contains('cluster')
         ? 'ML Learning'
         : kind.contains('translat')
         ? 'Translation'

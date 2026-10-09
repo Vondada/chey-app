@@ -26,6 +26,7 @@ const List<String> cheBrainCategories = [
   'Suggestion',
   'Translation',
   'Conversations',
+  'Agents',
 ];
 
 /// The brain's shape, seen from its left side by default like an anatomy
@@ -59,6 +60,7 @@ const Map<String, (double, double, double, double)> _brainRegions = {
   'Research': (2.6, -2.8, 0, 2.4), // temporal
   'Suggestion': (-5.4, -3.9, 0, 1.6), // cerebellum
   'Translation': (-2.2, -5.4, 0, 1.2), // brainstem
+  'Agents': (4.8, -3.6, 0, 2.0), // lower front: live specialist work
 };
 
 String cheBrainCategoryKey(String category) {
