@@ -1,5 +1,5 @@
 // CHE Art Studio media: real image generation with versions.
-import { moneyPrinterVideo, verifyVideoMedia } from './moneyprinter.js';
+import { moneyPrinterVideo, moneyPrinterStatus, verifyVideoMedia } from './moneyprinter.js';
 import { createFacelessVideo } from './faceless_video.js';
 //   - Owner image connector (CHE_IMAGE_GEN_URL) wins when configured.
 //   - Otherwise Workers AI FLUX.1 [schnell] generates the image on the CHE
@@ -247,7 +247,15 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
 
 export async function generateVideo(env, storage, body, fetcher = fetch) {
   const prompt = String(body.prompt || '').trim().slice(0, 8000);
-  if (!prompt) return { status: 400, detail: 'Describe the video.' };
+  const renderTaskId = String(body.task_id || '').trim();
+  if (!prompt && !renderTaskId) return { status: 400, detail: 'Describe the video or supply the existing renderer task ID.' };
+  if (renderTaskId && !/^[a-zA-Z0-9_-]{1,128}$/.test(renderTaskId)) {
+    return { status: 400, detail: 'Invalid video render task ID.' };
+  }
+  if (renderTaskId) {
+    const earlier = (await listMedia(storage)).find((item) => item.render_task_id === renderTaskId && item.verified);
+    if (earlier) return { status: 200, item: earlier, duplicate: true };
+  }
   const id = crypto.randomUUID();
   const record = {
     id,
@@ -257,10 +265,20 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
     prompt,
     mode: 'video',
     kind: 'video',
+    ...(renderTaskId ? { render_task_id: renderTaskId } : {}),
     created_at: now(),
   };
   const engines = [];
-  if (env.CHE_VIDEO_GEN_URL) {
+  if (renderTaskId) {
+    // Finish the exact existing renderer task; never start a second video.
+    if (!env.CHE_VIDEO_GEN_URL) return { status: 503, detail: 'Renderer is not configured. The saved task cannot be checked.' };
+    engines.push({ id: 'moneyprinter-turbo', run: async () => {
+      const checked = await moneyPrinterStatus(env, renderTaskId, fetcher);
+      if (!checked.ok) throw new Error(checked.error || 'Render task status failed.');
+      return checked.pending ? { pending: true, task_id: renderTaskId } :
+        { url: checked.media_url, verified: checked.verified };
+    } });
+  } else if (env.CHE_VIDEO_GEN_URL) {
     engines.push({ id: 'moneyprinter-turbo', run: async () =>
       connectorVideo(env, prompt, fetcher, Number(body.seconds || body.duration_seconds) || 15) });
   } else if (env.CHE_VIDEO_RENDER_URL) {

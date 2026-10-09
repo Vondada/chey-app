@@ -151,3 +151,24 @@ test('video completion creates a thumbnail receipt only if an image actually ren
   assert.match(created.item.thumbnail_error, /image engines failed|no image engine/i);
   assert.equal((await storage.get('media_index')).length, 1);
 });
+
+test('an existing video task finalizes once with a verified media ID, no duplicate render', async () => {
+  const storage = memoryStorage();
+  let starts = 0;
+  const fetcher = async (url) => {
+    const u = String(url);
+    if (u.endsWith('/videos')) { starts++; return new Response(JSON.stringify({ data: { task_id: 'existing' } })); }
+    if (u.includes('/tasks/existing')) return new Response(JSON.stringify({ data: { videos: ['https://cdn.example/space.mp4'] } }));
+    return new Response(Uint8Array.from([0,0,0,24,102,116,121,112,105,115,111,109]),
+      { headers: { 'content-type': 'video/mp4' } });
+  };
+  const body = { task_id: 'existing', prompt: 'Three facts about space' };
+  const first = await generateVideo({ CHE_VIDEO_GEN_URL: 'https://renderer.example' }, storage, body, fetcher);
+  assert.equal(first.status, 200);
+  assert.equal(first.item.verified, true);
+  assert.equal(first.item.render_task_id, 'existing');
+  const again = await generateVideo({ CHE_VIDEO_GEN_URL: 'https://renderer.example' }, storage, body, fetcher);
+  assert.equal(again.duplicate, true);
+  assert.equal(again.item.id, first.item.id);
+  assert.equal(starts, 0, 'finalizing never starts a second video');
+});
