@@ -130,6 +130,15 @@ Then, on GitHub:
 - **Verified merge/deploy update (2026-10-09):** PR #259 squash-merged to main commit `3c3194eed228c41e6f3f80548c748d4e78b2ffea`. GitHub Actions deploy run 37891768047 SUCCESS (Worker tests 780 passed/0 failed; secret sync; Wrangler deploy; live health confirmed version tag `3c3194eed228`, version `b9b49378-d2e9-4397-b338-2e0eefb82c8d`). Prior Cloudflare Workers Builds preview check remained failed; Github production deploy independently succeeded.
 - Next: obtain/verify reachable HTTPS renderer and optional R2 binding, then run a real 15s video + 1280x720 thumbnail/duration/playback acceptance test. No file generated, no YouTube upload, no paid media activated in this mission. Do not fabricate media completion claims.
 
+### ChatGPT, 2026-10-09 — owner video-render blocker fixed in code and deployed
+
+- **Merged:** PR #260 `CHE: add free faceless video rendering and authenticated previews` into main commit `45062dade468a240141d8233cbcb59205f9ad89b`.
+- **Live deploy verified:** GitHub Actions [run 37895608198](https://github.com/Vondada/chey-app/actions/runs/37895608198) succeeded; Wrangler Worker deployed; `/health` version tag `45062dade468`, Worker version `5cae8fd6-3acc-4c93-a63e-c05ebf1839b7`. Worker **785/785 tests green**; Flutter main/PR checks green.
+- **Real free rendering proven:** isolated GitHub Actions [run 37894167872](https://github.com/Vondada/chey-app/actions/runs/37894167872) rendered a **real 15.0s, 720x1280 H.264 MP4 with offline narration and a real 1280x720 PNG**, valid FFprobe/PIL receipts, artifact 11599593237. No paid media, no YouTube upload.
+- **Runtime integration:** `tools/che_video_render.py`; `.github/workflows/che-video-render.yml`; `server/cloudflare/github_video_renderer.js`; existing `media.js`, `video_route.js`, `video_engine.js`, `worker.js`, `cognitive_capabilities.js`. Existing CHE_GITHUB_TOKEN dispatches workflow_dispatch on main, returned `gha_...` task saved, polls/finalizes exact job, validates artifact ZIP MP4/PNG/manifest, stores paired media records, streams MP4 with byte ranges, optional R2 archival.
+- **HONEST OPEN ACCEPTANCE:** An actual paired iPhone owner-triggered POST through the live Worker has not yet been exercised. The existing CHE_GITHUB_TOKEN is configured but its GitHub **Actions:write** permission is unverified; if POST dispatch returns 403, that permission is the owner-resolvable blocker. Test in CHE chat: `Create a faceless video about 3 surprising space facts`; if initially pending ask `Is my video ready?`. Expect a real video/thumbnail receipt, NOT a model-written fake link. No auto YouTube publishing.
+- **Storage/security:** Default GitHub Actions artifacts expire in 30 days and may be visible to viewers of a public repo; do not create sensitive/private videos through this fallback. Permanent private R2 storage still requires an R2 binding, optional for first render. Original procedural visuals/basic offline TTS, not cinematic AI footage.
+
 ## 3. Queue: the owner's open requests, in order
 
 Do them top to bottom. Mark each one `DONE (PR #, SHA)` or `WIP (branch, next step)` here.
