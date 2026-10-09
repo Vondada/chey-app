@@ -34,6 +34,7 @@ import 'che_notifications.dart';
 import 'platform/che_platform_client.dart';
 import 'platform/che_platform_screens.dart';
 import 'che_stream_batcher.dart';
+import 'che_installed_skill_intent.dart';
 import 'che_request_session.dart';
 import 'che_owner_errors.dart';
 import 'che_bootstrap.dart';

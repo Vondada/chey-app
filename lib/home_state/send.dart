@@ -700,7 +700,9 @@ extension _CheHomeSend on _CHEHomeState {
 
     // Realtime voice is text/audio-only. A turn with an attachment must go
     // through the normal multimodal HTTP path so CHE actually sees/hears it.
-    if (_realtimeVoice?.connected == true && _pendingAttachment == null) {
+    if (_realtimeVoice?.connected == true &&
+        _pendingAttachment == null &&
+        !isInstalledSkillRequest(message)) {
       if (!mounted) return;
       _set(() {
         messages.add(outgoingUserMessage());
