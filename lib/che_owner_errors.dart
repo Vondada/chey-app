@@ -92,13 +92,13 @@ class CheOwnerError {
   static String _messageFor(String category) {
     switch (category) {
       case 'network_offline':
-        return "I lost the network connection, sir. I saved the job and will resume it automatically when the connection returns.";
+        return 'I lost the network connection, sir. I could not confirm that the request was accepted.';
       case 'voice_unavailable':
         return 'My spoken voice is down, sir. I still have your text and the iPhone voice as backup.';
       case 'authentication_required':
-        return "One moment, sir. I'm still working on that.";
+        return 'CHE could not authenticate that request, sir. Nothing was confirmed as running.';
       default:
-        return "One moment, sir. I'm still working on that.";
+        return "I couldn't complete that request just now, sir. I have not confirmed that any work is still running.";
     }
   }
 }

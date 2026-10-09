@@ -30,14 +30,15 @@ test('honors Retry-After and does not leak raw dumps to the owner', () => {
   });
   assert.equal(error.owner_safe, true);
   assert.doesNotMatch(error.message, /All AI engines failed|ENOSPC|llama-3.3/);
-  assert.match(sanitizeOwnerText('All AI engines failed (huge dump)'), /still working on that/i);
+  assert.match(sanitizeOwnerText('All AI engines failed (huge dump)'), /not confirmed.*running/i);
+  assert.doesNotMatch(sanitizeOwnerText('All AI engines failed (huge dump)'), /still working/i);
   assert.doesNotMatch(sanitizeOwnerText('All AI engines failed (huge dump)'), /engine|route|provider/i, 'the owner never hears about engines');
 });
 
-test('network outage wording never claims an on-phone fallback can finish cloud work', () => {
+test('network outage wording never claims an unconfirmed job was saved or running', () => {
   const error = makeEngineError({ category: 'network_offline', diagnostic: 'fetch failed', configured: true });
-  assert.match(error.message, /saved the job/i);
-  assert.match(error.message, /resume it automatically/i);
+  assert.match(error.message, /could not confirm.*accepted/i);
+  assert.doesNotMatch(error.message, /saved the job|resume it automatically|still working/i);
   assert.doesNotMatch(error.message, /keep going with what I have on this phone/i);
 });
 

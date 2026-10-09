@@ -14,9 +14,9 @@ export const ERROR_CATEGORIES = [
 ];
 
 const OWNER_MESSAGES = {
-  retryable_provider_error: "One moment, sir. I'm still working on that.",
-  temporary_cloud_unavailable: "One moment, sir. I'm still working on that.",
-  network_offline: "I lost the network connection, sir. I saved the job and will resume it automatically when the connection returns.",
+  retryable_provider_error: "I couldn't complete that request just now, sir. I have not confirmed that any work is still running.",
+  temporary_cloud_unavailable: "I couldn't complete that request just now, sir. I have not confirmed that any work is still running.",
+  network_offline: "I lost the network connection, sir. I could not confirm that the request was accepted.",
   voice_unavailable: "My spoken voice is down, sir. I still have your text and the iPhone voice as backup.",
   capability_missing: "That tool isn't connected right now, sir.",
   authentication_required: "I can't do that one right now, sir. Nothing was done, and I won't keep you waiting on it.",

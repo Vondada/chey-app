@@ -92,7 +92,9 @@ test('createSession dispatches the pinned workflow with compact inputs', async (
   } });
   const out = await runtime.createSession({ jobId: 'job-1', ownerRequest: 'Fix the voice bug in the current app.', baseSha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', targetBranch: 'claude/che-coding-runtime' });
   assert.equal(out.status, 202);
+  assert.equal(out.job_id, 'job-1');
   assert.equal(out.state, 'queued');
+  assert.match(out.accepted_at, /^\d{4}-\d{2}-\d{2}T/);
   assert.match(request.url, /actions\/workflows\/che-opencode-runtime\.yml\/dispatches$/);
   assert.equal(request.body.inputs.job_id, out.session_id);
   assert.equal(request.body.inputs.base_sha, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
@@ -114,6 +116,25 @@ test('getStatus treats no result as queued and validates finished JSON', async (
   const done = await runtime.getStatus(id);
   assert.equal(done.state, 'done');
   assert.equal(done.changed_files, 2);
+});
+
+test('missing or silent runtime records become failed after the bounded stale window', async () => {
+  const id = 'ocr-1234abcd';
+  const old = new Date(Date.now() - 36 * 60_000).toISOString();
+  const missing = new CheCodingRuntime(env, { fetcher: async () => response(404, { message: 'Not Found' }) });
+  const dispatch = await missing.getStatus(id, { acceptedAt: old });
+  assert.equal(dispatch.state, 'failed');
+  assert.equal(dispatch.failure, 'dispatch_stale');
+  assert.equal(recoverableRuntimeFailure(dispatch), true);
+  assert.doesNotMatch(speakRuntimeStatus(dispatch), /is running/i);
+
+  const content = Buffer.from(JSON.stringify({ session_id: id, state: 'running', claimed_at: old })).toString('base64');
+  const silent = new CheCodingRuntime(env, { fetcher: async () => response(200, { content }) });
+  const running = await silent.getStatus(id);
+  assert.equal(running.state, 'failed');
+  assert.equal(running.failure, 'runtime_stale');
+  assert.equal(recoverableRuntimeFailure(running), true);
+  assert.doesNotMatch(speakRuntimeStatus(running), /is running/i);
 });
 
 test('getStatus normalizes a completed result that still reports running', async () => {

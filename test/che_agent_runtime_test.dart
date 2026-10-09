@@ -183,6 +183,41 @@ void main() {
     expect(await client.codingStatus(), isNull);
   });
 
+  test('coding status renders every authoritative active and terminal state', () {
+    const active = {'queued', 'running', 'retrying', 'recovering', 'implemented', 'pr_open', 'reviewing'};
+    const terminal = {'interrupted', 'approved_waiting_owner', 'merged', 'review_rejected', 'tests_failed', 'rolled_back', 'no_change', 'blocked', 'failed', 'cancelled', 'dead_letter', 'opencode_failed', 'deliver_failed'};
+    for (final state in {...active, ...terminal}) {
+      final status = CheCodingJobStatus.fromNdjson(
+        '{"type":"delta","delta":"Coding job is $state."}\n'
+        '{"type":"done","background_job_id":"job-123","background_job_status":"$state"}\n',
+      );
+      expect(status, isNotNull, reason: state);
+      expect(status!.sessionId, 'job-123', reason: state);
+      expect(status.label, isNotEmpty, reason: state);
+      expect(status.active, active.contains(state), reason: state);
+    }
+  });
+
+  testWidgets('coding card visibly renders terminal failure and owner-wait states', (tester) async {
+    for (final entry in const {
+      'failed': 'FAILED',
+      'dead_letter': 'STOPPED AFTER RETRIES',
+      'approved_waiting_owner': 'READY FOR YOUR APPROVAL',
+    }.entries) {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: CheCodingJobCard(
+            status: CheCodingJobStatus(sessionId: 'job-123', state: entry.key, speech: 'Verified ${entry.key} status.'),
+            onReadAloud: () {},
+          ),
+        ),
+      ));
+      expect(find.text('CHE CODING · ${entry.value}'), findsOneWidget, reason: entry.key);
+      expect(find.text('Verified ${entry.key} status.'), findsOneWidget, reason: entry.key);
+      expect(find.byTooltip('Read coding status'), findsOneWidget, reason: entry.key);
+    }
+  });
+
   test('agent(che) builds CHE desk from roster, never /api/agents/che', () async {
     final seen = <http.Request>[];
     final client = CheAgentRuntimeClient(

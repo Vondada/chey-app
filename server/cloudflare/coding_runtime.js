@@ -4,6 +4,7 @@ const DEFAULT_WORKFLOW = 'che-opencode-runtime.yml';
 const DEFAULT_RESULTS_REF = 'che-mailbox';
 const RESULT_PREFIX = 'mailbox/runtime';
 const MAX_REQUEST_CHARS = 16000;
+const RUNTIME_STALE_MS = 35 * 60_000;
 
 const SECRET_LIKE = [
   /\bBEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY\b/i,
@@ -169,8 +170,10 @@ export class CheCodingRuntime {
     return {
       status: 202,
       runtime: 'opencode',
+      job_id: String(jobId || sessionId),
       session_id: sessionId,
       state: 'queued',
+      accepted_at: new Date().toISOString(),
       workflow: this.workflow,
       result_path: `${RESULT_PREFIX}/${sessionId}.json`,
     };
@@ -182,18 +185,30 @@ export class CheCodingRuntime {
     return found.ok ? validSha(found.data?.sha) : '';
   }
 
-  async getStatus(sessionId) {
+  async getStatus(sessionId, { acceptedAt = '', now = Date.now() } = {}) {
     const id = String(sessionId || '').trim();
     if (!/^ocr-[0-9a-f]{8}$/.test(id)) return { status: 400, detail: 'Invalid coding runtime session id.' };
     const path = `${RESULT_PREFIX}/${id}.json`;
     const found = await gh(this.env, 'GET', `/contents/${path}?ref=${encodeURIComponent(this.resultsRef)}`, null, this.fetcher);
-    if (found.status === 404) return { status: 200, runtime: 'opencode', session_id: id, state: 'queued' };
+    if (found.status === 404) {
+      const accepted = Date.parse(String(acceptedAt || ''));
+      if (Number.isFinite(accepted) && now - accepted > RUNTIME_STALE_MS) {
+        return { status: 200, runtime: 'opencode', session_id: id, state: 'failed', failure: 'dispatch_stale', error: 'The workflow never published an execution record.' };
+      }
+      return { status: 200, runtime: 'opencode', session_id: id, state: 'queued' };
+    }
     if (!found.ok) return { status: found.status || 502, detail: `Could not read OpenCode runtime status (${found.status || 'network'}).` };
     try {
       const parsed = JSON.parse(decodeBase64Utf8(found.data?.content));
       if (parsed?.session_id !== id) throw new Error('session mismatch');
        if (parsed.state === 'running' && (parsed.status === 'complete' || parsed.status === 'failed' || (typeof parsed.progress === 'number' && Number.isFinite(parsed.progress) && parsed.progress >= 100))) parsed.state = parsed.status === 'failed' ? 'failed' : 'complete';
        if (parsed.status === 'stopped') parsed.state = 'stopped';
+       const heartbeat = Date.parse(String(parsed.updated_at || parsed.started_at || parsed.claimed_at || acceptedAt || ''));
+       if (parsed.state === 'running' && Number.isFinite(heartbeat) && now - heartbeat > RUNTIME_STALE_MS) {
+         parsed.state = 'failed';
+         parsed.failure = 'runtime_stale';
+         parsed.error = 'The runtime stopped publishing progress before its workflow could finish.';
+       }
        return { status: 200, runtime: 'opencode', ...parsed };
     } catch (_) {
       return { status: 502, detail: 'OpenCode runtime result is not valid compact JSON.' };
@@ -226,7 +241,8 @@ export function recoverableRuntimeFailure(result = {}) {
   const state = runtimeState(result);
   // Unsafe-file guards and authorization failures are deliberately excluded:
   // they need policy/owner handling, not an automatic coding retry.
-  return ['opencode_failed', 'deliver_failed', 'tests_failed', 'review_rejected'].includes(state);
+  return ['opencode_failed', 'deliver_failed', 'tests_failed', 'review_rejected'].includes(state)
+    || ['dispatch_stale', 'runtime_stale'].includes(String(result.failure || ''));
 }
 
 export function speakRuntimeStatus(result = {}) {
@@ -252,7 +268,11 @@ export function speakRuntimeStatus(result = {}) {
     case 'opencode_failed': parts.push('The OpenCode attempt failed. I am recovering the coding job automatically.'); break;
     case 'deliver_failed': parts.push('The coding change could not be delivered. I am recovering the coding job automatically.'); break;
     case 'failed': case 'cancelled': case 'dead_letter':
-      parts.push(`The coding job stopped: ${state.replace(/_/g, ' ')}.`); break;
+      parts.push(result.failure === 'dispatch_stale'
+        ? 'The coding workflow never started, so I am not reporting it as running.'
+        : result.failure === 'runtime_stale'
+          ? 'The coding workflow stopped reporting progress and is no longer considered running.'
+          : `The coding job stopped: ${state.replace(/_/g, ' ')}.`); break;
     default: parts.push(`The coding job status is ${state.replace(/_/g, ' ')}.`);
   }
   if (result.remaining) parts.push(`Still remaining: ${String(result.remaining).slice(0, 200)}.`);

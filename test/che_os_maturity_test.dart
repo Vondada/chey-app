@@ -37,6 +37,8 @@ void main() {
     expect(error.message.toLowerCase(), isNot(contains('all ai engines failed')));
     expect(error.message.toLowerCase(), isNot(contains('enospc')));
     expect(error.message.toLowerCase(), isNot(contains('engine')));
+    expect(error.message.toLowerCase(), isNot(contains('still working')));
+    expect(error.message.toLowerCase(), contains('not confirmed'));
     expect(error.category, 'temporary_cloud_unavailable');
   });
 

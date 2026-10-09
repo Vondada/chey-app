@@ -14,7 +14,7 @@ writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), '
 ), 'utf8');
 let mod;
 try { mod = await import(generated.href + '?t=' + Date.now()); } finally { try { unlinkSync(generated); } catch (_) {} }
-const { default: worker, openAiVision, CheState, busyError, enqueueJob, selfUpdateChatIntent, isExistingChangeCommand, selectReadyJobs, shouldHandleSelfUpdateAction, MAX_JOB_ATTEMPTS, MAX_JOB_RETRIES } = mod;
+const { default: worker, openAiVision, CheState, busyError, dispatchChange, enqueueJob, selfUpdateChatIntent, isExistingChangeCommand, selectReadyJobs, shouldHandleSelfUpdateAction, MAX_JOB_ATTEMPTS, MAX_JOB_RETRIES } = mod;
 
 function storageFor(saved, alarms = []) {
   return {
@@ -44,6 +44,37 @@ test('duplicate owner requests are queued once (idempotent enqueue)', () => {
   assert.equal(data.jobs.length, 1);
   first.job.status = 'complete';
   assert.equal(enqueueJob(data, { prompt: 'Draft the weekly report' }).deduplicated, false, 'finished work can be requested again');
+});
+
+test('BUILD acceptance returns the durable job id before provider work starts', async () => {
+  const saved = new Map();
+  let aiCalls = 0;
+  const { api } = await pairedChat({
+    CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r',
+    AI: { run: async () => { aiCalls += 1; return { response: 'unused' }; } },
+  }, saved);
+  const response = await api('/api/change/request', { request: 'Fix the coding status bug in your app.' });
+  const body = await response.json();
+  assert.equal(response.status, 202);
+  assert.match(body.background_job_id, /^[0-9a-f-]{36}$/);
+  assert.equal(body.background_job_status, 'queued');
+  assert.match(body.message, /queued, not running yet/i);
+  assert.equal(aiCalls, 0, 'acceptance never waits for a provider');
+  assert.equal(saved.get('che').jobs[0].id, body.background_job_id);
+});
+
+test('failed BUILD job creation reports failure and never claims progress', async () => {
+  const response = await dispatchChange(
+    { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' },
+    { request: 'Fix the coding status bug in your app.' },
+    null,
+    { defer: true, queue: async () => { throw new Error('storage unavailable'); } },
+  );
+  const body = await response.json();
+  assert.equal(response.status, 503);
+  assert.match(body.detail, /could not save.*nothing started.*no work is running/i);
+  assert.doesNotMatch(body.detail, /working|continuing|queued/i);
+  assert.equal(body.background_job_id, undefined);
 });
 
 test('a job that keeps crashing the Worker mid-run is dead-lettered, not re-run forever', async () => {
@@ -381,7 +412,8 @@ test('authorized BUILD still dispatches exactly one OpenCode mutation session', 
   };
   try {
     const reply = replyFromNdjson(await (await chat('Fix your routing system and merge it if tests pass.')).text());
-    assert.match(reply, /OpenCode coding runner/i);
+    assert.match(reply, /accepted OpenCode coding job/i);
+    assert.match(reply, /queued, not running yet/i);
     assert.equal(dispatches, 1);
     assert.match(String(saved.get('che_runtime_last_session') || ''), /^ocr-[0-9a-f]{8}$/);
     await (await chat('Fix your routing system and merge it if tests pass.')).text();
@@ -422,13 +454,13 @@ test('legacy project-create route honors terminal chat-only isolation', async ()
   assert.equal(aiCalls, 1, 'only the terminal chat answer runs');
 });
 
-test('chat: engines down during a coding request → saved background job and a human sentence, no traces', async () => {
+test('chat: a coding request is durably accepted before engines run; an outage retries the same job', async () => {
   const saved = new Map();
   const env = {
     CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_DISABLE_KEYLESS_AI: '1',
     AI: { run: async () => { const e = new Error("I'm having trouble reaching my cloud engines, sir."); e.category = 'temporary_cloud_unavailable'; e.diagnostic = 'groq 429 | gemini 503'; throw e; } },
   };
-  const { chat } = await pairedChat(env, saved);
+  const { state, chat } = await pairedChat(env, saved);
   const original = globalThis.fetch;
   globalThis.fetch = GITHUB_OK({ 'lib/main.dart': "class A { String s = 'Ready'; }\n" });
   try {
@@ -437,10 +469,16 @@ test('chat: engines down during a coding request → saved background job and a 
     const text = (await res.text()).trim().split('\n').map((l) => JSON.parse(l)).filter((l) => l.type === 'delta').map((l) => l.delta).join('');
     assert.equal(res.status, 200);
     assert.doesNotMatch(text, /429|503|groq|gemini|diagnostic|token|provide the source|filename/i);
-    assert.match(text, /saved that coding job|continuing/i);
+    assert.match(text, /accepted coding job/i);
+    assert.match(text, /queued, not running yet/i);
     assert.doesNotMatch(text, /engine/i, 'no engine talk to the owner');
     const job = saved.get('che').jobs.find((j) => j.kind === 'self_development');
-    assert.ok(job, 'coding job checkpointed');
+    assert.ok(job, 'coding job persisted before provider work');
+    const id = job.id;
+    await state.processJobs();
+    const retrying = saved.get('che').jobs.find((j) => j.id === id);
+    assert.equal(retrying.status, 'queued');
+    assert.ok(retrying.checkpoint, 'provider outage checkpointed on the same job');
     // Asking again does not create a second job.
     await (await chat('Update your code: make the ready banner friendlier')).text();
     assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'self_development').length, 1);
@@ -449,7 +487,7 @@ test('chat: engines down during a coding request → saved background job and a 
   }
 });
 
-test('chat: a successful coding request renders a real che-update card and saves it for "create the PR"', async () => {
+test('chat: a successful queued coding request produces a reviewed change for "create the PR"', async () => {
   const saved = new Map();
   const files = { 'lib/main.dart': "class A {\n  String s = 'Ready. Type or speak a request.';\n}\n" };
   const env = {
@@ -464,7 +502,7 @@ test('chat: a successful coding request renders a real che-update card and saves
       },
     },
   };
-  const { chat } = await pairedChat(env, saved);
+  const { state, chat } = await pairedChat(env, saved);
   const original = globalThis.fetch;
   globalThis.fetch = GITHUB_OK(files);
   try {
@@ -472,7 +510,9 @@ test('chat: a successful coding request renders a real che-update card and saves
     const lines = (await res.text()).trim().split('\n').map((line) => JSON.parse(line));
     const reply = lines.filter((l) => l.type === 'delta').map((l) => l.delta).join('');
     assert.doesNotMatch(reply, /```|class A|che-update/, 'no code in chat unless the owner asks');
-    assert.match(reply, /create the PR/);
+    assert.match(reply, /accepted coding job/i);
+    assert.match(reply, /queued, not running yet/i);
+    await state.processJobs();
     const shown = (await (await chat('show me the code')).text());
     assert.match(shown, /```diff/);
     assert.match(shown, /Ready when you are/);
@@ -551,7 +591,10 @@ test('end-to-end: "make one small real improvement" → recover → review → a
   try {
     // 1. Vague owner request, no filename or guidance.
     env.CHE_CODING_RUNTIME = 'opencode';
-    const proposal = await replyOf(await chat(OWNER_SAFE_CODING_QUESTION));
+    const accepted = await replyOf(await chat(OWNER_SAFE_CODING_QUESTION));
+    assert.match(accepted, /accepted coding job/i);
+    await state.processJobs();
+    const proposal = saved.get('che').jobs.find((j) => j.kind === 'self_development')?.owner_message || '';
     assert.doesNotMatch(proposal, /```|export default/);
     assert.doesNotMatch(proposal, /provide|paste|filename|not provided|cannot inspect|503/i);
     // 2. Full autonomy: after independent review CHE opens the draft PR
@@ -652,7 +695,10 @@ test('one-button "Update CHE": one approval → PR → merge after CI → verifi
   const replyOf = async (res) => (await res.text()).trim().split('\n').map((l) => JSON.parse(l)).filter((l) => l.type === 'delta').map((l) => l.delta).join('');
   try {
     // 1. Vague owner request, no filename or guidance.
-    const proposal = await replyOf(await chat('CHE, make one small real improvement to your code.'));
+    const accepted = await replyOf(await chat('CHE, make one small real improvement to your code.'));
+    assert.match(accepted, /accepted coding job/i);
+    await state.processJobs();
+    const proposal = saved.get('che').jobs.find((j) => j.kind === 'self_development')?.owner_message || '';
     assert.match(proposal, /Real draft PR #77 is open/, proposal);
     assert.doesNotMatch(proposal, /```|export default/);
     assert.doesNotMatch(proposal, /provide|paste|filename|not provided|cannot inspect|503/i);
@@ -1347,7 +1393,7 @@ test('a reviewed change never overwrites one the owner has not decided on; it wa
   } finally { globalThis.fetch = original; }
 });
 
-test('a handoff whose coding job could not start is not marked done, so the owner can retry it', async () => {
+test('a handoff is marked done once its durable coding job is accepted, even before GitHub reads', async () => {
   const saved = new Map();
   const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'ok' }) } };
   const line = JSON.stringify({ id: 'h1', at: '2026-10-04T00:00:00Z', from: 'claude', to: 'che', text: 'Make the Ready banner say Ready, sir.' });
@@ -1363,9 +1409,9 @@ test('a handoff whose coding job could not start is not marked done, so the owne
   try {
     const first = await replyOf(await chat("do Claude's handoff"));
     assert.doesNotMatch(first, /already started/, first);
-    assert.equal(saved.has('mail_handoff_done:claude:h1'), false, 'a failed start is not recorded as done');
+    assert.equal(saved.has('mail_handoff_done:claude:h1'), true, 'the persistent queued job is a real accepted start');
     const second = await replyOf(await chat("do Claude's handoff"));
-    assert.doesNotMatch(second, /already started/, second);
+    assert.match(second, /already started/, second);
   } finally {
     globalThis.fetch = original;
   }
@@ -1506,11 +1552,12 @@ function failingCrewEnv(counter, { recoverWith = '' } = {}) {
 test('three failed attempts stop safely; recovery uses the evidence, never repeats them, and is bounded', async () => {
   const saved = new Map();
   const counter = { ai: 0, reviews: 0, engineer: 0, recoveryPrompts: 0, sawReviewerReason: 0 };
-  const { chat } = await pairedChat(failingCrewEnv(counter), saved);
+  const { state, chat } = await pairedChat(failingCrewEnv(counter), saved);
   const original = globalThis.fetch;
   globalThis.fetch = GITHUB_OK({ 'lib/main.dart': "class A { String s = 'Ready'; }\n" });
   try {
     await deltaText(await chat('Update your code: make the ready banner friendlier'));
+    await state.processJobs();
     const record = saved.get('che_failed_engineering');
     assert.ok(record, 'failure evidence retained');
     assert.ok(record.failed_strategies.length >= 1 && record.fingerprints.length >= 2);

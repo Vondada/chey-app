@@ -153,13 +153,25 @@ extension _CheHomeStreaming on _CHEHomeState {
         await _clearSecuritySession();
         throw const _CHEAgentException('Pair this device again, sir.');
       }
-      final result = jsonDecode(response.body) as Map<String, dynamic>;
-      if (response.statusCode != 200) {
+      Map<String, dynamic> result = const {};
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) result = decoded;
+      } catch (_) {}
+      if (response.statusCode < 200 || response.statusCode >= 300) {
         throw _CHEAgentException(
-          result['detail']?.toString() ?? 'The code proposal could not start.',
+          result['detail']?.toString() ?? 'The coding job was not accepted. Nothing started.',
         );
       }
-      final reply = result['message']?.toString() ?? 'Proposal started.';
+      final jobId = result['background_job_id']?.toString().trim() ?? '';
+      if (jobId.isNotEmpty) {
+        cheWatchedJobId.value = jobId;
+        unawaited(_statusHaptic(3));
+      }
+      final reply = result['message']?.toString() ??
+          (jobId.isEmpty
+              ? 'The coding request finished without a job receipt.'
+              : 'Coding job ${jobId.substring(0, jobId.length < 8 ? jobId.length : 8)} was accepted.');
       onPartial(reply);
       return reply;
     }
