@@ -45,7 +45,7 @@ export async function handleVideoLine(request, env, parsedBody, youtube = {}) {
         ? await moneyPrinterVideo(env, body.topic || body.prompt || '')
         : githubVideoConfigured(env)
           ? await startGithubVideo(env, body.topic || body.prompt || '', Number(body.seconds) || 15)
-          : { ok: false, error: 'No video renderer is connected.' };
+          : { ok: false, error: 'MoneyPrinter is not connected. Set CHE_VIDEO_GEN_URL or enable the free GitHub Actions renderer.' };
   }
   return new Response(JSON.stringify(result), {
     status: statusFor(result),
