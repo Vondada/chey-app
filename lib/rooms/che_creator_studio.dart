@@ -1,10 +1,10 @@
 // CHE Creator / Sound Studio: neon production room. ON AIR and the meters
 // react only to real activity (CHE speaking, cloud renders running). The
 // render queue is CHE's real background-job list (podcast / long create jobs
-// via /api/job/create). Video generation is not wired yet: next concrete step
-// is a Worker media job kind "video" behind an HTTPS connector
-// (CHE_VIDEO_GEN_URL), same honesty pattern as CHE_UPSCALE_URL — never fake a
-// finished video. Pictures live in Art Studio (FLUX / CHE_IMAGE_GEN_URL).
+// via /api/job/create). Video creation routes through the existing Worker
+// media system and requires a live HTTPS renderer (CHE_VIDEO_GEN_URL or
+// CHE_VIDEO_RENDER_URL). Pending tasks are not finished MP4 files.
+// Pictures live in Art Studio (FLUX / CHE_IMAGE_GEN_URL).
 
 import 'dart:math' as math;
 

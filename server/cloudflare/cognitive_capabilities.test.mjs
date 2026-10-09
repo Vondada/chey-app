@@ -86,3 +86,9 @@ test('capability limitations name the paid switch that is actually off', () => {
   assert.match(byId.image_generation.limitations, /CHE_ALLOW_PAID_AI/);
   assert.match(byId.video_generation.limitations, /CHE_ALLOW_PAID_AI/);
 });
+
+test('existing legacy renderer counts as a configured video production path', () => {
+  const registry = runtimeCapabilityRegistry({ CHE_VIDEO_RENDER_URL: 'https://render.example/video' }, {});
+  const video = registry.capabilities.find((item) => item.id === 'video_generation');
+  assert.equal(video?.available, true);
+});

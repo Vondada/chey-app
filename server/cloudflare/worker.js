@@ -4667,8 +4667,10 @@ export class CheState extends DurableObject {
               ? 'workers_ai'
               : (paidMedia && this.env.GEMINI_API_KEY) ? 'gemini-image' : 'none';
         const videoEngine = this.env.CHE_VIDEO_GEN_URL
-          ? 'connector'
-          : (paidMedia && this.env.GEMINI_API_KEY) ? 'gemini-omni' : 'none';
+          ? 'moneyprinter-turbo'
+          : this.env.CHE_VIDEO_RENDER_URL
+            ? 'faceless-renderer'
+            : (paidMedia && this.env.GEMINI_API_KEY) ? 'gemini-omni' : 'none';
         return json({
           items: await listMedia(this.ctx.storage),
           engine: imageEngine,

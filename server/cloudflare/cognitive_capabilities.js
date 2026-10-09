@@ -130,6 +130,7 @@ export function runtimeCapabilityRegistry(env, data = {}) {
   );
   const hasVideo = Boolean(
     env.CHE_VIDEO_GEN_URL ||
+    env.CHE_VIDEO_RENDER_URL ||
     (paidMedia && (
       env.GEMINI_API_KEY ||
       providerCaps.has('video_generation')
