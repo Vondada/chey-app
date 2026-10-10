@@ -652,7 +652,8 @@ class CheCodingJobCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = switch (status.state) {
       'merged' || 'no_change' || 'approved_waiting_owner' => CheColors.success,
-      'review_rejected' || 'tests_failed' || 'rolled_back' || 'blocked' => CheColors.danger,
+      'review_rejected' || 'tests_failed' || 'rolled_back' || 'blocked' ||
+      'failed' || 'cancelled' || 'dead_letter' || 'opencode_failed' || 'deliver_failed' || 'interrupted' => CheColors.danger,
       'reviewing' || 'pr_open' => CheColors.accent,
       _ => CheColors.warning,
     };

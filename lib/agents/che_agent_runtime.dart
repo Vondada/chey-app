@@ -413,15 +413,25 @@ String cheOfficeBoardSpeech(CheOfficeToday? today, CheOfficeConnection connectio
 
 const _codingJobStates = <String>{
   'queued',
+  'running',
+  'retrying',
+  'recovering',
+  'interrupted',
   'implemented',
   'pr_open',
   'reviewing',
+  'approved_waiting_owner',
   'merged',
   'review_rejected',
   'tests_failed',
   'rolled_back',
   'no_change',
   'blocked',
+  'failed',
+  'cancelled',
+  'dead_letter',
+  'opencode_failed',
+  'deliver_failed',
 };
 
 /// Latest CHE self-coding state, read from the Worker's compact runtime JSON.
@@ -439,10 +449,14 @@ class CheCodingJobStatus {
   final String state;
   final String speech;
 
-  bool get active => const {'queued', 'implemented', 'pr_open', 'reviewing'}.contains(state);
+  bool get active => const {'queued', 'running', 'retrying', 'recovering', 'implemented', 'pr_open', 'reviewing'}.contains(state);
 
   String get label => switch (state) {
         'queued' => 'Queued',
+        'running' => 'Running',
+        'retrying' => 'Retrying',
+        'recovering' => 'Recovering',
+        'interrupted' => 'Interrupted',
         'implemented' => 'Implemented',
         'pr_open' => 'PR open',
         'reviewing' => 'Reviewing',
@@ -453,6 +467,11 @@ class CheCodingJobStatus {
         'rolled_back' => 'Rolled back',
         'no_change' => 'No change',
         'blocked' => 'Blocked',
+        'failed' => 'Failed',
+        'cancelled' => 'Cancelled',
+        'dead_letter' => 'Stopped after retries',
+        'opencode_failed' => 'OpenCode failed',
+        'deliver_failed' => 'Delivery failed',
         _ => '',
       };
 
@@ -474,8 +493,10 @@ class CheCodingJobStatus {
         // A malformed line cannot become owner-facing state.
       }
     }
-    final sessionId = done?['session_id']?.toString().trim() ?? '';
-    final state = done?['state']?.toString().trim() ?? '';
+    final sessionId = done?['session_id']?.toString().trim() ??
+        done?['background_job_id']?.toString().trim() ?? '';
+    final state = done?['state']?.toString().trim() ??
+        done?['background_job_status']?.toString().trim() ?? '';
     if (sessionId.isEmpty || !_codingJobStates.contains(state)) return null;
     final spoken = speech.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
     return CheCodingJobStatus(

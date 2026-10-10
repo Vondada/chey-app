@@ -2615,6 +2615,59 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
   const continued = continuationOf(request, lastEngineering);
   const work = continued || request;
 
+  // Foreground chat must never hold the iPhone connection open while the full
+  // engineering team runs. Persist the authorized BUILD first; the existing
+  // alarm worker then owns implementation, bounded retries, checkpoints,
+  // review and PR delivery. A status is not "running" until processJobs writes
+  // that authoritative transition.
+  if (options.defer === true && options.queue && !recoveryRequestIntent(request)) {
+    let queued;
+    try {
+      queued = await options.queue({ request: work, groundedRequest: work, immediate: true });
+    } catch (error) {
+      console.error('CHE coding job creation failed', String(error?.message || error).slice(0, 300));
+      return json({
+        detail: 'I could not save that coding job, sir. Nothing started and no work is running.',
+        failure_class: classifyFailure(error).failure_class,
+        code_review_passed: false,
+        owner_approval_required: false,
+      }, 503);
+    }
+    if (!queued?.job?.id) {
+      return json({
+        detail: 'I could not save that coding job, sir. Nothing started and no work is running.',
+        failure_class: FAILURE_CLASS.INTERNAL,
+        code_review_passed: false,
+        owner_approval_required: false,
+      }, 503);
+    }
+    if (memory?.put) {
+      await memory.put(LAST_ENGINEERING_REQUEST_KEY, {
+        request: String(continued ? lastEngineering.request : request).slice(0, 4000),
+        integrate: true,
+        at: new Date().toISOString(),
+      }).catch(() => null);
+    }
+    const shortId = String(queued.job.id).slice(0, 8);
+    const message = queued.paused
+      ? `I saved coding job ${shortId}, sir. It is queued but not running because autonomy is paused.`
+      : queued.scheduled === false
+        ? `I saved coding job ${shortId}, sir. It is queued but not running because the background alarm could not be scheduled.`
+        : queued.deduplicated
+          ? `Coding job ${shortId} is already ${queued.job.status}, sir. I did not start a duplicate.`
+          : `I accepted coding job ${shortId}, sir. It is queued, not running yet. Ask "coding status" anytime.`;
+    return json({
+      message,
+      background_job_id: queued.job.id,
+      background_job_status: queued.job.status,
+      deduplicated: queued.deduplicated === true,
+      scheduled: queued.scheduled !== false,
+      execution_mode: turnPolicy.mode,
+      code_review_passed: false,
+      owner_approval_required: false,
+    }, 202);
+  }
+
   // The coding team runs here on Cloudflare and reads/writes the repo through
   // the GitHub API. GitHub Actions (billed minutes) is no longer required.
   const recall = await retrieveVectorContext(env, work);
@@ -6360,6 +6413,7 @@ export class CheState extends DurableObject {
       }
       if (path === '/api/change/request' && !ownerDevice) return ownerOnly();
       if (path === '/api/change/request') return dispatchChange(this.env, body, this.ctx.storage, {
+        defer: true,
         autoOpenPr: ownerDevice && data.autonomy !== false,
         queue: (args) => this.queueSelfDevelopment(args),
         topicStudy: (intent, text) => this.startTopicStudy(intent, text),
@@ -7289,8 +7343,13 @@ export class CheState extends DurableObject {
           // (an unstamped legacy session counts as older work).
           const activeJob = current.jobs.find((item) => item.kind === 'self_development' && ['queued', 'running'].includes(item.status));
           const jobReply = () => {
-            const state = String(activeJob.status || 'queued');
-            const spoken = state === 'running'
+            const storedState = String(activeJob.status || 'queued');
+            const stale = storedState === 'running'
+              && Date.parse(activeJob.updated_at || 0) <= Date.now() - jobStaleMs(activeJob);
+            const state = stale ? 'interrupted' : storedState;
+            const spoken = stale
+              ? 'The latest coding job stopped reporting progress and is not confirmed running. Its checkpoint is saved for recovery, but recovery has not started yet.'
+              : state === 'running'
               ? 'The latest coding job is running, sir.'
               : state === 'queued' && Number(activeJob.retry_count || 0) > 0
                 ? 'The latest coding job is retrying automatically, sir.'
@@ -7309,7 +7368,7 @@ export class CheState extends DurableObject {
           const runtimeIsNewer = Boolean(id) && (!activeJob || (runtimeAt && runtimeAt > String(activeJob.created_at || '')));
           if (activeJob && !runtimeIsNewer) return jobReply();
           if (id) {
-            const status = await new CheCodingRuntime(this.env).getStatus(id);
+            const status = await new CheCodingRuntime(this.env).getStatus(id, { acceptedAt: runtimeAt });
             if (status.status === 200) {
               const runtimeLifecycle = runtimeState(status);
               // Status is a read. Automatic recovery runs from the alarm path,
@@ -9285,7 +9344,7 @@ export class CheState extends DurableObject {
 
   // Saves an owner coding request as an idempotent background job when the
   // engines/GitHub are temporarily unavailable (class B).
-  async queueSelfDevelopment({ request, groundedRequest }) {
+  async queueSelfDevelopment({ request, groundedRequest, immediate = false }) {
     const data = await this.loadData();
     const { job, deduplicated } = enqueueJob(data, {
       kind: 'self_development',
@@ -9293,11 +9352,18 @@ export class CheState extends DurableObject {
       prompt: String(groundedRequest || request).slice(0, 16000),
       request: String(request).slice(0, 16000),
       idempotency_key: idempotencyKey('job:self_development', request),
-      retry_at: Date.now() + backoffMs(0, 5 * 60_000),
+      retry_at: immediate ? Date.now() : Date.now() + backoffMs(0, 5 * 60_000),
     });
+    if (!deduplicated) noteJobActivity(job, 'Coding job accepted and queued.');
     await this.ctx.storage.put('che', data);
-    await this.scheduleWork();
-    return { job, deduplicated, paused: !data.autonomy };
+    let scheduled = true;
+    try {
+      await this.scheduleWork();
+    } catch (error) {
+      scheduled = false;
+      console.error('CHE coding alarm scheduling failed', String(error?.message || error).slice(0, 300));
+    }
+    return { job, deduplicated, paused: !data.autonomy, scheduled };
   }
 
   // Compatibility path for installed clients that selected the legacy coding
@@ -9333,14 +9399,15 @@ export class CheState extends DurableObject {
       const started = await this.startOpenCodeSession(message).catch((error) => ({ status: 0, detail: String(error?.message || error) }));
       if (started.status === 202) {
         await Promise.resolve(onAccepted?.()).catch(() => null);
-        return ndjsonReply(`I handed this to my OpenCode coding runner, sir. It will change the code, open a pull request, run the tests, have my reviewer check it, and merge it if everything passes. Ask "coding status" anytime.`, {
-          source: 'che_self_development', runtime: 'opencode', session_id: started.session_id,
+        return ndjsonReply(`I accepted OpenCode coding job ${String(started.job_id || started.session_id).slice(0, 8)}, sir. It is queued, not running yet. Ask "coding status" anytime.`, {
+          source: 'che_self_development', runtime: 'opencode', job_id: started.job_id, session_id: started.session_id, state: started.state,
         });
       }
       await this.ctx.storage.put('che_runtime_last_fallback', { at: new Date().toISOString(), detail: String(started.detail || '').slice(0, 300) });
     }
     const autonomyOn = (await this.loadData().catch(() => ({})))?.autonomy !== false;
     const response = await dispatchChange(this.env, { request: message }, this.ctx.storage, {
+      defer: true,
       autoOpenPr: autonomyOn,
       queue: (args) => this.queueSelfDevelopment(args),
       topicStudy: (intent, text) => this.startTopicStudy(intent, text),
@@ -9381,9 +9448,11 @@ export class CheState extends DurableObject {
     const priorKey = String(await this.ctx.storage.get('che_runtime_last_mission_key') || '');
     const priorSession = String(await this.ctx.storage.get('che_runtime_last_session') || '');
     if (priorKey === missionKey && priorSession) {
-      const prior = await runtime.getStatus(priorSession).catch(() => null);
+      const priorAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
+      const prior = await runtime.getStatus(priorSession, { acceptedAt: priorAt }).catch(() => null);
       if (prior?.status === 200 && ['queued', 'dispatching', 'running', 'retrying', 'recovering', 'implemented', 'pr_open', 'reviewing', 'approved_waiting_owner'].includes(runtimeState(prior))) {
-        return { status: 202, runtime: 'opencode', session_id: priorSession, state: runtimeState(prior), deduplicated: true };
+        const priorJobId = String(await this.ctx.storage.get('che_runtime_last_job_id') || priorSession);
+        return { status: 202, runtime: 'opencode', job_id: priorJobId, session_id: priorSession, state: runtimeState(prior), deduplicated: true };
       }
     }
     const jobId = crypto.randomUUID();
@@ -9396,6 +9465,7 @@ export class CheState extends DurableObject {
     });
     if (started.status === 202) {
       await this.ctx.storage.put('che_runtime_last_session', started.session_id);
+      await this.ctx.storage.put('che_runtime_last_job_id', started.job_id || jobId);
       await this.ctx.storage.put('che_runtime_last_session_at', new Date().toISOString());
       await this.ctx.storage.put('che_runtime_last_mission_key', missionKey);
       await this.ctx.storage.put('che_runtime_last_request', ownerRequest.slice(0, 16000));
@@ -9422,7 +9492,7 @@ export class CheState extends DurableObject {
     const id = String(await this.ctx.storage.get('che_runtime_last_session') || '');
     const runtimeAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
     if (!id || !runtimeAt) return null;
-    const status = await new CheCodingRuntime(this.env).getStatus(id).catch(() => null);
+    const status = await new CheCodingRuntime(this.env).getStatus(id, { acceptedAt: runtimeAt }).catch(() => null);
     if (!status || status.status !== 200) return null;
     const state = runtimeState(status);
     if (recoverableRuntimeFailure(status)) {
@@ -9897,6 +9967,15 @@ export class CheState extends DurableObject {
       // The retry continues this job from its checkpoint on other engines.
       if (prepared.checkpoint) error.checkpoint = prepared.checkpoint;
       throw error;
+    }
+    if (prepared.engineering_record) {
+      await this.ctx.storage.put(FAILED_ENGINEERING_KEY, {
+        ...prepared.engineering_record,
+        request: String(job.request || job.prompt).slice(0, 16000),
+        recovery_runs: 0,
+        recovery_lock_until: 0,
+        from_job: job.id,
+      });
     }
     return {
       id: job.id,
