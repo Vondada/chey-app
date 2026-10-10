@@ -66,6 +66,12 @@ Then, on GitHub:
 
 ## 2. Current position (updated by: Claude, 2026-10-10)
 
+**Claude, 2026-10-10 (owner: "fix the Workers Builds failure"). Diagnosed, NOT fixed in the repo. Owner decision needed.**
+- Check "Workers Builds: chey-app" fails within a second on every commit. Its log is only in the Cloudflare dashboard, which Claude cannot open, so the cause is inferred.
+- Most likely cause: the only Wrangler config is `server/cloudflare/wrangler.jsonc`, but Workers Builds reads from the repo root by default. Cloudflare's docs describe this exact case as "Missing entry-point … a Wrangler configuration file is likely missing from the root directory."
+- Two dashboard options, neither done: (a) set the Build Configuration root directory to `server/cloudflare`; (b) disconnect the Git integration. Recommended: (b). `che-worker-deploy.yml` is the production path. A second deployer would race it and could publish a version without the commit tag that "Verify live deployed commit" checks.
+- Do NOT add a root-level wrangler config to make the build pass: it would duplicate bindings and Durable Object migrations.
+
 **Claude, 2026-10-10 (owner: "merge the PR when the checks pass"). PR #271 MERGED and DEPLOYED.**
 - Squash-merged to `main` as `4ee17fd` (head `eae5bf1`). Deploy run `38070425113` succeeded: Worker tests, sync, deploy, and "Verify live deployed commit" all passed.
 - Checks at merge: "Worker syntax and unit tests" and both `analyze` jobs passed. "Workers Builds: chey-app" still fails instantly on every commit (also on #270); it is the Cloudflare integration check, not the deploy path. Not fixed.
