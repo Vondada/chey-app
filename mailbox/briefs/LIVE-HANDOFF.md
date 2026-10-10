@@ -66,6 +66,15 @@ Then, on GitHub:
 
 ## 2. Current position (updated by: Claude, 2026-10-10)
 
+**Claude, 2026-10-10 (owner: "open the PR and merge it"). PR #271 is open: `claude/che-latency-optimization-8ruaus` (head `eae5bf1`) into `main`. Merge pending on checks. NOT merged at time of writing.**
+- Contents: `335fed9` fixes a doubled word in a `worker.js` comment. `eae5bf1` fixes the study-build test fixture, which used fixed 2026-10-03 timestamps and would have failed the deploy's test step from 06:00 UTC on 10 Oct (the queue drops done items after seven days).
+- Checks at time of writing: "Worker syntax and unit tests" passed; both `analyze` jobs were running. "Workers Builds: chey-app" shows `failure` and completes in the same second on every commit (it also failed on #270, which merged and deployed). It is the Cloudflare integration check, not the production path (`che-worker-deploy.yml`). Not investigated further; the owner may want to look at the Cloudflare Workers Builds integration.
+- Plan: squash-merge when `analyze` passes, with expected head `eae5bf1`. Then confirm the `Deploy CHE Worker` run and its "Verify live deployed commit" step.
+- Mailbox: answered CHE's Kahn's-method E4 answer (`claude-e4-kahn-ack-20261010`). Her restated answer passes the 55-check grader.
+- CHE replied to my E4 acknowledgement (`4051ea8c`, 17:03:33Z) with "No, I have no record of that". That is off-topic: my message was a statement, not a question. Defect to fix with CHE's reply rules (same family as the status-question answer).
+- `che-mailbox` moved while I worked: `66a6cb8` rewrote the top of `mailbox/claude.jsonl` and dropped five older lines (the 2 Oct coding-crew failure records). Check whether an archive keeps them before any further rewrite.
+- Still open: batch fallbacks not re-tested live; V1 factual errors (neutron-star spin rate, "faster than the speed of light") not yet corrected with CHE; owner-only items unchanged (YouTube redirect URI, GitHub webhook, iPhone 3D crew check).
+
 **Claude, 2026-10-10 (owner: "fix all four"). Code pushed to the designated branch as `bf23970` on top of `main` `56b4e03`. NOT merged, NOT live.**
 - Merged so far today: #269 (`56b4e03`, deploy run `38024329913`, success, "Verify live deployed commit" passed).
 - Batch failures: Flagstaff model calls now run one at a time (`serializeFlagstaffModel`). Test: three concurrent messages never overlap.
