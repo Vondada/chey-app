@@ -144,7 +144,12 @@ extension _CheHomeStreaming on _CHEHomeState {
     if (codeRequest) {
       final response = await http.post(
         Uri.parse('$cheAgentBaseUrl/api/change/request'),
-        headers: _authHeaders,
+        headers: {
+          ..._authHeaders,
+          // Announce background-job support so the Worker may answer with 202
+          // and a real durable job id instead of 200 for legacy app builds.
+          'x-che-background-jobs': '1',
+        },
         body: jsonEncode(fixThis
             ? {'request': _fixThisRequest(trimmedRequest), 'fix_this': true}
             : {'request': userMessage.trim()}),
