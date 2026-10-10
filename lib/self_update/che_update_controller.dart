@@ -165,7 +165,7 @@ class CheUpdateController extends ChangeNotifier {
     }
   }
 
-  /// Called after the "installed" message has been shown and spoken once.
+  /// Called when the owner closes the "installed" notice.
   void dismissVerified() {
     if (verifiedLabel == null) return;
     verifiedLabel = null;
@@ -182,6 +182,12 @@ class CheUpdateController extends ChangeNotifier {
     );
     switch (outcome) {
       case CheInstallCheck.none:
+        // A stopped attempt (SideStore missing, a failed handoff, or an install
+        // that was never confirmed) starts over here, so "check for updates"
+        // can move past it.
+        if (install != CheFullInstallState.waitingForSideStore) {
+          install = CheFullInstallState.idle;
+        }
         return;
       case CheInstallCheck.waiting:
         install = CheFullInstallState.waitingForSideStore;

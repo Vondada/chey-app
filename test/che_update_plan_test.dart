@@ -116,6 +116,8 @@ void main() {
       expect(plan.stage, CheUpdateStage.installFailed);
       expect(plan.headline, 'The install was not confirmed');
       expect(plan.detail, contains('CHE 1.4.1, build 3700 is still running'));
+      expect(plan.detail, contains('"check for updates"'));
+      expect(plan.detail.toLowerCase(), isNot(contains('tap')));
       expect(plan.action, CheUpdateAction.checkAgain);
     });
 

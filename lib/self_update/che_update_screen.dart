@@ -87,6 +87,9 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
     _controller.configure(widget.baseUrl);
     _controller.start();
     WidgetsBinding.instance.addPostFrameCallback((_) => _announce());
+    // Opening the screen is a request to check, so it never shows a result
+    // from earlier than this open.
+    unawaited(_controller.refresh(force: true));
   }
 
   @override
@@ -296,10 +299,9 @@ class _CheMobileUpdateNoticeState extends State<CheMobileUpdateNotice> {
       HapticFeedback.mediumImpact();
       unawaited(widget.onSpeak('Sir, a new CHE update is ready.'));
     } else if (plan.stage == CheUpdateStage.installed) {
+      // The banner stays until the owner closes it, so the result can be read.
+      HapticFeedback.mediumImpact();
       unawaited(widget.onSpeak(plan.spoken));
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => _controller.dismissVerified(),
-      );
     }
   }
 
@@ -314,6 +316,26 @@ class _CheMobileUpdateNoticeState extends State<CheMobileUpdateNotice> {
     );
   }
 
+  Widget _trailing(CheUpdatePlan plan, CheMobileUpdateInfo? latest) {
+    if (plan.stage == CheUpdateStage.installed) {
+      return IconButton(
+        tooltip: 'Hide the update notice',
+        icon: const Icon(Icons.close_rounded, color: Colors.white),
+        onPressed: _controller.dismissVerified,
+      );
+    }
+    if (latest != null && plan.stage == CheUpdateStage.fullReady) {
+      return FilledButton(
+        onPressed: () async {
+          final said = await confirmAndInstallCheUpdate(context, latest);
+          if (said != null) await widget.onSpeak(said);
+        },
+        child: const Text('Update'),
+      );
+    }
+    return const Icon(Icons.chevron_right_rounded, color: Colors.white);
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -325,6 +347,7 @@ class _CheMobileUpdateNoticeState extends State<CheMobileUpdateNotice> {
           CheUpdateStage.installing,
           CheUpdateStage.sideStoreMissing,
           CheUpdateStage.installFailed,
+          CheUpdateStage.installed,
         };
         if (!shown.contains(plan.stage)) return const SizedBox.shrink();
         final latest = _controller.latest;
@@ -349,22 +372,7 @@ class _CheMobileUpdateNoticeState extends State<CheMobileUpdateNotice> {
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: Colors.white70),
                 ),
-                trailing:
-                    latest != null && plan.stage == CheUpdateStage.fullReady
-                    ? FilledButton(
-                        onPressed: () async {
-                          final said = await confirmAndInstallCheUpdate(
-                            context,
-                            latest,
-                          );
-                          if (said != null) await widget.onSpeak(said);
-                        },
-                        child: const Text('Update'),
-                      )
-                    : const Icon(
-                        Icons.chevron_right_rounded,
-                        color: Colors.white,
-                      ),
+                trailing: _trailing(plan, latest),
                 onTap: _openScreen,
               ),
             ),

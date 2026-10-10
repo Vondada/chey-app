@@ -122,6 +122,45 @@ class CheMobileBuilds {
   final bool newestBuildFailed;
 }
 
+/// What /api/update/latest said: the newest verified build, and whether the
+/// newest release attempt failed.
+class CheLatestRead {
+  const CheLatestRead({required this.latest, required this.newestBuildFailed});
+
+  final CheMobileUpdateInfo? latest;
+  final bool newestBuildFailed;
+}
+
+/// Reads one /api/update/latest reply. A failed newest build comes back as a
+/// 503 with `latest_attempt.state == 'failure'`, and that is reported as a
+/// failed build. Any other reply without a usable build throws, so CHE says
+/// "could not check" and never "up to date".
+CheLatestRead readLatestBuild(int status, String body) {
+  Map<String, dynamic>? payload;
+  try {
+    final raw = jsonDecode(body);
+    if (raw is Map) payload = Map<String, dynamic>.from(raw);
+  } catch (_) {}
+  final attempt = payload?['latest_attempt'];
+  final newestBuildFailed = attempt is Map && attempt['state'] == 'failure';
+  final ok = payload;
+  if (status == 200 && ok != null && ok['ok'] == true) {
+    final parsed = CheMobileUpdateInfo.fromJson(ok);
+    if (parsed.valid) {
+      return CheLatestRead(
+        latest: parsed,
+        newestBuildFailed: newestBuildFailed,
+      );
+    }
+  }
+  if (newestBuildFailed) {
+    return const CheLatestRead(latest: null, newestBuildFailed: true);
+  }
+  throw const FormatException(
+    'The update service did not return a usable build.',
+  );
+}
+
 /// Reads the update service. Throws when the network or the JSON fails, so the
 /// caller can show "could not check" instead of "up to date".
 Future<CheMobileBuilds> fetchMobileBuilds(String base) async {
@@ -134,20 +173,7 @@ Future<CheMobileBuilds> fetchMobileBuilds(String base) async {
         .timeout(const Duration(seconds: 15)),
   ]);
 
-  CheMobileUpdateInfo? latest;
-  var newestBuildFailed = false;
-  if (responses[0].statusCode == 200) {
-    final raw = jsonDecode(responses[0].body);
-    if (raw is Map) {
-      final payload = Map<String, dynamic>.from(raw);
-      if (payload['ok'] == true) {
-        final parsed = CheMobileUpdateInfo.fromJson(payload);
-        if (parsed.valid) latest = parsed;
-      }
-      final attempt = payload['latest_attempt'];
-      newestBuildFailed = attempt is Map && attempt['state'] == 'failure';
-    }
-  }
+  final read = readLatestBuild(responses[0].statusCode, responses[0].body);
 
   var history = <CheMobileUpdateInfo>[];
   if (responses[1].statusCode == 200) {
@@ -164,9 +190,9 @@ Future<CheMobileBuilds> fetchMobileBuilds(String base) async {
     }
   }
   return CheMobileBuilds(
-    latest: latest,
+    latest: read.latest,
     history: history,
-    newestBuildFailed: newestBuildFailed,
+    newestBuildFailed: read.newestBuildFailed,
   );
 }
 

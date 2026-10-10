@@ -100,7 +100,8 @@ CheUpdatePlan planCheUpdate({
       return CheUpdatePlan(
         stage: CheUpdateStage.installFailed,
         headline: 'The install was not confirmed',
-        detail: '$installedLabel is still running. Tap Update to try again.',
+        detail:
+            '$installedLabel is still running. Say "check for updates" to try again.',
         action: CheUpdateAction.checkAgain,
       );
     case CheFullInstallState.idle:
