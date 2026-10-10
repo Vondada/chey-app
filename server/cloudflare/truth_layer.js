@@ -146,6 +146,7 @@ export function verifiedState(receipts, jobs = [], extras = {}) {
     merged,
     deployed: recent(byKind('deployed').at(-1) || null),
     ci_passed: recent(byKind('ci_passed').at(-1) || null),
+    renders: byKind('video_render').slice(-3).map((r) => ({ task_id: String(r.task_id || ''), topic: String(r.topic || '').slice(0, 120), status: String(r.status || 'queued'), at: r.at || '' })),
   };
 }
 
@@ -155,6 +156,9 @@ const peerLabel = (peer) => ({ chatgpt: 'ChatGPT', claude: 'Claude', codex: 'Cod
 // Deterministic owner-facing status built only from receipts and jobs.
 export function verifiedStatusText(state) {
   const lines = [];
+  for (const render of state.renders || []) {
+    lines.push(`Video render ${shortId(render.task_id)} for "${render.topic}" is ${render.status} on the free renderer. No upload is recorded.`);
+  }
   for (const job of state.active_jobs) {
     lines.push(`${job.kind === 'repo_study' ? 'Repository study' : 'Coding job'} ${shortId(job.id)} is ${job.status === 'running' ? 'running' : 'queued to run'}.`);
   }

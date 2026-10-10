@@ -54,6 +54,7 @@ import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEnginee
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
 import { definitionAnswer, inspectRepositoryContext, lookupAnswer, prepareSelfUpdate, recordLesson, recoveryRequestIntent, refusesAnswer, SOURCE_RETRY_NOTE } from './self_development.js';
 import { jsRegexFlagProblems } from './flagstaff_code_check.js';
+import { ownToolPermissionProblems } from './flagstaff_reply_check.js';
 import { cachedCodeIndex } from './code_index.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
@@ -3586,6 +3587,14 @@ export class CheState extends DurableObject {
     return this.keyEnv;
   }
 
+  // Flagstaff model calls run one at a time. In the live test, parallel calls from
+  // one mailbox push all failed on their first try and only retries answered.
+  serializeFlagstaffModel(run) {
+    const next = (this.flagstaffModelTail || Promise.resolve()).then(run);
+    this.flagstaffModelTail = next.catch(() => null);
+    return next;
+  }
+
   // A wake push and the mailbox alarm can deliver the same message at the same
   // moment. They share one reply, so the owner's thread gets a single answer.
   replyToFlagstaffMessage(message, options = {}) {
@@ -3743,7 +3752,7 @@ export class CheState extends DurableObject {
       // A definition the index already holds is answered directly, not guessed.
       const lookupIndex = cachedCodeIndex(repoGrounding?.head_sha);
       const directAnswer = definitionAnswer(incoming, repoGrounding) || lookupAnswer(incoming, repoGrounding, lookupIndex ? (path) => lookupIndex.text(path) : null);
-      const callModel = (retryNote = '') => this.env.AI.run(this.env.CHE_STRONG_MODEL || STRONG_MODEL, {
+      const runModel = (retryNote = '') => this.env.AI.run(this.env.CHE_STRONG_MODEL || STRONG_MODEL, {
         messages: [
           {
             role: 'system',
@@ -3758,9 +3767,9 @@ export class CheState extends DurableObject {
               'Apps: CHE opens or uses an app only after the owner gives explicit permission for that app. If a peer asks you to open or use an app, say the owner must grant that permission first. Never promise to open it.',
               'Passwords: you may explain where they are kept. Passwords live only in the owner\'s on-device iPhone Keychain vault and are never sent to the CHE Worker, any AI provider, chat history, memory or logs. Never reveal a password itself.',
               'Never promise to send, finish or deliver anything later: you cannot run tools from this reply.',
-              'Status questions: when the sender asks whether something was rendered, uploaded, published, paid or sent, answer in the first sentence with yes or no. Say yes only when VERIFIED STATE lists it. If it has not happened, say plainly that it has not happened and what would make it happen. Never answer with "I don\'t have a confirmed link" or another vague line.',
+              'Status questions: when the sender asks whether something was rendered, uploaded, published, paid or sent, answer in the first sentence with yes or no. Say yes only when VERIFIED STATE lists it. If VERIFIED STATE does not list it, answer "No, I have no record of that": you only see renders CHE started and recorded, so never say a render did not happen. Then say what would make it happen. Never answer with "I don\'t have a confirmed link" or another vague line.',
               'Speculation: label a hypothesis or an unconfirmed science claim as one ("may", "one theory", "not confirmed"). Never state it as settled fact.',
-              'Code: give valid JavaScript only. Before you say an example passes, trace it by hand and state the result. If you name a bug, name its real cause, not a guess.',
+              'Code: give valid JavaScript only. Before you say an example passes, trace it by hand and state the result. If you name a bug, name its real cause, not a guess. Ordering: a depth-first post-order must be reversed to give a dependency order (each node before the nodes that depend on it), or use Kahn\'s method with a queue of nodes that have no incoming edges. Check the output against every edge.',
               'Your own tools, which you can run yourself without a yes: the free GitHub video renderer (a 5 to 90 second faceless MP4 with a thumbnail and voice, kept as a 30-day artifact and never uploaded), read-only repository inspection, the installed skill search, and background coding jobs for owner-authorized BUILD requests. Publishing to YouTube and any spending need the owner\'s direct yes.',
               'From a Flagstaff reply you cannot run any tool. If a peer asks you to render, inspect or code, say you will do it when the owner asks in the app, and do not promise a result or a time.',
               'You may analyze, verify supplied context, propose a plan or draft, and identify blockers.',
@@ -3786,6 +3795,7 @@ export class CheState extends DurableObject {
         che_route: 'quality',
         che_audit: { task: incoming.slice(0, 160), agent: 'CHE', route: 'flagstaff_live_reply', peer: sender },
       });
+      const callModel = (retryNote = '') => this.serializeFlagstaffModel(() => runModel(retryNote));
       const modelText = (res) => String(res?.response || res?.choices?.[0]?.message?.content || '').trim().slice(0, 12000);
       const jobIds = ((await this.loadData().catch(() => null))?.jobs || []).map((j) => j.id);
       // Quoted code must be real: checked against the pinned commit's index,
@@ -3811,8 +3821,13 @@ export class CheState extends DurableObject {
       }
       // Code JavaScript cannot parse is not sent as it is. One corrective pass names the exact problem.
       let codeProblems = directAnswer ? [] : jsRegexFlagProblems(raw);
-      if (codeProblems.length) {
-        raw = modelText(await callModel(`Your code block is not valid JavaScript: ${codeProblems.join('; ')}. Rewrite it as valid JavaScript. Valid regex flags are d, g, i, m, s, u, v and y; there is no x flag, so write a multi-line regex on one line. Trace each example by hand before you say it passes.`));
+      const toolProblems = directAnswer ? [] : ownToolPermissionProblems(raw);
+      if (codeProblems.length || toolProblems.length) {
+        const corrections = [
+          ...codeProblems.map((problem) => `Your code block is not valid JavaScript: ${problem}. Valid regex flags are d, g, i, m, s, u, v and y; there is no x flag, so write a multi-line regex on one line.`),
+          ...toolProblems.map((problem) => `Correction: ${problem}. The free renderer is your own tool and needs no owner yes. Only publishing to YouTube and spending need the owner's direct yes.`),
+        ];
+        raw = modelText(await callModel(`${corrections.join(' ')} Rewrite the reply with these fixes. Trace each example by hand before you say it passes.`));
         grounded = checked(raw);
         codeProblems = jsRegexFlagProblems(raw);
       }

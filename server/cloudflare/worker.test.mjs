@@ -1481,3 +1481,31 @@ test('Flagstaff code that JavaScript cannot parse gets one corrective pass befor
   assert.match(visible.text, /\/i\.exec/);
   assert.doesNotMatch(visible.text, /syntax problem I could not fix/);
 });
+
+test('Flagstaff model calls run one at a time, so a batch cannot fail together', async () => {
+  const saved = new Map();
+  let running = 0;
+  let peak = 0;
+  const env = {
+    AI: {
+      run: async () => {
+        running += 1;
+        peak = Math.max(peak, running);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        running -= 1;
+        return { response: 'Reviewed. The plan looks right.' };
+      },
+    },
+  };
+  const state = new CheState({
+    storage: {
+      get: async (key) => saved.get(key),
+      put: async (key, value) => saved.set(key, structuredClone(value)),
+      setAlarm: async () => {},
+    },
+  }, env);
+  const messages = ['one', 'two', 'three'].map((n) => ({ id: `serial-${n}`, from: 'claude', to: 'che', text: `Please review plan ${n}.` }));
+  const results = await Promise.all(messages.map((m) => state.replyToFlagstaffMessage(m)));
+  assert.equal(peak, 1);
+  assert.ok(results.every((r) => r.replied === true));
+});
