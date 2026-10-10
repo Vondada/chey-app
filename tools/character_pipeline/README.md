@@ -32,13 +32,30 @@ on it; eyes use a painted texture; hair, brows, lashes, mouth, shoes, fingers an
 accessories are rigid. Colours are vertex colours. Clips: idle, walk, run, wave, sit,
 stand, talk, think, celebrate, nod, shake. Blink is built into the looping clips.
 
-Viewer: `assets/characters/che_viewer.html` (serve the folder over http; file:// blocks
-module imports). CHE walks with the pad; the seven agents stand in the office playing
-their own clip; choosing an agent (button or tap) says their name and role and they wave.
+The app embeds `assets/characters/app/index.html` through
+`lib/rooms/che_characters_room.dart`; its scripts and eight GLBs are bundled in
+`pubspec.yaml`. The separate `assets/characters/che_viewer.html` is a development
+viewer (serve over HTTP; file:// blocks module imports). The animations are a
+character demonstration, not evidence of live agent work.
+
+Before packaging an export, run these dependency-free checks from the repo root:
+
+```
+node tools/character_pipeline/validate_assets.mjs
+node --test tools/character_pipeline/assets.test.mjs
+```
+
+CI runs the same contract: binary header/chunk bounds, embedded buffers/textures,
+skeleton and animation references, all eleven required clips, Flutter asset
+registration and locally available scene scripts. The command reports actual byte
+and triangle counts. It is not a full glTF validator or an iPhone rendering test.
 
 Known limits:
 - About 60k to 80k triangles and 2.3 to 3 MB per character; 8 characters is about 20 MB.
   Needs mesh compression or a lower-poly build before shipping in the app.
 - No facial blend shapes (mouth does not move when talking), no IK or foot placement.
 - Hands are small mitten shapes; hair is shaped shells and curls, not strands.
-- Not yet embedded in the Flutter app; not measured on an iPhone.
+- Embedded in Flutter; rendering performance has not been measured on an iPhone.
+- The app currently announces ready before the page acknowledges asynchronous GLB
+  parsing, and the character scene does not suspend its animation loop when hidden.
+  These runtime gaps still require a scene/Flutter bridge fix and device validation.
