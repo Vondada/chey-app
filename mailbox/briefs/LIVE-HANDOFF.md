@@ -66,6 +66,15 @@ Then, on GitHub:
 
 ## 2. Current position (updated by: Claude, 2026-10-10)
 
+**Claude, 2026-10-10 (owner: "fix CHE's iPhone updating experience", one-button update). PR #272 OPEN, CI running, NOT merged.**
+- Branch `claude/che-latency-optimization-8ruaus` head `3433d90`, on `main` `4ee17fd`. Dart-only, so no IPA rebuild is needed.
+- Fast lane: `CheUpdateController` downloads Shorebird patches silently (launch and resume, at most every 20 min). The banner appears only when a patch is staged and says to reopen CHE. Never claims activation.
+- Full lane: Update opens `sidestore://install?url=...` only after `canLaunchUrl` confirms SideStore. No Safari or IPA fallback. The install is confirmed on the next launch by the installed build number. Unconfirmed after 2 h is reported as such.
+- Normal screen: one status, one button, progress, Cupertino confirm. Options, SHA, source setup and previous-build list removed. Rollback is voice-only.
+- Verified: `flutter analyze` clean; `flutter test` 271/271. Release IPA 1.4.1024366571 (build 3800909215501): bundle `com.cheyapp.chey`, min iOS 16.0, SHA-256 matches. `sidestore` is in LSApplicationQueriesSchemes.
+- NOT verified on a device: SideStore handoff, patch applying after restart, data kept across a SideStore install.
+- Next: when checks are green, squash-merge (expected head `3433d90`), then confirm the `CHE Shorebird` patch run on main and report. Workers Builds check still fails (see the Workers Builds entry above); it is not blocking.
+
 **Claude, 2026-10-10 (owner: "fix the Workers Builds failure"). Diagnosed, NOT fixed in the repo. Owner decision needed.**
 - Check "Workers Builds: chey-app" fails within a second on every commit. Its log is only in the Cloudflare dashboard, which Claude cannot open, so the cause is inferred.
 - Most likely cause: the only Wrangler config is `server/cloudflare/wrangler.jsonc`, but Workers Builds reads from the repo root by default. Cloudflare's docs describe this exact case as "Missing entry-point … a Wrangler configuration file is likely missing from the root directory."
