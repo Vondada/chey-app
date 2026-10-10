@@ -98,7 +98,9 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
     // The board/coding polls notify independently of the roster fetch; only
     // the loaded roster can resolve the name, otherwise a placeholder desk
     // would falsely report the agent as absent.
-    if (_pendingAgentName == null || !_runtime.loaded) return;
+    // A failed roster request sets loaded=true too; do not call a real
+    // agent absent until a successful roster refresh has arrived.
+    if (_pendingAgentName == null || !_runtime.loaded || _runtime.error != null) return;
     final want = _pendingAgentName!;
     _pendingAgentName = null;
     final id = _store.deskIdForAgentName(want);
