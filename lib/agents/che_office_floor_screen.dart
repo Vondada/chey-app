@@ -41,6 +41,7 @@ class CheOfficeFloorScreen extends StatefulWidget {
     this.onTalkToChe,
     this.onSpeak,
     this.embedded = false,
+    this.initialAgentName,
   });
 
   final CheAgentRuntimeClient client;
@@ -53,6 +54,10 @@ class CheOfficeFloorScreen extends StatefulWidget {
 
   /// True when shown as the hub's Office tab (no app bar or back route).
   final bool embedded;
+
+  /// Deep link from the Brain's live agent orbs: opens this agent's desk
+  /// sheet once the roster arrives. Unmatched names are spoken, never guessed.
+  final String? initialAgentName;
 
   @override
   State<CheOfficeFloorScreen> createState() => _CheOfficeFloorScreenState();
@@ -76,10 +81,38 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
   );
   bool _useFlatPlan = false;
 
+  /// Deep link: open the requested agent's desk once, as soon as the roster
+  /// has anyone. Waits for the roster instead of guessing; an unmatched name
+  /// is spoken aloud exactly once.
+  String? _pendingAgentName;
+  bool _initialAgentTried = false;
+
   @override
   void initState() {
     super.initState();
+    _pendingAgentName = widget.initialAgentName;
     _runtime.start();
+  }
+
+  void _openInitialAgent() {
+    // The board/coding polls notify independently of the roster fetch; only
+    // the loaded roster can resolve the name, otherwise a placeholder desk
+    // would falsely report the agent as absent.
+    // A failed roster request sets loaded=true too; do not call a real
+    // agent absent until a successful roster refresh has arrived.
+    if (_pendingAgentName == null || !_runtime.loaded || _runtime.error != null) return;
+    final want = _pendingAgentName!;
+    _pendingAgentName = null;
+    final id = _store.deskIdForAgentName(want);
+    if (id != null) {
+      _initialAgentTried = true;
+      _openDesk(id);
+      return;
+    }
+    if (!_initialAgentTried) {
+      _initialAgentTried = true;
+      _speak('$want is not on the Office floor right now.');
+    }
   }
 
   @override
@@ -94,6 +127,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
     final r = _runtime;
     _store.setRoster(r.che, [for (final p in r.agents) p.agent]);
     _store.setMeetings(r.meetings);
+    _openInitialAgent();
     if (!identical(r.today, _lastBoard)) {
       _lastBoard = r.today;
       _store.setBoard(r.today);

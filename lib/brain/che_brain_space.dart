@@ -476,6 +476,7 @@ class CheBrainSpace extends StatefulWidget {
     this.onSpeak,
     this.active = true,
     this.cardBottomInset = 0,
+    this.onOpenAgent,
   });
 
   final CheBrainSpaceController controller;
@@ -486,6 +487,9 @@ class CheBrainSpace extends StatefulWidget {
 
   /// Keeps the memory card above controls the parent floats at the bottom.
   final double cardBottomInset;
+
+  /// Deep link for live agent orbs: the agent's name. Null hides the button.
+  final void Function(String agentName)? onOpenAgent;
 
   @override
   State<CheBrainSpace> createState() => _CheBrainSpaceState();
@@ -799,7 +803,7 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
               left: 12,
               right: 12,
               bottom: 12 + widget.cardBottomInset,
-              child: _MemoryCard(controller: c, node: sel, onSpeak: _say),
+              child: _MemoryCard(controller: c, node: sel, onSpeak: _say, onOpenAgent: widget.onOpenAgent),
             );
           },
         ),
@@ -909,11 +913,14 @@ class _LeaderLine extends CustomPainter {
 
 /// The readable card for one memory; surrounding memories stay visible.
 class _MemoryCard extends StatelessWidget {
-  const _MemoryCard({required this.controller, required this.node, required this.onSpeak});
+  const _MemoryCard({required this.controller, required this.node, required this.onSpeak, this.onOpenAgent});
 
   final CheBrainSpaceController controller;
   final CheBrainNode node;
   final void Function(String) onSpeak;
+
+  /// Deep link for live agent orbs; shown only on Agents cards when set.
+  final void Function(String agentName)? onOpenAgent;
 
   @override
   Widget build(BuildContext context) {
@@ -955,6 +962,12 @@ class _MemoryCard extends StatelessWidget {
                   icon: const Icon(Icons.volume_up_rounded, size: 18),
                   label: const Text('Read aloud'),
                 ),
+                if (node.dot.category == 'Agents' && onOpenAgent != null)
+                  TextButton.icon(
+                    onPressed: () => onOpenAgent!(node.dot.source),
+                    icon: const Icon(Icons.business_center_rounded, size: 18),
+                    label: Text('Open ${node.dot.source} in Office'),
+                  ),
                 if (cluster != null)
                   TextButton.icon(
                     onPressed: () => onSpeak(controller.toggleCluster(cluster.name, expand: false)),

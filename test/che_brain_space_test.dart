@@ -279,6 +279,26 @@ void main() {
       expect(cheMemoryCategoryColor('Agents'), const Color(0xFFFFB54D));
       c.dispose();
     });
+
+    testWidgets('an agent orb card deep-links to that agent in the Office', (tester) async {
+      final opened = <String>[];
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: CheMemoryBrainRoom(dots: agentDots(), onOpenAgent: opened.add),
+        ),
+      ));
+      await tester.pump();
+      final space = CheBrainSpaceController.current!;
+      space.execute(CheBrainCommand.parse('what is Atlas working on')!);
+      await tester.pump();
+      space.execute(const CheBrainCommand(CheBrainAction.openSelected));
+      await tester.pump();
+      expect(find.textContaining('Open Atlas in Office'), findsOneWidget);
+      expect(find.textContaining('Open Mira in Office'), findsNothing);
+      await tester.tap(find.textContaining('Open Atlas in Office'));
+      expect(opened, ['Atlas']);
+      await tester.pumpWidget(const SizedBox());
+    });
   });
 
   group('screen (iPhone 17 Pro Max, large accessibility text)', () {

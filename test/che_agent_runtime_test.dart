@@ -439,4 +439,62 @@ void main() {
     await tester.tap(find.text('Read all'));
     expect(spoken.single, 'Mira finished “Summer song”.');
   });
+
+  testWidgets('brain deep link waits for the roster instead of reporting the agent absent', (tester) async {
+    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+
+    final spoken = <String>[];
+    final backend = MockClient((request) async {
+      final path = request.url.path;
+      if (path == '/api/agents' && request.method == 'GET') {
+        // Roster is slow; the board answers first and must not resolve the link.
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        return http.Response(
+          jsonEncode({
+            'che': {'status': 'waiting', 'task': '1 delegated task in progress'},
+            'agents': [_nova],
+            'working': 1,
+            'meetings': [_meeting],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (path == '/api/office/today' && request.method == 'GET') {
+        return http.Response(
+          jsonEncode({
+            'board': {'started': [], 'shipped': [], 'blockers': [], 'agents_working': 0, 'agents': [], 'stripe': {'connected': false}},
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (path == '/api/agents/agent-nova-0001' && request.method == 'GET') {
+        return http.Response(jsonEncode({'agent': _nova, 'history': [], 'meetings': []}), 200,
+            headers: {'content-type': 'application/json'});
+      }
+      return http.Response(jsonEncode({'detail': 'Not found.'}), 404);
+    });
+    final client = CheAgentRuntimeClient(
+      baseUrl: () => 'https://che.example',
+      headers: () => const {},
+      client: backend,
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: CheOfficeFloorScreen(client: client, initialAgentName: 'Nova', onSpeak: (t) async => spoken.add(t)),
+    ));
+    // Board lands while the roster is still in flight: no false absent line,
+    // no desk sheet yet.
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(spoken, isEmpty);
+    expect(find.text('Curious and fast.'), findsNothing);
+    // Roster arrives: Nova's desk sheet opens on its own.
+    await _pumpUntilFound(tester, find.text('Curious and fast.'));
+    expect(spoken, isEmpty);
+
+    await tester.pumpWidget(const SizedBox());
+  });
 }

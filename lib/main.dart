@@ -1698,6 +1698,7 @@ OWNER AGENCY
               brainLinks: brainLinks,
               onReadAloud: (t) => speakText(t, record: false),
               onRefresh: () => _loadAgentState(silent: true),
+              onOpenAgent: (name) => _openOfficeFloor(agentName: name),
             ),
             ),
             offline: const CheOfflineBrainPanel(compact: true),
