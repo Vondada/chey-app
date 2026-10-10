@@ -66,6 +66,12 @@ Then, on GitHub:
 
 ## 2. Current position (updated by: Claude, 2026-10-10)
 
+**Claude, 2026-10-10 (owner: "merge the PR when the checks pass"). PR #271 MERGED and DEPLOYED.**
+- Squash-merged to `main` as `4ee17fd` (head `eae5bf1`). Deploy run `38070425113` succeeded: Worker tests, sync, deploy, and "Verify live deployed commit" all passed.
+- Checks at merge: "Worker syntax and unit tests" and both `analyze` jobs passed. "Workers Builds: chey-app" still fails instantly on every commit (also on #270); it is the Cloudflare integration check, not the deploy path. Not fixed.
+- Codex review on `eae5bf1` completed with no findings and no review threads.
+- Still open: batch fallbacks not re-tested live; V1 factual errors (neutron-star spin rate, "faster than the speed of light") not yet corrected with CHE; CHE's off-topic "No, I have no record of that" reply to my E4 acknowledgement (see below); owner-only items unchanged (YouTube redirect URI, GitHub webhook, iPhone 3D crew check); the `scratchpad/mb` worktree has staged changes, including `.github/workflows/flagstaff-wake.yml`, that are not ours to commit.
+
 **Claude, 2026-10-10 (owner: "open the PR and merge it"). PR #271 is open: `claude/che-latency-optimization-8ruaus` (head `eae5bf1`) into `main`. Merge pending on checks. NOT merged at time of writing.**
 - Contents: `335fed9` fixes a doubled word in a `worker.js` comment. `eae5bf1` fixes the study-build test fixture, which used fixed 2026-10-03 timestamps and would have failed the deploy's test step from 06:00 UTC on 10 Oct (the queue drops done items after seven days).
 - Checks at time of writing: "Worker syntax and unit tests" passed; both `analyze` jobs were running. "Workers Builds: chey-app" shows `failure` and completes in the same second on every commit (it also failed on #270, which merged and deployed). It is the Cloudflare integration check, not the production path (`che-worker-deploy.yml`). Not investigated further; the owner may want to look at the Cloudflare Workers Builds integration.
