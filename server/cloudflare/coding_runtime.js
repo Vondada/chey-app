@@ -185,6 +185,30 @@ export class CheCodingRuntime {
     return found.ok ? validSha(found.data?.sha) : '';
   }
 
+  // The mailbox result file only updates at claim and at publish, so an old
+  // heartbeat is not proof the run died: a queued or in-progress workflow run
+  // for this session is still live work. GitHub's own run state is the
+  // authority, checked before any stale-failure claim so a silent-but-alive
+  // run is never reported dead and never triggers a duplicate recovery job.
+  async workflowRunAlive({ runId = 0, acceptedAt = '' } = {}) {
+    if (Number(runId) > 0) {
+      const run = await gh(this.env, 'GET', `/actions/runs/${Number(runId)}`, null, this.fetcher);
+      if (!run.ok) return 'unknown';
+      return String(run.data?.status || '') === 'completed' ? 'dead' : 'alive';
+    }
+    const since = Date.parse(String(acceptedAt || ''));
+    if (!Number.isFinite(since)) return 'unknown';
+    const listed = await gh(this.env, 'GET', `/actions/workflows/${encodeURIComponent(this.workflow)}/runs?per_page=20`, null, this.fetcher);
+    if (!listed.ok) return 'unknown';
+    const runs = Array.isArray(listed.data?.workflow_runs) ? listed.data.workflow_runs : [];
+    // Only an uncompleted run created at/after this session was accepted can
+    // be its still-pending dispatch (60s of clock-skew slack).
+    const alive = runs.some((run) => String(run?.status || '') !== 'completed'
+      && Number.isFinite(Date.parse(String(run?.created_at || '')))
+      && Date.parse(run.created_at) >= since - 60_000);
+    return alive ? 'alive' : 'dead';
+  }
+
   async getStatus(sessionId, { acceptedAt = '', now = Date.now() } = {}) {
     const id = String(sessionId || '').trim();
     if (!/^ocr-[0-9a-f]{8}$/.test(id)) return { status: 400, detail: 'Invalid coding runtime session id.' };
@@ -193,6 +217,10 @@ export class CheCodingRuntime {
     if (found.status === 404) {
       const accepted = Date.parse(String(acceptedAt || ''));
       if (Number.isFinite(accepted) && now - accepted > RUNTIME_STALE_MS) {
+        if (await this.workflowRunAlive({ acceptedAt }) === 'alive') {
+          // The dispatch is real but the runner has not claimed it yet.
+          return { status: 200, runtime: 'opencode', session_id: id, state: 'dispatching' };
+        }
         return { status: 200, runtime: 'opencode', session_id: id, state: 'failed', failure: 'dispatch_stale', error: 'The workflow never published an execution record.' };
       }
       return { status: 200, runtime: 'opencode', session_id: id, state: 'queued' };
@@ -205,6 +233,9 @@ export class CheCodingRuntime {
        if (parsed.status === 'stopped') parsed.state = 'stopped';
        const heartbeat = Date.parse(String(parsed.updated_at || parsed.started_at || parsed.claimed_at || acceptedAt || ''));
        if (parsed.state === 'running' && Number.isFinite(heartbeat) && now - heartbeat > RUNTIME_STALE_MS) {
+         if (await this.workflowRunAlive({ runId: Number(parsed.run_id) || 0, acceptedAt }) === 'alive') {
+           return { status: 200, runtime: 'opencode', ...parsed, heartbeat: 'stale' };
+         }
          parsed.state = 'failed';
          parsed.failure = 'runtime_stale';
          parsed.error = 'The runtime stopped publishing progress before its workflow could finish.';
