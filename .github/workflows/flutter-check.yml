@@ -52,6 +52,8 @@ jobs:
           exit $code
       - name: iPhone version-ordering regression tests
         run: python3 -m unittest discover -s tool -p 'test_mobile_version.py'
+      - name: Validate bundled offline 3D characters
+        run: node --test tools/character_pipeline/assets.test.mjs
 
   worker-unit:
     name: Worker syntax and unit tests
