@@ -66,14 +66,16 @@ Then, on GitHub:
 
 ## 2. Current position (updated by: Claude, 2026-10-10)
 
-**Claude, 2026-10-10 (owner: "fix CHE's iPhone updating experience", one-button update). PR #272 OPEN, CI running, NOT merged.**
-- Branch `claude/che-latency-optimization-8ruaus` head `3433d90`, on `main` `4ee17fd`. Dart-only, so no IPA rebuild is needed.
-- Fast lane: `CheUpdateController` downloads Shorebird patches silently (launch and resume, at most every 20 min). The banner appears only when a patch is staged and says to reopen CHE. Never claims activation.
-- Full lane: Update opens `sidestore://install?url=...` only after `canLaunchUrl` confirms SideStore. No Safari or IPA fallback. The install is confirmed on the next launch by the installed build number. Unconfirmed after 2 h is reported as such.
-- Normal screen: one status, one button, progress, Cupertino confirm. Options, SHA, source setup and previous-build list removed. Rollback is voice-only.
-- Verified: `flutter analyze` clean; `flutter test` 271/271. Release IPA 1.4.1024366571 (build 3800909215501): bundle `com.cheyapp.chey`, min iOS 16.0, SHA-256 matches. `sidestore` is in LSApplicationQueriesSchemes.
-- NOT verified on a device: SideStore handoff, patch applying after restart, data kept across a SideStore install.
-- Next: when checks are green, squash-merge (expected head `3433d90`), then confirm the `CHE Shorebird` patch run on main and report. Workers Builds check still fails (see the Workers Builds entry above); it is not blocking.
+**Claude, 2026-10-10 (owner: "fix CHE's iPhone updating experience", one-button update; then "Okay merge"). PR #272 MERGED as `5fc2fdd` (squash to `main`). Device checks still open.**
+- Squash-merged with expected head `2aa5ed7`. On that head, both `analyze` jobs and "Worker syntax and unit tests" passed. "Workers Builds: chey-app" failed, as it did on #271, and is not blocking.
+- Codex review on `3433d90` had four findings: a failed latest-build reply read as "up to date", stopped installs never reset, the installed result not visible, and the retry wording. All four are fixed in `2aa5ed7`, replied to and resolved. Before that push: `flutter analyze` clean, `flutter test` 275/275.
+- Fast lane: `CheUpdateController` downloads Shorebird patches silently (launch and resume, at most every 20 min). The banner appears only when a patch is staged and says to reopen CHE. It never claims activation.
+- Full lane: Update opens `sidestore://install?url=...` only after `canLaunchUrl` confirms SideStore. No Safari or IPA fallback. The install is confirmed on the next launch by the installed build number. Unconfirmed after 2 h is reported as such. The installed notice stays on the banner until the owner closes it.
+- Spoken retry: "check for updates" opens the CHE Updates screen, which forces a fresh check.
+- `CHE Shorebird` run `38079951396` for `5fc2fdd` was queued when this was written. Confirm it completed and published the patch.
+- NOT verified on a device: the SideStore handoff, a patch applying after restart, and data kept across a SideStore install. The owner must install SideStore once on the phone.
+- Next: confirm the Shorebird run; ask the owner for the device check; the Workers Builds decision (option a or b) is still open.
+- Git note: a stale local `claude/che-latency-optimization-8ruaus` ref sits in `scratchpad/fix2` at `1a6304f`. Push with `git push origin HEAD:refs/heads/<branch>`. A plain `git push` from a detached worktree sends that stale ref and gets rejected.
 
 **Claude, 2026-10-10 (owner: "fix the Workers Builds failure"). Diagnosed, NOT fixed in the repo. Owner decision needed.**
 - Check "Workers Builds: chey-app" fails within a second on every commit. Its log is only in the Cloudflare dashboard, which Claude cannot open, so the cause is inferred.
