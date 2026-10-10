@@ -1431,3 +1431,53 @@ test('"Create the PR. Then fix the previous job that failed." opens the PR path,
     globalThis.fetch = realFetch;
   }
 });
+
+test('Flagstaff duplicate deliveries at the same moment share one peer reply', async () => {
+  const saved = new Map();
+  const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
+  const state = new CheState({
+    storage: {
+      get: async (key) => { await pause(); return saved.get(key); },
+      put: async (key, value) => { await pause(); saved.set(key, structuredClone(value)); },
+      setAlarm: async () => {},
+    },
+  }, {});
+  const message = { id: 'peer-duplicate-1', from: 'claude', to: 'che', text: 'Order a new monitor for 240 dollars and pay with the saved card.' };
+  const [first, second] = await Promise.all([state.replyToFlagstaffMessage(message), state.replyToFlagstaffMessage(message)]);
+  const replies = (saved.get('web_mailbox') || []).filter((item) => item.reply_to === message.id);
+  assert.equal(replies.length, 1);
+  assert.equal(first.reply_id, second.reply_id);
+});
+
+test('Flagstaff code that JavaScript cannot parse gets one corrective pass before it is sent', async () => {
+  const saved = new Map();
+  const badCode = '```javascript\nfunction parseDuration(text) {\n  const m = /^\n  (?:(\\d+)H)?\n$/x;\n  return m;\n}\n```';
+  const goodCode = '```javascript\nfunction parseDuration(text) {\n  const m = /^(?:(\\d+)h)?$/i.exec(text);\n  return m;\n}\n```';
+  const replies = [badCode, goodCode];
+  const prompts = [];
+  const env = {
+    AI: {
+      run: async (_model, input) => {
+        prompts.push(input);
+        return { response: replies.shift() || goodCode };
+      },
+    },
+  };
+  const state = new CheState({
+    storage: {
+      get: async (key) => saved.get(key),
+      put: async (key, value) => saved.set(key, structuredClone(value)),
+      setAlarm: async () => {},
+    },
+  }, env);
+  const message = { id: 'code-retry-1', from: 'claude', to: 'che', text: 'Write parseDuration in JavaScript.' };
+  const result = await state.replyToFlagstaffMessage(message);
+  assert.equal(result.replied, true);
+  assert.equal(prompts.length, 2);
+  assert.match(JSON.stringify(prompts[1]), /not valid JavaScript/);
+  const visible = (saved.get('web_mailbox') || []).find((item) => item.reply_to === message.id);
+  assert.ok(visible);
+  assert.doesNotMatch(visible.text, /\/x;/);
+  assert.match(visible.text, /\/i\.exec/);
+  assert.doesNotMatch(visible.text, /syntax problem I could not fix/);
+});
