@@ -66,6 +66,18 @@ Then, on GitHub:
 
 ## 2. Current position (updated by: Claude, 2026-10-10)
 
+**Claude, 2026-10-10 (owner: "fix all four"). Code pushed to the designated branch as `bf23970` on top of `main` `56b4e03`. NOT merged, NOT live.**
+- Merged so far today: #269 (`56b4e03`, deploy run `38024329913`, success, "Verify live deployed commit" passed).
+- Batch failures: Flagstaff model calls now run one at a time (`serializeFlagstaffModel`). Test: three concurrent messages never overlap.
+- Renderer permission: `flagstaff_reply_check.js` flags a reply that lists the free renderer under "needs the owner's yes", with one corrective pass. Five tests.
+- Render status: a render CHE starts (`handleVideoLine`, GitHub path) is recorded as a `video_render` receipt and listed in verified state with "No upload is recorded". A render she did not start (for example the test render, run `38023369403`) is unknown to her, so she should say "no record".
+- Topological order rule added to her code rules (Kahn or a reversed post-order). This is a targeted rule for the E4 bug only.
+- Validation: Worker suite 824/824.
+- Re-test results before these fixes: E2 16/16 pass; E4 4/8 (reversed order); V4 one reply, no duplicate; V1 still listed the renderer under "needs the owner's yes"; V2 solo "No, it hasn't been rendered or uploaded yet" (wrong about the test render); V3 solo pass.
+- Exact next action: owner asks for the PR and merge (title needs `[worker-deploy]`). After deploy, re-send E4 alone, V1 alone and V2 alone; check the batch-failure fallbacks are gone.
+- Test render: the owner cannot watch it. Do not ask again.
+
+
 **Claude, 2026-10-10 (owner: "fix her vague replies and her coding errors", "teach her what her own tools are", "duplicate replies"). Code pushed, NOT merged, NOT live.**
 - Branch `claude/che-latency-optimization-8ruaus`, commit `be414fe`. The old head `1a6304f` was merged history (#258), so the branch was reset to `origin/main` `4767fe5` with a lease. No PR opened (not asked).
 - Duplicate replies: a wake push and the mailbox alarm could deliver one message at the same moment, and each posted a reply (V4 got two, 32 ms apart; the two were separate GitHub commits from `sendMail`). Fix: `replyToFlagstaffMessage` is single-flight per message id; the body is now `replyToFlagstaffMessageOnce`. Test added: two concurrent deliveries share one reply. Reproduced on the old code first.
