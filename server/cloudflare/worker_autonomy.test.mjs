@@ -1249,8 +1249,8 @@ test('study builds wait while a reviewed change awaits the owner, then the next 
   const state = new CheState({ storage: storageFor(saved) }, { CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'x' }) } });
   saved.set('che', { jobs: [{ id: 'build-1', kind: 'self_development', status: 'complete', study_build: 's:1', prompt: 'p', created_at: new Date().toISOString() }], devices: {}, memories: [] });
   saved.set('study_build_queue', [
-    { id: 's:1', order: 1, topic: 'Search Engine', request: 'Topic 1', status: 'building', job_id: 'build-1', at: '2026-10-03T06:00:00.000Z' },
-    { id: 's:2', order: 2, topic: 'Database', request: 'Topic 2: Database build', status: 'waiting', at: '2026-10-03T06:05:00.000Z' },
+    { id: 's:1', order: 1, topic: 'Search Engine', request: 'Topic 1', status: 'building', job_id: 'build-1', at: new Date(Date.now() - 60_000).toISOString() },
+    { id: 's:2', order: 2, topic: 'Database', request: 'Topic 2: Database build', status: 'waiting', at: new Date().toISOString() },
   ]);
   saved.set('pending_self_update', { proposal: { summary: 'Search ranking', files: [{ path: 'a.js', content: 'x' }] }, request: 'Topic 1' });
   assert.equal(await state.advanceStudyBuilds(), null, 'one approval slot: Database waits for the owner');
