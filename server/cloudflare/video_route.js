@@ -8,6 +8,7 @@ import { runVideoLine } from './video_line.js';
 import { probeVideoEngine } from './video_engine.js';
 import { githubVideoConfigured, startGithubVideo, githubVideoStatus } from './github_video_renderer.js';
 import { generateVideo } from './media.js';
+import { recordReceipt } from './truth_layer.js';
 
 function statusFor(result) {
   if (result?.pending) return 202;
@@ -65,6 +66,10 @@ export async function handleVideoLine(request, env, parsedBody, youtube = {}, st
         : githubVideoConfigured(env)
           ? await startGithubVideo(env, body.topic || body.prompt || '', Number(body.seconds) || 15, fetcher)
           : { ok: false, error: 'MoneyPrinter is not connected. Set CHE_VIDEO_GEN_URL or enable the free GitHub Actions renderer.' };
+  }
+  if (result?.provider === 'github-actions-offline' && result.task_id) {
+    // CHE's own render is recorded so her verified state can say it exists.
+    await recordReceipt(storage, { kind: 'video_render', key: `video_render:${result.task_id}`, task_id: result.task_id, topic: String(body.topic || body.prompt || '').slice(0, 120), status: 'queued' }).catch(() => null);
   }
   return new Response(JSON.stringify(result), {
     status: statusFor(result),

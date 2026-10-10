@@ -53,6 +53,8 @@ import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpda
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
 import { definitionAnswer, inspectRepositoryContext, lookupAnswer, prepareSelfUpdate, recordLesson, recoveryRequestIntent, refusesAnswer, SOURCE_RETRY_NOTE } from './self_development.js';
+import { jsRegexFlagProblems } from './flagstaff_code_check.js';
+import { ownToolPermissionProblems } from './flagstaff_reply_check.js';
 import { cachedCodeIndex } from './code_index.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
@@ -1238,7 +1240,7 @@ function paidMediaOn(env) {
 }
 
 function openAiMediaKey(env) {
-  // Owner rule: free engines only, unless paid AI is turned on on purpose.
+  // Owner rule: free engines only, unless paid AI is turned on deliberately.
   if (!paidAllowed(env)) return '';
   return env.OPENAI_API_KEY || env.CHE_OPENAI_API_KEY || '';
 }
@@ -2921,6 +2923,7 @@ export function theaterNotesContext(notes, message) {
 function compactChatPrompt({ clientClock, brainContext, vectorMemoryContext, officeResults, skillResults, memories, remembered }) {
   return [
     'You are CHE, Cognitive Horizon Engine, the owner\'s private AI. Address the owner as sir naturally, not every sentence.',
+    'Your own tools, which you run yourself when the owner asks: the free GitHub video renderer (a 5 to 90 second faceless MP4 with a thumbnail and voice, kept as a 30-day artifact and never uploaded), read-only repository inspection, the installed skill search, and background coding jobs for owner-authorized BUILD requests. Publishing to YouTube and any spending need the owner\'s direct yes. Never say a free tool of yours needs the owner\'s OK to run.',
     'Be warm, sharp, concise and natural. Read the room: playful when casual, focused for work, money, health, legal and technical topics.',
     'Never claim an external action, live research, trade, payment or device control happened unless a tool result below confirms it.',
     'When you learn a durable, non-sensitive fact about the owner, end with a ```che-remember block, one tagged fact per line.',
@@ -3584,7 +3587,28 @@ export class CheState extends DurableObject {
     return this.keyEnv;
   }
 
-  async replyToFlagstaffMessage(message, options = {}) {
+  // Flagstaff model calls run one at a time. In the live test, parallel calls from
+  // one mailbox push all failed on their first try and only retries answered.
+  serializeFlagstaffModel(run) {
+    const next = (this.flagstaffModelTail || Promise.resolve()).then(run);
+    this.flagstaffModelTail = next.catch(() => null);
+    return next;
+  }
+
+  // A wake push and the mailbox alarm can deliver the same message at the same
+  // moment. They share one reply, so the owner's thread gets a single answer.
+  replyToFlagstaffMessage(message, options = {}) {
+    const id = String(message?.id || '').trim().slice(0, 160);
+    if (!id) return this.replyToFlagstaffMessageOnce(message, options);
+    this.flagstaffRepliesInFlight ||= new Map();
+    const running = this.flagstaffRepliesInFlight.get(id);
+    if (running) return running;
+    const reply = this.replyToFlagstaffMessageOnce(message, options).finally(() => this.flagstaffRepliesInFlight.delete(id));
+    this.flagstaffRepliesInFlight.set(id, reply);
+    return reply;
+  }
+
+  async replyToFlagstaffMessageOnce(message, options = {}) {
     const id = String(message?.id || '').trim().slice(0, 160);
     const sender = String(message?.from || '').trim().toLowerCase().replace(/[^a-z0-9 _-]/g, '').slice(0, 30);
     const recipient = String(message?.to || 'che').trim().toLowerCase();
@@ -3728,7 +3752,7 @@ export class CheState extends DurableObject {
       // A definition the index already holds is answered directly, not guessed.
       const lookupIndex = cachedCodeIndex(repoGrounding?.head_sha);
       const directAnswer = definitionAnswer(incoming, repoGrounding) || lookupAnswer(incoming, repoGrounding, lookupIndex ? (path) => lookupIndex.text(path) : null);
-      const callModel = (retryNote = '') => this.env.AI.run(this.env.CHE_STRONG_MODEL || STRONG_MODEL, {
+      const runModel = (retryNote = '') => this.env.AI.run(this.env.CHE_STRONG_MODEL || STRONG_MODEL, {
         messages: [
           {
             role: 'system',
@@ -3743,6 +3767,11 @@ export class CheState extends DurableObject {
               'Apps: CHE opens or uses an app only after the owner gives explicit permission for that app. If a peer asks you to open or use an app, say the owner must grant that permission first. Never promise to open it.',
               'Passwords: you may explain where they are kept. Passwords live only in the owner\'s on-device iPhone Keychain vault and are never sent to the CHE Worker, any AI provider, chat history, memory or logs. Never reveal a password itself.',
               'Never promise to send, finish or deliver anything later: you cannot run tools from this reply.',
+              'Status questions: when the sender asks whether something was rendered, uploaded, published, paid or sent, answer in the first sentence with yes or no. Say yes only when VERIFIED STATE lists it. If VERIFIED STATE does not list it, answer "No, I have no record of that": you only see renders CHE started and recorded, so never say a render did not happen. Then say what would make it happen. Never answer with "I don\'t have a confirmed link" or another vague line.',
+              'Speculation: label a hypothesis or an unconfirmed science claim as one ("may", "one theory", "not confirmed"). Never state it as settled fact.',
+              'Code: give valid JavaScript only. Before you say an example passes, trace it by hand and state the result. If you name a bug, name its real cause, not a guess. Ordering: a depth-first post-order must be reversed to give a dependency order (each node before the nodes that depend on it), or use Kahn\'s method with a queue of nodes that have no incoming edges. Check the output against every edge.',
+              'Your own tools, which you can run yourself without a yes: the free GitHub video renderer (a 5 to 90 second faceless MP4 with a thumbnail and voice, kept as a 30-day artifact and never uploaded), read-only repository inspection, the installed skill search, and background coding jobs for owner-authorized BUILD requests. Publishing to YouTube and any spending need the owner\'s direct yes.',
+              'From a Flagstaff reply you cannot run any tool. If a peer asks you to render, inspect or code, say you will do it when the owner asks in the app, and do not promise a result or a time.',
               'You may analyze, verify supplied context, propose a plan or draft, and identify blockers.',
               'For engineering collaboration, use REPOSITORY GROUNDING below before answering. It is a real read-only inspection CHE performed for this reply. Never say you lack repository access when grounding is ok. Name only files/symbols present there; do not invent paths.',
               'If repository grounding failed, report its exact detail/status. Do not ask the owner or peer for source, filenames or a source tree unless the grounding proves a genuine permission/configuration failure.',
@@ -3766,6 +3795,7 @@ export class CheState extends DurableObject {
         che_route: 'quality',
         che_audit: { task: incoming.slice(0, 160), agent: 'CHE', route: 'flagstaff_live_reply', peer: sender },
       });
+      const callModel = (retryNote = '') => this.serializeFlagstaffModel(() => runModel(retryNote));
       const modelText = (res) => String(res?.response || res?.choices?.[0]?.message?.content || '').trim().slice(0, 12000);
       const jobIds = ((await this.loadData().catch(() => null))?.jobs || []).map((j) => j.id);
       // Quoted code must be real: checked against the pinned commit's index,
@@ -3789,8 +3819,20 @@ export class CheState extends DurableObject {
         raw = modelText(await callModel(SOURCE_RETRY_NOTE));
         grounded = checked(raw);
       }
+      // Code JavaScript cannot parse is not sent as it is. One corrective pass names the exact problem.
+      let codeProblems = directAnswer ? [] : jsRegexFlagProblems(raw);
+      const toolProblems = directAnswer ? [] : ownToolPermissionProblems(raw);
+      if (codeProblems.length || toolProblems.length) {
+        const corrections = [
+          ...codeProblems.map((problem) => `Your code block is not valid JavaScript: ${problem}. Valid regex flags are d, g, i, m, s, u, v and y; there is no x flag, so write a multi-line regex on one line.`),
+          ...toolProblems.map((problem) => `Correction: ${problem}. The free renderer is your own tool and needs no owner yes. Only publishing to YouTube and spending need the owner's direct yes.`),
+        ];
+        raw = modelText(await callModel(`${corrections.join(' ')} Rewrite the reply with these fixes. Trace each example by hand before you say it passes.`));
+        grounded = checked(raw);
+        codeProblems = jsRegexFlagProblems(raw);
+      }
       // flagOnly keeps every sentence, so the note explains the marks instead of claiming a cut.
-      const honesty = grounded.removed.length ? ' Anything marked [NOT VERIFIED] is a file, link, code quote or job I could not confirm in the repository.' : '';
+      const honesty = (grounded.removed.length ? ' Anything marked [NOT VERIFIED] is a file, link, code quote or job I could not confirm in the repository.' : '') + (codeProblems.length ? ` The code above still has a syntax problem I could not fix in one pass: ${codeProblems[0]}.` : '');
       // Never a bare refusal: when nothing can be pinned, say where to look.
       const searchTerms = [...new Set(incoming.match(/[A-Za-z_$][\w$]{3,}/g) || [])].slice(0, 4).join(', ') || 'the key words of the question';
       const reply = grounded.text ? `${grounded.text}${honesty}` : `I can't pin the exact line from the source I read. To check it, search the pinned commit for: ${searchTerms}.${honesty}`;
@@ -4389,6 +4431,7 @@ export class CheState extends DurableObject {
               'You are CHE — Cognitive Horizon Engine, the owner’s private conversational AI.',
               'The voice session is already active. Never ask the owner to say “Hey [assistant name]”, “Ok [assistant name]”, or any generic wake phrase. CHE/Chay wake detection is handled by the iPhone client before you receive the turn.',
               'Address the owner as sir naturally when it fits, not in every sentence.',
+              'Your own tools, which you run yourself when the owner asks: the free GitHub video renderer (a 5 to 90 second faceless MP4 with a thumbnail and voice, kept as a 30-day artifact and never uploaded), read-only repository inspection, the installed skill search, and background coding jobs for owner-authorized BUILD requests. Publishing to YouTube and any spending need the owner\'s direct yes. Never say a free tool of yours needs the owner\'s OK to run.',
               'Sound bright, warm, confident, current and natural — like a sharp friend, not a help desk.',
               'Default to one or two short sentences. Lead with exactly what the owner needs. No preamble, recap, or extra explanation unless it is necessary or he asks for more.',
               'Understand slang, profanity, dark humor, mature and controversial topics without acting shocked, preachy or prudish. Be candid and direct while still respecting real safety, privacy, consent, security and legal limits.',

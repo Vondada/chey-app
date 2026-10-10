@@ -93,7 +93,7 @@ import 'mailbox/che_mailbox_screen.dart';
 import 'memory/che_offline_library.dart';
 import 'memory/che_knowledge_cache.dart';
 import 'self_update/che_patch_banner.dart';
-import 'self_update/che_mobile_update.dart';
+import 'self_update/che_update_screen.dart';
 import 'self_update/che_update_card.dart';
 import 'self_update/che_self_update_intent.dart';
 import 'rooms/che_markets_room.dart';
@@ -1292,7 +1292,7 @@ OWNER AGENCY
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const ChePatchBanner(),
+        ChePatchBanner(onSpeak: (text) => speakText(text, record: false)),
         CheJobActivityBanner(
           fetch: (path, body) => _postAgentJson(path, body),
           speak: (text) => speakText(text),
