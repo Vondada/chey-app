@@ -66,6 +66,19 @@ Then, on GitHub:
 
 ## 2. Current position (updated by: Claude, 2026-10-10)
 
+**Claude, 2026-10-10 (owner: "fix her vague replies and her coding errors", "teach her what her own tools are", "duplicate replies"). Code pushed, NOT merged, NOT live.**
+- Branch `claude/che-latency-optimization-8ruaus`, commit `be414fe`. The old head `1a6304f` was merged history (#258), so the branch was reset to `origin/main` `4767fe5` with a lease. No PR opened (not asked).
+- Duplicate replies: a wake push and the mailbox alarm could deliver one message at the same moment, and each posted a reply (V4 got two, 32 ms apart; the two were separate GitHub commits from `sendMail`). Fix: `replyToFlagstaffMessage` is single-flight per message id; the body is now `replyToFlagstaffMessageOnce`. Test added: two concurrent deliveries share one reply. Reproduced on the old code first.
+- Coding errors: `flagstaff_code_check.js` flags JavaScript regex flags that do not exist, including the verbose `x` flag from E2. A reply with such code gets one corrective pass that names the problem; if it still fails, the reply says so. 5 guard tests plus 1 retry test. The E4 reversed-order bug is NOT caught by any rule. Only the prompt asks her to trace examples by hand.
+- Vague answers: prompt rule that status questions (rendered, uploaded, published, paid, sent) get yes or no in the first sentence, and only VERIFIED STATE counts as yes.
+- Speculation: prompt rule that a hypothesis is labelled as one (V1 stated the Neptune diamond ocean as fact).
+- Her own tools: the Flagstaff reply prompt and the owner text and voice prompts now list the free GitHub video renderer (5-90 s, MP4 plus thumbnail plus voice, 30-day artifact, never uploaded), read-only repository inspection, skill search and coding jobs. Publishing and spending still need the owner's direct yes. Rule: never say a free tool needs the owner's OK.
+- Validation: Worker suite 816/816 (main 809 plus 7 new). Live behaviour NOT verified.
+- The owner cannot watch the test render. Do not ask the owner to watch it.
+- Exact next action: owner asks for the PR and merge (title needs `[worker-deploy]`); after deploy, re-run E2 and E4 (`grade10.mjs`, sent 04:13:53Z) and V2 and V4 (sent 04:16:17Z) and check that V4 answers once.
+- Caution: worktree `scratchpad/fix2` (branch name was `claude/che-latency-optimization-8ruaus`, old head) has staged deletions of `assets/characters/app/characters-vendor.js`, `assets/characters/app/index.html` and `lib/rooms/che_characters_room.dart`, which are the 3D crew files. Left untouched. Committing from that worktree would delete the 3D crew.
+
+
 **Claude, 2026-10-10 (owner: "Give her 5 self coding questions", then "test her on creating a YouTube video"). Tests only, no code changed.**
 - Self-coding E1–E5 (sent 04:13:53Z, ids `self-coding-e1..e5`), graded by `grade10.mjs` with 55 checks (reference solutions pass 55/55): E1 chunk 10/10. E2 parseDuration 0/16: her regex uses the `/x` flag, which JavaScript does not have, so the function fails to load (SyntaxError). E3 LRUCache 7/7. E4 topoOrder fix 4/8: cycle detection works, but the output is reversed (`[a→b]` gives `["b","a"]`); her one-line diagnosis ("missing cycle detection") was wrong. E5 evaluateRPN 14/14. Total 35/55. E4 and E5 each had one "Working on it" on the first model call and answered within about a minute.
 - Video tests V1–V4 (sent 04:16:17Z, ids `video-test-v1..v4`):
