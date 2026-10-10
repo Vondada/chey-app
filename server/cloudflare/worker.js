@@ -1240,7 +1240,7 @@ function paidMediaOn(env) {
 }
 
 function openAiMediaKey(env) {
-  // Owner rule: free engines only, unless paid AI is turned on on purpose.
+  // Owner rule: free engines only, unless paid AI is turned on deliberately.
   if (!paidAllowed(env)) return '';
   return env.OPENAI_API_KEY || env.CHE_OPENAI_API_KEY || '';
 }
