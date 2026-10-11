@@ -267,7 +267,7 @@ extension _CheHomeVoice on _CHEHomeState {
 
 
   Future<bool> _playServerVoice(CheVoiceClip clip) async {
-    final played = await CheNativeVoice.playAudio(clip.bytes);
+    final played = await CheNativeVoice.playAudioBounded(clip.bytes);
     if (played) {
       final engine = clip.engine.isEmpty ? 'server-voice' : clip.engine;
       if (_lastVoiceEngine != engine) {
@@ -419,7 +419,9 @@ extension _CheHomeVoice on _CHEHomeState {
           debugPrint('CHE mic MIC_STOPPED: TTS start');
         });
       }
-      await _ensureAudibleOutput();
+      // Audio-session setup must not hold the turn: a stalled platform call
+      // would otherwise keep every chunk waiting in silence.
+      await _ensureAudibleOutput().timeout(const Duration(seconds: 3), onTimeout: () {});
       if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS && _nativeIosVoiceActive) {
         try {
           await CheNativeVoice.setAssistantSpeaking(true);
