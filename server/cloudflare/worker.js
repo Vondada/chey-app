@@ -34,6 +34,7 @@ import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv } from './a
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { handleEdgeVoice } from './edge_route.js';
+import { preferredElevenLabsSpeech } from './preferred_elevenlabs_voice.js';
 import { handleVideoLine } from './video_route.js';
 import {
   YOUTUBE_CALLBACK_PATH, disconnectYouTube, finishYouTubeConnect, startYouTubeConnect,
@@ -646,6 +647,9 @@ export function fluentSpeechText(text) {
 async function voiceSynthesisResponse(env, text) {
   const input = fluentSpeechText(text).slice(0, 6000);
   if (!input) return json({ detail: 'Nothing speakable in that text.' }, 400);
+  // Explicit owner opt-in: try Mary before free voices, never paid by default.
+  const preferred = await preferredElevenLabsSpeech(env, input);
+  if (preferred) return preferred;
   const voiceFailures = [];
 
   // Prefer free Workers AI TTS first so Gemini quota does not block spoken replies.
@@ -707,60 +711,9 @@ async function voiceSynthesisResponse(env, text) {
     voiceFailures.push('gemini: no GEMINI_API_KEY');
   }
 
-  // Premium voices only when secrets exist.
-  // ElevenLabs is a paid voice: free engines only unless paid AI is on.
-  if (env.ELEVENLABS_API_KEY && env.CHE_ELEVENLABS_VOICE_ID && paidAllowed(env)) {
-    if (voiceProviderCooling('elevenlabs')) {
-      voiceFailures.push('elevenlabs: cooling down after quota');
-    } else {
-      try {
-        const voiceId = encodeURIComponent(String(env.CHE_ELEVENLABS_VOICE_ID).trim());
-        const response = await fetch(
-          `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`,
-          {
-            method: 'POST',
-            headers: {
-              'xi-api-key': String(env.ELEVENLABS_API_KEY),
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              text: input,
-              model_id: String(env.CHE_ELEVENLABS_MODEL || 'eleven_flash_v2_5'),
-              // Steadier, slightly quicker delivery: fewer dramatic pauses.
-              voice_settings: {
-                stability: 0.6,
-                similarity_boost: 0.82,
-                style: 0.15,
-                use_speaker_boost: true,
-                speed: Number(env.CHE_VOICE_SPEED) || 1.06,
-              },
-            }),
-            signal: AbortSignal.timeout(8_000),
-          },
-        );
-
-        if (response.ok) {
-          const bytes = await response.arrayBuffer();
-          if (bytes.byteLength > 0 && bytes.byteLength <= 6 * 1024 * 1024) {
-            return new Response(bytes, {
-              headers: {
-                'Content-Type': response.headers.get('content-type') || 'audio/mpeg',
-                'Cache-Control': 'no-store',
-                'X-CHE-Voice': 'elevenlabs-chaze',
-              },
-            });
-          }
-        } else if (response.status === 429 || response.status === 402) {
-          markVoiceProviderCooldown('elevenlabs');
-          voiceFailures.push(`elevenlabs: ${response.status}`);
-        } else {
-          voiceFailures.push(`elevenlabs: ${response.status}`);
-        }
-      } catch (error) {
-        voiceFailures.push(`elevenlabs: ${String(error?.message || error).slice(0, 80)}`);
-      }
-    }
-  }
+  // ElevenLabs is tried only through preferredElevenLabsSpeech above, which
+  // requires CHE_ELEVENLABS_PREFERRED=1. Do not repeat the paid request here
+  // merely because CHE_ALLOW_PAID_AI is enabled for other models.
 
   // Fallback 2: OpenAI neural voice using the key stored only on the server.
   // The iPhone never receives the standard API key.
@@ -4286,6 +4239,10 @@ export class CheState extends DurableObject {
       const ownerOnly = () => json({ detail: 'Only the CHE owner can change, merge or deploy CHE’s code.' }, 403);
 
       if (path === '/api/voice/edge' && request.method === 'POST') {
+        // The current iPhone requests Edge before other TTS. Honor the same
+        // explicit ElevenLabs opt-in here without requiring a new IPA.
+        const preferred = await preferredElevenLabsSpeech(this.keyEnv || this.env, body.text);
+        if (preferred) return preferred;
         return handleEdgeVoice(request, this.keyEnv || this.env, body);
       }
       if (request.method === 'POST' && path === '/api/youtube/connect/start') {
@@ -5652,7 +5609,7 @@ export class CheState extends DurableObject {
       if (path === '/api/voice/synthesize') {
         const text = String(body.text || '').trim();
         if (!text) return json({ detail: 'Voice text required.' }, 400);
-        return voiceSynthesisResponse(this.env, text);
+        return voiceSynthesisResponse(this.keyEnv || this.env, text);
       }
       if (path === '/api/service-account/request') {
         const provider = String(body.provider || '').trim().slice(0, 80);
