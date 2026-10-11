@@ -251,7 +251,6 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   List<String> _homeSuggestions = const [];
   bool _screenChipsHidden = false;
   bool _screenGreetingHidden = false;
-  bool _greetedThisLaunch = false;
   String _explainLevel = 'simple';
   // "Tell me more" / "expand": the next reply only goes deeper.
   bool _deeperOnce = false;
@@ -1113,8 +1112,8 @@ OWNER AGENCY
       if (_appForeground) unawaited(_refreshMailboxBadge());
     });
     unawaited(_loadExplainLevel());
-    // CHE greets once, in one short line, with something useful.
-    Future<void>.delayed(const Duration(milliseconds: 2600), () => _loadHomeGreeting(speak: true));
+    // Load useful greeting text quietly; speech happens only on owner request.
+    Future<void>.delayed(const Duration(milliseconds: 2600), () => _loadHomeGreeting());
     _proactiveTimer = Timer.periodic(
       const Duration(minutes: 10),
       (_) {
