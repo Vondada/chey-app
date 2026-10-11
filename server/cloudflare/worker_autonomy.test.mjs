@@ -2395,9 +2395,9 @@ test('owner opt-in prefers Mary on both existing iPhone voice routes without a p
   }
 });
 
-test('free engines only: the paid ElevenLabs voice is never called unless paid AI is on', async () => {
+test('ElevenLabs cannot spend credits from the general paid AI switch without voice opt-in', async () => {
   const saved = new Map();
-  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', ELEVENLABS_API_KEY: 'el', CHE_ELEVENLABS_VOICE_ID: 'v', AI: { run: async () => { throw new Error('tts down'); } } };
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_ALLOW_PAID_AI: '1', ELEVENLABS_API_KEY: 'el', CHE_ELEVENLABS_VOICE_ID: 'v', AI: { run: async () => { throw new Error('tts down'); } } };
   const { api } = await pairedChat(env, saved);
   const original = globalThis.fetch;
   const seen = [];
