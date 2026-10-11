@@ -169,7 +169,7 @@ extension _CheHomeSend on _CHEHomeState {
         MaterialPageRoute<void>(
           builder: (_) => CheMobileUpdateScreen(
             baseUrl: cheAgentBaseUrl,
-            onSpeak: (text) => speakText(text, record: false),
+            onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
             announceRequestedCheck: true,
           ),
         ),
@@ -190,7 +190,7 @@ extension _CheHomeSend on _CHEHomeState {
         MaterialPageRoute<void>(
           builder: (_) => CheMobileUpdateScreen(
             baseUrl: cheAgentBaseUrl,
-            onSpeak: (text) => speakText(text, record: false),
+            onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
             rollback: true,
           ),
         ),
@@ -1039,7 +1039,7 @@ extension _CheHomeSend on _CHEHomeState {
       baseUrl: () => cheAgentBaseUrl,
       headers: () => _authHeaders,
       onOpenFlagstaff: () => unawaited(_openMailbox()),
-      onReadAloud: (t) => speakText(t, record: false),
+      onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
     ));
   }
 
