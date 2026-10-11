@@ -16,7 +16,7 @@ import 'che_update_plan.dart';
 class ChePatchBanner extends StatefulWidget {
   const ChePatchBanner({super.key, this.onSpeak});
 
-  /// Speaks the restart instruction once the patch is ready.
+  /// Speaks the restart instruction only when this notice is selected.
   final CheSpeak? onSpeak;
 
   @override
@@ -55,12 +55,7 @@ class _ChePatchBannerState extends State<ChePatchBanner> {
     if (_announced) return;
     _announced = true;
     HapticFeedback.mediumImpact();
-    final speak = widget.onSpeak;
-    if (speak != null) {
-      unawaited(speak(_readyText));
-    } else {
-      _announceToScreenReader();
-    }
+    // No automatic TTS when updates become ready.
   }
 
   void _announceToScreenReader() {
