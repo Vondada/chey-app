@@ -102,6 +102,10 @@ export function releaseToUpdate(release, origin) {
     build_date: String(release?.published_at || release?.created_at || ''),
     ipa_download_url: downloadUrl,
     download_url: downloadUrl,
+    // SideStore should fetch the verified public release IPA directly, rather
+    // than re-streaming a ~43 MB archive through a Cloudflare Worker. The
+    // Worker relay remains available for CHE's own stable update endpoints.
+    asset_download_url: String(asset.browser_download_url || ''),
     sha256: sha,
     size: Number(asset.size || meta.size || 0),
     update_lane: 'full',
@@ -120,7 +124,10 @@ export function sourceFromUpdates(updates, origin) {
     version: item.version,
     date: item.build_date,
     localizedDescription: item.release_notes,
-    downloadURL: item.download_url,
+    // SideStore expects the raw ZIP/IPA bytes. Avoid turning a transient
+    // Worker-to-GitHub proxy error into a downloaded JSON/temp archive.
+    downloadURL: /^https:\/\/github\.com\/Vondada\/chey-app\/releases\/download\/[^?#]+\/CHE-unsigned\.ipa$/.test(String(item.asset_download_url || ''))
+      ? item.asset_download_url : item.download_url,
     size: item.size,
     minOSVersion: '16.0',
   }));
