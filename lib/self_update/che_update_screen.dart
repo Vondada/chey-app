@@ -207,6 +207,14 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(plan.detail, style: theme.textTheme.bodyLarge),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () => widget.onSpeak(plan.spoken),
+                      icon: const Icon(Icons.volume_up_rounded),
+                      label: const Text('Read this'),
+                    ),
+                  ),
                   if (plan.showProgress) ...[
                     const SizedBox(height: 20),
                     Semantics(
