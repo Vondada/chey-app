@@ -1,0 +1,271 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  applyModelReading, classifyOwnerTurn, clearInterpretationCache, correctSpokenTerms,
+  expandSlang, interpretOwnerTurn, interpretWithModel, parseReading, phoneticKey,
+} from './speech_intent.js';
+
+const COMPLETION = /\b(done|sent|deleted|opened|merged|published|finished)\b/i;
+const user = (text) => ({ role: 'user', content: text });
+const assistant = (text) => ({ role: 'assistant', content: text });
+
+// ---- Mispronounced technology names -------------------------------------
+
+test('"Showbird" next to build words is corrected to Shorebird and the change is reported', () => {
+  const out = correctSpokenTerms('The Showbird patch failed on my phone');
+  assert.equal(out.text, 'The Shorebird patch failed on my phone');
+  assert.deepEqual(out.changes, [{ heard: 'Showbird', meant: 'Shorebird' }]);
+});
+
+test('"size store" with install words is corrected to SideStore', () => {
+  const out = correctSpokenTerms('Can you check if the size store app is installed');
+  assert.match(out.text, /SideStore app is installed/);
+});
+
+test('a sound-alike tech name is fixed from context when no exact alias exists', () => {
+  assert.match(correctSpokenTerms('the cloudflair build is stuck').text, /Cloudflare build is stuck/);
+});
+
+test('the same sounds in ordinary sentences are left alone', () => {
+  assert.equal(correctSpokenTerms('I saw a showbird at the zoo').text, 'I saw a showbird at the zoo');
+  assert.equal(correctSpokenTerms('I went to the size store on Main Street').text, 'I went to the size store on Main Street');
+});
+
+test('"Shay" or "Chay" addressing CHE is corrected, but not mid-sentence', () => {
+  assert.equal(correctSpokenTerms('Shay, what is the status').text, 'CHE, what is the status');
+  assert.equal(correctSpokenTerms('Hey chay what is up').text, 'Hey CHE what is up');
+  assert.equal(correctSpokenTerms('The chay tea was good').text, 'The chay tea was good');
+});
+
+test('spoken brand names with spaces become their written form', () => {
+  assert.equal(correctSpokenTerms('ask chat gpt and you tube').text, 'ask ChatGPT and YouTube');
+});
+
+test('phonetic keys treat spelling variants as one sound', () => {
+  assert.equal(phoneticKey('phone'), phoneticKey('fone'));
+  assert.notEqual(phoneticKey('grok'), phoneticKey('gemini'));
+});
+
+// ---- Slang and informal English -----------------------------------------
+
+test('slang is expanded only for understanding', () => {
+  assert.equal(expandSlang('lemme see if u can fix it pls'), 'let me see if you can fix it please');
+});
+
+test('"I wanna check the build" is an action request', () => {
+  assert.equal(classifyOwnerTurn('I wanna check the Shorebird build').kind, 'action');
+});
+
+test('"lemme send Sam a quick note" is an action request, not a question', () => {
+  assert.equal(classifyOwnerTurn('lemme send Sam a quick note').kind, 'action');
+});
+
+// ---- Incomplete and interrupted requests --------------------------------
+
+test('a rambling, unfinished request is not guessed at or turned into a question', () => {
+  const out = interpretOwnerTurn('so the thing with the uh the');
+  assert.equal(out.kind, 'unclear');
+  assert.equal(out.clarify, null);
+  assert.equal(out.text, 'so the thing with the uh the');
+});
+
+test('an interruption that calls the request off is dropped without running anything', () => {
+  const out = interpretOwnerTurn('send the build to Sam, actually never mind');
+  assert.equal(out.kind, 'cancel');
+  assert.equal(out.clarify, 'Okay, I have dropped that.');
+  assert.equal(out.passthrough, true);
+  assert.doesNotMatch(out.clarify, COMPLETION);
+});
+
+test('a bare "never mind" or "forget it" cancels, while a plain "no" stays a no', () => {
+  assert.equal(classifyOwnerTurn('never mind', { hasHeldAction: true }).kind, 'cancel');
+  assert.equal(classifyOwnerTurn('forget it').kind, 'cancel');
+  assert.equal(classifyOwnerTurn('no').kind, 'no');
+  assert.equal(interpretOwnerTurn('never mind', { hasHeldAction: true }).clarify, 'Okay, I have dropped that.');
+});
+
+test('a self-correction is recognised and not turned into a new request', () => {
+  const out = interpretOwnerTurn('okay so the build, wait, I meant the Shorebird build');
+  assert.equal(out.kind, 'correction');
+  assert.equal(out.clarify, null);
+});
+
+test('a plain "no" passes through to the reply, without being turned into a request', () => {
+  const out = interpretOwnerTurn('no');
+  assert.equal(out.kind, 'no');
+  assert.equal(out.passthrough, true);
+  assert.equal(out.text, 'no');
+});
+
+// ---- References to previous conversation and follow-up questions --------
+
+test('"fix it" resolves to the earlier request, and the resolution is visible in the text', () => {
+  const out = interpretOwnerTurn('fix it', { history: [user('The Shorebird patch failed on my iPhone'), assistant('Got it.')] });
+  assert.equal(out.kind, 'followup');
+  assert.equal(out.clarify, null);
+  assert.equal(out.text, 'About the earlier request, "The Shorebird patch failed on my iPhone": fix it');
+  assert.equal(out.referent, 'The Shorebird patch failed on my iPhone');
+});
+
+test('"do the same thing" repeats the earlier request without asking', () => {
+  const out = interpretOwnerTurn('do the same thing', { history: [user('Send Sam the update')] });
+  assert.equal(out.clarify, null);
+  assert.match(out.text, /Send Sam the update": do the same thing$/);
+});
+
+test('"what about now?" keeps the topic of the question before it', () => {
+  const out = interpretOwnerTurn('what about now?', { history: [user("What's the weather in Lisbon?"), assistant('Mild, around 20.')] });
+  assert.equal(out.clarify, null);
+  assert.match(out.text, /What's the weather in Lisbon\?": what about now\?$/);
+});
+
+test('"why?" keeps the topic of the last request', () => {
+  const out = interpretOwnerTurn('why?', { history: [user('The build failed on the phone')] });
+  assert.equal(out.kind, 'followup');
+  assert.match(out.text, /The build failed on the phone": why\?$/);
+});
+
+test('a full new question does not drag in the old topic', () => {
+  const out = interpretOwnerTurn('why did the build fail', { history: [user('Show my Shorebird builds')] });
+  assert.equal(out.kind, 'question');
+  assert.equal(out.text, 'why did the build fail');
+  assert.equal(out.referent, '');
+});
+
+test('a topic change is kept as it is, with no old referent attached', () => {
+  const out = interpretOwnerTurn("What's the weather in Lisbon tomorrow?", { history: [user('Show my Shorebird builds')] });
+  assert.equal(out.text, "What's the weather in Lisbon tomorrow?");
+  assert.equal(out.referent, '');
+});
+
+// ---- Ambiguity: ask one short question only when it matters -------------
+
+test('"fix it" with nothing earlier asks one short question instead of guessing', () => {
+  const out = interpretOwnerTurn('fix it', { history: [] });
+  assert.equal(out.clarify, 'Which one do you mean?');
+  assert.equal(out.passthrough, false);
+});
+
+test('a bare "why?" with no earlier turn goes to the reply instead of asking which one', () => {
+  const out = interpretOwnerTurn('Why', { history: [] });
+  assert.equal(out.clarify, null);
+  assert.equal(out.text, 'Why');
+});
+
+test('a bare "yes" with nothing to confirm goes to the reply unchanged, asking nothing', () => {
+  const out = interpretOwnerTurn('yes', { history: [] });
+  assert.equal(out.passthrough, true);
+  assert.equal(out.clarify, null);
+  assert.equal(out.text, 'yes');
+});
+
+// ---- Confirmation before consequential actions --------------------------
+
+test('"delete that one" with no name asks which one before anything is touched', () => {
+  const out = interpretOwnerTurn('delete that one', { history: [user('show my notes')] });
+  assert.equal(out.consequential, true);
+  assert.equal(out.clarify, 'Which one should I delete? Tell me its name first.');
+  assert.doesNotMatch(out.clarify, COMPLETION);
+});
+
+test('an explicit consequential request is not second-guessed by a question', () => {
+  const out = interpretOwnerTurn('buy me the Shorebird book');
+  assert.equal(out.consequential, true);
+  assert.equal(out.clarify, null);
+});
+
+test('"yes" right after CHE asked to confirm an action releases that action, once', () => {
+  const history = [
+    user('clean up the old stuff'),
+    assistant('Just to be sure, do you want me to delete the old notes? Say yes, or tell me what you mean.'),
+  ];
+  const out = interpretOwnerTurn('yes', { history });
+  assert.equal(out.text, 'delete the old notes');
+});
+
+test('"yes" while a request is held is passed through for the owner gate to release', () => {
+  const out = interpretOwnerTurn('yes', { history: [user('delete my notes')], hasHeldAction: true });
+  assert.equal(out.passthrough, true);
+  assert.equal(out.text, 'yes');
+});
+
+test('an acknowledgement after a request never repeats that request', () => {
+  for (const ack of ['okay', 'yes', 'cool', 'do it']) {
+    const out = interpretOwnerTurn(ack, { history: [user('Send Sam the update'), assistant('Sent.')] });
+    assert.equal(out.text, ack, `"${ack}" must not re-run the earlier request`);
+    assert.doesNotMatch(out.text, /Send Sam/);
+  }
+});
+
+// ---- Model layer for what the rules cannot read -------------------------
+
+test('a model reading adds a likely meaning for an unclear request, without executing it', async () => {
+  clearInterpretationCache();
+  const rule = interpretOwnerTurn('that phone stuff thing from before the other day');
+  const reading = await interpretWithModel({
+    runText: async () => '{"intent":"action","meaning":"open the Shorebird status on the phone","confidence":0.8,"clarify":""}',
+    text: 'that phone stuff thing from before the other day',
+  });
+  const out = applyModelReading(rule, reading);
+  assert.equal(out.modelRead, true);
+  assert.equal(out.kind, 'action');
+  assert.match(out.text, /\(Likely meaning from context: open the Shorebird status on the phone\)$/);
+});
+
+test('an unreadable model answer is ignored and the rule reading stands', async () => {
+  clearInterpretationCache();
+  const rule = interpretOwnerTurn('that phone stuff thing from before the other day');
+  const reading = await interpretWithModel({ runText: async () => 'I think you mean the phone', text: 'that phone stuff thing from before the other day' });
+  assert.equal(reading, null);
+  assert.equal(applyModelReading(rule, reading), rule);
+});
+
+test('a low-confidence model reading asks one question instead of proceeding', () => {
+  const rule = interpretOwnerTurn('the thing on the phone with the app');
+  const reading = parseReading('{"intent":"unclear","meaning":"","confidence":0.3,"clarify":"Do you mean the phone or the app"}');
+  const out = applyModelReading(rule, reading);
+  assert.equal(out.clarify, 'Do you mean the phone or the app?');
+  assert.equal(out.text, rule.text);
+});
+
+test('a model reading that would act on money or deletion becomes a confirmation question', () => {
+  const rule = interpretOwnerTurn('clean up the old stuff');
+  const reading = { intent: 'action', meaning: 'delete the old notes', confidence: 0.9, clarify: '' };
+  const out = applyModelReading(rule, reading);
+  assert.equal(out.consequential, true);
+  assert.equal(out.clarify, 'Just to be sure, do you want me to delete the old notes? Say yes, or tell me what you mean.');
+  assert.equal(out.text, rule.text);
+});
+
+test('a model reading that claims something was done is never used', () => {
+  const rule = interpretOwnerTurn('the thing from before');
+  const reading = { intent: 'action', meaning: 'I already deleted the notes', confidence: 0.99, clarify: '' };
+  assert.equal(applyModelReading(rule, reading), rule);
+});
+
+test('model readings are cached and time out, so a slow engine cannot stall a turn', async () => {
+  clearInterpretationCache();
+  let calls = 0;
+  const runText = async () => { calls++; return '{"intent":"chitchat","meaning":"small talk","confidence":0.9,"clarify":""}'; };
+  await interpretWithModel({ runText, text: 'same unclear words here' });
+  await interpretWithModel({ runText, text: 'same unclear words here' });
+  assert.equal(calls, 1);
+  const slow = await interpretWithModel({ runText: () => new Promise(() => {}), text: 'never answers', timeoutMs: 20 });
+  assert.equal(slow, null);
+});
+
+test('model JSON is parsed strictly: unknown intents and out-of-range confidence are rejected', () => {
+  assert.equal(parseReading('{"intent":"delete","meaning":"x","confidence":0.9}'), null);
+  assert.equal(parseReading('{"intent":"action","meaning":"x","confidence":2}'), null);
+  assert.equal(parseReading('no json here'), null);
+});
+
+test('no clarifying question ever claims an action happened', () => {
+  const cases = [
+    interpretOwnerTurn('fix it', { history: [] }),
+    interpretOwnerTurn('yes', { history: [] }),
+    interpretOwnerTurn('delete that one', { history: [user('show my notes')] }),
+    interpretOwnerTurn('send the build to Sam, actually never mind'),
+  ];
+  for (const out of cases) if (out.clarify) assert.doesNotMatch(out.clarify, COMPLETION);
+});

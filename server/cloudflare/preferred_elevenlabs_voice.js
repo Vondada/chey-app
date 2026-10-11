@@ -8,6 +8,17 @@ export function preferredElevenLabsReady(env = {}) {
     && /^[a-zA-Z0-9_-]{10,80}$/.test(String(env.CHE_ELEVENLABS_VOICE_ID || '').trim());
 }
 
+// After a quota, auth or server error, Mary pauses so later clips go straight to
+// the free voice. A timeout pauses too, so a slow provider cannot add its wait to
+// every clip. Each iPhone reply tries Mary on two routes, so this matters.
+const PAUSE_AFTER_ERROR_MS = 10 * 60 * 1000;
+const PAUSE_AFTER_TIMEOUT_MS = 2 * 60 * 1000;
+let pausedUntil = 0;
+
+export function resetPreferredElevenLabsPause() {
+  pausedUntil = 0;
+}
+
 // Null means use CHE's existing free/iPhone voice; do not speak a partial clip.
 // This helper is shared by both iOS voice routes because the app normally tries
 // /api/voice/edge before /api/voice/synthesize.
@@ -17,6 +28,7 @@ export async function preferredElevenLabsSpeech(env = {}, text, fetcher = fetch)
   // Cap each synthesis to avoid runaway paid generation; longer text uses the
   // original free voice path without truncating the user's spoken reply.
   if (!said || said.length > 800) return null;
+  if (Date.now() < pausedUntil) return null;
   const voice = encodeURIComponent(String(env.CHE_ELEVENLABS_VOICE_ID).trim());
   const configuredSpeed = Number(env.CHE_VOICE_SPEED);
   const speed = Number.isFinite(configuredSpeed) && configuredSpeed > 0
@@ -44,7 +56,13 @@ export async function preferredElevenLabsSpeech(env = {}, text, fetcher = fetch)
         signal: AbortSignal.timeout(8000),
       },
     );
-    if (!response.ok || !/^audio\//i.test(response.headers.get('content-type') || '')) return null;
+    if (!response.ok) {
+      if ([401, 402, 403, 429].includes(response.status) || response.status >= 500) {
+        pausedUntil = Date.now() + PAUSE_AFTER_ERROR_MS;
+      }
+      return null;
+    }
+    if (!/^audio\//i.test(response.headers.get('content-type') || '')) return null;
     const bytes = await response.arrayBuffer();
     if (!bytes.byteLength || bytes.byteLength > 6 * 1024 * 1024) return null;
     return new Response(bytes, {
@@ -56,6 +74,7 @@ export async function preferredElevenLabsSpeech(env = {}, text, fetcher = fetch)
     });
   } catch (_) {
     // Credentials/quota/timeouts fall back to the existing voice. Never log keys.
+    pausedUntil = Date.now() + PAUSE_AFTER_TIMEOUT_MS;
     return null;
   }
 }

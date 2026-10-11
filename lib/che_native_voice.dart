@@ -150,7 +150,7 @@ class CheNativeVoice {
 
   static Future<bool> start() async {
     await _applyStoredSettings();
-    unawaited(_kokoro.prepare());
+    _prepareInBackground();
     return (await _invoke<bool>('start')) ?? false;
   }
 
@@ -160,7 +160,7 @@ class CheNativeVoice {
 
   static Future<bool> wake() async {
     await _applyStoredSettings();
-    unawaited(_kokoro.prepare());
+    _prepareInBackground();
     return (await _invoke<bool>('wake')) ?? false;
   }
 
@@ -174,10 +174,22 @@ class CheNativeVoice {
     // This is the on-device fallback. Server voice is selected by the existing
     // speech pipeline before this method, with its own cooldown and cancellation.
     await _applyStoredSettings();
-    try {
-      if (await _kokoro.speak(clean)) return true;
-    } catch (_) {}
+    // Speak now. The neural model is used only once it is already loaded: waiting
+    // on its first-run download here held the whole fallback, so a stalled
+    // download meant silence with no error.
+    if (_kokoro.isReady) {
+      try {
+        if (await _kokoro.speak(clean)) return true;
+      } catch (_) {}
+    } else {
+      _prepareInBackground();
+    }
     return (await _invoke<bool>('speakText', {'text': clean})) ?? false;
+  }
+
+  /// Warms the neural voice without ever making speech wait for it.
+  static void _prepareInBackground() {
+    unawaited(_kokoro.prepare().then<void>((_) {}, onError: (_) {}));
   }
 
   static Future<bool> speakNeural(String text) async {
@@ -185,7 +197,7 @@ class CheNativeVoice {
     if (clean.isEmpty) return false;
     await _applyStoredSettings();
     if (!_kokoro.isReady) {
-      unawaited(_kokoro.prepare());
+      _prepareInBackground();
       return false;
     }
     try {
@@ -200,7 +212,7 @@ class CheNativeVoice {
     if (clean.isEmpty) return null;
     await _applyStoredSettings();
     if (!_kokoro.isReady) {
-      unawaited(_kokoro.prepare());
+      _prepareInBackground();
       return null;
     }
     try {
@@ -214,10 +226,35 @@ class CheNativeVoice {
 
   static Future<bool> playAudio(Uint8List bytes) async => (await _invoke<bool>('playAudio', bytes)) ?? false;
 
+  /// How long one clip may play before it counts as stuck. Scales with the bytes
+  /// for compressed speech, but is capped: uncompressed WAV (24 kHz PCM16 from
+  /// the Gemini route) is about 20 times larger per second of audio, and an
+  /// uncapped deadline would leave a silent turn for minutes.
+  static Duration playbackDeadline(int bytes) {
+    final seconds = 3 + bytes ~/ 2000;
+    return Duration(seconds: seconds > 60 ? 60 : seconds);
+  }
+
+  /// Plays one clip but never waits forever. A player that stops reporting
+  /// completion would otherwise hold the whole speech turn in silence. On
+  /// timeout the audio is stopped and the caller speaks that chunk on the
+  /// device voice instead.
+  static Future<bool> playAudioBounded(Uint8List bytes, {Duration? limit}) async {
+    final wait = limit ?? playbackDeadline(bytes.length);
+    try {
+      return await playAudio(bytes).timeout(wait);
+    } on TimeoutException {
+      try {
+        await stopAudio();
+      } catch (_) {}
+      return false;
+    }
+  }
+
   static Future<bool> stopAudio() async => (await _invoke<bool>('stopAudio')) ?? false;
 
   static Future<Map<String, dynamic>> status() async {
-    unawaited(_kokoro.prepare());
+    _prepareInBackground();
     final raw = await _invoke<dynamic>('status');
     final result = raw is Map
         ? Map<String, dynamic>.from(raw)
