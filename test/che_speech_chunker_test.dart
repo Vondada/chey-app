@@ -23,10 +23,11 @@ void main() {
   });
 
   test('extremely long words are still bounded and never hang', () {
-    final chunks = cheReadAloudChunks('A' * 2050);
+    final text = List.filled(2050, 'A').join();
+    final chunks = cheReadAloudChunks(text);
     expect(chunks.length, 4);
     expect(chunks.every((chunk) => chunk.length <= 640), isTrue);
-    expect(chunks.join(''), 'A' * 2050);
+    expect(chunks.join(''), text);
   });
 
   test('speech chunker preserves streaming order without duplicates', () {
