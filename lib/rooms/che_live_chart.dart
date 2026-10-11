@@ -209,14 +209,18 @@ class _CheLiveChartPanelState extends State<CheLiveChartPanel> {
     super.dispose();
   }
 
-  void _say(String message) {
-    CheEmbeddedAppAnnouncer.say(context, message);
+  void _showStatus(String message) {
     ScaffoldMessenger.maybeOf(context)
       ?..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message, style: const TextStyle(fontSize: 18))));
   }
 
-  // Success or failure is announced when the chart page actually loads.
+  void _say(String message) {
+    CheEmbeddedAppAnnouncer.say(context, message);
+    _showStatus(message);
+  }
+
+  // Chart load status stays visible, without automatic speech.
   void _pick(CheLiveSymbol s) {
     HapticFeedback.selectionClick();
     CheLiveChart.symbol.value = s;
@@ -231,10 +235,10 @@ class _CheLiveChartPanelState extends State<CheLiveChartPanel> {
     final s = CheLiveChart.symbol.value;
     if (ok) {
       HapticFeedback.lightImpact();
-      _say(CheLiveChart.describe(s, CheLiveChart.interval.value));
+      _showStatus(CheLiveChart.describe(s, CheLiveChart.interval.value));
     } else {
       HapticFeedback.heavyImpact();
-      _say('The chart for ${s.name} could not load. Check the connection; say "read the price" for the latest quote.');
+      _showStatus('The chart for ${s.name} could not load. Check the connection; say "read the price" for the latest quote.');
     }
   }
 

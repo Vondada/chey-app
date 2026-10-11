@@ -2,7 +2,7 @@ part of '../main.dart';
 
 const String _homeBaseUrlKey = 'che.homeBaseUrl';
 
-// One connected world: CHE's greeting on open, the activity feed, "find
+// One connected world: CHE's silent greeting on open, the activity feed, "find
 // anything made in any room", the explanation level and "read to me". All
 // data comes from the CHE server's real state (/api/greeting, /api/activity,
 // /api/find); nothing here invents activity.
@@ -128,9 +128,8 @@ extension _CheHomeConnected on _CHEHomeState {
     } catch (_) {}
   }
 
-  /// Loads CHE's one-line greeting and three suggestions; speaks the greeting
-  /// once per launch when the conversation is empty.
-  Future<void> _loadHomeGreeting({bool speak = false}) async {
+  /// Loads CHE's greeting and suggestions as text, never auto-speaking on launch.
+  Future<void> _loadHomeGreeting() async {
     String since = '';
     SharedPreferences? prefs;
     try {
@@ -149,10 +148,6 @@ extension _CheHomeConnected on _CHEHomeState {
     try {
       await prefs?.setString(_lastSeenKey, DateTime.now().toUtc().toIso8601String());
     } catch (_) {}
-    if (speak && !_greetedThisLaunch && line.isNotEmpty && messages.isEmpty && voiceResponsesEnabled && !_isSpeaking) {
-      _greetedThisLaunch = true;
-      await speakText(line, record: false);
-    }
   }
 
   /// Null when the feed could not be loaded (never reported as "empty").
@@ -183,7 +178,7 @@ extension _CheHomeConnected on _CHEHomeState {
       context: context,
       isScrollControlled: true,
       backgroundColor: kit.CheColors.surface,
-      builder: (_) => CheActivityFeedSheet(events: events, onSpeak: (t) => speakText(t, record: false)),
+      builder: (_) => CheActivityFeedSheet(events: events, onSpeak: (t) => speakText(t, record: false, readOnDemand: true)),
     );
   }
 

@@ -35,7 +35,7 @@ extension _CheMailboxBadge on _CHEHomeState {
       builder: (_) => CheMailboxScreen(
         baseUrl: cheAgentBaseUrl,
         headers: () => _authHeaders,
-        onSpeak: (text) => unawaited(speakText(text, record: false)),
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
         initialTab: tab,
       ),
     ));

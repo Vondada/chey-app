@@ -47,10 +47,14 @@ void main() {
     expect(find.textContaining('could not load: Owner only'), findsOneWidget);
   });
 
-  testWidgets('a failed load is spoken aloud, not only drawn', (tester) async {
+  testWidgets('a failed load stays silent until Read this error is pressed', (tester) async {
     final spoken = <String>[];
     await tester.pumpWidget(MaterialApp(home: CheConversationsScreen(baseUrl: () => 'https://che', headers: () => const {}, onReadAloud: (t) async => spoken.add(t), client: MockClient((r) async => http.Response('{"detail":"Pair your phone"}', 401)))));
     await tester.pumpAndSettle();
+    expect(find.textContaining('Conversations could not load: Pair your phone'), findsOneWidget);
+    expect(spoken, isEmpty, reason: 'navigation and loading errors must not speak');
+    await tester.tap(find.text('Read this error'));
+    await tester.pump();
     expect(spoken, ['Conversations could not load: Pair your phone']);
   });
 

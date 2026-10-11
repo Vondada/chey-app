@@ -1,6 +1,6 @@
 # CHE owner requirements
 
-The owner uses CHE voice-first, as if blind. Every feature must be fully usable by voice OR typing, including by a blind or deaf owner. Show every spoken reply as large text, and pair status feedback with a visible banner and haptic pattern. Owner rule (October 8, 2026): live working-step lines (CHE's job activity) appear as quiet, muted subtext like Claude's working status, not large text; they must still be spoken aloud and announced to screen readers.
+The owner uses CHE voice-first, as if blind. Every feature must be fully usable by voice OR typing, including by a blind or deaf owner. Show every spoken reply as large text, and pair status feedback with a visible banner and haptic pattern. Owner rule (October 11, 2026; supersedes earlier unsolicited-narration rules): CHE stays silent on app launch and passive navigation. Mailbox summaries, live charts, Office/Workshop changes, update banners, job activity and ordinary screen loading must not start CHE speech automatically. Show progress as quiet, muted accessible text; do not force a screen-reader announcement for every passive status update. The owner can explicitly select **Read This / Read Aloud** to hear the content; user-initiated voice conversations, explicit spoken commands and required action confirmations still speak normally. Never disable a manual Read button just to keep passive screens quiet.
 
 - CHE describes the current screen aloud, based on actual available screen context.
 - Read options aloud as a numbered list and support spoken choices.

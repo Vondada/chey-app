@@ -45,7 +45,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
           conversationMemories: conversationMemories,
         ),
         brainLinks: brainLinks,
-        onReadAloud: (t) => speakText(t, record: false),
+        onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
         onRefresh: () => _loadAgentState(silent: true),
         onOpenAgent: (name) => _openOfficeFloor(agentName: name),
       ),
@@ -525,7 +525,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
       MaterialPageRoute<void>(
         builder: (_) => CheOfficeFloorScreen(
           client: _agentRuntime,
-          onSpeak: speakText,
+          onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
           initialAgentName: agentName,
           // Tapping CHE's desk returns to the conversation.
           onTalkToChe: () => Navigator.of(context).popUntil((route) => route.isFirst),
@@ -540,7 +540,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
     return CheOfficeFloorScreen(
       client: _agentRuntime,
       embedded: true,
-      onSpeak: speakText,
+      onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
       onTalkToChe: () => Navigator.of(context).popUntil((route) => route.isFirst),
     );
   }

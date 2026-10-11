@@ -251,7 +251,6 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   List<String> _homeSuggestions = const [];
   bool _screenChipsHidden = false;
   bool _screenGreetingHidden = false;
-  bool _greetedThisLaunch = false;
   String _explainLevel = 'simple';
   // "Tell me more" / "expand": the next reply only goes deeper.
   bool _deeperOnce = false;
@@ -1113,8 +1112,8 @@ OWNER AGENCY
       if (_appForeground) unawaited(_refreshMailboxBadge());
     });
     unawaited(_loadExplainLevel());
-    // CHE greets once, in one short line, with something useful.
-    Future<void>.delayed(const Duration(milliseconds: 2600), () => _loadHomeGreeting(speak: true));
+    // Load useful greeting text quietly; speech happens only on owner request.
+    Future<void>.delayed(const Duration(milliseconds: 2600), () => _loadHomeGreeting());
     _proactiveTimer = Timer.periodic(
       const Duration(minutes: 10),
       (_) {
@@ -1292,10 +1291,10 @@ OWNER AGENCY
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        ChePatchBanner(onSpeak: (text) => speakText(text, record: false)),
+        ChePatchBanner(onSpeak: (text) => speakText(text, record: false, readOnDemand: true)),
         CheJobActivityBanner(
           fetch: (path, body) => _postAgentJson(path, body),
-          speak: (text) => speakText(text),
+          speak: (text) => speakText(text, record: false, readOnDemand: true),
         ),
         ChePriorityNotificationBanner(
           gateway: chePlatformGateway(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders),
@@ -1303,7 +1302,7 @@ OWNER AGENCY
         ),
         CheMobileUpdateNotice(
           baseUrl: cheAgentBaseUrl,
-          onSpeak: (text) => speakText(text, record: false),
+          onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
         ),
         Semantics(
           liveRegion: true,
@@ -1638,7 +1637,7 @@ OWNER AGENCY
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheNotificationsScreen(
         gateway: _platformGateway(),
-        onReadAloud: (text) => speakText(text, record: false),
+        onReadAloud: (text) => speakText(text, record: false, readOnDemand: true),
       ),
     ));
   }
@@ -1648,7 +1647,7 @@ OWNER AGENCY
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheCoreRoomScreen(
         gateway: _platformGateway(),
-        onReadAloud: (text) => speakText(text, record: false),
+        onReadAloud: (text) => speakText(text, record: false, readOnDemand: true),
       ),
     ));
   }
@@ -1696,7 +1695,7 @@ OWNER AGENCY
                 conversationMemories: conversationMemories,
               ),
               brainLinks: brainLinks,
-              onReadAloud: (t) => speakText(t, record: false),
+              onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
               onRefresh: () => _loadAgentState(silent: true),
               onOpenAgent: (name) => _openOfficeFloor(agentName: name),
             ),
@@ -1754,7 +1753,7 @@ OWNER AGENCY
               CheOfficeFloorScreen(
                 client: _agentRuntime,
                 embedded: true,
-                onSpeak: speakText,
+                onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
                 onTalkToChe: () => _goShellTab(1),
               ),
               CheProjectsBoard(

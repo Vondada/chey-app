@@ -318,9 +318,9 @@ extension _CheHomeVoice on _CHEHomeState {
     }
   }
 
-  /// Speaks [text]. With [record] false (the home greeting) nothing is added
-  /// to the conversation, so the voice-first home stays on screen.
-  Future<void> speakText(String text, {bool record = true}) async {
+  /// Speak on an explicit owner request. Read This bypasses the ordinary
+  /// voice-replies toggle without enabling automatic screen narration.
+  Future<void> speakText(String text, {bool record = true, bool readOnDemand = false}) async {
     if (text.trim().isEmpty) return;
     if (record && mounted && (messages.isEmpty || messages.last['text'] != text)) {
       _set(() => messages.add({'role': 'assistant', 'text': text}));
@@ -330,7 +330,7 @@ extension _CheHomeVoice on _CHEHomeState {
       debugPrint('CHE voice: skip duplicate speak');
       return;
     }
-    final turn = _openSpeechTurn();
+    final turn = _openSpeechTurn(readOnDemand: readOnDemand);
     if (turn == null) return;
     // CHE refers to and pronounces herself as "CHE"; "Chay" is only the wake
     // word, so no substitution happens here.
@@ -342,7 +342,7 @@ extension _CheHomeVoice on _CHEHomeState {
   /// Starts one spoken assistant turn. Chunks added to the returned pipeline
   /// are synthesized ahead of playback and played back to back; the mic is
   /// suppressed once at the start and resumed once at the end of the turn.
-  CheSpeechPipeline<CheVoiceClip>? _openSpeechTurn() {
+  CheSpeechPipeline<CheVoiceClip>? _openSpeechTurn({bool readOnDemand = false}) {
     // Mirror the persisted UI Controls toggle (defaults ON).
     voiceResponsesEnabled = CheUiPreferences.instance.voiceResponsesEnabled;
     if (_realtimeVoice?.connected == true) {
@@ -356,7 +356,7 @@ extension _CheHomeVoice on _CHEHomeState {
         return null;
       }
     }
-    if (!voiceResponsesEnabled) {
+    if (!voiceResponsesEnabled && !readOnDemand) {
       if (kIsWeb && openConversation) {
         Future.delayed(const Duration(milliseconds: 300), () {
           if (mounted && openConversation && !_isSending && !_isSpeaking && !isListening) {

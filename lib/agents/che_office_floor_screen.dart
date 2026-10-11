@@ -70,7 +70,6 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
   /// rebuilds when desks are added or removed.
   final CheOfficeStore _store = CheOfficeStore();
   CheOfficeToday? _lastBoard;
-  Future<void> _speech = Future<void>.value();
   String _filter = 'All'; // All | Research | Trading | Content
 
   // Flat floor plan kept as a fallback when the WebView 3D surface fails.
@@ -81,9 +80,8 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
   );
   bool _useFlatPlan = false;
 
-  /// Deep link: open the requested agent's desk once, as soon as the roster
-  /// has anyone. Waits for the roster instead of guessing; an unmatched name
-  /// is spoken aloud exactly once.
+  /// Deep link: open the requested agent's desk once the roster is known.
+  /// Missing agents are shown visually, without unsolicited narration.
   String? _pendingAgentName;
   bool _initialAgentTried = false;
 
@@ -111,7 +109,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
     }
     if (!_initialAgentTried) {
       _initialAgentTried = true;
-      _speak('$want is not on the Office floor right now.');
+      _snack('$want is not on the Office floor right now.');
     }
   }
 
@@ -131,22 +129,12 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
     if (!identical(r.today, _lastBoard)) {
       _lastBoard = r.today;
       _store.setBoard(r.today);
-      // CHE says new blockers without being asked (deduped on the server).
+      // Blockers stay visible and readable without automatically speaking.
       for (final line in _store.takeAnnouncements()) {
-        _speech = _speech.then((_) => _announce(line));
         _snack(line);
       }
     }
     if (mounted) setState(() {});
-  }
-
-  Future<void> _announce(String line) async {
-    if (!mounted) return;
-    try {
-      await _speak(line);
-    } catch (_) {
-      // Speech failing must not stop the next announcement.
-    }
   }
 
   void _openDesk(String id) {

@@ -61,10 +61,14 @@ class CheMobileUpdateScreen extends StatefulWidget {
     required this.baseUrl,
     required this.onSpeak,
     this.rollback = false,
+    this.announceRequestedCheck = false,
   });
 
   final String baseUrl;
   final CheSpeak onSpeak;
+
+  /// Only an explicit owner 'check for updates' command can request speech.
+  final bool announceRequestedCheck;
 
   /// Opened by the "roll back" voice command. Offers the previous verified
   /// build behind its own confirmation. It is not shown on the normal screen.
@@ -86,10 +90,10 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
     _controller.addListener(_onChanged);
     _controller.configure(widget.baseUrl);
     _controller.start();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _announce());
+    // Opening the screen remains silent; status is displayed immediately.
     // Opening the screen is a request to check, so it never shows a result
     // from earlier than this open.
-    unawaited(_controller.refresh(force: true));
+    unawaited(_refreshOnOpen());
   }
 
   @override
@@ -98,19 +102,25 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
     super.dispose();
   }
 
+  Future<void> _refreshOnOpen() async {
+    await _controller.refresh(force: true);
+    if (mounted && widget.announceRequestedCheck) {
+      await widget.onSpeak(_controller.plan.spoken);
+    }
+  }
+
   void _onChanged() {
     if (!mounted || _busy) return;
     _announce();
   }
 
-  /// Speaks each settled stage once. Work that the owner started speaks its
-  /// own result instead, so nothing is said twice.
+  /// Track settled stages without narrating screen changes automatically.
   void _announce() {
     if (!mounted || _controller.checking) return;
     final plan = _controller.plan;
     if (plan.stage != _spokenStage) {
       _spokenStage = plan.stage;
-      unawaited(widget.onSpeak(plan.spoken));
+      // Only explicit Read/Update actions speak.
     }
     if (widget.rollback && !_rollbackOffered) {
       _rollbackOffered = true;
@@ -197,6 +207,14 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(plan.detail, style: theme.textTheme.bodyLarge),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () => widget.onSpeak(plan.spoken),
+                      icon: const Icon(Icons.volume_up_rounded),
+                      label: const Text('Read this'),
+                    ),
+                  ),
                   if (plan.showProgress) ...[
                     const SizedBox(height: 20),
                     Semantics(
@@ -297,11 +315,9 @@ class _CheMobileUpdateNoticeState extends State<CheMobileUpdateNotice> {
     _announced = plan.stage;
     if (plan.stage == CheUpdateStage.fullReady) {
       HapticFeedback.mediumImpact();
-      unawaited(widget.onSpeak('Sir, a new CHE update is ready.'));
     } else if (plan.stage == CheUpdateStage.installed) {
       // The banner stays until the owner closes it, so the result can be read.
       HapticFeedback.mediumImpact();
-      unawaited(widget.onSpeak(plan.spoken));
     }
   }
 

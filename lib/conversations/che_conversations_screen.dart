@@ -123,10 +123,9 @@ class _CheConversationsScreenState extends State<CheConversationsScreen> {
       _error = 'Conversations could not load: ${'$e'.replaceFirst('Exception: ', '')}';
     }
     if (mounted) setState(() => _loading = false);
-    // The real result, spoken and felt, not only drawn.
+    // Errors stay visible and are spoken only when Read This is selected.
     if (_error != null) {
       HapticFeedback.heavyImpact();
-      await widget.onReadAloud?.call(_error!);
     } else {
       HapticFeedback.lightImpact();
     }
@@ -150,7 +149,19 @@ class _CheConversationsScreenState extends State<CheConversationsScreen> {
               onTap: widget.onOpenFlagstaff!,
             ),
           if (_loading) const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
-          if (_error != null) Padding(padding: const EdgeInsets.all(16), child: Text(_error!, style: CheType.caption.copyWith(color: CheColors.warning))),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(_error!, style: CheType.caption.copyWith(color: CheColors.warning)),
+                if (widget.onReadAloud != null)
+                  TextButton.icon(
+                    onPressed: () => widget.onReadAloud!(_error!),
+                    icon: const Icon(Icons.volume_up_rounded),
+                    label: const Text('Read this error'),
+                  ),
+              ]),
+            ),
           if (!_loading && _error == null && _threads.isEmpty)
             const Padding(
               padding: EdgeInsets.all(24),
