@@ -50,8 +50,12 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
     _load();
   }
 
+  void _showStatus(String text) {
+    if (mounted) setState(() => _status = text);
+  }
+
   void _say(String text) {
-    setState(() => _status = text);
+    _showStatus(text);
     widget.onSpeak?.call(text);
   }
 
@@ -87,7 +91,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
       });
       final unread = _letters.where((l) => l['read'] != true).length;
       final newMail = (_flag['unread'] as num?)?.toInt() ?? 0;
-      _say('${newMail == 0 ? 'No new messages.' : '$newMail new messages.'} '
+      _showStatus('${newMail == 0 ? 'No new messages.' : '$newMail new messages.'} '
           '${unread == 0 ? 'No new letters.' : '$unread new letters.'}');
       // Opening the mailbox counts as reading it, so the badge clears.
       http.post(
@@ -98,7 +102,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
     } catch (_) {
       if (!mounted) return;
       setState(() => _loading = false);
-      _say('I could not open the mailbox. Check the connection and try again.');
+      _showStatus('I could not open the mailbox. Check the connection and try again.');
     }
   }
 
