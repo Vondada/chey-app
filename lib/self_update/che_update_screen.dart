@@ -61,10 +61,14 @@ class CheMobileUpdateScreen extends StatefulWidget {
     required this.baseUrl,
     required this.onSpeak,
     this.rollback = false,
+    this.announceRequestedCheck = false,
   });
 
   final String baseUrl;
   final CheSpeak onSpeak;
+
+  /// Only an explicit owner 'check for updates' command can request speech.
+  final bool announceRequestedCheck;
 
   /// Opened by the "roll back" voice command. Offers the previous verified
   /// build behind its own confirmation. It is not shown on the normal screen.
@@ -89,13 +93,20 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
     // Opening the screen remains silent; status is displayed immediately.
     // Opening the screen is a request to check, so it never shows a result
     // from earlier than this open.
-    unawaited(_controller.refresh(force: true));
+    unawaited(_refreshOnOpen());
   }
 
   @override
   void dispose() {
     _controller.removeListener(_onChanged);
     super.dispose();
+  }
+
+  Future<void> _refreshOnOpen() async {
+    await _controller.refresh(force: true);
+    if (mounted && widget.announceRequestedCheck) {
+      await widget.onSpeak(_controller.plan.spoken);
+    }
   }
 
   void _onChanged() {
