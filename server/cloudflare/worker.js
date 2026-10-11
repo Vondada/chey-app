@@ -60,6 +60,7 @@ import { cachedCodeIndex } from './code_index.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
+import { applyModelReading, interpretOwnerTurn, interpretWithModel } from './speech_intent.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { webAppPage } from './web_app.js';
@@ -2968,6 +2969,16 @@ export class CheState extends DurableObject {
     // Every text model call goes through CHE's free-engine router. Persist
     // per-engine daily usage estimates in this owner's Durable Object.
     this.env = routedEnv(env, fetch, state.storage);
+  }
+
+  // The fast engine reads only the turns the rules could not, for the listening layer.
+  async runInterpreterText(messages) {
+    const answer = await this.env.AI.run(this.env.CHE_FAST_MODEL || FAST_MODEL, {
+      messages,
+      max_tokens: 160,
+      che_audit: { task: 'interpret_owner_turn', agent: 'CHE', route: 'owner_interpret' },
+    });
+    return String(answer?.response || answer?.choices?.[0]?.message?.content || '');
   }
 
   // Mail news found by the last background check, delivered once.
@@ -6447,6 +6458,31 @@ export class CheState extends DurableObject {
           const esc = correction.heard.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           message = previousText.replace(new RegExp(`\\b${esc}\\b`, 'gi'), correction.meant);
         }
+        // Understanding before any gate: fix likely speech mistakes, resolve "that
+        // one" and "do it again" from the recent turns, and ask one question only
+        // when a consequential request has no clear target. The owner gates below
+        // see the resolved words, so money and delete holds still apply.
+        let heldPeek = null;
+        try {
+          heldPeek = (await this.ctx.storage.get(PENDING_OWNER_ACTION_KEY)) || (await this.ctx.storage.get(PENDING_APP_ACTION_KEY)) || null;
+        } catch (_) { heldPeek = null; }
+        let interpretation = interpretOwnerTurn(message, { history: ownerHistory, hasHeldAction: Boolean(heldPeek) });
+        // The reply model reads a vague turn itself; this extra read is only worth
+        // its cost when there is conversation for it to resolve against.
+        if (interpretation.kind === 'unclear' && !interpretation.clarify && !interpretation.passthrough && ownerHistory.length > 0) {
+          const reading = await interpretWithModel({
+            runText: (messages) => this.runInterpreterText(messages),
+            text: message,
+            history: ownerHistory,
+          }).catch(() => null);
+          interpretation = applyModelReading(interpretation, reading);
+        }
+        if (interpretation.clarify) {
+          const question = interpretation.clarify;
+          return json({ message: question, reply: question, clarification: true, held_for_owner: false, code_review_passed: false, owner_approval_required: false });
+        }
+        message = interpretation.text;
+
         // Owner rule: money and delete/remove need an explicit yes. The hold is
         // enforced here in code. A plain yes on the next turn releases exactly
         // the held request, once; anything else replaces it.
