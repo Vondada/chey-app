@@ -45,6 +45,17 @@ const b64encode = (text) => {
 };
 const b64decode = (value) => new TextDecoder().decode(Uint8Array.from(atob(String(value || '').replace(/\s+/g, '')), (c) => c.charCodeAt(0)));
 
+// The Contents API returns no inline content for files over 1 MB. The blob API
+// returns the same bytes at any size, so it is the fallback. Null means the bytes
+// could not be read; callers must refuse to write rather than treat it as empty.
+async function fileText(env, found, fetcher) {
+  if (found.data?.content) return b64decode(found.data.content);
+  if (!found.data?.sha) return null;
+  const blob = await gh(env, 'GET', `/git/blobs/${found.data.sha}`, null, fetcher);
+  if (!blob.ok) return null;
+  return b64decode(blob.data?.content || '');
+}
+
 export function normalizePeer(name) {
   const peer = String(name || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 30);
   return peer || null;
@@ -82,7 +93,9 @@ export async function readThread(env, peer, fetcher = fetch) {
   const found = await gh(env, 'GET', `/contents/mailbox/${who}.jsonl?ref=${MAILBOX_BRANCH}`, null, fetcher);
   if (found.status === 404) return { messages: [], sha: null };
   if (!found.ok) return { error: `Mailbox read failed (${found.status}).`, messages: [] };
-  return { messages: parseMail(b64decode(found.data.content)), sha: found.data.sha };
+  const text = await fileText(env, found, fetcher);
+  if (text === null) return { error: 'Mailbox read failed (file content unavailable).', messages: [] };
+  return { messages: parseMail(text), sha: found.data.sha };
 }
 
 export async function listThreads(env, fetcher = fetch) {
@@ -100,6 +113,34 @@ export async function listThreads(env, fetcher = fetch) {
   return { threads };
 }
 
+// The live thread file keeps its newest lines. Everything older moves to
+// mailbox/archive/<peer>.jsonl, so no message is ever dropped from the repo.
+export const LIVE_LIMIT = 300;
+const ARCHIVE_DIR = 'archive';
+
+// Adds overflow lines to the archive, skipping ids already there. Returns
+// { retry: true } when another write won the race, so the caller re-reads.
+async function archiveMail(env, peer, overflow, fetcher) {
+  const path = `/contents/mailbox/${ARCHIVE_DIR}/${peer}.jsonl`;
+  const found = await gh(env, 'GET', `${path}?ref=${MAILBOX_BRANCH}`, null, fetcher);
+  if (found.status !== 404 && !found.ok) return { error: `Mailbox archive read failed (${found.status}).` };
+  const text = found.ok ? await fileText(env, found, fetcher) : '';
+  if (text === null) return { error: 'Mailbox archive read failed (file content unavailable).' };
+  const archived = parseMail(text);
+  const have = new Set(archived.map((m) => m.id));
+  const fresh = overflow.filter((m) => !have.has(m.id));
+  if (!fresh.length) return {};
+  const put = await gh(env, 'PUT', path, {
+    message: `mailbox archive: ${peer}`,
+    content: b64encode([...archived, ...fresh].map((m) => JSON.stringify(m)).join('\n') + '\n'),
+    branch: MAILBOX_BRANCH,
+    ...(found.ok ? { sha: found.data.sha } : {}),
+  }, fetcher);
+  if (put.ok) return {};
+  if (put.status === 409 || put.status === 422) return { retry: true };
+  return { error: `Mailbox archive write failed (${put.status}).` };
+}
+
 export async function sendMail(env, { from = 'che', to, text, replyTo = '', id = '' }, fetcher = fetch) {
   const sender = normalizePeer(from) || 'che';
   const recipient = normalizePeer(to);
@@ -115,7 +156,16 @@ export async function sendMail(env, { from = 'che', to, text, replyTo = '', id =
   for (let attempt = 0; attempt < 3; attempt++) {
     const thread = await readThread(env, peer, fetcher);
     if (thread.error) return { status: 502, detail: thread.error };
-    const lines = [...thread.messages, message].slice(-300).map((m) => JSON.stringify(m)).join('\n') + '\n';
+    const all = [...thread.messages, message];
+    // Overflow is archived before the live file is trimmed. A retry after a
+    // lost race skips lines already archived, so nothing is written twice.
+    const overflow = all.slice(0, -LIVE_LIMIT);
+    if (overflow.length) {
+      const moved = await archiveMail(env, peer, overflow, fetcher);
+      if (moved.retry) continue;
+      if (moved.error) return { status: 502, detail: moved.error };
+    }
+    const lines = all.slice(-LIVE_LIMIT).map((m) => JSON.stringify(m)).join('\n') + '\n';
     const put = await gh(env, 'PUT', `/contents/mailbox/${peer}.jsonl`, {
       message: `mailbox: ${sender} → ${recipient}`,
       content: b64encode(lines),

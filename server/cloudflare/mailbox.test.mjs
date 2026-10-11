@@ -4,19 +4,31 @@ import { mailboxHead, mailboxIntent, readThread, sendMail, listThreads } from '.
 
 function fakeRepo() {
   const files = new Map();
+  const large = new Set();
+  const flags = { noBlobs: false };
   let branch = false;
   const ok = (data, status = 200) => ({ ok: status < 300, status, json: async () => data });
-  return async (url, init = {}) => {
+  const handler = async (url, init = {}) => {
     const u = String(url);
     const method = init.method || 'GET';
     if (u.includes('/git/ref/heads/che-mailbox')) return branch ? ok({ object: { sha: 'm' } }) : ok({}, 404);
     if (u.endsWith('/o/r')) return ok({ default_branch: 'main' });
     if (u.includes('/git/ref/heads/main')) return ok({ object: { sha: 'x' } });
     if (u.endsWith('/git/refs') && method === 'POST') { branch = true; return ok({}, 201); }
+    const blob = /\/git\/blobs\/([^/?]+)/.exec(u);
+    if (blob) {
+      const hit = [...files.values()].find((f) => f.sha === blob[1]);
+      return hit && !flags.noBlobs ? ok({ content: btoa(hit.text), encoding: 'base64' }) : ok({}, 404);
+    }
     const dir = /\/contents\/mailbox\?ref=/.test(u);
     if (dir) return ok([...files.keys()].map((name) => ({ name })));
-    const m = /\/contents\/mailbox\/([a-z0-9-]+\.jsonl)/.exec(u);
-    if (m && method === 'GET') return files.has(m[1]) ? ok({ content: btoa(files.get(m[1]).text), sha: files.get(m[1]).sha }) : ok({}, 404);
+    const m = /\/contents\/mailbox\/((?:archive\/)?[a-z0-9-]+\.jsonl)/.exec(u);
+    if (m && method === 'GET') {
+      if (!files.has(m[1])) return ok({}, 404);
+      const f = files.get(m[1]);
+      // Above 1 MB the Contents API returns no inline content, only the sha.
+      return large.has(m[1]) ? ok({ content: '', encoding: 'none', sha: f.sha }) : ok({ content: btoa(f.text), sha: f.sha });
+    }
     if (m && method === 'PUT') {
       const body = JSON.parse(init.body);
       files.set(m[1], { text: atob(body.content), sha: String(Math.random()) });
@@ -24,6 +36,9 @@ function fakeRepo() {
     }
     return ok({}, 404);
   };
+  handler.large = large;
+  handler.flags = flags;
+  return handler;
 }
 
 const env = { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' };
@@ -93,4 +108,73 @@ test('handoff intent and latest handoff pick the right message', async () => {
   ];
   assert.equal(latestHandoff(msgs, 'claude').id, '3');
   assert.equal(latestHandoff(msgs, 'grok'), null);
+});
+
+test('an archive over 1 MB is read through the blob API, so old lines are kept', async () => {
+  const fetcher = fakeRepo();
+  for (let i = 0; i < 301; i++) {
+    await sendMail(env, { from: 'claude', to: 'che', text: `line ${i}`, id: `m${i}` }, fetcher);
+  }
+  fetcher.large.add('archive/claude.jsonl');
+  assert.equal((await sendMail(env, { from: 'claude', to: 'che', text: 'line 301', id: 'm301' }, fetcher)).status, 200);
+  fetcher.large.delete('archive/claude.jsonl');
+  const archive = await fetcher('https://api.github.com/repos/o/r/contents/mailbox/archive/claude.jsonl?ref=che-mailbox');
+  const archived = atob((await archive.json()).content).split('\n').filter(Boolean).map((l) => JSON.parse(l).id);
+  assert.deepEqual(archived, ['m0', 'm1']);
+});
+
+test('a live thread over 1 MB is read in full, so a write never truncates it', async () => {
+  const fetcher = fakeRepo();
+  await sendMail(env, { from: 'claude', to: 'che', text: 'first', id: 'a1' }, fetcher);
+  await sendMail(env, { from: 'claude', to: 'che', text: 'second', id: 'a2' }, fetcher);
+  fetcher.large.add('claude.jsonl');
+  assert.deepEqual((await readThread(env, 'claude', fetcher)).messages.map((m) => m.id), ['a1', 'a2']);
+  assert.equal((await sendMail(env, { from: 'claude', to: 'che', text: 'third', id: 'a3' }, fetcher)).status, 200);
+  fetcher.large.delete('claude.jsonl');
+  assert.deepEqual((await readThread(env, 'claude', fetcher)).messages.map((m) => m.id), ['a1', 'a2', 'a3']);
+});
+
+test('when the bytes cannot be read, a write is refused instead of truncating the thread', async () => {
+  const fetcher = fakeRepo();
+  await sendMail(env, { from: 'claude', to: 'che', text: 'keep me', id: 'k1' }, fetcher);
+  fetcher.large.add('claude.jsonl');
+  fetcher.flags.noBlobs = true;
+  assert.equal((await sendMail(env, { from: 'claude', to: 'che', text: 'new', id: 'k2' }, fetcher)).status, 502);
+  fetcher.large.delete('claude.jsonl');
+  fetcher.flags.noBlobs = false;
+  assert.deepEqual((await readThread(env, 'claude', fetcher)).messages.map((m) => m.id), ['k1']);
+});
+
+test('older lines move to the archive instead of being dropped', async () => {
+  const fetcher = fakeRepo();
+  for (let i = 0; i < 302; i++) {
+    assert.equal((await sendMail(env, { from: 'claude', to: 'che', text: `line ${i}`, id: `m${i}` }, fetcher)).status, 200);
+  }
+  const live = await readThread(env, 'claude', fetcher);
+  assert.equal(live.messages.length, 300);
+  assert.equal(live.messages[0].id, 'm2');
+  assert.equal(live.messages.at(-1).id, 'm301');
+  const archive = await fetcher('https://api.github.com/repos/o/r/contents/mailbox/archive/claude.jsonl?ref=che-mailbox');
+  const archived = atob((await archive.json()).content).split('\n').filter(Boolean).map((l) => JSON.parse(l).id);
+  assert.deepEqual(archived, ['m0', 'm1']);
+});
+
+test('a lost race after archiving does not archive a line twice', async () => {
+  const fetcher = fakeRepo();
+  for (let i = 0; i < 300; i++) {
+    await sendMail(env, { from: 'claude', to: 'che', text: `line ${i}`, id: `m${i}` }, fetcher);
+  }
+  let failed = false;
+  const racy = async (url, init = {}) => {
+    if (!failed && init.method === 'PUT' && /\/contents\/mailbox\/claude\.jsonl/.test(String(url))) {
+      failed = true;
+      return { ok: false, status: 409, json: async () => ({}) };
+    }
+    return fetcher(url, init);
+  };
+  assert.equal((await sendMail(env, { from: 'claude', to: 'che', text: 'line 300', id: 'm300' }, racy)).status, 200);
+  assert.equal(failed, true, 'the first live write was refused');
+  const archive = await fetcher('https://api.github.com/repos/o/r/contents/mailbox/archive/claude.jsonl?ref=che-mailbox');
+  const archived = atob((await archive.json()).content).split('\n').filter(Boolean).map((l) => JSON.parse(l).id);
+  assert.deepEqual(archived, ['m0']);
 });

@@ -128,6 +128,12 @@ What CHE looks for in each one (study-only unless its license allows reuse):
 | sindresorhus/awesome | Finding proven tools before building one |
 | msitarzewski/agency-agents | Specialist agent roles and personalities |
 | codecrafters-io/build-your-own-x | Learning how systems work by building them |
+| debpalash/VoiceStudio | Local transcription and dubbing ideas (study only; license not yet verified; never clone a voice) |
+| hugohe3/ppt-master | Turning a PDF or Word document into an editable deck |
+| bilawalsidhu/gods-eye-view | Layered 3D globe for her 3D views; label estimated data honestly |
+| morluto/rea | Explaining how another app's function works, for her explain-this answers |
+| cathrynlavery/diagram-design | Branded diagrams, always with a text description |
+| paperclipai/paperclip | Agent budgets, approvals and audit logs for her Office crew |
 
 ## Who owns what
 - **Claude:** the in-app voice navigator, latency, self-development reliability.
