@@ -66,12 +66,14 @@ Then, on GitHub:
 
 ## 2. Current position (updated by: Claude, 2026-10-11)
 
-**Claude, 2026-10-11 (owner P0: "Fix CHE's silent voice after Shorebird update"). PR #281 open from `claude/fix-silent-read-aloud` at `9c26391` (from main `b19c3c8`). NOT merged yet.**
+**Claude, 2026-10-11 (owner: "check PR #282 and merge when green"; "check PR 281 and merge if green"). PR #282 OPEN, NOT merged. PR #281 MERGED as `2e942e7`.**
+- **PR #282** (branch `claude/chat-context-understanding`, head `9d0c868`, base `main` `b19c3c8`): contextual understanding. New `server/cloudflare/speech_intent.js` and one interpretation step in `/api/chat`, before the owner gates. 39 new tests. Verified locally: Worker suite 869/869 (830 baseline + 39). In CI on `9d0c868`: "Worker syntax and unit tests" and one `analyze` job passed; the other `analyze` job was still running at last check. The Codex review was running. "Workers Builds" failed and is not gating. No review threads open. Merge gate: required checks green on `9d0c868`, no open thread, `expectedHeadSha` `9d0c868`. Its files do not overlap #281's. Not verified live: the Worker deploy, and any behaviour on the phone.
+- **PR #281** (`claude/fix-silent-read-aloud`) MERGED as squash `2e942e7` on `main` at 17:12 UTC, with head `eef9838`. Checks green on `eef9838`: both `analyze` jobs (`flutter analyze --fatal-infos`, `flutter test`, iPhone version-ordering tests) and the Worker tests. "Workers Builds" failed and is not gating. All review threads resolved. The earlier `9c26391` is superseded: the fix went `9c26391` → `f5cac82` → `eef9838`.
 - Root cause (proven in code): the device-voice fallback awaited the on-device neural model's first download, which has no timeout, before AVSpeech could speak. Native playAudio had no bound. Audio-session setup had no timeout. Mary had no failure pause, and each reply tries Mary on two routes.
-- Not confirmed: the exact trigger on the owner's phone. No device logs. Base IPA = run 38123285160 (`4c2a3fe`). Shorebird patch 38127944204 = `b19c3c8` Dart only.
-- Verified: Worker suite 833/833 (`node --test`). Dart NOT run locally (no Flutter here). CI pending on #281.
-- Next: CI green, then merge (the owner asked for merge when green). Then confirm the Worker deploy and Shorebird patch runs from logs. Owner checks the device.
+- Downstream on `main` `2e942e7`, at last check (17:12 UTC): `Deploy CHE Worker` 38158675324 in progress (key sync step); `CHE Shorebird` 38158675353 in progress (Flutter setup); `Check CHE Flutter client` 38158675306 Worker tests passed, analyze in progress; `CHE iPhone IPA` 38158675323 build-ios skipped. Not yet verified: "Verify live deployed commit" and the Shorebird "Published Patch" line.
+- Not confirmed: the exact trigger on the owner's phone. No device logs. Base IPA = run 38123285160 (`4c2a3fe`). Shorebird patch 38127944204 = `b19c3c8` Dart only. Not tested on the phone.
 - Caution: the designated branch `claude/che-latency-optimization-8ruaus` holds unapproved commits (starred repos, mailbox cap fix). Do not merge it, because that would deploy them with the voice fix.
+- Next: finish the #282 gate and merge if green. Then read the deploy and Shorebird results from logs and record them here. The owner checks Read This on the phone.
 
 **Claude, 2026-10-11 (owner: six GitHub repos, "put these to Che"). Queue item 4 (starred repos) DONE in code. NOT merged, NOT deployed.**
 - The owner's links were cut off for four of the six. Full names came from public search results, not the repos (they are outside this session's GitHub scope): `debpalash/VoiceStudio`, `hugohe3/ppt-master`, `bilawalsidhu/gods-eye-view`, `cathrynlavery/diagram-design`, `paperclipai/paperclip`. `morluto/rea` was given in full.
