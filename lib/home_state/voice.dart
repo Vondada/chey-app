@@ -267,7 +267,7 @@ extension _CheHomeVoice on _CHEHomeState {
 
 
   Future<bool> _playServerVoice(CheVoiceClip clip) async {
-    final played = await CheNativeVoice.playAudio(clip.bytes);
+    final played = await CheNativeVoice.playAudioBounded(clip.bytes);
     if (played) {
       final engine = clip.engine.isEmpty ? 'server-voice' : clip.engine;
       if (_lastVoiceEngine != engine) {
@@ -358,7 +358,10 @@ extension _CheHomeVoice on _CHEHomeState {
           phase == CheVoicePhase.thinking ||
           phase == CheVoicePhase.userSpeaking ||
           phase == CheVoicePhase.connecting) {
-        return null;
+        if (!readOnDemand) return null;
+        // An explicit Read This must not vanish silently: stop the live reply
+        // and speak the requested text on the local voice.
+        unawaited(_realtimeVoice!.cancelActiveResponse('owner read request'));
       }
     }
     if (!voiceResponsesEnabled && !readOnDemand) {
@@ -419,7 +422,9 @@ extension _CheHomeVoice on _CHEHomeState {
           debugPrint('CHE mic MIC_STOPPED: TTS start');
         });
       }
-      await _ensureAudibleOutput();
+      // Audio-session setup must not hold the turn: a stalled platform call
+      // would otherwise keep every chunk waiting in silence.
+      await _ensureAudibleOutput().timeout(const Duration(seconds: 3), onTimeout: () {});
       if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS && _nativeIosVoiceActive) {
         try {
           await CheNativeVoice.setAssistantSpeaking(true);
