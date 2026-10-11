@@ -15,7 +15,7 @@ function fakeRepo() {
     if (u.endsWith('/git/refs') && method === 'POST') { branch = true; return ok({}, 201); }
     const dir = /\/contents\/mailbox\?ref=/.test(u);
     if (dir) return ok([...files.keys()].map((name) => ({ name })));
-    const m = /\/contents\/mailbox\/([a-z0-9-]+\.jsonl)/.exec(u);
+    const m = /\/contents\/mailbox\/((?:archive\/)?[a-z0-9-]+\.jsonl)/.exec(u);
     if (m && method === 'GET') return files.has(m[1]) ? ok({ content: btoa(files.get(m[1]).text), sha: files.get(m[1]).sha }) : ok({}, 404);
     if (m && method === 'PUT') {
       const body = JSON.parse(init.body);
@@ -93,4 +93,38 @@ test('handoff intent and latest handoff pick the right message', async () => {
   ];
   assert.equal(latestHandoff(msgs, 'claude').id, '3');
   assert.equal(latestHandoff(msgs, 'grok'), null);
+});
+
+test('older lines move to the archive instead of being dropped', async () => {
+  const fetcher = fakeRepo();
+  for (let i = 0; i < 302; i++) {
+    assert.equal((await sendMail(env, { from: 'claude', to: 'che', text: `line ${i}`, id: `m${i}` }, fetcher)).status, 200);
+  }
+  const live = await readThread(env, 'claude', fetcher);
+  assert.equal(live.messages.length, 300);
+  assert.equal(live.messages[0].id, 'm2');
+  assert.equal(live.messages.at(-1).id, 'm301');
+  const archive = await fetcher('https://api.github.com/repos/o/r/contents/mailbox/archive/claude.jsonl?ref=che-mailbox');
+  const archived = atob((await archive.json()).content).split('\n').filter(Boolean).map((l) => JSON.parse(l).id);
+  assert.deepEqual(archived, ['m0', 'm1']);
+});
+
+test('a lost race after archiving does not archive a line twice', async () => {
+  const fetcher = fakeRepo();
+  for (let i = 0; i < 300; i++) {
+    await sendMail(env, { from: 'claude', to: 'che', text: `line ${i}`, id: `m${i}` }, fetcher);
+  }
+  let failed = false;
+  const racy = async (url, init = {}) => {
+    if (!failed && init.method === 'PUT' && /\/contents\/mailbox\/claude\.jsonl/.test(String(url))) {
+      failed = true;
+      return { ok: false, status: 409, json: async () => ({}) };
+    }
+    return fetcher(url, init);
+  };
+  assert.equal((await sendMail(env, { from: 'claude', to: 'che', text: 'line 300', id: 'm300' }, racy)).status, 200);
+  assert.equal(failed, true, 'the first live write was refused');
+  const archive = await fetcher('https://api.github.com/repos/o/r/contents/mailbox/archive/claude.jsonl?ref=che-mailbox');
+  const archived = atob((await archive.json()).content).split('\n').filter(Boolean).map((l) => JSON.parse(l).id);
+  assert.deepEqual(archived, ['m0']);
 });
