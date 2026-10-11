@@ -45,6 +45,17 @@ const b64encode = (text) => {
 };
 const b64decode = (value) => new TextDecoder().decode(Uint8Array.from(atob(String(value || '').replace(/\s+/g, '')), (c) => c.charCodeAt(0)));
 
+// The Contents API returns no inline content for files over 1 MB. The blob API
+// returns the same bytes at any size, so it is the fallback. Null means the bytes
+// could not be read; callers must refuse to write rather than treat it as empty.
+async function fileText(env, found, fetcher) {
+  if (found.data?.content) return b64decode(found.data.content);
+  if (!found.data?.sha) return null;
+  const blob = await gh(env, 'GET', `/git/blobs/${found.data.sha}`, null, fetcher);
+  if (!blob.ok) return null;
+  return b64decode(blob.data?.content || '');
+}
+
 export function normalizePeer(name) {
   const peer = String(name || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 30);
   return peer || null;
@@ -82,7 +93,9 @@ export async function readThread(env, peer, fetcher = fetch) {
   const found = await gh(env, 'GET', `/contents/mailbox/${who}.jsonl?ref=${MAILBOX_BRANCH}`, null, fetcher);
   if (found.status === 404) return { messages: [], sha: null };
   if (!found.ok) return { error: `Mailbox read failed (${found.status}).`, messages: [] };
-  return { messages: parseMail(b64decode(found.data.content)), sha: found.data.sha };
+  const text = await fileText(env, found, fetcher);
+  if (text === null) return { error: 'Mailbox read failed (file content unavailable).', messages: [] };
+  return { messages: parseMail(text), sha: found.data.sha };
 }
 
 export async function listThreads(env, fetcher = fetch) {
@@ -111,7 +124,9 @@ async function archiveMail(env, peer, overflow, fetcher) {
   const path = `/contents/mailbox/${ARCHIVE_DIR}/${peer}.jsonl`;
   const found = await gh(env, 'GET', `${path}?ref=${MAILBOX_BRANCH}`, null, fetcher);
   if (found.status !== 404 && !found.ok) return { error: `Mailbox archive read failed (${found.status}).` };
-  const archived = found.ok ? parseMail(b64decode(found.data.content)) : [];
+  const text = found.ok ? await fileText(env, found, fetcher) : '';
+  if (text === null) return { error: 'Mailbox archive read failed (file content unavailable).' };
+  const archived = parseMail(text);
   const have = new Set(archived.map((m) => m.id));
   const fresh = overflow.filter((m) => !have.has(m.id));
   if (!fresh.length) return {};

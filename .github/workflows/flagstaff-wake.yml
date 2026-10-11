@@ -30,7 +30,8 @@ jobs:
           set -euo pipefail
           # Every peer message this push added (not only the last line), so a
           # batch of questions is answered in one run. CHE's own replies are skipped.
-          ids="$(git show -U0 --format= "$GITHUB_SHA" -- 'mailbox/*.jsonl' | grep '^+{' | sed 's/^+//' | python3 -c '
+          # mailbox/archive/ holds moved history, not new mail, so it is excluded.
+          ids="$(git show -U0 --format= "$GITHUB_SHA" -- 'mailbox/*.jsonl' ':(exclude)mailbox/archive/*' | grep '^+{' | sed 's/^+//' | python3 -c '
           import json, sys
           ids = []
           for line in sys.stdin:
