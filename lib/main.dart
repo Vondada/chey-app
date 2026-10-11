@@ -1291,10 +1291,10 @@ OWNER AGENCY
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        ChePatchBanner(onSpeak: (text) => speakText(text, record: false)),
+        ChePatchBanner(onSpeak: (text) => speakText(text, record: false, readOnDemand: true)),
         CheJobActivityBanner(
           fetch: (path, body) => _postAgentJson(path, body),
-          speak: (text) => speakText(text),
+          speak: (text) => speakText(text, record: false, readOnDemand: true),
         ),
         ChePriorityNotificationBanner(
           gateway: chePlatformGateway(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders),
@@ -1302,7 +1302,7 @@ OWNER AGENCY
         ),
         CheMobileUpdateNotice(
           baseUrl: cheAgentBaseUrl,
-          onSpeak: (text) => speakText(text, record: false),
+          onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
         ),
         Semantics(
           liveRegion: true,
@@ -1637,7 +1637,7 @@ OWNER AGENCY
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheNotificationsScreen(
         gateway: _platformGateway(),
-        onReadAloud: (text) => speakText(text, record: false),
+        onReadAloud: (text) => speakText(text, record: false, readOnDemand: true),
       ),
     ));
   }
@@ -1647,7 +1647,7 @@ OWNER AGENCY
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheCoreRoomScreen(
         gateway: _platformGateway(),
-        onReadAloud: (text) => speakText(text, record: false),
+        onReadAloud: (text) => speakText(text, record: false, readOnDemand: true),
       ),
     ));
   }
@@ -1695,7 +1695,7 @@ OWNER AGENCY
                 conversationMemories: conversationMemories,
               ),
               brainLinks: brainLinks,
-              onReadAloud: (t) => speakText(t, record: false),
+              onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
               onRefresh: () => _loadAgentState(silent: true),
               onOpenAgent: (name) => _openOfficeFloor(agentName: name),
             ),
