@@ -226,14 +226,21 @@ class CheNativeVoice {
 
   static Future<bool> playAudio(Uint8List bytes) async => (await _invoke<bool>('playAudio', bytes)) ?? false;
 
+  /// How long one clip may play before it counts as stuck. Scales with the bytes
+  /// for compressed speech, but is capped: uncompressed WAV (24 kHz PCM16 from
+  /// the Gemini route) is about 20 times larger per second of audio, and an
+  /// uncapped deadline would leave a silent turn for minutes.
+  static Duration playbackDeadline(int bytes) {
+    final seconds = 3 + bytes ~/ 2000;
+    return Duration(seconds: seconds > 60 ? 60 : seconds);
+  }
+
   /// Plays one clip but never waits forever. A player that stops reporting
   /// completion would otherwise hold the whole speech turn in silence. On
   /// timeout the audio is stopped and the caller speaks that chunk on the
   /// device voice instead.
   static Future<bool> playAudioBounded(Uint8List bytes, {Duration? limit}) async {
-    // Allows 16 kbps of audio plus a fixed margin: far longer than any clip CHE
-    // requests, yet short enough that a dead player cannot hold the turn.
-    final wait = limit ?? Duration(seconds: 3 + bytes.length ~/ 2000);
+    final wait = limit ?? playbackDeadline(bytes.length);
     try {
       return await playAudio(bytes).timeout(wait);
     } on TimeoutException {

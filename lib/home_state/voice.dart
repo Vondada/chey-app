@@ -358,10 +358,7 @@ extension _CheHomeVoice on _CHEHomeState {
           phase == CheVoicePhase.thinking ||
           phase == CheVoicePhase.userSpeaking ||
           phase == CheVoicePhase.connecting) {
-        if (!readOnDemand) return null;
-        // An explicit Read This must not vanish silently: stop the live reply
-        // and speak the requested text on the local voice.
-        unawaited(_realtimeVoice!.cancelActiveResponse('owner read request'));
+        return null;
       }
     }
     if (!voiceResponsesEnabled && !readOnDemand) {

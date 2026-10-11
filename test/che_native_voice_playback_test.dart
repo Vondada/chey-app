@@ -98,6 +98,12 @@ void main() {
     expect(await CheNativeVoice.playAudioBounded(Uint8List(8)), isFalse);
   });
 
+  test('playback deadline is capped, so uncompressed audio cannot hold a turn for minutes', () {
+    expect(CheNativeVoice.playbackDeadline(0), const Duration(seconds: 3));
+    // About 20 seconds of 24 kHz PCM16 WAV: the Gemini route's uncompressed clip.
+    expect(CheNativeVoice.playbackDeadline(960000), const Duration(seconds: 60));
+  });
+
   test('a clip that fails to play is spoken on the device voice, in order', () async {
     final spoken = <String>[];
     final pipeline = CheSpeechPipeline<String>(
