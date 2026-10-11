@@ -46,6 +46,12 @@ const STARRED_FOCUS = {
   'kernc/backtesting.py': 'Small, clear backtest metrics (win rate, expectancy, drawdown): apply to her trading lab report (learn only; AGPL).',
   'polakowo/vectorbt': 'Testing many strategy parameters at once: apply to how her trading lab searches for new strategy variants.',
   'stefan-jansen/machine-learning-for-trading': 'Feature engineering and honest out-of-sample testing for trading: apply to her trading lab without leaking future data.',
+  'debpalash/voicestudio': 'Local transcription, dictation and dubbing ideas: apply to her voice input and transcripts. Study only (AGPL-3.0). Never clone a voice; the owner declined cloning for CHE.',
+  'hugohe3/ppt-master': 'Turns a PDF or Word document into an editable PowerPoint deck: apply to her document and slide export. Check its animation claims before relying on them.',
+  'bilawalsidhu/gods-eye-view': 'Layered 3D globe with clickable objects: apply to her 3D Office and Workshop views. Label estimated or simulated data as such, never as live. Check LICENSE before reusing code.',
+  'morluto/rea': 'Explaining how another app\'s function works from its behaviour: apply to her explain-this answers. Explain only; never bypass an app\'s protections or terms.',
+  'cathrynlavery/diagram-design': 'Branded technical diagrams as self-contained HTML and SVG: apply to her diagram answers, always with a text description for a blind owner.',
+  'paperclipai/paperclip': 'Agent org charts, monthly budgets, approvals and audit logs: apply to her Office crew\'s cost limits, owner approvals and activity records.',
 };
 
 export function starredFocus(repo) {
