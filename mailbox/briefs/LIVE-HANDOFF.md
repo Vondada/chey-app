@@ -66,7 +66,7 @@ Then, on GitHub:
 
 ## 2. Current position (updated by: Claude, 2026-10-11)
 
-**Claude, 2026-10-11 (owner: "Merge"). PR #283 MERGED as squash `c186886` on `main`. Worker deploy `38164617603` queued at 18:37 UTC; result to be recorded here.**
+**Claude, 2026-10-11 (owner: "Merge"). PR #283 MERGED as squash `c186886` on `main`. Worker deploy `38164617603` (job `114544481800`) SUCCEEDED at 18:38 UTC: Worker tests, Cloudflare token check, ElevenLabs credential check, key sync, Deploy, and "Verify live deployed commit" all passed.**
 - **PR #283** (branch `claude/che-latency-optimization-8ruaus`, head `ff21d12`): mailbox overflow goes to `mailbox/archive/<peer>.jsonl` before the live trim. Reads fall back to the blob API for files over 1 MB, and a read that gets no bytes refuses the write. The Flagstaff wake pathspec excludes `mailbox/archive/`. Six starred repos added to CHE's study focus (study only). VoiceStudio's license is stated as not yet verified. Codex P1 and P2 fixed in `ff21d12`, replied to, and resolved. Worker suite 879/879 on `ff21d12`. Required checks green on `ff21d12`: Worker syntax and unit tests, both analyze jobs. "Workers Builds" failed and is not gating. Merged with `expectedHeadSha` `ff21d12`. Not verified live: the first archive write after deploy, and the wake on `che-mailbox`. The wake workflow lives on `main`, so it runs on `che-mailbox` pushes only if that branch carries the same workflow file.
 
 **Claude, 2026-10-11 (owner: "check PR #282 and merge when green"; "check PR 281 and merge if green"). PR #282 MERGED as squash `6b2964b` on `main`. PR #281 MERGED as `2e942e7`.**
