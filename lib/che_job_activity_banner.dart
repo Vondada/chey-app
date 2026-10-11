@@ -1,12 +1,11 @@
 // Live "what CHE is doing" line for the background job the owner just started.
-// Shows the newest step in large text, announces it to screen readers, gives a
-// light haptic tap, and speaks it. Polls /api/job/activity until the job ends.
+// Shows real job progress quietly with a haptic. Read this is optional.
+// Polls /api/job/activity until the job ends.
 // Everything shown comes from the server's job log; nothing is invented here.
 
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 /// The job the owner is watching. Set when a background job is started.
@@ -85,17 +84,8 @@ class _CheJobActivityBannerState extends State<CheJobActivityBanner> {
     });
 
     if (changed) {
-      // Voice-first: the owner hears each step, sees it large, and feels a tap.
+      // Keep progress available in text, not unsolicited speech.
       HapticFeedback.lightImpact();
-      final view = View.maybeOf(context);
-      if (view != null) {
-        unawaited(SemanticsService.sendAnnouncement(
-          view,
-          last,
-          Directionality.maybeOf(context) ?? TextDirection.ltr,
-        ));
-      }
-      unawaited(widget.speak(last));
     }
     if (_finishedStatuses.contains(status)) _timer?.cancel();
   }
@@ -128,6 +118,11 @@ class _CheJobActivityBannerState extends State<CheJobActivityBanner> {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(fontSize: 12, color: muted),
               ),
+            ),
+            IconButton(
+              tooltip: 'Read this job status aloud',
+              icon: Icon(Icons.volume_up_rounded, size: 18, color: muted),
+              onPressed: () => widget.speak(_line),
             ),
           ],
         ),
