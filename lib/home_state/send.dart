@@ -170,6 +170,7 @@ extension _CheHomeSend on _CHEHomeState {
           builder: (_) => CheMobileUpdateScreen(
             baseUrl: cheAgentBaseUrl,
             onSpeak: (text) => speakText(text, record: false),
+            announceRequestedCheck: true,
           ),
         ),
       );
