@@ -34,6 +34,7 @@ import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv } from './a
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { handleEdgeVoice } from './edge_route.js';
+import { preferredElevenLabsSpeech } from './preferred_elevenlabs_voice.js';
 import { handleVideoLine } from './video_route.js';
 import {
   YOUTUBE_CALLBACK_PATH, disconnectYouTube, finishYouTubeConnect, startYouTubeConnect,
@@ -646,6 +647,9 @@ export function fluentSpeechText(text) {
 async function voiceSynthesisResponse(env, text) {
   const input = fluentSpeechText(text).slice(0, 6000);
   if (!input) return json({ detail: 'Nothing speakable in that text.' }, 400);
+  // Explicit owner opt-in: try Mary before free voices, never paid by default.
+  const preferred = await preferredElevenLabsSpeech(env, input);
+  if (preferred) return preferred;
   const voiceFailures = [];
 
   // Prefer free Workers AI TTS first so Gemini quota does not block spoken replies.
@@ -4286,6 +4290,10 @@ export class CheState extends DurableObject {
       const ownerOnly = () => json({ detail: 'Only the CHE owner can change, merge or deploy CHE’s code.' }, 403);
 
       if (path === '/api/voice/edge' && request.method === 'POST') {
+        // The current iPhone requests Edge before other TTS. Honor the same
+        // explicit ElevenLabs opt-in here without requiring a new IPA.
+        const preferred = await preferredElevenLabsSpeech(this.keyEnv || this.env, body.text);
+        if (preferred) return preferred;
         return handleEdgeVoice(request, this.keyEnv || this.env, body);
       }
       if (request.method === 'POST' && path === '/api/youtube/connect/start') {
@@ -5652,7 +5660,7 @@ export class CheState extends DurableObject {
       if (path === '/api/voice/synthesize') {
         const text = String(body.text || '').trim();
         if (!text) return json({ detail: 'Voice text required.' }, 400);
-        return voiceSynthesisResponse(this.env, text);
+        return voiceSynthesisResponse(this.keyEnv || this.env, text);
       }
       if (path === '/api/service-account/request') {
         const provider = String(body.provider || '').trim().slice(0, 80);
