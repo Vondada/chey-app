@@ -86,7 +86,7 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
     _controller.addListener(_onChanged);
     _controller.configure(widget.baseUrl);
     _controller.start();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _announce());
+    // Opening the screen remains silent; status is displayed immediately.
     // Opening the screen is a request to check, so it never shows a result
     // from earlier than this open.
     unawaited(_controller.refresh(force: true));
@@ -103,14 +103,13 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
     _announce();
   }
 
-  /// Speaks each settled stage once. Work that the owner started speaks its
-  /// own result instead, so nothing is said twice.
+  /// Track settled stages without narrating screen changes automatically.
   void _announce() {
     if (!mounted || _controller.checking) return;
     final plan = _controller.plan;
     if (plan.stage != _spokenStage) {
       _spokenStage = plan.stage;
-      unawaited(widget.onSpeak(plan.spoken));
+      // Only explicit Read/Update actions speak.
     }
     if (widget.rollback && !_rollbackOffered) {
       _rollbackOffered = true;
@@ -297,11 +296,9 @@ class _CheMobileUpdateNoticeState extends State<CheMobileUpdateNotice> {
     _announced = plan.stage;
     if (plan.stage == CheUpdateStage.fullReady) {
       HapticFeedback.mediumImpact();
-      unawaited(widget.onSpeak('Sir, a new CHE update is ready.'));
     } else if (plan.stage == CheUpdateStage.installed) {
       // The banner stays until the owner closes it, so the result can be read.
       HapticFeedback.mediumImpact();
-      unawaited(widget.onSpeak(plan.spoken));
     }
   }
 
