@@ -66,6 +66,13 @@ Then, on GitHub:
 
 ## 2. Current position (updated by: Claude, 2026-10-11)
 
+**Claude, 2026-10-11 (owner P0: "Fix CHE's silent voice after Shorebird update"). PR #281 open from `claude/fix-silent-read-aloud` at `9c26391` (from main `b19c3c8`). NOT merged yet.**
+- Root cause (proven in code): the device-voice fallback awaited the on-device neural model's first download, which has no timeout, before AVSpeech could speak. Native playAudio had no bound. Audio-session setup had no timeout. Mary had no failure pause, and each reply tries Mary on two routes.
+- Not confirmed: the exact trigger on the owner's phone. No device logs. Base IPA = run 38123285160 (`4c2a3fe`). Shorebird patch 38127944204 = `b19c3c8` Dart only.
+- Verified: Worker suite 833/833 (`node --test`). Dart NOT run locally (no Flutter here). CI pending on #281.
+- Next: CI green, then merge (the owner asked for merge when green). Then confirm the Worker deploy and Shorebird patch runs from logs. Owner checks the device.
+- Caution: the designated branch `claude/che-latency-optimization-8ruaus` holds unapproved commits (starred repos, mailbox cap fix). Do not merge it, because that would deploy them with the voice fix.
+
 **Claude, 2026-10-11 (owner: six GitHub repos, "put these to Che"). Queue item 4 (starred repos) DONE in code. NOT merged, NOT deployed.**
 - The owner's links were cut off for four of the six. Full names came from public search results, not the repos (they are outside this session's GitHub scope): `debpalash/VoiceStudio`, `hugohe3/ppt-master`, `bilawalsidhu/gods-eye-view`, `cathrynlavery/diagram-design`, `paperclipai/paperclip`. `morluto/rea` was given in full.
 - Code: `f527a35` on `claude/che-latency-optimization-8ruaus`. Six entries in `STARRED_FOCUS` (`server/cloudflare/che_self_knowledge.js`) and six rows in `docs/CHE_SELF_KNOWLEDGE.md`. Study only unless a license allows reuse. Worker suite 829/829.
