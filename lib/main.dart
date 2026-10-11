@@ -1753,7 +1753,7 @@ OWNER AGENCY
               CheOfficeFloorScreen(
                 client: _agentRuntime,
                 embedded: true,
-                onSpeak: speakText,
+                onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
                 onTalkToChe: () => _goShellTab(1),
               ),
               CheProjectsBoard(
