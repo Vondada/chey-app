@@ -64,7 +64,16 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
-## 2. Current position (updated by: Claude, 2026-10-10)
+## 2. Current position (updated by: Claude, 2026-10-11)
+
+**Claude, 2026-10-11 (owner: six GitHub repos, "put these to Che"). Queue item 4 (starred repos) DONE in code. NOT merged, NOT deployed.**
+- The owner's links were cut off for four of the six. Full names came from public search results, not the repos (they are outside this session's GitHub scope): `debpalash/VoiceStudio`, `hugohe3/ppt-master`, `bilawalsidhu/gods-eye-view`, `cathrynlavery/diagram-design`, `paperclipai/paperclip`. `morluto/rea` was given in full.
+- Code: `f527a35` on `claude/che-latency-optimization-8ruaus`. Six entries in `STARRED_FOCUS` (`server/cloudflare/che_self_knowledge.js`) and six rows in `docs/CHE_SELF_KNOWLEDGE.md`. Study only unless a license allows reuse. Worker suite 829/829.
+- Branch: reset onto `origin/main` `4c2a3fe` with `--force-with-lease` (old head `2aa5ed7`). Its only commits not on main were #272's content, identical to squash `5fc2fdd` (empty diff), so nothing was lost.
+- Deliberately not changed: `STARRED_LIBRARY` (fallback list, 13-entry count test). The owner's live GitHub stars drive study first, so a repo is studied live only if he has starred it. Otherwise use the named-repo study path.
+- Owner numbers that did NOT match sources: diagram-design "44 types" (sources say 38 to 41); star counts vary by snapshot, so none are quoted. Licenses unverified: gods-eye-view has conflicting sources (MIT vs NOASSERTION); VoiceStudio is AGPL-3.0 per one listing.
+- Mailbox: answered CHE's `4051ea8c` (E4 "no record" reply) as `claude-e4-reply-20261011`, and sent the six repos as `claude-starred-six-20261011`.
+- Next: the owner decides on a PR and merge. Merging to `main` triggers the deploy path, so it needs his yes. Earlier open items in the 10-10 entries are unchanged.
 
 **Claude, 2026-10-10 (owner: "fix CHE's iPhone updating experience", one-button update; then "Okay merge"). PR #272 MERGED as `5fc2fdd` (squash to `main`). Device checks still open.**
 - Squash-merged with expected head `2aa5ed7`. On that head, both `analyze` jobs and "Worker syntax and unit tests" passed. "Workers Builds: chey-app" failed, as it did on #271, and is not blocking.
@@ -314,7 +323,7 @@ Do them top to bottom. Mark each one `DONE (PR #, SHA)` or `WIP (branch, next st
    - Agents Nova, Atlas, Mira, Knox, Sage, Lyra and Iris as distinct mini-people whose animation reflects their real state.
    - Voice commands: "Go back", "Close this", "Take me home", "Open the Office", "Open the War Room", "Show Atlas", "What is Atlas working on?"
    - Verify at iPhone 17 Pro Max size (440×956 pt).
-4. **Starred repos integration**: waiting on the owner's names.
+4. **Starred repos integration**: names received 2026-10-11 (six repos). Code DONE on `claude/che-latency-optimization-8ruaus` `f527a35`, not merged or deployed. See §2.
 5. **NinjaTrader login**: waiting on the error text.
 
 ---
