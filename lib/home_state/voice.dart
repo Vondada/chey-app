@@ -334,7 +334,12 @@ extension _CheHomeVoice on _CHEHomeState {
     if (turn == null) return;
     // CHE refers to and pronounces herself as "CHE"; "Chay" is only the wake
     // word, so no substitution happens here.
-    turn.add(text);
+    // Read This can include whole Brain memories or long articles. The
+    // ElevenLabs route intentionally rejects a clip above 800 characters;
+    // split before prefetch so every part can use Mary, in the correct order.
+    for (final chunk in cheReadAloudChunks(text)) {
+      turn.add(chunk);
+    }
     turn.close();
     await turn.done;
   }
