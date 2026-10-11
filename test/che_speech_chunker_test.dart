@@ -2,6 +2,33 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:chey/che_speech_chunker.dart';
 
 void main() {
+  test('a long Brain Read aloud uses Mary-sized clips in original order', () {
+    final memory = List.generate(
+      25,
+      (i) => 'Atlas researched evaluation dataset number $i. '
+             'Keep testing the active branch before merging results.',
+    ).join(' ');
+    expect(memory.length, greaterThan(800));
+    final clips = cheReadAloudChunks(memory);
+    expect(clips.length, greaterThan(1));
+    expect(clips.every((clip) => clip.isNotEmpty && clip.length <= 640), isTrue);
+    expect(clips.join(' '), memory);
+  });
+
+  test('single-line and multiline readings remain complete and free of empty clips', () {
+    expect(cheReadAloudChunks('  Hi, sir.  '), ['Hi, sir.']);
+    const message = 'First line.\n  Second line, with  more spaces!';
+    expect(cheReadAloudChunks(message), ['First line. Second line, with more spaces!']);
+    expect(cheReadAloudChunks('  '), isEmpty);
+  });
+
+  test('extremely long words are still bounded and never hang', () {
+    final chunks = cheReadAloudChunks('A' * 2050);
+    expect(chunks.length, 4);
+    expect(chunks.every((chunk) => chunk.length <= 640), isTrue);
+    expect(chunks.join(''), 'A' * 2050);
+  });
+
   test('speech chunker preserves streaming order without duplicates', () {
     final c = CheSpeechChunker();
     expect(c.addCumulative('Hello'), isEmpty);
