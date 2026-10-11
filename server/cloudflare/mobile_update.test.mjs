@@ -64,6 +64,22 @@ test('SideStore source keeps verified build history with only current schema fie
   assert.ok(Array.isArray(source.apps[0].permissions));
 });
 
+test('SideStore gets the verified direct release IPA, not the streaming Worker relay', () => {
+  const update = releaseToUpdate(release, 'https://che.example');
+  assert.equal(update.download_url, 'https://che.example/api/update/download/che-ios-v1.4.5-b1200001');
+  assert.equal(update.asset_download_url, 'https://downloads.example/CHE-unsigned.ipa');
+  // Only trusted public GitHub release assets may bypass the relay.
+  const official = {
+    ...update,
+    asset_download_url: 'https://github.com/Vondada/chey-app/releases/download/che-ios-v1.4.5-b1200001/CHE-unsigned.ipa',
+  };
+  const source = sourceFromUpdates([official], 'https://che.example');
+  assert.equal(source.apps[0].versions[0].downloadURL, official.asset_download_url);
+  assert.equal(source.apps[0].bundleIdentifier, 'com.cheyapp.chey');
+  const untrusted = sourceFromUpdates([update], 'https://che.example');
+  assert.equal(untrusted.apps[0].versions[0].downloadURL, update.download_url);
+});
+
 test('latest and history advertise only successful releases with IPA assets', async () => {
   const fetcher = async (url) => {
     assert.match(String(url), /api\.github\.com/);
