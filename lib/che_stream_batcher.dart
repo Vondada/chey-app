@@ -36,13 +36,13 @@ class CheStreamBatcher {
 /// This is a pure helper, shared by every call to speakText, not a new router.
 List<String> cheReadAloudChunks(String text, {int maxChars = 640}) {
   if (maxChars < 32) throw ArgumentError.value(maxChars, 'maxChars');
-  var pending = text.replaceAll(RegExp(r'\\s+'), ' ').trim();
+  var pending = text.replaceAll(RegExp(r'\s+'), ' ').trim();
   final chunks = <String>[];
   while (pending.length > maxChars) {
     final window = pending.substring(0, maxChars + 1);
     var cut = window.lastIndexOf(' ');
     // Prefer the end of a sentence for natural playback when it is nearby.
-    final sentence = RegExp(r'[.!?]\\s').allMatches(window).toList();
+    final sentence = RegExp(r'[.!?]\s').allMatches(window).toList();
     if (sentence.isNotEmpty) {
       final at = sentence.last.end - 1;
       if (at >= maxChars * 0.60) cut = at;
