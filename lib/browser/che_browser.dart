@@ -313,8 +313,6 @@ class _CheBrowserScreenState extends State<CheBrowserScreen> {
   final _address = TextEditingController();
   final _addressFocus = FocusNode();
   bool _showBrowserControls = false;
-  bool _announcedOpen = false;
-  bool _announcedClose = false;
   bool _canGoBackInPage = false;
 
   _BrowserTab get _tab => _tabs[_active];
@@ -329,12 +327,6 @@ class _CheBrowserScreenState extends State<CheBrowserScreen> {
     _addressFocus.addListener(() {
       if (!_addressFocus.hasFocus) _syncAddress();
       if (mounted) setState(() {});
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _announcedOpen) return;
-      _announcedOpen = true;
-      final name = widget.title?.trim().isNotEmpty == true ? widget.title!.trim() : 'this app';
-      CheEmbeddedAppAnnouncer.say(context, 'Opening $name inside CHE.');
     });
   }
 
@@ -1124,11 +1116,6 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
 
     return PopScope(
       canPop: true,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop || _announcedClose) return;
-        _announcedClose = true;
-        CheEmbeddedAppAnnouncer.say(context, 'Closed $_appTitle.');
-      },
       child: CheEmbeddedAppShell(
         title: _appTitle,
         onClose: _closeApp,
