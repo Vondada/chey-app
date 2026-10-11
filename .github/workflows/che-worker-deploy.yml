@@ -42,8 +42,12 @@ jobs:
       # allowance runs out. Add any of these as repository secrets.
       ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
       CHE_ELEVENLABS_VOICE_ID: ${{ secrets.CHE_ELEVENLABS_VOICE_ID }}
-      # Explicit paid-voice opt-in, separate from the paid chat/model switch.
-      CHE_ELEVENLABS_PREFERRED: ${{ secrets.CHE_ELEVENLABS_PREFERRED }}
+      # Owner-authorized 2026-10-11: Mary is preferred for CHE's requested
+      # speech only. Set the Actions secret CHE_ELEVENLABS_PREFERRED=0 to
+      # immediately disable on the next deployment; revoke the capped
+      # ElevenLabs API key for immediate provider-side shutdown.
+      # A repository variable CHE_ELEVENLABS_PREFERRED=0 is also supported.
+      CHE_ELEVENLABS_PREFERRED: ${{ secrets.CHE_ELEVENLABS_PREFERRED || vars.CHE_ELEVENLABS_PREFERRED || '1' }}
       CHE_OPENAI_API_KEY: ${{ secrets.CHE_OPENAI_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -100,6 +104,21 @@ jobs:
           if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
             echo "::error::Add the CLOUDFLARE_API_TOKEN repository secret (Edit Cloudflare Workers token) to deploy CHE."
             exit 1
+          fi
+
+      - name: Check opted-in ElevenLabs credentials without spending credits
+        shell: bash
+        run: |
+          # Fail the deploy if owner-enabled premium speech has no credentials.
+          # This only checks presence and format; it does NOT synthesize audio.
+          if [[ "${CHE_ELEVENLABS_PREFERRED,,}" =~ ^(1|true|yes)$ ]]; then
+            if [[ -z "${ELEVENLABS_API_KEY}" || ! "${CHE_ELEVENLABS_VOICE_ID}" =~ ^[A-Za-z0-9_-]{10,80}$ ]]; then
+              echo "::error::Premium voice was enabled, but the ElevenLabs API key or Voice ID is missing."
+              exit 1
+            fi
+            echo "CHE Mary TTS configured. No credits spent during deployment."
+          else
+            echo "CHE premium voice remains disabled."
           fi
 
       - name: Sync AI engine keys to the Worker
