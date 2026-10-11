@@ -2364,6 +2364,37 @@ test('engines all busy: CHE answers from research she already has, with no word 
   }
 });
 
+test('owner opt-in prefers Mary on both existing iPhone voice routes without a paid AI switch', async () => {
+  const saved = new Map();
+  const env = {
+    CHE_PAIR_CODE: '123456',
+    CHE_ELEVENLABS_PREFERRED: '1',
+    ELEVENLABS_API_KEY: 'test-only',
+    CHE_ELEVENLABS_VOICE_ID: 'GgMNbwMsOI1mIBUkirnu',
+    AI: { run: async () => { throw new Error('Free voice must not run when preferred TTS succeeds'); } },
+  };
+  const { api } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url: String(url), body: options?.body });
+    return new Response(new Uint8Array([0x49, 0x44, 0x33, 0x01]), {
+      headers: { 'Content-Type': 'audio/mpeg' },
+    });
+  };
+  try {
+    for (const path of ['/api/voice/edge', '/api/voice/synthesize']) {
+      const response = await api(path, { text: 'Hello sir' });
+      assert.equal(response.status, 200, path);
+      assert.equal(response.headers.get('X-CHE-Voice'), 'elevenlabs-mary');
+    }
+    assert.equal(calls.length, 2, 'one ElevenLabs request per route');
+    assert.ok(calls.every((call) => call.url.includes('GgMNbwMsOI1mIBUkirnu')));
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test('free engines only: the paid ElevenLabs voice is never called unless paid AI is on', async () => {
   const saved = new Map();
   const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', ELEVENLABS_API_KEY: 'el', CHE_ELEVENLABS_VOICE_ID: 'v', AI: { run: async () => { throw new Error('tts down'); } } };
