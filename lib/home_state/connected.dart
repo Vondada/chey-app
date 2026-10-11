@@ -178,7 +178,7 @@ extension _CheHomeConnected on _CHEHomeState {
       context: context,
       isScrollControlled: true,
       backgroundColor: kit.CheColors.surface,
-      builder: (_) => CheActivityFeedSheet(events: events, onSpeak: (t) => speakText(t, record: false)),
+      builder: (_) => CheActivityFeedSheet(events: events, onSpeak: (t) => speakText(t, record: false, readOnDemand: true)),
     );
   }
 
