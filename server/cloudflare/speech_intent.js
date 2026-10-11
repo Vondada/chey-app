@@ -200,8 +200,9 @@ export function classifyOwnerTurn(text, { lastUser = '', hasHeldAction = false }
   const turn = (kind, extra = {}) => ({ kind, consequential, reference: false, ...extra });
   if (!s) return turn('unclear', { confidence: 0 });
   if (YES_RE.test(s)) return turn('yes', { held: hasHeldAction });
-  if (NO_RE.test(s)) return turn('no');
+  // Cancel is checked before no: "never mind" and "forget it" call the request off.
   if (CANCEL_RE.test(s)) return turn('cancel');
+  if (NO_RE.test(s)) return turn('no');
   if (GREET_RE.test(s) && words <= 5) return turn('greeting');
   if (THANKS_RE.test(s) && words <= 4) return turn('thanks');
   if (CORRECTION_RE.test(s)) return turn('correction');

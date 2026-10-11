@@ -77,6 +77,13 @@ test('an interruption that calls the request off is dropped without running anyt
   assert.doesNotMatch(out.clarify, COMPLETION);
 });
 
+test('a bare "never mind" or "forget it" cancels, while a plain "no" stays a no', () => {
+  assert.equal(classifyOwnerTurn('never mind', { hasHeldAction: true }).kind, 'cancel');
+  assert.equal(classifyOwnerTurn('forget it').kind, 'cancel');
+  assert.equal(classifyOwnerTurn('no').kind, 'no');
+  assert.equal(interpretOwnerTurn('never mind', { hasHeldAction: true }).clarify, 'Okay, I have dropped that.');
+});
+
 test('a self-correction is recognised and not turned into a new request', () => {
   const out = interpretOwnerTurn('okay so the build, wait, I meant the Shorebird build');
   assert.equal(out.kind, 'correction');

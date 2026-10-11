@@ -6479,6 +6479,14 @@ export class CheState extends DurableObject {
         }
         if (interpretation.clarify) {
           const question = interpretation.clarify;
+          // Any turn that is not a plain yes replaces a held request. A cancel or a
+          // question must drop the hold here, or a later "yes" would release it.
+          try {
+            await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, null);
+            await this.ctx.storage.put(PENDING_APP_ACTION_KEY, null);
+          } catch (_) {
+            return json({ message: 'I could not record that safely, so I did not act. Please say it again.', reply: 'I could not record that safely, so I did not act. Please say it again.', code_review_passed: false, owner_approval_required: true }, 503);
+          }
           return json({ message: question, reply: question, clarification: true, held_for_owner: false, code_review_passed: false, owner_approval_required: false });
         }
         message = interpretation.text;
