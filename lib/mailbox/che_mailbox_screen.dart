@@ -740,7 +740,15 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
                       width: double.infinity,
                       color: CheColors.surfaceHi,
                       padding: const EdgeInsets.all(12),
-                      child: Text(_status, style: CheType.body),
+                      child: Row(children: [
+                        Expanded(child: Text(_status, style: CheType.body)),
+                        if (widget.onSpeak != null)
+                          IconButton(
+                            tooltip: 'Read this status',
+                            onPressed: () => widget.onSpeak!(_status),
+                            icon: const Icon(Icons.volume_up_rounded),
+                          ),
+                      ]),
                     ),
                   ),
                 Expanded(
