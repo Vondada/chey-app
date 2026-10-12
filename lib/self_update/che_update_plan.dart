@@ -31,7 +31,7 @@ enum CheUpdateStage {
   upToDate,
 }
 
-enum CheUpdateAction { none, installFullBuild, explainRestart, checkAgain }
+enum CheUpdateAction { none, installFullBuild, explainRestart, checkAgain, stopWaiting }
 
 class CheUpdatePlan {
   const CheUpdatePlan({
@@ -68,7 +68,7 @@ CheUpdatePlan planCheUpdate({
   if (verifiedLabel != null) {
     return CheUpdatePlan(
       stage: CheUpdateStage.installed,
-      headline: 'CHE is updated',
+      headline: 'Update complete',
       detail: '$verifiedLabel is installed.',
       action: CheUpdateAction.checkAgain,
     );
@@ -79,8 +79,9 @@ CheUpdatePlan planCheUpdate({
         stage: CheUpdateStage.installing,
         headline: 'Waiting for SideStore',
         detail:
-            'SideStore is open. Confirm the install of $installLabel there. CHE checks the result when it next opens.',
+            'SideStore is open. Confirm the install of $installLabel there. CHE checks the result when it next opens. If SideStore showed an error, CHE can stop waiting so you can try again.',
         showProgress: true,
+        action: CheUpdateAction.stopWaiting,
       );
     case CheFullInstallState.sideStoreMissing:
       return const CheUpdatePlan(

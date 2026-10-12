@@ -165,6 +165,15 @@ class CheUpdateController extends ChangeNotifier {
     }
   }
 
+  /// Stops waiting for a SideStore install that CHE handed off. Used when the
+  /// owner reports that SideStore showed an error, so the update can be offered again.
+  Future<void> stopWaiting() async {
+    if (install != CheFullInstallState.waitingForSideStore) return;
+    await _clearPending(await _preferences());
+    install = CheFullInstallState.idle;
+    notifyListeners();
+  }
+
   /// Called when the owner closes the "installed" notice.
   void dismissVerified() {
     if (verifiedLabel == null) return;

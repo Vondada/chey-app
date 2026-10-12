@@ -8,6 +8,14 @@ const REPO = 'Vondada/chey-app';
 const IPA_NAME = 'CHE-unsigned.ipa';
 const META_NAME = 'CHE-update.json';
 const TAG_RE = /^che-ios-v(.+)-b([0-9]+)$/;
+// The app's real bundle identifier (ios/Runner, Info.plist CFBundleIdentifier).
+export const CHE_BUNDLE_ID = 'com.cheyapp.chey';
+// SideStore's sidestore://install link takes the app name from the last path
+// segment of the IPA URL, minus its extension. A URL ending in the release tag
+// gave "che-ios-v1.4", which SideStore then refused against the real bundle ID.
+// The install URL therefore ends in the bundle ID itself.
+export const INSTALL_FILE_NAME = `${CHE_BUNDLE_ID}.ipa`;
+const INSTALL_SEGMENT = `/${INSTALL_FILE_NAME}`;
 const ICON_URL = 'https://raw.githubusercontent.com/Vondada/chey-app/main/assets/avatars/che.png';
 
 const privacy = {
@@ -83,6 +91,8 @@ export function releaseToUpdate(release, origin) {
   if (!version || !buildNumber) return null;
   if (meta.version && String(meta.version).trim() !== parsed[1]) return null;
   if (meta.build && String(meta.build).trim() !== parsed[2]) return null;
+  // A release built for another bundle identifier is never advertised to CHE.
+  if (meta.bundle_id && String(meta.bundle_id).trim() !== CHE_BUNDLE_ID) return null;
   const assetDigest = String(asset.digest || '').trim();
   if (!/^sha256:[0-9a-f]{64}$/i.test(assetDigest)) return null;
   const sha = assetDigest.replace(/^sha256:/i, '').toLowerCase();
@@ -92,7 +102,7 @@ export function releaseToUpdate(release, origin) {
   if (metaSize > 0 && metaSize !== Number(asset.size || 0)) return null;
   const commit = String(meta.commit || release?.target_commitish || '').trim();
   const shorebirdBase = String(meta.shorebird_base || '').toLowerCase() === 'true';
-  const downloadUrl = `${origin}/api/update/download/${encodeURIComponent(tag)}`;
+  const downloadUrl = `${origin}/api/update/download/${encodeURIComponent(tag)}${INSTALL_SEGMENT}`;
   return {
     id: tag,
     tag,
@@ -137,7 +147,7 @@ export function sourceFromUpdates(updates, origin) {
     sourceURL: `${origin}/api/update/source`,
     apps: [{
       name: 'CHE',
-      bundleIdentifier: 'com.cheyapp.chey',
+      bundleIdentifier: CHE_BUNDLE_ID,
       developerName: 'Vondada',
       subtitle: 'Cognitive Horizon Engine',
       localizedDescription: 'Voice-first private AI assistant and Office.',
@@ -244,10 +254,10 @@ export function isMobileUpdatePath(path) {
   return path === '/api/update/latest'
     || path === '/api/update/history'
     || path === '/api/update/source'
-    || /^\/api\/update\/download\/(?:latest|che-ios-v[A-Za-z0-9.+_-]+-b[0-9]+)$/.test(path);
+    || /^\/api\/update\/download\/(?:latest|che-ios-v[A-Za-z0-9.+_-]+-b[0-9]+)(?:\/com\.cheyapp\.chey\.ipa)?$/.test(path);
 }
 
-async function downloadRelease(request, release, fetcher = fetch) {
+async function downloadRelease(request, release, fetcher = fetch, fileName = IPA_NAME) {
   const asset = ipaAsset(release);
   if (!asset?.browser_download_url) return json({ detail: 'CHE IPA is not available.' }, 404);
   const upstreamHeaders = {};
@@ -263,7 +273,7 @@ async function downloadRelease(request, release, fetcher = fetch) {
   }
   const headers = new Headers();
   headers.set('Content-Type', 'application/octet-stream');
-  headers.set('Content-Disposition', `attachment; filename="${IPA_NAME}"`);
+  headers.set('Content-Disposition', `attachment; filename="${fileName}"`);
   headers.set('Cache-Control', 'public, max-age=300');
   for (const name of ['Content-Length', 'Content-Range', 'Accept-Ranges', 'ETag', 'Last-Modified']) {
     const value = upstream.headers.get(name);
@@ -317,11 +327,12 @@ export async function handleMobileUpdateRequest(request, env = {}, fetcher = fet
         .slice(0, 12);
       return json(sourceFromUpdates(items, url.origin), 200, 'public, max-age=300');
     }
-    const match = /^\/api\/update\/download\/(.+)$/.exec(path);
+    const match = /^\/api\/update\/download\/(.+?)(\/com\.cheyapp\.chey\.ipa)?$/.exec(path);
     if (match) {
       const release = await releaseByTag(decodeURIComponent(match[1]), env, fetcher);
       if (!release) return json({ detail: 'CHE build not found.' }, 404, 'no-store');
-      return downloadRelease(request, release, fetcher);
+      // The bare tag URL still works for builds that already hold it.
+      return downloadRelease(request, release, fetcher, match[2] ? INSTALL_FILE_NAME : IPA_NAME);
     }
     return json({ detail: 'Not found.' }, 404, 'no-store');
   } catch (error) {

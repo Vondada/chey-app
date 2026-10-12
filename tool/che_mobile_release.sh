@@ -114,6 +114,12 @@ package_ipa() {
   test -s "$IPA"
 }
 
+verify_ipa() {
+  # Never publish an IPA SideStore would refuse: the bundle identifier must be
+  # com.cheyapp.chey, and the version and build must be the ones this run set.
+  python3 tool/ipa_metadata.py verify "$IPA" "$FULL_VERSION" "$FULL_BUILD"
+}
+
 build_full() {
   local shorebird_base=false
   rm -rf build/ios/ipa
@@ -130,6 +136,7 @@ build_full() {
     flutter build ios --release --no-codesign       "--build-name=$FULL_VERSION" "--build-number=$FULL_BUILD" "${dart_defines[@]}"
   fi
   package_ipa
+  verify_ipa
   publish_release "$shorebird_base"
 }
 
@@ -221,6 +228,7 @@ with open(path, 'w') as f:
         "update_lane": "full",
         "build_status": "success",
         "tag": tag,
+        "bundle_id": "com.cheyapp.chey",
     }, f, indent=2)
 PY
 
@@ -237,6 +245,7 @@ path, tag, commit, version, build, sha, size, shorebird, notes = sys.argv[1:]
 body = (notes.strip() or f"CHE iPhone build {version} ({build}).") + "\n\n" + """<!-- CHE-META
 version={version}
 build={build}
+bundle_id=com.cheyapp.chey
 commit={commit}
 sha256={sha}
 size={size}
