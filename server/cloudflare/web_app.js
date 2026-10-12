@@ -207,6 +207,7 @@ footer .row{max-width:760px;margin:0 auto}
       (k.providers || []).forEach((p) => {
         const card = el('div', null, 'card');
         card.append(el('div', p.name + ': ' + p.status + (p.last4 ? ' (ends ' + p.last4 + ')' : '')));
+        if (p.readonly) { if (p.detail) card.append(el('p', p.detail, 'dim')); box.append(card); return; }
         const id = 'key-' + p.id; const label = el('label', 'New ' + p.name + ' key'); label.htmlFor = id;
         const input = el('input'); input.id = id; input.type = 'password'; input.autocomplete = 'off';
         const save = el('button', 'Save and test ' + p.name + ' key');

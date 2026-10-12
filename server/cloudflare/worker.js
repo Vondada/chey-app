@@ -34,7 +34,7 @@ import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv } from './a
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { handleEdgeVoice } from './edge_route.js';
-import { preferredElevenLabsSpeech } from './preferred_elevenlabs_voice.js';
+import { preferredElevenLabsKeyStatus, preferredElevenLabsSpeech } from './preferred_elevenlabs_voice.js';
 import { handleVideoLine } from './video_route.js';
 import {
   YOUTUBE_CALLBACK_PATH, disconnectYouTube, finishYouTubeConnect, startYouTubeConnect,
@@ -4880,8 +4880,14 @@ export class CheState extends DurableObject {
         const health = (await this.ctx.storage.get('key_health')) || {};
         const memoryOn = vectorMemoryReadiness(this.keyEnv || this.env).configured;
         const memoryStored = hasStoredMemoryDatabase(await storedKeys(this.ctx.storage));
+        // Mary's key is a deploy-time secret, so its row is read-only and shows
+        // only the last outcome; the key is never sent to the phone or the web app.
+        const mary = preferredElevenLabsKeyStatus(this.keyEnv || this.env);
         return json({
-          providers: Object.entries(KEY_PROVIDERS).map(([id, p]) => ({ id, name: p.name, page: p.page, status: health[id]?.status || 'not set up', last4: health[id]?.last4 || '' })),
+          providers: [
+            ...Object.entries(KEY_PROVIDERS).map(([id, p]) => ({ id, name: p.name, page: p.page, status: health[id]?.status || 'not set up', last4: health[id]?.last4 || '' })),
+            { id: 'elevenlabs', name: 'ElevenLabs (Mary voice)', page: 'https://elevenlabs.io', status: mary.status, last4: mary.last4, detail: mary.detail, readonly: true },
+          ],
           memory: { name: MEMORY_DB.name, page: MEMORY_DB.page, status: memoryStored ? (health.memory?.status || 'connected') : (memoryOn ? 'connected (server secret)' : 'not set up'), last4: memoryStored ? (health.memory?.last4 || '') : '', stored: memoryStored },
         });
       }
@@ -4897,6 +4903,7 @@ export class CheState extends DurableObject {
       if (path === '/api/keys' && request.method === 'POST') {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can add or remove AI keys.' }, 403);
         if (await isLockedDown(this.ctx.storage)) return json({ detail: 'Lockdown is on; key changes are frozen.' }, 423);
+        if (String(body.provider || '') === 'elevenlabs') return json({ detail: "Mary's ElevenLabs key is a server secret set at deploy time, so it cannot be changed here." }, 422);
         if (body.remove === true) {
           const removed = await removeKey(this.ctx.storage, String(body.provider || ''));
           if (removed.ok) await this.refreshKeyEnv();
