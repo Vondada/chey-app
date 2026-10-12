@@ -155,6 +155,13 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
     await widget.onSpeak(_controller.plan.spoken);
   }
 
+  Future<void> _stopWaiting() async {
+    await _controller.stopWaiting();
+    if (!mounted) return;
+    _spokenStage = _controller.plan.stage;
+    await widget.onSpeak('Stopped waiting for SideStore. ${_controller.plan.spoken}');
+  }
+
   Future<void> _install(
     CheMobileUpdateInfo target, {
     bool rollback = false,
@@ -260,6 +267,13 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
         onPressed: _explainRestart,
         icon: const Icon(Icons.restart_alt_rounded),
         label: const Text('Update'),
+      );
+    }
+    if (plan.action == CheUpdateAction.stopWaiting) {
+      return OutlinedButton.icon(
+        onPressed: _stopWaiting,
+        icon: const Icon(Icons.stop_circle_outlined),
+        label: const Text('Stop waiting'),
       );
     }
     if (plan.action == CheUpdateAction.checkAgain) {
