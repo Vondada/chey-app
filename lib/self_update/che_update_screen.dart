@@ -306,6 +306,7 @@ class CheMobileUpdateNotice extends StatefulWidget {
 class _CheMobileUpdateNoticeState extends State<CheMobileUpdateNotice> {
   final _controller = CheUpdateController.instance;
   CheUpdateStage? _announced;
+  Timer? _verifiedTimer;
 
   @override
   void initState() {
@@ -318,6 +319,7 @@ class _CheMobileUpdateNoticeState extends State<CheMobileUpdateNotice> {
 
   @override
   void dispose() {
+    _verifiedTimer?.cancel();
     _controller.removeListener(_onChanged);
     super.dispose();
   }
@@ -330,8 +332,11 @@ class _CheMobileUpdateNoticeState extends State<CheMobileUpdateNotice> {
     if (plan.stage == CheUpdateStage.fullReady) {
       HapticFeedback.mediumImpact();
     } else if (plan.stage == CheUpdateStage.installed) {
-      // The banner stays until the owner closes it, so the result can be read.
+      // The confirmed result stays for a moment, then clears by itself, so the
+      // Update button does not linger. The close button clears it sooner.
       HapticFeedback.mediumImpact();
+      _verifiedTimer?.cancel();
+      _verifiedTimer = Timer(const Duration(seconds: 15), _controller.dismissVerified);
     }
   }
 

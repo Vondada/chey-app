@@ -246,6 +246,13 @@ List<ChePlatformNotification> cheTopPriorityBanners(Iterable<ChePlatformNotifica
   return cheSortNotificationsNewestFirst(items).where((item) => item.isTopPriority && !item.isRead).toList();
 }
 
+/// The unread notifications an opened list has shown, newest first. Showing
+/// them is reading them, so the home banner stops counting them. The count is
+/// capped so one open never sends a long run of requests.
+List<ChePlatformNotification> cheUnreadToMarkRead(Iterable<ChePlatformNotification> items, {int max = 20}) {
+  return cheSortNotificationsNewestFirst(items).where((item) => !item.isRead).take(max).toList();
+}
+
 String _text(Object? value) => value == null ? '' : '$value'.trim();
 
 String _priority(Object? value) {

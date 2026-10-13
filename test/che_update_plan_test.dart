@@ -257,6 +257,47 @@ void main() {
       expect(plan.action, isNot(CheUpdateAction.installFullBuild));
     });
 
+    test('a build handed to SideStore and still waiting never offers Update again', () {
+      final plan = planFor(
+        fullNewer: true,
+        install: CheFullInstallState.waitingForSideStore,
+        installedLabel: 'CHE 1.4.1024480253, build 3812328516001',
+      );
+      expect(plan.stage, CheUpdateStage.installing);
+      expect(plan.action, CheUpdateAction.stopWaiting);
+      expect(plan.action, isNot(CheUpdateAction.installFullBuild));
+    });
+
+    test('an install that was not confirmed offers Check again, never Update', () {
+      final plan = planFor(
+        fullNewer: true,
+        install: CheFullInstallState.notConfirmed,
+        installedLabel: 'CHE 1.4.1024480253, build 3812328516001',
+      );
+      expect(plan.stage, CheUpdateStage.installFailed);
+      expect(plan.action, CheUpdateAction.checkAgain);
+    });
+
+    test('a verified install shows Update complete and no Update button', () {
+      final plan = planFor(
+        fullNewer: false,
+        verifiedLabel: 'CHE 1.4.1024603585, build 3828969674601',
+        installedLabel: 'CHE 1.4.1024603585, build 3828969674601',
+      );
+      expect(plan.stage, CheUpdateStage.installed);
+      expect(plan.action, CheUpdateAction.checkAgain);
+      expect(plan.action, isNot(CheUpdateAction.installFullBuild));
+    });
+
+    test('when the running build is the newest release, no update is offered', () {
+      final plan = planFor(
+        fullNewer: false,
+        installedLabel: 'CHE 1.4.1024603585, build 3828969674601',
+      );
+      expect(plan.stage, CheUpdateStage.upToDate);
+      expect(plan.action, isNot(CheUpdateAction.installFullBuild));
+    });
+
     test('a waiting install says what is running now, in plain words', () {
       final plan = planCheUpdate(
         fast: CheFastPatchState.unavailable,

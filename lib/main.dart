@@ -426,6 +426,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   // Unread INCOMING mailbox messages (badge on the Chat mailbox icon).
   int _mailboxUnread = 0;
+  // Changing this rebuilds the priority banner, so it reloads what is unread.
+  int _priorityBannerVersion = 0;
   Timer? _mailboxBadgeTimer;
 
   // Keyboard on/off: off by default because the owner mostly talks to CHE.
@@ -1170,6 +1172,7 @@ OWNER AGENCY
 
     _appForeground = state == AppLifecycleState.resumed;
     if (state == AppLifecycleState.resumed) {
+      _updateHomeState(() { _priorityBannerVersion++; });
       unawaited(_loadAgentState(silent: true));
       unawaited(_refreshMailboxBadge());
       unawaited(_loadHomeGreeting());
@@ -1299,6 +1302,7 @@ OWNER AGENCY
           speak: (text) => speakText(text, record: false, readOnDemand: true),
         ),
         ChePriorityNotificationBanner(
+          key: ValueKey('priority-banner-$_priorityBannerVersion'),
           gateway: chePlatformGateway(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders),
           onOpen: () => unawaited(_openPlatformNotifications()),
         ),
@@ -1642,6 +1646,8 @@ OWNER AGENCY
         onReadAloud: (text) => speakText(text, record: false, readOnDemand: true),
       ),
     ));
+    // The list reads what it showed, so the banner reloads to drop it.
+    if (mounted) _updateHomeState(() { _priorityBannerVersion++; });
   }
 
   Future<void> _openCoreRoom() async {
