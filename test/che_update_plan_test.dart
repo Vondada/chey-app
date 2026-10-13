@@ -1,3 +1,4 @@
+import 'package:chey/self_update/che_mobile_update.dart';
 import 'package:chey/self_update/che_update_plan.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -9,13 +10,14 @@ CheUpdatePlan planFor({
   bool checkFailed = false,
   bool newestBuildFailed = false,
   String? verifiedLabel,
+  String? installedLabel = 'CHE 1.4.1, build 3700',
 }) => planCheUpdate(
   fast: fast,
   install: install,
   fullNewer: fullNewer,
   fullLabel: 'CHE 1.4.2, build 3800',
   installLabel: 'CHE 1.4.2, build 3800',
-  installedLabel: 'CHE 1.4.1, build 3700',
+  installedLabel: installedLabel,
   checking: checking,
   checkFailed: checkFailed,
   newestBuildFailed: newestBuildFailed,
@@ -135,49 +137,63 @@ void main() {
   group('checkPendingInstall', () {
     final started = DateTime.utc(2026, 10, 10, 12);
 
+    CheInstallCheck check({
+      String? targetVersion = '1.4.1024603585',
+      String? targetBuild = '3828969674601',
+      DateTime? at,
+      String? installedVersion,
+      String? installedBuild,
+      Duration after = const Duration(minutes: 5),
+    }) => checkPendingInstall(
+      targetVersion: targetVersion,
+      targetBuild: targetBuild,
+      startedAt: at ?? started,
+      installedVersion: installedVersion,
+      installedBuild: installedBuild,
+      now: started.add(after),
+    );
+
     test('no pending install means nothing to check', () {
       expect(
-        checkPendingInstall(
-          targetBuild: null,
-          startedAt: started,
-          installedBuild: '3800',
-          now: started,
-        ),
+        check(targetBuild: null, installedVersion: '1.4.1024603585', installedBuild: '3828969674601'),
         CheInstallCheck.none,
       );
     });
 
-    test('the target build running now is confirmed', () {
+    test('the exact version and build running now are confirmed', () {
       expect(
-        checkPendingInstall(
-          targetBuild: '3800',
-          startedAt: started,
-          installedBuild: '3800',
-          now: started.add(const Duration(minutes: 5)),
-        ),
+        check(installedVersion: '1.4.1024603585', installedBuild: '3828969674601'),
         CheInstallCheck.confirmed,
       );
     });
 
-    test('an old build still running is waiting, not confirmed', () {
+    test('the same build number under another version is not confirmed', () {
       expect(
-        checkPendingInstall(
-          targetBuild: '3800',
-          startedAt: started,
-          installedBuild: '3700',
-          now: started.add(const Duration(minutes: 5)),
-        ),
+        check(installedVersion: '1.4.1024480253', installedBuild: '3828969674601'),
+        CheInstallCheck.waiting,
+      );
+    });
+
+    test('an older build still running is waiting, not confirmed', () {
+      expect(
+        check(installedVersion: '1.4.1024480253', installedBuild: '3812328516001'),
+        CheInstallCheck.waiting,
+      );
+    });
+
+    test('an unreadable running build is waiting, never confirmed', () {
+      expect(
+        check(installedVersion: null, installedBuild: null),
         CheInstallCheck.waiting,
       );
     });
 
     test('an old build after the timeout is not confirmed', () {
       expect(
-        checkPendingInstall(
-          targetBuild: '3800',
-          startedAt: started,
-          installedBuild: '3700',
-          now: started.add(const Duration(hours: 3)),
+        check(
+          installedVersion: '1.4.1024480253',
+          installedBuild: '3812328516001',
+          after: const Duration(hours: 3),
         ),
         CheInstallCheck.notConfirmed,
       );
@@ -186,25 +202,77 @@ void main() {
     test('a pending install with no start time is not confirmed', () {
       expect(
         checkPendingInstall(
-          targetBuild: '3800',
+          targetVersion: '1.4.1024603585',
+          targetBuild: '3828969674601',
           startedAt: null,
-          installedBuild: '3700',
+          installedVersion: '1.4.1024480253',
+          installedBuild: '3812328516001',
           now: started,
         ),
         CheInstallCheck.notConfirmed,
       );
     });
 
+    test('an older save without a version is compared by build only', () {
+      expect(
+        check(targetVersion: null, installedVersion: '1.4.1024603585', installedBuild: '3828969674601'),
+        CheInstallCheck.confirmed,
+      );
+    });
+
     test('a rollback is confirmed when the older build is running', () {
       expect(
-        checkPendingInstall(
-          targetBuild: '3600',
-          startedAt: started,
-          installedBuild: '3600',
-          now: started.add(const Duration(minutes: 1)),
+        check(
+          targetVersion: '1.4.1024480253',
+          targetBuild: '3812328516001',
+          after: const Duration(minutes: 1),
+          installedVersion: '1.4.1024480253',
+          installedBuild: '3812328516001',
         ),
         CheInstallCheck.confirmed,
       );
+    });
+  });
+
+  group('the running build is never guessed', () {
+    test('an unreadable running build reads as unknown, not as an old release', () {
+      expect(CheInstalledBuild.fromNative(null), isNull);
+      expect(CheInstalledBuild.fromNative({'version': '', 'build': '3828969674601'}), isNull);
+      expect(CheInstalledBuild.fromNative({'version': '1.4.1024603585'}), isNull);
+    });
+
+    test('a real native reply is read exactly', () {
+      final build = CheInstalledBuild.fromNative({
+        'version': '1.4.1024603585',
+        'build': '3828969674601',
+      });
+      expect(build?.version, '1.4.1024603585');
+      expect(build?.build, '3828969674601');
+    });
+
+    test('with the running build unknown, the plan never offers Full update ready', () {
+      final plan = planFor(fullNewer: true, installedLabel: null);
+      expect(plan.stage, CheUpdateStage.checkFailed);
+      expect(plan.headline, 'Could not read the installed version');
+      expect(plan.action, isNot(CheUpdateAction.installFullBuild));
+    });
+
+    test('a waiting install says what is running now, in plain words', () {
+      final plan = planCheUpdate(
+        fast: CheFastPatchState.unavailable,
+        install: CheFullInstallState.waitingForSideStore,
+        fullNewer: false,
+        fullLabel: 'CHE 1.4.1024603585, build 3828969674601',
+        installLabel: 'CHE 1.4.1024603585, build 3828969674601',
+        installedLabel: 'CHE 1.4.1024480253, build 3812328516001',
+        checking: false,
+        checkFailed: false,
+        newestBuildFailed: false,
+        verifiedLabel: null,
+      );
+      expect(plan.headline, 'Waiting for SideStore');
+      expect(plan.detail, contains('CHE is running CHE 1.4.1024480253, build 3812328516001 now.'));
+      expect(plan.detail, contains('swipe CHE away'));
     });
   });
 

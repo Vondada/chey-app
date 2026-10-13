@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'che_mobile_update.dart';
 import 'che_update_plan.dart';
 
+const _pendingVersionKey = 'che_update_pending_version';
 const _pendingBuildKey = 'che_update_pending_build';
 const _pendingAtKey = 'che_update_pending_at';
 const _recheckAfter = Duration(minutes: 20);
@@ -20,7 +21,8 @@ const _recheckAfter = Duration(minutes: 20);
 /// never as active.
 ///
 /// Full lane: SideStore installs a new IPA after the owner confirms there. The
-/// result is read from the installed build number on the next launch.
+/// result is read from the running build (version and build number) every time
+/// CHE comes back to the front, and it is never assumed.
 class CheUpdateController extends ChangeNotifier {
   CheUpdateController._();
   static final CheUpdateController instance = CheUpdateController._();
@@ -32,6 +34,7 @@ class CheUpdateController extends ChangeNotifier {
   bool _refreshing = false;
   bool _refreshAgain = false;
 
+  /// The build this copy is running, or null when iOS would not say.
   CheInstalledBuild? installed;
   CheMobileUpdateInfo? latest;
   List<CheMobileUpdateInfo> history = const [];
@@ -43,6 +46,8 @@ class CheUpdateController extends ChangeNotifier {
   bool checkFailed = false;
   bool newestBuildFailed = false;
 
+  /// True only when the running build is known and the newest verified build is
+  /// newer. An unknown running build never offers an install.
   bool get fullNewer {
     final current = installed;
     final candidate = latest;
@@ -51,12 +56,13 @@ class CheUpdateController extends ChangeNotifier {
         candidate.isNewerThan(current);
   }
 
-  String get _installedLabel {
+  String? get _installedLabel {
     final current = installed;
-    return current == null
-        ? 'CHE'
-        : 'CHE ${current.version}, build ${current.build}';
+    return current == null ? null : _labelFor(current);
   }
+
+  static String _labelFor(CheInstalledBuild build) =>
+      'CHE ${build.version}, build ${build.build}';
 
   CheUpdatePlan get plan => planCheUpdate(
     fast: fast,
@@ -90,11 +96,24 @@ class CheUpdateController extends ChangeNotifier {
     unawaited(refresh(force: true));
   }
 
-  /// Checks on launch and on every return to CHE, at most every 20 minutes.
+  /// Checks on launch and on every return to CHE. The running build is read at
+  /// once on each return; the network and Shorebird checks keep their 20-minute gap.
   void start() {
     if (_lifecycle != null) return;
-    _lifecycle = AppLifecycleListener(onResume: () => unawaited(refresh()));
+    _lifecycle = AppLifecycleListener(onResume: () => unawaited(_onResume()));
     unawaited(refresh());
+  }
+
+  Future<void> _onResume() async {
+    await refreshInstalled();
+    await refresh();
+  }
+
+  /// Reads the running build and settles any pending SideStore install. It is
+  /// local only (no network, no Shorebird call), so it runs on every return.
+  Future<void> refreshInstalled() async {
+    await _readInstalledAndPending();
+    notifyListeners();
   }
 
   Future<void> refresh({bool force = false}) async {
@@ -115,9 +134,7 @@ class CheUpdateController extends ChangeNotifier {
     await Future<void>.value();
     notifyListeners();
     try {
-      final current = await CheInstalledBuild.read();
-      installed = current;
-      await _checkPendingInstall(current);
+      await _readInstalledAndPending();
       await _checkFastPatch();
       await _checkFullBuilds();
       _lastCheck = DateTime.now();
@@ -133,8 +150,12 @@ class CheUpdateController extends ChangeNotifier {
   }
 
   /// Hands a full IPA to SideStore. Returns true only when SideStore opened.
-  /// The install itself is confirmed later, from the installed build number.
+  /// The install itself is confirmed later, from the running build.
   Future<bool> installFullBuild(CheMobileUpdateInfo target) async {
+    final current = installed;
+    // Only a build newer than the running one goes to SideStore. An unknown
+    // running build is not guessed at, so nothing is offered or installed on a guess.
+    if (current == null || !target.isNewerThan(current)) return false;
     installTarget = target;
     verifiedLabel = null;
     try {
@@ -143,7 +164,7 @@ class CheUpdateController extends ChangeNotifier {
         notifyListeners();
         return false;
       }
-      await _savePending(target.buildNumber);
+      await _savePending(target.version, target.buildNumber);
       final opened = await launchUrl(
         sideStoreInstallUri(target.downloadUrl),
         mode: LaunchMode.externalApplication,
@@ -181,28 +202,33 @@ class CheUpdateController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _checkPendingInstall(CheInstalledBuild current) async {
+  Future<void> _readInstalledAndPending() async {
+    installed = await CheInstalledBuild.read();
+    await _checkPendingInstall(installed);
+  }
+
+  Future<void> _checkPendingInstall(CheInstalledBuild? current) async {
     final prefs = await _preferences();
     final outcome = checkPendingInstall(
+      targetVersion: prefs?.getString(_pendingVersionKey),
       targetBuild: prefs?.getString(_pendingBuildKey),
       startedAt: DateTime.tryParse(prefs?.getString(_pendingAtKey) ?? ''),
-      installedBuild: current.build,
+      installedVersion: current?.version,
+      installedBuild: current?.build,
       now: DateTime.now(),
     );
     switch (outcome) {
       case CheInstallCheck.none:
-        // A stopped attempt (SideStore missing, a failed handoff, or an install
-        // that was never confirmed) starts over here, so "check for updates"
-        // can move past it.
-        if (install != CheFullInstallState.waitingForSideStore) {
-          install = CheFullInstallState.idle;
-        }
+        // Nothing is pending, so nothing is waiting. A stopped attempt (SideStore
+        // missing, a failed handoff, or an install never confirmed) starts over,
+        // so "check for updates" can move past it.
+        install = CheFullInstallState.idle;
         return;
       case CheInstallCheck.waiting:
         install = CheFullInstallState.waitingForSideStore;
         return;
       case CheInstallCheck.confirmed:
-        verifiedLabel = _installedLabel;
+        if (current != null) verifiedLabel = _labelFor(current);
         install = CheFullInstallState.idle;
         await _clearPending(prefs);
         return;
@@ -258,9 +284,10 @@ class CheUpdateController extends ChangeNotifier {
     }
   }
 
-  Future<void> _savePending(String build) async {
+  Future<void> _savePending(String version, String build) async {
     final prefs = await _preferences();
     try {
+      await prefs?.setString(_pendingVersionKey, version);
       await prefs?.setString(_pendingBuildKey, build);
       await prefs?.setString(_pendingAtKey, DateTime.now().toIso8601String());
     } catch (_) {}
@@ -268,6 +295,7 @@ class CheUpdateController extends ChangeNotifier {
 
   Future<void> _clearPending(SharedPreferences? prefs) async {
     try {
+      await prefs?.remove(_pendingVersionKey);
       await prefs?.remove(_pendingBuildKey);
       await prefs?.remove(_pendingAtKey);
     } catch (_) {}
