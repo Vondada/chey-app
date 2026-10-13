@@ -111,7 +111,9 @@ CheUpdatePlan planCheUpdate({
     case CheFullInstallState.idle:
       break;
   }
-  if (fullNewer) {
+  // A newer release is only offered against a build CHE could read. An unknown
+  // running build falls through to the "could not read" stage below.
+  if (fullNewer && installedLabel != null) {
     return CheUpdatePlan(
       stage: CheUpdateStage.fullReady,
       headline: 'Full update ready',
