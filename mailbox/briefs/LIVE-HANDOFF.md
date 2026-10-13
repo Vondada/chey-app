@@ -66,6 +66,14 @@ Then, on GitHub:
 
 ## 2. Current position (updated by: Claude, 2026-10-13)
 
+**Claude, 2026-10-13 (review follow-up on PR #287). Head `d1cfdda`, fast-forward. NOT merged. CI running.**
+- `d1cfdda` answers three Codex P1/P2 findings. (1) A rollback to an earlier verified build was blocked by the install guard; `canHandOffInstall` now allows an older build only for a rollback, never the running build. (2) A successful Mary clip sends `X-CHE-Mary: healthy`. (3) A removed Mary setting is sent empty, so it overrides the stale env. Each finding has a reply on its thread.
+- `Workers Builds: chey-app` is red on each head. It is the Cloudflare Git integration check, non-gating, and failed on earlier PRs too. The fix is a dashboard setting (the build root), so it is the owner's call. A comment on the PR says so.
+- CI: `CHE UI Analyze` passed on `8373863`. `Check CHE Flutter client` was still running on `8373863`, `e9b098a` and `d1cfdda` when this was written. Read the results before merging.
+- Worker suite 897/897 at `d1cfdda`. Dart not run locally (no Flutter SDK).
+- Next: green on `d1cfdda` → merge with the `[worker-deploy]` title → read `Verify live Mary voice settings` → Shorebird patch. Owner, on the phone after the patch: restart CHE fully, then check the update banner, the Updates screen and the priority banner.
+
+
 **Claude, 2026-10-13 (owner: "the update button should go away once it's updated"; "the messages banner should disappear after I read the most recent messages"). PR #287 OPEN, head `8373863` (fast-forward). NOT merged. CI running on `e9b098a`.**
 - **Update button.** The latest published release is `1.4.1024603585` build `3828969674601`, which the owner says is installed. So an Update button for it is stale state, not a real update. The Update button now never appears for a build already running, never appears while a SideStore install is waiting, and never appears after a handoff was not confirmed. A verified install shows "Update complete" and clears itself after 15 seconds. The phone still runs the old code until the Shorebird patch applies after a restart. If the button still shows after a patch and a full close and reopen, the running process reports an older build, and that is not fixed by this change.
 - **Messages banner.** The banner is the priority notifications banner. It counted unread items and loaded only once. Opening the notifications list now marks the unread items it shows as read (newest first, capped at 20). The banner reloads when the owner returns from the list and when CHE resumes.
