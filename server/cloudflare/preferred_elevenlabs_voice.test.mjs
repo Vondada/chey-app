@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  preferredElevenLabsKeyStatus,
   preferredElevenLabsReady,
   preferredElevenLabsSpeech,
   resetPreferredElevenLabsPause,
@@ -56,13 +57,82 @@ test('provider errors, JSON response, and empty clips fall back to free voice', 
   assert.equal(await preferredElevenLabsSpeech(env, 'Hi', async () => { throw Error('unavailable'); }), null);
 });
 
-test('a quota or auth error pauses Mary, so later clips go straight to the free voice', async () => {
+test('a rate limit pauses Mary for half a minute, so a busy moment does not silence the voice for ten', async (t) => {
   resetPreferredElevenLabsPause();
+  let now = 1_000_000;
+  t.mock.method(Date, 'now', () => now);
   let calls = 0;
-  const quota = async () => { calls++; return new Response('quota', { status: 429 }); };
-  assert.equal(await preferredElevenLabsSpeech(env, 'Hi', quota), null);
-  assert.equal(await preferredElevenLabsSpeech(env, 'Hi again', quota), null);
-  assert.equal(calls, 1);
+  const limited = async () => { calls++; return new Response('slow down', { status: 429 }); };
+  assert.equal(await preferredElevenLabsSpeech(env, 'Hi', limited), null);
+  now += 10_000;
+  assert.equal(await preferredElevenLabsSpeech(env, 'Hi again', limited), null);
+  assert.equal(calls, 1, 'paused during the short backoff');
+  now += 31_000;
+  assert.equal(await preferredElevenLabsSpeech(env, 'Hi later', limited), null);
+  assert.equal(calls, 2, 'tried again once the backoff ends');
+  resetPreferredElevenLabsPause();
+});
+
+test('a bad key or spent credits stays paused for minutes, so later clips go straight to the free voice', async (t) => {
+  resetPreferredElevenLabsPause();
+  let now = 2_000_000;
+  t.mock.method(Date, 'now', () => now);
+  let denied = 0;
+  const denial = async () => { denied++; return new Response('{"detail":{"status":"invalid_api_key"}}', { status: 401 }); };
+  assert.equal(await preferredElevenLabsSpeech(env, 'Hi', denial), null);
+  now += 5 * 60 * 1000;
+  assert.equal(await preferredElevenLabsSpeech(env, 'Hi', denial), null);
+  assert.equal(denied, 1, 'a bad key is not retried for minutes');
+  now += 6 * 60 * 1000;
+  assert.equal(await preferredElevenLabsSpeech(env, 'Hi', denial), null);
+  assert.equal(denied, 2, 'retried after the long pause');
+  resetPreferredElevenLabsPause();
+});
+
+test('a server error pauses Mary for a minute, and a 402 pauses it for the long time', async (t) => {
+  resetPreferredElevenLabsPause();
+  let now = 3_000_000;
+  t.mock.method(Date, 'now', () => now);
+  let serverErrors = 0;
+  const broken = async () => { serverErrors++; return new Response('oops', { status: 503 }); };
+  await preferredElevenLabsSpeech(env, 'Hi', broken);
+  now += 61_000;
+  await preferredElevenLabsSpeech(env, 'Hi', broken);
+  assert.equal(serverErrors, 2, 'a server blip clears within a minute');
+  resetPreferredElevenLabsPause();
+  now += 1;
+  let payment = 0;
+  const unpaid = async () => { payment++; return new Response('pay', { status: 402 }); };
+  await preferredElevenLabsSpeech(env, 'Hi', unpaid);
+  now += 5 * 60 * 1000;
+  await preferredElevenLabsSpeech(env, 'Hi', unpaid);
+  assert.equal(payment, 1, 'out of credits waits for the owner, not seconds');
+  resetPreferredElevenLabsPause();
+});
+
+test('a quota message on a 401 is reported as out of credits, not as a dead key', async () => {
+  resetPreferredElevenLabsPause();
+  await preferredElevenLabsSpeech(env, 'Hi', async () => new Response('{"detail":{"status":"quota_exceeded"}}', { status: 401 }));
+  assert.equal(preferredElevenLabsKeyStatus(env).status, 'out of credits');
+  resetPreferredElevenLabsPause();
+});
+
+test('the Keys tab sees Mary\'s state in plain words, and never the key itself', async (t) => {
+  resetPreferredElevenLabsPause();
+  let now = 4_000_000;
+  t.mock.method(Date, 'now', () => now);
+  assert.equal(preferredElevenLabsKeyStatus({ ...env, CHE_ELEVENLABS_PREFERRED: '' }).status, 'not set up');
+  assert.equal(preferredElevenLabsKeyStatus(env).status, 'not tried yet');
+  await preferredElevenLabsSpeech(env, 'Hi', async () => new Response('slow', { status: 429 }));
+  const limited = preferredElevenLabsKeyStatus(env, now);
+  assert.equal(limited.status, 'rate-limited');
+  assert.equal(limited.last4, 'real', 'only the last four characters of the key');
+  assert.match(limited.detail, /HTTP 429/);
+  assert.match(limited.detail, /waits until/);
+  assert.equal(JSON.stringify(limited).includes(env.ELEVENLABS_API_KEY), false);
+  now += 31_000;
+  await preferredElevenLabsSpeech(env, 'Hi', async () => new Response(new Uint8Array([1, 2]), { headers: { 'Content-Type': 'audio/mpeg' } }));
+  assert.equal(preferredElevenLabsKeyStatus(env, now).status, 'healthy');
   resetPreferredElevenLabsPause();
 });
 

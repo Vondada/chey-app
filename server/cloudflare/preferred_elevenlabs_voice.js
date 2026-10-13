@@ -8,15 +8,57 @@ export function preferredElevenLabsReady(env = {}) {
     && /^[a-zA-Z0-9_-]{10,80}$/.test(String(env.CHE_ELEVENLABS_VOICE_ID || '').trim());
 }
 
-// After a quota, auth or server error, Mary pauses so later clips go straight to
-// the free voice. A timeout pauses too, so a slow provider cannot add its wait to
-// every clip. Each iPhone reply tries Mary on two routes, so this matters.
-const PAUSE_AFTER_ERROR_MS = 10 * 60 * 1000;
+// A failure pauses Mary so later clips go straight to the free voice. How long
+// depends on the cause: a rate limit or server blip clears in seconds, while a
+// bad key or spent credits will not clear until the owner acts. A timeout pauses
+// briefly so a slow provider cannot add its wait to every clip. Each iPhone reply
+// tries Mary on two routes, so this matters.
+const PAUSE_RATE_LIMIT_MS = 30 * 1000;
+const PAUSE_SERVER_MS = 60 * 1000;
+const PAUSE_LONG_MS = 10 * 60 * 1000;
 const PAUSE_AFTER_TIMEOUT_MS = 2 * 60 * 1000;
 let pausedUntil = 0;
+// The last outcome, for the Keys tab. It holds a status word and a time only,
+// never the key or the provider's error text.
+let lastOutcome = null;
 
 export function resetPreferredElevenLabsPause() {
   pausedUntil = 0;
+  lastOutcome = null;
+}
+
+// Maps a failed ElevenLabs reply to the Keys tab's words and to a pause length.
+// Returns null for a refused clip (bad text), which says nothing about the key.
+function classifyFailure(code, reason) {
+  const outOfCredits = code === 402 || (code === 401 && /quota|credit/i.test(reason));
+  if (outOfCredits) return { status: 'out of credits', pauseMs: PAUSE_LONG_MS };
+  if (code === 401 || code === 403) return { status: 'unauthorized', pauseMs: PAUSE_LONG_MS };
+  if (code === 429) return { status: 'rate-limited', pauseMs: PAUSE_RATE_LIMIT_MS };
+  if (code >= 500) return { status: 'network', pauseMs: PAUSE_SERVER_MS };
+  return null;
+}
+
+function recordFailure(code, status, pauseMs, now = Date.now()) {
+  pausedUntil = now + pauseMs;
+  lastOutcome = { status, code, at: now };
+}
+
+// Mary's state for the Keys tab. The status words are the ones the Keys screens
+// already show ("healthy", "rate-limited", "unauthorized", "network"); the
+// others are read as plain text. Only the last four characters of the key leave
+// this module, the same as the other key rows.
+export function preferredElevenLabsKeyStatus(env = {}, now = Date.now()) {
+  if (!preferredElevenLabsReady(env)) return { status: 'not set up', last4: '', detail: '' };
+  const last4 = String(env.ELEVENLABS_API_KEY).trim().slice(-4);
+  if (!lastOutcome) return { status: 'not tried yet', last4, detail: 'Mary has not spoken since the last restart.' };
+  const at = new Date(lastOutcome.at).toISOString();
+  const waiting = pausedUntil > now ? ` Mary waits until ${new Date(pausedUntil).toISOString()} before trying again.` : '';
+  const code = lastOutcome.code ? ` (HTTP ${lastOutcome.code})` : '';
+  return {
+    status: lastOutcome.status,
+    last4,
+    detail: `Last attempt ${at}${code}.${waiting}`,
+  };
 }
 
 // Null means use CHE's existing free/iPhone voice; do not speak a partial clip.
@@ -57,14 +99,17 @@ export async function preferredElevenLabsSpeech(env = {}, text, fetcher = fetch)
       },
     );
     if (!response.ok) {
-      if ([401, 402, 403, 429].includes(response.status) || response.status >= 500) {
-        pausedUntil = Date.now() + PAUSE_AFTER_ERROR_MS;
-      }
+      // The reason is read only to tell "out of credits" from a bad key; it is
+      // never logged or returned.
+      const reason = (await response.text().catch(() => '')).slice(0, 300);
+      const failure = classifyFailure(response.status, reason);
+      if (failure) recordFailure(response.status, failure.status, failure.pauseMs);
       return null;
     }
     if (!/^audio\//i.test(response.headers.get('content-type') || '')) return null;
     const bytes = await response.arrayBuffer();
     if (!bytes.byteLength || bytes.byteLength > 6 * 1024 * 1024) return null;
+    lastOutcome = { status: 'healthy', code: 200, at: Date.now() };
     return new Response(bytes, {
       headers: {
         'Content-Type': response.headers.get('content-type') || 'audio/mpeg',
@@ -74,7 +119,7 @@ export async function preferredElevenLabsSpeech(env = {}, text, fetcher = fetch)
     });
   } catch (_) {
     // Credentials/quota/timeouts fall back to the existing voice. Never log keys.
-    pausedUntil = Date.now() + PAUSE_AFTER_TIMEOUT_MS;
+    recordFailure(0, 'network', PAUSE_AFTER_TIMEOUT_MS);
     return null;
   }
 }
