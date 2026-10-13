@@ -91,7 +91,7 @@ export function makeEngineError({
 // word, so a job ID ("e124299b"), a price ("$1,429") or a word ("task-by-task")
 // never turns a real answer into an error.
 const PROVIDER_DUMP = /all ai engines failed|enospc|stack trace|<html|pollinations|llm7/i;
-const PROVIDER_STATUS = /\b(?:http(?:\/\d(?:\.\d)?)?|status|code|error)\W{0,4}(?:401|402|404|429)\b|\b(?:401|402|404|429)\s+(?:unauthorized|payment required|not found|too many requests)/i;
+const PROVIDER_STATUS = /\b(?:http(?:\/\d(?:\.\d)?)?|status|code|error)\W{0,4}(?:401|402|404|429)\b|\b(?:401|402|404|429)\W{1,4}(?:unauthorized|payment required|not found|too many requests)/i;
 const CREDENTIAL = /\bgsk_[a-z0-9]|\bsk-[a-z0-9]{2,}|\bAIza[0-9a-z_-]{20,}|\bBearer\s+[a-z0-9._~+/=-]{8,}/i;
 
 export function sanitizeOwnerText(text, { truncate = true } = {}) {
