@@ -86,10 +86,18 @@ export function makeEngineError({
   return error;
 }
 
+// Signs that a reply is a raw provider dump or carries a credential. A status
+// code counts only beside an HTTP word, and a key prefix only at the start of a
+// word, so a job ID ("e124299b"), a price ("$1,429") or a word ("task-by-task")
+// never turns a real answer into an error.
+const PROVIDER_DUMP = /all ai engines failed|enospc|stack trace|<html|pollinations|llm7/i;
+const PROVIDER_STATUS = /\b(?:http(?:\/\d(?:\.\d)?)?|status|code|error)\W{0,4}(?:401|402|404|429)\b|\b(?:401|402|404|429)\s+(?:unauthorized|payment required|not found|too many requests)/i;
+const CREDENTIAL = /\bgsk_[a-z0-9]|\bsk-[a-z0-9]{2,}|\bAIza[0-9a-z_-]{20,}|\bBearer\s+[a-z0-9._~+/=-]{8,}/i;
+
 export function sanitizeOwnerText(text, { truncate = true } = {}) {
   const raw = String(text || '');
   if (!raw) return ownerFacingMessage('temporary_cloud_unavailable');
-  if (/all ai engines failed|enospc|stack trace|<html|pollinations|llm7|401|402|404|429|gsk_|sk-|AIza|Bearer /i.test(raw)
+  if ((PROVIDER_DUMP.test(raw) || PROVIDER_STATUS.test(raw) || CREDENTIAL.test(raw))
       && raw.length > 120) {
     return ownerFacingMessage('temporary_cloud_unavailable');
   }
