@@ -208,3 +208,38 @@ jobs:
           await verifyIpa(`${base}/api/update/download/${encodeURIComponent(latest.id)}/${bundleId}.ipa`, 'Worker relay download');
           console.log(`Verified live install link for ${bundleId} ${latest.version} (${latest.build_number}), ${latest.size} bytes`);
           JS
+
+      - name: Verify live Mary voice settings
+        env:
+          EXPECTED_TAG: ${{ github.sha }}
+        run: |
+          node --input-type=module <<'JS'
+          // Public probe: booleans and status words only, never a key or a voice ID.
+          // It fails when the live Worker cannot see the Mary settings this deploy
+          // just synced. Mary is not tested here: no speech is generated, so no
+          // ElevenLabs credits are spent.
+          const enabled = ['1', 'true', 'yes'].includes(String(process.env.CHE_ELEVENLABS_PREFERRED || '').toLowerCase());
+          let probe = null;
+          for (let attempt = 0; attempt < 6 && !probe; attempt++) {
+            try {
+              const response = await fetch('https://chey-app.henryjavoni.workers.dev/api/voice/status', { signal: AbortSignal.timeout(10000) });
+              const body = await response.json();
+              if (response.ok && body.ok) probe = body;
+            } catch { /* retry a transient error */ }
+            if (!probe) await new Promise(resolve => setTimeout(resolve, 3000));
+          }
+          if (!probe) throw new Error('Live voice status did not answer');
+          console.log(`Live voice settings: ${JSON.stringify({ top_level: probe.top_level, live: probe.live, captured: probe.captured })}`);
+          if (!enabled) {
+            if (probe.live.preferred) throw new Error('Mary is on in the live Worker, but the owner setting is off.');
+            console.log('Mary is off by the owner setting; the free voice is used.');
+            process.exit(0);
+          }
+          if (!probe.top_level.ready || !probe.live.ready) {
+            throw new Error(`Mary is enabled, but the live Worker reports not ready (key present: ${probe.live.key_present}, voice ID format ok: ${probe.live.voice_id_format_ok}).`);
+          }
+          if (!probe.captured.ready) {
+            console.log('::notice::The Durable Object had an older env; the live Mary settings were passed in for this request.');
+          }
+          console.log(`Mary live: ready, last status "${probe.live.status}".`);
+          JS

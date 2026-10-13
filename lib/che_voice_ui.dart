@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'che_edge_voice.dart';
 import 'che_native_voice.dart';
 import 'che_theme.dart';
 import 'che_voice_state.dart';
@@ -120,6 +121,7 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
     required this.lastServerEvent,
     this.playbackEngine,
     this.fallbackReason,
+    this.maryStatus = '',
   });
 
   final CheVoiceSnapshot snapshot;
@@ -127,6 +129,8 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
   final String? lastServerEvent;
   final String? playbackEngine;
   final String? fallbackReason;
+  /// Mary's status from the last server reply; empty before the first reply.
+  final String maryStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -204,7 +208,8 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
             row('Audio verified', snapshot.audioVerified ? 'Yes' : 'No'),
             row('CHE server', serverOnline ? 'Connected' : 'Not confirmed'),
             row('Last event', lastServerEvent ?? '—'),
-            row('Playback engine', playbackEngine ?? '—'),
+            row('Mary (preferred)', cheMaryStateLabel(maryStatus)),
+            row('Playback engine', cheVoiceEngineLabel(playbackEngine)),
             row('Fallback detail', fallbackReason ?? '—'),
             row('Last interruption', snapshot.lastInterruptionReason ?? '—'),
             row(

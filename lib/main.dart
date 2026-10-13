@@ -395,6 +395,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   Timer? _quickEndTimer;
   String? _lastVoiceEngine;
   String _voiceFailReason = '';
+  // Mary's status from the last server reply, for the voice diagnostics sheet.
+  String _maryStatus = '';
   bool _naturalVoiceServerErrored = false;
   bool _loadingAgentState = false;
   int _speechTurn = 0;

@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  marySecretsFrom,
+  preferredElevenLabsDiagnostics,
   preferredElevenLabsKeyStatus,
   preferredElevenLabsReady,
   preferredElevenLabsSpeech,
   resetPreferredElevenLabsPause,
+  withMarySecrets,
 } from './preferred_elevenlabs_voice.js';
 
 const env = {
@@ -163,4 +166,53 @@ test('after a pause, Mary is tried again and returns the real audio bytes', asyn
   assert.equal(audio.headers.get('X-CHE-Voice'), 'elevenlabs-mary');
   assert.deepEqual([...new Uint8Array(await audio.arrayBuffer())], [9, 8, 7]);
   resetPreferredElevenLabsPause();
+});
+
+// A Durable Object can keep the env it was created with. These tests reproduce
+// the owner's "Not set up" reading, where the live secrets exist but the object
+// that answers the Keys tab could not see them.
+test('a stale captured env reports Mary as not set up, and the live secrets fix it', () => {
+  resetPreferredElevenLabsPause();
+  const stale = { CHE_ELEVENLABS_PREFERRED: '0' };
+  assert.equal(preferredElevenLabsReady(stale), false);
+  const live = marySecretsFrom(env);
+  assert.equal(preferredElevenLabsReady(withMarySecrets(stale, live)), true);
+  assert.equal(preferredElevenLabsKeyStatus(withMarySecrets(stale, live), Date.now()).status, 'not tried yet');
+});
+
+test('only the Mary settings are copied, and an empty value is left out', () => {
+  const copied = marySecretsFrom({ ...env, ELEVENLABS_API_KEY: '', GROQ_API_KEY: 'do-not-copy', CHE_VOICE_SPEED: '' });
+  assert.deepEqual(Object.keys(copied).sort(), ['CHE_ELEVENLABS_PREFERRED', 'CHE_ELEVENLABS_VOICE_ID'].sort());
+  assert.equal(copied.GROQ_API_KEY, undefined);
+});
+
+test('the merged env leaves the base env unchanged and no snapshot means the base env', () => {
+  const base = { CHE_ELEVENLABS_PREFERRED: '0' };
+  const merged = withMarySecrets(base, { CHE_ELEVENLABS_PREFERRED: '1' });
+  assert.equal(merged.CHE_ELEVENLABS_PREFERRED, '1');
+  assert.equal(base.CHE_ELEVENLABS_PREFERRED, '0');
+  assert.equal(withMarySecrets(base, {}), base);
+});
+
+test('the voice status probe reports booleans and words, never the key or voice ID', () => {
+  const diagnostics = preferredElevenLabsDiagnostics({ ...env, ELEVENLABS_API_KEY: 'sk_secret_value_1234' });
+  assert.deepEqual(diagnostics, {
+    preferred: true,
+    key_present: true,
+    voice_id_format_ok: true,
+    ready: true,
+    status: 'not tried yet',
+    paused: false,
+  });
+  const text = JSON.stringify(diagnostics);
+  assert.equal(text.includes('sk_secret_value_1234'), false);
+  assert.equal(text.includes(env.CHE_ELEVENLABS_VOICE_ID), false);
+  assert.deepEqual(preferredElevenLabsDiagnostics({}), {
+    preferred: false,
+    key_present: false,
+    voice_id_format_ok: false,
+    ready: false,
+    status: 'not set up',
+    paused: false,
+  });
 });
