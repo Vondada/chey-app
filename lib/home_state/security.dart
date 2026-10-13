@@ -1297,6 +1297,7 @@ extension _CheHomeSecurity on _CHEHomeState {
         lastServerEvent: _realtimeVoice?.lastServerEvent,
         playbackEngine: _lastVoiceEngine,
         fallbackReason: _voiceFailReason.isEmpty ? null : _voiceFailReason,
+        maryStatus: _maryStatus,
       ),
     );
   }

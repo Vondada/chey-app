@@ -61,6 +61,42 @@ export function preferredElevenLabsKeyStatus(env = {}, now = Date.now()) {
   };
 }
 
+// The Mary settings, copied from the Worker's live env on each voice request. The
+// Durable Object keeps the env it was created with, so a secret set or changed
+// later would otherwise stay invisible to it until the object restarts.
+export const MARY_SECRET_NAMES = ['ELEVENLABS_API_KEY', 'CHE_ELEVENLABS_VOICE_ID', 'CHE_ELEVENLABS_PREFERRED', 'CHE_ELEVENLABS_MODEL', 'CHE_VOICE_SPEED'];
+
+// An absent setting is sent as an empty value, not left out. A removed secret
+// then overrides the stale captured env instead of being inherited from it.
+export function marySecretsFrom(env = {}) {
+  const out = {};
+  for (const name of MARY_SECRET_NAMES) {
+    out[name] = env[name] === undefined || env[name] === null ? '' : String(env[name]);
+  }
+  return out;
+}
+
+export function withMarySecrets(env = {}, secrets = {}) {
+  if (!secrets || !Object.keys(secrets).length) return env;
+  const merged = Object.create(env);
+  for (const [name, value] of Object.entries(secrets)) merged[name] = value;
+  return merged;
+}
+
+// Booleans and status words only, never a key or a voice ID. The owner's voice
+// diagnostics and the deploy check read this.
+export function preferredElevenLabsDiagnostics(env = {}, now = Date.now()) {
+  const keyStatus = preferredElevenLabsKeyStatus(env, now);
+  return {
+    preferred: enabled(env.CHE_ELEVENLABS_PREFERRED),
+    key_present: Boolean(String(env.ELEVENLABS_API_KEY || '').trim()),
+    voice_id_format_ok: /^[a-zA-Z0-9_-]{10,80}$/.test(String(env.CHE_ELEVENLABS_VOICE_ID || '').trim()),
+    ready: preferredElevenLabsReady(env),
+    status: keyStatus.status,
+    paused: pausedUntil > now,
+  };
+}
+
 // Null means use CHE's existing free/iPhone voice; do not speak a partial clip.
 // This helper is shared by both iOS voice routes because the app normally tries
 // /api/voice/edge before /api/voice/synthesize.
@@ -115,6 +151,9 @@ export async function preferredElevenLabsSpeech(env = {}, text, fetcher = fetch)
         'Content-Type': response.headers.get('content-type') || 'audio/mpeg',
         'Cache-Control': 'no-store',
         'X-CHE-Voice': 'elevenlabs-mary',
+        // A successful Mary clip is her status too, so the phone can clear an
+        // earlier rate-limit or error in its diagnostics.
+        'X-CHE-Mary': 'healthy',
       },
     });
   } catch (_) {

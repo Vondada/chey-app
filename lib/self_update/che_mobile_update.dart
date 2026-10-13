@@ -6,32 +6,50 @@ import 'package:http/http.dart' as http;
 // Models and the update-service client for CHE's iPhone builds. The screen,
 // banners and the update controller live in their own files.
 
-const _fallbackVersion = String.fromEnvironment(
-  'CHE_APP_VERSION',
-  defaultValue: '1.4.6',
-);
-const _fallbackBuild = String.fromEnvironment(
-  'CHE_BUILD_NUMBER',
-  defaultValue: '15',
-);
-
+/// The build this copy of CHE is running, as iOS reports it through the
+/// native `appVersion` call (CFBundleShortVersionString and CFBundleVersion).
+///
+/// There is no fallback value. A build that cannot be read is null, and CHE
+/// then says so instead of comparing against a number it made up.
 class CheInstalledBuild {
   const CheInstalledBuild(this.version, this.build);
   final String version;
   final String build;
   static const _shell = MethodChannel('che/native_shell');
 
-  static Future<CheInstalledBuild> read() async {
+  /// Reads the native reply. Returns null unless both values are present.
+  static CheInstalledBuild? fromNative(Map<String, dynamic>? raw) {
+    final version = '${raw?['version'] ?? ''}'.trim();
+    final build = '${raw?['build'] ?? ''}'.trim();
+    if (version.isEmpty || build.isEmpty) return null;
+    return CheInstalledBuild(version, build);
+  }
+
+  static Future<CheInstalledBuild?> read() async {
     try {
       final raw = await _shell.invokeMapMethod<String, dynamic>('appVersion');
-      final version = '${raw?['version'] ?? ''}'.trim();
-      final build = '${raw?['build'] ?? ''}'.trim();
-      if (version.isNotEmpty && build.isNotEmpty) {
-        return CheInstalledBuild(version, build);
-      }
-    } catch (_) {}
-    return const CheInstalledBuild(_fallbackVersion, _fallbackBuild);
+      return fromNative(raw == null ? null : Map<String, dynamic>.from(raw));
+    } catch (_) {
+      return null;
+    }
   }
+}
+
+/// Whether SideStore may be handed this build. A normal update is only ever a
+/// newer build than the running one. A rollback is the owner's own choice of an
+/// earlier verified build, so it may be older, but never the running build. An
+/// unknown running build is never guessed at, so nothing is handed off.
+bool canHandOffInstall({
+  required CheInstalledBuild? installed,
+  required CheMobileUpdateInfo target,
+  bool rollback = false,
+}) {
+  final current = installed;
+  if (current == null) return false;
+  if (rollback) {
+    return !target.isNewerThan(current) && target.buildNumber != current.build;
+  }
+  return target.isNewerThan(current);
 }
 
 class CheMobileUpdateInfo {

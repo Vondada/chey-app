@@ -94,4 +94,40 @@ void main() {
       },
     );
   });
+
+  group('canHandOffInstall', () {
+    const running = CheInstalledBuild('1.4.1024603585', '3828969674601');
+    const newer = CheMobileUpdateInfo(
+      version: '1.4.1024610000', buildNumber: '3830000000000', commitSha: '', buildDate: '',
+      downloadUrl: 'https://example.invalid/a.ipa', sha256: '', size: 0, releaseNotes: '', shorebirdBase: false,
+    );
+    const older = CheMobileUpdateInfo(
+      version: '1.4.1024480253', buildNumber: '3812328516001', commitSha: '', buildDate: '',
+      downloadUrl: 'https://example.invalid/b.ipa', sha256: '', size: 0, releaseNotes: '', shorebirdBase: false,
+    );
+    const same = CheMobileUpdateInfo(
+      version: '1.4.1024603585', buildNumber: '3828969674601', commitSha: '', buildDate: '',
+      downloadUrl: 'https://example.invalid/c.ipa', sha256: '', size: 0, releaseNotes: '', shorebirdBase: false,
+    );
+
+    test('a normal update is handed off only when newer', () {
+      expect(canHandOffInstall(installed: running, target: newer), isTrue);
+      expect(canHandOffInstall(installed: running, target: older), isFalse);
+      expect(canHandOffInstall(installed: running, target: same), isFalse);
+    });
+
+    test('a rollback to an earlier verified build is handed off', () {
+      expect(canHandOffInstall(installed: running, target: older, rollback: true), isTrue);
+    });
+
+    test('a rollback never targets the running build or a newer one', () {
+      expect(canHandOffInstall(installed: running, target: same, rollback: true), isFalse);
+      expect(canHandOffInstall(installed: running, target: newer, rollback: true), isFalse);
+    });
+
+    test('an unknown running build hands off nothing, even a rollback', () {
+      expect(canHandOffInstall(installed: null, target: older), isFalse);
+      expect(canHandOffInstall(installed: null, target: older, rollback: true), isFalse);
+    });
+  });
 }

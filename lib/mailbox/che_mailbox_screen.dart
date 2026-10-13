@@ -143,6 +143,10 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
   }
 
   Future<void> _addKey(Map<String, dynamic> provider) async {
+    if (provider['readonly'] == true) {
+      _say(_maryStatusSpeech(provider));
+      return;
+    }
     final controller = TextEditingController();
     final name = '${provider['name']}';
     _say('Adding a $name key. Open the official page, create a key, then paste it here.');
@@ -494,10 +498,24 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         'healthy' => 'Working',
         'rate-limited' => 'Resting (not dead)',
         'unauthorized' => 'Dead: needs a new key',
+        'out of credits' => 'Out of credits',
         'network' => 'Unreachable right now',
+        'not tried yet' => 'Not used yet',
         'not set up' => 'Not set up',
         _ => s,
       };
+
+  // Mary's key is a server secret set at deploy time. Her row only reports the
+  // server's status, in words, and never opens the paste-a-key form.
+  String _maryStatusSpeech(Map<String, dynamic> provider) {
+    final words = _statusWords('${provider['status']}');
+    final last4 = '${provider['last4'] ?? ''}'.trim();
+    final detail = '${provider['detail'] ?? ''}'.trim();
+    return 'ElevenLabs, Mary voice: $words.'
+        '${last4.isEmpty ? '' : ' Her key ends $last4.'}'
+        '${detail.isEmpty ? '' : ' $detail'}'
+        ' The key is changed at deploy time, not here.';
+  }
 
   String _youtubeLine() {
     final title = '${_youtube['channel_title'] ?? ''}';
@@ -675,12 +693,18 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
                   itemBuilder: (_, i) {
                     final p = providers[i];
                     final status = '${p['status']}';
-                    final ok =
-                        status == 'healthy' || status == 'rate-limited';
+                    final readonly = p['readonly'] == true;
+                    final ok = status == 'healthy' ||
+                        status == 'rate-limited' ||
+                        (readonly && status == 'not tried yet');
+                    final detail = '${p['detail'] ?? ''}'.trim();
+                    final base =
+                        '${_statusWords(status)}${'${p['last4']}'.isNotEmpty ? ' · ends ${p['last4']}' : ''}';
                     return Semantics(
                       button: true,
-                      label:
-                          '${p['name']}: ${_statusWords(status)}. Double tap to add or replace the key.',
+                      label: readonly
+                          ? '${p['name']}: ${_statusWords(status)}. Server secret, read only. Double tap to hear its status.'
+                          : '${p['name']}: ${_statusWords(status)}. Double tap to add or replace the key.',
                       child: Card(
                         color: CheColors.surface,
                         child: ListTile(
@@ -693,10 +717,14 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
                           ),
                           title: Text('${p['name']}', style: CheType.label),
                           subtitle: Text(
-                            '${_statusWords(status)}${'${p['last4']}'.isNotEmpty ? ' · ends ${p['last4']}' : ''}',
+                            readonly && detail.isNotEmpty
+                                ? '$base\n$detail'
+                                : base,
                             style: CheType.caption,
                           ),
-                          trailing: const Icon(Icons.add_rounded),
+                          trailing: Icon(readonly
+                              ? Icons.lock_outline_rounded
+                              : Icons.add_rounded),
                           onTap: () => _addKey(p),
                         ),
                       ),

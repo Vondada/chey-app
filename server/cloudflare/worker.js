@@ -34,7 +34,7 @@ import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv } from './a
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { handleEdgeVoice } from './edge_route.js';
-import { preferredElevenLabsKeyStatus, preferredElevenLabsSpeech } from './preferred_elevenlabs_voice.js';
+import { marySecretsFrom, preferredElevenLabsDiagnostics, preferredElevenLabsKeyStatus, preferredElevenLabsSpeech, withMarySecrets } from './preferred_elevenlabs_voice.js';
 import { handleVideoLine } from './video_route.js';
 import {
   YOUTUBE_CALLBACK_PATH, disconnectYouTube, finishYouTubeConnect, startYouTubeConnect,
@@ -3551,6 +3551,26 @@ export class CheState extends DurableObject {
     return this.keyEnv;
   }
 
+  // The Worker's default fetch hands over Mary's live settings before each voice
+  // or key request. They stay in memory only and are never written to storage.
+  setMarySecrets(secrets) {
+    this.marySecrets = secrets && typeof secrets === 'object' ? secrets : {};
+  }
+
+  // The env every Mary route uses: stored keys, then the live Mary settings.
+  voiceEnv() {
+    return withMarySecrets(this.keyEnv || this.env, this.marySecrets);
+  }
+
+  // Booleans for the public /api/voice/status probe. `captured` is the env this
+  // object was created with; `live` is what the voice routes actually use.
+  voiceStatus() {
+    return {
+      captured: preferredElevenLabsDiagnostics(this.keyEnv || this.env),
+      live: preferredElevenLabsDiagnostics(this.voiceEnv()),
+    };
+  }
+
   // Flagstaff model calls run one at a time. In the live test, parallel calls from
   // one mailbox push all failed on their first try and only retries answered.
   serializeFlagstaffModel(run) {
@@ -4252,9 +4272,9 @@ export class CheState extends DurableObject {
       if (path === '/api/voice/edge' && request.method === 'POST') {
         // The current iPhone requests Edge before other TTS. Honor the same
         // explicit ElevenLabs opt-in here without requiring a new IPA.
-        const preferred = await preferredElevenLabsSpeech(this.keyEnv || this.env, body.text);
+        const preferred = await preferredElevenLabsSpeech(this.voiceEnv(), body.text);
         if (preferred) return preferred;
-        return handleEdgeVoice(request, this.keyEnv || this.env, body);
+        return handleEdgeVoice(request, this.voiceEnv(), body);
       }
       if (request.method === 'POST' && path === '/api/youtube/connect/start') {
         const started = await startYouTubeConnect(this.keyEnv || this.env, data, new URL(request.url).origin);
@@ -4882,7 +4902,7 @@ export class CheState extends DurableObject {
         const memoryStored = hasStoredMemoryDatabase(await storedKeys(this.ctx.storage));
         // Mary's key is a deploy-time secret, so its row is read-only and shows
         // only the last outcome; the key is never sent to the phone or the web app.
-        const mary = preferredElevenLabsKeyStatus(this.keyEnv || this.env);
+        const mary = preferredElevenLabsKeyStatus(this.voiceEnv());
         return json({
           providers: [
             ...Object.entries(KEY_PROVIDERS).map(([id, p]) => ({ id, name: p.name, page: p.page, status: health[id]?.status || 'not set up', last4: health[id]?.last4 || '' })),
@@ -5627,7 +5647,7 @@ export class CheState extends DurableObject {
       if (path === '/api/voice/synthesize') {
         const text = String(body.text || '').trim();
         if (!text) return json({ detail: 'Voice text required.' }, 400);
-        return voiceSynthesisResponse(this.keyEnv || this.env, text);
+        return voiceSynthesisResponse(this.voiceEnv(), text);
       }
       if (path === '/api/service-account/request') {
         const provider = String(body.provider || '').trim().slice(0, 80);
@@ -10053,6 +10073,20 @@ export default {
       return handleMobileUpdateRequest(request, env);
     }
     if (path === '/health') return json({ ok: true, agent: 'CHE cloud', ...runtimeVersion(env) });
+    // Public and secret-free: booleans and status words only. The deploy check
+    // reads it, and the owner's voice diagnostics can show it.
+    if (path === '/api/voice/status' && request.method === 'GET') {
+      const owner = env.CHE_STATE.getByName('owner');
+      await owner.setMarySecrets(marySecretsFrom(env));
+      return json({ ok: true, top_level: preferredElevenLabsDiagnostics(env), ...(await owner.voiceStatus()) });
+    }
+    // Mary's live settings reach the Durable Object before each voice or key
+    // request, so a secret change is seen without restarting the object.
+    if (['/api/voice/edge', '/api/voice/synthesize', '/api/keys'].includes(path)) {
+      const owner = env.CHE_STATE.getByName('owner');
+      await owner.setMarySecrets(marySecretsFrom(env));
+      return owner.fetch(request);
+    }
     if (path === '/health/engines') return env.CHE_STATE.getByName('owner').fetch(request);
     if (path === '/live-voice') return liveVoicePage();
     // CHE in any browser (lost phone, laptop, family invite links).

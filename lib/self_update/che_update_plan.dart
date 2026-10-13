@@ -58,7 +58,9 @@ CheUpdatePlan planCheUpdate({
   required bool fullNewer,
   required String fullLabel,
   required String installLabel,
-  required String installedLabel,
+  // Null when the running build could not be read. Then CHE never claims an
+  // install is missing, and never compares against a guessed build.
+  required String? installedLabel,
   required bool checking,
   required bool checkFailed,
   required bool newestBuildFailed,
@@ -79,7 +81,7 @@ CheUpdatePlan planCheUpdate({
         stage: CheUpdateStage.installing,
         headline: 'Waiting for SideStore',
         detail:
-            'SideStore is open. Confirm the install of $installLabel there. CHE checks the result when it next opens. If SideStore showed an error, CHE can stop waiting so you can try again.',
+            'Confirm the install of $installLabel in SideStore. ${installedLabel == null ? 'CHE could not read the build it is running.' : 'CHE is running $installedLabel now.'} CHE checks again each time it opens. If the new build still does not show, swipe CHE away in the app switcher and open it again. If SideStore showed an error, press Stop waiting.',
         showProgress: true,
         action: CheUpdateAction.stopWaiting,
       );
@@ -101,14 +103,17 @@ CheUpdatePlan planCheUpdate({
       return CheUpdatePlan(
         stage: CheUpdateStage.installFailed,
         headline: 'The install was not confirmed',
-        detail:
-            '$installedLabel is still running. Say "check for updates" to try again.',
+        detail: installedLabel == null
+            ? 'CHE could not read the build it is running. Say "check for updates" to try again.'
+            : '$installedLabel is still running. Say "check for updates" to try again.',
         action: CheUpdateAction.checkAgain,
       );
     case CheFullInstallState.idle:
       break;
   }
-  if (fullNewer) {
+  // A newer release is only offered against a build CHE could read. An unknown
+  // running build falls through to the "could not read" stage below.
+  if (fullNewer && installedLabel != null) {
     return CheUpdatePlan(
       stage: CheUpdateStage.fullReady,
       headline: 'Full update ready',
@@ -139,6 +144,15 @@ CheUpdatePlan planCheUpdate({
       headline: 'Checking for updates',
       detail: 'This takes a few seconds.',
       showProgress: true,
+    );
+  }
+  if (installedLabel == null) {
+    return const CheUpdatePlan(
+      stage: CheUpdateStage.checkFailed,
+      headline: 'Could not read the installed version',
+      detail:
+          'CHE could not tell which build is running, so it will not offer an install. Say "check for updates" to try again.',
+      action: CheUpdateAction.checkAgain,
     );
   }
   if (checkFailed) {
@@ -177,18 +191,29 @@ enum CheInstallCheck { none, waiting, confirmed, notConfirmed }
 
 /// Decides whether a SideStore install that CHE handed off has happened.
 ///
-/// It compares the build that is running now with the build CHE asked for.
-/// It never assumes success: until the build matches, the install is waiting,
-/// and after [timeout] it is reported as not confirmed.
+/// It compares the version and build that are running now with the release CHE
+/// asked SideStore for, and both must match. A missing reading never matches.
+/// It never assumes success: until they match the install is waiting, and
+/// after [timeout] it is reported as not confirmed. A saved target without a
+/// version (an older save) is compared by build only.
 CheInstallCheck checkPendingInstall({
+  required String? targetVersion,
   required String? targetBuild,
   required DateTime? startedAt,
-  required String installedBuild,
+  required String? installedVersion,
+  required String? installedBuild,
   required DateTime now,
   Duration timeout = const Duration(hours: 2),
 }) {
   if (targetBuild == null || targetBuild.isEmpty) return CheInstallCheck.none;
-  if (installedBuild == targetBuild) return CheInstallCheck.confirmed;
+  final versionMatches = targetVersion == null || targetVersion.isEmpty
+      ? true
+      : installedVersion == targetVersion;
+  if (installedBuild != null &&
+      installedBuild == targetBuild &&
+      versionMatches) {
+    return CheInstallCheck.confirmed;
+  }
   if (startedAt == null || now.difference(startedAt) > timeout) {
     return CheInstallCheck.notConfirmed;
   }

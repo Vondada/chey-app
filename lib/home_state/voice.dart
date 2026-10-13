@@ -385,16 +385,31 @@ extension _CheHomeVoice on _CHEHomeState {
       ready: _prepareSpeechOutput(),
       synthesize: (text) async {
         if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return null;
+        // Mary first: the Worker tries her on this route. Then the free server
+        // voices, then the on-device voice. The reason Mary did not speak is kept
+        // for the diagnostics sheet, next to the voice that actually played.
         final edge = await CheEdgeVoice.speak(text);
-        if (edge != null && edge.isNotEmpty) return CheVoiceClip(edge, 'edge-ava');
+        final edgeClip = edge.clip;
+        final maryReason = cheMaryReason(edge.maryStatus, edgeClip?.engine ?? '');
+        if (edge.maryStatus.isNotEmpty) _maryStatus = edge.maryStatus;
+        if (edgeClip != null && edgeClip.bytes.isNotEmpty) {
+          _voiceFailReason = maryReason;
+          return edgeClip;
+        }
         final server = await _synthesizeServerVoice(text);
-        if (server != null) return server;
+        if (server != null) {
+          _voiceFailReason = maryReason;
+          return server;
+        }
         // Fluent reading: prepare the on-device neural voice here (ahead of
         // playback) instead of in the fallback, which only runs after the
         // previous chunk finished and left a pause between paragraphs.
         try {
           final local = await CheNativeVoice.synthesizeNeural(text);
-          if (local != null) return CheVoiceClip(local, 'iphone-neural');
+          if (local != null) {
+            _voiceFailReason = [maryReason, _voiceFailReason].where((r) => r.isNotEmpty).join('; ');
+            return CheVoiceClip(local, 'iphone-neural');
+          }
         } catch (_) {}
         return null;
       },

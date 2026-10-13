@@ -133,6 +133,13 @@ class _CheNotificationsScreenState extends State<CheNotificationsScreen> {
       _page = page;
       _loading = false;
     });
+    // Showing a notification is reading it, so the home banner stops counting
+    // it. The banner only counts unread notifications.
+    if (page.isLive) {
+      for (final item in cheUnreadToMarkRead(page.items)) {
+        await widget.gateway.markNotificationRead(item.id);
+      }
+    }
   }
 
   @override
