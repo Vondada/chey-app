@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 const DIGEST = 'a'.repeat(64);
 
 import {
+  CHE_BUNDLE_ID,
   handleMobileUpdateRequest,
   releaseToUpdate,
   sourceFromUpdates,
@@ -41,7 +42,7 @@ test('release metadata produces stable Worker and SideStore URLs', () => {
   assert.equal(update.shorebird_base, true);
   assert.equal(
     update.download_url,
-    'https://che.example/api/update/download/che-ios-v1.4.5-b1200001',
+    'https://che.example/api/update/download/che-ios-v1.4.5-b1200001/com.cheyapp.chey.ipa',
   );
   assert.match(update.sidestore_install_url, /^sidestore:\/\/install\?url=/);
   assert.doesNotMatch(JSON.stringify(update), /token|secret/i);
@@ -66,7 +67,7 @@ test('SideStore source keeps verified build history with only current schema fie
 
 test('SideStore gets the verified direct release IPA, not the streaming Worker relay', () => {
   const update = releaseToUpdate(release, 'https://che.example');
-  assert.equal(update.download_url, 'https://che.example/api/update/download/che-ios-v1.4.5-b1200001');
+  assert.equal(update.download_url, 'https://che.example/api/update/download/che-ios-v1.4.5-b1200001/com.cheyapp.chey.ipa');
   assert.equal(update.asset_download_url, 'https://downloads.example/CHE-unsigned.ipa');
   // Only trusted public GitHub release assets may bypass the relay.
   const official = {
@@ -242,4 +243,60 @@ test('latest IPA is the highest numeric version even if another builder publishe
   assert.deepEqual((await history.json()).builds.map((item) => item.version), [
     '1.4.1024200000', '1.4.1000371',
   ]);
+});
+
+test('the SideStore install link names the app by its bundle ID, never by the release tag', () => {
+  const update = releaseToUpdate(release, 'https://che.example');
+  const install = new URL(update.sidestore_install_url);
+  assert.equal(install.protocol, 'sidestore:');
+  assert.equal(install.hostname, 'install');
+  const ipa = new URL(install.searchParams.get('url'));
+  // SideStore drops the extension from the last path segment; what remains must be the bundle ID.
+  const lastSegment = ipa.pathname.split('/').pop();
+  assert.equal(lastSegment.replace(/\.ipa$/, ''), CHE_BUNDLE_ID);
+  assert.equal(update.download_url, ipa.href);
+  assert.equal(update.ipa_download_url, ipa.href);
+});
+
+test('the install link and the bare tag both download the IPA; only the install link is named for the bundle', async () => {
+  const fetcher = async (url) => {
+    if (String(url).includes('/releases?')) return new Response(JSON.stringify([release]), { status: 200 });
+    if (String(url).includes('/releases/tags/')) return new Response(JSON.stringify(release), { status: 200 });
+    if (String(url) === 'https://downloads.example/CHE-unsigned.ipa') return new Response('IPA', { status: 200 });
+    throw new Error('unexpected URL ' + url);
+  };
+  const install = await handleMobileUpdateRequest(
+    new Request(`https://che.example/api/update/download/che-ios-v1.4.5-b1200001/${CHE_BUNDLE_ID}.ipa`),
+    {},
+    fetcher,
+  );
+  assert.equal(install.status, 200);
+  assert.equal(install.headers.get('Content-Disposition'), `attachment; filename="${CHE_BUNDLE_ID}.ipa"`);
+  assert.equal(await install.text(), 'IPA');
+  const bare = await handleMobileUpdateRequest(
+    new Request('https://che.example/api/update/download/che-ios-v1.4.5-b1200001'),
+    {},
+    fetcher,
+  );
+  assert.equal(bare.status, 200);
+  assert.equal(bare.headers.get('Content-Disposition'), 'attachment; filename="CHE-unsigned.ipa"');
+  const wrongName = await handleMobileUpdateRequest(
+    new Request('https://che.example/api/update/download/che-ios-v1.4.5-b1200001/evil.ipa'),
+    {},
+    fetcher,
+  );
+  assert.equal(wrongName.status, 404);
+});
+
+test('a release built for another bundle identifier is never advertised to CHE', () => {
+  const other = { ...release, body: release.body.replace('-->', 'bundle_id=com.example.other\n-->') };
+  assert.equal(releaseToUpdate(other, 'https://che.example'), null);
+  const same = { ...release, body: release.body.replace('-->', `bundle_id=${CHE_BUNDLE_ID}\n-->`) };
+  assert.equal(releaseToUpdate(same, 'https://che.example').sha256, DIGEST);
+});
+
+test('the Worker and the iOS release tool agree on the bundle identifier', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const tool = await readFile(new URL('../../tool/ipa_metadata.py', import.meta.url), 'utf8');
+  assert.ok(tool.includes(`BUNDLE_ID = '${CHE_BUNDLE_ID}'`), 'tool/ipa_metadata.py must name the same bundle ID');
 });

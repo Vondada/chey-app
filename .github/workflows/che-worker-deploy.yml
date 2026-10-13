@@ -166,3 +166,37 @@ jobs:
           }
           throw new Error(`Live CHE did not confirm commit ${expected}`);
           JS
+
+      - name: Verify live SideStore install link
+        # SideStore names the app from the IPA URL's last path segment. The live
+        # link must end in the real bundle ID, and the IPA must be reachable.
+        run: |
+          node --input-type=module <<'JS'
+          const base = 'https://chey-app.henryjavoni.workers.dev';
+          const bundleId = 'com.cheyapp.chey';
+          const read = async (url, method = 'GET') => {
+            for (let attempt = 0; attempt < 6; attempt++) {
+              try {
+                const response = await fetch(url, { method, signal: AbortSignal.timeout(20000) });
+                return response;
+              } catch { /* retry a transient error */ }
+              await new Promise(resolve => setTimeout(resolve, 3000));
+            }
+            throw new Error(`Could not reach ${url}`);
+          };
+          const latestResponse = await read(`${base}/api/update/latest`);
+          const latest = await latestResponse.json();
+          if (!latest.ok) {
+            console.log('No verified CHE iPhone release is published yet; nothing to check.');
+            process.exit(0);
+          }
+          const ipaUrl = new URL(new URL(latest.sidestore_install_url).searchParams.get('url'));
+          const lastSegment = ipaUrl.pathname.split('/').pop();
+          if (lastSegment !== `${bundleId}.ipa`) throw new Error(`Install link ends in ${lastSegment}, not ${bundleId}.ipa`);
+          const source = await (await read(`${base}/api/update/source`)).json();
+          if (source.apps?.[0]?.bundleIdentifier !== bundleId) throw new Error('Update source names a different bundle ID');
+          const ipa = await read(ipaUrl.href, 'HEAD');
+          if (!ipa.ok) throw new Error(`IPA download returned ${ipa.status}`);
+          if (Number(ipa.headers.get('content-length')) !== Number(latest.size)) throw new Error('IPA size differs from the published size');
+          console.log(`Verified live install link for ${bundleId} ${latest.version} (${latest.build_number}), ${latest.size} bytes`);
+          JS

@@ -92,7 +92,7 @@ void main() {
       );
       expect(plan.stage, CheUpdateStage.installing);
       expect(plan.showProgress, isTrue);
-      expect(plan.action, CheUpdateAction.none);
+      expect(plan.action, CheUpdateAction.stopWaiting);
       expect(plan.spoken, contains('Waiting for SideStore'));
     });
 
@@ -127,7 +127,7 @@ void main() {
         fullNewer: true,
       );
       expect(plan.stage, CheUpdateStage.installed);
-      expect(plan.headline, 'CHE is updated');
+      expect(plan.headline, 'Update complete');
       expect(plan.detail, 'CHE 1.4.2, build 3800 is installed.');
     });
   });

@@ -99,6 +99,30 @@ and:
 Adding the CHE source once lets SideStore see the latest CHE version and older
 versions from the release history without visiting Codemagic.
 
+### Install links must end in the bundle ID
+
+SideStore names the app it is installing from the last path segment of the IPA
+URL, minus its extension. An install link that ended in the release tag
+(`…/che-ios-v1.4.1024480253-b3812328516001`) was named `che-ios-v1.4`, and
+SideStore refused it: "The bundle ID 'com.cheyapp.chey' does not match the one
+specified by the source ('che-ios-v1.4')". The install link therefore ends in
+`/com.cheyapp.chey.ipa`, which the Worker serves for the same release:
+
+`https://chey-app.henryjavoni.workers.dev/api/update/download/<tag>/com.cheyapp.chey.ipa`
+
+The bare tag URL still downloads the IPA for older builds.
+
+Guards against a repeat:
+
+- `tool/ipa_metadata.py verify` runs before every publish. It refuses an IPA
+  whose `CFBundleIdentifier`, version or build differs from the release.
+- Each release records `bundle_id=com.cheyapp.chey` in its CHE-META block. The
+  Worker never advertises a release that names another bundle ID.
+- `server/cloudflare/mobile_update.test.mjs` fails if the install link stops
+  ending in the bundle ID, or if the Worker and `tool/ipa_metadata.py` disagree.
+- The Worker deploy workflow checks the live install link, the source's bundle
+  ID and the IPA's reachable size after every deploy.
+
 ## One-time Codemagic setup
 
 The existing personal Codemagic app must remain connected to
