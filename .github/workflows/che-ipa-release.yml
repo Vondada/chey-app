@@ -77,6 +77,17 @@ jobs:
             --jq '.[] | select(.name == "CHE-unsigned.ipa") | .digest' | head -1)
           expected="sha256:$(jq -r .sha256 ipa/CHE-update.json)"
           [[ "$remote" == "$expected" ]] || { echo '::error::IPA digest mismatch; release not published'; exit 1; }
+          # SideStore installs from a URL named for the bundle ID, so the release
+          # also carries the same bytes under that name. GitHub serves it directly.
+          install_remote=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+            --jq '.[] | select(.name == "com.cheyapp.chey.ipa") | .digest' | head -1)
+          if [[ -z "$install_remote" ]]; then
+            cp ipa/CHE-unsigned.ipa ipa/com.cheyapp.chey.ipa
+            gh release upload "$tag" ipa/com.cheyapp.chey.ipa
+            install_remote=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+              --jq '.[] | select(.name == "com.cheyapp.chey.ipa") | .digest' | head -1)
+          fi
+          [[ "$install_remote" == "$expected" ]] || { echo '::error::Install copy digest mismatch; release not published'; exit 1; }
           jq -n --rawfile body ipa/CHE-update.md \
             '{draft:false, make_latest:"true", body:$body}' \
             | gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" --input - >/dev/null

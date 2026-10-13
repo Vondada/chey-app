@@ -65,7 +65,7 @@ test('SideStore source keeps verified build history with only current schema fie
   assert.ok(Array.isArray(source.apps[0].permissions));
 });
 
-test('SideStore gets the verified direct release IPA, not the streaming Worker relay', () => {
+test('without a bundle-named copy, SideStore falls back to the verified Worker relay', () => {
   const update = releaseToUpdate(release, 'https://che.example');
   assert.equal(update.download_url, 'https://che.example/api/update/download/che-ios-v1.4.5-b1200001/com.cheyapp.chey.ipa');
   assert.equal(update.asset_download_url, 'https://downloads.example/CHE-unsigned.ipa');
@@ -114,7 +114,7 @@ test('download streams the exact IPA with iOS-friendly headers', async () => {
     if (String(url) === 'https://downloads.example/CHE-unsigned.ipa') {
       return new Response('IPA', {
         status: 200,
-        headers: { 'Content-Length': '3', 'Accept-Ranges': 'bytes' },
+        headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': '3', 'Accept-Ranges': 'bytes' },
       });
     }
     throw new Error('unexpected URL ' + url);
@@ -262,7 +262,9 @@ test('the install link and the bare tag both download the IPA; only the install 
   const fetcher = async (url) => {
     if (String(url).includes('/releases?')) return new Response(JSON.stringify([release]), { status: 200 });
     if (String(url).includes('/releases/tags/')) return new Response(JSON.stringify(release), { status: 200 });
-    if (String(url) === 'https://downloads.example/CHE-unsigned.ipa') return new Response('IPA', { status: 200 });
+    if (String(url) === 'https://downloads.example/CHE-unsigned.ipa') {
+      return new Response('IPA', { status: 200, headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': '3' } });
+    }
     throw new Error('unexpected URL ' + url);
   };
   const install = await handleMobileUpdateRequest(
@@ -299,4 +301,97 @@ test('the Worker and the iOS release tool agree on the bundle identifier', async
   const { readFile } = await import('node:fs/promises');
   const tool = await readFile(new URL('../../tool/ipa_metadata.py', import.meta.url), 'utf8');
   assert.ok(tool.includes(`BUNDLE_ID = '${CHE_BUNDLE_ID}'`), 'tool/ipa_metadata.py must name the same bundle ID');
+});
+
+const RELAY_URL = `https://che.example/api/update/download/che-ios-v1.4.5-b1200001/${CHE_BUNDLE_ID}.ipa`;
+const DIRECT_URL = `https://github.com/Vondada/chey-app/releases/download/che-ios-v1.4.5-b1200001/${CHE_BUNDLE_ID}.ipa`;
+const bundleCopy = {
+  name: `${CHE_BUNDLE_ID}.ipa`,
+  state: 'uploaded',
+  digest: `sha256:${DIGEST}`,
+  size: 3,
+  browser_download_url: DIRECT_URL,
+};
+const withBundleCopy = { ...release, assets: [...release.assets, bundleCopy] };
+
+test('SideStore downloads the byte-identical bundle-named release asset straight from GitHub', () => {
+  const update = releaseToUpdate(withBundleCopy, 'https://che.example');
+  assert.equal(update.download_url, DIRECT_URL);
+  assert.equal(update.ipa_download_url, DIRECT_URL);
+  assert.equal(new URL(update.sidestore_install_url).searchParams.get('url'), DIRECT_URL);
+  assert.equal(new URL(DIRECT_URL).pathname.split('/').pop(), `${CHE_BUNDLE_ID}.ipa`);
+});
+
+test('the bundle-named copy is used only when it is the same file as the verified IPA', () => {
+  const cases = {
+    'different digest': { ...bundleCopy, digest: `sha256:${'b'.repeat(64)}` },
+    'different size': { ...bundleCopy, size: 4 },
+    'not uploaded': { ...bundleCopy, state: 'starter' },
+    'no digest': { ...bundleCopy, digest: '' },
+    'another host': { ...bundleCopy, browser_download_url: `https://evil.example/${CHE_BUNDLE_ID}.ipa` },
+    'another release': { ...bundleCopy, browser_download_url: DIRECT_URL.replace('b1200001', 'b1200002') },
+  };
+  for (const [label, asset] of Object.entries(cases)) {
+    const update = releaseToUpdate({ ...release, assets: [...release.assets, asset] }, 'https://che.example');
+    assert.equal(update.download_url, RELAY_URL, label);
+  }
+});
+
+// Reproduces the phone's path: SideStore's download went through the Worker,
+// and GitHub's signed URL refuses HEAD. The relay used to pass that 401 on.
+test('a HEAD on the relay is answered from GitHub, so a refused HEAD cannot fail the install', async () => {
+  const methods = [];
+  const fetcher = async (url, init = {}) => {
+    if (String(url).includes('/releases/tags/')) return new Response(JSON.stringify(release), { status: 200 });
+    methods.push(init.method);
+    if (init.method === 'HEAD') return new Response(null, { status: 401 });
+    return new Response('IPA', {
+      status: 200,
+      headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': '3' },
+    });
+  };
+  const head = await handleMobileUpdateRequest(new Request(RELAY_URL, { method: 'HEAD' }), {}, fetcher);
+  assert.equal(head.status, 200);
+  assert.equal(head.headers.get('Content-Length'), '3');
+  assert.equal(await head.text(), '');
+  assert.deepEqual(methods, ['GET']);
+});
+
+test('the relay refuses an upstream body that is the wrong size, an error page or unlabelled', async () => {
+  const relay = (upstream) => handleMobileUpdateRequest(
+    new Request(RELAY_URL),
+    {},
+    async (url) => (String(url).includes('/releases/tags/')
+      ? new Response(JSON.stringify(release), { status: 200 })
+      : upstream()),
+  );
+  const short = await relay(() => new Response('IP', {
+    status: 200,
+    headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': '2' },
+  }));
+  assert.equal(short.status, 502);
+  const page = await relay(() => new Response('<html>denied</html>', {
+    status: 200,
+    headers: { 'Content-Type': 'text/html', 'Content-Length': '18' },
+  }));
+  assert.equal(page.status, 502);
+  const unlabelled = await relay(() => new Response('IPA', { status: 200 }));
+  assert.equal(unlabelled.status, 502);
+});
+
+test('a range request passes through with the full-size Content-Range', async () => {
+  const response = await handleMobileUpdateRequest(
+    new Request(RELAY_URL, { headers: { Range: 'bytes=0-1' } }),
+    {},
+    async (url, init = {}) => {
+      if (String(url).includes('/releases/tags/')) return new Response(JSON.stringify(release), { status: 200 });
+      assert.equal(init.headers.Range, 'bytes=0-1');
+      return new Response('IP', {
+        status: 206,
+        headers: { 'Content-Type': 'application/octet-stream', 'Content-Range': 'bytes 0-1/3', 'Content-Length': '2' },
+      });
+    },
+  );
+  assert.equal(response.status, 206);
+  assert.equal(response.headers.get('Content-Range'), 'bytes 0-1/3');
 });

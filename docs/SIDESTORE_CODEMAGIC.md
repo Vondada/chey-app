@@ -106,11 +106,25 @@ URL, minus its extension. An install link that ended in the release tag
 (`…/che-ios-v1.4.1024480253-b3812328516001`) was named `che-ios-v1.4`, and
 SideStore refused it: "The bundle ID 'com.cheyapp.chey' does not match the one
 specified by the source ('che-ios-v1.4')". The install link therefore ends in
-`/com.cheyapp.chey.ipa`, which the Worker serves for the same release:
+`/com.cheyapp.chey.ipa`.
 
-`https://chey-app.henryjavoni.workers.dev/api/update/download/<tag>/com.cheyapp.chey.ipa`
+Where the IPA comes from:
 
-The bare tag URL still downloads the IPA for older builds.
+- **Direct (preferred):** each release also carries a byte-identical copy named
+  `com.cheyapp.chey.ipa`, uploaded by `che-ipa-release.yml`. The install link
+  points at that GitHub asset, so the 43 MB archive never passes through the
+  Worker. The Worker uses the direct link only when the copy has the same SHA-256
+  and size as the verified IPA, and GitHub's own URL for that release.
+- **Worker relay (fallback):** `https://chey-app.henryjavoni.workers.dev/api/update/download/<tag>/com.cheyapp.chey.ipa`.
+  It streams the same asset and refuses any upstream reply whose size or type is
+  wrong. A HEAD is answered from a GET, because GitHub's signed URL returns 401 to HEAD.
+- The bare tag URL still downloads the IPA for older builds.
+
+Why the relay was not enough on its own: the phone's download was reported as
+"Archive appears to be corrupt". Replaying the relay against the real release
+returned the exact bytes (SHA-256 `6f2ebeb8…d926`, 42,950,006 bytes), and the
+IPA itself passes `unzip -t`, so the cause on the phone is not yet proven.
+Serving the bytes straight from GitHub removes the relay from that path.
 
 Guards against a repeat:
 
@@ -119,9 +133,11 @@ Guards against a repeat:
 - Each release records `bundle_id=com.cheyapp.chey` in its CHE-META block. The
   Worker never advertises a release that names another bundle ID.
 - `server/cloudflare/mobile_update.test.mjs` fails if the install link stops
-  ending in the bundle ID, or if the Worker and `tool/ipa_metadata.py` disagree.
-- The Worker deploy workflow checks the live install link, the source's bundle
-  ID and the IPA's reachable size after every deploy.
+  ending in the bundle ID, if the direct copy is used when it is not identical,
+  or if a HEAD or a wrong-size reply can pass as the IPA.
+- The Worker deploy workflow downloads the live install link and the relay in
+  full, then checks the SHA-256, the size and the ZIP signature against the
+  published release. A HEAD or a length check alone is not enough.
 
 ## One-time Codemagic setup
 

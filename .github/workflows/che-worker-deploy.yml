@@ -169,34 +169,42 @@ jobs:
 
       - name: Verify live SideStore install link
         # SideStore names the app from the IPA URL's last path segment. The live
-        # link must end in the real bundle ID, and the IPA must be reachable.
+        # link must end in the real bundle ID, and both download paths must
+        # deliver the published bytes. A HEAD or a length check is not enough.
         run: |
           node --input-type=module <<'JS'
+          import { createHash } from 'node:crypto';
           const base = 'https://chey-app.henryjavoni.workers.dev';
           const bundleId = 'com.cheyapp.chey';
-          const read = async (url, method = 'GET') => {
+          const read = async (url, timeoutMs = 20000) => {
             for (let attempt = 0; attempt < 6; attempt++) {
               try {
-                const response = await fetch(url, { method, signal: AbortSignal.timeout(20000) });
-                return response;
+                return await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
               } catch { /* retry a transient error */ }
               await new Promise(resolve => setTimeout(resolve, 3000));
             }
             throw new Error(`Could not reach ${url}`);
           };
-          const latestResponse = await read(`${base}/api/update/latest`);
-          const latest = await latestResponse.json();
+          const latest = await (await read(`${base}/api/update/latest`)).json();
           if (!latest.ok) {
             console.log('No verified CHE iPhone release is published yet; nothing to check.');
             process.exit(0);
           }
-          const ipaUrl = new URL(new URL(latest.sidestore_install_url).searchParams.get('url'));
-          const lastSegment = ipaUrl.pathname.split('/').pop();
+          const installUrl = new URL(new URL(latest.sidestore_install_url).searchParams.get('url'));
+          const lastSegment = installUrl.pathname.split('/').pop();
           if (lastSegment !== `${bundleId}.ipa`) throw new Error(`Install link ends in ${lastSegment}, not ${bundleId}.ipa`);
           const source = await (await read(`${base}/api/update/source`)).json();
           if (source.apps?.[0]?.bundleIdentifier !== bundleId) throw new Error('Update source names a different bundle ID');
-          const ipa = await read(ipaUrl.href, 'HEAD');
-          if (!ipa.ok) throw new Error(`IPA download returned ${ipa.status}`);
-          if (Number(ipa.headers.get('content-length')) !== Number(latest.size)) throw new Error('IPA size differs from the published size');
+          const verifyIpa = async (url, label) => {
+            const response = await read(url, 240000);
+            if (!response.ok) throw new Error(`${label} returned ${response.status}`);
+            const bytes = Buffer.from(await response.arrayBuffer());
+            if (bytes.length !== Number(latest.size)) throw new Error(`${label} is ${bytes.length} bytes, published ${latest.size}`);
+            if (createHash('sha256').update(bytes).digest('hex') !== latest.sha256) throw new Error(`${label} SHA-256 differs from the published release`);
+            if (bytes.subarray(0, 4).toString('hex') !== '504b0304') throw new Error(`${label} is not a ZIP archive`);
+            console.log(`${label}: verified ${bytes.length} bytes`);
+          };
+          await verifyIpa(installUrl.href, 'SideStore install download');
+          await verifyIpa(`${base}/api/update/download/${encodeURIComponent(latest.id)}/${bundleId}.ipa`, 'Worker relay download');
           console.log(`Verified live install link for ${bundleId} ${latest.version} (${latest.build_number}), ${latest.size} bytes`);
           JS

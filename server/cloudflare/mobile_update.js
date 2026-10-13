@@ -16,6 +16,10 @@ export const CHE_BUNDLE_ID = 'com.cheyapp.chey';
 // The install URL therefore ends in the bundle ID itself.
 export const INSTALL_FILE_NAME = `${CHE_BUNDLE_ID}.ipa`;
 const INSTALL_SEGMENT = `/${INSTALL_FILE_NAME}`;
+// Release publishing also attaches a byte-identical copy under the bundle ID
+// name. SideStore downloads that asset straight from GitHub, so the IPA no
+// longer has to stream through this Worker.
+const RELEASE_BASE = `https://github.com/${REPO}/releases/download/`;
 const ICON_URL = 'https://raw.githubusercontent.com/Vondada/chey-app/main/assets/avatars/che.png';
 
 const privacy = {
@@ -79,6 +83,17 @@ function ipaAsset(release) {
   ) || null;
 }
 
+// The bundle-named copy counts only when it is the same file as the verified
+// IPA: same digest, same size, and GitHub's own download URL for this release.
+function directInstallUrl(release, ipa) {
+  const install = (release?.assets || []).find((asset) => asset?.name === INSTALL_FILE_NAME);
+  if (!install || install.state !== 'uploaded') return '';
+  if (String(install.digest || '').toLowerCase() !== String(ipa.digest || '').toLowerCase()) return '';
+  if (Number(install.size || 0) !== Number(ipa.size || 0)) return '';
+  const expected = `${RELEASE_BASE}${release.tag_name}/${INSTALL_FILE_NAME}`;
+  return String(install.browser_download_url || '') === expected ? expected : '';
+}
+
 export function releaseToUpdate(release, origin) {
   const asset = ipaAsset(release);
   if (!asset) return null;
@@ -102,7 +117,10 @@ export function releaseToUpdate(release, origin) {
   if (metaSize > 0 && metaSize !== Number(asset.size || 0)) return null;
   const commit = String(meta.commit || release?.target_commitish || '').trim();
   const shorebirdBase = String(meta.shorebird_base || '').toLowerCase() === 'true';
-  const downloadUrl = `${origin}/api/update/download/${encodeURIComponent(tag)}${INSTALL_SEGMENT}`;
+  const relayUrl = `${origin}/api/update/download/${encodeURIComponent(tag)}${INSTALL_SEGMENT}`;
+  // SideStore should fetch the verified release IPA directly, rather than
+  // re-streaming ~43 MB through a Worker. The Worker relay stays as fallback.
+  const downloadUrl = directInstallUrl(release, asset) || relayUrl;
   return {
     id: tag,
     tag,
@@ -112,9 +130,6 @@ export function releaseToUpdate(release, origin) {
     build_date: String(release?.published_at || release?.created_at || ''),
     ipa_download_url: downloadUrl,
     download_url: downloadUrl,
-    // SideStore should fetch the verified public release IPA directly, rather
-    // than re-streaming a ~43 MB archive through a Cloudflare Worker. The
-    // Worker relay remains available for CHE's own stable update endpoints.
     asset_download_url: String(asset.browser_download_url || ''),
     sha256: sha,
     size: Number(asset.size || meta.size || 0),
@@ -257,19 +272,39 @@ export function isMobileUpdatePath(path) {
     || /^\/api\/update\/download\/(?:latest|che-ios-v[A-Za-z0-9.+_-]+-b[0-9]+)(?:\/com\.cheyapp\.chey\.ipa)?$/.test(path);
 }
 
+// Full size of the IPA that the upstream response carries, or null when unknown.
+function servedIpaBytes(upstream) {
+  if (upstream.status === 206) {
+    const total = /\/(\d+)$/.exec(upstream.headers.get('Content-Range') || '');
+    return total ? Number(total[1]) : null;
+  }
+  const length = upstream.headers.get('Content-Length') || '';
+  return /^\d+$/.test(length) ? Number(length) : null;
+}
+
 async function downloadRelease(request, release, fetcher = fetch, fileName = IPA_NAME) {
   const asset = ipaAsset(release);
   if (!asset?.browser_download_url) return json({ detail: 'CHE IPA is not available.' }, 404);
   const upstreamHeaders = {};
   const range = request.headers.get('Range');
   if (range) upstreamHeaders.Range = range;
+  // GitHub answers HEAD on its signed download URL with 401, so HEAD is read
+  // with GET and its body is dropped. Nothing is trusted from a HEAD response.
   const upstream = await fetcher(asset.browser_download_url, {
-    method: request.method === 'HEAD' ? 'HEAD' : 'GET',
+    method: 'GET',
     headers: upstreamHeaders,
     redirect: 'follow',
   });
   if (!upstream.ok && upstream.status !== 206) {
+    await upstream.body?.cancel();
     return json({ detail: `CHE IPA download failed with ${upstream.status}.` }, 502, 'no-store');
+  }
+  // Only the exact published archive is served. An error page or a truncated
+  // or different-sized body is refused, never handed to SideStore as the IPA.
+  const type = upstream.headers.get('Content-Type') || '';
+  if (!/^application\/(octet-stream|zip)/i.test(type) || servedIpaBytes(upstream) !== Number(asset.size)) {
+    await upstream.body?.cancel();
+    return json({ detail: 'CHE IPA download did not match the published release. The installed build is unchanged.' }, 502, 'no-store');
   }
   const headers = new Headers();
   headers.set('Content-Type', 'application/octet-stream');
@@ -279,10 +314,11 @@ async function downloadRelease(request, release, fetcher = fetch, fileName = IPA
     const value = upstream.headers.get(name);
     if (value) headers.set(name, value);
   }
-  return new Response(request.method === 'HEAD' ? null : upstream.body, {
-    status: upstream.status,
-    headers,
-  });
+  if (request.method === 'HEAD') {
+    await upstream.body?.cancel();
+    return new Response(null, { status: upstream.status, headers });
+  }
+  return new Response(upstream.body, { status: upstream.status, headers });
 }
 
 export async function handleMobileUpdateRequest(request, env = {}, fetcher = fetch) {
