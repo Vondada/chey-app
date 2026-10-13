@@ -46,7 +46,7 @@ Future<String?> confirmAndInstallCheUpdate(
   );
   if (confirmed != true || !context.mounted) return null;
   HapticFeedback.mediumImpact();
-  final opened = await controller.installFullBuild(target);
+  final opened = await controller.installFullBuild(target, rollback: rollback);
   if (opened) {
     return 'SideStore is open. Confirm the install there. CHE checks the result the next time it opens.';
   }

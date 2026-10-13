@@ -151,11 +151,10 @@ class CheUpdateController extends ChangeNotifier {
 
   /// Hands a full IPA to SideStore. Returns true only when SideStore opened.
   /// The install itself is confirmed later, from the running build.
-  Future<bool> installFullBuild(CheMobileUpdateInfo target) async {
-    final current = installed;
-    // Only a build newer than the running one goes to SideStore. An unknown
-    // running build is not guessed at, so nothing is offered or installed on a guess.
-    if (current == null || !target.isNewerThan(current)) return false;
+  Future<bool> installFullBuild(CheMobileUpdateInfo target, {bool rollback = false}) async {
+    if (!canHandOffInstall(installed: installed, target: target, rollback: rollback)) {
+      return false;
+    }
     installTarget = target;
     verifiedLabel = null;
     try {

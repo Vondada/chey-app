@@ -66,10 +66,12 @@ export function preferredElevenLabsKeyStatus(env = {}, now = Date.now()) {
 // later would otherwise stay invisible to it until the object restarts.
 export const MARY_SECRET_NAMES = ['ELEVENLABS_API_KEY', 'CHE_ELEVENLABS_VOICE_ID', 'CHE_ELEVENLABS_PREFERRED', 'CHE_ELEVENLABS_MODEL', 'CHE_VOICE_SPEED'];
 
+// An absent setting is sent as an empty value, not left out. A removed secret
+// then overrides the stale captured env instead of being inherited from it.
 export function marySecretsFrom(env = {}) {
   const out = {};
   for (const name of MARY_SECRET_NAMES) {
-    if (env[name] !== undefined && env[name] !== null && String(env[name]) !== '') out[name] = String(env[name]);
+    out[name] = env[name] === undefined || env[name] === null ? '' : String(env[name]);
   }
   return out;
 }
@@ -149,6 +151,9 @@ export async function preferredElevenLabsSpeech(env = {}, text, fetcher = fetch)
         'Content-Type': response.headers.get('content-type') || 'audio/mpeg',
         'Cache-Control': 'no-store',
         'X-CHE-Voice': 'elevenlabs-mary',
+        // A successful Mary clip is her status too, so the phone can clear an
+        // earlier rate-limit or error in its diagnostics.
+        'X-CHE-Mary': 'healthy',
       },
     });
   } catch (_) {

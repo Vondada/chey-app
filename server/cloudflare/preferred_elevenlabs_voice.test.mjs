@@ -180,10 +180,18 @@ test('a stale captured env reports Mary as not set up, and the live secrets fix 
   assert.equal(preferredElevenLabsKeyStatus(withMarySecrets(stale, live), Date.now()).status, 'not tried yet');
 });
 
-test('only the Mary settings are copied, and an empty value is left out', () => {
-  const copied = marySecretsFrom({ ...env, ELEVENLABS_API_KEY: '', GROQ_API_KEY: 'do-not-copy', CHE_VOICE_SPEED: '' });
-  assert.deepEqual(Object.keys(copied).sort(), ['CHE_ELEVENLABS_PREFERRED', 'CHE_ELEVENLABS_VOICE_ID'].sort());
+test('only the Mary settings are copied, and an absent one is sent empty', () => {
+  const copied = marySecretsFrom({ ...env, ELEVENLABS_API_KEY: '', GROQ_API_KEY: 'do-not-copy' });
+  assert.deepEqual(Object.keys(copied).sort(), ['CHE_ELEVENLABS_MODEL', 'CHE_ELEVENLABS_PREFERRED', 'CHE_ELEVENLABS_VOICE_ID', 'CHE_VOICE_SPEED', 'ELEVENLABS_API_KEY']);
+  assert.equal(copied.ELEVENLABS_API_KEY, '');
+  assert.equal(copied.CHE_VOICE_SPEED, '');
   assert.equal(copied.GROQ_API_KEY, undefined);
+});
+
+test('a removed Mary setting is not inherited from a stale captured env', () => {
+  const stale = { CHE_ELEVENLABS_PREFERRED: '1', ELEVENLABS_API_KEY: 'sk_old_key_value', CHE_ELEVENLABS_VOICE_ID: env.CHE_ELEVENLABS_VOICE_ID };
+  assert.equal(preferredElevenLabsReady(stale), true);
+  assert.equal(preferredElevenLabsReady(withMarySecrets(stale, marySecretsFrom({}))), false);
 });
 
 test('the merged env leaves the base env unchanged and no snapshot means the base env', () => {

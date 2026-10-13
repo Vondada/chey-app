@@ -35,6 +35,23 @@ class CheInstalledBuild {
   }
 }
 
+/// Whether SideStore may be handed this build. A normal update is only ever a
+/// newer build than the running one. A rollback is the owner's own choice of an
+/// earlier verified build, so it may be older, but never the running build. An
+/// unknown running build is never guessed at, so nothing is handed off.
+bool canHandOffInstall({
+  required CheInstalledBuild? installed,
+  required CheMobileUpdateInfo target,
+  bool rollback = false,
+}) {
+  final current = installed;
+  if (current == null) return false;
+  if (rollback) {
+    return !target.isNewerThan(current) && target.buildNumber != current.build;
+  }
+  return target.isNewerThan(current);
+}
+
 class CheMobileUpdateInfo {
   const CheMobileUpdateInfo({
     required this.version,
