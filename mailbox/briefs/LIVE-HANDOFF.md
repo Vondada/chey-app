@@ -66,6 +66,52 @@ Then, on GitHub:
 
 ## 2. Current position (updated by: Claude, 2026-10-13)
 
+**Claude, 2026-10-13 (owner: "Yes", go ahead and merge). PR #287 MERGED as squash `02edc38` on `main`. Worker DEPLOYED and verified from logs. Shorebird Patch 1 PUBLISHED. Phone NOT verified. Follow-up PR #288 open.**
+- **Merge:** `expectedHeadSha` `95622e6`. Required checks green on that head:
+  - `CHE UI Analyze` 38480067225;
+  - `Check CHE Flutter client` 38480067397 (`analyze`, Worker syntax and unit tests).
+  - `Workers Builds` failed, as on every PR. It is not gating.
+  - The three Codex threads were answered and resolved.
+- **Worker deploy, verified:** `Deploy CHE Worker` 38480695880 succeeded at 22:53 UTC. Steps passed:
+  - Worker tests;
+  - the ElevenLabs credential check;
+  - key sync;
+  - Deploy;
+  - "Verify live deployed commit";
+  - "Verify live SideStore install link";
+  - the new "Verify live Mary voice settings". Its probe read `top_level`, `live` and `captured` all `preferred: true`, `key_present: true`, `voice_id_format_ok: true`, `ready: true`, `paused: false`, status "not tried yet".
+- **Mary, root cause still NOT proven:**
+  - Before this change, the Keys row said "Not set up" only when the voice Durable Object's env failed `preferredElevenLabsReady`, meaning one of opt-in, key or voice ID was missing. Stored keys never override env values.
+  - The deploy restarted the object, so `captured` was already fresh. The stale-env theory can no longer be confirmed or ruled out.
+  - Now the live settings are passed in on every voice and key request, and the deploy fails if the live Worker cannot see them.
+  - Real Mary audio has NOT been heard: no paid call was made from here.
+- **Shorebird, verified from logs:** `CHE Shorebird` 38480695939 printed "✅ Published Patch 1!" at 23:08 UTC:
+  - release `1.4.1024603585+3828969674601`, the IPA the owner says is installed;
+  - iOS arm64, 2.10 MB, Stable track.
+  - NOT verified on the phone.
+- **Follow-up PR #288 (OPEN, head `624d6c5`):** after the merge, `Check CHE Flutter client` 38480695919 on `main` failed one Worker test, `truth_layer.test.mjs:211`. It passed on the PR head and in the deploy's run of the same commit.
+  - **Root cause, reproduced:** `sanitizeOwnerText` (`che_errors.js`) replaced any owner reply over 120 characters containing `401`, `402`, `404`, `429`, `sk-`, `AIza` or `Bearer ` anywhere.
+  - The random job ID `e124299b` contains "429", so the coding-job reply became "I couldn't complete that request just now".
+  - **Production bug too:** prices (`$1,429`), addresses (`404 Main Street`) and words (`task-by-task`) did the same.
+  - **Fix:**
+    - a status code counts only beside an HTTP word or before its reason phrase;
+    - a key prefix counts only at a word start.
+    - A Codex P2 (`429: Too Many Requests` form) is fixed in `624d6c5`.
+  - Worker suite 899/899.
+  - The branch merged `main` (a merge commit, no force push). Its diff is only these two files.
+- **`Workers Builds: chey-app` correction:** it fails on every PR branch (#283, #285, #286, #287, #288) and PASSES on `main` (`cc06d55`, `02edc38`). An earlier note said it fails on `main` too; that was wrong. The #287 description is corrected. The cause is in the dashboard's preview-branch build. Its log is not readable from this sandbox.
+- **Owner, on the iPhone after the patch:**
+  - Close CHE fully in the app switcher and open it twice. The patch downloads on the first start and applies on the next.
+  - Mailbox → Keys: ElevenLabs should read "Not used yet" or "Working", and selecting it speaks the status instead of opening the add-key form.
+  - Say a sentence or use Read This, then check the voice diagnostics. Mary (preferred), Playback engine, and the fallback reason should name the real voice.
+  - Updates: the Update button should be gone for the installed `1.4.1024603585`.
+  - Open the notifications list. The priority banner should clear on return.
+- **If the Update button still shows after the patch and a full reopen:** the native `appVersion` reply on this IPA reports an older build. That needs a native fix and a new IPA, not a Dart patch.
+- **Still open:**
+  - the stale draft release `che-ios-v1.4.10-b3768024821801` (deleting it needs the owner's yes);
+  - the `Workers Builds` dashboard setting (owner's call);
+  - whether "Update CHE" (the code-proposal card) is the button the owner meant.
+
 **Claude, 2026-10-13 (review follow-up on PR #287). Head `d1cfdda`, fast-forward. NOT merged. CI running.**
 - `d1cfdda` answers three Codex P1/P2 findings. (1) A rollback to an earlier verified build was blocked by the install guard; `canHandOffInstall` now allows an older build only for a rollback, never the running build. (2) A successful Mary clip sends `X-CHE-Mary: healthy`. (3) A removed Mary setting is sent empty, so it overrides the stale env. Each finding has a reply on its thread.
 - `Workers Builds: chey-app` is red on each head. It is the Cloudflare Git integration check, non-gating, and failed on earlier PRs too. The fix is a dashboard setting (the build root), so it is the owner's call. A comment on the PR says so.
