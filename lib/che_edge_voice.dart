@@ -53,7 +53,7 @@ String cheVoiceEngineLabel(String? engine) => switch (engine) {
       'neural' => 'Server neural voice',
       'iphone-neural' => 'iPhone neural voice',
       'iphone-tts' => 'iPhone system voice',
-      _ => engine ?? '—',
+      _ => engine,
     };
 
 /// Mary's last known state, in words, for the diagnostics sheet.
