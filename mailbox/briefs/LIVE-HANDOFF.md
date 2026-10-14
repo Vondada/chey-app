@@ -66,6 +66,45 @@ Then, on GitHub:
 
 ## 2. Current position (updated by: Claude, 2026-10-13)
 
+**Claude, 2026-10-14 (owner: "integrate Fish Audio into CHE's existing voice system"). PR #289 MERGED as squash `7ded258`. Worker DEPLOYED (version `1f29b6f7`). Fish NOT active: the owner has not added the Fish secrets. No real Fish call has been made.**
+- **What it does:**
+  - **Worker module:** `server/cloudflare/fish_audio_voice.js`.
+  - **Voice order:** Fish is tried first on both iPhone voice routes (`/api/voice/edge`, `/api/voice/synthesize`). After it come Mary, Edge Ava, the free server voices and the iPhone voice.
+  - **Models:** `s2.1-pro-free` for everyday speech and `drama-3` for stories and narration. Both are settings: `CHE_FISH_MODEL` and `CHE_FISH_EXPRESSIVE_MODEL`.
+  - **Request:** `POST https://api.fish.audio/v1/tts`, Bearer key and `model` header, matching the official Python SDK 1.3.0. The docs site and API are blocked from the sandbox.
+  - **Caching:** a bounded audio cache in Durable Object storage (80 clips or 24 MB), plus shared synthesis for identical requests already in flight.
+  - **Failure handling:** each failure type rests Fish for a set time, and measured slowness rests it too (`CHE_FISH_MAX_LATENCY_MS`, default 4 s).
+  - **Drama 3 cap:** a daily character cap, reserved before each call (`CHE_FISH_EXPRESSIVE_DAILY_CHARS`, default 20,000).
+  - **Owner-only:** stories and character voices (`CHE_FISH_CHARACTER_VOICES`, by name).
+  - **Pronunciation:** CHE is said "Chay" on every voice.
+  - **Keys:** a read-only "Fish Audio (CHE voice)" row.
+  - **Status probe:** `/api/voice/status` has a `fish` block (booleans and words only).
+- **App:**
+  - A story request (tell, read or narrate a story) sends `purpose: story` and waits up to 30 s.
+  - Diagnostics show "CHE voice (Fish Audio)" and the reason Fish didn't speak.
+  - The Updates screen always shows `Installed: CHE <version>, build <build>, patch <n>`.
+- **YouTube:** `che-video-render.yml` narrates with Fish Drama 3 when set up, cached by text, model and voice. It falls back to Piper. `CHE_FISH_NARRATION=0` or `CHE_FISH_PREFERRED=0` keeps narration on Piper.
+- **Deploy:**
+  - Syncs the Fish settings to Worker secrets. `CHE_FISH_PREFERRED` defaults to 1, but takes effect only with a key and a voice.
+  - "Verify live Fish voice settings" checks the live Worker.
+  - One real, cached measurement (short reply plus narration) is saved as the private artifact `che-fish-voice-samples`.
+  - `CHE_FISH_PREFERRED=0` stops every Fish call.
+- **Verified:**
+  - Worker 927/927 and renderer 5/5.
+  - `CHE UI Analyze` and `Check CHE Flutter client` green on `71e6327`.
+  - `Deploy CHE Worker` 38492241711 attempt 2 passed every step. The live Fish probe read `key_present: false`, `voice_id_format_ok: false`, status "not set up". Mary was ready.
+- **Deploy note:** attempt 1 deployed fine, but "Verify live Mary voice settings" got no answer from `/api/voice/status` for 20 s. Attempt 2, same code, passed.
+  - Likely cause: Durable Object version skew right after the deploy. The default export calls the renamed `setVoiceSecrets`, and the object may still have been on the old code.
+  - Not proven: the probe does not print the HTTP status. If it recurs, print the status and lengthen the retry window.
+- **Shorebird, verified from logs:** `CHE Shorebird` 38492241658 printed "✅ Published Patch 2!".
+  - Release `1.4.1024603585+3828969674601`, iOS arm64 2.17 MB, Stable track.
+  - Shorebird warned that the patch shares only 89.5% of Dart code with the release, so parts may run slower.
+  - After two full restarts, the Updates screen should read "Installed: CHE 1.4.1024603585, build 3828969674601, patch 2."
+  - `Check CHE Flutter client` passed on `main` `7ded258`.
+- **Not verified:** a real Fish call, whether the account can use `s2.1-pro-free` and `drama-3` under those names, Fish audio on the iPhone, and quiet launch on the device.
+- **Owner action:** add the GitHub Actions secrets `FISH_API_KEY` and `CHE_FISH_VOICE_ID`, then re-run `Deploy CHE Worker`. `CHE_FISH_VOICE_ID` is the 32-character ID in the chosen voice's fish.audio URL. Its measurement step makes the first real call and keeps the two clips as an artifact.
+- **Next:** after the secrets, read "Measure Fish Audio voice" (HTTP, latency, MP3) before saying Fish works. If a model name is refused, set `CHE_FISH_MODEL` or `CHE_FISH_EXPRESSIVE_MODEL` as a repository variable.
+
 **Claude, 2026-10-14. PR #288 MERGED as squash `943499c` (reply-filter fix). Worker DEPLOYED and verified from logs.**
 - Merged with `expectedHeadSha` `624d6c5`, after all required checks were green on that head.
 - `Deploy CHE Worker` 38487887723 succeeded at 00:03 UTC. These steps passed:
