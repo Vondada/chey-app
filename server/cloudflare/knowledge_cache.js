@@ -75,11 +75,28 @@ export async function rememberKnowledge(storage, entry, now = Date.now()) {
   const key = String(entry.key || '').slice(0, 220);
   const answer = String(entry.answer || '').trim().slice(0, 12000);
   if (!key || !answer || SECRET.test(key) || !isSafeToStore(answer) || !isSafeToStore(entry.limitation || 'ok')) return null;
+  const source = String(entry.source || 'knowledge_cache').slice(0, 40);
+  const sources = (Array.isArray(entry.sources) ? entry.sources : [])
+    .map(String).filter((url) => /^https:\/\/[^\s/]+(?:\/[^\s]*)?$/i.test(url)).slice(0, 5);
+  // Only owner-attested facts or source-backed research become known answers.
+  // A fluent model answer and an unsourced research summary are NOT evidence.
+  const ownerAttested = source === 'owner_memory';
+  if (!ownerAttested && !(entry.verified === true && sources.length > 0)) return null;
+  const prior = await storage.get(entryKey(key));
+  const superseded = prior && prior.answer !== answer
+    ? [...(Array.isArray(prior.superseded) ? prior.superseded : []), {
+        answer: String(prior.answer || '').slice(0, 2000),
+        source: prior.source, sources: prior.sources || [],
+        verified_at: prior.verified_at, superseded_at: now,
+      }].slice(-5)
+    : Array.isArray(prior?.superseded) ? prior.superseded.slice(-5) : [];
   const record = {
     key,
     answer,
-    source: String(entry.source || 'knowledge_cache').slice(0, 40),
-    sources: (Array.isArray(entry.sources) ? entry.sources : []).map(String).filter((u) => /^https:\/\//.test(u)).slice(0, 5),
+    source,
+    sources,
+    verification_status: ownerAttested ? 'owner_attested' : 'source_verified',
+    superseded,
     limitation: String(entry.limitation || '').slice(0, 300),
     confidence: Math.max(0, Math.min(1, Number.isFinite(entry.confidence) ? entry.confidence : 0.9)),
     verified_at: now,
@@ -114,6 +131,12 @@ export async function recallKnowledge(storage, key, { now = Date.now(), minConfi
   if (!key || !storage?.get) return null;
   const record = await storage.get(entryKey(key));
   if (!record) return null;
+  // Legacy unsourced model/research cache entries must never be promoted to
+  // verified merely because they carry a high numeric confidence value.
+  if (record.verification_status !== 'owner_attested' &&
+      record.verification_status !== 'source_verified' &&
+      record.source !== 'owner_memory') return null;
+  if (record.verification_status === 'source_verified' && !record.sources?.length) return null;
   if (record.confidence < minConfidence) return null;
   if (Number.isFinite(record.expires_at) && now > record.expires_at) return null;
   if (record.volatile && now - record.verified_at > VOLATILE_TTL_MS) return null;
@@ -144,9 +167,9 @@ export async function markPureResearch(storage, question) {
 export async function cachedResearch(storage, question, research, now = Date.now()) {
   const key = researchKey(question);
   const hit = await recallKnowledge(storage, key, { now });
-  if (hit) return { summary: hit.answer, sources: hit.sources, limitation: hit.limitation || undefined, cached: true, verified_at: hit.verified_at };
+  if (hit && hit.verification_status === 'source_verified') return { summary: hit.answer, sources: hit.sources, limitation: hit.limitation || undefined, cached: true, verified_at: hit.verified_at };
   const fresh = await research();
-  if (fresh?.summary) {
+  if (fresh?.summary && Array.isArray(fresh.sources) && fresh.sources.some((s) => /^https:\/\//i.test(String(s)))) {
     const volatile = isVolatile(question);
     await rememberKnowledge(storage, {
       key,
@@ -154,6 +177,7 @@ export async function cachedResearch(storage, question, research, now = Date.now
       sources: fresh.sources,
       limitation: fresh.limitation,
       source: 'research_library',
+      verified: true,
       confidence: 0.85,
       ttl_ms: volatile ? VOLATILE_TTL_MS : RESEARCH_TTL_MS,
       volatile,
