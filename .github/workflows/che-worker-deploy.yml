@@ -61,7 +61,7 @@ jobs:
       CHE_FISH_EXPRESSIVE_MODEL: ${{ vars.CHE_FISH_EXPRESSIVE_MODEL || secrets.CHE_FISH_EXPRESSIVE_MODEL }}
       CHE_FISH_SPEED: ${{ vars.CHE_FISH_SPEED || secrets.CHE_FISH_SPEED }}
       CHE_FISH_CHARACTER_VOICES: ${{ secrets.CHE_FISH_CHARACTER_VOICES || vars.CHE_FISH_CHARACTER_VOICES }}
-      CHE_FISH_MAX_LATENCY_MS: ${{ vars.CHE_FISH_MAX_LATENCY_MS || secrets.CHE_FISH_MAX_LATENCY_MS }}
+      CHE_FISH_MAX_RTF: ${{ vars.CHE_FISH_MAX_RTF || secrets.CHE_FISH_MAX_RTF }}
       CHE_FISH_EXPRESSIVE_DAILY_CHARS: ${{ vars.CHE_FISH_EXPRESSIVE_DAILY_CHARS || secrets.CHE_FISH_EXPRESSIVE_DAILY_CHARS }}
       CHE_OPENAI_API_KEY: ${{ secrets.CHE_OPENAI_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -141,7 +141,7 @@ jobs:
         run: |
           node -e '
             const out = {};
-            for (const k of ["CHE_YOUTUBE_CLIENT_ID", "CHE_YOUTUBE_CLIENT_SECRET", "CHE_OAUTH_SECRET", "CHE_VIDEO_GEN_URL", "CHE_VIDEO_GEN_TOKEN", "CHE_VIDEO_RENDER_URL", "CHE_GITHUB_TOKEN", "ELEVENLABS_API_KEY", "CHE_ELEVENLABS_VOICE_ID", "CHE_ELEVENLABS_PREFERRED", "FISH_API_KEY", "CHE_FISH_VOICE_ID", "CHE_FISH_MODEL", "CHE_FISH_EXPRESSIVE_MODEL", "CHE_FISH_SPEED", "CHE_FISH_CHARACTER_VOICES", "CHE_FISH_MAX_LATENCY_MS", "CHE_FISH_EXPRESSIVE_DAILY_CHARS", "CHE_OPENAI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CHE_OLLAMA_URL", "CHE_OLLAMA_TOKEN", "XAI_API_KEY", "GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GITHUB_MODELS_TOKEN", "SAMBANOVA_API_KEY", "HF_TOKEN", "CHE_PGVECTOR_REST_URL", "CHE_PGVECTOR_TOKEN", "CHE_VMWARE_TRAINING_URL", "CHE_VMWARE_TRAINING_TOKEN", "CHE_HF_TRAINING_URL", "CHE_HF_TRAINING_TOKEN", "CHE_HF_TTS_URL", "CHE_COMPUTER_URL", "CHE_COMPUTER_TOKEN", "STRIPE_SECRET_KEY", "CHE_PICOVOICE_ACCESS_KEY", "CHE_PICOVOICE_KEYWORD_PPN_B64", "CHE_PICOVOICE_SENSITIVITY"]) {
+            for (const k of ["CHE_YOUTUBE_CLIENT_ID", "CHE_YOUTUBE_CLIENT_SECRET", "CHE_OAUTH_SECRET", "CHE_VIDEO_GEN_URL", "CHE_VIDEO_GEN_TOKEN", "CHE_VIDEO_RENDER_URL", "CHE_GITHUB_TOKEN", "ELEVENLABS_API_KEY", "CHE_ELEVENLABS_VOICE_ID", "CHE_ELEVENLABS_PREFERRED", "FISH_API_KEY", "CHE_FISH_VOICE_ID", "CHE_FISH_MODEL", "CHE_FISH_EXPRESSIVE_MODEL", "CHE_FISH_SPEED", "CHE_FISH_CHARACTER_VOICES", "CHE_FISH_MAX_RTF", "CHE_FISH_EXPRESSIVE_DAILY_CHARS", "CHE_OPENAI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CHE_OLLAMA_URL", "CHE_OLLAMA_TOKEN", "XAI_API_KEY", "GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GITHUB_MODELS_TOKEN", "SAMBANOVA_API_KEY", "HF_TOKEN", "CHE_PGVECTOR_REST_URL", "CHE_PGVECTOR_TOKEN", "CHE_VMWARE_TRAINING_URL", "CHE_VMWARE_TRAINING_TOKEN", "CHE_HF_TRAINING_URL", "CHE_HF_TRAINING_TOKEN", "CHE_HF_TTS_URL", "CHE_COMPUTER_URL", "CHE_COMPUTER_TOKEN", "STRIPE_SECRET_KEY", "CHE_PICOVOICE_ACCESS_KEY", "CHE_PICOVOICE_KEYWORD_PPN_B64", "CHE_PICOVOICE_SENSITIVITY"]) {
               if (process.env[k]) out[k] = process.env[k];
             }
             // An absent/cleared GitHub opt-in MUST revoke any previously live
@@ -304,7 +304,7 @@ jobs:
             }
             // Same voice, models and sample text → same measurement, reused
             // from the cache instead of paying for it again on every deploy.
-            const key = createHash("sha256").update(JSON.stringify(["v2", process.env.CHE_FISH_VOICE_ID, process.env.CHE_FISH_MODEL || "s2.1-pro-free", process.env.CHE_FISH_EXPRESSIVE_MODEL || "drama-3", process.env.CHE_FISH_SPEED || ""])).digest("hex").slice(0, 24);
+            const key = createHash("sha256").update(JSON.stringify(["v3", process.env.CHE_FISH_VOICE_ID, process.env.CHE_FISH_MODEL || "s2.1-pro-free", process.env.CHE_FISH_EXPRESSIVE_MODEL || "drama-3", process.env.CHE_FISH_SPEED || ""])).digest("hex").slice(0, 24);
             require("fs").appendFileSync(process.env.GITHUB_OUTPUT, `key=che-fish-probe-${key}\n`);
           '
 
@@ -312,7 +312,7 @@ jobs:
         if: steps.fishkey.outputs.key != ''
         uses: actions/cache/restore@v4
         with:
-          path: .che-fish-probe
+          path: che-fish-samples
           key: ${{ steps.fishkey.outputs.key }}
 
       - name: Measure Fish Audio voice (real call, short and long)
@@ -333,8 +333,9 @@ jobs:
           const { encodeMsgpack } = await lib('msgpack_encode.js');
           const { fishRequestBody, fishRefusalReason } = await lib('fish_audio_voice.js');
           const env = { FISH_API_KEY: process.env.FISH_API_KEY, CHE_FISH_VOICE_ID: process.env.CHE_FISH_VOICE_ID };
-          // In the workspace: the artifact upload does not expand "~".
-          const dir = `${process.env.GITHUB_WORKSPACE}/.che-fish-probe`;
+          // In the workspace (the artifact upload does not expand "~"), and not
+          // a hidden folder (upload-artifact v4 skips those).
+          const dir = `${process.env.GITHUB_WORKSPACE}/che-fish-samples`;
           const reportFile = `${dir}/report.json`;
           if (existsSync(reportFile)) {
             console.log(`Fish measurement reused from cache (no new Fish charge): ${readFileSync(reportFile, 'utf8')}`);
@@ -360,6 +361,8 @@ jobs:
                 row.bytes = bytes.length;
                 row.valid_mp3 = (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) || (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0);
                 row.approx_seconds = Math.round((bytes.length * 8) / (bitrate * 1000) * 10) / 10;
+                // Seconds of work per second of audio; below 1 keeps ahead of playback.
+                row.rtf = row.approx_seconds > 0 ? Math.round(row.ms / (row.approx_seconds * 1000) * 100) / 100 : null;
                 row.audio = bytes;
               } else {
                 row.reason = fishRefusalReason(new TextDecoder().decode(bytes), env);
@@ -416,7 +419,7 @@ jobs:
         if: steps.fishmeasure.outputs.save == '1'
         uses: actions/cache/save@v4
         with:
-          path: .che-fish-probe
+          path: che-fish-samples
           key: ${{ steps.fishkey.outputs.key }}
 
       - name: Keep the Fish sample clips for the owner
@@ -424,6 +427,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: che-fish-voice-samples
-          path: .che-fish-probe/*.mp3
+          path: che-fish-samples/*.mp3
           if-no-files-found: ignore
           retention-days: 14

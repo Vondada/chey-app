@@ -56,6 +56,21 @@ void main() {
       expect(cheVoiceWait('conversation', everyday: const Duration(seconds: 5)), const Duration(seconds: 5));
     });
 
+    test('the wait grows with the clip, because Fish\'s time does', () {
+      // A 240-character reply chunk took Fish about 8.5 s; the old fixed
+      // 12 s and 5 s waits cut longer chunks off.
+      expect(cheVoiceWait('conversation', everyday: const Duration(seconds: 12), chars: 40),
+          const Duration(seconds: 12));
+      expect(cheVoiceWait('conversation', everyday: const Duration(seconds: 12), chars: 240),
+          const Duration(milliseconds: 14600));
+      expect(cheVoiceWait('conversation', everyday: const Duration(seconds: 5), chars: 640),
+          const Duration(seconds: 30), reason: 'never longer than 30 seconds');
+      final voice = File('lib/home_state/voice.dart').readAsStringSync();
+      final edge = File('lib/che_edge_voice.dart').readAsStringSync();
+      expect(voice, contains('chars: text.length'));
+      expect(edge, contains('chars: said.length'));
+    });
+
     test('the purpose reaches both voice requests', () {
       final voice = File('lib/home_state/voice.dart').readAsStringSync();
       final send = File('lib/home_state/send.dart').readAsStringSync();

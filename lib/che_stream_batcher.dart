@@ -33,21 +33,27 @@ class CheStreamBatcher {
 /// CHE's preferred ElevenLabs route deliberately declines clips over 800 chars;
 /// without splitting, a long Brain memory silently reverted to the old voice.
 /// Keep a conservative 640-char maximum for fast, affordable synthesis.
+/// The first clip is shorter ([firstMaxChars]), so the voice starts sooner
+/// while the next clips are prepared during playback: Fish's time grows with
+/// the clip's length.
 /// This is a pure helper, shared by every call to speakText, not a new router.
-List<String> cheReadAloudChunks(String text, {int maxChars = 640}) {
+List<String> cheReadAloudChunks(String text, {int maxChars = 640, int firstMaxChars = 240}) {
   if (maxChars < 32) throw ArgumentError.value(maxChars, 'maxChars');
+  if (firstMaxChars < 32) throw ArgumentError.value(firstMaxChars, 'firstMaxChars');
   var pending = text.replaceAll(RegExp(r'\s+'), ' ').trim();
   final chunks = <String>[];
-  while (pending.length > maxChars) {
-    final window = pending.substring(0, maxChars + 1);
+  while (true) {
+    final limit = chunks.isEmpty && firstMaxChars < maxChars ? firstMaxChars : maxChars;
+    if (pending.length <= limit) break;
+    final window = pending.substring(0, limit + 1);
     var cut = window.lastIndexOf(' ');
     // Prefer the end of a sentence for natural playback when it is nearby.
     final sentence = RegExp(r'[.!?]\s').allMatches(window).toList();
     if (sentence.isNotEmpty) {
       final at = sentence.last.end - 1;
-      if (at >= maxChars * 0.60) cut = at;
+      if (at >= limit * 0.60) cut = at;
     }
-    if (cut < maxChars ~/ 2) cut = maxChars;
+    if (cut < limit ~/ 2) cut = limit;
     final piece = pending.substring(0, cut).trimRight();
     if (piece.isEmpty) break;
     chunks.add(piece);
