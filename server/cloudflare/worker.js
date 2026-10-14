@@ -10982,7 +10982,8 @@ export default {
     }
     // The live voice settings reach the Durable Object before each voice or key
     // request, so a secret change is seen without restarting the object.
-    if (['/api/voice/edge', '/api/voice/synthesize', '/api/voice/report', '/api/keys'].includes(path)) {
+    if (['/api/voice/edge', '/api/voice/synthesize', '/api/voice/report',
+      '/api/voice/choices', '/api/voice/choice', '/api/voice/preview', '/api/keys'].includes(path)) {
       const owner = env.CHE_STATE.getByName('owner');
       await owner.setVoiceSecrets(voiceSecretsFrom(env));
       return owner.fetch(request);
