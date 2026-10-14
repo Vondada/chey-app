@@ -335,17 +335,20 @@ export async function cachedAnswer(storage, question, { hasConversationContext =
   if (hasConversationContext || !cacheable(question)) return null;
   const cache = await get(storage, CACHE, {});
   const hit = cache?.[cacheKey(question)];
-  if (!hit || Date.now() - hit.at > 7 * 86400000) return null;
+  if (!hit || hit.verified !== true || !Array.isArray(hit.sources) || !hit.sources.length ||
+      Date.now() - hit.at > 7 * 86400000) return null;
   return hit.answer;
 }
 
-export async function rememberAnswer(storage, question, answer) {
-  if (!cacheable(question) || !answer || answer.length > 4000) return;
+export async function rememberAnswer(storage, question, answer, { verified = false, sources = [] } = {}) {
+  const proof = (Array.isArray(sources) ? sources : []).map(String).filter((s) => /^https:\/\/[^\s/]+/i.test(s)).slice(0, 5);
+  if (!verified || !proof.length || !cacheable(question) || !answer || answer.length > 4000) return false;
   const cache = await get(storage, CACHE, {});
-  const next = { ...(cache || {}), [cacheKey(question)]: { answer, at: Date.now() } };
+  const next = { ...(cache || {}), [cacheKey(question)]: { answer, at: Date.now(), verified: true, sources: proof } };
   const keys = Object.keys(next);
   if (keys.length > 300) for (const k of keys.sort((a, b) => next[a].at - next[b].at).slice(0, keys.length - 300)) delete next[k];
   await put(storage, CACHE, next);
+  return true;
 }
 
 export async function forgetAnswer(storage, question) {
