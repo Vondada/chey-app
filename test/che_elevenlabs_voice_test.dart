@@ -43,11 +43,13 @@ void main() {
   });
 
   group('the phone waits long enough for ElevenLabs, then Fish', () {
-    test('ElevenLabs\' 8 seconds and Fish\'s time for the clip, never more than 30 seconds', () {
+    test('the wait covers ElevenLabs\' limit and then Fish\'s limit for the same clip', () {
+      // The Worker's Fish limits: conversation min(25 s, max(7 s, 4 s + 40 ms per
+      // character)); story 60 s. ElevenLabs: 8 s. Plus a second for the trip.
       expect(chePremiumVoiceWait('conversation'), const Duration(seconds: 16));
       expect(chePremiumVoiceWait('conversation', chars: 240), const Duration(milliseconds: 22600));
-      expect(chePremiumVoiceWait('conversation', chars: 640), const Duration(seconds: 30));
-      expect(chePremiumVoiceWait('story', chars: 10), const Duration(seconds: 30));
+      expect(chePremiumVoiceWait('conversation', chars: 640), const Duration(seconds: 34));
+      expect(chePremiumVoiceWait('story', chars: 10), const Duration(seconds: 70));
     });
   });
 

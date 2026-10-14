@@ -76,16 +76,19 @@ Duration cheVoiceWait(String purpose, {required Duration everyday, int chars = 0
 }
 
 /// How long the phone waits for one clip when only ElevenLabs and Fish may
-/// speak: ElevenLabs' own limit (8 s), then Fish's, which grows with the clip,
-/// plus a second for the trip. Never longer than 30 seconds.
+/// speak. The Worker tries them one after the other, so the wait covers both
+/// limits: ElevenLabs' 8 seconds plus a second for the trip, then Fish's own
+/// limit for that clip (7 to 25 seconds for conversation, growing with the
+/// clip; 60 seconds for a story). Giving up sooner would leave a valid Fish
+/// clip unheard. Clips are prepared ahead of playback, so only the first clip
+/// of a reply is ever waited on, and only when ElevenLabs is failing.
 Duration chePremiumVoiceWait(String purpose, {int chars = 0}) {
-  const most = Duration(seconds: 30);
-  if (purpose == 'story') return most;
-  final fish = Duration(milliseconds: 4000 + 40 * chars) > const Duration(seconds: 7)
-      ? Duration(milliseconds: 4000 + 40 * chars)
-      : const Duration(seconds: 7);
-  final wait = const Duration(seconds: 9) + fish;
-  return wait > most ? most : wait;
+  const elevenLabs = Duration(seconds: 9);
+  if (purpose == 'story') return elevenLabs + const Duration(seconds: 61);
+  var fish = Duration(milliseconds: 4000 + 40 * chars);
+  if (fish < const Duration(seconds: 7)) fish = const Duration(seconds: 7);
+  if (fish > const Duration(seconds: 25)) fish = const Duration(seconds: 25);
+  return elevenLabs + fish;
 }
 
 /// Why CHE stayed silent for one clip, in words the owner can read: the phone's
