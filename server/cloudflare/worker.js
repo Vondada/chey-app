@@ -48,7 +48,7 @@ import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, cha
 import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
 import { MODE_NAME, chooseAccount, deskIntent, rememberListed, deskTick, pendingAlert, readDesk, setMode, setSize, skipTrade, speakAlert, speakDeskStatus, takeAnnouncement, takeTrade } from './trading_desk.js';
 import { externalGrounding } from './external_grounding.js';
-import { answerEvidenceReceipt, cachedResearch, evidenceFollowup, explainAnswerEvidence, factKey, forgetKnowledge, knownAnswer, LAST_ANSWER_EVIDENCE_KEY, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
+import { answerEvidenceReceipt, cachedResearch, confirmedOwnerMemoryExample, evidenceFollowup, evidenceReferenceFollowup, evidenceReferenceLabel, explainAnswerEvidence, factKey, forgetKnowledge, knownAnswer, LAST_ANSWER_EVIDENCE_KEY, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
 import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliability } from './reliability_ledger.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
@@ -72,7 +72,7 @@ import { APPROVED_SKILLS, handleInstalledSkill, installedSkillIntent, installedS
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { noteJobActivity } from './job_activity.js';
 import { PENDING_OWNER_ACTION_KEY, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
-import { asksForCurrentOwnerLocation, changeHistoryIntent, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
+import { asksForCurrentOwnerLocation, changeHistoryIntent, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
 import { describeTopicStudyStart, starredStudyTargets, matchTopicSections, namedRepoStudyIntent, starredLibraryIntent, readTutorial, readmeSections, sectionTutorials, studyBatchIntent, topicBuildRequest, topicTitles, wantsSerialStudy } from './topic_study.js';
@@ -7279,11 +7279,27 @@ export class CheState extends DurableObject {
           return ndjsonReply(aiIntent.reply, aiIntent.meta || { source: 'ai_layer' });
         }
 
-        // Answer source follow-ups from a recorded prior result, never with
-        // invented citations generated after the fact.
-        if (ownerDevice && !body.attachment && evidenceFollowup(message)) {
+        // Fact-check follow-ups and "the last one" must never fall into a
+        // storytelling model. Ground the referent in the recent turns and
+        // explain the actual prior receipt, even if it proves nothing.
+        if (ownerDevice && !body.attachment && evidenceReferenceFollowup(message, ownerHistory)) {
           const priorEvidence = await Promise.resolve().then(() => this.ctx.storage.get(LAST_ANSWER_EVIDENCE_KEY)).catch(() => null);
-          return ndjsonReply(explainAnswerEvidence(priorEvidence), { source: 'che_evidence_receipt', model_calls: 0 });
+          const referent = evidenceFollowup(message) ? '' : `For ${evidenceReferenceLabel(ownerHistory)}: `;
+          return ndjsonReply(referent + explainAnswerEvidence(priorEvidence), {
+            source: 'che_evidence_receipt', model_calls: 0,
+          });
+        }
+        // Verified-owner-memory example: don't let a model invent a
+        // confirmation from the owner's desired answer style.
+        if (ownerDevice && !body.attachment &&
+            /^(?:(?:che|chay|chey)[, ]+)?tell me something (?:you remember )?that i(?:'ve| have) confirmed\.?$/i.test(message)) {
+          const example = confirmedOwnerMemoryExample(data.memory_records);
+          await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY,
+            answerEvidenceReceipt({ ownerAttested: Boolean(example) }))).catch(() => null);
+          return ndjsonReply(example?.answer ||
+            'I cannot find a source-recorded owner confirmation to cite yet, sir. I will not invent one.', {
+              source: 'che_memory_provenance', model_calls: 0,
+            });
         }
 
         // KNOW IT → RETRIEVE IT. A verified owner fact ("what is my Worker
@@ -8729,6 +8745,10 @@ export class CheState extends DurableObject {
             reply = [guarded.text, note, guarded.text.length < 40 || guarded.removed.some((r) => r.rule !== 'owner_homework') ? statusNow : ''].filter(Boolean).join(' ').trim();
           }
         }
+        // A chat model cannot create execution evidence by claiming it
+        // searched or compared sources. Successful real tools are the only
+        // basis for those past-tense claims.
+        reply = guardClaimedResearchActions(reply, { research, tools: skillResults }).text;
         // Persist the actual answer-provenance receipt, not a model-invented
         // bibliography. Source-backed research may be reused; model-only text
         // cannot become verified memory by repetition.
