@@ -30,199 +30,20 @@ ScreenCommand? parseScreenCommand(String raw) {
   t = t.replaceFirst(_lead, '').replaceFirst(_polite, '').trim();
   if (t.isEmpty) return null;
 
-  // On-device first: no AI calls, speculative OAuth, or browser jump.
+  // On-device navigation only. The provider sign-in still needs owner consent.
   if (RegExp(
-    r'^(?:(?:open|show(?: me)?|go to|take me to|bring up)\s+(?:my\s+|the\s+)?(?:connections?|connected accounts|integrations?|connection center)|connect\s+(?:my\s+)?(?:youtube(?: channel)?|google account|bank(?: account)?|ninjatrader|tradovate))
-  if (RegExp(r'^(?:open|show|show me|go to|take me to|bring up)\s+(?:the\s+|my\s+)?(?:commands?|command center|command library|slash commands)(?:\s+(?:page|screen|list))?$').hasMatch(t) ||
-      RegExp(r'^(?:commands?|command center|command library)$').hasMatch(t)) {
-    return const ScreenCommand(ScreenOp.openCommands);
-  }
-
-  // A request for the complete list is navigation, not a literal search for
-  // the word "all" (which can otherwise yield an empty filtered library).
-  if (RegExp(
-    r'^(?:list|show(?: me)?|find|search(?: for)?)\s+(?:me\s+)?(?:all|every|the full list of|the complete list of|full list of)\s+(?:the\s+)?(?:commands?|command library|slash commands)$',
-  ).hasMatch(t)) {
-    return const ScreenCommand(ScreenOp.openCommands);
-  }
-
-  // Explicit local-catalog intent. "Search YouTube for jazz" still goes
-  // through CHE's normal web/video route; no model is needed for the catalog.
-  if (!RegExp(r'^(?:search|find|look up)\s+(?:the\s+)?(?:web|internet|online)\b').hasMatch(t)) {
-    final commandsFirst = RegExp(
-      r'^(?:search|find|look up)\s+(?:for\s+)?(?:the\s+|my\s+)?(?:commands?|command\s+(?:center|library))\s+(?:for|about|on)\s+(.+)$',
-    ).firstMatch(t);
-    final topicFirst = RegExp(
-      r'^(?:search|find|look up|show(?: me)?)\s+(?:for\s+)?(.+?)\s+(?:commands?|in\s+(?:the\s+|my\s+)?(?:commands?|command\s+(?:center|library)))$',
-    ).firstMatch(t);
-    final topic = (commandsFirst?.group(1) ?? topicFirst?.group(1) ?? '').trim();
-    if (topic.isNotEmpty) {
-      return ScreenCommand(ScreenOp.searchCommands, topic);
-    }
-  }
-
-  final add = RegExp(r'\b(add|put|place|insert)\b').hasMatch(t);
-  final remove = RegExp(r'\b(clear|remove|delete|hide|get rid of|take off|clearing|wipe|erase)\b').hasMatch(t);
-  final show = RegExp(r'\b(show|bring back|put back|restore)\b').hasMatch(t);
-  final chips = RegExp(r'\b(bubble|bubbles|chip|chips|suggestion|suggestions)\b').hasMatch(t);
-  final greeting = RegExp(r'\b(greeting|hello line|status line)\b').hasMatch(t);
-  final chat = RegExp(r'\b(chat|messages|screen text|the text|everything on (?:the )?screen)\b').hasMatch(t);
-  final last = RegExp(r'\b(last|previous)\b').hasMatch(t) && RegExp(r'\b(message|bubble|reply)\b').hasMatch(t);
-
-  if (chips && remove && !add) {
-    final quoted = RegExp(r'["\u201c](.+?)["\u201d]').firstMatch(raw);
-    final named = RegExp(r'\b(?:called|named|saying|that says)\s+(.+)$', caseSensitive: false).firstMatch(t);
-    final label = (quoted?.group(1) ?? named?.group(1) ?? '').trim();
-    if (label.isNotEmpty && !RegExp(r'\b(those|these|three|all|the)\b').hasMatch(label)) {
-      return ScreenCommand(ScreenOp.removeChip, label);
-    }
-    return const ScreenCommand(ScreenOp.clearChips);
-  }
-  if (chips && add) {
-    final quoted = RegExp(r'["\u201c](.+?)["\u201d]').firstMatch(raw);
-    final named = RegExp(r'\b(?:saying|that says|called|labeled)\s+(.+)$', caseSensitive: false).firstMatch(raw.trim());
-    final label = (quoted?.group(1) ?? named?.group(1) ?? '').trim();
-    if (label.isEmpty) return null;
-    return ScreenCommand(ScreenOp.addChip, label);
-  }
-  if (chips && show) return const ScreenCommand(ScreenOp.showChips);
-  if (greeting && remove) return const ScreenCommand(ScreenOp.hideGreeting);
-  if (greeting && show) return const ScreenCommand(ScreenOp.showGreeting);
-  if (last && remove) return const ScreenCommand(ScreenOp.removeLast);
-  if (chat && remove) return const ScreenCommand(ScreenOp.clearChat);
-  return null;
-}
-,
+    r'^(?:(?:open|show(?: me)?|go to|take me to|bring up)\s+(?:my\s+|the\s+)?(?:connections?|connected accounts|integrations?|connection center)|connect\s+(?:my\s+)?(?:youtube(?: channel)?|google account|bank(?: account)?|ninjatrader|tradovate))$',
   ).hasMatch(t)) {
     return const ScreenCommand(ScreenOp.openConnections);
   }
   if (RegExp(
-    r'^(?:(?:open|show(?: me)?|go to)\s+(?:the\s+|my\s+)?(?:voice settings|voice selector|change voice)|(?:change|switch|choose|preview)\s+(?:your\s+|che\s+|my\s+)?voice)
-  if (RegExp(r'^(?:open|show|show me|go to|take me to|bring up)\s+(?:the\s+|my\s+)?(?:commands?|command center|command library|slash commands)(?:\s+(?:page|screen|list))?$').hasMatch(t) ||
-      RegExp(r'^(?:commands?|command center|command library)$').hasMatch(t)) {
-    return const ScreenCommand(ScreenOp.openCommands);
-  }
-
-  // A request for the complete list is navigation, not a literal search for
-  // the word "all" (which can otherwise yield an empty filtered library).
-  if (RegExp(
-    r'^(?:list|show(?: me)?|find|search(?: for)?)\s+(?:me\s+)?(?:all|every|the full list of|the complete list of|full list of)\s+(?:the\s+)?(?:commands?|command library|slash commands)$',
-  ).hasMatch(t)) {
-    return const ScreenCommand(ScreenOp.openCommands);
-  }
-
-  // Explicit local-catalog intent. "Search YouTube for jazz" still goes
-  // through CHE's normal web/video route; no model is needed for the catalog.
-  if (!RegExp(r'^(?:search|find|look up)\s+(?:the\s+)?(?:web|internet|online)\b').hasMatch(t)) {
-    final commandsFirst = RegExp(
-      r'^(?:search|find|look up)\s+(?:for\s+)?(?:the\s+|my\s+)?(?:commands?|command\s+(?:center|library))\s+(?:for|about|on)\s+(.+)$',
-    ).firstMatch(t);
-    final topicFirst = RegExp(
-      r'^(?:search|find|look up|show(?: me)?)\s+(?:for\s+)?(.+?)\s+(?:commands?|in\s+(?:the\s+|my\s+)?(?:commands?|command\s+(?:center|library)))$',
-    ).firstMatch(t);
-    final topic = (commandsFirst?.group(1) ?? topicFirst?.group(1) ?? '').trim();
-    if (topic.isNotEmpty) {
-      return ScreenCommand(ScreenOp.searchCommands, topic);
-    }
-  }
-
-  final add = RegExp(r'\b(add|put|place|insert)\b').hasMatch(t);
-  final remove = RegExp(r'\b(clear|remove|delete|hide|get rid of|take off|clearing|wipe|erase)\b').hasMatch(t);
-  final show = RegExp(r'\b(show|bring back|put back|restore)\b').hasMatch(t);
-  final chips = RegExp(r'\b(bubble|bubbles|chip|chips|suggestion|suggestions)\b').hasMatch(t);
-  final greeting = RegExp(r'\b(greeting|hello line|status line)\b').hasMatch(t);
-  final chat = RegExp(r'\b(chat|messages|screen text|the text|everything on (?:the )?screen)\b').hasMatch(t);
-  final last = RegExp(r'\b(last|previous)\b').hasMatch(t) && RegExp(r'\b(message|bubble|reply)\b').hasMatch(t);
-
-  if (chips && remove && !add) {
-    final quoted = RegExp(r'["\u201c](.+?)["\u201d]').firstMatch(raw);
-    final named = RegExp(r'\b(?:called|named|saying|that says)\s+(.+)$', caseSensitive: false).firstMatch(t);
-    final label = (quoted?.group(1) ?? named?.group(1) ?? '').trim();
-    if (label.isNotEmpty && !RegExp(r'\b(those|these|three|all|the)\b').hasMatch(label)) {
-      return ScreenCommand(ScreenOp.removeChip, label);
-    }
-    return const ScreenCommand(ScreenOp.clearChips);
-  }
-  if (chips && add) {
-    final quoted = RegExp(r'["\u201c](.+?)["\u201d]').firstMatch(raw);
-    final named = RegExp(r'\b(?:saying|that says|called|labeled)\s+(.+)$', caseSensitive: false).firstMatch(raw.trim());
-    final label = (quoted?.group(1) ?? named?.group(1) ?? '').trim();
-    if (label.isEmpty) return null;
-    return ScreenCommand(ScreenOp.addChip, label);
-  }
-  if (chips && show) return const ScreenCommand(ScreenOp.showChips);
-  if (greeting && remove) return const ScreenCommand(ScreenOp.hideGreeting);
-  if (greeting && show) return const ScreenCommand(ScreenOp.showGreeting);
-  if (last && remove) return const ScreenCommand(ScreenOp.removeLast);
-  if (chat && remove) return const ScreenCommand(ScreenOp.clearChat);
-  return null;
-}
-,
+    r'^(?:(?:open|show(?: me)?|go to)\s+(?:the\s+|my\s+)?(?:voice settings|voice selector|change voice)|(?:change|switch|choose|preview)\s+(?:your\s+|che\s+|my\s+)?voice)$',
   ).hasMatch(t)) {
     return const ScreenCommand(ScreenOp.changeVoice);
   }
-  // An unconnected bank must never be answered with invented transactions.
-  if (RegExp(r'^(?:show(?: me)?|check)\s+(?:my\s+)?bank\s+(?:transactions?|balance|accounts?)
-  if (RegExp(r'^(?:open|show|show me|go to|take me to|bring up)\s+(?:the\s+|my\s+)?(?:commands?|command center|command library|slash commands)(?:\s+(?:page|screen|list))?$').hasMatch(t) ||
-      RegExp(r'^(?:commands?|command center|command library)$').hasMatch(t)) {
-    return const ScreenCommand(ScreenOp.openCommands);
-  }
-
-  // A request for the complete list is navigation, not a literal search for
-  // the word "all" (which can otherwise yield an empty filtered library).
   if (RegExp(
-    r'^(?:list|show(?: me)?|find|search(?: for)?)\s+(?:me\s+)?(?:all|every|the full list of|the complete list of|full list of)\s+(?:the\s+)?(?:commands?|command library|slash commands)$',
+    r'^(?:show(?: me)?|check)\s+(?:my\s+)?bank\s+(?:transactions?|balance|accounts?)$',
   ).hasMatch(t)) {
-    return const ScreenCommand(ScreenOp.openCommands);
-  }
-
-  // Explicit local-catalog intent. "Search YouTube for jazz" still goes
-  // through CHE's normal web/video route; no model is needed for the catalog.
-  if (!RegExp(r'^(?:search|find|look up)\s+(?:the\s+)?(?:web|internet|online)\b').hasMatch(t)) {
-    final commandsFirst = RegExp(
-      r'^(?:search|find|look up)\s+(?:for\s+)?(?:the\s+|my\s+)?(?:commands?|command\s+(?:center|library))\s+(?:for|about|on)\s+(.+)$',
-    ).firstMatch(t);
-    final topicFirst = RegExp(
-      r'^(?:search|find|look up|show(?: me)?)\s+(?:for\s+)?(.+?)\s+(?:commands?|in\s+(?:the\s+|my\s+)?(?:commands?|command\s+(?:center|library)))$',
-    ).firstMatch(t);
-    final topic = (commandsFirst?.group(1) ?? topicFirst?.group(1) ?? '').trim();
-    if (topic.isNotEmpty) {
-      return ScreenCommand(ScreenOp.searchCommands, topic);
-    }
-  }
-
-  final add = RegExp(r'\b(add|put|place|insert)\b').hasMatch(t);
-  final remove = RegExp(r'\b(clear|remove|delete|hide|get rid of|take off|clearing|wipe|erase)\b').hasMatch(t);
-  final show = RegExp(r'\b(show|bring back|put back|restore)\b').hasMatch(t);
-  final chips = RegExp(r'\b(bubble|bubbles|chip|chips|suggestion|suggestions)\b').hasMatch(t);
-  final greeting = RegExp(r'\b(greeting|hello line|status line)\b').hasMatch(t);
-  final chat = RegExp(r'\b(chat|messages|screen text|the text|everything on (?:the )?screen)\b').hasMatch(t);
-  final last = RegExp(r'\b(last|previous)\b').hasMatch(t) && RegExp(r'\b(message|bubble|reply)\b').hasMatch(t);
-
-  if (chips && remove && !add) {
-    final quoted = RegExp(r'["\u201c](.+?)["\u201d]').firstMatch(raw);
-    final named = RegExp(r'\b(?:called|named|saying|that says)\s+(.+)$', caseSensitive: false).firstMatch(t);
-    final label = (quoted?.group(1) ?? named?.group(1) ?? '').trim();
-    if (label.isNotEmpty && !RegExp(r'\b(those|these|three|all|the)\b').hasMatch(label)) {
-      return ScreenCommand(ScreenOp.removeChip, label);
-    }
-    return const ScreenCommand(ScreenOp.clearChips);
-  }
-  if (chips && add) {
-    final quoted = RegExp(r'["\u201c](.+?)["\u201d]').firstMatch(raw);
-    final named = RegExp(r'\b(?:saying|that says|called|labeled)\s+(.+)$', caseSensitive: false).firstMatch(raw.trim());
-    final label = (quoted?.group(1) ?? named?.group(1) ?? '').trim();
-    if (label.isEmpty) return null;
-    return ScreenCommand(ScreenOp.addChip, label);
-  }
-  if (chips && show) return const ScreenCommand(ScreenOp.showChips);
-  if (greeting && remove) return const ScreenCommand(ScreenOp.hideGreeting);
-  if (greeting && show) return const ScreenCommand(ScreenOp.showGreeting);
-  if (last && remove) return const ScreenCommand(ScreenOp.removeLast);
-  if (chat && remove) return const ScreenCommand(ScreenOp.clearChat);
-  return null;
-}
-).hasMatch(t)) {
     return const ScreenCommand(ScreenOp.openConnections);
   }
 
