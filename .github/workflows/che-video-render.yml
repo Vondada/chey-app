@@ -72,6 +72,8 @@ jobs:
           CHE_FISH_PREFERRED: ${{ secrets.CHE_FISH_PREFERRED || vars.CHE_FISH_PREFERRED || '1' }}
           CHE_FISH_VOICE_ID: ${{ secrets.CHE_FISH_VOICE_ID || vars.CHE_FISH_VOICE_ID }}
           CHE_FISH_EXPRESSIVE_MODEL: ${{ vars.CHE_FISH_EXPRESSIVE_MODEL || secrets.CHE_FISH_EXPRESSIVE_MODEL }}
+          # Used when Drama 3 cannot be used (for example no Fish API credit).
+          CHE_FISH_MODEL: ${{ vars.CHE_FISH_MODEL || secrets.CHE_FISH_MODEL }}
           CHE_FISH_NARRATION: ${{ vars.CHE_FISH_NARRATION }}
         run: |
           python tools/che_video_render.py --topic "$TOPIC" --seconds "$DURATION" --out rendered

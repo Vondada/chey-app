@@ -67,6 +67,7 @@ const USAGE_KEY = 'fish_tts_usage';
 // never the key or the provider's error text.
 const state = {
   pausedUntil: new Map(), // model ('*' = every model) → epoch ms
+  pauseWhy: new Map(), // model → the status word that rested it
   lastOutcome: null, // { status, code, model, at }
   latencies: [], // recent conversational latencies (ms), cache misses only
   refused: new Map(), // cache key → epoch ms, for text Fish refused
@@ -78,6 +79,7 @@ const state = {
 
 export function resetFishAudioState() {
   state.pausedUntil.clear();
+  state.pauseWhy.clear();
   state.lastOutcome = null;
   state.latencies = [];
   state.refused.clear();
@@ -148,8 +150,11 @@ function paused(model, now) {
   return Math.max(state.pausedUntil.get('*') || 0, state.pausedUntil.get(model) || 0) > now;
 }
 
-function pause(model, ms, now) {
+// `why` is the Keys status word for the rest; it decides whether a story may
+// fall back to the everyday model (see EXPRESSIVE_BLOCKED).
+function pause(model, ms, now, why) {
   state.pausedUntil.set(model, Math.max(state.pausedUntil.get(model) || 0, now + ms));
+  state.pauseWhy.set(model, why);
 }
 
 // Maps a failed Fish reply to the Keys tab's words and a pause. A refused clip
@@ -241,7 +246,7 @@ function maxLatency(env) {
 function noteLatency(env, model, ms, now) {
   state.latencies = [...state.latencies, ms].slice(-LATENCY_WINDOW);
   if (state.latencies.length >= 3 && median(state.latencies) > maxLatency(env)) {
-    pause(model, PAUSE_SLOW_MS, now);
+    pause(model, PAUSE_SLOW_MS, now, 'slow');
     record('slow', 200, model, now);
     state.latencies = [];
   }
@@ -373,7 +378,28 @@ function audioResponse(bytes, type, model, cache) {
  * `character` names an owner-authorized character voice; CHE's own voice is the
  * default. `storage` is the Durable Object storage used for the audio cache.
  */
-export async function fishAudioSpeech(env = {}, text, {
+export async function fishAudioSpeech(env = {}, text, options = {}) {
+  const spoken = await fishSpeakOnce(env, text, options);
+  if (spoken || !fishAudioReady(env)) return spoken;
+  // A story falls back to CHE's everyday Fish voice when the expressive model
+  // cannot be used here (no API credit, not on this account, today's cap
+  // reached), so she still sounds like herself. A timeout does not fall back:
+  // that would make the owner wait twice.
+  if (!EXPRESSIVE_PURPOSES.has(String(options.purpose || '').toLowerCase())) return null;
+  const expressiveModel = fishModels(env).expressive;
+  const last = state.lastOutcome;
+  const now = options.now ?? Date.now();
+  const resting = paused(expressiveModel, now) && EXPRESSIVE_BLOCKED.has(state.pauseWhy.get(expressiveModel));
+  const blocked = resting || (last?.model === expressiveModel && EXPRESSIVE_BLOCKED.has(last.status));
+  if (!blocked) return null;
+  return fishSpeakOnce(env, text, { ...options, purpose: 'conversation' });
+}
+
+// Outcomes that mean the expressive model cannot be used right now, but the
+// everyday model may still speak.
+const EXPRESSIVE_BLOCKED = new Set(['out of credits', 'model not available', 'daily limit reached']);
+
+async function fishSpeakOnce(env = {}, text, {
   purpose = 'conversation',
   character = '',
   storage = null,
@@ -465,21 +491,21 @@ async function synthesize(env, { said, model, voice, bitrate, speed, expressive,
         const count = recent ? (last.key === key ? last.count : last.count + 1) : 1;
         state.refusals.set(model, { count, at: now, key });
         if (count >= 2) {
-          pause(model, PAUSE_LONG_MS, now);
+          pause(model, PAUSE_LONG_MS, now, 'request refused');
           record('request refused', response.status, model, now, reason);
         } else {
           record('refused text', response.status, model, now, reason);
         }
         return null;
       }
-      pause(failure.scope === 'key' ? '*' : model, failure.pauseMs, now);
+      pause(failure.scope === 'key' ? '*' : model, failure.pauseMs, now, failure.status);
       record(failure.status, response.status, model, now, reason);
       return null;
     }
     const type = (response.headers.get('content-type') || '').toLowerCase();
     if (!/^audio\/|^application\/octet-stream/.test(type)) {
       record('network', response.status, model, now);
-      pause(model, PAUSE_SERVER_MS, now);
+      pause(model, PAUSE_SERVER_MS, now, 'network');
       return null;
     }
     const bytes = new Uint8Array(await response.arrayBuffer());
@@ -497,7 +523,7 @@ async function synthesize(env, { said, model, voice, bitrate, speed, expressive,
   } catch (_) {
     // A timeout or network error rests Fish briefly so a slow provider cannot
     // add its wait to every clip. Never log the key.
-    pause(model, PAUSE_TIMEOUT_MS, now);
+    pause(model, PAUSE_TIMEOUT_MS, now, 'network');
     record('network', 0, model, now);
     await addUsage(storage, model, { failures: 1 }, now);
     return null;

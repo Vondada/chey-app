@@ -109,6 +109,27 @@ class FishNarrationTest(unittest.TestCase):
             self.assertIsNone(render.fish_narration('Hello again.'))
         self.assertEqual(list(Path(self.cache).glob('*.mp3')), [], 'nothing unplayable is cached')
 
+    def test_without_drama_3_credit_the_everyday_fish_voice_narrates(self):
+        # The owner's real account: drama-3 answers 402, s2.1-pro-free speaks.
+        def reply(request):
+            if request.get_header('Model') == 'drama-3':
+                raise urllib.error.HTTPError(request.full_url, 402, 'Payment Required', {},
+                    io.BytesIO(b'{"message":"Insufficient API credit."}'))
+            return FakeResponse(MP3)
+        with self.fake(reply):
+            first = render.fish_narration('The lighthouse keeper heard a knock.')
+            second = render.fish_narration('The lighthouse keeper heard a knock.')
+        self.assertEqual([c.get_header('Model') for c in self.calls], ['drama-3', 's2.1-pro-free'])
+        self.assertEqual(first[1:], ('s2.1-pro-free', 'miss'))
+        self.assertEqual(second[1:], ('s2.1-pro-free', 'hit'), 'the fallback narration is cached too')
+
+    def test_a_refused_key_goes_straight_to_piper(self):
+        def refused(request):
+            raise urllib.error.HTTPError(request.full_url, 401, 'Unauthorized', {}, io.BytesIO(b'{"message":"bad key"}'))
+        with self.fake(refused):
+            self.assertIsNone(render.fish_narration('Hello.'))
+        self.assertEqual(len(self.calls), 1)
+
     def test_a_custom_expressive_model_is_used_and_a_bad_one_is_not(self):
         with mock.patch.dict(os.environ, {'CHE_FISH_EXPRESSIVE_MODEL': 'drama-3-preview'}), self.fake(lambda _: FakeResponse(MP3)):
             render.fish_narration('One.')

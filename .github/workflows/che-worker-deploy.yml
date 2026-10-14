@@ -312,7 +312,7 @@ jobs:
         if: steps.fishkey.outputs.key != ''
         uses: actions/cache/restore@v4
         with:
-          path: ~/.che-fish-probe
+          path: .che-fish-probe
           key: ${{ steps.fishkey.outputs.key }}
 
       - name: Measure Fish Audio voice (real call, short and long)
@@ -328,13 +328,13 @@ jobs:
           // voices on its own. The clips are kept as a private artifact so the
           // owner can listen to them.
           import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-          import { homedir } from 'node:os';
           import { pathToFileURL } from 'node:url';
           const lib = (file) => import(pathToFileURL(`${process.env.GITHUB_WORKSPACE}/server/cloudflare/${file}`).href);
           const { encodeMsgpack } = await lib('msgpack_encode.js');
           const { fishRequestBody, fishRefusalReason } = await lib('fish_audio_voice.js');
           const env = { FISH_API_KEY: process.env.FISH_API_KEY, CHE_FISH_VOICE_ID: process.env.CHE_FISH_VOICE_ID };
-          const dir = `${homedir()}/.che-fish-probe`;
+          // In the workspace: the artifact upload does not expand "~".
+          const dir = `${process.env.GITHUB_WORKSPACE}/.che-fish-probe`;
           const reportFile = `${dir}/report.json`;
           if (existsSync(reportFile)) {
             console.log(`Fish measurement reused from cache (no new Fish charge): ${readFileSync(reportFile, 'utf8')}`);
@@ -416,7 +416,7 @@ jobs:
         if: steps.fishmeasure.outputs.save == '1'
         uses: actions/cache/save@v4
         with:
-          path: ~/.che-fish-probe
+          path: .che-fish-probe
           key: ${{ steps.fishkey.outputs.key }}
 
       - name: Keep the Fish sample clips for the owner
@@ -424,6 +424,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: che-fish-voice-samples
-          path: ~/.che-fish-probe/*.mp3
+          path: .che-fish-probe/*.mp3
           if-no-files-found: ignore
           retention-days: 14
