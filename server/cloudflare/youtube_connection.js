@@ -294,9 +294,9 @@ export async function disconnectYouTube(env, data, fetcher = fetch) {
 }
 
 // A small page for the browser tab that Google returns to. Text is escaped.
-export function youtubeResultPage(ok, message) {
+export function youtubeResultPage(ok, message, label = 'YouTube') {
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-  const title = ok ? 'YouTube connected' : 'YouTube not connected';
+  const title = ok ? `${label} connected` : `${label} not connected`;
   const body = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}</title>
@@ -308,3 +308,10 @@ export function youtubeResultPage(ok, message) {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
   });
 }
+
+// Shared Google sign-in pieces, reused by google_services.js so Gmail, Drive,
+// Calendar and Ads use the same OAuth client, PKCE, sealed tokens and revoke.
+export {
+  ACCESS_SAFETY_MS, AUTH_URL, PENDING_TTL_MS, TOKEN_URL, clientConfig as googleClientConfig,
+  codeChallenge, open as openToken, postForm, randomToken, revokeGrant, seal as sealToken,
+};

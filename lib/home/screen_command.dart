@@ -26,6 +26,16 @@ class ScreenCommand {
 final _lead = RegExp(r'^(?:hey\s+)?(?:che|chay|chey)[,:]?\s+', caseSensitive: false);
 final _polite = RegExp(r'^(?:please\s+|can you\s+|could you\s+|i want you to\s+)', caseSensitive: false);
 
+// Which Connections row a spoken "connect ..." means.
+String _connectTarget(String spoken) {
+  if (spoken.startsWith('youtube') || spoken == 'google account') return 'youtube';
+  if (spoken == 'ninjatrader' || spoken == 'tradovate') return 'broker';
+  if (spoken == 'gmail') return 'gmail';
+  if (spoken.contains('drive')) return 'drive';
+  if (spoken.contains('calendar')) return 'calendar';
+  return 'google_ads';
+}
+
 ScreenCommand? parseScreenCommand(String raw) {
   var t = raw.trim().toLowerCase().replaceAll(RegExp(r'[.!?]+$'), '');
   t = t.replaceFirst(_lead, '').replaceFirst(_polite, '').trim();
@@ -33,11 +43,9 @@ ScreenCommand? parseScreenCommand(String raw) {
 
   // On-device navigation only. A spoken connect opens Connections and starts
   // that one official sign-in; the provider still asks the owner on its page.
-  final connect = RegExp(r'^connect\s+(?:my\s+)?(youtube(?: channel)?|google account|ninjatrader|tradovate)$').firstMatch(t);
+  final connect = RegExp(r'^connect\s+(?:my\s+|the\s+)?(youtube(?: channel)?|google account|ninjatrader|tradovate|gmail|(?:google\s+)?drive|(?:google\s+)?calendar|google ads)$').firstMatch(t);
   if (connect != null) {
-    final target = connect.group(1)!;
-    return ScreenCommand(ScreenOp.openConnections,
-        target.startsWith('youtube') || target == 'google account' ? 'youtube' : 'broker');
+    return ScreenCommand(ScreenOp.openConnections, _connectTarget(connect.group(1)!));
   }
   if (RegExp(
     r'^(?:(?:open|show(?: me)?|go to|take me to|bring up)\s+(?:my\s+|the\s+)?(?:connections?|connected accounts|integrations?|connection center)|connect\s+(?:my\s+)?bank(?: account)?)$',

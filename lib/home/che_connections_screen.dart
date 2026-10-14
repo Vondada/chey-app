@@ -16,6 +16,22 @@ class CheConnectionsVoice {
   static Future<String?> Function(String words)? handler;
 }
 
+// Google services: one sign-in each, with only that service's permissions.
+const _googleLabels = {
+  'gmail': 'Gmail',
+  'drive': 'Google Drive',
+  'calendar': 'Google Calendar',
+  'google_ads': 'Google Ads',
+};
+
+// Connectors CHE has verified as signed in (never a key alone).
+const _signedIn = {'youtube', 'broker', 'gmail', 'drive', 'calendar', 'google_ads'};
+
+String _googleIdFor(String spoken) => spoken.contains('drive') ? 'drive'
+    : spoken.contains('calendar') ? 'calendar'
+    : spoken.contains('ads') ? 'google_ads'
+    : 'gmail';
+
 class CheConnectionsScreen extends StatefulWidget {
   const CheConnectionsScreen({
     super.key,
@@ -65,6 +81,9 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_connectYoutube()));
     } else if (widget.autoConnect == 'broker') {
       WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_connectBroker()));
+    } else if (_googleLabels.containsKey(widget.autoConnect)) {
+      final service = widget.autoConnect;
+      WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_connectGoogle(service)));
     }
   }
 
@@ -117,7 +136,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
     if (connector == null) return 'Unsupported';
     if (_error.isNotEmpty || _loading && _connectors.isEmpty) return 'Unavailable';
     return switch (_actual(connector)['state']?.toString()) {
-      'ready' => connector == 'youtube' || connector == 'broker' ? 'Connected' : 'Configured',
+      'ready' => _signedIn.contains(connector) ? 'Connected' : 'Configured',
       'needs_reconnect' => 'Needs Reconnect',
       'not_connected' => 'Needs Setup',
       'unavailable' => 'Unavailable',
@@ -163,6 +182,11 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
       await _connectYoutube();
       return '';
     }
+    final google = RegExp(r'^connect\s+(?:my\s+|the\s+)?(gmail|(?:google\s+)?drive|(?:google\s+)?calendar|google ads)$').firstMatch(t);
+    if (google != null) {
+      await _connectGoogle(_googleIdFor(google.group(1)!));
+      return '';
+    }
     if (RegExp(r'^connect\s+(?:my\s+)?(?:ninjatrader|tradovate)(?: account)?$').hasMatch(t)) {
       await _connectBroker();
       return '';
@@ -202,6 +226,36 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
     } on Object catch (e) {
       HapticFeedback.heavyImpact();
       _say('YouTube: ${e.toString().replaceFirst('Bad state: ', '')}');
+    } finally {
+      if (mounted) setState(() => _connecting = false);
+    }
+  }
+
+  // Gmail, Drive, Calendar and Google Ads: each its own Google sign-in.
+  Future<void> _connectGoogle(String service) async {
+    if (_connecting) return;
+    final label = _googleLabels[service] ?? 'Google';
+    setState(() { _connecting = true; _message = ''; });
+    try {
+      final r = await _client.post(
+        Uri.parse('${widget.baseUrl}/api/google/connect/start'),
+        headers: {...widget.headers(), 'content-type': 'application/json'},
+        body: jsonEncode({'service': service}),
+      ).timeout(const Duration(seconds: 18));
+      final raw = jsonDecode(utf8.decode(r.bodyBytes));
+      final data = raw is Map ? raw : <String, dynamic>{};
+      final uri = Uri.tryParse((data['url'] ?? '').toString());
+      if (r.statusCode != 200 || uri == null || uri.scheme != 'https' ||
+          (uri.host != 'accounts.google.com' && uri.host != 'google.com')) {
+        throw StateError((data['detail'] ?? '$label sign-in is not configured. Open Keys for setup.').toString());
+      }
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication).catchError((_) => false);
+      if (!opened) throw StateError('Could not open the official Google sign-in page.');
+      HapticFeedback.selectionClick();
+      _say('Approve $label on Google’s secure page, then return to CHE and press Refresh. Only $label permissions are requested. No access is claimed until Refresh confirms it.');
+    } on Object catch (e) {
+      HapticFeedback.heavyImpact();
+      _say('$label: ${e.toString().replaceFirst('Bad state: ', '')}');
     } finally {
       if (mounted) setState(() => _connecting = false);
     }
@@ -319,12 +373,15 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
           _card('YouTube channel', Icons.play_circle_outline_rounded, 'youtube',
               'Use CHE’s existing Google OAuth connection. Publishing still requires approval.',
               onAction: _connectYoutube, action: 'Connect with Google'),
-          _card('Google Drive', Icons.folder_outlined, null,
-              'Google Drive OAuth and file permissions are not implemented in CHE yet.'),
-          _card('Gmail', Icons.mail_outline_rounded, null,
-              'Gmail access is not configured. YouTube permissions do not grant email access.'),
-          _card('Google Calendar', Icons.event_note_rounded, null,
-              'Calendar OAuth and event permissions are not implemented yet.'),
+          _card('Gmail', Icons.mail_outline_rounded, 'gmail',
+              'Reads your mail and sends email when you ask. Approved separately from YouTube.',
+              onAction: () => _connectGoogle('gmail'), action: 'Connect Gmail'),
+          _card('Google Drive', Icons.folder_outlined, 'drive',
+              'Sees only files CHE creates or you open with it.',
+              onAction: () => _connectGoogle('drive'), action: 'Connect Drive'),
+          _card('Google Calendar', Icons.event_note_rounded, 'calendar',
+              'Reads and adds events on your primary calendar when you ask.',
+              onAction: () => _connectGoogle('calendar'), action: 'Connect Calendar'),
           _heading('Trading'),
           _card('NinjaTrader / Tradovate', Icons.candlestick_chart_rounded, 'broker',
               'Use the existing Tradovate sign-in route. Orders require your separate approval.',
@@ -336,6 +393,9 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
               'Stripe API configuration only. No bank account access or permission to move money.',
               onAction: widget.onKeys, action: 'Review Keys'),
           _heading('Business & development'),
+          _card('Google Ads', Icons.campaign_outlined, 'google_ads',
+              'Lists the ad accounts you can reach. Needs CHE’s Google Ads developer token from Google.',
+              onAction: () => _connectGoogle('google_ads'), action: 'Connect Google Ads'),
           _card('GitHub code integration', Icons.code_rounded, 'github',
               'Code credentials may be configured. Verify each action and deployment receipt.',
               onAction: widget.onKeys, action: 'Review Keys'),
