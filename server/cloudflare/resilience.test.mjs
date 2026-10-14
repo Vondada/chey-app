@@ -57,7 +57,12 @@ test('cache only general questions', async () => {
   const s = store();
   assert.equal(cacheable('What is the capital of France'), true);
   assert.equal(cacheable("What's on my schedule today"), false);
-  await rememberAnswer(s, 'What is the capital of France?', 'Paris.');
+  // A language model's plausible but unsupported answer is not a fact.
+  assert.equal(await rememberAnswer(s, 'What is the capital of France?', 'Lyon.'), false);
+  assert.equal(await cachedAnswer(s, 'what is the capital of france'), null);
+  assert.equal(await rememberAnswer(s, 'What is the capital of France?', 'Paris.', {
+    verified: true, sources: ['https://www.britannica.com/place/Paris'],
+  }), true);
   assert.equal(await cachedAnswer(s, 'what is the capital of france'), 'Paris.');
   assert.equal(
     await cachedAnswer(s, 'what is the capital of france', { hasConversationContext: true }),
@@ -83,4 +88,36 @@ test('scout files free and paid finds separately', async () => {
   assert.deepEqual(found.free.map((f) => f.name), ['Mistral']);
   assert.deepEqual(found.paid.map((f) => f.name), ['Fancy AI']);
   assert.equal((await techItems(s)).length, 2);
+});
+
+test('legacy answer cache and fake source strings never become trusted facts', async () => {
+  const s = store();
+  const cacheName = 'answer_cache';
+  await s.put(cacheName, { 'what is gravity': { answer: 'It is imaginary.', at: Date.now() } });
+  assert.equal(await cachedAnswer(s, 'What is gravity?'), null, 'old cache has no provenance');
+  assert.equal(await rememberAnswer(s, 'What is gravity?', 'Force.', {
+    verified: true, sources: ['javascript:alert(1)'],
+  }), false, 'non-HTTPS sources cannot certify a fact');
+  assert.equal(await cachedAnswer(s, 'What is gravity?'), null);
+});
+
+test('research library requires source-backed evidence, retains superseded facts and never promotes unsourced answers', async () => {
+  const { rememberKnowledge, recallKnowledge, researchKey, cachedResearch, rememberOwnerFact, factKey } = await import('./knowledge_cache.js');
+  const s = store(), now = Date.now();
+  const query = 'Explain the lifecycle of a star';
+  const missing = await cachedResearch(s, query, async () => ({ summary: 'A model guessed the entire answer.', sources: [] }), now);
+  assert.match(missing.summary, /guessed/);
+  assert.equal(await recallKnowledge(s, researchKey(query), { now }), null);
+  const url = 'https://science.nasa.gov/universe/stars/';
+  const live = await cachedResearch(s, query, async () => ({ summary: 'Stars form and evolve.', sources: [url] }), now);
+  assert.equal(live.summary, 'Stars form and evolve.');
+  const called = await cachedResearch(s, query, async () => { throw Error('Should not research a fresh cited result twice'); }, now + 1000);
+  assert.equal(called.cached, true);
+  assert.deepEqual(called.sources, [url]);
+  await rememberOwnerFact(s, 'my favorite drink is Sprite', now);
+  await rememberOwnerFact(s, 'my favorite drink is Ginger Ale', now + 1000);
+  const record = await recallKnowledge(s, factKey('favorite drink'), { now: now + 1000 });
+  assert.equal(record.answer, 'Ginger Ale');
+  assert.equal(record.verification_status, 'owner_attested');
+  assert.equal(record.superseded[0].answer, 'Sprite');
 });
