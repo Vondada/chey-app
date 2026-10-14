@@ -66,6 +66,20 @@ Then, on GitHub:
 
 ## 2. Current position (updated by: Claude, 2026-10-13)
 
+**Claude, 2026-10-14. PR #288 MERGED as squash `943499c` (reply-filter fix). Worker DEPLOYED and verified from logs.**
+- Merged with `expectedHeadSha` `624d6c5`, after all required checks were green on that head.
+- `Deploy CHE Worker` 38487887723 succeeded at 00:03 UTC. These steps passed:
+  - "Verify live deployed commit" (`943499c`);
+  - the SideStore install link check;
+  - the Mary check: `top_level`, `live` and `captured` all ready, status "not tried yet".
+- No Dart change, so there is no new Shorebird patch. Patch 1 from #287 is the one the phone needs.
+- Still NOT verified: real Mary audio, and anything on the phone.
+- Owner's next step: close CHE fully and open it twice (the patch downloads, then applies). Then check:
+  - Keys → ElevenLabs;
+  - Read This and the voice diagnostics;
+  - that the Update button is gone;
+  - that the priority banner clears after opening notifications.
+
 **Claude, 2026-10-13 (owner: "Yes", go ahead and merge). PR #287 MERGED as squash `02edc38` on `main`. Worker DEPLOYED and verified from logs. Shorebird Patch 1 PUBLISHED. Phone NOT verified. Follow-up PR #288 open.**
 - **Merge:** `expectedHeadSha` `95622e6`. Required checks green on that head:
   - `CHE UI Analyze` 38480067225;
