@@ -7,9 +7,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('CHE\'s Fish voice is named honestly', () {
-    test('a Fish clip is labelled as CHE\'s voice', () {
+    test('a Fish clip is labelled as CHE\'s backup voice', () {
       expect(cheEdgeEngine('fish-audio'), 'fish-audio');
-      expect(cheVoiceEngineLabel('fish-audio'), 'CHE voice (Fish Audio)');
+      expect(cheVoiceEngineLabel('fish-audio'), 'Fish Audio (backup)');
     });
 
     test('no Fish reason when Fish spoke, was not reported, or is not set up', () {
@@ -65,17 +65,14 @@ void main() {
           const Duration(milliseconds: 14600));
       expect(cheVoiceWait('conversation', everyday: const Duration(seconds: 5), chars: 640),
           const Duration(seconds: 30), reason: 'never longer than 30 seconds');
-      final voice = File('lib/home_state/voice.dart').readAsStringSync();
       final edge = File('lib/che_edge_voice.dart').readAsStringSync();
-      expect(voice, contains('chars: text.length'));
-      expect(edge, contains('chars: said.length'));
+      expect(edge, contains('chePremiumVoiceWait(purpose, chars: said.length)'));
     });
 
-    test('the purpose reaches both voice requests', () {
+    test('the purpose reaches the one voice request', () {
       final voice = File('lib/home_state/voice.dart').readAsStringSync();
       final send = File('lib/home_state/send.dart').readAsStringSync();
-      expect(voice, contains('CheEdgeVoice.speak(text, purpose: purpose)'));
-      expect(voice, contains('_synthesizeServerVoice(text, purpose: purpose)'));
+      expect(voice, contains('CheEdgeVoice.speak(text, purpose: purpose, premiumOnly: true)'));
       expect(send, contains('_openSpeechTurn(purpose: cheVoicePurposeFor(message))'));
     });
   });

@@ -224,7 +224,27 @@ class CheNativeVoice {
 
   static Future<bool> previewVoice() => speakText('Hey, I\u2019m CHE. You\u2019re hearing my Chaze signature voice.');
 
-  static Future<bool> playAudio(Uint8List bytes) async => (await _invoke<bool>('playAudio', bytes)) ?? false;
+  /// Why the last [playAudio] did not play, in the iPhone's own words (for
+  /// example AVAudioPlayer's error), or empty when it played.
+  static String lastPlaybackError = '';
+
+  static Future<bool> playAudio(Uint8List bytes) async {
+    lastPlaybackError = '';
+    try {
+      final played = await _methods.invokeMethod<bool>('playAudio', bytes) ?? false;
+      bridgePresent = true;
+      if (!played) lastPlaybackError = 'the audio player stopped or did not start';
+      return played;
+    } on MissingPluginException {
+      bridgePresent = false;
+      lastPlaybackError = 'the native audio player is missing';
+      return false;
+    } on PlatformException catch (error) {
+      final detail = (error.details ?? error.message ?? '').toString().trim();
+      lastPlaybackError = detail.isEmpty ? error.code : '${error.code}: $detail';
+      return false;
+    }
+  }
 
   /// How long one clip may play before it counts as stuck. Scales with the bytes
   /// for compressed speech, but is capped: uncompressed WAV (24 kHz PCM16 from
@@ -237,13 +257,13 @@ class CheNativeVoice {
 
   /// Plays one clip but never waits forever. A player that stops reporting
   /// completion would otherwise hold the whole speech turn in silence. On
-  /// timeout the audio is stopped and the caller speaks that chunk on the
-  /// device voice instead.
+  /// timeout the audio is stopped and the caller shows that chunk and why.
   static Future<bool> playAudioBounded(Uint8List bytes, {Duration? limit}) async {
     final wait = limit ?? playbackDeadline(bytes.length);
     try {
       return await playAudio(bytes).timeout(wait);
     } on TimeoutException {
+      lastPlaybackError = 'playback did not finish within ${wait.inSeconds} seconds';
       try {
         await stopAudio();
       } catch (_) {}

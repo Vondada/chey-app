@@ -507,6 +507,9 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         'model not available' => 'Model not available on this account',
         'slow' => 'Too slow, resting',
         'daily limit reached' => 'Story limit reached today',
+        'needs a paid plan' => 'Needs a paid ElevenLabs plan for this voice',
+        'voice not found' => 'Voice ID not found',
+        'refused text' => 'Refused the last text',
         _ => s,
       };
 

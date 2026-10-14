@@ -211,10 +211,10 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
             row('Audio verified', snapshot.audioVerified ? 'Yes' : 'No'),
             row('CHE server', serverOnline ? 'Connected' : 'Not confirmed'),
             row('Last event', lastServerEvent ?? '—'),
-            row('CHE voice (Fish Audio)', cheFishStateLabel(fishStatus)),
-            row('Mary (backup)', cheMaryStateLabel(maryStatus)),
+            row('CHE voice (ElevenLabs)', cheMaryStateLabel(maryStatus)),
+            row('Fish Audio (backup)', cheFishStateLabel(fishStatus)),
             row('Playback engine', cheVoiceEngineLabel(playbackEngine)),
-            row('Fallback detail', fallbackReason ?? '—'),
+            row('Why not spoken', fallbackReason ?? '—'),
             row('Last interruption', snapshot.lastInterruptionReason ?? '—'),
             row(
               'Turn latency',

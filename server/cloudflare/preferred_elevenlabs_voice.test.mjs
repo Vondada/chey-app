@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  elevenLabsRefusalReason,
   marySecretsFrom,
   preferredElevenLabsDiagnostics,
   preferredElevenLabsKeyStatus,
+  preferredElevenLabsLastOutcome,
   preferredElevenLabsReady,
   preferredElevenLabsSpeech,
   resetPreferredElevenLabsPause,
@@ -182,7 +184,7 @@ test('a stale captured env reports Mary as not set up, and the live secrets fix 
 
 test('only the Mary settings are copied, and an absent one is sent empty', () => {
   const copied = marySecretsFrom({ ...env, ELEVENLABS_API_KEY: '', GROQ_API_KEY: 'do-not-copy' });
-  assert.deepEqual(Object.keys(copied).sort(), ['CHE_ELEVENLABS_MODEL', 'CHE_ELEVENLABS_PREFERRED', 'CHE_ELEVENLABS_VOICE_ID', 'CHE_VOICE_SPEED', 'ELEVENLABS_API_KEY']);
+  assert.deepEqual(Object.keys(copied).sort(), ['CHE_ELEVENLABS_CONCURRENCY', 'CHE_ELEVENLABS_MODEL', 'CHE_ELEVENLABS_PREFERRED', 'CHE_ELEVENLABS_VOICE_ID', 'CHE_VOICE_SPEED', 'ELEVENLABS_API_KEY']);
   assert.equal(copied.ELEVENLABS_API_KEY, '');
   assert.equal(copied.CHE_VOICE_SPEED, '');
   assert.equal(copied.GROQ_API_KEY, undefined);
@@ -223,4 +225,56 @@ test('the voice status probe reports booleans and words, never the key or voice 
     status: 'not set up',
     paused: false,
   });
+});
+
+test('ElevenLabs\' reason is kept short, without the key or the voice ID, and names the real problem', async () => {
+  resetPreferredElevenLabsPause();
+  const body = JSON.stringify({ detail: { status: 'payment_required', message: `Free users cannot use library voices via the API. Voice ${env.CHE_ELEVENLABS_VOICE_ID}, key ${env.ELEVENLABS_API_KEY}.` } });
+  assert.equal(await preferredElevenLabsSpeech(env, 'Hi', async () => new Response(body, { status: 402 })), null);
+  const last = preferredElevenLabsLastOutcome();
+  assert.equal(last.status, 'needs a paid plan');
+  assert.equal(last.code, 402);
+  assert.match(last.reason, /^payment_required: Free users cannot use library voices/);
+  assert.doesNotMatch(last.reason, /GgMNbwMsOI1mIBUkirnu|test-secret-never-real/);
+  assert.match(preferredElevenLabsKeyStatus(env).detail, /ElevenLabs said: "payment_required/);
+  assert.ok(elevenLabsRefusalReason('x'.repeat(500)).length <= 160);
+  resetPreferredElevenLabsPause();
+  await preferredElevenLabsSpeech(env, 'Hi', async () => new Response('{"detail":{"status":"voice_not_found","message":"A voice with that ID was not found."}}', { status: 404 }));
+  assert.equal(preferredElevenLabsLastOutcome().status, 'voice not found');
+  resetPreferredElevenLabsPause();
+});
+
+test('the deploy check makes a real call even while Mary rests', async () => {
+  resetPreferredElevenLabsPause();
+  let calls = 0;
+  await preferredElevenLabsSpeech(env, 'Hi', async () => { calls++; return new Response('{}', { status: 429 }); });
+  assert.equal(await preferredElevenLabsSpeech(env, 'Hi', async () => { calls++; return new Response(''); }), null, 'resting');
+  assert.equal(calls, 1);
+  const ok = await preferredElevenLabsSpeech(env, 'Hi', async () => { calls++; return new Response(new Uint8Array([0x49, 0x44, 0x33]), { headers: { 'Content-Type': 'audio/mpeg' } }); }, { force: true });
+  assert.equal(ok.headers.get('X-CHE-Voice'), 'elevenlabs-mary');
+  assert.equal(calls, 2);
+  resetPreferredElevenLabsPause();
+});
+
+test('at most two ElevenLabs calls run at once; the rest wait their turn instead of being refused', async () => {
+  resetPreferredElevenLabsPause();
+  let running = 0;
+  let most = 0;
+  const release = [];
+  const fetcher = async () => {
+    running += 1;
+    most = Math.max(most, running);
+    await new Promise((resolve) => release.push(resolve));
+    running -= 1;
+    return new Response(new Uint8Array([0x49, 0x44, 0x33]), { headers: { 'Content-Type': 'audio/mpeg' } });
+  };
+  const clips = [1, 2, 3, 4].map((n) => preferredElevenLabsSpeech(env, `Clip ${n}`, fetcher));
+  for (let i = 0; i < 4; i += 1) {
+    while (!release.length) await new Promise((resolve) => setTimeout(resolve, 1));
+    release.shift()();
+  }
+  const done = await Promise.all(clips);
+  assert.equal(most, 2);
+  assert.ok(done.every((clip) => clip?.headers.get('X-CHE-Voice') === 'elevenlabs-mary'));
+  resetPreferredElevenLabsPause();
 });

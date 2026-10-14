@@ -10,7 +10,7 @@ void main() {
     });
 
     test('the diagnostics name each engine in plain words', () {
-      expect(cheVoiceEngineLabel('elevenlabs-mary'), 'Mary (ElevenLabs)');
+      expect(cheVoiceEngineLabel('elevenlabs-mary'), 'CHE voice (ElevenLabs)');
       expect(cheVoiceEngineLabel('edge-ava'), 'Edge Ava (free server voice)');
       expect(cheVoiceEngineLabel('iphone-tts'), 'iPhone system voice');
       expect(cheVoiceEngineLabel(null), '—');

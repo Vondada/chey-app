@@ -34,9 +34,10 @@ import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv } from './a
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { handleEdgeVoice } from './edge_route.js';
-import { marySecretsFrom, preferredElevenLabsDiagnostics, preferredElevenLabsKeyStatus, preferredElevenLabsSpeech, withMarySecrets } from './preferred_elevenlabs_voice.js';
-import { fishAudioDiagnostics, fishAudioKeyStatus, fishAudioSpeech, fishSecretsFrom, readFishUsage } from './fish_audio_voice.js';
+import { marySecretsFrom, preferredElevenLabsDiagnostics, preferredElevenLabsKeyStatus, preferredElevenLabsLastOutcome, preferredElevenLabsSpeech, withMarySecrets } from './preferred_elevenlabs_voice.js';
+import { fishAudioDiagnostics, fishAudioKeyStatus, fishSecretsFrom, readFishUsage } from './fish_audio_voice.js';
 import { cheSpokenText } from './che_pronunciation.js';
+import { premiumVoiceSpeech, premiumVoiceStatuses, readVoiceLog, recordVoiceLog, voiceProbeAuthorized } from './phone_voice.js';
 import { handleVideoLine } from './video_route.js';
 import {
   YOUTUBE_CALLBACK_PATH, disconnectYouTube, finishYouTubeConnect, startYouTubeConnect,
@@ -653,16 +654,18 @@ function voiceSecretsFrom(env) {
   return { ...marySecretsFrom(env), ...fishSecretsFrom(env) };
 }
 
-async function voiceSynthesisResponse(env, text, { storage = null, purpose = 'conversation', character = '' } = {}) {
+async function voiceSynthesisResponse(env, text, { storage = null, purpose = 'conversation', character = '', premiumOnly = false } = {}) {
   const input = cheSpokenText(fluentSpeechText(text)).slice(0, 6000);
   if (!input) return json({ detail: 'Nothing speakable in that text.' }, 400);
-  // CHE's own voice: Fish Audio when the owner set it up. It returns null
-  // (and the chain below speaks) when Fish is off, resting or failing.
-  const fish = await fishAudioSpeech(env, input, { purpose, character, storage });
-  if (fish) return fish;
-  // Explicit owner opt-in: try Mary before free voices, never paid by default.
-  const preferred = await preferredElevenLabsSpeech(env, input);
-  if (preferred) return preferred;
+  // CHE's voice: ElevenLabs (Mary), then Fish (owner, 2026-10-14). Both need
+  // the owner's explicit setup and return null when off, resting or failing.
+  const premium = await premiumVoiceSpeech(env, input, { purpose, character, storage });
+  if (premium) return premium;
+  // The phone asks for these two voices only; it then stays silent and shows why.
+  if (premiumOnly) {
+    const statuses = premiumVoiceStatuses(env);
+    return new Response(null, { status: 204, headers: { 'X-CHE-Voice': 'none', 'X-CHE-Mary': statuses.mary, 'X-CHE-Fish': statuses.fish } });
+  }
   const voiceFailures = [];
 
   // Prefer free Workers AI TTS first so Gemini quota does not block spoken replies.
@@ -3575,6 +3578,35 @@ export class CheState extends DurableObject {
     return withMarySecrets(this.keyEnv || this.env, this.voiceSecrets);
   }
 
+  // The deploy check: one real ElevenLabs call with the live settings, the
+  // audio, ElevenLabs' reason when it refuses, and the recent voice log.
+  async voiceProbe() {
+    const env = this.voiceEnv();
+    const text = cheSpokenText('Hello, sir. CHE here, checking my voice after the update.');
+    const started = Date.now();
+    const response = await preferredElevenLabsSpeech(env, text, fetch, { force: true });
+    const ms = Date.now() - started;
+    const bytes = response ? new Uint8Array(await response.arrayBuffer()) : new Uint8Array();
+    const outcome = preferredElevenLabsLastOutcome();
+    await recordVoiceLog(this.ctx.storage, { route: 'probe', chars: text.length, engine: response ? 'elevenlabs-mary' : 'none', mary: outcome?.status || 'not set up', ms, bytes: bytes.length });
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return {
+      ok: Boolean(response),
+      engine: response ? 'elevenlabs-mary' : 'none',
+      ready: preferredElevenLabsDiagnostics(env).ready,
+      status: outcome?.status || preferredElevenLabsKeyStatus(env).status,
+      http: outcome?.code ?? null,
+      reason: outcome?.reason || '',
+      ms,
+      bytes: bytes.length,
+      model: String(env.CHE_ELEVENLABS_MODEL || 'eleven_flash_v2_5'),
+      fish: fishAudioKeyStatus(env).status,
+      audio_base64: response ? btoa(binary) : '',
+      voice_log: await readVoiceLog(this.ctx.storage, 20),
+    };
+  }
+
   // Booleans for the public /api/voice/status probe. `captured` is the env this
   // object was created with; `live` is what the voice routes actually use.
   voiceStatus() {
@@ -4287,27 +4319,37 @@ export class CheState extends DurableObject {
       const ownerOnly = () => json({ detail: 'Only the CHE owner can change, merge or deploy CHE’s code.' }, 403);
 
       if (path === '/api/voice/edge' && request.method === 'POST') {
-        // The current iPhone requests Edge before other TTS, so CHE's own voice
-        // (Fish), then Mary, are tried here first without requiring a new IPA.
+        // The iPhone asks this route first. CHE's voice is ElevenLabs (Mary),
+        // then Fish (owner, 2026-10-14), tried here without requiring a new IPA.
         const voiceEnv = this.voiceEnv();
         const said = cheSpokenText(body.text);
         const started = Date.now();
         // Stories (Drama 3) and character voices can cost credits, so only the
         // owner's devices may ask for them; everyone else gets the everyday voice.
-        const fish = await fishAudioSpeech(voiceEnv, said, ownerDevice
+        const premium = await premiumVoiceSpeech(voiceEnv, said, ownerDevice
           ? { purpose: body.purpose, character: body.character, storage: this.ctx.storage }
           : { storage: this.ctx.storage });
-        if (fish) return fish;
-        // A Fish attempt that used most of the phone's wait skips Mary, whose
-        // own timeout would push the reply past it; Edge Ava answers instead.
-        if (Date.now() - started < 4000) {
-          const preferred = await preferredElevenLabsSpeech(voiceEnv, said);
-          if (preferred) {
-            preferred.headers.set('X-CHE-Fish', fishAudioKeyStatus(voiceEnv).status);
-            return preferred;
-          }
+        const statuses = premiumVoiceStatuses(voiceEnv);
+        await recordVoiceLog(this.ctx.storage, {
+          route: 'edge',
+          chars: said.length,
+          engine: premium?.headers.get('X-CHE-Voice') || 'none',
+          ...statuses,
+          ms: Date.now() - started,
+        });
+        if (premium) return premium;
+        // The phone asks for ElevenLabs and Fish only: no free voice, so it can
+        // stay silent and show why instead of speaking in another voice.
+        if (body.premium_only === true) {
+          return new Response(null, { status: 204, headers: { 'X-CHE-Voice': 'none', 'X-CHE-Mary': statuses.mary, 'X-CHE-Fish': statuses.fish } });
         }
         return handleEdgeVoice(request, voiceEnv, { ...body, text: said });
+      }
+      // What the phone heard for one spoken reply: engines and reasons only,
+      // never the words. It is the evidence the deploy check prints.
+      if (path === '/api/voice/report' && request.method === 'POST') {
+        if (ownerDevice) await recordVoiceLog(this.ctx.storage, { ...body, route: 'phone' });
+        return json({ ok: true });
       }
       if (request.method === 'POST' && path === '/api/youtube/connect/start') {
         const started = await startYouTubeConnect(this.keyEnv || this.env, data, new URL(request.url).origin);
@@ -4936,15 +4978,15 @@ export class CheState extends DurableObject {
         // Mary's key is a deploy-time secret, so its row is read-only and shows
         // only the last outcome; the key is never sent to the phone or the web app.
         const mary = preferredElevenLabsKeyStatus(this.voiceEnv());
-        // Fish is CHE's own voice, also a deploy-time secret, shown the same way.
+        // Fish is CHE's backup voice, also a deploy-time secret, shown the same way.
         const fish = fishAudioKeyStatus(this.voiceEnv());
         const fishUsage = Object.entries((await readFishUsage(this.ctx.storage)).models)
           .map(([model, row]) => `${model}: ${row.requests} clips, ${row.chars} characters, ${row.cache_hits} from cache`).join('; ');
         return json({
           providers: [
             ...Object.entries(KEY_PROVIDERS).map(([id, p]) => ({ id, name: p.name, page: p.page, status: health[id]?.status || 'not set up', last4: health[id]?.last4 || '' })),
-            { id: 'fish', name: 'Fish Audio (CHE voice)', page: 'https://fish.audio', status: fish.status, last4: fish.last4, detail: fishUsage ? `${fish.detail} Today ${fishUsage}.` : fish.detail, readonly: true },
-            { id: 'elevenlabs', name: 'ElevenLabs (Mary voice)', page: 'https://elevenlabs.io', status: mary.status, last4: mary.last4, detail: mary.detail, readonly: true },
+            { id: 'elevenlabs', name: 'ElevenLabs (CHE voice)', page: 'https://elevenlabs.io', status: mary.status, last4: mary.last4, detail: mary.detail, readonly: true },
+            { id: 'fish', name: 'Fish Audio (backup voice)', page: 'https://fish.audio', status: fish.status, last4: fish.last4, detail: fishUsage ? `${fish.detail} Today ${fishUsage}.` : fish.detail, readonly: true },
           ],
           memory: { name: MEMORY_DB.name, page: MEMORY_DB.page, status: memoryStored ? (health.memory?.status || 'connected') : (memoryOn ? 'connected (server secret)' : 'not set up'), last4: memoryStored ? (health.memory?.last4 || '') : '', stored: memoryStored },
         });
@@ -5685,9 +5727,10 @@ export class CheState extends DurableObject {
       if (path === '/api/voice/synthesize') {
         const text = String(body.text || '').trim();
         if (!text) return json({ detail: 'Voice text required.' }, 400);
+        const premiumOnly = body.premium_only === true;
         return voiceSynthesisResponse(this.voiceEnv(), text, ownerDevice
-          ? { storage: this.ctx.storage, purpose: body.purpose, character: body.character }
-          : { storage: this.ctx.storage });
+          ? { storage: this.ctx.storage, purpose: body.purpose, character: body.character, premiumOnly }
+          : { storage: this.ctx.storage, premiumOnly });
       }
       if (path === '/api/service-account/request') {
         const provider = String(body.provider || '').trim().slice(0, 80);
@@ -10121,9 +10164,16 @@ export default {
       const status = await owner.voiceStatus();
       return json({ ok: true, top_level: preferredElevenLabsDiagnostics(env), ...status, fish: { top_level: fishAudioDiagnostics(env), ...status.fish } });
     }
+    // The deploy check. The route exists only for the per-deploy random token.
+    if (path === '/api/voice/probe' && request.method === 'POST') {
+      if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
+      const owner = env.CHE_STATE.getByName('owner');
+      await owner.setVoiceSecrets(voiceSecretsFrom(env));
+      return json(await owner.voiceProbe());
+    }
     // The live voice settings reach the Durable Object before each voice or key
     // request, so a secret change is seen without restarting the object.
-    if (['/api/voice/edge', '/api/voice/synthesize', '/api/keys'].includes(path)) {
+    if (['/api/voice/edge', '/api/voice/synthesize', '/api/voice/report', '/api/keys'].includes(path)) {
       const owner = env.CHE_STATE.getByName('owner');
       await owner.setVoiceSecrets(voiceSecretsFrom(env));
       return owner.fetch(request);

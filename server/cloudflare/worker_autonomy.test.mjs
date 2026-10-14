@@ -2401,16 +2401,15 @@ const FISH_ENV = {
   CHE_FISH_PREFERRED: '1',
 };
 
-test('Fish is CHE\'s voice on both iPhone voice routes, says "Chay", and caches the clip', async () => {
+test('Fish, the backup voice, speaks when ElevenLabs is not set up, says "Chay", and caches the clip', async () => {
   const { resetFishAudioState } = await import('./fish_audio_voice.js');
+  const { resetPreferredElevenLabsPause } = await import('./preferred_elevenlabs_voice.js');
   resetFishAudioState();
+  resetPreferredElevenLabsPause();
   const saved = new Map();
   const env = {
     CHE_PAIR_CODE: '123456',
     ...FISH_ENV,
-    CHE_ELEVENLABS_PREFERRED: '1',
-    ELEVENLABS_API_KEY: 'test-only',
-    CHE_ELEVENLABS_VOICE_ID: 'GgMNbwMsOI1mIBUkirnu',
     AI: { run: async () => { throw new Error('Free voice must not run when Fish succeeds'); } },
   };
   const { api } = await pairedChat(env, saved);
@@ -2424,10 +2423,11 @@ test('Fish is CHE\'s voice on both iPhone voice routes, says "Chay", and caches 
     const edge = await api('/api/voice/edge', { text: 'CHE here, sir.' });
     assert.equal(edge.status, 200);
     assert.equal(edge.headers.get('X-CHE-Voice'), 'fish-audio');
+    assert.equal(edge.headers.get('X-CHE-Mary'), 'not set up', 'the phone hears why ElevenLabs did not speak');
     const synth = await api('/api/voice/synthesize', { text: 'CHE here, sir.' });
     assert.equal(synth.headers.get('X-CHE-Voice'), 'fish-audio');
     assert.equal(synth.headers.get('X-CHE-Cache'), 'hit', 'the second route reuses the first route\'s audio');
-    assert.equal(calls.length, 1, 'one Fish request, no Mary request');
+    assert.equal(calls.length, 1, 'one Fish request');
     assert.equal(calls[0].url, 'https://api.fish.audio/v1/tts');
     assert.equal(calls[0].headers.model, 's2.1-pro-free');
     const { decodeMsgpack } = await import('./msgpack_decode_for_tests.mjs');
@@ -2440,9 +2440,11 @@ test('Fish is CHE\'s voice on both iPhone voice routes, says "Chay", and caches 
   }
 });
 
-test('when Fish fails, Mary then the free voices still speak, and the phone hears why', async () => {
+test('ElevenLabs speaks first on both iPhone voice routes; Fish speaks only when ElevenLabs gives no audio', async () => {
   const { resetFishAudioState } = await import('./fish_audio_voice.js');
+  const { resetPreferredElevenLabsPause } = await import('./preferred_elevenlabs_voice.js');
   resetFishAudioState();
+  resetPreferredElevenLabsPause();
   const saved = new Map();
   const env = {
     CHE_PAIR_CODE: '123456',
@@ -2450,23 +2452,119 @@ test('when Fish fails, Mary then the free voices still speak, and the phone hear
     CHE_ELEVENLABS_PREFERRED: '1',
     ELEVENLABS_API_KEY: 'test-only',
     CHE_ELEVENLABS_VOICE_ID: 'GgMNbwMsOI1mIBUkirnu',
-    AI: { run: async () => { throw new Error('unused'); } },
+    AI: { run: async () => { throw new Error('Free voice must not run'); } },
+  };
+  const { api } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  const seen = [];
+  let elevenLabsDown = false;
+  globalThis.fetch = async (url) => {
+    seen.push(String(url));
+    if (String(url).includes('elevenlabs') && elevenLabsDown) {
+      return new Response('{"detail":{"status":"quota_exceeded","message":"This request exceeds your quota."}}', { status: 401 });
+    }
+    return new Response(new Uint8Array([0x49, 0x44, 0x33, 0x04]), { headers: { 'Content-Type': 'audio/mpeg' } });
+  };
+  try {
+    for (const path of ['/api/voice/edge', '/api/voice/synthesize']) {
+      const response = await api(path, { text: 'Hello sir', premium_only: true });
+      assert.equal(response.headers.get('X-CHE-Voice'), 'elevenlabs-mary', path);
+      assert.equal(response.headers.get('X-CHE-Fish'), 'not tried yet', path);
+    }
+    assert.ok(seen.every((u) => u.includes('api.elevenlabs.io')), 'no Fish call while ElevenLabs speaks');
+    elevenLabsDown = true;
+    const backup = await api('/api/voice/edge', { text: 'Hello again sir', premium_only: true });
+    assert.equal(backup.headers.get('X-CHE-Voice'), 'fish-audio');
+    assert.equal(backup.headers.get('X-CHE-Mary'), 'out of credits');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('when ElevenLabs and Fish both fail, the phone gets silence and both reasons, never a free voice', async () => {
+  const { resetFishAudioState } = await import('./fish_audio_voice.js');
+  const { resetPreferredElevenLabsPause } = await import('./preferred_elevenlabs_voice.js');
+  resetFishAudioState();
+  resetPreferredElevenLabsPause();
+  const saved = new Map();
+  let freeVoice = 0;
+  const env = {
+    CHE_PAIR_CODE: '123456',
+    ...FISH_ENV,
+    CHE_ELEVENLABS_PREFERRED: '1',
+    ELEVENLABS_API_KEY: 'test-only',
+    CHE_ELEVENLABS_VOICE_ID: 'GgMNbwMsOI1mIBUkirnu',
+    AI: { run: async () => { freeVoice += 1; throw new Error('free voice'); } },
   };
   const { api } = await pairedChat(env, saved);
   const original = globalThis.fetch;
   const seen = [];
   globalThis.fetch = async (url) => {
     seen.push(String(url));
+    if (String(url).includes('elevenlabs')) return new Response('{"detail":{"status":"invalid_api_key"}}', { status: 401 });
     if (String(url).includes('fish.audio')) return new Response('{"message":"bad key"}', { status: 401 });
-    return new Response(new Uint8Array([0x49, 0x44, 0x33, 0x04]), { headers: { 'Content-Type': 'audio/mpeg' } });
+    throw new Error(`free voice called: ${url}`);
   };
   try {
-    const edge = await api('/api/voice/edge', { text: 'Hello sir' });
-    assert.equal(edge.status, 200);
-    assert.equal(edge.headers.get('X-CHE-Voice'), 'elevenlabs-mary');
-    assert.equal(edge.headers.get('X-CHE-Fish'), 'unauthorized');
-    await api('/api/voice/synthesize', { text: 'Hello again sir' });
-    assert.equal(seen.filter((u) => u.includes('fish.audio')).length, 1, 'a refused Fish key is not retried on the next route');
+    for (const path of ['/api/voice/edge', '/api/voice/synthesize']) {
+      const response = await api(path, { text: 'Hello sir', premium_only: true });
+      assert.equal(response.status, 204, path);
+      assert.equal(response.headers.get('X-CHE-Voice'), 'none');
+      assert.equal(response.headers.get('X-CHE-Mary'), 'unauthorized');
+      assert.equal(response.headers.get('X-CHE-Fish'), 'unauthorized');
+    }
+    assert.equal(freeVoice, 0, 'no free server voice');
+    assert.ok(seen.every((u) => u.includes('elevenlabs') || u.includes('fish.audio')), 'only the two voices were called');
+    assert.equal(seen.filter((u) => u.includes('fish.audio')).length, 1, 'a refused Fish key is not retried');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('the phone\'s report and each voice attempt are logged with words and numbers only, for the deploy check', async () => {
+  const { resetFishAudioState } = await import('./fish_audio_voice.js');
+  const { resetPreferredElevenLabsPause } = await import('./preferred_elevenlabs_voice.js');
+  resetFishAudioState();
+  resetPreferredElevenLabsPause();
+  const saved = new Map();
+  const env = {
+    CHE_PAIR_CODE: '123456',
+    CHE_ELEVENLABS_PREFERRED: '1',
+    ELEVENLABS_API_KEY: 'test-only',
+    CHE_ELEVENLABS_VOICE_ID: 'GgMNbwMsOI1mIBUkirnu',
+    CHE_VOICE_PROBE_TOKEN: 'p'.repeat(64),
+    AI: { run: async () => { throw new Error('unused'); } },
+  };
+  const { api } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response(new Uint8Array([0x49, 0x44, 0x33, 0x05]), { headers: { 'Content-Type': 'audio/mpeg' } });
+  try {
+    await api('/api/voice/edge', { text: 'My bank PIN is in the drawer, sir.', premium_only: true });
+    const report = await api('/api/voice/report', {
+      chunks: 2, played: 1, silent: 1, engines: { 'elevenlabs-mary': 1 },
+      reasons: ['playback failed: audio_playback_failed <b>OSStatus 1954115647</b>'],
+      text: 'My bank PIN is in the drawer, sir.',
+    });
+    assert.equal(report.status, 200);
+    const probe = (body, token) => worker.fetch(new Request('https://che.example/api/voice/probe', {
+      method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {}, body: JSON.stringify(body || {}),
+    }), env);
+    assert.equal((await probe({})).status, 404, 'no token, no route');
+    assert.equal((await probe({}, 'q'.repeat(64))).status, 404, 'a wrong token, no route');
+    const result = await (await probe({}, 'p'.repeat(64))).json();
+    assert.equal(result.ok, true);
+    assert.equal(result.engine, 'elevenlabs-mary');
+    assert.equal(result.bytes, 4);
+    assert.equal(Buffer.from(result.audio_base64, 'base64').toString('hex'), '49443305');
+    const routes = result.voice_log.map((row) => row.route);
+    assert.deepEqual(routes, ['edge', 'phone', 'probe']);
+    assert.equal(result.voice_log[0].engine, 'elevenlabs-mary');
+    assert.equal(result.voice_log[1].silent, 1);
+    assert.match(result.voice_log[1].reasons[0], /playback failed: audio_playback_failed b OSStatus 1954115647 \/?b/);
+    const text = JSON.stringify(result);
+    assert.doesNotMatch(text, /PIN|drawer|test-only|GgMNbwMsOI1mIBUkirnu/);
+    delete env.CHE_VOICE_PROBE_TOKEN;
+    assert.equal((await probe({}, 'p'.repeat(64))).status, 404, 'without the deploy token the route does not exist');
   } finally {
     globalThis.fetch = original;
   }
