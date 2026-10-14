@@ -437,6 +437,10 @@ extension _CheHomeSend on _CHEHomeState {
         return 'Opening Commands, sir.';
       case ScreenOp.searchCommands:
         return 'Opening Commands for "${command.text}", sir.';
+      case ScreenOp.openConnections:
+        return 'Opening CHE Connections, sir.';
+      case ScreenOp.changeVoice:
+        return 'Opening CHE Voice Settings, sir.';
       case ScreenOp.clearChat:
         messages.clear();
         return 'Chat cleared, sir.';
@@ -536,7 +540,9 @@ extension _CheHomeSend on _CHEHomeState {
     // playback to stop. Open the page first, then interrupt the old clip.
     final earlyCommand = _pendingAttachment == null ? parseScreenCommand(controller.text.trim()) : null;
     final quickCommandsRoute = earlyCommand?.op == ScreenOp.openCommands ||
-        earlyCommand?.op == ScreenOp.searchCommands;
+        earlyCommand?.op == ScreenOp.searchCommands ||
+        earlyCommand?.op == ScreenOp.openConnections ||
+        earlyCommand?.op == ScreenOp.changeVoice;
     if (_isSpeaking && !quickCommandsRoute) {
       await _interruptSpeechAndListen(resumeListening: false);
     }
@@ -575,7 +581,8 @@ extension _CheHomeSend on _CHEHomeState {
     if (screenCommand != null) {
       // Open the real page immediately. A deferred callback could leave the
       // owner in Chat, so the next local search went to the web/model.
-      if (screenCommand.op == ScreenOp.openCommands || screenCommand.op == ScreenOp.searchCommands) {
+      if (screenCommand.op == ScreenOp.openCommands || screenCommand.op == ScreenOp.searchCommands ||
+          screenCommand.op == ScreenOp.openConnections || screenCommand.op == ScreenOp.changeVoice) {
         if (!mounted) return;
         final reply = _applyScreenCommand(screenCommand);
         _set(() {
@@ -585,13 +592,21 @@ extension _CheHomeSend on _CHEHomeState {
             ..add({'role': 'assistant', 'text': reply});
         });
         HapticFeedback.mediumImpact();
-        unawaited(_openCommandCenter(
-          search: screenCommand.op == ScreenOp.searchCommands ? screenCommand.text : '',
-        ));
+        if (screenCommand.op == ScreenOp.openConnections) {
+          unawaited(_openConnections());
+        } else if (screenCommand.op == ScreenOp.changeVoice) {
+          _openVoiceSelector();
+        } else {
+          unawaited(_openCommandCenter(
+            search: screenCommand.op == ScreenOp.searchCommands ? screenCommand.text : '',
+          ));
+        }
         if (_isSpeaking) await _interruptSpeechAndListen(resumeListening: false);
         // A requested search speaks its numbered results (or a real failure)
         // from the Command Center, not a misleading "Opening..." preamble.
-        if (screenCommand.op == ScreenOp.openCommands) {
+        if (screenCommand.op == ScreenOp.openCommands ||
+            screenCommand.op == ScreenOp.openConnections ||
+            screenCommand.op == ScreenOp.changeVoice) {
           await speakText(reply, record: false);
         }
         return;
