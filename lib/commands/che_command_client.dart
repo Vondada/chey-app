@@ -41,20 +41,30 @@ class CheCommandClient {
     return body;
   }
 
-  /// The catalog exactly as CHE sent it (the store caches this JSON).
-  Future<Map<String, dynamic>> catalogJson() async {
+  /// Every request goes through here, so a timeout or a dropped connection
+  /// becomes a CheCommandException the page reports, never an uncaught error
+  /// that leaves its controls disabled.
+  Future<Map<String, dynamic>> _send(Future<http.Response> Function() request) async {
     if (baseUrl.isEmpty) throw const CheCommandException('CHE is not connected on this iPhone yet.', {});
-    final response = await _client.get(_uri('/api/commands'), headers: headers()).timeout(_timeout);
+    final http.Response response;
+    try {
+      response = await request().timeout(_timeout);
+    } on TimeoutException {
+      throw const CheCommandException('CHE did not answer within 20 seconds', {});
+    } on http.ClientException catch (e) {
+      throw CheCommandException('the connection failed (${e.message})', const {});
+    } on Exception {
+      // Socket and TLS errors the HTTP client did not wrap.
+      throw const CheCommandException('the connection failed', {});
+    }
     return _decode(response);
   }
 
-  Future<Map<String, dynamic>> _post(String path, Map<String, dynamic> body) async {
-    if (baseUrl.isEmpty) throw const CheCommandException('CHE is not connected on this iPhone yet.', {});
-    final response = await _client
-        .post(_uri(path), headers: {...headers(), 'Content-Type': 'application/json'}, body: jsonEncode(body))
-        .timeout(_timeout);
-    return _decode(response);
-  }
+  /// The catalog exactly as CHE sent it (the store caches this JSON).
+  Future<Map<String, dynamic>> catalogJson() => _send(() => _client.get(_uri('/api/commands'), headers: headers()));
+
+  Future<Map<String, dynamic>> _post(String path, Map<String, dynamic> body) => _send(
+      () => _client.post(_uri(path), headers: {...headers(), 'Content-Type': 'application/json'}, body: jsonEncode(body)));
 
   Future<CheWorkflowPlan> describe(String name, List<CheWorkflowStepDraft> steps) async =>
       CheWorkflowPlan.fromJson(await _post('/api/commands/workflow/describe', {

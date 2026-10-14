@@ -178,8 +178,8 @@
    "does": "Starts a reviewed coding job on CHE's own code: a draft pull request, tests and review. Merging and deploying need your separate yes.",
    "mode": "BUILD",
    "approval": {
-    "required": true,
-    "reason": "Starts a coding job that changes CHE's code (as a draft pull request)."
+    "required": false,
+    "reason": ""
    },
    "input": {
     "name": "change",
@@ -1355,8 +1355,8 @@
    "does": "Publishes the latest draft of the site CHE built at its public link.",
    "mode": "BUILD",
    "approval": {
-    "required": true,
-    "reason": "Makes the site public."
+    "required": false,
+    "reason": ""
    },
    "input": null,
    "examples": [
@@ -1428,8 +1428,8 @@
    "does": "Fixes defects in CHE's own app through a reviewed coding job (draft pull request).",
    "mode": "BUILD",
    "approval": {
-    "required": true,
-    "reason": "Starts a coding job that changes CHE's code (as a draft pull request)."
+    "required": false,
+    "reason": ""
    },
    "input": {
     "name": "bug",

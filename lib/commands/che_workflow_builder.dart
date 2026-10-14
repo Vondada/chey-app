@@ -189,7 +189,7 @@ class _CheWorkflowBuilderScreenState extends State<CheWorkflowBuilderScreen> {
     final result = await widget.client.run(_draft);
     if (!mounted) return;
     setState(() => _busy = false);
-    _report(result.message, ok: result.ok);
+    _report(result.ok ? result.message : 'CHE did not start it: ${result.message}', ok: result.ok);
     if (result.ok) widget.onStarted?.call();
   }
 

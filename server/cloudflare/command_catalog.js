@@ -110,7 +110,6 @@ export const COMMANDS = Object.freeze([
   }),
   C('che-build', 'intelligence', 'BUILD', 'Authorized implementation.', {
     does: 'Starts a reviewed coding job on CHE\'s own code: a draft pull request, tests and review. Merging and deploying need your separate yes.',
-    confirm: 'Starts a coding job that changes CHE\'s code (as a draft pull request).',
     needs: ['model', 'github'], route: 'che_self_development', handler: 'self_development.js (draft PR pipeline)',
     input: { name: 'change', required: true, hint: 'The change to make in CHE' },
     examples: ['Build a dark mode switch for the Office screen', 'Implement voice search in Mailbox'],
@@ -336,7 +335,6 @@ export const COMMANDS = Object.freeze([
   }),
   C('site-publish', 'build', 'BUILD', 'Deploy approved websites.', {
     does: 'Publishes the latest draft of the site CHE built at its public link.',
-    confirm: 'Makes the site public.',
     needs: ['site_hosting'], route: 'che_site_builder', handler: 'site_builder.publishSite',
     input: null,
     examples: ['Publish the website'],
@@ -351,7 +349,6 @@ export const COMMANDS = Object.freeze([
   }),
   C('app-fix', 'build', 'BUILD', 'Diagnose and repair application defects.', {
     does: 'Fixes defects in CHE\'s own app through a reviewed coding job (draft pull request).',
-    confirm: 'Starts a coding job that changes CHE\'s code (as a draft pull request).',
     needs: ['model', 'github'], route: 'che_self_development', handler: 'self_development.js',
     input: { name: 'bug', required: true, hint: 'What is broken' },
     examples: ['Fix the Office screen freezing'],

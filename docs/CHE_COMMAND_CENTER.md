@@ -14,6 +14,27 @@ The page has three tabs:
 
 Opening the page, changing tabs, searching and loading never make CHE speak. **Read this** buttons and your own actions do. An action reports its real result with a visible banner, a haptic and CHE's voice.
 
+## By voice
+
+Everything on the page also works by voice. The page has its own **Speak to CHE** mic button, or use hands-free. While the page is open, Chat's voice pipeline offers it your words first; this is the same hook CHE's browser uses (`lib/commands/che_command_voice.dart`, deterministic, no model call). Anything else goes to Chat as usual.
+
+| Say | Does |
+|---|---|
+| "What's on screen?" / "read my options" | Reads the page as a numbered list |
+| "Search for website clients" / "which command prices a website" | Searches and reads the top 5, numbered |
+| "Number two" | Opens that one's details and reads them |
+| "Open trade chart" | Opens a command's details and reads them |
+| "Run trade chart NQ" / "run it" | Back to Chat, where CHE runs it and says the real result |
+| "Favorite it" / "remove trade chart from favorites" | Adds it to or removes it from your favorites |
+| "Show workflows" / "show activity" / "back to chat" | Switches tab, or goes back |
+| "Build a workflow called website clients with lead scout for barbers in Phoenix, lead audit and pricing" | Saves it, then reads back the steps and anything still missing |
+| "Add lead proposal to my website clients workflow" / "remove step 3 from website clients workflow" | Edits the saved workflow |
+| "Run my website clients workflow" | Starts it on the mission queue |
+| "Approve" / "approve step 2" / "retry it" / "pause" / "resume" | Controls the current run |
+| "Cancel the run" / "delete website clients workflow" | Asks first; only a plain "yes" next goes ahead |
+
+A command that needs setup, or is missing its input, says what is missing and runs nothing. An approval command asks for a spoken yes in Chat.
+
 ## How it works (no second assistant)
 
 | Piece | Where | Reuses |
@@ -21,8 +42,8 @@ Opening the page, changing tabs, searching and loading never make CHE speak. **R
 | Catalog of 71 commands | `server/cloudflare/command_catalog.js` | One entry per command. It names the existing handler and chat route it uses, its mode (EXPLORE, PLAN or BUILD), approval, input, connectors, evidence and cost. |
 | Live status | `connectorStatus()` | Real Worker secrets, the YouTube OAuth state, the NinjaTrader token and `runtimeCapabilityRegistry`. |
 | Running a command | `/name input` in chat | The request goes through the ordinary `/api/chat` route, so every money, delete and app gate, every truth guard and every receipt applies. A command name cannot bypass a permission. |
-| Approval | `confirm` in the catalog | Held with the same "plain yes on the next turn" hold the money gate uses, or confirmed on the page. Money and delete still ask separately. |
-| Workflows | `command` nodes in `objective_graph.js` | CHE's existing mission graph and job queue: dependencies, parallel lanes, recovery ladder, checkpoints. Each step runs as your own command through `/api/chat`. Earlier steps' results are passed to the next step as data. |
+| Approval | `confirm` in the catalog | Only `/trade-execute` (real money) and `/yt-publish` (your YouTube channel). Owner rule of September 28: everything else you ask for explicitly just runs, and money and delete gates still ask separately. Held with the same "plain yes on the next turn" hold the money gate uses, or confirmed on the page. In a workflow, an approval step can be approved only once the steps before it are done, so you decide with their results. |
+| Workflows | `command` nodes in `objective_graph.js` | CHE's existing mission graph and job queue: dependencies, parallel lanes, recovery ladder, checkpoints. Each step runs as your own command through `/api/chat`. Earlier steps' results are passed to the next step as data. A recovery attempt carries the ladder's new approach as context; the routed request stays the catalog's. |
 | Suggestions | `suggestCommands()` | Deterministic word rules, never a model call. At most two cards, appended after the reply as a `command_suggestions` event (older apps ignore it). Tapping a card opens details; nothing runs from a suggestion. |
 | Phone | `lib/commands/` | Favorites, recents, dismissed suggestions and the last catalog are kept on the phone. Saved workflows are kept on CHE, so "run my website clients workflow" works by voice. |
 
@@ -60,7 +81,7 @@ Honest limits:
 - **Make a faceless YouTube video:** /yt-ideas → /yt-script → /yt-video → /yt-thumbnail
 - **Plan, build and review an app:** /che-plan → /app-build → /code-review
 - **NQ open briefing with risk check:** /trade-open → /trade-chart → /trade-risk
-- **Build and publish a website:** /site-build → /site-audit → /site-publish (publishing waits for your approval)
+- **Build and publish a website:** /site-build → /site-audit → /site-publish
 
 ## Measured (2026-10-14, `server/cloudflare/command_center.test.mjs` and a local measurement script)
 
@@ -84,7 +105,9 @@ Honest limits:
   - library, search, categories, details, setup-required and approval runs;
   - favorites across restarts, offline cache, builder (order, run together, save, check, run) and activity controls;
   - delete confirmation, no automatic speech, VoiceOver labels at 2× text, the suggestion card, the spoken route;
-  - the real app's Chat → Commands → Chat.
+  - a dropped connection reported with the controls still usable;
+  - every page action by voice (search, numbered choice, open, run, favorite, tabs, build, edit, run, approve, pause, and delete and cancel that ask first);
+  - the real app's Chat → Commands → Chat, with the voice hook registered only while the page is open.
 - **End to end** (`test/che_command_center_e2e_test.dart` + `tool/command_center_e2e_server.mjs`): the real page over real HTTP against the real Worker code. A command handed to Chat reaches the trading handler, and a workflow built on the page completes on the job queue and shows in Activity. CI starts the server in the `flutter test` step.
 
 Adding a command means one catalog entry. The route test then checks that it reaches the handler it names. Regenerate the phone fixture with `node tool/dump_command_catalog.mjs`.

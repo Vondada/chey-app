@@ -549,6 +549,20 @@ extension _CheHomeSend on _CHEHomeState {
       return;
     }
 
+    // The Command Center, while it is open, answers its own voice routes
+    // first (search, numbered options, run, favorite, workflows, run
+    // controls). Its reply is on its banner; CHE says it here. An empty
+    // reply means the command went to Chat, which speaks the real result.
+    final commandsVoice = CheCommandCenterVoice.handler;
+    if (commandsVoice != null && _pendingAttachment == null) {
+      final reply = await commandsVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
     // Direct screen edits are applied on-device before any model routing.
     final screenCommand = _pendingAttachment == null ? parseScreenCommand(message) : null;
     if (screenCommand != null) {

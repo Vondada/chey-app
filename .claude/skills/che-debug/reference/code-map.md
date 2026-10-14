@@ -28,7 +28,7 @@
 ## Flutter (`lib/`)
 - **Shell:** `lib/main.dart`. `_CHEHomeState` is split into `lib/home_state/*.dart` (voice, microphone, send, security, hub_rooms, memory).
 - **Voice:** `lib/home_state/voice.dart`, `lib/che_speech_pipeline.dart`, `lib/che_mic_supervisor.dart`, and native `ios/Runner/AppDelegate.swift`.
-- **Command Center:** `lib/commands/` (page, detail, workflow builder, store, client). Chat wiring is in `lib/main.dart` (`_openCommandCenter`) and `lib/home_state/streaming.dart` (the `command_suggestions` event).
+- **Command Center:** `lib/commands/` (page, detail, workflow builder, store, client, voice routes in `che_command_voice.dart`). Chat wiring is in `lib/main.dart` (`_openCommandCenter`), `lib/home_state/send.dart` (the page answers spoken words first while it is open) and `lib/home_state/streaming.dart` (the `command_suggestions` event).
 - **Brain and memory on the phone:** `lib/che_ui/che_brain.dart`, the brain guide and the `che-remember` blocks.
 
 ## Never break (AGENTS.md and the handoff)

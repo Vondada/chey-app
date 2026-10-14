@@ -10,6 +10,7 @@ import 'package:chey/commands/che_command_center.dart';
 import 'package:chey/commands/che_command_client.dart';
 import 'package:chey/commands/che_command_models.dart';
 import 'package:chey/commands/che_command_store.dart';
+import 'package:chey/commands/che_command_voice.dart';
 import 'package:chey/commands/che_command_widgets.dart';
 import 'package:chey/home/screen_command.dart';
 import 'package:chey/main.dart';
@@ -24,6 +25,11 @@ final Map<String, dynamic> fixture = jsonDecode(File('test/fixtures/command_cata
 class FakeChe {
   FakeChe({this.offline = false});
   bool offline;
+  /// Workflow run/control requests fail in transport (dropped connection).
+  bool dropActions = false;
+
+  /// Commands whose connectors are signed in on this test CHE.
+  Set<String> ready = {};
   final requests = <http.Request>[];
   List<Map<String, dynamic>> workflows = [];
   List<Map<String, dynamic>> missions = [];
@@ -36,10 +42,15 @@ class FakeChe {
   late final client = MockClient((request) async {
     requests.add(request);
     if (offline) throw const SocketException('offline');
+    if (dropActions && request.url.path.startsWith('/api/commands/workflow/')) throw http.ClientException('Connection reset by peer', request.url);
     final path = request.url.path;
     Map<String, dynamic> body() => request.body.isEmpty ? {} : jsonDecode(request.body) as Map<String, dynamic>;
     if (path == '/api/commands') {
-      return json({...fixture, 'workflows': workflows, 'missions': missions, 'runs': runs}, 200);
+      final commands = [
+        for (final c in (fixture['commands'] as List).cast<Map<String, dynamic>>())
+          ready.contains(c['id']) ? {...c, 'status': 'available', 'missing': <Object>[]} : c,
+      ];
+      return json({...fixture, 'commands': commands, 'workflows': workflows, 'missions': missions, 'runs': runs}, 200);
     }
     if (path == '/api/commands/workflow/describe') return json(describe, 200);
     if (path == '/api/commands/workflows/save') {
@@ -195,6 +206,26 @@ void main() {
   });
 
   testWidgets('an approval command runs only after the owner approves it', (tester) async {
+    final che = FakeChe()..ready = {'trade-execute'};
+    final ran = Ran();
+    await openCenter(tester, che: che, ran: ran);
+    await tester.enterText(find.byType(TextField).first, 'trade-execute');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('/trade-execute').first);
+    await tester.pumpAndSettle();
+    await tapVisible(tester, find.text('Run /trade-execute in Chat'));
+    expect(find.text('Approve /trade-execute?'), findsOneWidget);
+    await tester.tap(find.text('Not now'));
+    await tester.pumpAndSettle();
+    expect(ran.calls, isEmpty);
+    await tester.tap(find.text('Run /trade-execute in Chat'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Approve and run'));
+    await tester.pumpAndSettle();
+    expect(ran.calls, [('/trade-execute', true)]);
+  });
+
+  testWidgets('publishing a site is the owner\'s explicit request: it runs without an extra approval', (tester) async {
     final che = FakeChe();
     final ran = Ran();
     await openCenter(tester, che: che, ran: ran);
@@ -202,17 +233,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('/site-publish').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Run /site-publish in Chat'));
-    await tester.pumpAndSettle();
-    expect(find.text('Approve /site-publish?'), findsOneWidget);
-    await tester.tap(find.text('Not now'));
-    await tester.pumpAndSettle();
-    expect(ran.calls, isEmpty);
-    await tester.tap(find.text('Run /site-publish in Chat'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Approve and run'));
-    await tester.pumpAndSettle();
-    expect(ran.calls, [('/site-publish', true)]);
+    expect(find.textContaining('Needs your approval'), findsNothing);
+    await tapVisible(tester, find.text('Run /site-publish in Chat'));
+    expect(ran.calls, [('/site-publish', false)]);
   });
 
   testWidgets('favorites and recents survive a restart', (tester) async {
@@ -294,7 +317,7 @@ void main() {
           'id': 'm1', 'name': 'Ship site', 'status': 'awaiting_approval', 'paused': false, 'spoken': 'Ship site: 1 of 3 steps done.',
           'steps': [
             {'id': 's1', 'command': 'site-audit', 'title': '/site-audit my site', 'status': 'complete', 'depends_on': [], 'output': 'Add alt text.', 'evidence': [], 'verified_by': 'model'},
-            {'id': 's2', 'command': 'site-publish', 'title': '/site-publish', 'status': 'awaiting_approval', 'depends_on': ['s1'], 'needs_approval': true, 'evidence': []},
+            {'id': 's2', 'command': 'yt-publish', 'title': '/yt-publish', 'status': 'awaiting_approval', 'depends_on': ['s1'], 'needs_approval': true, 'evidence': []},
             {'id': 's3', 'command': 'trade-open', 'title': '/trade-open NQ', 'status': 'failed', 'depends_on': [], 'evidence': ['job x failed: The free data source did not answer.'], 'recovery': 'exhausted'},
           ],
         },
@@ -325,6 +348,31 @@ void main() {
     await tester.pumpAndSettle();
     expect(che.posted('/api/commands/workflow/control').where((b) => b['action'] == 'cancel'), isEmpty);
     expect(spoken, isNotEmpty, reason: 'owner actions report their real result aloud');
+  });
+
+  testWidgets('a dropped connection is reported and leaves the controls usable', (tester) async {
+    final che = FakeChe()
+      ..missions = [
+        {
+          'id': 'm1', 'name': 'Ship site', 'status': 'running', 'paused': false, 'spoken': 'Ship site: 0 of 1 steps done.',
+          'steps': [
+            {'id': 's1', 'command': 'site-audit', 'title': '/site-audit my site', 'status': 'running', 'depends_on': [], 'evidence': []},
+          ],
+        },
+      ]
+      ..dropActions = true;
+    final spoken = <String>[];
+    await openCenter(tester, che: che, spoken: spoken);
+    await tester.tap(find.text('Activity'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Pause'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('CHE did not pause it: the connection failed (Connection reset by peer)'), findsWidgets);
+    expect(spoken.last, contains('the connection failed'), reason: 'the failure is spoken, not swallowed');
+    // Not stuck busy: the same control works again.
+    await tester.tap(find.text('Pause'));
+    await tester.pumpAndSettle();
+    expect(che.posted('/api/commands/workflow/control').length, 2);
   });
 
   testWidgets('deleting a saved workflow asks first', (tester) async {
@@ -427,6 +475,134 @@ void main() {
     }
   });
 
+  test('voice phrases map to the page\'s actions, deterministically', () {
+    CheCommandVoice? p(String words) => CheCommandVoice.parse(words);
+    expect(p("What's on screen?")?.op, CheCommandVoiceOp.describe);
+    expect(p('read my options')?.op, CheCommandVoiceOp.describe);
+    expect(p('show workflows')?.text, 'workflows');
+    expect(p('go to the activity tab')?.text, 'activity');
+    expect(p('Che, find website clients')?.text, 'website clients');
+    expect(p('which command should I use to price a website')?.text, 'price a website');
+    expect(p('number two')?.number, 2);
+    expect(p('the first one')?.number, 1);
+    expect(p('Run trade chart NQ')?.op, CheCommandVoiceOp.run);
+    expect(p('Run trade chart NQ')?.text, 'trade chart NQ', reason: 'the input keeps its case');
+    expect(p('favorite it')?.op, CheCommandVoiceOp.favorite);
+    expect(p('remove trade chart from my favorites')?.op, CheCommandVoiceOp.unfavorite);
+    final built = p('build a workflow called website clients with lead scout, lead audit and then pricing')!;
+    expect(built.op, CheCommandVoiceOp.buildWorkflow);
+    expect(built.target, 'website clients');
+    expect(built.items, ['lead scout', 'lead audit', 'pricing']);
+    expect(p('new workflow')?.op, CheCommandVoiceOp.newWorkflow);
+    expect(p('add pricing to my website clients workflow')?.target, 'website clients');
+    expect(p('remove step 2 from website clients workflow')?.number, 2);
+    expect(p('delete the website clients workflow')?.op, CheCommandVoiceOp.deleteWorkflow);
+    expect(p('run my website clients workflow')?.target, 'website clients');
+    expect(p('approve step 3')?.number, 3);
+    expect(p('retry it')?.op, CheCommandVoiceOp.retry);
+    expect(p('pause the run')?.op, CheCommandVoiceOp.pause);
+    expect(p('resume ship site')?.target, 'ship site');
+    expect(p('cancel the run')?.op, CheCommandVoiceOp.cancel);
+    expect(p('back to chat')?.op, CheCommandVoiceOp.back);
+    expect(p('yes')?.op, CheCommandVoiceOp.yes);
+    expect(p('what is the weather like'), isNull, reason: 'anything else goes to Chat as usual');
+    final ids = {'trade-chart', 'yt-ideas', 'create-3d', 'che-plan', 'che'};
+    expect(cheMatchCommandWords('trade chart NQ', ids), (id: 'trade-chart', rest: 'NQ'));
+    expect(cheMatchCommandWords('YouTube ideas for cooking', ids), (id: 'yt-ideas', rest: 'cooking'));
+    expect(cheMatchCommandWords('slash chey plan my week', ids), (id: 'che-plan', rest: 'my week'));
+    expect(cheMatchCommandWords('create 3 d obby', ids), (id: 'create-3d', rest: 'obby'));
+    expect(cheMatchCommandWords('my errands', ids), isNull, reason: 'a command runs only when its name was said');
+  });
+
+  testWidgets('every page action works by voice: read options, pick, favorite, search, tabs, run and back', (tester) async {
+    final che = FakeChe();
+    final ran = Ran();
+    final store = CheCommandStore();
+    final spoken = <String>[];
+    await openCenter(tester, che: che, ran: ran, store: store, spoken: spoken);
+    final voice = CheCommandCenterVoice.handler!;
+    Future<String?> say(String words) async {
+      final reply = await voice(words);
+      await tester.pumpAndSettle();
+      return reply;
+    }
+
+    final screen = (await say("what's on screen"))!;
+    expect(screen, contains('71 commands in 8 categories'));
+    expect(screen, contains('Tabs: 1. Library, 2. Workflows, 3. Activity.'));
+    final found = (await say('search for trade chart'))!;
+    expect(found, contains('1. /trade-chart: '));
+    expect(find.textContaining('for "trade chart"'), findsOneWidget, reason: 'the screen shows what CHE read');
+    expect(await say('number one'), contains('/trade-chart'));
+    expect(find.byTooltip('Read this command aloud'), findsOneWidget, reason: 'its details are open');
+    expect(await say('favorite it'), '/trade-chart is in your favorites.');
+    expect(store.isFavorite('trade-chart'), isTrue);
+    expect(await say('back'), 'Back to Commands.');
+    expect(find.byTooltip('Read this command aloud'), findsNothing);
+    expect(await say('remove trade chart from favorites'), '/trade-chart is not in your favorites.');
+    expect(store.isFavorite('trade-chart'), isFalse);
+    expect(await say('show activity'), contains('Activity tab'));
+    expect(find.text('Workflow runs'.toUpperCase()), findsOneWidget);
+    expect(await say('run lead scout'), contains('/lead-scout needs who to look for'));
+    expect(await say('run trade execute'), allOf(contains('Needs setup'), contains('Nothing was run')));
+    expect(await say('run my errands'), contains('I don\'t have a command called "my errands"'));
+    expect(ran.calls, isEmpty, reason: 'nothing ran from a refused or unknown request');
+    expect(find.textContaining('Nothing was run'), findsOneWidget, reason: 'each spoken reply is also on the banner');
+    expect(await say('run trade chart NQ'), '', reason: 'Chat runs it and speaks the real result');
+    expect(ran.calls, [('/trade-chart NQ', false)]);
+    expect(find.text('Chat host'), findsOneWidget, reason: 'back in Chat');
+    expect(CheCommandCenterVoice.handler, isNull);
+    expect(spoken, isEmpty, reason: 'Chat speaks voice replies once; the page never adds a second voice');
+  });
+
+  testWidgets('workflows and runs by voice: build, edit, run, approve, pause; delete and cancel ask first', (tester) async {
+    final che = FakeChe()
+      ..missions = [
+        {
+          'id': 'm1', 'name': 'Ship site', 'status': 'awaiting_approval', 'paused': false, 'spoken': 'Ship site: 1 of 2 steps done.',
+          'steps': [
+            {'id': 's1', 'command': 'site-audit', 'title': '/site-audit my site', 'status': 'complete', 'depends_on': [], 'evidence': []},
+            {'id': 's2', 'command': 'yt-publish', 'title': '/yt-publish', 'status': 'awaiting_approval', 'depends_on': ['s1'], 'needs_approval': true, 'evidence': []},
+          ],
+        },
+      ];
+    await openCenter(tester, che: che);
+    final voice = CheCommandCenterVoice.handler!;
+    Future<String?> say(String words) async {
+      final reply = await voice(words);
+      await tester.pumpAndSettle();
+      return reply;
+    }
+
+    expect(await say('build a workflow called website clients with lead scout for barbers in Phoenix, lead audit and pricing'),
+        startsWith('Saved "website clients": /lead-scout barbers in Phoenix, then /lead-audit, then /pricing.'));
+    expect(che.posted('/api/commands/workflows/save').last['steps'], [
+      {'command': 'lead-scout', 'input': 'barbers in Phoenix', 'parallel': false},
+      {'command': 'lead-audit', 'input': '', 'parallel': false},
+      {'command': 'pricing', 'input': '', 'parallel': false},
+    ]);
+    expect(await say('add lead proposal to my website clients workflow'), contains('then /lead-proposal'));
+    expect(che.posted('/api/commands/workflows/save').last['id'], 'wf-1', reason: 'an edit of the same workflow, not a copy');
+    expect(await say('remove step 3 from website clients workflow'), isNot(contains('/pricing')));
+    expect(await say('run website clients workflow'), contains('Started'));
+    expect(che.posted('/api/commands/workflow/run').last, {'id': 'wf-1'});
+    await say('approve');
+    expect(che.posted('/api/commands/workflow/control').last, {'id': 'm1', 'action': 'approve', 'node_id': 's2'});
+    await say('pause the run');
+    expect(che.posted('/api/commands/workflow/control').last['action'], 'pause');
+    expect(await say('cancel the run'), contains('Say yes to cancel it'));
+    expect(che.posted('/api/commands/workflow/control').where((b) => b['action'] == 'cancel'), isEmpty);
+    await say('yes');
+    expect(che.posted('/api/commands/workflow/control').last['action'], 'cancel');
+    expect(await say('delete website clients workflow'), contains('Say yes to delete it'));
+    expect(await say('no'), 'Okay. Nothing was changed.');
+    expect(che.posted('/api/commands/workflows/delete'), isEmpty);
+    await say('delete website clients workflow');
+    expect(await say('yes'), contains('Deleted the saved workflow "website clients"'));
+    expect(che.posted('/api/commands/workflows/delete').single, {'id': 'wf-1'});
+    expect(await say('yes'), isNull, reason: 'nothing pending: a yes goes on to Chat (a held command)');
+  });
+
   testWidgets('Chat → Commands → back to Chat, in the real app, with no speech on the way', (tester) async {
     tester.view.physicalSize = const Size(1170, 2532);
     tester.view.devicePixelRatio = 3;
@@ -448,11 +624,18 @@ void main() {
     // This test phone is not paired, so CHE says so instead of showing an empty list.
     expect(find.textContaining('Could not reach CHE'), findsOneWidget);
     expect(tester.takeException(), isNull);
+    // While the page is open, Chat's voice pipeline offers it the owner's
+    // words first, and its mic button is CHE's own microphone.
+    expect(CheCommandCenterVoice.handler, isNotNull);
+    expect(find.byTooltip('Speak to CHE'), findsOneWidget);
+    expect(await CheCommandCenterVoice.handler!('search for website clients'), startsWith('Could not reach CHE'),
+        reason: 'unpaired: the spoken search says why instead of an empty success');
     await tester.tap(find.byTooltip('Back to Chat'));
     for (var i = 0; i < 10; i++) {
       await tester.pump(const Duration(milliseconds: 150));
     }
     expect(find.text('What can I help with?'), findsOneWidget);
+    expect(CheCommandCenterVoice.handler, isNull, reason: 'closed pages answer no voice routes');
     handle.dispose();
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 1));

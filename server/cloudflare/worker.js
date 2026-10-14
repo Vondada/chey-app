@@ -143,7 +143,7 @@ import {
   writeResearchMemoryNote,
 } from './research_memory.js';
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
-import { advanceObjectives, applyMissionEvent, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
+import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
 import { catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, searchCommands, speakUnavailable, suggestCommands, workflowNodes } from './command_catalog.js';
 import { LAST_RESULTS_KEY, loadCatalog, resourceChoice, resourceIntent, resultLinks, searchCatalog, speakResults } from './resource_catalogs.js';
 import { fiveLayerIntent, LAYER_RESULTS_KEY, reasoningLayer, runReasoningLayer, speakFiveLayerResults } from './reasoning_exam.js';
@@ -222,7 +222,7 @@ function commandMissions(data) {
       id: o.id, name: o.workflow_name || o.objective, workflow_id: o.workflow_id || '', status: o.status, paused: o.paused === true,
       created_at: o.created_at, updated_at: o.updated_at, spoken: speakObjective(o),
       steps: o.nodes.map((n) => ({
-        id: n.id, command: n.command || '', title: n.title, status: awaitingApproval(n) && n.status === 'pending' ? 'awaiting_approval' : n.status,
+        id: n.id, command: n.command || '', title: n.title, status: approvalReached(o, n) ? 'awaiting_approval' : n.status,
         depends_on: n.depends_on, needs_approval: n.needs_approval === true, approved_at: n.approved_at || null,
         output: String(n.output || '').slice(0, 600), evidence: (n.evidence || []).slice(-2), recovery: n.recovery || '',
         verified_by: n.verification?.by || '',
@@ -465,9 +465,11 @@ async function commandCenterProbe(env, token) {
       ({ done, reply }) => done.source === 'che_command' && done.ok === false && done.model_calls === 0 && /Nothing was run/.test(reply));
     await step('slash command reaches its existing handler', '/trade-journal',
       ({ done }) => done.source === 'che_trading' && Number(done.model_calls || 0) === 0);
-    await step('approval command is held for a yes', '/site-publish',
-      ({ held }) => held?.held_for_owner === true && held.command === 'site-publish');
-    await step('a different turn drops the hold', 'Never mind.', () => true);
+    // This isolated CHE has no broker sign-in, so the money command must say
+    // what is missing and run nothing (its approval hold is unit-tested).
+    await step('a command needing setup says what is missing, nothing run', '/trade-execute',
+      ({ done, reply }) => done.source === 'che_command' && done.ok === false && done.model_calls === 0
+        && ['setup_required', 'unsupported'].includes(done.command_status) && /Nothing was run/.test(reply));
     await step('a suggestion card follows a matching question', 'How can I make some money building websites?',
       ({ events }) => events.some((e) => e.type === 'command_suggestions' && e.suggestions?.[0]?.id === 'website-clients'), { optional: true });
   } finally {
@@ -4485,7 +4487,7 @@ export class CheState extends DurableObject {
     const waiting = objective.nodes.filter((n) => awaitingApproval(n)).map((n) => n.title);
     return {
       ok: true, objective, started, described,
-      spoken: `Started "${described.name}", sir: ${described.steps.length} step${described.steps.length === 1 ? '' : 's'}, ${started} running now.${waiting.length ? ` ${waiting.length === 1 ? 'One step waits' : `${waiting.length} steps wait`} for your approval: ${waiting.join(', ')}.` : ''} Say "mission status" for progress.`,
+      spoken: `Started "${described.name}", sir: ${described.steps.length} step${described.steps.length === 1 ? '' : 's'}, ${started} running now.${waiting.length ? ` ${waiting.length === 1 ? 'One step asks' : `${waiting.length} steps ask`} for your approval once the steps before ${waiting.length === 1 ? 'it are' : 'them are'} done: ${waiting.join(', ')}.` : ''} Say "mission status" for progress.`,
     };
   }
 
@@ -4513,6 +4515,18 @@ export class CheState extends DurableObject {
         { role: 'assistant', content: 'Noted, sir.' },
       ]
       : [];
+    // A recovery attempt carries the ladder's strategy (what recoverNode
+    // added to the catalog request) as context for this attempt. The routed
+    // request itself stays the catalog's, so a retry can never reach a
+    // different handler than the command names.
+    const base = String(node.base_prompt || '');
+    const recovery = base && String(node.prompt || '').startsWith(base) ? String(node.prompt).slice(base.length).trim() : '';
+    if (recovery && node.strategy && !['initial', 'owner_replan'].includes(node.strategy)) {
+      history.push(
+        { role: 'user', content: `The last attempt at this step failed. For this attempt: ${recovery.slice(0, 1200)}` },
+        { role: 'assistant', content: 'Understood, sir.' },
+      );
+    }
     const before = { owner: null, app: null };
     try {
       before.owner = await this.ctx.storage.get(PENDING_OWNER_ACTION_KEY);
@@ -6531,7 +6545,17 @@ export class CheState extends DurableObject {
               : action === 'resume' ? setObjectivePaused(objective, false)
                 : action === 'cancel' ? cancelObjective(objective)
                   : { ok: false, reason: 'unknown_action' };
-        if (!out.ok) return json({ detail: out.reason }, 409);
+        if (!out.ok) {
+          const why = {
+            not_reached: 'That step is not reached yet: its earlier steps must finish first, so you decide with their results.',
+            no_approval_needed: 'That step does not need approval.',
+            not_failed: 'That step has not failed, so there is nothing to retry.',
+            strategies_exhausted: 'That step was already retried as many times as allowed.',
+            unknown_step: 'That step is not part of this run.',
+            unknown_action: 'I can approve, retry, pause, resume or cancel a run.',
+          }[out.reason] || `That step is ${String(out.reason || '').replace(/^step_/, '').replace(/_/g, ' ')}.`;
+          return json({ detail: why, reason: out.reason }, 409);
+        }
         const started = await this.advanceMissions(data);
         await this.ctx.storage.put('che', data);
         await this.scheduleWork();

@@ -14,6 +14,7 @@ import 'che_command_client.dart';
 import 'che_command_detail.dart';
 import 'che_command_models.dart';
 import 'che_command_store.dart';
+import 'che_command_voice.dart';
 import 'che_command_widgets.dart';
 import 'che_workflow_builder.dart';
 
@@ -28,6 +29,7 @@ class CheCommandCenterScreen extends StatefulWidget {
     required this.store,
     required this.onRunInChat,
     this.onSpeak,
+    this.onListen,
     this.initialCommand,
     this.initialSteps,
     this.initialTab = 0,
@@ -37,6 +39,10 @@ class CheCommandCenterScreen extends StatefulWidget {
   final CheCommandStore store;
   final CheRunInChat onRunInChat;
   final void Function(String text)? onSpeak;
+
+  /// Starts or stops CHE's microphone (the same as Chat's mic button). What
+  /// the owner says reaches this page's voice routes first.
+  final VoidCallback? onListen;
 
   /// Opens this command's details first (from a chat suggestion).
   final String? initialCommand;
@@ -72,11 +78,13 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
   void initState() {
     super.initState();
     widget.store.addListener(_onStore);
+    CheCommandCenterVoice.handler = _voice;
     unawaited(_start());
   }
 
   @override
   void dispose() {
+    if (CheCommandCenterVoice.handler == _voice) CheCommandCenterVoice.handler = null;
     widget.store.removeListener(_onStore);
     _search.dispose();
     _libraryScroll.dispose();
@@ -216,7 +224,7 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
     final result = await widget.client.run(workflow);
     if (!mounted) return;
     setState(() => _busy = false);
-    _report(result.message, ok: result.ok);
+    _report(result.ok ? result.message : 'CHE did not start it: ${result.message}', ok: result.ok);
     if (result.ok) {
       setState(() => _tab = 2);
       await _refresh();
@@ -262,12 +270,21 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
       );
       if (yes != true || !mounted) return;
     }
-    setState(() => _busy = true);
-    final result = await widget.client.control(mission.id, action, stepId: stepId);
+    final result = await _controlCore(mission, action, stepId: stepId);
     if (!mounted) return;
-    setState(() => _busy = false);
     _report(result.ok ? result.message : 'CHE did not $action it: ${result.message}', ok: result.ok);
-    await _refresh();
+  }
+
+  Future<CheCommandResult> _controlCore(CheMission mission, String action, {String? stepId}) async {
+    setState(() => _busy = true);
+    try {
+      return await widget.client.control(mission.id, action, stepId: stepId);
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+        unawaited(_refresh());
+      }
+    }
   }
 
   String _pageSummary() {
@@ -281,6 +298,354 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
       if (_catalog.workflows.isNotEmpty) '${_catalog.workflows.length} saved workflows.',
       'Search by name or say what you want to do.',
     ].join(' ');
+  }
+
+  // ── Voice ────────────────────────────────────────────────────────────
+  // Every action on this page by voice (AGENTS.md: a voice route to each
+  // action). Chat offers the owner's words here first while the page is
+  // open; the reply is shown on the banner and spoken by Chat. Deleting and
+  // cancelling ask first, and only a plain yes on the next turn goes ahead.
+
+  /// What CHE last read as a numbered list (commands or workflows).
+  List<Object> _voiceList = const [];
+
+  /// The command the owner last opened or picked ("run it", "favorite it").
+  CheCommandInfo? _voiceFocus;
+
+  /// A spoken delete or cancel waiting for the owner's yes.
+  Future<String> Function()? _voiceConfirm;
+
+  Set<String> get _ids => {for (final c in _catalog.commands) c.id};
+
+  /// The visible result of a spoken action: banner and haptic. Chat speaks it.
+  String _say(String text, {bool ok = true}) {
+    if (mounted) {
+      setState(() {
+        _status = text;
+        _statusOk = ok;
+      });
+    }
+    HapticFeedback.heavyImpact();
+    if (!ok) HapticFeedback.vibrate();
+    return text;
+  }
+
+  String _numbered(List<Object> items) {
+    _voiceList = items;
+    return [
+      for (final (i, item) in items.indexed)
+        switch (item) {
+          CheCommandInfo c => '${i + 1}. ${c.slash}: ${c.summary}',
+          CheSavedWorkflow w => '${i + 1}. ${w.name}: ${w.steps.map((s) => '/${s.command}').join(', then ')}.',
+          _ => '',
+        },
+    ].join(' ');
+  }
+
+  Object? _fromList(String words) {
+    final m = RegExp(r'^(?:number|option|result)?\s*(\S+)(?:\s+one)?$', caseSensitive: false).firstMatch(words.trim());
+    final n = CheCommandVoice.numberFrom(m?.group(1));
+    return n != null && n >= 1 && n <= _voiceList.length ? _voiceList[n - 1] : null;
+  }
+
+  /// The command the owner named, with any words after it as its input.
+  ({CheCommandInfo command, String input})? _named(String words) {
+    final w = words.trim();
+    if (RegExp(r'^(?:it|that|this)(?:\s+(?:one|command))?$', caseSensitive: false).hasMatch(w)) {
+      final c = _voiceFocus;
+      return c == null ? null : (command: c, input: '');
+    }
+    final picked = _fromList(w);
+    if (picked is CheCommandInfo) return (command: picked, input: '');
+    final match = cheMatchCommandWords(w, _ids);
+    final c = match == null ? null : _catalog.byId(match.id);
+    return c == null ? null : (command: c, input: match!.rest);
+  }
+
+  String _noSuch(String words) {
+    final near = _catalog.search(words).take(3).toList();
+    return 'I don\'t have a command called "$words".${near.isEmpty ? '' : ' Closest: ${_numbered(near)} Say a number to hear one.'} Nothing was run.';
+  }
+
+  CheSavedWorkflow? _workflowNamed(String name, {bool templates = false}) {
+    final want = name.trim().toLowerCase().replaceAll(RegExp(r'^(?:the|my)\s+'), '');
+    if (want.isEmpty) return null;
+    final picked = _fromList(want);
+    if (picked is CheSavedWorkflow) return picked;
+    final all = [..._catalog.workflows, if (templates) ..._catalog.templates];
+    for (final w in all) {
+      if (w.name.toLowerCase() == want) return w;
+    }
+    for (final w in all) {
+      if (w.name.toLowerCase().contains(want) || want.contains(w.name.toLowerCase())) return w;
+    }
+    return null;
+  }
+
+  CheMission? _missionNamed(String name) {
+    final want = name.trim().toLowerCase();
+    final missions = _catalog.missions;
+    if (want.isNotEmpty) {
+      for (final m in missions) {
+        if (m.name.toLowerCase().contains(want)) return m;
+      }
+      return null;
+    }
+    return missions.where((m) => !m.finished).firstOrNull ?? missions.firstOrNull;
+  }
+
+  String _unavailable(CheCommandInfo c) {
+    final missing = c.missing.map((m) => m.label).join(', ');
+    final setup = c.missing.map((m) => m.setup).where((s) => s.isNotEmpty).join(' ');
+    return '${c.slash}: ${cheCommandStatusLabel(c.status)}.${missing.isEmpty ? '' : ' Missing: $missing.'}${setup.isEmpty ? '' : ' To set up: $setup'} Nothing was run.';
+  }
+
+  String _describe() {
+    switch (_tab) {
+      case 1:
+        final all = [..._catalog.workflows, ..._catalog.templates];
+        return 'Commands, Workflows tab. ${_catalog.workflows.length} saved workflow${_catalog.workflows.length == 1 ? '' : 's'}'
+            '${_catalog.templates.isEmpty ? '' : ' and ${_catalog.templates.length} templates'}. ${_numbered(all)} '
+            'Say "run" and a workflow\'s name, "build a workflow called" a name "with" its commands, or "show library".';
+      case 2:
+        final missions = _catalog.missions.take(3).toList();
+        _voiceList = const [];
+        return 'Commands, Activity tab. ${missions.isEmpty ? 'No workflow runs yet.' : [for (final (i, m) in missions.indexed) '${i + 1}. ${m.spoken}'].join(' ')}'
+            '${_catalog.runs.isEmpty ? '' : ' Last command: /${_catalog.runs.first.command}, ${cheStepStatusLabel(_catalog.runs.first.status).toLowerCase()}.'}'
+            '${missions.isEmpty ? '' : ' Say approve, retry, pause, resume or cancel.'}';
+      default:
+        final query = _query.trim();
+        if (query.isNotEmpty) {
+          final found = _catalog.search(query).take(5).toList();
+          return 'Commands, ${found.length} best matches for "$query". ${_numbered(found)} Say a number to hear one, or "run" and its name.';
+        }
+        final mine = <CheCommandInfo>{
+          for (final id in [...widget.store.favorites, ...widget.store.recents]) ?_catalog.byId(id),
+        }.take(5).toList();
+        return '${_pageSummary()} Tabs: 1. Library, 2. Workflows, 3. Activity.'
+            '${mine.isEmpty ? '' : ' Your commands: ${_numbered(mine)}'} Say "search for" and what you want to do, a command\'s name, or "back to chat".';
+    }
+  }
+
+  Future<String?> _voice(String words) async {
+    if (!mounted) return null;
+    final v = CheCommandVoice.parse(words);
+    final pending = _voiceConfirm;
+    _voiceConfirm = null;
+    if (pending != null) {
+      if (v?.op == CheCommandVoiceOp.yes) return pending();
+      if (v?.op == CheCommandVoiceOp.no) return _say('Okay. Nothing was changed.');
+    }
+    if (v == null) return null;
+    final page = ModalRoute.of(context);
+    final atTop = page?.isCurrent ?? true;
+    switch (v.op) {
+      case CheCommandVoiceOp.yes || CheCommandVoiceOp.no:
+        return null; // Nothing asked here: Chat answers it (a held command's yes).
+      case CheCommandVoiceOp.back:
+        unawaited(Navigator.of(context).maybePop());
+        return atTop ? 'Back to Chat.' : 'Back to Commands.';
+      default:
+        break;
+    }
+    if (_catalog.isEmpty) {
+      return _say(_loadError.isEmpty ? 'The command list is still loading from CHE. Try again in a moment.' : 'Could not reach CHE: $_loadError. Nothing was changed.', ok: false);
+    }
+    if (!atTop && v.op != CheCommandVoiceOp.run && v.op != CheCommandVoiceOp.favorite && v.op != CheCommandVoiceOp.unfavorite) {
+      // Details or the builder is open on top: return to the page first.
+      Navigator.of(context).popUntil((route) => route == page || route.isFirst);
+    }
+    switch (v.op) {
+      case CheCommandVoiceOp.describe:
+        return _say(_describe());
+      case CheCommandVoiceOp.tab:
+        setState(() => _tab = switch (v.text) { 'workflows' => 1, 'activity' => 2, _ => 0 });
+        return _say(_describe());
+      case CheCommandVoiceOp.search:
+        _search.text = v.text;
+        setState(() {
+          _tab = 0;
+          _category = 'all';
+          _query = v.text;
+        });
+        _toTop();
+        final found = _catalog.search(v.text).take(5).toList();
+        return _say(found.isEmpty
+            ? 'No command matches "${v.text}". Try other words.'
+            : '${found.length} best matches for "${v.text}". ${_numbered(found)} Say a number to hear one, or "run" and its name.');
+      case CheCommandVoiceOp.pick:
+        final n = v.number ?? 0;
+        if (n < 1 || n > _voiceList.length) {
+          return _say(_voiceList.isEmpty ? 'I have not read a list yet. Say "what\'s on screen".' : 'There is no number $n. I read ${_voiceList.length}.', ok: false);
+        }
+        final item = _voiceList[n - 1];
+        if (item is CheSavedWorkflow) {
+          return _say('${item.name}: ${item.steps.map((s) => '/${s.command}${s.input.isEmpty ? '' : ' ${s.input}'}').join(', then ')}. Say "run ${item.name} workflow" to start it.');
+        }
+        final c = item as CheCommandInfo;
+        _voiceFocus = c;
+        unawaited(_openDetail(c));
+        return _say('${c.spoken} Say "run it" or "favorite it".');
+      case CheCommandVoiceOp.open:
+        final named = _named(v.text);
+        if (named == null) return _say(_noSuch(v.text), ok: false);
+        _voiceFocus = named.command;
+        unawaited(_openDetail(named.command));
+        return _say('${named.command.spoken} Say "run it" or "favorite it".');
+      case CheCommandVoiceOp.run:
+        final named = _named(v.text);
+        if (named == null) return _say(_noSuch(v.text), ok: false);
+        final c = named.command;
+        _voiceFocus = c;
+        if (!c.canRun) return _say(_unavailable(c), ok: false);
+        if (c.input?.required == true && named.input.isEmpty) {
+          return _say('${c.slash} needs ${c.input!.hint.toLowerCase()}. Say it after the name, for example: "run ${c.id.replaceAll('-', ' ')} for …". Nothing was run.', ok: false);
+        }
+        await widget.store.noteUsed(c.id);
+        if (!mounted) return null;
+        // Back to Chat, where CHE runs it through her normal route and says
+        // the real result (an approval command asks for a spoken yes there).
+        CheCommandCenterVoice.handler = null;
+        Navigator.of(context).popUntil((route) => route.isFirst);
+        await widget.onRunInChat([c.slash, if (named.input.isNotEmpty) named.input].join(' '));
+        return '';
+      case CheCommandVoiceOp.favorite || CheCommandVoiceOp.unfavorite:
+        final named = _named(v.text);
+        if (named == null) return _say(_noSuch(v.text), ok: false);
+        final c = named.command;
+        final want = v.op == CheCommandVoiceOp.favorite;
+        if (widget.store.isFavorite(c.id) != want) await widget.store.toggleFavorite(c.id);
+        return _say(want ? '${c.slash} is in your favorites.' : '${c.slash} is not in your favorites.');
+      case CheCommandVoiceOp.newWorkflow:
+        unawaited(_openBuilder(CheSavedWorkflow(name: v.target, steps: [])));
+        return _say('The workflow builder is open. By voice you can also say: build a workflow called website clients with lead scout, lead audit, pricing and lead proposal.');
+      case CheCommandVoiceOp.buildWorkflow:
+        final steps = <CheWorkflowStepDraft>[];
+        for (final item in v.items) {
+          final named = _named(item);
+          if (named == null) return _say('I could not match "$item" to a command, so nothing was saved. ${_noSuch(item).replaceFirst(' Nothing was run.', '')}', ok: false);
+          steps.add(CheWorkflowStepDraft(command: named.command.id, input: named.input));
+        }
+        final name = v.target.isNotEmpty ? v.target : '${steps.first.command} to ${steps.last.command}';
+        return _saveByVoice(CheSavedWorkflow(id: _workflowNamed(name)?.id ?? '', name: name, steps: steps));
+      case CheCommandVoiceOp.addStep:
+        final w = _workflowNamed(v.target);
+        if (w == null) return _say('I have no saved workflow called "${v.target}". Nothing was changed.', ok: false);
+        final named = _named(v.text);
+        if (named == null) return _say('${_noSuch(v.text).replaceFirst(' Nothing was run.', '')} Nothing was changed.', ok: false);
+        return _saveByVoice(CheSavedWorkflow(id: w.id, name: w.name, steps: [
+          for (final s in w.steps) s.copy(),
+          CheWorkflowStepDraft(command: named.command.id, input: named.input),
+        ]));
+      case CheCommandVoiceOp.removeStep:
+        final w = _workflowNamed(v.target);
+        final n = v.number ?? 0;
+        if (w == null) return _say('I have no saved workflow called "${v.target}". Nothing was changed.', ok: false);
+        if (n < 1 || n > w.steps.length) return _say('${w.name} has ${w.steps.length} steps; there is no step $n. Nothing was changed.', ok: false);
+        if (w.steps.length == 1) return _say('${w.name} has only that step. Say "delete ${w.name} workflow" to remove the whole workflow. Nothing was changed.', ok: false);
+        return _saveByVoice(CheSavedWorkflow(id: w.id, name: w.name, steps: [
+          for (final (i, s) in w.steps.indexed)
+            if (i != n - 1) s.copy(),
+        ]));
+      case CheCommandVoiceOp.deleteWorkflow:
+        final w = _workflowNamed(v.target);
+        if (w == null) return _say('I have no saved workflow called "${v.target}". Nothing was deleted.', ok: false);
+        // Owner rule: ask before deleting anything.
+        _voiceConfirm = () async {
+          try {
+            await widget.client.delete(w.id);
+            if (mounted) setState(() => _catalog = _withWorkflows([for (final x in _catalog.workflows) if (x.id != w.id) x]));
+            return _say('Deleted the saved workflow "${w.name}". Past runs and their results stay.');
+          } on Object catch (e) {
+            return _say('CHE did not delete it: $e', ok: false);
+          }
+        };
+        setState(() => _tab = 1);
+        return _say('Delete the saved workflow "${w.name}"? Say yes to delete it, or no to keep it.');
+      case CheCommandVoiceOp.runWorkflow:
+        final w = _workflowNamed(v.target, templates: true);
+        if (w == null) {
+          return _say('I have no workflow called "${v.target}". ${_catalog.workflows.isEmpty ? 'There are no saved workflows yet.' : 'Saved: ${_numbered(_catalog.workflows)}'} Nothing was run.', ok: false);
+        }
+        setState(() => _busy = true);
+        final result = await widget.client.run(w.id.isNotEmpty ? w : CheSavedWorkflow(name: w.name, steps: [for (final s in w.steps) s.copy()]));
+        if (!mounted) return result.message;
+        setState(() {
+          _busy = false;
+          if (result.ok) _tab = 2;
+        });
+        if (result.ok) unawaited(_refresh());
+        return _say(result.ok ? result.message : 'CHE did not start it: ${result.message}', ok: result.ok);
+      case CheCommandVoiceOp.activity:
+        setState(() => _tab = 2);
+        final m = v.target.isEmpty ? null : _missionNamed(v.target);
+        return _say(m != null ? m.spoken : _describe());
+      case CheCommandVoiceOp.approve || CheCommandVoiceOp.retry || CheCommandVoiceOp.pause || CheCommandVoiceOp.resume || CheCommandVoiceOp.cancel:
+        return _controlByVoice(v);
+      default:
+        return null;
+    }
+  }
+
+  Future<String> _saveByVoice(CheSavedWorkflow draft) async {
+    setState(() => _busy = true);
+    try {
+      final (saved, all) = await widget.client.save(draft);
+      if (!mounted) return 'Saved.';
+      setState(() {
+        _catalog = _withWorkflows(all);
+        _tab = 1;
+      });
+      final plan = await widget.client.describe(saved.name, saved.steps);
+      return _say('Saved "${saved.name}": ${saved.steps.map((s) => '/${s.command}${s.input.isEmpty ? '' : ' ${s.input}'}').join(', then ')}.'
+          '${plan.issues.isEmpty ? ' Say "run ${saved.name} workflow" to start it.' : ' Before it can run: ${plan.issues.join(' ')}'}'
+          '${plan.approvals.isEmpty ? '' : ' It will wait for your approval at: ${plan.approvals.join(', ')}.'}');
+    } on Object catch (e) {
+      return _say('CHE did not save the workflow: $e', ok: false);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<String> _controlByVoice(CheCommandVoice v) async {
+    final action = switch (v.op) {
+      CheCommandVoiceOp.approve => 'approve',
+      CheCommandVoiceOp.retry => 'retry',
+      CheCommandVoiceOp.pause => 'pause',
+      CheCommandVoiceOp.resume => 'resume',
+      _ => 'cancel',
+    };
+    setState(() => _tab = 2);
+    final mission = _missionNamed(v.target);
+    if (mission == null) return _say(v.target.isEmpty ? 'There is no workflow run to $action.' : 'I found no workflow run called "${v.target}".', ok: false);
+    String? stepId;
+    if (action == 'approve' || action == 'retry') {
+      final steps = mission.steps;
+      final n = v.number;
+      final candidates = [
+        for (final (i, s) in steps.indexed)
+          if (action == 'approve' ? s.awaitingApproval : s.failed) (i + 1, s),
+      ];
+      if (n != null) {
+        if (n < 1 || n > steps.length) return _say('${mission.name} has ${steps.length} steps; there is no step $n.', ok: false);
+        stepId = steps[n - 1].id;
+      } else if (candidates.length == 1) {
+        stepId = candidates.single.$2.id;
+      } else if (candidates.isEmpty) {
+        return _say(action == 'approve' ? 'No step of ${mission.name} is waiting for your approval yet.' : 'No step of ${mission.name} has failed.', ok: false);
+      } else {
+        return _say('Steps ${candidates.map((c) => c.$1).join(' and ')} of ${mission.name} ${action == 'approve' ? 'wait for your approval' : 'failed'}. Say "$action step" and its number.');
+      }
+    }
+    if (action == 'cancel') {
+      _voiceConfirm = () async {
+        final result = await _controlCore(mission, 'cancel');
+        return _say(result.ok ? result.message : 'CHE did not cancel it: ${result.message}', ok: result.ok);
+      };
+      return _say('Cancel "${mission.name}"? Steps that have not finished are cancelled; finished results are kept. Say yes to cancel it, or no to keep it running.');
+    }
+    final result = await _controlCore(mission, action, stepId: stepId);
+    return _say(result.ok ? result.message : 'CHE did not $action it: ${result.message}', ok: result.ok);
   }
 
   // ── UI ───────────────────────────────────────────────────────────────
@@ -298,6 +663,12 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
         ),
         title: Text('Commands', style: CheType.title.copyWith(fontSize: 22, fontWeight: FontWeight.w800)),
         actions: [
+          if (widget.onListen != null)
+            IconButton(
+              tooltip: 'Speak to CHE',
+              icon: const Icon(Icons.mic_rounded),
+              onPressed: widget.onListen,
+            ),
           IconButton(
             tooltip: 'Read this page aloud',
             icon: const Icon(Icons.volume_up_rounded),

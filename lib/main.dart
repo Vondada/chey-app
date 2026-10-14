@@ -121,6 +121,7 @@ import 'commands/che_command_center.dart';
 import 'commands/che_command_client.dart';
 import 'commands/che_command_models.dart';
 import 'commands/che_command_store.dart';
+import 'commands/che_command_voice.dart';
 import 'commands/che_command_widgets.dart';
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
@@ -536,6 +537,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
         initialSteps: steps,
         initialTab: tab,
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
         onRunInChat: _runCommandInChat,
       ),
     ));

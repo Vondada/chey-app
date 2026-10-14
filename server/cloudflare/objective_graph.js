@@ -147,6 +147,17 @@ export function awaitingApproval(node) {
   return node?.needs_approval === true && !node.approved_at;
 }
 
+/**
+ * The approval checkpoint has been reached: every prerequisite is complete,
+ * so the owner decides with the earlier results in front of him. Only then
+ * is the step shown as needing approval, or can it be approved.
+ */
+export function approvalReached(objective, node) {
+  if (!awaitingApproval(node) || node.status !== 'pending') return false;
+  const done = new Set(objective.nodes.filter((n) => n.status === 'complete').map((n) => n.id));
+  return node.depends_on.every((d) => done.has(d));
+}
+
 function dependentsOf(objective, id, out = new Set()) {
   for (const n of objective.nodes) if (n.depends_on.includes(id) && !out.has(n.id)) { out.add(n.id); dependentsOf(objective, n.id, out); }
   return out;
@@ -168,8 +179,7 @@ function refreshStatus(objective, now) {
   const live = objective.nodes.filter((n) => n.status !== 'cancelled');
   const statuses = live.map((n) => n.status);
   const waiting = live.some((n) => n.status === 'pending' && Number(n.not_before) > Date.now());
-  const done = new Set(live.filter((n) => n.status === 'complete').map((n) => n.id));
-  const approvalReady = live.some((n) => n.status === 'pending' && awaitingApproval(n) && n.depends_on.every((d) => done.has(d)));
+  const approvalReady = live.some((n) => approvalReached(objective, n));
   if (objective.cancelled) objective.status = 'cancelled';
   else if (live.length && statuses.every((s) => s === 'complete')) objective.status = 'complete';
   else if (objective.paused && !statuses.some((s) => s === 'running')) objective.status = 'paused';
@@ -384,6 +394,9 @@ export function approveNode(objective, nodeId, now = new Date().toISOString()) {
   if (!node.needs_approval) return { ok: false, reason: 'no_approval_needed' };
   if (node.approved_at) return { ok: true, objective, duplicate: true };
   if (node.status !== 'pending') return { ok: false, reason: `step_${node.status}` };
+  // No approving ahead of time: a money or publishing step is confirmed when
+  // it is reached, with the earlier steps' results known.
+  if (!approvalReached(objective, node)) return { ok: false, reason: 'not_reached' };
   node.approved_at = now;
   recordMissionEvent(objective, 'owner_approved', { node_id: node.id, key: `approve:${node.id}` }, now);
   refreshStatus(objective, now);
@@ -720,6 +733,6 @@ export function speakObjective(objective) {
   const count = (s) => objective.nodes.filter((n) => n.status === s).length;
   const live = objective.nodes.filter((n) => n.status !== 'cancelled').length;
   const recovering = objective.nodes.filter((n) => ['pending', 'running'].includes(n.status) && n.strategy && !['initial', 'owner_replan'].includes(n.strategy)).length;
-  const owner = objective.nodes.filter((n) => (n.status === 'failed' && n.recovery === 'needs_owner') || (n.status === 'pending' && awaitingApproval(n))).length;
+  const owner = objective.nodes.filter((n) => (n.status === 'failed' && n.recovery === 'needs_owner') || approvalReached(objective, n)).length;
   return `${objective.objective.slice(0, 120)}: ${count('complete')} of ${live} steps done, ${count('running')} running, ${count('failed')} failed, ${count('blocked')} waiting on a failed step.${recovering ? ` ${recovering} recovering with a new approach.` : ''}${owner ? ` ${owner} need${owner === 1 ? 's' : ''} your approval.` : ''}`;
 }
