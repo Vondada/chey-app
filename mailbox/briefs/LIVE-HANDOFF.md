@@ -64,6 +64,15 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (updated by Claude, 2026-10-14 ~06:50 UTC — memory truth #300 live; skills mission started)
+
+**PR #300 merged as `2b0c66e9f5f0103845eaec91c45b60605a7f33cb` (squash, head c9bc419). Deploy CHE Worker run 38523937234 SUCCESS: "Verify live deployed commit" passed; the live memory-truth probe passed 10/10 against an isolated CHE (A no record, B remember/retrieve, C how do you know, D the last one + retraction, the owner's 12:34 replay ×2, E correction ×2, model answer). Memory routes used 0 model calls (53–842 ms).**
+- What #300 does: owner-memory questions answered only from owner-attested records (no model); final guard removes unsupported "you told me/you confirmed"; per-answer evidence ledger; "How do you know?" explains that exact answer and retracts unsupported owner claims; one-time provenance audit (nothing deleted); combined "how do you know? + another request" split; "research a fact" with no subject asks which fact; subjectless step reports ("1. Searched fresh sources") need receipts.
+- Shorebird push patch ran on merge (lib/che_ui/che_brain.dart guide text only). No IPA needed.
+- Tests: Worker 976/976; memory_truth.test.mjs 23 tests through the real /api/chat.
+- **Not verified:** the owner's own iPhone replay; ElevenLabs voice on the phone (still awaiting the owner's confirmation). This sandbox's proxy blocks workers.dev, so production was verified through the deploy run's own steps.
+- **Now:** owner mission "Agent Skills": building `.claude/skills/` (che-fact-check, che-debug, che-release, che-youtube) on `claude/che-latency-optimization-8ruaus` (branch = main + merge commit a63f028; force-push denied, so main was merged in).
+
 ## 2. Current position (updated by ChatGPT, 2026-10-14 — owner live reliability screenshots)
 
 **PR #298 merged as `d83b1ffc91b4a23b98d7c229e34bb4b00276a45a`; Worker deployed SUCCESS (GitHub Actions 38518478477). Production /health independently returned `ok: true` and `version_tag: d83b1ffc91b4`.**
