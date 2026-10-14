@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { availableVoiceChoices, parseElevenVoices, validateVoiceChoice, voiceEnvForSelection } from './voice_choices.js';
 
-const key = { ELEVENLABS_API_KEY: 'private-key', CHE_ELEVENLABS_VOICE_ID: 'baseVoiceabcdefgh', FISH_API_KEY: 'fish-secret', CHE_FISH_VOICE_ID: 'fishVoiceabcdefgh', CHE_FISH_PREFERRED: '1' };
+const key = { ELEVENLABS_API_KEY: 'private-key', CHE_ELEVENLABS_PREFERRED: '1', CHE_ELEVENLABS_VOICE_ID: 'baseVoiceabcdefgh', FISH_API_KEY: 'fish-secret', CHE_FISH_VOICE_ID: 'fishVoiceabcdefgh', CHE_FISH_PREFERRED: '1' };
 const voices = { voices: [
   { voice_id: 'ABCdef123456789', name: 'Clara' },
   { voice_id: 'anotherABCDE12345', name: 'Sky' },
@@ -34,6 +34,15 @@ test('missing keys are setup not a fabricated catalog', async () => {
   assert.equal(list.fish, 'Needs Setup');
 });
 
+test('an account key without explicit ElevenLabs paid voice opt-in is not selectable', async () => {
+  let called = false;
+  const disabled = { ...key, CHE_ELEVENLABS_PREFERRED: '0' };
+  const list = await availableVoiceChoices(disabled, async () => { called = true; throw Error('unexpected'); });
+  assert.equal(called, false);
+  assert.equal(list.elevenlabs, 'Needs Setup');
+  assert.equal(list.options.some((x) => x.provider === 'elevenlabs'), false);
+});
+
 test('unavailable provider and unauthorized voice are never selected', async () => {
   const list = await availableVoiceChoices(key, async () => ({ ok: false, status: 401 }));
   assert.equal(list.elevenlabs, 'Needs Reconnect');
@@ -61,5 +70,8 @@ test('selected ElevenLabs voice affects speech env without changing original sec
   assert.equal(chosen.CHE_VOICE_SPEED, '1.1');
   assert.equal(chosen.ELEVENLABS_API_KEY, key.ELEVENLABS_API_KEY);
   assert.equal(env.CHE_ELEVENLABS_VOICE_ID, key.CHE_ELEVENLABS_VOICE_ID);
-  assert.equal(voiceEnvForSelection(env, { provider: 'fish', id: 'configured', speed: 1 }), env);
+  const fish = voiceEnvForSelection(env, { provider: 'fish', id: 'configured', speed: 1.15 });
+  assert.equal(fish.CHE_FISH_SPEED, '1.15');
+  assert.equal(fish.FISH_API_KEY, key.FISH_API_KEY);
+  assert.equal(env.CHE_FISH_SPEED, undefined);
 });
