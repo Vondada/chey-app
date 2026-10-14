@@ -64,6 +64,16 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (updated by: ChatGPT, 2026-10-14)
+
+**ChatGPT 2026-10-14T05:20:13 UTC — owner mission: Verified Intelligence, Reliable Reasoning & Long-Term Knowledge. PR #296 MERGED as `1cdcb909300ef20092d50575998b05326ca3830d`; production Worker deploy SUCCESS, confirmed live /health `version_tag: 1cdcb909300e`. iPhone IPA compilation IN PROGRESS at Actions run 38515469962; Shorebird run 38515469887 also in progress.**
+- Owner-authorized reliability upgrade reuses existing knowledge_cache.js, resilience.js, research_memory.js, vector_memory.js, worker.js and Flutter CheKnowledgeCache; no replacement architecture. Exact branch `fix/che-evidence-memory-reliability` squash merged via PR #296, worker deploy run **38515470061 succeeded**.
+- Repro defects fixed: unsourced LLM responses persist as trusted answers on Worker/iPhone; old uncited cache replay; agent scout summaries incorrectly become owner-attested facts; old superseded/expired pgvector references; limited owner correction supersession; missing actual source evidence for "how do you know?". Evidence tiers distinguish owner-attested, source-backed, tool receipt, and unverified (a URL alone is not independent fact-checking). No paid additional AI loops.
+- **Tests:** final head `5e77039d9081b9576f6e87263428fdf76d35327e` passed Worker 949/949, Flutter full tests/analyze and CHE UI Analyze; end-to-end paired Worker test checks source follow-up without model-cited hallucinations.
+- **Owner-only remaining:** install freshly published iPhone IPA in SideStore once release workflow finishes; on-device playback/update and memory verification require real phone. No installed IPA or live device success claimed.
+- **Research-quality remaining:** independent primary-source corroboration and semantic claim/source entailment are not guaranteed by this patch; verified research connectors/owner-auth live sessions must be tested separately. No AI can guarantee every factual claim. Do not label link-backed research independently fact-checked.
+- **Next:** confirm IPA build 38515469962 and dependent public release, verify SHA and SideStore URL; do NOT restart a healthy iPhone build. Preserve other active PR lanes #268, #273, #274, #275.
+
 ## 2. Current position (updated by: Claude, 2026-10-14)
 
 **Claude, 2026-10-14 04:25 UTC. PR #293 MERGED as `c7bb9f9`. Worker deployed, ElevenLabs verified LIVE through the Worker, new IPA published, Shorebird Patch 4 published. Phone NOT verified: waiting for the owner to install the new build and say he heard her ElevenLabs voice.**
