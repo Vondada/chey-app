@@ -143,3 +143,38 @@ test('source follow-ups use real prior-turn receipts, not model-created citation
   assert.match(explainAnswerEvidence(owner, at + 1000), /something you told me/);
   assert.match(explainAnswerEvidence(research, at + 86400000 + 1), /do not have a recent/);
 });
+
+
+test('evidence dialog variants and owner confirmation remain grounded', async () => {
+  const { evidenceReferenceFollowup, evidenceFollowup, confirmedOwnerMemoryExample, evidenceReferenceLabel } = await import('./knowledge_cache.js');
+  assert.equal(evidenceFollowup("How do you know that's correct?"), true);
+  assert.equal(evidenceFollowup('How do you know that’s correct? Research a fact, check your sources, and explain what you verified.'), true);
+  assert.equal(evidenceFollowup('Research the cause of solar flares'), false);
+  assert.equal(evidenceReferenceFollowup('The last one we were just talking about', [
+    { role: 'assistant', content: 'I remember you confirming that you prefer short, friendly replies.' },
+    { role: 'user', content: "How do you know that's correct?" },
+    { role: 'assistant', content: 'Want me to demonstrate?' },
+  ]), true);
+  assert.equal(evidenceReferenceFollowup('The last one', [{ role: 'user', content: 'Which song?' }]), false);
+  assert.match(evidenceReferenceLabel([{ role: 'assistant', content: 'You prefer short, friendly replies.' }]), /short, friendly replies/);
+  assert.equal(confirmedOwnerMemoryExample([{ text: 'You like short replies', verification_status: 'unverified_reference', source: 'agent_research' }]), null);
+  const example = confirmedOwnerMemoryExample([
+    { text: 'My favorite food is pizza', source: 'owner_chat', verification_status: 'owner_attested', active: true },
+  ]);
+  assert.match(example.answer, /pizza/);
+  assert.match(example.answer, /not independently verified/);
+});
+
+test('research action guard prevents imaginary browser and comparison receipts', async () => {
+  const { guardClaimedResearchActions } = await import('./truth_layer.js');
+  const madeUp = "Here's how I handled the last request: 1. Searched fresh sources – I used the browser tool to pull the most recent articles. 2. Compared the info – I looked at each source side-by-side.";
+  const guarded = guardClaimedResearchActions(madeUp);
+  assert.equal(guarded.corrected, true);
+  assert.match(guarded.text, /do not have execution receipts/);
+  assert.doesNotMatch(guarded.text, /I used the browser tool/);
+  assert.equal(guardClaimedResearchActions('I verify facts by comparing sources.').corrected, false, 'describing a process is not an executed action');
+  assert.equal(guardClaimedResearchActions('I searched fresh sources.', { research: { summary: 'Found reference', sources: ['https://example.org/article'] } }).corrected, false);
+  assert.equal(guardClaimedResearchActions('I searched fresh sources.', { research: { summary: 'Cached', sources: ['https://example.org/article'], cached: true } }).corrected, true);
+  assert.equal(guardClaimedResearchActions('I used the browser tool.', { tools: [{ ok: true, plugin: 'browser', tool: 'search' }] }).corrected, false);
+  assert.equal(guardClaimedResearchActions('I compared sources.', { tools: [{ ok: true, plugin: 'research', tool: 'search' }] }).corrected, true);
+});
