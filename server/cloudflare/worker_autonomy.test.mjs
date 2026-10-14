@@ -2866,3 +2866,20 @@ test('owner chat regression: evidence question and "the last one" bypass models'
   assert.match(noMemory, /cannot find a source-recorded owner confirmation/);
   assert.equal(calls, 0);
 });
+
+
+test('paired-chat reply boundary removes made-up browsing and cross-check actions', async () => {
+  const saved = new Map();
+  const env = {
+    CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1',
+    AI: { run: async () => ({ response: 'I used the browser tool to pull the most recent articles. I compared sources and checked each result side by side.' }) },
+  };
+  const { chat } = await pairedChat(env, saved);
+  const response = await chat('Explain the difference between fact and inference');
+  assert.equal(response.status, 200);
+  const text = replyFromNdjson(await response.text());
+  assert.match(text, /do not have execution receipts/);
+  assert.doesNotMatch(text, /used the browser tool|I compared sources/i);
+  const receipt = saved.get('che_last_answer_evidence');
+  assert.equal(receipt?.kind, 'unverified');
+});
