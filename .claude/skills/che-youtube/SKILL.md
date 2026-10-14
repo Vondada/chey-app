@@ -39,5 +39,6 @@ Status: the package format and the validator work today. Rendering and upload re
 - Spending money (stock media, paid voices) needs the owner's yes first.
 
 ## Lessons (append dated entries)
+- **Agent A/B, 2026-10-14: same task, same code, with vs without this skill, one run each.** With: 61,995 tokens, 10 tool calls, 106 s. Without: 76,815 tokens, 13 tool calls, 72 s. Both found the same 5 blocking errors. The skill run was **slower**: it re-read the uploader to double-check. Trust the validator for limits, and spend the time on the sources instead.
 - **2026-10-14, measured with `tests/measure.mjs`.** Checking a package by hand means reading 11,216 bytes of uploader and pipeline code. `check_package.mjs` answers in 738 bytes. It cannot judge whether a claim is true, only whether it is sourced, so still read the sources.
 - **2026-10-14: CHE's uploader silently clips descriptions to 500 characters.** The validator warns before that happens.

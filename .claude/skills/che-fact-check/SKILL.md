@@ -55,14 +55,7 @@ Run a case with che-debug's replay: `node .claude/skills/che-debug/scripts/repla
 5. Never delete memory. Downgrade it (unverified_reference, disputed, superseded, invalidated) and keep the history.
 6. Prove every change with a replay plus a test through `/api/chat`. In production, prove it with the deploy's live memory probe (see che-release).
 
-## Lessons (append dated entries)
-- **2026-10-14, measured with `tests/measure.mjs`.** Answering "what does the owner see for this draft?" by reading the guard code means reading 70,567 bytes (≈17.6k tokens) of `memory_provenance.js` and `truth_layer.js`. `claim_check.mjs` answers in 270 bytes, and its verdict matches `/api/chat` on 8 of 8 fixtures (tests).
-- **2026-10-14, 12:34 and 12:56 owner screenshots.**
-  - Root causes:
-    - exact-phrase routing;
-    - a single shared "last answer" receipt;
-    - the default provenance `owner` on CHE's own notes;
-    - "Treat them as your own memories" in the phone brain guide.
-  - Fix (#300): records-only owner-memory answers, a per-answer ledger, an attribution guard and retraction. The live probe passed 10/10.
-- **2026-10-14, found by `claim_check.mjs` while measuring this skill.** "I searched three websites and they all agree", "I googled it", "I looked it up online", "According to my research" and "I browsed five sites" all passed the tool-claim guard. It now covers search verbs with counts and "my research shows". Stories the owner asks for are exempt.
-- **2026-10-14, found by `claim_check.mjs` while writing this skill.** The attribution guard dropped the rest of a reply when that rest was under 40 characters ("The weather today is mild." vanished). It now keeps any remainder with content.
+## Lessons
+- A fake search claim replaces the whole reply. An unsupported owner attribution removes only its sentence.
+- Probing the guards with `claim_check.mjs` found three real gaps on 2026-10-14. Probe new phrasings the same way before you trust a guard.
+- Dated lessons and measurements are in `reference/lessons.md`. Append new ones there.

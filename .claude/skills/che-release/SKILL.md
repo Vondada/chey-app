@@ -46,6 +46,7 @@ It reports:
 - Never print secrets. The script needs none, and an optional `GITHUB_TOKEN` is never printed.
 
 ## Lessons (append dated entries)
+- **Agent A/B, 2026-10-14: same task, same code, with vs without this skill, one run each.** "Is #300 merged and live, and did the probes pass?" With: 55,888 tokens, 8 tool calls, 34 s. Without: 108,534 tokens, 21 tool calls, 124 s. Both were correct.
 - **2026-10-14, measured with `tests/measure.mjs`.** Five raw GitHub API responses (436,533 bytes) vs `release_status.mjs` (839 bytes) for "is #300 merged and live?".
 - **2026-10-14: workers.dev is blocked from the cloud dev sandbox.** Rely on the deploy's "Verify live deployed commit" step, which fails unless `/health` reports the merge commit. The script reads that step.
 - **2026-10-14: reading a full deploy job log for the probe output cost about 25k tokens.** The deploy now also writes `::notice` annotations (titled "Live CHE commit", "Memory truth" and "CHE voice"), which the script reads in one small request.

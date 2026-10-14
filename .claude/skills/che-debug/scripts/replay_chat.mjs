@@ -53,9 +53,13 @@ function modelReply(input, n) {
 
 // Offline by default: every outbound request is refused and its host noted.
 const blockedHosts = new Set();
+const turnHosts = new Set();
 if (!flag('--network')) {
   globalThis.fetch = async (url) => {
-    try { blockedHosts.add(new URL(String(url?.url || url)).host); } catch (_) { blockedHosts.add(String(url).slice(0, 60)); }
+    let host;
+    try { host = new URL(String(url?.url || url)).host; } catch (_) { host = String(url).slice(0, 60); }
+    blockedHosts.add(host);
+    turnHosts.add(host);
     return new Response('{"error":"offline replay"}', { status: 503, headers: { 'Content-Type': 'application/json' } });
   };
 }
@@ -125,6 +129,7 @@ let misses = 0;
 for (const [i, raw] of spec.turns.entries()) {
   const turn = typeof raw === 'string' ? { message: raw } : raw;
   const before = modelCalls;
+  turnHosts.clear();
   const started = performance.now();
   mute();
   let reply = '';
@@ -144,6 +149,7 @@ for (const [i, raw] of spec.turns.entries()) {
   const row = {
     turn: i + 1, message: turn.message, status, route: done.source || (modelCalls > before ? 'model' : 'none'),
     model_calls: modelCalls - before, ms: Math.round(performance.now() - started), reply,
+    ...(turnHosts.size ? { refused_hosts: [...turnHosts] } : {}),
   };
   const expect = turn.expect || {};
   const problems = [];
@@ -165,8 +171,8 @@ if (flag('--json')) {
     console.log(`${r.turn}. route=${r.route} model_calls=${r.model_calls} ${r.ms}ms${r.status && r.status !== 200 ? ` http=${r.status}` : ''}${r.check ? ` ${r.check}` : ''}`);
     console.log(`   > ${clip(r.message, 110)}`);
     console.log(`   < ${clip(r.reply, 320)}`);
+    if (r.refused_hosts) console.log(`   (offline: refused ${r.refused_hosts.join(', ')})`);
   }
-  if (blockedHosts.size) console.log(`offline: refused calls to ${[...blockedHosts].join(', ')}`);
   if (results.some((r) => r.check)) console.log(`${results.filter((r) => r.check === 'PASS').length}/${results.filter((r) => r.check).length} expectations met`);
 }
 process.exit(misses ? 1 : 0);

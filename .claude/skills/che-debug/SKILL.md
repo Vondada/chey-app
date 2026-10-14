@@ -40,5 +40,7 @@ Order: **reproduce → locate → fix narrowly → prove → review.** Do not ed
 - The PR body says what changed, how it was verified, and what was **not** verified (the iPhone, production).
 
 ## Measured (2026-10-14; add new measurements with date and method)
+- **Agent A/B, 2026-10-14: same task, same code, with vs without this skill, one run each.** Reproducing two chat turns through `/api/chat`. With: 51,137 tokens, 6 tool calls, 19 s. Without: 61,823 tokens, 10 tool calls, 54 s. Both were correct. The no-skill run wrote its own harness.
+- **2026-10-14, from the A/B runs.** The scripts now use the checkout they run in, so worktrees work. The replay lists refused network hosts per turn.
 - **Full Worker suite (976 tests):** raw TAP output is 290,737 bytes (≈72k tokens). Through `run_checks.sh` the passing run prints one 21-byte line. Failures print with up to 14 diagnostic lines each.
 - **Reproducing the owner's 12:34 screenshots, the same day:** before this skill it took three throwaway harness scripts (6,716 bytes of model-written code). With it, a 2,280-byte case file that stays as a regression check, one command, and 1,281 bytes of output.

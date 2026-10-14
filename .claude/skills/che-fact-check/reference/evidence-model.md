@@ -25,6 +25,8 @@ Each reply passes through these steps, in this order:
 
 `claim_check.mjs` runs steps 1–3. Other guards, such as location/weather and `guardOwnerReply`, run on their own paths.
 
+A fake search, browse or comparison claim replaces the **whole** reply. Anything else in it may rest on the search that never ran, so harmless lines are lost as well. An unsupported owner attribution removes only its sentence.
+
 ## Contradictions
 - A newer owner statement about the same subject supersedes the older one. Both stay; answers use the newer one and can mention the history.
 - A source that contradicts an owner statement does not overwrite it. Report both, with their tiers.
