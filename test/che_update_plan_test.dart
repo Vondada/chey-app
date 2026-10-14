@@ -6,6 +6,7 @@ CheUpdatePlan planFor({
   CheFastPatchState fast = CheFastPatchState.idle,
   CheFullInstallState install = CheFullInstallState.idle,
   bool fullNewer = false,
+  bool recoveryBuildAvailable = false,
   bool checking = false,
   bool checkFailed = false,
   bool newestBuildFailed = false,
@@ -15,6 +16,7 @@ CheUpdatePlan planFor({
   fast: fast,
   install: install,
   fullNewer: fullNewer,
+  recoveryBuildAvailable: recoveryBuildAvailable,
   fullLabel: 'CHE 1.4.2, build 3800',
   installLabel: 'CHE 1.4.2, build 3800',
   installedLabel: installedLabel,
@@ -255,6 +257,24 @@ void main() {
       expect(plan.stage, CheUpdateStage.checkFailed);
       expect(plan.headline, 'Could not read the installed version');
       expect(plan.action, isNot(CheUpdateAction.installFullBuild));
+    });
+
+    test('an unknown installed version offers explicit repair only with a verified release', () {
+      final plan = planFor(installedLabel: null, recoveryBuildAvailable: true);
+      expect(plan.stage, CheUpdateStage.recoveryReady);
+      expect(plan.action, CheUpdateAction.repairFullBuild);
+      expect(plan.detail, contains('cannot tell whether this build is newer'));
+      expect(plan.headline, isNot('CHE is up to date'));
+    });
+
+    test('a failed check blocks recovery even with stale release metadata', () {
+      final plan = planFor(installedLabel: null, recoveryBuildAvailable: true, checkFailed: true);
+      expect(plan.action, CheUpdateAction.checkAgain);
+    });
+
+    test('waiting SideStore takes precedence over repair', () {
+      final plan = planFor(installedLabel: null, recoveryBuildAvailable: true, install: CheFullInstallState.waitingForSideStore);
+      expect(plan.action, CheUpdateAction.stopWaiting);
     });
 
     test('a build handed to SideStore and still waiting never offers Update again', () {
