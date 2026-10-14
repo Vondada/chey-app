@@ -79,11 +79,33 @@ class CheKnowledgeCache {
     } catch (_) {}
   }
 
-  int get count => _entries.length;
+  int get count => _entries.where(_isUsable).length;
 
-  /// Keeps a cloud answer for later. Error-looking or tiny answers are skipped.
-  Future<void> remember(String question, String answer) async {
-    if (!cacheable(question)) return;
+  static bool hasVerifiedEvidence(List<String> urls) {
+    if (urls.isEmpty) return false;
+    return urls.every((source) {
+      final uri = Uri.tryParse(source);
+      return uri != null && uri.scheme == 'https' && uri.host.isNotEmpty &&
+          uri.userInfo.isEmpty;
+    });
+  }
+
+  // Old app releases saved arbitrary model responses as if they were facts.
+  // Keep the file for compatibility, but only entries with explicit source
+  // provenance are eligible for recall. No caller may mark an AI answer as
+  // verified merely because it sounds plausible.
+  static bool _isUsable(_Entry e) =>
+      e.verified && hasVerifiedEvidence(e.sources) &&
+      DateTime.now().difference(e.at) < const Duration(days: 7);
+
+  /// Evidence-backed local cache only; plain model replies are not facts.
+  Future<void> remember(
+    String question,
+    String answer, {
+    List<String> verifiedSources = const [],
+    DateTime? verifiedAt,
+  }) async {
+    if (!cacheable(question) || !hasVerifiedEvidence(verifiedSources)) return;
     final a = answer.trim();
     if (a.length < 20 || a.length > 6000) return;
     if (RegExp(r"\b(?:sorry|couldn't|could not|can't reach|backup engine|error)\b", caseSensitive: false).hasMatch(a.substring(0, a.length < 160 ? a.length : 160))) {
@@ -93,7 +115,10 @@ class CheKnowledgeCache {
     final terms = _terms(question);
     if (terms.isEmpty) return;
     _entries.removeWhere((e) => _similarity(e.terms, terms) >= 0.95);
-    _entries.add(_Entry(question.trim(), a, terms, DateTime.now()));
+    _entries.add(_Entry(
+      question.trim(), a, terms, verifiedAt ?? DateTime.now(),
+      verified: true, sources: verifiedSources.take(5).toList(),
+    ));
     if (_entries.length > maxEntries) _entries.removeRange(0, _entries.length - maxEntries);
     await _save();
   }
@@ -114,7 +139,7 @@ class CheKnowledgeCache {
     final terms = _terms(question);
     _Entry? best;
     var bestScore = 0.0;
-    for (final e in _entries) {
+    for (final e in _entries.where(_isUsable)) {
       final s = _similarity(e.terms, terms);
       if (s > bestScore) {
         bestScore = s;
@@ -132,7 +157,7 @@ class CheKnowledgeCache {
     final terms = _terms(question);
     if (terms.isEmpty) return const [];
     final scored = <MapEntry<double, _Entry>>[];
-    for (final e in _entries) {
+    for (final e in _entries.where(_isUsable)) {
       final shared = e.terms.intersection(terms).length;
       if (shared == 0) continue;
       scored.add(MapEntry(shared / terms.length, e));
@@ -151,7 +176,7 @@ class CheKnowledgeCache {
     final terms = _terms(question);
     if (terms.isEmpty) return false;
     final covered = <String>{};
-    for (final e in _entries) {
+    for (final e in _entries.where(_isUsable)) {
       covered.addAll(e.terms.intersection(terms));
     }
     return covered.length == terms.length;
@@ -159,19 +184,38 @@ class CheKnowledgeCache {
 }
 
 class _Entry {
-  _Entry(this.question, this.answer, this.terms, this.at);
+  _Entry(
+    this.question,
+    this.answer,
+    this.terms,
+    this.at, {
+    this.verified = false,
+    this.sources = const [],
+  });
 
   final String question;
   final String answer;
   final Set<String> terms;
   final DateTime at;
+  final bool verified;
+  final List<String> sources;
 
   static _Entry? fromJson(Map<String, dynamic> json) {
     final q = '${json['q'] ?? ''}';
     final a = '${json['a'] ?? ''}';
     if (q.isEmpty || a.isEmpty) return null;
-    return _Entry(q, a, CheKnowledgeCache._terms(q), DateTime.tryParse('${json['at']}') ?? DateTime.now());
+    return _Entry(
+      q, a, CheKnowledgeCache._terms(q),
+      DateTime.tryParse('${json['at']}') ?? DateTime.now(),
+      verified: json['verified'] == true,
+      sources: json['sources'] is List
+          ? (json['sources'] as List).whereType<String>().take(5).toList()
+          : const [],
+    );
   }
 
-  Map<String, dynamic> toJson() => {'q': question, 'a': answer, 'at': at.toIso8601String()};
+  Map<String, dynamic> toJson() => {
+    'q': question, 'a': answer, 'at': at.toIso8601String(),
+    'verified': verified, 'sources': sources,
+  };
 }

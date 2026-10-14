@@ -69,3 +69,18 @@ test('approved memory can be mirrored into Postgres/pgvector', async () => {
   assert.deepEqual(calls[0].body.embedding, [0.1, 0.2, 0.3]);
   assert.match(calls[0].init.headers.Prefer, /merge-duplicates/);
 });
+
+test('pgvector excludes disproven, superseded, expired memories while labelling old references unverified', async () => {
+  const result = await retrieveVectorContext(fakeEnv(), 'Where do I live?', async () => Response.json([
+    { id: 'old', content: 'An obsolete address', similarity: 0.98, metadata: { active: false } },
+    { id: 'superseded', content: 'Former favorite', similarity: 0.97, metadata: { superseded_at: '2026-10-01T00:00:00Z' } },
+    { id: 'expired', content: 'Yesterday weather', similarity: 0.95, metadata: { expires_at: '2020-01-01T00:00:00Z' } },
+    { id: 'unverified', content: 'Agent claim about a place', similarity: 0.88, source: 'research_note' },
+    { id: 'owner', content: 'My favorite drink is Sprite', similarity: 0.81, metadata: { verification_status: 'owner_attested' } },
+  ]));
+  assert.deepEqual(result.matches.map(x => x.id), ['unverified', 'owner']);
+  const context = vectorContextText(result);
+  assert.match(context, /unverified reference/);
+  assert.match(context, /owner-attested/);
+  assert.doesNotMatch(context, /obsolete address|Former favorite|Yesterday weather/);
+});

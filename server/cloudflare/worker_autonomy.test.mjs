@@ -2132,7 +2132,7 @@ test('final review: a verified research-cache hit ends the turn with zero resear
   const { chat } = await pairedChat(env, saved);
   const question = 'Research and compare sources on the latest provider limits';
   const now = Date.now();
-  saved.set(`kc:${researchKey(question)}`, { key: researchKey(question), answer: 'Groq allows 30 requests a minute on the free tier.', source: 'research_library', sources: ['https://console.groq.com/docs/rate-limits'], limitation: '', confidence: 0.85, verified_at: now - 60_000, expires_at: now + 3600_000, volatile: true, pure: true });
+  saved.set(`kc:${researchKey(question)}`, { key: researchKey(question), answer: 'Groq allows 30 requests a minute on the free tier.', source: 'research_library', verification_status: 'source_backed', sources: ['https://console.groq.com/docs/rate-limits'], limitation: '', confidence: 0.85, verified_at: now - 60_000, expires_at: now + 3600_000, volatile: true, pure: true });
   const original = globalThis.fetch;
   let providerCalls = 0;
   globalThis.fetch = async () => { providerCalls += 1; return new Response('{}', { status: 500 }); };
@@ -2174,7 +2174,7 @@ test('final review: the knowledge cache checks the WHOLE stored value for secret
   assert.equal(await rememberKnowledge(storage, { key: 'research:x', answer: late }), null);
   assert.equal(m.size, 0, 'nothing was persisted');
   assert.equal(await rememberKnowledge(storage, { key: 'research:y', answer: 'fine', limitation: `${'x '.repeat(400)} seed phrase: alpha beta` }), null, 'the limitation is persisted too, so it is checked too');
-  assert.ok(await rememberKnowledge(storage, { key: 'research:z', answer: `${'Rate limits per minute vary by plan. '.repeat(40)}` }), 'ordinary long research still caches');
+  assert.ok(await rememberKnowledge(storage, { key: 'research:z', answer: `${'Rate limits per minute vary by plan. '.repeat(40)}`, source: 'research_library', verified: true, sources: ['https://example.org/rate-limits'] }), 'long source-backed research still caches');
 });
 
 test('five-layer exam end to end: a layer queues as a job, an engine outage retries it ungraded, a real answer is graded and spoken', async () => {
@@ -2277,7 +2277,7 @@ test('research cache: informational verbs still hit with zero inference, but con
   const { chat } = await pairedChat(env, saved);
   const storage = storageFor(saved);
   const question = 'research how to make sourdough';
-  await rememberKnowledge(storage, { key: researchKey(question), answer: 'Use a mature starter.', source: 'research_library', confidence: 0.95, ttl_ms: 60000 }, Date.now());
+  await rememberKnowledge(storage, { key: researchKey(question), answer: 'Use a mature starter.', source: 'research_library', verified: true, sources: ['https://www.kingarthurbaking.com/learn/guides/sourdough'], confidence: 0.95, ttl_ms: 60000 }, Date.now());
   await markPureResearch(storage, question);
   const original = globalThis.fetch;
   globalThis.fetch = async () => new Response('{}', { status: 500 });
@@ -2287,7 +2287,7 @@ test('research cache: informational verbs still hit with zero inference, but con
     assert.equal(aiCalls, 0, 'make inside an informational research query is not misclassified as an external action');
 
     for (const mixed of ['research how to make sourdough and email it to John', 'research how to make sourdough, then text Sam', 'can you research how to make sourdough and share it']) {
-      await rememberKnowledge(storage, { key: researchKey(mixed), answer: 'Use a mature starter.', source: 'research_library', confidence: 0.95, ttl_ms: 60000 }, Date.now());
+      await rememberKnowledge(storage, { key: researchKey(mixed), answer: 'Use a mature starter.', source: 'research_library', verified: true, sources: ['https://www.kingarthurbaking.com/learn/guides/sourdough'], confidence: 0.95, ttl_ms: 60000 }, Date.now());
       await markPureResearch(storage, mixed);
       aiCalls = 0;
       await (await chat(mixed)).text();
@@ -2690,7 +2690,7 @@ test('A7: a mission step already answered in verified research memory finishes w
   const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { calls += 1; return { response: 'model' }; } } };
   const { api } = await pairedChat(env, saved);
   const question = 'What is the capital of Australia?';
-  await rememberKnowledge(storageFor(saved), { key: researchKey(question), answer: 'Canberra is the capital of Australia.', source: 'research_library', confidence: 0.9 });
+  await rememberKnowledge(storageFor(saved), { key: researchKey(question), answer: 'Canberra is the capital of Australia.', source: 'research_library', verified: true, sources: ['https://www.australia.gov.au/about-australia/our-country/canberra'], confidence: 0.9 });
   const before = calls;
   const res = await (await api('/api/objective/create', { objective: 'Geography', nodes: [{ id: 'q', prompt: question }] })).json();
   assert.equal(res.started, 0, 'nothing queued');
@@ -2810,4 +2810,76 @@ test('app builds: a refused dispatch is reported honestly and nothing is queued'
   } finally {
     globalThis.fetch = original;
   }
+});
+
+test('live paired chat explains actual source evidence and declines to fabricate citations', async () => {
+  const saved = new Map();
+  let modelCalls = 0;
+  const env = {
+    CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1',
+    AI: { run: async () => { modelCalls += 1; return { response: 'Plants convert light into chemical energy.' }; } },
+  };
+  const { chat } = await pairedChat(env, saved);
+  const first = replyFromNdjson(await (await chat('Explain photosynthesis in one sentence')).text());
+  assert.match(first, /Plants convert light/);
+  const priorCalls = modelCalls;
+  const unsupported = replyFromNdjson(await (await chat('How do you know that?')).text());
+  assert.match(unsupported, /not independently verified/i);
+  assert.equal(modelCalls, priorCalls, 'the evidence follow-up uses receipts without AI inference');
+  const question = 'Research how fast sunlight travels to Earth';
+  const url = 'https://science.nasa.gov/sun/';
+  const now = Date.now();
+  await rememberKnowledge(storageFor(saved), {
+    key: researchKey(question), answer: 'Sunlight takes about eight minutes to reach Earth.',
+    source: 'research_library', sources: [url], verified: true,
+    confidence: 0.9, ttl_ms: 86400000,
+  }, now);
+  await markPureResearch(storageFor(saved), question);
+  const fact = replyFromNdjson(await (await chat(question, { requested_capabilities: ['web_research'] })).text());
+  assert.match(fact, /about eight minutes/);
+  const sourced = replyFromNdjson(await (await chat('Show me the sources')).text());
+  assert.match(sourced, /science.nasa.gov/);
+  assert.match(sourced, /not proof/i);
+  assert.equal(modelCalls, priorCalls, 'verified cache and its evidence receipt reuse zero model calls');
+});
+
+
+test('owner chat regression: evidence question and "the last one" bypass models', async () => {
+  const saved = new Map();
+  let calls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { calls++; return { response: "I used the browser tool and compared sources." }; } } };
+  const { chat } = await pairedChat(env, saved);
+  const first = replyFromNdjson(await (await chat("How do you know that's correct?")).text());
+  assert.match(first, /not independently verified|do not have a recent evidence record/i);
+  assert.equal(calls, 0);
+  const history = [
+    { role: 'user', content: "CHE, tell me something you remember that I've confirmed." },
+    { role: 'assistant', content: 'I remember you confirming that you prefer short, friendly replies.' },
+    { role: 'user', content: "How do you know that's correct?" },
+    { role: 'assistant', content: 'Want me to demonstrate?' },
+  ];
+  const followup = replyFromNdjson(await (await chat('The last one we were just talking about', { history })).text());
+  assert.match(followup, /short, friendly replies/);
+  assert.match(followup, /not independently verified|do not have a recent evidence record/i);
+  assert.equal(calls, 0, 'neither context-aware evidence follow-up calls a model');
+  const noMemory = replyFromNdjson(await (await chat("CHE, tell me something you remember that I've confirmed.")).text());
+  assert.match(noMemory, /cannot find a source-recorded owner confirmation/);
+  assert.equal(calls, 0);
+});
+
+
+test('paired-chat reply boundary removes made-up browsing and cross-check actions', async () => {
+  const saved = new Map();
+  const env = {
+    CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1',
+    AI: { run: async () => ({ response: 'I used the browser tool to pull the most recent articles. I compared sources and checked each result side by side.' }) },
+  };
+  const { chat } = await pairedChat(env, saved);
+  const response = await chat('Explain the difference between fact and inference');
+  assert.equal(response.status, 200);
+  const text = replyFromNdjson(await response.text());
+  assert.match(text, /do not have execution receipts/);
+  assert.doesNotMatch(text, /used the browser tool|I compared sources/i);
+  const receipt = saved.get('che_last_answer_evidence');
+  assert.equal(receipt?.kind, 'unverified');
 });

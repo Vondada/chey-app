@@ -75,11 +75,28 @@ export async function rememberKnowledge(storage, entry, now = Date.now()) {
   const key = String(entry.key || '').slice(0, 220);
   const answer = String(entry.answer || '').trim().slice(0, 12000);
   if (!key || !answer || SECRET.test(key) || !isSafeToStore(answer) || !isSafeToStore(entry.limitation || 'ok')) return null;
+  const source = String(entry.source || 'knowledge_cache').slice(0, 40);
+  const sources = (Array.isArray(entry.sources) ? entry.sources : [])
+    .map(String).filter((url) => /^https:\/\/[^\s/]+(?:\/[^\s]*)?$/i.test(url)).slice(0, 5);
+  // Only owner-attested facts or source-backed research become known answers.
+  // A fluent model answer and an unsourced research summary are NOT evidence.
+  const ownerAttested = source === 'owner_memory';
+  if (!ownerAttested && !(entry.verified === true && sources.length > 0)) return null;
+  const prior = await storage.get(entryKey(key));
+  const superseded = prior && prior.answer !== answer
+    ? [...(Array.isArray(prior.superseded) ? prior.superseded : []), {
+        answer: String(prior.answer || '').slice(0, 2000),
+        source: prior.source, sources: prior.sources || [],
+        verified_at: prior.verified_at, superseded_at: now,
+      }].slice(-5)
+    : Array.isArray(prior?.superseded) ? prior.superseded.slice(-5) : [];
   const record = {
     key,
     answer,
-    source: String(entry.source || 'knowledge_cache').slice(0, 40),
-    sources: (Array.isArray(entry.sources) ? entry.sources : []).map(String).filter((u) => /^https:\/\//.test(u)).slice(0, 5),
+    source,
+    sources,
+    verification_status: ownerAttested ? 'owner_attested' : 'source_backed',
+    superseded,
     limitation: String(entry.limitation || '').slice(0, 300),
     confidence: Math.max(0, Math.min(1, Number.isFinite(entry.confidence) ? entry.confidence : 0.9)),
     verified_at: now,
@@ -114,6 +131,13 @@ export async function recallKnowledge(storage, key, { now = Date.now(), minConfi
   if (!key || !storage?.get) return null;
   const record = await storage.get(entryKey(key));
   if (!record) return null;
+  // Legacy unsourced model/research cache entries must never be promoted to
+  // verified merely because they carry a high numeric confidence value.
+  if (record.verification_status !== 'owner_attested' &&
+      record.verification_status !== 'source_backed' &&
+      record.verification_status !== 'source_verified' &&
+      record.source !== 'owner_memory') return null;
+  if (['source_backed', 'source_verified'].includes(record.verification_status) && !record.sources?.length) return null;
   if (record.confidence < minConfidence) return null;
   if (Number.isFinite(record.expires_at) && now > record.expires_at) return null;
   if (record.volatile && now - record.verified_at > VOLATILE_TTL_MS) return null;
@@ -144,9 +168,9 @@ export async function markPureResearch(storage, question) {
 export async function cachedResearch(storage, question, research, now = Date.now()) {
   const key = researchKey(question);
   const hit = await recallKnowledge(storage, key, { now });
-  if (hit) return { summary: hit.answer, sources: hit.sources, limitation: hit.limitation || undefined, cached: true, verified_at: hit.verified_at };
+  if (hit && ['source_backed', 'source_verified'].includes(hit.verification_status)) return { summary: hit.answer, sources: hit.sources, limitation: hit.limitation || undefined, cached: true, verified_at: hit.verified_at };
   const fresh = await research();
-  if (fresh?.summary) {
+  if (fresh?.summary && Array.isArray(fresh.sources) && fresh.sources.some((s) => /^https:\/\//i.test(String(s)))) {
     const volatile = isVolatile(question);
     await rememberKnowledge(storage, {
       key,
@@ -154,6 +178,7 @@ export async function cachedResearch(storage, question, research, now = Date.now
       sources: fresh.sources,
       limitation: fresh.limitation,
       source: 'research_library',
+      verified: true,
       confidence: 0.85,
       ttl_ms: volatile ? VOLATILE_TTL_MS : RESEARCH_TTL_MS,
       volatile,
@@ -188,4 +213,74 @@ export async function rememberOwnerFact(storage, statement, now = Date.now()) {
   const fact = ownerFactFromStatement(statement);
   if (!fact) return null;
   return rememberKnowledge(storage, { key: factKey(fact.subject), answer: fact.value, source: 'owner_memory', confidence: 1 }, now);
+}
+
+// These receipts describe what was ACTUALLY available during the prior reply;
+// they are not post-hoc model-generated citations. No private answer text is
+// persisted, only bounded provenance and time.
+export const LAST_ANSWER_EVIDENCE_KEY = 'che_last_answer_evidence';
+
+export function evidenceFollowup(message) {
+  const q = normalizeQuestion(message).replace(/[.?!]+$/, '').trim();
+  // The owner may dictate "that's correct" as "that s correct", or quote a
+  // generic instruction from a prior test in the same turn. No specific new
+  // research subject is specified in "research a fact".
+  const genericResearch = /(?: research a fact check (?:your |the )?sources and explain what you verified)?/;
+  if (new RegExp('^how do you know(?: that| this| it| that s correct| that is correct| it s correct| whether that is true)?' + genericResearch.source + '$').test(q)) return true;
+  return /^(?:where did you get (?:that|this|the information)|what(?: is| are)? (?:your|the) sources?(?: for that)?|can you (?:cite|verify|fact check) (?:that|this|your answer)|show (?:me )?(?:the )?(?:sources?|evidence)(?: for that)?)$/i.test(q);
+}
+
+// "The last one" refers to the preceding fact-check discussion, not to an
+// imaginary completed web search. Require explicit nearby dialog grounding.
+export function evidenceReferenceFollowup(message, history = []) {
+  if (evidenceFollowup(message)) return true;
+  const q = normalizeQuestion(message);
+  if (!/^(?:the last one(?: we were just talking about)?|that last one|the one we were just talking about)$/.test(q)) return false;
+  return (Array.isArray(history) ? history.slice(-10) : []).some((turn) =>
+    turn?.role === 'user' && (evidenceFollowup(turn.content || turn.text || '') ||
+      /how do you know|check (?:your |the )?sources/i.test(String(turn.content || turn.text || ''))));
+}
+
+export function confirmedOwnerMemoryExample(records = []) {
+  const record = (Array.isArray(records) ? records : []).slice().reverse().find((item) =>
+    item?.active !== false && item?.verification_status === 'owner_attested' &&
+    ['owner', 'owner_chat', 'explicit_memory'].includes(String(item.source || '')) &&
+    isSafeMemoryText(item.text) && String(item.text || '').length <= 300);
+  if (!record) return null;
+  return { answer: `You told me: "${String(record.text).trim()}" I have it recorded as your statement, sir—not independently verified outside our conversation.`,
+    verified_at: record.last_verified_at || record.created_at || null };
+}
+
+export function evidenceReferenceLabel(history = []) {
+  const assistantTurns = (Array.isArray(history) ? history : []).filter((turn) => turn?.role === 'assistant').slice(-8).reverse();
+  if (assistantTurns.some((turn) => /you prefer short, friendly replies|prefer short friendly replies/i.test(String(turn.content || turn.text || ''))))
+    return 'the claim I made about your preference for short, friendly replies';
+  return 'the earlier answer';
+}
+
+export function answerEvidenceReceipt({ research = null, tools = [], ownerAttested = false, at = Date.now() } = {}) {
+  const urls = (Array.isArray(research?.sources) ? research.sources : [])
+    .map(String).filter((s) => /^https:\/\/[^\s/]+/i.test(s)).slice(0, 5);
+  const usedTools = (Array.isArray(tools) ? tools : []).filter((t) => t?.ok === true)
+    .map((t) => `${String(t.plugin || 'tool').slice(0, 50)}/${String(t.tool || 'read').slice(0, 50)}`).slice(0, 5);
+  return {
+    kind: ownerAttested ? 'owner_attested' : urls.length ? 'source_backed' : usedTools.length ? 'tool_result' : 'unverified',
+    at, sources: urls, tools: usedTools,
+  };
+}
+
+export function explainAnswerEvidence(receipt, now = Date.now()) {
+  if (!receipt || !Number.isFinite(receipt.at) || now - receipt.at > DAY || receipt.at > now + 60000) {
+    return 'I do not have a recent evidence record for that answer, sir. I cannot honestly claim it was fact-checked.';
+  }
+  if (receipt.kind === 'owner_attested') {
+    return 'That was something you told me, sir. I treated it as your stated information, not as an independently verified external fact.';
+  }
+  if (receipt.kind === 'source_backed' && receipt.sources?.length) {
+    return `The research tools returned these source links: ${receipt.sources.join(', ')}. A link is not proof that every claim in my answer was independently fact-checked.`;
+  }
+  if (receipt.kind === 'tool_result' && receipt.tools?.length) {
+    return `The answer used these successful tools: ${receipt.tools.join(', ')}. I do not have a source URL for independent confirmation, sir.`;
+  }
+  return 'That answer was not independently verified, sir. I have no source receipt for it and should not present it as a confirmed fact.';
 }

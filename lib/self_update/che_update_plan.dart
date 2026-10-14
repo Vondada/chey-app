@@ -24,6 +24,7 @@ enum CheUpdateStage {
   sideStoreMissing,
   installFailed,
   fullReady,
+  recoveryReady,
   fastDownloading,
   fastReady,
   checking,
@@ -31,7 +32,7 @@ enum CheUpdateStage {
   upToDate,
 }
 
-enum CheUpdateAction { none, installFullBuild, explainRestart, checkAgain, stopWaiting }
+enum CheUpdateAction { none, installFullBuild, repairFullBuild, explainRestart, checkAgain, stopWaiting }
 
 class CheUpdatePlan {
   const CheUpdatePlan({
@@ -56,6 +57,7 @@ CheUpdatePlan planCheUpdate({
   required CheFastPatchState fast,
   required CheFullInstallState install,
   required bool fullNewer,
+  bool recoveryBuildAvailable = false,
   required String fullLabel,
   required String installLabel,
   // Null when the running build could not be read. Then CHE never claims an
@@ -119,6 +121,15 @@ CheUpdatePlan planCheUpdate({
       headline: 'Full update ready',
       detail: '$fullLabel. SideStore installs it, and you confirm there.',
       action: CheUpdateAction.installFullBuild,
+    );
+  }
+  if (installedLabel == null && recoveryBuildAvailable &&
+      !checkFailed && !newestBuildFailed) {
+    return CheUpdatePlan(
+      stage: CheUpdateStage.recoveryReady,
+      headline: 'Repair CHE installation',
+      detail: 'CHE cannot identify the installed version. A verified release is available: $fullLabel. You can reinstall it through SideStore to restore the native voice and update checks. CHE cannot tell whether this build is newer until it can read the installed version.',
+      action: CheUpdateAction.repairFullBuild,
     );
   }
   if (fast == CheFastPatchState.downloading) {

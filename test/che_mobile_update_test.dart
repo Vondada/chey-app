@@ -125,6 +125,21 @@ void main() {
       expect(canHandOffInstall(installed: running, target: newer, rollback: true), isFalse);
     });
 
+    test('recovery requires unknown build, valid HTTPS metadata and a digest', () {
+      const repairRelease = CheMobileUpdateInfo(
+        version: '1.4.1024725360', buildNumber: '3850966980301',
+        commitSha: 'abc', buildDate: '',
+        downloadUrl: 'https://example.invalid/com.cheyapp.chey.ipa',
+        sha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        size: 0, releaseNotes: '', shorebirdBase: false,
+      );
+      expect(canHandOffInstall(installed: null, target: repairRelease), isFalse);
+      expect(canHandOffInstall(installed: null, target: repairRelease, repair: true), isTrue);
+      expect(canHandOffInstall(installed: running, target: repairRelease, repair: true), isFalse);
+      expect(canHandOffInstall(installed: null, target: repairRelease, repair: true, rollback: true), isFalse);
+      expect(canHandOffInstall(installed: null, target: newer, repair: true), isFalse);
+    });
+
     test('an unknown running build hands off nothing, even a rollback', () {
       expect(canHandOffInstall(installed: null, target: older), isFalse);
       expect(canHandOffInstall(installed: null, target: older, rollback: true), isFalse);

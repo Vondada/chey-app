@@ -32,7 +32,15 @@ export function isSafeMemoryText(text) {
  * research write-back so there is one owner-visible list path.
  */
 function memorySupersessionSlot(text) {
-  let value = clip(text, 500).trim().toLowerCase();
+  const original = clip(text, 500).trim().toLowerCase();
+  let value = original;
+  // General owner corrections, not only "favorite X": a new "my X is Y"
+  // supersedes the same subject while retaining the inactive audit record.
+  // Avoid matching "my X" embedded in a research note or other narrative.
+  const ownerFact = /^my\s+([a-z0-9][a-z0-9 '\-]{1,55}?)\s+(?:is|are|=)\s+\S/i.exec(original);
+  if (ownerFact && !ownerFact[1].startsWith('favorite ')) {
+    return `owner-fact:${ownerFact[1].trim().replace(/\s+/g, ' ')}`;
+  }
   if (value.startsWith('my ')) value = value.slice(3);
   if (!value.startsWith('favorite ')) return '';
   const rest = value.slice('favorite '.length);
@@ -85,6 +93,9 @@ export function addOwnerMemory(data, text, opts = {}) {
     source: clip(opts.source || 'owner', 220) || 'owner',
     scope: opts.scope === 'general' ? 'general' : 'owner',
     confidence,
+    verification_status: opts.verification_status || (
+      ['owner', 'owner_chat', 'explicit_memory'].includes(String(opts.source || 'owner'))
+        ? 'owner_attested' : 'unverified_reference'),
     created_at: now,
     last_verified_at: clip(opts.last_verified_at || now, 64),
     active: true,
@@ -295,9 +306,11 @@ export function writeResearchMemoryNote(data, opts = {}) {
     data.memory_notes = data.memory_notes.slice(0, MAX_NOTES_SOFT);
   }
 
-  const mem = addOwnerMemory(data, memoryText);
-
-  const lesson = clip(`${note.title}: ${note.bullets[0] || ''}`, 700);
+  // Agent prose is a RESEARCH LEAD, not an owner-attested personal fact.
+  // Keep it as a searchable research note, separate from data.memories;
+  // even a cited URL is not proof an agent actually checked that page.
+  note.verification_status = 'unverified_research_lead';
+  const lesson = clip(`Unverified research lead — ${note.title}: ${note.bullets[0] || ''}`, 700);
   if (lesson && !data.learned_knowledge.includes(lesson)) {
     data.learned_knowledge.push(lesson);
     data.learned_knowledge = data.learned_knowledge.slice(-30);
@@ -310,8 +323,8 @@ export function writeResearchMemoryNote(data, opts = {}) {
   return {
     written: true,
     note,
-    memory_added: mem.added,
-    memory: mem.memory || memoryText,
+    memory_added: false,
+    memory: memoryText,
   };
 }
 

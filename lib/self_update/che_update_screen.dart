@@ -16,6 +16,7 @@ Future<String?> confirmAndInstallCheUpdate(
   BuildContext context,
   CheMobileUpdateInfo target, {
   bool rollback = false,
+  bool repair = false,
 }) async {
   final controller = CheUpdateController.instance;
   final confirmed = await showCupertinoDialog<bool>(
@@ -24,12 +25,16 @@ Future<String?> confirmAndInstallCheUpdate(
       title: Text(
         rollback
             ? 'Go back to CHE ${target.version}?'
-            : 'Install CHE ${target.version}?',
+            : repair
+                ? 'Repair CHE with ${target.version}?'
+                : 'Install CHE ${target.version}?',
       ),
       content: Text(
         rollback
             ? 'SideStore will open to install this older build. Use this only if the current build is broken.'
-            : 'SideStore will open to install build ${target.buildNumber} over CHE. You confirm the install there. CHE checks the result the next time it opens.',
+            : repair
+                ? 'CHE cannot read the version currently installed, so it cannot confirm this build is newer. SideStore will open to reinstall the latest verified CHE build ${target.buildNumber}. Confirm there. CHE checks the result next time it opens.'
+                : 'SideStore will open to install build ${target.buildNumber} over CHE. You confirm the install there. CHE checks the result the next time it opens.',
       ),
       actions: [
         CupertinoDialogAction(
@@ -39,14 +44,14 @@ Future<String?> confirmAndInstallCheUpdate(
         CupertinoDialogAction(
           isDefaultAction: true,
           onPressed: () => Navigator.pop(dialogContext, true),
-          child: Text(rollback ? 'Go back' : 'Update'),
+          child: Text(rollback ? 'Go back' : repair ? 'Repair' : 'Update'),
         ),
       ],
     ),
   );
   if (confirmed != true || !context.mounted) return null;
   HapticFeedback.mediumImpact();
-  final opened = await controller.installFullBuild(target, rollback: rollback);
+  final opened = await controller.installFullBuild(target, rollback: rollback, repair: repair);
   if (opened) {
     return 'SideStore is open. Confirm the install there. CHE checks the result the next time it opens.';
   }
@@ -165,6 +170,7 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
   Future<void> _install(
     CheMobileUpdateInfo target, {
     bool rollback = false,
+    bool repair = false,
   }) async {
     _busy = true;
     String? said;
@@ -173,6 +179,7 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
         context,
         target,
         rollback: rollback,
+        repair: repair,
       );
     } finally {
       _busy = false;
@@ -268,6 +275,13 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
         onPressed: _busy ? null : () => _install(latest),
         icon: const Icon(Icons.system_update_rounded),
         label: const Text('Update'),
+      );
+    }
+    if (plan.action == CheUpdateAction.repairFullBuild && latest != null) {
+      return FilledButton.icon(
+        onPressed: _busy ? null : () => _install(latest, repair: true),
+        icon: const Icon(Icons.build_circle_outlined),
+        label: const Text('Repair CHE'),
       );
     }
     if (plan.action == CheUpdateAction.explainRestart) {
