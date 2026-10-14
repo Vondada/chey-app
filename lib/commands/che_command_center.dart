@@ -31,6 +31,7 @@ class CheCommandCenterScreen extends StatefulWidget {
     this.onSpeak,
     this.onListen,
     this.initialCommand,
+    this.initialSearch = '',
     this.initialSteps,
     this.initialTab = 0,
   });
@@ -47,6 +48,9 @@ class CheCommandCenterScreen extends StatefulWidget {
   /// Opens this command's details first (from a chat suggestion).
   final String? initialCommand;
 
+  /// Explicit Chat request: open the local command library filtered to this goal.
+  final String initialSearch;
+
   /// Opens the builder with these commands (from a chat suggestion card).
   final List<String>? initialSteps;
   final int initialTab;
@@ -61,12 +65,12 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
   bool _fromCache = false;
   String _loadError = '';
   late int _tab = widget.initialTab;
-  String _query = '';
+  late String _query = widget.initialSearch.trim();
   String _category = 'all';
   String _status = '';
   bool _statusOk = true;
   bool _busy = false;
-  final _search = TextEditingController();
+  late final _search = TextEditingController(text: widget.initialSearch.trim());
   // New search results or a new category start at the top of the list.
   final _libraryScroll = ScrollController();
 
@@ -106,6 +110,15 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
     }
     await _refresh();
     if (!mounted) return;
+    // A Chat voice search explicitly requested these local results, unlike
+    // passive navigation which must remain silent.
+    if (widget.initialSearch.trim().isNotEmpty && _catalog.commands.isNotEmpty) {
+      final found = _catalog.search(_query).take(5).toList();
+      final report = found.isEmpty
+          ? 'No command matches "${_query}". Try other words.'
+          : '${found.length} best matches for "${_query}". ${_numbered(found)} Say a number to hear one.';
+      _report(report, ok: found.isNotEmpty);
+    }
     final open = widget.initialCommand == null ? null : _catalog.byId(widget.initialCommand!);
     if (open != null) unawaited(_openDetail(open));
     final steps = widget.initialSteps;
