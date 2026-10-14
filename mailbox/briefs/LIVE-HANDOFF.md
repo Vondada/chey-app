@@ -89,10 +89,10 @@ Then, on GitHub:
 - **Deploy hiccups (not code):**
   - Owner run 38499012492 failed on a Cloudflare API 524 during upload.
   - Run 38492241711 attempt 1 got no answer from the status probe for 20 s; attempt 2 passed, likely Durable Object version skew.
-- **Shorebird:** Patch 3 (the #292 phone timing) was building when this was written. Read its "Published Patch" line.
+- **Shorebird:** `CHE Shorebird` 38502473410 published Patch 3 (the #292 phone timing) on the stable track at 02:57 UTC, release `1.4.1024603585+3828969674601`, the same release as Patch 2. Same 89.5% code-sharing warning as Patch 2. Applies after CHE restarts. NOT verified on the phone.
 - **Not verified:** Fish playback on the iPhone, quiet launch on the device, and Drama 3 audio.
 - **Owner, on the iPhone:**
-  - Close CHE fully and open her twice. Updates should say patch 3 once it is published.
+  - Close CHE fully and open her twice. Updates should say patch 3.
   - Talk to her. Voice diagnostics should say "CHE voice (Fish Audio)".
   - Listen to the sample in Actions, run 38502473484.
 
