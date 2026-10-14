@@ -420,6 +420,34 @@ test('Fish\'s reason is short and never carries the key or a bearer token', () =
   assert.doesNotMatch(reason, /abc\.def|fish-test-key/);
 });
 
+test('a long reply chunk gets a longer wait, and Fish faster than playback is never "slow"', async () => {
+  // Owner's account: about 0.6 s plus 33 ms per character, 0.57 s of work per
+  // second of audio. A 240-character chunk took ~8.5 s: over the old fixed 7 s.
+  let clock = 2_000_000;
+  const realNow = Date.now;
+  Date.now = () => clock;
+  try {
+    const seconds = 16; // audio for a 240-character chunk
+    const audio = new Uint8Array((seconds * 64000) / 8); // 64 kbps
+    audio.set([0x49, 0x44, 0x33]);
+    let seenTimeout = 0;
+    const fetcher = async (url, init) => {
+      seenTimeout = init.signal ? 1 : 0;
+      clock += 8500;
+      return new Response(audio, { headers: { 'Content-Type': 'audio/mpeg' } });
+    };
+    const storage = memoryStorage();
+    for (let i = 0; i < 4; i += 1) {
+      const said = `${'A reply sentence that runs on. '.repeat(7)}${i}`;
+      assert.equal((await fishAudioSpeech(env(), said, { storage, fetcher, now: clock })).status, 200);
+    }
+    assert.equal(seenTimeout, 1);
+    assert.equal(fishAudioKeyStatus(env(), clock).status, 'healthy', '8.5 s for 16 s of audio keeps ahead of playback');
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 test('a conversational clip over 800 characters is left to the other voices', async () => {
   const { calls, fetcher } = fakeFish();
   assert.equal(await fishAudioSpeech(env(), 'x'.repeat(801), { storage: memoryStorage(), fetcher }), null);

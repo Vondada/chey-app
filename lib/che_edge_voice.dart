@@ -54,10 +54,18 @@ String cheVoicePurposeFor(String ownerMessage) {
   return asked || RegExp(r'\bnarrate\b').hasMatch(said) ? 'story' : 'conversation';
 }
 
-/// How long the phone waits for one server clip. Drama 3 renders a story chunk
-/// more slowly than everyday speech; chunks are prepared ahead of playback.
-Duration cheVoiceWait(String purpose, {required Duration everyday}) =>
-    purpose == 'story' ? const Duration(seconds: 30) : everyday;
+/// How long the phone waits for one server clip of [chars] characters. Fish's
+/// time grows with the clip (about 0.6 s plus 33 ms per character on the owner's
+/// account), so a fixed wait cut off ordinary reply chunks. The wait is a little
+/// longer than the Worker's own Fish limit, and never longer than 30 seconds.
+/// Drama 3 stories always get 30 seconds; chunks are prepared ahead of playback.
+Duration cheVoiceWait(String purpose, {required Duration everyday, int chars = 0}) {
+  const most = Duration(seconds: 30);
+  if (purpose == 'story') return most;
+  final scaled = Duration(milliseconds: 5000 + 40 * chars);
+  final wait = scaled > everyday ? scaled : everyday;
+  return wait > most ? most : wait;
+}
 
 /// Why CHE's Fish voice did not speak, in words the owner can read. Empty when
 /// Fish spoke, or when Fish is not set up (that is shown in Keys, not per clip).
@@ -151,7 +159,7 @@ class CheEdgeVoice {
               if (purpose != 'conversation') 'purpose': purpose,
             }),
           )
-          .timeout(cheVoiceWait(purpose, everyday: const Duration(seconds: 12)));
+          .timeout(cheVoiceWait(purpose, everyday: const Duration(seconds: 12), chars: said.length));
       final maryStatus = (response.headers['x-che-mary'] ?? '').trim();
       final fishStatus = (response.headers['x-che-fish'] ?? '').trim();
       final type = response.headers['content-type'] ?? '';

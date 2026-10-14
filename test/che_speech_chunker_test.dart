@@ -15,6 +15,14 @@ void main() {
     expect(clips.join(' '), memory);
   });
 
+  test('the first Read This clip is short so the voice starts sooner', () {
+    final article = List.generate(30, (i) => 'Sentence number $i tells part of the story.').join(' ');
+    final clips = cheReadAloudChunks(article);
+    expect(clips.first.length, lessThanOrEqualTo(240));
+    expect(clips.skip(1).every((clip) => clip.length <= 640), isTrue);
+    expect(clips.join(' '), article);
+  });
+
   test('single-line and multiline readings remain complete and free of empty clips', () {
     expect(cheReadAloudChunks('  Hi, sir.  '), ['Hi, sir.']);
     const message = 'First line.\n  Second line, with  more spaces!';

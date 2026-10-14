@@ -28,7 +28,7 @@ export const FISH_SECRET_NAMES = [
   'CHE_FISH_EXPRESSIVE_MODEL',
   'CHE_FISH_SPEED',
   'CHE_FISH_CHARACTER_VOICES',
-  'CHE_FISH_MAX_LATENCY_MS',
+  'CHE_FISH_MAX_RTF',
   'CHE_FISH_EXPRESSIVE_DAILY_CHARS',
 ];
 
@@ -41,9 +41,15 @@ const EXPRESSIVE_PURPOSES = new Set(['story', 'narration', 'expressive']);
 // parts, so every part fits.
 const MAX_CONVERSATION_CHARS = 800;
 const MAX_EXPRESSIVE_CHARS = 6000;
-const CONVERSATION_TIMEOUT_MS = 7000;
 const EXPRESSIVE_TIMEOUT_MS = 60000;
-const DEFAULT_MAX_LATENCY_MS = 4000;
+// Fish's measured speed on the owner's account (deploy 38501693260): about
+// 0.6 s plus 33 ms per character, i.e. 0.57 s of work per second of audio.
+// So the wait grows with the clip; a fixed 7 s cut off ordinary 240-character
+// reply chunks. The phone waits a little longer than this (cheVoiceWait).
+const conversationTimeoutMs = (chars) => Math.min(25000, Math.max(7000, 4000 + 40 * chars));
+// Slower than this many seconds of work per second of audio is too slow to
+// keep ahead of playback.
+const DEFAULT_MAX_RTF = 1.0;
 const DEFAULT_EXPRESSIVE_DAILY_CHARS = 20000;
 
 const PAUSE_RATE_LIMIT_MS = 30 * 1000;
@@ -70,6 +76,7 @@ const state = {
   pauseWhy: new Map(), // model → the status word that rested it
   lastOutcome: null, // { status, code, model, at }
   latencies: [], // recent conversational latencies (ms), cache misses only
+  rtfs: [], // recent seconds of work per second of audio, cache misses only
   refused: new Map(), // cache key → epoch ms, for text Fish refused
   refusals: new Map(), // model → { count, at, key }: refusals of different words in a row
   inflight: new Map(), // cache key → Promise<{ bytes, type } | null>
@@ -82,6 +89,7 @@ export function resetFishAudioState() {
   state.pauseWhy.clear();
   state.lastOutcome = null;
   state.latencies = [];
+  state.rtfs = [];
   state.refused.clear();
   state.refusals.clear();
   state.inflight.clear();
@@ -239,19 +247,23 @@ function numberSetting(value) {
   return Number.isFinite(number) ? number : null;
 }
 
-function maxLatency(env) {
-  const value = numberSetting(env.CHE_FISH_MAX_LATENCY_MS);
-  return value !== null && value >= 1000 ? value : DEFAULT_MAX_LATENCY_MS;
+function maxRtf(env) {
+  const value = numberSetting(env.CHE_FISH_MAX_RTF);
+  return value !== null && value > 0 ? value : DEFAULT_MAX_RTF;
 }
 
-// A conversational clip slower than the limit (median of the last few) rests
-// Fish for ten minutes, so the faster existing voice answers meanwhile.
-function noteLatency(env, model, ms, now) {
+// Fish is measured against the audio it makes: a long clip may take longer,
+// but if Fish needs more time than the audio lasts (median of the last few
+// clips), it cannot keep ahead of playback, and it rests for ten minutes so
+// the faster existing voice answers meanwhile.
+function noteLatency(env, model, ms, audioSeconds, now) {
   state.latencies = [...state.latencies, ms].slice(-LATENCY_WINDOW);
-  if (state.latencies.length >= 3 && median(state.latencies) > maxLatency(env)) {
+  const rtf = audioSeconds > 0 ? ms / (audioSeconds * 1000) : Infinity;
+  state.rtfs = [...state.rtfs, rtf].slice(-LATENCY_WINDOW);
+  if (state.rtfs.length >= 3 && median(state.rtfs) > maxRtf(env)) {
     pause(model, PAUSE_SLOW_MS, now, 'slow');
     record('slow', 200, model, now);
-    state.latencies = [];
+    state.rtfs = [];
   }
 }
 
@@ -482,7 +494,7 @@ async function synthesize(env, { said, model, voice, bitrate, speed, expressive,
         model,
       },
       body: encodeMsgpack(fishRequestBody({ text: said, voice, bitrate, expressive, speed })),
-      signal: AbortSignal.timeout(expressive ? EXPRESSIVE_TIMEOUT_MS : CONVERSATION_TIMEOUT_MS),
+      signal: AbortSignal.timeout(expressive ? EXPRESSIVE_TIMEOUT_MS : conversationTimeoutMs(said.length)),
     });
     const ms = Date.now() - started;
     if (!response.ok) {
@@ -527,7 +539,7 @@ async function synthesize(env, { said, model, voice, bitrate, speed, expressive,
     record('healthy', 200, model, now);
     state.refusals.delete(model);
     await addUsage(storage, model, { requests: 1, chars: said.length, total_ms: ms, last_ms: ms }, now);
-    if (!expressive) noteLatency(env, model, ms, now);
+    if (!expressive) noteLatency(env, model, ms, (bytes.byteLength * 8) / (bitrate * 1000), now);
     const audioType = type.startsWith('audio/') ? type.split(';')[0] : 'audio/mpeg';
     await cacheWrite(storage, key, bytes, audioType, model);
     return { bytes, type: audioType };

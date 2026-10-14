@@ -216,7 +216,7 @@ extension _CheHomeVoice on _CHEHomeState {
               if (purpose != 'conversation') 'purpose': purpose,
             }),
           )
-          .timeout(cheVoiceWait(purpose, everyday: const Duration(seconds: 5)));
+          .timeout(cheVoiceWait(purpose, everyday: const Duration(seconds: 5), chars: text.length));
 
       if (response.statusCode == 401) {
         _naturalVoiceServerErrored = true;
