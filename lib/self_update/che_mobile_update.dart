@@ -43,7 +43,15 @@ bool canHandOffInstall({
   required CheInstalledBuild? installed,
   required CheMobileUpdateInfo target,
   bool rollback = false,
+  bool repair = false,
 }) {
+  // Recovery is an explicit owner-confirmed reinstall of the newest verified
+  // release, not evidence that this release is newer than the unknown build.
+  // Only the controller can authorize the Worker-supplied latest target.
+  if (repair) {
+    return !rollback && installed == null && target.valid &&
+        RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(target.sha256);
+  }
   final current = installed;
   if (current == null) return false;
   if (rollback) {
