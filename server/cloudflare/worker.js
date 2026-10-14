@@ -48,7 +48,7 @@ import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, cha
 import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
 import { MODE_NAME, chooseAccount, deskIntent, rememberListed, deskTick, pendingAlert, readDesk, setMode, setSize, skipTrade, speakAlert, speakDeskStatus, takeAnnouncement, takeTrade } from './trading_desk.js';
 import { externalGrounding } from './external_grounding.js';
-import { cachedResearch, factKey, forgetKnowledge, knownAnswer, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
+import { answerEvidenceReceipt, cachedResearch, evidenceFollowup, explainAnswerEvidence, factKey, forgetKnowledge, knownAnswer, LAST_ANSWER_EVIDENCE_KEY, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
 import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliability } from './reliability_ledger.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
@@ -7279,6 +7279,13 @@ export class CheState extends DurableObject {
           return ndjsonReply(aiIntent.reply, aiIntent.meta || { source: 'ai_layer' });
         }
 
+        // Answer source follow-ups from a recorded prior result, never with
+        // invented citations generated after the fact.
+        if (ownerDevice && !body.attachment && evidenceFollowup(message)) {
+          const priorEvidence = await this.ctx.storage.get(LAST_ANSWER_EVIDENCE_KEY).catch(() => null);
+          return ndjsonReply(explainAnswerEvidence(priorEvidence), { source: 'che_evidence_receipt', model_calls: 0 });
+        }
+
         // KNOW IT → RETRIEVE IT. A verified owner fact ("what is my Worker
         // URL?") is answered from CHE's own memory with zero AI calls. A
         // "remember that my X is Y" turn also becomes such a fact.
@@ -7295,6 +7302,8 @@ export class CheState extends DurableObject {
           }
           const known = rememberFact ? null : await knownAnswer(this.ctx.storage, message, { memories: data.memories }).catch(() => null);
           if (known) {
+            await this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY,
+              answerEvidenceReceipt({ ownerAttested: true, at: Date.now() })).catch(() => null);
             await recordReliability(this.ctx.storage, { kind: 'retrieval', workflow: 'instant_answer', outcome: 'answered_from_memory', tokens_saved: 1500 });
             return ndjsonReply(known.answer, { source: 'che_memory', model_calls: 0 });
           }
@@ -7320,6 +7329,8 @@ export class CheState extends DurableObject {
             ? await researchHit(this.ctx.storage, message).catch(() => null)
             : null;
           if (researched?.pure === true) {
+            await this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY,
+              answerEvidenceReceipt({ research: researched })).catch(() => null);
             await recordReliability(this.ctx.storage, { kind: 'retrieval', workflow: 'research', outcome: 'answered_from_memory', tokens_saved: 3000 });
             const sources = researched.sources?.length ? `\n\nSources: ${researched.sources.join(', ')}` : '';
             const limit = researched.limitation ? `\n\n${researched.limitation}` : '';
@@ -8718,6 +8729,11 @@ export class CheState extends DurableObject {
             reply = [guarded.text, note, guarded.text.length < 40 || guarded.removed.some((r) => r.rule !== 'owner_homework') ? statusNow : ''].filter(Boolean).join(' ').trim();
           }
         }
+        // Persist the actual answer-provenance receipt, not a model-invented
+        // bibliography. Source-backed research may be reused; model-only text
+        // cannot become verified memory by repetition.
+        await this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY,
+          answerEvidenceReceipt({ research, tools: skillResults })).catch(() => null);
         // Never cache an unverified language-model answer as a reusable fact.
         // Source-backed research is already saved by knowledge_cache.js with
         // provenance, expiry and supersession; owner facts use owner_memory.
