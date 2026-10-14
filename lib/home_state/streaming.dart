@@ -215,9 +215,10 @@ extension _CheHomeStreaming on _CHEHomeState {
     debugPrint('TRACE skill: request built');
 
     request.headers.addAll(_authHeaders);
-    // A command approved on the Command Center page counts for this one turn.
-    final commandConfirmed = _pendingCommandConfirmed;
-    _pendingCommandConfirmed = false;
+    // A command approved on the Command Center page counts for this one turn,
+    // and only for the exact text that was approved.
+    final commandConfirmed = _pendingCommandConfirmedFor != null && _pendingCommandConfirmedFor == userMessage.trim();
+    _pendingCommandConfirmedFor = null;
     if (mounted) _set(() => _commandSuggestions = const []);
     final explainLevel = _deeperOnce ? 'deeper' : _explainLevel;
     _deeperOnce = false;

@@ -261,7 +261,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   // one-turn approval the Command Center passes with a command it runs.
   final CheCommandStore _commandStore = CheCommandStore();
   List<CheSuggestionCard> _commandSuggestions = const [];
-  bool _pendingCommandConfirmed = false;
+  // The exact command text the owner approved on the Command Center page.
+  String? _pendingCommandConfirmedFor;
   bool _screenGreetingHidden = false;
   String _explainLevel = 'simple';
   // "Tell me more" / "expand": the next reply only goes deeper.
@@ -548,7 +549,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
       _shellTab = 1;
       controller.text = message;
     });
-    _pendingCommandConfirmed = confirmed;
+    _pendingCommandConfirmedFor = confirmed ? message : null;
     await sendMessage();
   }
 
