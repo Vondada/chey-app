@@ -84,6 +84,7 @@ import 'home/che_inline_preview.dart';
 import 'home/che_grok_chat_screen.dart';
 import 'home/che_mockup_home.dart';
 import 'home/che_more_tab.dart';
+import 'home/che_connections_screen.dart';
 import 'home/che_projects_board.dart';
 import 'home/che_memory_brain.dart';
 import 'che_ui/che_phone_shell.dart';
@@ -1942,11 +1943,53 @@ OWNER AGENCY
     }
   }
 
+  Future<void> _openConnections() async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheConnectionsScreen(
+        baseUrl: cheAgentBaseUrl,
+        headers: () => _authHeaders,
+        onBrokerConnect: () {
+          Navigator.of(context).pop();
+          _goShellTab(1);
+          controller.text = 'connect NinjaTrader';
+          unawaited(sendMessage());
+        },
+        onVoiceSettings: _openVoiceSelector,
+        onKeys: () {
+          Navigator.of(context).pop();
+          unawaited(_openMailbox(tab: 3));
+        },
+      ),
+    ));
+  }
+
+  void _openVoiceSelector() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => const CheVoiceSettingsSheet(),
+    );
+  }
+
   Widget _buildMoreTab() {
     return CheMoreTab(
       che: _officeRuntime.che,
       onTalkToChe: () => _goShellTab(1),
       items: [
+        CheMoreItem(
+          icon: Icons.hub_outlined,
+          title: 'Connections',
+          subtitle: 'YouTube · Google · broker · banks · business · voice',
+          onTap: () => unawaited(_openConnections()),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.record_voice_over_rounded,
+          title: 'Change CHE’s Voice',
+          subtitle: 'Choose and preview a voice right inside CHE',
+          onTap: _openVoiceSelector,
+          hue: kit.CheColors.accentAlt,
+        ),
         CheMoreItem(
           icon: Icons.candlestick_chart_rounded,
           title: 'Trading Room',
