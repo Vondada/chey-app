@@ -14,7 +14,11 @@ export function parseElevenVoices(payload) {
 export async function availableVoiceChoices(env = {}, fetcher = fetch) {
   const options = [];
   let elevenStatus = 'Needs Setup';
-  if (String(env.ELEVENLABS_API_KEY || '').trim()) {
+  const elevenOptedIn = ['1', 'true', 'yes'].includes(String(env.CHE_ELEVENLABS_PREFERRED || '').toLowerCase());
+  if (String(env.ELEVENLABS_API_KEY || '').trim() && !elevenOptedIn) {
+    elevenStatus = 'Needs Setup';
+  }
+  if (String(env.ELEVENLABS_API_KEY || '').trim() && elevenOptedIn) {
     try {
       const reply = await fetcher('https://api.elevenlabs.io/v1/voices', {
         headers: { 'xi-api-key': String(env.ELEVENLABS_API_KEY), Accept: 'application/json' },
@@ -48,9 +52,17 @@ export function validateVoiceChoice(requested, available) {
 }
 
 export function voiceEnvForSelection(env, selected) {
-  if (!selected || selected.provider !== 'elevenlabs' || !VOICE_ID.test(selected.id)) return env;
-  const overlay = Object.create(env);
-  overlay.CHE_ELEVENLABS_VOICE_ID = selected.id;
-  overlay.CHE_VOICE_SPEED = String(selected.speed || 1);
-  return overlay;
+  if (!selected) return env;
+  if (selected.provider === 'elevenlabs' && VOICE_ID.test(selected.id)) {
+    const overlay = Object.create(env);
+    overlay.CHE_ELEVENLABS_VOICE_ID = selected.id;
+    overlay.CHE_VOICE_SPEED = String(selected.speed || 1);
+    return overlay;
+  }
+  if (selected.provider === 'fish' && selected.id === 'configured') {
+    const overlay = Object.create(env);
+    overlay.CHE_FISH_SPEED = String(selected.speed || 1);
+    return overlay;
+  }
+  return env;
 }
