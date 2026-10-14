@@ -12,6 +12,8 @@
 //
 // The API key never leaves this module: it is not logged, returned or cached.
 
+import { encodeMsgpack } from './msgpack_encode.js';
+
 const FISH_TTS_URL = 'https://api.fish.audio/v1/tts';
 export const FISH_DEFAULT_MODEL = 's2.1-pro-free';
 export const FISH_DEFAULT_EXPRESSIVE_MODEL = 'drama-3';
@@ -68,6 +70,7 @@ const state = {
   lastOutcome: null, // { status, code, model, at }
   latencies: [], // recent conversational latencies (ms), cache misses only
   refused: new Map(), // cache key → epoch ms, for text Fish refused
+  refusals: new Map(), // model → { count, at, key }: refusals of different words in a row
   inflight: new Map(), // cache key → Promise<{ bytes, type } | null>
   // Expressive characters used or reserved today, per model. See reserveExpressive.
   ledger: { date: '', chars: new Map(), seeded: new Set() },
@@ -78,6 +81,7 @@ export function resetFishAudioState() {
   state.lastOutcome = null;
   state.latencies = [];
   state.refused.clear();
+  state.refusals.clear();
   state.inflight.clear();
   state.ledger = { date: '', chars: new Map(), seeded: new Set() };
 }
@@ -170,8 +174,47 @@ export function classifyFishFailure(code, reason = '') {
   return { refused: true };
 }
 
-function record(status, code, model, now) {
-  state.lastOutcome = { status, code, model, at: now };
+function record(status, code, model, now, reason = '') {
+  state.lastOutcome = { status, code, model, at: now, reason };
+}
+
+// Fish's own words for a refusal, for the owner's Keys row and the deploy log:
+// at most 160 characters, with the key and the voice ID removed.
+export function fishRefusalReason(body, env = {}) {
+  let message = String(body || '');
+  try {
+    const parsed = JSON.parse(message);
+    const picked = parsed?.message ?? parsed?.detail ?? parsed?.error ?? parsed;
+    message = typeof picked === 'string' ? picked : JSON.stringify(picked);
+  } catch (_) { /* plain text */ }
+  for (const hidden of [keyOf(env), voiceOf(env)]) {
+    if (hidden) message = message.split(hidden).join('[hidden]');
+  }
+  return message.replace(/Bearer\s+\S+/gi, 'Bearer [hidden]').replace(/\s+/g, ' ').trim().slice(0, 160);
+}
+
+// The same request body as Fish's official SDK (TTSConfig defaults), sent as
+// MessagePack like the SDK does.
+export function fishRequestBody({ text, voice, bitrate, expressive, speed = 1 }) {
+  return {
+    text,
+    chunk_length: 200,
+    format: 'mp3',
+    mp3_bitrate: bitrate,
+    opus_bitrate: 32,
+    references: [],
+    reference_id: voice,
+    normalize: true,
+    latency: expressive ? 'normal' : 'balanced',
+    ...(speed !== 1 ? { prosody: { speed, volume: 0 } } : {}),
+    top_p: 0.7,
+    temperature: 0.7,
+    max_new_tokens: 1024,
+    repetition_penalty: 1.2,
+    min_chunk_length: 50,
+    condition_on_previous_chunks: true,
+    early_stop_threshold: 1.0,
+  };
 }
 
 function median(values) {
@@ -398,34 +441,39 @@ async function synthesize(env, { said, model, voice, bitrate, speed, expressive,
       method: 'POST',
       headers: {
         Authorization: `Bearer ${keyOf(env)}`,
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/msgpack',
         model,
       },
-      body: JSON.stringify({
-        text: said,
-        reference_id: voice,
-        format: 'mp3',
-        mp3_bitrate: bitrate,
-        normalize: true,
-        latency: expressive ? 'normal' : 'balanced',
-        ...(speed !== 1 ? { prosody: { speed, volume: 0 } } : {}),
-      }),
+      body: encodeMsgpack(fishRequestBody({ text: said, voice, bitrate, expressive, speed })),
       signal: AbortSignal.timeout(expressive ? EXPRESSIVE_TIMEOUT_MS : CONVERSATION_TIMEOUT_MS),
     });
     const ms = Date.now() - started;
     if (!response.ok) {
-      // The reason is read only to classify the failure; it is never logged
-      // or returned.
-      const reason = (await response.text().catch(() => '')).slice(0, 400);
-      const failure = classifyFishFailure(response.status, reason);
+      // The body classifies the failure. Only Fish's own short message, with
+      // the key and voice removed, is kept for the owner's Keys row.
+      const body = (await response.text().catch(() => '')).slice(0, 400);
+      const failure = classifyFishFailure(response.status, body);
+      const reason = fishRefusalReason(body, env);
       await addUsage(storage, model, { failures: 1 }, now);
       if (failure.refused) {
         state.refused.set(key, now + REFUSED_TEXT_MS);
-        record('refused text', response.status, model, now);
+        // Fish refusing different words in a row is a setup problem, not the
+        // text: rest that model so every clip does not wait for a refusal.
+        // The same words refused again count once; only different words do.
+        const last = state.refusals.get(model);
+        const recent = last && now - last.at < PAUSE_LONG_MS;
+        const count = recent ? (last.key === key ? last.count : last.count + 1) : 1;
+        state.refusals.set(model, { count, at: now, key });
+        if (count >= 2) {
+          pause(model, PAUSE_LONG_MS, now);
+          record('request refused', response.status, model, now, reason);
+        } else {
+          record('refused text', response.status, model, now, reason);
+        }
         return null;
       }
       pause(failure.scope === 'key' ? '*' : model, failure.pauseMs, now);
-      record(failure.status, response.status, model, now);
+      record(failure.status, response.status, model, now, reason);
       return null;
     }
     const type = (response.headers.get('content-type') || '').toLowerCase();
@@ -440,6 +488,7 @@ async function synthesize(env, { said, model, voice, bitrate, speed, expressive,
       return null;
     }
     record('healthy', 200, model, now);
+    state.refusals.delete(model);
     await addUsage(storage, model, { requests: 1, chars: said.length, total_ms: ms, last_ms: ms }, now);
     if (!expressive) noteLatency(env, model, ms, now);
     const audioType = type.startsWith('audio/') ? type.split(';')[0] : 'audio/mpeg';
@@ -467,14 +516,14 @@ export function fishAudioKeyStatus(env = {}, now = Date.now()) {
   }
   if (!enabled(env.CHE_FISH_PREFERRED)) return { status: 'off', last4, detail: `Fish is switched off by CHE_FISH_PREFERRED. ${modelLine}` };
   if (!state.lastOutcome) return { status: 'not tried yet', last4, detail: `Fish has not spoken since the last restart. ${modelLine}` };
-  const { status, code, model, at } = state.lastOutcome;
+  const { status, code, model, at, reason } = state.lastOutcome;
   const resting = Math.max(state.pausedUntil.get('*') || 0, state.pausedUntil.get(model) || 0);
   const waiting = resting > now ? ` Fish waits until ${new Date(resting).toISOString()} before trying ${model} again.` : '';
   const last = state.latencies.length ? ` Last reply took ${state.latencies[state.latencies.length - 1]} ms.` : '';
   return {
     status,
     last4,
-    detail: `Last attempt ${new Date(at).toISOString()} with ${model}${code ? ` (HTTP ${code})` : ''}.${last}${waiting} ${modelLine}`,
+    detail: `Last attempt ${new Date(at).toISOString()} with ${model}${code ? ` (HTTP ${code})` : ''}.${reason ? ` Fish said: "${reason}".` : ''}${last}${waiting} ${modelLine}`,
   };
 }
 

@@ -6,7 +6,7 @@ up (FISH_API_KEY and CHE_FISH_VOICE_ID). Finished narration is cached by text,
 model and voice, so the same words are never paid for twice. Without Fish, or
 if Fish fails, the free offline Piper voice narrates as before.
 """
-import argparse, hashlib, json, os, random, re, shutil, subprocess, sys, urllib.error, urllib.request
+import argparse, hashlib, json, os, random, re, shutil, struct, subprocess, sys, urllib.error, urllib.request
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 BOLD='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
@@ -46,6 +46,40 @@ def art(size,seed,index):
 def spoken(text):
     # CHE is said "Chay"; the on-screen text keeps "CHE".
     return re.sub(r'\bChe\b', 'Chay', re.sub(r'\bCHE\b', 'Chay', text))
+def pack(value):
+    """MessagePack, as Fish's official SDKs send the TTS request."""
+    if value is None: return b'\xc0'
+    if value is True: return b'\xc3'
+    if value is False: return b'\xc2'
+    if isinstance(value,int):
+        if 0<=value<0x80: return bytes([value])
+        if -32<=value<0: return struct.pack('>b',value)
+        for code,fmt,lo,hi in ((0xcc,'>B',0,0xff),(0xcd,'>H',0,0xffff),(0xce,'>I',0,0xffffffff),
+                               (0xd0,'>b',-0x80,0x7f),(0xd1,'>h',-0x8000,0x7fff),(0xd2,'>i',-0x80000000,0x7fffffff)):
+            if lo<=value<=hi: return bytes([code])+struct.pack(fmt,value)
+        return (b'\xcf'+struct.pack('>Q',value)) if value>0 else (b'\xd3'+struct.pack('>q',value))
+    if isinstance(value,float): return b'\xcb'+struct.pack('>d',value)
+    if isinstance(value,str):
+        data=value.encode('utf-8'); n=len(data)
+        head=bytes([0xa0|n]) if n<32 else (b'\xd9'+struct.pack('>B',n) if n<0x100 else (b'\xda'+struct.pack('>H',n) if n<0x10000 else b'\xdb'+struct.pack('>I',n)))
+        return head+data
+    if isinstance(value,(list,tuple)):
+        n=len(value); head=bytes([0x90|n]) if n<16 else (b'\xdc'+struct.pack('>H',n) if n<0x10000 else b'\xdd'+struct.pack('>I',n))
+        return head+b''.join(pack(v) for v in value)
+    if isinstance(value,dict):
+        n=len(value); head=bytes([0x80|n]) if n<16 else (b'\xde'+struct.pack('>H',n) if n<0x10000 else b'\xdf'+struct.pack('>I',n))
+        return head+b''.join(pack(k)+pack(v) for k,v in value.items())
+    raise TypeError(f'cannot pack {type(value).__name__}')
+def fish_reason(body, hidden):
+    """Fish's own words for a refusal: short, with the key and voice removed."""
+    text=body.decode('utf-8','replace') if isinstance(body,bytes) else str(body)
+    try:
+        parsed=json.loads(text); picked=parsed.get('message') or parsed.get('detail') or parsed.get('error') or parsed
+        text=picked if isinstance(picked,str) else json.dumps(picked)
+    except Exception: pass
+    for secret in hidden:
+        if secret: text=text.replace(secret,'[hidden]')
+    return re.sub(r'\s+',' ',re.sub(r'(?i)bearer\s+\S+','Bearer [hidden]',text)).strip()[:160]
 def is_mp3(data):
     return data[:3]==b'ID3' or (len(data)>1 and data[0]==0xFF and (data[1]&0xE0)==0xE0)
 def prune(cache, keep=100):
@@ -68,14 +102,17 @@ def fish_narration(text):
         cached.touch()
         print(f'CHE narration: reused cached Fish audio ({model}); no new Fish charge')
         return cached,model,'hit'
-    body=json.dumps({'text':text,'reference_id':voice,'format':'mp3','mp3_bitrate':128,'normalize':True,'latency':'normal'}).encode()
+    # The same body as Fish's SDK (TTSConfig defaults), as MessagePack.
+    body=pack({'text':text,'chunk_length':200,'format':'mp3','mp3_bitrate':128,'opus_bitrate':32,'references':[],
+        'reference_id':voice,'normalize':True,'latency':'normal','top_p':0.7,'temperature':0.7,'max_new_tokens':1024,
+        'repetition_penalty':1.2,'min_chunk_length':50,'condition_on_previous_chunks':True,'early_stop_threshold':1.0})
     request=urllib.request.Request('https://api.fish.audio/v1/tts',data=body,method='POST',
-        headers={'Authorization':'Bearer '+key,'Content-Type':'application/json','model':model})
+        headers={'Authorization':'Bearer '+key,'Content-Type':'application/msgpack','model':model})
     try:
         with urllib.request.urlopen(request,timeout=120) as response: audio=response.read()
     except urllib.error.HTTPError as error:
-        # Status code only: the body can echo request details.
-        print(f'CHE narration: Fish {model} answered HTTP {error.code}; using Piper'); return None
+        reason=fish_reason(error.read()[:400],(key,voice))
+        print(f'CHE narration: Fish {model} answered HTTP {error.code}: {reason}; using Piper'); return None
     except Exception as error:
         print(f'CHE narration: Fish {model} unreachable ({type(error).__name__}); using Piper'); return None
     if not is_mp3(audio):
