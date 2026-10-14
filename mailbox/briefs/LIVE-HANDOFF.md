@@ -64,7 +64,43 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
-## 2. Current position (updated by: Claude, 2026-10-13)
+## 2. Current position (updated by: Claude, 2026-10-14)
+
+**Claude, 2026-10-14 (owner: "Make CHE speak only with my ElevenLabs voice on my iPhone… If ElevenLabs fails, use Fish. Never the iPhone voice or the free server voices."). PR #293 OPEN from `claude/che-latency-optimization-8ruaus` at `59a68f1`. NOT merged. Phone NOT verified.**
+- **Root cause, from the owner's Voice diagnostics screenshot:**
+  - Fish showed "Working", the playback engine was "iPhone system voice", and the fallback detail was "server voice playback failed".
+  - So the clip reached the phone, but `che/native_voice` `playAudio` failed, and the native `speakText` failed too. Otherwise the engine would read `iphone-voice`, not `iphone-tts`.
+  - `tool/bootstrap.sh` registers every CHE channel (native_voice, native_shell, account_bridge, local_ai) inside `if let controller = window?.rootViewController as? FlutterViewController` in `didFinishLaunchingWithOptions`.
+  - Under Flutter's UIScene lifecycle the window does not exist yet at that point, so none of the channels were registered.
+  - The new `CHE iOS native build check` prints whether the generated Info.plist uses UIScene. Read it to confirm.
+- **#293 native part (`[ios-build]`, needs a NEW IPA; Shorebird cannot patch native code):**
+  - Channels now use the root view controller's messenger, or else `self.registrar(forPlugin: "CHENativeBridge")?.messenger()`.
+  - AVAudioPlayer gets an MP3/WAV type hint.
+  - New workflow `che-ios-native-check.yml` compiles the generated project for the simulator on PRs that touch native code.
+- **#293 Worker part (`[worker-deploy]`):**
+  - `phone_voice.js` tries ElevenLabs, then Fish. With `premium_only` the phone gets 204 plus both status words, never a free voice.
+  - A voice log in Durable Object storage holds status words and numbers only. The phone adds to it with `POST /api/voice/report`.
+  - `POST /api/voice/probe` is gated by a per-deploy random `CHE_VOICE_PROBE_TOKEN` and makes one real ElevenLabs call. The deploy step "Check CHE's ElevenLabs voice through the live Worker" prints the result, ElevenLabs' reason and the voice log. Artifact: `che-voice-check`.
+  - ElevenLabs: refusal reason redacted, new statuses "needs a paid plan" and "voice not found", at most 2 calls at once.
+- **#293 Dart part:**
+  - The iPhone asks `/api/voice/edge` with `premium_only` only. No `/synthesize`, Kokoro or AVSpeech for replies.
+  - A silent clip shows a large banner with the reason and the unspoken words (VoiceOver live region), plus one double haptic per reply.
+  - Password readouts stay on `flutterTts` (on-device).
+- **Verified:**
+  - Worker 941/941.
+  - Python 9/9.
+  - The deploy-check script against fake answers.
+  - CI on `2c4c710`: Flutter analyze, Dart tests and Worker tests all green.
+- **Not verified:**
+  - CI and the iOS compile on `59a68f1` (running when this was written).
+  - The live ElevenLabs call.
+  - Anything on the phone.
+- **Next:**
+  1. Green CI → merge with the exact SHA.
+  2. Read the deploy's ElevenLabs check.
+  3. The `CHE iPhone IPA` build runs (title carries `[ios-build]`), then `che-ipa-release`.
+  4. The Shorebird patch goes to the current release. Until the owner installs the new IPA, replies stay silent with "install the newest CHE build from Updates".
+  5. Owner: Updates → install the new build in SideStore, then talk to CHE.
 
 **Claude, 2026-10-14 (owner added FISH_API_KEY and CHE_FISH_VOICE_ID). Fish's everyday voice WORKS on the server. Drama 3 needs Fish API credit. PRs #290, #291 and #292 merged. Worker live on `58d5e7e`. Phone NOT verified.**
 - **First real calls:** deploy 38498562143, after the owner added the secrets, got HTTP 400 for both models.
