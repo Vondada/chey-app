@@ -365,54 +365,116 @@ export async function latestAnswerEvidence(storage) {
   }
 }
 
+// Each pattern must cover the whole clause, from its start, so a real
+// request that happens to contain the same words ("can you verify that my
+// order shipped", "show me the source code", "octopuses have nine brains, is
+// that true?") is never mistaken for a question about CHE's own answer.
+const ASK_LEAD = '(?:(?:but|and|so|ok|okay|wait|well|sir|really|hmm+|no|yes|yeah|then|now|honestly|seriously|come on|tell me|hold on|hang on|um+|uh+) )*';
+const ASK_TAIL = '(?: (?:sir|please|really|though|then|now|for sure|exactly|honestly|again))*';
 const EVIDENCE_ASK = [
-  /\bhow (?:do|did|would|could|can) you (?:know|be sure|tell|be certain)(?: (?:that|this|it|so|for sure|for certain|whether|if)\b.*)?$/,
-  /\bhow are you (?:sure|certain)\b/,
-  /\bare you (?:sure|certain)(?: (?:about|of) (?:that|this|it))?$/,
-  /\bwhat (?:evidence|proof|source|sources|receipt|receipts|record|records) (?:do you have|is there|did you use|supports? (?:that|this|it)|backs? (?:that|this|it) up|are you using)\b/,
-  /\bwhat is (?:your|the) (?:evidence|proof|source|sources)\b/,
-  /\bwhere did you (?:get|hear|find|learn|read) (?:that|this|it)\b/,
-  /\bwho told you (?:that|this)\b/,
-  /\b(?:is|was) (?:that|this|it) (?:verified|confirmed|true|correct|accurate|real|right|a fact)$/,
-  /\bdid i (?:really |actually |ever )?(?:confirm|say|tell you|verify|approve|test) (?:that|this|it)\b/,
-  /\bcan you (?:prove|back up|verify|cite|source|fact check|show me) (?:that|this|it)\b/,
-  /\bshow me (?:the |your )?(?:evidence|proof|sources?|receipts?)\b/,
-  /\bwhat makes you (?:think|say|so sure) (?:that|so|this)?\b/,
-];
+  'how (?:do|did|would|could|can) you (?:know|be sure|tell|be certain)(?: (?:that|this|it|so|for sure|for certain|whether|if)\\b.*)?',
+  'how are you (?:so )?(?:sure|certain)(?: (?:about|of) (?:that|this|it))?',
+  'are you (?:sure|certain)(?: (?:about|of) (?:that|this|it))?',
+  'what (?:evidence|proof|source|sources|receipt|receipts) (?:do you have|is there|did you use|supports? (?:that|this|it)|backs? (?:that|this|it) up|are you using)(?: (?:for|behind|on|that)\\b.*)?',
+  'what (?:is|are) (?:your|the) (?:evidence|proof|source|sources)(?: (?:for|behind) (?:that|this|it|your answer|that answer))?',
+  'where did you (?:get|hear|find|learn|read) (?:that|this|it|the information|that information|the info)(?: from)?(?: (?:information|info|idea|claim|fact))?',
+  'who told you (?:that|this)',
+  '(?:is|was) (?:that|this|it) (?:really )?(?:verified|confirmed|true|correct|accurate|real|right|a fact)',
+  'did i (?:really |actually |ever )?(?:confirm|say|tell you|verify|approve|test) (?:that|this|it)(?: to you)?',
+  'can you (?:prove|back up|verify|cite|source|fact check) (?:that|this|it|your answer|that answer)(?: for me)?',
+  'show (?:me )?(?:the |your )?(?:evidence|proof|sources?|receipts?)(?: (?:for|behind) (?:that|this|it))?',
+  'what makes you (?:think|say|so sure)(?: (?:that|so|this))?',
+].map((core) => new RegExp(`^${ASK_LEAD}${core}${ASK_TAIL}$`));
 const REFERENT_ONLY = /^(?:the |that |your )?(?:last|previous|first|earlier) (?:one|answer|thing|claim|statement)(?: (?:we were|you were|i was) (?:just )?(?:talking|speaking) about| you (?:just )?(?:said|mentioned|told me))?$|^(?:the one|what) (?:we were|you were) (?:just )?(?:talking|speaking) about$|^what you (?:just )?said$/;
+// "The last one we were just talking about" names the subject of the
+// conversation, not merely CHE's latest reply.
+const SUBJECT_REFERENT = /\b(?:we were|you were|i was) (?:just )?(?:talking|speaking) about$/;
 
-/** A question asking CHE for the evidence behind something she said. */
+const turnText = (turn) => String(turn?.content ?? turn?.text ?? '');
+
+function evidenceClauses(message) {
+  return String(message || '').split(/[.?!;]+/)
+    .map((raw) => ({ raw: raw.replace(/^[\s"'“”‘’,]+|[\s"'“”‘’,]+$/g, ''), plain: plainWords(raw) }))
+    .filter((clause) => clause.plain);
+}
+const isEvidenceAsk = (plain) => plain.split(' ').length <= 14 && EVIDENCE_ASK.some((re) => re.test(plain));
+// Words that only color the question ("No. How do you know that, sir?").
+const FILLER = /^(?:(?:sir|okay|ok|please|hmm+|well|so|really|seriously|wait|hey|um+|uh+|and|but|honestly|yes|yeah|no|nope|right|huh|then|now|again|come on|tell me)\s*)+$/;
+const ridesAlong = (plain) => REFERENT_ONLY.test(plain) || FILLER.test(plain);
+
+/** True when any part of a message asks for the evidence behind an answer. */
+function evidenceAsked(message) {
+  const clauses = evidenceClauses(message);
+  return clauses.length > 0 && clauses.length <= 12 && clauses.some((c) => isEvidenceAsk(c.plain));
+}
+
+/** A question asking CHE for the evidence behind something she said, and nothing else. */
 export function evidenceQuestion(message, history = []) {
-  const clauses = String(message || '').split(/[.?!;]+/).map(plainWords).filter(Boolean);
+  const clauses = evidenceClauses(message).map((c) => c.plain);
   if (!clauses.length || clauses.join(' ').split(' ').length > 40) return false;
-  const asks = clauses.some((clause) => EVIDENCE_ASK.some((re) => re.test(clause)));
-  // Any other request in the same message ("…and book me a table") goes to
-  // the normal path; only "sir", "okay" and the like may ride along.
-  if (asks) return clauses.every((clause) => EVIDENCE_ASK.some((re) => re.test(clause)) || REFERENT_ONLY.test(clause) || clause.split(' ').length <= 2);
+  // Any other request in the same message ("…and book me a table") is split
+  // off by evidenceRequestSplit(); only "sir", "okay" and the like ride along.
+  if (clauses.some(isEvidenceAsk)) return clauses.every((clause) => isEvidenceAsk(clause) || ridesAlong(clause));
   // "The last one we were just talking about" right after an evidence question.
   if (!clauses.every((clause) => REFERENT_ONLY.test(clause))) return false;
   const lastUser = [...(Array.isArray(history) ? history : [])].reverse().find((turn) => turn?.role === 'user');
-  return Boolean(lastUser && evidenceQuestion(String(lastUser.content ?? lastUser.text ?? ''), []));
+  return Boolean(lastUser && evidenceAsked(turnText(lastUser)));
 }
 
 /**
- * The earlier answer of CHE's that the owner is asking about: the most recent
- * assistant claim, skipping CHE's own replies to evidence questions and bare
- * questions back to the owner. Returns { text } or null.
+ * "How do you know that's correct? Research a fact and explain what you
+ * verified": an evidence question with another request attached. Returns
+ * { rest } with the other request in the owner's own words, or null.
  */
-export function evidenceReferent(history = []) {
-  const turns = Array.isArray(history) ? history : [];
-  for (let i = turns.length - 1; i >= 0; i -= 1) {
-    const turn = turns[i];
-    if (turn?.role !== 'assistant') continue;
-    const text = String(turn.content ?? turn.text ?? '').trim();
+export function evidenceRequestSplit(message) {
+  const clauses = evidenceClauses(message);
+  if (!clauses.length || clauses.length > 12 || !clauses.some((c) => isEvidenceAsk(c.plain))) return null;
+  // "Octopuses have nine brains. Is that true?" asks about his own words in
+  // this message, not about CHE's answer: the ask must come first.
+  const firstOther = clauses.findIndex((c) => !isEvidenceAsk(c.plain) && !ridesAlong(c.plain));
+  if (firstOther >= 0 && clauses.slice(firstOther).some((c) => isEvidenceAsk(c.plain))) return null;
+  const rest = clauses.filter((c) => !isEvidenceAsk(c.plain) && !ridesAlong(c.plain)).map((c) => c.raw).join('. ');
+  return rest ? { rest: /[.?!]$/.test(rest) ? rest : `${rest}.` } : null;
+}
+
+// Most recent assistant claim before `end`: CHE's own replies to evidence
+// questions and bare questions back to the owner are skipped. When an
+// evidence answer came first in a combined reply, the rest of it counts.
+function latestClaim(turns, end) {
+  for (let i = end - 1; i >= 0; i -= 1) {
+    if (turns[i]?.role !== 'assistant') continue;
+    let text = turnText(turns[i]).trim();
     if (!text) continue;
-    const before = turns.slice(0, i).reverse().find((t) => t?.role === 'user');
-    if (before && evidenceQuestion(String(before.content ?? before.text ?? ''), [])) continue;
-    if (/\?\s*$/.test(text) && text.length < 120) continue;
+    let asked = i - 1;
+    while (asked >= 0 && turns[asked]?.role !== 'user') asked -= 1;
+    if (asked >= 0 && evidenceQuestion(turnText(turns[asked]), turns.slice(0, asked))) continue;
+    if (/^About my answer "/.test(text)) text = text.split(/\n\s*\n/).slice(1).join('\n\n').trim();
+    // "Got it, sir. Anything else?" asks; it claims nothing to check.
+    const stated = sentences(text).filter((s) => !/\?\s*$/.test(s)).join(' ');
+    if (/\?/.test(text) && plainWords(stated).split(' ').filter(Boolean).length < 5) continue;
     return { text };
   }
   return null;
+}
+
+/**
+ * The earlier answer of CHE's that the owner is asking about. "The last one
+ * we were just talking about" keeps the subject of the evidence question he
+ * asked a moment ago; otherwise it is her most recent claim. Returns { text } or null.
+ */
+export function evidenceReferent(history = [], { message = '' } = {}) {
+  const turns = Array.isArray(history) ? history : [];
+  const clauses = evidenceClauses(message).map((c) => c.plain);
+  const followup = clauses.length > 0 && (clauses.some((c) => SUBJECT_REFERENT.test(c)) || clauses.every((c) => REFERENT_ONLY.test(c)));
+  if (followup) {
+    const userTurns = turns.map((turn, index) => ({ turn, index })).filter(({ turn }) => turn?.role === 'user').slice(-3).reverse();
+    const asked = userTurns.find(({ turn }) => evidenceAsked(turnText(turn)));
+    if (asked) {
+      const subject = latestClaim(turns, asked.index);
+      if (subject) return subject;
+    }
+  }
+  return latestClaim(turns, turns.length);
 }
 
 /** Plain explanation of one answer's evidence, quoting the answer it is about. */

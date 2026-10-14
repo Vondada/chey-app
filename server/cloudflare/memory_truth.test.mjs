@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { replyFromNdjson } from './brain_memory.js';
-import { ANSWER_LEDGER_KEY, RETRACTED_CLAIMS_KEY, evidenceQuestion, ownerMemoryQuestion } from './memory_provenance.js';
+import { ANSWER_LEDGER_KEY, RETRACTED_CLAIMS_KEY, evidenceQuestion, evidenceRequestSplit, ownerMemoryQuestion } from './memory_provenance.js';
 
 const generated = new URL('./.memory_truth.test.generated.mjs', import.meta.url);
 writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
@@ -377,7 +377,7 @@ test('deploy check: the live memory probe runs the real chat route in an isolate
     assert.equal(report.ok, true, JSON.stringify(report.steps.filter((s) => !s.pass), null, 1));
     assert.equal(report.passed, report.total);
     assert.equal(report.memory_route_model_calls, 0);
-    assert.ok(report.total >= 8);
+    assert.ok(report.total >= 10);
     assert.equal(JSON.stringify([...stores.get('owner').entries()]), ownerBefore, "the owner's CHE is never touched");
     assert.deepEqual(vectorWrites.filter((url) => /che_memory\?on_conflict/.test(url)), [], 'no test conversation reaches shared vector memory');
     const probe = stores.get('memory-truth-probe').get('che');
@@ -394,4 +394,92 @@ test('H: "what did I just say?" repeats the owner\'s last words; a second reques
   assert.equal(out.modelCalls, 0);
   assert.equal(evidenceQuestion('How do you know that? Also book me a table for two at eight.', []), false);
   assert.equal(evidenceQuestion('How do you know that, sir?', []), true);
+});
+
+// The owner's iPhone at 12:34 on October 14, 2026, before this repair: CHE
+// presented one of her own style notes as his confirmation, then described
+// browser searches she never ran.
+const SHORT_REPLIES = 'I remember you confirming that you prefer short, friendly replies—just one to three sentences, no filler. Want me to use that to shape our next chat?';
+const PASTED = 'How do you know that\'s correct?” “Research a fact, check your sources, and explain what you verified.';
+const INVENTED_STEPS = 'Sure thing, sir. Here’s how I handled the last “how do you know that’s correct?” request:\n\n1. **Searched fresh sources** – I used the browser tool to pull the most recent articles, docs, or data on the topic.\n2. **Compared the info** – I looked at each source side-by-side, checking dates, authors, and claims.';
+
+test('owner 12:34 replay: "tell me something you remember that I\'ve confirmed" never turns a note into his confirmation', async () => {
+  const che = await owner({ model: () => SHORT_REPLIES });
+  const out = await che.say("CHE, tell me something you remember that I've confirmed.");
+  assert.equal(out.meta.source, 'che_memory_provenance');
+  assert.equal(out.modelCalls, 0);
+  assert.match(out.reply, /cannot find a source-recorded owner confirmation/);
+  assert.doesNotMatch(out.reply, /short, friendly|you confirming/i);
+});
+
+test('owner 12:34 replay: an evidence question with a second request answers both, about the right answer', async () => {
+  const che = await owner({ model: () => INVENTED_STEPS });
+  const history = [
+    { role: 'user', content: "CHE, tell me something you remember that I've confirmed." },
+    { role: 'assistant', content: SHORT_REPLIES },
+    { role: 'user', content: 'Yes' },
+    { role: 'assistant', content: "Got it, sir. Anything specific you'd like me to handle right now?" },
+  ];
+  const both = await che.say(PASTED, { history });
+  // First the evidence for the answer he asked about, from its receipt…
+  assert.match(both.reply, /^About my answer "I remember you confirming that you prefer short, friendly replies/);
+  assert.match(both.reply, /no record that you ever said or confirmed that[\s\S]*taking it back/);
+  // …then the second request on its own: it names no fact, so CHE asks which
+  // one instead of researching the words "a fact" and reporting on them.
+  assert.match(both.reply, /\n\nWhich fact should I research, sir\?/);
+  assert.doesNotMatch(both.reply, /browser tool|Searched fresh sources|I verify a fact/i);
+  assert.equal(both.modelCalls, 0);
+  assert.ok((che.saved.get(RETRACTED_CLAIMS_KEY) || []).some((item) => /short, friendly replies/.test(item.snippet)));
+
+  // "The last one we were just talking about" keeps that subject; nothing
+  // about browser searches that never ran reaches him.
+  history.push({ role: 'user', content: PASTED }, { role: 'assistant', content: both.reply });
+  const last = await che.say('The last one we were just talking about', { history });
+  assert.equal(last.meta.source, 'che_evidence_receipt');
+  assert.equal(last.modelCalls, 0);
+  assert.match(last.reply, /^About my answer "I remember you confirming that you prefer short, friendly replies/);
+  assert.doesNotMatch(last.reply, /browser tool|Searched fresh sources|side-by-side/i);
+});
+
+test('an evidence question with a real second request answers the evidence, then runs the request through chat', async () => {
+  const asked = [];
+  const che = await owner({
+    model: (input) => {
+      asked.push(String((input?.messages || []).filter((m) => m.role === 'user').at(-1)?.content || ''));
+      return 'Canberra is the capital of Australia.';
+    },
+  });
+  const history = [
+    { role: 'user', content: 'Give me a fun fact' },
+    { role: 'assistant', content: 'Octopuses have three hearts and blue blood, sir.' },
+  ];
+  const out = await che.say('How do you know that? Also, what is the capital of Australia?', { history });
+  assert.match(out.reply, /^About my answer "Octopuses have three hearts/);
+  assert.match(out.reply, /\n\nCanberra is the capital of Australia\./);
+  assert.ok(asked.some((text) => /capital of Australia/.test(text) && !/How do you know/.test(text)), 'the model only sees the second request');
+  // A later "how do you know that?" is about the new answer, with its own receipt.
+  history.push({ role: 'user', content: 'How do you know that? Also, what is the capital of Australia?' }, { role: 'assistant', content: out.reply });
+  const why = await che.say('How do you know that?', { history });
+  assert.match(why.reply, /^About my answer "Canberra is the capital of Australia/);
+  assert.match(why.reply, /language model alone/);
+});
+
+test('owner 12:34 replay: invented step-by-step searches never reach him on the general path', async () => {
+  const che = await owner({ model: () => INVENTED_STEPS });
+  const out = await che.say('Walk me through how you handled my last question.');
+  assert.ok(out.modelCalls >= 1);
+  assert.doesNotMatch(out.reply, /browser tool|Searched fresh sources|side-by-side/i);
+  assert.match(out.reply, /do not have execution receipts/);
+});
+
+test('evidence asks are whole questions: real requests that start the same way are never swallowed', () => {
+  for (const request of [
+    'Can you verify that my order shipped?', 'Show me the source code for the app', 'What is the source of the Nile?',
+    'How do you know Spanish?', 'Are you sure? Do it.', 'Octopuses have nine brains, is that true?',
+  ]) assert.equal(evidenceQuestion(request, []), false, request);
+  // "Is that true?" after his own claim asks about his words, not CHE's answer.
+  assert.equal(evidenceRequestSplit('My friend says octopuses have nine brains. Is that true?'), null);
+  assert.deepEqual(evidenceRequestSplit(PASTED), { rest: 'Research a fact, check your sources, and explain what you verified.' });
+  assert.equal(evidenceQuestion('No. How do you know that, sir?', []), true);
+  assert.equal(evidenceQuestion('Did I really say that?', []), true);
 });

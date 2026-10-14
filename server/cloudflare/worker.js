@@ -50,7 +50,7 @@ import { MODE_NAME, chooseAccount, deskIntent, rememberListed, deskTick, pending
 import { externalGrounding } from './external_grounding.js';
 import { answerEvidenceReceipt, cachedResearch, evidenceReferenceFollowup, factKey, forgetKnowledge, knownAnswer, LAST_ANSWER_EVIDENCE_KEY, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
 import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliability } from './reliability_ledger.js';
-import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, explainEvidenceFor, findAnswerEvidence, guardOwnerAttributions, guardRememberBlock, latestAnswerEvidence, loadRetractions, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions } from './memory_provenance.js';
+import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, guardOwnerAttributions, guardRememberBlock, latestAnswerEvidence, loadRetractions, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions } from './memory_provenance.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { sanitizeOwnerText } from './che_errors.js';
@@ -73,7 +73,7 @@ import { APPROVED_SKILLS, handleInstalledSkill, installedSkillIntent, installedS
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { noteJobActivity } from './job_activity.js';
 import { PENDING_OWNER_ACTION_KEY, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
-import { asksForCurrentOwnerLocation, changeHistoryIntent, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
+import { asksForCurrentOwnerLocation, changeHistoryIntent, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
 import { describeTopicStudyStart, starredStudyTargets, matchTopicSections, namedRepoStudyIntent, starredLibraryIntent, readTutorial, readmeSections, sectionTutorials, studyBatchIntent, topicBuildRequest, topicTitles, wantsSerialStudy } from './topic_study.js';
@@ -191,6 +191,8 @@ import {
 
 // Requests that came from the owner's own device (set during auth).
 const OWNER_CHAT_REQUESTS = new WeakSet();
+// The second half of a combined "how do you know? … and also …" message.
+const EVIDENCE_SPLIT_REQUESTS = new WeakSet();
 
 const FAST_MODEL = '@cf/meta/llama-3.2-3b-instruct';
 // 8B on purpose: Cloudflare's free 10k neurons/day last ~10x longer than with 70B.
@@ -334,6 +336,19 @@ async function memoryTruthProbe(env, token) {
     );
     await turn('D the last one: retracts, no fake evidence', 'The last one we were just talking about. What evidence do you have?',
       (reply, done) => done.source === 'che_evidence_receipt' && /security protocol/i.test(reply) && /taking it back/i.test(reply) && !/https?:/i.test(reply));
+    // The owner's 12:34 conversation: an evidence question pasted together
+    // with a second request, then "the last one we were just talking about".
+    history.push(
+      { role: 'user', content: "CHE, tell me something you remember that I've confirmed." },
+      { role: 'assistant', content: 'I remember you confirming that you prefer short, friendly replies—just one to three sentences, no filler. Want me to use that to shape our next chat?' },
+      { role: 'user', content: 'Yes' },
+      { role: 'assistant', content: "Got it, sir. Anything specific you'd like me to handle right now?" },
+    );
+    await turn('12:34 evidence question with a second request', 'How do you know that\'s correct?” “Research a fact, check your sources, and explain what you verified.',
+      (reply) => /^About my answer "I remember you confirming/.test(reply) && /taking it back/i.test(reply)
+        && /Which fact should I research/.test(reply) && !/browser tool|searched fresh/i.test(reply));
+    await turn('12:34 the last one keeps the subject', 'The last one we were just talking about',
+      (reply, done) => done.source === 'che_evidence_receipt' && /short, friendly replies/i.test(reply) && !/browser tool|searched fresh/i.test(reply));
     // E: a correction replaces the answer and keeps the history.
     await turn('E correct', `Actually, my favorite food is ${food[1]}.`, (reply) => new RegExp(`Updated, sir: your favorite food is ${food[1]}`, 'i').test(reply));
     await turn('E uses the newer answer and keeps history', 'What did I tell you about my favorite food?',
@@ -345,7 +360,7 @@ async function memoryTruthProbe(env, token) {
   } finally {
     await call('/api/security/revoke_self', {}, device).catch(() => null);
   }
-  const memorySteps = steps.filter((step) => step.route === 'che_memory_provenance' || step.route === 'che_evidence_receipt');
+  const memorySteps = steps.filter((step) => ['che_memory_provenance', 'che_evidence_receipt', 'che_clarify'].includes(step.route));
   return {
     ok: steps.length > 0 && steps.every((step) => step.pass),
     object: MEMORY_PROBE_OBJECT,
@@ -4190,6 +4205,27 @@ export class CheState extends DurableObject {
     return reply;
   }
 
+  // The evidence behind one earlier answer of CHE's, from that answer's own
+  // receipt. A claim about the owner with no record behind it is retracted,
+  // so it can never be saved or repeated as his.
+  async explainEarlierAnswer(data, ownerHistory, rawMessage) {
+    const referent = evidenceReferent(ownerHistory, { message: rawMessage });
+    let entry = referent
+      ? await findAnswerEvidence(this.ctx.storage, referent.text)
+      : await latestAnswerEvidence(this.ctx.storage);
+    if (!entry && !referent) {
+      // Receipts written before the per-answer ledger existed.
+      const legacy = await Promise.resolve().then(() => this.ctx.storage.get(LAST_ANSWER_EVIDENCE_KEY)).catch(() => null);
+      if (legacy && Number.isFinite(legacy.at)) entry = legacy;
+    }
+    const explained = explainEvidenceFor({
+      referent, entry, records: data.memory_records, ownerTurns: ownerWords(ownerHistory, rawMessage),
+    });
+    await recordRetractions(this.ctx.storage, explained.retract);
+    await recordAnswerEvidence(this.ctx.storage, explained.text, { kind: 'unverified' }, { meta: true });
+    return explained;
+  }
+
   async handleRequest(request) {
     await this.refreshKeyEnv();
     try {
@@ -6661,7 +6697,25 @@ export class CheState extends DurableObject {
         const ownerHistory = Array.isArray(body.history) ? body.history : [];
         // Evaluate references before the interpreter expands "the last one"
         // into a new question. Route it later, after permission handling.
-        const asksForEvidence = evidenceReferenceFollowup(rawMessage, ownerHistory) || evidenceQuestion(rawMessage, ownerHistory);
+        const asksForEvidence = evidenceQuestion(rawMessage, ownerHistory) ||
+          (evidenceReferenceFollowup(rawMessage, ownerHistory) && !evidenceRequestSplit(rawMessage));
+        // "How do you know that's correct? Research a fact…": the evidence
+        // for the earlier answer comes from its receipt first, and the rest of
+        // the message is answered on its own through this same chat route.
+        const evidenceSplit = ownerDevice && !body.attachment && !asksForEvidence && !EVIDENCE_SPLIT_REQUESTS.has(request)
+          ? evidenceRequestSplit(rawMessage) : null;
+        if (evidenceSplit) {
+          const explained = await this.explainEarlierAnswer(data, ownerHistory, rawMessage);
+          const inner = new Request(request.url, {
+            method: 'POST', headers: request.headers, body: JSON.stringify({ ...body, message: evidenceSplit.rest }),
+          });
+          EVIDENCE_SPLIT_REQUESTS.add(inner);
+          const rest = await this.handleRequest(inner);
+          if (rest.ok && /ndjson/i.test(rest.headers.get('Content-Type') || '')) return prefixNdjson(rest, `${explained.text}\n\n`);
+          return ndjsonReply(`${explained.text}\n\nI couldn't finish the rest of your message just now, sir. Please ask me that part again.`, {
+            source: 'che_evidence_receipt', model_calls: 0, retracted: explained.retract.length,
+          });
+        }
         const lastOwner = [...ownerHistory].reverse().find((h) => h && h.role === 'user');
         const previousText = String(lastOwner?.content || lastOwner?.text || '').slice(0, 2000);
         const correction = detectCorrection(rawMessage, previousText);
@@ -7397,20 +7451,7 @@ export class CheState extends DurableObject {
         // recent turns; its OWN receipt is explained, and a claim about the
         // owner with no record behind it is retracted, not defended.
         if (ownerDevice && !body.attachment && asksForEvidence) {
-          const referent = evidenceReferent(ownerHistory);
-          let entry = referent
-            ? await findAnswerEvidence(this.ctx.storage, referent.text)
-            : await latestAnswerEvidence(this.ctx.storage);
-          if (!entry && !referent) {
-            // Receipts written before the per-answer ledger existed.
-            const legacy = await Promise.resolve().then(() => this.ctx.storage.get(LAST_ANSWER_EVIDENCE_KEY)).catch(() => null);
-            if (legacy && Number.isFinite(legacy.at)) entry = legacy;
-          }
-          const explained = explainEvidenceFor({
-            referent, entry, records: data.memory_records, ownerTurns: ownerWords(ownerHistory, rawMessage),
-          });
-          await recordRetractions(this.ctx.storage, explained.retract);
-          await recordAnswerEvidence(this.ctx.storage, explained.text, { kind: 'unverified' }, { meta: true });
+          const explained = await this.explainEarlierAnswer(data, ownerHistory, rawMessage);
           return ndjsonReply(explained.text, {
             source: 'che_evidence_receipt', model_calls: 0, retracted: explained.retract.length,
           });
@@ -7443,6 +7484,14 @@ export class CheState extends DurableObject {
           await recordAnswerEvidence(this.ctx.storage, reply, answerEvidenceReceipt({ ownerAttested: true }),
             { records: added.record?.id ? [added.record.id] : [] });
           return ndjsonReply(reply, { source: 'che_memory', model_calls: 0 });
+        }
+        // "Research a fact and explain what you verified" names no fact. Ask
+        // which one before any research, Office partner or model is spent on
+        // the request's own words, so nothing unverified is reported back.
+        if (ownerDevice && !body.attachment && vagueResearchRequest(rawMessage)) {
+          const reply = 'Which fact should I research, sir? Say it with the topic, for example "research the boiling point of water", and I will check real sources and tell you only what I actually verified.';
+          await recordAnswerEvidence(this.ctx.storage, reply, { kind: 'none' });
+          return ndjsonReply(reply, { source: 'che_clarify', model_calls: 0 });
         }
 
         // KNOW IT → RETRIEVE IT. A verified owner fact ("what is my Worker

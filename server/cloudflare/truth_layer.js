@@ -467,6 +467,19 @@ export function guardLocationWeatherReply(message, reply, { forecastVerified = f
 // Only tool execution receipts, not plausible model prose, can establish that
 // CHE browsed, searched, or compared sources. Guard past-tense claims, not
 // explanations of HOW one might research a fact.
+// "Research a fact, check your sources and explain what you verified" names
+// no subject. Researching the request's own words would return sources about
+// nothing in particular, so CHE asks which fact instead.
+const RESEARCH_VERB = /\b(?:research|fact ?check|look (?:something|anything|it) up|look up|find out|verify|check)\b/;
+const PLACEHOLDER_SUBJECT = /\b(?:a|any|some|one|random) (?:fact|topic|thing|claim|subject|statement)\b|\bsomething\b|\banything\b/;
+const NO_SUBJECT_WORDS = /\b(?:che|hey|please|can|could|would|will|you|i|want|need|to|go|and|then|also|now|a|an|any|some|one|random|the|your|my|me|for|it|what|which|how|have|has|did|do|explain|tell|show|research|researched|look|looked|up|fact|facts|check|checked|verify|verified|find|found|out|about|source|sources|something|anything|topic|thing|claim|subject|statement|information|info|search|web|online|internet|carefully|thoroughly|quickly|real|reliable|sir)\b/g;
+
+export function vagueResearchRequest(message) {
+  const q = String(message || '').toLowerCase().replace(/[’']/g, '').replace(/[^a-z ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!q || q.split(' ').length > 25 || !RESEARCH_VERB.test(q) || !PLACEHOLDER_SUBJECT.test(q)) return false;
+  return !q.replace(NO_SUBJECT_WORDS, ' ').trim();
+}
+
 export function guardClaimedResearchActions(reply, { research = null, tools = [], documentRead = false } = {}) {
   const text = String(reply || '');
   const successful = (Array.isArray(tools) ? tools : []).filter((t) => t?.ok === true);
@@ -485,11 +498,16 @@ export function guardClaimedResearchActions(reply, { research = null, tools = []
   // document result from this turn.
   const claimedVerification = /\b(?:i|we)(?:'ve|\s+have)?\s+(?:independently\s+|personally\s+|already\s+)?(?:verified|fact.?checked|double.?checked|validated)\s+(?:this|that|it|the|each|every|all|these|those|your|with|against)\b/i.test(text);
   const claimedDocumentReview = /\b(?:i|we)(?:'ve|\s+have)?\s+(?:reviewed|read|examined|analy[sz]ed|went through|looked through)\s+(?:the|your|those|these|several|multiple|some|all|each|every)\s+(?:\w+\s+){0,2}(?:documents?|articles?|pages?|papers?|reports?|files?|pdfs?|links?|studies|filings?)\b/i.test(text);
+  // A step-by-step report with no "I" ("1. Searched fresh sources – …",
+  // "- Compared the info") claims the same actions.
+  const stepReport = /(?:^|\n)[ \t]*(?:\d+[.)]|[-*•])[ \t]*\**[ \t]*(?:searched|looked up|researched|browsed|pulled|compared|cross.?checked|fact.?checked|verified|reviewed|checked)\b/i.test(text);
+  const claimedSourceLook = /\b(?:i|we)(?:'ve|\s+have)?\s+(?:looked at|checked|went over|compared)\s+(?:the|each|every|all|both|several|multiple|those|these)\s+(?:\w+\s+){0,2}(?:sources?|articles?|results?|sites?|websites?)\b/i.test(text);
   const anyReceipt = actualResearch || comparisonReceipt || successful.length > 0;
   if ((claimedBrowser && !actualBrowser) || (claimedSearch && !actualResearch) ||
       (claimedComparison && !comparisonReceipt) ||
       (claimedVerification && !anyReceipt) ||
-      (claimedDocumentReview && !anyReceipt && !documentRead)) {
+      (claimedDocumentReview && !anyReceipt && !documentRead) ||
+      ((stepReport || claimedSourceLook) && !anyReceipt)) {
     return {
       text: 'I need to correct that, sir: I do not have execution receipts proving I performed the search or comparison I described. I have not independently fact-checked that answer.',
       corrected: true,
