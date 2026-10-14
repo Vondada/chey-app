@@ -54,8 +54,8 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
         const String.fromEnvironment('CHE_AGENT_URL', defaultValue: 'https://chey-app.henryjavoni.workers.dev')).replaceAll(RegExp(r'/+$'), '');
       _token = prefs.getString('che_agent_device_token') ?? '';
       if (_token.isEmpty) throw StateError('Pair this iPhone with CHE before changing the cloud voice.');
-      final r = await _client.get(Uri.parse(_base + '/api/voice/choices'),
-        headers: {'authorization': 'Bearer ' + _token}).timeout(const Duration(seconds: 20));
+      final r = await _client.get(Uri.parse('$_base/api/voice/choices'),
+        headers: {'authorization': 'Bearer $_token'}).timeout(const Duration(seconds: 20));
       final j = jsonDecode(utf8.decode(r.bodyBytes));
       if (r.statusCode != 200 || j is! Map) {
         throw StateError(j is Map ? (j['detail'] ?? 'CHE did not return voice choices.').toString()
@@ -85,13 +85,13 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
   }
 
   Map<String, dynamic> get _choice => {'provider': _provider, 'id': _id, 'speed': _speed};
-  Map<String, String> get _headers => {'authorization': 'Bearer ' + _token, 'content-type': 'application/json'};
+  Map<String, String> get _headers => {'authorization': 'Bearer $_token', 'content-type': 'application/json'};
 
   Future<void> _save() async {
     if (_busy || _id.isEmpty) return;
     setState(() { _busy = true; _status = ''; });
     try {
-      final r = await _client.post(Uri.parse(_base + '/api/voice/choice'),
+      final r = await _client.post(Uri.parse('$_base/api/voice/choice'),
         headers: _headers, body: jsonEncode(_choice)).timeout(const Duration(seconds: 20));
       final j = jsonDecode(utf8.decode(r.bodyBytes));
       if (r.statusCode != 200 || j is! Map || j['ok'] != true) {
@@ -101,7 +101,7 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
       if (mounted) setState(() => _status = 'Voice saved for CHE Chat and Read This. Test it with Read This.');
     } on Object catch (e) {
       HapticFeedback.heavyImpact();
-      if (mounted) setState(() => _status = 'Voice not saved: ' + e.toString().replaceFirst('Bad state: ', ''));
+      if (mounted) setState(() => _status = 'Voice not saved: ${e.toString().replaceFirst('Bad state: ', '')}');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -122,7 +122,7 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
     if (allowed != true || !mounted) return;
     setState(() { _busy = true; _status = 'Requesting a real voice preview…'; });
     try {
-      final r = await _client.post(Uri.parse(_base + '/api/voice/preview'),
+      final r = await _client.post(Uri.parse('$_base/api/voice/preview'),
         headers: _headers, body: jsonEncode(_choice)).timeout(const Duration(seconds: 55));
       if (r.statusCode != 200 || !((r.headers['content-type'] ?? '').contains('audio'))) {
         String reason = 'This voice did not return playable audio.';
@@ -137,7 +137,7 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
       if (!played) throw StateError('CHE received audio but your iPhone could not play it.');
       if (mounted) setState(() => _status = 'Preview played. Select Save Voice to use it for future replies.');
     } on Object catch (e) {
-      if (mounted) setState(() => _status = 'Preview failed: ' + e.toString().replaceFirst('Bad state: ', ''));
+      if (mounted) setState(() => _status = 'Preview failed: ${e.toString().replaceFirst('Bad state: ', '')}');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -154,7 +154,7 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
         const SizedBox(height: 8),
         const Text('These are the real cloud voices for normal Chat and Read This, not the iPhone fallback voices. Choose and save one here; do not open the providers’ apps.', style: TextStyle(color: CheColors.textDim)),
         const SizedBox(height: 12),
-        Text('ElevenLabs: ' + _elevenState + '    Fish Audio: ' + _fishState,
+        Text('ElevenLabs: $_elevenState    Fish Audio: $_fishState',
           style: const TextStyle(color: CheColors.accent)),
         if (_loading) const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator()),
         if (_error.isNotEmpty) Text(_error, style: const TextStyle(color: CheColors.warning)),
@@ -176,7 +176,7 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
             }),
           ),
         const SizedBox(height: 12),
-        Text('Speaking speed: ' + _speed.toStringAsFixed(2) + '×'),
+        Text('Speaking speed: ${_speed.toStringAsFixed(2)}×'),
         Slider(value: _speed, min: 0.7, max: 1.2, divisions: 10,
           label: _speed.toStringAsFixed(2), onChanged: _busy ? null : (v) => setState(() => _speed = v)),
         const SizedBox(height: 12),
