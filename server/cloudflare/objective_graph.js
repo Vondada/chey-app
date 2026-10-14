@@ -12,6 +12,7 @@
 
 import { classifyFailure, FAILURE_CLASS, isEvidenceRequest, stableHash } from './recovery_policy.js';
 import { estimateTokens } from './workflow_governor.js';
+import { commandById, dispatchPrompt } from './command_catalog.js';
 
 const MAX_NODES = 30;
 const MAX_TOTAL_NODES = 40; // including split/cancelled nodes kept for audit
@@ -22,7 +23,9 @@ const MAX_OWNER_REPLANS = 2;
 const MAX_PROCESSED_EVENTS = 200;
 const MAX_EVENTS = 40;
 // Nodes run through job kinds that already enforce CHE's permission model.
-const NODE_KINDS = new Set(['chat', 'self_development']);
+// A `command` node is one Command Center step: it runs through /api/chat
+// itself, so every owner gate and truth guard applies to it.
+const NODE_KINDS = new Set(['chat', 'self_development', 'command']);
 // Mission fields no mutation, recovery or optimization may change.
 const PROTECTED_FIELDS = new Set(['objective', 'constraints', 'owner_authorized', 'id', 'created_at']);
 
@@ -34,9 +37,14 @@ const priorityOf = (value) => Math.max(0, Math.min(9, Number.isFinite(Number(val
 
 function buildNode(node, i) {
   const id = cleanId(node?.id || `n${i + 1}`);
-  const prompt = clip(node?.prompt, 8000).trim();
-  if (!prompt) throw new Error(`Step ${id} needs a prompt.`);
   const kind = NODE_KINDS.has(node?.kind) ? node.kind : 'chat';
+  // A command step's request always comes from the catalog, never from the
+  // caller, and its approval checkpoint cannot be switched off.
+  const command = kind === 'command' ? commandById(node?.command) : null;
+  if (kind === 'command' && !command) throw new Error(`Step ${id} names an unknown command.`);
+  const input = command ? clip(node?.input, 1000).trim() : '';
+  const prompt = command ? dispatchPrompt(command, input) : clip(node?.prompt, 8000).trim();
+  if (!prompt) throw new Error(`Step ${id} needs a prompt.`);
   return {
     id,
     title: clip(node?.title || prompt, 100),
@@ -50,6 +58,14 @@ function buildNode(node, i) {
     verify: list(node?.verify, 6, 300),
     engine: clip(node?.engine, 40),
     tools: list(node?.tools, 8, 40),
+    ...(command ? {
+      command: command.id,
+      input,
+      // An approval checkpoint: the step never starts until the owner
+      // approves it (approveNode), whatever the rest of the graph does.
+      needs_approval: Boolean(command.confirm) || node?.needs_approval === true,
+      approved_at: null,
+    } : {}),
     status: 'pending',
     attempts: 0,
     fingerprints: [fingerprint(prompt)],
@@ -116,13 +132,19 @@ export function createObjective({ objective, nodes, repo_sha = '', owner_authori
 
 /** Nodes whose prerequisites are all complete and that have not started, highest priority first. */
 export function runnableNodes(objective) {
+  if (objective.paused) return [];
   const done = new Set(objective.nodes.filter((n) => n.status === 'complete').map((n) => n.id));
   const now = Date.now();
   return objective.nodes
-    .filter((n) => n.status === 'pending' && n.depends_on.every((d) => done.has(d)) && !(Number(n.not_before) > now))
+    .filter((n) => n.status === 'pending' && n.depends_on.every((d) => done.has(d)) && !(Number(n.not_before) > now) && !awaitingApproval(n))
     .map((n, i) => ({ n, i }))
     .sort((a, b) => priorityOf(b.n.priority) - priorityOf(a.n.priority) || a.i - b.i)
     .map(({ n }) => n);
+}
+
+/** A command step whose prerequisites may be done but the owner has not approved it. */
+export function awaitingApproval(node) {
+  return node?.needs_approval === true && !node.approved_at;
 }
 
 function dependentsOf(objective, id, out = new Set()) {
@@ -146,8 +168,12 @@ function refreshStatus(objective, now) {
   const live = objective.nodes.filter((n) => n.status !== 'cancelled');
   const statuses = live.map((n) => n.status);
   const waiting = live.some((n) => n.status === 'pending' && Number(n.not_before) > Date.now());
-  if (live.length && statuses.every((s) => s === 'complete')) objective.status = 'complete';
-  else if (!statuses.some((s) => s === 'running') && !runnableNodes(objective).length && !waiting) objective.status = 'needs_replan';
+  const done = new Set(live.filter((n) => n.status === 'complete').map((n) => n.id));
+  const approvalReady = live.some((n) => n.status === 'pending' && awaitingApproval(n) && n.depends_on.every((d) => done.has(d)));
+  if (objective.cancelled) objective.status = 'cancelled';
+  else if (live.length && statuses.every((s) => s === 'complete')) objective.status = 'complete';
+  else if (objective.paused && !statuses.some((s) => s === 'running')) objective.status = 'paused';
+  else if (!statuses.some((s) => s === 'running') && !runnableNodes(objective).length && !waiting) objective.status = approvalReady ? 'awaiting_approval' : 'needs_replan';
   else objective.status = 'active';
   objective.updated_at = now;
 }
@@ -351,6 +377,68 @@ export function replanNode(objective, nodeId, { prompt } = {}, now = new Date().
   return { ok: true, objective };
 }
 
+/** The owner approves one command step's checkpoint; it may then start. */
+export function approveNode(objective, nodeId, now = new Date().toISOString()) {
+  const node = objective.nodes.find((n) => n.id === cleanId(nodeId));
+  if (!node) return { ok: false, reason: 'unknown_step' };
+  if (!node.needs_approval) return { ok: false, reason: 'no_approval_needed' };
+  if (node.approved_at) return { ok: true, objective, duplicate: true };
+  if (node.status !== 'pending') return { ok: false, reason: `step_${node.status}` };
+  node.approved_at = now;
+  recordMissionEvent(objective, 'owner_approved', { node_id: node.id, key: `approve:${node.id}` }, now);
+  refreshStatus(objective, now);
+  return { ok: true, objective };
+}
+
+/**
+ * The owner retries ONE failed step as it was (same request). Bounded by the
+ * owner-replan budget, so a retry can never loop.
+ */
+export function retryNode(objective, nodeId, now = new Date().toISOString()) {
+  const node = objective.nodes.find((n) => n.id === cleanId(nodeId));
+  if (!node) return { ok: false, reason: 'unknown_step' };
+  // A step waiting out an automatic cooldown can be resumed right away.
+  if (node.status === 'pending' && Number(node.not_before) > Date.now()) {
+    node.not_before = 0;
+    recordMissionEvent(objective, 'owner_resume_now', { node_id: node.id, key: `resume_now:${node.id}:${node.fingerprints.length}` }, now);
+    refreshStatus(objective, now);
+    return { ok: true, objective };
+  }
+  if (node.status !== 'failed') return { ok: false, reason: 'not_failed' };
+  if (Number(node.owner_replans || 0) >= MAX_OWNER_REPLANS) return { ok: false, reason: 'strategies_exhausted' };
+  node.owner_replans = Number(node.owner_replans || 0) + 1;
+  node.prompt = node.base_prompt || node.prompt;
+  node.fingerprints = [...node.fingerprints, fingerprint(node.prompt, `owner_retry${node.owner_replans}`)];
+  node.strategy = 'owner_replan';
+  node.recovery = '';
+  node.status = 'pending';
+  node.job_id = null;
+  node.not_before = 0;
+  node.failure_class = '';
+  recordMissionEvent(objective, 'owner_retry', { node_id: node.id, key: `retry:${node.id}:${node.owner_replans}` }, now);
+  refreshStatus(objective, now);
+  return { ok: true, objective };
+}
+
+/** Pause stops new steps from starting; a running step finishes and is kept. */
+export function setObjectivePaused(objective, paused, now = new Date().toISOString()) {
+  if (['complete', 'cancelled'].includes(objective.status)) return { ok: false, reason: `objective_${objective.status}` };
+  objective.paused = paused === true;
+  recordMissionEvent(objective, paused ? 'paused' : 'resumed', { key: `${paused ? 'pause' : 'resume'}:${now}` }, now);
+  refreshStatus(objective, now);
+  return { ok: true, objective };
+}
+
+/** Cancels every step that has not finished; finished results are kept. */
+export function cancelObjective(objective, now = new Date().toISOString()) {
+  if (objective.status === 'complete') return { ok: false, reason: 'objective_complete' };
+  for (const n of objective.nodes) if (['pending', 'blocked', 'failed'].includes(n.status)) n.status = 'cancelled';
+  objective.cancelled = true;
+  recordMissionEvent(objective, 'cancelled', { key: `cancel:${now}` }, now);
+  refreshStatus(objective, now);
+  return { ok: true, objective };
+}
+
 // ---- Graph mutation from new evidence -----------------------------------
 
 /**
@@ -369,7 +457,7 @@ export function mutateObjective(objective, ops, now = new Date().toISOString()) 
     const kind = String(op?.op || '');
     if (op?.field !== undefined || kind === 'set_field') return { ok: false, reason: 'protected_field' };
     if (kind === 'add_node') {
-      if (op.node?.kind === 'self_development' && !selfDevAllowed) return { ok: false, reason: 'owner_authorization_required' };
+      if (['self_development', 'command'].includes(op.node?.kind) && !selfDevAllowed) return { ok: false, reason: 'owner_authorization_required' };
       let built;
       try { built = buildNode(op.node, nodes.length); } catch (error) { return { ok: false, reason: String(error.message || error) }; }
       nodes.push(built);
@@ -383,7 +471,7 @@ export function mutateObjective(objective, ops, now = new Date().toISOString()) 
     if (kind === 'split_node') {
       const parts = Array.isArray(op.into) ? op.into : [];
       if (parts.length < 2) return { ok: false, reason: 'split_needs_two_parts' };
-      if (parts.some((p) => (p?.kind || node.kind) === 'self_development') && !selfDevAllowed) return { ok: false, reason: 'owner_authorization_required' };
+      if (parts.some((p) => ['self_development', 'command'].includes(p?.kind || node.kind)) && !selfDevAllowed) return { ok: false, reason: 'owner_authorization_required' };
       let children;
       try { children = parts.map((p, i) => buildNode({ kind: node.kind, priority: node.priority, goal: node.goal, targets: node.targets, ...p, depends_on: p?.depends_on || node.depends_on }, nodes.length + i)); } catch (error) { return { ok: false, reason: String(error.message || error) }; }
       node.status = 'cancelled';
@@ -589,12 +677,14 @@ export function advanceObjectives(data, enqueue, now = new Date().toISOString())
     for (const node of runnableNodes(objective)) {
       // Repository-changing objective nodes are owner-only even when an old or
       // externally supplied objective reaches the durable queue later.
-      if (node.kind === 'self_development' && objective.owner_authorized !== true) {
+      // Command steps run as the owner through /api/chat, so they too need
+      // an objective the owner's own device created.
+      if ((node.kind === 'self_development' || node.kind === 'command') && objective.owner_authorized !== true) {
         node.status = 'failed';
         node.failure_class = 'A';
         node.failure_kind = 'AUTHORIZATION';
         node.recovery = 'needs_owner';
-        node.evidence = [...node.evidence, 'self-development objective rejected: owner authorization required'].slice(-6);
+        node.evidence = [...node.evidence, `${node.kind === 'command' ? 'command' : 'self-development'} objective rejected: owner authorization required`].slice(-6);
         continue;
       }
       // Safe parallelism: a node writing a file/resource that a running node
@@ -630,6 +720,6 @@ export function speakObjective(objective) {
   const count = (s) => objective.nodes.filter((n) => n.status === s).length;
   const live = objective.nodes.filter((n) => n.status !== 'cancelled').length;
   const recovering = objective.nodes.filter((n) => ['pending', 'running'].includes(n.status) && n.strategy && !['initial', 'owner_replan'].includes(n.strategy)).length;
-  const owner = objective.nodes.filter((n) => n.status === 'failed' && n.recovery === 'needs_owner').length;
+  const owner = objective.nodes.filter((n) => (n.status === 'failed' && n.recovery === 'needs_owner') || (n.status === 'pending' && awaitingApproval(n))).length;
   return `${objective.objective.slice(0, 120)}: ${count('complete')} of ${live} steps done, ${count('running')} running, ${count('failed')} failed, ${count('blocked')} waiting on a failed step.${recovering ? ` ${recovering} recovering with a new approach.` : ''}${owner ? ` ${owner} need${owner === 1 ? 's' : ''} your approval.` : ''}`;
 }
