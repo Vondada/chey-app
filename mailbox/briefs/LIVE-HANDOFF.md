@@ -66,7 +66,19 @@ Then, on GitHub:
 
 ## 2. Current position (updated by: Claude, 2026-10-14)
 
-**Claude, 2026-10-14 (owner: "Make CHE speak only with my ElevenLabs voice on my iPhone… If ElevenLabs fails, use Fish. Never the iPhone voice or the free server voices."). PR #293 OPEN from `claude/che-latency-optimization-8ruaus` at `59a68f1`. NOT merged. Phone NOT verified.**
+**Claude, 2026-10-14 04:25 UTC. PR #293 MERGED as `c7bb9f9`. Worker deployed, ElevenLabs verified LIVE through the Worker, new IPA published, Shorebird Patch 4 published. Phone NOT verified: waiting for the owner to install the new build and say he heard her ElevenLabs voice.**
+- **Merge:** `c7bb9f9` "Voice: ElevenLabs first, Fish backup, fix the iPhone voice bridge (#293) [worker-deploy] [ios-build]". Branch `claude/che-latency-optimization-8ruaus` has main merged back (`9a63d21`).
+- **Root cause, proven:** the `CHE iOS native build check` log shows the generated Info.plist uses the UIScene lifecycle. `window?.rootViewController` is nil in `didFinishLaunchingWithOptions`, so che/native_voice, native_voice_events, native_shell, account_bridge and local_ai were never registered. `playAudio` threw MissingPluginException, and flutter_tts ("iphone-tts") spoke. Fixed in the new IPA (registrar messenger).
+- **Deploy CHE Worker run 38509669864, success.** The deploy check made one real ElevenLabs call through the live Worker: `{"ok":true,"engine":"elevenlabs-mary","status":"healthy","http":200,"ms":343,"bytes":48527,"model":"eleven_flash_v2_5","valid_mp3":true}`. Clip artifact `che-voice-check` (ID 11869536249).
+- **New IPA:** `CHE iPhone IPA` run 38509669803 succeeded. `CHE IPA public release` run 38510549687 published release `che-ios-v1.4.1024725360-b3850966980301` at 04:16:54 UTC (commit `c7bb9f9`, 42,955,096 bytes, sha256 `d70c86bd…bad`, `shorebird_base=true`). This build already contains every #293 change; it needs no patch.
+- **Shorebird:** run 38509669831 printed "✅ Published Patch 4!" for release **1.4.1024603585+3828969674601** (the OLD build), Stable track, arm64 2.24 MB. It shared 89.0% of the Dart code (Shorebird warning; may run a little slower). On the old build the native bridge still does not exist, so with Patch 4 replies stay SILENT with a large banner: "this CHE build cannot play voice audio; install the newest CHE build from Updates". That is by design: the owner said never the iPhone voice.
+- **Check CHE Flutter client** on `c7bb9f9`: success.
+- **Owner's next step:** CHE → Updates → install 1.4.1024725360 (build 3850966980301) through SideStore (data and pairing kept). Then speak to CHE and open Voice diagnostics: the playback engine should read "CHE voice (ElevenLabs)".
+- **If it still fails on the phone:** read the voice log. `POST /api/voice/probe` (deploy step "Check CHE's ElevenLabs voice through the live Worker") prints the last 20 entries, including what the phone reported (engine, played, silent, reasons). Re-run `che-worker-deploy.yml` to get a fresh probe.
+- **Do not** claim the voice works until the owner confirms he heard her ElevenLabs voice on the phone.
+- **Owner's next request (not started):** he drafted a prompt to make CHE ("Jay") a personal AI operating system with full capability, memory and agency. Handle it only when he sends it.
+
+**Claude, 2026-10-14 (owner: "Make CHE speak only with my ElevenLabs voice on my iPhone… If ElevenLabs fails, use Fish. Never the iPhone voice or the free server voices."). PR #293 details (written before the merge; see the entry above for what shipped).**
 - **Root cause, from the owner's Voice diagnostics screenshot:**
   - Fish showed "Working", the playback engine was "iPhone system voice", and the fallback detail was "server voice playback failed".
   - So the clip reached the phone, but `che/native_voice` `playAudio` failed, and the native `speakText` failed too. Otherwise the engine would read `iphone-voice`, not `iphone-tts`.
