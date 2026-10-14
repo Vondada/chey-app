@@ -142,6 +142,33 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
     }
   }
 
+  Future<void> _connectBroker() async {
+    if (_connecting) return;
+    setState(() { _connecting = true; _message = ''; });
+    try {
+      final r = await _client.post(
+        Uri.parse(widget.baseUrl + '/api/broker/tradovate/connect/start'),
+        headers: {...widget.headers(), 'content-type': 'application/json'},
+        body: '{}',
+      ).timeout(const Duration(seconds: 18));
+      final raw = jsonDecode(utf8.decode(r.bodyBytes));
+      final data = raw is Map ? raw : <String, dynamic>{};
+      final uri = Uri.tryParse((data['url'] ?? '').toString());
+      if (r.statusCode != 200 || uri == null || uri.scheme != 'https' ||
+          uri.host != 'trader.tradovate.com') {
+        throw StateError((data['detail'] ?? 'Tradovate OAuth application is not configured.').toString());
+      }
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!opened) throw StateError('Could not open the official Tradovate sign-in.');
+      if (mounted) setState(() => _message = 'Authorize with Tradovate, then return to CHE and Refresh. No broker connection or trade is claimed until confirmed.');
+    } on Object catch (e) {
+      HapticFeedback.heavyImpact();
+      if (mounted) setState(() => _message = 'Broker: ' + e.toString().replaceFirst('Bad state: ', ''));
+    } finally {
+      if (mounted) setState(() => _connecting = false);
+    }
+  }
+
   Widget _card(String title, IconData icon, String? connector, String explanation,
       {VoidCallback? onAction, String action = 'Connect'}) {
     final status = _status(connector);
@@ -234,7 +261,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
           _heading('Trading'),
           _card('NinjaTrader / Tradovate', Icons.candlestick_chart_rounded, 'broker',
               'Use the existing Tradovate sign-in route. Orders require your separate approval.',
-              onAction: widget.onBrokerConnect, action: 'Connect NinjaTrader'),
+              onAction: _connectBroker, action: 'Connect NinjaTrader'),
           _heading('Banks & finances'),
           _card('Bank accounts — read only', Icons.account_balance_outlined, null,
               'No secure bank-link provider is configured. CHE cannot see balances or transactions. Do not enter bank passwords in Chat.'),
