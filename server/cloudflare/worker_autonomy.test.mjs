@@ -2811,3 +2811,34 @@ test('app builds: a refused dispatch is reported honestly and nothing is queued'
     globalThis.fetch = original;
   }
 });
+
+test('live paired chat explains actual source evidence and declines to fabricate citations', async () => {
+  const saved = new Map();
+  let modelCalls = 0;
+  const env = {
+    CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1',
+    AI: { run: async () => { modelCalls += 1; return { response: 'Plants convert light into chemical energy.' }; } },
+  };
+  const { chat } = await pairedChat(env, saved);
+  const first = replyFromNdjson(await (await chat('Explain photosynthesis in one sentence')).text());
+  assert.match(first, /Plants convert light/);
+  const priorCalls = modelCalls;
+  const unsupported = replyFromNdjson(await (await chat('How do you know that?')).text());
+  assert.match(unsupported, /not independently verified/i);
+  assert.equal(modelCalls, priorCalls, 'the evidence follow-up uses receipts without AI inference');
+  const question = 'Research how fast sunlight travels to Earth';
+  const url = 'https://science.nasa.gov/sun/';
+  const now = Date.now();
+  await rememberKnowledge(storageFor(saved), {
+    key: researchKey(question), answer: 'Sunlight takes about eight minutes to reach Earth.',
+    source: 'research_library', sources: [url], verified: true,
+    confidence: 0.9, ttl_ms: 86400000,
+  }, now);
+  await markPureResearch(storageFor(saved), question);
+  const fact = replyFromNdjson(await (await chat(question, { requested_capabilities: ['web_research'] })).text());
+  assert.match(fact, /about eight minutes/);
+  const sourced = replyFromNdjson(await (await chat('Show me the sources')).text());
+  assert.match(sourced, /science.nasa.gov/);
+  assert.match(sourced, /not proof/i);
+  assert.equal(modelCalls, priorCalls, 'verified cache and its evidence receipt reuse zero model calls');
+});
