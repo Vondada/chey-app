@@ -31,6 +31,7 @@ Order: **reproduce → locate → fix narrowly → prove → review.** Do not ed
 - Turn the replay into a test in the owning `*.test.mjs`, through `/api/chat`; `server/cloudflare/memory_truth.test.mjs` has an `owner()` helper to copy. Then re-run the replay and show the corrected output.
 - `bash .claude/skills/che-debug/scripts/run_checks.sh` runs exactly the checks CI runs for the changed paths (Worker syntax and tests, skills tests, Dart analyze/test, tools, workflow scripts). It prints failures with their diagnostics, and one line per passing check.
 - When `flutter` is not on PATH, the script says Flutter was NOT RUN. Report that; never call it verified.
+- Keep test messages offline. If the replay lists refused hosts for a turn, CI (which has network) will take a different path; 2026-10-14 a "research the market" test passed here and failed in CI.
 
 ## 5. Review
 - Re-read the diff as a reviewer would:
