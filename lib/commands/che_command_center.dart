@@ -112,12 +112,18 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
     if (!mounted) return;
     // A Chat voice search explicitly requested these local results, unlike
     // passive navigation which must remain silent.
-    if (widget.initialSearch.trim().isNotEmpty && _catalog.commands.isNotEmpty) {
-      final found = _catalog.search(_query).take(5).toList();
-      final report = found.isEmpty
-          ? 'No command matches "${_query}". Try other words.'
-          : '${found.length} best matches for "${_query}". ${_numbered(found)} Say a number to hear one.';
-      _report(report, ok: found.isNotEmpty);
+    if (widget.initialSearch.trim().isNotEmpty) {
+      if (_catalog.commands.isEmpty) {
+        _report('I could not search the command library for "${_query}", sir. '
+            'CHE has no command catalog on this phone right now. '
+            'Check pairing or your connection and retry.', ok: false);
+      } else {
+        final found = _catalog.search(_query).take(5).toList();
+        final report = found.isEmpty
+            ? 'No command matches "${_query}". Try other words.'
+            : '${found.length} best matches for "${_query}". ${_numbered(found)} Say a number to hear one.';
+        _report(report, ok: found.isNotEmpty);
+      }
     }
     final open = widget.initialCommand == null ? null : _catalog.byId(widget.initialCommand!);
     if (open != null) unawaited(_openDetail(open));
