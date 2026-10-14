@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { replyFromNdjson } from './brain_memory.js';
-import { ANSWER_LEDGER_KEY, RETRACTED_CLAIMS_KEY, evidenceQuestion, evidenceRequestSplit, ownerMemoryQuestion } from './memory_provenance.js';
+import { ANSWER_LEDGER_KEY, RETRACTED_CLAIMS_KEY, evidenceQuestion, evidenceRequestSplit, ownerMemoryQuestion, storyRequested } from './memory_provenance.js';
 
 const generated = new URL('./.memory_truth.test.generated.mjs', import.meta.url);
 writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
@@ -15,6 +15,13 @@ writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), '
 let mod;
 try { mod = await import(generated.href + '?t=' + Date.now()); } finally { try { unlinkSync(generated); } catch (_) {} }
 const { default: worker, CheState } = mod;
+
+// Hermetic: CI runners have network and this sandbox may not. A real lookup
+// would leave a real research receipt, so every outbound request fails here
+// the same way it does offline, and both take the same path.
+globalThis.fetch = async (input) => {
+  throw new TypeError(`fetch failed (memory_truth tests are offline: ${new URL(String(input?.url || input)).host})`);
+};
 
 const FABRICATED = 'You personally tested a new office security protocol last Tuesday and confirmed that after-hours access required a two-step biometric check.';
 
@@ -523,8 +530,10 @@ test('G: everyday ways of claiming a search never reach the owner without a rece
   const story = await owner({ model: () => 'I searched the attic and googled the old map, sir, and found the key.' });
   const out = await story.say('Tell me a short story where you are a detective.');
   assert.match(out.reply, /I searched the attic and googled the old map/);
-  // A factual request that only mentions a story is not creative writing.
-  for (const ask of ['Fact-check this news story for me.', 'Tell me the story behind this product.']) {
+  // A factual request that only mentions a story is not creative writing. (Through /api/chat
+  // only offline messages: "fact-check …" starts a real lookup, whose receipt would count.)
+  for (const ask of ['Fact-check this news story for me.', 'Research the story behind this product.']) assert.equal(storyRequested(ask), false, ask);
+  for (const ask of ['Is the story about the new garage door code accurate?', 'Tell me the story behind this product.']) {
     const che = await owner({ model: () => 'I searched five websites and they all confirm it.' });
     assert.match((await che.say(ask)).reply, /do not have execution receipts/, ask);
   }
