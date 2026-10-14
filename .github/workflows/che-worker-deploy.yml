@@ -296,6 +296,12 @@ jobs:
         run: |
           node -e '
             const { createHash } = require("crypto");
+            // CHE_FISH_PREFERRED=0 is the owner switch-off: no Fish call at all,
+            // not even this measurement.
+            if (!["1", "true", "yes"].includes(String(process.env.CHE_FISH_PREFERRED || "").toLowerCase())) {
+              console.log("Fish is switched off by CHE_FISH_PREFERRED; no measurement.");
+              process.exit(0);
+            }
             // Same voice, models and sample text → same measurement, reused
             // from the cache instead of paying for it again on every deploy.
             const key = createHash("sha256").update(JSON.stringify(["v1", process.env.CHE_FISH_VOICE_ID, process.env.CHE_FISH_MODEL || "s2.1-pro-free", process.env.CHE_FISH_EXPRESSIVE_MODEL || "drama-3", process.env.CHE_FISH_SPEED || ""])).digest("hex").slice(0, 24);

@@ -791,7 +791,8 @@ extension _CheHomeSend on _CHEHomeState {
         if (spoken.isEmpty || !mounted || _stopRequested) return;
         if (!replySpeechOpened) {
           replySpeechOpened = true;
-          replySpeech = _openSpeechTurn();
+          // A story the owner asked for uses CHE's expressive story voice.
+          replySpeech = _openSpeechTurn(purpose: cheVoicePurposeFor(message));
         }
         replySpeech?.add(spoken);
       }

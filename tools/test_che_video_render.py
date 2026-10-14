@@ -29,6 +29,7 @@ class FishNarrationTest(unittest.TestCase):
         self.env = mock.patch.dict(os.environ, {
             'FISH_API_KEY': 'fish-test-key', 'CHE_FISH_VOICE_ID': VOICE,
             'CHE_NARRATION_CACHE': self.cache, 'CHE_FISH_EXPRESSIVE_MODEL': '', 'CHE_FISH_NARRATION': '',
+            'CHE_FISH_PREFERRED': '1',
         })
         self.env.start()
         self.calls = []
@@ -62,6 +63,8 @@ class FishNarrationTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {'FISH_API_KEY': ''}):
             self.assertIsNone(render.fish_narration('Hello.'))
         with mock.patch.dict(os.environ, {'CHE_FISH_NARRATION': '0'}):
+            self.assertIsNone(render.fish_narration('Hello.'))
+        with mock.patch.dict(os.environ, {'CHE_FISH_PREFERRED': '0'}):
             self.assertIsNone(render.fish_narration('Hello.'))
         with mock.patch.dict(os.environ, {'CHE_FISH_VOICE_ID': 'bad id'}):
             self.assertIsNone(render.fish_narration('Hello.'))

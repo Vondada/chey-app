@@ -36,6 +36,35 @@ void main() {
     });
   });
 
+  group('story voice only when the owner asked for a story', () {
+    test('asking for a story picks the story voice', () {
+      expect(cheVoicePurposeFor('CHE, tell me a bedtime story about a fox'), 'story');
+      expect(cheVoicePurposeFor('Read me a short story'), 'story');
+      expect(cheVoicePurposeFor('Can you make up a tale for my nephew?'), 'story');
+      expect(cheVoicePurposeFor('Narrate the opening of my video'), 'story');
+    });
+
+    test('ordinary questions stay on the everyday voice', () {
+      expect(cheVoicePurposeFor("What's the story with my order?"), 'conversation');
+      expect(cheVoicePurposeFor('Tell me the weather'), 'conversation');
+      expect(cheVoicePurposeFor('Read my messages'), 'conversation');
+      expect(cheVoicePurposeFor(''), 'conversation');
+    });
+
+    test('a story clip may take longer; everyday clips keep their wait', () {
+      expect(cheVoiceWait('story', everyday: const Duration(seconds: 5)), const Duration(seconds: 30));
+      expect(cheVoiceWait('conversation', everyday: const Duration(seconds: 5)), const Duration(seconds: 5));
+    });
+
+    test('the purpose reaches both voice requests', () {
+      final voice = File('lib/home_state/voice.dart').readAsStringSync();
+      final send = File('lib/home_state/send.dart').readAsStringSync();
+      expect(voice, contains('CheEdgeVoice.speak(text, purpose: purpose)'));
+      expect(voice, contains('_synthesizeServerVoice(text, purpose: purpose)'));
+      expect(send, contains('_openSpeechTurn(purpose: cheVoicePurposeFor(message))'));
+    });
+  });
+
   group('CHE is said "Chay"', () {
     test('only the spoken words change', () {
       expect(cheSpokenText("I'm CHE. CHE's update is ready."), "I'm Chay. Chay's update is ready.");

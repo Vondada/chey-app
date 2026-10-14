@@ -41,6 +41,24 @@ String cheMaryReason(String maryStatus, String engine) {
   };
 }
 
+/// The voice style for a reply to [ownerMessage]: 'story' when the owner asked
+/// CHE to tell, read or narrate a story, otherwise 'conversation'. Only 'story'
+/// uses Fish's expressive model (Drama 3), which can cost credits, so ordinary
+/// questions that merely mention a story stay on the everyday voice. Decided on
+/// the phone from the owner's own words: no AI call, no tokens.
+String cheVoicePurposeFor(String ownerMessage) {
+  final said = ownerMessage.toLowerCase();
+  final asked = RegExp(
+    r"\b(?:tell|read|narrate|make\s+up|write\s+and\s+read)\b[^.?!]{0,40}\b(?:story|stories|tale|fable|bedtime)\b",
+  ).hasMatch(said);
+  return asked || RegExp(r'\bnarrate\b').hasMatch(said) ? 'story' : 'conversation';
+}
+
+/// How long the phone waits for one server clip. Drama 3 renders a story chunk
+/// more slowly than everyday speech; chunks are prepared ahead of playback.
+Duration cheVoiceWait(String purpose, {required Duration everyday}) =>
+    purpose == 'story' ? const Duration(seconds: 30) : everyday;
+
 /// Why CHE's Fish voice did not speak, in words the owner can read. Empty when
 /// Fish spoke, or when Fish is not set up (that is shown in Keys, not per clip).
 String cheFishReason(String fishStatus, String engine) {
@@ -107,7 +125,7 @@ String cheMaryStateLabel(String maryStatus) => switch (maryStatus) {
 class CheEdgeVoice {
   static const voice = 'en-US-AvaNeural';
 
-  static Future<CheEdgeResult> speak(String text) async {
+  static Future<CheEdgeResult> speak(String text, {String purpose = 'conversation'}) async {
     final said = text.trim();
     if (said.isEmpty) return const CheEdgeResult();
     final prefs = await SharedPreferences.getInstance();
@@ -127,9 +145,13 @@ class CheEdgeVoice {
               'content-type': 'application/json',
               'Authorization': 'Bearer $token',
             },
-            body: jsonEncode({'text': said, 'voice': voice}),
+            body: jsonEncode({
+              'text': said,
+              'voice': voice,
+              if (purpose != 'conversation') 'purpose': purpose,
+            }),
           )
-          .timeout(const Duration(seconds: 12));
+          .timeout(cheVoiceWait(purpose, everyday: const Duration(seconds: 12)));
       final maryStatus = (response.headers['x-che-mary'] ?? '').trim();
       final fishStatus = (response.headers['x-che-fish'] ?? '').trim();
       final type = response.headers['content-type'] ?? '';

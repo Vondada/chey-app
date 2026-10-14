@@ -55,7 +55,9 @@ def fish_narration(text):
     """(path, model, cache) for Fish narration, or None to use Piper."""
     key=os.environ.get('FISH_API_KEY','').strip()
     voice=os.environ.get('CHE_FISH_VOICE_ID','').strip()
-    if os.environ.get('CHE_FISH_NARRATION','1').strip().lower() in ('0','false','no'): return None
+    off=('0','false','no')
+    if os.environ.get('CHE_FISH_NARRATION','1').strip().lower() in off: return None
+    if os.environ.get('CHE_FISH_PREFERRED','1').strip().lower() in off: return None
     if not key or not re.fullmatch(r'[A-Za-z0-9_-]{8,80}',voice): return None
     model=os.environ.get('CHE_FISH_EXPRESSIVE_MODEL','').strip() or 'drama-3'
     if not re.fullmatch(r'[A-Za-z0-9._-]{1,40}',model): model='drama-3'

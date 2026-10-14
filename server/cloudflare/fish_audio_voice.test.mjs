@@ -267,6 +267,36 @@ test('settings that arrive empty use the defaults, not zero', async () => {
   assert.equal('prosody' in calls[0].body, false, 'an empty speed is the natural speed');
 });
 
+test('stories running at the same time cannot overshoot the daily cap', async () => {
+  // The phone prefetches several story chunks at once. Each reserves its
+  // characters before Fish is called, so the cap holds while they are in flight.
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const { calls, fetcher } = fakeFish(async () => { await gate; return new Response(MP3, { headers: { 'Content-Type': 'audio/mpeg' } }); });
+  const storage = memoryStorage();
+  const capped = env({ CHE_FISH_EXPRESSIVE_DAILY_CHARS: '50' });
+  const texts = ['Chunk one of the story.', 'Chunk two of the story.', 'Chunk three of the tale.'];
+  const pending = texts.map((text) => fishAudioSpeech(capped, text, { purpose: 'story', storage, fetcher }));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  release();
+  const results = await Promise.all(pending);
+  assert.equal(calls.length, 2, 'two 23-character chunks fit under 50; the third does not');
+  assert.equal(results.filter(Boolean).length, 2);
+});
+
+test('a failed story gives its characters back to the daily cap', async () => {
+  let fail = true;
+  const { calls, fetcher } = fakeFish(() => (fail
+    ? new Response('{"message":"text invalid"}', { status: 400 })
+    : new Response(MP3, { headers: { 'Content-Type': 'audio/mpeg' } })));
+  const storage = memoryStorage();
+  const capped = env({ CHE_FISH_EXPRESSIVE_DAILY_CHARS: '30' });
+  assert.equal(await fishAudioSpeech(capped, 'Twenty-five characters ok', { purpose: 'story', storage, fetcher }), null);
+  fail = false;
+  assert.equal((await fishAudioSpeech(capped, 'Another twenty-five chars', { purpose: 'story', storage, fetcher })).status, 200);
+  assert.equal(calls.length, 2);
+});
+
 test('a conversational clip over 800 characters is left to the other voices', async () => {
   const { calls, fetcher } = fakeFish();
   assert.equal(await fishAudioSpeech(env(), 'x'.repeat(801), { storage: memoryStorage(), fetcher }), null);

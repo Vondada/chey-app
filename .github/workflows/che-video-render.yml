@@ -66,8 +66,10 @@ jobs:
           DURATION: ${{ github.event.client_payload.seconds || inputs.seconds || '15' }}
           # CHE's Fish voice narrates with the expressive model (Drama 3) when
           # set up. Without these, or on any Fish error, Piper narrates.
-          # CHE_FISH_NARRATION=0 (variable) keeps narration on Piper.
+          # CHE_FISH_NARRATION=0 (variable) keeps narration on Piper, and the
+          # owner switch-off CHE_FISH_PREFERRED=0 stops every Fish call.
           FISH_API_KEY: ${{ secrets.FISH_API_KEY }}
+          CHE_FISH_PREFERRED: ${{ secrets.CHE_FISH_PREFERRED || vars.CHE_FISH_PREFERRED || '1' }}
           CHE_FISH_VOICE_ID: ${{ secrets.CHE_FISH_VOICE_ID || vars.CHE_FISH_VOICE_ID }}
           CHE_FISH_EXPRESSIVE_MODEL: ${{ vars.CHE_FISH_EXPRESSIVE_MODEL || secrets.CHE_FISH_EXPRESSIVE_MODEL }}
           CHE_FISH_NARRATION: ${{ vars.CHE_FISH_NARRATION }}

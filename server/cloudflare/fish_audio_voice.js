@@ -69,6 +69,8 @@ const state = {
   latencies: [], // recent conversational latencies (ms), cache misses only
   refused: new Map(), // cache key → epoch ms, for text Fish refused
   inflight: new Map(), // cache key → Promise<{ bytes, type } | null>
+  // Expressive characters used or reserved today, per model. See reserveExpressive.
+  ledger: { date: '', chars: new Map(), seeded: new Set() },
 };
 
 export function resetFishAudioState() {
@@ -77,6 +79,7 @@ export function resetFishAudioState() {
   state.latencies = [];
   state.refused.clear();
   state.inflight.clear();
+  state.ledger = { date: '', chars: new Map(), seeded: new Set() };
 }
 
 export function fishSecretsFrom(env = {}) {
@@ -277,6 +280,31 @@ async function addUsage(storage, model, change, now) {
   } catch (_) { /* usage is a measurement, never a blocker */ }
 }
 
+// The day's expressive characters are kept in memory, seeded once per day from
+// storage. A request reserves its characters before Fish is called, with no
+// await between the check and the reservation, so requests running at the same
+// time cannot all pass the cap. A failed request gives its reservation back.
+async function reserveExpressive(env, storage, model, chars, now) {
+  const date = today(now);
+  if (state.ledger.date !== date) state.ledger = { date, chars: new Map(), seeded: new Set() };
+  if (!state.ledger.seeded.has(model)) {
+    const usage = await readFishUsage(storage, now);
+    if (state.ledger.date === date && !state.ledger.seeded.has(model)) {
+      state.ledger.chars.set(model, (state.ledger.chars.get(model) || 0) + (usage.models[model]?.chars || 0));
+      state.ledger.seeded.add(model);
+    }
+  }
+  const used = state.ledger.chars.get(model) || 0;
+  if (used + chars > expressiveDailyChars(env)) return false;
+  state.ledger.chars.set(model, used + chars);
+  return true;
+}
+
+function releaseExpressive(model, chars, now) {
+  if (state.ledger.date !== today(now)) return;
+  state.ledger.chars.set(model, Math.max(0, (state.ledger.chars.get(model) || 0) - chars));
+}
+
 function expressiveDailyChars(env) {
   const value = numberSetting(env.CHE_FISH_EXPRESSIVE_DAILY_CHARS);
   return value !== null && value >= 0 ? value : DEFAULT_EXPRESSIVE_DAILY_CHARS;
@@ -331,20 +359,27 @@ export async function fishAudioSpeech(env = {}, text, {
   }
   if (paused(model, now)) return null;
   if ((state.refused.get(key) || 0) > now) return null;
-  if (expressive) {
-    const usage = await readFishUsage(storage, now);
-    if ((usage.models[model]?.chars || 0) + said.length > expressiveDailyChars(env)) {
+
+  // The same words requested twice at once (the phone's two voice routes, or a
+  // retry) share one synthesis and one reservation against the daily cap.
+  let pending = state.inflight.get(key);
+  if (!pending && expressive) {
+    if (!(await reserveExpressive(env, storage, model, said.length, now))) {
       record('daily limit reached', 0, model, now);
       return null;
     }
+    // Another request for the same words may have started while this one
+    // waited; share it and give this reservation back.
+    pending = state.inflight.get(key);
+    if (pending) releaseExpressive(model, said.length, now);
   }
-
-  // The same words requested twice at once (the phone's two voice routes, or a
-  // retry) share one synthesis.
-  let pending = state.inflight.get(key);
   const owner = !pending;
   if (owner) {
-    pending = synthesize(env, { said, model, voice, bitrate, speed, expressive, storage, fetcher, key, now });
+    pending = synthesize(env, { said, model, voice, bitrate, speed, expressive, storage, fetcher, key, now })
+      .then((result) => {
+        if (!result && expressive) releaseExpressive(model, said.length, now);
+        return result;
+      });
     state.inflight.set(key, pending);
   }
   let result;
