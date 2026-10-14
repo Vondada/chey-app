@@ -75,7 +75,7 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
         final current = match.isNotEmpty ? match.first : (options.isNotEmpty ? options.first : null);
         _provider = (current?['provider'] ?? '').toString();
         _id = (current?['id'] ?? '').toString();
-        _speed = ((selected['speed'] is num ? selected['speed'] as num : 1).toDouble()).clamp(0.7, 1.2);
+        _speed = ((selected['speed'] is num ? selected['speed'] as num : 1).toDouble()).clamp(0.7, 1.2).toDouble();
       });
     } on Object catch (e) {
       if (mounted) setState(() { _voices = []; _error = e.toString().replaceFirst('Bad state: ', ''); });
