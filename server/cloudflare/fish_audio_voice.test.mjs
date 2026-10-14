@@ -261,9 +261,10 @@ test('Drama 3 stops at the daily character cap', async () => {
   const storage = memoryStorage();
   const capped = env({ CHE_FISH_EXPRESSIVE_DAILY_CHARS: '30' });
   assert.equal((await fishAudioSpeech(capped, 'Twenty characters ok', { purpose: 'story', storage, fetcher })).status, 200);
-  assert.equal(await fishAudioSpeech(capped, 'Another twenty chars', { purpose: 'story', storage, fetcher }), null);
-  assert.equal(calls.length, 1);
-  assert.equal(fishAudioKeyStatus(capped).status, 'daily limit reached');
+  // Over the cap, Drama 3 is not called; the story uses the free everyday voice.
+  const over = await fishAudioSpeech(capped, 'Another twenty chars', { purpose: 'story', storage, fetcher });
+  assert.equal(over.headers.get('X-CHE-Fish-Model'), 's2.1-pro-free');
+  assert.deepEqual(calls.map((c) => c.headers.model), ['drama-3', 's2.1-pro-free']);
   assert.equal((await fishAudioSpeech(capped, 'Everyday speech is not capped.', { storage, fetcher })).status, 200);
 });
 
@@ -292,8 +293,9 @@ test('stories running at the same time cannot overshoot the daily cap', async ()
   await new Promise((resolve) => setTimeout(resolve, 10));
   release();
   const results = await Promise.all(pending);
-  assert.equal(calls.length, 2, 'two 23-character chunks fit under 50; the third does not');
-  assert.equal(results.filter(Boolean).length, 2);
+  const drama = calls.filter((c) => c.headers.model === 'drama-3');
+  assert.equal(drama.length, 2, 'two 23-character chunks fit under 50; the third does not use Drama 3');
+  assert.equal(results.filter(Boolean).length, 3, 'the third chunk is spoken by the everyday voice');
 });
 
 test('a failed story gives its characters back to the daily cap', async () => {
@@ -346,6 +348,70 @@ test('the same words refused again do not rest the model', async () => {
   assert.equal(fishAudioKeyStatus(env()).status, 'refused text');
   assert.equal((await fishAudioSpeech(env(), 'Other words.', { storage, fetcher, now: now + 62_000 })).status, 200);
   assert.equal(calls.length, 3);
+});
+
+test('without API credit for Drama 3, a story uses CHE\'s everyday Fish voice', async () => {
+  // The owner's real account (deploy 38500424502): s2.1-pro-free speaks,
+  // drama-3 answers 402 "Insufficient API credit".
+  const { calls, fetcher } = fakeFish((n, call) => (call.headers.model === 'drama-3'
+    ? new Response('{"message":"Insufficient API credit. API credit is managed independently from platform credit."}', { status: 402 })
+    : new Response(MP3, { headers: { 'Content-Type': 'audio/mpeg' } })));
+  const storage = memoryStorage();
+  const story = await fishAudioSpeech(env(), 'Once upon a time, a fox learned to read.', { purpose: 'story', storage, fetcher });
+  assert.equal(story.status, 200);
+  assert.equal(story.headers.get('X-CHE-Fish-Model'), 's2.1-pro-free');
+  assert.deepEqual(calls.map((c) => c.headers.model), ['drama-3', 's2.1-pro-free']);
+  // Drama 3 now rests; the next story goes straight to the everyday voice.
+  const next = await fishAudioSpeech(env(), 'The fox read every sign in town.', { purpose: 'story', storage, fetcher });
+  assert.equal(next.headers.get('X-CHE-Fish-Model'), 's2.1-pro-free');
+  assert.deepEqual(calls.map((c) => c.headers.model), ['drama-3', 's2.1-pro-free', 's2.1-pro-free']);
+});
+
+test('each story chunk falls back on its own reason, not another chunk\'s', async () => {
+  // Two chunks in flight: one gets 402 (falls back), the other times out
+  // (does not), whatever order their answers arrive in.
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const { calls, fetcher } = fakeFish(async (n, call) => {
+    if (call.headers.model !== 'drama-3') return new Response(MP3, { headers: { 'Content-Type': 'audio/mpeg' } });
+    if (call.body.text === 'Chunk with no credit.') return new Response('{"message":"Insufficient API credit."}', { status: 402 });
+    await gate;
+    throw new DOMException('timed out', 'TimeoutError');
+  });
+  const storage = memoryStorage();
+  const timedOut = fishAudioSpeech(env(), 'Chunk that times out.', { purpose: 'story', storage, fetcher });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const credit = await fishAudioSpeech(env(), 'Chunk with no credit.', { purpose: 'story', storage, fetcher });
+  release();
+  assert.equal(credit.headers.get('X-CHE-Fish-Model'), 's2.1-pro-free');
+  assert.equal(await timedOut, null);
+  assert.deepEqual(calls.map((c) => [c.headers.model, c.body.text]), [
+    ['drama-3', 'Chunk that times out.'],
+    ['drama-3', 'Chunk with no credit.'],
+    ['s2.1-pro-free', 'Chunk with no credit.'],
+  ]);
+  // The timeout's short rest does not hide the longer out-of-credits rest.
+  const next = await fishAudioSpeech(env(), 'The next chunk.', { purpose: 'story', storage, fetcher });
+  assert.equal(next.headers.get('X-CHE-Fish-Model'), 's2.1-pro-free');
+});
+
+test('a long story keeps its length and quality on the everyday fallback', async () => {
+  const { calls, fetcher } = fakeFish((n, call) => (call.headers.model === 'drama-3'
+    ? new Response('{"message":"Insufficient API credit."}', { status: 402 })
+    : new Response(MP3, { headers: { 'Content-Type': 'audio/mpeg' } })));
+  const long = 'The lighthouse keeper listened. '.repeat(40);
+  assert.ok(long.length > 800 && long.length < 6000);
+  const story = await fishAudioSpeech(env(), long, { purpose: 'narration', storage: memoryStorage(), fetcher });
+  assert.equal(story.headers.get('X-CHE-Fish-Model'), 's2.1-pro-free');
+  assert.equal(calls[1].headers.model, 's2.1-pro-free');
+  assert.equal(calls[1].body.mp3_bitrate, 128, 'narration quality is kept');
+  assert.equal(calls[1].body.latency, 'normal');
+});
+
+test('a story does not fall back after a timeout, so the owner never waits twice', async () => {
+  const { calls, fetcher } = fakeFish(() => { throw new DOMException('timed out', 'TimeoutError'); });
+  assert.equal(await fishAudioSpeech(env(), 'Once upon a time.', { purpose: 'story', storage: memoryStorage(), fetcher }), null);
+  assert.equal(calls.length, 1);
 });
 
 test('Fish\'s reason is short and never carries the key or a bearer token', () => {

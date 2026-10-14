@@ -86,40 +86,59 @@ def prune(cache, keep=100):
     files=sorted(cache.glob('*.mp3'),key=lambda f:f.stat().st_mtime,reverse=True)
     for old in files[keep:]: old.unlink(missing_ok=True)
 def fish_narration(text):
-    """(path, model, cache) for Fish narration, or None to use Piper."""
+    """(path, model, cache) for Fish narration, or None to use Piper.
+
+    Drama 3 first. When Fish says that model cannot be used here (no API credit,
+    not on this account), CHE's everyday Fish model narrates instead, so the
+    video still has her voice; Piper is the last resort."""
     key=os.environ.get('FISH_API_KEY','').strip()
     voice=os.environ.get('CHE_FISH_VOICE_ID','').strip()
     off=('0','false','no')
     if os.environ.get('CHE_FISH_NARRATION','1').strip().lower() in off: return None
     if os.environ.get('CHE_FISH_PREFERRED','1').strip().lower() in off: return None
     if not key or not re.fullmatch(r'[A-Za-z0-9_-]{8,80}',voice): return None
-    model=os.environ.get('CHE_FISH_EXPRESSIVE_MODEL','').strip() or 'drama-3'
-    if not re.fullmatch(r'[A-Za-z0-9._-]{1,40}',model): model='drama-3'
+    def setting(name,default):
+        value=os.environ.get(name,'').strip() or default
+        return value if re.fullmatch(r'[A-Za-z0-9._-]{1,40}',value) else default
+    models=[setting('CHE_FISH_EXPRESSIVE_MODEL','drama-3')]
+    everyday=setting('CHE_FISH_MODEL','s2.1-pro-free')
+    if everyday not in models: models.append(everyday)
     cache=Path(os.environ.get('CHE_NARRATION_CACHE') or Path.home()/'.cache'/'che-narration')
     cache.mkdir(parents=True,exist_ok=True)
-    cached=cache/(hashlib.sha256(json.dumps([model,voice,128,text]).encode()).hexdigest()[:40]+'.mp3')
-    if cached.exists() and is_mp3(cached.read_bytes()[:4]):
-        cached.touch()
-        print(f'CHE narration: reused cached Fish audio ({model}); no new Fish charge')
-        return cached,model,'hit'
-    # The same body as Fish's SDK (TTSConfig defaults), as MessagePack.
-    body=pack({'text':text,'chunk_length':200,'format':'mp3','mp3_bitrate':128,'opus_bitrate':32,'references':[],
-        'reference_id':voice,'normalize':True,'latency':'normal','top_p':0.7,'temperature':0.7,'max_new_tokens':1024,
-        'repetition_penalty':1.2,'min_chunk_length':50,'condition_on_previous_chunks':True,'early_stop_threshold':1.0})
-    request=urllib.request.Request('https://api.fish.audio/v1/tts',data=body,method='POST',
-        headers={'Authorization':'Bearer '+key,'Content-Type':'application/msgpack','model':model})
-    try:
-        with urllib.request.urlopen(request,timeout=120) as response: audio=response.read()
-    except urllib.error.HTTPError as error:
-        reason=fish_reason(error.read()[:400],(key,voice))
-        print(f'CHE narration: Fish {model} answered HTTP {error.code}: {reason}; using Piper'); return None
-    except Exception as error:
-        print(f'CHE narration: Fish {model} unreachable ({type(error).__name__}); using Piper'); return None
-    if not is_mp3(audio):
-        print(f'CHE narration: Fish {model} returned no MP3; using Piper'); return None
-    cached.write_bytes(audio); prune(cache)
-    print(f'CHE narration: Fish {model} narrated {len(text)} characters')
-    return cached,model,'miss'
+    for model in models:
+        cached=cache/(hashlib.sha256(json.dumps([model,voice,128,text]).encode()).hexdigest()[:40]+'.mp3')
+        if cached.exists() and is_mp3(cached.read_bytes()[:4]):
+            cached.touch()
+            print(f'CHE narration: reused cached Fish audio ({model}); no new Fish charge')
+            return cached,model,'hit'
+    for index,model in enumerate(models):
+        last=index==len(models)-1
+        # The same body as Fish's SDK (TTSConfig defaults), as MessagePack.
+        body=pack({'text':text,'chunk_length':200,'format':'mp3','mp3_bitrate':128,'opus_bitrate':32,'references':[],
+            'reference_id':voice,'normalize':True,'latency':'normal','top_p':0.7,'temperature':0.7,'max_new_tokens':1024,
+            'repetition_penalty':1.2,'min_chunk_length':50,'condition_on_previous_chunks':True,'early_stop_threshold':1.0})
+        request=urllib.request.Request('https://api.fish.audio/v1/tts',data=body,method='POST',
+            headers={'Authorization':'Bearer '+key,'Content-Type':'application/msgpack','model':model})
+        try:
+            with urllib.request.urlopen(request,timeout=120) as response: audio=response.read()
+        except urllib.error.HTTPError as error:
+            reason=fish_reason(error.read()[:400],(key,voice))
+            # Only "this model cannot be used here" tries the next model; a bad
+            # key, a rate limit or a server error goes straight to Piper.
+            blocked=error.code==402 or (error.code in (400,403,404,422) and re.search(r'model|plan|credit|tier|eligib',reason,re.I))
+            nxt='trying '+models[index+1] if blocked and not last else 'using Piper'
+            print(f'CHE narration: Fish {model} answered HTTP {error.code}: {reason}; {nxt}')
+            if blocked and not last: continue
+            return None
+        except Exception as error:
+            print(f'CHE narration: Fish {model} unreachable ({type(error).__name__}); using Piper'); return None
+        if not is_mp3(audio):
+            print(f'CHE narration: Fish {model} returned no MP3; using Piper'); return None
+        cached=cache/(hashlib.sha256(json.dumps([model,voice,128,text]).encode()).hexdigest()[:40]+'.mp3')
+        cached.write_bytes(audio); prune(cache)
+        print(f'CHE narration: Fish {model} narrated {len(text)} characters')
+        return cached,model,'miss'
+    return None
 def piper_narration(text, out):
     wav=out/'narration.wav'
     subprocess.run([sys.executable,'-m','piper','-m','en_US-kristin-medium','-f',str(wav),'--',text],check=True)
