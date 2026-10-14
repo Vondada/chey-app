@@ -64,6 +64,21 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-14 ~22:30 UTC — PR #306 MERGED to main `fc71368`; deploy and iPhone build being verified)
+
+- **Took over PR #306 from ChatGPT** on the owner's directive. Squash-merged to `main` as **`fc71368`** from head **`1ae9137`**. Merge title tags: `[ios-build] [worker-deploy]`.
+- **Red CI root cause (48979c0, run 38629227766):** `test/che_home_smoke_test.dart` could not find "Voice replies" because the new Connections and Change Voice rows pushed it out of the lazy More list. Fixed by scrolling to the row (`20b7b16`); the assertion is unchanged.
+- **Owner-rule fixes (`5513a39`, `e26fbbf`, `0b6edb6`, `1ae9137`):** connect, refresh, preview and save results are spoken and shown at 18 pt; "connect my YouTube channel" and "connect NinjaTrader" start that one official sign-in by voice; the natural voice picker takes spoken commands (list voices, choose by name or number, preview with a spoken yes after the credit notice, save voice, speed, refresh, back); "change your voice" opens the picker, and "open voice settings" still opens the local sheet; the dead `onBrokerConnect` path (it sent the request through chat) is removed.
+- **Codex** reviewed 5513a39, e26fbbf, 0b6edb6 and 1ae9137. Every thread is answered in-line with its fix commit. The 1ae9137 review has no findings.
+- **Verified before merge:** `dart analyze --fatal-infos` clean; `flutter test` 375/375 (the Command Center end-to-end server included); CI `Check CHE Flutter client` (analyze + Worker unit tests) and `CHE UI Analyze` green on 1ae9137; `tool/test_mobile_version.py` OK.
+- **Not a required check, but failing:** `Workers Builds: chey-app` (Cloudflare's Git build integration) has failed since `b93f124` (#303). GitHub reports this PR as `unstable`, not `blocked`. Its log is only on the Cloudflare dashboard, which I cannot read, so I did not change it. The Worker itself deploys through the GitHub Actions workflow "CHE Worker deploy".
+- **Next, in order:** (1) the deploy and IPA runs for `fc71368` finish green; (2) `/health` reports `fc71368`, and `/api/voice/choices`, `/api/voice/choice`, `/api/voice/preview` and `/api/broker/tradovate/connect/start` return 403 without an owner token (the routes exist and are owner-only); (3) the IPA release is downloaded and its SHA-256 recorded; (4) the owner installs it through SideStore and tests: "CHE, open connections", "refresh connections", "change your voice", "list voices", "choose number one", "preview voice" then "yes", "save voice", "back". Google, YouTube or Tradovate sign-in happens only if he says yes on the provider's own page.
+- **NOT verified:** the owner's iPhone; a real Google, YouTube or Tradovate sign-in; audible ElevenLabs or Fish voice; any bank connection (none exists; the page says Unsupported).
+- **Not done, on purpose:** no trades, payments, uploads, deletes or account changes. Bank linking has no provider in CHE yet.
+- **Local-only note:** my local e2e runner read a stale `che_e2e.json` and hit a dead port. I fixed the runner (clear the file first); the repo is unchanged.
+
+---
+
 ## 2. Current position — CHATGPT PAUSED; CLAUDE TAKEOVER (2026-10-14; explicit owner instruction)
 
 **OWNER DIRECTIVE:** “Pause where you are and let Claude pick up.” ChatGPT is STOPPING ALL IMPLEMENTATION, TEST FIXES, MERGES AND DEPLOYMENTS on this mission as of this handoff. CLAUDE should take over the existing work in place, not redo inspection or create a second architecture.
