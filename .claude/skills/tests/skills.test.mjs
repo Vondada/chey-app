@@ -48,7 +48,9 @@ test('every file a skill points to exists', () => {
   const tracked = new Set(run('git', ['ls-files']).stdout.split('\n').filter(Boolean));
   const local = (rel) => existsSync(join(repo, rel));
   for (const dir of SKILLS) {
-    const text = readFileSync(join(skillsDir, dir, 'SKILL.md'), 'utf8') + readdirSync(join(skillsDir, dir, 'reference')).map((f) => readFileSync(join(skillsDir, dir, 'reference', f), 'utf8')).join('\n');
+    const refDir = join(skillsDir, dir, 'reference');
+    const refs = existsSync(refDir) ? readdirSync(refDir).map((f) => readFileSync(join(refDir, f), 'utf8')) : [];
+    const text = [readFileSync(join(skillsDir, dir, 'SKILL.md'), 'utf8'), ...refs].join('\n');
     for (const [, path] of text.matchAll(/`(\.claude\/skills\/[^`\s*]+?\.(?:mjs|md|json|sh|py))`/g)) assert.ok(local(path), `${dir}: ${path} is missing`);
     for (const [, rel] of text.matchAll(/`((?:scripts|reference|examples|cases)\/[^`\s*]+?\.(?:mjs|md|json|sh|py))`/g)) assert.ok(existsSync(join(skillsDir, dir, rel)), `${dir}: ${rel} is missing`);
     // Code files the skill names must still exist in the repo (stale maps mislead).
