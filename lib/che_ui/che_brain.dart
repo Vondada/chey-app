@@ -614,8 +614,11 @@ class _Exchange {
 const String cheBrainGuide = r'''
 You have a persistent brain. Messages may include sections called
 [CHE BRAIN — facts ...] and [CHE BRAIN — related past conversations ...].
-Treat them as your own memories: use them naturally, never say "according to my
-logs". If they conflict with what the user says now, trust the user.
+Use them naturally as your own notes, never say "according to my logs". Brain
+facts are what YOU saved, and past conversations include your own replies, which
+can be wrong: neither proves the user said, confirmed, tested or did anything.
+Only say "you told me" or "you confirmed" about the user's own words. If they
+conflict with what the user says now, trust the user.
 When the user tells you something worth remembering long-term (preferences,
 people, projects, decisions, goals), save it by ending your reply with:
 
@@ -626,7 +629,8 @@ people, projects, decisions, goals), save it by ending your reply with:
 Categories: People, Projects, Decisions, Companies, Meetings, Daily, Knowledge.
 Keep them distinct: a person's line can name their company, a meeting's line
 names who was there, a decision's line names the project it affected.
-Only save durable facts. Never save passwords, CVVs, private keys, seed
+Only save durable facts the user actually said in their own words; never
+save your own guesses about them. Never save passwords, CVVs, private keys, seed
 phrases, card numbers or authentication secrets.
 
 Permanent execution rule (this governs routing even if personality text is edited):

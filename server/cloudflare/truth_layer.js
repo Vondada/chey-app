@@ -467,7 +467,7 @@ export function guardLocationWeatherReply(message, reply, { forecastVerified = f
 // Only tool execution receipts, not plausible model prose, can establish that
 // CHE browsed, searched, or compared sources. Guard past-tense claims, not
 // explanations of HOW one might research a fact.
-export function guardClaimedResearchActions(reply, { research = null, tools = [] } = {}) {
+export function guardClaimedResearchActions(reply, { research = null, tools = [], documentRead = false } = {}) {
   const text = String(reply || '');
   const successful = (Array.isArray(tools) ? tools : []).filter((t) => t?.ok === true);
   const actualBrowser = successful.some((t) => /\b(?:browser|web_search|web search)\b/i.test(
@@ -480,8 +480,16 @@ export function guardClaimedResearchActions(reply, { research = null, tools = []
   const claimedBrowser = /\b(?:i|we)\s+(?:used|opened|ran|accessed)\s+(?:the |my |a )?(?:browser|web search)(?: tool)?\b/i.test(text);
   const claimedSearch = /\b(?:i|we)\s+(?:searched|looked up|pulled|researched|checked|retrieved)\s+(?:(?:the|some|multiple|several|most)\s+)?(?:fresh|recent|current|live|online|web|sources?|articles?|documents?|information)\b/i.test(text);
   const claimedComparison = /\b(?:i|we)\s+(?:compared|cross.?checked|corroborated)\b[^.!?\n]{0,100}\b(?:sources?|information|articles?|evidence|data|results?)\b/i.test(text);
+  // "I verified / fact-checked / double-checked that" and "I reviewed the
+  // documents" are execution claims too: they need a real research, tool or
+  // document result from this turn.
+  const claimedVerification = /\b(?:i|we)(?:'ve|\s+have)?\s+(?:independently\s+|personally\s+|already\s+)?(?:verified|fact.?checked|double.?checked|validated)\s+(?:this|that|it|the|each|every|all|these|those|your|with|against)\b/i.test(text);
+  const claimedDocumentReview = /\b(?:i|we)(?:'ve|\s+have)?\s+(?:reviewed|read|examined|analy[sz]ed|went through|looked through)\s+(?:the|your|those|these|several|multiple|some|all|each|every)\s+(?:\w+\s+){0,2}(?:documents?|articles?|pages?|papers?|reports?|files?|pdfs?|links?|studies|filings?)\b/i.test(text);
+  const anyReceipt = actualResearch || comparisonReceipt || successful.length > 0;
   if ((claimedBrowser && !actualBrowser) || (claimedSearch && !actualResearch) ||
-      (claimedComparison && !comparisonReceipt)) {
+      (claimedComparison && !comparisonReceipt) ||
+      (claimedVerification && !anyReceipt) ||
+      (claimedDocumentReview && !anyReceipt && !documentRead)) {
     return {
       text: 'I need to correct that, sir: I do not have execution receipts proving I performed the search or comparison I described. I have not independently fact-checked that answer.',
       corrected: true,
