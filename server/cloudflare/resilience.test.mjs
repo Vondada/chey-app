@@ -121,3 +121,23 @@ test('research library requires source-backed evidence, retains superseded facts
   assert.equal(record.verification_status, 'owner_attested');
   assert.equal(record.superseded[0].answer, 'Sprite');
 });
+
+test('source follow-ups use real prior-turn receipts, not model-created citations', async () => {
+  const { answerEvidenceReceipt, evidenceFollowup, explainAnswerEvidence } = await import('./knowledge_cache.js');
+  assert.equal(evidenceFollowup('How do you know that?'), true);
+  assert.equal(evidenceFollowup('Show me the sources'), true);
+  assert.equal(evidenceFollowup('What is a reliable source?'), false);
+  const at = Date.UTC(2026, 9, 14);
+  const unverified = answerEvidenceReceipt({ at });
+  assert.equal(unverified.kind, 'unverified');
+  assert.match(explainAnswerEvidence(unverified, at + 1000), /not independently verified/);
+  const research = answerEvidenceReceipt({
+    at, research: { sources: ['https://science.nasa.gov/', 'javascript:alert(1)'] },
+  });
+  assert.equal(research.kind, 'source_backed');
+  assert.deepEqual(research.sources, ['https://science.nasa.gov/']);
+  assert.match(explainAnswerEvidence(research, at + 1000), /science.nasa.gov/);
+  const owner = answerEvidenceReceipt({ ownerAttested: true, at });
+  assert.match(explainAnswerEvidence(owner, at + 1000), /something you told me/);
+  assert.match(explainAnswerEvidence(research, at + 86400000 + 1), /do not have a recent/);
+});
