@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
-import { guardOwnerReply, verifiedState, verifiedStatusText } from './truth_layer.js';
+import { asksForCurrentOwnerLocation, guardLocationWeatherReply, guardOwnerReply, OWNER_LOCATION_NOT_VERIFIED, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { collaborationIntent, parallelPreference, statusIntent } from './collaboration.js';
 
 const generated = new URL('./.truth_layer.test.generated.mjs', import.meta.url);
@@ -541,4 +541,33 @@ test('requestedCodeNames catches a name written with parentheses, not only "func
   const names = requestedCodeNames('Write canAttempt(state, kind, limits) and recordAttempt(state, kind). kind is semantic or format.');
   assert.ok(names.has('canAttempt'));
   assert.ok(names.has('recordAttempt'));
+});
+
+
+test('owner location follow-ups do not assume GPS from a time zone or a remembered city', () => {
+  for (const request of [
+    'So you know where I am though',
+    "That's good, so where am I since I sent you?",
+    'Do you have my current location?',
+    "What's my GPS position?",
+  ]) assert.equal(asksForCurrentOwnerLocation(request), true, request);
+  for (const request of ['Where am I going with this idea?', 'Where am I in life?', 'Where is Marrero?']) {
+    assert.equal(asksForCurrentOwnerLocation(request), false, request);
+  }
+  assert.match(OWNER_LOCATION_NOT_VERIFIED, /not live GPS coordinates/);
+  assert.match(guardLocationWeatherReply('Do you know my location?', "Yes—I've used the location you've shared with CHE to pull the forecast."), /cannot verify where/);
+  const madeUp = 'It will be mostly sunny with a high of 72 degrees and a low of 54 degrees. I checked the forecast.';
+  assert.match(guardLocationWeatherReply("What's the weather like tomorrow?", madeUp), /do not have a verified live weather forecast/);
+  assert.equal(guardLocationWeatherReply("What's the weather like tomorrow in Marrero?", madeUp, { forecastVerified: true }), madeUp);
+  assert.equal(guardLocationWeatherReply('Tell me about weather forecasts', 'Weather can be unpredictable.'), 'Weather can be unpredictable.');
+});
+
+test('worker location handling runs before generic chat model and guards forecast output', () => {
+  const source = readFileSync(new URL('./worker.js', import.meta.url), 'utf8');
+  const clock = source.indexOf('const clientClock = formatClientTime(body.client_time);', source.indexOf("if (path === '/api/chat')"));
+  const reply = source.indexOf('reply = guardLocationWeatherReply(message, reply, {');
+  assert.ok(clock >= 0);
+  assert.ok(source.indexOf('asksForCurrentOwnerLocation(message)', clock) > clock);
+  assert.ok(reply > clock);
+  assert.ok(source.includes("source: 'location_provenance'"));
 });
