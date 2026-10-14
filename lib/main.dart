@@ -1978,20 +1978,6 @@ OWNER AGENCY
       onTalkToChe: () => _goShellTab(1),
       items: [
         CheMoreItem(
-          icon: Icons.hub_outlined,
-          title: 'Connections',
-          subtitle: 'YouTube · Google · broker · banks · business · voice',
-          onTap: () => unawaited(_openConnections()),
-          hue: kit.CheColors.accent,
-        ),
-        CheMoreItem(
-          icon: Icons.record_voice_over_rounded,
-          title: 'Change CHE’s Voice',
-          subtitle: 'Choose and preview a voice right inside CHE',
-          onTap: _openVoiceSelector,
-          hue: kit.CheColors.accentAlt,
-        ),
-        CheMoreItem(
           icon: Icons.candlestick_chart_rounded,
           title: 'Trading Room',
           subtitle: 'Swings · entries · backtests · paper trades',
@@ -2025,6 +2011,20 @@ OWNER AGENCY
           subtitle: 'Theme, avatar, text size, voice replies',
           onTap: () => unawaited(_openUiControls()),
           hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.hub_outlined,
+          title: 'Connections',
+          subtitle: 'YouTube · Google · broker · banks · business · voice',
+          onTap: () => unawaited(_openConnections()),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.record_voice_over_rounded,
+          title: 'Change CHE’s Voice',
+          subtitle: 'Choose and preview a voice right inside CHE',
+          onTap: _openVoiceSelector,
+          hue: kit.CheColors.accentAlt,
         ),
         CheMoreItem(
           icon: voiceResponsesEnabled ? Icons.volume_up_rounded : Icons.volume_off_rounded,
