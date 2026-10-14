@@ -2430,7 +2430,8 @@ test('Fish is CHE\'s voice on both iPhone voice routes, says "Chay", and caches 
     assert.equal(calls.length, 1, 'one Fish request, no Mary request');
     assert.equal(calls[0].url, 'https://api.fish.audio/v1/tts');
     assert.equal(calls[0].headers.model, 's2.1-pro-free');
-    assert.equal(JSON.parse(calls[0].body).text, 'Chay here, sir.');
+    const { decodeMsgpack } = await import('./msgpack_decode_for_tests.mjs');
+    assert.equal(decodeMsgpack(calls[0].body).text, 'Chay here, sir.');
     const story = await api('/api/voice/synthesize', { text: 'Once upon a time, sir.', purpose: 'story' });
     assert.equal(story.headers.get('X-CHE-Fish-Model'), 'drama-3', 'the owner can ask for a story voice');
     assert.equal(calls[1].headers.model, 'drama-3');

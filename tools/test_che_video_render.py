@@ -18,6 +18,33 @@ MP3 = b'ID3\x04\x00\x00\x00\x00' + b'\x55' * 64
 VOICE = '802e3bc2b27e49c2995d23ef70e6ac89'
 
 
+def unpack(data):
+    """Small MessagePack reader for the request bodies the renderer sends."""
+    import struct
+    at = 0
+    def read():
+        nonlocal at
+        b = data[at]; at += 1
+        def take(n):
+            nonlocal at
+            chunk = data[at:at + n]; at += n
+            return chunk
+        if b <= 0x7f: return b
+        if b >= 0xe0: return b - 0x100
+        if b & 0xe0 == 0xa0: return take(b & 0x1f).decode()
+        if b & 0xf0 == 0x90: return [read() for _ in range(b & 0x0f)]
+        if b & 0xf0 == 0x80: return {read(): read() for _ in range(b & 0x0f)}
+        simple = {0xc0: None, 0xc2: False, 0xc3: True}
+        if b in simple: return simple[b]
+        if b == 0xcc: return take(1)[0]
+        if b == 0xcd: return struct.unpack('>H', take(2))[0]
+        if b == 0xcb: return struct.unpack('>d', take(8))[0]
+        if b == 0xd9: return take(take(1)[0]).decode()
+        if b == 0xde: return {read(): read() for _ in range(struct.unpack('>H', take(2))[0])}
+        raise ValueError(hex(b))
+    return read()
+
+
 class FakeResponse(io.BytesIO):
     def __enter__(self): return self
     def __exit__(self, *_): return False
@@ -52,7 +79,10 @@ class FishNarrationTest(unittest.TestCase):
         self.assertEqual(request.full_url, 'https://api.fish.audio/v1/tts')
         self.assertEqual(request.get_header('Model'), 'drama-3')
         self.assertEqual(request.get_header('Authorization'), 'Bearer fish-test-key')
-        body = json.loads(request.data)
+        self.assertEqual(request.get_header('Content-type'), 'application/msgpack')
+        body = unpack(request.data)
+        self.assertEqual(body['chunk_length'], 200)
+        self.assertEqual(body['references'], [])
         self.assertEqual(body['text'], 'Three hundred miles off the coast.')
         self.assertEqual(body['reference_id'], VOICE)
         self.assertEqual(first[1:], ('drama-3', 'miss'))
@@ -85,6 +115,17 @@ class FishNarrationTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {'CHE_FISH_EXPRESSIVE_MODEL': 'x\r\nInjected: 1'}), self.fake(lambda _: FakeResponse(MP3)):
             render.fish_narration('Two.')
         self.assertEqual([c.get_header('Model') for c in self.calls], ['drama-3-preview', 'drama-3'])
+
+    def test_msgpack_matches_the_reference_encoding(self):
+        # Bytes from Python's msgpack.packb for the same map.
+        body = {'text': 'Hi', 'mp3_bitrate': 128, 'normalize': True, 'references': [], 'top_p': 0.7,
+                'prosody': {'speed': 1.1, 'volume': 0}}
+        self.assertEqual(render.pack(body).hex(),
+            '86a474657874a24869ab6d70335f62697472617465cc80a96e6f726d616c697a65c3aa7265666572656e63657390a5746f705f70cb3fe6666666666666a770726f736f647982a57370656564cb3ff199999999999aa6766f6c756d6500')
+
+    def test_a_refusal_reason_hides_the_key_and_voice(self):
+        reason = render.fish_reason(b'{"message":"bad voice ' + VOICE.encode() + b' for fish-test-key"}', ('fish-test-key', VOICE))
+        self.assertEqual(reason, 'bad voice [hidden] for [hidden]')
 
     def test_che_is_spoken_as_chay(self):
         self.assertEqual(render.spoken("CHE's channel. Che explains."), "Chay's channel. Chay explains.")

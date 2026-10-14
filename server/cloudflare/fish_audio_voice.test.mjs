@@ -11,11 +11,15 @@ import {
   fishAudioSpeech,
   fishCharacterVoices,
   fishModelFor,
+  fishRefusalReason,
+  fishRequestBody,
   fishSecretsFrom,
   readFishUsage,
   resetFishAudioState,
 } from './fish_audio_voice.js';
 import { cheSpokenText } from './che_pronunciation.js';
+import { encodeMsgpack } from './msgpack_encode.js';
+import { decodeMsgpack } from './msgpack_decode_for_tests.mjs';
 
 const KEY = 'fish-test-key-ABCD';
 const VOICE = '802e3bc2b27e49c2995d23ef70e6ac89';
@@ -36,7 +40,7 @@ function memoryStorage() {
 function fakeFish(reply = () => new Response(MP3, { headers: { 'Content-Type': 'audio/mpeg' } })) {
   const calls = [];
   const fetcher = async (url, init = {}) => {
-    calls.push({ url: String(url), headers: init.headers, body: JSON.parse(init.body) });
+    calls.push({ url: String(url), headers: init.headers, body: decodeMsgpack(init.body) });
     return reply(calls.length, calls[calls.length - 1]);
   };
   return { calls, fetcher };
@@ -77,7 +81,15 @@ test('the request carries only the final speech text, the voice and the model he
   assert.equal(calls[0].url, 'https://api.fish.audio/v1/tts');
   assert.equal(calls[0].headers.Authorization, `Bearer ${KEY}`);
   assert.equal(calls[0].headers.model, 's2.1-pro-free');
-  assert.deepEqual(Object.keys(calls[0].body).sort(), ['format', 'latency', 'mp3_bitrate', 'normalize', 'reference_id', 'text']);
+  // Fish's official SDKs send MessagePack with their TTSConfig defaults.
+  assert.equal(calls[0].headers['Content-Type'], 'application/msgpack');
+  assert.deepEqual(Object.keys(calls[0].body).sort(), [
+    'chunk_length', 'condition_on_previous_chunks', 'early_stop_threshold', 'format', 'latency',
+    'max_new_tokens', 'min_chunk_length', 'mp3_bitrate', 'normalize', 'opus_bitrate',
+    'reference_id', 'references', 'repetition_penalty', 'temperature', 'text', 'top_p',
+  ]);
+  assert.equal(calls[0].body.chunk_length, 200);
+  assert.deepEqual(calls[0].body.references, []);
   assert.equal(calls[0].body.text, 'Good morning, sir.');
   assert.equal(calls[0].body.reference_id, VOICE);
   assert.equal(calls[0].body.format, 'mp3');
@@ -295,6 +307,37 @@ test('a failed story gives its characters back to the daily cap', async () => {
   fail = false;
   assert.equal((await fishAudioSpeech(capped, 'Another twenty-five chars', { purpose: 'story', storage, fetcher })).status, 200);
   assert.equal(calls.length, 2);
+});
+
+test('the MessagePack body matches the reference encoding byte for byte', () => {
+  // Bytes from Python's msgpack.packb for the same map (an integer stays an integer).
+  const body = { text: 'Hi', mp3_bitrate: 128, normalize: true, references: [], top_p: 0.7, prosody: { speed: 1.1, volume: 0 } };
+  assert.equal(
+    Buffer.from(encodeMsgpack(body)).toString('hex'),
+    '86a474657874a24869ab6d70335f62697472617465cc80a96e6f726d616c697a65c3aa7265666572656e63657390a5746f705f70cb3fe6666666666666a770726f736f647982a57370656564cb3ff199999999999aa6766f6c756d6500',
+  );
+  assert.deepEqual(decodeMsgpack(encodeMsgpack(fishRequestBody({ text: 'x', voice: VOICE, bitrate: 64, expressive: false }))).reference_id, VOICE);
+});
+
+test('Fish refusing different words twice in a row rests that model and shows Fish\'s reason', async () => {
+  const { calls, fetcher } = fakeFish(() => new Response(JSON.stringify({ status: 400, message: `Invalid reference_id ${VOICE} for key ${KEY}` }), { status: 400 }));
+  const storage = memoryStorage();
+  assert.equal(await fishAudioSpeech(env(), 'First sentence.', { storage, fetcher }), null);
+  assert.equal(fishAudioKeyStatus(env()).status, 'refused text');
+  assert.equal(await fishAudioSpeech(env(), 'Second sentence.', { storage, fetcher }), null);
+  assert.equal(await fishAudioSpeech(env(), 'Third sentence.', { storage, fetcher }), null);
+  assert.equal(calls.length, 2, 'after two refusals the model rests instead of costing every clip a wait');
+  const status = fishAudioKeyStatus(env());
+  assert.equal(status.status, 'request refused');
+  assert.match(status.detail, /Fish said: "Invalid reference_id \[hidden\] for key \[hidden\]"/);
+  assert.doesNotMatch(JSON.stringify(status), new RegExp(`${KEY}|${VOICE}`));
+  assert.doesNotMatch(JSON.stringify(fishAudioDiagnostics(env())), /Invalid reference_id/, 'the public probe never carries Fish\'s words');
+});
+
+test('Fish\'s reason is short and never carries the key or a bearer token', () => {
+  const reason = fishRefusalReason(`{"detail":"bad Bearer abc.def key ${KEY} ${'x'.repeat(300)}"}`, env());
+  assert.ok(reason.length <= 160);
+  assert.doesNotMatch(reason, /abc\.def|fish-test-key/);
 });
 
 test('a conversational clip over 800 characters is left to the other voices', async () => {
