@@ -14,6 +14,7 @@ import 'package:chey/commands/che_command_voice.dart';
 import 'package:chey/commands/che_command_widgets.dart';
 import 'package:chey/home/screen_command.dart';
 import 'package:chey/main.dart';
+import 'package:chey/home/che_home_chat.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -96,6 +97,7 @@ Future<void> openCenter(
   Ran? ran,
   List<String>? spoken,
   double textScale = 1,
+  String initialSearch = '',
 }) async {
   tester.view.physicalSize = const Size(1170, 4200);
   tester.view.devicePixelRatio = 3;
@@ -116,6 +118,7 @@ Future<void> openCenter(
               builder: (_) => CheCommandCenterScreen(
                 client: CheCommandClient(baseUrl: 'https://che.test', headers: () => const {}, client: che.client),
                 store: s,
+                initialSearch: initialSearch,
                 onSpeak: spoken?.add,
                 onRunInChat: (message, {bool confirmed = false}) async => ran?.calls.add((message, confirmed)),
               ),
@@ -625,6 +628,48 @@ void main() {
     expect(await say('yes'), contains('Deleted the saved workflow "website clients"'));
     expect(che.posted('/api/commands/workflows/delete').single, {'id': 'wf-1'});
     expect(await say('yes'), isNull, reason: 'nothing pending: a yes goes on to Chat (a held command)');
+  });
+
+  testWidgets('Chat-directed YouTube command search opens filtered local results', (tester) async {
+    final che = FakeChe();
+    final spoken = <String>[];
+    await openCenter(tester, che: che, initialSearch: 'youtube', spoken: spoken);
+    final field = tester.widget<TextField>(find.byType(TextField).first);
+    expect(field.controller?.text, 'youtube');
+    expect(find.textContaining('MATCHES FOR "YOUTUBE"'), findsOneWidget);
+    expect(find.text('/yt-ideas'), findsOneWidget);
+    expect(spoken.any((line) => line.contains('best matches for "youtube"')), isTrue,
+        reason: 'an explicit voice search reads numbered local results');
+    expect(che.requests.every((r) => r.url.path == '/api/commands'),
+        isTrue, reason: 'searching the catalog never calls web or an AI model');
+  });
+
+  testWidgets('the actual Chat send path opens Commands for typed/spoken commands', (tester) async {
+    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(const CHEApp());
+    for (var i = 0; i < 15; i++) { await tester.pump(const Duration(milliseconds: 200)); }
+    await tester.tap(find.text('Chat'));
+    await tester.pump(const Duration(milliseconds: 500));
+    final composer = tester.widget<CheHomeComposer>(find.byType(CheHomeComposer));
+    composer.controller.text = 'CHE, open commands.';
+    composer.onSend();
+    for (var i = 0; i < 12; i++) { await tester.pump(const Duration(milliseconds: 150)); }
+    expect(find.text('Library'), findsOneWidget, reason: 'a spoken opening must actually navigate');
+    await tester.tap(find.byTooltip('Back to Chat'));
+    for (var i = 0; i < 10; i++) { await tester.pump(const Duration(milliseconds: 150)); }
+    final next = tester.widget<CheHomeComposer>(find.byType(CheHomeComposer));
+    next.controller.text = 'Search for YouTube commands';
+    next.onSend();
+    for (var i = 0; i < 12; i++) { await tester.pump(const Duration(milliseconds: 150)); }
+    expect(find.text('Library'), findsOneWidget, reason: 'the local-search intent navigates, not web research');
+    final search = tester.widget<TextField>(find.byType(TextField).first);
+    expect(search.controller?.text, 'youtube');
+    expect(CheCommandCenterVoice.handler, isNotNull);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 1));
   });
 
   testWidgets('Chat → Commands → back to Chat, in the real app, with no speech on the way', (tester) async {
