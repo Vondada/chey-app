@@ -6685,8 +6685,8 @@ export class CheState extends DurableObject {
         // A question about the owner's own memories or about the evidence for
         // an earlier answer is answered from records further down, in his own
         // words: no interpreter rewrite, clarifying question or model read.
-        const memoryRoute = asksForEvidence || Boolean(ownerMemoryQuestion(rawMessage)) ||
-          Boolean(ownerFactCorrection(rawMessage, data.memory_records));
+        const memoryRoute = ownerDevice && !body.attachment && (asksForEvidence || Boolean(ownerMemoryQuestion(rawMessage)) ||
+          Boolean(ownerFactCorrection(rawMessage, data.memory_records)));
         let interpretation = memoryRoute
           ? { kind: 'memory', text: message, passthrough: true }
           : interpretOwnerTurn(message, { history: ownerHistory, hasHeldAction: Boolean(heldPeek) });
