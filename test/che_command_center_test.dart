@@ -652,7 +652,7 @@ void main() {
     final che = FakeChe()..offline = true;
     final spoken = <String>[];
     await openCenter(tester, che: che, initialSearch: 'youtube', spoken: spoken);
-    expect(spoken, contains(contains('could not search the command library for "youtube"')),
+    expect(spoken.any((line) => line.contains('could not search the command library for "youtube"')), isTrue,
         reason: 'voice-first owner must hear the failure, not only see quiet error text');
     expect(find.textContaining('could not search the command library'), findsOneWidget);
   });
