@@ -232,7 +232,10 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
 }
 
 class CheVoiceSettingsSheet extends StatefulWidget {
-  const CheVoiceSettingsSheet({super.key});
+  const CheVoiceSettingsSheet({super.key, this.onSpeak});
+
+  /// Speaks the real outcome of an owner-triggered cloud voice action.
+  final ValueChanged<String>? onSpeak;
 
   @override
   State<CheVoiceSettingsSheet> createState() => _CheVoiceSettingsSheetState();
@@ -338,7 +341,7 @@ class _CheVoiceSettingsSheetState extends State<CheVoiceSettingsSheet> {
                         children: [
                           FilledButton.icon(
                             onPressed: () => Navigator.of(context).push(
-                              MaterialPageRoute<void>(builder: (_) => const CheCloudVoicePicker()),
+                              MaterialPageRoute<void>(builder: (_) => CheCloudVoicePicker(onSpeak: widget.onSpeak)),
                             ),
                             icon: const Icon(Icons.cloud_outlined),
                             label: const Text('CHOOSE NATURAL CHAT VOICE'),

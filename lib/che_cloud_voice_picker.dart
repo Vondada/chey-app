@@ -12,8 +12,9 @@ import 'che_native_voice.dart';
 import 'che_ui/che_theme.dart';
 
 class CheCloudVoicePicker extends StatefulWidget {
-  const CheCloudVoicePicker({super.key, this.client});
+  const CheCloudVoicePicker({super.key, this.client, this.onSpeak});
   final http.Client? client;
+  final ValueChanged<String>? onSpeak;
 
   @override
   State<CheCloudVoicePicker> createState() => _CheCloudVoicePickerState();
@@ -84,6 +85,13 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
     }
   }
 
+  // Save and preview results are shown and spoken, never only shown.
+  void _say(String line) {
+    if (!mounted) return;
+    setState(() => _status = line);
+    widget.onSpeak?.call(line);
+  }
+
   Map<String, dynamic> get _choice => {'provider': _provider, 'id': _id, 'speed': _speed};
   Map<String, String> get _headers => {'authorization': 'Bearer $_token', 'content-type': 'application/json'};
 
@@ -98,10 +106,10 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
         throw StateError(j is Map ? (j['detail'] ?? 'Voice change was not saved.').toString() : 'Voice change was not saved.');
       }
       HapticFeedback.selectionClick();
-      if (mounted) setState(() => _status = 'Voice saved for CHE Chat and Read This. Test it with Read This.');
+      _say('Voice saved for CHE Chat and Read This. Test it with Read This.');
     } on Object catch (e) {
       HapticFeedback.heavyImpact();
-      if (mounted) setState(() => _status = 'Voice not saved: ${e.toString().replaceFirst('Bad state: ', '')}');
+      _say('Voice not saved: ${e.toString().replaceFirst('Bad state: ', '')}');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -135,9 +143,9 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
       await CheNativeVoice.stopAudio();
       final played = await CheNativeVoice.playAudioBounded(r.bodyBytes);
       if (!played) throw StateError('CHE received audio but your iPhone could not play it.');
-      if (mounted) setState(() => _status = 'Preview played. Select Save Voice to use it for future replies.');
+      _say('Preview played. Select Save Voice to use it for future replies.');
     } on Object catch (e) {
-      if (mounted) setState(() => _status = 'Preview failed: ${e.toString().replaceFirst('Bad state: ', '')}');
+      _say('Preview failed: ${e.toString().replaceFirst('Bad state: ', '')}');
     } finally {
       if (mounted) setState(() => _busy = false);
     }

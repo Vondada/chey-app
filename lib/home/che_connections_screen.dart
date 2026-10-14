@@ -15,20 +15,21 @@ class CheConnectionsScreen extends StatefulWidget {
     super.key,
     required this.baseUrl,
     required this.headers,
-    required this.onBrokerConnect,
     required this.onVoiceSettings,
     required this.onKeys,
     this.client,
     this.onSpeak,
+    this.autoConnect = '',
   });
 
   final String baseUrl;
   final Map<String, String> Function() headers;
-  final VoidCallback onBrokerConnect;
   final VoidCallback onVoiceSettings;
   final VoidCallback onKeys;
   final http.Client? client;
   final ValueChanged<String>? onSpeak;
+  /// 'youtube' or 'broker' starts that one official sign-in once the page opens.
+  final String autoConnect;
 
   @override
   State<CheConnectionsScreen> createState() => _CheConnectionsScreenState();
@@ -52,6 +53,11 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
   void initState() {
     super.initState();
     unawaited(_refresh());
+    if (widget.autoConnect == 'youtube') {
+      WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_connectYoutube()));
+    } else if (widget.autoConnect == 'broker') {
+      WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_connectBroker()));
+    }
   }
 
   Future<void> _refresh({bool announce = false}) async {
@@ -124,6 +130,12 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
         : fallback;
   }
 
+  // Every owner-triggered connect result is shown and spoken, never only shown.
+  void _say(String line) {
+    if (mounted) setState(() => _message = line);
+    widget.onSpeak?.call(line);
+  }
+
   Future<void> _connectYoutube() async {
     if (_connecting) return;
     setState(() { _connecting = true; _message = ''; });
@@ -143,14 +155,12 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
       }
       // Google requires trusted browser authentication. No Google password
       // or refresh token may be collected by the CHE Flutter view.
-      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication).catchError((_) => false);
       if (!opened) throw StateError('Could not open the official Google sign-in page.');
-      if (mounted) setState(() => _message = 'Approve YouTube on Google’s secure page, then return to CHE and press Refresh. No channel connection is claimed yet.');
+      _say('Approve YouTube on Google’s secure page, then return to CHE and press Refresh. No channel connection is claimed yet.');
     } on Object catch (e) {
-      if (mounted) {
-        HapticFeedback.heavyImpact();
-        setState(() => _message = 'YouTube: ${e.toString().replaceFirst('Bad state: ', '')}');
-      }
+      HapticFeedback.heavyImpact();
+      _say('YouTube: ${e.toString().replaceFirst('Bad state: ', '')}');
     } finally {
       if (mounted) setState(() => _connecting = false);
     }
@@ -172,12 +182,12 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
           uri.host != 'trader.tradovate.com') {
         throw StateError((data['detail'] ?? 'Tradovate OAuth application is not configured.').toString());
       }
-      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication).catchError((_) => false);
       if (!opened) throw StateError('Could not open the official Tradovate sign-in.');
-      if (mounted) setState(() => _message = 'Authorize with Tradovate, then return to CHE and Refresh. No broker connection or trade is claimed until confirmed.');
+      _say('Authorize with Tradovate, then return to CHE and Refresh. No broker connection or trade is claimed until confirmed.');
     } on Object catch (e) {
       HapticFeedback.heavyImpact();
-      if (mounted) setState(() => _message = 'Broker: ${e.toString().replaceFirst('Bad state: ', '')}');
+      _say('NinjaTrader: ${e.toString().replaceFirst('Bad state: ', '')}');
     } finally {
       if (mounted) setState(() => _connecting = false);
     }

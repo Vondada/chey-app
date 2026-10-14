@@ -1943,18 +1943,13 @@ OWNER AGENCY
     }
   }
 
-  Future<void> _openConnections() async {
+  Future<void> _openConnections({String autoConnect = ''}) async {
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheConnectionsScreen(
         baseUrl: cheAgentBaseUrl,
         headers: () => _authHeaders,
+        autoConnect: autoConnect,
         onSpeak: (line) => unawaited(speakText(line, record: false, readOnDemand: true)),
-        onBrokerConnect: () {
-          Navigator.of(context).pop();
-          _goShellTab(1);
-          controller.text = 'connect NinjaTrader';
-          unawaited(sendMessage());
-        },
         onVoiceSettings: _openVoiceSelector,
         onKeys: () {
           Navigator.of(context).pop();
@@ -1968,7 +1963,9 @@ OWNER AGENCY
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => const CheVoiceSettingsSheet(),
+      builder: (_) => CheVoiceSettingsSheet(
+        onSpeak: (line) => unawaited(speakText(line, record: false, readOnDemand: true)),
+      ),
     );
   }
 

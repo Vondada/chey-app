@@ -438,7 +438,11 @@ extension _CheHomeSend on _CHEHomeState {
       case ScreenOp.searchCommands:
         return 'Opening Commands for "${command.text}", sir.';
       case ScreenOp.openConnections:
-        return 'Opening CHE Connections, sir.';
+        return switch (command.text) {
+          'youtube' => 'Opening CHE Connections to connect YouTube, sir.',
+          'broker' => 'Opening CHE Connections to connect NinjaTrader, sir.',
+          _ => 'Opening CHE Connections, sir.',
+        };
       case ScreenOp.changeVoice:
         return 'Opening CHE Voice Settings, sir.';
       case ScreenOp.clearChat:
@@ -593,7 +597,7 @@ extension _CheHomeSend on _CHEHomeState {
         });
         HapticFeedback.mediumImpact();
         if (screenCommand.op == ScreenOp.openConnections) {
-          unawaited(_openConnections());
+          unawaited(_openConnections(autoConnect: screenCommand.text));
         } else if (screenCommand.op == ScreenOp.changeVoice) {
           _openVoiceSelector();
         } else {
@@ -604,9 +608,12 @@ extension _CheHomeSend on _CHEHomeState {
         if (_isSpeaking) await _interruptSpeechAndListen(resumeListening: false);
         // A requested search speaks its numbered results (or a real failure)
         // from the Command Center, not a misleading "Opening..." preamble.
-        if (screenCommand.op == ScreenOp.openCommands ||
+        // A spoken connect speaks its real result from the Connections page;
+        // this "Opening..." line would cut across it.
+        final connectsNow = screenCommand.op == ScreenOp.openConnections && screenCommand.text.isNotEmpty;
+        if (!connectsNow && (screenCommand.op == ScreenOp.openCommands ||
             screenCommand.op == ScreenOp.openConnections ||
-            screenCommand.op == ScreenOp.changeVoice) {
+            screenCommand.op == ScreenOp.changeVoice)) {
           await speakText(reply, record: false);
         }
         return;

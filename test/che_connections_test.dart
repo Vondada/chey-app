@@ -22,6 +22,10 @@ void main() {
       expect(parseScreenCommand(prompt)?.op, ScreenOp.changeVoice, reason: prompt);
     }
     // A market-data query is NOT an account-linking operation.
+    // A spoken connect goes straight to that one official sign-in.
+    expect(parseScreenCommand('connect my YouTube channel')?.text, 'youtube');
+    expect(parseScreenCommand('connect NinjaTrader')?.text, 'broker');
+    expect(parseScreenCommand('open connections')?.text, '');
     expect(parseScreenCommand('analyze NQ chart')?.op, isNot(ScreenOp.openConnections));
     expect(parseScreenCommand('make a YouTube video')?.op, isNot(ScreenOp.openConnections));
   });
@@ -45,7 +49,7 @@ void main() {
     });
     await tester.pumpWidget(MaterialApp(theme: CheTheme.dark(),
       home: CheConnectionsScreen(baseUrl: 'https://che.test', headers: () => {'Authorization': 'Bearer x'},
-        client: client, onBrokerConnect: () {}, onVoiceSettings: () {}, onKeys: () {})));
+        client: client, onVoiceSettings: () {}, onKeys: () {})));
     await tester.pumpAndSettle();
     expect(paths, ['/api/commands']);
     expect(find.text('YouTube channel'), findsOneWidget);
@@ -59,11 +63,28 @@ void main() {
     expect(find.text('Configured'), findsWidgets, reason: 'a key alone is not verified connection');
   });
 
+  testWidgets('a spoken YouTube connect starts the sign-in and speaks its real result', (tester) async {
+    final spoken = <String>[];
+    final client = MockClient((r) async {
+      if (r.method == 'POST') {
+        return http.Response(jsonEncode({'detail': 'Google sign-in is not configured. Open Keys for setup.'}), 503,
+          headers: {'content-type': 'application/json'});
+      }
+      return http.Response(jsonEncode({'connectors': {}}), 200, headers: {'content-type': 'application/json'});
+    });
+    await tester.pumpWidget(MaterialApp(theme: CheTheme.dark(),
+      home: CheConnectionsScreen(baseUrl: 'https://che.test', headers: () => {}, client: client,
+        autoConnect: 'youtube', onSpeak: spoken.add, onVoiceSettings: () {}, onKeys: () {})));
+    await tester.pumpAndSettle();
+    expect(spoken, ['YouTube: Google sign-in is not configured. Open Keys for setup.'],
+      reason: 'the passive page load is silent; only the requested connect speaks');
+  });
+
   testWidgets('HTTP auth failure clears stale connection claims', (tester) async {
     final client = MockClient((r) async => http.Response('{"detail":"Pair phone"}', 401));
     await tester.pumpWidget(MaterialApp(theme: CheTheme.dark(),
       home: CheConnectionsScreen(baseUrl: 'https://che.test', headers: () => {},
-        client: client, onBrokerConnect: () {}, onVoiceSettings: () {}, onKeys: () {})));
+        client: client, onVoiceSettings: () {}, onKeys: () {})));
     await tester.pumpAndSettle();
     expect(find.textContaining('Pair this iPhone to CHE first'), findsWidgets);
     expect(find.text('Connected'), findsNothing);
@@ -75,6 +96,7 @@ void main() {
       'che_agent_device_token': 'mock-owner-token',
     });
     final requests = <http.Request>[];
+    final spoken = <String>[];
     final client = MockClient((r) async {
       requests.add(r);
       if (r.method == 'GET') {
@@ -85,7 +107,7 @@ void main() {
       }
       return http.Response(jsonEncode({'ok': true, 'selected': jsonDecode(r.body)}), 200);
     });
-    await tester.pumpWidget(MaterialApp(theme: CheTheme.dark(), home: CheCloudVoicePicker(client: client)));
+    await tester.pumpWidget(MaterialApp(theme: CheTheme.dark(), home: CheCloudVoicePicker(client: client, onSpeak: spoken.add)));
     await tester.pumpAndSettle();
     expect(find.text('Clara'), findsOneWidget);
     await tester.tap(find.text('Save Voice'));
@@ -98,5 +120,6 @@ void main() {
     expect(saved['provider'], 'elevenlabs');
     expect(last.body.contains('mock-owner-token'), false);
     expect(find.textContaining('Voice saved for CHE Chat'), findsOneWidget);
+    expect(spoken, ['Voice saved for CHE Chat and Read This. Test it with Read This.']);
   });
 }

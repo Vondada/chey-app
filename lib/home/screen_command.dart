@@ -30,9 +30,16 @@ ScreenCommand? parseScreenCommand(String raw) {
   t = t.replaceFirst(_lead, '').replaceFirst(_polite, '').trim();
   if (t.isEmpty) return null;
 
-  // On-device navigation only. The provider sign-in still needs owner consent.
+  // On-device navigation only. A spoken connect opens Connections and starts
+  // that one official sign-in; the provider still asks the owner on its page.
+  final connect = RegExp(r'^connect\s+(?:my\s+)?(youtube(?: channel)?|google account|ninjatrader|tradovate)$').firstMatch(t);
+  if (connect != null) {
+    final target = connect.group(1)!;
+    return ScreenCommand(ScreenOp.openConnections,
+        target.startsWith('youtube') || target == 'google account' ? 'youtube' : 'broker');
+  }
   if (RegExp(
-    r'^(?:(?:open|show(?: me)?|go to|take me to|bring up)\s+(?:my\s+|the\s+)?(?:connections?|connected accounts|integrations?|connection center)|connect\s+(?:my\s+)?(?:youtube(?: channel)?|google account|bank(?: account)?|ninjatrader|tradovate))$',
+    r'^(?:(?:open|show(?: me)?|go to|take me to|bring up)\s+(?:my\s+|the\s+)?(?:connections?|connected accounts|integrations?|connection center)|connect\s+(?:my\s+)?bank(?: account)?)$',
   ).hasMatch(t)) {
     return const ScreenCommand(ScreenOp.openConnections);
   }
