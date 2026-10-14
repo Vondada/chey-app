@@ -252,13 +252,20 @@ const ATTRIBUTION = new RegExp([
 const HYPOTHETICAL = /^(?:if|when|whenever|once|unless|suppose|imagine|let s say|in case)\b/;
 const FICTION_REQUEST = /\b(?:story|stories|fiction|fictional|pretend|role ?play|imagine|hypothetical(?:ly)?|make up|made up|brainstorm|poem|joke|scenario|example dialogue)\b/;
 
-// Creative writing only. A brainstorm or a "worst-case scenario" may still
-// come with a research request whose claims need receipts.
-const STORY_REQUEST = /\b(?:story|stories|fiction|fictional|pretend|role ?play|poem|poems|fairy tale|screenplay|bedtime)\b/;
+// Creative writing only: "tell me a story", "write a poem", "let's role-play".
+// A news story, "the story behind" a product, a brainstorm or a scenario can
+// come with research whose claims still need receipts.
+const STORY_REQUEST = new RegExp([
+  '\\b(?:tell|write|make up|create|compose|invent|read|give|do)\\s+(?:me\\s+|us\\s+|him\\s+|her\\s+|them\\s+)?(?:a|an|another|one more|some)\\s+(?:[a-z]+\\s+){0,3}(?:story|stories|poem|poems|tale|fable|fairy tale|limerick|screenplay|bedtime story)\\b',
+  '\\b(?:bedtime story|fairy tale|fictional story|short fiction)\\b',
+  '\\b(?:let s |lets )?(?:pretend|role ?play)\\b',
+].join('|'));
+const FACTUAL_ASK = /\b(?:fact ?check|research|verify|look up|search|true story|real story|news|history of|actually happened|accurate|sources?|evidence|citations?)\b/;
 
 /** The owner asked for a story, poem or role-play: invented narration is the point. */
 export function storyRequested(message) {
-  return STORY_REQUEST.test(plainWords(message));
+  const words = plainWords(message);
+  return STORY_REQUEST.test(words) && !FACTUAL_ASK.test(words);
 }
 
 function sentences(text) {

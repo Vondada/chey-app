@@ -45,6 +45,15 @@ export async function releaseStatus({ pr = null, sha = null, fetcher = fetch, to
   out.main_sha = /^[0-9a-f]{40}$/.test(String(main.data || '').trim()) ? String(main.data).trim() : null;
   if (!main.error && !out.main_sha) unknown('main head', 'unexpected response');
 
+  // Workflow runs are looked up by full SHA, and /health reports 12 characters:
+  // expand an abbreviation first, or a live match reads as a mismatch.
+  if (sha && sha.length < 40) {
+    const full = await getJson(fetcher, `${API}/repos/${REPO}/commits/${sha}`, { ...auth, Accept: 'application/vnd.github.sha' }, 'text');
+    const value = String(full.data || '').trim();
+    if (!full.error && /^[0-9a-f]{40}$/.test(value)) sha = value;
+    else { unknown(`commit ${sha}`, full.error || 'not found'); sha = null; }
+  }
+
   if (pr) {
     const p = await gh(`/pulls/${pr}`);
     if (p.error) unknown(`PR #${pr}`, p.error);

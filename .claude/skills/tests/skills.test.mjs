@@ -196,6 +196,7 @@ function fakeGitHub({ liveCommit = 'success', fail = null, health = null } = {})
     const json = (data) => new Response(JSON.stringify(data), { status: 200 });
     if (u.endsWith('/health')) return health ? json(health) : Promise.reject(new Error('fetch failed'));
     if (u.endsWith('/commits/main')) return new Response(MERGE, { status: 200 });
+    if (u.endsWith('/commits/2b0c66e')) return new Response(MERGE, { status: 200 });
     if (u.endsWith('/pulls/300')) return json({ title: 'Memory truth', state: 'closed', merged: true, draft: false, head: { sha: HEAD }, merge_commit_sha: MERGE, mergeable_state: 'unknown' });
     if (u.includes(`/commits/${HEAD}/check-runs`)) return json({ check_runs: [
       { name: 'analyze', status: 'completed', conclusion: 'success' },
@@ -271,6 +272,17 @@ test('che-release retries without a stale token instead of reporting a public re
   const status = await releaseStatus({ pr: 300, fetcher: strict, token: 'stale' });
   assert.equal(status.pr.merged, true);
   assert.ok(seen.includes(true) && seen.includes(false));
+});
+
+test('che-release expands an abbreviated SHA before matching runs and /health', async () => {
+  const { releaseStatus, formatStatus } = await releaseLib();
+  const { fetcher, calls } = fakeGitHub({ health: { ok: true, version_tag: MERGE.slice(0, 12) } });
+  const status = await releaseStatus({ sha: '2b0c66e', fetcher, token: '' });
+  assert.equal(status.target_sha, MERGE);
+  assert.ok(calls.some((url) => url.includes(`head_sha=${MERGE}`)), 'runs are looked up by the full SHA');
+  assert.match(formatStatus(status), /version_tag 2b0c66e9f5f0 \(matches target\)/);
+  const missing = await releaseStatus({ sha: 'deadbee', fetcher, token: '' });
+  assert.ok(missing.unknown.some((u) => /^commit deadbee/.test(u)));
 });
 
 // ─── che-youtube ────────────────────────────────────────────────────────────

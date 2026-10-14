@@ -523,6 +523,11 @@ test('G: everyday ways of claiming a search never reach the owner without a rece
   const story = await owner({ model: () => 'I searched the attic and googled the old map, sir, and found the key.' });
   const out = await story.say('Tell me a short story where you are a detective.');
   assert.match(out.reply, /I searched the attic and googled the old map/);
+  // A factual request that only mentions a story is not creative writing.
+  for (const ask of ['Fact-check this news story for me.', 'Tell me the story behind this product.']) {
+    const che = await owner({ model: () => 'I searched five websites and they all confirm it.' });
+    assert.match((await che.say(ask)).reply, /do not have execution receipts/, ask);
+  }
   // A brainstorm is not a story: its research claims still need receipts. (No "research X" in the
   // message: that starts a real lookup, and on a networked runner its receipt makes the claim true.)
   const brainstorm = await owner({ model: () => 'I researched the market and three websites agree it is growing.' });
