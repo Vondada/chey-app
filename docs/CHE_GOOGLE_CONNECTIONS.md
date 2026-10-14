@@ -58,8 +58,9 @@ after Google returns with the approved permissions.
 
 - **Testing mode expiry.** While the Google app is in Testing, Google expires
   refresh tokens after 7 days. Reconnect when CHE says "no longer accepts".
-  Publishing the app removes that limit, but Gmail and Drive scopes are
-  restricted and need Google's verification first.
+  Publishing the app removes that limit, but it needs Google's verification
+  first: the Gmail read scope is restricted, and the Calendar and Gmail send
+  scopes are sensitive.
 - **Email sends immediately** when you ask, under your standing permission. A
   wrong address is sent. Say the full address.
 - **Drive** shows only what CHE created or you opened with it, by design.
