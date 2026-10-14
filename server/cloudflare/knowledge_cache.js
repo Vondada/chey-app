@@ -95,7 +95,7 @@ export async function rememberKnowledge(storage, entry, now = Date.now()) {
     answer,
     source,
     sources,
-    verification_status: ownerAttested ? 'owner_attested' : 'source_verified',
+    verification_status: ownerAttested ? 'owner_attested' : 'source_backed',
     superseded,
     limitation: String(entry.limitation || '').slice(0, 300),
     confidence: Math.max(0, Math.min(1, Number.isFinite(entry.confidence) ? entry.confidence : 0.9)),
@@ -134,9 +134,10 @@ export async function recallKnowledge(storage, key, { now = Date.now(), minConfi
   // Legacy unsourced model/research cache entries must never be promoted to
   // verified merely because they carry a high numeric confidence value.
   if (record.verification_status !== 'owner_attested' &&
+      record.verification_status !== 'source_backed' &&
       record.verification_status !== 'source_verified' &&
       record.source !== 'owner_memory') return null;
-  if (record.verification_status === 'source_verified' && !record.sources?.length) return null;
+  if (['source_backed', 'source_verified'].includes(record.verification_status) && !record.sources?.length) return null;
   if (record.confidence < minConfidence) return null;
   if (Number.isFinite(record.expires_at) && now > record.expires_at) return null;
   if (record.volatile && now - record.verified_at > VOLATILE_TTL_MS) return null;
@@ -167,7 +168,7 @@ export async function markPureResearch(storage, question) {
 export async function cachedResearch(storage, question, research, now = Date.now()) {
   const key = researchKey(question);
   const hit = await recallKnowledge(storage, key, { now });
-  if (hit && hit.verification_status === 'source_verified') return { summary: hit.answer, sources: hit.sources, limitation: hit.limitation || undefined, cached: true, verified_at: hit.verified_at };
+  if (hit && ['source_backed', 'source_verified'].includes(hit.verification_status)) return { summary: hit.answer, sources: hit.sources, limitation: hit.limitation || undefined, cached: true, verified_at: hit.verified_at };
   const fresh = await research();
   if (fresh?.summary && Array.isArray(fresh.sources) && fresh.sources.some((s) => /^https:\/\//i.test(String(s)))) {
     const volatile = isVolatile(question);
@@ -243,7 +244,7 @@ export function explainAnswerEvidence(receipt, now = Date.now()) {
     return 'That was something you told me, sir. I treated it as your stated information, not as an independently verified external fact.';
   }
   if (receipt.kind === 'source_backed' && receipt.sources?.length) {
-    return `I used these recorded sources: ${receipt.sources.join(', ')}. They support the research path, but I cannot claim every statement was independently confirmed.`;
+    return `The research tools returned these source links: ${receipt.sources.join(', ')}. A link is not proof that every claim in my answer was independently fact-checked.`;
   }
   if (receipt.kind === 'tool_result' && receipt.tools?.length) {
     return `The answer used these successful tools: ${receipt.tools.join(', ')}. I do not have a source URL for independent confirmation, sir.`;
