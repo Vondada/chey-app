@@ -58,11 +58,11 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
     setState(() { _loading = true; _error = ''; });
     try {
       final r = await _client.get(
-        Uri.parse(widget.baseUrl + '/api/commands'),
+        Uri.parse('${widget.baseUrl}/api/commands'),
         headers: widget.headers(),
       ).timeout(const Duration(seconds: 18));
       if (r.statusCode != 200) {
-        throw StateError(r.statusCode == 401 ? 'Pair this iPhone to CHE first.' : 'CHE returned HTTP ' + r.statusCode.toString());
+        throw StateError(r.statusCode == 401 ? 'Pair this iPhone to CHE first.' : 'CHE returned HTTP ${r.statusCode}');
       }
       final raw = jsonDecode(utf8.decode(r.bodyBytes));
       if (raw is! Map || raw['connectors'] is! Map) {
@@ -87,7 +87,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
       });
       if (announce) {
         HapticFeedback.heavyImpact();
-        widget.onSpeak?.call('I could not verify the connections, sir. ' + _error);
+        widget.onSpeak?.call('I could not verify the connections, sir. $_error');
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -114,7 +114,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
 
   String _detail(String? connector, String fallback) {
     if (connector == null) return fallback;
-    if (_error.isNotEmpty) return 'Cannot verify connection: ' + _error;
+    if (_error.isNotEmpty) return 'Cannot verify connection: $_error';
     final actual = _actual(connector);
     if (actual.isEmpty) return _loading ? 'Checking with CHE…' : 'CHE has not confirmed this service.';
     final detail = (actual['detail'] ?? '').toString().trim();
@@ -129,7 +129,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
     setState(() { _connecting = true; _message = ''; });
     try {
       final r = await _client.post(
-        Uri.parse(widget.baseUrl + '/api/youtube/connect/start'),
+        Uri.parse('${widget.baseUrl}/api/youtube/connect/start'),
         headers: {...widget.headers(), 'content-type': 'application/json'},
         body: '{}',
       ).timeout(const Duration(seconds: 18));
@@ -149,7 +149,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
     } on Object catch (e) {
       if (mounted) {
         HapticFeedback.heavyImpact();
-        setState(() => _message = 'YouTube: ' + e.toString().replaceFirst('Bad state: ', ''));
+        setState(() => _message = 'YouTube: ${e.toString().replaceFirst('Bad state: ', '')}');
       }
     } finally {
       if (mounted) setState(() => _connecting = false);
@@ -161,7 +161,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
     setState(() { _connecting = true; _message = ''; });
     try {
       final r = await _client.post(
-        Uri.parse(widget.baseUrl + '/api/broker/tradovate/connect/start'),
+        Uri.parse('${widget.baseUrl}/api/broker/tradovate/connect/start'),
         headers: {...widget.headers(), 'content-type': 'application/json'},
         body: '{}',
       ).timeout(const Duration(seconds: 18));
@@ -177,7 +177,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
       if (mounted) setState(() => _message = 'Authorize with Tradovate, then return to CHE and Refresh. No broker connection or trade is claimed until confirmed.');
     } on Object catch (e) {
       HapticFeedback.heavyImpact();
-      if (mounted) setState(() => _message = 'Broker: ' + e.toString().replaceFirst('Bad state: ', ''));
+      if (mounted) setState(() => _message = 'Broker: ${e.toString().replaceFirst('Bad state: ', '')}');
     } finally {
       if (mounted) setState(() => _connecting = false);
     }
@@ -195,7 +195,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
       _ => CheColors.danger,
     };
     return Semantics(
-      label: '$title. $status. ' + _detail(connector, explanation),
+      label: '$title. $status. ${_detail(connector, explanation)}',
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
         decoration: BoxDecoration(
@@ -256,7 +256,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
           if (_loading) const LinearProgressIndicator(),
           if (_error.isNotEmpty) Padding(
             padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Text('Connection check failed: ' + _error, style: const TextStyle(color: CheColors.warning)),
+            child: Text('Connection check failed: $_error', style: const TextStyle(color: CheColors.warning)),
           ),
           if (_message.isNotEmpty) Padding(
             padding: const EdgeInsets.symmetric(vertical: 12),
