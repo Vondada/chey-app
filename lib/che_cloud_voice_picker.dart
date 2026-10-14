@@ -163,12 +163,13 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
           child: Text('No available cloud voices were verified. Check pairing, provider keys, and account access in CHE Connections.', style: TextStyle(color: CheColors.warning)),
         ),
         for (final v in _voices)
-          RadioListTile<String>(
+          ListTile(
+            leading: Icon(_provider == v['provider'] && _id == v['id']
+              ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+              color: CheColors.accent),
             title: Text((v['name'] ?? '').toString()),
             subtitle: Text(v['provider'] == 'fish' ? 'Fish Audio — configured voice' : 'ElevenLabs'),
-            value: (v['provider'] ?? '').toString() + ':' + (v['id'] ?? '').toString(),
-            groupValue: _provider + ':' + _id,
-            onChanged: _busy ? null : (_) => setState(() {
+            onTap: _busy ? null : () => setState(() {
               _provider = (v['provider'] ?? '').toString();
               _id = (v['id'] ?? '').toString();
               _status = '';
