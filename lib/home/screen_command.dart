@@ -12,6 +12,9 @@ enum ScreenOp {
   showGreeting,
   openCommands,
   searchCommands,
+  openConnections,
+  changeVoice,
+  naturalVoice,
 }
 
 class ScreenCommand {
@@ -27,6 +30,32 @@ ScreenCommand? parseScreenCommand(String raw) {
   var t = raw.trim().toLowerCase().replaceAll(RegExp(r'[.!?]+$'), '');
   t = t.replaceFirst(_lead, '').replaceFirst(_polite, '').trim();
   if (t.isEmpty) return null;
+
+  // On-device navigation only. A spoken connect opens Connections and starts
+  // that one official sign-in; the provider still asks the owner on its page.
+  final connect = RegExp(r'^connect\s+(?:my\s+)?(youtube(?: channel)?|google account|ninjatrader|tradovate)$').firstMatch(t);
+  if (connect != null) {
+    final target = connect.group(1)!;
+    return ScreenCommand(ScreenOp.openConnections,
+        target.startsWith('youtube') || target == 'google account' ? 'youtube' : 'broker');
+  }
+  if (RegExp(
+    r'^(?:(?:open|show(?: me)?|go to|take me to|bring up)\s+(?:my\s+|the\s+)?(?:connections?|connected accounts|integrations?|connection center)|connect\s+(?:my\s+)?bank(?: account)?)$',
+  ).hasMatch(t)) {
+    return const ScreenCommand(ScreenOp.openConnections);
+  }
+  // Natural cloud voices: the picker lists verified voices and takes spoken choices.
+  if (RegExp(r'^(?:change|switch|choose|pick|preview)\s+(?:your\s+|che\s+|my\s+)?voice$').hasMatch(t)) {
+    return const ScreenCommand(ScreenOp.naturalVoice);
+  }
+  if (RegExp(r'^(?:open|show(?: me)?|go to)\s+(?:the\s+|my\s+)?(?:voice settings|voice selector|change voice)$').hasMatch(t)) {
+    return const ScreenCommand(ScreenOp.changeVoice);
+  }
+  if (RegExp(
+    r'^(?:show(?: me)?|check)\s+(?:my\s+)?bank\s+(?:transactions?|balance|accounts?)$',
+  ).hasMatch(t)) {
+    return const ScreenCommand(ScreenOp.openConnections);
+  }
 
   // "open commands", "show me the command center", "command library".
   if (RegExp(r'^(?:open|show|show me|go to|take me to|bring up)\s+(?:the\s+|my\s+)?(?:commands?|command center|command library|slash commands)(?:\s+(?:page|screen|list))?$').hasMatch(t) ||

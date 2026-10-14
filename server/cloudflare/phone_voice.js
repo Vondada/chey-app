@@ -18,16 +18,28 @@ const VOICE_LOG_MAX = 40;
  * spoke. Each response carries both voices' status words, so the phone can say
  * why the other one did not speak.
  */
-export async function premiumVoiceSpeech(env = {}, text, { purpose, character, storage } = {}) {
+export async function premiumVoiceSpeech(env = {}, text, { purpose, character, storage, selectedProvider } = {}) {
+  // An owner-chosen Fish voice becomes primary, with ElevenLabs as fallback.
+  // The default behavior stays ElevenLabs-first; selection never disables the
+  // other provider or overrides its normal credit/rate-limit safeguards.
+  if (selectedProvider === 'fish') {
+    const fishFirst = await fishAudioSpeech(env, text, { purpose, character, storage });
+    if (fishFirst) {
+      fishFirst.headers.set('X-CHE-Mary', preferredElevenLabsKeyStatus(env).status);
+      return fishFirst;
+    }
+  }
   const mary = await preferredElevenLabsSpeech(env, text);
   if (mary) {
     mary.headers.set('X-CHE-Fish', fishAudioKeyStatus(env).status);
     return mary;
   }
-  const fish = await fishAudioSpeech(env, text, { purpose, character, storage });
-  if (fish) {
-    fish.headers.set('X-CHE-Mary', preferredElevenLabsKeyStatus(env).status);
-    return fish;
+  if (selectedProvider !== 'fish') {
+    const fish = await fishAudioSpeech(env, text, { purpose, character, storage });
+    if (fish) {
+      fish.headers.set('X-CHE-Mary', preferredElevenLabsKeyStatus(env).status);
+      return fish;
+    }
   }
   return null;
 }

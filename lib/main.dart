@@ -46,6 +46,7 @@ import 'che_wake_word.dart';
 import 'che_wake_match.dart';
 import 'che_voice_state.dart';
 import 'che_local_voice_loop.dart';
+import 'che_cloud_voice_picker.dart';
 import 'che_voice_ui.dart';
 import 'che_app_portal.dart';
 import 'che_video.dart';
@@ -84,6 +85,7 @@ import 'home/che_inline_preview.dart';
 import 'home/che_grok_chat_screen.dart';
 import 'home/che_mockup_home.dart';
 import 'home/che_more_tab.dart';
+import 'home/che_connections_screen.dart';
 import 'home/che_projects_board.dart';
 import 'home/che_memory_brain.dart';
 import 'che_ui/che_phone_shell.dart';
@@ -1942,6 +1944,42 @@ OWNER AGENCY
     }
   }
 
+  Future<void> _openConnections({String autoConnect = ''}) async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheConnectionsScreen(
+        baseUrl: cheAgentBaseUrl,
+        headers: () => _authHeaders,
+        autoConnect: autoConnect,
+        onSpeak: (line) => unawaited(speakText(line, record: false, readOnDemand: true)),
+        onVoiceSettings: _openVoiceSelector,
+        onKeys: () {
+          Navigator.of(context).pop();
+          unawaited(_openMailbox(tab: 3));
+        },
+      ),
+    ));
+  }
+
+  void _openNaturalVoicePicker() {
+    unawaited(Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheCloudVoicePicker(
+        onSpeak: (line) => unawaited(speakText(line, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+      ),
+    )));
+  }
+
+  void _openVoiceSelector() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => CheVoiceSettingsSheet(
+        onSpeak: (line) => unawaited(speakText(line, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+      ),
+    );
+  }
+
   Widget _buildMoreTab() {
     return CheMoreTab(
       che: _officeRuntime.che,
@@ -1981,6 +2019,20 @@ OWNER AGENCY
           subtitle: 'Theme, avatar, text size, voice replies',
           onTap: () => unawaited(_openUiControls()),
           hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.hub_outlined,
+          title: 'Connections',
+          subtitle: 'YouTube · Google · broker · banks · business · voice',
+          onTap: () => unawaited(_openConnections()),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.record_voice_over_rounded,
+          title: 'Change CHE’s Voice',
+          subtitle: 'Choose and preview a voice right inside CHE',
+          onTap: _openVoiceSelector,
+          hue: kit.CheColors.accentAlt,
         ),
         CheMoreItem(
           icon: voiceResponsesEnabled ? Icons.volume_up_rounded : Icons.volume_off_rounded,
