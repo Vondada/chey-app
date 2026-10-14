@@ -367,6 +367,47 @@ test('without API credit for Drama 3, a story uses CHE\'s everyday Fish voice', 
   assert.deepEqual(calls.map((c) => c.headers.model), ['drama-3', 's2.1-pro-free', 's2.1-pro-free']);
 });
 
+test('each story chunk falls back on its own reason, not another chunk\'s', async () => {
+  // Two chunks in flight: one gets 402 (falls back), the other times out
+  // (does not), whatever order their answers arrive in.
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const { calls, fetcher } = fakeFish(async (n, call) => {
+    if (call.headers.model !== 'drama-3') return new Response(MP3, { headers: { 'Content-Type': 'audio/mpeg' } });
+    if (call.body.text === 'Chunk with no credit.') return new Response('{"message":"Insufficient API credit."}', { status: 402 });
+    await gate;
+    throw new DOMException('timed out', 'TimeoutError');
+  });
+  const storage = memoryStorage();
+  const timedOut = fishAudioSpeech(env(), 'Chunk that times out.', { purpose: 'story', storage, fetcher });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const credit = await fishAudioSpeech(env(), 'Chunk with no credit.', { purpose: 'story', storage, fetcher });
+  release();
+  assert.equal(credit.headers.get('X-CHE-Fish-Model'), 's2.1-pro-free');
+  assert.equal(await timedOut, null);
+  assert.deepEqual(calls.map((c) => [c.headers.model, c.body.text]), [
+    ['drama-3', 'Chunk that times out.'],
+    ['drama-3', 'Chunk with no credit.'],
+    ['s2.1-pro-free', 'Chunk with no credit.'],
+  ]);
+  // The timeout's short rest does not hide the longer out-of-credits rest.
+  const next = await fishAudioSpeech(env(), 'The next chunk.', { purpose: 'story', storage, fetcher });
+  assert.equal(next.headers.get('X-CHE-Fish-Model'), 's2.1-pro-free');
+});
+
+test('a long story keeps its length and quality on the everyday fallback', async () => {
+  const { calls, fetcher } = fakeFish((n, call) => (call.headers.model === 'drama-3'
+    ? new Response('{"message":"Insufficient API credit."}', { status: 402 })
+    : new Response(MP3, { headers: { 'Content-Type': 'audio/mpeg' } })));
+  const long = 'The lighthouse keeper listened. '.repeat(40);
+  assert.ok(long.length > 800 && long.length < 6000);
+  const story = await fishAudioSpeech(env(), long, { purpose: 'narration', storage: memoryStorage(), fetcher });
+  assert.equal(story.headers.get('X-CHE-Fish-Model'), 's2.1-pro-free');
+  assert.equal(calls[1].headers.model, 's2.1-pro-free');
+  assert.equal(calls[1].body.mp3_bitrate, 128, 'narration quality is kept');
+  assert.equal(calls[1].body.latency, 'normal');
+});
+
 test('a story does not fall back after a timeout, so the owner never waits twice', async () => {
   const { calls, fetcher } = fakeFish(() => { throw new DOMException('timed out', 'TimeoutError'); });
   assert.equal(await fishAudioSpeech(env(), 'Once upon a time.', { purpose: 'story', storage: memoryStorage(), fetcher }), null);
