@@ -2842,3 +2842,27 @@ test('live paired chat explains actual source evidence and declines to fabricate
   assert.match(sourced, /not proof/i);
   assert.equal(modelCalls, priorCalls, 'verified cache and its evidence receipt reuse zero model calls');
 });
+
+
+test('owner chat regression: evidence question and "the last one" bypass models', async () => {
+  const saved = new Map();
+  let calls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { calls++; return { response: "I used the browser tool and compared sources." }; } } };
+  const { chat } = await pairedChat(env, saved);
+  const first = replyFromNdjson(await (await chat("How do you know that's correct?")).text());
+  assert.match(first, /not independently verified|do not have a recent evidence record/i);
+  assert.equal(calls, 0);
+  const history = [
+    { role: 'user', content: "CHE, tell me something you remember that I've confirmed." },
+    { role: 'assistant', content: 'I remember you confirming that you prefer short, friendly replies.' },
+    { role: 'user', content: "How do you know that's correct?" },
+    { role: 'assistant', content: 'Want me to demonstrate?' },
+  ];
+  const followup = replyFromNdjson(await (await chat('The last one we were just talking about', { history })).text());
+  assert.match(followup, /short, friendly replies/);
+  assert.match(followup, /not independently verified|do not have a recent evidence record/i);
+  assert.equal(calls, 0, 'neither context-aware evidence follow-up calls a model');
+  const noMemory = replyFromNdjson(await (await chat("CHE, tell me something you remember that I've confirmed.")).text());
+  assert.match(noMemory, /cannot find a source-recorded owner confirmation/);
+  assert.equal(calls, 0);
+});
