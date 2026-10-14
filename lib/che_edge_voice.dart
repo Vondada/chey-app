@@ -1,6 +1,6 @@
-// Edge Ava is the voice on this route, and the Worker tries Mary first. The reply
-// header names the voice that actually spoke, and reports Mary's status when she
-// did not, so the phone never labels a Mary clip as Edge Ava or the reverse.
+// Edge Ava is the voice on this route; the Worker tries CHE's Fish voice, then
+// Mary, first. The reply header names the voice that actually spoke, and reports
+// Fish's and Mary's status when they did not, so the phone never mislabels a clip.
 
 import 'dart:convert';
 
@@ -10,13 +10,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'che_speech_pipeline.dart';
 
 /// One /api/voice/edge reply. [clip] is null when the server spoke nothing.
-/// [maryStatus] is Mary's state in the Keys tab's words, or empty when the
-/// server did not report it.
+/// [maryStatus] and [fishStatus] are Mary's and Fish's states in the Keys tab's
+/// words, or empty when the server did not report them.
 class CheEdgeResult {
-  const CheEdgeResult({this.clip, this.maryStatus = ''});
+  const CheEdgeResult({this.clip, this.maryStatus = '', this.fishStatus = ''});
 
   final CheVoiceClip? clip;
   final String maryStatus;
+  final String fishStatus;
 }
 
 /// The engine label for a clip. A reply without a label is Edge Ava, the voice
@@ -40,10 +41,62 @@ String cheMaryReason(String maryStatus, String engine) {
   };
 }
 
+/// The voice style for a reply to [ownerMessage]: 'story' when the owner asked
+/// CHE to tell, read or narrate a story, otherwise 'conversation'. Only 'story'
+/// uses Fish's expressive model (Drama 3), which can cost credits, so ordinary
+/// questions that merely mention a story stay on the everyday voice. Decided on
+/// the phone from the owner's own words: no AI call, no tokens.
+String cheVoicePurposeFor(String ownerMessage) {
+  final said = ownerMessage.toLowerCase();
+  final asked = RegExp(
+    r"\b(?:tell|read|narrate|make\s+up|write\s+and\s+read)\b[^.?!]{0,40}\b(?:story|stories|tale|fable|bedtime)\b",
+  ).hasMatch(said);
+  return asked || RegExp(r'\bnarrate\b').hasMatch(said) ? 'story' : 'conversation';
+}
+
+/// How long the phone waits for one server clip. Drama 3 renders a story chunk
+/// more slowly than everyday speech; chunks are prepared ahead of playback.
+Duration cheVoiceWait(String purpose, {required Duration everyday}) =>
+    purpose == 'story' ? const Duration(seconds: 30) : everyday;
+
+/// Why CHE's Fish voice did not speak, in words the owner can read. Empty when
+/// Fish spoke, or when Fish is not set up (that is shown in Keys, not per clip).
+String cheFishReason(String fishStatus, String engine) {
+  if (engine == 'fish-audio' || fishStatus.isEmpty || fishStatus == 'not set up') return '';
+  return switch (fishStatus) {
+    'needs a voice' => 'Fish has no voice chosen yet',
+    'off' => 'Fish is switched off',
+    'unauthorized' => 'Fish\'s key was refused',
+    'out of credits' => 'Fish is out of credits',
+    'model not available' => 'Fish\'s model is not available on this account',
+    'rate-limited' => 'Fish is resting after a rate limit',
+    'slow' => 'Fish was too slow, so a faster voice answered',
+    'network' => 'Fish could not be reached',
+    'daily limit reached' => 'Fish reached today\'s story limit',
+    'not tried yet' => 'Fish was not tried for this clip',
+    _ => 'Fish did not speak this clip ($fishStatus)',
+  };
+}
+
+/// Fish's last known state, in words, for the diagnostics sheet.
+String cheFishStateLabel(String fishStatus) => switch (fishStatus) {
+      '' => 'Not asked yet this session',
+      'healthy' => 'Working',
+      'not tried yet' => 'Not used yet',
+      'not set up' => 'Not set up on the server',
+      'needs a voice' => 'Needs a voice ID',
+      'off' => 'Switched off',
+      'model not available' => 'Model not available on this account',
+      'slow' => 'Too slow; resting',
+      'daily limit reached' => 'Story limit reached today',
+      _ => cheMaryStateLabel(fishStatus),
+    };
+
 /// The owner-facing name for a playback engine label, as the Worker and the
 /// phone report it.
 String cheVoiceEngineLabel(String? engine) => switch (engine) {
       null || '' => '—',
+      'fish-audio' => 'CHE voice (Fish Audio)',
       'elevenlabs-mary' => 'Mary (ElevenLabs)',
       'edge-ava' => 'Edge Ava (free server voice)',
       'cloudflare-aura' => 'Aura (free server voice)',
@@ -72,7 +125,7 @@ String cheMaryStateLabel(String maryStatus) => switch (maryStatus) {
 class CheEdgeVoice {
   static const voice = 'en-US-AvaNeural';
 
-  static Future<CheEdgeResult> speak(String text) async {
+  static Future<CheEdgeResult> speak(String text, {String purpose = 'conversation'}) async {
     final said = text.trim();
     if (said.isEmpty) return const CheEdgeResult();
     final prefs = await SharedPreferences.getInstance();
@@ -92,16 +145,21 @@ class CheEdgeVoice {
               'content-type': 'application/json',
               'Authorization': 'Bearer $token',
             },
-            body: jsonEncode({'text': said, 'voice': voice}),
+            body: jsonEncode({
+              'text': said,
+              'voice': voice,
+              if (purpose != 'conversation') 'purpose': purpose,
+            }),
           )
-          .timeout(const Duration(seconds: 12));
+          .timeout(cheVoiceWait(purpose, everyday: const Duration(seconds: 12)));
       final maryStatus = (response.headers['x-che-mary'] ?? '').trim();
+      final fishStatus = (response.headers['x-che-fish'] ?? '').trim();
       final type = response.headers['content-type'] ?? '';
       if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
-        return CheEdgeResult(maryStatus: maryStatus);
+        return CheEdgeResult(maryStatus: maryStatus, fishStatus: fishStatus);
       }
       if (!type.contains('audio') && !type.contains('octet-stream')) {
-        return CheEdgeResult(maryStatus: maryStatus);
+        return CheEdgeResult(maryStatus: maryStatus, fishStatus: fishStatus);
       }
       return CheEdgeResult(
         clip: CheVoiceClip(
@@ -109,6 +167,7 @@ class CheEdgeVoice {
           cheEdgeEngine(response.headers['x-che-voice']),
         ),
         maryStatus: maryStatus,
+        fishStatus: fishStatus,
       );
     } catch (_) {
       return const CheEdgeResult();

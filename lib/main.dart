@@ -29,6 +29,7 @@ import 'che_mic_supervisor.dart';
 import 'che_ui/che_ui_voice_command.dart';
 import 'che_native_voice.dart';
 import 'che_edge_voice.dart';
+import 'che_pronunciation.dart';
 import 'che_speech_pipeline.dart';
 import 'che_notifications.dart';
 import 'platform/che_platform_client.dart';
@@ -395,8 +396,10 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   Timer? _quickEndTimer;
   String? _lastVoiceEngine;
   String _voiceFailReason = '';
-  // Mary's status from the last server reply, for the voice diagnostics sheet.
+  // Mary's and Fish's status from the last server reply, for the voice
+  // diagnostics sheet.
   String _maryStatus = '';
+  String _fishStatus = '';
   bool _naturalVoiceServerErrored = false;
   bool _loadingAgentState = false;
   int _speechTurn = 0;

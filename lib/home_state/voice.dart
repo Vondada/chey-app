@@ -178,7 +178,7 @@ extension _CheHomeVoice on _CHEHomeState {
 
   /// Server TTS only: returns the clip, or null so the caller falls back to
   /// the iPhone voice. Safe to call ahead of playback (prefetch).
-  Future<CheVoiceClip?> _synthesizeServerVoice(String text) async {
+  Future<CheVoiceClip?> _synthesizeServerVoice(String text, {String purpose = 'conversation'}) async {
     if (freeNativeVoiceMode) {
       _naturalVoiceServerErrored = true;
       return null;
@@ -211,9 +211,12 @@ extension _CheHomeVoice on _CHEHomeState {
           .post(
             Uri.parse('$cheAgentBaseUrl/api/voice/synthesize'),
             headers: _authHeaders,
-            body: jsonEncode({'text': text}),
+            body: jsonEncode({
+              'text': text,
+              if (purpose != 'conversation') 'purpose': purpose,
+            }),
           )
-          .timeout(const Duration(seconds: 5));
+          .timeout(cheVoiceWait(purpose, everyday: const Duration(seconds: 5)));
 
       if (response.statusCode == 401) {
         _naturalVoiceServerErrored = true;
@@ -332,13 +335,13 @@ extension _CheHomeVoice on _CHEHomeState {
     }
     final turn = _openSpeechTurn(readOnDemand: readOnDemand);
     if (turn == null) return;
-    // CHE refers to and pronounces herself as "CHE"; "Chay" is only the wake
-    // word, so no substitution happens here.
-    // Read This can include whole Brain memories or long articles. The
-    // ElevenLabs route intentionally rejects a clip above 800 characters;
-    // split before prefetch so every part can use Mary, in the correct order.
+    // CHE is written "CHE" and said "Chay" (owner, 2026-10-14). Only the words
+    // handed to a voice change; the transcript above keeps "CHE".
+    // Read This can include whole Brain memories or long articles. The Fish and
+    // ElevenLabs routes reject a clip above 800 characters; split before
+    // prefetch so every part can use them, in the correct order.
     for (final chunk in cheReadAloudChunks(text)) {
-      turn.add(chunk);
+      turn.add(cheSpokenText(chunk));
     }
     turn.close();
     await turn.done;
@@ -347,7 +350,9 @@ extension _CheHomeVoice on _CHEHomeState {
   /// Starts one spoken assistant turn. Chunks added to the returned pipeline
   /// are synthesized ahead of playback and played back to back; the mic is
   /// suppressed once at the start and resumed once at the end of the turn.
-  CheSpeechPipeline<CheVoiceClip>? _openSpeechTurn({bool readOnDemand = false}) {
+  /// [purpose] is 'story' for a story the owner asked for (Fish's expressive
+  /// voice), otherwise 'conversation'.
+  CheSpeechPipeline<CheVoiceClip>? _openSpeechTurn({bool readOnDemand = false, String purpose = 'conversation'}) {
     // Mirror the persisted UI Controls toggle (defaults ON).
     voiceResponsesEnabled = CheUiPreferences.instance.voiceResponsesEnabled;
     if (_realtimeVoice?.connected == true) {
@@ -388,15 +393,22 @@ extension _CheHomeVoice on _CHEHomeState {
         // Mary first: the Worker tries her on this route. Then the free server
         // voices, then the on-device voice. The reason Mary did not speak is kept
         // for the diagnostics sheet, next to the voice that actually played.
-        final edge = await CheEdgeVoice.speak(text);
+        final edge = await CheEdgeVoice.speak(text, purpose: purpose);
         final edgeClip = edge.clip;
-        final maryReason = cheMaryReason(edge.maryStatus, edgeClip?.engine ?? '');
+        final engine = edgeClip?.engine ?? '';
+        // Why CHE's own voice (Fish) and Mary did not speak, for diagnostics.
+        final maryReason = [
+          cheFishReason(edge.fishStatus, engine),
+          if (engine != 'fish-audio') cheMaryReason(edge.maryStatus, engine),
+        ].where((r) => r.isNotEmpty).join('; ');
         if (edge.maryStatus.isNotEmpty) _maryStatus = edge.maryStatus;
+        if (edge.fishStatus.isNotEmpty) _fishStatus = edge.fishStatus;
+        if (engine == 'fish-audio') _fishStatus = 'healthy';
         if (edgeClip != null && edgeClip.bytes.isNotEmpty) {
           _voiceFailReason = maryReason;
           return edgeClip;
         }
-        final server = await _synthesizeServerVoice(text);
+        final server = await _synthesizeServerVoice(text, purpose: purpose);
         if (server != null) {
           _voiceFailReason = maryReason;
           return server;

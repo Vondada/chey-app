@@ -187,6 +187,21 @@ CheUpdatePlan planCheUpdate({
   );
 }
 
+/// The line the Updates screen always shows, so the owner can confirm which
+/// version, build and patch this iPhone is running. A patch applies only after
+/// CHE restarts, so this names the patch actually running, not one downloaded.
+String cheInstalledSummary({
+  required String? installedLabel,
+  required int? patchNumber,
+  required bool patchesAvailable,
+}) {
+  if (installedLabel == null) {
+    return 'Installed: unknown. CHE could not read the build it is running.';
+  }
+  if (!patchesAvailable) return 'Installed: $installedLabel.';
+  return 'Installed: $installedLabel, ${patchNumber == null ? 'no patch yet' : 'patch $patchNumber'}.';
+}
+
 enum CheInstallCheck { none, waiting, confirmed, notConfirmed }
 
 /// Decides whether a SideStore install that CHE handed off has happened.

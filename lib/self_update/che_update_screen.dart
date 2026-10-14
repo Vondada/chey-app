@@ -214,10 +214,18 @@ class _CheMobileUpdateScreenState extends State<CheMobileUpdateScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(plan.detail, style: theme.textTheme.bodyLarge),
+                  const SizedBox(height: 8),
+                  // Always visible, so the owner can confirm what is installed.
+                  Text(
+                    _controller.installedSummary,
+                    style: theme.textTheme.bodyMedium,
+                  ),
                   Align(
                     alignment: Alignment.centerLeft,
                     child: TextButton.icon(
-                      onPressed: () => widget.onSpeak(plan.spoken),
+                      onPressed: () => widget.onSpeak(
+                        '${plan.spoken} ${_controller.installedSummary}',
+                      ),
                       icon: const Icon(Icons.volume_up_rounded),
                       label: const Text('Read this'),
                     ),

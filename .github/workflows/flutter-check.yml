@@ -66,4 +66,6 @@ jobs:
         run: for f in server/cloudflare/*.js; do node --check "$f" || exit 1; done
       - name: Run Worker unit tests
         run: node --test server/cloudflare/*.test.mjs
+      - name: Video narration tests (Fish Drama 3, cache, Piper fallback)
+        run: python3 -m unittest discover -s tools -p 'test_che_video_render.py'
 

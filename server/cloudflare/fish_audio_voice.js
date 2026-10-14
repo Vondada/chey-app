@@ -1,0 +1,495 @@
+// CHE's Fish Audio voice. Fish speaks first when the owner has set it up; the
+// existing voices stay as the fallback, so a Fish outage never silences CHE.
+//
+// Cost rules:
+// - Only the final text meant to be heard is sent. No history, no reasoning.
+// - Everyday speech uses the free developer model. The expressive model (used
+//   for stories and YouTube narration) is never chosen for ordinary replies,
+//   and it has a daily character cap.
+// - Finished audio is cached in Durable Object storage, and an identical
+//   request already in flight is shared, so the same words are paid for once.
+// - A slow Fish is measured and rested, so latency never grows unnoticed.
+//
+// The API key never leaves this module: it is not logged, returned or cached.
+
+const FISH_TTS_URL = 'https://api.fish.audio/v1/tts';
+export const FISH_DEFAULT_MODEL = 's2.1-pro-free';
+export const FISH_DEFAULT_EXPRESSIVE_MODEL = 'drama-3';
+
+// Settings the Worker hands the Durable Object on each voice request, so a
+// secret set after the object started is seen at once (see withMarySecrets).
+export const FISH_SECRET_NAMES = [
+  'FISH_API_KEY',
+  'CHE_FISH_VOICE_ID',
+  'CHE_FISH_PREFERRED',
+  'CHE_FISH_MODEL',
+  'CHE_FISH_EXPRESSIVE_MODEL',
+  'CHE_FISH_SPEED',
+  'CHE_FISH_CHARACTER_VOICES',
+  'CHE_FISH_MAX_LATENCY_MS',
+  'CHE_FISH_EXPRESSIVE_DAILY_CHARS',
+];
+
+const enabled = (value) => ['1', 'true', 'yes'].includes(String(value || '').toLowerCase());
+const VOICE_ID = /^[A-Za-z0-9_-]{8,80}$/;
+const MODEL_NAME = /^[A-Za-z0-9._-]{1,40}$/;
+const EXPRESSIVE_PURPOSES = new Set(['story', 'narration', 'expressive']);
+
+// One conversational clip. The phone splits Read This into 640-character
+// parts, so every part fits.
+const MAX_CONVERSATION_CHARS = 800;
+const MAX_EXPRESSIVE_CHARS = 6000;
+const CONVERSATION_TIMEOUT_MS = 7000;
+const EXPRESSIVE_TIMEOUT_MS = 60000;
+const DEFAULT_MAX_LATENCY_MS = 4000;
+const DEFAULT_EXPRESSIVE_DAILY_CHARS = 20000;
+
+const PAUSE_RATE_LIMIT_MS = 30 * 1000;
+const PAUSE_SERVER_MS = 60 * 1000;
+const PAUSE_TIMEOUT_MS = 2 * 60 * 1000;
+const PAUSE_SLOW_MS = 10 * 60 * 1000;
+const PAUSE_LONG_MS = 10 * 60 * 1000;
+const REFUSED_TEXT_MS = 60 * 1000;
+const LATENCY_WINDOW = 5;
+
+// Storage for finished audio. Values stay well under Durable Object storage's
+// 2 MB value limit; a long narration is split into parts.
+const CACHE_PREFIX = 'fish_tts:';
+const CACHE_INDEX_KEY = 'fish_tts_index';
+const CACHE_PART_BYTES = 1_000_000;
+const CACHE_MAX_ENTRIES = 80;
+const CACHE_MAX_BYTES = 24 * 1024 * 1024;
+const USAGE_KEY = 'fish_tts_usage';
+
+// In-memory state for this isolate. It holds status words, times and numbers,
+// never the key or the provider's error text.
+const state = {
+  pausedUntil: new Map(), // model ('*' = every model) → epoch ms
+  lastOutcome: null, // { status, code, model, at }
+  latencies: [], // recent conversational latencies (ms), cache misses only
+  refused: new Map(), // cache key → epoch ms, for text Fish refused
+  inflight: new Map(), // cache key → Promise<{ bytes, type } | null>
+  // Expressive characters used or reserved today, per model. See reserveExpressive.
+  ledger: { date: '', chars: new Map(), seeded: new Set() },
+};
+
+export function resetFishAudioState() {
+  state.pausedUntil.clear();
+  state.lastOutcome = null;
+  state.latencies = [];
+  state.refused.clear();
+  state.inflight.clear();
+  state.ledger = { date: '', chars: new Map(), seeded: new Set() };
+}
+
+export function fishSecretsFrom(env = {}) {
+  const out = {};
+  for (const name of FISH_SECRET_NAMES) {
+    out[name] = env[name] === undefined || env[name] === null ? '' : String(env[name]);
+  }
+  return out;
+}
+
+const keyOf = (env) => String(env.FISH_API_KEY || '').trim();
+const voiceOf = (env) => String(env.CHE_FISH_VOICE_ID || '').trim();
+
+export function fishModels(env = {}) {
+  const pick = (value, fallback) => {
+    const name = String(value || '').trim();
+    return MODEL_NAME.test(name) ? name : fallback;
+  };
+  return {
+    everyday: pick(env.CHE_FISH_MODEL, FISH_DEFAULT_MODEL),
+    expressive: pick(env.CHE_FISH_EXPRESSIVE_MODEL, FISH_DEFAULT_EXPRESSIVE_MODEL),
+  };
+}
+
+// Stories and narration get the expressive model; everything else is everyday.
+export function fishModelFor(env = {}, purpose = 'conversation') {
+  const models = fishModels(env);
+  return EXPRESSIVE_PURPOSES.has(String(purpose || '').toLowerCase()) ? models.expressive : models.everyday;
+}
+
+export function fishAudioConfigured(env = {}) {
+  return Boolean(keyOf(env)) && VOICE_ID.test(voiceOf(env));
+}
+
+// Fish speaks only when the key and voice are set and the owner setting is on.
+export function fishAudioReady(env = {}) {
+  return enabled(env.CHE_FISH_PREFERRED) && fishAudioConfigured(env);
+}
+
+// Character voices the owner authorized, by name. The phone and the renderer
+// name a character; they never send a raw voice ID.
+export function fishCharacterVoices(env = {}) {
+  let parsed = {};
+  try { parsed = JSON.parse(String(env.CHE_FISH_CHARACTER_VOICES || '{}')); } catch (_) { parsed = {}; }
+  const out = {};
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    for (const [name, id] of Object.entries(parsed)) {
+      const key = String(name).trim().toLowerCase();
+      if (/^[a-z0-9 _-]{1,40}$/.test(key) && VOICE_ID.test(String(id || '').trim())) out[key] = String(id).trim();
+    }
+  }
+  return out;
+}
+
+function voiceFor(env, character) {
+  const name = String(character || '').trim().toLowerCase();
+  if (!name || name === 'che') return voiceOf(env);
+  return fishCharacterVoices(env)[name] || null;
+}
+
+function paused(model, now) {
+  return Math.max(state.pausedUntil.get('*') || 0, state.pausedUntil.get(model) || 0) > now;
+}
+
+function pause(model, ms, now) {
+  state.pausedUntil.set(model, Math.max(state.pausedUntil.get(model) || 0, now + ms));
+}
+
+// Maps a failed Fish reply to the Keys tab's words and a pause. A refused clip
+// (bad text) returns { refused: true }: it says nothing about the key.
+export function classifyFishFailure(code, reason = '') {
+  const text = String(reason || '').toLowerCase();
+  const aboutModel = /model|plan|tier|eligib|not available|unsupported|permission/.test(text);
+  if (code === 401) return { status: 'unauthorized', scope: 'key', pauseMs: PAUSE_LONG_MS };
+  if (code === 402 || /credit|balance|quota|insufficient/.test(text)) {
+    return { status: 'out of credits', scope: 'model', pauseMs: PAUSE_LONG_MS };
+  }
+  if (code === 403) {
+    return aboutModel
+      ? { status: 'model not available', scope: 'model', pauseMs: PAUSE_LONG_MS }
+      : { status: 'unauthorized', scope: 'key', pauseMs: PAUSE_LONG_MS };
+  }
+  if (code === 429) return { status: 'rate-limited', scope: 'key', pauseMs: PAUSE_RATE_LIMIT_MS };
+  if (code >= 500) return { status: 'network', scope: 'key', pauseMs: PAUSE_SERVER_MS };
+  if ([400, 404, 422].includes(code) && aboutModel) {
+    return { status: 'model not available', scope: 'model', pauseMs: PAUSE_LONG_MS };
+  }
+  return { refused: true };
+}
+
+function record(status, code, model, now) {
+  state.lastOutcome = { status, code, model, at: now };
+}
+
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+}
+
+// A number setting, or null when it is unset. The live settings arrive with
+// absent values as empty strings, and Number('') is 0, so empty means unset.
+function numberSetting(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  const number = Number(raw);
+  return Number.isFinite(number) ? number : null;
+}
+
+function maxLatency(env) {
+  const value = numberSetting(env.CHE_FISH_MAX_LATENCY_MS);
+  return value !== null && value >= 1000 ? value : DEFAULT_MAX_LATENCY_MS;
+}
+
+// A conversational clip slower than the limit (median of the last few) rests
+// Fish for ten minutes, so the faster existing voice answers meanwhile.
+function noteLatency(env, model, ms, now) {
+  state.latencies = [...state.latencies, ms].slice(-LATENCY_WINDOW);
+  if (state.latencies.length >= 3 && median(state.latencies) > maxLatency(env)) {
+    pause(model, PAUSE_SLOW_MS, now);
+    record('slow', 200, model, now);
+    state.latencies = [];
+  }
+}
+
+async function sha256Hex(text) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// The cache key covers everything that changes the audio, and nothing secret
+// in readable form.
+export async function fishCacheKey({ model, voice, text, bitrate, speed }) {
+  return CACHE_PREFIX + (await sha256Hex(JSON.stringify([model, voice, bitrate, speed, text]))).slice(0, 40);
+}
+
+async function cacheRead(storage, key) {
+  if (!storage) return null;
+  try {
+    const index = (await storage.get(CACHE_INDEX_KEY)) || [];
+    const entry = index.find((item) => item.key === key);
+    if (!entry) return null;
+    const parts = [];
+    for (let i = 0; i < entry.parts; i += 1) {
+      const part = await storage.get(`${key}:${i}`);
+      if (!part) return null;
+      parts.push(new Uint8Array(part));
+    }
+    const bytes = new Uint8Array(entry.bytes);
+    let offset = 0;
+    for (const part of parts) { bytes.set(part, offset); offset += part.byteLength; }
+    // Most recently used goes last; eviction takes from the front.
+    await storage.put(CACHE_INDEX_KEY, [...index.filter((item) => item.key !== key), { ...entry, at: Date.now() }]);
+    return { bytes, type: entry.type || 'audio/mpeg' };
+  } catch (_) {
+    return null;
+  }
+}
+
+async function cacheWrite(storage, key, bytes, type, model) {
+  if (!storage || !bytes?.byteLength || bytes.byteLength > CACHE_MAX_BYTES) return;
+  try {
+    const parts = Math.ceil(bytes.byteLength / CACHE_PART_BYTES);
+    for (let i = 0; i < parts; i += 1) {
+      await storage.put(`${key}:${i}`, bytes.slice(i * CACHE_PART_BYTES, (i + 1) * CACHE_PART_BYTES));
+    }
+    let index = ((await storage.get(CACHE_INDEX_KEY)) || []).filter((item) => item.key !== key);
+    index.push({ key, bytes: bytes.byteLength, parts, type, model, at: Date.now() });
+    let total = index.reduce((sum, item) => sum + item.bytes, 0);
+    while (index.length > CACHE_MAX_ENTRIES || total > CACHE_MAX_BYTES) {
+      const [oldest, ...rest] = index;
+      for (let i = 0; i < oldest.parts; i += 1) await storage.delete(`${oldest.key}:${i}`);
+      total -= oldest.bytes;
+      index = rest;
+    }
+    await storage.put(CACHE_INDEX_KEY, index);
+  } catch (_) { /* a cache write never blocks speech */ }
+}
+
+const today = (now) => new Date(now).toISOString().slice(0, 10);
+
+// Daily counts per model: requests, characters sent, cache hits, failures and
+// latency. Characters are what Fish bills, so this is the cost measurement.
+export async function readFishUsage(storage, now = Date.now()) {
+  const usage = storage ? await storage.get(USAGE_KEY).catch(() => null) : null;
+  return usage && usage.date === today(now) ? usage : { date: today(now), models: {} };
+}
+
+async function addUsage(storage, model, change, now) {
+  if (!storage) return;
+  try {
+    const usage = await readFishUsage(storage, now);
+    const row = usage.models[model] || { requests: 0, chars: 0, cache_hits: 0, failures: 0, total_ms: 0, last_ms: 0 };
+    for (const [field, value] of Object.entries(change)) {
+      row[field] = field === 'last_ms' ? value : (row[field] || 0) + value;
+    }
+    usage.models[model] = row;
+    await storage.put(USAGE_KEY, usage);
+  } catch (_) { /* usage is a measurement, never a blocker */ }
+}
+
+// The day's expressive characters are kept in memory, seeded once per day from
+// storage. A request reserves its characters before Fish is called, with no
+// await between the check and the reservation, so requests running at the same
+// time cannot all pass the cap. A failed request gives its reservation back.
+async function reserveExpressive(env, storage, model, chars, now) {
+  const date = today(now);
+  if (state.ledger.date !== date) state.ledger = { date, chars: new Map(), seeded: new Set() };
+  if (!state.ledger.seeded.has(model)) {
+    const usage = await readFishUsage(storage, now);
+    if (state.ledger.date === date && !state.ledger.seeded.has(model)) {
+      state.ledger.chars.set(model, (state.ledger.chars.get(model) || 0) + (usage.models[model]?.chars || 0));
+      state.ledger.seeded.add(model);
+    }
+  }
+  const used = state.ledger.chars.get(model) || 0;
+  if (used + chars > expressiveDailyChars(env)) return false;
+  state.ledger.chars.set(model, used + chars);
+  return true;
+}
+
+function releaseExpressive(model, chars, now) {
+  if (state.ledger.date !== today(now)) return;
+  state.ledger.chars.set(model, Math.max(0, (state.ledger.chars.get(model) || 0) - chars));
+}
+
+function expressiveDailyChars(env) {
+  const value = numberSetting(env.CHE_FISH_EXPRESSIVE_DAILY_CHARS);
+  return value !== null && value >= 0 ? value : DEFAULT_EXPRESSIVE_DAILY_CHARS;
+}
+
+function audioResponse(bytes, type, model, cache) {
+  return new Response(bytes, {
+    headers: {
+      'Content-Type': type || 'audio/mpeg',
+      'Cache-Control': 'no-store',
+      'X-CHE-Voice': 'fish-audio',
+      'X-CHE-Fish': 'healthy',
+      'X-CHE-Fish-Model': model,
+      'X-CHE-Cache': cache,
+    },
+  });
+}
+
+/**
+ * Speaks `text` with Fish Audio, or returns null so the caller uses the
+ * existing voice. `purpose` picks the model: 'conversation' (default) and
+ * 'read' use the everyday model; 'story' and 'narration' use the expressive one.
+ * `character` names an owner-authorized character voice; CHE's own voice is the
+ * default. `storage` is the Durable Object storage used for the audio cache.
+ */
+export async function fishAudioSpeech(env = {}, text, {
+  purpose = 'conversation',
+  character = '',
+  storage = null,
+  fetcher = fetch,
+  now = Date.now(),
+} = {}) {
+  if (!fishAudioReady(env)) return null;
+  const said = String(text || '').replace(/\s+/g, ' ').trim();
+  const expressive = EXPRESSIVE_PURPOSES.has(String(purpose || '').toLowerCase());
+  if (!said || said.length > (expressive ? MAX_EXPRESSIVE_CHARS : MAX_CONVERSATION_CHARS)) return null;
+  const model = fishModelFor(env, purpose);
+  const voice = voiceFor(env, character);
+  if (!voice) return null;
+  const configuredSpeed = numberSetting(env.CHE_FISH_SPEED);
+  const speed = configuredSpeed !== null && configuredSpeed > 0
+    ? Math.min(1.3, Math.max(0.8, configuredSpeed)) : 1;
+  // Speech at 64 kbps is clear and half the bytes of 128, so it reaches the
+  // phone sooner. Narration is kept at 128 for the finished video.
+  const bitrate = expressive ? 128 : 64;
+  const key = await fishCacheKey({ model, voice, text: said, bitrate, speed });
+
+  const cached = await cacheRead(storage, key);
+  if (cached) {
+    await addUsage(storage, model, { cache_hits: 1 }, now);
+    return audioResponse(cached.bytes, cached.type, model, 'hit');
+  }
+  if (paused(model, now)) return null;
+  if ((state.refused.get(key) || 0) > now) return null;
+
+  // The same words requested twice at once (the phone's two voice routes, or a
+  // retry) share one synthesis and one reservation against the daily cap.
+  let pending = state.inflight.get(key);
+  if (!pending && expressive) {
+    if (!(await reserveExpressive(env, storage, model, said.length, now))) {
+      record('daily limit reached', 0, model, now);
+      return null;
+    }
+    // Another request for the same words may have started while this one
+    // waited; share it and give this reservation back.
+    pending = state.inflight.get(key);
+    if (pending) releaseExpressive(model, said.length, now);
+  }
+  const owner = !pending;
+  if (owner) {
+    pending = synthesize(env, { said, model, voice, bitrate, speed, expressive, storage, fetcher, key, now })
+      .then((result) => {
+        if (!result && expressive) releaseExpressive(model, said.length, now);
+        return result;
+      });
+    state.inflight.set(key, pending);
+  }
+  let result;
+  try {
+    result = await pending;
+  } finally {
+    if (owner) state.inflight.delete(key);
+  }
+  return result ? audioResponse(result.bytes, result.type, model, owner ? 'miss' : 'shared') : null;
+}
+
+async function synthesize(env, { said, model, voice, bitrate, speed, expressive, storage, fetcher, key, now }) {
+  const started = Date.now();
+  try {
+    const response = await fetcher(FISH_TTS_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${keyOf(env)}`,
+        'Content-Type': 'application/json',
+        model,
+      },
+      body: JSON.stringify({
+        text: said,
+        reference_id: voice,
+        format: 'mp3',
+        mp3_bitrate: bitrate,
+        normalize: true,
+        latency: expressive ? 'normal' : 'balanced',
+        ...(speed !== 1 ? { prosody: { speed, volume: 0 } } : {}),
+      }),
+      signal: AbortSignal.timeout(expressive ? EXPRESSIVE_TIMEOUT_MS : CONVERSATION_TIMEOUT_MS),
+    });
+    const ms = Date.now() - started;
+    if (!response.ok) {
+      // The reason is read only to classify the failure; it is never logged
+      // or returned.
+      const reason = (await response.text().catch(() => '')).slice(0, 400);
+      const failure = classifyFishFailure(response.status, reason);
+      await addUsage(storage, model, { failures: 1 }, now);
+      if (failure.refused) {
+        state.refused.set(key, now + REFUSED_TEXT_MS);
+        record('refused text', response.status, model, now);
+        return null;
+      }
+      pause(failure.scope === 'key' ? '*' : model, failure.pauseMs, now);
+      record(failure.status, response.status, model, now);
+      return null;
+    }
+    const type = (response.headers.get('content-type') || '').toLowerCase();
+    if (!/^audio\/|^application\/octet-stream/.test(type)) {
+      record('network', response.status, model, now);
+      pause(model, PAUSE_SERVER_MS, now);
+      return null;
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (!bytes.byteLength || bytes.byteLength > CACHE_MAX_BYTES) {
+      record('network', response.status, model, now);
+      return null;
+    }
+    record('healthy', 200, model, now);
+    await addUsage(storage, model, { requests: 1, chars: said.length, total_ms: ms, last_ms: ms }, now);
+    if (!expressive) noteLatency(env, model, ms, now);
+    const audioType = type.startsWith('audio/') ? type.split(';')[0] : 'audio/mpeg';
+    await cacheWrite(storage, key, bytes, audioType, model);
+    return { bytes, type: audioType };
+  } catch (_) {
+    // A timeout or network error rests Fish briefly so a slow provider cannot
+    // add its wait to every clip. Never log the key.
+    pause(model, PAUSE_TIMEOUT_MS, now);
+    record('network', 0, model, now);
+    await addUsage(storage, model, { failures: 1 }, now);
+    return null;
+  }
+}
+
+// Fish's row in the Keys tab. Status words match the other rows; only the last
+// four characters of the key leave this module.
+export function fishAudioKeyStatus(env = {}, now = Date.now()) {
+  const models = fishModels(env);
+  const modelLine = `Everyday voice ${models.everyday}; stories and narration ${models.expressive}.`;
+  if (!keyOf(env)) return { status: 'not set up', last4: '', detail: 'Add FISH_API_KEY as a GitHub Actions secret, then deploy.' };
+  const last4 = keyOf(env).slice(-4);
+  if (!VOICE_ID.test(voiceOf(env))) {
+    return { status: 'needs a voice', last4, detail: 'Add CHE_FISH_VOICE_ID (the Fish voice for CHE) as a GitHub Actions secret, then deploy.' };
+  }
+  if (!enabled(env.CHE_FISH_PREFERRED)) return { status: 'off', last4, detail: `Fish is switched off by CHE_FISH_PREFERRED. ${modelLine}` };
+  if (!state.lastOutcome) return { status: 'not tried yet', last4, detail: `Fish has not spoken since the last restart. ${modelLine}` };
+  const { status, code, model, at } = state.lastOutcome;
+  const resting = Math.max(state.pausedUntil.get('*') || 0, state.pausedUntil.get(model) || 0);
+  const waiting = resting > now ? ` Fish waits until ${new Date(resting).toISOString()} before trying ${model} again.` : '';
+  const last = state.latencies.length ? ` Last reply took ${state.latencies[state.latencies.length - 1]} ms.` : '';
+  return {
+    status,
+    last4,
+    detail: `Last attempt ${new Date(at).toISOString()} with ${model}${code ? ` (HTTP ${code})` : ''}.${last}${waiting} ${modelLine}`,
+  };
+}
+
+// Booleans, model names and status words only, never a key or a voice ID.
+export function fishAudioDiagnostics(env = {}, now = Date.now()) {
+  const models = fishModels(env);
+  return {
+    preferred: enabled(env.CHE_FISH_PREFERRED),
+    key_present: Boolean(keyOf(env)),
+    voice_id_format_ok: VOICE_ID.test(voiceOf(env)),
+    ready: fishAudioReady(env),
+    everyday_model: models.everyday,
+    expressive_model: models.expressive,
+    status: fishAudioKeyStatus(env, now).status,
+    paused: paused(models.everyday, now),
+    median_latency_ms: state.latencies.length ? median(state.latencies) : null,
+  };
+}
