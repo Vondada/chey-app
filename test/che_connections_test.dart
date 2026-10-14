@@ -53,6 +53,9 @@ void main() {
     expect(find.text('NinjaTrader / Tradovate'), findsOneWidget);
     expect(find.textContaining('No secure bank-link provider'), findsOneWidget);
     expect(find.text('Unsupported'), findsWidgets);
+    await tester.scrollUntilVisible(find.text('Payments / Stripe'), 200,
+      scrollable: find.byType(Scrollable).first);
+    await tester.pumpAndSettle();
     expect(find.text('Configured'), findsWidgets, reason: 'a key alone is not verified connection');
   });
 
