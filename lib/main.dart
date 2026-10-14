@@ -1948,6 +1948,7 @@ OWNER AGENCY
       builder: (_) => CheConnectionsScreen(
         baseUrl: cheAgentBaseUrl,
         headers: () => _authHeaders,
+        onSpeak: (line) => unawaited(speakText(line, record: false, readOnDemand: true)),
         onBrokerConnect: () {
           Navigator.of(context).pop();
           _goShellTab(1);
