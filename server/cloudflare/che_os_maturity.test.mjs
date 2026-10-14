@@ -52,6 +52,44 @@ test('internal provider failover is silent in owner chat', () => {
   );
 });
 
+// The sanitizer only checks replies over 120 characters, so each case is padded.
+const longReply = (text) => `${text} This sentence makes the reply long enough, well past the limit, for the provider-dump check to apply to it.`;
+
+test('a real answer is never replaced because a job ID, price or word contains a status code or key prefix', () => {
+  for (const reply of [
+    "I'll read my own source from GitHub. Coding job e124299b is queued for your request.",
+    'Here is a task-by-task plan for the kitchen remodel, starting with the cabinets.',
+    'It is a risk-free trial for thirty days, and you can cancel at any time.',
+    'Your total is $1,429 including tax, due on the first of the month.',
+    'The office is at 404 Main Street, on the second floor.',
+    'He was the bearer of good news this morning.',
+  ]) {
+    const long = longReply(reply);
+    assert.ok(long.length > 120, reply);
+    assert.equal(sanitizeOwnerText(long, { truncate: false }), long, reply);
+  }
+});
+
+test('provider status dumps and credentials are still kept out of owner replies', () => {
+  for (const leak of [
+    'Error 429: Too Many Requests from the upstream provider.',
+    '{"error":{"code":401,"message":"Invalid API key provided"}}',
+    'HTTP/1.1 402 Payment Required',
+    'The provider said 404 not found for the model.',
+    '429: Too Many Requests. Please retry after 20 seconds.',
+    '401 - Unauthorized. The request was not authenticated.',
+    '404: Not Found. The requested model does not exist.',
+    'Use the key sk-proj-abcdefghijklmnop1234 for this.',
+    'Groq key gsk_abcdefghijklmnop1234 is set.',
+    'Gemini key AIzaSyA1234567890abcdefghijklmnopqrs is set.',
+    'Authorization: Bearer abcdefghijklmnop1234',
+  ]) {
+    const long = longReply(leak);
+    assert.ok(long.length > 120, leak);
+    assert.match(sanitizeOwnerText(long, { truncate: false }), /not confirmed.*running/i, leak);
+  }
+});
+
 test('final owner replies can be sanitized without truncation', () => {
   const reply = 'A complete answer. '.repeat(20);
   assert.equal(sanitizeOwnerText(reply), reply.slice(0, 280));
