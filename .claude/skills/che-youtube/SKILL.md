@@ -39,4 +39,5 @@ Status: the package format and the validator work today. Rendering and upload re
 - Spending money (stock media, paid voices) needs the owner's yes first.
 
 ## Lessons (append dated entries)
+- **2026-10-14, measured with `tests/measure.mjs`.** Checking a package by hand means reading 11,216 bytes of uploader and pipeline code. `check_package.mjs` answers in 738 bytes. It cannot judge whether a claim is true, only whether it is sourced, so still read the sources.
 - **2026-10-14: CHE's uploader silently clips descriptions to 500 characters.** The validator warns before that happens.

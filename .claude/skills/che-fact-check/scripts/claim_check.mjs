@@ -6,11 +6,21 @@
 //   claim_check.mjs --reply "text" [--owner "owner's own words"]… [--records records.json]
 //                   [--tool plugin/tool]… [--source https://…]… [--document-read] [--message "owner message"] [--json]
 //   claim_check.mjs --route "owner message" [--records records.json]
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const workerDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../server/cloudflare');
+// The Worker of the checkout this runs in (a worktree included), else the
+// one next to this script.
+function workerDirectory() {
+  try {
+    const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    if (top && existsSync(resolve(top, 'server/cloudflare/worker.js'))) return resolve(top, 'server/cloudflare');
+  } catch (_) { /* not in a git checkout */ }
+  return resolve(dirname(fileURLToPath(import.meta.url)), '../../../../server/cloudflare');
+}
+const workerDir = workerDirectory();
 const lib = (file) => import(pathToFileURL(resolve(workerDir, file)).href);
 
 const argv = process.argv.slice(2);

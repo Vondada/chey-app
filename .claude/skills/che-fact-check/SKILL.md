@@ -56,6 +56,7 @@ Run a case with che-debug's replay: `node .claude/skills/che-debug/scripts/repla
 6. Prove every change with a replay plus a test through `/api/chat`. In production, prove it with the deploy's live memory probe (see che-release).
 
 ## Lessons (append dated entries)
+- **2026-10-14, measured with `tests/measure.mjs`.** Answering "what does the owner see for this draft?" by reading the guard code means reading 70,567 bytes (≈17.6k tokens) of `memory_provenance.js` and `truth_layer.js`. `claim_check.mjs` answers in 270 bytes, and its verdict matches `/api/chat` on 8 of 8 fixtures (tests).
 - **2026-10-14, 12:34 and 12:56 owner screenshots.**
   - Root causes:
     - exact-phrase routing;

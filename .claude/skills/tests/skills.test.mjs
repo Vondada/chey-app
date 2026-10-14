@@ -340,3 +340,9 @@ test('workflow checker: catches a broken inline script and passes the real workf
   const real = run('python3', [script('che-debug', 'check_workflows.py'), ...readdirSync(join(repo, '.github/workflows')).map((f) => join(repo, '.github/workflows', f))]);
   assert.equal(real.status, 0, real.stdout);
 });
+
+test('scripts use the checkout they run in, and fall back to their own outside git', () => {
+  const outside = node([script('che-fact-check', 'claim_check.mjs'), '--route', 'Is that true, sir?'], { cwd: mkdtempSync(join(tmpdir(), 'nogit-')) });
+  assert.equal(outside.status, 0, outside.stderr);
+  assert.match(outside.stdout, /ROUTE: che_evidence_receipt/);
+});

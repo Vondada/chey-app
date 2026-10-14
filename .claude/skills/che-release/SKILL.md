@@ -46,6 +46,7 @@ It reports:
 - Never print secrets. The script needs none, and an optional `GITHUB_TOKEN` is never printed.
 
 ## Lessons (append dated entries)
+- **2026-10-14, measured with `tests/measure.mjs`.** Five raw GitHub API responses (436,533 bytes) vs `release_status.mjs` (839 bytes) for "is #300 merged and live?".
 - **2026-10-14: workers.dev is blocked from the cloud dev sandbox.** Rely on the deploy's "Verify live deployed commit" step, which fails unless `/health` reports the merge commit. The script reads that step.
 - **2026-10-14: reading a full deploy job log for the probe output cost about 25k tokens.** The deploy now also writes `::notice` annotations (titled "Live CHE commit", "Memory truth" and "CHE voice"), which the script reads in one small request.
 - **2026-10-14: answering "is #300 merged and live?" from raw GitHub API JSON means 446,575 bytes across 7 endpoints.** The script prints the same answer in 843 bytes.

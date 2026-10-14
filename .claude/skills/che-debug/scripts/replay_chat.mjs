@@ -7,12 +7,21 @@
 //   node .claude/skills/che-debug/scripts/replay_chat.mjs case.json [--json] [--network] [--verbose]
 //
 // Case format: .claude/skills/che-debug/reference/replay-format.md
-import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const workerDir = resolve(here, '../../../../server/cloudflare');
+// The Worker of the checkout this runs in (a worktree included), else the
+// one next to this script.
+function workerDirectory() {
+  try {
+    const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    if (top && existsSync(resolve(top, 'server/cloudflare/worker.js'))) return resolve(top, 'server/cloudflare');
+  } catch (_) { /* not in a git checkout */ }
+  return resolve(dirname(fileURLToPath(import.meta.url)), '../../../../server/cloudflare');
+}
+const workerDir = workerDirectory();
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);
 const casePath = args.find((a) => !a.startsWith('--'));
