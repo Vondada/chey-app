@@ -32,15 +32,16 @@ export function isSafeMemoryText(text) {
  * research write-back so there is one owner-visible list path.
  */
 function memorySupersessionSlot(text) {
-  let value = clip(text, 500).trim().toLowerCase();
-  if (value.startsWith('my ')) value = value.slice(3);
+  const original = clip(text, 500).trim().toLowerCase();
+  let value = original;
   // General owner corrections, not only "favorite X": a new "my X is Y"
   // supersedes the same subject while retaining the inactive audit record.
   // Avoid matching "my X" embedded in a research note or other narrative.
-  const ownerFact = /^my\s+([a-z0-9][a-z0-9 '\-]{1,55}?)\s+(?:is|are|=)\s+\S/i.exec(value);
+  const ownerFact = /^my\s+([a-z0-9][a-z0-9 '\-]{1,55}?)\s+(?:is|are|=)\s+\S/i.exec(original);
   if (ownerFact && !ownerFact[1].startsWith('favorite ')) {
     return `owner-fact:${ownerFact[1].trim().replace(/\s+/g, ' ')}`;
   }
+  if (value.startsWith('my ')) value = value.slice(3);
   if (!value.startsWith('favorite ')) return '';
   const rest = value.slice('favorite '.length);
   for (const separator of [':', ' = ', ' is ']) {
