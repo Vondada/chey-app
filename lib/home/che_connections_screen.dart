@@ -19,6 +19,7 @@ class CheConnectionsScreen extends StatefulWidget {
     required this.onVoiceSettings,
     required this.onKeys,
     this.client,
+    this.onSpeak,
   });
 
   final String baseUrl;
@@ -27,6 +28,7 @@ class CheConnectionsScreen extends StatefulWidget {
   final VoidCallback onVoiceSettings;
   final VoidCallback onKeys;
   final http.Client? client;
+  final ValueChanged<String>? onSpeak;
 
   @override
   State<CheConnectionsScreen> createState() => _CheConnectionsScreenState();
@@ -52,7 +54,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
     unawaited(_refresh());
   }
 
-  Future<void> _refresh() async {
+  Future<void> _refresh({bool announce = false}) async {
     setState(() { _loading = true; _error = ''; });
     try {
       final r = await _client.get(
@@ -68,6 +70,14 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
       }
       if (!mounted) return;
       setState(() { _connectors = Map<String, dynamic>.from(raw['connectors'] as Map); });
+      if (announce) {
+        HapticFeedback.selectionClick();
+        final youtube = _status('youtube');
+        final broker = _status('broker');
+        final note = 'Connection check complete. YouTube: $youtube. NinjaTrader: $broker. Bank linking remains unavailable.';
+        setState(() => _message = note);
+        widget.onSpeak?.call(note);
+      }
     } on Object catch (e) {
       if (!mounted) return;
       // Never reuse stale "Connected" labels after a network/auth error.
@@ -75,6 +85,10 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
         _connectors = {};
         _error = e is TimeoutException ? 'CHE did not answer in time.' : e.toString().replaceFirst('Bad state: ', '');
       });
+      if (announce) {
+        HapticFeedback.heavyImpact();
+        widget.onSpeak?.call('I could not verify the connections, sir. ' + _error);
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -227,13 +241,13 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
         actions: [
           IconButton(
             tooltip: 'Refresh verified connections',
-            onPressed: _loading ? null : _refresh,
+            onPressed: _loading ? null : () => unawaited(_refresh(announce: true)),
             icon: const Icon(Icons.refresh_rounded),
           ),
         ],
       ),
       body: SafeArea(child: RefreshIndicator(
-        onRefresh: _refresh,
+        onRefresh: () => _refresh(announce: true),
         child: ListView(padding: const EdgeInsets.all(16), children: [
           const Text('One app. Real connections.', style: TextStyle(fontSize: 23, fontWeight: FontWeight.w800)),
           const SizedBox(height: 6),
@@ -246,7 +260,8 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
           ),
           if (_message.isNotEmpty) Padding(
             padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Text(_message, style: const TextStyle(color: CheColors.accent)),
+            child: Semantics(liveRegion: true,
+              child: Text(_message, style: const TextStyle(color: CheColors.accent))),
           ),
           _heading('Google & creators'),
           _card('YouTube channel', Icons.play_circle_outline_rounded, 'youtube',
