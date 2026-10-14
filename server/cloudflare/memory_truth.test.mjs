@@ -378,6 +378,8 @@ test('deploy check: the live memory probe runs the real chat route in an isolate
     assert.equal(report.passed, report.total);
     assert.equal(report.memory_route_model_calls, 0);
     assert.ok(report.total >= 10);
+    // Only the live model's own answer may downgrade to a deploy warning.
+    assert.deepEqual(report.steps.filter((step) => step.optional).map((step) => step.name), ['Model answer has no unsupported owner claims']);
     assert.equal(JSON.stringify([...stores.get('owner').entries()]), ownerBefore, "the owner's CHE is never touched");
     assert.deepEqual(vectorWrites.filter((url) => /che_memory\?on_conflict/.test(url)), [], 'no test conversation reaches shared vector memory');
     const probe = stores.get('memory-truth-probe').get('che');
@@ -482,4 +484,18 @@ test('evidence asks are whole questions: real requests that start the same way a
   assert.deepEqual(evidenceRequestSplit(PASTED), { rest: 'Research a fact, check your sources, and explain what you verified.' });
   assert.equal(evidenceQuestion('No. How do you know that, sir?', []), true);
   assert.equal(evidenceQuestion('Did I really say that?', []), true);
+});
+
+test('"Remember I said my meeting is Friday" is saved, not looked up; "remember what I said" still asks', async () => {
+  assert.equal(ownerMemoryQuestion('Remember I said my meeting is Friday'), null);
+  assert.equal(ownerMemoryQuestion('Can you remember that I said my meeting is Friday'), null);
+  assert.ok(ownerMemoryQuestion('Remember what I said about my meeting?'));
+  assert.ok(ownerMemoryQuestion('Do you remember what I told you about my meeting?'));
+  const che = await owner();
+  const saved = await che.say('Remember I said my meeting is Friday');
+  assert.notEqual(saved.meta.source, 'che_memory_provenance');
+  assert.match(saved.reply, /remember/i);
+  const recall = await che.say('What did I tell you about my meeting?');
+  assert.equal(recall.meta.source, 'che_memory_provenance');
+  assert.match(recall.reply, /meeting is Friday/i);
 });

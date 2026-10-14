@@ -136,7 +136,9 @@ const OWNER_ADVERBS = '(?:(?:personally|previously|already|ever|just|once|actual
 const OWNER_ACT_PAST = '\\b(?:confirmed|verified|told you|said|mentioned|stated|approved|tested|witnessed|experienced|decided|agreed|shared(?: with you)?|taught you|let you know|asked you to remember)';
 const OWNER_SUBJECT_ACT = new RegExp(`\\bi (?:have |had )?${OWNER_ADVERBS}${OWNER_ACT_PAST}\\b|\\bi did ${OWNER_ADVERBS}${OWNER_ACT}\\b`);
 const OWNER_INVERTED_ACT = new RegExp(`\\b(?:have|did|had) i ${OWNER_ADVERBS}${OWNER_ACT}\\b`);
-const ASK_FORM = /^(?:(?:can|could|would|will) you (?:please )?)?(?:tell me|name|give me|share|list|remind me|what|which|(?:do )?you (?:remember|recall|know)|remember|recall|say|have i|did i|is there|are there|anything|something)\b/;
+// A bare "remember" is a command to save ("Remember I said my meeting is
+// Friday"); it asks only when a question word follows ("remember what I said").
+const ASK_FORM = /^(?:(?:can|could|would|will) you (?:please )?)?(?:tell me|name|give me|share|list|remind me|what|which|(?:do )?you (?:remember|recall|know)|(?:remember|recall) (?:when|what|whether|if|anything|something|the time|which|how)|say|have i|did i|is there|are there|anything|something)\b/;
 
 /**
  * A question about what the owner personally said, confirmed, approved or did.

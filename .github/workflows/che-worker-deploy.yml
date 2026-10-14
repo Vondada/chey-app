@@ -405,10 +405,12 @@ jobs:
             console.log(`     ${String(step.reply || '').replace(/\s+/g, ' ')}`);
             summary(`| ${step.name} | ${step.pass ? 'pass' : '**FAIL**'} | ${step.route || 'model'} | ${step.model_calls ?? '?'} | ${step.ms} |`);
           }
-          const failedMemory = (report.steps || []).filter((step) => !step.pass && step.route !== '');
-          const failedModel = (report.steps || []).filter((step) => !step.pass && step.route === '');
+          // Only the step the Worker marks optional (a live model's own words)
+          // may warn instead of fail; an errored or unrouted memory step fails.
+          const failedMemory = (report.steps || []).filter((step) => !step.pass && step.optional !== true);
+          const failedModel = (report.steps || []).filter((step) => !step.pass && step.optional === true);
           for (const step of failedModel) console.log(`::warning title=Model answer check::${step.name}: ${String(step.reply).slice(0, 200)}`);
-          if (!report.ok && (failedMemory.length || !failedModel.length)) {
+          if (failedMemory.length || (!report.ok && !failedModel.length)) {
             console.log(`::error title=Memory truth check failed::${failedMemory.map((step) => step.name).join('; ') || report.error || 'see log'}`);
             process.exit(1);
           }

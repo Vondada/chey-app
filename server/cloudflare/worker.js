@@ -303,7 +303,9 @@ async function memoryTruthProbe(env, token) {
   const food = ['pizza', 'sushi'];
   const history = [];
   const steps = [];
-  const turn = async (name, message, check, { keep = true, useHistory = true } = {}) => {
+  // `optional` marks the one step whose words come from a live model; any
+  // other failing step, including a transport error, fails the deploy.
+  const turn = async (name, message, check, { keep = true, useHistory = true, optional = false } = {}) => {
     const started = Date.now();
     const res = await call('/api/chat', { message, history: useHistory ? history.slice(-20) : [] }, device);
     const raw = await res.text();
@@ -312,7 +314,7 @@ async function memoryTruthProbe(env, token) {
       || String(lines.find((line) => line.message)?.message || '');
     const done = lines.find((line) => line.type === 'done') || {};
     const pass = res.status === 200 && check(reply, done);
-    steps.push({ name, pass, status: res.status, ms: Date.now() - started, route: done.source || '', model_calls: done.model_calls ?? null, reply: reply.slice(0, 500) });
+    steps.push({ name, pass, optional, status: res.status, ms: Date.now() - started, route: done.source || '', model_calls: done.model_calls ?? null, reply: reply.slice(0, 500) });
     if (keep) history.push({ role: 'user', content: message }, { role: 'assistant', content: reply });
     return reply;
   };
@@ -356,7 +358,7 @@ async function memoryTruthProbe(env, token) {
     // G/H: a real model answer; nothing it says may claim an unrecorded owner action or a tool it did not run.
     await turn('Model answer has no unsupported owner claims', 'In two short sentences, what do you remember about my week at the office?',
       (reply) => !guardOwnerAttributions(reply, { records: [], ownerTurns: food.map((item) => `my favorite food is ${item}`) }).removed.length
-        && !/\b(?:i|we)\s+(?:searched|verified|compared|cross.?checked|reviewed the)\b/i.test(reply), { useHistory: false });
+        && !/\b(?:i|we)\s+(?:searched|verified|compared|cross.?checked|reviewed the)\b/i.test(reply), { useHistory: false, optional: true });
   } finally {
     await call('/api/security/revoke_self', {}, device).catch(() => null);
   }
