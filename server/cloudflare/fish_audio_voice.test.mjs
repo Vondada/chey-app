@@ -334,6 +334,20 @@ test('Fish refusing different words twice in a row rests that model and shows Fi
   assert.doesNotMatch(JSON.stringify(fishAudioDiagnostics(env())), /Invalid reference_id/, 'the public probe never carries Fish\'s words');
 });
 
+test('the same words refused again do not rest the model', async () => {
+  // One problem phrase, retried after its one-minute skip, is still one phrase.
+  const { calls, fetcher } = fakeFish((n, call) => (call.body.text === 'Problem phrase.'
+    ? new Response('{"message":"text invalid"}', { status: 400 })
+    : new Response(MP3, { headers: { 'Content-Type': 'audio/mpeg' } })));
+  const storage = memoryStorage();
+  const now = Date.now();
+  assert.equal(await fishAudioSpeech(env(), 'Problem phrase.', { storage, fetcher, now }), null);
+  assert.equal(await fishAudioSpeech(env(), 'Problem phrase.', { storage, fetcher, now: now + 61_000 }), null);
+  assert.equal(fishAudioKeyStatus(env()).status, 'refused text');
+  assert.equal((await fishAudioSpeech(env(), 'Other words.', { storage, fetcher, now: now + 62_000 })).status, 200);
+  assert.equal(calls.length, 3);
+});
+
 test('Fish\'s reason is short and never carries the key or a bearer token', () => {
   const reason = fishRefusalReason(`{"detail":"bad Bearer abc.def key ${KEY} ${'x'.repeat(300)}"}`, env());
   assert.ok(reason.length <= 160);

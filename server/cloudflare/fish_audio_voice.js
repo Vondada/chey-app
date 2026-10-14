@@ -70,7 +70,7 @@ const state = {
   lastOutcome: null, // { status, code, model, at }
   latencies: [], // recent conversational latencies (ms), cache misses only
   refused: new Map(), // cache key → epoch ms, for text Fish refused
-  refusals: new Map(), // model → { count, at }: refusals in a row
+  refusals: new Map(), // model → { count, at, key }: refusals of different words in a row
   inflight: new Map(), // cache key → Promise<{ bytes, type } | null>
   // Expressive characters used or reserved today, per model. See reserveExpressive.
   ledger: { date: '', chars: new Map(), seeded: new Set() },
@@ -459,9 +459,11 @@ async function synthesize(env, { said, model, voice, bitrate, speed, expressive,
         state.refused.set(key, now + REFUSED_TEXT_MS);
         // Fish refusing different words in a row is a setup problem, not the
         // text: rest that model so every clip does not wait for a refusal.
+        // The same words refused again count once; only different words do.
         const last = state.refusals.get(model);
-        const count = last && now - last.at < PAUSE_LONG_MS ? last.count + 1 : 1;
-        state.refusals.set(model, { count, at: now });
+        const recent = last && now - last.at < PAUSE_LONG_MS;
+        const count = recent ? (last.key === key ? last.count : last.count + 1) : 1;
+        state.refusals.set(model, { count, at: now, key });
         if (count >= 2) {
           pause(model, PAUSE_LONG_MS, now);
           record('request refused', response.status, model, now, reason);

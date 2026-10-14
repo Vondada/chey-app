@@ -341,7 +341,7 @@ jobs:
             process.exit(0);
           }
           mkdirSync(dir, { recursive: true });
-          const call = async ({ model, text, bitrate, expressive, voice = env.CHE_FISH_VOICE_ID }) => {
+          const call = async ({ model, text, bitrate, expressive, voice = env.CHE_FISH_VOICE_ID, timeoutMs = 90000 }) => {
             const started = Date.now();
             const row = { model, chars: text.length, voice: voice ? 'CHE voice' : 'none' };
             try {
@@ -351,7 +351,7 @@ jobs:
                 method: 'POST',
                 headers: { Authorization: `Bearer ${env.FISH_API_KEY}`, 'Content-Type': 'application/msgpack', model },
                 body: encodeMsgpack(body),
-                signal: AbortSignal.timeout(90000),
+                signal: AbortSignal.timeout(timeoutMs),
               });
               const bytes = new Uint8Array(await response.arrayBuffer());
               row.http = response.status;
@@ -394,14 +394,21 @@ jobs:
           }
           // Something was refused. A few short calls show which part: the model
           // name, the voice ID, or the request itself. About 16 characters each.
+          // Only when Fish answered at all: an unreachable Fish is not diagnosed
+          // here, and each check is bounded so the deploy job keeps its time.
+          if (!report.some((row) => Number.isInteger(row.http))) {
+            console.log('Fish did not answer; no further checks this deploy.');
+            process.exit(0);
+          }
           const probe = "Hello, I'm Chay.";
           const variants = [
             { model: everyday }, { model: 's2-pro' }, { model: 's1' }, { model: 's1', voice: '' },
             { model: expressive }, { model: 'drama-3-preview' },
           ].filter((v, i, all) => all.findIndex((o) => o.model === v.model && o.voice === v.voice) === i);
           for (const variant of variants) {
-            const row = await call({ text: probe, bitrate: 64, expressive: false, ...variant });
+            const row = await call({ text: probe, bitrate: 64, expressive: false, timeoutMs: 15000, ...variant });
             console.log(`Fish check ${variant.model}${variant.voice === '' ? ' without the CHE voice' : ''}: ${show(row)}`);
+            if (!Number.isInteger(row.http)) break;
           }
           JS
 
