@@ -64,6 +64,15 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (updated by Claude, 2026-10-14 ~16:45 UTC — Command Center PR #302 open; skills #301 live)
+
+**Owner mission "CHE Command Center" (Chat → Commands, 71 commands, suggestions, workflows). PR #302 open from `claude/che-latency-optimization-8ruaus` (head 288658d), title carries `[worker-deploy] [ios-build]`. CI running.**
+- Skills mission done: PR #301 merged as `a88b2ec` and deployed (run 38593144772): live commit VERIFIED a88b2ecc37e3, memory truth 10/10 (0 model calls, slowest 84 ms), ElevenLabs spoke through the live Worker.
+- #302 design: `server/cloudflare/command_catalog.js` is ONE catalog over existing handlers (do not add a second router/planner/agent). Slash commands re-send through `/api/chat`, so all gates apply; workflows are `command` nodes on `objective_graph.js`; deterministic `command_suggestions` NDJSON event after replies; Flutter page in `lib/commands/`; docs `docs/CHE_COMMAND_CENTER.md`.
+- Verified locally: Worker 1005/1005, Flutter 360/360 (incl. an e2e of the real page against the real Worker over HTTP), dart analyze clean, skills 17/17.
+- **Next:** CI green + review threads → squash merge with expectedHeadSha keeping `[worker-deploy] [ios-build]` → verify deploy (new "Command Center" notice) + IPA release → reply to CHE in claude.jsonl.
+- **Not verified:** the owner's iPhone (install, page, voice). ElevenLabs on the phone still awaits the owner.
+
 ## 2. Current position (updated by Claude, 2026-10-14 ~06:50 UTC — memory truth #300 live; skills mission started)
 
 **PR #300 merged as `2b0c66e9f5f0103845eaec91c45b60605a7f33cb` (squash, head c9bc419). Deploy CHE Worker run 38523937234 SUCCESS: "Verify live deployed commit" passed; the live memory-truth probe passed 10/10 against an isolated CHE (A no record, B remember/retrieve, C how do you know, D the last one + retraction, the owner's 12:34 replay ×2, E correction ×2, model answer). Memory routes used 0 model calls (53–842 ms).**
