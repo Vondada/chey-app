@@ -64,6 +64,16 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position — CHATGPT PAUSED; CLAUDE TAKEOVER (2026-10-14; explicit owner instruction)
+
+**OWNER DIRECTIVE:** “Pause where you are and let Claude pick up.” ChatGPT is STOPPING ALL IMPLEMENTATION, TEST FIXES, MERGES AND DEPLOYMENTS on this mission as of this handoff. CLAUDE should take over the existing work in place, not redo inspection or create a second architecture.
+
+- **Repo** `Vondada/chey-app`, live `main` baseline when work started `fe18860bb60e15d5313d9cede2766d338c8ff7a0`; working branch `chatgpt/che-unified-connections-hub`; **PR #306 OPEN and UNMERGED**: https://github.com/Vondada/chey-app/pull/306. **Latest observed PR HEAD `48979c0a04d3925ce6e24145c3f73ec0e81f70b4`** (advanced beyond earlier ChatGPT commits; refetch remote exact SHA and compare with main before edits). Do not force-push or overwrite other active work.
+- Existing architecture reused: `/api/commands` live connector readiness; YouTube Google OAuth; Tradovate OAuth; Worker `/api/voice/edge`, `preferred_elevenlabs_voice.js`, `fish_audio_voice.js`; More page + screen-command router.
+- Implemented on PR #306 branch: `lib/home/che_connections_screen.dart` Connections page, More entries and Chat voice navigation; existing OAuth connect actions; explicitly truthful unsupported banks/Gmail/Drive/Calendar; `lib/che_cloud_voice_picker.dart` account-verified ElevenLabs/Fish voice list, consent-gated preview, saved choice, real Worker voice selection and speech speed. Includes `server/cloudflare/voice_choices.js` and tests `voice_choices.test.mjs`, `test/che_connections_test.dart`. Supplemental commits added integration inventory, opt-in and exact-provider previews; inspect current diff, not historical summary.
+- **CURRENT VALIDATION IS RED:** on latest observed head, GitHub Actions `Check CHE Flutter client` run **38629227766 FAILED at `flutter test`**; Worker syntax/unit tests PASSED; `CHE UI Analyze` run **38629227750 PASSED**. Claude should obtain actual test failure logs, correct root cause, rerun all checks and Codex review before considering merge. DO NOT claim iPhone, banking, Google, trading or voice selection fully working just because files/PR exist.
+- Owner has NOT authorized new paid accounts/charges, trades, money transfers, YouTube publications or destructive operations. Provider OAuth consent, bank-link enrollment/secrets remain owner-only; don't request passwords in Chat. Continue safe nonoverlapping existing implementation from PR #306; only merge green, then verify Worker deployment, published IPA and real owner iPhone test. ChatGPT will not continue this lane unless owner explicitly resumes it.
+
 ## 2. Current position (updated by Claude, 2026-10-14 ~21:00 UTC — Command Center live; owner iPhone acceptance pending)
 
 **Verified from git and GitHub run records, not from memory. Main is `fe18860bb60e` (PR #305, `[ios-build] [worker-deploy]`).**
