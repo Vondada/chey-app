@@ -36,7 +36,7 @@ import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscale
 import { handleEdgeVoice } from './edge_route.js';
 import { marySecretsFrom, preferredElevenLabsDiagnostics, preferredElevenLabsKeyStatus, preferredElevenLabsLastOutcome, preferredElevenLabsSpeech, withMarySecrets } from './preferred_elevenlabs_voice.js';
 import { availableVoiceChoices, validateVoiceChoice, voiceEnvForSelection } from './voice_choices.js';
-import { fishAudioDiagnostics, fishAudioKeyStatus, fishSecretsFrom, readFishUsage } from './fish_audio_voice.js';
+import { fishAudioDiagnostics, fishAudioKeyStatus, fishAudioSpeech, fishSecretsFrom, readFishUsage } from './fish_audio_voice.js';
 import { cheSpokenText } from './che_pronunciation.js';
 import { premiumVoiceSpeech, premiumVoiceStatuses, readVoiceLog, recordVoiceLog, voiceProbeAuthorized } from './phone_voice.js';
 import { handleVideoLine } from './video_route.js';
@@ -4865,10 +4865,13 @@ export class CheState extends DurableObject {
         if (!chosen) return json({ detail: 'That voice is not available for preview.' }, 400);
         this.lastVoicePreviewAt = Date.now();
         const env = voiceEnvForSelection(this.voiceEnv(), chosen);
-        const audio = await premiumVoiceSpeech(env,
-          cheSpokenText('Hello, sir. This is how my selected CHE voice sounds.'),
-          { selectedProvider: chosen.provider, storage: this.ctx.storage });
-        return audio || new Response(null, { status: 204 });
+        const sample = cheSpokenText('Hello, sir. This is how my selected CHE voice sounds.');
+        // A preview MUST use precisely the voice chosen. Do not substitute
+        // the other provider: doing so misleads the owner and can use credits.
+        const audio = chosen.provider === 'fish'
+          ? await fishAudioSpeech(env, sample, { storage: this.ctx.storage })
+          : await preferredElevenLabsSpeech(env, sample);
+        return audio || json({ detail: 'The chosen voice cannot speak right now. No alternative was substituted.' }, 503);
       }
 
       if (path === '/api/voice/edge' && request.method === 'POST') {
