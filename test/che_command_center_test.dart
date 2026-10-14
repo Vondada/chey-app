@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:chey/che_ui/che_theme.dart';
+import 'package:chey/che_ui/che_ui_preferences.dart';
 import 'package:chey/commands/che_command_center.dart';
 import 'package:chey/commands/che_command_client.dart';
 import 'package:chey/commands/che_command_models.dart';
@@ -658,6 +659,10 @@ void main() {
   });
 
   testWidgets('the actual Chat send path opens Commands for typed/spoken commands', (tester) async {
+    // This is a navigation integration test, not a native audio test.
+    // Avoid mock-platform TTS pipeline timers after disposing CHEApp.
+    await CheUiPreferences.instance.setVoiceResponsesEnabled(false);
+    addTearDown(() => CheUiPreferences.instance.setVoiceResponsesEnabled(true));
     tester.view.physicalSize = const Size(1170, 2532);
     tester.view.devicePixelRatio = 3;
     addTearDown(tester.view.reset);
