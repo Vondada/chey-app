@@ -147,7 +147,7 @@ export function vectorContextText(recall, maxChars = 9000) {
   for (const item of recall.matches || []) {
     const label = [item.kind, item.title].filter(Boolean).join(' · ');
     const score = item.similarity == null ? '' : ` (similarity ${item.similarity.toFixed(3)})`;
-    const status = item.metadata?.verification_status === 'source_verified' ? 'source-backed' :
+    const status = ['source_verified', 'source_backed'].includes(item.metadata?.verification_status) ? 'source-backed' :
       item.metadata?.verification_status === 'owner_attested' ? 'owner-attested' : 'unverified reference';
     const line = `[${label || 'memory'}${score}; ${status}] ${item.content}${item.source ? ` — source: ${item.source}` : ''}`;
     if (used + line.length > maxChars) break;
