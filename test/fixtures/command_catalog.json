@@ -1,0 +1,3202 @@
+{
+ "version": 1,
+ "categories": [
+  {
+   "id": "intelligence",
+   "title": "Intelligence & Control",
+   "summary": "Think, research, verify, remember and recover."
+  },
+  {
+   "id": "youtube",
+   "title": "YouTube",
+   "summary": "Research, script, render and publish faceless videos."
+  },
+  {
+   "id": "trading",
+   "title": "Trading",
+   "summary": "NQ/MNQ market reads, risk, backtests and the trading desk."
+  },
+  {
+   "id": "build",
+   "title": "Websites, Apps & AI",
+   "summary": "Build and fix sites, apps, AI tools and CHE herself."
+  },
+  {
+   "id": "money",
+   "title": "Money Management",
+   "summary": "Budgets, cash flow, invoices, pricing and profit."
+  },
+  {
+   "id": "clients",
+   "title": "Client Scouting & Delivery",
+   "summary": "Find lawful leads, propose, follow up and deliver."
+  },
+  {
+   "id": "marketing",
+   "title": "Marketing & Sales",
+   "summary": "Brand, campaigns, content, ads and funnels."
+  },
+  {
+   "id": "office",
+   "title": "Office & Automation",
+   "summary": "The Office crew, integrations, skills and voice."
+  }
+ ],
+ "commands": [
+  {
+   "id": "che",
+   "category": "intelligence",
+   "title": "CHE",
+   "summary": "Main assistant and skill coordinator.",
+   "does": "Answers or acts on anything you ask, choosing the right CHE skill herself.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "request",
+    "required": true,
+    "hint": "Anything you want CHE to do"
+   },
+   "examples": [
+    "CHE, help me plan my week",
+    "CHE, what can you do for my business?"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "notes",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "assistant",
+    "help",
+    "anything"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "che-explore",
+   "category": "intelligence",
+   "title": "Che Explore",
+   "summary": "Read-only exploration.",
+   "does": "Looks into a question or CHE's own code and reports what exists. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "topic",
+    "required": true,
+    "hint": "What to look into"
+   },
+   "examples": [
+    "Explore how the trading desk decides entries",
+    "Read-only: where does CHE store my memories?"
+   ],
+   "needs": [
+    "model",
+    "github"
+   ],
+   "optional": [],
+   "handler": "code_scout.repositoryInspectionIntent → inspectReferenceRepo",
+   "route": "che_repository_inspection",
+   "produces": "findings",
+   "evidence": "File paths and lines from the current repository commit.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "investigate",
+    "inspect",
+    "look into",
+    "read only",
+    "code"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "github",
+     "label": "GitHub connection",
+     "state": "not_connected",
+     "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets.",
+     "detail": "GitHub is not connected."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "che-plan",
+   "category": "intelligence",
+   "title": "Che Plan",
+   "summary": "Create plans without execution.",
+   "does": "Writes a step-by-step plan with risks and checkpoints. Nothing is executed.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "goal",
+    "required": true,
+    "hint": "What you want to achieve"
+   },
+   "examples": [
+    "Plan a booking app for my barbershop",
+    "Make a plan to launch my YouTube channel"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "plan",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "plan",
+    "roadmap",
+    "steps",
+    "strategy",
+    "how should i"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "che-build",
+   "category": "intelligence",
+   "title": "Che Build",
+   "summary": "Authorized implementation.",
+   "does": "Starts a reviewed coding job on CHE's own code: a draft pull request, tests and review. Merging and deploying need your separate yes.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "change",
+    "required": true,
+    "hint": "The change to make in CHE"
+   },
+   "examples": [
+    "Build a dark mode switch for the Office screen",
+    "Implement voice search in Mailbox"
+   ],
+   "needs": [
+    "model",
+    "github"
+   ],
+   "optional": [],
+   "handler": "self_development.js (draft PR pipeline)",
+   "route": "che_self_development",
+   "produces": "pull request",
+   "evidence": "Pull request number, CI result and review outcome.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "implement",
+    "build",
+    "code",
+    "change che",
+    "feature"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "github",
+     "label": "GitHub connection",
+     "state": "not_connected",
+     "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets.",
+     "detail": "GitHub is not connected."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "che-research",
+   "category": "intelligence",
+   "title": "Che Research",
+   "summary": "Research actual information.",
+   "does": "Searches public sources and answers with what it actually found and where.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "question",
+    "required": true,
+    "hint": "What to research"
+   },
+   "examples": [
+    "Research the best cities for barbershops",
+    "Research how long faceless channels take to monetize"
+   ],
+   "needs": [
+    "model",
+    "research"
+   ],
+   "optional": [],
+   "handler": "public research (Wikipedia, DuckDuckGo) + research cache",
+   "route": "model",
+   "produces": "research",
+   "evidence": "Every fact names the source CHE actually read.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "research",
+    "find out",
+    "look up",
+    "sources",
+    "search"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "che-verify",
+   "category": "intelligence",
+   "title": "Che Verify",
+   "summary": "Verify facts and evidence.",
+   "does": "Fact-checks a claim against sources, or explains the evidence behind one of CHE's answers.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "claim",
+    "required": true,
+    "hint": "The claim or answer to check"
+   },
+   "examples": [
+    "Verify that NQ opens at 9:30 New York time",
+    "How do you know that is correct?"
+   ],
+   "needs": [
+    "model",
+    "research"
+   ],
+   "optional": [],
+   "handler": "truth_layer.js + memory_provenance.js receipts",
+   "route": "model",
+   "produces": "verdict",
+   "evidence": "A verdict per claim with the source or receipt behind it.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "verify",
+    "fact check",
+    "true",
+    "evidence",
+    "how do you know",
+    "proof"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "che-memory",
+   "category": "intelligence",
+   "title": "Che Memory",
+   "summary": "Retrieve and reconcile confirmed knowledge.",
+   "does": "Answers only from what you told or confirmed to CHE, and says plainly when there is no record.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "question",
+    "required": true,
+    "hint": "What to recall"
+   },
+   "examples": [
+    "What do you remember about my business?",
+    "What have I confirmed about my trading rules?"
+   ],
+   "needs": [
+    "memory"
+   ],
+   "optional": [],
+   "handler": "memory_provenance.answerOwnerMemoryQuestion",
+   "route": "che_memory_provenance",
+   "produces": "memories",
+   "evidence": "Only owner-attested records; zero model calls.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "remember",
+    "memory",
+    "recall",
+    "what did i say",
+    "confirmed"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "che-recover",
+   "category": "intelligence",
+   "title": "Che Recover",
+   "summary": "Recover interrupted or failed tasks.",
+   "does": "Resumes the saved coding job or mission step from its checkpoint instead of starting over.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Resume the coding job",
+    "Recover the failed mission step"
+   ],
+   "needs": [
+    "jobs"
+   ],
+   "optional": [],
+   "handler": "recovery_policy.js + objective_graph.recoverNode",
+   "route": "che_coding_resume",
+   "produces": "status",
+   "evidence": "The job id and the checkpoint it resumed from.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "recover",
+    "resume",
+    "retry",
+    "failed",
+    "interrupted",
+    "stuck"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "che-status",
+   "category": "intelligence",
+   "title": "Che Status",
+   "summary": "Report verified progress and outcomes.",
+   "does": "Reports what is actually running, finished or failed, from CHE's own records.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Mission status",
+    "How are my missions going?"
+   ],
+   "needs": [
+    "jobs"
+   ],
+   "optional": [],
+   "handler": "objective_graph.speakObjective",
+   "route": "che_mission_status",
+   "produces": "status",
+   "evidence": "Job and mission records only.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "status",
+    "progress",
+    "what is running",
+    "done",
+    "mission"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "yt-ideas",
+   "category": "youtube",
+   "title": "Yt Ideas",
+   "summary": "Research promising video ideas.",
+   "does": "Finds topic ideas from real public sources and explains why each could work. Never invents demand numbers.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "niche",
+    "required": true,
+    "hint": "Channel niche"
+   },
+   "examples": [
+    "Video ideas for a faceless history channel",
+    "Find trending ideas about space"
+   ],
+   "needs": [
+    "model",
+    "research"
+   ],
+   "optional": [],
+   "handler": "public research + topic_scout.js (CHE_TREND_URLS feeds)",
+   "route": "model",
+   "produces": "video ideas",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "video ideas",
+    "youtube ideas",
+    "topics",
+    "faceless",
+    "channel"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "yt-research",
+   "category": "youtube",
+   "title": "Yt Research",
+   "summary": "Gather and verify information.",
+   "does": "Collects facts for a video topic with sources, ready for a script.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "topic",
+    "required": true,
+    "hint": "Video topic"
+   },
+   "examples": [
+    "Research octopus intelligence for a video",
+    "Gather facts about the pyramids for my script"
+   ],
+   "needs": [
+    "model",
+    "research"
+   ],
+   "optional": [],
+   "handler": "public research + research cache",
+   "route": "model",
+   "produces": "sourced facts",
+   "evidence": "Every fact names its source.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "video research",
+    "facts",
+    "sources"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "yt-script",
+   "category": "youtube",
+   "title": "Yt Script",
+   "summary": "Create original video scripts.",
+   "does": "Writes an original narration script with a hook, beats and a closing, citing the researched facts it uses.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "topic",
+    "required": true,
+    "hint": "Topic or angle"
+   },
+   "examples": [
+    "Write a 60 second script about octopus intelligence",
+    "Script a Short about black holes"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "script",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "script",
+    "narration",
+    "video script",
+    "short"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "yt-video",
+   "category": "youtube",
+   "title": "Yt Video",
+   "summary": "Generate and assemble videos.",
+   "does": "Renders a faceless video (script, scenes, narration) on CHE's video line. An mp4 exists only if the renderer returns one.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "topic",
+    "required": true,
+    "hint": "Video topic"
+   },
+   "examples": [
+    "Make a faceless video about octopus intelligence",
+    "Render a 30 second video about Mars"
+   ],
+   "needs": [
+    "model",
+    "video_renderer"
+   ],
+   "optional": [],
+   "handler": "faceless_video.js → github_video_renderer.js / moneyprinter.js",
+   "route": "video_renderer",
+   "produces": "video",
+   "evidence": "A verified mp4 link from the renderer, or the exact render error.",
+   "cost": "Free renderer on GitHub Actions; paid video engines stay off unless you enable them.",
+   "keywords": [
+    "make a video",
+    "render",
+    "video"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "video_renderer",
+     "label": "Video renderer",
+     "state": "not_connected",
+     "setup": "Needs CHE_VIDEO_RENDER_URL, or CHE_GITHUB_TOKEN with CHE_GITHUB_REPO for the free GitHub renderer.",
+     "detail": "No video renderer is configured."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "yt-voice",
+   "category": "youtube",
+   "title": "Yt Voice",
+   "summary": "Create audio narration.",
+   "does": "Narration is produced inside the video line in CHE's voice (ElevenLabs, then Fish). A standalone audio file is not offered yet.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "topic",
+    "required": true,
+    "hint": "Video topic"
+   },
+   "examples": [
+    "Narrate a video about the ocean"
+   ],
+   "needs": [
+    "model",
+    "voice",
+    "video_renderer"
+   ],
+   "optional": [],
+   "handler": "tools/che_video_render.py narration (Fish/ElevenLabs/Piper)",
+   "route": "video_renderer",
+   "produces": "narrated video",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Uses your ElevenLabs/Fish credits.",
+   "keywords": [
+    "narration",
+    "voiceover",
+    "voice over",
+    "audio"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "voice",
+     "label": "CHE voice (ElevenLabs or Fish)",
+     "state": "not_connected",
+     "setup": "Add ELEVENLABS_API_KEY (or FISH_API_KEY) as a Worker secret.",
+     "detail": "No ElevenLabs or Fish key."
+    },
+    {
+     "id": "video_renderer",
+     "label": "Video renderer",
+     "state": "not_connected",
+     "setup": "Needs CHE_VIDEO_RENDER_URL, or CHE_GITHUB_TOKEN with CHE_GITHUB_REPO for the free GitHub renderer.",
+     "detail": "No video renderer is configured."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "yt-thumbnail",
+   "category": "youtube",
+   "title": "Yt Thumbnail",
+   "summary": "Generate thumbnails.",
+   "does": "Generates a thumbnail image from your description with CHE's image engine.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "description",
+    "required": true,
+    "hint": "What the thumbnail shows"
+   },
+   "examples": [
+    "Generate a thumbnail image of a glowing octopus brain"
+   ],
+   "needs": [
+    "image_generation"
+   ],
+   "optional": [],
+   "handler": "media.js image generation",
+   "route": "model",
+   "produces": "image",
+   "evidence": "The generated image link.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "thumbnail",
+    "cover image"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "yt-seo",
+   "category": "youtube",
+   "title": "Yt Seo",
+   "summary": "Optimize titles, descriptions, and metadata.",
+   "does": "Drafts titles (under 100 characters), a description and tags that match the script, without clickbait claims.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "video",
+    "required": true,
+    "hint": "Video topic or script"
+   },
+   "examples": [
+    "SEO title and tags for my octopus video"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "metadata",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "seo",
+    "title",
+    "tags",
+    "description",
+    "metadata"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "yt-publish",
+   "category": "youtube",
+   "title": "Yt Publish",
+   "summary": "Upload or schedule approved videos.",
+   "does": "Runs one Office video pass: a topic from your trend feeds, a sourced package, a render, and an UNLISTED upload to your channel. Making it public stays your decision on YouTube.",
+   "mode": "BUILD",
+   "approval": {
+    "required": true,
+    "reason": "Uploads a video to your YouTube channel."
+   },
+   "input": null,
+   "examples": [
+    "Run the video line",
+    "Publish the next video to my channel"
+   ],
+   "needs": [
+    "model",
+    "video_renderer",
+    "youtube"
+   ],
+   "optional": [],
+   "handler": "video_line.runVideoLine → youtube_upload.js",
+   "route": "che_video_line",
+   "produces": "youtube link",
+   "evidence": "The YouTube video link returned by the upload.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "publish",
+    "upload",
+    "youtube upload",
+    "post video"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "video_renderer",
+     "label": "Video renderer",
+     "state": "not_connected",
+     "setup": "Needs CHE_VIDEO_RENDER_URL, or CHE_GITHUB_TOKEN with CHE_GITHUB_REPO for the free GitHub renderer.",
+     "detail": "No video renderer is configured."
+    },
+    {
+     "id": "youtube",
+     "label": "YouTube channel",
+     "state": "not_connected",
+     "setup": "Open Mailbox → Keys → YouTube and sign in with Google.",
+     "detail": "YouTube is not connected."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "yt-batch",
+   "category": "youtube",
+   "title": "Yt Batch",
+   "summary": "Coordinate multiple video projects.",
+   "does": "Hands a batch of video topics to the Office crew as tracked jobs.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "topics",
+    "required": true,
+    "hint": "Several topics"
+   },
+   "examples": [
+    "Tell the office to script videos about Mars, Venus and Jupiter"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "office goal → agent_runtime.queueAgentTask",
+   "route": "office:goal",
+   "produces": "office jobs",
+   "evidence": "Office job ids.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "batch",
+    "several videos",
+    "multiple videos"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "yt-analytics",
+   "category": "youtube",
+   "title": "Yt Analytics",
+   "summary": "Analyze actual channel data.",
+   "does": "Reports your channel connection and the uploads CHE made, from YouTube's own responses. Full YouTube Analytics reports are not connected yet.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "YouTube channel status",
+    "Which videos have you uploaded?"
+   ],
+   "needs": [
+    "youtube"
+   ],
+   "optional": [],
+   "handler": "youtube_connection.youtubeStatus + data.youtube_uploads",
+   "route": "che_youtube_status",
+   "produces": "channel data",
+   "evidence": "Only data YouTube returned.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "analytics",
+    "views",
+    "channel stats",
+    "performance"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "youtube",
+     "label": "YouTube channel",
+     "state": "not_connected",
+     "setup": "Open Mailbox → Keys → YouTube and sign in with Google.",
+     "detail": "YouTube is not connected."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "yt-grow",
+   "category": "youtube",
+   "title": "Yt Grow",
+   "summary": "Recommend improvements based on results.",
+   "does": "Suggests next experiments from results you share or CHE has recorded, labeled as suggestions.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "results",
+    "required": false,
+    "hint": "Results to learn from"
+   },
+   "examples": [
+    "How can I grow my faceless channel?"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "growth plan",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "grow",
+    "growth",
+    "subscribers",
+    "improve channel"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-open",
+   "category": "trading",
+   "title": "Trade Open",
+   "summary": "New York session market briefing.",
+   "does": "Reads live NQ candles from public data and reports trend, swings and patterns before the 9:30 New York open.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "symbol",
+    "required": false,
+    "hint": "NQ by default"
+   },
+   "examples": [
+    "What's NQ doing at the open?",
+    "Give me the New York open briefing"
+   ],
+   "needs": [
+    "market_data"
+   ],
+   "optional": [],
+   "handler": "trading_lab.analyze (Stooq/Binance candles)",
+   "route": "che_trading",
+   "produces": "market read",
+   "evidence": "Candle data with its source and time.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "open",
+    "new york",
+    "nq",
+    "premarket",
+    "briefing",
+    "market"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-chart",
+   "category": "trading",
+   "title": "Trade Chart",
+   "summary": "Analyze NQ/MNQ market structure.",
+   "does": "Analyzes trend, swing highs and lows and candle patterns from real candles.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "symbol",
+    "required": false,
+    "hint": "NQ, MNQ, ES, BTC…"
+   },
+   "examples": [
+    "Analyze the NQ chart",
+    "Show me swing highs on MNQ"
+   ],
+   "needs": [
+    "market_data"
+   ],
+   "optional": [],
+   "handler": "trading_lab.analyze",
+   "route": "che_trading",
+   "produces": "market read",
+   "evidence": "Candle data with its source and time.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "chart",
+    "structure",
+    "swing",
+    "trend",
+    "nq",
+    "mnq"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-setup",
+   "category": "trading",
+   "title": "Trade Setup",
+   "summary": "Identify conditional setups.",
+   "does": "Lists entry points the learned strategies see in real candles, as conditions, never as advice to trade.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "symbol",
+    "required": false,
+    "hint": "NQ by default"
+   },
+   "examples": [
+    "Any entry points on NQ?",
+    "Find setups on MNQ"
+   ],
+   "needs": [
+    "market_data"
+   ],
+   "optional": [],
+   "handler": "trading_lab.analyze (learned strategies)",
+   "route": "che_trading",
+   "produces": "setups",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "setup",
+    "entry",
+    "entries",
+    "signal"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-liquidity",
+   "category": "trading",
+   "title": "Trade Liquidity",
+   "summary": "Analyze VWAP, liquidity, order blocks, and key levels.",
+   "does": "Marks swing highs and lows (where liquidity rests) from real candles. VWAP and order-block math are not computed yet; CHE says so instead of guessing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "symbol",
+    "required": false,
+    "hint": "NQ by default"
+   },
+   "examples": [
+    "Where is the liquidity on NQ?"
+   ],
+   "needs": [
+    "market_data"
+   ],
+   "optional": [],
+   "handler": "trading_lab.analyze (swings)",
+   "route": "che_trading",
+   "produces": "levels",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "liquidity",
+    "vwap",
+    "order block",
+    "levels",
+    "key levels"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-risk",
+   "category": "trading",
+   "title": "Trade Risk",
+   "summary": "Evaluate risk and account limits.",
+   "does": "Reports the trading mode, contract size and account CHE trades on. Account balance needs your NinjaTrader connection.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "What trading mode am I on?"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [
+    "broker"
+   ],
+   "handler": "trading_desk.speakDeskStatus",
+   "route": "che_trading_desk",
+   "produces": "risk status",
+   "evidence": "Desk state and broker responses only.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "risk",
+    "account",
+    "limits",
+    "drawdown",
+    "position size"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": [
+    "broker"
+   ]
+  },
+  {
+   "id": "trade-backtest",
+   "category": "trading",
+   "title": "Trade Backtest",
+   "summary": "Test historical strategies.",
+   "does": "Backtests CHE's learned strategies on real historical candles and reports win rate and drawdown.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "symbol",
+    "required": false,
+    "hint": "Symbol to test"
+   },
+   "examples": [
+    "Backtest NQ",
+    "Backtest bitcoin strategies"
+   ],
+   "needs": [
+    "market_data"
+   ],
+   "optional": [],
+   "handler": "trading_lab.backtestAll",
+   "route": "che_trading",
+   "produces": "backtest",
+   "evidence": "Results computed from historical candles, with the period.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "backtest",
+    "historical",
+    "strategy test"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-journal",
+   "category": "trading",
+   "title": "Trade Journal",
+   "summary": "Document trades and outcomes.",
+   "does": "Reads your paper-trading book: open and closed trades and results.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Read my trading journal",
+    "How are my paper trades doing?"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trading_lab.speakBook",
+   "route": "che_trading",
+   "produces": "journal",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "journal",
+    "trade log",
+    "paper trades",
+    "results"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-alert",
+   "category": "trading",
+   "title": "Trade Alert",
+   "summary": "Create supported market alerts.",
+   "does": "Reads the desk's current entry alerts. New alerts come from symbols CHE paper-trades and watches.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Any trade alerts?"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trading_desk.pendingAlert",
+   "route": "che_trading_desk",
+   "produces": "alerts",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "alert",
+    "notify",
+    "watch",
+    "alarm"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-execute",
+   "category": "trading",
+   "title": "Trade Execute",
+   "summary": "Prepare authorized broker actions with confirmation.",
+   "does": "Places the current desk alert on your selected NinjaTrader account as a bracket order. Live accounts risk real money.",
+   "mode": "BUILD",
+   "approval": {
+    "required": true,
+    "reason": "Places a real order on your broker account."
+   },
+   "input": null,
+   "examples": [
+    "Take the trade"
+   ],
+   "needs": [
+    "broker"
+   ],
+   "optional": [],
+   "handler": "trading_desk.takeTrade → broker_tradovate.placeBracket",
+   "route": "che_trading_desk",
+   "produces": "order receipt",
+   "evidence": "The broker's order id.",
+   "cost": "Real money on a live account.",
+   "keywords": [
+    "execute",
+    "place order",
+    "take the trade",
+    "buy",
+    "sell"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "broker",
+     "label": "NinjaTrader / Tradovate account",
+     "state": "not_connected",
+     "setup": "Add CHE_TRADOVATE_OAUTH_CLIENT_ID and CHE_TRADOVATE_OAUTH_CLIENT_SECRET, then say \"connect NinjaTrader\" and sign in on Tradovate's page.",
+     "detail": "Tradovate OAuth app credentials are not set."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "site-build",
+   "category": "build",
+   "title": "Site Build",
+   "summary": "Create websites.",
+   "does": "Builds a real website or small web app and hosts a private preview on CHE. Nothing is public until you publish.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "site",
+    "required": true,
+    "hint": "What the site is for"
+   },
+   "examples": [
+    "Build me a website for my barbershop",
+    "Build a booking page for my studio"
+   ],
+   "needs": [
+    "model",
+    "site_hosting"
+   ],
+   "optional": [],
+   "handler": "site_builder.js (writeSite, saveSite)",
+   "route": "che_site_builder",
+   "produces": "site preview",
+   "evidence": "The preview link CHE serves.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "website",
+    "site",
+    "landing page",
+    "web app",
+    "booking"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "site-redesign",
+   "category": "build",
+   "title": "Site Redesign",
+   "summary": "Improve existing sites.",
+   "does": "Edits the last site CHE built; the change stays a draft until you publish.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "change",
+    "required": true,
+    "hint": "What to change"
+   },
+   "examples": [
+    "Change the website: make the header dark teal"
+   ],
+   "needs": [
+    "model",
+    "site_hosting"
+   ],
+   "optional": [],
+   "handler": "site_builder.siteEditIntent",
+   "route": "che_site_builder",
+   "produces": "site preview",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "redesign",
+    "change the website",
+    "improve site"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "site-audit",
+   "category": "build",
+   "title": "Site Audit",
+   "summary": "Audit performance, usability, accessibility, and SEO.",
+   "does": "Reviews a site against accessibility, usability and SEO basics and lists concrete fixes. It reads only what you paste or CHE built.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "site",
+    "required": true,
+    "hint": "Site address or what to check"
+   },
+   "examples": [
+    "Audit my barbershop website"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "audit",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "audit",
+    "seo audit",
+    "accessibility",
+    "performance"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "site-publish",
+   "category": "build",
+   "title": "Site Publish",
+   "summary": "Deploy approved websites.",
+   "does": "Publishes the latest draft of the site CHE built at its public link.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Publish the website"
+   ],
+   "needs": [
+    "site_hosting"
+   ],
+   "optional": [],
+   "handler": "site_builder.publishSite",
+   "route": "che_site_builder",
+   "produces": "public link",
+   "evidence": "The public link.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "publish site",
+    "go live",
+    "deploy site"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "app-build",
+   "category": "build",
+   "title": "App Build",
+   "summary": "Create applications.",
+   "does": "Builds a small web app (single page, hosted by CHE). Native App Store apps are planned with /che-plan.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "app",
+    "required": true,
+    "hint": "What the app does"
+   },
+   "examples": [
+    "Build me a booking app",
+    "Build a habit tracker web app"
+   ],
+   "needs": [
+    "model",
+    "site_hosting"
+   ],
+   "optional": [],
+   "handler": "site_builder.js (web apps)",
+   "route": "che_site_builder",
+   "produces": "app preview",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "app",
+    "application",
+    "booking app",
+    "tool"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "app-fix",
+   "category": "build",
+   "title": "App Fix",
+   "summary": "Diagnose and repair application defects.",
+   "does": "Fixes defects in CHE's own app through a reviewed coding job (draft pull request).",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "bug",
+    "required": true,
+    "hint": "What is broken"
+   },
+   "examples": [
+    "Fix the Office screen freezing"
+   ],
+   "needs": [
+    "model",
+    "github"
+   ],
+   "optional": [],
+   "handler": "self_development.js",
+   "route": "che_self_development",
+   "produces": "pull request",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "fix",
+    "bug",
+    "broken",
+    "crash",
+    "repair"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "github",
+     "label": "GitHub connection",
+     "state": "not_connected",
+     "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets.",
+     "detail": "GitHub is not connected."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "ai-build",
+   "category": "build",
+   "title": "Ai Build",
+   "summary": "Create AI tools, assistants, and agents.",
+   "does": "Designs an AI assistant or agent: purpose, tools, data, safety rules and test cases. Use /site-build to give it a web page.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "assistant",
+    "required": true,
+    "hint": "What the AI should do"
+   },
+   "examples": [
+    "Design an AI receptionist for my barbershop"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "design",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "ai",
+    "agent",
+    "assistant",
+    "chatbot",
+    "automation"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "code-review",
+   "category": "build",
+   "title": "Code Review",
+   "summary": "Review code quality and tests.",
+   "does": "Inspects CHE's repository read-only and reports risks, missing tests and fixes, with file paths.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "area",
+    "required": true,
+    "hint": "What to review"
+   },
+   "examples": [
+    "Review the trading desk code"
+   ],
+   "needs": [
+    "model",
+    "github"
+   ],
+   "optional": [],
+   "handler": "code_scout.inspectReferenceRepo",
+   "route": "che_repository_inspection",
+   "produces": "review",
+   "evidence": "File paths and lines from the current commit.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "review",
+    "code review",
+    "quality",
+    "tests"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "github",
+     "label": "GitHub connection",
+     "state": "not_connected",
+     "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets.",
+     "detail": "GitHub is not connected."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "che-release",
+   "category": "build",
+   "title": "Che Release",
+   "summary": "Validate and release authorized changes.",
+   "does": "Reports the state and checks of CHE's latest self-update pull request. Merging and deploying stay separate owner decisions.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Check the pull request status"
+   ],
+   "needs": [
+    "github"
+   ],
+   "optional": [],
+   "handler": "self_update (PR status and checks)",
+   "route": "che_self_update",
+   "produces": "release status",
+   "evidence": "Live version and deploy records.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "release",
+    "deploy",
+    "deployed",
+    "live version",
+    "merge"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "github",
+     "label": "GitHub connection",
+     "state": "not_connected",
+     "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets.",
+     "detail": "GitHub is not connected."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "iphone-update",
+   "category": "build",
+   "title": "Iphone Update",
+   "summary": "Check iPhone builds, SideStore, and installation evidence.",
+   "does": "Reports the latest iPhone app build. Installing happens in SideStore and is confirmed by the app on its next launch.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "What's the app build status?"
+   ],
+   "needs": [
+    "github"
+   ],
+   "optional": [],
+   "handler": "appBuildIntent (status) + lib/self_update",
+   "route": "che_app_build",
+   "produces": "build status",
+   "evidence": "GitHub Actions run and release asset.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "iphone",
+    "ipa",
+    "sidestore",
+    "update",
+    "install",
+    "build status"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "github",
+     "label": "GitHub connection",
+     "state": "not_connected",
+     "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets.",
+     "detail": "GitHub is not connected."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "money-dashboard",
+   "category": "money",
+   "title": "Money Dashboard",
+   "summary": "Financial overview from connected records.",
+   "does": "Reads today's Office earnings and Stripe sales. CHE has no bank feed, so spending is only what you tell her.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "How much did we make today?"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [
+    "stripe"
+   ],
+   "handler": "office_board.officeToday + Stripe webhook totals",
+   "route": "office:earnedToday",
+   "produces": "financial snapshot",
+   "evidence": "Stripe and Office records only.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "money",
+    "dashboard",
+    "earnings",
+    "revenue",
+    "made today"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": [
+    "stripe"
+   ]
+  },
+  {
+   "id": "cashflow",
+   "category": "money",
+   "title": "Cashflow",
+   "summary": "Analyze income and outgoings.",
+   "does": "Analyzes the income and outgoings you give CHE (no bank connection) and shows where money goes.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "numbers",
+    "required": true,
+    "hint": "Your income and expenses"
+   },
+   "examples": [
+    "Analyze my cash flow: income 4000, rent 1500, ads 300"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [
+    "stripe"
+   ],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "cash flow",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "cash flow",
+    "income",
+    "outgoings",
+    "spending"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": [
+    "stripe"
+   ]
+  },
+  {
+   "id": "budget",
+   "category": "money",
+   "title": "Budget",
+   "summary": "Create spending budgets.",
+   "does": "Builds a monthly budget from your numbers and goals.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "numbers",
+    "required": true,
+    "hint": "Income, bills and goals"
+   },
+   "examples": [
+    "Make me a budget: I earn 5000 a month and want to save 1000"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "budget",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "budget",
+    "save money",
+    "spending plan"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "expenses",
+   "category": "money",
+   "title": "Expenses",
+   "summary": "Categorize expenses.",
+   "does": "Sorts the expenses you list into categories with totals.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "expenses",
+    "required": true,
+    "hint": "Your expense list"
+   },
+   "examples": [
+    "Categorize these expenses: Adobe 55, Uber 23, ads 300"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "expense report",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "expenses",
+    "categorize",
+    "receipts",
+    "costs"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "invoices",
+   "category": "money",
+   "title": "Invoices",
+   "summary": "Prepare and track invoices.",
+   "does": "Drafts an invoice from the details you give. It charges no one: Stripe payment links are made only from a client-pipeline deal, with your approval, and /lead-crm shows which deals are paid.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "invoice",
+    "required": true,
+    "hint": "Client, work and amount"
+   },
+   "examples": [
+    "Invoice Joe's Barbershop 800 dollars for the website"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (draft); pipeline.createPaymentLink stays a separate, approved step",
+   "route": "model",
+   "produces": "invoice",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Stripe charges its standard fee per payment.",
+   "keywords": [
+    "invoice",
+    "bill",
+    "payment link",
+    "charge client"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "money-forecast",
+   "category": "money",
+   "title": "Money Forecast",
+   "summary": "Project future cash flow.",
+   "does": "Projects the next months from your numbers, with the assumptions stated.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "numbers",
+    "required": true,
+    "hint": "Current numbers and plans"
+   },
+   "examples": [
+    "Forecast my next 6 months if I land 3 website clients a month at 800"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "forecast",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "forecast",
+    "projection",
+    "next months"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "pricing",
+   "category": "money",
+   "title": "Pricing",
+   "summary": "Estimate profitable service prices.",
+   "does": "Works out prices from your costs, hours and target profit; market rates only when researched with sources.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "service",
+    "required": true,
+    "hint": "Service, hours, costs"
+   },
+   "examples": [
+    "How much should I charge for a 5 page website?"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "price",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "price",
+    "pricing",
+    "charge",
+    "rate",
+    "how much should i charge"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "profit-report",
+   "category": "money",
+   "title": "Profit Report",
+   "summary": "Report revenue, expenses, and profit.",
+   "does": "Reports profit from the revenue and costs you give plus Stripe sales when connected.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "numbers",
+    "required": false,
+    "hint": "Revenue and costs"
+   },
+   "examples": [
+    "Profit report for this month"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [
+    "stripe"
+   ],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "profit report",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "profit",
+    "revenue",
+    "report",
+    "p&l"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": [
+    "stripe"
+   ]
+  },
+  {
+   "id": "lead-scout",
+   "category": "clients",
+   "title": "Lead Scout",
+   "summary": "Find potential clients using lawful business information.",
+   "does": "The Office opportunity scout shortlists public business leads for your review. It never messages anyone.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "market",
+    "required": true,
+    "hint": "Who to look for"
+   },
+   "examples": [
+    "Scout leads for barbershops without websites in Phoenix"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "opportunity_scout.buildOpportunityScoutTask (Office)",
+   "route": "office:opportunityScout",
+   "produces": "leads",
+   "evidence": "Each lead names its public source.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "leads",
+    "clients",
+    "prospects",
+    "find clients",
+    "scout"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "lead-audit",
+   "category": "clients",
+   "title": "Lead Audit",
+   "summary": "Identify verifiable service needs.",
+   "does": "Researches a business's public presence and lists needs you can verify (no website, broken links, no booking).",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "business",
+    "required": true,
+    "hint": "Business name or site"
+   },
+   "examples": [
+    "Audit Joe's Barbershop in Phoenix for website needs"
+   ],
+   "needs": [
+    "model",
+    "research"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "needs",
+   "evidence": "Every need cites what was observed.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "audit lead",
+    "needs",
+    "business check"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "lead-score",
+   "category": "clients",
+   "title": "Lead Score",
+   "summary": "Prioritize opportunities.",
+   "does": "Ranks the leads you give by fit, urgency and value, explaining each score.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "leads",
+    "required": true,
+    "hint": "Leads to rank"
+   },
+   "examples": [
+    "Score these leads: …"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "ranked leads",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "score",
+    "prioritize",
+    "rank leads"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "lead-match",
+   "category": "clients",
+   "title": "Lead Match",
+   "summary": "Match needs to services CHE can deliver.",
+   "does": "Matches each need to a service CHE can actually deliver today (sites, web apps, videos, content).",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "needs",
+    "required": true,
+    "hint": "Client needs"
+   },
+   "examples": [
+    "Which of my services fit a barbershop with no booking page?"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "service match",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "match",
+    "services",
+    "offer"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "lead-proposal",
+   "category": "clients",
+   "title": "Lead Proposal",
+   "summary": "Prepare proposals.",
+   "does": "Drafts a proposal with scope, timeline and price for your review. Nothing is sent.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "client",
+    "required": true,
+    "hint": "Client and work"
+   },
+   "examples": [
+    "Draft a proposal for Joe's Barbershop website"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "proposal",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "proposal",
+    "quote",
+    "pitch"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "lead-outreach",
+   "category": "clients",
+   "title": "Lead Outreach",
+   "summary": "Draft and send authorized communications.",
+   "does": "Drafts a short, honest outreach message with an easy opt-out. It sends nothing: you review it and send it yourself. No bulk or cold messaging.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "message",
+    "required": true,
+    "hint": "Who and what to say"
+   },
+   "examples": [
+    "Draft an outreach text to Joe's Barbershop about a new website"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "message draft",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "outreach",
+    "contact",
+    "message client",
+    "cold email",
+    "text"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "lead-crm",
+   "category": "clients",
+   "title": "Lead Crm",
+   "summary": "Track client opportunities.",
+   "does": "Reads the deals in CHE's client pipeline and their stages.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "What is in my client pipeline?"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "pipeline.pipelineSummary",
+   "route": "che_pipeline",
+   "produces": "pipeline",
+   "evidence": "Pipeline records only.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "crm",
+    "pipeline",
+    "deals",
+    "clients list"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "lead-followup",
+   "category": "clients",
+   "title": "Lead Followup",
+   "summary": "Manage authorized follow-up workflows.",
+   "does": "Drafts polite follow-ups for leads that went quiet. It sends nothing; you review and send.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "lead",
+    "required": true,
+    "hint": "Who to follow up"
+   },
+   "examples": [
+    "Draft a follow-up to Joe's Barbershop"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "message draft",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "follow up",
+    "followup",
+    "reminder"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "client-deliver",
+   "category": "clients",
+   "title": "Client Deliver",
+   "summary": "Coordinate agreed-upon project deliverables.",
+   "does": "Hands the agreed deliverables to the Office crew as tracked jobs and reports progress.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "project",
+    "required": true,
+    "hint": "Client and deliverables"
+   },
+   "examples": [
+    "Tell the office to deliver Joe's Barbershop website"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "office:goal",
+   "produces": "office jobs",
+   "evidence": "Office job ids and their results.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "deliver",
+    "deliverables",
+    "project delivery"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "brand-build",
+   "category": "marketing",
+   "title": "Brand Build",
+   "summary": "Create business branding.",
+   "does": "Creates a brand kit: name options, voice, colors, logo direction and taglines.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "business",
+    "required": true,
+    "hint": "Your business"
+   },
+   "examples": [
+    "Build a brand for my web design studio"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "brand kit",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "brand",
+    "logo",
+    "branding",
+    "name"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "marketing-plan",
+   "category": "marketing",
+   "title": "Marketing Plan",
+   "summary": "Plan marketing campaigns.",
+   "does": "Plans a campaign: audience, channels, message, a 30-day calendar and how to measure it.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "goal",
+    "required": true,
+    "hint": "What to market"
+   },
+   "examples": [
+    "Marketing plan for my web design service"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "marketing plan",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "marketing",
+    "campaign",
+    "promote"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "social-content",
+   "category": "marketing",
+   "title": "Social Content",
+   "summary": "Create social media content.",
+   "does": "Writes ready-to-post captions and post ideas. Posting stays with you.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "topic",
+    "required": true,
+    "hint": "Topic and platform"
+   },
+   "examples": [
+    "Write 5 Instagram posts for my barbershop"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "posts",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "social",
+    "instagram",
+    "tiktok",
+    "posts",
+    "content"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "ads-plan",
+   "category": "marketing",
+   "title": "Ads Plan",
+   "summary": "Prepare advertising campaigns.",
+   "does": "Prepares ad copy, audiences and a test budget plan. CHE has no ad-account connection and never spends.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "campaign",
+    "required": true,
+    "hint": "Product and budget"
+   },
+   "examples": [
+    "Plan a 200 dollar Facebook ad test for my studio"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "ad plan",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "ads",
+    "advertising",
+    "facebook ads",
+    "google ads"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "seo-growth",
+   "category": "marketing",
+   "title": "Seo Growth",
+   "summary": "Improve organic search opportunities.",
+   "does": "Plans keywords, pages and content for organic search growth.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "site",
+    "required": true,
+    "hint": "Business or site"
+   },
+   "examples": [
+    "SEO plan for my barbershop site"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "seo plan",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "seo",
+    "google ranking",
+    "organic",
+    "keywords"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "sales-funnel",
+   "category": "marketing",
+   "title": "Sales Funnel",
+   "summary": "Design client acquisition workflows.",
+   "does": "Designs a funnel from first contact to paid client, with the message and offer at each stage.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "offer",
+    "required": true,
+    "hint": "What you sell"
+   },
+   "examples": [
+    "Design a sales funnel for my website service"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "funnel",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "funnel",
+    "sales",
+    "conversion",
+    "acquisition"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "business-launch",
+   "category": "marketing",
+   "title": "Business Launch",
+   "summary": "Plan business launches.",
+   "does": "Plans a launch: checklist, timeline, first offers and first customers.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "business",
+    "required": true,
+    "hint": "What you are launching"
+   },
+   "examples": [
+    "Plan the launch of my web design business"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "launch plan",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "launch",
+    "start a business",
+    "new business"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "office-status",
+   "category": "office",
+   "title": "Office Status",
+   "summary": "Report Office agent status.",
+   "does": "Reads the live Office board: who is working on what, what shipped and what is stalled.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "What's happening in the office?"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "office_board + office_phrases.speakOfficeBoard",
+   "route": "office:happening",
+   "produces": "office status",
+   "evidence": "Office board records only.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "office",
+    "agents",
+    "team",
+    "crew"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "office-delegate",
+   "category": "office",
+   "title": "Office Delegate",
+   "summary": "Delegate suitable tasks.",
+   "does": "Gives the Office crew a goal; CHE splits it into tracked agent jobs.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "task",
+    "required": true,
+    "hint": "What the Office should do"
+   },
+   "examples": [
+    "Tell the office to research barbershops in Phoenix"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "office_company.splitGoal → agent_runtime.queueAgentTask",
+   "route": "office:goal",
+   "produces": "office jobs",
+   "evidence": "Office job ids.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "delegate",
+    "office task",
+    "assign"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "warroom",
+   "category": "office",
+   "title": "Warroom",
+   "summary": "Coordinate complex multi-agent work.",
+   "does": "Puts a hard question to Gemini, ChatGPT and Grok and gives each answer; an engine that cannot be reached is named, never faked.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "question",
+    "required": true,
+    "hint": "The hard question"
+   },
+   "examples": [
+    "Ask Gemini and ChatGPT: should I focus on websites or videos first?"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_consult.consultIntent (peer engines)",
+   "route": "che_consult",
+   "produces": "panel answers",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "war room",
+    "warroom",
+    "round table",
+    "second opinion",
+    "multiple ais"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "automate",
+   "category": "office",
+   "title": "Automate",
+   "summary": "Create supported recurring workflows.",
+   "does": "Designs a repeatable workflow you save here and run with one tap or sentence. Unattended schedules stay off by your rule.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "routine",
+    "required": true,
+    "hint": "What you repeat"
+   },
+   "examples": [
+    "Automate my Monday client follow-ups"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "ai_router (language engine)",
+   "route": "model",
+   "produces": "workflow design",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "automate",
+    "automation",
+    "recurring",
+    "routine",
+    "every week"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "skill-learn",
+   "category": "office",
+   "title": "Skill Learn",
+   "summary": "Improve existing skills using tested lessons.",
+   "does": "Teaches CHE a skill from text you give; secrets are removed and the skill is saved with its source.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "skill",
+    "required": true,
+    "hint": "The lesson or steps"
+   },
+   "examples": [
+    "Learn this skill: always check the NQ open range before entries"
+   ],
+   "needs": [
+    "memory"
+   ],
+   "optional": [],
+   "handler": "self_skills.learnSkillIntent → saveLearnedSkills",
+   "route": "che_self_skills",
+   "produces": "learned skill",
+   "evidence": "The saved skill with its source.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "learn",
+    "skill",
+    "teach",
+    "lesson"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "connect",
+   "category": "office",
+   "title": "Connect",
+   "summary": "Help configure supported integrations.",
+   "does": "Tells you exactly how to connect a supported service and checks which keys work.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Check my keys"
+   ],
+   "needs": [
+    "model"
+   ],
+   "optional": [],
+   "handler": "resilience.setupSteps / checkAllKeys",
+   "route": "che_keys",
+   "produces": "setup steps",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "connect",
+    "integration",
+    "keys",
+    "setup",
+    "api key"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "voice-test",
+   "category": "office",
+   "title": "Voice Test",
+   "summary": "Test CHE's actual voice systems.",
+   "does": "Checks which of CHE's voices answer right now (ElevenLabs, Fish) and reports real results. Hearing it on your phone is the final test.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Test your voice"
+   ],
+   "needs": [
+    "voice"
+   ],
+   "optional": [],
+   "handler": "voiceProbe (one real ElevenLabs call) + fishAudioKeyStatus",
+   "route": "che_voice_test",
+   "produces": "voice status",
+   "evidence": "A real synthesis result; only your ears confirm the phone.",
+   "cost": "One short ElevenLabs synthesis from your credits.",
+   "keywords": [
+    "voice",
+    "test voice",
+    "elevenlabs",
+    "speech"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "voice",
+     "label": "CHE voice (ElevenLabs or Fish)",
+     "state": "not_connected",
+     "setup": "Add ELEVENLABS_API_KEY (or FISH_API_KEY) as a Worker secret.",
+     "detail": "No ElevenLabs or Fish key."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "create-3d",
+   "category": "office",
+   "title": "Create 3d",
+   "summary": "Coordinate supported 3D content creation.",
+   "does": "Gives the Office a Roblox Studio job (games, items, UGC). Publishing or spending Robux needs your yes.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "project",
+    "required": true,
+    "hint": "3D game or item"
+   },
+   "examples": [
+    "Build a Roblox obby game"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "roblox_studio.parseRobloxPhrase (Office robloxJob)",
+   "route": "office:robloxJob",
+   "produces": "office jobs",
+   "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "3d",
+    "roblox",
+    "game",
+    "model"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  }
+ ],
+ "templates": [
+  {
+   "id": "website-clients",
+   "name": "Find and win website clients",
+   "steps": [
+    {
+     "command": "lead-scout",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "lead-audit",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "pricing",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "lead-proposal",
+     "input": "",
+     "parallel": false
+    }
+   ]
+  },
+  {
+   "id": "faceless-youtube",
+   "name": "Make a faceless YouTube video",
+   "steps": [
+    {
+     "command": "yt-ideas",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "yt-script",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "yt-video",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "yt-thumbnail",
+     "input": "",
+     "parallel": false
+    }
+   ]
+  },
+  {
+   "id": "build-app",
+   "name": "Plan, build and review an app",
+   "steps": [
+    {
+     "command": "che-plan",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "app-build",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "code-review",
+     "input": "",
+     "parallel": false
+    }
+   ]
+  },
+  {
+   "id": "nq-open",
+   "name": "NQ open briefing with risk check",
+   "steps": [
+    {
+     "command": "trade-open",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "trade-chart",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "trade-risk",
+     "input": "",
+     "parallel": false
+    }
+   ]
+  },
+  {
+   "id": "build-website",
+   "name": "Build and publish a website",
+   "steps": [
+    {
+     "command": "site-build",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "site-audit",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "site-publish",
+     "input": "",
+     "parallel": false
+    }
+   ]
+  },
+  {
+   "id": "money-plan",
+   "name": "Get a grip on your money",
+   "steps": [
+    {
+     "command": "cashflow",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "budget",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "money-forecast",
+     "input": "",
+     "parallel": false
+    }
+   ]
+  },
+  {
+   "id": "pricing",
+   "name": "Price your service",
+   "steps": [
+    {
+     "command": "pricing",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "lead-proposal",
+     "input": "",
+     "parallel": false
+    }
+   ]
+  },
+  {
+   "id": "launch",
+   "name": "Launch and market a business",
+   "steps": [
+    {
+     "command": "business-launch",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "brand-build",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "marketing-plan",
+     "input": "",
+     "parallel": false
+    }
+   ]
+  },
+  {
+   "id": "social",
+   "name": "Grow on social media",
+   "steps": [
+    {
+     "command": "social-content",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "marketing-plan",
+     "input": "",
+     "parallel": false
+    }
+   ]
+  },
+  {
+   "id": "backtest",
+   "name": "Test a trading strategy",
+   "steps": [
+    {
+     "command": "trade-backtest",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "trade-journal",
+     "input": "",
+     "parallel": false
+    }
+   ]
+  },
+  {
+   "id": "verify",
+   "name": "Check that this is true",
+   "steps": [
+    {
+     "command": "che-verify",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "che-research",
+     "input": "",
+     "parallel": false
+    }
+   ]
+  },
+  {
+   "id": "office",
+   "name": "Hand it to the Office crew",
+   "steps": [
+    {
+     "command": "office-status",
+     "input": "",
+     "parallel": false
+    },
+    {
+     "command": "office-delegate",
+     "input": "",
+     "parallel": false
+    }
+   ]
+  }
+ ],
+ "connectors": {
+  "model": {
+   "state": "ready",
+   "detail": "",
+   "label": "CHE language engine",
+   "setup": "An AI engine must be reachable. Say \"check my keys\" to hear which engines answer."
+  },
+  "research": {
+   "state": "ready",
+   "detail": "",
+   "label": "Public web research",
+   "setup": "Built in. Needs internet access."
+  },
+  "market_data": {
+   "state": "ready",
+   "detail": "",
+   "label": "Public market data (Stooq/Binance)",
+   "setup": "Built in. Owner data feed optional: CHE_MARKET_DATA_URL."
+  },
+  "office": {
+   "state": "ready",
+   "detail": "",
+   "label": "Office crew",
+   "setup": "Built in."
+  },
+  "memory": {
+   "state": "ready",
+   "detail": "",
+   "label": "Owner memory and receipts",
+   "setup": "Built in."
+  },
+  "jobs": {
+   "state": "ready",
+   "detail": "",
+   "label": "Background jobs and missions",
+   "setup": "Built in."
+  },
+  "site_hosting": {
+   "state": "ready",
+   "detail": "",
+   "label": "CHE site hosting",
+   "setup": "Built in: CHE serves the sites she builds."
+  },
+  "broker": {
+   "state": "not_connected",
+   "detail": "Tradovate OAuth app credentials are not set.",
+   "label": "NinjaTrader / Tradovate account",
+   "setup": "Add CHE_TRADOVATE_OAUTH_CLIENT_ID and CHE_TRADOVATE_OAUTH_CLIENT_SECRET, then say \"connect NinjaTrader\" and sign in on Tradovate's page."
+  },
+  "youtube": {
+   "state": "not_connected",
+   "detail": "YouTube is not connected.",
+   "label": "YouTube channel",
+   "setup": "Open Mailbox → Keys → YouTube and sign in with Google."
+  },
+  "video_renderer": {
+   "state": "not_connected",
+   "detail": "No video renderer is configured.",
+   "label": "Video renderer",
+   "setup": "Needs CHE_VIDEO_RENDER_URL, or CHE_GITHUB_TOKEN with CHE_GITHUB_REPO for the free GitHub renderer."
+  },
+  "image_generation": {
+   "state": "ready",
+   "detail": "",
+   "label": "Image generation",
+   "setup": "Workers AI images are built in when the AI binding is on; HD providers need their key and the paid-media switch."
+  },
+  "voice": {
+   "state": "not_connected",
+   "detail": "No ElevenLabs or Fish key.",
+   "label": "CHE voice (ElevenLabs or Fish)",
+   "setup": "Add ELEVENLABS_API_KEY (or FISH_API_KEY) as a Worker secret."
+  },
+  "github": {
+   "state": "not_connected",
+   "detail": "GitHub is not connected.",
+   "label": "GitHub connection",
+   "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets."
+  },
+  "stripe": {
+   "state": "not_connected",
+   "detail": "Stripe is not connected.",
+   "label": "Stripe",
+   "setup": "Add STRIPE_SECRET_KEY (or CHE_PAYMENTS_URL) as a Worker secret."
+  },
+  "sms": {
+   "state": "not_connected",
+   "detail": "Twilio is not connected.",
+   "label": "Twilio SMS",
+   "setup": "Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and a sender number as Worker secrets."
+  },
+  "bookkeeping": {
+   "state": "none",
+   "detail": "CHE has no bank or bookkeeping connector yet.",
+   "label": "Bank or bookkeeping feed",
+   "setup": "CHE has no bank or bookkeeping connector yet."
+  },
+  "ads_account": {
+   "state": "none",
+   "detail": "CHE has no ad-platform connector yet.",
+   "label": "Ad account (Google/Meta)",
+   "setup": "CHE has no ad-platform connector yet."
+  }
+ }
+}

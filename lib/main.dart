@@ -117,6 +117,12 @@ import 'conversations/che_conversations_screen.dart';
 import 'browser/che_chat_links.dart';
 import 'home/che_chat_link_actions.dart';
 import 'rooms/che_live_chart.dart';
+import 'commands/che_command_center.dart';
+import 'commands/che_command_client.dart';
+import 'commands/che_command_models.dart';
+import 'commands/che_command_store.dart';
+import 'commands/che_command_voice.dart';
+import 'commands/che_command_widgets.dart';
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
 
@@ -251,6 +257,13 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   String? _homeGreeting;
   List<String> _homeSuggestions = const [];
   bool _screenChipsHidden = false;
+  // Command Center: suggestion cards for the latest reply (from the Worker's
+  // `command_suggestions` event), the owner's favorites/dismissals, and the
+  // one-turn approval the Command Center passes with a command it runs.
+  final CheCommandStore _commandStore = CheCommandStore();
+  List<CheSuggestionCard> _commandSuggestions = const [];
+  // The exact command text the owner approved on the Command Center page.
+  String? _pendingCommandConfirmedFor;
   bool _screenGreetingHidden = false;
   String _explainLevel = 'simple';
   // "Tell me more" / "expand": the next reply only goes deeper.
@@ -506,8 +519,59 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     setState(() {
       messages.clear();
       _liveSteps.clear();
+      _commandSuggestions = const [];
     });
     _brainLog.newConversation();
+  }
+
+  /// Chat → Commands. [command] opens one command's details; [steps] opens
+  /// the workflow builder with those commands (both from a suggestion card).
+  Future<void> _openCommandCenter({String? command, List<String>? steps, int tab = 0}) async {
+    HapticFeedback.selectionClick();
+    _composerFocus.unfocus();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheCommandCenterScreen(
+        client: CheCommandClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        store: _commandStore,
+        initialCommand: command,
+        initialSteps: steps,
+        initialTab: tab,
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+        onRunInChat: _runCommandInChat,
+      ),
+    ));
+  }
+
+  /// Sends a command through the normal chat turn, so CHE answers it in the
+  /// conversation, shows its receipt, and speaks only as any reply would.
+  Future<void> _runCommandInChat(String message, {bool confirmed = false}) async {
+    if (_isSending || !mounted) return;
+    _set(() {
+      _shellTab = 1;
+      controller.text = message;
+    });
+    _pendingCommandConfirmedFor = confirmed ? message : null;
+    await sendMessage();
+  }
+
+  Widget _commandSuggestionCards() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final card in _commandSuggestions)
+          CheCommandSuggestionCard(
+            key: ValueKey('suggest-${card.id}'),
+            card: card,
+            onOpenCommand: (id) => unawaited(_openCommandCenter(command: id)),
+            onBuildWorkflow: (ids) => unawaited(_openCommandCenter(steps: ids, tab: 1)),
+            onDismiss: () {
+              unawaited(_commandStore.dismissSuggestion(card.id));
+              setState(() => _commandSuggestions = [for (final c in _commandSuggestions) if (c.id != card.id) c]);
+            },
+          ),
+      ],
+    );
   }
 
   void _redoFrom(int index) {
@@ -1107,6 +1171,7 @@ OWNER AGENCY
     _voiceSnapshot = _voiceMachine.snapshot;
     _cognitionReady = _restoreCognition();
     unawaited(_skillPlugins.load());
+    unawaited(_commandStore.load());
     _wireBrowser();
     initializeVoice();
     _loadSecuritySession();
@@ -1427,7 +1492,13 @@ OWNER AGENCY
                   ),
           ),
         ),
-        if (postReplyActions.isNotEmpty &&
+        if (_commandSuggestions.isNotEmpty &&
+            !_screenChipsHidden &&
+            messages.isNotEmpty &&
+            messages.last['role'] == 'assistant' &&
+            !_isSending)
+          _commandSuggestionCards()
+        else if (postReplyActions.isNotEmpty &&
             messages.isNotEmpty &&
             messages.last['role'] == 'assistant' &&
             !_isSending)
@@ -2072,6 +2143,27 @@ OWNER AGENCY
                 style: kit.CheType.title.copyWith(fontSize: 22, fontWeight: FontWeight.w800),
               ),
               actions: [
+                Semantics(
+                  button: true,
+                  label: 'Commands. Open CHE\'s command library, workflows and activity.',
+                  excludeSemantics: true,
+                  child: MediaQuery.textScalerOf(context).scale(14) > 20
+                      ? IconButton(
+                          tooltip: 'Commands',
+                          icon: const Icon(Icons.bolt_rounded),
+                          onPressed: () => unawaited(_openCommandCenter()),
+                        )
+                      : TextButton.icon(
+                          onPressed: () => unawaited(_openCommandCenter()),
+                          icon: const Icon(Icons.bolt_rounded, size: 18),
+                          label: const Text('Commands'),
+                          style: TextButton.styleFrom(
+                            foregroundColor: kit.CheColors.accent,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
+                ),
                 IconButton(
                   tooltip: 'Conversations',
                   icon: const Icon(Icons.history_rounded),

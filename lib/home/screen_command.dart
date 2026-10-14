@@ -10,6 +10,7 @@ enum ScreenOp {
   removeLast,
   hideGreeting,
   showGreeting,
+  openCommands,
 }
 
 class ScreenCommand {
@@ -25,6 +26,12 @@ ScreenCommand? parseScreenCommand(String raw) {
   var t = raw.trim().toLowerCase().replaceAll(RegExp(r'[.!?]+$'), '');
   t = t.replaceFirst(_lead, '').replaceFirst(_polite, '').trim();
   if (t.isEmpty) return null;
+
+  // "open commands", "show me the command center", "command library".
+  if (RegExp(r'^(?:open|show|show me|go to|take me to|bring up)\s+(?:the\s+|my\s+)?(?:commands?|command center|command library|slash commands)(?:\s+(?:page|screen|list))?$').hasMatch(t) ||
+      RegExp(r'^(?:commands?|command center|command library)$').hasMatch(t)) {
+    return const ScreenCommand(ScreenOp.openCommands);
+  }
 
   final add = RegExp(r'\b(add|put|place|insert)\b').hasMatch(t);
   final remove = RegExp(r'\b(clear|remove|delete|hide|get rid of|take off|clearing|wipe|erase)\b').hasMatch(t);

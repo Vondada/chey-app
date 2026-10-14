@@ -432,6 +432,11 @@ extension _CheHomeSend on _CHEHomeState {
         _homeSuggestions = kept;
         _screenChipsHidden = false;
         return removed ? 'Removed "$label" from the suggestions, sir.' : 'I do not see "$label" in the suggestions.';
+      case ScreenOp.openCommands:
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) unawaited(_openCommandCenter());
+        });
+        return 'Opening Commands, sir.';
       case ScreenOp.clearChat:
         messages.clear();
         return 'Chat cleared, sir.';
@@ -542,6 +547,20 @@ extension _CheHomeSend on _CHEHomeState {
       if (mounted) _set(() => controller.clear());
       await _runVaultCommand(vaultCommand);
       return;
+    }
+
+    // The Command Center, while it is open, answers its own voice routes
+    // first (search, numbered options, run, favorite, workflows, run
+    // controls). Its reply is on its banner; CHE says it here. An empty
+    // reply means the command went to Chat, which speaks the real result.
+    final commandsVoice = CheCommandCenterVoice.handler;
+    if (commandsVoice != null && _pendingAttachment == null) {
+      final reply = await commandsVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
     }
 
     // Direct screen edits are applied on-device before any model routing.

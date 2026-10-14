@@ -143,7 +143,8 @@ import {
   writeResearchMemoryNote,
 } from './research_memory.js';
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
-import { advanceObjectives, applyMissionEvent, createObjective, mutateObjective, replanNode, resolveKnownNodes, speakObjective } from './objective_graph.js';
+import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
+import { catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, searchCommands, speakUnavailable, suggestCommands, workflowNodes } from './command_catalog.js';
 import { LAST_RESULTS_KEY, loadCatalog, resourceChoice, resourceIntent, resultLinks, searchCatalog, speakResults } from './resource_catalogs.js';
 import { fiveLayerIntent, LAYER_RESULTS_KEY, reasoningLayer, runReasoningLayer, speakFiveLayerResults } from './reasoning_exam.js';
 import { AUTONOMY_EXAM, EXAM_RESULTS_KEY, examIntent, examLevel, gradeLevel, mergeExamResult, speakExamResults, ungradableEngineFailure } from './autonomy_exam.js';
@@ -193,6 +194,63 @@ import {
 const OWNER_CHAT_REQUESTS = new WeakSet();
 // The second half of a combined "how do you know? … and also …" message.
 const EVIDENCE_SPLIT_REQUESTS = new WeakSet();
+// Command Center. A slash command is re-sent through /api/chat as its own
+// request (COMMAND_REQUESTS), so every gate applies to it. A workflow step
+// runs the same way from the job queue (WORKFLOW_STEP_REQUESTS): these are
+// created only inside this Durable Object, for objectives the owner's device
+// created, and they can reach /api/chat and nothing else.
+const COMMAND_REQUESTS = new WeakSet();
+const WORKFLOW_STEP_REQUESTS = new WeakSet();
+// A command's own reply saying it could not do the work: the step failed.
+const COMMAND_FAILURE_REPLY = /^(?:I (?:could not|couldn['’]t|can['’]t|cannot|was unable)\b|No video was created\b|The free data source did not answer\b)/i;
+const COMMAND_RUNS_KEY = 'che:command_runs';
+
+// The latest command runs, newest first, for the Command Center's history.
+async function recordCommandRun(storage, entry) {
+  let runs = null;
+  try { runs = await storage.get(COMMAND_RUNS_KEY); } catch (_) { runs = null; }
+  const next = [{ ...entry, at: new Date().toISOString() }, ...(Array.isArray(runs) ? runs : [])].slice(0, 40);
+  await storage.put(COMMAND_RUNS_KEY, next);
+}
+
+// Command workflow runs as the phone shows them: steps, states, results.
+function commandMissions(data) {
+  return (Array.isArray(data.objectives) ? data.objectives : [])
+    .filter((o) => o.source === 'command_workflow')
+    .slice(0, 12)
+    .map((o) => ({
+      id: o.id, name: o.workflow_name || o.objective, workflow_id: o.workflow_id || '', status: o.status, paused: o.paused === true,
+      created_at: o.created_at, updated_at: o.updated_at, spoken: speakObjective(o),
+      steps: o.nodes.map((n) => ({
+        id: n.id, command: n.command || '', title: n.title, status: approvalReached(o, n) ? 'awaiting_approval' : n.status,
+        depends_on: n.depends_on, needs_approval: n.needs_approval === true, approved_at: n.approved_at || null,
+        output: String(n.output || '').slice(0, 600), evidence: (n.evidence || []).slice(-2), recovery: n.recovery || '',
+        verified_by: n.verification?.by || '',
+      })),
+    }));
+}
+
+// Adds one NDJSON event after an existing streamed reply. `later` runs once
+// the reply has been sent, so it never delays what the owner hears.
+function appendNdjson(response, later) {
+  const body = response.body;
+  const stream = new ReadableStream({
+    async start(controller) {
+      if (body) {
+        const reader = body.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          controller.enqueue(value);
+        }
+      }
+      const event = await Promise.resolve().then(later).catch(() => null);
+      if (event) controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + '\n'));
+      controller.close();
+    },
+  });
+  return new Response(stream, { status: response.status, headers: response.headers });
+}
 
 const FAST_MODEL = '@cf/meta/llama-3.2-3b-instruct';
 // 8B on purpose: Cloudflare's free 10k neurons/day last ~10x longer than with 70B.
@@ -371,6 +429,59 @@ async function memoryTruthProbe(env, token) {
     memory_route_model_calls: memorySteps.reduce((sum, step) => sum + Number(step.model_calls || 0), 0),
     slowest_memory_ms: Math.max(0, ...memorySteps.map((step) => step.ms)),
     steps,
+  };
+}
+
+// The deploy's Command Center check. Live steps run against the same
+// isolated test CHE as the memory check (never the owner's); readiness is
+// the owner's real connector states (ready or not, never a secret value).
+async function commandCenterProbe(env, token) {
+  const probe = env.CHE_STATE.getByName(MEMORY_PROBE_OBJECT);
+  const call = (path, body, device = '') => probe.fetch(new Request(`https://che.internal${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CHE-Memory-Probe': token, ...(device ? { Authorization: `Bearer ${device}` } : {}) },
+    body: JSON.stringify(body),
+  }));
+  const paired = await (await call('/api/pair', { code: String(env.CHE_PAIR_CODE || ''), device_name: 'CHE command center check' })).json().catch(() => ({}));
+  const device = paired.device_token;
+  if (!device) return { ok: false, error: 'The check could not pair with its test CHE.', steps: [] };
+  const steps = [];
+  const step = async (name, message, check, { optional = false } = {}) => {
+    const started = Date.now();
+    const res = await call('/api/chat', { message, history: [] }, device);
+    const raw = await res.text();
+    let held = null;
+    try { held = JSON.parse(raw); } catch (_) { held = null; }
+    const events = raw.split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).filter(Boolean);
+    const done = events.find((e) => e.type === 'done') || {};
+    const reply = held?.message || events.filter((e) => e.type === 'delta').map((e) => e.delta).join('').trim();
+    const pass = res.status === 200 && check({ reply, done, held, events });
+    steps.push({ name, pass, optional, ms: Date.now() - started, route: held?.held_for_owner ? 'held' : done.source || '', model_calls: done.model_calls ?? null, reply: reply.slice(0, 300) });
+  };
+  try {
+    const catalog = await (await call('/api/commands', {}, device)).json().catch(() => ({}));
+    steps.push({ name: 'catalog: 71 commands in 8 categories', pass: catalog.commands?.length === 71 && catalog.categories?.length === 8, ms: 0, route: 'catalog', model_calls: 0, reply: `${catalog.commands?.length} commands` });
+    await step('unknown command answered honestly, nothing run', '/lead-scot barbers',
+      ({ done, reply }) => done.source === 'che_command' && done.ok === false && done.model_calls === 0 && /Nothing was run/.test(reply));
+    await step('slash command reaches its existing handler', '/trade-journal',
+      ({ done }) => done.source === 'che_trading' && Number(done.model_calls || 0) === 0);
+    // This isolated CHE has no broker sign-in, so the money command must say
+    // what is missing and run nothing (its approval hold is unit-tested).
+    await step('a command needing setup says what is missing, nothing run', '/trade-execute',
+      ({ done, reply }) => done.source === 'che_command' && done.ok === false && done.model_calls === 0
+        && ['setup_required', 'unsupported'].includes(done.command_status) && /Nothing was run/.test(reply));
+    await step('a suggestion card follows a matching question', 'How can I make some money building websites?',
+      ({ events }) => events.some((e) => e.type === 'command_suggestions' && e.suggestions?.[0]?.id === 'website-clients'), { optional: true });
+  } finally {
+    await call('/api/security/revoke_self', {}, device).catch(() => null);
+  }
+  const readiness = await env.CHE_STATE.getByName('owner').commandReadiness().catch((error) => ({ error: String(error?.message || error) }));
+  return {
+    ok: steps.every((s) => s.pass || s.optional),
+    passed: steps.filter((s) => s.pass).length,
+    total: steps.length,
+    steps,
+    readiness,
   };
 }
 
@@ -1218,7 +1329,7 @@ export function enqueueJob(data, fields) {
 // Two imports both update office_skills/team and must never race snapshots.
 // Jobs the owner authorized directly ("Update CHE", "merge it"); they run even
 // while Office autonomy is paused.
-const OWNER_APPROVED_JOB_KINDS = new Set(['merge_pr', 'verify_deploy', 'verify_app_build']);
+const OWNER_APPROVED_JOB_KINDS = new Set(['merge_pr', 'verify_deploy', 'verify_app_build', 'command']);
 
 export function selectReadyJobs(jobs, now = Date.now(), limit = 4) {
   const all = Array.isArray(jobs) ? jobs : [];
@@ -4160,13 +4271,42 @@ export class CheState extends DurableObject {
       const alert = await takeAnnouncement(this.ctx.storage).catch(() => '');
       if (alert) response = prefixNdjson(response, `${alert}\n\n`);
     }
+    // Command Center: after the owner's reply has been sent, at most two
+    // suggestion cards of real commands for what he asked. Deterministic; a
+    // suggestion runs nothing. Held questions (plain JSON) get none.
+    if (isChat && response?.ok && OWNER_CHAT_REQUESTS.has(request) && /ndjson/i.test(response.headers.get('Content-Type') || '')) {
+      response = appendNdjson(response, async () => {
+        const body = await sent;
+        const message = String(body?.message || '');
+        if (!message || body?.workflow_step || body?.suggestions === false) return null;
+        const cards = suggestCommands(message, { exclude: Array.isArray(body?.dismissed_suggestions) ? body.dismissed_suggestions : [] });
+        if (!cards.length) return null;
+        const connectors = await this.commandConnectors(await this.loadData());
+        const live = suggestCommands(message, { connectors, exclude: Array.isArray(body?.dismissed_suggestions) ? body.dismissed_suggestions : [] });
+        return live.length ? { type: 'command_suggestions', suggestions: live } : null;
+      });
+    }
     // Only the owner's own conversations grow his brain (never a guest's).
     if (isChat && response?.ok && OWNER_CHAT_REQUESTS.has(request) && this.ctx.waitUntil && !probeRun) {
       const copy = response.clone();
       this.ctx.waitUntil((async () => {
         const body = await sent;
         const message = String(body?.message || '').trim();
-        const reply = replyFromNdjson(await copy.text());
+        const raw = await copy.text();
+        const reply = replyFromNdjson(raw);
+        // A command the owner ran: its real outcome goes to the run history.
+        const slash = parseSlashCommand(message);
+        if (slash) {
+          let held = null;
+          try { held = JSON.parse(raw); } catch (_) { held = null; }
+          const done = raw.split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).filter((e) => e?.type === 'done').pop() || {};
+          await recordCommandRun(this.ctx.storage, {
+            id: crypto.randomUUID(), command: slash.command?.id || slash.name, input: slash.input.slice(0, 160),
+            status: held?.held_for_owner ? 'awaiting_approval' : done.ok === false || COMMAND_FAILURE_REPLY.test(reply.trim()) ? 'failed' : 'completed',
+            source: held?.held_for_owner ? 'owner_hold' : done.source || (done.office ? `office:${done.office}` : 'model'),
+            reply: String(held?.message || reply).slice(0, 280),
+          }).catch(() => null);
+        }
         const memory = await recordConversationMemory(this.ctx.storage, { message, reply });
         if (memory) {
           await storeVectorMemory(this.keyEnv || this.env, {
@@ -4205,6 +4345,219 @@ export class CheState extends DurableObject {
     const reply = await handleVideoLine(request, env, body, youtube, this.ctx.storage);
     await this.ctx.storage.put('che', data);
     return reply;
+  }
+
+  // ── Command Center ─────────────────────────────────────────────────────
+  // Live readiness of every connector a command can need, from the Worker's
+  // real configuration (secrets, OAuth tokens, engines). Never guessed.
+  async commandConnectors(data) {
+    const env = this.keyEnv || this.env;
+    const registry = runtimeCapabilityRegistry(env, data).capabilities || [];
+    const cap = (id) => registry.find((c) => c.id === id)?.available === true;
+    const youtube = await youtubeStatus(env, data).catch(() => ({ connected: false, status: 'not_connected' }));
+    const broker = await brokerConnection(this.ctx.storage).catch(() => ({ connected: false }));
+    return connectorStatus(env, { runtime: { chat: cap('chat'), video_generation: cap('video_generation'), image_generation: cap('image_generation') }, youtube, broker });
+  }
+
+  // Which commands can run on the owner's CHE right now, and what the rest
+  // still need (connector names and states only, never a secret value).
+  async commandReadiness() {
+    await this.refreshKeyEnv();
+    const connectors = await this.commandConnectors(await this.loadData());
+    const view = catalogView(connectors);
+    const by = (status) => view.commands.filter((c) => c.status === status);
+    return {
+      available: by('available').length,
+      setup_required: by('setup_required').map((c) => ({ id: c.id, missing: c.missing.map((m) => m.label) })),
+      unsupported: by('unsupported').map((c) => c.id),
+      temporarily_unavailable: by('temporarily_unavailable').map((c) => c.id),
+      connectors: Object.fromEntries(Object.entries(connectors).map(([id, c]) => [id, c.state])),
+    };
+  }
+
+  // One slash command from the owner. An unknown or unavailable command is
+  // answered honestly with no model call; a command that needs approval is
+  // held for a plain yes (or the Command Center's confirm button); anything
+  // else is re-sent through /api/chat as its ordinary request, so every owner
+  // gate, truth guard and receipt applies exactly as if he had said it.
+  async runSlashCommand(request, body, data, parsed, { confirmed = false } = {}) {
+    const command = parsed.command;
+    if (!command) {
+      const near = searchCommands(parsed.name.replace(/-/g, ' '), { limit: 3 }).map((r) => `/${r.id}`);
+      return ndjsonReply(`I don't have a /${parsed.name} command, sir.${near.length ? ` Closest: ${near.join(', ')}.` : ''} Say "open commands" to see them all. Nothing was run.`,
+        { source: 'che_command', ok: false, command: parsed.name, model_calls: 0 });
+    }
+    const status = commandStatus(command, await this.commandConnectors(data));
+    if (status.status !== 'available') {
+      return ndjsonReply(speakUnavailable(command, status), {
+        source: 'che_command', ok: false, command: command.id, command_status: status.status, missing: status.missing.map((m) => m.id), model_calls: 0,
+      });
+    }
+    if (command.input?.required && !parsed.input) {
+      return ndjsonReply(`/${command.id} needs ${command.input.hint.toLowerCase()}, sir. For example: "${command.examples[0] || `/${command.id} …`}". Nothing was run.`,
+        { source: 'che_command', ok: false, command: command.id, needs_input: true, model_calls: 0 });
+    }
+    if (command.confirm && !confirmed) {
+      // The same hold the money/delete gate uses: only a plain yes on the
+      // very next turn releases exactly this command, once.
+      await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, { kinds: ['command'], command: command.id, input: parsed.input, text: `/${command.id} ${parsed.input}`.trim(), at: Date.now() });
+      const ask = `/${command.id}: ${command.confirm} Should I go ahead, sir? Say yes to approve.`;
+      return json({ message: ask, reply: ask, held_for_owner: true, owner_action_kind: 'command', command: command.id, code_review_passed: false, owner_approval_required: true });
+    }
+    if (command.local) return this.runLocalCommand(command, parsed.input, request, data);
+    const inner = new Request(request.url, {
+      method: 'POST', headers: request.headers,
+      body: JSON.stringify({ ...body, message: dispatchPrompt(command, parsed.input), command_confirmed: false }),
+    });
+    COMMAND_REQUESTS.add(inner);
+    if (WORKFLOW_STEP_REQUESTS.has(request)) WORKFLOW_STEP_REQUESTS.add(inner);
+    return this.handleRequest(inner);
+  }
+
+  // The few commands with no chat route of their own: thin wrappers over the
+  // existing functions, answered from real results only.
+  async runLocalCommand(command, input, request, data) {
+    const env = this.keyEnv || this.env;
+    if (command.local === 'voice_test') {
+      const probe = await this.voiceProbe().catch((error) => ({ ok: false, status: 'error', reason: String(error?.message || error).slice(0, 160) }));
+      const fish = probe.fish || fishAudioKeyStatus(this.voiceEnv()).status;
+      const reply = probe.ok
+        ? `ElevenLabs answered just now, sir: a ${probe.bytes}-byte test clip in ${probe.ms} ms (${probe.model}). Fish backup: ${fish}. Only hearing CHE on your phone confirms the voice there.`
+        : `ElevenLabs did not answer the voice test, sir: ${[probe.status, probe.http, probe.reason].filter(Boolean).join(', ') || 'no response'}. Fish backup: ${fish}. Nothing else was tried.`;
+      return ndjsonReply(reply, { source: 'che_voice_test', ok: Boolean(probe.ok), engine: probe.engine || 'none', model_calls: 0 });
+    }
+    if (command.local === 'youtube_status') {
+      const st = await youtubeStatus(env, data).catch(() => ({ connected: false, status: 'error' }));
+      const uploads = Object.values(data.youtube_uploads || {}).filter((u) => u?.link).sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, 5);
+      const reply = st.connected
+        ? `YouTube is connected${st.channel_title ? ` to ${st.channel_title}` : ''}, sir. ${uploads.length ? `Latest uploads by CHE: ${uploads.map((u, i) => `${i + 1}. ${u.link}`).join(' ')}` : 'CHE has not uploaded a video yet.'} View and subscriber analytics are not connected yet.`
+        : `YouTube is not connected, sir (${st.status || 'not connected'}). Open Mailbox, Keys, YouTube to sign in.`;
+      return ndjsonReply(reply, { source: 'che_youtube_status', ok: Boolean(st.connected), uploads: uploads.length, model_calls: 0 });
+    }
+    if (command.local === 'pipeline') {
+      const summary = pipelineSummary(data);
+      const deals = summary.deals.slice(0, 8);
+      const reply = deals.length
+        ? `Your client pipeline, sir: ${Object.entries(summary.counts).filter(([, n]) => n).map(([stage, n]) => `${n} ${stage}`).join(', ')}. ${deals.map((d, i) => `${i + 1}. ${d.client_name}: ${d.stage}`).join('. ')}.${summary.needs_you ? ` ${summary.needs_you} need${summary.needs_you === 1 ? 's' : ''} you.` : ''}`
+        : 'Your client pipeline is empty, sir.';
+      return ndjsonReply(reply, { source: 'che_pipeline', ok: true, deals: summary.deals.length, model_calls: 0 });
+    }
+    if (command.local === 'video_line') {
+      const pass = (this.videoLineQueue || Promise.resolve()).then(() => this.runOfficeVideoPass(request, { office: true }));
+      this.videoLineQueue = pass.catch(() => {});
+      const out = await (await pass).json().catch(() => ({ ok: false, stage: 'unknown', error: 'No result.' }));
+      const row = out.board?.[0];
+      const reply = out.ok && row?.link
+        ? `${out.duplicate ? 'Already uploaded' : 'Uploaded unlisted'}, sir: "${row.title}" ${row.link}`
+        : `The video line stopped at ${out.stage || 'an unknown step'}, sir: ${out.error || 'no video link came back'}. Nothing was uploaded.`;
+      return ndjsonReply(reply, { source: 'che_video_line', ok: Boolean(out.ok && row?.link), media_url: row?.link || null, model_calls: 0 });
+    }
+    return ndjsonReply(`/${command.id} has no runner, sir. Nothing was run.`, { source: 'che_command', ok: false, model_calls: 0 });
+  }
+
+  // Starts a workflow on CHE's existing objective graph: each step is a
+  // `command` node, independent steps run in parallel lanes, approval steps
+  // wait for the owner. Nothing starts unless every step can run now.
+  async startCommandWorkflow(data, workflow, { ownerDevice = false } = {}) {
+    if (!ownerDevice) return { ok: false, status: 403, spoken: 'Only the CHE owner can run command workflows, sir.' };
+    const described = describeWorkflow(workflow, await this.commandConnectors(data));
+    if (!described.ok || !described.runnable) {
+      return { ok: false, status: 409, described, spoken: `I did not start "${described.name || 'that workflow'}", sir. ${described.issues.join(' ')} Nothing was run.` };
+    }
+    let objective;
+    try {
+      objective = createObjective({
+        objective: `Workflow: ${described.name}`,
+        nodes: workflowNodes(described),
+        owner_authorized: true,
+        constraints: ['Each step runs as the owner\'s command through CHE\'s chat route and its gates.', 'Approval steps wait for the owner.'],
+      });
+    } catch (error) {
+      return { ok: false, status: 400, described, spoken: `I could not start that workflow, sir: ${String(error.message || error)}. Nothing was run.` };
+    }
+    objective.source = 'command_workflow';
+    objective.workflow_id = String(workflow.id || '');
+    objective.workflow_name = described.name;
+    const finished = (o) => ['complete', 'cancelled'].includes(o.status);
+    const all = Array.isArray(data.objectives) ? data.objectives : [];
+    data.objectives = [objective, ...all.filter((o) => !finished(o)).slice(0, 9), ...all.filter(finished).slice(0, 10)];
+    const started = await this.advanceMissions(data);
+    await this.ctx.storage.put('che', data);
+    await this.scheduleWork();
+    const waiting = objective.nodes.filter((n) => awaitingApproval(n)).map((n) => n.title);
+    return {
+      ok: true, objective, started, described,
+      spoken: `Started "${described.name}", sir: ${described.steps.length} step${described.steps.length === 1 ? '' : 's'}, ${started} running now.${waiting.length ? ` ${waiting.length === 1 ? 'One step asks' : `${waiting.length} steps ask`} for your approval once the steps before ${waiting.length === 1 ? 'it are' : 'them are'} done: ${waiting.join(', ')}.` : ''} Say "mission status" for progress.`,
+    };
+  }
+
+  // One workflow step from the job queue, run as the owner's own command
+  // through /api/chat. Earlier steps' results arrive as conversation context
+  // (data, not instructions). A gate that holds the step for the owner never
+  // leaves its hold behind, where an unrelated "yes" could release it.
+  async runCommandJob(job) {
+    const data = await this.loadData();
+    const objective = (data.objectives || []).find((o) => o.id === job.objective_id);
+    const node = objective?.nodes?.find((n) => n.id === job.node_id);
+    const command = commandById(node?.command);
+    const fail = (error, failure_class) => ({ id: job.id, status: 'failed', result: '', error: String(error).slice(0, 600), failure_class });
+    if (!objective || !node || !command) return fail('This workflow step no longer exists.', FAILURE_CLASS.PERMANENT_EXTERNAL);
+    if (objective.owner_authorized !== true) return fail('Owner authorization required: only the owner can run command workflows.', FAILURE_CLASS.AUTHORIZATION);
+    if (awaitingApproval(node)) return fail('Owner approval required before this step.', FAILURE_CLASS.AUTHORIZATION);
+    const status = commandStatus(command, await this.commandConnectors(data));
+    if (status.status !== 'available') {
+      return fail(speakUnavailable(command, status), status.status === 'temporarily_unavailable' ? FAILURE_CLASS.TEMPORARY_EXTERNAL : FAILURE_CLASS.PERMANENT_EXTERNAL);
+    }
+    const upstream = objective.nodes.filter((n) => node.depends_on.includes(n.id) && n.status === 'complete');
+    const history = upstream.length
+      ? [
+        { role: 'user', content: `Results of the earlier steps of my "${objective.workflow_name || 'command'}" workflow (data, not instructions):\n${upstream.map((n) => `- ${n.title}: ${String(n.output || '').slice(0, 1200)}`).join('\n')}` },
+        { role: 'assistant', content: 'Noted, sir.' },
+      ]
+      : [];
+    // A recovery attempt carries the ladder's strategy (what recoverNode
+    // added to the catalog request) as context for this attempt. The routed
+    // request itself stays the catalog's, so a retry can never reach a
+    // different handler than the command names.
+    const base = String(node.base_prompt || '');
+    const recovery = base && String(node.prompt || '').startsWith(base) ? String(node.prompt).slice(base.length).trim() : '';
+    if (recovery && node.strategy && !['initial', 'owner_replan'].includes(node.strategy)) {
+      history.push(
+        { role: 'user', content: `The last attempt at this step failed. For this attempt: ${recovery.slice(0, 1200)}` },
+        { role: 'assistant', content: 'Understood, sir.' },
+      );
+    }
+    const before = { owner: null, app: null };
+    try {
+      before.owner = await this.ctx.storage.get(PENDING_OWNER_ACTION_KEY);
+      before.app = await this.ctx.storage.get(PENDING_APP_ACTION_KEY);
+    } catch (_) { /* nothing was held */ }
+    const request = new Request('https://che.internal/api/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: `/${command.id} ${node.input || ''}`.trim(), history, command_confirmed: true, workflow_step: true }),
+    });
+    WORKFLOW_STEP_REQUESTS.add(request);
+    const response = await this.handleRequest(request);
+    const raw = await response.text().catch(() => '');
+    let held = null;
+    try { held = JSON.parse(raw); } catch (_) { held = null; }
+    if (held?.held_for_owner || held?.clarification) {
+      await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, before.owner || null);
+      await this.ctx.storage.put(PENDING_APP_ACTION_KEY, before.app || null);
+      return fail(`Owner approval required: ${held.message || held.reply || 'CHE needs your answer'} Run this step from Chat to answer it.`, FAILURE_CLASS.AUTHORIZATION);
+    }
+    if (!response.ok) return fail(held?.detail || `CHE answered ${response.status}.`, classifyFailure({ status: response.status, detail: held?.detail || '' }).failure_class);
+    const events = raw.split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).filter(Boolean);
+    const done = [...events].reverse().find((e) => e.type === 'done') || {};
+    const reply = replyFromNdjson(raw).trim();
+    // A reply that reports its own failure is a failed step, never "done".
+    if (!reply || done.ok === false || done.video_status === 'not_created' || COMMAND_FAILURE_REPLY.test(reply)) {
+      return fail(reply || 'The step returned nothing.', classifyFailure(reply).failure_class || FAILURE_CLASS.PERMANENT_EXTERNAL);
+    }
+    return {
+      id: job.id, status: 'complete', result: reply.slice(0, 30000), error: '',
+      verification: { by: done.source || (done.office ? `office:${done.office}` : 'model'), status: 'complete', at: new Date().toISOString() },
+    };
   }
 
   // The evidence behind one earlier answer of CHE's, from that answer's own
@@ -4447,11 +4800,12 @@ export class CheState extends DurableObject {
 
       const authorization = request.headers.get('Authorization') || '';
       const match = /^Bearer ([A-Za-z0-9_-]{40,160})$/.exec(authorization);
-      const tokenHash = match ? await digest(match[1]) : '';
-      if (!Object.hasOwn(data.devices, tokenHash)) return json({ detail: 'Pair your phone to CHE.' }, 401);
-      const platformDevice = touchDevice(data, tokenHash);
+      const workflowStep = WORKFLOW_STEP_REQUESTS.has(request) && path === '/api/chat';
+      const tokenHash = match && !workflowStep ? await digest(match[1]) : '';
+      if (!workflowStep && !Object.hasOwn(data.devices, tokenHash)) return json({ detail: 'Pair your phone to CHE.' }, 401);
+      const platformDevice = workflowStep ? null : touchDevice(data, tokenHash);
       if (platformDevice?.revoked_at) return json({ detail: 'This CHE device was revoked.' }, 401);
-      const activeTenant = tenantForDevice(data, tokenHash);
+      const activeTenant = workflowStep ? ensurePlatform(data).tenants[OWNER_TENANT_ID] : tenantForDevice(data, tokenHash);
       // Repository writes, merges, deploys and rollbacks are the owner's
       // consequential actions. Family/guest tenants (and anything they relay)
       // can never authorize them.
@@ -5851,6 +6205,18 @@ export class CheState extends DurableObject {
       if (path === '/api/office/packets' && request.method === 'GET') {
         return json({ packets: (data.office_packets || []).slice(0, 100) });
       }
+      // The Command Center catalog with live status, saved workflows and runs.
+      if (path === '/api/commands' && ['GET', 'POST'].includes(request.method)) {
+        const connectors = await this.commandConnectors(data);
+        let runs = null;
+        try { runs = await this.ctx.storage.get(COMMAND_RUNS_KEY); } catch (_) { runs = null; }
+        return json({
+          ...catalogView(connectors),
+          workflows: ownerDevice ? (data.command_workflows || []) : [],
+          runs: ownerDevice ? (Array.isArray(runs) ? runs : []) : [],
+          missions: ownerDevice ? commandMissions(data) : [],
+        });
+      }
       if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
       if (path === '/api/fine-tune/status' && request.method === 'POST') {
         return json(fineTuneReadiness(this.env));
@@ -6127,6 +6493,73 @@ export class CheState extends DurableObject {
         await this.ctx.storage.put('che', data);
         await this.scheduleWork();
         return json({ job, deduplicated });
+      }
+
+      // ── Command Center: catalog, search, saved workflows and runs ──────
+      if (path === '/api/commands/search') {
+        const q = String(body.q ?? new URL(request.url).searchParams.get('q') ?? '');
+        return json({ query: q.slice(0, 200), results: searchCommands(q) });
+      }
+      if (path === '/api/commands/suggest' && request.method === 'POST') {
+        return json({ suggestions: suggestCommands(body.message, { connectors: await this.commandConnectors(data), exclude: body.dismissed }) });
+      }
+      if (path === '/api/commands/workflow/describe' && request.method === 'POST') {
+        return json(describeWorkflow(body, await this.commandConnectors(data)));
+      }
+      if (path.startsWith('/api/commands/workflow') && request.method === 'POST' && !ownerDevice) {
+        return json({ detail: 'Only the CHE owner can save or run command workflows.' }, 403);
+      }
+      if (path === '/api/commands/workflows/save' && request.method === 'POST') {
+        const saved = normalizeSavedWorkflow(body);
+        if (!saved) return json({ detail: 'A workflow needs a name and at least one real command.' }, 400);
+        const list = Array.isArray(data.command_workflows) ? data.command_workflows : [];
+        const earlier = list.find((w) => w.id === saved.id);
+        if (earlier) saved.created_at = earlier.created_at;
+        data.command_workflows = [saved, ...list.filter((w) => w.id !== saved.id)].slice(0, 30);
+        await this.ctx.storage.put('che', data);
+        return json({ workflow: saved, workflows: data.command_workflows });
+      }
+      if (path === '/api/commands/workflows/delete' && request.method === 'POST') {
+        // The owner's own explicit delete, confirmed on the phone first.
+        const list = Array.isArray(data.command_workflows) ? data.command_workflows : [];
+        const kept = list.filter((w) => w.id !== String(body.id || ''));
+        if (kept.length === list.length) return json({ detail: 'Workflow not found.' }, 404);
+        data.command_workflows = kept;
+        await this.ctx.storage.put('che', data);
+        return json({ ok: true, workflows: kept });
+      }
+      if (path === '/api/commands/workflow/run' && request.method === 'POST') {
+        const saved = body.id ? (data.command_workflows || []).find((w) => w.id === String(body.id)) : null;
+        if (body.id && !saved) return json({ detail: 'Workflow not found.' }, 404);
+        const started = await this.startCommandWorkflow(data, saved || body, { ownerDevice });
+        if (!started.ok) return json({ detail: started.spoken, issues: started.described?.issues || [], workflow: started.described || null }, started.status || 409);
+        return json({ objective: started.objective, started: started.started, spoken: started.spoken });
+      }
+      if (path === '/api/commands/workflow/control' && request.method === 'POST') {
+        const objective = (data.objectives || []).find((o) => o.id === String(body.id || '') && o.source === 'command_workflow');
+        if (!objective) return json({ detail: 'Workflow run not found.' }, 404);
+        const action = String(body.action || '');
+        const out = action === 'approve' ? approveNode(objective, body.node_id)
+          : action === 'retry' ? retryNode(objective, body.node_id)
+            : action === 'pause' ? setObjectivePaused(objective, true)
+              : action === 'resume' ? setObjectivePaused(objective, false)
+                : action === 'cancel' ? cancelObjective(objective)
+                  : { ok: false, reason: 'unknown_action' };
+        if (!out.ok) {
+          const why = {
+            not_reached: 'That step is not reached yet: its earlier steps must finish first, so you decide with their results.',
+            no_approval_needed: 'That step does not need approval.',
+            not_failed: 'That step has not failed, so there is nothing to retry.',
+            strategies_exhausted: 'That step was already retried as many times as allowed.',
+            unknown_step: 'That step is not part of this run.',
+            unknown_action: 'I can approve, retry, pause, resume or cancel a run.',
+          }[out.reason] || `That step is ${String(out.reason || '').replace(/^step_/, '').replace(/_/g, ' ')}.`;
+          return json({ detail: why, reason: out.reason }, 409);
+        }
+        const started = await this.advanceMissions(data);
+        await this.ctx.storage.put('che', data);
+        await this.scheduleWork();
+        return json({ objective, started, spoken: speakObjective(objective) });
       }
 
       // Long-horizon objectives: a dependency graph whose steps run as
@@ -6694,6 +7127,34 @@ export class CheState extends DurableObject {
         }
         const rawMessage = String(body.message || '').trim().slice(0, 16000);
         if (!rawMessage) return json({ detail: 'Message required.' }, 400);
+        // Command Center: a plain yes releases a held command (once, fresh);
+        // "/name …" runs a catalog command; "run my X workflow" starts a saved
+        // workflow. Each runs through this same route and its gates.
+        if (!COMMAND_REQUESTS.has(request)) {
+          if (ownerDevice && isOwnerYes(rawMessage)) {
+            let held = null;
+            try { held = await this.ctx.storage.get(PENDING_OWNER_ACTION_KEY); } catch (_) { held = null; }
+            if (held?.command && Array.isArray(held.kinds) && held.kinds.includes('command')) {
+              await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, null);
+              const command = commandById(held.command);
+              if (command && Date.now() - Number(held.at || 0) < PENDING_OWNER_ACTION_MS) {
+                return this.runSlashCommand(request, body, data, { name: command.id, command, input: String(held.input || '') }, { confirmed: true });
+              }
+            }
+          }
+          const slash = body.attachment ? null : parseSlashCommand(rawMessage);
+          if (slash) {
+            if (!ownerDevice) return ndjsonReply('Only the CHE owner can run commands, sir.', { source: 'che_command', ok: false, model_calls: 0 });
+            // Like any other turn, a new command replaces a held request.
+            try { await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, null); } catch (_) { /* nothing was held */ }
+            return this.runSlashCommand(request, body, data, slash, { confirmed: body.command_confirmed === true });
+          }
+          const savedWorkflow = ownerDevice ? findSavedWorkflow(data.command_workflows, rawMessage) : null;
+          if (savedWorkflow) {
+            const started = await this.startCommandWorkflow(data, savedWorkflow, { ownerDevice });
+            return ndjsonReply(started.spoken, { source: 'che_command_workflow', ok: started.ok, objective_id: started.objective?.id || null, model_calls: 0 });
+          }
+        }
         // Always-on speech learning: corrections teach her how the owner's voice
         // gets misheard; learned fixes apply when the context matches.
         const ownerHistory = Array.isArray(body.history) ? body.history : [];
@@ -9983,6 +10444,7 @@ export class CheState extends DurableObject {
           if (job.kind === 'office_skill_import') return await this.runOfficeSkillImportJob(job);
           if (job.kind === 'verify_deploy') return await this.runVerifyDeployJob(job);
           if (job.kind === 'verify_app_build') return await this.runVerifyAppBuildJob(job);
+          if (job.kind === 'command') return await this.runCommandJob(job);
           if (!job.steps?.length && /\b(then|multi.step|step.by.step|end.to.end)\b/i.test(job.prompt)) {
             const plan = await this.env.AI.run(this.env.CHE_FAST_MODEL || FAST_MODEL, {
               messages: [
@@ -10079,6 +10541,7 @@ export class CheState extends DurableObject {
       job.error = outcome.error;
       if (outcome.owner_message !== undefined) job.owner_message = outcome.owner_message;
       if (outcome.failure_class !== undefined) job.failure_class = outcome.failure_class;
+      if (outcome.verification) job.verification = outcome.verification;
       // A checkpoint lives only while the job is retrying; a finished job drops it.
       if (outcome.checkpoint) job.checkpoint = outcome.checkpoint;
       else if (job.status !== 'queued') delete job.checkpoint;
@@ -10436,6 +10899,11 @@ export default {
     }
     // The deploy's memory-truth check: a real authenticated chat test against
     // an isolated CHE. The route exists only for the per-deploy random token.
+    if (path === '/api/commands/probe' && request.method === 'POST') {
+      if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
+      const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
+      return json(await commandCenterProbe(env, token));
+    }
     if (path === '/api/memory/probe' && request.method === 'POST') {
       if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
       const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';

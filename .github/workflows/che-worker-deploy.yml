@@ -420,6 +420,50 @@ jobs:
           }
           JS
 
+      - name: Check CHE's Command Center through the live Worker
+        run: |
+          node --input-type=module <<'JS'
+          // Live checks on the same isolated test CHE as the memory check (never
+          // the owner's): the catalog, an unknown command, a slash command
+          // reaching its handler, an approval hold, and a suggestion card. Then
+          // which commands the owner's CHE can run now (connector states only).
+          import { appendFileSync } from 'node:fs';
+          const summary = (line) => appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
+          let report = null;
+          let lastError = '';
+          for (let attempt = 0; attempt < 5 && !report; attempt++) {
+            try {
+              const response = await fetch('https://chey-app.henryjavoni.workers.dev/api/commands/probe', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${process.env.CHE_VOICE_PROBE_TOKEN}` },
+                signal: AbortSignal.timeout(90000),
+              });
+              if (response.ok) report = await response.json();
+              else lastError = `HTTP ${response.status}`;
+            } catch (error) {
+              lastError = error?.name === 'TimeoutError' ? 'no answer within 90 s' : 'network error';
+            }
+            if (!report) await new Promise((resolve) => setTimeout(resolve, 4000));
+          }
+          if (!report) {
+            console.log(`::error title=Command Center check did not run::The live Worker did not answer (${lastError}).`);
+            process.exit(1);
+          }
+          for (const step of report.steps || []) {
+            console.log(`${step.pass ? 'PASS' : step.optional ? 'WARN' : 'FAIL'} ${step.name} [${step.route || '-'} | model_calls=${step.model_calls ?? '?'} | ${step.ms} ms] ${String(step.reply || '').replace(/\s+/g, ' ').slice(0, 160)}`);
+          }
+          const r = report.readiness || {};
+          const setup = (r.setup_required || []).map((c) => `/${c.id} (${c.missing.join(', ')})`);
+          console.log(`::notice title=Command Center::${report.passed}/${report.total} live checks passed; owner CHE: ${r.available ?? '?'} commands ready, ${setup.length} need setup, ${(r.unsupported || []).length} unsupported, ${(r.temporarily_unavailable || []).length} temporarily unavailable`);
+          if (setup.length) console.log(`Needs setup: ${setup.join('; ')}`);
+          summary(`**Command Center (live Worker):** ${report.passed}/${report.total} live checks passed; ${r.available ?? '?'} commands ready on the owner's CHE; needs setup: ${setup.join('; ') || 'none'}.`);
+          for (const step of (report.steps || []).filter((s) => !s.pass && s.optional)) console.log(`::warning title=Command Center check::${step.name}: ${String(step.reply).slice(0, 200)}`);
+          if (!report.ok) {
+            console.log(`::error title=Command Center check failed::${(report.steps || []).filter((s) => !s.pass && !s.optional).map((s) => s.name).join('; ') || report.error || 'see log'}`);
+            process.exit(1);
+          }
+          JS
+
       - name: Fish measurement key
         id: fishkey
         if: env.FISH_API_KEY != '' && env.CHE_FISH_VOICE_ID != ''
