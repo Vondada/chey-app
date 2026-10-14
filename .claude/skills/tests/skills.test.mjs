@@ -165,6 +165,8 @@ test('evidence integrity: claim_check agrees with the deployed chat route on eve
     ['I remember you confirming that you prefer short replies. Want me to use that?', true],
     ['I searched the web and compared three sources; they agree.', true],
     ['1. Searched fresh sources – I used the browser tool.', true],
+    ['According to my research, the bridge opened in 1932.', true],
+    ['I googled it and three websites agree.', true],
     ['Plants convert light into chemical energy.', false],
     ['If you tell me your favorite color, I will remember it.', false],
   ];

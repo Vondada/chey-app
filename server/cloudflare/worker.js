@@ -8950,7 +8950,7 @@ export class CheState extends DurableObject {
         // searched or compared sources. Successful real tools are the only
         // basis for those past-tense claims.
         reply = guardClaimedResearchActions(reply, {
-          research, tools: skillResults, documentRead: Boolean(multimodal?.summary || body.screen_context),
+          research, tools: skillResults, documentRead: Boolean(multimodal?.summary || body.screen_context), message: rawMessage,
         }).text;
         // Nothing the owner did not say becomes "you told me" or "you
         // confirmed", and a fact the model inferred never reaches the phone's

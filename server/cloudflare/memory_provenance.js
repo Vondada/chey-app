@@ -252,6 +252,11 @@ const ATTRIBUTION = new RegExp([
 const HYPOTHETICAL = /^(?:if|when|whenever|once|unless|suppose|imagine|let s say|in case)\b/;
 const FICTION_REQUEST = /\b(?:story|stories|fiction|fictional|pretend|role ?play|imagine|hypothetical(?:ly)?|make up|made up|brainstorm|poem|joke|scenario|example dialogue)\b/;
 
+/** The owner asked for a story, poem, role-play or brainstorm: invented content is the point. */
+export function fictionRequested(message) {
+  return FICTION_REQUEST.test(plainWords(message));
+}
+
 function sentences(text) {
   return String(text || '').match(/[^.!?\n]+(?:[.!?]+|\n|$)/g) || [];
 }

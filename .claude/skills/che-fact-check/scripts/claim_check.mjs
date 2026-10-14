@@ -4,7 +4,7 @@
 // verdict is what server/cloudflare does before the owner sees the text.
 //
 //   claim_check.mjs --reply "text" [--owner "owner's own words"]… [--records records.json]
-//                   [--tool plugin/tool]… [--source https://…]… [--message "owner message"] [--json]
+//                   [--tool plugin/tool]… [--source https://…]… [--document-read] [--message "owner message"] [--json]
 //   claim_check.mjs --route "owner message" [--records records.json]
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -17,7 +17,7 @@ const argv = process.argv.slice(2);
 const many = (name) => argv.flatMap((a, i) => (a === name && i + 1 < argv.length ? [argv[i + 1]] : []));
 const one = (name) => many(name).at(-1);
 const usage = () => {
-  console.error('usage: claim_check.mjs --reply "text" [--owner "…"]… [--records f.json] [--tool p/t]… [--source url]… [--message "…"] [--json]\n       claim_check.mjs --route "owner message" [--records f.json]');
+  console.error('usage: claim_check.mjs --reply "text" [--owner "…"]… [--records f.json] [--tool p/t]… [--source url]… [--document-read] [--message "…"] [--json]\n       claim_check.mjs --route "owner message" [--records f.json]');
   process.exit(2);
 };
 
@@ -65,7 +65,7 @@ const sources = many('--source');
 const research = sources.length ? { summary: 'research receipt', sources, cached: false } : null;
 
 // Same order as the final boundary in worker.js.
-const research_check = truth.guardClaimedResearchActions(reply, { research, tools });
+const research_check = truth.guardClaimedResearchActions(reply, { research, tools, documentRead: argv.includes('--document-read'), message });
 const attribution = mp.guardOwnerAttributions(research_check.text, { records, ownerTurns, message });
 const remember = mp.guardRememberBlock(attribution.text, { ownerTurns, retracted: [] });
 const result = {

@@ -507,3 +507,20 @@ test('removing an unsupported attribution keeps the rest of a short reply', asyn
   assert.match(out.reply, /The weather today is mild\./);
   assert.match(out.reply, /no record of you saying or confirming that/);
 });
+
+test('G: everyday ways of claiming a search never reach the owner without a receipt; requested stories keep them', async () => {
+  for (const claim of [
+    'I searched three websites and they all agree it is safe.',
+    'I googled it and found that it is safe.',
+    'I looked it up online and confirmed it.',
+    'According to my research, it is safe.',
+    'I browsed five sites before answering.',
+  ]) {
+    const che = await owner({ model: () => claim });
+    const out = await che.say('Is the new garage door code format secure?');
+    assert.match(out.reply, /do not have execution receipts/, claim);
+  }
+  const story = await owner({ model: () => 'I searched the attic and googled the old map, sir, and found the key.' });
+  const out = await story.say('Tell me a short story where you are a detective.');
+  assert.match(out.reply, /I searched the attic and googled the old map/);
+});

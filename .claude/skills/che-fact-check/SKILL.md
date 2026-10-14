@@ -28,7 +28,7 @@ The full rules, the file map and the final-boundary order are in `reference/evid
 
 ## Check a drafted reply (deterministic: CHE's own guards, no model)
 ```
-node .claude/skills/che-fact-check/scripts/claim_check.mjs --reply "…" [--owner "his own words"]… [--records records.json] [--tool plugin/tool]… [--source https://…]…
+node .claude/skills/che-fact-check/scripts/claim_check.mjs --reply "…" [--owner "his own words"]… [--records records.json] [--tool plugin/tool]… [--source https://…]… [--document-read] [--message "what the owner asked"]
 ```
 It prints `PASS` or `BLOCKED`, each removed sentence, and the exact text the owner would see. Exit 1 means blocked.
 
@@ -63,4 +63,5 @@ Run a case with che-debug's replay: `node .claude/skills/che-debug/scripts/repla
     - the default provenance `owner` on CHE's own notes;
     - "Treat them as your own memories" in the phone brain guide.
   - Fix (#300): records-only owner-memory answers, a per-answer ledger, an attribution guard and retraction. The live probe passed 10/10.
+- **2026-10-14, found by `claim_check.mjs` while measuring this skill.** "I searched three websites and they all agree", "I googled it", "I looked it up online", "According to my research" and "I browsed five sites" all passed the tool-claim guard. It now covers search verbs with counts and "my research shows". Stories the owner asks for are exempt.
 - **2026-10-14, found by `claim_check.mjs` while writing this skill.** The attribution guard dropped the rest of a reply when that rest was under 40 characters ("The weather today is mild." vanished). It now keeps any remainder with content.
