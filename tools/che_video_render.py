@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
-"""Original offline faceless video + narration + thumbnail. No paid service."""
-import argparse, json, random, subprocess, sys
+"""Original faceless video + narration + thumbnail.
+
+Narration uses Fish Audio's expressive model (Drama 3) when the owner set Fish
+up (FISH_API_KEY and CHE_FISH_VOICE_ID). Finished narration is cached by text,
+model and voice, so the same words are never paid for twice. Without Fish, or
+if Fish fails, the free offline Piper voice narrates as before.
+"""
+import argparse, hashlib, json, os, random, re, shutil, subprocess, sys, urllib.error, urllib.request
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 BOLD='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
@@ -37,6 +43,51 @@ def art(size,seed,index):
         color=(int(25+38*f),int(70+58*f),int(110+89*f)) if index%2==0 else (int(120+74*f),int(53+46*f),int(70+36*f))
         d.ellipse((x-rr,y-rr,x+rr,y+rr),fill=color)
     return image
+def spoken(text):
+    # CHE is said "Chay"; the on-screen text keeps "CHE".
+    return re.sub(r'\bChe\b', 'Chay', re.sub(r'\bCHE\b', 'Chay', text))
+def is_mp3(data):
+    return data[:3]==b'ID3' or (len(data)>1 and data[0]==0xFF and (data[1]&0xE0)==0xE0)
+def prune(cache, keep=100):
+    files=sorted(cache.glob('*.mp3'),key=lambda f:f.stat().st_mtime,reverse=True)
+    for old in files[keep:]: old.unlink(missing_ok=True)
+def fish_narration(text):
+    """(path, model, cache) for Fish narration, or None to use Piper."""
+    key=os.environ.get('FISH_API_KEY','').strip()
+    voice=os.environ.get('CHE_FISH_VOICE_ID','').strip()
+    if os.environ.get('CHE_FISH_NARRATION','1').strip().lower() in ('0','false','no'): return None
+    if not key or not re.fullmatch(r'[A-Za-z0-9_-]{8,80}',voice): return None
+    model=os.environ.get('CHE_FISH_EXPRESSIVE_MODEL','').strip() or 'drama-3'
+    if not re.fullmatch(r'[A-Za-z0-9._-]{1,40}',model): model='drama-3'
+    cache=Path(os.environ.get('CHE_NARRATION_CACHE') or Path.home()/'.cache'/'che-narration')
+    cache.mkdir(parents=True,exist_ok=True)
+    cached=cache/(hashlib.sha256(json.dumps([model,voice,128,text]).encode()).hexdigest()[:40]+'.mp3')
+    if cached.exists() and is_mp3(cached.read_bytes()[:4]):
+        cached.touch()
+        print(f'CHE narration: reused cached Fish audio ({model}); no new Fish charge')
+        return cached,model,'hit'
+    body=json.dumps({'text':text,'reference_id':voice,'format':'mp3','mp3_bitrate':128,'normalize':True,'latency':'normal'}).encode()
+    request=urllib.request.Request('https://api.fish.audio/v1/tts',data=body,method='POST',
+        headers={'Authorization':'Bearer '+key,'Content-Type':'application/json','model':model})
+    try:
+        with urllib.request.urlopen(request,timeout=120) as response: audio=response.read()
+    except urllib.error.HTTPError as error:
+        # Status code only: the body can echo request details.
+        print(f'CHE narration: Fish {model} answered HTTP {error.code}; using Piper'); return None
+    except Exception as error:
+        print(f'CHE narration: Fish {model} unreachable ({type(error).__name__}); using Piper'); return None
+    if not is_mp3(audio):
+        print(f'CHE narration: Fish {model} returned no MP3; using Piper'); return None
+    cached.write_bytes(audio); prune(cache)
+    print(f'CHE narration: Fish {model} narrated {len(text)} characters')
+    return cached,model,'miss'
+def piper_narration(text, out):
+    wav=out/'narration.wav'
+    subprocess.run([sys.executable,'-m','piper','-m','en_US-kristin-medium','-f',str(wav),'--',text],check=True)
+    return wav
+def duration_of(path):
+    return float(subprocess.check_output(['ffprobe','-v','error','-show_entries',
+        'format=duration','-of','default=noprint_wrappers=1:nokey=1',str(path)],text=True).strip())
 def render(topic, seconds, out):
     out.mkdir(parents=True,exist_ok=True)
     space='space' in topic.lower() or 'planet' in topic.lower()
@@ -69,13 +120,19 @@ def render(topic, seconds, out):
     center(d,['COGNITIVE HORIZON ENGINE'],79,1280,font(29),(221,252,255))
     im.save(out/'thumbnail.png')
     (out/'narration.txt').write_text(narration,encoding='utf-8')
-    wav=out/'narration.wav'
-    # Neural speech is mandatory for this upgrade; don't silently fall back
-    # to the old robotic eSpeak voice and report a fake quality improvement.
-    subprocess.run([sys.executable,'-m','piper','-m','en_US-kristin-medium',
-        '-f',str(wav),'--',narration],check=True)
-    spoken_duration=float(subprocess.check_output(['ffprobe','-v','error','-show_entries',
-        'format=duration','-of','default=noprint_wrappers=1:nokey=1',str(wav)],text=True).strip())
+    # Neural speech is mandatory; never fall back to the robotic eSpeak voice.
+    # Fish (Drama 3) first when set up, then the free Piper voice.
+    voice_provider,voice_model,voice_cache='piper-neural','en_US-kristin-medium','none'
+    wav=None
+    fish=fish_narration(spoken(narration))
+    if fish:
+        wav=out/'narration.mp3'; shutil.copyfile(fish[0],wav)
+        if duration_of(wav) > seconds * 1.32:
+            print('CHE narration: Fish narration is too long for this video; using Piper'); wav=None
+        else:
+            voice_provider,voice_model,voice_cache='fish-audio',fish[1],fish[2]
+    if wav is None: wav=piper_narration(spoken(narration),out)
+    spoken_duration=duration_of(wav)
     if spoken_duration > seconds * 1.32:
         raise RuntimeError('Neural narration is too long for the requested video. Shorten the script, do not cut words.')
     command=['ffmpeg','-hide_banner','-loglevel','error','-y']
@@ -97,9 +154,10 @@ def render(topic, seconds, out):
     if (out/'video.mp4').stat().st_size<20000:raise RuntimeError('MP4 is unexpectedly small')
     manifest={'status':'verified','topic':topic,'title':title,'description':narration,'duration_seconds':duration,
       'video_width':720,'video_height':1280,'thumbnail_width':1280,'thumbnail_height':720,
-      'video_bytes':(out/'video.mp4').stat().st_size,'voice_provider':'piper-neural',
-      'voice_model':'en_US-kristin-medium','speech_duration_seconds':spoken_duration,
-      'paid_media':False,'youtube_uploaded':False}
+      'video_bytes':(out/'video.mp4').stat().st_size,'voice_provider':voice_provider,
+      'voice_model':voice_model,'voice_cache':voice_cache,'speech_duration_seconds':spoken_duration,
+      'paid_media':voice_provider=='fish-audio' and voice_cache=='miss' and 'free' not in voice_model,
+      'youtube_uploaded':False}
     (out/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     print('CHE_RENDER_VERIFIED '+json.dumps(manifest))
 if __name__=='__main__':

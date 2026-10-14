@@ -36,6 +36,8 @@ class CheUpdateController extends ChangeNotifier {
 
   /// The build this copy is running, or null when iOS would not say.
   CheInstalledBuild? installed;
+  /// The Shorebird patch this copy is running, or null for none.
+  int? currentPatch;
   CheMobileUpdateInfo? latest;
   List<CheMobileUpdateInfo> history = const [];
   CheFastPatchState fast = CheFastPatchState.unavailable;
@@ -63,6 +65,13 @@ class CheUpdateController extends ChangeNotifier {
 
   static String _labelFor(CheInstalledBuild build) =>
       'CHE ${build.version}, build ${build.build}';
+
+  /// Version, build and running patch, for the Updates screen.
+  String get installedSummary => cheInstalledSummary(
+    installedLabel: _installedLabel,
+    patchNumber: currentPatch,
+    patchesAvailable: _shorebird.isAvailable,
+  );
 
   CheUpdatePlan get plan => planCheUpdate(
     fast: fast,
@@ -203,6 +212,13 @@ class CheUpdateController extends ChangeNotifier {
 
   Future<void> _readInstalledAndPending() async {
     installed = await CheInstalledBuild.read();
+    if (_shorebird.isAvailable) {
+      try {
+        currentPatch = (await _shorebird.readCurrentPatch())?.number;
+      } catch (_) {
+        currentPatch = null;
+      }
+    }
     await _checkPendingInstall(installed);
   }
 

@@ -332,13 +332,13 @@ extension _CheHomeVoice on _CHEHomeState {
     }
     final turn = _openSpeechTurn(readOnDemand: readOnDemand);
     if (turn == null) return;
-    // CHE refers to and pronounces herself as "CHE"; "Chay" is only the wake
-    // word, so no substitution happens here.
-    // Read This can include whole Brain memories or long articles. The
-    // ElevenLabs route intentionally rejects a clip above 800 characters;
-    // split before prefetch so every part can use Mary, in the correct order.
+    // CHE is written "CHE" and said "Chay" (owner, 2026-10-14). Only the words
+    // handed to a voice change; the transcript above keeps "CHE".
+    // Read This can include whole Brain memories or long articles. The Fish and
+    // ElevenLabs routes reject a clip above 800 characters; split before
+    // prefetch so every part can use them, in the correct order.
     for (final chunk in cheReadAloudChunks(text)) {
-      turn.add(chunk);
+      turn.add(cheSpokenText(chunk));
     }
     turn.close();
     await turn.done;
@@ -390,8 +390,15 @@ extension _CheHomeVoice on _CHEHomeState {
         // for the diagnostics sheet, next to the voice that actually played.
         final edge = await CheEdgeVoice.speak(text);
         final edgeClip = edge.clip;
-        final maryReason = cheMaryReason(edge.maryStatus, edgeClip?.engine ?? '');
+        final engine = edgeClip?.engine ?? '';
+        // Why CHE's own voice (Fish) and Mary did not speak, for diagnostics.
+        final maryReason = [
+          cheFishReason(edge.fishStatus, engine),
+          if (engine != 'fish-audio') cheMaryReason(edge.maryStatus, engine),
+        ].where((r) => r.isNotEmpty).join('; ');
         if (edge.maryStatus.isNotEmpty) _maryStatus = edge.maryStatus;
+        if (edge.fishStatus.isNotEmpty) _fishStatus = edge.fishStatus;
+        if (engine == 'fish-audio') _fishStatus = 'healthy';
         if (edgeClip != null && edgeClip.bytes.isNotEmpty) {
           _voiceFailReason = maryReason;
           return edgeClip;

@@ -52,10 +52,25 @@ jobs:
           command -v ffprobe
           command -v espeak-ng
           python -m piper --help >/dev/null
+      # Finished Fish narration is kept between runs, keyed by text, model and
+      # voice inside the renderer, so the same narration is never paid twice.
+      - name: Reuse earlier narration audio
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/che-narration
+          key: che-narration-${{ github.run_id }}
+          restore-keys: che-narration-
       - name: Render and independently probe video and thumbnail
         env:
           TOPIC: ${{ github.event.client_payload.topic || inputs.topic || '3 surprising facts about space' }}
           DURATION: ${{ github.event.client_payload.seconds || inputs.seconds || '15' }}
+          # CHE's Fish voice narrates with the expressive model (Drama 3) when
+          # set up. Without these, or on any Fish error, Piper narrates.
+          # CHE_FISH_NARRATION=0 (variable) keeps narration on Piper.
+          FISH_API_KEY: ${{ secrets.FISH_API_KEY }}
+          CHE_FISH_VOICE_ID: ${{ secrets.CHE_FISH_VOICE_ID || vars.CHE_FISH_VOICE_ID }}
+          CHE_FISH_EXPRESSIVE_MODEL: ${{ vars.CHE_FISH_EXPRESSIVE_MODEL || secrets.CHE_FISH_EXPRESSIVE_MODEL }}
+          CHE_FISH_NARRATION: ${{ vars.CHE_FISH_NARRATION }}
         run: |
           python tools/che_video_render.py --topic "$TOPIC" --seconds "$DURATION" --out rendered
       - name: Retain files for authenticated owner preview

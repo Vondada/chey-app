@@ -122,6 +122,7 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
     this.playbackEngine,
     this.fallbackReason,
     this.maryStatus = '',
+    this.fishStatus = '',
   });
 
   final CheVoiceSnapshot snapshot;
@@ -131,6 +132,8 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
   final String? fallbackReason;
   /// Mary's status from the last server reply; empty before the first reply.
   final String maryStatus;
+  /// Fish's (CHE's own voice) status from the last server reply.
+  final String fishStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -208,7 +211,8 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
             row('Audio verified', snapshot.audioVerified ? 'Yes' : 'No'),
             row('CHE server', serverOnline ? 'Connected' : 'Not confirmed'),
             row('Last event', lastServerEvent ?? '—'),
-            row('Mary (preferred)', cheMaryStateLabel(maryStatus)),
+            row('CHE voice (Fish Audio)', cheFishStateLabel(fishStatus)),
+            row('Mary (backup)', cheMaryStateLabel(maryStatus)),
             row('Playback engine', cheVoiceEngineLabel(playbackEngine)),
             row('Fallback detail', fallbackReason ?? '—'),
             row('Last interruption', snapshot.lastInterruptionReason ?? '—'),

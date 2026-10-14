@@ -144,7 +144,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
 
   Future<void> _addKey(Map<String, dynamic> provider) async {
     if (provider['readonly'] == true) {
-      _say(_maryStatusSpeech(provider));
+      _say(_serverKeyStatusSpeech(provider));
       return;
     }
     final controller = TextEditingController();
@@ -502,17 +502,23 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         'network' => 'Unreachable right now',
         'not tried yet' => 'Not used yet',
         'not set up' => 'Not set up',
+        'needs a voice' => 'Needs a voice ID',
+        'off' => 'Switched off',
+        'model not available' => 'Model not available on this account',
+        'slow' => 'Too slow, resting',
+        'daily limit reached' => 'Story limit reached today',
         _ => s,
       };
 
-  // Mary's key is a server secret set at deploy time. Her row only reports the
-  // server's status, in words, and never opens the paste-a-key form.
-  String _maryStatusSpeech(Map<String, dynamic> provider) {
+  // Fish's and Mary's keys are server secrets set at deploy time. Their rows
+  // only report the server's status, in words, and never open the paste-a-key
+  // form.
+  String _serverKeyStatusSpeech(Map<String, dynamic> provider) {
     final words = _statusWords('${provider['status']}');
     final last4 = '${provider['last4'] ?? ''}'.trim();
     final detail = '${provider['detail'] ?? ''}'.trim();
-    return 'ElevenLabs, Mary voice: $words.'
-        '${last4.isEmpty ? '' : ' Her key ends $last4.'}'
+    return '${provider['name']}: $words.'
+        '${last4.isEmpty ? '' : ' The key ends $last4.'}'
         '${detail.isEmpty ? '' : ' $detail'}'
         ' The key is changed at deploy time, not here.';
   }

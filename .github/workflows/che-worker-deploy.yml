@@ -48,6 +48,21 @@ jobs:
       # ElevenLabs API key for immediate provider-side shutdown.
       # A repository variable CHE_ELEVENLABS_PREFERRED=0 is also supported.
       CHE_ELEVENLABS_PREFERRED: ${{ secrets.CHE_ELEVENLABS_PREFERRED || vars.CHE_ELEVENLABS_PREFERRED || '1' }}
+      # CHE's own voice (Fish Audio). Owner-requested 2026-10-14. Fish speaks
+      # only when FISH_API_KEY and CHE_FISH_VOICE_ID are both set; the existing
+      # voices stay as the fallback. Set CHE_FISH_PREFERRED=0 (secret or
+      # variable) to switch Fish off on the next deploy. Model names are plain
+      # settings: a repository variable overrides the defaults in the Worker
+      # (s2.1-pro-free for everyday speech, drama-3 for stories and narration).
+      FISH_API_KEY: ${{ secrets.FISH_API_KEY }}
+      CHE_FISH_VOICE_ID: ${{ secrets.CHE_FISH_VOICE_ID || vars.CHE_FISH_VOICE_ID }}
+      CHE_FISH_PREFERRED: ${{ secrets.CHE_FISH_PREFERRED || vars.CHE_FISH_PREFERRED || '1' }}
+      CHE_FISH_MODEL: ${{ vars.CHE_FISH_MODEL || secrets.CHE_FISH_MODEL }}
+      CHE_FISH_EXPRESSIVE_MODEL: ${{ vars.CHE_FISH_EXPRESSIVE_MODEL || secrets.CHE_FISH_EXPRESSIVE_MODEL }}
+      CHE_FISH_SPEED: ${{ vars.CHE_FISH_SPEED || secrets.CHE_FISH_SPEED }}
+      CHE_FISH_CHARACTER_VOICES: ${{ secrets.CHE_FISH_CHARACTER_VOICES || vars.CHE_FISH_CHARACTER_VOICES }}
+      CHE_FISH_MAX_LATENCY_MS: ${{ vars.CHE_FISH_MAX_LATENCY_MS || secrets.CHE_FISH_MAX_LATENCY_MS }}
+      CHE_FISH_EXPRESSIVE_DAILY_CHARS: ${{ vars.CHE_FISH_EXPRESSIVE_DAILY_CHARS || secrets.CHE_FISH_EXPRESSIVE_DAILY_CHARS }}
       CHE_OPENAI_API_KEY: ${{ secrets.CHE_OPENAI_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -126,13 +141,16 @@ jobs:
         run: |
           node -e '
             const out = {};
-            for (const k of ["CHE_YOUTUBE_CLIENT_ID", "CHE_YOUTUBE_CLIENT_SECRET", "CHE_OAUTH_SECRET", "CHE_VIDEO_GEN_URL", "CHE_VIDEO_GEN_TOKEN", "CHE_VIDEO_RENDER_URL", "CHE_GITHUB_TOKEN", "ELEVENLABS_API_KEY", "CHE_ELEVENLABS_VOICE_ID", "CHE_ELEVENLABS_PREFERRED", "CHE_OPENAI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CHE_OLLAMA_URL", "CHE_OLLAMA_TOKEN", "XAI_API_KEY", "GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GITHUB_MODELS_TOKEN", "SAMBANOVA_API_KEY", "HF_TOKEN", "CHE_PGVECTOR_REST_URL", "CHE_PGVECTOR_TOKEN", "CHE_VMWARE_TRAINING_URL", "CHE_VMWARE_TRAINING_TOKEN", "CHE_HF_TRAINING_URL", "CHE_HF_TRAINING_TOKEN", "CHE_HF_TTS_URL", "CHE_COMPUTER_URL", "CHE_COMPUTER_TOKEN", "STRIPE_SECRET_KEY", "CHE_PICOVOICE_ACCESS_KEY", "CHE_PICOVOICE_KEYWORD_PPN_B64", "CHE_PICOVOICE_SENSITIVITY"]) {
+            for (const k of ["CHE_YOUTUBE_CLIENT_ID", "CHE_YOUTUBE_CLIENT_SECRET", "CHE_OAUTH_SECRET", "CHE_VIDEO_GEN_URL", "CHE_VIDEO_GEN_TOKEN", "CHE_VIDEO_RENDER_URL", "CHE_GITHUB_TOKEN", "ELEVENLABS_API_KEY", "CHE_ELEVENLABS_VOICE_ID", "CHE_ELEVENLABS_PREFERRED", "FISH_API_KEY", "CHE_FISH_VOICE_ID", "CHE_FISH_MODEL", "CHE_FISH_EXPRESSIVE_MODEL", "CHE_FISH_SPEED", "CHE_FISH_CHARACTER_VOICES", "CHE_FISH_MAX_LATENCY_MS", "CHE_FISH_EXPRESSIVE_DAILY_CHARS", "CHE_OPENAI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CHE_OLLAMA_URL", "CHE_OLLAMA_TOKEN", "XAI_API_KEY", "GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GITHUB_MODELS_TOKEN", "SAMBANOVA_API_KEY", "HF_TOKEN", "CHE_PGVECTOR_REST_URL", "CHE_PGVECTOR_TOKEN", "CHE_VMWARE_TRAINING_URL", "CHE_VMWARE_TRAINING_TOKEN", "CHE_HF_TRAINING_URL", "CHE_HF_TRAINING_TOKEN", "CHE_HF_TTS_URL", "CHE_COMPUTER_URL", "CHE_COMPUTER_TOKEN", "STRIPE_SECRET_KEY", "CHE_PICOVOICE_ACCESS_KEY", "CHE_PICOVOICE_KEYWORD_PPN_B64", "CHE_PICOVOICE_SENSITIVITY"]) {
               if (process.env[k]) out[k] = process.env[k];
             }
             // An absent/cleared GitHub opt-in MUST revoke any previously live
             // Worker setting. Bulk secret sync otherwise leaves the old '1'.
             out.CHE_ELEVENLABS_PREFERRED =
               ["1", "true", "yes"].includes(String(process.env.CHE_ELEVENLABS_PREFERRED || "").toLowerCase())
+                ? "1" : "0";
+            out.CHE_FISH_PREFERRED =
+              ["1", "true", "yes"].includes(String(process.env.CHE_FISH_PREFERRED || "").toLowerCase())
                 ? "1" : "0";
             require("fs").writeFileSync("/tmp/che-secrets.json", JSON.stringify(out));
             console.log("Syncing", Object.keys(out).length ? Object.keys(out).join(", ") : "no optional keys");
@@ -243,3 +261,131 @@ jobs:
           }
           console.log(`Mary live: ready, last status "${probe.live.status}".`);
           JS
+
+      - name: Verify live Fish voice settings
+        run: |
+          node --input-type=module <<'JS'
+          // Public probe: booleans, model names and status words only. It fails
+          // only when Fish is configured here but the live Worker cannot see it.
+          const on = ['1', 'true', 'yes'].includes(String(process.env.CHE_FISH_PREFERRED || '').toLowerCase());
+          const configured = Boolean(process.env.FISH_API_KEY) && /^[A-Za-z0-9_-]{8,80}$/.test(process.env.CHE_FISH_VOICE_ID || '');
+          let probe = null;
+          for (let attempt = 0; attempt < 6 && !probe; attempt++) {
+            try {
+              const response = await fetch('https://chey-app.henryjavoni.workers.dev/api/voice/status', { signal: AbortSignal.timeout(10000) });
+              const body = await response.json();
+              if (response.ok && body.ok && body.fish) probe = body.fish;
+            } catch { /* retry a transient error */ }
+            if (!probe) await new Promise(resolve => setTimeout(resolve, 3000));
+          }
+          if (!probe) throw new Error('Live voice status did not report Fish');
+          console.log(`Live Fish settings: ${JSON.stringify(probe)}`);
+          if (!configured) {
+            console.log('::notice::Fish Audio is not set up: add the FISH_API_KEY and CHE_FISH_VOICE_ID secrets. CHE keeps her existing voices.');
+            process.exit(0);
+          }
+          if (on && (!probe.top_level.ready || !probe.live.ready)) {
+            throw new Error(`Fish is configured, but the live Worker reports not ready (key present: ${probe.live.key_present}, voice ID format ok: ${probe.live.voice_id_format_ok}).`);
+          }
+          console.log(on ? `Fish live: ready, everyday ${probe.live.everyday_model}, expressive ${probe.live.expressive_model}.` : 'Fish is switched off by CHE_FISH_PREFERRED.');
+          JS
+
+      - name: Fish measurement key
+        id: fishkey
+        if: env.FISH_API_KEY != '' && env.CHE_FISH_VOICE_ID != ''
+        run: |
+          node -e '
+            const { createHash } = require("crypto");
+            // Same voice, models and sample text → same measurement, reused
+            // from the cache instead of paying for it again on every deploy.
+            const key = createHash("sha256").update(JSON.stringify(["v1", process.env.CHE_FISH_VOICE_ID, process.env.CHE_FISH_MODEL || "s2.1-pro-free", process.env.CHE_FISH_EXPRESSIVE_MODEL || "drama-3", process.env.CHE_FISH_SPEED || ""])).digest("hex").slice(0, 24);
+            require("fs").appendFileSync(process.env.GITHUB_OUTPUT, `key=che-fish-probe-${key}\n`);
+          '
+
+      - name: Reuse an earlier Fish measurement
+        if: steps.fishkey.outputs.key != ''
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.che-fish-probe
+          key: ${{ steps.fishkey.outputs.key }}
+
+      - name: Measure Fish Audio voice (real call, short and long)
+        id: fishmeasure
+        if: steps.fishkey.outputs.key != ''
+        run: |
+          node --input-type=module <<'JS'
+          // A real synthesis of one short reply (everyday model) and one longer
+          // narration (expressive model). It measures latency and checks the
+          // audio, never prints the key, and never fails the deploy: Fish falls
+          // back to CHE's existing voices on its own. The clips are kept as a
+          // private workflow artifact so the owner can listen to them.
+          import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+          import { homedir } from 'node:os';
+          const dir = `${homedir()}/.che-fish-probe`;
+          const reportFile = `${dir}/report.json`;
+          if (existsSync(reportFile)) {
+            console.log(`Fish measurement reused from cache (no new Fish charge): ${readFileSync(reportFile, 'utf8')}`);
+            process.exit(0);
+          }
+          mkdirSync(dir, { recursive: true });
+          const samples = [
+            { name: 'conversation', model: process.env.CHE_FISH_MODEL || 's2.1-pro-free', bitrate: 64, latency: 'balanced',
+              text: "Morning, sir. Chay here. Your ten o'clock moved to Thursday, and I've already let everyone know." },
+            { name: 'narration', model: process.env.CHE_FISH_EXPRESSIVE_MODEL || 'drama-3', bitrate: 128, latency: 'normal',
+              text: 'Three hundred miles off the coast, the lighthouse keeper heard a knock at the door. Nobody had visited the island in eleven years. She set down her tea, picked up the lantern, and listened. The knock came again, slower this time, as if whoever stood outside had all the time in the world.' },
+          ];
+          const report = [];
+          for (const sample of samples) {
+            const started = Date.now();
+            let row = { name: sample.name, model: sample.model, chars: sample.text.length };
+            try {
+              const response = await fetch('https://api.fish.audio/v1/tts', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${process.env.FISH_API_KEY}`, 'Content-Type': 'application/json', model: sample.model },
+                body: JSON.stringify({ text: sample.text, reference_id: process.env.CHE_FISH_VOICE_ID, format: 'mp3', mp3_bitrate: sample.bitrate, normalize: true, latency: sample.latency }),
+                signal: AbortSignal.timeout(90000),
+              });
+              const bytes = new Uint8Array(await response.arrayBuffer());
+              row.http = response.status;
+              row.ms = Date.now() - started;
+              if (response.ok) {
+                const mp3 = (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) || (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0);
+                row.bytes = bytes.length;
+                row.valid_mp3 = mp3;
+                row.approx_seconds = Math.round((bytes.length * 8) / (sample.bitrate * 1000) * 10) / 10;
+                if (mp3) writeFileSync(`${dir}/${sample.name}.mp3`, bytes);
+              } else {
+                // Status code only: the body can echo request details.
+                row.error = response.status === 401 ? 'key refused' : response.status === 402 ? 'out of credits' : response.status === 403 ? 'model or key not permitted' : 'request refused';
+              }
+            } catch (error) {
+              row.ms = Date.now() - started;
+              row.error = error?.name === 'TimeoutError' ? 'timed out' : 'network error';
+            }
+            report.push(row);
+            console.log(`Fish ${sample.name}: ${JSON.stringify(row)}`);
+            if (!row.valid_mp3) console.log(`::warning::Fish ${sample.name} (${sample.model}) did not return playable audio: ${row.error || 'not an MP3'}. CHE keeps her existing voice for this.`);
+          }
+          // Only a fully playable pair is cached, so a failure is measured again
+          // on the next deploy.
+          if (report.every((row) => row.valid_mp3)) {
+            writeFileSync(reportFile, JSON.stringify(report));
+            writeFileSync(process.env.GITHUB_OUTPUT, 'save=1\n', { flag: 'a' });
+          }
+          JS
+
+      - name: Save the Fish measurement
+        if: steps.fishmeasure.outputs.save == '1'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.che-fish-probe
+          key: ${{ steps.fishkey.outputs.key }}
+
+      - name: Keep the Fish sample clips for the owner
+        if: steps.fishkey.outputs.key != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: che-fish-voice-samples
+          path: ~/.che-fish-probe/*.mp3
+          if-no-files-found: ignore
+          retention-days: 14

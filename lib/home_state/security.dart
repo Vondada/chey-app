@@ -1298,6 +1298,7 @@ extension _CheHomeSecurity on _CHEHomeState {
         playbackEngine: _lastVoiceEngine,
         fallbackReason: _voiceFailReason.isEmpty ? null : _voiceFailReason,
         maryStatus: _maryStatus,
+        fishStatus: _fishStatus,
       ),
     );
   }
