@@ -237,7 +237,9 @@ class CheNativeVoice {
       return played;
     } on MissingPluginException {
       bridgePresent = false;
-      lastPlaybackError = 'the native audio player is missing';
+      // The voice bridge is missing from this build (it is registered at
+      // launch in native code, which a Dart patch cannot change).
+      lastPlaybackError = 'this CHE build cannot play voice audio; install the newest CHE build from Updates';
       return false;
     } on PlatformException catch (error) {
       final detail = (error.details ?? error.message ?? '').toString().trim();

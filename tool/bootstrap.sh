@@ -227,20 +227,26 @@ struct CHEAppShortcuts: AppShortcutsProvider {
       }
     }
 
-    if let controller = window?.rootViewController as? FlutterViewController {
+    // Flutter's UIScene lifecycle creates the window after launch, so
+    // window.rootViewController is nil here and channels built from it never
+    // existed: the iPhone could not play CHE's server voice and spoke with the
+    // system voice instead (owner's voice diagnostics, 2026-10-14). The app
+    // delegate's plugin registrar has the engine's messenger in both lifecycles.
+    if let messenger = (window?.rootViewController as? FlutterViewController)?.binaryMessenger
+      ?? self.registrar(forPlugin: "CHENativeBridge")?.messenger() {
       let methods = FlutterMethodChannel(
         name: "che/native_voice",
-        binaryMessenger: controller.binaryMessenger
+        binaryMessenger: messenger
       )
       let events = FlutterEventChannel(
         name: "che/native_voice_events",
-        binaryMessenger: controller.binaryMessenger
+        binaryMessenger: messenger
       )
       events.setStreamHandler(voiceStreamHandler)
 
       let nativeShell = FlutterMethodChannel(
         name: "che/native_shell",
-        binaryMessenger: controller.binaryMessenger
+        binaryMessenger: messenger
       )
       nativeShell.setMethodCallHandler { call, result in
         switch call.method {
@@ -303,7 +309,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
 
       let accountBridge = FlutterMethodChannel(
         name: "che/account_bridge",
-        binaryMessenger: controller.binaryMessenger
+        binaryMessenger: messenger
       )
       accountBridge.setMethodCallHandler { [weak self] call, result in
         guard let self else {
@@ -975,7 +981,9 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     assistantText = ""
 
     do {
-      let audioPlayer = try AVAudioPlayer(data: data)
+      // Name the format: raw MP3 without an ID3 tag can otherwise fail with
+      // "unsupported file type" (OSStatus 1954115647).
+      let audioPlayer = try AVAudioPlayer(data: data, fileTypeHint: audioTypeHint(data))
       audioPlayer.delegate = self
       audioPlayer.prepareToPlay()
       player = audioPlayer
@@ -993,6 +1001,20 @@ struct CHEAppShortcuts: AppShortcutsProvider {
         details: error.localizedDescription
       ))
     }
+  }
+
+  private func audioTypeHint(_ data: Data) -> String? {
+    let head = [UInt8](data.prefix(4))
+    if head.count == 4, head[0] == 0x52, head[1] == 0x49, head[2] == 0x46, head[3] == 0x46 {
+      return AVFileType.wav.rawValue
+    }
+    if head.count >= 3, head[0] == 0x49, head[1] == 0x44, head[2] == 0x33 {
+      return AVFileType.mp3.rawValue
+    }
+    if head.count >= 2, head[0] == 0xFF, (head[1] & 0xE0) == 0xE0 {
+      return AVFileType.mp3.rawValue
+    }
+    return nil
   }
 
   private func stopAllAudio() {

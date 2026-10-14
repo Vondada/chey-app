@@ -99,6 +99,12 @@ void main() {
     expect(CheNativeVoice.lastPlaybackError, 'audio_playback_failed: could not play');
   });
 
+  test('a build without the voice bridge says to install the newest build', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(_channel, null);
+    expect(await CheNativeVoice.playAudioBounded(Uint8List(8)), isFalse);
+    expect(CheNativeVoice.lastPlaybackError, contains('install the newest CHE build from Updates'));
+  });
+
   test('a stuck player and a played clip leave the right playback reason', () async {
     final stuck = Completer<Object?>();
     mockBridge((call) => call.method == 'playAudio' ? stuck.future : Future<Object?>.value(null));
