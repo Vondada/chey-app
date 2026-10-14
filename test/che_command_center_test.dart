@@ -677,8 +677,11 @@ void main() {
     next.onSend();
     for (var i = 0; i < 12; i++) { await tester.pump(const Duration(milliseconds: 150)); }
     expect(find.text('Library'), findsOneWidget, reason: 'the local-search intent navigates, not web research');
-    final search = tester.widget<TextField>(find.byType(TextField).first);
-    expect(search.controller?.text, 'youtube');
+    // This real CHEApp test has no paired device, so it intentionally has no
+    // live catalog and hides the search field. Verify the route parameter;
+    // the seeded FakeChe test above proves the field and results are filtered.
+    final opened = tester.widget<CheCommandCenterScreen>(find.byType(CheCommandCenterScreen));
+    expect(opened.initialSearch, 'youtube');
     expect(CheCommandCenterVoice.handler, isNotNull);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
