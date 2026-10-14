@@ -72,6 +72,13 @@ function headers(env, extra = {}) {
 function sanitizeMatch(row) {
   const content = clip(row?.content ?? row?.text ?? row?.memory, 2200);
   if (!content) return null;
+  const meta = row?.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+    ? row.metadata : {};
+  // pgvector similarity measures relevance, not correctness. Exclude entries
+  // explicitly invalidated/superseded or expired; keep the audit in Postgres.
+  if (meta.active === false || meta.superseded_at || meta.verification_status === 'disproven') return null;
+  const expires = Date.parse(String(meta.expires_at || ''));
+  if (Number.isFinite(expires) && expires < Date.now()) return null;
   return {
     id: clip(row?.id, 120),
     external_id: clip(row?.external_id, 180),
@@ -82,9 +89,7 @@ function sanitizeMatch(row) {
     similarity: Number.isFinite(Number(row?.similarity))
       ? Math.max(0, Math.min(1, Number(row.similarity)))
       : null,
-    metadata: row?.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
-      ? row.metadata
-      : {},
+    metadata: meta,
   };
 }
 
@@ -142,7 +147,9 @@ export function vectorContextText(recall, maxChars = 9000) {
   for (const item of recall.matches || []) {
     const label = [item.kind, item.title].filter(Boolean).join(' · ');
     const score = item.similarity == null ? '' : ` (similarity ${item.similarity.toFixed(3)})`;
-    const line = `[${label || 'memory'}${score}] ${item.content}${item.source ? ` — source: ${item.source}` : ''}`;
+    const status = item.metadata?.verification_status === 'source_verified' ? 'source-backed' :
+      item.metadata?.verification_status === 'owner_attested' ? 'owner-attested' : 'unverified reference';
+    const line = `[${label || 'memory'}${score}; ${status}] ${item.content}${item.source ? ` — source: ${item.source}` : ''}`;
     if (used + line.length > maxChars) break;
     used += line.length;
     lines.push(line);
