@@ -433,10 +433,10 @@ extension _CheHomeSend on _CHEHomeState {
         _screenChipsHidden = false;
         return removed ? 'Removed "$label" from the suggestions, sir.' : 'I do not see "$label" in the suggestions.';
       case ScreenOp.openCommands:
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) unawaited(_openCommandCenter());
-        });
+        // Navigation now happens directly in sendMessage, not in a frame callback.
         return 'Opening Commands, sir.';
+      case ScreenOp.searchCommands:
+        return 'Opening Commands for "${command.text}", sir.';
       case ScreenOp.clearChat:
         messages.clear();
         return 'Chat cleared, sir.';
@@ -566,6 +566,24 @@ extension _CheHomeSend on _CHEHomeState {
     // Direct screen edits are applied on-device before any model routing.
     final screenCommand = _pendingAttachment == null ? parseScreenCommand(message) : null;
     if (screenCommand != null) {
+      // Open the real page immediately. A deferred callback could leave the
+      // owner in Chat, so the next local search went to the web/model.
+      if (screenCommand.op == ScreenOp.openCommands || screenCommand.op == ScreenOp.searchCommands) {
+        if (!mounted) return;
+        final reply = _applyScreenCommand(screenCommand);
+        _set(() {
+          controller.clear();
+          messages
+            ..add({'role': 'user', 'text': message})
+            ..add({'role': 'assistant', 'text': reply});
+        });
+        HapticFeedback.mediumImpact();
+        unawaited(_openCommandCenter(
+          search: screenCommand.op == ScreenOp.searchCommands ? screenCommand.text : '',
+        ));
+        await speakText(reply, record: false);
+        return;
+      }
       var reply = '';
       if (mounted) {
         _set(() {
