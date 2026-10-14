@@ -50,7 +50,7 @@ export function checkPackage(pkg = {}) {
     const refs = [...sentence.matchAll(/\[([\d,\s]+)\]/g)].flatMap((m) => m[1].split(',').map((n) => Number(n.trim())));
     for (const n of refs) {
       if (!ids.has(n)) errors.push(`script cites [${n}] but there is no source ${n}: "${sentence.slice(0, 80)}"`);
-      cited.add(n);
+      else cited.add(n);
     }
     if (!refs.length && FACTUAL.test(sentence.replace(/\[[\d,\s]+\]/g, ''))) {
       uncited += 1;
