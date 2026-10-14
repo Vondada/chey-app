@@ -570,7 +570,8 @@ test('the deploy probe checks the live Command Center on an isolated CHE and rep
   };
   env.CHE_STATE = { getByName: (name) => {
     if (!states.has(name)) states.set(name, new CheState({ storage: storageFor(new Map()), waitUntil: (p) => pending.push(p) }, env));
-    return states.get(name);
+    // Match production Durable Object stubs: only fetch() is exposed.
+    return { fetch: (request) => states.get(name).fetch(request) };
   } };
   const denied = await worker.fetch(new Request('https://che.example/api/commands/probe', { method: 'POST' }), env);
   assert.equal(denied.status, 404);
@@ -579,6 +580,7 @@ test('the deploy probe checks the live Command Center on an isolated CHE and rep
   for (const p of pending) await p;
   assert.equal(report.ok, true, JSON.stringify(report.steps, null, 1));
   assert.equal(report.passed, report.total);
+  assert.equal(typeof report.readiness.error, 'undefined', 'readiness is genuinely available in production-stub shape');
   assert.ok(report.readiness.available >= 50, `${report.readiness.available} ready`);
   assert.ok(report.readiness.setup_required.some((c) => c.id === 'trade-execute' && c.missing.includes('NinjaTrader / Tradovate account')));
   assert.equal(report.readiness.connectors.voice, 'ready');

@@ -475,9 +475,26 @@ async function commandCenterProbe(env, token) {
   } finally {
     await call('/api/security/revoke_self', {}, device).catch(() => null);
   }
-  const readiness = await env.CHE_STATE.getByName('owner').commandReadiness().catch((error) => ({ error: String(error?.message || error) }));
+  // Production CHE_STATE returns a Durable Object stub (fetch only), not a
+  // CheState instance. Ask the owner's object for the read-only count through
+  // a probe-token-gated endpoint; never pretend an unknown count is zero.
+  let readiness;
+  try {
+    const response = await env.CHE_STATE.getByName('owner').fetch(new Request('https://che.internal/api/commands/readiness', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: '{}',
+    }));
+    if (!response.ok) throw new Error(`Readiness request returned HTTP ${response.status}`);
+    readiness = await response.json();
+    if (!Number.isInteger(readiness.available) || !Array.isArray(readiness.setup_required)) {
+      throw new Error('Readiness count was not returned');
+    }
+  } catch (error) {
+    readiness = { error: String(error?.message || error).slice(0, 160) };
+  }
   return {
-    ok: steps.every((s) => s.pass || s.optional),
+    ok: steps.every((s) => s.pass || s.optional) && !readiness.error,
     passed: steps.filter((s) => s.pass).length,
     total: steps.length,
     steps,
@@ -4745,6 +4762,12 @@ export class CheState extends DurableObject {
       }
 
       const body = ['POST', 'PATCH'].includes(request.method) ? await bodyOf(request) : {};
+      // Internal release probe: only the per-deploy random token may read
+      // connector readiness, with no user data, keys, or saved workflows.
+      if (request.method === 'POST' && path === '/api/commands/readiness') {
+        if (!voiceProbeAuthorized(request, this.env)) return json({ detail: 'Not found.' }, 404);
+        return json(await this.commandReadiness());
+      }
       if (request.method === 'POST' && path === '/api/pair') {
         const secret = this.env.CHE_PAIR_CODE;
         if (!secret || !/^\d{6,12}$/.test(secret)) return json({ detail: 'Set CHE_PAIR_CODE as a server secret.' }, 503);
