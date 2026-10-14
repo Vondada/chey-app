@@ -38,7 +38,9 @@ ScreenCommand? parseScreenCommand(String raw) {
   // the word "all" (which can otherwise yield an empty filtered library).
   if (RegExp(
     r'^(?:list|show(?: me)?|find|search(?: for)?)\s+(?:me\s+)?(?:all|every|the full list of|the complete list of|full list of)\s+(?:the\s+)?(?:commands?|command library|slash commands)$',
-  ).hasMatch(t)) return const ScreenCommand(ScreenOp.openCommands);
+  ).hasMatch(t)) {
+    return const ScreenCommand(ScreenOp.openCommands);
+  }
 
   // Explicit local-catalog intent. "Search YouTube for jazz" still goes
   // through CHE's normal web/video route; no model is needed for the catalog.
@@ -50,7 +52,9 @@ ScreenCommand? parseScreenCommand(String raw) {
       r'^(?:search|find|look up|show(?: me)?)\s+(?:for\s+)?(.+?)\s+(?:commands?|in\s+(?:the\s+|my\s+)?(?:commands?|command\s+(?:center|library)))$',
     ).firstMatch(t);
     final topic = (commandsFirst?.group(1) ?? topicFirst?.group(1) ?? '').trim();
-    if (topic.isNotEmpty) return ScreenCommand(ScreenOp.searchCommands, topic);
+    if (topic.isNotEmpty) {
+      return ScreenCommand(ScreenOp.searchCommands, topic);
+    }
   }
 
   final add = RegExp(r'\b(add|put|place|insert)\b').hasMatch(t);
