@@ -48,6 +48,14 @@ class CheWorkflowBuilderScreen extends StatefulWidget {
   final void Function(CheSavedWorkflow saved, List<CheSavedWorkflow> all)? onSaved;
   final VoidCallback? onStarted;
 
+  static final List<CheWorkflowStepDraft> facelessYouTubeTemplate = [
+    CheWorkflowStepDraft(command: 'topic_research', input: 'Trending tech topics'),
+    CheWorkflowStepDraft(command: 'script_generation', input: 'Draft a 5-minute script'),
+    CheWorkflowStepDraft(command: 'voiceover_synthesis', input: 'Use natural voice model'),
+    CheWorkflowStepDraft(command: 'visual_asset_generation', input: 'Generate B-roll and visuals'),
+    CheWorkflowStepDraft(command: 'metadata_packaging', input: 'Title, tags, and thumbnail prompt')
+  ];
+
   @override
   State<CheWorkflowBuilderScreen> createState() => _CheWorkflowBuilderScreenState();
 }
