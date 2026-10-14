@@ -27,6 +27,9 @@ void main() {
   });
 
   testWidgets('Connections reports actual provider states and never invents bank access', (tester) async {
+    tester.view.physicalSize = const Size(1170, 4200);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
     final paths = <String>[];
     final client = MockClient((r) async {
       paths.add(r.url.path);
