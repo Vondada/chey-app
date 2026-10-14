@@ -313,5 +313,6 @@ test('opportunity scout queues shortlist-only jobs (Pinterest); memory write-bac
   });
   assert.equal(written.written, true);
   assert.ok(stored.memory_notes?.length >= 1);
-  assert.ok(stored.memories?.some((m) => /Opportunity|pinterest|planner/i.test(m)));
+  assert.equal(stored.memories?.some((m) => /Opportunity|pinterest|planner/i.test(m)), false, 'agent ideas must not become verified owner facts');
+  assert.equal(stored.memory_notes[0].verification_status, 'unverified_research_lead');
 });

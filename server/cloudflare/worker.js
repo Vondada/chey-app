@@ -48,7 +48,7 @@ import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, cha
 import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
 import { MODE_NAME, chooseAccount, deskIntent, rememberListed, deskTick, pendingAlert, readDesk, setMode, setSize, skipTrade, speakAlert, speakDeskStatus, takeAnnouncement, takeTrade } from './trading_desk.js';
 import { externalGrounding } from './external_grounding.js';
-import { cachedResearch, factKey, forgetKnowledge, knownAnswer, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
+import { answerEvidenceReceipt, cachedResearch, evidenceFollowup, explainAnswerEvidence, factKey, forgetKnowledge, knownAnswer, LAST_ANSWER_EVIDENCE_KEY, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
 import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliability } from './reliability_ledger.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
@@ -7279,6 +7279,13 @@ export class CheState extends DurableObject {
           return ndjsonReply(aiIntent.reply, aiIntent.meta || { source: 'ai_layer' });
         }
 
+        // Answer source follow-ups from a recorded prior result, never with
+        // invented citations generated after the fact.
+        if (ownerDevice && !body.attachment && evidenceFollowup(message)) {
+          const priorEvidence = await Promise.resolve().then(() => this.ctx.storage.get(LAST_ANSWER_EVIDENCE_KEY)).catch(() => null);
+          return ndjsonReply(explainAnswerEvidence(priorEvidence), { source: 'che_evidence_receipt', model_calls: 0 });
+        }
+
         // KNOW IT → RETRIEVE IT. A verified owner fact ("what is my Worker
         // URL?") is answered from CHE's own memory with zero AI calls. A
         // "remember that my X is Y" turn also becomes such a fact.
@@ -7295,6 +7302,8 @@ export class CheState extends DurableObject {
           }
           const known = rememberFact ? null : await knownAnswer(this.ctx.storage, message, { memories: data.memories }).catch(() => null);
           if (known) {
+            await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY,
+              answerEvidenceReceipt({ ownerAttested: true, at: Date.now() }))).catch(() => null);
             await recordReliability(this.ctx.storage, { kind: 'retrieval', workflow: 'instant_answer', outcome: 'answered_from_memory', tokens_saved: 1500 });
             return ndjsonReply(known.answer, { source: 'che_memory', model_calls: 0 });
           }
@@ -7320,6 +7329,8 @@ export class CheState extends DurableObject {
             ? await researchHit(this.ctx.storage, message).catch(() => null)
             : null;
           if (researched?.pure === true) {
+            await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY,
+              answerEvidenceReceipt({ research: researched }))).catch(() => null);
             await recordReliability(this.ctx.storage, { kind: 'retrieval', workflow: 'research', outcome: 'answered_from_memory', tokens_saved: 3000 });
             const sources = researched.sources?.length ? `\n\nSources: ${researched.sources.join(', ')}` : '';
             const limit = researched.limitation ? `\n\n${researched.limitation}` : '';
@@ -8355,6 +8366,7 @@ export class CheState extends DurableObject {
                 : '',
               'HONESTY (highest priority): never claim an action happened unless a tool in this turn returned success, and give the receipt (link, ID or result) when it did. Label anything unverified as unverified. Say "I don\u2019t know" or "I can\u2019t do that yet" instead of guessing. Never invent plugins, settings, panels, features, services, outages, prices, sales or numbers.',
               'CONTEXT PRIORITY: current owner message > verified tool results from this turn > active conversation > explicit stored/retrieved owner context > cached/general knowledge. The newest owner correction wins conflicts. Short follow-ups continue the most recent unresolved subject/action; do not restart from scratch.',
+              'FACT PROVENANCE: Treat retrieved memories, summaries, research notes, and pgvector similarity hits as reference data, NOT independently verified evidence. Owner-stated preferences are owner-attested, not external facts. For changing or high-stakes factual claims use fresh authoritative tool evidence; if absent, say what remains unverified. Never turn a model assertion or unsourced research summary into a confirmed memory.',
               'COGNITION LOOP: understand the goal, recall relevant context, select the real capability/tool, act when available, verify the result, then answer. Do not repeat an earlier answer merely because it is cached. Do not call a task complete without a real result.',
               'SELF-KNOWLEDGE: your voice is chosen by CHE\u2019s server code (Gemini voice first, then other connected voices, then the iPhone voice as a last resort). There is no voice plugin. You CAN change your own app code: the owner says \u201cupdate your code: \u2026\u201d, your Office coding crew builds and reviews it, and \u201cUpdate CHE\u201d ships it after the checks pass. Server code, native iOS code and API keys still need an engineering session. You can build and host websites and web apps (\u201cbuild me a website for \u2026\u201d). Your built-in plugins are only Weather, Crypto Prices and Wikipedia unless the plugin list in this turn says otherwise.',
               'VOICE-FIRST (always): treat the owner as someone who uses CHE entirely by voice, as if he cannot see the screen. Be his eyes and navigator: when he asks what is on screen, describe it in plain spoken language; read real choices as a short numbered list; say what you did and how it went, and never say \u201ctap here\u201d or rely on him seeing something. Lead with the answer, never with a screen description or a \u201cScreen context\u201d label. Keep spoken replies short. Your own built-in tools (image/video/music generation, research, browser, Office agents) never need permission: use them and report the result. Ask first only before spending money or deleting anything. Acting inside a third-party app outside CHE needs the owner\u2019s go-ahead for that app. Inside CHE\u2019s built-in apps and browser you can read the page, scroll, search, and open or play items by name or number. You cannot see or control apps outside CHE; for those, say so and suggest iPhone Voice Control or VoiceOver (Settings \u2192 Accessibility).',
@@ -8717,9 +8729,14 @@ export class CheState extends DurableObject {
             reply = [guarded.text, note, guarded.text.length < 40 || guarded.removed.some((r) => r.rule !== 'owner_homework') ? statusNow : ''].filter(Boolean).join(' ').trim();
           }
         }
-        if (answer.engine !== 'cache' && officeResults.length === 0 && skillResults.length === 0) {
-          await rememberAnswer(this.ctx.storage, message, reply);
-        }
+        // Persist the actual answer-provenance receipt, not a model-invented
+        // bibliography. Source-backed research may be reused; model-only text
+        // cannot become verified memory by repetition.
+        await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY,
+          answerEvidenceReceipt({ research, tools: skillResults }))).catch(() => null);
+        // Never cache an unverified language-model answer as a reusable fact.
+        // Source-backed research is already saved by knowledge_cache.js with
+        // provenance, expiry and supersession; owner facts use owner_memory.
         if (/\[assistant name\]/i.test(reply) ||
             (/start the conversation/i.test(reply) && /say\s+[“"'']?hey\b/i.test(reply))) {
           reply = 'I’m awake, sir. What do you need?';

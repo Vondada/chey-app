@@ -53,7 +53,7 @@ test('distill opportunity note keeps channel/offer/why/URL and rejects secrets',
   assert.equal(blocked.ok, false);
 });
 
-test('write-back updates memories + memory_notes via shared add path', () => {
+test('write-back keeps agent leads separate from owner-attested facts', () => {
   const data = { memories: [], memory_notes: [], learned_knowledge: [] };
   const agent = { name: 'Iris', role: 'Ad Studio', memory_refs: [] };
   const out = writeResearchMemoryNote(data, {
@@ -69,8 +69,11 @@ test('write-back updates memories + memory_notes via shared add path', () => {
   });
   assert.equal(out.written, true);
   assert.equal(listMemoryNotes(data).length, 1);
-  assert.ok(data.memories.length >= 1);
-  assert.ok(isSafeMemoryText(data.memories[0]));
+  assert.equal(data.memories.length, 0, 'agent research must not become an owner-confirmed fact');
+  assert.equal(out.memory_added, false);
+  assert.equal(out.note.verification_status, 'unverified_research_lead');
+  assert.ok(isSafeMemoryText(out.memory));
+  assert.match(data.learned_knowledge[0], /Unverified research lead/);
   assert.ok(data.learned_knowledge.length >= 1);
   assert.ok(agent.memory_refs.includes(out.note.id));
 

@@ -28,3 +28,16 @@ test('owner memories keep provenance, verification time and supersession history
   assert.equal(data.memory_records[0].superseded_by, 'My favorite drink is ginger ale');
   assert.equal(data.memory_records[1].active, true);
 });
+
+test('a new owner statement supersedes general facts, preserving the previous audit record', () => {
+  const data = { memories: [], memory_records: [] };
+  addOwnerMemory(data, 'My home base is Marrero', { source: 'owner_chat' });
+  const corrected = addOwnerMemory(data, 'My home base is Algiers', { source: 'owner_chat' });
+  assert.deepEqual(corrected.replaced, ['My home base is Marrero']);
+  assert.deepEqual(data.memories, ['My home base is Algiers']);
+  assert.equal(data.memory_records[0].active, false);
+  assert.equal(data.memory_records[0].superseded_by, 'My home base is Algiers');
+  assert.equal(data.memory_records[1].verification_status, 'owner_attested');
+  const reference = addOwnerMemory(data, 'An agent produced an answer', { source: 'agent_research', confidence: 0.4 });
+  assert.equal(reference.record.verification_status, 'unverified_reference');
+});
