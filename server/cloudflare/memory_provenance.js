@@ -252,6 +252,22 @@ const ATTRIBUTION = new RegExp([
 const HYPOTHETICAL = /^(?:if|when|whenever|once|unless|suppose|imagine|let s say|in case)\b/;
 const FICTION_REQUEST = /\b(?:story|stories|fiction|fictional|pretend|role ?play|imagine|hypothetical(?:ly)?|make up|made up|brainstorm|poem|joke|scenario|example dialogue)\b/;
 
+// Creative writing only: "tell me a story", "write a poem", "let's role-play".
+// A news story, "the story behind" a product, a brainstorm or a scenario can
+// come with research whose claims still need receipts.
+const STORY_REQUEST = new RegExp([
+  '\\b(?:tell|write|make up|create|compose|invent|read|give|do)\\s+(?:me\\s+|us\\s+|him\\s+|her\\s+|them\\s+)?(?:a|an|another|one more|some)\\s+(?:[a-z]+\\s+){0,3}(?:story|stories|poem|poems|tale|fable|fairy tale|limerick|screenplay|bedtime story)\\b',
+  '\\b(?:bedtime story|fairy tale|fictional story|short fiction)\\b',
+  '\\b(?:let s |lets )?(?:pretend|role ?play)\\b',
+].join('|'));
+const FACTUAL_ASK = /\b(?:fact ?check|research|verify|look up|search|true story|real story|news|history of|actually happened|accurate|sources?|evidence|citations?)\b/;
+
+/** The owner asked for a story, poem or role-play: invented narration is the point. */
+export function storyRequested(message) {
+  const words = plainWords(message);
+  return STORY_REQUEST.test(words) && !FACTUAL_ASK.test(words);
+}
+
 function sentences(text) {
   return String(text || '').match(/[^.!?\n]+(?:[.!?]+|\n|$)/g) || [];
 }
@@ -280,8 +296,10 @@ export function guardOwnerAttributions(reply, { records = [], ownerTurns = [], m
   }).join('').replace(/[ \t]+\n/g, '\n').replace(/\s{2,}/g, ' ').trim();
   if (!removed.length) return { text, removed };
   const correction = 'I can find no record of you saying or confirming that, sir, so I have left it out rather than present it as yours.';
+  // Whatever else the reply said stays, even when it is short ("The weather
+  // is mild."); only a bare "Sure, sir." is not worth keeping on its own.
   const body = kept.replace(/```[\s\S]*?```/g, '').trim();
-  return { text: body.length >= 40 ? `${kept}\n\n${correction}` : `${correction} If you tell me now, I'll keep it as your own statement.${kept.includes('```') ? `\n\n${kept.match(/```[\s\S]*?```/g).join('\n')}` : ''}`, removed };
+  return { text: body.length >= 40 || contentWords(body).length >= 2 ? `${kept}\n\n${correction}` : `${correction} If you tell me now, I'll keep it as your own statement.${kept.includes('```') ? `\n\n${kept.match(/```[\s\S]*?```/g).join('\n')}` : ''}`, removed };
 }
 
 /**

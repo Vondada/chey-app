@@ -66,3 +66,67 @@ dispatch, numbered choices, upstream failure and unknown-command rejection.
 For production acceptance, send the commands above through a paired CHE chat
 and check `done.source = che_installed_skills` and its `skill_receipt` against
 live index results. A local HTTP test is not proof of production deployment.
+
+## Development skills for Claude Code (`.claude/skills/`)
+
+These are workflow skills for the AIs that build CHE. They are **not** CHE runtime capabilities. Adding them changed nothing in `APPROVED_SKILLS`, and CHE does not load them in chat.
+
+| Skill | Use it for | Deterministic scripts |
+|---|---|---|
+| `che-fact-check` | What CHE may present as true: evidence tiers, owner-confirmed memories, retractions, tool-claim receipts | `claim_check.mjs` runs CHE's own truth guards on a draft reply, or shows a message's route. `cases/` holds the owner's real screenshot conversations. |
+| `che-debug` | Reproduce → locate → narrow fix → prove → review | `replay_chat.mjs` replays turns through the real `/api/chat` offline. `run_checks.sh` runs the CI checks for changed paths. `check_workflows.py` checks workflow YAML and inline scripts. |
+| `che-release` | PR checks, merge, Worker deploy, live commit, probes, Shorebird, IPA | `release_status.mjs` is read-only status. Each consequential action needs the owner's authorization. |
+| `che-youtube` | Sourced faceless-video packages for the existing video line | `check_package.mjs` checks sources, YouTube and CHE uploader limits, thumbnail honesty and publish approval. |
+
+### How to invoke them
+- **In Claude Code:** type `/che-fact-check`, `/che-debug`, `/che-release` or `/che-youtube`. Claude also picks one when the task matches its description: only the name and description load up front, and the body loads on demand.
+- **Other AIs (Codex, Gemini, Cursor, OpenCode):** read `.claude/skills/<name>/SKILL.md` and run its scripts directly. Any of the scripts can be run by hand as well.
+- **CHE's own coding crew:** the OpenCode runner's preamble (`che-opencode-runtime.yml`) points it to che-debug and che-fact-check. That is the existing mechanism, the same one that loads `ponytail`.
+
+### Runtime integration
+CHE's runtime enforces the fact-check rules in code (`memory_provenance.js`, `truth_layer.js`), not through a skill file. While che-fact-check was being written, `claim_check.mjs` found a production defect: the attribution guard dropped the rest of a short reply. It was fixed in `memory_provenance.js`, with a regression test.
+
+Measured on 2026-10-14:
+- CHE's compact chat prompt (2,911 characters) carries no skills list.
+- The full prompt (31,176 characters) includes the 461-character installed-skills context (1.5%).
+- Learned skills are already selected per message.
+
+So no runtime prompt change was made for skills.
+
+### Measured with and without each skill (2026-10-14)
+**Agent A/B.** Each skill got the same task twice, on the same code, from a fresh agent: once told to use the skill, once with `.claude/` off limits. These are single runs, so treat them as indications, not averages. Tokens are the agent's full usage, including its fixed system prompt.
+
+| Skill | Task | With skill | Without | Tokens | Time | Both correct |
+|---|---|---|---|---|---|---|
+| che-fact-check | What does the owner see for a draft reply? | 57,167 tok · 8 calls · 25 s | 72,958 tok · 9 calls · 44 s | −22% | −44% | yes |
+| che-debug | Reproduce two chat turns through `/api/chat` | 51,137 · 6 · 19 s | 61,823 · 10 · 54 s | −17% | −64% | yes |
+| che-release | Is #300 merged and live, and did the probes pass? | 55,888 · 8 · 34 s | 108,534 · 21 · 124 s | −49% | −72% | yes |
+| che-youtube | Is a video package ready to render or publish? | 61,995 · 10 · 106 s | 76,815 · 13 · 72 s | −19% | **+47% (slower)** | yes |
+| **Total** | | **226,187** | **320,130** | **−29%** | | |
+
+**First round.** It ran in worktrees made from `main`, so the with-skill agents had to find the skill elsewhere. Results:
+
+| Skill | Tokens with skill | Tokens without |
+|---|---|---|
+| fact-check | 69,473 | 76,098 |
+| debug | 59,366 | 57,854 (the skill run used **more**) |
+
+That run led to two fixes: the scripts now use the checkout they run in, and the replay lists refused network hosts per turn.
+
+**Context bytes** (`node .claude/skills/tests/measure.mjs`; tokens ≈ bytes/4, an estimate):
+
+| Question | Without the skill | With the skill |
+|---|---|---|
+| Worker suite pass/fail | 291,218 B of TAP | 21 B |
+| Is #300 merged and live? | 436,533 B of raw API JSON | 839 B |
+| What does the owner see? | 70,567 B of guard source | 270 B |
+| Is the package ready? | 11,216 B of pipeline source | 738 B |
+| Skill instructions held before use | 2.9–4.7 KB each | 453–573 B each (name and description only) |
+
+### Tests
+`node --test .claude/skills/tests/*.test.mjs` runs in CI (`flutter-check.yml`, Worker job). It covers:
+- skill selection by description;
+- script execution on the owner's real cases;
+- evidence integrity;
+- token budgets;
+- failure recovery.

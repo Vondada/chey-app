@@ -1,0 +1,50 @@
+{
+  "topic": "Why octopuses have three hearts",
+  "target_seconds": 30,
+  "title": "Why Octopuses Have Three Hearts",
+  "description": "Two hearts pump blood through the gills and one through the body. Sources are listed below.\n\n[1] Smithsonian Ocean: https://ocean.si.edu/ocean-life/invertebrates/octopuses\n[2] Britannica: https://www.britannica.com/animal/octopus-mollusk",
+  "tags": [
+    "octopus",
+    "ocean animals",
+    "marine biology"
+  ],
+  "thumbnail_text": "3 HEARTS?",
+  "sources": [
+    {
+      "id": 1,
+      "url": "https://ocean.si.edu/ocean-life/invertebrates/octopuses",
+      "title": "Octopuses",
+      "accessed": "EXAMPLE ONLY: open and confirm this page before using it"
+    },
+    {
+      "id": 2,
+      "url": "https://www.britannica.com/animal/octopus-mollusk",
+      "title": "Octopus",
+      "accessed": "EXAMPLE ONLY: open and confirm this page before using it"
+    }
+  ],
+  "script": [
+    {
+      "say": "An octopus has 3 hearts. [1]",
+      "show": "Slow pan across an octopus on a reef"
+    },
+    {
+      "say": "Two of them push blood through the gills, and the third sends it around the body. [1]",
+      "show": "Simple diagram of the three hearts"
+    },
+    {
+      "say": "Its blood is blue because it carries oxygen with a copper-based protein called hemocyanin. [2]",
+      "show": "Blue liquid in a glass, then the octopus again"
+    },
+    {
+      "say": "When an octopus swims, the body heart stops beating, which is one reason they prefer to crawl. [1]",
+      "show": "Octopus crawling along the sea floor"
+    },
+    {
+      "say": "So next time you see one walking across the rocks, it may simply be saving its heart.",
+      "show": "Closing shot of the reef"
+    }
+  ],
+  "privacy": "unlisted",
+  "owner_publish_approval": null
+}
