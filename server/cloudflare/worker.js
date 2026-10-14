@@ -72,7 +72,7 @@ import { APPROVED_SKILLS, handleInstalledSkill, installedSkillIntent, installedS
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { noteJobActivity } from './job_activity.js';
 import { PENDING_OWNER_ACTION_KEY, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
-import { changeHistoryIntent, guardGroundedFacts, guardOwnerReply, loadChangeHistory, loadReceipts, recordReceipt, requestedCodeNames, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
+import { asksForCurrentOwnerLocation, changeHistoryIntent, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
 import { describeTopicStudyStart, starredStudyTargets, matchTopicSections, namedRepoStudyIntent, starredLibraryIntent, readTutorial, readmeSections, sectionTutorials, studyBatchIntent, topicBuildRequest, topicTitles, wantsSerialStudy } from './topic_study.js';
@@ -7838,6 +7838,11 @@ export class CheState extends DurableObject {
 
         const clientClock = formatClientTime(body.client_time);
         const lowerMessage = message.toLowerCase();
+        // The phone supplies its local clock, not GPS. Location questions are
+        // answered from that actual contract, not by a guessing chat model.
+        if (asksForCurrentOwnerLocation(message)) {
+          return ndjsonReply(OWNER_LOCATION_NOT_VERIFIED, { source: 'location_provenance', live_gps: false });
+        }
         const brainContext = Array.isArray(body.brain_context)
           ? body.brain_context.map((item) => String(item)).join('\n\n').slice(0, 9000)
           : '';
@@ -8612,6 +8617,13 @@ export class CheState extends DurableObject {
         }
         let reply = String(answer.response || answer.choices?.[0]?.message?.content || '').trim();
         if (!reply) return json({ detail: 'The model did not return an answer.' }, 502);
+        // Never turn time zone, remembered place, or an imagined forecast into
+        // a claim that CHE has the owner's current GPS fix. Require the actual
+        // completed weather tool receipt for specific weather predictions.
+        reply = guardLocationWeatherReply(message, reply, {
+          forecastVerified: skillResults.some((result) =>
+            result.ok === true && result.plugin === 'weather' && result.tool === 'forecast'),
+        });
         // Reject unrelated diagnostics or model/template scaffolding before
         // it can become the owner's answer or enter the cache.
         if (replyHijacksOwnerRequest(message, reply)) {

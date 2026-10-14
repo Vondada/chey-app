@@ -428,3 +428,37 @@ export function guardGroundedFacts(reply, { paths = [], repo = '', jobIds = [], 
     .replace(/\u0000(\d+)\u0000/g, (_, i) => fences[Number(i)]).replace(/\n{3,}/g, '\n\n').trim();
   return { text, removed };
 }
+
+
+// Owner GPS provenance: the current CHE phone /api/chat request sends a device
+// timezone, not CoreLocation coordinates. Do not confuse that clock context,
+// a weather tool's geocoded city, or remembered addresses with live position.
+export function asksForCurrentOwnerLocation(message) {
+  const text = String(message || '').trim().toLowerCase();
+  if (!text || text.length > 240) return false;
+  return /\bwhere\s+(?:exactly\s+)?(?:am\s+i|i\s+am|i'm)\b(?!\s+(?:going|headed|in\s+life))/.test(text) ||
+    /\b(?:do|can|so)\s+you\s+(?:know|see|tell)\s+(?:me\s+)?where\s+i\s+am\b/.test(text) ||
+    /\b(?:do\s+)?you\s+(?:know|have|see)\s+my\s+(?:live\s+|current\s+|exact\s+)?(?:location|gps\s+position)\b/.test(text) ||
+    /\b(?:what|where)(?:'s| is)\s+my\s+(?:live\s+|current\s+|exact\s+)?(?:location|gps\s+position)\b/.test(text);
+}
+
+export const OWNER_LOCATION_NOT_VERIFIED =
+  'I cannot verify where you physically are right now, sir. This CHE chat sends your iPhone time zone, not live GPS coordinates. I can use a city or address you shared for a forecast, but that does not prove your current position. I should not have claimed otherwise.';
+
+// A truthful forecast requires a completed weather tool call, not a plausible
+// temperature produced by the AI. The guard deliberately preserves general
+// weather conversation and verified city-based forecasts.
+export function guardLocationWeatherReply(message, reply, { forecastVerified = false } = {}) {
+  const answer = String(reply || '');
+  const askedWeather = /\b(?:weather|forecast|temperatures?|highs?\s+and\s+lows?|rain|snow)\b/i.test(message || '');
+  const assertedForecast = /\b(?:forecast\s+(?:shows|says|predicts)|(?:will|going to)\s+be\s+(?:mostly\s+)?(?:sunny|cloudy|rainy|clear|warm|cold)|(?:high|low)\s+(?:of|around)\s+\d+|\d+\s*(?:degrees|°[fc]))\b/i.test(answer);
+  if (askedWeather && assertedForecast && !forecastVerified) {
+    return 'I do not have a verified live weather forecast for that request, sir. Tell me the city you want checked, or enable CHE’s Weather tool. Your iPhone time zone is not your GPS location.';
+  }
+  const unprovedGpsClaim =
+    /\bi(?:'ve| have)?\s+(?:used|checked|pulled|retrieved|accessed|looked up|got)\b[^.!?\n]{0,120}\b(?:your\s+(?:current\s+|live\s+|gps\s+)?location|the\s+location\s+you(?:'ve| have)\s+shared)\b/i.test(answer) ||
+    /\bi\s+(?:know|can see|have)\s+(?:exactly\s+)?where\s+you\s+are\b/i.test(answer) ||
+    /\b(?:checked|pulled|looked up)\s+(?:the\s+)?forecast\s+for\s+your\s+current\s+location\b/i.test(answer);
+  if (unprovedGpsClaim) return OWNER_LOCATION_NOT_VERIFIED;
+  return answer;
+}
