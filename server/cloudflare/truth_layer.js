@@ -8,7 +8,7 @@
 //  - strips unsupported action claims and owner "homework" from
 //    model-generated owner replies before they reach chat or voice.
 
-import { fictionRequested } from './memory_provenance.js';
+import { storyRequested } from './memory_provenance.js';
 import { isEvidenceRequest } from './recovery_policy.js';
 
 export const RECEIPTS_KEY = 'che_receipts';
@@ -484,7 +484,7 @@ export function vagueResearchRequest(message) {
 export function guardClaimedResearchActions(reply, { research = null, tools = [], documentRead = false, message = '' } = {}) {
   const text = String(reply || '');
   // A story or role-play the owner asked for may say "I searched the attic".
-  if (fictionRequested(message)) return { text, corrected: false };
+  if (storyRequested(message)) return { text, corrected: false };
   const successful = (Array.isArray(tools) ? tools : []).filter((t) => t?.ok === true);
   const actualBrowser = successful.some((t) => /\b(?:browser|web_search|web search)\b/i.test(
     String(t.plugin || '') + ' ' + String(t.tool || '')));

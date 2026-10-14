@@ -523,4 +523,7 @@ test('G: everyday ways of claiming a search never reach the owner without a rece
   const story = await owner({ model: () => 'I searched the attic and googled the old map, sir, and found the key.' });
   const out = await story.say('Tell me a short story where you are a detective.');
   assert.match(out.reply, /I searched the attic and googled the old map/);
+  // A brainstorm is not a story: its research claims still need receipts.
+  const brainstorm = await owner({ model: () => 'I researched the market and three websites agree it is growing.' });
+  assert.match((await brainstorm.say('Brainstorm business ideas for me and research the market.')).reply, /do not have execution receipts/);
 });
