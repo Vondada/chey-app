@@ -64,6 +64,15 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (updated by ChatGPT, 2026-10-14 — owner live reliability screenshots)
+
+**PR #298 merged as `d83b1ffc91b4a23b98d7c229e34bb4b00276a45a`; Worker deployed SUCCESS (GitHub Actions 38518478477). Production /health independently returned `ok: true` and `version_tag: d83b1ffc91b4`.**
+- Owner's screenshots identified 3 failures in the iPhone chat test after #296: made-up confirmed preference, missing “How do you know that's correct?” follow-up, and false first-person claims that CHE browsed fresh sources/compared sources.
+- Root cause: exact-only evidence intent matcher and speech_intent reference expansion; general chat truth guard did not verify web-browsing or comparison assertions. New code in existing `knowledge_cache.js`, `truth_layer.js`, `worker.js` retains raw owner evidence-intent through speech preprocessing, returns source explanations from actual existing Durable Object receipts, responds with only recorded owner-attested active memory examples, and replaces unsupported model claims of completed browsing/research/comparison. Cached URL alone is not proof of fresh research.
+- **CI for PR #298 HEAD `887c12add9c0528757ca3d010aaf675a03f2442e`: 953/953 Worker tests (including paired-chat boundary), Flutter full checks and CHE UI Analyze green.** No client change or IPA required for this issue.
+- **Not verified:** actual iPhone regression replay and full live source corroboration. Owner should ask CHE: “Tell me something I've confirmed”, “How do you know that's correct?”, “The last one we were just talking about.” If CHE still invents tools, capture screenshot and inspect live response before another patch. Nothing about voice playback is proven by this Worker fix.
+- Keep PR #297 and unrelated agent/3D lanes untouched. PR #296 long-term memory/fact-provenance still merged; PR #298 builds on it.
+
 ## 2. Current position (updated by: ChatGPT, 2026-10-14)
 
 **ChatGPT 2026-10-14T05:20:13 UTC — owner mission: Verified Intelligence, Reliable Reasoning & Long-Term Knowledge. PR #296 MERGED as `1cdcb909300ef20092d50575998b05326ca3830d`; production Worker deploy SUCCESS, confirmed live /health `version_tag: 1cdcb909300e`. iPhone IPA build run 38515469962 SUCCESS; public release workflow 38516519647 SUCCESS and release che-ios-v1.4.1024729463-b3851546996201 PUBLISHED. Shorebird run 38515469887 was still in progress at last check; full IPA is independent.**
