@@ -13,6 +13,9 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // Safely check update availability.
+    final version = await _checkUpdateController?.fetchVersion();
+    if (version == null) return false;
     String? appName;
     const actionPrefixes = ['open ', 'launch ', 'go to ', 'watch ', 'use ', 'show me '];
     for (final prefix in actionPrefixes) {

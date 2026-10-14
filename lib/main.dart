@@ -242,7 +242,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   void _updateHomeState(VoidCallback callback) => setState(callback);
 
   /// setState for members split into lib/home_state/*.dart extensions.
-  String _statusBanner = 'Ready';
+  String _statusBanner = 'Ready. Type or speak a request.';
   String _lastStatusKey = '';
   bool _autonomy = true;
   List<Map<String, dynamic>> _actionApprovals = [];
