@@ -18,6 +18,7 @@ class CheConnectionsScreen extends StatefulWidget {
     required this.onBrokerConnect,
     required this.onVoiceSettings,
     required this.onKeys,
+    this.client,
   });
 
   final String baseUrl;
@@ -25,12 +26,20 @@ class CheConnectionsScreen extends StatefulWidget {
   final VoidCallback onBrokerConnect;
   final VoidCallback onVoiceSettings;
   final VoidCallback onKeys;
+  final http.Client? client;
 
   @override
   State<CheConnectionsScreen> createState() => _CheConnectionsScreenState();
 }
 
 class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
+  late final http.Client _client = widget.client ?? http.Client();
+
+  @override
+  void dispose() {
+    if (widget.client == null) _client.close();
+    super.dispose();
+  }
   Map<String, dynamic> _connectors = {};
   bool _loading = true;
   bool _connecting = false;
@@ -46,7 +55,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
   Future<void> _refresh() async {
     setState(() { _loading = true; _error = ''; });
     try {
-      final r = await http.get(
+      final r = await _client.get(
         Uri.parse(widget.baseUrl + '/api/commands'),
         headers: widget.headers(),
       ).timeout(const Duration(seconds: 18));
@@ -105,7 +114,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
     if (_connecting) return;
     setState(() { _connecting = true; _message = ''; });
     try {
-      final r = await http.post(
+      final r = await _client.post(
         Uri.parse(widget.baseUrl + '/api/youtube/connect/start'),
         headers: {...widget.headers(), 'content-type': 'application/json'},
         body: '{}',
