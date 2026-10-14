@@ -445,6 +445,8 @@ extension _CheHomeSend on _CHEHomeState {
         };
       case ScreenOp.changeVoice:
         return 'Opening CHE Voice Settings, sir.';
+      case ScreenOp.naturalVoice:
+        return 'Opening your CHE voice choices, sir.';
       case ScreenOp.clearChat:
         messages.clear();
         return 'Chat cleared, sir.';
@@ -546,7 +548,8 @@ extension _CheHomeSend on _CHEHomeState {
     final quickCommandsRoute = earlyCommand?.op == ScreenOp.openCommands ||
         earlyCommand?.op == ScreenOp.searchCommands ||
         earlyCommand?.op == ScreenOp.openConnections ||
-        earlyCommand?.op == ScreenOp.changeVoice;
+        earlyCommand?.op == ScreenOp.changeVoice ||
+        earlyCommand?.op == ScreenOp.naturalVoice;
     if (_isSpeaking && !quickCommandsRoute) {
       await _interruptSpeechAndListen(resumeListening: false);
     }
@@ -580,13 +583,25 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // The natural-voice picker, while it is open, takes the same spoken control.
+    final pickerVoice = CheCloudVoicePickerVoice.handler;
+    if (pickerVoice != null && _pendingAttachment == null) {
+      final reply = await pickerVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
     // Direct screen edits are applied on-device before any model routing.
     final screenCommand = _pendingAttachment == null ? parseScreenCommand(message) : null;
     if (screenCommand != null) {
       // Open the real page immediately. A deferred callback could leave the
       // owner in Chat, so the next local search went to the web/model.
       if (screenCommand.op == ScreenOp.openCommands || screenCommand.op == ScreenOp.searchCommands ||
-          screenCommand.op == ScreenOp.openConnections || screenCommand.op == ScreenOp.changeVoice) {
+          screenCommand.op == ScreenOp.openConnections || screenCommand.op == ScreenOp.changeVoice ||
+          screenCommand.op == ScreenOp.naturalVoice) {
         if (!mounted) return;
         final reply = _applyScreenCommand(screenCommand);
         _set(() {
@@ -600,6 +615,8 @@ extension _CheHomeSend on _CHEHomeState {
           unawaited(_openConnections(autoConnect: screenCommand.text));
         } else if (screenCommand.op == ScreenOp.changeVoice) {
           _openVoiceSelector();
+        } else if (screenCommand.op == ScreenOp.naturalVoice) {
+          _openNaturalVoicePicker();
         } else {
           unawaited(_openCommandCenter(
             search: screenCommand.op == ScreenOp.searchCommands ? screenCommand.text : '',
@@ -613,7 +630,8 @@ extension _CheHomeSend on _CHEHomeState {
         final connectsNow = screenCommand.op == ScreenOp.openConnections && screenCommand.text.isNotEmpty;
         if (!connectsNow && (screenCommand.op == ScreenOp.openCommands ||
             screenCommand.op == ScreenOp.openConnections ||
-            screenCommand.op == ScreenOp.changeVoice)) {
+            screenCommand.op == ScreenOp.changeVoice ||
+            screenCommand.op == ScreenOp.naturalVoice)) {
           await speakText(reply, record: false);
         }
         return;

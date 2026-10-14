@@ -11,10 +11,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'che_native_voice.dart';
 import 'che_ui/che_theme.dart';
 
+/// Spoken control for the picker while it is on screen; null when it is closed.
+class CheCloudVoicePickerVoice {
+  CheCloudVoicePickerVoice._();
+  static Future<String?> Function(String words)? handler;
+}
+
 class CheCloudVoicePicker extends StatefulWidget {
-  const CheCloudVoicePicker({super.key, this.client, this.onSpeak});
+  const CheCloudVoicePicker({super.key, this.client, this.onSpeak, this.onListen});
   final http.Client? client;
   final ValueChanged<String>? onSpeak;
+  final VoidCallback? onListen;
 
   @override
   State<CheCloudVoicePicker> createState() => _CheCloudVoicePickerState();
@@ -34,20 +41,23 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
   double _speed = 1.0;
   String _base = '';
   String _token = '';
+  bool _pendingPreview = false;
 
   @override
   void initState() {
     super.initState();
+    CheCloudVoicePickerVoice.handler = _voice;
     unawaited(_load());
   }
 
   @override
   void dispose() {
+    if (CheCloudVoicePickerVoice.handler == _voice) CheCloudVoicePickerVoice.handler = null;
     if (widget.client == null) _client.close();
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool announce = false}) async {
     setState(() { _loading = true; _error = ''; });
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -78,8 +88,19 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
         _id = (current?['id'] ?? '').toString();
         _speed = ((selected['speed'] is num ? selected['speed'] as num : 1).toDouble()).clamp(0.7, 1.2).toDouble();
       });
+      // Only an owner-requested refresh announces; the first load stays silent.
+      if (announce) {
+        HapticFeedback.selectionClick();
+        _say(_voices.isEmpty
+            ? 'No cloud voices are verified right now. ElevenLabs: $_elevenState. Fish: $_fishState.'
+            : 'Voices refreshed. ${_voices.length} verified. ElevenLabs: $_elevenState. Fish: $_fishState.');
+      }
     } on Object catch (e) {
       if (mounted) setState(() { _voices = []; _error = e.toString().replaceFirst('Bad state: ', ''); });
+      if (announce) {
+        HapticFeedback.heavyImpact();
+        _say('Voices not refreshed: ${e.toString().replaceFirst('Bad state: ', '')}');
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -90,6 +111,113 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
     if (!mounted) return;
     setState(() => _status = line);
     widget.onSpeak?.call(line);
+  }
+
+  static const _numberWords = {'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+    'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10};
+
+  String _numbered() => [
+    for (var i = 0; i < _voices.length; i++) '${i + 1}, ${_voices[i]['name'] ?? 'voice'}',
+  ].join('; ');
+
+  Map<String, dynamic>? _voiceNamed(String wanted) {
+    Map<String, dynamic>? partial;
+    for (final v in _voices) {
+      final name = (v['name'] ?? '').toString().toLowerCase();
+      if (name == wanted) return v;
+      if (partial == null && name.contains(wanted)) partial = v;
+    }
+    return partial;
+  }
+
+  void _choose(Map<String, dynamic> v) {
+    setState(() {
+      _provider = (v['provider'] ?? '').toString();
+      _id = (v['id'] ?? '').toString();
+    });
+    _say('Selected ${v['name'] ?? 'voice'}. Say preview voice to hear it, or save voice to use it.');
+  }
+
+  // Spoken control while the picker is open. Each route says its real result
+  // and shows it on screen. Speech it does not recognize goes to Chat (null).
+  Future<String?> _voice(String words) async {
+    final t = words.trim().toLowerCase().replaceAll(RegExp(r'[.!?]+$'), '')
+        .replaceFirst(RegExp(r'^(?:hey\s+)?(?:che|chay|chey)[,:]?\s+'), '').trim();
+    if (_pendingPreview) {
+      _pendingPreview = false;
+      if (RegExp(r'^(?:yes|yeah|yep|go ahead|do it|preview)$').hasMatch(t)) {
+        await _preview();
+        return '';
+      }
+      if (RegExp(r'^(?:no|nope|cancel|never mind|stop)$').hasMatch(t)) {
+        _say('Preview cancelled. Nothing was played.');
+        return '';
+      }
+    }
+    if (RegExp(r'^(?:go back|back|close)$').hasMatch(t)) {
+      unawaited(Navigator.of(context).maybePop());
+      return '';
+    }
+    if (RegExp(r'^(?:list|read|show|what are|which are)\s+(?:the\s+|my\s+|available\s+)?voices$').hasMatch(t) ||
+        RegExp(r'^what voices (?:do i have|are there|can i use)$').hasMatch(t)) {
+      _say(_voices.isEmpty
+          ? 'No cloud voices are verified right now. Check pairing and provider keys in CHE Connections.'
+          : 'Available voices: ${_numbered()}. Say choose and a name, or choose number and a number.');
+      return '';
+    }
+    if (RegExp(r'^(?:refresh|reload|check)\s+(?:the\s+)?voices$').hasMatch(t)) {
+      await _load(announce: true);
+      return '';
+    }
+    final typedSpeed = RegExp(r'^(?:set\s+)?(?:voice\s+)?speed\s+(?:to\s+)?(\d+(?:\.\d+)?)\s*x?$').firstMatch(t);
+    final faster = RegExp(r'^(?:faster|speed up)$').hasMatch(t);
+    final slower = RegExp(r'^(?:slower|slow down)$').hasMatch(t);
+    if (typedSpeed != null || faster || slower) {
+      final requested = typedSpeed != null ? double.parse(typedSpeed.group(1)!) : _speed + (faster ? 0.05 : -0.05);
+      if (typedSpeed != null && (requested < 0.7 || requested > 1.2)) {
+        _say('Speed must be between 0.7 and 1.2. It is ${_speed.toStringAsFixed(2)} now.');
+        return '';
+      }
+      setState(() => _speed = requested.clamp(0.7, 1.2).toDouble());
+      _say('Voice speed is ${_speed.toStringAsFixed(2)}. Say save voice to keep it.');
+      return '';
+    }
+    if (RegExp(r'^(?:preview|test|play|hear)\s+(?:this\s+|that\s+|the\s+|my\s+|your\s+)?voice$').hasMatch(t)) {
+      if (_id.isEmpty) {
+        _say('Choose a voice first. Say list voices to hear the choices.');
+        return '';
+      }
+      _pendingPreview = true;
+      _say('One short preview may use credits from your connected voice provider. Say yes to preview, or no to cancel.');
+      return '';
+    }
+    if (RegExp(r'^(?:save|keep|use|apply)\s+(?:this\s+|that\s+|the\s+|my\s+)?(?:voice|choice|selection)$').hasMatch(t) ||
+        RegExp(r'^(?:save|use|keep)\s+(?:it|this|that)$').hasMatch(t)) {
+      if (_id.isEmpty) {
+        _say('Choose a voice first. Say list voices to hear the choices.');
+        return '';
+      }
+      await _save();
+      return '';
+    }
+    final number = RegExp(r'^(?:choose|pick|select|use|switch to)\s+(?:number\s+|voice\s+)?(one|two|three|four|five|six|seven|eight|nine|ten|\d+)$').firstMatch(t);
+    final named = RegExp(r'^(?:choose|pick|select|switch to|use)\s+(?:the\s+|voice\s+)?(.+?)(?:\s+voice)?$').firstMatch(t);
+    if (number != null || named != null) {
+      final spoken = (number ?? named)!.group(1)!;
+      final index = number == null ? null : (_numberWords[spoken] ?? int.tryParse(spoken));
+      final chosen = number != null
+          ? (index != null && index >= 1 && index <= _voices.length ? _voices[index - 1] : null)
+          : _voiceNamed(spoken);
+      if (chosen == null) {
+        _say(_voices.isEmpty
+            ? 'No cloud voices are verified right now.'
+            : 'I did not find that voice. Available voices: ${_numbered()}.');
+      } else {
+        _choose(chosen);
+      }
+      return '';
+    }
+    return null;
   }
 
   Map<String, dynamic> get _choice => {'provider': _provider, 'id': _id, 'speed': _speed};
@@ -143,8 +271,10 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
       await CheNativeVoice.stopAudio();
       final played = await CheNativeVoice.playAudioBounded(r.bodyBytes);
       if (!played) throw StateError('CHE received audio but your iPhone could not play it.');
+      HapticFeedback.selectionClick();
       _say('Preview played. Select Save Voice to use it for future replies.');
     } on Object catch (e) {
+      HapticFeedback.heavyImpact();
       _say('Preview failed: ${e.toString().replaceFirst('Bad state: ', '')}');
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -156,7 +286,12 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
     return Scaffold(
       backgroundColor: CheColors.bg,
       appBar: AppBar(title: const Text('CHE Natural Voice'),
-        actions: [IconButton(tooltip: 'Refresh voices', icon: const Icon(Icons.refresh), onPressed: _busy || _loading ? null : _load)]),
+        actions: [
+          if (widget.onListen != null)
+            IconButton(tooltip: 'Speak to CHE', icon: const Icon(Icons.mic_rounded), onPressed: widget.onListen),
+          IconButton(tooltip: 'Refresh voices', icon: const Icon(Icons.refresh),
+            onPressed: _busy || _loading ? null : () => unawaited(_load(announce: true))),
+        ]),
       body: SafeArea(child: ListView(padding: const EdgeInsets.all(18), children: [
         const Text('Choose how CHE speaks', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
         const SizedBox(height: 8),
@@ -196,7 +331,7 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
             icon: const Icon(Icons.check), label: const Text('Save Voice'))),
         ]),
         if (_status.isNotEmpty) Padding(padding: const EdgeInsets.symmetric(vertical: 14),
-          child: Semantics(liveRegion: true, child: Text(_status, style: const TextStyle(color: CheColors.accent)))),
+          child: Semantics(liveRegion: true, child: Text(_status, style: const TextStyle(color: CheColors.accent, fontSize: 18, height: 1.3)))),
         const SizedBox(height: 18),
         const Text('Only account-authorized voices are listed. Fish currently exposes its configured voice, not an invented catalog. If a provider fails, CHE tries the other connected provider.', style: TextStyle(color: CheColors.textDim, fontSize: 12)),
       ])),

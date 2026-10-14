@@ -157,6 +157,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
       // or refresh token may be collected by the CHE Flutter view.
       final opened = await launchUrl(uri, mode: LaunchMode.externalApplication).catchError((_) => false);
       if (!opened) throw StateError('Could not open the official Google sign-in page.');
+      HapticFeedback.selectionClick();
       _say('Approve YouTube on Google’s secure page, then return to CHE and press Refresh. No channel connection is claimed yet.');
     } on Object catch (e) {
       HapticFeedback.heavyImpact();
@@ -184,6 +185,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
       }
       final opened = await launchUrl(uri, mode: LaunchMode.externalApplication).catchError((_) => false);
       if (!opened) throw StateError('Could not open the official Tradovate sign-in.');
+      HapticFeedback.selectionClick();
       _say('Authorize with Tradovate, then return to CHE and Refresh. No broker connection or trade is claimed until confirmed.');
     } on Object catch (e) {
       HapticFeedback.heavyImpact();
@@ -271,7 +273,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
           if (_message.isNotEmpty) Padding(
             padding: const EdgeInsets.symmetric(vertical: 12),
             child: Semantics(liveRegion: true,
-              child: Text(_message, style: const TextStyle(color: CheColors.accent))),
+              child: Text(_message, style: const TextStyle(color: CheColors.accent, fontSize: 18, height: 1.3))),
           ),
           _heading('Google & creators'),
           _card('YouTube channel', Icons.play_circle_outline_rounded, 'youtube',

@@ -14,6 +14,7 @@ enum ScreenOp {
   searchCommands,
   openConnections,
   changeVoice,
+  naturalVoice,
 }
 
 class ScreenCommand {
@@ -43,9 +44,11 @@ ScreenCommand? parseScreenCommand(String raw) {
   ).hasMatch(t)) {
     return const ScreenCommand(ScreenOp.openConnections);
   }
-  if (RegExp(
-    r'^(?:(?:open|show(?: me)?|go to)\s+(?:the\s+|my\s+)?(?:voice settings|voice selector|change voice)|(?:change|switch|choose|preview)\s+(?:your\s+|che\s+|my\s+)?voice)$',
-  ).hasMatch(t)) {
+  // Natural cloud voices: the picker lists verified voices and takes spoken choices.
+  if (RegExp(r'^(?:change|switch|choose|pick|preview)\s+(?:your\s+|che\s+|my\s+)?voice$').hasMatch(t)) {
+    return const ScreenCommand(ScreenOp.naturalVoice);
+  }
+  if (RegExp(r'^(?:open|show(?: me)?|go to)\s+(?:the\s+|my\s+)?(?:voice settings|voice selector|change voice)$').hasMatch(t)) {
     return const ScreenCommand(ScreenOp.changeVoice);
   }
   if (RegExp(

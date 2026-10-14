@@ -46,6 +46,7 @@ import 'che_wake_word.dart';
 import 'che_wake_match.dart';
 import 'che_voice_state.dart';
 import 'che_local_voice_loop.dart';
+import 'che_cloud_voice_picker.dart';
 import 'che_voice_ui.dart';
 import 'che_app_portal.dart';
 import 'che_video.dart';
@@ -1959,12 +1960,22 @@ OWNER AGENCY
     ));
   }
 
+  void _openNaturalVoicePicker() {
+    unawaited(Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheCloudVoicePicker(
+        onSpeak: (line) => unawaited(speakText(line, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+      ),
+    )));
+  }
+
   void _openVoiceSelector() {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       builder: (_) => CheVoiceSettingsSheet(
         onSpeak: (line) => unawaited(speakText(line, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
       ),
     );
   }

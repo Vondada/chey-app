@@ -18,9 +18,10 @@ void main() {
       'connect my YouTube channel', 'connect my bank account', 'show my bank transactions']) {
       expect(parseScreenCommand(prompt)?.op, ScreenOp.openConnections, reason: prompt);
     }
-    for (final prompt in ['CHE, change your voice', 'open voice settings', 'preview your voice']) {
-      expect(parseScreenCommand(prompt)?.op, ScreenOp.changeVoice, reason: prompt);
+    for (final prompt in ['CHE, change your voice', 'preview your voice']) {
+      expect(parseScreenCommand(prompt)?.op, ScreenOp.naturalVoice, reason: prompt);
     }
+    expect(parseScreenCommand('open voice settings')?.op, ScreenOp.changeVoice);
     // A market-data query is NOT an account-linking operation.
     // A spoken connect goes straight to that one official sign-in.
     expect(parseScreenCommand('connect my YouTube channel')?.text, 'youtube');
@@ -78,6 +79,52 @@ void main() {
     await tester.pumpAndSettle();
     expect(spoken, ['YouTube: Google sign-in is not configured. Open Keys for setup.'],
       reason: 'the passive page load is silent; only the requested connect speaks');
+  });
+
+  testWidgets('the open voice picker answers spoken choices and speaks each real result', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'che_agent_base_url': 'https://che.test',
+      'che_agent_device_token': 'mock-owner-token',
+    });
+    final spoken = <String>[];
+    final posted = <String>[];
+    final client = MockClient((r) async {
+      if (r.method == 'POST') {
+        posted.add(r.body);
+        return http.Response(jsonEncode({'ok': true, 'selected': jsonDecode(r.body)}), 200);
+      }
+      return http.Response(jsonEncode({
+        'options': [
+          {'provider': 'elevenlabs', 'id': 'ABCDEFGHIJKLMN', 'name': 'Clara'},
+          {'provider': 'fish', 'id': 'configured', 'name': 'CHE Fish voice (configured)'},
+        ],
+        'selected': null, 'elevenlabs': 'Connected', 'fish': 'Connected',
+      }), 200, headers: {'content-type': 'application/json'});
+    });
+    await tester.pumpWidget(MaterialApp(theme: CheTheme.dark(),
+      home: CheCloudVoicePicker(client: client, onSpeak: spoken.add)));
+    await tester.pumpAndSettle();
+    expect(spoken, isEmpty, reason: 'the passive first load is silent');
+    final voice = CheCloudVoicePickerVoice.handler!;
+
+    expect(await tester.runAsync(() => voice('list voices')), '');
+    expect(spoken.last, 'Available voices: 1, Clara; 2, CHE Fish voice (configured). Say choose and a name, or choose number and a number.');
+    expect(await tester.runAsync(() => voice('choose fish')), '');
+    expect(spoken.last, 'Selected CHE Fish voice (configured). Say preview voice to hear it, or save voice to use it.');
+    expect(await tester.runAsync(() => voice('choose number one')), '');
+    expect(spoken.last, 'Selected Clara. Say preview voice to hear it, or save voice to use it.');
+    expect(await tester.runAsync(() => voice('speed 1.1')), '');
+    expect(spoken.last, 'Voice speed is 1.10. Say save voice to keep it.');
+    expect(await tester.runAsync(() => voice('speed 2')), '');
+    expect(spoken.last, 'Speed must be between 0.7 and 1.2. It is 1.10 now.');
+    expect(await tester.runAsync(() => voice('preview voice')), '');
+    expect(spoken.last, startsWith('One short preview may use credits'));
+    expect(await tester.runAsync(() => voice('no')), '');
+    expect(spoken.last, 'Preview cancelled. Nothing was played.');
+    expect(await tester.runAsync(() => voice('save voice')), '');
+    expect(spoken.last, 'Voice saved for CHE Chat and Read This. Test it with Read This.');
+    expect(jsonDecode(posted.single)['id'], 'ABCDEFGHIJKLMN');
+    expect(await tester.runAsync(() => voice('tell me a joke')), isNull, reason: 'anything else goes to Chat');
   });
 
   testWidgets('HTTP auth failure clears stale connection claims', (tester) async {
