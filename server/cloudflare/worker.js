@@ -432,6 +432,57 @@ async function memoryTruthProbe(env, token) {
   };
 }
 
+// The deploy's Command Center check. Live steps run against the same
+// isolated test CHE as the memory check (never the owner's); readiness is
+// the owner's real connector states (ready or not, never a secret value).
+async function commandCenterProbe(env, token) {
+  const probe = env.CHE_STATE.getByName(MEMORY_PROBE_OBJECT);
+  const call = (path, body, device = '') => probe.fetch(new Request(`https://che.internal${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CHE-Memory-Probe': token, ...(device ? { Authorization: `Bearer ${device}` } : {}) },
+    body: JSON.stringify(body),
+  }));
+  const paired = await (await call('/api/pair', { code: String(env.CHE_PAIR_CODE || ''), device_name: 'CHE command center check' })).json().catch(() => ({}));
+  const device = paired.device_token;
+  if (!device) return { ok: false, error: 'The check could not pair with its test CHE.', steps: [] };
+  const steps = [];
+  const step = async (name, message, check, { optional = false } = {}) => {
+    const started = Date.now();
+    const res = await call('/api/chat', { message, history: [] }, device);
+    const raw = await res.text();
+    let held = null;
+    try { held = JSON.parse(raw); } catch (_) { held = null; }
+    const events = raw.split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).filter(Boolean);
+    const done = events.find((e) => e.type === 'done') || {};
+    const reply = held?.message || events.filter((e) => e.type === 'delta').map((e) => e.delta).join('').trim();
+    const pass = res.status === 200 && check({ reply, done, held, events });
+    steps.push({ name, pass, optional, ms: Date.now() - started, route: held?.held_for_owner ? 'held' : done.source || '', model_calls: done.model_calls ?? null, reply: reply.slice(0, 300) });
+  };
+  try {
+    const catalog = await (await call('/api/commands', {}, device)).json().catch(() => ({}));
+    steps.push({ name: 'catalog: 71 commands in 8 categories', pass: catalog.commands?.length === 71 && catalog.categories?.length === 8, ms: 0, route: 'catalog', model_calls: 0, reply: `${catalog.commands?.length} commands` });
+    await step('unknown command answered honestly, nothing run', '/lead-scot barbers',
+      ({ done, reply }) => done.source === 'che_command' && done.ok === false && done.model_calls === 0 && /Nothing was run/.test(reply));
+    await step('slash command reaches its existing handler', '/trade-journal',
+      ({ done }) => done.source === 'che_trading' && Number(done.model_calls || 0) === 0);
+    await step('approval command is held for a yes', '/site-publish',
+      ({ held }) => held?.held_for_owner === true && held.command === 'site-publish');
+    await step('a different turn drops the hold', 'Never mind.', () => true);
+    await step('a suggestion card follows a matching question', 'How can I make some money building websites?',
+      ({ events }) => events.some((e) => e.type === 'command_suggestions' && e.suggestions?.[0]?.id === 'website-clients'), { optional: true });
+  } finally {
+    await call('/api/security/revoke_self', {}, device).catch(() => null);
+  }
+  const readiness = await env.CHE_STATE.getByName('owner').commandReadiness().catch((error) => ({ error: String(error?.message || error) }));
+  return {
+    ok: steps.every((s) => s.pass || s.optional),
+    passed: steps.filter((s) => s.pass).length,
+    total: steps.length,
+    steps,
+    readiness,
+  };
+}
+
 function ndjsonReply(reply, meta = {}) {
   return new Response(
     JSON.stringify({ type: 'delta', delta: reply }) + '\n' +
@@ -4221,7 +4272,7 @@ export class CheState extends DurableObject {
     // Command Center: after the owner's reply has been sent, at most two
     // suggestion cards of real commands for what he asked. Deterministic; a
     // suggestion runs nothing. Held questions (plain JSON) get none.
-    if (isChat && response?.ok && OWNER_CHAT_REQUESTS.has(request) && !probeRun && /ndjson/i.test(response.headers.get('Content-Type') || '')) {
+    if (isChat && response?.ok && OWNER_CHAT_REQUESTS.has(request) && /ndjson/i.test(response.headers.get('Content-Type') || '')) {
       response = appendNdjson(response, async () => {
         const body = await sent;
         const message = String(body?.message || '');
@@ -4304,6 +4355,22 @@ export class CheState extends DurableObject {
     const youtube = await youtubeStatus(env, data).catch(() => ({ connected: false, status: 'not_connected' }));
     const broker = await brokerConnection(this.ctx.storage).catch(() => ({ connected: false }));
     return connectorStatus(env, { runtime: { chat: cap('chat'), video_generation: cap('video_generation'), image_generation: cap('image_generation') }, youtube, broker });
+  }
+
+  // Which commands can run on the owner's CHE right now, and what the rest
+  // still need (connector names and states only, never a secret value).
+  async commandReadiness() {
+    await this.refreshKeyEnv();
+    const connectors = await this.commandConnectors(await this.loadData());
+    const view = catalogView(connectors);
+    const by = (status) => view.commands.filter((c) => c.status === status);
+    return {
+      available: by('available').length,
+      setup_required: by('setup_required').map((c) => ({ id: c.id, missing: c.missing.map((m) => m.label) })),
+      unsupported: by('unsupported').map((c) => c.id),
+      temporarily_unavailable: by('temporarily_unavailable').map((c) => c.id),
+      connectors: Object.fromEntries(Object.entries(connectors).map(([id, c]) => [id, c.state])),
+    };
   }
 
   // One slash command from the owner. An unknown or unavailable command is
@@ -10808,6 +10875,11 @@ export default {
     }
     // The deploy's memory-truth check: a real authenticated chat test against
     // an isolated CHE. The route exists only for the per-deploy random token.
+    if (path === '/api/commands/probe' && request.method === 'POST') {
+      if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
+      const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
+      return json(await commandCenterProbe(env, token));
+    }
     if (path === '/api/memory/probe' && request.method === 'POST') {
       if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
       const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';

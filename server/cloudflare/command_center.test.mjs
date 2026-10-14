@@ -118,7 +118,7 @@ test('1. all 71 commands exist exactly as the owner listed them, in 8 categories
     // outside CHE (publish, send, trade, charge, deploy, code) always do.
     if (c.mode !== 'BUILD') assert.equal(c.confirm, '', `${c.id} is read-only`);
   }
-  for (const id of ['yt-publish', 'trade-execute', 'site-publish', 'invoices', 'lead-outreach', 'lead-followup', 'che-build', 'app-fix']) {
+  for (const id of ['yt-publish', 'trade-execute', 'site-publish', 'che-build', 'app-fix']) {
     assert.ok(commandById(id).confirm, `${id} needs owner approval`);
   }
 });
@@ -297,7 +297,7 @@ test('saved workflows persist on CHE across restarts and can be started by voice
 test('7. a workflow is an ordered graph with purposes, dependencies, connectors and approvals', () => {
   const bare = connectorStatus({ AI: {} });
   const d = describeWorkflow({ name: 'Clients', steps: [
-    { command: 'lead-scout', input: 'barbers' }, { command: 'lead-audit' }, { command: 'pricing', parallel: true }, { command: 'lead-proposal' }, { command: 'lead-outreach' },
+    { command: 'lead-scout', input: 'barbers' }, { command: 'lead-audit' }, { command: 'pricing', parallel: true }, { command: 'lead-proposal' }, { command: 'site-publish' },
   ] }, bare);
   assert.deepEqual(d.steps.map((s) => s.depends_on), [[], ['s1'], ['s1'], ['s3'], ['s4']]);
   assert.equal(d.steps[0].purpose, commandById('lead-scout').summary);
@@ -504,4 +504,29 @@ test('the Flutter catalog fixture matches what the Worker serves (regenerate: no
   assert.deepEqual(fixture, JSON.parse(JSON.stringify(fixtureCatalog())));
   assert.equal(fixture.commands.length, 71);
   assert.ok(fixture.templates.length >= 4);
+});
+
+test('the deploy probe checks the live Command Center on an isolated CHE and reports owner readiness without secrets', async () => {
+  const states = new Map();
+  const pending = [];
+  const env = {
+    CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_VOICE_PROBE_TOKEN: 'p'.repeat(40), ELEVENLABS_API_KEY: 'el_secret_value',
+    AI: { run: async () => ({ response: 'Here is the answer, sir.' }) },
+  };
+  env.CHE_STATE = { getByName: (name) => {
+    if (!states.has(name)) states.set(name, new CheState({ storage: storageFor(new Map()), waitUntil: (p) => pending.push(p) }, env));
+    return states.get(name);
+  } };
+  const denied = await worker.fetch(new Request('https://che.example/api/commands/probe', { method: 'POST' }), env);
+  assert.equal(denied.status, 404);
+  const res = await worker.fetch(new Request('https://che.example/api/commands/probe', { method: 'POST', headers: { Authorization: `Bearer ${'p'.repeat(40)}` } }), env);
+  const report = await res.json();
+  for (const p of pending) await p;
+  assert.equal(report.ok, true, JSON.stringify(report.steps, null, 1));
+  assert.equal(report.passed, report.total);
+  assert.ok(report.readiness.available >= 50, `${report.readiness.available} ready`);
+  assert.ok(report.readiness.setup_required.some((c) => c.id === 'trade-execute' && c.missing.includes('NinjaTrader / Tradovate account')));
+  assert.equal(report.readiness.connectors.voice, 'ready');
+  assert.doesNotMatch(JSON.stringify(report), /el_secret_value/);
+  assert.ok(!states.has('owner') || !(await states.get('owner').loadData()).memories?.length, 'the owner\'s memory is untouched');
 });

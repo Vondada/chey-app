@@ -1802,11 +1802,11 @@
    "category": "money",
    "title": "Invoices",
    "summary": "Prepare and track invoices.",
-   "does": "Drafts an invoice, and with Stripe connected creates a payment link for a deal in your client pipeline after your approval.",
-   "mode": "BUILD",
+   "does": "Drafts an invoice from the details you give. It charges no one: Stripe payment links are made only from a client-pipeline deal, with your approval, and /lead-crm shows which deals are paid.",
+   "mode": "PLAN",
    "approval": {
-    "required": true,
-    "reason": "Creates a payment request that charges a customer."
+    "required": false,
+    "reason": ""
    },
    "input": {
     "name": "invoice",
@@ -1819,10 +1819,8 @@
    "needs": [
     "model"
    ],
-   "optional": [
-    "stripe"
-   ],
-   "handler": "pipeline.createPaymentLink (Stripe)",
+   "optional": [],
+   "handler": "ai_router (draft); pipeline.createPaymentLink stays a separate, approved step",
    "route": "model",
    "produces": "invoice",
    "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
@@ -1835,9 +1833,7 @@
    ],
    "status": "available",
    "missing": [],
-   "optional_missing": [
-    "stripe"
-   ]
+   "optional_missing": []
   },
   {
    "id": "money-forecast",
@@ -2150,11 +2146,11 @@
    "category": "clients",
    "title": "Lead Outreach",
    "summary": "Draft and send authorized communications.",
-   "does": "Drafts a personal outreach message. Sending by text uses Twilio and needs your review of each message; no bulk or cold spam.",
-   "mode": "BUILD",
+   "does": "Drafts a short, honest outreach message with an easy opt-out. It sends nothing: you review it and send it yourself. No bulk or cold messaging.",
+   "mode": "PLAN",
    "approval": {
-    "required": true,
-    "reason": "Messages go to people outside your contacts."
+    "required": false,
+    "reason": ""
    },
    "input": {
     "name": "message",
@@ -2167,14 +2163,12 @@
    "needs": [
     "model"
    ],
-   "optional": [
-    "sms"
-   ],
+   "optional": [],
    "handler": "ai_router (language engine)",
    "route": "model",
    "produces": "message draft",
    "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
-   "cost": "Twilio charges per text sent.",
+   "cost": "Free engines only, unless you turned paid AI on.",
    "keywords": [
     "outreach",
     "contact",
@@ -2184,9 +2178,7 @@
    ],
    "status": "available",
    "missing": [],
-   "optional_missing": [
-    "sms"
-   ]
+   "optional_missing": []
   },
   {
    "id": "lead-crm",
@@ -2227,11 +2219,11 @@
    "category": "clients",
    "title": "Lead Followup",
    "summary": "Manage authorized follow-up workflows.",
-   "does": "Drafts polite follow-ups for leads that went quiet. You review before anything is sent.",
-   "mode": "BUILD",
+   "does": "Drafts polite follow-ups for leads that went quiet. It sends nothing; you review and send.",
+   "mode": "PLAN",
    "approval": {
-    "required": true,
-    "reason": "Messages go to people outside your contacts."
+    "required": false,
+    "reason": ""
    },
    "input": {
     "name": "lead",
@@ -2244,9 +2236,7 @@
    "needs": [
     "model"
    ],
-   "optional": [
-    "sms"
-   ],
+   "optional": [],
    "handler": "ai_router (language engine)",
    "route": "model",
    "produces": "message draft",
@@ -2259,9 +2249,7 @@
    ],
    "status": "available",
    "missing": [],
-   "optional_missing": [
-    "sms"
-   ]
+   "optional_missing": []
   },
   {
    "id": "client-deliver",
@@ -2641,7 +2629,7 @@
    "category": "office",
    "title": "Warroom",
    "summary": "Coordinate complex multi-agent work.",
-   "does": "Puts a hard question to several AI engines and compares their answers.",
+   "does": "Puts a hard question to Gemini, ChatGPT and Grok and gives each answer; an engine that cannot be reached is named, never faked.",
    "mode": "PLAN",
    "approval": {
     "required": false,
@@ -2653,14 +2641,14 @@
     "hint": "The hard question"
    },
    "examples": [
-    "War room: should I focus on websites or videos first?"
+    "Ask Gemini and ChatGPT: should I focus on websites or videos first?"
    ],
    "needs": [
     "model"
    ],
    "optional": [],
-   "handler": "consult / ai_round_table",
-   "route": "model",
+   "handler": "ai_consult.consultIntent (peer engines)",
+   "route": "che_consult",
    "produces": "panel answers",
    "evidence": "Facts carry their source; anything else is labeled as opinion or estimate.",
    "cost": "Free engines only, unless you turned paid AI on.",

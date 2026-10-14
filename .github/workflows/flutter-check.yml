@@ -39,8 +39,18 @@ jobs:
       - name: flutter test
         run: |
           set +e
+          # Command Center end-to-end: CHE's real Worker code on a local port
+          # (offline, in-memory, fake model) for test/che_command_center_e2e_test.dart.
+          node tool/command_center_e2e_server.mjs --out "$RUNNER_TEMP/che_e2e.json" > "$RUNNER_TEMP/che_e2e.log" 2>&1 &
+          e2e_pid=$!
+          for i in $(seq 1 100); do [ -s "$RUNNER_TEMP/che_e2e.json" ] && break; sleep 0.2; done
+          export CHE_E2E_URL="$(node -p "require(process.argv[1]).url" "$RUNNER_TEMP/che_e2e.json" 2>/dev/null)"
+          export CHE_E2E_TOKEN="$(node -p "require(process.argv[1]).token" "$RUNNER_TEMP/che_e2e.json" 2>/dev/null)"
+          export CHE_E2E_REQUIRED=1
           flutter test --reporter json > test-results.jsonl
           code=$?
+          kill "$e2e_pid" 2>/dev/null
+          [ "$code" = 0 ] || tail -20 "$RUNNER_TEMP/che_e2e.log"
           node -e '
             const lines=require("fs").readFileSync("test-results.jsonl","utf8").split("\n").filter(Boolean).map(l=>{try{return JSON.parse(l)}catch{return null}}).filter(Boolean);
             const names={},errs={},logs={};

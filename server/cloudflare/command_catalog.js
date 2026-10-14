@@ -413,10 +413,9 @@ export const COMMANDS = Object.freeze([
     examples: ['Categorize these expenses: Adobe 55, Uber 23, ads 300'],
     prompt: `Categorize these expenses with totals per category: {input}. ${NUMBERS_RULE}`, produces: 'expense report', keywords: ['expenses', 'categorize', 'receipts', 'costs'],
   }),
-  C('invoices', 'money', 'BUILD', 'Prepare and track invoices.', {
-    does: 'Drafts an invoice, and with Stripe connected creates a payment link for a deal in your client pipeline after your approval.',
-    confirm: 'Creates a payment request that charges a customer.',
-    optional: ['stripe'], route: 'model', handler: 'pipeline.createPaymentLink (Stripe)',
+  C('invoices', 'money', 'PLAN', 'Prepare and track invoices.', {
+    does: 'Drafts an invoice from the details you give. It charges no one: Stripe payment links are made only from a client-pipeline deal, with your approval, and /lead-crm shows which deals are paid.',
+    route: 'model', handler: 'ai_router (draft); pipeline.createPaymentLink stays a separate, approved step',
     input: { name: 'invoice', required: true, hint: 'Client, work and amount' },
     examples: ['Invoice Joe\'s Barbershop 800 dollars for the website'],
     prompt: `Draft an invoice: {input}. ${NUMBERS_RULE}`, produces: 'invoice', cost: 'Stripe charges its standard fee per payment.', keywords: ['invoice', 'bill', 'payment link', 'charge client'],
@@ -474,13 +473,12 @@ export const COMMANDS = Object.freeze([
     examples: ['Draft a proposal for Joe\'s Barbershop website'],
     prompt: `Draft a client proposal: {input}. Scope, deliverables, timeline, price, next step. ${NUMBERS_RULE} ${PLAN_RULE}`, produces: 'proposal', keywords: ['proposal', 'quote', 'pitch'],
   }),
-  C('lead-outreach', 'clients', 'BUILD', 'Draft and send authorized communications.', {
-    does: 'Drafts a personal outreach message. Sending by text uses Twilio and needs your review of each message; no bulk or cold spam.',
-    confirm: 'Messages go to people outside your contacts.',
-    optional: ['sms'], input: { name: 'message', required: true, hint: 'Who and what to say' },
+  C('lead-outreach', 'clients', 'PLAN', 'Draft and send authorized communications.', {
+    does: 'Drafts a short, honest outreach message with an easy opt-out. It sends nothing: you review it and send it yourself. No bulk or cold messaging.',
+    input: { name: 'message', required: true, hint: 'Who and what to say' },
     examples: ['Draft an outreach text to Joe\'s Barbershop about a new website'],
     prompt: `Draft a short, honest outreach message (no false claims, an easy opt-out) for: {input}. Do not send it.`,
-    produces: 'message draft', cost: 'Twilio charges per text sent.', keywords: ['outreach', 'contact', 'message client', 'cold email', 'text'],
+    produces: 'message draft', keywords: ['outreach', 'contact', 'message client', 'cold email', 'text'],
   }),
   C('lead-crm', 'clients', 'EXPLORE', 'Track client opportunities.', {
     does: 'Reads the deals in CHE\'s client pipeline and their stages.',
@@ -488,10 +486,9 @@ export const COMMANDS = Object.freeze([
     examples: ['What is in my client pipeline?'],
     prompt: 'Client pipeline summary.', produces: 'pipeline', evidence: 'Pipeline records only.', keywords: ['crm', 'pipeline', 'deals', 'clients list'],
   }),
-  C('lead-followup', 'clients', 'BUILD', 'Manage authorized follow-up workflows.', {
-    does: 'Drafts polite follow-ups for leads that went quiet. You review before anything is sent.',
-    confirm: 'Messages go to people outside your contacts.',
-    optional: ['sms'], input: { name: 'lead', required: true, hint: 'Who to follow up' },
+  C('lead-followup', 'clients', 'PLAN', 'Manage authorized follow-up workflows.', {
+    does: 'Drafts polite follow-ups for leads that went quiet. It sends nothing; you review and send.',
+    input: { name: 'lead', required: true, hint: 'Who to follow up' },
     examples: ['Draft a follow-up to Joe\'s Barbershop'],
     prompt: 'Draft a short, polite follow-up message with an easy opt-out for: {input}. Do not send it.', produces: 'message draft', keywords: ['follow up', 'followup', 'reminder'],
   }),
@@ -562,11 +559,11 @@ export const COMMANDS = Object.freeze([
     prompt: 'Tell the office to {input}', produces: 'office jobs', evidence: 'Office job ids.', keywords: ['delegate', 'office task', 'assign'],
   }),
   C('warroom', 'office', 'PLAN', 'Coordinate complex multi-agent work.', {
-    does: 'Puts a hard question to several AI engines and compares their answers.',
-    needs: ['model'], route: 'model', handler: 'consult / ai_round_table',
+    does: 'Puts a hard question to Gemini, ChatGPT and Grok and gives each answer; an engine that cannot be reached is named, never faked.',
+    needs: ['model'], route: 'che_consult', handler: 'ai_consult.consultIntent (peer engines)',
     input: { name: 'question', required: true, hint: 'The hard question' },
-    examples: ['War room: should I focus on websites or videos first?'],
-    prompt: 'Ask the other AIs: {input}', produces: 'panel answers', keywords: ['war room', 'warroom', 'round table', 'second opinion', 'multiple ais'],
+    examples: ['Ask Gemini and ChatGPT: should I focus on websites or videos first?'],
+    prompt: 'Ask Gemini, ChatGPT and Grok: {input}', produces: 'panel answers', keywords: ['war room', 'warroom', 'round table', 'second opinion', 'multiple ais'],
   }),
   C('automate', 'office', 'PLAN', 'Create supported recurring workflows.', {
     does: 'Designs a repeatable workflow you save here and run with one tap or sentence. Unattended schedules stay off by your rule.',

@@ -16,6 +16,7 @@ const DEPLOY_STEPS = {
   live_commit: /^Verify live deployed commit$/,
   memory_probe: /memory truth/i,
   voice_probe: /ElevenLabs voice through the live Worker/i,
+  command_probe: /Command Center through the live Worker/i,
 };
 
 async function getJson(fetcher, url, headers = {}, as = 'json') {
@@ -110,7 +111,7 @@ export async function releaseStatus({ pr = null, sha = null, fetcher = fetch, to
               // Only CHE's own notices (the deploy writes them); runner and
               // action-version notices are noise here.
               out.deploy.notices = (notes.data || [])
-                .filter((a) => a.annotation_level === 'notice' && /^(?:Live CHE commit|Memory truth|CHE voice)/i.test(a.title || ''))
+                .filter((a) => a.annotation_level === 'notice' && /^(?:Live CHE commit|Memory truth|CHE voice|Command Center)/i.test(a.title || ''))
                 .map((a) => `${a.title ? `${a.title}: ` : ''}${a.message}`.slice(0, 300));
               out.deploy.errors = (notes.data || []).filter((a) => a.annotation_level === 'failure').map((a) => `${a.title}: ${a.message}`.slice(0, 300));
             }
@@ -156,7 +157,7 @@ export function formatStatus(s) {
     if (s.deploy) {
       const v = s.deploy.live_commit;
       lines.push(`  live commit check: ${v === 'success' ? `VERIFIED ${short(s.target_sha)} is live` : v ? `${v.toUpperCase()} (not verified)` : 'UNKNOWN'}`);
-      lines.push(`  memory probe: ${s.deploy.memory_probe || 'UNKNOWN'}; voice probe: ${s.deploy.voice_probe || 'UNKNOWN'}`);
+      lines.push(`  memory probe: ${s.deploy.memory_probe || 'UNKNOWN'}; voice probe: ${s.deploy.voice_probe || 'UNKNOWN'}${s.deploy.command_probe ? `; command center probe: ${s.deploy.command_probe}` : ''}`);
       for (const n of s.deploy.notices || []) lines.push(`  note: ${n}`);
       for (const e of s.deploy.errors || []) lines.push(`  error: ${e}`);
     } else if (s.runs.deploy?.status === 'completed') lines.push('  live commit check: UNKNOWN (steps unreadable)');

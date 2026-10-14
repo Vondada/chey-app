@@ -17,6 +17,9 @@ The router's voice policy guides owner-facing replies. It does not itself implem
 ## Project skills
 Reusable workflows for every AI live in `.claude/skills/`: `che-fact-check` (what CHE may claim as true), `che-debug` (reproduce, fix, test), `che-release` (checks, deploy, live verification; owner authorization for consequential actions) and `che-youtube` (sourced video packages; publishing needs the owner's yes). Load a skill only when the task needs it, and use its scripts instead of rewriting them. See `docs/CHE_AGENT_SKILLS.md`.
 
+## CHE Command Center
+CHE's own runtime commands (Chat → Commands, `/name` in chat) are one catalog in `server/cloudflare/command_catalog.js` over existing handlers; workflows run on the objective graph. Add or change a command there (one entry, its route asserted in `command_center.test.mjs`), never as a second router, planner or agent. See `docs/CHE_COMMAND_CENTER.md`.
+
 ## Every AI session: continue from the live handoff
 Before starting, read `mailbox/briefs/LIVE-HANDOFF.md` on the `che-mailbox` branch: it records where the last AI stopped, the queue of the owner's open requests, and the exact coding process. Continue from there without redoing or overwriting finished work. Before you stop, or when your limit is nearly used, push your work and update that file's "Current position". The owner asked for this permanently so ChatGPT, Codex, CHE and Claude can always finish each other's work.
 

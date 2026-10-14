@@ -23,10 +23,12 @@
   - `topic_scout.js` → `faceless_video.js` → `github_video_renderer.js` / `moneyprinter.js` → `youtube_upload.js`.
   - `video_line.js` orchestrates them.
 - **Coding:** `self_development.js`, `coding_runtime.js`, and the OpenCode runner `.github/workflows/che-opencode-runtime.yml`.
+- **Command Center:** `command_catalog.js` holds the 71 commands, their routes, connectors, search and suggestions. Slash dispatch, `/api/commands*` and `runCommandJob` live in `worker.js`; workflows are `command` nodes in `objective_graph.js`. Every command's route is asserted in `command_center.test.mjs`.
 
 ## Flutter (`lib/`)
 - **Shell:** `lib/main.dart`. `_CHEHomeState` is split into `lib/home_state/*.dart` (voice, microphone, send, security, hub_rooms, memory).
 - **Voice:** `lib/home_state/voice.dart`, `lib/che_speech_pipeline.dart`, `lib/che_mic_supervisor.dart`, and native `ios/Runner/AppDelegate.swift`.
+- **Command Center:** `lib/commands/` (page, detail, workflow builder, store, client). Chat wiring is in `lib/main.dart` (`_openCommandCenter`) and `lib/home_state/streaming.dart` (the `command_suggestions` event).
 - **Brain and memory on the phone:** `lib/che_ui/che_brain.dart`, the brain guide and the `che-remember` blocks.
 
 ## Never break (AGENTS.md and the handoff)
