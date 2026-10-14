@@ -479,6 +479,10 @@ void main() {
   });
 
   test('Chat searches the local command catalog, never the web, using spoken words', () {
+    for (final phrase in ['Show me all commands', 'find all commands', 'search for all commands', 'list every command']) {
+      final route = parseScreenCommand(phrase);
+      expect(route?.op, ScreenOp.openCommands, reason: phrase);
+    }
     for (final phrase in [
       'Search for YouTube commands',
       'CHE, search for YouTube commands',
@@ -642,6 +646,15 @@ void main() {
         reason: 'an explicit voice search reads numbered local results');
     expect(che.requests.every((r) => r.url.path == '/api/commands'),
         isTrue, reason: 'searching the catalog never calls web or an AI model');
+  });
+
+  testWidgets('explicit command search reports an offline catalog failure aloud', (tester) async {
+    final che = FakeChe()..offline = true;
+    final spoken = <String>[];
+    await openCenter(tester, che: che, initialSearch: 'youtube', spoken: spoken);
+    expect(spoken, contains(contains('could not search the command library for "youtube"')),
+        reason: 'voice-first owner must hear the failure, not only see quiet error text');
+    expect(find.textContaining('could not search the command library'), findsOneWidget);
   });
 
   testWidgets('the actual Chat send path opens Commands for typed/spoken commands', (tester) async {
