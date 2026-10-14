@@ -151,14 +151,23 @@ test('long narration is stored in parts and comes back whole', async () => {
 });
 
 test('the cache is bounded: the oldest clips are evicted', async () => {
-  const storage = memoryStorage();
-  const { fetcher } = fakeFish();
-  for (let i = 0; i < 85; i += 1) await fishAudioSpeech(env(), `Clip number ${i}.`, { storage, fetcher });
-  const index = storage.saved.get('fish_tts_index');
-  assert.equal(index.length, 80);
-  assert.ok(!index.some((entry) => entry.model !== 's2.1-pro-free'));
-  const parts = [...storage.saved.keys()].filter((key) => /^fish_tts:[0-9a-f]+:\d+$/.test(key));
-  assert.equal(parts.length, 80, 'evicted clips leave no parts behind');
+  // A fixed clock: this test is about the cache, so wall-clock latency must
+  // not count. The 8-byte fake clip is ~0.5 ms of audio, and on a busy runner
+  // a 1 ms response would otherwise look slower than playback and rest Fish.
+  const realNow = Date.now;
+  Date.now = () => 3_000_000;
+  try {
+    const storage = memoryStorage();
+    const { fetcher } = fakeFish(async () => { await new Promise((r) => setTimeout(r, 2)); return new Response(MP3, { headers: { 'Content-Type': 'audio/mpeg' } }); });
+    for (let i = 0; i < 85; i += 1) await fishAudioSpeech(env(), `Clip number ${i}.`, { storage, fetcher });
+    const index = storage.saved.get('fish_tts_index');
+    assert.equal(index.length, 80);
+    assert.ok(!index.some((entry) => entry.model !== 's2.1-pro-free'));
+    const parts = [...storage.saved.keys()].filter((key) => /^fish_tts:[0-9a-f]+:\d+$/.test(key));
+    assert.equal(parts.length, 80, 'evicted clips leave no parts behind');
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 test('a refused key falls back at once and rests every model; the key is never exposed', async () => {
