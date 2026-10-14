@@ -221,8 +221,41 @@ export async function rememberOwnerFact(storage, statement, now = Date.now()) {
 export const LAST_ANSWER_EVIDENCE_KEY = 'che_last_answer_evidence';
 
 export function evidenceFollowup(message) {
+  const q = normalizeQuestion(message).replace(/[.?!]+$/, '').trim();
+  // The owner may dictate "that's correct" as "that s correct", or quote a
+  // generic instruction from a prior test in the same turn. No specific new
+  // research subject is specified in "research a fact".
+  const genericResearch = /(?: research a fact check (?:your |the )?sources and explain what you verified)?/;
+  if (new RegExp('^how do you know(?: that| this| it| that s correct| that is correct| it s correct| whether that is true)?' + genericResearch.source + '$').test(q)) return true;
+  return /^(?:where did you get (?:that|this|the information)|what(?: is| are)? (?:your|the) sources?(?: for that)?|can you (?:cite|verify|fact check) (?:that|this|your answer)|show (?:me )?(?:the )?(?:sources?|evidence)(?: for that)?)$/i.test(q);
+}
+
+// "The last one" refers to the preceding fact-check discussion, not to an
+// imaginary completed web search. Require explicit nearby dialog grounding.
+export function evidenceReferenceFollowup(message, history = []) {
+  if (evidenceFollowup(message)) return true;
   const q = normalizeQuestion(message);
-  return /^(?:how do you know(?: that| this| it)?|where did you get (?:that|this|the information)|what(?: is| are)? (?:your|the) sources?(?: for that)?|can you (?:cite|verify|fact check) (?:that|this|your answer)|show (?:me )?(?:the )?(?:sources?|evidence)(?: for that)?)\??$/i.test(q);
+  if (!/^(?:the last one(?: we were just talking about)?|that last one|the one we were just talking about)$/.test(q)) return false;
+  return (Array.isArray(history) ? history.slice(-10) : []).some((turn) =>
+    turn?.role === 'user' && (evidenceFollowup(turn.content || turn.text || '') ||
+      /how do you know|check (?:your |the )?sources/i.test(String(turn.content || turn.text || ''))));
+}
+
+export function confirmedOwnerMemoryExample(records = []) {
+  const record = (Array.isArray(records) ? records : []).slice().reverse().find((item) =>
+    item?.active !== false && item?.verification_status === 'owner_attested' &&
+    ['owner', 'owner_chat', 'explicit_memory'].includes(String(item.source || '')) &&
+    isSafeMemoryText(item.text) && String(item.text || '').length <= 300);
+  if (!record) return null;
+  return { answer: `You told me: "${String(record.text).trim()}" I have it recorded as your statement, sir—not independently verified outside our conversation.`,
+    verified_at: record.last_verified_at || record.created_at || null };
+}
+
+export function evidenceReferenceLabel(history = []) {
+  const assistantTurns = (Array.isArray(history) ? history : []).filter((turn) => turn?.role === 'assistant').slice(-8).reverse();
+  if (assistantTurns.some((turn) => /you prefer short, friendly replies|prefer short friendly replies/i.test(String(turn.content || turn.text || ''))))
+    return 'the claim I made about your preference for short, friendly replies';
+  return 'the earlier answer';
 }
 
 export function answerEvidenceReceipt({ research = null, tools = [], ownerAttested = false, at = Date.now() } = {}) {
