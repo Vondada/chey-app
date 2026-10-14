@@ -90,11 +90,14 @@ export function addOwnerMemory(data, text, opts = {}) {
     text: memory,
     title: clip(opts.title || memory, 160),
     category: clip(opts.category || 'Memory', 60) || 'Memory',
-    source: clip(opts.source || 'owner', 220) || 'owner',
+    // No source means CHE's own code wrote it, not the owner: only the owner's
+    // memory paths (chat "remember", the Memory screen, an approved
+    // candidate) are recorded as his statements.
+    source: clip(opts.source || 'che_note', 220) || 'che_note',
     scope: opts.scope === 'general' ? 'general' : 'owner',
     confidence,
     verification_status: opts.verification_status || (
-      ['owner', 'owner_chat', 'explicit_memory'].includes(String(opts.source || 'owner'))
+      ['owner', 'owner_chat', 'explicit_memory', 'owner_approved'].includes(String(opts.source || ''))
         ? 'owner_attested' : 'unverified_reference'),
     created_at: now,
     last_verified_at: clip(opts.last_verified_at || now, 64),

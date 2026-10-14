@@ -2860,7 +2860,8 @@ test('owner chat regression: evidence question and "the last one" bypass models'
   ];
   const followup = replyFromNdjson(await (await chat('The last one we were just talking about', { history })).text());
   assert.match(followup, /short, friendly replies/);
-  assert.match(followup, /not independently verified|do not have a recent evidence record/i);
+  // No owner record supports that claim, so CHE retracts it instead of defending it.
+  assert.match(followup, /no record that you ever said or confirmed that[\s\S]*taking it back/i);
   assert.equal(calls, 0, 'neither context-aware evidence follow-up calls a model');
   const noMemory = replyFromNdjson(await (await chat("CHE, tell me something you remember that I've confirmed.")).text());
   assert.match(noMemory, /cannot find a source-recorded owner confirmation/);
