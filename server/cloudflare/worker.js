@@ -7282,7 +7282,7 @@ export class CheState extends DurableObject {
         // Answer source follow-ups from a recorded prior result, never with
         // invented citations generated after the fact.
         if (ownerDevice && !body.attachment && evidenceFollowup(message)) {
-          const priorEvidence = await this.ctx.storage.get(LAST_ANSWER_EVIDENCE_KEY).catch(() => null);
+          const priorEvidence = await Promise.resolve().then(() => this.ctx.storage.get(LAST_ANSWER_EVIDENCE_KEY)).catch(() => null);
           return ndjsonReply(explainAnswerEvidence(priorEvidence), { source: 'che_evidence_receipt', model_calls: 0 });
         }
 
@@ -7302,8 +7302,8 @@ export class CheState extends DurableObject {
           }
           const known = rememberFact ? null : await knownAnswer(this.ctx.storage, message, { memories: data.memories }).catch(() => null);
           if (known) {
-            await this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY,
-              answerEvidenceReceipt({ ownerAttested: true, at: Date.now() })).catch(() => null);
+            await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY,
+              answerEvidenceReceipt({ ownerAttested: true, at: Date.now() }))).catch(() => null);
             await recordReliability(this.ctx.storage, { kind: 'retrieval', workflow: 'instant_answer', outcome: 'answered_from_memory', tokens_saved: 1500 });
             return ndjsonReply(known.answer, { source: 'che_memory', model_calls: 0 });
           }
@@ -7329,8 +7329,8 @@ export class CheState extends DurableObject {
             ? await researchHit(this.ctx.storage, message).catch(() => null)
             : null;
           if (researched?.pure === true) {
-            await this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY,
-              answerEvidenceReceipt({ research: researched })).catch(() => null);
+            await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY,
+              answerEvidenceReceipt({ research: researched }))).catch(() => null);
             await recordReliability(this.ctx.storage, { kind: 'retrieval', workflow: 'research', outcome: 'answered_from_memory', tokens_saved: 3000 });
             const sources = researched.sources?.length ? `\n\nSources: ${researched.sources.join(', ')}` : '';
             const limit = researched.limitation ? `\n\n${researched.limitation}` : '';
@@ -8732,8 +8732,8 @@ export class CheState extends DurableObject {
         // Persist the actual answer-provenance receipt, not a model-invented
         // bibliography. Source-backed research may be reused; model-only text
         // cannot become verified memory by repetition.
-        await this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY,
-          answerEvidenceReceipt({ research, tools: skillResults })).catch(() => null);
+        await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY,
+          answerEvidenceReceipt({ research, tools: skillResults }))).catch(() => null);
         // Never cache an unverified language-model answer as a reusable fact.
         // Source-backed research is already saved by knowledge_cache.js with
         // provenance, expiry and supersession; owner facts use owner_memory.
