@@ -6556,6 +6556,9 @@ export class CheState extends DurableObject {
         // Always-on speech learning: corrections teach her how the owner's voice
         // gets misheard; learned fixes apply when the context matches.
         const ownerHistory = Array.isArray(body.history) ? body.history : [];
+        // Evaluate references before the interpreter expands "the last one"
+        // into a new question. Route it later, after permission handling.
+        const asksForEvidence = evidenceReferenceFollowup(rawMessage, ownerHistory);
         const lastOwner = [...ownerHistory].reverse().find((h) => h && h.role === 'user');
         const previousText = String(lastOwner?.content || lastOwner?.text || '').slice(0, 2000);
         const correction = detectCorrection(rawMessage, previousText);
@@ -7282,9 +7285,9 @@ export class CheState extends DurableObject {
         // Fact-check follow-ups and "the last one" must never fall into a
         // storytelling model. Ground the referent in the recent turns and
         // explain the actual prior receipt, even if it proves nothing.
-        if (ownerDevice && !body.attachment && evidenceReferenceFollowup(message, ownerHistory)) {
+        if (ownerDevice && !body.attachment && asksForEvidence) {
           const priorEvidence = await Promise.resolve().then(() => this.ctx.storage.get(LAST_ANSWER_EVIDENCE_KEY)).catch(() => null);
-          const referent = evidenceFollowup(message) ? '' : `For ${evidenceReferenceLabel(ownerHistory)}: `;
+          const referent = evidenceFollowup(rawMessage) ? '' : `For ${evidenceReferenceLabel(ownerHistory)}: `;
           return ndjsonReply(referent + explainAnswerEvidence(priorEvidence), {
             source: 'che_evidence_receipt', model_calls: 0,
           });
