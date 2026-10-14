@@ -11,6 +11,7 @@ enum ScreenOp {
   hideGreeting,
   showGreeting,
   openCommands,
+  searchCommands,
 }
 
 class ScreenCommand {
@@ -31,6 +32,29 @@ ScreenCommand? parseScreenCommand(String raw) {
   if (RegExp(r'^(?:open|show|show me|go to|take me to|bring up)\s+(?:the\s+|my\s+)?(?:commands?|command center|command library|slash commands)(?:\s+(?:page|screen|list))?$').hasMatch(t) ||
       RegExp(r'^(?:commands?|command center|command library)$').hasMatch(t)) {
     return const ScreenCommand(ScreenOp.openCommands);
+  }
+
+  // A request for the complete list is navigation, not a literal search for
+  // the word "all" (which can otherwise yield an empty filtered library).
+  if (RegExp(
+    r'^(?:list|show(?: me)?|find|search(?: for)?)\s+(?:me\s+)?(?:all|every|the full list of|the complete list of|full list of)\s+(?:the\s+)?(?:commands?|command library|slash commands)$',
+  ).hasMatch(t)) {
+    return const ScreenCommand(ScreenOp.openCommands);
+  }
+
+  // Explicit local-catalog intent. "Search YouTube for jazz" still goes
+  // through CHE's normal web/video route; no model is needed for the catalog.
+  if (!RegExp(r'^(?:search|find|look up)\s+(?:the\s+)?(?:web|internet|online)\b').hasMatch(t)) {
+    final commandsFirst = RegExp(
+      r'^(?:search|find|look up)\s+(?:for\s+)?(?:the\s+|my\s+)?(?:commands?|command\s+(?:center|library))\s+(?:for|about|on)\s+(.+)$',
+    ).firstMatch(t);
+    final topicFirst = RegExp(
+      r'^(?:search|find|look up|show(?: me)?)\s+(?:for\s+)?(.+?)\s+(?:commands?|in\s+(?:the\s+|my\s+)?(?:commands?|command\s+(?:center|library)))$',
+    ).firstMatch(t);
+    final topic = (commandsFirst?.group(1) ?? topicFirst?.group(1) ?? '').trim();
+    if (topic.isNotEmpty) {
+      return ScreenCommand(ScreenOp.searchCommands, topic);
+    }
   }
 
   final add = RegExp(r'\b(add|put|place|insert)\b').hasMatch(t);

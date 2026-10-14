@@ -96,6 +96,7 @@ Future<void> openCenter(
   Ran? ran,
   List<String>? spoken,
   double textScale = 1,
+  String initialSearch = '',
 }) async {
   tester.view.physicalSize = const Size(1170, 4200);
   tester.view.devicePixelRatio = 3;
@@ -116,6 +117,7 @@ Future<void> openCenter(
               builder: (_) => CheCommandCenterScreen(
                 client: CheCommandClient(baseUrl: 'https://che.test', headers: () => const {}, client: che.client),
                 store: s,
+                initialSearch: initialSearch,
                 onSpeak: spoken?.add,
                 onRunInChat: (message, {bool confirmed = false}) async => ran?.calls.add((message, confirmed)),
               ),
@@ -475,6 +477,34 @@ void main() {
     }
   });
 
+  test('Chat searches the local command catalog, never the web, using spoken words', () {
+    for (final phrase in ['Show me all commands', 'find all commands', 'search for all commands', 'list every command']) {
+      final route = parseScreenCommand(phrase);
+      expect(route?.op, ScreenOp.openCommands, reason: phrase);
+    }
+    for (final phrase in [
+      'Search for YouTube commands',
+      'CHE, search for YouTube commands',
+      'Find YouTube commands',
+      'Search commands for YouTube',
+      'Show me YouTube commands',
+      'Look up YouTube in my command library',
+    ]) {
+      final route = parseScreenCommand(phrase);
+      expect(route?.op, ScreenOp.searchCommands, reason: phrase);
+      expect(route?.text, 'youtube', reason: phrase);
+    }
+    for (final phrase in [
+      'Search YouTube for jazz',
+      'Research YouTube video strategy',
+      'Find YouTube videos about cooking',
+      'What commands do you have for clients?',
+      'Search the web for YouTube commands',
+    ]) {
+      expect(parseScreenCommand(phrase)?.op, isNot(ScreenOp.searchCommands), reason: phrase);
+    }
+  });
+
   test('voice phrases map to the page\'s actions, deterministically', () {
     CheCommandVoice? p(String words) => CheCommandVoice.parse(words);
     expect(p("What's on screen?")?.op, CheCommandVoiceOp.describe);
@@ -601,6 +631,29 @@ void main() {
     expect(await say('yes'), contains('Deleted the saved workflow "website clients"'));
     expect(che.posted('/api/commands/workflows/delete').single, {'id': 'wf-1'});
     expect(await say('yes'), isNull, reason: 'nothing pending: a yes goes on to Chat (a held command)');
+  });
+
+  testWidgets('Chat-directed YouTube command search opens filtered local results', (tester) async {
+    final che = FakeChe();
+    final spoken = <String>[];
+    await openCenter(tester, che: che, initialSearch: 'youtube', spoken: spoken);
+    final field = tester.widget<TextField>(find.byType(TextField).first);
+    expect(field.controller?.text, 'youtube');
+    expect(find.textContaining('MATCHES FOR "YOUTUBE"'), findsOneWidget);
+    expect(find.text('/yt-ideas'), findsOneWidget);
+    expect(spoken.any((line) => line.contains('best matches for "youtube"')), isTrue,
+        reason: 'an explicit voice search reads numbered local results');
+    expect(che.requests.every((r) => r.url.path == '/api/commands'),
+        isTrue, reason: 'searching the catalog never calls web or an AI model');
+  });
+
+  testWidgets('explicit command search reports an offline catalog failure aloud', (tester) async {
+    final che = FakeChe()..offline = true;
+    final spoken = <String>[];
+    await openCenter(tester, che: che, initialSearch: 'youtube', spoken: spoken);
+    expect(spoken.any((line) => line.contains('could not search the command library for "youtube"')), isTrue,
+        reason: 'voice-first owner must hear the failure, not only see quiet error text');
+    expect(find.textContaining('could not search the command library'), findsOneWidget);
   });
 
   testWidgets('Chat → Commands → back to Chat, in the real app, with no speech on the way', (tester) async {

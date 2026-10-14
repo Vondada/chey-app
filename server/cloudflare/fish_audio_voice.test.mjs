@@ -134,7 +134,13 @@ test('two identical requests at once share one synthesis', async () => {
   assert.equal(calls.length, 1);
   assert.equal(a.status, 200);
   assert.equal(b.status, 200);
-  assert.equal(b.headers.get('X-CHE-Cache'), 'shared');
+  // Both concurrent callers are valid initiators. Under runner load the
+  // second JavaScript call may win the race; one miss and one shared answer
+  // is the invariant, not which caller receives which cache header.
+  assert.deepEqual(
+    [a.headers.get('X-CHE-Cache'), b.headers.get('X-CHE-Cache')].sort(),
+    ['miss', 'shared'],
+  );
 });
 
 test('long narration is stored in parts and comes back whole', async () => {

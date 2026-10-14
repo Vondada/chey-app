@@ -433,10 +433,10 @@ extension _CheHomeSend on _CHEHomeState {
         _screenChipsHidden = false;
         return removed ? 'Removed "$label" from the suggestions, sir.' : 'I do not see "$label" in the suggestions.';
       case ScreenOp.openCommands:
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) unawaited(_openCommandCenter());
-        });
+        // Navigation now happens directly in sendMessage, not in a frame callback.
         return 'Opening Commands, sir.';
+      case ScreenOp.searchCommands:
+        return 'Opening Commands for "${command.text}", sir.';
       case ScreenOp.clearChat:
         messages.clear();
         return 'Chat cleared, sir.';
@@ -532,7 +532,14 @@ extension _CheHomeSend on _CHEHomeState {
   Future<void> sendMessage({bool fromVoice = false}) async {
     if (await _controlAutonomy(controller.text.trim())) return;
     if (_isSending) return;
-    if (_isSpeaking) await _interruptSpeechAndListen(resumeListening: false);
+    // Navigating to Commands must not wait for a potentially stalled voice
+    // playback to stop. Open the page first, then interrupt the old clip.
+    final earlyCommand = _pendingAttachment == null ? parseScreenCommand(controller.text.trim()) : null;
+    final quickCommandsRoute = earlyCommand?.op == ScreenOp.openCommands ||
+        earlyCommand?.op == ScreenOp.searchCommands;
+    if (_isSpeaking && !quickCommandsRoute) {
+      await _interruptSpeechAndListen(resumeListening: false);
+    }
 
     final typedMessage = controller.text.trim();
     final message = typedMessage.isEmpty && _pendingAttachment != null
@@ -566,6 +573,29 @@ extension _CheHomeSend on _CHEHomeState {
     // Direct screen edits are applied on-device before any model routing.
     final screenCommand = _pendingAttachment == null ? parseScreenCommand(message) : null;
     if (screenCommand != null) {
+      // Open the real page immediately. A deferred callback could leave the
+      // owner in Chat, so the next local search went to the web/model.
+      if (screenCommand.op == ScreenOp.openCommands || screenCommand.op == ScreenOp.searchCommands) {
+        if (!mounted) return;
+        final reply = _applyScreenCommand(screenCommand);
+        _set(() {
+          controller.clear();
+          messages
+            ..add({'role': 'user', 'text': message})
+            ..add({'role': 'assistant', 'text': reply});
+        });
+        HapticFeedback.mediumImpact();
+        unawaited(_openCommandCenter(
+          search: screenCommand.op == ScreenOp.searchCommands ? screenCommand.text : '',
+        ));
+        if (_isSpeaking) await _interruptSpeechAndListen(resumeListening: false);
+        // A requested search speaks its numbered results (or a real failure)
+        // from the Command Center, not a misleading "Opening..." preamble.
+        if (screenCommand.op == ScreenOp.openCommands) {
+          await speakText(reply, record: false);
+        }
+        return;
+      }
       var reply = '';
       if (mounted) {
         _set(() {

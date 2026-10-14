@@ -526,7 +526,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   /// Chat → Commands. [command] opens one command's details; [steps] opens
   /// the workflow builder with those commands (both from a suggestion card).
-  Future<void> _openCommandCenter({String? command, List<String>? steps, int tab = 0}) async {
+  Future<void> _openCommandCenter({String? command, List<String>? steps, int tab = 0, String search = ''}) async {
     HapticFeedback.selectionClick();
     _composerFocus.unfocus();
     await Navigator.of(context).push(MaterialPageRoute<void>(
@@ -534,6 +534,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
         client: CheCommandClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
         store: _commandStore,
         initialCommand: command,
+        initialSearch: search,
         initialSteps: steps,
         initialTab: tab,
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
