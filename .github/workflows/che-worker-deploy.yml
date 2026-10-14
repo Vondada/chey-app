@@ -186,6 +186,8 @@ jobs:
               const health = await response.json();
               if (response.ok && health.ok && health.version_tag === expected) {
                 console.log(`Verified live CHE commit ${expected}, version ${health.version_id}`);
+                // A notice is readable from the check-run API without the log.
+                console.log(`::notice title=Live CHE commit::${expected} is live (Worker version ${health.version_id})`);
                 process.exit(0);
               }
             } catch { /* retry propagation or a transient health error */ }
@@ -348,6 +350,7 @@ jobs:
             mkdirSync('che-voice-check', { recursive: true });
             writeFileSync('che-voice-check/elevenlabs.mp3', audio);
             console.log(`ElevenLabs spoke: ${audio.length} bytes in ${result.ms} ms (model ${result.model}).`);
+            console.log(`::notice title=CHE voice::ElevenLabs spoke through the live Worker: ${audio.length} bytes in ${result.ms} ms`);
             summary(`**ElevenLabs voice works through the live Worker:** ${audio.length} bytes in ${result.ms} ms. The clip is in the \`che-voice-check\` artifact.`);
           } else {
             const why = `${result.status || 'no status'}${result.http ? ` (HTTP ${result.http})` : ''}${result.reason ? `: ${String(result.reason).replace(/[.\s]+$/, '')}` : ''}`;
@@ -397,6 +400,7 @@ jobs:
             process.exit(1);
           }
           summary(`**CHE memory truth (live Worker, isolated test CHE):** ${report.passed}/${report.total} steps passed; memory answers used ${report.memory_route_model_calls} model calls; slowest memory answer ${report.slowest_memory_ms} ms.`);
+          console.log(`::notice title=Memory truth::${report.passed}/${report.total} steps passed; memory answers used ${report.memory_route_model_calls} model calls; slowest ${report.slowest_memory_ms} ms`);
           summary('');
           summary('| Step | Result | Route | Model calls | ms |');
           summary('|---|---|---|---|---|');

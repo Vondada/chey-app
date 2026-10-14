@@ -1,0 +1,18 @@
+{
+  "about": "Owner iPhone 2026-10-14 12:56: an invented 'you personally tested the security protocol' memory, then the evidence follow-ups.",
+  "model": "You confirmed that the new office security protocol requires a two-step biometric check because you personally tested the system last Tuesday.",
+  "turns": [
+    { "message": "CHE, tell me something I've personally confirmed.",
+      "expect": { "route": "che_memory_provenance", "model_calls": 0, "not": "security protocol|biometric" } },
+    { "message": "Give me a quick recap of how my week at the office went.",
+      "expect": { "not": "security protocol|biometric|you personally tested", "match": "no record of you saying or confirming that" } },
+    { "message": "The last one we were just talking about. What evidence do you have?",
+      "history": [
+        { "role": "user", "content": "CHE, tell me something I've personally confirmed." },
+        { "role": "assistant", "content": "You confirmed that the new office security protocol requires a two-step biometric check because you personally tested the system last Tuesday." },
+        { "role": "user", "content": "How do you know that's correct?" },
+        { "role": "assistant", "content": "That answer was not independently verified, sir. I have no source receipt for it." }
+      ],
+      "expect": { "route": "che_evidence_receipt", "model_calls": 0, "match": "security protocol[\\s\\S]*taking it back", "not": "https?:" } }
+  ]
+}

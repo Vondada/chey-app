@@ -280,8 +280,10 @@ export function guardOwnerAttributions(reply, { records = [], ownerTurns = [], m
   }).join('').replace(/[ \t]+\n/g, '\n').replace(/\s{2,}/g, ' ').trim();
   if (!removed.length) return { text, removed };
   const correction = 'I can find no record of you saying or confirming that, sir, so I have left it out rather than present it as yours.';
+  // Whatever else the reply said stays, even when it is short ("The weather
+  // is mild."); only a bare "Sure, sir." is not worth keeping on its own.
   const body = kept.replace(/```[\s\S]*?```/g, '').trim();
-  return { text: body.length >= 40 ? `${kept}\n\n${correction}` : `${correction} If you tell me now, I'll keep it as your own statement.${kept.includes('```') ? `\n\n${kept.match(/```[\s\S]*?```/g).join('\n')}` : ''}`, removed };
+  return { text: body.length >= 40 || contentWords(body).length >= 2 ? `${kept}\n\n${correction}` : `${correction} If you tell me now, I'll keep it as your own statement.${kept.includes('```') ? `\n\n${kept.match(/```[\s\S]*?```/g).join('\n')}` : ''}`, removed };
 }
 
 /**

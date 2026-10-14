@@ -1,0 +1,16 @@
+{
+  "topic": "Octopus facts",
+  "target_seconds": 60,
+  "title": "You Won't Believe These Octopus Facts That Scientists Have Been Hiding From Everyone For Over One Hundred Years!!",
+  "description": "Octopus facts.",
+  "tags": ["octopus"],
+  "thumbnail_text": "9 BRAINS",
+  "sources": [{ "id": 1, "url": "https://ocean.si.edu/ocean-life/invertebrates/octopuses", "title": "Octopuses" }],
+  "script": [
+    { "say": "Octopuses have 3 hearts. [1]" },
+    { "say": "Scientists found that octopuses can live 400 years." },
+    { "say": "Their blood is blue. [2]" }
+  ],
+  "privacy": "public",
+  "owner_publish_approval": null
+}

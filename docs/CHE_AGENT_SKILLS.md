@@ -66,3 +66,37 @@ dispatch, numbered choices, upstream failure and unknown-command rejection.
 For production acceptance, send the commands above through a paired CHE chat
 and check `done.source = che_installed_skills` and its `skill_receipt` against
 live index results. A local HTTP test is not proof of production deployment.
+
+## Development skills for Claude Code (`.claude/skills/`)
+
+These are workflow skills for the AIs that build CHE. They are **not** CHE runtime capabilities. Adding them changed nothing in `APPROVED_SKILLS`, and CHE does not load them in chat.
+
+| Skill | Use it for | Deterministic scripts |
+|---|---|---|
+| `che-fact-check` | What CHE may present as true: evidence tiers, owner-confirmed memories, retractions, tool-claim receipts | `claim_check.mjs` runs CHE's own truth guards on a draft reply, or shows a message's route. `cases/` holds the owner's real screenshot conversations. |
+| `che-debug` | Reproduce → locate → narrow fix → prove → review | `replay_chat.mjs` replays turns through the real `/api/chat` offline. `run_checks.sh` runs the CI checks for changed paths. `check_workflows.py` checks workflow YAML and inline scripts. |
+| `che-release` | PR checks, merge, Worker deploy, live commit, probes, Shorebird, IPA | `release_status.mjs` is read-only status. Each consequential action needs the owner's authorization. |
+| `che-youtube` | Sourced faceless-video packages for the existing video line | `check_package.mjs` checks sources, YouTube and CHE uploader limits, thumbnail honesty and publish approval. |
+
+### How to invoke them
+- **In Claude Code:** type `/che-fact-check`, `/che-debug`, `/che-release` or `/che-youtube`. Claude also picks one when the task matches its description: only the name and description load up front, and the body loads on demand.
+- **Other AIs (Codex, Gemini, Cursor, OpenCode):** read `.claude/skills/<name>/SKILL.md` and run its scripts directly. Any of the scripts can be run by hand as well.
+- **CHE's own coding crew:** the OpenCode runner's preamble (`che-opencode-runtime.yml`) points it to che-debug and che-fact-check. That is the existing mechanism, the same one that loads `ponytail`.
+
+### Runtime integration
+CHE's runtime enforces the fact-check rules in code (`memory_provenance.js`, `truth_layer.js`), not through a skill file. While che-fact-check was being written, `claim_check.mjs` found a production defect: the attribution guard dropped the rest of a short reply. It was fixed in `memory_provenance.js`, with a regression test.
+
+Measured on 2026-10-14:
+- CHE's compact chat prompt (2,911 characters) carries no skills list.
+- The full prompt (31,176 characters) includes the 461-character installed-skills context (1.5%).
+- Learned skills are already selected per message.
+
+So no runtime prompt change was made for skills.
+
+### Tests
+`node --test .claude/skills/tests/*.test.mjs` runs in CI (`flutter-check.yml`, Worker job). It covers:
+- skill selection by description;
+- script execution on the owner's real cases;
+- evidence integrity;
+- token budgets;
+- failure recovery.

@@ -499,3 +499,11 @@ test('"Remember I said my meeting is Friday" is saved, not looked up; "remember 
   assert.equal(recall.meta.source, 'che_memory_provenance');
   assert.match(recall.reply, /meeting is Friday/i);
 });
+
+test('removing an unsupported attribution keeps the rest of a short reply', async () => {
+  const che = await owner({ model: () => 'You personally tested the new door lock last Tuesday. The weather today is mild.' });
+  const out = await che.say('Anything new around the house?');
+  assert.doesNotMatch(out.reply, /door lock|you personally tested/i);
+  assert.match(out.reply, /The weather today is mild\./);
+  assert.match(out.reply, /no record of you saying or confirming that/);
+});
