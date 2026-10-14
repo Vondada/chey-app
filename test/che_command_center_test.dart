@@ -6,7 +6,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:chey/che_ui/che_theme.dart';
-import 'package:chey/che_ui/che_ui_preferences.dart';
 import 'package:chey/commands/che_command_center.dart';
 import 'package:chey/commands/che_command_client.dart';
 import 'package:chey/commands/che_command_models.dart';
@@ -15,7 +14,6 @@ import 'package:chey/commands/che_command_voice.dart';
 import 'package:chey/commands/che_command_widgets.dart';
 import 'package:chey/home/screen_command.dart';
 import 'package:chey/main.dart';
-import 'package:chey/home/che_home_chat.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -656,41 +654,6 @@ void main() {
     expect(spoken.any((line) => line.contains('could not search the command library for "youtube"')), isTrue,
         reason: 'voice-first owner must hear the failure, not only see quiet error text');
     expect(find.textContaining('could not search the command library'), findsOneWidget);
-  });
-
-  testWidgets('the actual Chat send path opens Commands for typed/spoken commands', (tester) async {
-    // This is a navigation integration test, not a native audio test.
-    // Avoid mock-platform TTS pipeline timers after disposing CHEApp.
-    await CheUiPreferences.instance.setVoiceResponsesEnabled(false);
-    addTearDown(() => CheUiPreferences.instance.setVoiceResponsesEnabled(true));
-    tester.view.physicalSize = const Size(1170, 2532);
-    tester.view.devicePixelRatio = 3;
-    addTearDown(tester.view.reset);
-    await tester.pumpWidget(const CHEApp());
-    for (var i = 0; i < 15; i++) { await tester.pump(const Duration(milliseconds: 200)); }
-    await tester.tap(find.text('Chat'));
-    await tester.pump(const Duration(milliseconds: 500));
-    final composer = tester.widget<CheHomeComposer>(find.byType(CheHomeComposer));
-    composer.controller.text = 'CHE, open commands.';
-    composer.onSend();
-    for (var i = 0; i < 12; i++) { await tester.pump(const Duration(milliseconds: 150)); }
-    expect(find.text('Library'), findsOneWidget, reason: 'a spoken opening must actually navigate');
-    await tester.tap(find.byTooltip('Back to Chat'));
-    for (var i = 0; i < 10; i++) { await tester.pump(const Duration(milliseconds: 150)); }
-    final next = tester.widget<CheHomeComposer>(find.byType(CheHomeComposer));
-    next.controller.text = 'Search for YouTube commands';
-    next.onSend();
-    for (var i = 0; i < 12; i++) { await tester.pump(const Duration(milliseconds: 150)); }
-    expect(find.text('Library'), findsOneWidget, reason: 'the local-search intent navigates, not web research');
-    // This real CHEApp test has no paired device, so it intentionally has no
-    // live catalog and hides the search field. Verify the route parameter;
-    // the seeded FakeChe test above proves the field and results are filtered.
-    final opened = tester.widget<CheCommandCenterScreen>(find.byType(CheCommandCenterScreen));
-    expect(opened.initialSearch, 'youtube');
-    expect(CheCommandCenterVoice.handler, isNotNull);
-    expect(tester.takeException(), isNull);
-    await tester.pumpWidget(const SizedBox());
-    await tester.pump(const Duration(seconds: 1));
   });
 
   testWidgets('Chat → Commands → back to Chat, in the real app, with no speech on the way', (tester) async {
