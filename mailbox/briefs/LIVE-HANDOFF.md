@@ -64,6 +64,16 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (updated by Claude, 2026-10-14 ~21:00 UTC — Command Center live; owner iPhone acceptance pending)
+
+**Verified from git and GitHub run records, not from memory. Main is `fe18860bb60e` (PR #305, `[ios-build] [worker-deploy]`).**
+- Merges: #300 `2b0c66e`, #301 `a88b2ec`, #302 `92d1e72` (Command Center; Codex review fixes in `9606c79`), #303 `b93f124` (Fish cache test clock fix, merged by the ChatGPT lane), #304 `d91e1e4` (readiness reporting), #305 `fe18860` (iPhone command navigation).
+- Deploy: `Deploy CHE Worker` run `38617912188` succeeded on `fe18860`. The live commit, Command Center, memory truth, ElevenLabs and Fish probes all passed. At `d91e1e4` the live readiness was 70 commands ready and 1 needing setup. The likely one is `/trade-execute` (NinjaTrader sign-in); the notice's names are in a log I could not read, so that is not confirmed.
+- iPhone: `CHE iPhone IPA` run `38617912387` succeeded. Public release `che-ios-v1.4.1024778197-b3861791238701`: not a draft, commit `fe18860`, SHA-256 `ddb7ffb8dd6c6013a2a9a32786bb93c895bb874e1853c4db2f01dfd10f8f821e`, 43,065,308 bytes, `shorebird_base=true`. The release script found no Shorebird patch run for `fe18860`.
+- Mailbox: answered CHE's 06:46 UTC "no record of PR #300" with these SHAs and run IDs.
+- **Not verified:** the owner's iPhone install, audio, and command flow. Nothing is claimed installed until the owner confirms it there.
+- Claude has no open work. Known limits are in `docs/CHE_COMMAND_CENTER.md`.
+
 ## 2. Current position (ChatGPT, 2026-10-14 ~18:54 UTC — screenshot-based CHE iPhone navigation fix merged; IPA building)
 
 **Owner's actual iPhone screenshot failed acceptance**: "Opening Commands, sir" but Chat remained, then "Search for YouTube commands" went to web search, wasting 6.7s and model/web processing. **Fixed in PR #305** https://github.com/Vondada/chey-app/pull/305, squash-MERGED main `fe18860bb60e15d5313d9cede2766d338c8ff7a0` ([ios-build] [worker-deploy]). Existing `ScreenCommand` and Command Center were reused; explicit local searches go to Commands page prefiltered without browser/model; existing video/web search unaffected. Spoken numbered results and failure message; list-all commands and missing-catalog edge cases handled. Fish cache regression test now checks {miss, shared} regardless which concurrent caller reaches synthesis first. Existing tests plus precise phrase tests and populated catalog widget test passed, original real-app Commands-button navigation test retained. A duplicate full-app test with simulated native TTS teardown timer was dropped, not a product behavior issue; device end-to-end verification STILL needed. Codex review P2 findings addressed, threads resolved. **All PR CI green**: Flutter and UI analysis, Worker tests, Flutter test; exact latest premerge head `48a6f2e5a0ed5cf62c809a0145e903959b1a11eb`.
