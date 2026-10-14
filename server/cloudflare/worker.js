@@ -35,6 +35,7 @@ import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry 
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { handleEdgeVoice } from './edge_route.js';
 import { marySecretsFrom, preferredElevenLabsDiagnostics, preferredElevenLabsKeyStatus, preferredElevenLabsLastOutcome, preferredElevenLabsSpeech, withMarySecrets } from './preferred_elevenlabs_voice.js';
+import { availableVoiceChoices, validateVoiceChoice, voiceEnvForSelection } from './voice_choices.js';
 import { fishAudioDiagnostics, fishAudioKeyStatus, fishSecretsFrom, readFishUsage } from './fish_audio_voice.js';
 import { cheSpokenText } from './che_pronunciation.js';
 import { premiumVoiceSpeech, premiumVoiceStatuses, readVoiceLog, recordVoiceLog, voiceProbeAuthorized } from './phone_voice.js';
@@ -4836,16 +4837,52 @@ export class CheState extends DurableObject {
       if (ownerDevice) OWNER_CHAT_REQUESTS.add(request);
       const ownerOnly = () => json({ detail: 'Only the CHE owner can change, merge or deploy CHE’s code.' }, 403);
 
+      // Owner voice selection: account-scoped catalog, consent-gated previews,
+      // and a persistent choice actually used by Chat and Read This.
+      if (path === '/api/voice/choices' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const choices = await availableVoiceChoices(this.voiceEnv());
+        const saved = data.voice_choice || null;
+        return json({ ...choices, selected: saved,
+          message: 'Only provider voices confirmed by your CHE account may be chosen.' });
+      }
+      if (path === '/api/voice/choice' && request.method === 'POST') {
+        if (!ownerDevice) return ownerOnly();
+        const choices = await availableVoiceChoices(this.voiceEnv());
+        const chosen = validateVoiceChoice(body, choices);
+        if (!chosen) return json({ detail: 'That voice is not available on your connected account, or the speed is invalid.' }, 400);
+        data.voice_choice = chosen;
+        await this.ctx.storage.put('che', data);
+        return json({ ok: true, selected: chosen, message: 'CHE will use this voice for Chat and Read This.' });
+      }
+      if (path === '/api/voice/preview' && request.method === 'POST') {
+        if (!ownerDevice) return ownerOnly();
+        if (Date.now() - (this.lastVoicePreviewAt || 0) < 5000) {
+          return json({ detail: 'Wait a few seconds before another voice preview.' }, 429);
+        }
+        const choices = await availableVoiceChoices(this.voiceEnv());
+        const chosen = validateVoiceChoice(body, choices);
+        if (!chosen) return json({ detail: 'That voice is not available for preview.' }, 400);
+        this.lastVoicePreviewAt = Date.now();
+        const env = voiceEnvForSelection(this.voiceEnv(), chosen);
+        const audio = await premiumVoiceSpeech(env,
+          cheSpokenText('Hello, sir. This is how my selected CHE voice sounds.'),
+          { selectedProvider: chosen.provider, storage: this.ctx.storage });
+        return audio || new Response(null, { status: 204 });
+      }
+
       if (path === '/api/voice/edge' && request.method === 'POST') {
         // The iPhone asks this route first. CHE's voice is ElevenLabs (Mary),
         // then Fish (owner, 2026-10-14), tried here without requiring a new IPA.
-        const voiceEnv = this.voiceEnv();
+        const selectedVoice = ownerDevice ? data.voice_choice : null;
+        const voiceEnv = voiceEnvForSelection(this.voiceEnv(), selectedVoice);
         const said = cheSpokenText(body.text);
         const started = Date.now();
         // Stories (Drama 3) and character voices can cost credits, so only the
         // owner's devices may ask for them; everyone else gets the everyday voice.
         const premium = await premiumVoiceSpeech(voiceEnv, said, ownerDevice
-          ? { purpose: body.purpose, character: body.character, storage: this.ctx.storage }
+          ? { purpose: body.purpose, character: body.character, storage: this.ctx.storage,
+              selectedProvider: selectedVoice?.provider }
           : { storage: this.ctx.storage });
         const statuses = premiumVoiceStatuses(voiceEnv);
         await recordVoiceLog(this.ctx.storage, {
