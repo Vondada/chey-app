@@ -114,6 +114,8 @@ test('research library requires source-backed evidence, retains superseded facts
   const called = await cachedResearch(s, query, async () => { throw Error('Should not research a fresh cited result twice'); }, now + 1000);
   assert.equal(called.cached, true);
   assert.deepEqual(called.sources, [url]);
+  const sourced = await recallKnowledge(s, researchKey(query), { now: now + 1000 });
+  assert.equal(sourced.verification_status, 'source_backed', 'a URL alone is not independent fact-checking');
   await rememberOwnerFact(s, 'my favorite drink is Sprite', now);
   await rememberOwnerFact(s, 'my favorite drink is Ginger Ale', now + 1000);
   const record = await recallKnowledge(s, factKey('favorite drink'), { now: now + 1000 });
