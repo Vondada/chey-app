@@ -34,6 +34,12 @@ ScreenCommand? parseScreenCommand(String raw) {
     return const ScreenCommand(ScreenOp.openCommands);
   }
 
+  // A request for the complete list is navigation, not a literal search for
+  // the word "all" (which can otherwise yield an empty filtered library).
+  if (RegExp(
+    r'^(?:list|show(?: me)?|find|search(?: for)?)\s+(?:me\s+)?(?:all|every|the full list of|the complete list of|full list of)\s+(?:the\s+)?(?:commands?|command library|slash commands)$',
+  ).hasMatch(t)) return const ScreenCommand(ScreenOp.openCommands);
+
   // Explicit local-catalog intent. "Search YouTube for jazz" still goes
   // through CHE's normal web/video route; no model is needed for the catalog.
   if (!RegExp(r'^(?:search|find|look up)\s+(?:the\s+)?(?:web|internet|online)\b').hasMatch(t)) {
