@@ -4906,6 +4906,14 @@ export class CheState extends DurableObject {
         if (ownerDevice) await recordVoiceLog(this.ctx.storage, { ...body, route: 'phone' });
         return json({ ok: true });
       }
+      // Existing Tradovate OAuth, exposed to the Connections page without
+      // sending the owner's intent through an AI model or storing a password.
+      if (request.method === 'POST' && path === '/api/broker/tradovate/connect/start') {
+        if (!ownerDevice) return ownerOnly();
+        const result = await connectLink(this.ctx.storage, this.keyEnv || this.env, new URL(request.url).origin);
+        return result.url ? json({ url: result.url })
+          : json({ detail: 'Tradovate OAuth app credentials need setup. Register the CHE callback with Tradovate first.' }, 503);
+      }
       if (request.method === 'POST' && path === '/api/youtube/connect/start') {
         const started = await startYouTubeConnect(this.keyEnv || this.env, data, new URL(request.url).origin);
         await this.ctx.storage.put('che', data);
