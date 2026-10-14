@@ -475,6 +475,30 @@ void main() {
     }
   });
 
+  test('Chat searches the local command catalog, never the web, using spoken words', () {
+    for (final phrase in [
+      'Search for YouTube commands',
+      'CHE, search for YouTube commands',
+      'Find YouTube commands',
+      'Search commands for YouTube',
+      'Show me YouTube commands',
+      'Look up YouTube in my command library',
+    ]) {
+      final route = parseScreenCommand(phrase);
+      expect(route?.op, ScreenOp.searchCommands, reason: phrase);
+      expect(route?.text, 'youtube', reason: phrase);
+    }
+    for (final phrase in [
+      'Search YouTube for jazz',
+      'Research YouTube video strategy',
+      'Find YouTube videos about cooking',
+      'What commands do you have for clients?',
+      'Search the web for YouTube commands',
+    ]) {
+      expect(parseScreenCommand(phrase)?.op, isNot(ScreenOp.searchCommands), reason: phrase);
+    }
+  });
+
   test('voice phrases map to the page\'s actions, deterministically', () {
     CheCommandVoice? p(String words) => CheCommandVoice.parse(words);
     expect(p("What's on screen?")?.op, CheCommandVoiceOp.describe);
