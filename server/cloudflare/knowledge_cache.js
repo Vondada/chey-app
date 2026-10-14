@@ -213,3 +213,40 @@ export async function rememberOwnerFact(storage, statement, now = Date.now()) {
   if (!fact) return null;
   return rememberKnowledge(storage, { key: factKey(fact.subject), answer: fact.value, source: 'owner_memory', confidence: 1 }, now);
 }
+
+// These receipts describe what was ACTUALLY available during the prior reply;
+// they are not post-hoc model-generated citations. No private answer text is
+// persisted, only bounded provenance and time.
+export const LAST_ANSWER_EVIDENCE_KEY = 'che_last_answer_evidence';
+
+export function evidenceFollowup(message) {
+  const q = normalizeQuestion(message);
+  return /^(?:how do you know(?: that| this| it)?|where did you get (?:that|this|the information)|what(?: is| are)? (?:your|the) sources?(?: for that)?|can you (?:cite|verify|fact check) (?:that|this|your answer)|show (?:me )?(?:the )?(?:sources?|evidence)(?: for that)?)\??$/i.test(q);
+}
+
+export function answerEvidenceReceipt({ research = null, tools = [], ownerAttested = false, at = Date.now() } = {}) {
+  const urls = (Array.isArray(research?.sources) ? research.sources : [])
+    .map(String).filter((s) => /^https:\/\/[^\s/]+/i.test(s)).slice(0, 5);
+  const usedTools = (Array.isArray(tools) ? tools : []).filter((t) => t?.ok === true)
+    .map((t) => `${String(t.plugin || 'tool').slice(0, 50)}/${String(t.tool || 'read').slice(0, 50)}`).slice(0, 5);
+  return {
+    kind: ownerAttested ? 'owner_attested' : urls.length ? 'source_backed' : usedTools.length ? 'tool_result' : 'unverified',
+    at, sources: urls, tools: usedTools,
+  };
+}
+
+export function explainAnswerEvidence(receipt, now = Date.now()) {
+  if (!receipt || !Number.isFinite(receipt.at) || now - receipt.at > DAY || receipt.at > now + 60000) {
+    return 'I do not have a recent evidence record for that answer, sir. I cannot honestly claim it was fact-checked.';
+  }
+  if (receipt.kind === 'owner_attested') {
+    return 'That was something you told me, sir. I treated it as your stated information, not as an independently verified external fact.';
+  }
+  if (receipt.kind === 'source_backed' && receipt.sources?.length) {
+    return `I used these recorded sources: ${receipt.sources.join(', ')}. They support the research path, but I cannot claim every statement was independently confirmed.`;
+  }
+  if (receipt.kind === 'tool_result' && receipt.tools?.length) {
+    return `The answer used these successful tools: ${receipt.tools.join(', ')}. I do not have a source URL for independent confirmation, sir.`;
+  }
+  return 'That answer was not independently verified, sir. I have no source receipt for it and should not present it as a confirmed fact.';
+}
