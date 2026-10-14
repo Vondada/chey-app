@@ -462,3 +462,30 @@ export function guardLocationWeatherReply(message, reply, { forecastVerified = f
   if (unprovedGpsClaim) return OWNER_LOCATION_NOT_VERIFIED;
   return answer;
 }
+
+
+// Only tool execution receipts, not plausible model prose, can establish that
+// CHE browsed, searched, or compared sources. Guard past-tense claims, not
+// explanations of HOW one might research a fact.
+export function guardClaimedResearchActions(reply, { research = null, tools = [] } = {}) {
+  const text = String(reply || '');
+  const successful = (Array.isArray(tools) ? tools : []).filter((t) => t?.ok === true);
+  const actualBrowser = successful.some((t) => /\b(?:browser|web_search|web search)\b/i.test(
+    String(t.plugin || '') + ' ' + String(t.tool || '')));
+  const actualResearch = Boolean(research?.summary && research.cached !== true &&
+    (Array.isArray(research.sources) ? research.sources : []).some((s) => /^https:\/\/\S+/i.test(String(s)))) ||
+    successful.some((t) => /\b(?:search|research|browse|fetch)\b/i.test(String(t.tool || '')));
+  const comparisonReceipt = successful.some((t) =>
+    /\b(?:compare|cross.?check|corroborat)\b/i.test(String(t.tool || '')));
+  const claimedBrowser = /\b(?:i|we)\s+(?:used|opened|ran|accessed)\s+(?:the |my |a )?(?:browser|web search)(?: tool)?\b/i.test(text);
+  const claimedSearch = /\b(?:i|we)\s+(?:searched|looked up|pulled|researched|checked|retrieved)\s+(?:(?:the|some|multiple|several|most)\s+)?(?:fresh|recent|current|live|online|web|sources?|articles?|documents?|information)\b/i.test(text);
+  const claimedComparison = /\b(?:i|we)\s+(?:compared|cross.?checked|corroborated)\b[^.!?\n]{0,100}\b(?:sources?|information|articles?|evidence|data|results?)\b/i.test(text);
+  if ((claimedBrowser && !actualBrowser) || (claimedSearch && !actualResearch) ||
+      (claimedComparison && !comparisonReceipt)) {
+    return {
+      text: 'I need to correct that, sir: I do not have execution receipts proving I performed the search or comparison I described. I have not independently fact-checked that answer.',
+      corrected: true,
+    };
+  }
+  return { text, corrected: false };
+}
