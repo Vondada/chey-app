@@ -2132,7 +2132,7 @@ test('final review: a verified research-cache hit ends the turn with zero resear
   const { chat } = await pairedChat(env, saved);
   const question = 'Research and compare sources on the latest provider limits';
   const now = Date.now();
-  saved.set(`kc:${researchKey(question)}`, { key: researchKey(question), answer: 'Groq allows 30 requests a minute on the free tier.', source: 'research_library', verification_status: 'source_verified', sources: ['https://console.groq.com/docs/rate-limits'], limitation: '', confidence: 0.85, verified_at: now - 60_000, expires_at: now + 3600_000, volatile: true, pure: true });
+  saved.set(`kc:${researchKey(question)}`, { key: researchKey(question), answer: 'Groq allows 30 requests a minute on the free tier.', source: 'research_library', verification_status: 'source_backed', sources: ['https://console.groq.com/docs/rate-limits'], limitation: '', confidence: 0.85, verified_at: now - 60_000, expires_at: now + 3600_000, volatile: true, pure: true });
   const original = globalThis.fetch;
   let providerCalls = 0;
   globalThis.fetch = async () => { providerCalls += 1; return new Response('{}', { status: 500 }); };
