@@ -77,6 +77,8 @@ class CheUpdateController extends ChangeNotifier {
     fast: fast,
     install: install,
     fullNewer: fullNewer,
+    recoveryBuildAvailable: installed == null && latest != null &&
+        canHandOffInstall(installed: null, target: latest!, repair: true),
     fullLabel: latest?.label ?? '',
     installLabel: installTarget?.label ?? 'CHE',
     installedLabel: _installedLabel,
@@ -160,8 +162,12 @@ class CheUpdateController extends ChangeNotifier {
 
   /// Hands a full IPA to SideStore. Returns true only when SideStore opened.
   /// The install itself is confirmed later, from the running build.
-  Future<bool> installFullBuild(CheMobileUpdateInfo target, {bool rollback = false}) async {
-    if (!canHandOffInstall(installed: installed, target: target, rollback: rollback)) {
+  Future<bool> installFullBuild(CheMobileUpdateInfo target, {bool rollback = false, bool repair = false}) async {
+    // Recovery cannot be used on arbitrary history entries or unsigned URLs.
+    // Only a verified, freshly fetched latest release may repair an unreadable
+    // installation, and the owner still approves the SideStore dialog.
+    if (repair && (latest == null || !identical(target, latest))) return false;
+    if (!canHandOffInstall(installed: installed, target: target, rollback: rollback, repair: repair)) {
       return false;
     }
     installTarget = target;
