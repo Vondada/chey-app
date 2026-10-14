@@ -594,6 +594,17 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // The Connections page takes its own spoken control while it is the open route.
+    final connectionsVoice = CheConnectionsVoice.handler;
+    if (connectionsVoice != null && _pendingAttachment == null) {
+      final reply = await connectionsVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
     // Direct screen edits are applied on-device before any model routing.
     final screenCommand = _pendingAttachment == null ? parseScreenCommand(message) : null;
     if (screenCommand != null) {

@@ -133,6 +133,32 @@ void main() {
     expect(await tester.runAsync(() => voice('tell me a joke')), isNull, reason: 'anything else goes to Chat');
   });
 
+  testWidgets('the Connections page answers spoken refresh and connect, and speaks each result', (tester) async {
+    final spoken = <String>[];
+    final client = MockClient((r) async {
+      if (r.method == 'POST') {
+        return http.Response(jsonEncode({'detail': 'Tradovate OAuth application is not configured.'}), 503,
+          headers: {'content-type': 'application/json'});
+      }
+      return http.Response(jsonEncode({'connectors': {
+        'youtube': {'state': 'ready', 'detail': 'Existing YouTube channel'},
+        'broker': {'state': 'not_connected', 'detail': 'Sign in to Tradovate'},
+      }}), 200, headers: {'content-type': 'application/json'});
+    });
+    await tester.pumpWidget(MaterialApp(theme: CheTheme.dark(),
+      home: CheConnectionsScreen(baseUrl: 'https://che.test', headers: () => {}, client: client,
+        onSpeak: spoken.add, onVoiceSettings: () {}, onKeys: () {})));
+    await tester.pumpAndSettle();
+    expect(spoken, isEmpty, reason: 'the passive page load is silent');
+    final voice = CheConnectionsVoice.handler!;
+
+    expect(await tester.runAsync(() => voice('refresh connections')), '');
+    expect(spoken.last, 'Connection check complete. YouTube: Connected. NinjaTrader: Needs Setup. Bank linking remains unavailable.');
+    expect(await tester.runAsync(() => voice('connect NinjaTrader')), '');
+    expect(spoken.last, 'NinjaTrader: Tradovate OAuth application is not configured.');
+    expect(await tester.runAsync(() => voice('tell me a joke')), isNull, reason: 'anything else goes to Chat');
+  });
+
   testWidgets('HTTP auth failure clears stale connection claims', (tester) async {
     final client = MockClient((r) async => http.Response('{"detail":"Pair phone"}', 401));
     await tester.pumpWidget(MaterialApp(theme: CheTheme.dark(),

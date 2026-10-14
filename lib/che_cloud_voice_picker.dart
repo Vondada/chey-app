@@ -141,6 +141,7 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
   // Spoken control while the picker is open. Each route says its real result
   // and shows it on screen. Speech it does not recognize goes to Chat (null).
   Future<String?> _voice(String words) async {
+    if (ModalRoute.of(context)?.isCurrent == false) return null;
     final t = words.trim().toLowerCase().replaceAll(RegExp(r'[.!?]+$'), '')
         .replaceFirst(RegExp(r'^(?:hey\s+)?(?:che|chay|chey)[,:]?\s+'), '').trim();
     if (_pendingPreview) {
@@ -159,10 +160,11 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
       final closed = await Navigator.of(context).maybePop();
       if (closed) {
         HapticFeedback.selectionClick();
+        speak?.call('Closed the CHE voice choices.');
       } else {
         HapticFeedback.heavyImpact();
+        _say('I could not close the voice choices.');
       }
-      speak?.call(closed ? 'Closed the CHE voice choices.' : 'I could not close the voice choices.');
       return '';
     }
     if (RegExp(r'^(?:list|read|show|what are|which are)\s+(?:the\s+|my\s+|available\s+)?voices$').hasMatch(t) ||
@@ -320,11 +322,7 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
               color: CheColors.accent),
             title: Text((v['name'] ?? '').toString()),
             subtitle: Text(v['provider'] == 'fish' ? 'Fish Audio — configured voice' : 'ElevenLabs'),
-            onTap: _busy ? null : () => setState(() {
-              _provider = (v['provider'] ?? '').toString();
-              _id = (v['id'] ?? '').toString();
-              _status = '';
-            }),
+            onTap: _busy ? null : () => _choose(v),
           ),
         const SizedBox(height: 12),
         Text('Speaking speed: ${_speed.toStringAsFixed(2)}×'),

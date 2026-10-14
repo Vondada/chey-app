@@ -10,6 +10,12 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../che_ui/che_theme.dart';
 
+/// Spoken control for the Connections page while it is the open route.
+class CheConnectionsVoice {
+  CheConnectionsVoice._();
+  static Future<String?> Function(String words)? handler;
+}
+
 class CheConnectionsScreen extends StatefulWidget {
   const CheConnectionsScreen({
     super.key,
@@ -40,6 +46,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
 
   @override
   void dispose() {
+    if (CheConnectionsVoice.handler == _voice) CheConnectionsVoice.handler = null;
     if (widget.client == null) _client.close();
     super.dispose();
   }
@@ -52,6 +59,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
   @override
   void initState() {
     super.initState();
+    CheConnectionsVoice.handler = _voice;
     unawaited(_refresh());
     if (widget.autoConnect == 'youtube') {
       WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_connectYoutube()));
@@ -61,7 +69,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
   }
 
   Future<void> _refresh({bool announce = false}) async {
-    setState(() { _loading = true; _error = ''; });
+    setState(() { _loading = true; _error = ''; _message = ''; });
     try {
       final r = await _client.get(
         Uri.parse('${widget.baseUrl}/api/commands'),
@@ -128,6 +136,38 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
     return _status(connector) == 'Configured'
         ? 'Server credentials exist; a live account session has not been verified.'
         : fallback;
+  }
+
+  // Spoken control while this page is the open route. Unrecognized speech goes to Chat.
+  Future<String?> _voice(String words) async {
+    if (ModalRoute.of(context)?.isCurrent == false) return null;
+    final t = words.trim().toLowerCase().replaceAll(RegExp(r'[.!?]+$'), '')
+        .replaceFirst(RegExp(r'^(?:hey\s+)?(?:che|chay|chey)[,:]?\s+'), '').trim();
+    if (RegExp(r'^(?:go back|back|close)$').hasMatch(t)) {
+      final speak = widget.onSpeak;
+      final closed = await Navigator.of(context).maybePop();
+      if (closed) {
+        HapticFeedback.selectionClick();
+        speak?.call('Closed CHE Connections.');
+      } else {
+        HapticFeedback.heavyImpact();
+        _say('I could not close CHE Connections.');
+      }
+      return '';
+    }
+    if (RegExp(r'^(?:refresh|reload|check|verify)\s+(?:my\s+|the\s+)?(?:connections?|connected accounts|integrations?|status)$').hasMatch(t)) {
+      await _refresh(announce: true);
+      return '';
+    }
+    if (RegExp(r'^connect\s+(?:my\s+)?(?:youtube(?: channel)?|google account)$').hasMatch(t)) {
+      await _connectYoutube();
+      return '';
+    }
+    if (RegExp(r'^connect\s+(?:my\s+)?(?:ninjatrader|tradovate)(?: account)?$').hasMatch(t)) {
+      await _connectBroker();
+      return '';
+    }
+    return null;
   }
 
   // Every owner-triggered connect result is shown and spoken, never only shown.
