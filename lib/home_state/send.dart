@@ -532,7 +532,14 @@ extension _CheHomeSend on _CHEHomeState {
   Future<void> sendMessage({bool fromVoice = false}) async {
     if (await _controlAutonomy(controller.text.trim())) return;
     if (_isSending) return;
-    if (_isSpeaking) await _interruptSpeechAndListen(resumeListening: false);
+    // Navigating to Commands must not wait for a potentially stalled voice
+    // playback to stop. Open the page first, then interrupt the old clip.
+    final earlyCommand = _pendingAttachment == null ? parseScreenCommand(controller.text.trim()) : null;
+    final quickCommandsRoute = earlyCommand?.op == ScreenOp.openCommands ||
+        earlyCommand?.op == ScreenOp.searchCommands;
+    if (_isSpeaking && !quickCommandsRoute) {
+      await _interruptSpeechAndListen(resumeListening: false);
+    }
 
     final typedMessage = controller.text.trim();
     final message = typedMessage.isEmpty && _pendingAttachment != null
@@ -581,7 +588,12 @@ extension _CheHomeSend on _CHEHomeState {
         unawaited(_openCommandCenter(
           search: screenCommand.op == ScreenOp.searchCommands ? screenCommand.text : '',
         ));
-        await speakText(reply, record: false);
+        if (_isSpeaking) await _interruptSpeechAndListen(resumeListening: false);
+        // A requested search speaks its numbered results (or a real failure)
+        // from the Command Center, not a misleading "Opening..." preamble.
+        if (screenCommand.op == ScreenOp.openCommands) {
+          await speakText(reply, record: false);
+        }
         return;
       }
       var reply = '';
