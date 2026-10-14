@@ -114,14 +114,14 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
     // passive navigation which must remain silent.
     if (widget.initialSearch.trim().isNotEmpty) {
       if (_catalog.commands.isEmpty) {
-        _report('I could not search the command library for "${_query}", sir. '
+        _report('I could not search the command library for "$_query", sir. '
             'CHE has no command catalog on this phone right now. '
             'Check pairing or your connection and retry.', ok: false);
       } else {
         final found = _catalog.search(_query).take(5).toList();
         final report = found.isEmpty
-            ? 'No command matches "${_query}". Try other words.'
-            : '${found.length} best matches for "${_query}". ${_numbered(found)} Say a number to hear one.';
+            ? 'No command matches "$_query". Try other words.'
+            : '${found.length} best matches for "$_query". ${_numbered(found)} Say a number to hear one.';
         _report(report, ok: found.isNotEmpty);
       }
     }
