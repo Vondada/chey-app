@@ -18,6 +18,14 @@ on:
         default: patch
         type: choice
         options: [patch, release]
+      release_version:
+        description: >-
+          Patch mode only. The Shorebird release to patch, such as
+          1.4.1024603585+3828969674601, or latest. A patch reaches only phones
+          running that exact release, so a phone on an older build needs its own.
+        required: false
+        default: latest
+        type: string
   # Every merge that changes app code ships as a patch, whoever wrote it.
   push:
     branches: [main]
@@ -40,6 +48,7 @@ jobs:
       SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
       CHE_AGENT_URL: ${{ secrets.CHE_AGENT_URL }}
       MODE: ${{ github.event.inputs.mode || 'patch' }}
+      RELEASE_VERSION: ${{ github.event.inputs.release_version || 'latest' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -94,7 +103,14 @@ jobs:
 
       - name: Shorebird patch
         if: steps.configured.outputs.ready == 'true' && env.MODE == 'patch'
-        run: shorebird patch ios --no-codesign --release-version=latest --allow-native-diffs --allow-asset-diffs -- --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-https://chey-app.henryjavoni.workers.dev}"
+        run: |
+          set -eu
+          if [[ ! "$RELEASE_VERSION" =~ ^(latest|[0-9]+(\.[0-9]+)*\+[0-9]+)$ ]]; then
+            echo "::error::release_version must be latest or a release such as 1.4.1024603585+3828969674601"
+            exit 1
+          fi
+          echo "Patching Shorebird release: $RELEASE_VERSION"
+          shorebird patch ios --no-codesign --release-version="$RELEASE_VERSION" --allow-native-diffs --allow-asset-diffs -- --dart-define=CHE_AGENT_URL="${CHE_AGENT_URL:-https://chey-app.henryjavoni.workers.dev}"
 
       - name: Package unsigned IPA (release only)
         if: steps.configured.outputs.ready == 'true' && env.MODE == 'release'
