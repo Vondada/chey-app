@@ -497,3 +497,11 @@ test('the catalog never enters a model prompt; a command adds only its own reque
   assert.ok(catalogBytes > 20000, `catalog ${catalogBytes} B stays out of prompts`);
   assert.ok(Math.max(...prompts) < 400, `largest command request ${Math.max(...prompts)} B`);
 });
+
+test('the Flutter catalog fixture matches what the Worker serves (regenerate: node tool/dump_command_catalog.mjs)', async () => {
+  const { fixtureCatalog } = await import('../../tool/dump_command_catalog.mjs');
+  const fixture = JSON.parse(readFileSync(new URL('../../test/fixtures/command_catalog.json', import.meta.url), 'utf8'));
+  assert.deepEqual(fixture, JSON.parse(JSON.stringify(fixtureCatalog())));
+  assert.equal(fixture.commands.length, 71);
+  assert.ok(fixture.templates.length >= 4);
+});

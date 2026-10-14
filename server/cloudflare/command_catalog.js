@@ -682,10 +682,12 @@ export function catalogView(connectors) {
         id: c.id, category: c.category, title: c.title, summary: c.summary, does: c.does, mode: c.mode,
         approval: c.confirm ? { required: true, reason: c.confirm } : { required: false, reason: '' },
         input: c.input, examples: c.examples, needs: c.needs, optional: c.optional,
-        handler: c.handler, route: c.route, produces: c.produces, evidence: c.evidence, cost: c.cost,
+        handler: c.handler, route: c.route, produces: c.produces, evidence: c.evidence, cost: c.cost, keywords: c.keywords,
         status: s.status, missing: s.missing, optional_missing: s.optional_missing,
       };
     }),
+    // The suggestion combinations double as ready-made workflow templates.
+    templates: SUGGESTION_RULES.map((r) => ({ id: r.id, name: r.label, steps: r.commands.map((command) => ({ command, input: '', parallel: false })) })),
     connectors: Object.fromEntries(Object.entries(connectors).map(([id, c]) => [id, { ...c, label: CONNECTORS[id]?.label || id, setup: CONNECTORS[id]?.setup || '' }])),
   };
 }

@@ -215,6 +215,10 @@ extension _CheHomeStreaming on _CHEHomeState {
     debugPrint('TRACE skill: request built');
 
     request.headers.addAll(_authHeaders);
+    // A command approved on the Command Center page counts for this one turn.
+    final commandConfirmed = _pendingCommandConfirmed;
+    _pendingCommandConfirmed = false;
+    if (mounted) _set(() => _commandSuggestions = const []);
     final explainLevel = _deeperOnce ? 'deeper' : _explainLevel;
     _deeperOnce = false;
     // The Worker enforces the app ask-first gate against these grants, so
@@ -232,6 +236,8 @@ extension _CheHomeStreaming on _CHEHomeState {
       'screen_context': _pendingScreenContext,
       'attachment': _pendingAttachment,
       'app_grants': appGrants.toList(),
+      'command_confirmed': commandConfirmed,
+      'dismissed_suggestions': _commandStore.dismissed.toList(),
       'client_identity_profile': _cheIdentityProfile,
       'client_personality_profile': learnedPersonality,
       'client_memories': savedMemories,
@@ -376,6 +382,14 @@ extension _CheHomeStreaming on _CHEHomeState {
 
         complete.write(delta);
         onPartial(complete.toString());
+      }
+
+      // Suggestion cards of real commands, sent after the answer. Shown under
+      // the reply; nothing runs from them.
+      if (type == 'command_suggestions') {
+        final cards = cheSuggestionsFrom(data);
+        if (mounted && cards.isNotEmpty) _set(() => _commandSuggestions = cards);
+        continue;
       }
 
       if (type == 'tool_result') {

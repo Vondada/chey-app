@@ -432,6 +432,11 @@ extension _CheHomeSend on _CHEHomeState {
         _homeSuggestions = kept;
         _screenChipsHidden = false;
         return removed ? 'Removed "$label" from the suggestions, sir.' : 'I do not see "$label" in the suggestions.';
+      case ScreenOp.openCommands:
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) unawaited(_openCommandCenter());
+        });
+        return 'Opening Commands, sir.';
       case ScreenOp.clearChat:
         messages.clear();
         return 'Chat cleared, sir.';
