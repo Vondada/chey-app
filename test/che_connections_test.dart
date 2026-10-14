@@ -121,9 +121,15 @@ void main() {
     expect(spoken.last, startsWith('One short preview may use credits'));
     expect(await tester.runAsync(() => voice('no')), '');
     expect(spoken.last, 'Preview cancelled. Nothing was played.');
+    expect(await tester.runAsync(() => voice('preview voice')), '');
+    expect(await tester.runAsync(() => voice('yes')), '');
+    expect(spoken.last, 'Preview failed: This voice did not return playable audio.');
+    expect(find.byType(AlertDialog), findsNothing, reason: 'the spoken yes is the consent; no dialog blocks it');
     expect(await tester.runAsync(() => voice('save voice')), '');
     expect(spoken.last, 'Voice saved for CHE Chat and Read This. Test it with Read This.');
-    expect(jsonDecode(posted.single)['id'], 'ABCDEFGHIJKLMN');
+    expect(jsonDecode(posted.last)['id'], 'ABCDEFGHIJKLMN');
+    expect(await tester.runAsync(() => voice('back')), '');
+    expect(spoken.last, 'I could not close the voice choices.', reason: 'the picker is the only route here, so back cannot pop');
     expect(await tester.runAsync(() => voice('tell me a joke')), isNull, reason: 'anything else goes to Chat');
   });
 

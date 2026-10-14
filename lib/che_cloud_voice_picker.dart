@@ -146,7 +146,7 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
     if (_pendingPreview) {
       _pendingPreview = false;
       if (RegExp(r'^(?:yes|yeah|yep|go ahead|do it|preview)$').hasMatch(t)) {
-        await _preview();
+        await _preview(confirmed: true);
         return '';
       }
       if (RegExp(r'^(?:no|nope|cancel|never mind|stop)$').hasMatch(t)) {
@@ -155,7 +155,14 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
       }
     }
     if (RegExp(r'^(?:go back|back|close)$').hasMatch(t)) {
-      unawaited(Navigator.of(context).maybePop());
+      final speak = widget.onSpeak;
+      final closed = await Navigator.of(context).maybePop();
+      if (closed) {
+        HapticFeedback.selectionClick();
+      } else {
+        HapticFeedback.heavyImpact();
+      }
+      speak?.call(closed ? 'Closed the CHE voice choices.' : 'I could not close the voice choices.');
       return '';
     }
     if (RegExp(r'^(?:list|read|show|what are|which are)\s+(?:the\s+|my\s+|available\s+)?voices$').hasMatch(t) ||
@@ -243,11 +250,12 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
     }
   }
 
-  Future<void> _preview() async {
+  // [confirmed] is true only after the owner said yes to the spoken credit notice.
+  Future<void> _preview({bool confirmed = false}) async {
     if (_busy || _id.isEmpty) return;
     // Previewing uses the existing provider's account credits; no new
     // subscription is activated and no arbitrary text is sent.
-    final allowed = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+    final allowed = confirmed ? true : await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
       title: const Text('Preview cloud voice?'),
       content: const Text('One short preview may use credits from your connected voice provider. Continue?'),
       actions: [
