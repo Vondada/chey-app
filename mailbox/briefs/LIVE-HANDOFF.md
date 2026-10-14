@@ -66,6 +66,36 @@ Then, on GitHub:
 
 ## 2. Current position (updated by: Claude, 2026-10-13)
 
+**Claude, 2026-10-14 (owner added FISH_API_KEY and CHE_FISH_VOICE_ID). Fish's everyday voice WORKS on the server. Drama 3 needs Fish API credit. PRs #290, #291 and #292 merged. Worker live on `58d5e7e`. Phone NOT verified.**
+- **First real calls:** deploy 38498562143, after the owner added the secrets, got HTTP 400 for both models.
+  - Cause: CHE sent JSON, but every official Fish SDK sends `application/msgpack`.
+  - #290 (`31810a5`) switched the Worker, the deploy measurement and the renderer to MessagePack. It also shows Fish's own reason, with the key and voice ID hidden, and rests a model after two refusals of different words.
+- **Real Fish audio, verified from deploy logs (38500424502, 38501693260, 38502473484):**
+  - `s2.1-pro-free` answers HTTP 200 with a valid MP3, through the Worker's own request code.
+  - 3,470 to 3,970 ms for 96 characters (6.2 to 6.5 s of audio), real-time factor about 0.56.
+  - About 1.0 to 1.2 s for 16 characters.
+- **Drama 3 blocked by credit:** `drama-3`, `s2-pro`, `s1` and `drama-3-preview` all answer HTTP 402: "Insufficient API credit. API credit is managed independently from platform credit." Buying Fish API credit is the owner's decision (fish.audio/app/developers).
+- **#291 (`e5e4f34`):** a story falls back to CHE's everyday Fish voice when Drama 3 is blocked (credit, model or cap).
+  - The decision uses that attempt's own reason.
+  - A timeout never falls back.
+  - The fallback keeps the story's length limit and quality.
+  - The renderer goes Drama 3, then everyday Fish, then Piper.
+- **#292 (`58d5e7e`):** Fish's time grows with the clip, so fixed limits cut it off after the first sentence and Mary finished the reply.
+  - Worker limit: 4 s plus 40 ms per character (7 to 25 s).
+  - "Slow" is now judged by the real-time factor (`CHE_FISH_MAX_RTF`, default 1.0).
+  - Phone wait: 5 s plus 40 ms per character (up to 30 s).
+  - The first Read This part is at most 240 characters.
+  - The sample clip now uploads: artifact `che-fish-voice-samples`, run 38502473484, 48 KB, kept until 28 October.
+- **Deploy hiccups (not code):**
+  - Owner run 38499012492 failed on a Cloudflare API 524 during upload.
+  - Run 38492241711 attempt 1 got no answer from the status probe for 20 s; attempt 2 passed, likely Durable Object version skew.
+- **Shorebird:** Patch 3 (the #292 phone timing) was building when this was written. Read its "Published Patch" line.
+- **Not verified:** Fish playback on the iPhone, quiet launch on the device, and Drama 3 audio.
+- **Owner, on the iPhone:**
+  - Close CHE fully and open her twice. Updates should say patch 3 once it is published.
+  - Talk to her. Voice diagnostics should say "CHE voice (Fish Audio)".
+  - Listen to the sample in Actions, run 38502473484.
+
 **Claude, 2026-10-14 (owner: "integrate Fish Audio into CHE's existing voice system"). PR #289 MERGED as squash `7ded258`. Worker DEPLOYED (version `1f29b6f7`). Fish NOT active: the owner has not added the Fish secrets. No real Fish call has been made.**
 - **What it does:**
   - **Worker module:** `server/cloudflare/fish_audio_voice.js`.
