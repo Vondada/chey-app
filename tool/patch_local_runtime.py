@@ -23,7 +23,7 @@ if 'name: "che/local_ai"' not in text:
         raise SystemExit('CHE local runtime patch: native shell anchor not found')
     bridge = r'''      let localAI = FlutterMethodChannel(
         name: "che/local_ai",
-        binaryMessenger: controller.binaryMessenger
+        binaryMessenger: messenger
       )
       localAI.setMethodCallHandler { call, result in
         switch call.method {

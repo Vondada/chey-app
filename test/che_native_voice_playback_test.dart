@@ -95,6 +95,24 @@ void main() {
     });
 
     expect(await CheNativeVoice.playAudioBounded(Uint8List(8)), isFalse);
+    // The iPhone's own reason is kept for the diagnostics and the voice log.
+    expect(CheNativeVoice.lastPlaybackError, 'audio_playback_failed: could not play');
+  });
+
+  test('a build without the voice bridge says to install the newest build', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(_channel, null);
+    expect(await CheNativeVoice.playAudioBounded(Uint8List(8)), isFalse);
+    expect(CheNativeVoice.lastPlaybackError, contains('install the newest CHE build from Updates'));
+  });
+
+  test('a stuck player and a played clip leave the right playback reason', () async {
+    final stuck = Completer<Object?>();
+    mockBridge((call) => call.method == 'playAudio' ? stuck.future : Future<Object?>.value(null));
+    await CheNativeVoice.playAudioBounded(Uint8List(8), limit: const Duration(milliseconds: 50));
+    expect(CheNativeVoice.lastPlaybackError, 'playback did not finish within 0 seconds');
+    mockBridge((call) async => call.method == 'playAudio' ? true : null);
+    expect(await CheNativeVoice.playAudioBounded(Uint8List(8)), isTrue);
+    expect(CheNativeVoice.lastPlaybackError, '');
   });
 
   test('playback deadline is capped, so uncompressed audio cannot hold a turn for minutes', () {

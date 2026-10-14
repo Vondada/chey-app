@@ -176,103 +176,12 @@ extension _CheHomeVoice on _CHEHomeState {
     }
   }
 
-  /// Server TTS only: returns the clip, or null so the caller falls back to
-  /// the iPhone voice. Safe to call ahead of playback (prefetch).
-  Future<CheVoiceClip?> _synthesizeServerVoice(String text, {String purpose = 'conversation'}) async {
-    if (freeNativeVoiceMode) {
-      _naturalVoiceServerErrored = true;
-      return null;
-    }
-    _naturalVoiceServerErrored = false;
-    _voiceFailReason = '';
-
-    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) {
-      return null;
-    }
-
-    if (_localVoice.serverVoiceCoolingDown) {
-      _naturalVoiceServerErrored = true;
-      _voiceFailReason = 'server voice cooling down';
-      debugPrint('CHE voice: skip server TTS (cooldown)');
-      return null;
-    }
-
-    if (_deviceToken == null ||
-        cheAgentBaseUrl.isEmpty ||
-        integrations['natural_voice'] != true) {
-      _naturalVoiceServerErrored = true;
-      _voiceFailReason = 'server voice not connected';
-      return null;
-    }
-
-    try {
-      // Fail fast so iPhone TTS can speak — never leave the owner silent.
-      final response = await http
-          .post(
-            Uri.parse('$cheAgentBaseUrl/api/voice/synthesize'),
-            headers: _authHeaders,
-            body: jsonEncode({
-              'text': text,
-              if (purpose != 'conversation') 'purpose': purpose,
-            }),
-          )
-          .timeout(cheVoiceWait(purpose, everyday: const Duration(seconds: 5), chars: text.length));
-
-      if (response.statusCode == 401) {
-        _naturalVoiceServerErrored = true;
-        await _clearSecuritySession();
-        return null;
-      }
-
-      if (response.statusCode == 429) {
-        _localVoice.markServerVoiceCooldown();
-        _naturalVoiceServerErrored = true;
-        _voiceFailReason = 'server voice 429';
-        debugPrint('CHE voice: server TTS 429 cooldown');
-        return null;
-      }
-
-      if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
-        _naturalVoiceServerErrored = true;
-        try {
-          final decoded = jsonDecode(response.body);
-          _voiceFailReason = decoded is Map ? '${decoded['detail'] ?? ''}' : '';
-        } catch (_) {
-          _voiceFailReason = 'server voice ${response.statusCode}';
-        }
-        final detail = _voiceFailReason.toLowerCase();
-        if (response.statusCode == 503 ||
-            detail.contains('quota') ||
-            detail.contains('429') ||
-            detail.contains('cooling')) {
-          _localVoice.markServerVoiceCooldown();
-        }
-        debugPrint('CHE voice: server TTS fail ${_voiceFailReason.isEmpty ? response.statusCode : _voiceFailReason}');
-        return null;
-      }
-      _voiceFailReason = '';
-
-      final contentType =
-          response.headers['content-type']?.toLowerCase() ?? '';
-      if (!contentType.startsWith('audio/')) {
-        _naturalVoiceServerErrored = true;
-        return null;
-      }
-
-      return CheVoiceClip(response.bodyBytes, (response.headers['x-che-voice'] ?? '').trim());
-    } catch (e) {
-      _naturalVoiceServerErrored = true;
-      _voiceFailReason = e is TimeoutException ? 'server voice timed out' : 'server voice unreachable';
-      debugPrint('CHE voice: $_voiceFailReason');
-      return null;
-    }
-  }
-
-
-  Future<bool> _playServerVoice(CheVoiceClip clip) async {
+  Future<bool> _playServerVoice(CheVoiceClip clip, [CheVoiceTurnOutcome? outcome]) async {
     final played = await CheNativeVoice.playAudioBounded(clip.bytes);
+    final engine = clip.engine.isEmpty ? 'server-voice' : clip.engine;
     if (played) {
-      final engine = clip.engine.isEmpty ? 'server-voice' : clip.engine;
+      _naturalVoiceServerErrored = false;
+      outcome?.played(engine);
       if (_lastVoiceEngine != engine) {
         _lastVoiceEngine = engine;
         if (mounted) _set(() {});
@@ -280,7 +189,8 @@ extension _CheHomeVoice on _CHEHomeState {
       return true;
     }
     _naturalVoiceServerErrored = true;
-    _voiceFailReason = 'server voice playback failed';
+    final why = CheNativeVoice.lastPlaybackError;
+    _voiceFailReason = 'the iPhone could not play the ${cheVoiceEngineLabel(engine)} clip${why.isEmpty ? '' : ' ($why)'}';
     return false;
   }
 
@@ -385,50 +295,52 @@ extension _CheHomeVoice on _CHEHomeState {
     _mic.invalidate('TTS_START');
     _isSpeaking = true;
     debugPrint('CHE voice: TTS_START turn $speechTurn');
+    // CHE's voice on the iPhone is ElevenLabs, then Fish, and nothing else
+    // (owner, 2026-10-14): no iPhone voice and no free server voice. A clip
+    // neither could speak stays silent, with its words and the reason on screen.
+    final premiumOnly = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+    final outcome = CheVoiceTurnOutcome();
+    // Clips are prepared ahead of playback, so each silent clip keeps its own
+    // reason instead of reading a shared one another clip may have changed.
+    final silentReasons = <String, String>{};
+    String? playFailure;
     late final CheSpeechPipeline<CheVoiceClip> turn;
     turn = CheSpeechPipeline<CheVoiceClip>(
       ready: _prepareSpeechOutput(),
       synthesize: (text) async {
-        if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return null;
-        // Mary first: the Worker tries her on this route. Then the free server
-        // voices, then the on-device voice. The reason Mary did not speak is kept
-        // for the diagnostics sheet, next to the voice that actually played.
-        final edge = await CheEdgeVoice.speak(text, purpose: purpose);
+        if (!premiumOnly) return null;
+        final edge = await CheEdgeVoice.speak(text, purpose: purpose, premiumOnly: true);
         final edgeClip = edge.clip;
-        final engine = edgeClip?.engine ?? '';
-        // Why CHE's own voice (Fish) and Mary did not speak, for diagnostics.
-        final maryReason = [
-          cheFishReason(edge.fishStatus, engine),
-          if (engine != 'fish-audio') cheMaryReason(edge.maryStatus, engine),
-        ].where((r) => r.isNotEmpty).join('; ');
+        final engine = edgeClip?.engine ?? 'none';
         if (edge.maryStatus.isNotEmpty) _maryStatus = edge.maryStatus;
         if (edge.fishStatus.isNotEmpty) _fishStatus = edge.fishStatus;
         if (engine == 'fish-audio') _fishStatus = 'healthy';
         if (edgeClip != null && edgeClip.bytes.isNotEmpty) {
-          _voiceFailReason = maryReason;
+          // When Fish spoke, why ElevenLabs did not, for the diagnostics sheet.
+          _voiceFailReason = cheMaryReason(edge.maryStatus, engine);
           return edgeClip;
         }
-        final server = await _synthesizeServerVoice(text, purpose: purpose);
-        if (server != null) {
-          _voiceFailReason = maryReason;
-          return server;
-        }
-        // Fluent reading: prepare the on-device neural voice here (ahead of
-        // playback) instead of in the fallback, which only runs after the
-        // previous chunk finished and left a pause between paragraphs.
-        try {
-          final local = await CheNativeVoice.synthesizeNeural(text);
-          if (local != null) {
-            _voiceFailReason = [maryReason, _voiceFailReason].where((r) => r.isNotEmpty).join('; ');
-            return CheVoiceClip(local, 'iphone-neural');
-          }
-        } catch (_) {}
+        final why = cheSilentVoiceReason(edge);
+        _voiceFailReason = why;
+        silentReasons[text] = why;
         return null;
       },
-      play: _playServerVoice,
-      fallback: _speakFallbackChunk,
+      play: (clip) async {
+        final played = await _playServerVoice(clip, outcome);
+        playFailure = played ? null : _voiceFailReason;
+        return played;
+      },
+      fallback: (text) {
+        if (!premiumOnly) return _speakFallbackChunk(text);
+        final why = silentReasons.remove(text) ?? playFailure ?? 'neither ElevenLabs nor Fish sent audio';
+        playFailure = null;
+        return _staySilent(text, why, outcome);
+      },
       log: (m) => debugPrint('CHE voice timing: $m'),
-      onComplete: (cancelled) => _finishSpeechTurn(turn, speechTurn, localGen),
+      onComplete: (cancelled) async {
+        if (premiumOnly && outcome.chunks > 0) unawaited(CheEdgeVoice.report(outcome.toReport()));
+        await _finishSpeechTurn(turn, speechTurn, localGen);
+      },
     );
     _activeSpeech = turn;
     if (mounted) _set(() => isListening = false);
@@ -457,36 +369,52 @@ extension _CheHomeVoice on _CHEHomeState {
     } catch (_) {}
   }
 
-  /// iPhone/device voice for one chunk, used only when server TTS failed.
+  /// A clip neither ElevenLabs nor Fish could speak (owner, 2026-10-14: never
+  /// the iPhone voice). Its words go into a large banner with the reason, which
+  /// VoiceOver reads, and the phone gives one strong haptic per reply.
+  Future<bool> _staySilent(String text, String reason, CheVoiceTurnOutcome outcome) async {
+    final first = outcome.silent == 0;
+    _naturalVoiceServerErrored = true;
+    outcome.stayedSilent(text, reason);
+    _lastVoiceEngine = 'none';
+    if (first) {
+      unawaited(HapticFeedback.heavyImpact());
+      unawaited(Future<void>.delayed(const Duration(milliseconds: 160), HapticFeedback.heavyImpact));
+    }
+    if (!mounted) return true;
+    _set(() {});
+    final unspoken = outcome.silentText.join(' ');
+    final shown = unspoken.length > 600 ? '${unspoken.substring(0, 600)}…' : unspoken;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(SnackBar(
+      duration: const Duration(seconds: 12),
+      content: Semantics(
+        liveRegion: true,
+        label: 'CHE stayed silent: ${outcome.reasons.join('; ')}. $shown',
+        excludeSemantics: true,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('CHE stayed silent: ${outcome.reasons.join('; ')}',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            Text(shown, style: const TextStyle(fontSize: 22, height: 1.3)),
+          ],
+        ),
+      ),
+    ));
+    return true;
+  }
+
+  /// The device voice for one chunk, used only off the iPhone (web, desktop).
   Future<bool> _speakFallbackChunk(String text) async {
     try {
       if (kIsWeb) {
         if (await che_web_voice.speakText(text)) return true;
         await flutterTts.stop();
         await flutterTts.speak(text);
-        return true;
-      }
-      if (defaultTargetPlatform == TargetPlatform.iOS) {
-        for (final (engine, speak) in [
-          ('iphone-neural', CheNativeVoice.speakNeural),
-          ('iphone-voice', CheNativeVoice.speakText),
-        ]) {
-          try {
-            if (await speak(text)) {
-              if (_lastVoiceEngine != engine) {
-                _lastVoiceEngine = engine;
-                if (mounted) _set(() {});
-              }
-              return true;
-            }
-          } on MissingPluginException {
-            // Fall through to the next engine.
-          } catch (_) {}
-        }
-        await flutterTts.stop();
-        await flutterTts.setVolume(CheUiPreferences.instance.voiceVolume.clamp(0.0, 1.0));
-        await flutterTts.speak(text);
-        _lastVoiceEngine = 'iphone-tts';
         return true;
       }
       await flutterTts.stop();

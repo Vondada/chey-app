@@ -136,12 +136,21 @@ jobs:
             echo "CHE premium voice remains disabled."
           fi
 
+      - name: Make this deploy's voice check token
+        run: |
+          # A fresh random token for this deploy only, set as a Worker secret
+          # below. The voice check after the deploy uses it; the next deploy
+          # replaces it, and without it the check route does not exist.
+          token="$(openssl rand -hex 32)"
+          echo "::add-mask::$token"
+          echo "CHE_VOICE_PROBE_TOKEN=$token" >> "$GITHUB_ENV"
+
       - name: Sync AI engine keys to the Worker
         working-directory: server/cloudflare
         run: |
           node -e '
             const out = {};
-            for (const k of ["CHE_YOUTUBE_CLIENT_ID", "CHE_YOUTUBE_CLIENT_SECRET", "CHE_OAUTH_SECRET", "CHE_VIDEO_GEN_URL", "CHE_VIDEO_GEN_TOKEN", "CHE_VIDEO_RENDER_URL", "CHE_GITHUB_TOKEN", "ELEVENLABS_API_KEY", "CHE_ELEVENLABS_VOICE_ID", "CHE_ELEVENLABS_PREFERRED", "FISH_API_KEY", "CHE_FISH_VOICE_ID", "CHE_FISH_MODEL", "CHE_FISH_EXPRESSIVE_MODEL", "CHE_FISH_SPEED", "CHE_FISH_CHARACTER_VOICES", "CHE_FISH_MAX_RTF", "CHE_FISH_EXPRESSIVE_DAILY_CHARS", "CHE_OPENAI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CHE_OLLAMA_URL", "CHE_OLLAMA_TOKEN", "XAI_API_KEY", "GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GITHUB_MODELS_TOKEN", "SAMBANOVA_API_KEY", "HF_TOKEN", "CHE_PGVECTOR_REST_URL", "CHE_PGVECTOR_TOKEN", "CHE_VMWARE_TRAINING_URL", "CHE_VMWARE_TRAINING_TOKEN", "CHE_HF_TRAINING_URL", "CHE_HF_TRAINING_TOKEN", "CHE_HF_TTS_URL", "CHE_COMPUTER_URL", "CHE_COMPUTER_TOKEN", "STRIPE_SECRET_KEY", "CHE_PICOVOICE_ACCESS_KEY", "CHE_PICOVOICE_KEYWORD_PPN_B64", "CHE_PICOVOICE_SENSITIVITY"]) {
+            for (const k of ["CHE_YOUTUBE_CLIENT_ID", "CHE_YOUTUBE_CLIENT_SECRET", "CHE_OAUTH_SECRET", "CHE_VIDEO_GEN_URL", "CHE_VIDEO_GEN_TOKEN", "CHE_VIDEO_RENDER_URL", "CHE_GITHUB_TOKEN", "CHE_VOICE_PROBE_TOKEN", "ELEVENLABS_API_KEY", "CHE_ELEVENLABS_VOICE_ID", "CHE_ELEVENLABS_PREFERRED", "FISH_API_KEY", "CHE_FISH_VOICE_ID", "CHE_FISH_MODEL", "CHE_FISH_EXPRESSIVE_MODEL", "CHE_FISH_SPEED", "CHE_FISH_CHARACTER_VOICES", "CHE_FISH_MAX_RTF", "CHE_FISH_EXPRESSIVE_DAILY_CHARS", "CHE_OPENAI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CHE_OLLAMA_URL", "CHE_OLLAMA_TOKEN", "XAI_API_KEY", "GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GITHUB_MODELS_TOKEN", "SAMBANOVA_API_KEY", "HF_TOKEN", "CHE_PGVECTOR_REST_URL", "CHE_PGVECTOR_TOKEN", "CHE_VMWARE_TRAINING_URL", "CHE_VMWARE_TRAINING_TOKEN", "CHE_HF_TRAINING_URL", "CHE_HF_TRAINING_TOKEN", "CHE_HF_TTS_URL", "CHE_COMPUTER_URL", "CHE_COMPUTER_TOKEN", "STRIPE_SECRET_KEY", "CHE_PICOVOICE_ACCESS_KEY", "CHE_PICOVOICE_KEYWORD_PPN_B64", "CHE_PICOVOICE_SENSITIVITY"]) {
               if (process.env[k]) out[k] = process.env[k];
             }
             // An absent/cleared GitHub opt-in MUST revoke any previously live
@@ -289,6 +298,71 @@ jobs:
           }
           console.log(on ? `Fish live: ready, everyday ${probe.live.everyday_model}, expressive ${probe.live.expressive_model}.` : 'Fish is switched off by CHE_FISH_PREFERRED.');
           JS
+
+      - name: Check CHE's ElevenLabs voice through the live Worker (one real call)
+        run: |
+          node --input-type=module <<'JS'
+          // One real ElevenLabs call made by the deployed Worker with its live
+          // settings, the same code the phone's replies use. It prints
+          // ElevenLabs' reason when no audio comes back (key and voice ID
+          // removed), keeps the clip for the owner, and prints the recent voice
+          // log: what each phone reply got from the Worker and what the phone
+          // reported hearing. About 60 characters of ElevenLabs credit.
+          import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+          const enabled = ['1', 'true', 'yes'].includes(String(process.env.CHE_ELEVENLABS_PREFERRED || '').toLowerCase());
+          if (!enabled) {
+            console.log('ElevenLabs is off by the owner setting (CHE_ELEVENLABS_PREFERRED); no call made.');
+            process.exit(0);
+          }
+          const summary = (line) => appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
+          let result = null;
+          let lastError = '';
+          // A 404 or no answer means no call was made yet (the new secret can
+          // take a moment to reach every edge); retry those only.
+          for (let attempt = 0; attempt < 5 && !result; attempt++) {
+            try {
+              const response = await fetch('https://chey-app.henryjavoni.workers.dev/api/voice/probe', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${process.env.CHE_VOICE_PROBE_TOKEN}` },
+                signal: AbortSignal.timeout(30000),
+              });
+              if (response.ok) result = await response.json();
+              else lastError = `HTTP ${response.status}`;
+            } catch (error) {
+              lastError = error?.name === 'TimeoutError' ? 'no answer within 30 s' : 'network error';
+            }
+            if (!result) await new Promise((resolve) => setTimeout(resolve, 4000));
+          }
+          if (!result) {
+            console.log(`::error title=ElevenLabs voice check did not run::The live Worker did not answer the voice check (${lastError}).`);
+            summary(`**ElevenLabs voice check did not run:** the live Worker did not answer (${lastError}).`);
+            process.exit(0);
+          }
+          const audio = Buffer.from(result.audio_base64 || '', 'base64');
+          const validMp3 = audio.length > 3 && ((audio[0] === 0x49 && audio[1] === 0x44 && audio[2] === 0x33) || (audio[0] === 0xff && (audio[1] & 0xe0) === 0xe0));
+          const { audio_base64, voice_log: log = [], ...row } = result;
+          console.log(`ElevenLabs through the live Worker: ${JSON.stringify({ ...row, valid_mp3: validMp3 })}`);
+          console.log(`Recent voice attempts, oldest first (${log.length}):`);
+          for (const entry of log) console.log(`  ${JSON.stringify(entry)}`);
+          if (result.ok && validMp3) {
+            mkdirSync('che-voice-check', { recursive: true });
+            writeFileSync('che-voice-check/elevenlabs.mp3', audio);
+            console.log(`ElevenLabs spoke: ${audio.length} bytes in ${result.ms} ms (model ${result.model}).`);
+            summary(`**ElevenLabs voice works through the live Worker:** ${audio.length} bytes in ${result.ms} ms. The clip is in the \`che-voice-check\` artifact.`);
+          } else {
+            const why = `${result.status || 'no status'}${result.http ? ` (HTTP ${result.http})` : ''}${result.reason ? `: ${String(result.reason).replace(/[.\s]+$/, '')}` : ''}`;
+            console.log(`::error title=ElevenLabs gave no audio::ElevenLabs gave no audio through the live Worker: ${why}. CHE speaks with Fish until this is fixed.`);
+            summary(`**ElevenLabs gave no audio through the live Worker:** ${why}. CHE speaks with Fish (backup) until this is fixed.`);
+          }
+          JS
+
+      - name: Keep the ElevenLabs check clip for the owner
+        uses: actions/upload-artifact@v4
+        with:
+          name: che-voice-check
+          path: che-voice-check/*.mp3
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Fish measurement key
         id: fishkey
