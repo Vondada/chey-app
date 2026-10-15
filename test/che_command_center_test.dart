@@ -533,6 +533,20 @@ void main() {
     expect(parseScreenCommand('any commands for invoices?')?.text, 'invoices');
     expect(parseScreenCommand('show me your commands for YouTube')?.text, 'youtube');
     expect(parseScreenCommand('Search the web for YouTube commands'), isNull);
+    expect(parseScreenCommand('What commands are there for YouTube?')?.text, 'youtube');
+    expect(parseScreenCommand("Which YouTube commands aren't ready?")?.list?.only, 'setup');
+    for (final phrase in [
+      'Why are your commands so slow?',
+      'Do your commands work offline?',
+      'Give me 3 git commands for my website repo',
+      'show me five commands to clean up my videos folder',
+    ]) {
+      expect(parseScreenCommand(phrase), isNull, reason: phrase);
+    }
+    final catalog = CheCommandCatalog.fromJson(fixture);
+    expect(catalog.categoryNamed('YouTube')?.id, 'youtube');
+    expect(catalog.categoryNamed('sales'), isNull, reason: 'an ordinary word is searched, not one category');
+    expect(catalog.search('track an expense').first.id, 'expenses', reason: '"expense" meets "expenses"');
     expect(parseScreenCommand('what commands can I use to make money')?.list?.only, '', reason: '"can I use to" is a purpose, not readiness');
     for (final phrase in ['Which YouTube video commands work in Final Cut?', 'show me the commands for my Tesla', 'I need a command to restart my router']) {
       expect(parseScreenCommand(phrase), isNull, reason: phrase);

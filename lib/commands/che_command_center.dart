@@ -504,8 +504,12 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
       default:
         final query = _query.trim();
         if (query.isNotEmpty) {
-          final found = _catalog.search(query).take(5).toList();
-          return 'Commands, ${found.length} best matches for "$query". ${_numbered(found)} Say a number to hear one, or "run" and its name.';
+          final all = _catalog.search(query, limit: _catalog.commands.length);
+          final read = _numbered(all.take(5).toList());
+          _lastMatches = all;
+          _pageSize = 5;
+          return 'Commands, ${all.length} matches for "$query". $read${all.length > 5 ? ' Say "more" for the next ${all.length - 5 < 5 ? all.length - 5 : 5}.' : ''}'
+              ' Say a number to hear one, or "run" and its name.';
         }
         final mine = <CheCommandInfo>{
           for (final id in [...widget.store.favorites, ...widget.store.recents]) ?_catalog.byId(id),
@@ -678,7 +682,7 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
   /// ([fresh] means they were just read). Nothing is run.
   Future<String> _listByVoice(CheCommandListRequest r, {bool fresh = false}) async {
     if (r.more) return _moreByVoice(r.count);
-    if (r.followUp && _voiceList.whereType<CheCommandInfo>().isEmpty) {
+    if (r.followUp && _voiceList.whereType<CheCommandInfo>().isEmpty && !(r.aboutIt && _voiceFocus != null)) {
       // Nothing read yet: answer about what the screen shows.
       return _listByVoice(CheCommandListRequest(topic: _query.trim(), readiness: true, only: r.only));
     }
@@ -686,6 +690,11 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
     final stale = fresh ? _staleNote() : await _freshStates();
     // Asked again while CHE was being reached: only the newest answer is read.
     if (!mounted || ticket != _listTicket) return '';
+    final focus = _voiceFocus == null ? null : _catalog.byId(_voiceFocus!.id) ?? _voiceFocus;
+    if (r.followUp && r.aboutIt && focus != null) {
+      // "Is it ready?" about the command just picked.
+      return _say('$stale${focus.slash}: ${_state(focus)}.${focus.missing.isEmpty ? '' : ' ${focus.missing.map((m) => m.setup).where((x) => x.isNotEmpty).join(' ')}'}'.trim());
+    }
     if (r.followUp) return _say('$stale${_readinessOf([for (final c in _voiceList.whereType<CheCommandInfo>()) _catalog.byId(c.id) ?? c], r.only)}');
 
     final topic = r.topic.trim();
@@ -707,7 +716,9 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
     final what = group != null ? '${group.title} commands' : topic.isEmpty ? 'commands' : 'commands for "$topic"';
     if (found.isEmpty) return _say('${stale}No command matches "$topic". Try other words.', ok: false);
     if (matches.isEmpty) {
-      return _say('${stale}None of the ${found.length} $what ${r.only == 'ready' ? 'is ready. ${_tally(found)}' : 'needs setup. All are ready'}.');
+      return _say(r.only == 'ready'
+          ? '${stale}None of the ${found.length} $what is ready: ${_tally(found)}.'
+          : '${stale}All ${found.length} $what are ready.');
     }
     final limit = r.all ? 25 : r.count ?? (r.readiness ? 12 : 5);
     final shown = matches.take(limit).toList();
@@ -716,7 +727,7 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
     _pageSize = limit;
     final head = switch (r.only) {
       'ready' => '${matches.length} of the ${found.length} $what ${matches.length == 1 ? 'is' : 'are'} ready.',
-      'setup' => '${matches.length} of the ${found.length} $what need${matches.length == 1 ? 's' : ''} setup.',
+      'setup' => '${matches.length} of the ${found.length} $what ${matches.length == 1 ? 'is' : 'are'} not ready.',
       _ => group != null
           ? '${group.title}: ${found.length} commands.'
           : topic.isEmpty
@@ -732,7 +743,11 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
 
   /// "More": the next commands of the last list, numbered on from it.
   String _moreByVoice(int? count) {
-    if (_lastMatches.isEmpty) return _say('I have not read a list of commands yet. Say "search for" and what you want to do.', ok: false);
+    final read = [for (final c in _voiceList.whereType<CheCommandInfo>()) c.id];
+    final continues = read.length == _lastShown && [for (final c in _lastMatches.take(_lastShown)) c.id].join(' ') == read.join(' ');
+    if (_lastMatches.isEmpty || !continues) {
+      return _say('I have no list of commands to continue. Say "search for" and what you want to do.', ok: false);
+    }
     final start = _lastShown;
     if (start >= _lastMatches.length) return _say('That was all ${_lastMatches.length}.');
     final next = _lastMatches.skip(start).take(count ?? _pageSize).toList();
@@ -746,9 +761,10 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
   String _readinessOf(List<CheCommandInfo> read, String only) {
     final ready = [for (final (i, c) in read.indexed) if (c.canRun) '${i + 1}. ${c.slash}'];
     final notReady = [for (final (i, c) in read.indexed) if (!c.canRun) '${i + 1}. ${c.slash} (${_state(c)})'];
-    final readyPart = ready.isEmpty ? 'none ready.' : '${ready.length} ready: ${ready.join(', ')}.';
-    final setupPart = notReady.isEmpty ? 'none need setup.' : '${notReady.length} need${notReady.length == 1 ? 's' : ''} setup: ${notReady.join('; ')}.';
-    return 'Of those ${read.length}: ${switch (only) { 'ready' => readyPart, 'setup' => setupPart, _ => '$readyPart $setupPart' }}';
+    final readyPart = ready.isEmpty ? 'none are ready.' : '${ready.length} ready: ${ready.join(', ')}.';
+    final notPart = notReady.isEmpty ? 'all are ready.' : '${notReady.length} not ready: ${notReady.join('; ')}.';
+    final both = notReady.isEmpty ? readyPart : ready.isEmpty ? notPart : '$readyPart $notPart';
+    return 'Of those ${read.length}: ${switch (only) { 'ready' => readyPart, 'setup' => notPart, _ => both }}';
   }
 
   /// Re-reads the catalog when its states are older than

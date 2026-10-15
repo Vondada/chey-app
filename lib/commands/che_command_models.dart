@@ -466,7 +466,7 @@ class CheCommandCatalog {
     return null;
   }
 
-  /// Search by command name or by goal ("find website clients"), the same
+  /// Search by command name or by goal ("find website clients"), the
   /// deterministic word overlap the Worker uses (command_catalog.js). On the
   /// phone a category's name also counts: "YouTube" lists every YouTube
   /// command, and a goal that names a category ("publish faceless YouTube
@@ -512,14 +512,16 @@ class CheCommandCatalog {
 
 // Other words people use for a category's name, keyed by the Worker's
 // category ids. A missing id is simply never matched.
+// Only names of the whole category: an ordinary word such as "sales" or
+// "videos" is searched, so commands in other categories still match it.
 const _categoryAliases = {
-  'youtube': {'yt', 'youtube videos', 'videos', 'faceless youtube', 'faceless videos', 'youtube channel'},
-  'trading': {'trade', 'trades', 'futures'},
-  'build': {'websites', 'websites and apps', 'apps', 'websites apps and ai'},
-  'money': {'finance', 'finances', 'money management'},
-  'clients': {'client', 'client scouting', 'leads'},
-  'marketing': {'marketing and sales', 'sales'},
-  'office': {'office and automation', 'automation'},
+  'youtube': {'yt', 'youtube videos', 'faceless youtube', 'youtube channel'},
+  'trading': {'trade', 'trades'},
+  'build': {'websites and apps', 'websites apps and ai'},
+  'money': {'money management'},
+  'clients': {'client', 'client scouting'},
+  'marketing': {'marketing and sales'},
+  'office': {'office and automation'},
   'intelligence': {'intelligence and control'},
 };
 
@@ -548,9 +550,11 @@ Iterable<String> _words(String text) => text
     .replaceAll(RegExp(r'[^a-z0-9/& -]+'), ' ')
     .split(RegExp(r'[\s/-]+'))
     .where((w) => w.length > 1 && !_stop.contains(w));
-// "invoices" and "invoice", "prices" and "price" meet; "es" goes only where
-// English adds it ("boxes", "matches").
+// "invoices" and "invoice", "expenses" and "expense" meet; "es" goes only
+// where English adds it ("boxes", "matches", "classes"). The Worker's
+// stem (command_catalog.js) is older and cruder; the phone ranks its own
+// list.
 String _stem(String w) => w
     .replaceFirst(RegExp(r'ies$'), 'y')
-    .replaceFirst(RegExp(r'(?<=(?:s|x|z|ch|sh))es$'), '')
+    .replaceFirst(RegExp(r'(?<=(?:ss|x|z|ch|sh))es$'), '')
     .replaceFirst(RegExp(r'(?:ing|ed|s)$'), '');

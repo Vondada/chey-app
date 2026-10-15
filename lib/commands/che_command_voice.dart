@@ -224,6 +224,7 @@ class CheCommandListRequest {
     this.followUp = false,
     this.more = false,
     this.runAsked = false,
+    this.aboutIt = false,
   });
 
   /// What the commands are for ("youtube", "create and publish faceless
@@ -250,6 +251,9 @@ class CheCommandListRequest {
 
   /// Said as "run …" for several commands: they are listed, never run.
   final bool runAsked;
+
+  /// A follow-up about the one command just picked: "is it ready?"
+  final bool aboutIt;
 }
 
 const _amounts = {
@@ -265,7 +269,7 @@ const _readyWords = r"(?:ready|usable|runnable|working(?: (?:right )?now)?|works
 // The narrower "ready" that asks for only the ready ones. "Available" and
 // "can you run" ask what exists, so they get every command with its state.
 const _onlyReadyWords = r"(?:ready|usable|runnable|working(?: (?:right )?now)?|works? (?:right )?now|which (?:ones? |of them )?(?:work|run)|can i (?:use|run)(?: (?:it|them|those|these))?(?: (?:right )?now)?(?! (?:to|for|in|on|with|when|if)\b))";
-const _setupWords = r"(?:(?:need|needs|require|requires|needing) (?:(?:a|some|any|more|to be) )?(?:setup|set|connect\w*|config\w*|sign[\s-]?in|keys?|connection)|not ready|unavailable|setup)";
+const _setupWords = r"(?:(?:need|needs|require|requires|needing) (?:(?:a|some|any|more|to be) )?(?:setup|set|connect\w*|config\w*|sign[\s-]?in|keys?|connection)|not ready|unready|unavailable|setup)";
 
 /// The owner's words made comparable: lower case, CHE's name (in any
 /// spelling) and polite openers removed, and common speech-recognition
@@ -279,6 +283,7 @@ String cheCommandSpeech(String raw) {
       .replaceAll(RegExp(r'\bslash\s+(?=commands?\b)'), '')
       .replaceAll(RegExp(r'\bset(?:ting)?[\s-]up\b'), 'setup')
       .replaceAll(RegExp(r'\bready (?:to (?:use|go|run)|for use)\b|\bgood to go\b'), 'ready')
+      .replaceAll(RegExp(r"\b(?:aren't|are not|isn't|is not|not|don't|do not|doesn't|does not)\s+(?:yet\s+)?(?:ready|usable|working|work|available|runnable)\b"), 'unready')
       .replaceAll(RegExp(r"\bwhat's\b"), 'what is')
       .replaceAll(RegExp(r"\bthey're\b"), 'they are')
       .replaceAll(RegExp(r'\s+'), ' ')
@@ -304,7 +309,11 @@ final _thePage = RegExp(r"\b(?:(?:open|show(?: me)?|bring up|pull up|go to|take 
 final _cheOwn = RegExp(r"\b(?:your|che's|che)\s+(?:own\s+)?commands?\b|\bcommands?\s+(?:that\s+)?(?:you|che)\s+(?:can|could|have|has|know|offer|support|run)\b|\b(?:do|can|could|does)\s+(?:you|che)\s+(?:have|has|offer|run|support|know)\b.*\bcommands?\b|\bcommands?\b.*\b(?:do|can|could|does)\s+(?:you|che)\s+(?:have|has|offer|run|support|know)\b|\bcommand\s+(?:center|library)\b");
 // Topics CHE's catalog covers; outside the page a number or a readiness
 // question about these is a request for CHE's commands.
-final _catalogWords = RegExp(r"\b(?:youtube|yt|videos?|shorts|channel|faceless|trading|trades?|futures|nq|money|budget|cash ?flow|invoices?|expenses|clients?|leads?|marketing|sales|ads|seo|websites?|sites?|apps?|office|automation|workflows?|che)\b");
+// Words like "website" or "videos" are left out: "3 git commands for my
+// website repo" is not about CHE.
+final _catalogWords = RegExp(r"\b(?:youtube|yt|faceless|trading|trades?|futures|nq|money|budget|cash ?flow|invoices?|expenses|clients?|marketing|seo|office)\b");
+// Other systems' commands.
+final _otherCommands = RegExp(r"\b(?:git|linux|unix|bash|zsh|shell|terminal|command line|cmd|powershell|dos|windows|mac ?os|npm|docker|kubectl|sql|excel|vim|siri|alexa|google assistant|python|dog|dogs)\b");
 final _verbLead = RegExp(r'^(?:show|list|give|tell|read|find|search|look|get|pull up|bring up|display|name)\b');
 final _runLead = RegExp(r'^(?:run|start|use|execute|do)\b');
 final _more = RegExp('^(?:(?:show|read|give|tell|list)(?: me| us)? )?(?:(?:the )?next(?: $_amount)?|(?:$_amount )?more|the rest|the others)(?: (?:ones?|commands|of them|please))*\$');
@@ -320,7 +329,8 @@ CheCommandListRequest? cheCommandListRequest(String raw, {bool onPage = false}) 
   // The web is Chat's web search, never the catalog.
   if (RegExp(r'^(?:search|find|look up|look)\s+(?:the\s+)?(?:web|internet|online)\b|\b(?:on|from) the (?:web|internet)\b|\bgoogle (?:it|for|search)\b').hasMatch(t)) return null;
   var explicit = _cheOwn.hasMatch(t);
-  if (_thePage.hasMatch(t)) {
+  final pageNamed = _thePage.hasMatch(t);
+  if (pageNamed) {
     explicit = true;
     t = t.replaceAll(_thePage, ' . ');
   }
@@ -341,7 +351,8 @@ CheCommandListRequest? cheCommandListRequest(String raw, {bool onPage = false}) 
     if (readiness &&
         (RegExp(r"\b(?:ones?|them|they|those|these|it|that list|the list)\b").hasMatch(t) ||
             RegExp(r'^(?:which|what|how many|are|is|tell me|show me|say|read|explain)\b').hasMatch(t))) {
-      return CheCommandListRequest(followUp: true, readiness: true, only: onlyOf());
+      final it = RegExp(r"\b(?:it|that one|this one|that command|this command)\b").hasMatch(t) && !RegExp(r'\b(?:them|they|those|these|ones)\b').hasMatch(t);
+      return CheCommandListRequest(followUp: true, readiness: true, only: onlyOf(), aboutIt: it);
     }
     // "And the money ones?", "which one should I use to publish a video?"
     final ones = RegExp(r"^(?:(?:what|how) about\s+)?(?:the\s+)?([a-z][a-z &'-]*?)\s+ones$").firstMatch(t);
@@ -442,7 +453,8 @@ CheCommandListRequest? cheCommandListRequest(String raw, {bool onPage = false}) 
   final purpose = RegExp(r"^(?:(?:that|which)\s+)?(?:(?:you|i|we|che)\s+)?(?:(?:can|could|would|will|should|might|do|does|did)\s+)?(?:(?:you|i|we|che)\s+)?(?:(?:use|run|try|have|has|know|offer|suggest|recommend|need)\s+)?(?:for|about|on|to|with|in|into|related to|regarding|around|(?:to\s+)?helps?(?:\s+me)?(?:\s+with)?)\s+(.+)$").firstMatch(post) ??
       // "which commands can price a site", "commands that write scripts".
       RegExp(r"^(?:(?:that|which)\s+)?(?:can|could|will|would|should|might|lets?\s+(?:me|you))\s+(?!(?:i|you|we|che|be)\b)(.+)$").firstMatch(post) ??
-      RegExp(r"^(?:that|which)\s+(?!(?:are|is|was|were|need|needs|i|you|we|che|do|does|did|have|has)\b)(.+)$").firstMatch(post);
+      RegExp(r"^(?:that|which)\s+(?!(?:are|is|was|were|need|needs|i|you|we|che|do|does|did|have|has)\b)(.+)$").firstMatch(post) ??
+      RegExp(r"^(?:are|is)\s+(?:there\s+|available\s+|good\s+|useful\s+|best\s+|right\s+)?(?:for|about|on|to|with|in)\s+(.+)$").firstMatch(post);
   final postTopic = purpose?.group(1) ?? '';
   // Words after "commands" that are neither a purpose nor a readiness
   // question ("… commands work in Final Cut") make it some other question.
@@ -461,12 +473,19 @@ CheCommandListRequest? cheCommandListRequest(String raw, {bool onPage = false}) 
   final topic = [clean(preTopic), clean(postTopic)].where((s) => s.isNotEmpty).join(' ');
 
   // Outside the Commands page, "commands" alone may mean any commands
-  // ("five Linux commands to list files"): only CHE's own are listed here.
-  if (!onPage && !explicit) {
-    // As before: "show me YouTube commands", "search commands for YouTube".
-    final plain = verbLed && (post.isEmpty || (searchLed && preTopic.isEmpty && purpose != null));
-    final strong = count != null || all || readiness || question || RegExp(r'^(?:any|are there|is there)\b').hasMatch(pre);
-    if (!plain && !(strong && !unexplained && (topic.isEmpty || _catalogWords.hasMatch(topic)))) return null;
+  // ("five Linux commands to list files"): only CHE's own are listed here,
+  // and only when the words ask for a list ("why are your commands so
+  // slow?" is a question for Chat).
+  if (!onPage) {
+    if (_otherCommands.hasMatch(t)) return null;
+    final asks = verbLed || question || runAsked || count != null || all || RegExp(r'^(?:any|are there|is there)\b').hasMatch(pre);
+    if (!pageNamed && (!asks || unexplained)) return null;
+    if (!explicit) {
+      // As before: "show me YouTube commands", "search commands for YouTube".
+      final plain = verbLed && (post.isEmpty || (searchLed && preTopic.isEmpty && purpose != null));
+      final strong = count != null || all || readiness || question || RegExp(r'^(?:any|are there|is there)\b').hasMatch(pre);
+      if (!plain && !(strong && (topic.isEmpty || _catalogWords.hasMatch(topic)))) return null;
+    }
   }
 
   var only = '';

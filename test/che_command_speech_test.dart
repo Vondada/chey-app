@@ -57,19 +57,28 @@ void main() {
     expect(che.requests.where((r) => r.method != 'GET'), isEmpty, reason: 'nothing was sent but catalog reads');
 
     // Follow-ups about the list just read keep its numbers.
-    expect(await say('Which ones need setup?'), 'Of those 5: 2 need setup: 4. /yt-video (Needs setup: Video renderer); '
+    expect(await say('Which ones need setup?'), 'Of those 5: 2 not ready: 4. /yt-video (Needs setup: Video renderer); '
         '5. /yt-voice (Needs setup: CHE voice (ElevenLabs or Fish), Video renderer).');
+    expect(await say("which ones aren't ready?"), startsWith('Of those 5: 2 not ready: 4. /yt-video'), reason: 'a negation is not "ready"');
     expect(await say('which ones are ready'), 'Of those 5: 3 ready: 1. /yt-ideas, 2. /yt-research, 3. /yt-script.');
     final more = (await say('show me more'))!;
     expect(more, startsWith('6 to 10 of 11.'));
     expect(more, contains('6. /yt-thumbnail: '));
     expect(await say('number four'), contains('/yt-video'), reason: 'numbers still mean what CHE read');
-    await say('back');
+    expect(await say('is it ready?'), startsWith('/yt-video: Needs setup: Video renderer.'), reason: '"it" is the command just picked');
+    expect(find.byTooltip('Read this command aloud'), findsNothing, reason: 'the answer comes back on the page');
     expect(await say('show me the next five commands'), startsWith('11 to 11 of 11.'));
     // Another list read in between: "more" continues that one, never the old numbers.
     await say('Show me five YouTube commands');
     expect(await say('run yt thumb'), contains('Closest: 1. /yt-thumbnail'));
     expect(await say('more'), 'That was all 3.');
+    // "What's on screen" reads the same list and "more" still continues it.
+    await say('Show me YouTube commands');
+    expect(await say("what's on screen"), contains('Say "more" for the next 5.'));
+    expect(await say('more'), startsWith('6 to 10 of 11.'));
+    // Another tab cleared the numbers: "more" says so instead of misnumbering.
+    await say('show activity');
+    expect(await say('more'), startsWith('I have no list of commands to continue.'));
     expect(ran.calls, isEmpty);
   });
 
@@ -112,9 +121,10 @@ void main() {
     final ready = (await say('Which YouTube commands are ready?'))!;
     expect(ready, startsWith('7 of the 11 YouTube commands are ready. 1. /yt-ideas: '));
     expect(ready, isNot(contains('/yt-video')), reason: 'only the ready ones are read');
-    expect(await say('how many YouTube commands need setup'), startsWith('4 of the 11 YouTube commands need setup. 1. /yt-video: '));
-    expect(await say('read them again'), startsWith('4 of the 11 YouTube commands need setup.'));
-    expect(await say('Show me the YouTube commands that need setup'), startsWith('4 of the 11 YouTube commands need setup.'));
+    expect(await say('how many YouTube commands need setup'), startsWith('4 of the 11 YouTube commands are not ready. 1. /yt-video: '));
+    expect(await say('read them again'), startsWith('4 of the 11 YouTube commands are not ready.'));
+    expect(await say('Show me the YouTube commands that need setup'), startsWith('4 of the 11 YouTube commands are not ready.'));
+    expect(await say('which commands are there for trading'), startsWith('Trading: 9 commands.'));
     // "Available" asks what exists: every one, each with its state.
     expect(await say('What YouTube commands are available?'), startsWith('YouTube: 11 commands. 1. /yt-ideas: '));
     expect(await say('find a command to build an invoice'), contains('/invoices: '), reason: '"build" is a verb here, not the Websites category');
