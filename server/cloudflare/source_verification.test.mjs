@@ -396,7 +396,7 @@ test('a URL provided by the owner is input, not a verified article', async () =>
   const out = await che.say(`Summarize this article: ${MEDMIND_URL}`);
   assert.ok(calls.includes(MEDMIND_URL), 'the public citation is opened despite appearing in the owner prompt');
   assert.doesNotMatch(out.reply, /outperformed radiologists|release of MedMind/);
-  assert.match(out.reply, /technologyreview\\.com link returns a page that does not exist/);
+  assert.match(out.reply, /technologyreview\.com link returns a page that does not exist/);
 });
 
 test('private or one-click source links are never fetched or counted as evidence', async () => {
@@ -417,7 +417,7 @@ test('personal good news stays a conversation, never a current-news search', asy
   const che = await owner({ model: () => 'Congratulations, sir. That is wonderful news!' });
   const out = await che.say('I have good news: my baby was born.');
   assert.match(out.reply, /Congratulations/);
-  assert.equal(calls.filter((u) => /api\\.gdeltproject|hn\\.algolia/.test(u)).length, 0);
+  assert.equal(calls.filter((u) => /api\.gdeltproject|hn\.algolia/.test(u)).length, 0);
 });
 
 test('a real name in a made-up story is never recorded as suspect', async () => {
