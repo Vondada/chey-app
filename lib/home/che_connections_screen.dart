@@ -109,7 +109,8 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
         HapticFeedback.selectionClick();
         final youtube = _status('youtube');
         final broker = _status('broker');
-        final note = 'Connection check complete. YouTube: $youtube. NinjaTrader: $broker. Bank linking remains unavailable.';
+        final google = [for (final id in _googleLabels.keys) '${_googleLabels[id]}: ${_status(id)}'].join('. ');
+        final note = 'Connection check complete. YouTube: $youtube. NinjaTrader: $broker. $google. Bank linking remains unavailable.';
         setState(() => _message = note);
         widget.onSpeak?.call(note);
       }
@@ -313,11 +314,14 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
       final data = raw is Map ? raw : <String, dynamic>{};
       if (r.statusCode != 200) throw StateError((data['detail'] ?? 'CHE could not disconnect $label.').toString());
       final revoked = data['revoked_at_google'] == true;
+      final kept = data['kept_at_google'] == true;
       await _refresh();
       HapticFeedback.selectionClick();
       _say(revoked
           ? '$label disconnected. Google access was revoked.'
-          : '$label removed from CHE. Google did not confirm the revoke, so check your Google Account permissions.');
+          : kept
+              ? '$label removed from CHE. Google was not asked to revoke it, because other Google connections share its sign-in. To remove it at Google, use Google Account, Third-party access.'
+              : '$label removed from CHE. Google did not confirm the revoke, so check your Google Account permissions.');
     } on Object catch (e) {
       HapticFeedback.heavyImpact();
       _say('$label: ${e.toString().replaceFirst('Bad state: ', '')}');

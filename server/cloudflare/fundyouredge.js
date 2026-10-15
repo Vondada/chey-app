@@ -6,17 +6,20 @@ const FYE = /\bfund\s*your\s*edge\b|\bfundyouredge\b|\bfye\b/i;
 const ORDER_VERB = /\b(?:prepare|place|submit|enter|buy|sell|set up)\b/i;
 const FUTURES = /\b(?:mnq|nq|mes|es|nasdaq|s&p)\b/i;
 
-export function fundyouredgeIntent(message) {
+// orderBrokerReady: a broker that can take orders is connected, so a generic
+// futures order belongs to that broker's desk and is not refused here.
+export function fundyouredgeIntent(message, { orderBrokerReady = false } = {}) {
   const t = String(message || '').trim().replace(/\s+/g, ' ');
-  if (ORDER_VERB.test(t) && (FYE.test(t) || FUTURES.test(t))) return { kind: 'order' };
+  if (ORDER_VERB.test(t) && FYE.test(t)) return { kind: 'order' };
+  if (!orderBrokerReady && ORDER_VERB.test(t) && FUTURES.test(t)) return { kind: 'order' };
   if (!FYE.test(t)) return null;
   if (/\b(?:check|show|read|open|status|balance|account|positions?|drawdown|payouts?|p&l)\b/i.test(t)) return { kind: 'account' };
   return null;
 }
 
 // The honest spoken reply, or null when the message is not about this account.
-export function fundyouredgeReply(message) {
-  const intent = fundyouredgeIntent(message);
+export function fundyouredgeReply(message, options = {}) {
+  const intent = fundyouredgeIntent(message, options);
   if (!intent) return null;
   if (intent.kind === 'order') {
     return 'I cannot prepare or place an order for FundYourEdge, sir. Its accounts trade on Rithmic, and CHE has no licensed Rithmic order connection. Nothing was prepared or placed.';

@@ -16,7 +16,9 @@ const CALENDAR = 'https://www.googleapis.com/calendar/v3/calendars/primary';
 const EMAIL = /^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]+$/;
 
 export function adsApiBase(env = {}) {
-  const version = /^v\d{1,2}$/.test(String(env.CHE_GOOGLE_ADS_API_VERSION || '')) ? env.CHE_GOOGLE_ADS_API_VERSION : 'v20';
+  // v20 and v22 are sunset (June 10 and October 7, 2026). v24 is the newest version in
+  // Google's published timeline; the owner can change it with CHE_GOOGLE_ADS_API_VERSION.
+  const version = /^v\d{1,2}$/.test(String(env.CHE_GOOGLE_ADS_API_VERSION || '')) ? env.CHE_GOOGLE_ADS_API_VERSION : 'v24';
   return `https://googleads.googleapis.com/${version}`;
 }
 
@@ -283,11 +285,15 @@ export async function disconnectGoogle(env, data, service, fetcher = fetch) {
   if (!isGoogleService(service)) return { ok: false, error: 'CHE cannot disconnect that Google service.' };
   const label = GOOGLE_SERVICES[service].label;
   const conn = data.google_connections?.[service];
-  if (!conn) return { ok: true, label, was_connected: false, revoked_at_google: false };
+  if (!conn) return { ok: true, label, was_connected: false, revoked_at_google: false, kept_at_google: false };
   const refresh = await openToken(env, conn.refresh).catch(() => '');
-  const revoked = await revokeGrant(fetcher, refresh);
+  // Google's revoke can end a sign-in that other CHE connections share, YouTube
+  // included. So CHE revokes only when nothing else it holds would be affected.
+  const shared = Object.entries(data.google_connections || {}).some(([id, c]) => id !== service && c?.refresh)
+    || Boolean(data.youtube?.refresh);
+  const revoked = shared ? false : await revokeGrant(fetcher, refresh);
   delete data.google_connections[service];
-  return { ok: true, label, was_connected: true, revoked_at_google: revoked };
+  return { ok: true, label, was_connected: true, revoked_at_google: revoked, kept_at_google: shared };
 }
 
 const clampCount = (value, fallback, max) => Math.min(Math.max(Number(value) || fallback, 1), max);
@@ -668,7 +674,9 @@ function adsAccessMessage(r) {
 }
 
 // Writes change something outside CHE, so each one waits for the owner's yes.
-export const WRITE_KINDS = new Set(['gmail_send', 'calendar_create', 'drive_create']);
+// Sending email needs the owner's explicit yes: it reaches other people and cannot be taken back.
+// Calendar events and Drive docs run on the owner's explicit request, as CHE's standing rules allow.
+export const WRITE_KINDS = new Set(['gmail_send']);
 export const GOOGLE_HOLD_MS = 10 * 60 * 1000;
 export const PENDING_GOOGLE_ACTION_KEY = 'pending_google_action';
 const NO_PHRASES = new Set(['no', 'nope', 'cancel', 'stop', 'never mind', 'no thanks', 'do not', 'dont']);

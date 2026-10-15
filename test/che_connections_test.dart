@@ -159,7 +159,7 @@ void main() {
     final voice = CheConnectionsVoice.handler!;
 
     expect(await tester.runAsync(() => voice('refresh connections')), '');
-    expect(spoken.last, 'Connection check complete. YouTube: Connected. NinjaTrader: Needs Setup. Bank linking remains unavailable.');
+    expect(spoken.last, 'Connection check complete. YouTube: Connected. NinjaTrader: Needs Setup. Gmail: Unavailable. Google Drive: Unavailable. Google Calendar: Unavailable. Google Ads: Unavailable. Bank linking remains unavailable.');
     expect(await tester.runAsync(() => voice('connect NinjaTrader')), '');
     expect(spoken.last, 'NinjaTrader: Tradovate OAuth application is not configured.');
     expect(await tester.runAsync(() => voice('tell me a joke')), isNull, reason: 'anything else goes to Chat');

@@ -4,7 +4,7 @@ import { sealToken } from './youtube_connection.js';
 import {
   adsCustomers, buildRawEmail, calendarCreate, calendarList, calendarWindow, disconnectGoogle,
   driveCreateDoc, driveList, finishGoogleConnect, gmailList, gmailSend, googleAccessToken,
-  adsCampaignReport, googleChatIntent, googleConnectorStates, googleOwnerStep, googleStates, GOOGLE_HOLD_MS,
+  adsApiBase, adsCampaignReport, googleChatIntent, googleConnectorStates, googleOwnerStep, googleStates, GOOGLE_HOLD_MS,
   PENDING_GOOGLE_ACTION_KEY, runGoogleIntent, startGoogleConnect, zonedWallTimeToUtc,
 } from './google_services.js';
 
@@ -407,17 +407,35 @@ test('any other reply drops a held write, and an expired hold is not released by
   assert.equal(fetcher.calls.length, 0);
 });
 
-test('a calendar event waits for a yes, then is created in the owner zone', async () => {
+test('a calendar event runs at once on the explicit request, in the owner zone', async () => {
   const s = await stepSetup();
   const fetcher = fakeGoogle({
     'https://www.googleapis.com/calendar/v3/calendars/primary/events': () => json({ id: 'e1', summary: 'dentist', start: { dateTime: '2026-10-20T14:30:00' } }),
   });
-  const held = await googleOwnerStep('add dentist on 2026-10-20 at 2:30 pm', { ...s.opts, fetcher });
-  assert.equal(held.held, true);
-  assert.equal(fetcher.calls.length, 0);
-  const done = await googleOwnerStep('yes', { ...s.opts, fetcher });
+  const done = await googleOwnerStep('add dentist on 2026-10-20 at 2:30 pm', { ...s.opts, fetcher });
+  assert.equal(done.held, undefined, 'no second yes for a calendar event');
   assert.equal(done.text, 'Added "dentist" on 2026-10-20 at 14:30 in your calendar, sir.');
   assert.equal(fetcher.calls.filter((c) => c.method === 'POST').length, 1);
+  assert.equal(s.storage.m.get(PENDING_GOOGLE_ACTION_KEY), undefined);
+});
+
+test('disconnect keeps the Google grant when another CHE connection shares the sign-in', async () => {
+  const data = { youtube: { refresh: await sealToken(env, 'yt-refresh') }, google_connections: {
+    drive: { status: 'connected', refresh: await sealToken(env, 'drive-refresh') },
+  } };
+  const fetcher = fakeGoogle({ 'https://oauth2.googleapis.com/revoke': () => new Response('', { status: 200 }) });
+  const r = await disconnectGoogle(env, data, 'drive', fetcher);
+  assert.equal(r.ok, true);
+  assert.equal(r.revoked_at_google, false);
+  assert.equal(r.kept_at_google, true);
+  assert.equal(fetcher.calls.some((c) => c.url.includes('/revoke')), false, 'YouTube is not put at risk');
+  assert.equal(data.google_connections.drive, undefined, 'the local copy is still removed');
+});
+
+test('Google Ads uses the current supported API version by default, and the owner can change it', () => {
+  assert.equal(adsApiBase({}), 'https://googleads.googleapis.com/v24');
+  assert.equal(adsApiBase({ CHE_GOOGLE_ADS_API_VERSION: 'v23' }), 'https://googleads.googleapis.com/v23');
+  assert.equal(adsApiBase({ CHE_GOOGLE_ADS_API_VERSION: 'v20/../x' }), 'https://googleads.googleapis.com/v24', 'only a version number is accepted');
 });
 
 test('a write for a service that is not connected says so and holds nothing', async () => {

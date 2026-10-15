@@ -7713,7 +7713,9 @@ export class CheState extends DurableObject {
         if (googleStep) return ndjsonReply(googleStep.text, { source: 'che_google', ok: googleStep.ok, held: Boolean(googleStep.held), model_calls: 0 });
         // FundYourEdge has no licensed Rithmic connection, so CHE says so and never
         // prepares or places an order for it.
-        const brokerReply = ownerDevice && !chatOnlyEvaluation ? fundyouredgeReply(message) : null;
+        const orderBrokerReady = ownerDevice && !chatOnlyEvaluation
+          ? (await brokerConnection(this.ctx.storage).catch(() => ({ connected: false })))?.connected === true : false;
+        const brokerReply = ownerDevice && !chatOnlyEvaluation ? fundyouredgeReply(message, { orderBrokerReady }) : null;
         if (brokerReply) return ndjsonReply(brokerReply, { source: 'che_brokerage', ok: false, model_calls: 0 });
         const exam = ownerDevice && !chatOnlyEvaluation && !isExistingChangeCommand(selfUpdateChatIntent(message)) ? examIntent(message) : null;
         if (exam?.kind === 'results') {

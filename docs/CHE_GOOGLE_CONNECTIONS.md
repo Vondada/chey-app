@@ -14,16 +14,20 @@ reach the app. The app shows state and the signed-in address only.
 | Google Ads | `adwords` | Read-only: list the accounts this sign-in can reach, and last-7-day campaign results. Needs Setup until Google confirms CHE's access |
 
 Nothing deletes or modifies anything in your accounts. Disconnect removes CHE's
-grant here and asks Google to revoke it; say "disconnect my Gmail" or use the
-Disconnect button, and confirm. You can also revoke CHE in your Google Account
-under Third-party access.
+copy of a grant. It asks Google to revoke the grant only when no other CHE
+connection shares that sign-in, because a revoke can also end YouTube's. Otherwise
+CHE says Google was not asked, and you can remove the permission in Google
+Account, Third-party access. Say "disconnect my Gmail" or use the Disconnect
+button, and confirm first.
 
 ## Asked first (never done on a guess)
 
-Sending an email, adding a calendar event and creating a Drive doc each read
-back exactly what will happen, then wait for a plain **yes**. A **no** cancels
-it. Any other reply drops it, and a held request expires after ten minutes.
-Reads (checking mail, your calendar, Drive files, Ads results) run at once.
+Sending an email reads back exactly what will happen, then waits for a plain
+**yes**, because it reaches other people and cannot be taken back. A **no**
+cancels it. Any other reply drops it, and a held email expires after ten
+minutes. Calendar events and Drive docs run on your explicit request, as CHE's
+standing rules allow. Reads (checking mail, your calendar, Drive files, Ads
+results) run at once.
 Campaign changes, budgets and launches are not built and would need your
 explicit approval.
 
@@ -55,8 +59,9 @@ after Google returns with the approved permissions.
    - Audience → Test users: add your own Google account.
    - The redirect address does not change; the existing callback is reused.
 2. **Google Ads access** (no developer token is needed for CHE's code any more):
-   Google moved Ads access to the Cloud project. Apply for Basic access in the
-   Google Ads API Overview in Cloud Console. Google requires brand verification
+   Google moved Ads access to the Cloud project. CHE calls API version `v24` by
+   default (v20 and v22 are sunset). Apply for Basic access in the Google Ads API
+   Overview in Cloud Console. Google requires brand verification
    for Basic and Standard access. CHE shows Google Ads as Connected only after
    Google lists a real account for your sign-in.
 3. **Worker variable `CHE_TIMEZONE`**: already set to `America/Chicago` in
@@ -76,7 +81,8 @@ after Google returns with the approved permissions.
   scopes are sensitive.
 - **Drive** shows only what CHE created or you opened with it, by design.
 - **Google Ads** shows Needs Setup until Google approves access and lists your
-  accounts. Nothing is read or changed before that.
+  accounts. Nothing is read or changed before that. CHE's Ads calls have not been
+  run against a live account from here; the first real check is yours to confirm.
 
 ## Not built
 
@@ -89,6 +95,7 @@ after Google returns with the approved permissions.
   Rithmic. Rithmic's order API is licensed, with a developer kit, a conformance
   review and recurring fees before production access, and CHE has no such
   licence. CHE reports the account as not connected and never prepares or places
-  an order for it. The lower-cost option is for you to read the funded account
+  an order for it. A generic futures order is left to a connected order broker's
+  desk when one is connected. The lower-cost option is for you to read the funded account
   in the firm's own dashboard or TradeSea and tell CHE the figures; CHE does not
   log in to those platforms or scrape them.
