@@ -351,11 +351,13 @@ test('source-check redirects never fetch a private or action destination', async
     visited.push(url);
     if (url === 'https://a.example/private') return Response.redirect('https://docs.google.com/document/d/private/edit', 302);
     if (url === 'https://a.example/action') return Response.redirect('https://news.example.com/unsubscribe?token=abc', 302);
+    if (url === 'https://a.example/encoded') return Response.redirect('https://news.example.com/unsub%73cribe/abc', 302);
+    if (url === 'https://a.example/double-encoded') return Response.redirect('https://news.example.com/unsub%2573cribe/abc', 302);
     if (url === 'https://a.example/safe') return Response.redirect('https://b.example/story', 302);
     if (url === 'https://b.example/story') return new Response('<html><title>A real story</title><article>Safe article</article></html>', { status: 200 });
     throw new Error('unsafe redirect destination was opened');
   };
-  for (const name of ['private', 'action']) {
+  for (const name of ['private', 'action', 'encoded', 'double-encoded']) {
     visited.length = 0;
     const result = await fetchArticle(`https://a.example/${name}`, { fetcher });
     assert.equal(result.ok, false);
@@ -379,6 +381,18 @@ test('a bare citation URL on a factual sentence is opened even if the owner supp
   assert.deepEqual(visited, [url]);
   assert.equal(checked.removed.length, 1);
   assert.doesNotMatch(checked.text, /MegaCure reduced disease/);
+});
+
+test('bare source pointers cannot hide assertions earlier in the sentence', async () => {
+  const url = 'https://a.example/trial';
+  const calls = [];
+  const result = await guardCitations(`MegaCure reduced disease by 95%; the proof is at ${url}`, {
+    message: 'Can you verify this study?', trusted: [url],
+    fetcher: async (target) => { calls.push(target); return new Response('gone', { status: 404 }); },
+  });
+  assert.deepEqual(calls, [url]);
+  assert.equal(result.removed.length, 1);
+  assert.doesNotMatch(result.text, /MegaCure reduced disease/);
 });
 
 test('news questions are recognised; fiction and personal chat are not', () => {
@@ -542,6 +556,19 @@ test('a plain news event with no coined name still needs an article that says it
     const kept = await guardCitations(line, { message: TECH_NEWS, fetcher: offline, now: AT });
     assert.deepEqual(kept.removed, [], line);
   }
+});
+
+test('news descriptions without launch verbs still require the article to say them', async () => {
+  for (const claim of ["Apple's thinner phone is today's biggest story.", "A thinner Apple phone dominates today's headlines."]) {
+    const missing = await guardCitations(claim, { message: TECH_NEWS, fetcher: offline, now: AT });
+    assert.equal(missing.removed.length, 1, claim);
+    assert.doesNotMatch(missing.text, /thinner Apple phone|Apple's thinner phone/);
+  }
+  const verified = await guardCitations("Apple's thinner phone is today's biggest story.", {
+    message: TECH_NEWS, research: { engine: 'news', articles: [appleArticle()] }, fetcher: offline, now: AT,
+  });
+  assert.deepEqual(verified.removed, []);
+  assert.match(verified.text, /Sources I opened:/);
 });
 
 test('a news request finished in the background opens articles and is checked like a chat reply', async () => {
