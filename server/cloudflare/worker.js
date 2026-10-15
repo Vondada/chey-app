@@ -86,6 +86,11 @@ import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSna
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
+import {
+  disconnectGoogle, finishGoogleConnect, googleConnectorStates, googleLabel, googleOwnerStep, googleRecheckPending,
+  googleStates, startGoogleConnect,
+} from './google_services.js';
+import { fundyouredgeReply } from './fundyouredge.js';
 import { CheCodingRuntime, codingRuntimeEnabled, ownerRequiresMergeApproval, recoverableRuntimeFailure, runtimeState, runtimeStateClass, speakRuntimeStatus } from './coding_runtime.js';
 import { handoffIntent, latestHandoff, unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
@@ -4374,7 +4379,9 @@ export class CheState extends DurableObject {
     const cap = (id) => registry.find((c) => c.id === id)?.available === true;
     const youtube = await youtubeStatus(env, data).catch(() => ({ connected: false, status: 'not_connected' }));
     const broker = await brokerConnection(this.ctx.storage).catch(() => ({ connected: false }));
-    return connectorStatus(env, { runtime: { chat: cap('chat'), video_generation: cap('video_generation'), image_generation: cap('image_generation') }, youtube, broker });
+    const base = connectorStatus(env, { runtime: { chat: cap('chat'), video_generation: cap('video_generation'), image_generation: cap('image_generation') }, youtube, broker });
+    // Gmail, Drive, Calendar and Google Ads readiness, from their own grants.
+    return { ...base, ...(await googleConnectorStates(env, data).catch(() => ({}))) };
   }
 
   // Which commands can run on the owner's CHE right now, and what the rest
@@ -4798,8 +4805,17 @@ export class CheState extends DurableObject {
       // token is possible on that redirect; the one-time state protects it.
       if (request.method === 'GET' && path === YOUTUBE_CALLBACK_PATH) {
         const url = new URL(request.url);
+        const params = Object.fromEntries(url.searchParams);
+        // Google services share this callback; the pending state says which one.
+        if (data.google_oauth && params.state === data.google_oauth.state) {
+          const linked = await finishGoogleConnect(this.keyEnv || this.env, data, params, fetch, url.origin);
+          await this.ctx.storage.put('che', data);
+          return youtubeResultPage(linked.ok, linked.ok
+            ? `Connected ${linked.label}${linked.account ? ` (${linked.account})` : ''}.`
+            : linked.error, googleLabel(linked.service));
+        }
         const result = await finishYouTubeConnect(
-          this.keyEnv || this.env, data, Object.fromEntries(url.searchParams), fetch, url.origin,
+          this.keyEnv || this.env, data, params, fetch, url.origin,
         );
         await this.ctx.storage.put('che', data);
         return youtubeResultPage(result.ok, result.ok
@@ -4927,6 +4943,25 @@ export class CheState extends DurableObject {
       }
       if (request.method === 'POST' && path === '/api/youtube/disconnect') {
         const removed = await disconnectYouTube(this.keyEnv || this.env, data, fetch);
+        await this.ctx.storage.put('che', data);
+        return json(removed);
+      }
+      // Gmail, Google Drive, Google Calendar and Google Ads: one sign-in each,
+      // owner only. Status carries no tokens, only state and the account.
+      if (request.method === 'POST' && path === '/api/google/connect/start') {
+        if (!ownerDevice) return ownerOnly();
+        const started = await startGoogleConnect(this.keyEnv || this.env, data, new URL(request.url).origin, String(body?.service || ''));
+        await this.ctx.storage.put('che', data);
+        return started.ok ? json({ url: started.url }) : json({ detail: started.error }, 400);
+      }
+      if (request.method === 'GET' && path === '/api/google/status') {
+        if (!ownerDevice) return ownerOnly();
+        if (await googleRecheckPending(this.keyEnv || this.env, data, fetch).catch(() => false)) await this.ctx.storage.put('che', data);
+        return json({ services: await googleStates(this.keyEnv || this.env, data) });
+      }
+      if (request.method === 'POST' && path === '/api/google/disconnect') {
+        if (!ownerDevice) return ownerOnly();
+        const removed = await disconnectGoogle(this.keyEnv || this.env, data, String(body?.service || ''), fetch);
         await this.ctx.storage.put('che', data);
         return json(removed);
       }
@@ -6278,6 +6313,8 @@ export class CheState extends DurableObject {
       }
       // The Command Center catalog with live status, saved workflows and runs.
       if (path === '/api/commands' && ['GET', 'POST'].includes(request.method)) {
+        // A Google Ads grant Google has not approved yet is checked again on each refresh.
+        if (await googleRecheckPending(this.keyEnv || this.env, data, fetch).catch(() => false)) await this.ctx.storage.put('che', data);
         const connectors = await this.commandConnectors(data);
         let runs = null;
         try { runs = await this.ctx.storage.get(COMMAND_RUNS_KEY); } catch (_) { runs = null; }
@@ -7670,6 +7707,19 @@ export class CheState extends DurableObject {
         }
         // "Run the autonomy exam" (5 levels, each harder): real coding runs in
         // dry-run mode, graded deterministically. "Autonomy exam results".
+        // Gmail, Drive and Calendar: reads run now; sending, adding an event and
+        // creating a Drive doc wait for the owner's yes. Nothing changes on a guess.
+        const googleStep = ownerDevice && !chatOnlyEvaluation ? await googleOwnerStep(message, {
+          storage: this.ctx.storage, env: this.keyEnv || this.env, fetcher: fetch,
+          loadData: () => this.loadData(), saveData: (d) => this.ctx.storage.put('che', d),
+        }) : null;
+        if (googleStep) return ndjsonReply(googleStep.text, { source: 'che_google', ok: googleStep.ok, held: Boolean(googleStep.held), model_calls: 0 });
+        // FundYourEdge has no licensed Rithmic connection, so CHE says so and never
+        // prepares or places an order for it.
+        const orderBrokerReady = ownerDevice && !chatOnlyEvaluation
+          ? (await brokerConnection(this.ctx.storage).catch(() => ({ connected: false })))?.connected === true : false;
+        const brokerReply = ownerDevice && !chatOnlyEvaluation ? fundyouredgeReply(message, { orderBrokerReady }) : null;
+        if (brokerReply) return ndjsonReply(brokerReply, { source: 'che_brokerage', ok: false, model_calls: 0 });
         const exam = ownerDevice && !chatOnlyEvaluation && !isExistingChangeCommand(selfUpdateChatIntent(message)) ? examIntent(message) : null;
         if (exam?.kind === 'results') {
           const results = await Promise.resolve().then(() => this.ctx.storage.get(EXAM_RESULTS_KEY)).catch(() => null);

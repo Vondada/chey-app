@@ -441,6 +441,10 @@ extension _CheHomeSend on _CHEHomeState {
         return switch (command.text) {
           'youtube' => 'Opening CHE Connections to connect YouTube, sir.',
           'broker' => 'Opening CHE Connections to connect NinjaTrader, sir.',
+          'gmail' => 'Opening CHE Connections to connect Gmail, sir.',
+          'drive' => 'Opening CHE Connections to connect Google Drive, sir.',
+          'calendar' => 'Opening CHE Connections to connect Google Calendar, sir.',
+          'google_ads' => 'Opening CHE Connections to connect Google Ads, sir.',
           _ => 'Opening CHE Connections, sir.',
         };
       case ScreenOp.changeVoice:

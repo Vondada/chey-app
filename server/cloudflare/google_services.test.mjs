@@ -1,0 +1,532 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { disconnectYouTube, sealToken } from './youtube_connection.js';
+import {
+  adsCustomers, buildRawEmail, calendarCreate, calendarList, calendarWindow, disconnectGoogle,
+  driveCreateDoc, driveList, finishGoogleConnect, gmailList, gmailSend, googleAccessToken,
+  adsApiBase, adsCampaignReport, googleChatIntent, googleRecheckPending, googleConnectorStates, googleOwnerStep, googleStates, GOOGLE_HOLD_MS,
+  PENDING_GOOGLE_ACTION_KEY, runGoogleIntent, startGoogleConnect, zonedWallTimeToUtc,
+} from './google_services.js';
+
+const env = {
+  CHE_YOUTUBE_CLIENT_ID: 'client-id.apps.googleusercontent.com',
+  CHE_YOUTUBE_CLIENT_SECRET: 'client-secret-value',
+  CHE_OAUTH_SECRET: 'x'.repeat(40),
+};
+const ORIGIN = 'https://chey-app.example';
+const SCOPE = {
+  gmail: ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.send'],
+  drive: ['https://www.googleapis.com/auth/drive.file'],
+  calendar: ['https://www.googleapis.com/auth/calendar.events'],
+  google_ads: ['https://www.googleapis.com/auth/adwords'],
+};
+const NOW = Date.UTC(2026, 9, 14, 15, 0, 0);
+
+function json(body, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+}
+
+// A fake Google: records every call and answers by URL.
+function fakeGoogle(handlers = {}) {
+  const calls = [];
+  const fetcher = async (url, init = {}) => {
+    const u = String(url);
+    calls.push({ url: u, method: init.method || 'GET', headers: init.headers || {}, body: init.body });
+    const key = Object.keys(handlers).find((k) => u.startsWith(k));
+    if (!key) return json({ error: { message: `no fake for ${u}` } }, 500);
+    return handlers[key](u, init);
+  };
+  fetcher.calls = calls;
+  return fetcher;
+}
+
+function tokenHandler({ scope, refresh = 'refresh-token-value', access = 'access-token-value', expires = 3600 } = {}) {
+  return () => json({ access_token: access, refresh_token: refresh, scope: scope.join(' '), expires_in: expires });
+}
+
+function pendingFor(service, state = 'expected-state') {
+  return { service, state, verifier: 'verifier-value-long-enough-0123456789', created_at: NOW };
+}
+
+test('start builds a sign-in for one service only, with PKCE and a stored one-time state', async () => {
+  const data = {};
+  const r = await startGoogleConnect(env, data, ORIGIN, 'gmail', NOW);
+  assert.equal(r.ok, true);
+  const url = new URL(r.url);
+  assert.equal(url.origin + url.pathname, 'https://accounts.google.com/o/oauth2/v2/auth');
+  assert.equal(url.searchParams.get('scope'), SCOPE.gmail.join(' '));
+  assert.equal(url.searchParams.get('redirect_uri'), `${ORIGIN}/api/youtube/callback`);
+  assert.equal(url.searchParams.get('include_granted_scopes'), 'false', 'each service gets its own consent');
+  assert.equal(url.searchParams.get('code_challenge_method'), 'S256');
+  assert.equal(data.google_oauth.service, 'gmail');
+  assert.equal(data.google_oauth.state, url.searchParams.get('state'));
+});
+
+test('an unknown service and a missing secret are refused before any sign-in', async () => {
+  assert.equal((await startGoogleConnect(env, {}, ORIGIN, 'bank', NOW)).ok, false);
+  assert.equal((await startGoogleConnect(env, {}, ORIGIN, '__proto__', NOW)).ok, false);
+  const noSecret = await startGoogleConnect({ ...env, CHE_OAUTH_SECRET: 'short' }, {}, ORIGIN, 'drive', NOW);
+  assert.equal(noSecret.ok, false);
+  assert.match(noSecret.error, /CHE_OAUTH_SECRET/);
+});
+
+test('a callback with the wrong state is refused and leaves the real pending sign-in alone', async () => {
+  const data = { google_oauth: pendingFor('calendar') };
+  const r = await finishGoogleConnect(env, data, { state: 'forged', code: 'x' }, fakeGoogle(), ORIGIN, NOW);
+  assert.equal(r.ok, false);
+  assert.equal(data.google_oauth.service, 'calendar', 'the real pending sign-in is kept');
+});
+
+test('a successful Gmail sign-in stores sealed tokens and reports the account', async () => {
+  const data = { google_oauth: pendingFor('gmail') };
+  const fetcher = fakeGoogle({
+    'https://oauth2.googleapis.com/token': tokenHandler({ scope: SCOPE.gmail }),
+    'https://gmail.googleapis.com/gmail/v1/users/me/profile': () => json({ emailAddress: 'owner@example.com' }),
+  });
+  const r = await finishGoogleConnect(env, data, { state: 'expected-state', code: 'code-1' }, fetcher, ORIGIN, NOW);
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.account, 'owner@example.com');
+  assert.equal(data.google_oauth, undefined, 'the pending request is used once');
+  const stored = JSON.stringify(data.google_connections);
+  assert.equal(stored.includes('refresh-token-value'), false, 'refresh token is sealed at rest');
+  assert.equal(stored.includes('access-token-value'), false, 'access token is sealed at rest');
+  assert.equal(data.google_connections.gmail.status, 'connected');
+});
+
+test('a grant missing any approved permission is revoked and not saved', async () => {
+  const data = { google_oauth: pendingFor('gmail') };
+  const fetcher = fakeGoogle({
+    'https://oauth2.googleapis.com/token': tokenHandler({ scope: [SCOPE.gmail[0]] }),
+    'https://oauth2.googleapis.com/revoke': () => new Response('', { status: 200 }),
+  });
+  const r = await finishGoogleConnect(env, data, { state: 'expected-state', code: 'c' }, fetcher, ORIGIN, NOW);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /every permission/);
+  assert.equal(data.google_connections, undefined);
+  assert.ok(fetcher.calls.some((c) => c.url.includes('/revoke')), 'the partial grant is revoked at Google');
+});
+
+test('a sign-in without a long-term refresh token is refused', async () => {
+  const data = { google_oauth: pendingFor('drive') };
+  const fetcher = fakeGoogle({
+    'https://oauth2.googleapis.com/token': () => json({ access_token: 'a', scope: SCOPE.drive.join(' '), expires_in: 3600 }),
+    'https://oauth2.googleapis.com/revoke': () => new Response('', { status: 200 }),
+  });
+  const r = await finishGoogleConnect(env, data, { state: 'expected-state', code: 'c' }, fetcher, ORIGIN, NOW);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /long-term/);
+});
+
+test('a Google access error at the callback is shown in the owner\'s words', async () => {
+  const data = { google_oauth: pendingFor('calendar') };
+  const r = await finishGoogleConnect(env, data, { state: 'expected-state', error: 'access_denied' }, fakeGoogle(), ORIGIN, NOW);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /did not approve/);
+});
+
+test('a stored token refreshes, and an expired grant becomes needs_reconnect', async () => {
+  const data = { google_oauth: pendingFor('gmail') };
+  const ok = fakeGoogle({
+    'https://oauth2.googleapis.com/token': tokenHandler({ scope: SCOPE.gmail }),
+    'https://gmail.googleapis.com/gmail/v1/users/me/profile': () => json({ emailAddress: 'o@example.com' }),
+  });
+  await finishGoogleConnect(env, data, { state: 'expected-state', code: 'c' }, ok, ORIGIN, NOW);
+  // Access token is stale: the next call refreshes it.
+  data.google_connections.gmail.access_expires_at = NOW - 1;
+  const refresh = fakeGoogle({ 'https://oauth2.googleapis.com/token': () => json({ access_token: 'fresh', expires_in: 3600 }) });
+  const token = await googleAccessToken(env, data, 'gmail', refresh, NOW);
+  assert.equal(token.ok, true);
+  assert.equal(token.token, 'fresh');
+  // Google now refuses the grant.
+  data.google_connections.gmail.access_expires_at = NOW - 1;
+  const revoked = fakeGoogle({ 'https://oauth2.googleapis.com/token': () => json({ error: 'invalid_grant' }, 400) });
+  const dead = await googleAccessToken(env, data, 'gmail', revoked, NOW);
+  assert.equal(dead.ok, false);
+  assert.match(dead.error, /Reconnect Gmail/);
+  assert.equal(data.google_connections.gmail.status, 'needs_reconnect');
+});
+
+test('disconnect revokes at Google and forgets the local copy', async () => {
+  const data = { google_oauth: pendingFor('drive') };
+  const fetcher = fakeGoogle({
+    'https://oauth2.googleapis.com/token': tokenHandler({ scope: SCOPE.drive }),
+    'https://www.googleapis.com/drive/v3/about': () => json({ user: { emailAddress: 'o@example.com' } }),
+    'https://oauth2.googleapis.com/revoke': () => new Response('', { status: 200 }),
+  });
+  await finishGoogleConnect(env, data, { state: 'expected-state', code: 'c' }, fetcher, ORIGIN, NOW);
+  const r = await disconnectGoogle(env, data, 'drive', fetcher);
+  assert.equal(r.ok, true);
+  assert.equal(r.revoked_at_google, true);
+  assert.equal(data.google_connections.drive, undefined);
+});
+
+test('the raw email is valid RFC 2822 and a subject cannot inject headers', () => {
+  const raw = buildRawEmail({ to: 'a@example.com', subject: 'Hi\r\nBcc: spy@example.com', body: 'Line one\nLine two — café' });
+  const text = Buffer.from(raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+  const headers = text.split('\r\n\r\n')[0].split('\r\n');
+  assert.equal(headers.some((h) => /^Bcc:/i.test(h)), false, 'no injected Bcc header');
+  assert.equal(headers.filter((h) => /^To:/.test(h)).length, 1);
+  assert.match(text, /Subject: =\?UTF-8\?B\?/);
+  const body = text.split('\r\n\r\n').slice(1).join('\r\n\r\n').replace(/\r\n/g, '');
+  assert.equal(Buffer.from(body, 'base64').toString('utf8'), 'Line one\nLine two — café');
+});
+
+test('gmailSend refuses an incomplete address or empty text without calling Google', async () => {
+  const data = { google_connections: {} };
+  const fetcher = fakeGoogle({});
+  assert.equal((await gmailSend(env, data, { to: 'bob', body: 'hi' }, fetcher)).ok, false);
+  assert.equal((await gmailSend(env, data, { to: 'bob@example.com', body: '   ' }, fetcher)).ok, false);
+  assert.equal(fetcher.calls.length, 0);
+});
+
+test('Gmail list reads message headers and Drive create sends a Google Doc upload', async () => {
+  const data = { google_connections: { gmail: { status: 'connected', refresh: null }, drive: { status: 'connected', refresh: null } } };
+  const fetcher = fakeGoogle({});
+  const access = (await import('./google_services.js')).googleAccessToken;
+  // Use a fake token by pre-seeding a fresh access token in the record.
+  const { sealToken } = await import('./youtube_connection.js');
+  data.google_connections.gmail.access = await sealToken(env, 'live-token');
+  data.google_connections.gmail.access_expires_at = Date.now() + 3600_000;
+  data.google_connections.gmail.refresh = await sealToken(env, 'r');
+  data.google_connections.drive.access = await sealToken(env, 'live-token');
+  data.google_connections.drive.access_expires_at = Date.now() + 3600_000;
+  data.google_connections.drive.refresh = await sealToken(env, 'r');
+  const api = fakeGoogle({
+    'https://gmail.googleapis.com/gmail/v1/users/me/messages?': () => json({ messages: [{ id: 'm1' }], resultSizeEstimate: 1 }),
+    'https://gmail.googleapis.com/gmail/v1/users/me/messages/m1': () => json({
+      snippet: 'Hello there', payload: { headers: [{ name: 'From', value: 'Ann <ann@example.com>' }, { name: 'subject', value: 'Lunch' }] },
+    }),
+    'https://www.googleapis.com/upload/drive/v3/files': () => json({ id: 'd1', name: 'Plan', webViewLink: 'https://docs.google.com/d1' }),
+  });
+  assert.ok(access);
+  const mail = await gmailList(env, data, {}, api);
+  assert.equal(mail.ok, true);
+  assert.equal(mail.messages[0].from, 'Ann <ann@example.com>');
+  assert.equal(mail.messages[0].subject, 'Lunch');
+  const doc = await driveCreateDoc(env, data, { name: 'Plan\nEvil', text: 'Step one' }, api);
+  assert.equal(doc.ok, true);
+  const upload = api.calls.find((c) => c.url.includes('upload/drive'));
+  assert.match(upload.headers['content-type'], /multipart\/related; boundary=che/);
+  assert.match(upload.body, /"mimeType":"application\/vnd\.google-apps\.document"/);
+  assert.match(upload.body, /"name":"Plan Evil"/, 'newlines removed from the document name');
+});
+
+test('calendar windows follow the owner\'s time zone across daylight saving', () => {
+  // Chicago is UTC-6 in January and UTC-5 in July.
+  assert.equal(new Date(zonedWallTimeToUtc(2026, 1, 15, 0, 0, 'America/Chicago')).toISOString(), '2026-01-15T06:00:00.000Z');
+  assert.equal(new Date(zonedWallTimeToUtc(2026, 7, 15, 0, 0, 'America/Chicago')).toISOString(), '2026-07-15T05:00:00.000Z');
+  const today = calendarWindow('today', 'America/Chicago', NOW);
+  assert.equal(today.timeMin, '2026-10-14T05:00:00.000Z');
+  assert.equal(today.timeMax, '2026-10-15T05:00:00.000Z');
+  const week = calendarWindow('this week', 'America/Chicago', NOW);
+  assert.equal(week.timeMax, '2026-10-21T05:00:00.000Z');
+});
+
+test('calendar create sends local wall-clock times in the owner\'s zone and an hour by default', async () => {
+  const data = { google_connections: { calendar: { status: 'connected', refresh: null } } };
+  const { sealToken } = await import('./youtube_connection.js');
+  data.google_connections.calendar.access = await sealToken(env, 'live-token');
+  data.google_connections.calendar.access_expires_at = Date.now() + 3600_000;
+  data.google_connections.calendar.refresh = await sealToken(env, 'r');
+  const api = fakeGoogle({
+    'https://www.googleapis.com/calendar/v3/calendars/primary/events': (u, init) => json({
+      id: 'e1', summary: JSON.parse(init.body).summary, start: { dateTime: '2026-10-20T14:30:00-05:00' }, htmlLink: 'https://cal/e1',
+    }),
+  });
+  const r = await calendarCreate(env, data, { summary: 'Dentist', date: '2026-10-20', time: '14:30', timeZone: 'America/Chicago' }, api);
+  assert.equal(r.ok, true);
+  const body = JSON.parse(api.calls[0].body);
+  assert.equal(body.start.dateTime, '2026-10-20T14:30:00');
+  assert.equal(body.end.dateTime, '2026-10-20T15:30:00');
+  assert.equal(body.start.timeZone, 'America/Chicago');
+  const bad = await calendarCreate(env, data, { summary: 'X', date: '2026-13-40', time: '14:30' }, api);
+  assert.equal(bad.ok, false);
+});
+
+test('owner phrases map to one intent each, and ordinary chat maps to none', () => {
+  assert.deepEqual(googleChatIntent('check my email'), { kind: 'gmail_list' });
+  assert.deepEqual(googleChatIntent('send an email to ann@example.com saying lunch at noon'),
+    { kind: 'gmail_send', to: 'ann@example.com', body: 'lunch at noon' });
+  assert.deepEqual(googleChatIntent("what's on my calendar tomorrow"), { kind: 'calendar_list', range: 'tomorrow' });
+  assert.deepEqual(googleChatIntent('add dentist on 2026-10-20 at 2:30 pm'),
+    { kind: 'calendar_create', summary: 'dentist', date: '2026-10-20', time: '14:30' });
+  assert.deepEqual(googleChatIntent('list my drive files'), { kind: 'drive_list' });
+  assert.deepEqual(googleChatIntent('create a doc called Plan with Step one'), { kind: 'drive_create', name: 'Plan', text: 'Step one' });
+  assert.equal(googleChatIntent('hello there'), null);
+  assert.equal(googleChatIntent('send money to bob'), null);
+});
+
+test('a spoken request for a service that is not connected says so and does nothing', async () => {
+  const fetcher = fakeGoogle({});
+  const r = await runGoogleIntent({ kind: 'gmail_list' }, { env, data: { google_connections: {} }, fetcher, now: NOW });
+  assert.equal(r.ok, false);
+  assert.match(r.text, /Gmail is not connected, sir/);
+  assert.equal(fetcher.calls.length, 0);
+});
+
+test('a spoken email send reports the real result', async () => {
+  const { sealToken } = await import('./youtube_connection.js');
+  const data = { google_connections: { gmail: {
+    status: 'connected', refresh: await sealToken(env, 'r'), access: await sealToken(env, 'live-token'), access_expires_at: Date.now() + 3600_000,
+  } } };
+  const api = fakeGoogle({ 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send': () => json({ id: 'sent-1' }) });
+  const r = await runGoogleIntent({ kind: 'gmail_send', to: 'ann@example.com', body: 'lunch' }, { env, data, fetcher: api, now: NOW });
+  assert.equal(r.ok, true);
+  assert.equal(r.text, 'Sent to ann@example.com, sir, with the subject "(no subject)".');
+});
+
+test('listing helpers exist and read Drive and Calendar without sending anything', async () => {
+  const { sealToken } = await import('./youtube_connection.js');
+  const data = { google_connections: {
+    drive: { status: 'connected', refresh: await sealToken(env, 'r'), access: await sealToken(env, 't'), access_expires_at: Date.now() + 3600_000 },
+    calendar: { status: 'connected', refresh: await sealToken(env, 'r'), access: await sealToken(env, 't'), access_expires_at: Date.now() + 3600_000 },
+  } };
+  const api = fakeGoogle({
+    'https://www.googleapis.com/drive/v3/files': () => json({ files: [{ id: 'f', name: 'Notes', mimeType: 'x', modifiedTime: 'now' }] }),
+    'https://www.googleapis.com/calendar/v3/calendars/primary/events': () => json({ items: [{ id: 'e', summary: 'Standup', start: { dateTime: '2026-10-14T15:00:00Z' } }] }),
+  });
+  assert.equal((await driveList(env, data, {}, api)).files[0].name, 'Notes');
+  const cal = await calendarList(env, data, calendarWindow('today', 'America/Chicago', NOW), api);
+  assert.equal(cal.events[0].summary, 'Standup');
+  assert.ok(api.calls.every((c) => c.method === 'GET'), 'listing never writes');
+});
+
+test('connector states: a grant is ready only with a real account; un-approved Ads is Needs Setup', async () => {
+  assert.equal((await googleConnectorStates(env, { google_connections: {} })).calendar.state, 'not_connected');
+  const withAccount = { google_connections: { google_ads: { status: 'connected', account: '2 Google Ads accounts', refresh: await sealToken(env, 'r') } } };
+  assert.equal((await googleConnectorStates(env, withAccount)).google_ads.state, 'ready');
+  const pending = { google_connections: { google_ads: { status: 'needs_access', account: '',
+    access_status_detail: 'Needs Setup: Google has not confirmed CHE access yet.', refresh: await sealToken(env, 'r') } } };
+  const st = (await googleConnectorStates(env, pending)).google_ads;
+  assert.equal(st.state, 'not_connected');
+  assert.match(st.detail, /Needs Setup/);
+});
+
+test('Google Ads reads nothing without a grant, and never calls Google', async () => {
+  const fetcher = fakeGoogle({});
+  const r = await adsCustomers(env, { google_connections: {} }, fetcher);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /not connected/);
+  assert.equal(fetcher.calls.length, 0);
+});
+
+test('an Ads sign-in Google has not approved is kept as Needs Setup, and the grant is not revoked', async () => {
+  const data = { google_oauth: pendingFor('google_ads') };
+  const fetcher = fakeGoogle({
+    'https://oauth2.googleapis.com/token': tokenHandler({ scope: SCOPE.google_ads }),
+    'https://googleads.googleapis.com/': () => json({ error: { message: 'The user has not approved API access' } }, 403),
+  });
+  const r = await finishGoogleConnect(env, data, { state: 'expected-state', code: 'c' }, fetcher, ORIGIN, NOW);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /Needs Setup/);
+  assert.equal(data.google_connections.google_ads.status, 'needs_access');
+  assert.equal(fetcher.calls.some((c) => c.url.includes('/revoke')), false, 'the real grant is kept');
+});
+
+test('an Ads account list with no accounts is Needs Setup, not Connected', async () => {
+  const data = { google_oauth: pendingFor('google_ads') };
+  const fetcher = fakeGoogle({
+    'https://oauth2.googleapis.com/token': tokenHandler({ scope: SCOPE.google_ads }),
+    'https://googleads.googleapis.com/': () => json({ resourceNames: [] }),
+  });
+  const r = await finishGoogleConnect(env, data, { state: 'expected-state', code: 'c' }, fetcher, ORIGIN, NOW);
+  assert.equal(r.ok, false);
+  assert.equal(data.google_connections.google_ads.status, 'needs_access');
+});
+
+test('the Ads campaign report only reads, and converts micros to currency', async () => {
+  const data = { google_connections: { google_ads: { status: 'connected', account: '1 account', refresh: await sealToken(env, 'r'),
+    access: await sealToken(env, 't'), access_expires_at: Date.now() + 3600000 } } };
+  const fetcher = fakeGoogle({
+    'https://googleads.googleapis.com/': () => json([{ results: [{ campaign: { name: 'Spring', status: 'ENABLED' },
+      metrics: { impressions: '120', clicks: '9', costMicros: '2500000' } }] }]),
+  });
+  const r = await adsCampaignReport(env, data, { customerId: '123-456-7890' }, fetcher);
+  assert.equal(r.ok, true);
+  assert.equal(r.campaigns[0].cost, 2.5);
+  assert.equal(r.campaigns[0].clicks, 9);
+  assert.match(fetcher.calls[0].url, /customers\/1234567890\/googleAds:searchStream$/);
+  const query = JSON.parse(fetcher.calls[0].body).query;
+  assert.match(query, /FROM campaign/);
+  assert.equal(/\b(?:INSERT|UPDATE|DELETE|MUTATE|CREATE)\b/i.test(query), false, 'the query only reads');
+});
+
+test('the Ads read phrases map to read intents, and writes do not', () => {
+  assert.deepEqual(googleChatIntent('list my Google Ads accounts'), { kind: 'ads_accounts' });
+  assert.deepEqual(googleChatIntent('show my google ads campaigns'), { kind: 'ads_report' });
+});
+
+function memoryStorage() {
+  const m = new Map();
+  return { m, get: async (k) => (m.has(k) ? structuredClone(m.get(k)) : undefined), put: async (k, v) => { m.set(k, structuredClone(v)); } };
+}
+
+async function stepSetup(extraData = {}) {
+  const storage = memoryStorage();
+  const grant = { status: 'connected', account: 'owner@example.com', refresh: await sealToken(env, 'r'),
+    access: await sealToken(env, 'live'), access_expires_at: Date.now() + 3600000 };
+  const stored = { google_connections: { gmail: grant, calendar: grant, drive: grant }, ...extraData };
+  return {
+    storage, stored,
+    opts: { storage, env, now: NOW, loadData: async () => structuredClone(stored), saveData: async (d) => { Object.assign(stored, d); } },
+  };
+}
+
+test('an email is held until a plain yes, and nothing is sent before it', async () => {
+  const s = await stepSetup();
+  const fetcher = fakeGoogle({ 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send': () => json({ id: 'sent-1' }) });
+  const held = await googleOwnerStep('send an email to ann@example.com saying lunch at noon', { ...s.opts, fetcher });
+  assert.equal(held.held, true);
+  assert.match(held.text, /Say yes to send it/);
+  assert.equal(fetcher.calls.length, 0, 'nothing was sent');
+  const sent = await googleOwnerStep('yes', { ...s.opts, fetcher });
+  assert.equal(sent.ok, true);
+  assert.match(sent.text, /Sent to ann@example.com/);
+  assert.equal(fetcher.calls.filter((c) => c.method === 'POST').length, 1);
+});
+
+test('a no cancels the held email and sends nothing', async () => {
+  const s = await stepSetup();
+  const fetcher = fakeGoogle({ 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send': () => json({ id: 'x' }) });
+  await googleOwnerStep('send an email to ann@example.com saying hi', { ...s.opts, fetcher });
+  const no = await googleOwnerStep('no', { ...s.opts, fetcher });
+  assert.match(no.text, /Cancelled, sir\. The email to ann@example.com was not done\./);
+  assert.equal(fetcher.calls.length, 0);
+  assert.equal(s.storage.m.get(PENDING_GOOGLE_ACTION_KEY), null);
+});
+
+test('any other reply drops a held write, and an expired hold is not released by a yes', async () => {
+  const s = await stepSetup();
+  const fetcher = fakeGoogle({});
+  await googleOwnerStep('send an email to ann@example.com saying hi', { ...s.opts, fetcher });
+  assert.equal(await googleOwnerStep('what is the weather', { ...s.opts, fetcher }), null);
+  assert.equal(s.storage.m.get(PENDING_GOOGLE_ACTION_KEY), null);
+  await googleOwnerStep('send an email to ann@example.com saying hi', { ...s.opts, fetcher });
+  const late = await googleOwnerStep('yes', { ...s.opts, fetcher, now: NOW + GOOGLE_HOLD_MS + 1 });
+  assert.equal(late, null, 'an expired hold is never released');
+  assert.equal(fetcher.calls.length, 0);
+});
+
+test('a calendar event runs at once on the explicit request, in the owner zone', async () => {
+  const s = await stepSetup();
+  const fetcher = fakeGoogle({
+    'https://www.googleapis.com/calendar/v3/calendars/primary/events': () => json({ id: 'e1', summary: 'dentist', start: { dateTime: '2026-10-20T14:30:00' } }),
+  });
+  const done = await googleOwnerStep('add dentist on 2026-10-20 at 2:30 pm', { ...s.opts, fetcher });
+  assert.equal(done.held, undefined, 'no second yes for a calendar event');
+  assert.equal(done.text, 'Added "dentist" on 2026-10-20 at 14:30 in your calendar, sir.');
+  assert.equal(fetcher.calls.filter((c) => c.method === 'POST').length, 1);
+  assert.equal(s.storage.m.get(PENDING_GOOGLE_ACTION_KEY), undefined);
+});
+
+test('disconnect keeps the Google grant when another CHE connection shares the sign-in', async () => {
+  const data = { youtube: { refresh: await sealToken(env, 'yt-refresh') }, google_connections: {
+    drive: { status: 'connected', refresh: await sealToken(env, 'drive-refresh') },
+  } };
+  const fetcher = fakeGoogle({ 'https://oauth2.googleapis.com/revoke': () => new Response('', { status: 200 }) });
+  const r = await disconnectGoogle(env, data, 'drive', fetcher);
+  assert.equal(r.ok, true);
+  assert.equal(r.revoked_at_google, false);
+  assert.equal(r.kept_at_google, true);
+  assert.equal(fetcher.calls.some((c) => c.url.includes('/revoke')), false, 'YouTube is not put at risk');
+  assert.equal(data.google_connections.drive, undefined, 'the local copy is still removed');
+});
+
+test('Google Ads uses the current supported API version by default, and the owner can change it', () => {
+  assert.equal(adsApiBase({}), 'https://googleads.googleapis.com/v24');
+  assert.equal(adsApiBase({ CHE_GOOGLE_ADS_API_VERSION: 'v23' }), 'https://googleads.googleapis.com/v23');
+  assert.equal(adsApiBase({ CHE_GOOGLE_ADS_API_VERSION: 'v20/../x' }), 'https://googleads.googleapis.com/v24', 'only a version number is accepted');
+});
+
+test('a write for a service that is not connected says so and holds nothing', async () => {
+  const s = await stepSetup({ google_connections: {} });
+  const r = await googleOwnerStep('send an email to ann@example.com saying hi', { ...s.opts, fetcher: fakeGoogle({}) });
+  assert.match(r.text, /Gmail is not connected, sir/);
+  assert.equal(s.storage.m.get(PENDING_GOOGLE_ACTION_KEY), undefined);
+});
+
+test('a bad address is refused before anything is held', async () => {
+  const s = await stepSetup();
+  const r = await googleOwnerStep('send an email to bob saying hi', { ...s.opts, fetcher: fakeGoogle({}) });
+  assert.equal(r.ok, false);
+  assert.match(r.text, /not a full email address/);
+  assert.equal(s.storage.m.get(PENDING_GOOGLE_ACTION_KEY), undefined);
+});
+
+test('reads run at once and hold nothing', async () => {
+  const s = await stepSetup();
+  const fetcher = fakeGoogle({ 'https://gmail.googleapis.com/gmail/v1/users/me/messages?': () => json({ resultSizeEstimate: 0 }) });
+  const r = await googleOwnerStep('check my email', { ...s.opts, fetcher });
+  assert.equal(r.text, 'No unread email, sir.');
+  assert.equal(s.storage.m.get(PENDING_GOOGLE_ACTION_KEY), undefined);
+});
+
+test('a Google Ads grant waiting for approval becomes Connected on the next refresh once Google lists an account', async () => {
+  const data = { google_connections: { google_ads: { status: 'needs_access', account: '', access_status_detail: 'Needs Setup',
+    refresh: await sealToken(env, 'ads-refresh') } } };
+  const fetcher = fakeGoogle({
+    'https://oauth2.googleapis.com/token': () => json({ access_token: 'fresh', expires_in: 3600 }),
+    'https://googleads.googleapis.com/': () => json({ resourceNames: ['customers/1234567890'] }),
+  });
+  assert.equal(await googleRecheckPending(env, data, fetcher), true);
+  assert.equal(data.google_connections.google_ads.status, 'connected');
+  assert.match(data.google_connections.google_ads.account, /1 Google Ads account/);
+});
+
+test('a Google Ads grant still unapproved stays Needs Setup and keeps its grant', async () => {
+  const data = { google_connections: { google_ads: { status: 'needs_access', account: '', access_status_detail: 'Needs Setup',
+    refresh: await sealToken(env, 'ads-refresh') } } };
+  const fetcher = fakeGoogle({
+    'https://oauth2.googleapis.com/token': () => json({ access_token: 'fresh', expires_in: 3600 }),
+    'https://googleads.googleapis.com/': () => json({ error: { message: 'not approved' } }, 403),
+  });
+  await googleRecheckPending(env, data, fetcher);
+  assert.equal(data.google_connections.google_ads.status, 'needs_access');
+  assert.equal(fetcher.calls.some((c) => c.url.includes('/revoke')), false);
+});
+
+test('reconnecting a service does not revoke a grant that another CHE connection shares', async () => {
+  const data = { google_oauth: pendingFor('calendar'), youtube: { refresh: await sealToken(env, 'yt-refresh') },
+    google_connections: { calendar: { status: 'connected', refresh: await sealToken(env, 'old-calendar-refresh') } } };
+  const fetcher = fakeGoogle({
+    'https://oauth2.googleapis.com/token': tokenHandler({ scope: SCOPE.calendar }),
+    'https://www.googleapis.com/calendar/v3/calendars/primary/events': () => json({ items: [] }),
+  });
+  const r = await finishGoogleConnect(env, data, { state: 'expected-state', code: 'c' }, fetcher, ORIGIN, NOW);
+  assert.equal(r.ok, true, r.error);
+  assert.equal(fetcher.calls.some((c) => c.url.includes('/revoke')), false, 'the shared grant is not revoked');
+});
+
+test('disconnecting YouTube does not revoke a grant a Google service shares', async () => {
+  const data = { youtube: { refresh: await sealToken(env, 'yt-refresh') },
+    google_connections: { drive: { status: 'connected', refresh: await sealToken(env, 'drive-refresh') } } };
+  const fetcher = fakeGoogle({ 'https://oauth2.googleapis.com/revoke': () => new Response('', { status: 200 }) });
+  const r = await disconnectYouTube(env, data, fetcher);
+  assert.equal(r.revoked_at_google, false);
+  assert.equal(fetcher.calls.some((c) => c.url.includes('/revoke')), false, 'Google keeps its sign-in');
+  assert.equal(data.youtube, undefined, 'YouTube is still forgotten here');
+});
+
+test('Gmail that lists messages but returns none of their details is an error, not an empty inbox', async () => {
+  const { sealToken: seal } = await import('./youtube_connection.js');
+  const data = { google_connections: { gmail: { status: 'connected', refresh: await seal(env, 'r'),
+    access: await seal(env, 'live'), access_expires_at: Date.now() + 3600000 } } };
+  const fetcher = fakeGoogle({
+    'https://gmail.googleapis.com/gmail/v1/users/me/messages?': () => json({ messages: [{ id: 'm1' }, { id: 'm2' }], resultSizeEstimate: 2 }),
+  });
+  const r = await gmailList(env, data, {}, fetcher);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /would not return their details/);
+});
+
+test('the Ads campaign report says which currency it is in, and reads it from the account', async () => {
+  const data = { google_connections: { google_ads: { status: 'connected', account: '1 account', refresh: await sealToken(env, 'r'),
+    access: await sealToken(env, 't'), access_expires_at: Date.now() + 3600000 } } };
+  const fetcher = fakeGoogle({
+    'https://googleads.googleapis.com/': () => json([{ results: [{ customer: { currencyCode: 'GBP' },
+      campaign: { name: 'Spring', status: 'ENABLED' }, metrics: { impressions: '10', clicks: '1', costMicros: '1500000' } }] }]),
+  });
+  const r = await adsCampaignReport(env, data, { customerId: '1234567890' }, fetcher);
+  assert.equal(r.currency, 'GBP');
+  assert.match(JSON.parse(fetcher.calls[0].body).query, /customer\.currency_code/);
+});

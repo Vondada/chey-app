@@ -288,15 +288,18 @@ export async function disconnectYouTube(env, data, fetcher = fetch) {
   const conn = data.youtube;
   if (!conn) return { ok: true, revoked_at_google: false, was_connected: false };
   const refreshToken = await open(env, conn.refresh).catch(() => '');
-  const revoked = await revokeGrant(fetcher, refreshToken);
+  // A Google service connected through the same client may share this sign-in.
+  // Revoking would end it too, so CHE then forgets only YouTube's copy.
+  const sharedWithGoogle = Object.values(data.google_connections || {}).some((c) => Boolean(c?.refresh));
+  const revoked = sharedWithGoogle ? false : await revokeGrant(fetcher, refreshToken);
   delete data.youtube;
-  return { ok: true, was_connected: true, revoked_at_google: revoked };
+  return { ok: true, was_connected: true, revoked_at_google: revoked, kept_at_google: sharedWithGoogle };
 }
 
 // A small page for the browser tab that Google returns to. Text is escaped.
-export function youtubeResultPage(ok, message) {
+export function youtubeResultPage(ok, message, label = 'YouTube') {
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-  const title = ok ? 'YouTube connected' : 'YouTube not connected';
+  const title = ok ? `${label} connected` : `${label} not connected`;
   const body = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}</title>
@@ -308,3 +311,10 @@ export function youtubeResultPage(ok, message) {
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
   });
 }
+
+// Shared Google sign-in pieces, reused by google_services.js so Gmail, Drive,
+// Calendar and Ads use the same OAuth client, PKCE, sealed tokens and revoke.
+export {
+  ACCESS_SAFETY_MS, AUTH_URL, PENDING_TTL_MS, TOKEN_URL, clientConfig as googleClientConfig,
+  codeChallenge, open as openToken, postForm, randomToken, revokeGrant, seal as sealToken,
+};

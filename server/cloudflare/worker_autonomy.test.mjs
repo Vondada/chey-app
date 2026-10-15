@@ -2145,7 +2145,8 @@ test('final review: a verified research-cache hit ends the turn with zero resear
     assert.equal(saved.get('che_reliability_ledger').totals.memory_answers, 1);
     // A request to DO something with the same facts is never short-circuited:
     // the action and its permission checks must run.
-    const actionQ = 'Email John the latest provider limits';
+    // Starts with a verb that is not a Gmail send, so the Gmail step does not answer it first.
+    const actionQ = 'Remind me to email John the latest provider limits';
     saved.set(`kc:${researchKey(actionQ)}`, { ...saved.get(`kc:${researchKey(question)}`), key: researchKey(actionQ) });
     await (await chat(actionQ)).text();
     assert.ok(aiCalls + providerCalls > 0, 'an action request runs the full path');

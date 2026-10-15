@@ -27,6 +27,10 @@ void main() {
     expect(parseScreenCommand('connect my YouTube channel')?.text, 'youtube');
     expect(parseScreenCommand('connect NinjaTrader')?.text, 'broker');
     expect(parseScreenCommand('open connections')?.text, '');
+    expect(parseScreenCommand('connect my Gmail')?.text, 'gmail');
+    expect(parseScreenCommand('connect google drive')?.text, 'drive');
+    expect(parseScreenCommand('connect my calendar')?.text, 'calendar');
+    expect(parseScreenCommand('connect google ads')?.text, 'google_ads');
     expect(parseScreenCommand('analyze NQ chart')?.op, isNot(ScreenOp.openConnections));
     expect(parseScreenCommand('make a YouTube video')?.op, isNot(ScreenOp.openConnections));
   });
@@ -56,6 +60,8 @@ void main() {
     expect(find.text('YouTube channel'), findsOneWidget);
     expect(find.text('Existing YouTube channel'), findsOneWidget);
     expect(find.text('NinjaTrader / Tradovate'), findsOneWidget);
+    await tester.scrollUntilVisible(find.textContaining('No secure bank-link provider'), 200,
+      scrollable: find.byType(Scrollable).first);
     expect(find.textContaining('No secure bank-link provider'), findsOneWidget);
     expect(find.text('Unsupported'), findsWidgets);
     await tester.scrollUntilVisible(find.text('Payments / Stripe'), 200,
@@ -153,10 +159,109 @@ void main() {
     final voice = CheConnectionsVoice.handler!;
 
     expect(await tester.runAsync(() => voice('refresh connections')), '');
-    expect(spoken.last, 'Connection check complete. YouTube: Connected. NinjaTrader: Needs Setup. Bank linking remains unavailable.');
+    expect(spoken.last, 'Connection check complete. YouTube: Connected. NinjaTrader: Needs Setup. Gmail: Unavailable. Google Drive: Unavailable. Google Calendar: Unavailable. Google Ads: Unavailable. Bank linking remains unavailable.');
     expect(await tester.runAsync(() => voice('connect NinjaTrader')), '');
     expect(spoken.last, 'NinjaTrader: Tradovate OAuth application is not configured.');
     expect(await tester.runAsync(() => voice('tell me a joke')), isNull, reason: 'anything else goes to Chat');
+  });
+
+  testWidgets('Gmail, Drive and Calendar rows show the verified account, and a spoken connect asks Google for only that service', (tester) async {
+    tester.view.physicalSize = const Size(1170, 4200);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    final spoken = <String>[];
+    final posted = <String>[];
+    final client = MockClient((r) async {
+      if (r.method == 'POST') {
+        posted.add(r.body);
+        return http.Response(jsonEncode({'detail': 'Google Drive sign-in is not configured. Open Keys for setup.'}), 503,
+          headers: {'content-type': 'application/json'});
+      }
+      return http.Response(jsonEncode({'connectors': {
+        'gmail': {'state': 'ready', 'detail': 'owner@example.com'},
+        'drive': {'state': 'not_connected', 'detail': 'Google Drive is not connected.'},
+        'google_ads': {'state': 'not_connected', 'detail': 'Signed in, but CHE needs the Google Ads developer token.'},
+      }}), 200, headers: {'content-type': 'application/json'});
+    });
+    await tester.pumpWidget(MaterialApp(theme: CheTheme.dark(),
+      home: CheConnectionsScreen(baseUrl: 'https://che.test', headers: () => {}, client: client,
+        onSpeak: spoken.add, onVoiceSettings: () {}, onKeys: () {})));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('owner@example.com'), findsOneWidget);
+    expect(find.text('Connect Gmail'), findsOneWidget);
+    await tester.scrollUntilVisible(find.textContaining('developer token'), 200,
+      scrollable: find.byType(Scrollable).first);
+    expect(find.textContaining('developer token'), findsOneWidget);
+
+    expect(await tester.runAsync(() => CheConnectionsVoice.handler!('connect my drive')), '');
+    expect(jsonDecode(posted.single)['service'], 'drive');
+    expect(spoken.last, 'Google Drive: Google Drive sign-in is not configured. Open Keys for setup.');
+  });
+
+  testWidgets('a connected Google service is removed only after a confirmed yes, by button and by voice', (tester) async {
+    tester.view.physicalSize = const Size(1170, 4200);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    final spoken = <String>[];
+    final posted = <String>[];
+    var connected = true;
+    final client = MockClient((r) async {
+      if (r.method == 'POST' && r.url.path == '/api/google/disconnect') {
+        posted.add(r.body);
+        connected = false;
+        return http.Response(jsonEncode({'ok': true, 'label': 'Gmail', 'was_connected': true, 'revoked_at_google': true}),
+          200, headers: {'content-type': 'application/json'});
+      }
+      return http.Response(jsonEncode({'connectors': {
+        'gmail': connected ? {'state': 'ready', 'detail': 'owner@example.com'} : {'state': 'not_connected', 'detail': 'Gmail is not connected.'},
+      }}), 200, headers: {'content-type': 'application/json'});
+    });
+    await tester.pumpWidget(MaterialApp(theme: CheTheme.dark(),
+      home: CheConnectionsScreen(baseUrl: 'https://che.test', headers: () => {}, client: client,
+        onSpeak: spoken.add, onVoiceSettings: () {}, onKeys: () {})));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Disconnect').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Disconnect Gmail?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+    await tester.pumpAndSettle();
+    expect(posted, isEmpty, reason: 'cancel removes nothing');
+    await tester.tap(find.text('Disconnect').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Disconnect'));
+    await tester.pumpAndSettle();
+    expect(jsonDecode(posted.single)['service'], 'gmail');
+    expect(spoken.last, 'Gmail disconnected. Google access was revoked.');
+
+    posted.clear();
+    connected = true;
+    expect(await tester.runAsync(() => CheConnectionsVoice.handler!('disconnect my gmail')), '');
+    expect(spoken.last, 'Disconnect Gmail? CHE revokes its access at Google. Say yes to disconnect, or no to cancel.');
+    expect(posted, isEmpty, reason: 'a spoken disconnect asks first');
+    expect(await tester.runAsync(() => CheConnectionsVoice.handler!('no')), '');
+    expect(spoken.last, 'Disconnect cancelled. Nothing was removed.');
+    expect(posted, isEmpty);
+    expect(await tester.runAsync(() => CheConnectionsVoice.handler!('disconnect my gmail')), '');
+    expect(await tester.runAsync(() => CheConnectionsVoice.handler!('yes')), '');
+    expect(jsonDecode(posted.single)['service'], 'gmail');
+  });
+
+  testWidgets('FundYourEdge shows Unsupported with its Rithmic reason and no connect button', (tester) async {
+    tester.view.physicalSize = const Size(1170, 4200);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    final client = MockClient((r) async => http.Response(jsonEncode({'connectors': {
+      'fundyouredge': {'state': 'none', 'detail': 'Rithmic requires its own licensed API.'},
+    }}), 200, headers: {'content-type': 'application/json'}));
+    await tester.pumpWidget(MaterialApp(theme: CheTheme.dark(),
+      home: CheConnectionsScreen(baseUrl: 'https://che.test', headers: () => {}, client: client,
+        onVoiceSettings: () {}, onKeys: () {})));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('FundYourEdge funded account'), 200,
+      scrollable: find.byType(Scrollable).first);
+    expect(find.text('FundYourEdge funded account'), findsOneWidget);
+    expect(find.textContaining('Rithmic'), findsWidgets);
+    expect(find.text('Unsupported'), findsWidgets);
   });
 
   testWidgets('HTTP auth failure clears stale connection claims', (tester) async {
