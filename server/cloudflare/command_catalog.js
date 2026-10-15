@@ -37,6 +37,10 @@ export const CONNECTORS = Object.freeze({
   site_hosting: { label: 'CHE site hosting', kind: 'builtin', setup: 'Built in: CHE serves the sites she builds.' },
   broker: { label: 'NinjaTrader / Tradovate account', kind: 'oauth', setup: 'Add CHE_TRADOVATE_OAUTH_CLIENT_ID and CHE_TRADOVATE_OAUTH_CLIENT_SECRET, then say "connect NinjaTrader" and sign in on Tradovate\'s page.' },
   youtube: { label: 'YouTube channel', kind: 'oauth', setup: 'Open Mailbox → Keys → YouTube and sign in with Google.' },
+  gmail: { label: 'Gmail', kind: 'oauth', setup: 'Say "connect my Gmail" or open Connections, then approve Gmail on Google\'s page.' },
+  drive: { label: 'Google Drive', kind: 'oauth', setup: 'Say "connect Google Drive" or open Connections, then approve Drive on Google\'s page. CHE sees only files it creates or you open with it.' },
+  calendar: { label: 'Google Calendar', kind: 'oauth', setup: 'Say "connect my calendar" or open Connections, then approve Calendar on Google\'s page.' },
+  google_ads: { label: 'Google Ads', kind: 'oauth', setup: 'Say "connect Google Ads" or open Connections. Also needs CHE_GOOGLE_ADS_DEVELOPER_TOKEN from Google Ads API approval.' },
   video_renderer: { label: 'Video renderer', kind: 'secret', setup: 'Needs CHE_VIDEO_RENDER_URL, or CHE_GITHUB_TOKEN with CHE_GITHUB_REPO for the free GitHub renderer.' },
   image_generation: { label: 'Image generation', kind: 'secret', setup: 'Workers AI images are built in when the AI binding is on; HD providers need their key and the paid-media switch.' },
   voice: { label: 'CHE voice (ElevenLabs or Fish)', kind: 'secret', setup: 'Add ELEVENLABS_API_KEY (or FISH_API_KEY) as a Worker secret.' },
@@ -45,6 +49,7 @@ export const CONNECTORS = Object.freeze({
   sms: { label: 'Twilio SMS', kind: 'secret', setup: 'Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and a sender number as Worker secrets.' },
   bookkeeping: { label: 'Bank or bookkeeping feed', kind: 'none', setup: 'CHE has no bank or bookkeeping connector yet.' },
   ads_account: { label: 'Ad account (Google/Meta)', kind: 'none', setup: 'CHE has no ad-platform connector yet.' },
+  fundyouredge: { label: 'FundYourEdge funded account (Rithmic)', kind: 'none', setup: 'Rithmic requires its own licensed API before CHE can read or trade a funded account. Nothing is connected.' },
 });
 
 export const MODES = Object.freeze({ EXPLORE: 'EXPLORE', PLAN: 'PLAN', BUILD: 'BUILD' });
@@ -632,6 +637,7 @@ export function connectorStatus(env = {}, facts = {}) {
   out.sms = truthy(env.TWILIO_ACCOUNT_SID) && truthy(env.TWILIO_AUTH_TOKEN) ? ok() : missing('Twilio is not connected.');
   out.bookkeeping = { state: 'none', detail: CONNECTORS.bookkeeping.setup };
   out.ads_account = { state: 'none', detail: CONNECTORS.ads_account.setup };
+  out.fundyouredge = { state: 'none', detail: CONNECTORS.fundyouredge.setup };
   return out;
 }
 

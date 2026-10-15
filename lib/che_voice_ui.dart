@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'che_edge_voice.dart';
 import 'che_native_voice.dart';
+import 'che_cloud_voice_picker.dart';
 import 'che_theme.dart';
 import 'che_voice_state.dart';
 
@@ -231,7 +232,11 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
 }
 
 class CheVoiceSettingsSheet extends StatefulWidget {
-  const CheVoiceSettingsSheet({super.key});
+  const CheVoiceSettingsSheet({super.key, this.onSpeak, this.onListen});
+
+  /// Speaks the real outcome of an owner-triggered cloud voice action.
+  final ValueChanged<String>? onSpeak;
+  final VoidCallback? onListen;
 
   @override
   State<CheVoiceSettingsSheet> createState() => _CheVoiceSettingsSheetState();
@@ -335,6 +340,19 @@ class _CheVoiceSettingsSheetState extends State<CheVoiceSettingsSheet> {
                     Expanded(
                       child: ListView(
                         children: [
+                          FilledButton.icon(
+                            onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(builder: (_) => CheCloudVoicePicker(onSpeak: widget.onSpeak, onListen: widget.onListen)),
+                            ),
+                            icon: const Icon(Icons.cloud_outlined),
+                            label: const Text('CHOOSE NATURAL CHAT VOICE'),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text('ElevenLabs and Fish voices for normal Chat and Read This. Your selection controls actual server speech.',
+                            style: TextStyle(color: CheColors.textDim, fontSize: 12)),
+                          const Divider(height: 30),
+                          const Text('Local/offline fallback', style: TextStyle(fontWeight: FontWeight.w700)),
+                          const SizedBox(height: 10),
                           DropdownButtonFormField<int>(
                             initialValue: speakerId,
                             isExpanded: true,

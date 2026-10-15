@@ -35,7 +35,8 @@ import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry 
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { handleEdgeVoice } from './edge_route.js';
 import { marySecretsFrom, preferredElevenLabsDiagnostics, preferredElevenLabsKeyStatus, preferredElevenLabsLastOutcome, preferredElevenLabsSpeech, withMarySecrets } from './preferred_elevenlabs_voice.js';
-import { fishAudioDiagnostics, fishAudioKeyStatus, fishSecretsFrom, readFishUsage } from './fish_audio_voice.js';
+import { availableVoiceChoices, validateVoiceChoice, voiceEnvForSelection } from './voice_choices.js';
+import { fishAudioDiagnostics, fishAudioKeyStatus, fishAudioSpeech, fishSecretsFrom, readFishUsage } from './fish_audio_voice.js';
 import { cheSpokenText } from './che_pronunciation.js';
 import { premiumVoiceSpeech, premiumVoiceStatuses, readVoiceLog, recordVoiceLog, voiceProbeAuthorized } from './phone_voice.js';
 import { handleVideoLine } from './video_route.js';
@@ -85,6 +86,11 @@ import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSna
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
+import {
+  disconnectGoogle, finishGoogleConnect, googleConnectorStates, googleLabel, googleOwnerStep, googleRecheckPending,
+  googleStates, startGoogleConnect,
+} from './google_services.js';
+import { fundyouredgeReply } from './fundyouredge.js';
 import { CheCodingRuntime, codingRuntimeEnabled, ownerRequiresMergeApproval, recoverableRuntimeFailure, runtimeState, runtimeStateClass, speakRuntimeStatus } from './coding_runtime.js';
 import { handoffIntent, latestHandoff, unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
@@ -475,9 +481,26 @@ async function commandCenterProbe(env, token) {
   } finally {
     await call('/api/security/revoke_self', {}, device).catch(() => null);
   }
-  const readiness = await env.CHE_STATE.getByName('owner').commandReadiness().catch((error) => ({ error: String(error?.message || error) }));
+  // Production CHE_STATE returns a Durable Object stub (fetch only), not a
+  // CheState instance. Ask the owner's object for the read-only count through
+  // a probe-token-gated endpoint; never pretend an unknown count is zero.
+  let readiness;
+  try {
+    const response = await env.CHE_STATE.getByName('owner').fetch(new Request('https://che.internal/api/commands/readiness', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: '{}',
+    }));
+    if (!response.ok) throw new Error(`Readiness request returned HTTP ${response.status}`);
+    readiness = await response.json();
+    if (!Number.isInteger(readiness.available) || !Array.isArray(readiness.setup_required)) {
+      throw new Error('Readiness count was not returned');
+    }
+  } catch (error) {
+    readiness = { error: String(error?.message || error).slice(0, 160) };
+  }
   return {
-    ok: steps.every((s) => s.pass || s.optional),
+    ok: steps.every((s) => s.pass || s.optional) && !readiness.error,
     passed: steps.filter((s) => s.pass).length,
     total: steps.length,
     steps,
@@ -4356,7 +4379,9 @@ export class CheState extends DurableObject {
     const cap = (id) => registry.find((c) => c.id === id)?.available === true;
     const youtube = await youtubeStatus(env, data).catch(() => ({ connected: false, status: 'not_connected' }));
     const broker = await brokerConnection(this.ctx.storage).catch(() => ({ connected: false }));
-    return connectorStatus(env, { runtime: { chat: cap('chat'), video_generation: cap('video_generation'), image_generation: cap('image_generation') }, youtube, broker });
+    const base = connectorStatus(env, { runtime: { chat: cap('chat'), video_generation: cap('video_generation'), image_generation: cap('image_generation') }, youtube, broker });
+    // Gmail, Drive, Calendar and Google Ads readiness, from their own grants.
+    return { ...base, ...(await googleConnectorStates(env, data).catch(() => ({}))) };
   }
 
   // Which commands can run on the owner's CHE right now, and what the rest
@@ -4745,6 +4770,12 @@ export class CheState extends DurableObject {
       }
 
       const body = ['POST', 'PATCH'].includes(request.method) ? await bodyOf(request) : {};
+      // Internal release probe: only the per-deploy random token may read
+      // connector readiness, with no user data, keys, or saved workflows.
+      if (request.method === 'POST' && path === '/api/commands/readiness') {
+        if (!voiceProbeAuthorized(request, this.env)) return json({ detail: 'Not found.' }, 404);
+        return json(await this.commandReadiness());
+      }
       if (request.method === 'POST' && path === '/api/pair') {
         const secret = this.env.CHE_PAIR_CODE;
         if (!secret || !/^\d{6,12}$/.test(secret)) return json({ detail: 'Set CHE_PAIR_CODE as a server secret.' }, 503);
@@ -4774,8 +4805,17 @@ export class CheState extends DurableObject {
       // token is possible on that redirect; the one-time state protects it.
       if (request.method === 'GET' && path === YOUTUBE_CALLBACK_PATH) {
         const url = new URL(request.url);
+        const params = Object.fromEntries(url.searchParams);
+        // Google services share this callback; the pending state says which one.
+        if (data.google_oauth && params.state === data.google_oauth.state) {
+          const linked = await finishGoogleConnect(this.keyEnv || this.env, data, params, fetch, url.origin);
+          await this.ctx.storage.put('che', data);
+          return youtubeResultPage(linked.ok, linked.ok
+            ? `Connected ${linked.label}${linked.account ? ` (${linked.account})` : ''}.`
+            : linked.error, googleLabel(linked.service));
+        }
         const result = await finishYouTubeConnect(
-          this.keyEnv || this.env, data, Object.fromEntries(url.searchParams), fetch, url.origin,
+          this.keyEnv || this.env, data, params, fetch, url.origin,
         );
         await this.ctx.storage.put('che', data);
         return youtubeResultPage(result.ok, result.ok
@@ -4813,16 +4853,55 @@ export class CheState extends DurableObject {
       if (ownerDevice) OWNER_CHAT_REQUESTS.add(request);
       const ownerOnly = () => json({ detail: 'Only the CHE owner can change, merge or deploy CHE’s code.' }, 403);
 
+      // Owner voice selection: account-scoped catalog, consent-gated previews,
+      // and a persistent choice actually used by Chat and Read This.
+      if (path === '/api/voice/choices' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const choices = await availableVoiceChoices(this.voiceEnv());
+        const saved = data.voice_choice || null;
+        return json({ ...choices, selected: saved,
+          message: 'Only provider voices confirmed by your CHE account may be chosen.' });
+      }
+      if (path === '/api/voice/choice' && request.method === 'POST') {
+        if (!ownerDevice) return ownerOnly();
+        const choices = await availableVoiceChoices(this.voiceEnv());
+        const chosen = validateVoiceChoice(body, choices);
+        if (!chosen) return json({ detail: 'That voice is not available on your connected account, or the speed is invalid.' }, 400);
+        data.voice_choice = chosen;
+        await this.ctx.storage.put('che', data);
+        return json({ ok: true, selected: chosen, message: 'CHE will use this voice for Chat and Read This.' });
+      }
+      if (path === '/api/voice/preview' && request.method === 'POST') {
+        if (!ownerDevice) return ownerOnly();
+        if (Date.now() - (this.lastVoicePreviewAt || 0) < 5000) {
+          return json({ detail: 'Wait a few seconds before another voice preview.' }, 429);
+        }
+        const choices = await availableVoiceChoices(this.voiceEnv());
+        const chosen = validateVoiceChoice(body, choices);
+        if (!chosen) return json({ detail: 'That voice is not available for preview.' }, 400);
+        this.lastVoicePreviewAt = Date.now();
+        const env = voiceEnvForSelection(this.voiceEnv(), chosen);
+        const sample = cheSpokenText('Hello, sir. This is how my selected CHE voice sounds.');
+        // A preview MUST use precisely the voice chosen. Do not substitute
+        // the other provider: doing so misleads the owner and can use credits.
+        const audio = chosen.provider === 'fish'
+          ? await fishAudioSpeech(env, sample, { storage: this.ctx.storage })
+          : await preferredElevenLabsSpeech(env, sample);
+        return audio || json({ detail: 'The chosen voice cannot speak right now. No alternative was substituted.' }, 503);
+      }
+
       if (path === '/api/voice/edge' && request.method === 'POST') {
         // The iPhone asks this route first. CHE's voice is ElevenLabs (Mary),
         // then Fish (owner, 2026-10-14), tried here without requiring a new IPA.
-        const voiceEnv = this.voiceEnv();
+        const selectedVoice = ownerDevice ? data.voice_choice : null;
+        const voiceEnv = voiceEnvForSelection(this.voiceEnv(), selectedVoice);
         const said = cheSpokenText(body.text);
         const started = Date.now();
         // Stories (Drama 3) and character voices can cost credits, so only the
         // owner's devices may ask for them; everyone else gets the everyday voice.
         const premium = await premiumVoiceSpeech(voiceEnv, said, ownerDevice
-          ? { purpose: body.purpose, character: body.character, storage: this.ctx.storage }
+          ? { purpose: body.purpose, character: body.character, storage: this.ctx.storage,
+              selectedProvider: selectedVoice?.provider }
           : { storage: this.ctx.storage });
         const statuses = premiumVoiceStatuses(voiceEnv);
         await recordVoiceLog(this.ctx.storage, {
@@ -4846,6 +4925,14 @@ export class CheState extends DurableObject {
         if (ownerDevice) await recordVoiceLog(this.ctx.storage, { ...body, route: 'phone' });
         return json({ ok: true });
       }
+      // Existing Tradovate OAuth, exposed to the Connections page without
+      // sending the owner's intent through an AI model or storing a password.
+      if (request.method === 'POST' && path === '/api/broker/tradovate/connect/start') {
+        if (!ownerDevice) return ownerOnly();
+        const result = await connectLink(this.ctx.storage, this.keyEnv || this.env, new URL(request.url).origin);
+        return result.url ? json({ url: result.url })
+          : json({ detail: 'Tradovate OAuth app credentials need setup. Register the CHE callback with Tradovate first.' }, 503);
+      }
       if (request.method === 'POST' && path === '/api/youtube/connect/start') {
         const started = await startYouTubeConnect(this.keyEnv || this.env, data, new URL(request.url).origin);
         await this.ctx.storage.put('che', data);
@@ -4856,6 +4943,25 @@ export class CheState extends DurableObject {
       }
       if (request.method === 'POST' && path === '/api/youtube/disconnect') {
         const removed = await disconnectYouTube(this.keyEnv || this.env, data, fetch);
+        await this.ctx.storage.put('che', data);
+        return json(removed);
+      }
+      // Gmail, Google Drive, Google Calendar and Google Ads: one sign-in each,
+      // owner only. Status carries no tokens, only state and the account.
+      if (request.method === 'POST' && path === '/api/google/connect/start') {
+        if (!ownerDevice) return ownerOnly();
+        const started = await startGoogleConnect(this.keyEnv || this.env, data, new URL(request.url).origin, String(body?.service || ''));
+        await this.ctx.storage.put('che', data);
+        return started.ok ? json({ url: started.url }) : json({ detail: started.error }, 400);
+      }
+      if (request.method === 'GET' && path === '/api/google/status') {
+        if (!ownerDevice) return ownerOnly();
+        if (await googleRecheckPending(this.keyEnv || this.env, data, fetch).catch(() => false)) await this.ctx.storage.put('che', data);
+        return json({ services: await googleStates(this.keyEnv || this.env, data) });
+      }
+      if (request.method === 'POST' && path === '/api/google/disconnect') {
+        if (!ownerDevice) return ownerOnly();
+        const removed = await disconnectGoogle(this.keyEnv || this.env, data, String(body?.service || ''), fetch);
         await this.ctx.storage.put('che', data);
         return json(removed);
       }
@@ -6207,6 +6313,8 @@ export class CheState extends DurableObject {
       }
       // The Command Center catalog with live status, saved workflows and runs.
       if (path === '/api/commands' && ['GET', 'POST'].includes(request.method)) {
+        // A Google Ads grant Google has not approved yet is checked again on each refresh.
+        if (await googleRecheckPending(this.keyEnv || this.env, data, fetch).catch(() => false)) await this.ctx.storage.put('che', data);
         const connectors = await this.commandConnectors(data);
         let runs = null;
         try { runs = await this.ctx.storage.get(COMMAND_RUNS_KEY); } catch (_) { runs = null; }
@@ -7599,6 +7707,19 @@ export class CheState extends DurableObject {
         }
         // "Run the autonomy exam" (5 levels, each harder): real coding runs in
         // dry-run mode, graded deterministically. "Autonomy exam results".
+        // Gmail, Drive and Calendar: reads run now; sending, adding an event and
+        // creating a Drive doc wait for the owner's yes. Nothing changes on a guess.
+        const googleStep = ownerDevice && !chatOnlyEvaluation ? await googleOwnerStep(message, {
+          storage: this.ctx.storage, env: this.keyEnv || this.env, fetcher: fetch,
+          loadData: () => this.loadData(), saveData: (d) => this.ctx.storage.put('che', d),
+        }) : null;
+        if (googleStep) return ndjsonReply(googleStep.text, { source: 'che_google', ok: googleStep.ok, held: Boolean(googleStep.held), model_calls: 0 });
+        // FundYourEdge has no licensed Rithmic connection, so CHE says so and never
+        // prepares or places an order for it.
+        const orderBrokerReady = ownerDevice && !chatOnlyEvaluation
+          ? (await brokerConnection(this.ctx.storage).catch(() => ({ connected: false })))?.connected === true : false;
+        const brokerReply = ownerDevice && !chatOnlyEvaluation ? fundyouredgeReply(message, { orderBrokerReady }) : null;
+        if (brokerReply) return ndjsonReply(brokerReply, { source: 'che_brokerage', ok: false, model_calls: 0 });
         const exam = ownerDevice && !chatOnlyEvaluation && !isExistingChangeCommand(selfUpdateChatIntent(message)) ? examIntent(message) : null;
         if (exam?.kind === 'results') {
           const results = await Promise.resolve().then(() => this.ctx.storage.get(EXAM_RESULTS_KEY)).catch(() => null);
@@ -10911,7 +11032,8 @@ export default {
     }
     // The live voice settings reach the Durable Object before each voice or key
     // request, so a secret change is seen without restarting the object.
-    if (['/api/voice/edge', '/api/voice/synthesize', '/api/voice/report', '/api/keys'].includes(path)) {
+    if (['/api/voice/edge', '/api/voice/synthesize', '/api/voice/report',
+      '/api/voice/choices', '/api/voice/choice', '/api/voice/preview', '/api/keys'].includes(path)) {
       const owner = env.CHE_STATE.getByName('owner');
       await owner.setVoiceSecrets(voiceSecretsFrom(env));
       return owner.fetch(request);

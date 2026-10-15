@@ -38,7 +38,12 @@ void main() {
     await tester.tap(find.text('More'));
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('UI Controls'), findsOneWidget);
+    // The More list is lazy and now has Connections and voice rows above this one.
+    await tester.scrollUntilVisible(find.textContaining('Voice replies:'), 200,
+        scrollable: find.byType(Scrollable).first);
     expect(find.textContaining('Voice replies:'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('UI Controls'), -200,
+        scrollable: find.byType(Scrollable).first);
 
     await tester.tap(find.text('UI Controls'));
     await tester.pumpAndSettle(const Duration(milliseconds: 500));
