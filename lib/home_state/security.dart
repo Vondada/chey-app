@@ -1296,6 +1296,8 @@ extension _CheHomeSecurity on _CHEHomeState {
         serverOnline: _deviceToken != null,
         lastServerEvent: _realtimeVoice?.lastServerEvent,
         playbackEngine: _lastVoiceEngine,
+        audioRoute: _audioRouteNow,
+        lastPlayback: CheNativeVoice.lastPlayback,
         fallbackReason: _voiceFailReason.isEmpty ? null : _voiceFailReason,
         maryStatus: _maryStatus,
         fishStatus: _fishStatus,

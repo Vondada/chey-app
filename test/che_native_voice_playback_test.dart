@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:chey/che_native_voice.dart';
 import 'package:chey/che_speech_pipeline.dart';
+import 'package:chey/che_ui/che_ui_preferences.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -61,19 +62,69 @@ void main() {
 
   test('server audio reaches the iPhone player as the same bytes', () async {
     final clip = Uint8List.fromList(List<int>.generate(64, (i) => i));
-    mockBridge((call) async => call.method == 'playAudio' ? true : null);
+    mockBridge((call) async => call.method == 'playClip' ? {'played': true} : null);
 
     final played = await CheNativeVoice.playAudioBounded(clip);
 
     expect(played, isTrue);
-    final play = calls.singleWhere((c) => c.method == 'playAudio');
-    expect(play.arguments, clip);
+    final play = calls.singleWhere((c) => c.method == 'playClip');
+    expect((play.arguments as Map)['bytes'], clip);
+  });
+
+  test('a clip carries its words, the Voice Volume and Audio Output to the iPhone player', () async {
+    await CheUiPreferences.instance.setVoiceVolume(0.4);
+    await CheUiPreferences.instance.setAudioOutput(CheAudioOutput.receiver);
+    addTearDown(() async {
+      await CheUiPreferences.instance.setVoiceVolume(1.0);
+      await CheUiPreferences.instance.setAudioOutput(CheAudioOutput.auto);
+    });
+    mockBridge((call) async => call.method == 'playClip'
+        ? {'played': true, 'route': 'receiver', 'output_volume': 0.25, 'volume': 0.4, 'rms_db': -31.0, 'peak_db': -14.0, 'gain_db': 12.0}
+        : null);
+
+    expect(await CheNativeVoice.playAudioBounded(Uint8List(8), text: 'Here is the news.'), isTrue);
+
+    final args = calls.singleWhere((c) => c.method == 'playClip').arguments as Map;
+    expect(args['text'], 'Here is the news.', reason: 'the iPhone tells her own voice from the owner\'s');
+    expect(args['volume'], 0.4, reason: 'Voice Volume reaches ElevenLabs and Fish playback');
+    expect(args['output'], 'receiver');
+    expect(args['normalize'], isTrue, reason: 'an unusually quiet clip may be raised (never past its peak)');
+    // What the iPhone measured is kept for Voice diagnostics.
+    expect(CheNativeVoice.lastPlayback['route'], 'receiver');
+    expect(cheIphoneVolumePercent(CheNativeVoice.lastPlayback), 25);
+    expect(cheAudioRouteSpoken(CheNativeVoice.lastPlayback), 'the earpiece');
+  });
+
+  test('an iPhone build from before playClip plays the same bytes the old way', () async {
+    final clip = Uint8List.fromList([1, 2, 3, 4]);
+    mockBridge((call) async {
+      if (call.method == 'playClip') throw MissingPluginException();
+      return call.method == 'playAudio' ? true : null;
+    });
+
+    expect(await CheNativeVoice.playAudioBounded(clip, text: 'Hello'), isTrue);
+    expect(calls.map((c) => c.method), ['playClip', 'playAudio']);
+    expect(calls.last.arguments, clip);
+    expect(CheNativeVoice.bridgePresent, isTrue);
+  });
+
+  test('route calls on an older build answer null without calling the bridge missing', () async {
+    mockBridge((call) async => throw MissingPluginException());
+    expect(await CheNativeVoice.audioRoute(), isNull);
+    expect(await CheNativeVoice.setAudioOutput('speaker'), isNull);
+    expect(CheNativeVoice.bridgePresent, isTrue);
+
+    mockBridge((call) async => {'route': 'bluetooth', 'outputs': [{'type': 'BluetoothA2DPOutput', 'name': 'AirPods Pro'}], 'output_volume': 0.6});
+    final report = (await CheNativeVoice.audioRoute())!;
+    expect(cheAudioRouteSpoken(report), 'Bluetooth (AirPods Pro)');
+    expect(cheIphoneVolumePercent(report), 60);
+    expect(cheAudioRouteLabel('speaker'), 'the loudspeaker');
   });
 
   test('a player that never reports completion is stopped and treated as not played', () async {
     final stuck = Completer<Object?>();
     mockBridge((call) {
-      if (call.method == 'playAudio') return stuck.future;
+      if (call.method == 'playClip') return stuck.future;
       return Future<Object?>.value(null);
     });
 
@@ -88,7 +139,7 @@ void main() {
 
   test('a native playback error counts as not played, so the chunk falls back', () async {
     mockBridge((call) async {
-      if (call.method == 'playAudio') {
+      if (call.method == 'playClip') {
         throw PlatformException(code: 'audio_playback_failed', message: 'could not play');
       }
       return null;
@@ -107,10 +158,10 @@ void main() {
 
   test('a stuck player and a played clip leave the right playback reason', () async {
     final stuck = Completer<Object?>();
-    mockBridge((call) => call.method == 'playAudio' ? stuck.future : Future<Object?>.value(null));
+    mockBridge((call) => call.method == 'playClip' ? stuck.future : Future<Object?>.value(null));
     await CheNativeVoice.playAudioBounded(Uint8List(8), limit: const Duration(milliseconds: 50));
     expect(CheNativeVoice.lastPlaybackError, 'playback did not finish within 0 seconds');
-    mockBridge((call) async => call.method == 'playAudio' ? true : null);
+    mockBridge((call) async => call.method == 'playClip' ? {'played': true} : null);
     expect(await CheNativeVoice.playAudioBounded(Uint8List(8)), isTrue);
     expect(CheNativeVoice.lastPlaybackError, '');
   });

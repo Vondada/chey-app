@@ -177,7 +177,10 @@ extension _CheHomeVoice on _CHEHomeState {
   }
 
   Future<bool> _playServerVoice(CheVoiceClip clip, [CheVoiceTurnOutcome? outcome]) async {
-    final played = await CheNativeVoice.playAudioBounded(clip.bytes);
+    // The clip's words, the owner's Voice Volume and Audio Output go with it.
+    final played = await CheNativeVoice.playAudioBounded(clip.bytes, text: clip.text);
+    final route = CheNativeVoice.lastPlayback['route']?.toString() ?? '';
+    if (route.isNotEmpty) _audioRouteNow = route;
     final engine = clip.engine.isEmpty ? 'server-voice' : clip.engine;
     if (played) {
       _naturalVoiceServerErrored = false;
@@ -222,7 +225,16 @@ extension _CheHomeVoice on _CHEHomeState {
           );
           debugPrint('CHE voice: audio session playAndRecord ready');
         }
-        await Helper.setSpeakerphoneOnButPreferBluetooth();
+        // A build that routes CHE's voice itself (the loudspeaker unless the
+        // owner connected headphones, Bluetooth, AirPlay or a car, or his
+        // Audio Output choice) must not have the WebRTC helper reset that
+        // route before every reply. Older builds keep the helper.
+        final routed = await CheNativeVoice.setAudioOutput(CheUiPreferences.instance.audioOutput.name);
+        if (routed == null) {
+          await Helper.setSpeakerphoneOnButPreferBluetooth();
+        } else {
+          _audioRouteNow = routed['route']?.toString() ?? _audioRouteNow;
+        }
       } catch (e) {
         // Allow a later speak to retry setup if the first attempt failed.
         _localVoice.audioSessionReady = false;
@@ -318,7 +330,7 @@ extension _CheHomeVoice on _CHEHomeState {
         if (edgeClip != null && edgeClip.bytes.isNotEmpty) {
           // When Fish spoke, why ElevenLabs did not, for the diagnostics sheet.
           _voiceFailReason = cheMaryReason(edge.maryStatus, engine);
-          return edgeClip;
+          return CheVoiceClip(edgeClip.bytes, edgeClip.engine, text: text);
         }
         final why = cheSilentVoiceReason(edge);
         _voiceFailReason = why;
@@ -593,6 +605,12 @@ extension _CheHomeVoice on _CHEHomeState {
       await _closeMicUnlessHandsFree();
 
       await _controlAutonomy('stand by');
+      return;
+    }
+
+    if (type == 'audio_route') {
+      // Headphones or Bluetooth came or went: shown in Voice diagnostics.
+      _audioRouteNow = event['route']?.toString() ?? _audioRouteNow;
       return;
     }
 

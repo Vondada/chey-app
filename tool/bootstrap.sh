@@ -211,6 +211,16 @@ struct CHEAppShortcuts: AppShortcutsProvider {
   private var ignoreBargeInUntil = Date.distantPast
   private var recognitionGeneration = 0
   private var wakeSignalSent = false
+  // Where CHE's voice plays: "auto" (the loudspeaker, or the headphones,
+  // Bluetooth, AirPlay or car the owner has connected), "speaker" (always the
+  // loudspeaker) or "receiver" (the earpiece, for privacy).
+  private var outputPreference =
+    UserDefaults.standard.string(forKey: "che.voice.outputPreference") ?? "auto"
+  private var audioObserversInstalled = false
+  private var playbackGeneration = 0
+  private var pendingClipInfo: [String: Any]?
+  private var normalizedClipURL: URL?
+  private var lastStreamStart = Date.distantPast
 
   override func application(
     _ application: UIApplication,
@@ -406,6 +416,8 @@ struct CHEAppShortcuts: AppShortcutsProvider {
             "native_recognition": true,
             "barge_in": true,
             "free_voice_mode": true,
+            "output_route_control": true,
+            "loudness_normalization": true,
             "on_device_recognition":
               self.speechRecognizer?.supportsOnDeviceRecognition == true,
           ])
@@ -431,6 +443,36 @@ struct CHEAppShortcuts: AppShortcutsProvider {
             return
           }
           self.play(data: typed.data, result: result)
+
+        case "playClip":
+          // One ElevenLabs or Fish clip with its words (so CHE never takes her
+          // own voice for an interruption), the owner's Voice Volume and his
+          // output choice. Answers with what was measured and where it played.
+          guard
+            let args = call.arguments as? [String: Any],
+            let typed = args["bytes"] as? FlutterStandardTypedData
+          else {
+            result(false)
+            return
+          }
+          if let output = args["output"] as? String {
+            self.setOutputPreference(output)
+          }
+          self.play(
+            data: typed.data,
+            text: (args["text"] as? String) ?? "",
+            volume: (args["volume"] as? NSNumber)?.floatValue ?? 1.0,
+            normalize: (args["normalize"] as? Bool) ?? true,
+            clip: true,
+            result: result
+          )
+
+        case "audioRoute":
+          result(self.routeSummary())
+
+        case "setAudioOutput":
+          self.setOutputPreference((call.arguments as? String) ?? "auto")
+          result(self.routeSummary())
 
         default:
           result(FlutterMethodNotImplemented)
@@ -545,27 +587,170 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     return super.application(app, open: url, options: options)
   }
 
+  // The same options the Flutter side's WebRTC helper sets, so the two never
+  // flip the session back and forth. A2DP lets Bluetooth headphones play
+  // CHE in full quality; the earpiece choice drops defaultToSpeaker.
+  private var desiredCategoryOptions: AVAudioSession.CategoryOptions {
+    var options: AVAudioSession.CategoryOptions = [.allowBluetooth, .allowBluetoothA2DP, .allowAirPlay]
+    if outputPreference != "receiver" {
+      options.insert(.defaultToSpeaker)
+    }
+    return options
+  }
+
   private func configureAudioSession() {
     let session = AVAudioSession.sharedInstance()
+    installAudioObservers()
     // Re-applying an unchanged category/mode for every clip interrupts
     // recognition and adds a route change between sentences; only set it
     // when it actually differs, and keep the session active for the turn.
-    if session.category == .playAndRecord && session.mode == .voiceChat {
-      try? session.setActive(true)
-      return
+    let options = desiredCategoryOptions
+    if session.category != .playAndRecord || session.mode != .voiceChat || session.categoryOptions != options {
+      do {
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: options)
+      } catch {
+        voiceStreamHandler.emit([
+          "type": "error",
+          "message": "CHE could not configure iPhone voice audio."
+        ])
+      }
     }
+    try? session.setActive(true)
+    applyOutputRoute()
+  }
+
+  /// Puts CHE's voice where the owner wants it. Automatic replaces only the
+  /// quiet built-in earpiece with the loudspeaker; headphones, Bluetooth,
+  /// AirPlay or a car the owner connected keep playing her.
+  private func applyOutputRoute() {
+    let session = AVAudioSession.sharedInstance()
     do {
-      try session.setCategory(
-        .playAndRecord,
-        mode: .voiceChat,
-        options: [.defaultToSpeaker, .allowBluetooth]
-      )
-      try session.setActive(true)
+      switch outputPreference {
+      case "speaker":
+        if routeKind(session.currentRoute) != "speaker" {
+          try session.overrideOutputAudioPort(.speaker)
+        }
+      case "receiver":
+        if routeKind(session.currentRoute) == "speaker" {
+          try session.overrideOutputAudioPort(.none)
+        }
+      default:
+        if routeKind(session.currentRoute) == "receiver" {
+          try session.overrideOutputAudioPort(.speaker)
+        }
+      }
     } catch {
       voiceStreamHandler.emit([
         "type": "error",
-        "message": "CHE could not configure iPhone voice audio."
+        "message": "CHE could not switch the iPhone speaker: \(error.localizedDescription)"
       ])
+    }
+  }
+
+  private func setOutputPreference(_ value: String) {
+    let preference = ["auto", "speaker", "receiver"].contains(value) ? value : "auto"
+    guard preference != outputPreference else { return }
+    outputPreference = preference
+    UserDefaults.standard.set(preference, forKey: "che.voice.outputPreference")
+    if AVAudioSession.sharedInstance().category == .playAndRecord {
+      configureAudioSession()
+    }
+  }
+
+  /// The kind of output CHE is playing through right now.
+  private func routeKind(_ route: AVAudioSessionRouteDescription) -> String {
+    guard let port = route.outputs.first?.portType else { return "none" }
+    switch port {
+    case .builtInReceiver: return "receiver"
+    case .builtInSpeaker: return "speaker"
+    case .bluetoothA2DP, .bluetoothHFP, .bluetoothLE: return "bluetooth"
+    case .headphones: return "headphones"
+    case .airPlay: return "airplay"
+    case .carAudio: return "car"
+    case .usbAudio: return "usb"
+    case .HDMI, .lineOut: return "external"
+    default: return "other"
+    }
+  }
+
+  private func routeSummary() -> [String: Any] {
+    let session = AVAudioSession.sharedInstance()
+    return [
+      "route": routeKind(session.currentRoute),
+      "outputs": session.currentRoute.outputs.map { ["type": $0.portType.rawValue, "name": $0.portName] },
+      "preference": outputPreference,
+      "category": session.category.rawValue,
+      "mode": session.mode.rawValue,
+      "default_to_speaker": session.categoryOptions.contains(.defaultToSpeaker),
+      "bluetooth_a2dp": session.categoryOptions.contains(.allowBluetoothA2DP),
+      // The iPhone's own volume (0 to 1). CHE reports it; only the owner's
+      // volume buttons change it.
+      "output_volume": Double(session.outputVolume),
+      "listening": nativeVoiceRunning,
+      "voice_processing": nativeVoiceRunning && audioEngine.inputNode.isVoiceProcessingEnabled,
+    ]
+  }
+
+  private func installAudioObservers() {
+    guard !audioObserversInstalled else { return }
+    audioObserversInstalled = true
+    let center = NotificationCenter.default
+    center.addObserver(
+      forName: AVAudioSession.routeChangeNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] note in
+      guard let self else { return }
+      let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt ?? 0
+      let reason = AVAudioSession.RouteChangeReason(rawValue: raw)
+      // Headphones unplugged or Bluetooth gone: iOS falls back to the
+      // earpiece, so CHE moves her voice back to the loudspeaker. Her own
+      // override also posts a route change; that one is left alone.
+      if reason == .newDeviceAvailable || reason == .oldDeviceUnavailable || reason == .routeConfigurationChange {
+        if self.outputPreference != "receiver" &&
+            self.routeKind(AVAudioSession.sharedInstance().currentRoute) == "receiver" {
+          try? AVAudioSession.sharedInstance().overrideOutputAudioPort(.speaker)
+        }
+      }
+      self.voiceStreamHandler.emit([
+        "type": "audio_route",
+        "route": self.routeKind(AVAudioSession.sharedInstance().currentRoute),
+      ])
+    }
+    center.addObserver(
+      forName: AVAudioSession.interruptionNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] note in
+      guard let self else { return }
+      let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt ?? 0
+      guard let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+      if type == .began {
+        // A call or Siri took the audio: the clip ends here and Flutter
+        // shows its words, instead of waiting for a player iOS paused.
+        if self.player != nil {
+          self.stopAllAudio()
+        }
+      } else {
+        try? AVAudioSession.sharedInstance().setActive(true)
+        self.applyOutputRoute()
+        if self.nativeVoiceRunning && !self.assistantSpeaking {
+          self.restartRecognitionSoon(delay: 0.3)
+        }
+      }
+    }
+    center.addObserver(
+      forName: .AVAudioEngineConfigurationChange,
+      object: audioEngine,
+      queue: .main
+    ) { [weak self] _ in
+      // A route change stops the engine; listening resumes on the new route.
+      // A notice that arrives while the engine still runs, or right after a
+      // (re)start, is the start itself, not a stopped microphone.
+      guard let self, self.nativeVoiceRunning, !self.assistantSpeaking,
+            !self.audioEngine.isRunning,
+            Date().timeIntervalSince(self.lastStreamStart) > 1.0 else { return }
+      self.restartRecognitionSoon(delay: 0.2)
     }
   }
 
@@ -657,13 +842,16 @@ struct CHEAppShortcuts: AppShortcutsProvider {
       // Echo cancellation: CHE doesn't hear her own voice as the owner.
       try? inputNode.setVoiceProcessingEnabled(true)
     }
-    if #available(iOS 26.0, *) {
-      // Push other phone audio (music, videos) way down while she listens,
-      // so the microphone only hears the owner.
+    if #available(iOS 17.0, *) {
+      // CHE's own voice plays through AVAudioPlayer, which voice processing
+      // counts as "other audio". Maximum ducking (2026-09-30) turned Connie
+      // down to a whisper whenever the mic was open (owner, 2026-10-15).
+      // CHE's session already stops other apps' audio, so nothing else
+      // needs ducking: keep it at the minimum.
       inputNode.voiceProcessingOtherAudioDuckingConfiguration =
         AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
-          enableAdvancedDucking: true,
-          duckingLevel: .max
+          enableAdvancedDucking: false,
+          duckingLevel: .min
         )
     }
 
@@ -679,6 +867,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
 
     audioEngine.prepare()
     try audioEngine.start()
+    lastStreamStart = Date()
 
     recognitionTask = speechRecognizer.recognitionTask(with: request) {
       [weak self] result, error in
@@ -818,12 +1007,23 @@ struct CHEAppShortcuts: AppShortcutsProvider {
       return false
     }
 
-    let wordCount = heard.split(separator: " ").count
-    if wordCount <= 1 {
+    let heardWords = heard.split(separator: " ").map(String.init)
+    let spokenWords = Set(spoken.split(separator: " ").map(String.init))
+    // "Stop" or her name said over her own voice is the owner, not an echo.
+    let stopWords: Set<String> = ["stop", "wait", "pause", "chay", "chey", "shay", "chai", "che"]
+    if heardWords.contains(where: { stopWords.contains($0) && !spokenWords.contains($0) }) {
+      return false
+    }
+    if heardWords.count <= 1 {
       return spoken.contains(heard)
     }
-
-    return spoken.contains(heard) || heard.contains(spoken)
+    if spoken.contains(heard) || heard.contains(spoken) {
+      return true
+    }
+    // Her words as the recognizer heard them through the speaker, with a
+    // few misheard: most of them are words she is saying.
+    let matched = heardWords.filter { spokenWords.contains($0) }.count
+    return heardWords.count >= 3 && Double(matched) / Double(heardWords.count) >= 0.7
   }
 
   private func normalizedWords(_ value: String) -> String {
@@ -839,12 +1039,14 @@ struct CHEAppShortcuts: AppShortcutsProvider {
       assistantSpeaking = true
       bargeInDetected = false
       latestTranscript = ""
+      assistantText = ""
       ignoreBargeInUntil = Date().addingTimeInterval(0.28)
       return
     }
 
     let wasBargeIn = bargeInDetected
     assistantSpeaking = false
+    assistantText = ""
     ignoreBargeInUntil = .distantPast
 
     if !wasBargeIn && nativeVoiceRunning {
@@ -975,31 +1177,185 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     synthesizer.speak(utterance)
   }
 
-  private func play(data: Data, result: @escaping FlutterResult) {
+  private func play(
+    data: Data,
+    text: String = "",
+    volume: Float = 1.0,
+    normalize: Bool = false,
+    clip: Bool = false,
+    result: @escaping FlutterResult
+  ) {
     stopAllAudio()
     configureAudioSession()
-    assistantText = ""
+    // The words of this turn so far, so the recognizer's copy of her own
+    // voice is never taken for the owner interrupting.
+    assistantText = assistantSpeaking ? String((assistantText + " " + text).suffix(1600)) : text
+    playbackGeneration += 1
+    let generation = playbackGeneration
+    pendingAudioResult = result
+    pendingClipInfo = clip ? [:] : nil
 
+    // Measuring (and, for an unusually quiet clip, raising) the loudness
+    // decodes the audio, so it runs off the main thread.
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      guard let self else { return }
+      let prepared: (url: URL?, info: [String: Any]) = normalize ? self.loudnessNormalized(data) : (nil, [:])
+      DispatchQueue.main.async {
+        guard generation == self.playbackGeneration, self.pendingAudioResult != nil else {
+          if let url = prepared.url { try? FileManager.default.removeItem(at: url) }
+          return
+        }
+        self.startPlayer(data: data, prepared: prepared, volume: volume)
+      }
+    }
+  }
+
+  private func startPlayer(data: Data, prepared: (url: URL?, info: [String: Any]), volume: Float) {
     do {
-      // Name the format: raw MP3 without an ID3 tag can otherwise fail with
-      // "unsupported file type" (OSStatus 1954115647).
-      let audioPlayer = try AVAudioPlayer(data: data, fileTypeHint: audioTypeHint(data))
+      let audioPlayer: AVAudioPlayer
+      if let url = prepared.url {
+        normalizedClipURL = url
+        audioPlayer = try AVAudioPlayer(contentsOf: url)
+      } else {
+        // Name the format: raw MP3 without an ID3 tag can otherwise fail with
+        // "unsupported file type" (OSStatus 1954115647).
+        audioPlayer = try AVAudioPlayer(data: data, fileTypeHint: audioTypeHint(data))
+      }
       audioPlayer.delegate = self
+      // The owner's Voice Volume. The iPhone's own volume stays his to set.
+      audioPlayer.volume = max(0, min(1, volume))
       audioPlayer.prepareToPlay()
       player = audioPlayer
-      pendingAudioResult = result
+      if pendingClipInfo != nil {
+        var info = routeSummary()
+        for (key, value) in prepared.info { info[key] = value }
+        info["volume"] = Double(audioPlayer.volume)
+        pendingClipInfo = info
+      }
 
       guard audioPlayer.play() else {
-        pendingAudioResult = nil
-        result(false)
+        player = nil
+        finishPlayback(false)
         return
       }
     } catch {
-      result(FlutterError(
+      if let url = prepared.url { try? FileManager.default.removeItem(at: url) }
+      normalizedClipURL = nil
+      let pending = pendingAudioResult
+      pendingAudioResult = nil
+      pendingClipInfo = nil
+      pending?(FlutterError(
         code: "audio_playback_failed",
         message: "CHE could not play generated voice audio.",
         details: error.localizedDescription
       ))
+    }
+  }
+
+  /// Answers the pending play call: true/false for playAudio, and for
+  /// playClip what was measured and where she played.
+  private func finishPlayback(_ played: Bool) {
+    if let url = normalizedClipURL {
+      try? FileManager.default.removeItem(at: url)
+      normalizedClipURL = nil
+    }
+    guard let pending = pendingAudioResult else { return }
+    pendingAudioResult = nil
+    if var info = pendingClipInfo {
+      pendingClipInfo = nil
+      info["played"] = played
+      pending(info)
+    } else {
+      pending(played)
+    }
+  }
+
+  /// Measures one clip's loudness over the parts where she is speaking. Only
+  /// an unusually quiet clip (below -24 dBFS) is raised, toward normal speech
+  /// (-19 dBFS), never by more than 12 dB and never past -1 dBFS peak, so it
+  /// cannot clip or distort. A normal clip plays exactly as it arrived.
+  private func loudnessNormalized(_ data: Data) -> (url: URL?, info: [String: Any]) {
+    let folder = FileManager.default.temporaryDirectory
+    let ext = audioTypeHint(data) == AVFileType.wav.rawValue ? "wav" : "mp3"
+    let source = folder.appendingPathComponent("che-clip-\(UUID().uuidString).\(ext)")
+    defer { try? FileManager.default.removeItem(at: source) }
+    do {
+      try data.write(to: source, options: .atomic)
+      let file = try AVAudioFile(forReading: source)
+      let format = file.processingFormat
+      guard
+        file.length > 0,
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(file.length))
+      else { return (nil, [:]) }
+      try file.read(into: buffer)
+      guard let channels = buffer.floatChannelData else { return (nil, [:]) }
+      let frames = Int(buffer.frameLength)
+      let channelCount = Int(format.channelCount)
+      guard frames > 0, channelCount > 0 else { return (nil, [:]) }
+
+      var peak: Float = 0
+      var speechEnergy = 0.0
+      var speechBlocks = 0
+      let block = max(1, Int(format.sampleRate * 0.02))
+      var start = 0
+      while start < frames {
+        let end = min(frames, start + block)
+        var energy = 0.0
+        for c in 0..<channelCount {
+          let samples = channels[c]
+          for i in start..<end {
+            let value = samples[i]
+            peak = max(peak, abs(value))
+            energy += Double(value * value)
+          }
+        }
+        let meanSquare = energy / Double((end - start) * channelCount)
+        if meanSquare > 1e-5 {
+          speechEnergy += meanSquare
+          speechBlocks += 1
+        }
+        start = end
+      }
+      guard peak > 0, speechBlocks > 0 else { return (nil, ["peak_db": -120.0, "rms_db": -120.0, "gain_db": 0.0]) }
+      let peakDb = 20 * log10(Double(peak))
+      let rmsDb = 10 * log10(speechEnergy / Double(speechBlocks))
+      var info: [String: Any] = [
+        "peak_db": (peakDb * 10).rounded() / 10,
+        "rms_db": (rmsDb * 10).rounded() / 10,
+        "gain_db": 0.0,
+      ]
+      guard rmsDb < -24 else { return (nil, info) }
+      let gainDb = min(-19 - rmsDb, -1 - peakDb, 12)
+      guard gainDb >= 1 else { return (nil, info) }
+      let gain = Float(pow(10, gainDb / 20))
+      for c in 0..<channelCount {
+        let samples = channels[c]
+        for i in 0..<frames {
+          samples[i] *= gain
+        }
+      }
+      // 16-bit PCM: the raised clip still peaks at or below -1 dBFS.
+      let output = folder.appendingPathComponent("che-clip-\(UUID().uuidString).wav")
+      let settings: [String: Any] = [
+        AVFormatIDKey: kAudioFormatLinearPCM,
+        AVSampleRateKey: format.sampleRate,
+        AVNumberOfChannelsKey: format.channelCount,
+        AVLinearPCMBitDepthKey: 16,
+        AVLinearPCMIsFloatKey: false,
+        AVLinearPCMIsBigEndianKey: false,
+        AVLinearPCMIsNonInterleaved: false,
+      ]
+      let written = try AVAudioFile(
+        forWriting: output,
+        settings: settings,
+        commonFormat: format.commonFormat,
+        interleaved: format.isInterleaved
+      )
+      try written.write(from: buffer)
+      info["gain_db"] = (gainDb * 10).rounded() / 10
+      return (output, info)
+    } catch {
+      return (nil, [:])
     }
   }
 
@@ -1024,15 +1380,13 @@ struct CHEAppShortcuts: AppShortcutsProvider {
 
     player?.stop()
     player = nil
+    playbackGeneration += 1
 
     if let pending = pendingSpeechResult {
       pendingSpeechResult = nil
       pending(false)
     }
-    if let pending = pendingAudioResult {
-      pendingAudioResult = nil
-      pending(false)
-    }
+    finishPlayback(false)
   }
 
   func speechSynthesizer(
@@ -1062,10 +1416,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     successfully flag: Bool
   ) {
     self.player = nil
-    if let pending = pendingAudioResult {
-      pendingAudioResult = nil
-      pending(flag)
-    }
+    finishPlayback(flag)
   }
 }
 SWIFT

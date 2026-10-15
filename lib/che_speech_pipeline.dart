@@ -16,9 +16,12 @@ import 'dart:typed_data';
 
 /// One synthesized server-voice clip and the engine that produced it.
 class CheVoiceClip {
-  const CheVoiceClip(this.bytes, this.engine);
+  const CheVoiceClip(this.bytes, this.engine, {this.text = ''});
   final Uint8List bytes;
   final String engine;
+
+  /// The words the clip says (for telling CHE's own voice from the owner's).
+  final String text;
 }
 
 typedef CheSynthesize<A> = Future<A?> Function(String text);

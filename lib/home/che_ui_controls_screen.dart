@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../che_native_voice.dart';
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_ui_preferences.dart';
 import '../che_ui/che_widgets.dart';
@@ -157,9 +158,23 @@ class CheUiControlsScreen extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      'Applies to device TTS. Realtime sessions use the system route (speakerphone).',
+                      'CHE\'s voice (ElevenLabs and Fish) plays at this level. Your iPhone\'s volume buttons set the overall loudness. Say "louder" or "volume 80 percent".',
                       style: CheType.caption.copyWith(color: cheTextDimOf(context)),
                     ),
+                    const SizedBox(height: CheSpace.md),
+                    Text('Audio output', style: CheType.label.copyWith(color: cheTextOf(context))),
+                    const SizedBox(height: CheSpace.sm),
+                    PillToggle(
+                      options: const ['Automatic', 'Speaker', 'Earpiece'],
+                      index: prefs.audioOutput.index,
+                      onChanged: (i) async {
+                        final output = CheAudioOutput.values[i];
+                        await prefs.setAudioOutput(output);
+                        await CheNativeVoice.setAudioOutput(output.name);
+                      },
+                    ),
+                    const SizedBox(height: CheSpace.xs),
+                    _AudioRouteLine(output: prefs.audioOutput),
                   ],
                 ),
               ),
@@ -173,6 +188,59 @@ class CheUiControlsScreen extends StatelessWidget {
         );
       },
     );
+  }
+}
+
+/// What each Audio Output choice does, and where CHE's voice plays right now
+/// as the iPhone reports it.
+class _AudioRouteLine extends StatefulWidget {
+  const _AudioRouteLine({required this.output});
+  final CheAudioOutput output;
+
+  @override
+  State<_AudioRouteLine> createState() => _AudioRouteLineState();
+}
+
+class _AudioRouteLineState extends State<_AudioRouteLine> {
+  Map<String, dynamic>? _report;
+  bool _asked = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(_AudioRouteLine old) {
+    super.didUpdateWidget(old);
+    if (old.output != widget.output) _load();
+  }
+
+  Future<void> _load() async {
+    final report = await CheNativeVoice.audioRoute();
+    if (!mounted) return;
+    setState(() {
+      _report = report;
+      _asked = true;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final what = switch (widget.output) {
+      CheAudioOutput.auto => 'The loudspeaker, or your headphones, Bluetooth, AirPlay or car when connected.',
+      CheAudioOutput.speaker => 'Always the loudspeaker, even with headphones or Bluetooth connected.',
+      CheAudioOutput.receiver => 'The earpiece: hold the iPhone to your ear.',
+    };
+    final report = _report;
+    final now = !_asked
+        ? ''
+        : report == null
+            ? ' This CHE build cannot report where it plays.'
+            : ' Now playing through ${cheAudioRouteSpoken(report)}.';
+    // Quiet text: VoiceOver reads it when the owner moves to it.
+    return Text('$what$now', style: CheType.caption.copyWith(color: cheTextDimOf(context)));
   }
 }
 

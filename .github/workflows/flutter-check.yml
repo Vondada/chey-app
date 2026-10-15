@@ -62,6 +62,8 @@ jobs:
           exit $code
       - name: iPhone version-ordering regression tests
         run: python3 -m unittest discover -s tool -p 'test_mobile_version.py'
+      - name: iPhone audio session regression tests
+        run: python3 -m unittest discover -s tool -p 'test_ios_audio_session.py'
 
   worker-unit:
     name: Worker syntax and unit tests

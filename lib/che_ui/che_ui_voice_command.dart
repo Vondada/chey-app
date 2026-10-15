@@ -4,6 +4,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../che_native_voice.dart';
 import 'che_ui_preferences.dart';
 
 class CheUiVoiceCommand {
@@ -73,6 +74,28 @@ class CheUiVoiceCommand {
       return const CheUiVoiceCommand._('handsFree', false);
     }
 
+    // Where her voice plays: "use the speaker", "talk through the earpiece",
+    // "use my AirPods", "which speaker are you using?".
+    const through = r'(?:use|switch to|go to|play (?:through|on|from|over)|talk (?:through|on|over)|speak (?:through|on|over)|put (?:it|your voice|yourself|the sound|the audio) on)';
+    if (has('^$through (?:the |your )?(?:loud ?speaker|speaker ?phone|speaker|iphone speaker|phone speaker)\$') ||
+        has(r'^(?:turn |put )?(?:the )?speaker ?phone on$') || has(r'^turn on (?:the )?speaker(?: ?phone)?$')) {
+      return const CheUiVoiceCommand._('audioOutput', CheAudioOutput.speaker);
+    }
+    if (has('^$through (?:the |your )?(?:ear ?piece|receiver|phone earpiece|top speaker)\$') ||
+        has(r'^(?:turn )?(?:the )?speaker ?phone off$') || has(r'^turn off (?:the )?speaker(?: ?phone)?$') ||
+        has(r'^(?:talk|speak) (?:quietly )?(?:in|into) my ear$')) {
+      return const CheUiVoiceCommand._('audioOutput', CheAudioOutput.receiver);
+    }
+    if (has('^$through (?:my |the )?(?:bluetooth|headphones?|head ?set|air ?pods?(?: pro| max)?|ear ?buds|car(?: speakers)?)\$') ||
+        has(r'^(?:use |switch to )?(?:automatic|auto) (?:audio )?(?:output|speaker|route)$')) {
+      return const CheUiVoiceCommand._('audioOutput', CheAudioOutput.auto);
+    }
+    if (has(r'^(?:which|what) (?:speaker|audio output|output|audio route)(?: are you| is your voice| is che)? ?(?:using|playing (?:through|on|from)|on)?$') ||
+        has(r'^where (?:is|are) (?:your voice|you|the sound|your audio|the audio) (?:playing|coming (?:out|from)|coming out of)(?: from)?$') ||
+        has(r'^(?:check|test) (?:your |the )?(?:audio output|speaker|audio route)$')) {
+      return const CheUiVoiceCommand._('audioRoute');
+    }
+
     final pct = RegExp(r'^(?:set )?(?:your )?volume (?:to )?(\d{1,3})(?: ?%| percent)?$').firstMatch(t);
     if (pct != null) {
       final v = int.parse(pct.group(1)!).clamp(0, 100);
@@ -138,9 +161,45 @@ class CheUiVoiceCommand {
           await prefs.setVoiceVolume(v);
           return 'Done. Volume is ${(v * 100).round()} percent.';
         case 'volumeStep':
-          final v = (prefs.voiceVolume + (value! as double)).clamp(0.05, 1.0);
+          final step = value! as double;
+          if (step > 0 && prefs.voiceVolume >= 0.999) {
+            // CHE never moves the iPhone's own volume; only its buttons do.
+            final phone = cheIphoneVolumePercent(CheNativeVoice.lastPlayback);
+            return 'My voice is already at full volume. For more, press your iPhone\'s volume up button while I am talking'
+                '${phone == null ? '.' : '; it is at $phone percent.'}';
+          }
+          final v = (prefs.voiceVolume + step).clamp(0.05, 1.0);
           await prefs.setVoiceVolume(v);
           return 'Done. Volume is ${(v * 100).round()} percent.';
+        case 'audioOutput':
+          final output = value! as CheAudioOutput;
+          await prefs.setAudioOutput(output);
+          final report = await CheNativeVoice.setAudioOutput(output.name);
+          final choice = switch (output) {
+            CheAudioOutput.speaker => 'I will speak through the loudspeaker, even with headphones or Bluetooth connected.',
+            CheAudioOutput.receiver => 'I will speak through the earpiece. Hold the iPhone to your ear.',
+            CheAudioOutput.auto => 'I will use your headphones, Bluetooth, AirPlay or car when they are connected, and the loudspeaker otherwise.',
+          };
+          if (report == null) {
+            return output == CheAudioOutput.receiver
+                ? 'This CHE build always speaks through the loudspeaker. Install the newest CHE build from Updates to use the earpiece.'
+                : 'Done. $choice';
+          }
+          return 'Done. $choice Right now I am playing through ${cheAudioRouteSpoken(report)}.';
+        case 'audioRoute':
+          final report = await CheNativeVoice.audioRoute();
+          if (report == null) {
+            return 'This CHE build cannot tell me where my voice plays. It uses the loudspeaker unless headphones or Bluetooth are connected.';
+          }
+          final phone = cheIphoneVolumePercent(report);
+          final choice = switch (prefs.audioOutput) {
+            CheAudioOutput.speaker => 'Speaker',
+            CheAudioOutput.receiver => 'Earpiece',
+            CheAudioOutput.auto => 'Automatic',
+          };
+          return 'I am playing through ${cheAudioRouteSpoken(report)}. Audio Output is set to $choice. '
+              'My Voice Volume is ${(prefs.voiceVolume * 100).round()} percent'
+              '${phone == null ? '.' : ', and your iPhone volume is at $phone percent.'}';
       }
     } catch (_) {
       return 'I could not change that setting. Nothing was changed.';

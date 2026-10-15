@@ -411,6 +411,9 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   int _heldSpeechRestarts = 0;
   Timer? _quickEndTimer;
   String? _lastVoiceEngine;
+  // Where CHE's voice plays now ("speaker", "receiver", "bluetooth", ...), as
+  // the iPhone last reported it; empty until it does.
+  String _audioRouteNow = '';
   String _voiceFailReason = '';
   // Mary's and Fish's status from the last server reply, for the voice
   // diagnostics sheet.
