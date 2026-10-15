@@ -351,6 +351,13 @@ test('news questions are recognised; fiction and personal chat are not', () => {
   assert.equal(q.label, 'Oct 15, 2026');
   assert.ok(newsQuestion("What's the latest news in tech?", now));
   assert.ok(newsQuestion('Did Apple announce anything today?', now));
+  assert.ok(newsQuestion('CHE, tell me the latest news', now));
+  assert.ok(newsQuestion('AI news today', now));
+  for (const personal of [
+    'I have good news: my baby was born.',
+    'I got some breaking news from my sister.',
+    'My biggest news today is that I got the job.',
+  ]) assert.equal(newsQuestion(personal, now), null, personal);
   assert.equal(newsQuestion('Write a news story about a robot uprising', now), null);
   assert.equal(newsQuestion('How are you today?', now), null);
   assert.equal(newsQuestion('What is the capital of France?', now), null);
@@ -381,6 +388,36 @@ test('only links offered as sources are opened: never private, one-click or conn
   assert.match(out.reply, /^Your file Budget Plan is at https:\/\/docs\.google\.com/);
   assert.match(out.reply, /unsubscribe\?token=xyz/);
   assert.deepEqual(calls.filter((u) => /docs\.google|unsubscribe|docs\.flutter/.test(u)), [], 'none of them was fetched');
+});
+
+test('a URL provided by the owner is input, not a verified article', async () => {
+  const calls = useWeb();
+  const che = await owner({ model: () => MEDMIND_REPLY });
+  const out = await che.say(`Summarize this article: ${MEDMIND_URL}`);
+  assert.ok(calls.includes(MEDMIND_URL), 'the public citation is opened despite appearing in the owner prompt');
+  assert.doesNotMatch(out.reply, /outperformed radiologists|release of MedMind/);
+  assert.match(out.reply, /technologyreview\\.com link returns a page that does not exist/);
+});
+
+test('private or one-click source links are never fetched or counted as evidence', async () => {
+  const source = 'https://docs.google.com/document/d/abc123/edit';
+  let fetched = 0;
+  const out = await guardCitations(`According to a study at ${source}, MegaCure reduced disease by 95%.`, {
+    message: 'Summarize this study', trusted: [source],
+    fetcher: async () => { fetched += 1; throw new Error('unsafe fetch'); },
+  });
+  assert.equal(fetched, 0, 'no request is sent to a private document');
+  assert.equal(out.removed.length, 1);
+  assert.doesNotMatch(out.text, /MegaCure reduced disease/);
+  assert.match(out.text, /cannot safely check/);
+});
+
+test('personal good news stays a conversation, never a current-news search', async () => {
+  const calls = useWeb({ down: true });
+  const che = await owner({ model: () => 'Congratulations, sir. That is wonderful news!' });
+  const out = await che.say('I have good news: my baby was born.');
+  assert.match(out.reply, /Congratulations/);
+  assert.equal(calls.filter((u) => /api\\.gdeltproject|hn\\.algolia/.test(u)).length, 0);
 });
 
 test('a real name in a made-up story is never recorded as suspect', async () => {
