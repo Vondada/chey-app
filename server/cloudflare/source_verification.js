@@ -641,9 +641,15 @@ export async function guardCitations(reply, {
     // Replace one URL with a marker and validate the ENTIRE sentence. A
     // pointer followed by an assertion (or "proof is at...") is evidence,
     // not a harmless instruction to open a link.
-    const linkOnly = kind.urls.length === 1 ? s.replace(kind.urls[0], '[LINK]').trim() : '';
-    const pointer = !/\b(?:proof|source|evidence|study|research|claims?|reported|according)\b/i.test(linkOnly)
-      && /^(?:(?:your|the|this|that|our)\s+[^;.!?]{0,90}\b(?:is|are)\s+at\s+\[LINK\]|(?:unsubscribe|subscribe)\s+here\s*:\s*\[LINK\]|(?:follow|visit|open|download|view)\b[^;.!?]{0,90}\b(?:at|here)\s+\[LINK\]|here(?:'s| is| are)\b[^;.!?]{0,90}\[LINK\])[\s.?!]*$/i.test(linkOnly);
+    const linkOnly = kind.urls.reduce((line, url) => line.replace(url, '[LINK]'), s).trim();
+    const harmlessLinkPointer = /^(?:(?:your|the|this|that|our)\s+[^;.!?]{0,90}\b(?:is|are)\s+at\s+\[LINK\]|(?:unsubscribe|subscribe)\s+here\s*:\s*\[LINK\]|(?:follow|visit|open|download|view)\b[^;.!?]{0,90}\b(?:at|here)\s+\[LINK\]|here(?:'s| is| are)\b[^;.!?]{0,90}\[LINK\])[\s.?!]*$/i;
+    // The sentence tokenizer sometimes groups several URL pointers. All
+    // clauses must be pure navigation directions; one factual assertion
+    // anywhere in the group makes its source URLs require verification.
+    const clauses = linkOnly.split(/\.\s+|;\s+/).filter((part) => part.trim());
+    const pointer = kind.urls.length > 0 && clauses.length > 0
+      && clauses.every((part) => !/\b(?:proof|source|evidence|study|research|claims?|reported|according)\b/i.test(part)
+        && harmlessLinkPointer.test(part.trim()));
     const offered = Boolean(news) || Boolean(hit) || kind.sourceWords || (kind.urls.length > 0 && !pointer);
     const urls = offered ? kind.urls.filter(checkableUrl) : [];
     const unsafe = offered ? kind.urls.filter((u) => !checkableUrl(u)) : [];
