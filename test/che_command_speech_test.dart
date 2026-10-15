@@ -72,6 +72,10 @@ void main() {
     await say('Show me five YouTube commands');
     expect(await say('run yt thumb'), contains('Closest: 1. /yt-thumbnail'));
     expect(await say('more'), 'That was all 3.');
+    // A search that finds nothing replaced the list on screen: nothing to continue.
+    await say('Show me YouTube commands');
+    expect(await say('search for zebra polka'), startsWith('No command matches'));
+    expect(await say('more'), startsWith('I have no list of commands to continue.'));
     // "What's on screen" reads the same list and "more" still continues it.
     await say('Show me YouTube commands');
     expect(await say("what's on screen"), contains('Say "more" for the next 5.'));

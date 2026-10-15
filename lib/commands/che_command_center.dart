@@ -709,6 +709,13 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
     });
     _toTop();
     final what = group != null ? '${group.title} commands' : topic.isEmpty ? 'commands' : 'commands for "$topic"';
+    if (found.isEmpty || matches.isEmpty) {
+      // The screen no longer shows the list read before, so "more" and
+      // numbers must not continue it.
+      _voiceList = const [];
+      _lastMatches = const [];
+      _lastShown = 0;
+    }
     if (found.isEmpty) return _say('${stale}No command matches "$topic". Try other words.', ok: false);
     if (matches.isEmpty) {
       return _say(r.only == 'ready'
