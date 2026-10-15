@@ -395,6 +395,18 @@ test('bare source pointers cannot hide assertions earlier in the sentence', asyn
   assert.doesNotMatch(result.text, /MegaCure reduced disease/);
 });
 
+test('a pointer followed by a medical claim cannot bypass the source guard', async () => {
+  const url = 'https://a.example/trial';
+  const calls = [];
+  const checked = await guardCitations(`The proof is at ${url}; MegaCure reduced disease by 95%.`, {
+    message: 'Verify the evidence', trusted: [url],
+    fetcher: async (requested) => { calls.push(requested); return new Response('not found', { status: 404 }); },
+  });
+  assert.deepEqual(calls, [url]);
+  assert.equal(checked.removed.length, 1);
+  assert.doesNotMatch(checked.text, /MegaCure reduced disease/);
+});
+
 test('news questions are recognised; fiction and personal chat are not', () => {
   const now = Date.parse('2026-10-15T20:00:00Z');
   const q = newsQuestion(NEWS_QUESTION, now);
@@ -569,6 +581,17 @@ test('news descriptions without launch verbs still require the article to say th
   });
   assert.deepEqual(verified.removed, []);
   assert.match(verified.text, /Sources I opened:/);
+});
+
+test('short unsupported news claims never bypass the opened-source check', async () => {
+  for (const claim of ['AI surged.', 'Apple is doomed.']) {
+    const result = await guardCitations(claim, { message: TECH_NEWS, fetcher: offline, now: AT });
+    assert.equal(result.removed.length, 1, claim);
+    assert.doesNotMatch(result.text, /AI surged|Apple is doomed/);
+  }
+  const report = appleArticle({ text: 'Apple is doomed, according to analysts.', description: 'Analysts say Apple is doomed.' });
+  const supported = await guardCitations('Apple is doomed.', { message: TECH_NEWS, research: { engine: 'news', articles: [report] }, fetcher: offline, now: AT });
+  assert.deepEqual(supported.removed, []);
 });
 
 test('a news request finished in the background opens articles and is checked like a chat reply', async () => {
