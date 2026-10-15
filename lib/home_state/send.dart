@@ -969,9 +969,12 @@ extension _CheHomeSend on _CHEHomeState {
 
       if (stopped) {
         replySpeech?.cancel();
+        _pendingVoicePreviewId = null;
       } else {
         replySpeech?.close();
         await replySpeech?.done;
+        // A free sample asked for by voice starts only after the spoken reply has finished.
+        if (mounted) unawaited(_playPendingVoicePreview());
       }
     } on _CHEAgentException catch (e) {
       final errorReply = e.message;

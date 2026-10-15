@@ -2,6 +2,17 @@ part of '../main.dart';
 
 // Split out of main.dart: _CHEHomeState members (streaming).
 extension _CheHomeStreaming on _CHEHomeState {
+  /// Plays the held free sample. If it cannot play, CHE says so on screen and aloud.
+  Future<void> _playPendingVoicePreview() async {
+    final voiceId = _pendingVoicePreviewId;
+    _pendingVoicePreviewId = null;
+    if (voiceId == null) return;
+    final played = await CheVoiceStudioPreview.play(voiceId: voiceId);
+    if (played || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('The free sample could not play on this iPhone.')));
+    unawaited(speakText('The free sample could not play on this iPhone, sir.', record: false));
+  }
+
   Future<String?> _tryLocalOfflineResponse(
     String userMessage,
     List<Map<String, String>> history, {
@@ -403,6 +414,13 @@ extension _CheHomeStreaming on _CHEHomeState {
       }
 
       if (type == 'done') {
+        // "Preview number three": the reply names a free sample from the provider's own
+        // library. It is held here and played by send.dart once CHE has finished saying
+        // the reply, so the two never talk over each other.
+        final voicePreview = data['voice_preview'];
+        if (voicePreview is Map && voicePreview['voice_id'] is String) {
+          _pendingVoicePreviewId = voicePreview['voice_id'] as String;
+        }
         if (data['source'] == 'che_installed_skills' && mounted) {
           final ok = data['ok'] == true;
           // The delta pipeline speaks the result. This receipt adds visible

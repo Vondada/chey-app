@@ -116,7 +116,7 @@ export function preferredElevenLabsKeyStatus(env = {}, now = Date.now()) {
 // The Mary settings, copied from the Worker's live env on each voice request. The
 // Durable Object keeps the env it was created with, so a secret set or changed
 // later would otherwise stay invisible to it until the object restarts.
-export const MARY_SECRET_NAMES = ['ELEVENLABS_API_KEY', 'CHE_ELEVENLABS_VOICE_ID', 'CHE_ELEVENLABS_PREFERRED', 'CHE_ELEVENLABS_MODEL', 'CHE_ELEVENLABS_CONCURRENCY', 'CHE_VOICE_SPEED'];
+export const MARY_SECRET_NAMES = ['ELEVENLABS_API_KEY', 'CHE_ELEVENLABS_VOICE_ID', 'CHE_ELEVENLABS_PREFERRED', 'CHE_ELEVENLABS_MODEL', 'CHE_ELEVENLABS_CONCURRENCY', 'CHE_VOICE_SPEED', 'CHE_VOICE_STABILITY', 'CHE_VOICE_SIMILARITY', 'CHE_VOICE_STYLE', 'CHE_VOICE_SPEAKER_BOOST'];
 
 // An absent setting is sent as an empty value, not left out. A removed secret
 // then overrides the stale captured env instead of being inherited from it.
@@ -162,6 +162,24 @@ export async function preferredElevenLabsSpeech(env = {}, text, fetcher = fetch,
   return withSlot(concurrency(env), () => speakOnce(env, said, fetcher));
 }
 
+// The owner's voice controls for Mary. An unset control keeps the default CHE has
+// always used, so nothing changes until the owner chooses different settings.
+export function elevenVoiceSettings(env = {}) {
+  const unit = (value, fallback) => {
+    const raw = String(value ?? '').trim();
+    if (!raw) return fallback;
+    const number = Number(raw);
+    return Number.isFinite(number) && number >= 0 && number <= 1 ? number : fallback;
+  };
+  const boost = String(env.CHE_VOICE_SPEAKER_BOOST ?? '').trim().toLowerCase();
+  return {
+    stability: unit(env.CHE_VOICE_STABILITY, 0.6),
+    similarity_boost: unit(env.CHE_VOICE_SIMILARITY, 0.82),
+    style: unit(env.CHE_VOICE_STYLE, 0.15),
+    use_speaker_boost: boost === '' ? true : !['0', 'false', 'no'].includes(boost),
+  };
+}
+
 async function speakOnce(env, said, fetcher) {
   const voice = encodeURIComponent(String(env.CHE_ELEVENLABS_VOICE_ID).trim());
   const configuredSpeed = Number(env.CHE_VOICE_SPEED);
@@ -179,13 +197,7 @@ async function speakOnce(env, said, fetcher) {
         body: JSON.stringify({
           text: said,
           model_id: String(env.CHE_ELEVENLABS_MODEL || 'eleven_flash_v2_5'),
-          voice_settings: {
-            stability: 0.6,
-            similarity_boost: 0.82,
-            style: 0.15,
-            use_speaker_boost: true,
-            speed,
-          },
+          voice_settings: { ...elevenVoiceSettings(env), speed },
         }),
         signal: AbortSignal.timeout(8000),
       },

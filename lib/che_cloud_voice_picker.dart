@@ -39,6 +39,9 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
   String _provider = '';
   String _id = '';
   double _speed = 1.0;
+  // The owner's speech model and controls, kept so saving here does not reset them.
+  String _modelId = '';
+  Map<String, dynamic>? _settings;
   String _base = '';
   String _token = '';
   bool _pendingPreview = false;
@@ -87,6 +90,8 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
         _provider = (current?['provider'] ?? '').toString();
         _id = (current?['id'] ?? '').toString();
         _speed = ((selected['speed'] is num ? selected['speed'] as num : 1).toDouble()).clamp(0.7, 1.2).toDouble();
+        _modelId = (selected['model_id'] ?? '').toString();
+        _settings = selected['settings'] is Map ? Map<String, dynamic>.from(selected['settings'] as Map) : null;
       });
       // Only an owner-requested refresh announces; the first load stays silent.
       if (announce) {
@@ -229,7 +234,13 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
     return null;
   }
 
-  Map<String, dynamic> get _choice => {'provider': _provider, 'id': _id, 'speed': _speed};
+  Map<String, dynamic> get _choice => {
+    'provider': _provider,
+    'id': _id,
+    'speed': _speed,
+    if (_provider == 'elevenlabs' && _modelId.isNotEmpty) 'model_id': _modelId,
+    if (_provider == 'elevenlabs' && _modelId.isNotEmpty && _settings != null) 'settings': _settings,
+  };
   Map<String, String> get _headers => {'authorization': 'Bearer $_token', 'content-type': 'application/json'};
 
   Future<void> _save() async {
@@ -268,8 +279,9 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
     if (allowed != true || !mounted) return;
     setState(() { _busy = true; _status = 'Requesting a real voice preview…'; });
     try {
+      // The owner has just confirmed the credit notice here, so the request carries that consent.
       final r = await _client.post(Uri.parse('$_base/api/voice/preview'),
-        headers: _headers, body: jsonEncode(_choice)).timeout(const Duration(seconds: 55));
+        headers: _headers, body: jsonEncode({..._choice, 'confirm_credits': true})).timeout(const Duration(seconds: 55));
       if (r.statusCode != 200 || !((r.headers['content-type'] ?? '').contains('audio'))) {
         String reason = 'This voice did not return playable audio.';
         try {

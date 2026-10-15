@@ -1,0 +1,542 @@
+// Voice Studio through the real Worker, offline: the owner's spoken library requests
+// in /api/chat (no model call), the library routes, previews, favourites, confirmation
+// for paid samples and the choices saved. The provider is a fake account; no request
+// leaves this process. Same harness approach as google_worker.test.mjs.
+import assert from 'node:assert/strict';
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import test from 'node:test';
+
+const realFetch = globalThis.fetch;
+const generated = new URL('./.voice_studio.test.generated.mjs', import.meta.url);
+writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
+  "import { DurableObject } from 'cloudflare:workers';",
+  'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }',
+), 'utf8');
+let mod;
+try { mod = await import(generated.href + '?t=' + Date.now()); } finally { try { unlinkSync(generated); } catch (_) {} }
+const { default: worker, CheState } = mod;
+
+const KEY = 'xi-owner-secret-key-7777';
+const MISSING_PERMISSION = '{"detail":{"status":"missing_permissions","message":"The API key you used is missing the permission voices_read to execute this operation."}}';
+const PAID_PLAN = '{"detail":{"status":"paid_plan_required","message":"This is a library voice and requires a paid plan."}}';
+const NOT_FOUND = '{"detail":{"status":"voice_not_found","message":"Voice not found."}}';
+const PRESET_CONNIE = 'GO6k0TLODKW6FuTZ6xO5';
+const PRESET_MIKE = 'zfc8CJQpe8Kqyl0vvCzo';
+const PASTED = 'PASTEDvoiceABCDE1';
+const FISH32 = '0123456789abcdef0123456789abcdef';
+const FISH_KEY = 'fish-owner-secret-8888';
+const CONNIE = 'CONNIEvoice0001';
+const RACHEL = 'RACHELvoice0002';
+const NARRATOR = 'NARRATORvoice03';
+const NEW = 'NEWVOICE0000001';
+
+// The provider's account, as the fake answers it. Tests change `account` and `flags`.
+function fakeProvider() {
+  const calls = [];
+  const state = {
+    calls,
+    account: [
+      { voice_id: CONNIE, name: 'Connie', category: 'cloned', is_owner: true, labels: { accent: 'british' }, preview_url: 'https://cdn.example.test/connie.mp3' },
+      { voice_id: RACHEL, name: 'Rachel', category: 'premade', is_owner: false, preview_url: 'https://cdn.example.test/rachel.mp3' },
+      { voice_id: NARRATOR, name: 'Narrator Saved', category: 'professional', is_owner: false },
+    ],
+    voicesStatus: 0,
+    voicesBody: null,
+    speechCalls: 0,
+    details: {},
+    detailsStatus: 0,
+    paid: new Set(),
+  };
+  state.fetch = async (input, init = {}) => {
+    const url = new URL(String(input?.url || input));
+    calls.push({ host: url.host, path: url.pathname, auth: init.headers?.['xi-api-key'] || init.headers?.Authorization || '' });
+    if (url.host === 'api.elevenlabs.io' && url.pathname === '/v2/voices') {
+      if (state.voicesStatus) return new Response(state.voicesBody || '{"detail":{"status":"missing_permissions","message":"The API key you used is missing the permission voices_read to execute this operation."}}', { status: state.voicesStatus, headers: { 'content-type': 'application/json' } });
+      const token = url.searchParams.get('next_page_token');
+      const page = token === 'page-two' ? state.account.slice(2) : state.account.slice(0, 2);
+      const more = !token;
+      return Response.json({ voices: page, has_more: more, next_page_token: more ? 'page-two' : undefined });
+    }
+    // A voice's own details (the Voice IDs check). Found, not found, paid-plan or missing permission.
+    if (url.host === 'api.elevenlabs.io' && url.pathname.startsWith('/v1/voices/')) {
+      const id = decodeURIComponent(url.pathname.slice('/v1/voices/'.length));
+      if (state.detailsStatus) return new Response(MISSING_PERMISSION, { status: state.detailsStatus, headers: { 'content-type': 'application/json' } });
+      if (state.paid.has(id)) return new Response(PAID_PLAN, { status: 402, headers: { 'content-type': 'application/json' } });
+      if (state.details[id]) return Response.json({ voice_id: id, name: state.details[id] });
+      return new Response(NOT_FOUND, { status: 404, headers: { 'content-type': 'application/json' } });
+    }
+    if (url.host === 'api.elevenlabs.io' && url.pathname === '/v1/models') {
+      return Response.json([
+        { model_id: 'eleven_flash_v2_5', name: 'Flash v2.5', can_do_text_to_speech: true, can_use_style: false, can_use_speaker_boost: true, token_cost_factor: 0.5 },
+        { model_id: 'eleven_multilingual_v2', name: 'Multilingual v2', can_do_text_to_speech: true, can_use_style: true, can_use_speaker_boost: true, token_cost_factor: 1 },
+      ]);
+    }
+    if (url.host === 'api.elevenlabs.io' && url.pathname.startsWith('/v1/text-to-speech/')) {
+      if (state.paid.has(decodeURIComponent(url.pathname.slice('/v1/text-to-speech/'.length)))) return new Response(PAID_PLAN, { status: 402, headers: { 'content-type': 'application/json' } });
+      state.speechCalls += 1;
+      return new Response(new Uint8Array([9, 9, 9]), { status: 200, headers: { 'content-type': 'audio/mpeg' } });
+    }
+    if (url.host === 'api.fish.audio' && url.pathname.startsWith('/model/')) {
+      const id = decodeURIComponent(url.pathname.slice('/model/'.length));
+      if (id === FISH32) return Response.json({ _id: id, title: 'My Fish voice' });
+      return new Response(NOT_FOUND, { status: 404, headers: { 'content-type': 'application/json' } });
+    }
+    if (url.host === 'api.fish.audio' && url.pathname === '/model') {
+      return Response.json({ items: [{ _id: 'fishmodelABCDEF12', title: 'My Fish voice', languages: ['en'] }], has_more: false });
+    }
+    if (url.host === 'cdn.example.test') {
+      return new Response(new Uint8Array([1, 2, 3, 4]), { status: 200, headers: { 'content-type': 'audio/mpeg' } });
+    }
+    throw new TypeError(`fetch failed (offline voice test: ${url.host})`);
+  };
+  return state;
+}
+
+function storageFor(saved) {
+  return {
+    get: async (key) => (saved.has(key) ? structuredClone(saved.get(key)) : undefined),
+    put: async (key, value) => saved.set(key, structuredClone(value)),
+    delete: async (key) => saved.delete(key),
+    list: async ({ prefix = '' } = {}) => new Map([...saved.entries()].filter(([k]) => k.startsWith(prefix))),
+    setAlarm: async () => {},
+    deleteAlarm: async () => {},
+  };
+}
+
+async function owner(provider) {
+  globalThis.fetch = provider.fetch;
+  const inputs = [];
+  const pending = [];
+  const saved = new Map();
+  const env = {
+    CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_TIMEZONE: 'America/Chicago',
+    CHE_VOICE_PROBE_TOKEN: 'o'.repeat(40),
+    ELEVENLABS_API_KEY: KEY, CHE_ELEVENLABS_PREFERRED: '1', CHE_ELEVENLABS_VOICE_ID: 'baseVoiceabcdefgh',
+    FISH_API_KEY: FISH_KEY, CHE_FISH_PREFERRED: '1', CHE_FISH_VOICE_ID: 'fishVoiceabcdefgh',
+    AI: { run: async (_model, input) => { inputs.push(input); return { response: 'Model answer, sir.' }; } },
+  };
+  const state = new CheState({ storage: storageFor(saved), waitUntil: (p) => pending.push(p) }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, body, token = '', method = 'POST') => worker.fetch(new Request(`https://che.example${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
+  }), env);
+  const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
+  const settle = async () => { while (pending.length) await pending.shift(); };
+  return {
+    token, saved, state, env,
+    data: () => saved.get('che') || {},
+    modelCalls: () => inputs.length,
+    lastInput: () => JSON.stringify(inputs[inputs.length - 1] ?? null),
+    async say(message) {
+      const before = inputs.length;
+      const res = await send('/api/chat', { message, history: [] }, token);
+      const raw = await res.text();
+      await settle();
+      const events = raw.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch (_) { return null; } }).filter(Boolean);
+      const done = events.find((e) => e.type === 'done') || {};
+      const reply = events.filter((e) => e.type === 'delta').map((e) => e.delta).join('');
+      return { raw, reply, done, modelCalls: inputs.length - before, status: res.status };
+    },
+    async get(path) { const res = await send(path, null, token, 'GET'); return { status: res.status, body: await res.json().catch(() => ({})), res }; },
+    async post(path, body) { const res = await send(path, body, token); return { status: res.status, body: await res.json().catch(() => ({})) }; },
+  };
+}
+
+test('"show my ElevenLabs library" lists the account\'s voices by group, with no model call', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  const r = await me.say('CHE, show my ElevenLabs library.');
+  assert.equal(r.done.source, 'che_voice_studio');
+  assert.equal(r.done.model_calls, 0);
+  assert.equal(r.modelCalls, 0);
+  assert.match(r.reply, /ElevenLabs library has 3 voices/);
+  assert.match(r.reply, /1, Connie, My Voices/);
+  assert.match(r.reply, /2, Narrator Saved, Voice Library/);
+  assert.match(r.reply, /3, Rachel, Built in/);
+  assert.equal(JSON.stringify(r).includes(KEY), false, 'the key never reaches the chat');
+});
+
+test('"preview number three" plays the free sample only; no speech is generated and no credits are used', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  await me.say('show my ElevenLabs library');
+  const r = await me.say('preview number three');
+  assert.equal(r.done.source, 'che_voice_studio');
+  assert.deepEqual(r.done.voice_preview, { provider: 'elevenlabs', voice_id: RACHEL });
+  assert.match(r.reply, /free sample of Rachel/);
+  assert.equal(provider.speechCalls, 0, 'no paid speech call was made');
+});
+
+test('"use Connie" saves her as CHE\'s voice, and "save this as your voice" keeps the one just previewed', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  await me.say('show my ElevenLabs library');
+  const used = await me.say('use Connie');
+  assert.equal(used.done.model_calls, 0);
+  assert.match(used.reply, /Connie is now CHE's voice/);
+  assert.equal(me.data().voice_choice.id, CONNIE);
+  assert.equal(me.data().voice_choice.provider, 'elevenlabs');
+  assert.equal(me.data().voice_choice.name, 'Connie');
+  await me.say('preview number three');
+  const saved = await me.say('CHE, save this as your voice.');
+  assert.match(saved.reply, /Saved Rachel as CHE's voice/);
+  assert.equal(me.data().voice_choice.id, RACHEL);
+});
+
+test('a voice added to the account is seen on refresh and can be used at once, with no deploy', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  assert.equal((await me.say('use Brand New')).modelCalls, 1, 'before the voice exists, the name is not on the account: ordinary chat');
+  provider.account.push({ voice_id: NEW, name: 'Brand New', category: 'cloned', is_owner: true });
+  const refreshed = await me.say('refresh my voices');
+  assert.match(refreshed.reply, /refreshed, sir: 4 voices/);
+  const used = await me.say('use Brand New');
+  assert.match(used.reply, /Brand New is now CHE's voice/);
+  assert.equal(me.data().voice_choice.id, NEW);
+});
+
+test('a key without the voices permission is said in plain words, and nothing is saved', async () => {
+  const provider = fakeProvider();
+  provider.voicesStatus = 401;
+  const me = await owner(provider);
+  const r = await me.say('show my ElevenLabs library');
+  assert.match(r.reply, /missing the voices_read permission/);
+  assert.equal(JSON.stringify(r).includes(KEY), false);
+  const used = await me.say('use Connie voice');
+  assert.match(used.reply, /cannot read your voice library right now, sir\. .*voices_read permission/);
+  assert.equal(used.modelCalls, 0, 'the model does not guess at a voice it cannot see');
+  assert.equal(me.data().voice_choice, undefined);
+  const trading = await me.say('switch to live trading');
+  assert.equal(trading.done.source === 'che_voice_studio', false, 'a trading request is not a voice request');
+});
+
+test('a voice with no published free sample is said so, and nothing is played in its place', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  await me.say('show my ElevenLabs library');
+  const r = await me.say('preview Narrator Saved');
+  assert.match(r.reply, /publishes no free sample for Narrator Saved/);
+  assert.equal(r.done.voice_preview, undefined);
+  assert.equal(provider.speechCalls, 0);
+});
+
+test('unknown names and out-of-range numbers change nothing and say so', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  await me.say('show my ElevenLabs library');
+  const bob = await me.say('use Bob voice');
+  assert.match(bob.reply, /did not find bob in your voice library/i);
+  assert.equal(bob.modelCalls, 0);
+  const far = await me.say('preview number nine');
+  assert.match(far.reply, /from 1 to 3/);
+  assert.equal(me.data().voice_choice, undefined);
+});
+
+test('ordinary conversation still reaches the model; voice words in a sentence do not hijack it', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  const weather = await me.say('what is the weather like');
+  assert.equal(weather.done.source === 'che_voice_studio', false);
+  assert.equal(weather.modelCalls, 1);
+  const music = await me.say('play some music');
+  assert.equal(music.done.source === 'che_voice_studio', false);
+});
+
+test('paid samples need an explicit confirmation before any credit is spent', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  const refused = await me.post('/api/voice/preview', { provider: 'elevenlabs', id: CONNIE, speed: 1 });
+  assert.equal(refused.status, 409);
+  assert.equal(refused.body.needs_confirmation, true);
+  assert.equal(provider.speechCalls, 0);
+});
+
+test('the library route lists every group, filters by search and favourites, and keeps favourites', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  const all = await me.get('/api/voice/library');
+  assert.equal(all.status, 200);
+  assert.equal(all.body.state, 'Connected');
+  assert.deepEqual(all.body.voices.map((v) => v.source), ['mine', 'library', 'default']);
+  assert.equal(JSON.stringify(all.body).includes(KEY), false);
+  assert.equal(all.body.models.elevenlabs.length, 2);
+  const starred = await me.post('/api/voice/favorite', { voice_id: RACHEL, on: true });
+  assert.deepEqual(starred.body.favorites, [RACHEL]);
+  const onlyStarred = await me.get('/api/voice/library?favorites=1');
+  assert.deepEqual(onlyStarred.body.voices.map((v) => v.name), ['Rachel']);
+  const searched = await me.get('/api/voice/library?query=narrator');
+  assert.deepEqual(searched.body.voices.map((v) => v.name), ['Narrator Saved']);
+  const bad = await me.post('/api/voice/favorite', { voice_id: '../etc', on: true });
+  assert.equal(bad.status, 400);
+});
+
+test('a free preview from the library is audio bytes, and a voice not on the account is refused', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  const sample = await me.get(`/api/voice/library/preview?voice_id=${CONNIE}`);
+  assert.equal(sample.status, 200);
+  assert.match(sample.res.headers.get('content-type'), /audio\/mpeg/);
+  assert.equal(provider.speechCalls, 0);
+  const malformed = await me.get('/api/voice/library/preview?voice_id=../etc/passwd');
+  assert.equal(malformed.status, 400);
+  const notListed = await me.get('/api/voice/library/preview?voice_id=ABSENTvoice000001');
+  assert.equal(notListed.status, 404, 'a well-formed ID that is not on the account is not previewed');
+});
+
+test('a chosen model and its settings are saved only where the model allows them', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  const ok = await me.post('/api/voice/choice', { provider: 'elevenlabs', id: CONNIE, speed: 1, model_id: 'eleven_multilingual_v2', settings: { stability: 0.35, style: 0.4 } });
+  assert.equal(ok.status, 200);
+  assert.equal(me.data().voice_choice.model_id, 'eleven_multilingual_v2');
+  assert.equal(me.data().voice_choice.settings.style, 0.4);
+  assert.equal(me.data().voice_choice.name, 'Connie');
+  const refused = await me.post('/api/voice/choice', { provider: 'elevenlabs', id: CONNIE, speed: 1, model_id: 'eleven_flash_v2_5', settings: { style: 0.4 } });
+  assert.equal(refused.status, 400, 'Flash cannot use style');
+  assert.equal(me.data().voice_choice.model_id, 'eleven_multilingual_v2', 'a refused choice changes nothing');
+});
+
+test('the panel\'s controls can be said aloud; a setting the model does not allow is refused and nothing is saved', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  await me.say('show my ElevenLabs library');
+  await me.say('use Connie');
+  const stab = await me.say('set stability to 60 percent');
+  assert.equal(stab.done.model_calls, 0);
+  assert.match(stab.reply, /Stability is 60 percent for Connie/);
+  assert.equal(me.data().voice_choice.settings.stability, 0.6);
+  const boost = await me.say('turn speaker boost off');
+  assert.match(boost.reply, /Speaker boost is off for Connie/);
+  assert.equal(me.data().voice_choice.settings.use_speaker_boost, false);
+  const style = await me.say('set style to 40 percent');
+  assert.match(style.reply, /not allowed for Flash v2\.5/, 'Flash cannot use style');
+  assert.equal(me.data().voice_choice.settings.style, undefined, 'a refused setting is not saved');
+  const model = await me.say('use the multilingual model');
+  assert.match(model.reply, /will speak with Multilingual v2/);
+  assert.equal(me.data().voice_choice.model_id, 'eleven_multilingual_v2');
+  const styled = await me.say('set style to 40 percent');
+  assert.match(styled.reply, /Style is 40 percent for Connie/);
+  const speed = await me.say('set speed to 1.1');
+  assert.match(speed.reply, /Speaking speed is 1\.10 for Connie/);
+  const refused = await me.say('set stability to 150 percent');
+  assert.match(refused.reply, /not allowed for Multilingual v2/);
+  assert.equal(me.data().voice_choice.settings.stability, 0.6, 'an out-of-range value changes nothing');
+  const noModel = await me.say('use the bathroom model');
+  assert.equal(noModel.done.source === 'che_voice_studio', false, 'a model the account does not have is ordinary chat');
+});
+
+test('"switch to Fish" makes Fish first, and "switch to ElevenLabs" puts ElevenLabs back', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  const fish = await me.say('CHE, switch to Fish.');
+  assert.match(fish.reply, /Switched to Fish Audio, sir: CHE Fish voice \(configured\)/, 'the Fish voice the owner set up comes first');
+  assert.equal(me.data().voice_choice.provider, 'fish');
+  assert.equal(me.data().voice_choice.id, 'configured');
+  const back = await me.say('switch to ElevenLabs');
+  assert.match(back.reply, /Switched back to ElevenLabs/);
+  assert.equal(me.data().voice_choice, undefined);
+});
+
+// The deploy check sends this deploy's probe token to the owner's object. The object was
+// created with an older env, so it must take the token from the voice settings it is given.
+test('the Command Center readiness check accepts this deploy\'s probe token, not only the one the object was created with', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  const NEW_TOKEN = 'n'.repeat(40);
+  const ask = () => me.state.fetch(new Request('https://che.internal/api/commands/readiness', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${NEW_TOKEN}`, 'Content-Type': 'application/json' },
+    body: '{}',
+  }));
+  assert.equal((await ask()).status, 404, 'a token the object was not given is refused');
+  await me.state.setVoiceSecrets({ CHE_VOICE_PROBE_TOKEN: NEW_TOKEN });
+  const ok = await ask();
+  assert.equal(ok.status, 200);
+  assert.equal(Number.isInteger((await ok.json()).available), true);
+});
+
+// ─── Voice IDs: paste an ID, check it with the provider, name it, save it, use it ───
+
+test('a pasted ElevenLabs ID is checked with the provider; an unknown ID is refused and nothing is used', async () => {
+  const provider = fakeProvider();
+  provider.details[PASTED] = 'Pasted';
+  const me = await owner(provider);
+  const refused = await me.post('/api/voice/ids/save', { provider: 'elevenlabs', id: 'NOTonACCOUNT00000', name: 'Ghost', use: true });
+  assert.equal(refused.status, 404);
+  assert.equal(refused.body.state, 'not_found');
+  assert.match(refused.body.detail, /no voice with this ID on your account/);
+  assert.equal(me.data().voice_choice, undefined, 'nothing is used');
+  assert.equal((me.data().voice_saved || []).some((s) => s.name === 'Ghost'), false, 'nothing is saved');
+  const saved = await me.post('/api/voice/ids/save', { provider: 'elevenlabs', id: PASTED, name: 'My Pasted', use: true });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.active.name, 'My Pasted');
+  assert.match(saved.body.message, /My Pasted is CHE's voice now/);
+  assert.equal(me.data().voice_choice.id, PASTED);
+  assert.equal(provider.speechCalls, 0, 'a voice the account can read is checked without speech');
+});
+
+test('a key that cannot read voice details still saves a voice, after the one test sentence the owner agreed to', async () => {
+  const provider = fakeProvider();
+  provider.detailsStatus = 401;
+  provider.details[PASTED] = 'Pasted';
+  const me = await owner(provider);
+  const r = await me.post('/api/voice/ids/save', { provider: 'elevenlabs', id: PASTED, name: 'Pasted', use: true });
+  assert.equal(r.status, 200);
+  assert.equal(provider.speechCalls, 1, 'exactly one short test sentence confirmed the voice');
+  assert.equal(me.data().voice_choice.id, PASTED);
+});
+
+test('a voice gated to a paid ElevenLabs plan is named as such, and is not saved or used', async () => {
+  const provider = fakeProvider();
+  provider.paid.add(PASTED);
+  const me = await owner(provider);
+  const r = await me.post('/api/voice/ids/save', { provider: 'elevenlabs', id: PASTED, name: 'Gated', use: true });
+  assert.equal(r.status, 409);
+  assert.equal(r.body.state, 'paid_plan');
+  assert.match(r.body.detail, /needs a paid ElevenLabs plan/);
+  assert.equal(me.data().voice_choice, undefined);
+});
+
+test('the presets Connie and Mike are checked when the page opens: details only, no credits', async () => {
+  const provider = fakeProvider();
+  provider.details[PRESET_CONNIE] = 'Connie';
+  provider.details[PRESET_MIKE] = 'Mike';
+  const me = await owner(provider);
+  const r = await me.get('/api/voice/ids');
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.saved.map((s) => [s.name, s.state]), [['Connie', 'verified'], ['Mike', 'verified']]);
+  assert.equal(provider.speechCalls, 0);
+});
+
+test('a preset the account cannot use says why when the page is checked', async () => {
+  const provider = fakeProvider();
+  provider.details[PRESET_CONNIE] = 'Connie';
+  provider.paid.add(PRESET_MIKE);
+  const me = await owner(provider);
+  const r = await me.get('/api/voice/ids');
+  const mike = r.body.saved.find((s) => s.name === 'Mike');
+  assert.equal(mike.state, 'paid_plan');
+  assert.match(mike.reason, /paid ElevenLabs plan/);
+  const use = await me.post('/api/voice/ids/use', { provider: 'elevenlabs', id: PRESET_MIKE });
+  assert.equal(use.status, 409, 'a voice the provider refused cannot be switched to');
+});
+
+test('saved voices are switched instantly, and the chosen voice is kept on the Worker', async () => {
+  const provider = fakeProvider();
+  provider.details[PRESET_CONNIE] = 'Connie';
+  provider.details[PRESET_MIKE] = 'Mike';
+  const me = await owner(provider);
+  await me.get('/api/voice/ids');
+  const toMike = await me.post('/api/voice/ids/use', { provider: 'elevenlabs', id: PRESET_MIKE });
+  assert.equal(toMike.status, 200);
+  assert.equal(me.data().voice_choice.name, 'Mike');
+  assert.equal(me.saved.get('che').voice_choice.id, PRESET_MIKE, 'stored, so it survives a restart');
+  await me.post('/api/voice/ids/use', { provider: 'elevenlabs', id: PRESET_CONNIE });
+  assert.equal(me.data().voice_choice.name, 'Connie');
+});
+
+test('a spoken "use Mike" switches to the saved voice, and "preview" uses the free-credit confirmation', async () => {
+  const provider = fakeProvider();
+  provider.details[PRESET_CONNIE] = 'Connie';
+  provider.details[PRESET_MIKE] = 'Mike';
+  const me = await owner(provider);
+  await me.get('/api/voice/ids');
+  const said = await me.say('use Mike');
+  assert.equal(said.modelCalls, 0);
+  assert.match(said.reply, /Mike is now CHE's voice/);
+  assert.equal(me.data().voice_choice.id, PRESET_MIKE);
+  const unconfirmed = await me.post('/api/voice/preview', { provider: 'elevenlabs', id: PRESET_MIKE, speed: 1 });
+  assert.equal(unconfirmed.status, 409, 'a sample needs the owner\'s confirmation');
+  const confirmed = await worker.fetch(new Request('https://che.example/api/voice/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${me.token}` },
+    body: JSON.stringify({ provider: 'elevenlabs', id: PRESET_MIKE, speed: 1, confirm_credits: true }),
+  }), me.env);
+  assert.equal(confirmed.status, 200);
+  assert.match(confirmed.headers.get('content-type'), /audio/);
+});
+
+test('removing a saved voice needs confirmation; removing the voice in use returns CHE to its built-in voice', async () => {
+  const provider = fakeProvider();
+  provider.details[PRESET_MIKE] = 'Mike';
+  const me = await owner(provider);
+  await me.post('/api/voice/ids/use', { provider: 'elevenlabs', id: PRESET_MIKE });
+  const unconfirmed = await me.post('/api/voice/ids/remove', { provider: 'elevenlabs', id: PRESET_MIKE });
+  assert.equal(unconfirmed.status, 409);
+  assert.equal(me.data().voice_choice.id, PRESET_MIKE, 'nothing was removed without confirmation');
+  const removed = await me.post('/api/voice/ids/remove', { provider: 'elevenlabs', id: PRESET_MIKE, confirm: true });
+  assert.equal(removed.status, 200);
+  assert.match(removed.body.message, /Mike is removed. CHE is back on its built-in voice/);
+  assert.equal(me.data().voice_choice, undefined);
+  assert.equal((me.data().voice_saved || []).some((s) => s.id === PRESET_MIKE), false);
+});
+
+test('a Fish Audio ID is checked against Fish Audio and saved under its name', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  const bad = await me.post('/api/voice/ids/save', { provider: 'fish', id: '0'.repeat(32), name: 'Nope', use: true });
+  assert.equal(bad.status, 404);
+  assert.match(bad.body.detail, /Fish Audio has no voice model with this ID/);
+  const ok = await me.post('/api/voice/ids/save', { provider: 'fish', id: FISH32, name: 'My Fish', use: true });
+  assert.equal(ok.status, 200);
+  assert.equal(me.data().voice_choice.provider, 'fish');
+  assert.equal(me.data().voice_choice.name, 'My Fish');
+});
+
+test('a voice request replaces a held delete, so a later "yes" cannot release it', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  const held = JSON.parse((await me.say('delete my old voice notes')).raw);
+  assert.equal(held.held_for_owner, true, 'the delete is held until the owner says yes');
+  const studio = await me.say('use Connie');
+  assert.equal(studio.done.source, 'che_voice_studio');
+  const yes = await me.say('yes');
+  assert.equal(yes.done.source === 'che_voice_studio', false);
+  assert.equal(me.lastInput().includes('delete my old voice notes'), false, 'the held delete was not sent on the yes');
+});
+
+test('switching to Fish and back restores the ElevenLabs voice the owner had, not the built-in one', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  await me.say('use Connie');
+  assert.equal(me.data().voice_choice.name, 'Connie');
+  await me.say('switch to Fish');
+  assert.equal(me.data().voice_choice.provider, 'fish');
+  const back = await me.say('switch to ElevenLabs');
+  assert.match(back.reply, /Switched back to ElevenLabs/);
+  assert.equal(me.data().voice_choice.provider, 'elevenlabs');
+  assert.equal(me.data().voice_choice.name, 'Connie');
+});
+
+test('with the library unreadable, "use fish oil" and "switch to live trading" go on to chat', async () => {
+  const provider = fakeProvider();
+  provider.voicesStatus = 401;
+  const me = await owner(provider);
+  // Each goes to its own route (chat for "fish oil", the trading desk for trading), never the voice library.
+  for (const message of ['use fish oil', 'switch to live trading']) {
+    const turn = await me.say(message);
+    assert.equal(turn.done.source === 'che_voice_studio', false, message);
+    assert.doesNotMatch(turn.reply, /voice library/, `${message} is not about the voice library`);
+  }
+});
+
+test('a favourite past the 50 limit is refused with 409, and the list is unchanged', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  for (let i = 0; i < 50; i += 1) {
+    const r = await me.post('/api/voice/favorite', { voice_id: `FAVVOICE${String(i).padStart(4, '0')}`, on: true });
+    assert.equal(r.status, 200);
+  }
+  const over = await me.post('/api/voice/favorite', { voice_id: 'FAVVOICE9999', on: true });
+  assert.equal(over.status, 409);
+  assert.match(over.body.detail, /favourites are full/);
+  assert.equal(me.data().voice_favorites.length, 50);
+  assert.equal(me.data().voice_favorites.includes('FAVVOICE9999'), false);
+});
+
+test('the test harness restores the real fetch', () => {
+  globalThis.fetch = realFetch;
+  assert.equal(globalThis.fetch, realFetch);
+});

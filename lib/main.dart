@@ -47,6 +47,7 @@ import 'che_wake_match.dart';
 import 'che_voice_state.dart';
 import 'che_local_voice_loop.dart';
 import 'che_cloud_voice_picker.dart';
+import 'che_voice_studio.dart';
 import 'che_voice_ui.dart';
 import 'che_app_portal.dart';
 import 'che_video.dart';
@@ -464,6 +465,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   String? _deviceToken;
   String _agentBaseUrl = _defaultAgentBaseUrl;
+  // A free sample asked for by voice; it plays after CHE finishes the spoken reply.
+  String? _pendingVoicePreviewId;
   String _homeBaseUrl = '';
 
   // Office agents run in the backend Agent Runtime; the app mirrors them.
@@ -1461,6 +1464,8 @@ OWNER AGENCY
         : (_homeSuggestions.isNotEmpty ? _homeSuggestions : _skillPlugins.quickActions());
     final chat = Column(
       children: [
+        // Voice IDs opens inside Chat. Collapsed, it builds nothing and speaks nothing.
+        CheVoiceIdsSection(onSpeak: (line) => unawaited(speakText(line, record: false))),
         Expanded(
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 260),
