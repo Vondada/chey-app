@@ -64,6 +64,24 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-15 ~00:55 UTC — PR #308 MERGED to main `091cd9b`; deploy, probes, iPhone IPA and Shorebird verified; owner iPhone test pending)
+
+- **Merged:** PR #308 (squash) from `e3b4d6d`, on branch `claude/che-google-connections`. Earlier commits on that branch (`7471c07`, `62c9a46`, `75297ae`) are included.
+- **Built:** Gmail, Google Drive, Google Calendar and Google Ads, each with its own Google sign-in and full scope URLs, on the existing YouTube OAuth client, callback and sealed tokens. YouTube's grant is not revoked by a Google disconnect or reconnect.
+- **Asked first:** sending email waits for a plain yes. Calendar events and Drive docs run on the owner's explicit request. Disconnect asks first, by button and by voice.
+- **Google Ads:** Connected only after Google lists a real account. Needs Setup until then, rechecked on each refresh. Read-only campaign report in the account's currency. Default API version `v24`, overridable with `CHE_GOOGLE_ADS_API_VERSION`.
+- **FundYourEdge:** Unsupported, with its reason. Its accounts trade on Rithmic, which needs a licensed API. Voice requests to check the account or prepare a futures order get an honest reply. No order is prepared or placed.
+- **Config:** `wrangler.jsonc` sets `CHE_TIMEZONE=America/Chicago`. `CHE_GITHUB_REPO` was already there.
+- **Verified:** CI green on `e3b4d6d`. Worker 1069/1069. Flutter 378/378 with the end-to-end server. `dart analyze` clean. Codex re-reviews answered in-line, and the last one has no findings.
+- **Deploy:** run `38660203761` failed once at "Verify live SideStore install link"; the log is not readable from here. Re-run once (attempt 2) succeeded. Live commit `091cd9b` verified; memory, voice and Command Center probes green.
+- **IPA:** `che-ios-v1.4.1024798704-b3866020356901`, commit `091cd9b`, `CHE-unsigned.ipa` 43,105,328 bytes, SHA-256 `70026849922edd35343e36a9653ab92109fb77d172d99687aa3d676ba7e7121d`. Re-downloaded and re-hashed; bundle `com.cheyapp.chey` 1.4.1024798704 (3866020356901); Shorebird linked. Shorebird run `38660203640` succeeded.
+- **NOT verified:** a live Google sign-in, a live Google Ads account (API `v24` is not confirmed live), any Gmail or Calendar call against a real account, the owner's iPhone, and FundYourEdge (no connection exists).
+- **Owner steps:** in Google Cloud, add the scopes to Google Auth Platform (Data access), add the owner's Google account as a test user, and enable the APIs. For Google Ads, apply for API access in the Google Ads API Overview and complete brand verification. Confirm whether `TRADOVATE` client credentials are set on the Worker (the deploy does not sync them).
+- **Blocked:** FundYourEdge trading and account reads need a Rithmic API licence (developer kit, conformance review, recurring fees). Lower-cost option: the owner reads the account in the firm's dashboard or TradeSea and tells CHE the figures. CHE does not log in to those platforms.
+- **Not done:** no trade orders placed. No changes to the Trading Room or the NinjaTrader desk. PR #307 was not touched.
+
+---
+
 ## 2. Current position (Claude, 2026-10-14 ~21:58 UTC — PR #306 MERGED to main `fc71368`; deploy, Shorebird and public IPA VERIFIED; owner iPhone acceptance PENDING)
 
 - **Took over PR #306 from ChatGPT** on the owner's directive. Squash-merged to `main` as **`fc71368`** from head **`1ae9137`**. Merge title tags: `[ios-build] [worker-deploy]`.
