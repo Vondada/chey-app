@@ -458,8 +458,9 @@ struct CHEAppShortcuts: AppShortcutsProvider {
             result(false)
             return
           }
-          if let output = args["output"] as? String {
-            self.setOutputPreference(output)
+          if let output = args["output"] as? String, !self.setOutputPreference(output) {
+            result(FlutterError(code: "audio_route_failed", message: "CHE could not safely route this voice clip.", details: nil))
+            return
           }
           self.play(
             data: typed.data,
@@ -474,8 +475,11 @@ struct CHEAppShortcuts: AppShortcutsProvider {
           result(self.routeSummary())
 
         case "setAudioOutput":
-          self.setOutputPreference((call.arguments as? String) ?? "auto")
-          result(self.routeSummary())
+          if self.setOutputPreference((call.arguments as? String) ?? "auto") {
+            result(self.routeSummary())
+          } else {
+            result(FlutterError(code: "audio_route_failed", message: "CHE could not change audio output. The previous choice is unchanged.", details: nil))
+          }
 
         default:
           result(FlutterMethodNotImplemented)
@@ -601,7 +605,8 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     return options
   }
 
-  private func configureAudioSession() {
+  @discardableResult
+  private func configureAudioSession() -> Bool {
     let session = AVAudioSession.sharedInstance()
     installAudioObservers()
     // Re-applying an unchanged category/mode for every clip interrupts
@@ -616,16 +621,23 @@ struct CHEAppShortcuts: AppShortcutsProvider {
           "type": "error",
           "message": "CHE could not configure iPhone voice audio."
         ])
+        return false
       }
     }
-    try? session.setActive(true)
-    applyOutputRoute()
+    do {
+      try session.setActive(true)
+    } catch {
+      voiceStreamHandler.emit(["type": "error", "message": "CHE could not activate iPhone voice audio."])
+      return false
+    }
+    return applyOutputRoute()
   }
 
   /// Puts CHE's voice where the owner wants it. Automatic replaces only the
   /// quiet built-in earpiece with the loudspeaker; headphones, Bluetooth,
   /// AirPlay or a car the owner connected keep playing her.
-  private func applyOutputRoute(newDevice: Bool = false) {
+  @discardableResult
+  private func applyOutputRoute(newDevice: Bool = false) -> Bool {
     let session = AVAudioSession.sharedInstance()
     do {
       switch outputPreference {
@@ -651,25 +663,32 @@ struct CHEAppShortcuts: AppShortcutsProvider {
           try session.overrideOutputAudioPort(.speaker)
         }
       }
+      return true
     } catch {
       voiceStreamHandler.emit([
         "type": "error",
         "message": "CHE could not switch the iPhone speaker: \(error.localizedDescription)"
       ])
+      return false
     }
   }
 
-  private func setOutputPreference(_ value: String) {
+  @discardableResult
+  private func setOutputPreference(_ value: String) -> Bool {
     let preference = ["auto", "speaker", "receiver"].contains(value) ? value : "auto"
-    if preference != outputPreference {
-      outputPreference = preference
+    let previous = outputPreference
+    outputPreference = preference
+    // Validate and apply the route BEFORE persisting it. A failed native
+    // override must never look like a successful private-earpiece choice.
+    guard configureAudioSession() else {
+      outputPreference = previous
+      _ = configureAudioSession()
+      return false
+    }
+    if preference != previous {
       UserDefaults.standard.set(preference, forKey: "che.voice.outputPreference")
     }
-    // Called before every reply: even an unchanged choice re-applies the
-    // route, in case another part of the app reset the session since.
-    if AVAudioSession.sharedInstance().category == .playAndRecord {
-      configureAudioSession()
-    }
+    return true
   }
 
   /// The kind of output CHE is playing through right now.
@@ -1183,7 +1202,10 @@ struct CHEAppShortcuts: AppShortcutsProvider {
 
   private func speak(_ text: String, result: @escaping FlutterResult) {
     stopAllAudio()
-    configureAudioSession()
+    guard configureAudioSession() else {
+      result(FlutterError(code: "audio_route_failed", message: "CHE could not safely route device speech.", details: nil))
+      return
+    }
 
     assistantText = text
 
@@ -1208,7 +1230,10 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     result: @escaping FlutterResult
   ) {
     stopAllAudio()
-    configureAudioSession()
+    guard configureAudioSession() else {
+      result(FlutterError(code: "audio_route_failed", message: "CHE could not safely route this voice clip.", details: nil))
+      return
+    }
     // The words of this turn so far, so the recognizer's copy of her own
     // voice is never taken for the owner interrupting.
     assistantText = assistantSpeaking ? String((assistantText + " " + text).suffix(1600)) : text
