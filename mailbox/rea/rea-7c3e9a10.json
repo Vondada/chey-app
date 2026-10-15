@@ -1,0 +1,221 @@
+{
+ "schema": "che.rea-summary.v1",
+ "job_id": "rea-7c3e9a10",
+ "tool": {
+  "name": "rea-agents",
+  "version": "6.5.0",
+  "provider": "rea-javascript-application",
+  "provider_version": "1",
+  "analysis": "static JavaScript application analysis; no code from the package was executed"
+ },
+ "target": {
+  "kind": "npm",
+  "name": "semver",
+  "version": "7.7.2",
+  "integrity": "sha512-RF0Fw+rO5AMf9MAyaRXI4AV0Ulj5lMHqVxxdSgiVbixSCXoEmmX/jk0CuJw4+3SqroYO9VoUh+HcuJivvtJemA=="
+ },
+ "state": "complete",
+ "evidence": {
+  "id": "ev_ae375e06324f66f40ede1ea0c4d8ea17fafddaa8f655a4772fba3db81ac0d31a",
+  "operation": "analyze_javascript_application",
+  "confidence": "derived",
+  "authority": "shipped-artifact",
+  "artifact_sha256": "62ff98d2abd4bb2d252f18a0d88bb24883cdcc48cba2b7f8c479fadba70505dc"
+ },
+ "coverage": {
+  "relevant_files": 49,
+  "parsed_files": 48,
+  "parse_failures": 0,
+  "invalid_utf8_files": 0,
+  "text_bytes_read": 71273,
+  "graph_status": "partial",
+  "graph_omitted_nodes": null
+ },
+ "structure": {
+  "graph_nodes": 156,
+  "nodes_by_kind": {
+   "javascript-asset": 48,
+   "javascript-module": 103,
+   "electron-main": 1,
+   "package": 1,
+   "artifact": 2,
+   "endpoint": 1
+  },
+  "module_nodes": 103,
+  "imports": {
+   "import_links": 261,
+   "resolved_import_links": 261,
+   "sample": [
+    {
+     "from": "ranges/outside.js",
+     "specifier": "../functions/lte",
+     "to": "functions/lte.js",
+     "status": "resolved"
+    },
+    {
+     "from": "classes/range.js",
+     "specifier": "../internal/debug",
+     "to": "internal/debug.js",
+     "status": "resolved"
+    },
+    {
+     "from": "functions/cmp.js",
+     "specifier": "./lt",
+     "to": "functions/lt.js",
+     "status": "resolved"
+    },
+    {
+     "from": "index.js",
+     "specifier": "./functions/compare",
+     "to": "functions/compare.js",
+     "status": "resolved"
+    },
+    {
+     "from": "index.js",
+     "specifier": "./ranges/to-comparators",
+     "to": "ranges/to-comparators.js",
+     "status": "resolved"
+    },
+    {
+     "from": "classes/comparator.js",
+     "specifier": "./range",
+     "to": "classes/range.js",
+     "status": "resolved"
+    },
+    {
+     "from": "ranges/gtr.js",
+     "specifier": "./outside",
+     "to": "ranges/outside.js",
+     "status": "resolved"
+    },
+    {
+     "from": "functions/compare-loose.js",
+     "specifier": "./compare",
+     "to": "functions/compare.js",
+     "status": "resolved"
+    },
+    {
+     "from": "index.js",
+     "specifier": "./ranges/to-comparators",
+     "to": "ranges/to-comparators.js",
+     "status": "resolved"
+    },
+    {
+     "from": "functions/compare-build.js",
+     "specifier": "../classes/semver",
+     "to": "classes/semver.js",
+     "status": "resolved"
+    },
+    {
+     "from": "functions/inc.js",
+     "specifier": "../classes/semver",
+     "to": "classes/semver.js",
+     "status": "resolved"
+    },
+    {
+     "from": "classes/comparator.js",
+     "specifier": "../functions/cmp",
+     "to": "functions/cmp.js",
+     "status": "resolved"
+    },
+    {
+     "from": "index.js",
+     "specifier": "./classes/comparator",
+     "to": "classes/comparator.js",
+     "status": "resolved"
+    },
+    {
+     "from": "index.js",
+     "specifier": "./ranges/min-satisfying",
+     "to": "ranges/min-satisfying.js",
+     "status": "resolved"
+    },
+    {
+     "from": "index.js",
+     "specifier": "./ranges/min-version",
+     "to": "ranges/min-version.js",
+     "status": "resolved"
+    },
+    {
+     "from": "ranges/min-satisfying.js",
+     "specifier": "../classes/semver",
+     "to": "classes/semver.js",
+     "status": "resolved"
+    },
+    {
+     "from": "classes/semver.js",
+     "specifier": "../internal/parse-options",
+     "to": "internal/parse-options.js",
+     "status": "resolved"
+    },
+    {
+     "from": "classes/range.js",
+     "specifier": "./comparator",
+     "to": "classes/comparator.js",
+     "status": "resolved"
+    },
+    {
+     "from": "functions/patch.js",
+     "specifier": "../classes/semver",
+     "to": "classes/semver.js",
+     "status": "resolved"
+    },
+    {
+     "from": "classes/range.js",
+     "specifier": "../internal/constants",
+     "to": "internal/constants.js",
+     "status": "resolved"
+    },
+    {
+     "from": "ranges/valid.js",
+     "specifier": "../classes/range",
+     "to": "classes/range.js",
+     "status": "resolved"
+    },
+    {
+     "from": "index.js",
+     "specifier": "./classes/semver",
+     "to": "classes/semver.js",
+     "status": "resolved"
+    },
+    {
+     "from": "index.js",
+     "specifier": "./functions/compare-loose",
+     "to": "functions/compare-loose.js",
+     "status": "resolved"
+    },
+    {
+     "from": "ranges/ltr.js",
+     "specifier": "./outside",
+     "to": "ranges/outside.js",
+     "status": "resolved"
+    },
+    {
+     "from": "index.js",
+     "specifier": "./ranges/outside",
+     "to": "ranges/outside.js",
+     "status": "resolved"
+    }
+   ]
+  }
+ },
+ "electron": {
+  "browser_windows": 0,
+  "preload_entrypoints": 0,
+  "ipc_operations": 0,
+  "native_addon_bindings": 0,
+  "note": "A count of 0 means REA found none in the files it read. It is not proof that the feature is absent."
+ },
+ "findings": {
+  "count": 316
+ },
+ "integrity_contradictions": 0,
+ "limitations": [
+  "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
+  "Graph coverage is incomplete; unavailable facts remain explicit and must not be read as absence.",
+  "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
+  "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
+  "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
+  "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code."
+ ]
+}
