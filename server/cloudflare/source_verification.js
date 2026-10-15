@@ -546,7 +546,7 @@ export function checkableUrl(url) {
   try {
     const u = new URL(url);
     return /^https?:$/.test(u.protocol) && !u.username && !u.password && !u.port
-      && !/^\\[/.test(u.hostname) && !/\\.(?:local|internal|lan|localhost)$/i.test(u.hostname)
+      && !u.hostname.startsWith('[') && !['.local', '.internal', '.lan', '.localhost'].some((suffix) => u.hostname.toLowerCase().endsWith(suffix))
       && !PRIVATE_HOST.test(u.hostname) && !ACTION_PATH.test(`${u.pathname}${u.search}`);
   } catch (_) {
     return false;
