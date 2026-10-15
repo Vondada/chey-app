@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:chey/che_native_voice.dart';
 import 'package:chey/che_speech_pipeline.dart';
 import 'package:chey/che_ui/che_ui_preferences.dart';
+import 'package:chey/che_ui/che_ui_voice_command.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -119,6 +120,23 @@ void main() {
     expect(cheAudioRouteSpoken(report), 'Bluetooth (AirPods Pro)');
     expect(cheIphoneVolumePercent(report), 60);
     expect(cheAudioRouteLabel('speaker'), 'the loudspeaker');
+  });
+
+  test('native output routing failure keeps the previous private output preference', () async {
+    await CheUiPreferences.instance.setAudioOutput(CheAudioOutput.receiver);
+    addTearDown(() => CheUiPreferences.instance.setAudioOutput(CheAudioOutput.auto));
+    mockBridge((call) async {
+      if (call.method == 'setAudioOutput') {
+        throw PlatformException(code: 'audio_route_failed', message: 'Unable to override output port');
+      }
+      return null;
+    });
+
+    final result = await cheSetAudioOutput(CheAudioOutput.speaker);
+    expect(result.applied, isFalse);
+    expect(result.text, contains('Nothing was changed'));
+    expect(CheUiPreferences.instance.audioOutput, CheAudioOutput.receiver);
+    expect(calls.where((call) => call.method == 'setAudioOutput'), hasLength(1));
   });
 
   test('a player that never reports completion is stopped and treated as not played', () async {
