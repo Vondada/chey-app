@@ -14,7 +14,12 @@
 // "sim" uses Tradovate's demo environment (the simulated account), "live"
 // the real one. Same login, same token, different server.
 
+import { guardSubmit } from './trading_environments.js';
+
 const AUTH_KEY = 'tradovate_auth';
+
+// Dollars per index point for the contracts CHE trades (CME specifications).
+export const POINT_VALUE = { ES: 50, MES: 5, NQ: 20, MNQ: 2 };
 const STATE_KEY = 'tradovate_oauth_state';
 const BASE = { sim: 'https://demo.tradovateapi.com/v1', live: 'https://live.tradovateapi.com/v1' };
 const DEFAULT_TOKEN_URL = 'https://live.tradovateapi.com/auth/oauthtoken';
@@ -135,7 +140,7 @@ export async function frontContract(storage, mode, root, opts = {}) {
   return hit ? { symbol: hit.name } : { error: `Tradovate did not return a current ${root} contract.` };
 }
 
-const tick = (price) => Math.round(price * 4) / 4; // ES, MES, NQ, MNQ trade in 0.25 points
+export const tick = (price) => Math.round(price * 4) / 4; // ES, MES, NQ, MNQ trade in 0.25 points
 
 /**
  * A limit entry with its stop and target attached (Order Sends Order): the
@@ -151,6 +156,17 @@ export async function placeBracket(storage, mode, order, opts = {}) {
   if (acct.error) return acct;
   const contract = await frontContract(storage, mode, root, opts);
   if (contract.error) return contract;
+  // The environment guard: a simulated run goes only to a simulated account, and a live
+  // order needs the owner's approval for this exact order, within his limits. It is
+  // checked here, the one place every order passes, before anything is sent.
+  const live = mode === 'live';
+  const pointValue = POINT_VALUE[root] || 0;
+  if (live && !pointValue) return { error: `CHE does not know the point value of ${root}, so the live order was NOT placed.` };
+  const verdict = guardSubmit(live ? 'funded' : 'broker_sim', {
+    account_kind: live ? 'funded' : 'simulation', account: acct.account.name, contract: root,
+    qty, entry: tick(entry), stop: tick(stop), target: tick(target), pointValue,
+  }, { approval: order.approval || null, unattended: Boolean(order.unattended), limits: order.limits || null });
+  if (!verdict.allowed) return { error: `The order was NOT placed: ${verdict.reason}.` };
   const body = {
     accountSpec: acct.account.name,
     accountId: acct.account.id,

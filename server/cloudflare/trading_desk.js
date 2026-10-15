@@ -8,7 +8,7 @@
 //          after the owner says "take the trade" (owner rule: anything that
 //          costs money is confirmed first).
 
-import { placeBracket } from './broker_tradovate.js';
+import { placeBracket, tick } from './broker_tradovate.js';
 
 const DESK = 'trading_desk';
 const ALERT_HOURS = 20; // a daily-bar entry is good until the next session
@@ -24,7 +24,15 @@ export async function readDesk(storage) {
     // The account each mode trades: live orders go only to the one the owner named.
     account: { sim: String(desk.account?.sim || ''), live: String(desk.account?.live || '') },
     listed: desk.listed && Array.isArray(desk.listed.names) ? desk.listed : null,
+    // The owner's live limits: the most contracts per order and the most dollars at risk on one order.
+    risk_limits: validLimits(desk.risk_limits),
   };
+}
+
+function validLimits(limits) {
+  const contracts = Number(limits?.maxContracts);
+  const dollars = Number(limits?.maxRiskDollars);
+  return Number.isInteger(contracts) && contracts >= 1 && contracts <= 10 && dollars >= 1 ? { maxContracts: contracts, maxRiskDollars: dollars } : null;
 }
 
 async function saveDesk(storage, desk) {
@@ -124,6 +132,8 @@ export function deskIntent(message) {
   if (/\bwhat\b[\s\S]{0,20}\btrading mode\b|\bam i (?:on|in) (?:live|sim|paper|the live|the sim)\b|\bwhich (?:trading )?account am i\b/.test(text)) return { kind: 'status' };
   if (/^\s*(?:yes[,!.]?\s+)?(?:take|place|enter|send)\s+(?:the|that|this)\s+trade\b|^\s*confirm\s+(?:the|that)\s+trade\b|^\s*yes[,!.]?\s+(?:take|place)\s+it\b/.test(text)) return { kind: 'take' };
   if (/^\s*(?:no[,!.]?\s+)?skip\s+(?:it|the trade|that trade|this trade)\b|^\s*(?:cancel|pass on)\s+(?:the|that|this)\s+(?:trade|alert)\b/.test(text)) return { kind: 'skip' };
+  const limit = /\b(?:set|change|make|put)\b[\s\S]{0,30}\b(?:live\s+)?(?:risk\s+)?limits?\b[\s\S]{0,30}?\b(\d{1,2})\s+contracts?\b[\s\S]{0,30}?\$?(\d{1,6}(?:\.\d+)?)\s*(?:dollars?|usd)?\b/.exec(text);
+  if (limit) return { kind: 'limits', maxContracts: Number(limit[1]), maxRiskDollars: Number(limit[2]) };
   const size = /\btrade\s+(\d{1,2}|one|two|three|four|five)\s+(micros?|micro contracts?|contracts?|full(?:[\s-]size)? contracts?)\b/.exec(text);
   if (size) {
     const words = { one: 1, two: 2, three: 3, four: 4, five: 5 };
@@ -149,6 +159,21 @@ export async function setMode(storage, mode) {
   return { before, mode };
 }
 
+// The owner sets the live limits by voice. Nothing live is sent until they exist.
+export async function setRiskLimits(storage, { maxContracts, maxRiskDollars } = {}) {
+  const limits = validLimits({ maxContracts, maxRiskDollars });
+  if (!limits) return { error: 'Choose 1 to 10 contracts and at least 1 dollar for the live limits, sir. Nothing changed.' };
+  const desk = await readDesk(storage);
+  desk.risk_limits = limits;
+  await saveDesk(storage, desk);
+  return { limits };
+}
+
+// The owner's "take the trade" approves exactly this alert, as the broker will send it.
+function approvalFor(alert, account) {
+  return { account, contract: alert.root, qty: alert.qty, entry: tick(alert.entry), stop: tick(alert.stop), target: tick(alert.target), expires_at: Date.parse(alert.expires_at) };
+}
+
 export async function setSize(storage, qty, contract) {
   if (!(qty >= 1 && qty <= 10)) return { error: 'Choose 1 to 10 contracts, sir.' };
   const desk = await readDesk(storage);
@@ -171,12 +196,17 @@ export async function takeTrade(storage, { now = Date.now(), place = placeBracke
   if (desk.mode === 'paper') return { reply: 'You are in paper trading, sir, so nothing goes to NinjaTrader. Say "switch to sim trading" or "switch to live trading" first. Nothing was placed.' };
   const account = desk.account[desk.mode];
   if (desk.mode === 'live' && !account) return { reply: 'Which live account should this go to, sir? Say "list my trading accounts", then "use account" and its number. Nothing was placed.' };
+  // Checked before the alert is claimed, so the alert stays open for when the limits are set.
+  if (desk.mode === 'live' && !desk.risk_limits) return { ok: false, reply: 'Set your live risk limits first, sir: say "set my live risk limit to 1 contract and 100 dollars". Nothing was placed.' };
   // Claim the alert before calling the broker: a repeated or overlapping
   // "take the trade" finds it already taken and sends nothing.
   alert.status = 'placing';
   alert.announced = true;
   await saveDesk(storage, desk);
-  const result = await place(storage, desk.mode, { ...alert, account }).catch((e) => ({ error: String(e?.message || e) }));
+  const result = await place(storage, desk.mode, {
+    ...alert, account, approval: desk.mode === 'live' ? approvalFor(alert, account) : null,
+    limits: desk.risk_limits, unattended: false,
+  }).catch((e) => ({ error: String(e?.message || e) }));
   await updateAlert(storage, alert.id, result.ok ? { status: 'placed', result, mode: desk.mode } : { status: 'failed', error: result.error });
   return {
     ok: Boolean(result.ok),
