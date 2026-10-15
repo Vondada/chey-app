@@ -128,6 +128,7 @@ async function owner(provider) {
     token, saved, state, env,
     data: () => saved.get('che') || {},
     modelCalls: () => inputs.length,
+    lastInput: () => JSON.stringify(inputs[inputs.length - 1] ?? null),
     async say(message) {
       const before = inputs.length;
       const res = await send('/api/chat', { message, history: [] }, token);
@@ -482,6 +483,57 @@ test('a Fish Audio ID is checked against Fish Audio and saved under its name', a
   assert.equal(ok.status, 200);
   assert.equal(me.data().voice_choice.provider, 'fish');
   assert.equal(me.data().voice_choice.name, 'My Fish');
+});
+
+test('a voice request replaces a held delete, so a later "yes" cannot release it', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  const held = JSON.parse((await me.say('delete my old voice notes')).raw);
+  assert.equal(held.held_for_owner, true, 'the delete is held until the owner says yes');
+  const studio = await me.say('use Connie');
+  assert.equal(studio.done.source, 'che_voice_studio');
+  const yes = await me.say('yes');
+  assert.equal(yes.done.source === 'che_voice_studio', false);
+  assert.equal(me.lastInput().includes('delete my old voice notes'), false, 'the held delete was not sent on the yes');
+});
+
+test('switching to Fish and back restores the ElevenLabs voice the owner had, not the built-in one', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  await me.say('use Connie');
+  assert.equal(me.data().voice_choice.name, 'Connie');
+  await me.say('switch to Fish');
+  assert.equal(me.data().voice_choice.provider, 'fish');
+  const back = await me.say('switch to ElevenLabs');
+  assert.match(back.reply, /Switched back to ElevenLabs/);
+  assert.equal(me.data().voice_choice.provider, 'elevenlabs');
+  assert.equal(me.data().voice_choice.name, 'Connie');
+});
+
+test('with the library unreadable, "use fish oil" and "switch to live trading" go on to chat', async () => {
+  const provider = fakeProvider();
+  provider.voicesStatus = 401;
+  const me = await owner(provider);
+  // Each goes to its own route (chat for "fish oil", the trading desk for trading), never the voice library.
+  for (const message of ['use fish oil', 'switch to live trading']) {
+    const turn = await me.say(message);
+    assert.equal(turn.done.source === 'che_voice_studio', false, message);
+    assert.doesNotMatch(turn.reply, /voice library/, `${message} is not about the voice library`);
+  }
+});
+
+test('a favourite past the 50 limit is refused with 409, and the list is unchanged', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  for (let i = 0; i < 50; i += 1) {
+    const r = await me.post('/api/voice/favorite', { voice_id: `FAVVOICE${String(i).padStart(4, '0')}`, on: true });
+    assert.equal(r.status, 200);
+  }
+  const over = await me.post('/api/voice/favorite', { voice_id: 'FAVVOICE9999', on: true });
+  assert.equal(over.status, 409);
+  assert.match(over.body.detail, /favourites are full/);
+  assert.equal(me.data().voice_favorites.length, 50);
+  assert.equal(me.data().voice_favorites.includes('FAVVOICE9999'), false);
 });
 
 test('the test harness restores the real fetch', () => {

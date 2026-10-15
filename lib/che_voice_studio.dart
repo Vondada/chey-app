@@ -104,7 +104,9 @@ class _CheVoiceIdsPanelState extends State<CheVoiceIdsPanel> {
   String _base = '';
   String _token = '';
   String _provider = 'elevenlabs';
+  // _status is the result the owner hears (live). _progress is quiet text while a step runs.
   String _status = '';
+  String _progress = '';
   String _error = '';
   List<Map<String, dynamic>> _saved = [];
   Map<String, dynamic>? _active;
@@ -129,7 +131,7 @@ class _CheVoiceIdsPanelState extends State<CheVoiceIdsPanel> {
 
   void _say(String line) {
     if (!mounted) return;
-    setState(() => _status = line);
+    setState(() { _status = line; _progress = ''; });
     widget.onSpeak?.call(line);
   }
 
@@ -192,7 +194,7 @@ class _CheVoiceIdsPanelState extends State<CheVoiceIdsPanel> {
       _say('Give this voice a name, for example Connie.');
       return;
     }
-    setState(() { _busy = true; _status = 'Checking the voice with ${_providerName(_provider)}…'; });
+    setState(() { _busy = true; _progress = 'Checking the voice with ${_providerName(_provider)}…'; });
     try {
       final r = await _client.post(Uri.parse('$_base/api/voice/ids/save'), headers: _json,
           body: jsonEncode({'provider': _provider, 'id': id, 'name': name, 'use': true}))
@@ -281,7 +283,7 @@ class _CheVoiceIdsPanelState extends State<CheVoiceIdsPanel> {
       ),
     );
     if (yes != true || !mounted) return;
-    setState(() { _busy = true; _status = 'Making a short sample…'; });
+    setState(() { _busy = true; _progress = 'Making a short sample…'; });
     try {
       final r = await _client.post(Uri.parse('$_base/api/voice/preview'), headers: _json,
           body: jsonEncode({'provider': active['provider'], 'id': active['id'], 'speed': 1, 'confirm_credits': true}))
@@ -325,6 +327,7 @@ class _CheVoiceIdsPanelState extends State<CheVoiceIdsPanel> {
   Widget _savedRow(Map<String, dynamic> voice) {
     final isActive = _active != null && _active!['id'] == voice['id'] && _active!['provider'] == voice['provider'];
     final refused = _refused(voice);
+    final canUse = !_busy && !refused && !isActive;
     final reason = (voice['reason'] ?? '').toString();
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -353,17 +356,31 @@ class _CheVoiceIdsPanelState extends State<CheVoiceIdsPanel> {
               child: Text(reason, style: const TextStyle(color: CheColors.warning, fontSize: 14, height: 1.3)),
             ),
           const SizedBox(height: 8),
+          // VoiceOver reads the voice's name with each button, not just "Use" or "Remove".
           Row(children: [
             Expanded(
-              child: FilledButton(
-                onPressed: _busy || refused || isActive ? null : () => _use(voice),
-                child: Text(isActive ? 'In use' : 'Use'),
+              child: Semantics(
+                button: true,
+                enabled: canUse,
+                label: isActive ? '${voice['name']}, in use' : 'Use ${voice['name']}',
+                onTap: canUse ? () => _use(voice) : null,
+                excludeSemantics: true,
+                child: FilledButton(
+                  onPressed: canUse ? () => _use(voice) : null,
+                  child: Text(isActive ? 'In use' : 'Use'),
+                ),
               ),
             ),
             const SizedBox(width: 8),
-            TextButton(
-              onPressed: _busy ? null : () => _remove(voice),
-              child: const Text('Remove'),
+            Semantics(
+              button: true,
+              label: 'Remove ${voice['name']}',
+              onTap: _busy ? null : () => _remove(voice),
+              excludeSemantics: true,
+              child: TextButton(
+                onPressed: _busy ? null : () => _remove(voice),
+                child: const Text('Remove'),
+              ),
             ),
           ]),
         ],
@@ -454,6 +471,11 @@ class _CheVoiceIdsPanelState extends State<CheVoiceIdsPanel> {
           ),
         const SizedBox(height: 12),
         for (final voice in _saved) _savedRow(voice),
+        if (_progress.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Text(_progress, style: const TextStyle(color: CheColors.textDim, fontSize: 15, height: 1.3)),
+          ),
         if (_status.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 10),

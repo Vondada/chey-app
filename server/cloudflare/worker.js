@@ -4977,6 +4977,11 @@ export class CheState extends DurableObject {
       if (path === '/api/voice/favorite' && request.method === 'POST') {
         if (!ownerDevice) return ownerOnly();
         if (!isVoiceId(body?.voice_id)) return json({ detail: 'That is not a voice ID CHE can keep.' }, 400);
+        // A favourite past the limit is refused, not silently dropped while the reply says it was kept.
+        const starred = Array.isArray(data.voice_favorites) ? data.voice_favorites : [];
+        if (body.on === true && !starred.includes(String(body.voice_id)) && starred.length >= FAVORITES_LIMIT) {
+          return json({ ok: false, detail: `Your favourites are full (${FAVORITES_LIMIT}). Remove one before adding another.`, favorites: starred, limit: FAVORITES_LIMIT }, 409);
+        }
         data.voice_favorites = withFavorite(data.voice_favorites, String(body.voice_id), body.on === true);
         await this.ctx.storage.put('che', data);
         return json({ ok: true, favorites: data.voice_favorites, limit: FAVORITES_LIMIT });
@@ -7442,6 +7447,14 @@ export class CheState extends DurableObject {
         if (ownerDevice && !body.attachment) {
           const studio = await voiceStudioTurn(this.ctx.storage, data, this.voiceEnv(), message);
           if (studio) {
+            // A voice turn replaces a held request, as any other turn does, so a later "yes"
+            // cannot release a delete or a payment the owner was asked about earlier.
+            try {
+              await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, null);
+              await this.ctx.storage.put(PENDING_APP_ACTION_KEY, null);
+            } catch (_) {
+              return json({ message: 'I could not record that safely, so I did not act. Please say it again.', reply: 'I could not record that safely, so I did not act. Please say it again.', code_review_passed: false, owner_approval_required: true }, 503);
+            }
             return ndjsonReply(studio.reply, { source: 'che_voice_studio', ok: studio.ok, model_calls: 0,
               ...(studio.preview ? { voice_preview: studio.preview } : {}) });
           }

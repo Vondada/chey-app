@@ -240,9 +240,12 @@ export async function fetchFishModels(env = {}, { fetcher = fetch, own = true } 
 // Only the fields the model's own flags allow. Out-of-range or unsupported values
 // are refused, not clamped, so the owner hears exactly what was not accepted.
 export function validateElevenSettings(input = {}, model = null) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
   const out = {};
+  // A number, or text that is a number. null, true and blank text are refused, not read as 0 or 1.
   const number = (value) => {
     if (value === undefined) return undefined;
+    if (typeof value !== 'number' && !(typeof value === 'string' && value.trim() !== '')) return null;
     const n = Number(value);
     return Number.isFinite(n) && n >= 0 && n <= 1 ? Math.round(n * 100) / 100 : null;
   };
@@ -285,6 +288,10 @@ export async function fetchFreePreview(url, { fetcher = fetch } = {}) {
 // Deterministic, like the Google turn: no model call. A request that is not about
 // the voice library returns null and goes to chat as usual.
 const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+
+// Text that names the voice library itself: "voices", ElevenLabs, Fish Audio, or "voice" at the
+// end ("use Mike voice"). "voice typing" or "voice mode" do not, so they go on to chat.
+export const VOICE_NAMED = /\bvoice$|\bvoices\b|\belevenlabs\b|\beleven labs\b|\bfish audio\b/;
 
 export function normalizeVoiceRequest(message) {
   let t = String(message || '').replace(/[‘’`]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -341,11 +348,11 @@ export function voiceStudioIntent(message, { last = null, names = null } = {}) {
   if (!named) return null;
   const verb = named[1];
   const loose = /^(?:play|hear|test)$/.test(verb);
-  if (loose && !last?.items?.length && !/\bvoices?\b/.test(t)) return null;
+  if (loose && !last?.items?.length && !VOICE_NAMED.test(t)) return null;
   if (!names) return { kind: 'needs_names' };
   const match = matchName(named[2], names);
   if (match) return { kind: /^(?:preview|play|hear|test)$/.test(verb) ? 'preview_name' : 'use_name', name: match };
-  if (/\bvoices?\b/.test(t)) return { kind: 'unknown_name', spoken: named[2] };
+  if (VOICE_NAMED.test(t)) return { kind: 'unknown_name', spoken: named[2] };
   return null;
 }
 

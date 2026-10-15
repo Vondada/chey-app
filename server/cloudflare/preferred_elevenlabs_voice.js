@@ -116,7 +116,7 @@ export function preferredElevenLabsKeyStatus(env = {}, now = Date.now()) {
 // The Mary settings, copied from the Worker's live env on each voice request. The
 // Durable Object keeps the env it was created with, so a secret set or changed
 // later would otherwise stay invisible to it until the object restarts.
-export const MARY_SECRET_NAMES = ['ELEVENLABS_API_KEY', 'CHE_ELEVENLABS_VOICE_ID', 'CHE_ELEVENLABS_PREFERRED', 'CHE_ELEVENLABS_MODEL', 'CHE_ELEVENLABS_CONCURRENCY', 'CHE_VOICE_SPEED'];
+export const MARY_SECRET_NAMES = ['ELEVENLABS_API_KEY', 'CHE_ELEVENLABS_VOICE_ID', 'CHE_ELEVENLABS_PREFERRED', 'CHE_ELEVENLABS_MODEL', 'CHE_ELEVENLABS_CONCURRENCY', 'CHE_VOICE_SPEED', 'CHE_VOICE_STABILITY', 'CHE_VOICE_SIMILARITY', 'CHE_VOICE_STYLE', 'CHE_VOICE_SPEAKER_BOOST'];
 
 // An absent setting is sent as an empty value, not left out. A removed secret
 // then overrides the stale captured env instead of being inherited from it.

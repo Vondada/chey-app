@@ -219,3 +219,23 @@ test('ordinary conversation is never a voice request', () => {
   assert.equal(mightBeVoiceRequest('tell me a joke'), true);
   assert.equal(mightBeVoiceRequest('the weather is nice'), false);
 });
+
+// Owner-reported fixes: "voice" alone is not a library request, and settings are never read
+// from null, true or blank text.
+test('"voice" in ordinary talk is not a library request; "voice" at the end of a name is', () => {
+  for (const message of ['switch to voice mode', 'play voice memo', 'use voice typing']) {
+    assert.equal(voiceStudioIntent(message, { last: null, names: ['Connie'] }), null, message);
+  }
+  assert.deepEqual(voiceStudioIntent('use Connie voice', { last: null, names: ['Connie'] }), { kind: 'use_name', name: 'Connie' });
+  assert.deepEqual(voiceStudioIntent('use Rachel voice', { last: null, names: ['Connie'] }), { kind: 'unknown_name', spoken: 'rachel' });
+});
+
+test('settings are refused, not read as 0 or 1, when the value is null, true or blank', () => {
+  const flags = { controls: { style: false, use_speaker_boost: true } };
+  assert.equal(validateElevenSettings({ stability: null }, flags), null);
+  assert.equal(validateElevenSettings({ stability: true }, flags), null);
+  assert.equal(validateElevenSettings({ stability: '   ' }, flags), null);
+  assert.equal(validateElevenSettings(null, flags), null);
+  assert.deepEqual(validateElevenSettings({ stability: '0.5' }, flags), { stability: 0.5 });
+  assert.deepEqual(validateElevenSettings({ similarity_boost: 0.82 }, flags), { similarity_boost: 0.82 });
+});

@@ -184,7 +184,7 @@ test('a stale captured env reports Mary as not set up, and the live secrets fix 
 
 test('only the Mary settings are copied, and an absent one is sent empty', () => {
   const copied = marySecretsFrom({ ...env, ELEVENLABS_API_KEY: '', GROQ_API_KEY: 'do-not-copy' });
-  assert.deepEqual(Object.keys(copied).sort(), ['CHE_ELEVENLABS_CONCURRENCY', 'CHE_ELEVENLABS_MODEL', 'CHE_ELEVENLABS_PREFERRED', 'CHE_ELEVENLABS_VOICE_ID', 'CHE_VOICE_SPEED', 'ELEVENLABS_API_KEY']);
+  assert.deepEqual(Object.keys(copied).sort(), ['CHE_ELEVENLABS_CONCURRENCY', 'CHE_ELEVENLABS_MODEL', 'CHE_ELEVENLABS_PREFERRED', 'CHE_ELEVENLABS_VOICE_ID', 'CHE_VOICE_SIMILARITY', 'CHE_VOICE_SPEAKER_BOOST', 'CHE_VOICE_SPEED', 'CHE_VOICE_STABILITY', 'CHE_VOICE_STYLE', 'ELEVENLABS_API_KEY']);
   assert.equal(copied.ELEVENLABS_API_KEY, '');
   assert.equal(copied.CHE_VOICE_SPEED, '');
   assert.equal(copied.GROQ_API_KEY, undefined);

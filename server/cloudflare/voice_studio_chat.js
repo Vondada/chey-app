@@ -3,7 +3,7 @@
 // model is called and no credits are spent: previews are the provider's free samples,
 // and a voice is saved only after the account confirms it.
 import { availableVoiceChoices, validateVoiceChoice } from './voice_choices.js';
-import { fetchElevenLibrary, fetchElevenModels, fetchFishModels, filterLibrary, mightBeVoiceRequest, normalizeVoiceRequest, voiceStudioIntent } from './voice_library.js';
+import { VOICE_NAMED, fetchElevenLibrary, fetchElevenModels, fetchFishModels, filterLibrary, mightBeVoiceRequest, normalizeVoiceRequest, voiceStudioIntent } from './voice_library.js';
 
 export const STUDIO_LAST_KEY = 'voice_studio_last';
 const DEFAULT_MODEL = 'eleven_flash_v2_5';
@@ -24,7 +24,7 @@ export async function voiceStudioTurn(storage, data, env, message, { fetcher = f
     ctx.library = await fetchElevenLibrary(env, { fetcher });
     // With the library unreadable, a request that names a voice or a provider says why. Other
     // "switch to …" or "use …" talk (trading, the apps) is not a voice request and goes on to chat.
-    if (ctx.library.state !== 'Connected' && /\b(?:voices?|elevenlabs|eleven labs|fish)\b/.test(normalizeVoiceRequest(message))) {
+    if (ctx.library.state !== 'Connected' && VOICE_NAMED.test(normalizeVoiceRequest(message))) {
       return { ok: false, reply: `I cannot read your voice library right now, sir. ${ctx.library.reason} Nothing changed.` };
     }
     // Names come from both accounts, so "use <Fish name>" works as it does for ElevenLabs.
@@ -127,7 +127,11 @@ async function switchProvider(provider, ctx) {
     if (ctx.data.voice_choice?.provider === 'elevenlabs' || !ctx.data.voice_choice) {
       return { ok: true, reply: 'CHE already speaks with ElevenLabs, sir. Say show my ElevenLabs library to choose a voice.' };
     }
-    delete ctx.data.voice_choice;
+    // The ElevenLabs voice the owner had before Fish is restored, not left unset.
+    const before = ctx.data.voice_choice_before_fish ?? null;
+    if (before) ctx.data.voice_choice = before;
+    else delete ctx.data.voice_choice;
+    delete ctx.data.voice_choice_before_fish;
     await ctx.storage.put('che', ctx.data);
     return { ok: true, reply: 'Switched back to ElevenLabs, sir. Fish Audio is no longer first.' };
   }
@@ -137,6 +141,8 @@ async function switchProvider(provider, ctx) {
   if (!fish) return { ok: false, reply: 'Fish Audio has no voice on this account yet, sir. Nothing changed.' };
   const chosen = validateVoiceChoice({ provider: 'fish', id: fish.id, speed: ctx.data.voice_choice?.speed ?? 1 }, choices);
   if (!chosen) return { ok: false, reply: 'That Fish Audio voice is not available, sir. Nothing changed.' };
+  // The ElevenLabs voice is kept, so switching back to ElevenLabs restores it.
+  if (ctx.data.voice_choice?.provider !== 'fish') ctx.data.voice_choice_before_fish = ctx.data.voice_choice ?? null;
   await setChoice(ctx, { ...chosen, name: fish.name });
   return { ok: true, reply: `Switched to Fish Audio, sir: ${fish.name}. Fish is first now, with ElevenLabs as backup.` };
 }
@@ -150,7 +156,14 @@ async function useVoice(voice, ctx) {
   const carry = voice.provider === 'elevenlabs' && current.provider === 'elevenlabs'
     ? { model_id: current.model_id, settings: current.settings } : {};
   const chosen = validateVoiceChoice({ provider: voice.provider, id: voice.id, speed: current.speed ?? 1, ...carry }, choices);
-  if (!chosen) return { ok: false, reply: `${voice.name} is not available on your account right now, sir. Nothing changed.` };
+  if (!chosen) {
+    // A library voice CHE has not saved can be used only after it is saved by its ID.
+    const saved = (ctx.data.voice_saved || []).some((s) => s.id === voice.id);
+    if (voice.provider === 'elevenlabs' && !saved) {
+      return { ok: false, reply: `${voice.name} is in your library, sir, but CHE can use it only once it is saved. Paste its voice ID in Voice IDs and press Save and Use Voice. Nothing changed.` };
+    }
+    return { ok: false, reply: `${voice.name} is not available on your account right now, sir. Nothing changed.` };
+  }
   await setChoice(ctx, { ...chosen, name: voice.name });
   await remember(ctx, { selected: { provider: voice.provider, id: voice.id, name: voice.name } });
   return { ok: true, reply: `${voice.name} is now CHE's voice for Chat, voice conversations and Read This, sir.` };

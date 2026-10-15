@@ -45,12 +45,17 @@ void main() {
   });
 
   testWidgets('Voice IDs lists saved voices with their checked state, and says why one cannot be used', (tester) async {
+    final semantics = tester.ensureSemantics();
     final client = MockClient((r) async => _json(_list()));
     await _pump(tester, client);
     expect(find.text('Connie'), findsOneWidget);
     expect(find.text('Mike'), findsOneWidget);
     expect(find.textContaining('Checked: available to CHE'), findsOneWidget);
+    // VoiceOver reads the name with each button, so "Use" alone is not announced.
+    expect(find.bySemanticsLabel('Use Connie'), findsOneWidget);
+    expect(find.bySemanticsLabel('Remove Connie'), findsOneWidget);
     expect(find.textContaining('paid ElevenLabs plan before it can speak'), findsOneWidget);
+    semantics.dispose();
   });
 
   testWidgets('Save & Use Voice sends the pasted ID and name, with use set, and reports the saved name', (tester) async {
