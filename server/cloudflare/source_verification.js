@@ -126,13 +126,29 @@ export async function fetchArticle(url, { fetcher = fetch, timeoutMs = 5000, now
   try { parsed = new URL(asked); } catch (_) { return { url: asked, ok: false, broken: true, status: 0, error: 'not a valid link', checked_at: now }; }
   if (!/^https?:$/.test(parsed.protocol)) return { url: asked, ok: false, broken: true, status: 0, error: 'not a web link', checked_at: now };
   try {
-    const response = await fetcher(parsed.toString(), {
-      redirect: 'follow',
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CHE source check)', Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5' },
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    // Never auto-follow: redirects may point to private services or GET-based
+    // unsubscribe/confirmation links. Check every destination before visiting.
+    let current = parsed.toString();
+    const signal = AbortSignal.timeout(timeoutMs);
+    let response;
+    for (let hop = 0; hop < 4; hop++) {
+      if (!checkableUrl(current)) return { url: asked, ok: false, broken: false, status: 0, error: 'a private or action source link', checked_at: now };
+      response = await fetcher(current, {
+        redirect: 'manual',
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CHE source check)', Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5' },
+        signal,
+      });
+      if (![301, 302, 303, 307, 308].includes(response.status)) break;
+      const destination = response.headers?.get('location');
+      if (!destination) return { url: asked, ok: false, broken: false, status: response.status, error: 'a redirect with no destination', checked_at: now };
+      const next = new URL(destination, current).toString();
+      if (!checkableUrl(next)) return { url: asked, ok: false, broken: false, status: response.status, error: 'a redirect to a private or action link', checked_at: now };
+      if (hop === 3) return { url: asked, ok: false, broken: false, status: response.status, error: 'too many redirects', checked_at: now };
+      current = next;
+    }
     const status = Number(response.status) || 0;
-    const finalUrl = response.url || parsed.toString();
+    const finalUrl = response.url || current;
+    if (!checkableUrl(finalUrl)) return { url: asked, final_url: finalUrl, ok: false, broken: false, status, error: 'a private or action source link', checked_at: now };
     // Owner-facing words: CHE's final text check reads "HTTP 404" as a leaked
     // provider error, and these reasons are spoken.
     if (status === 404 || status === 410) {
@@ -235,6 +251,7 @@ export function newsQuestion(message, now = Date.now()) {
   // Short spoken questions, imperatives and news-command phrases do.
   const request = /\?\s*$/.test(text)
     || /^(?:(?:hey[, ]*)?(?:che|chay|chey)[,!:]?\s*)?(?:please\s+)?(?:what(?:'s| is| was)?|who|where|when|why|how|which|did|does|do|is|are|was|were|has|have|(?:can|could|would|will) you|tell me|give me|show me|find|search|check|look up|summari[sz]e|read me|list)\b/i.test(text)
+    || /^(?:(?:hey[, ]*)?(?:che|chay|chey)[,!:]?\s*)?(?:please\s+)?(?:update me\b|(?:can|could|may) i (?:get|have|hear|see)\b|i(?:'d| would) like (?:an? )?(?:update|news)\b)/i.test(text)
     || /^(?:(?:today['’]s|latest|breaking|top|biggest|current|recent)\s+)?(?:[a-z0-9+#-]+\s+){0,3}(?:news|headlines?)\b(?:\s+(?:today|tonight|now|this week))?[.!]?\s*$/i.test(text);
   if (!request) return null;
   const named = /\bnews\b|\bheadlines?\b|\bbreaking\b/i.test(text);
@@ -528,7 +545,9 @@ const ACTION_PATH = /(?:unsubscribe|opt-?out|confirm|approve|verify|activate|res
 export function checkableUrl(url) {
   try {
     const u = new URL(url);
-    return /^https?:$/.test(u.protocol) && !PRIVATE_HOST.test(u.hostname) && !ACTION_PATH.test(`${u.pathname}${u.search}`);
+    return /^https?:$/.test(u.protocol) && !u.username && !u.password && !u.port
+      && !/^\\[/.test(u.hostname) && !/\\.(?:local|internal|lan|localhost)$/i.test(u.hostname)
+      && !PRIVATE_HOST.test(u.hostname) && !ACTION_PATH.test(`${u.pathname}${u.search}`);
   } catch (_) {
     return false;
   }
@@ -596,7 +615,11 @@ export async function guardCitations(reply, {
     const hit = disprovenHit(s, disproven);
     // A link offered as a source (or any link in a news answer) is checked;
     // "the guide is at https://…" is not a claim about the world.
-    const offered = Boolean(news) || Boolean(hit) || kind.sourceWords;
+    // A bare URL attached to an assertion is a citation too. Do not open
+    // plain link pointers such as "Your file is at...", "Unsubscribe here"
+    // or "Follow the guide at..." that make no claim about the page.
+    const pointer = /\b(?:is|are|located|available)\s+(?:at\s+)?https?:\/\/|^\s*(?:here(?:'s| is| are)|open|visit|follow|download|unsubscribe|subscribe|view|link\s*:|url\s*:)/i.test(s);
+    const offered = Boolean(news) || Boolean(hit) || kind.sourceWords || (kind.urls.length > 0 && !pointer);
     const urls = offered ? kind.urls.filter(checkableUrl) : [];
     const unsafe = offered ? kind.urls.filter((u) => !checkableUrl(u)) : [];
     return { ...kind, urls, unsafe, cites: kind.cites || urls.length > 0 || unsafe.length > 0, terms: claimTerms(s), hit };
