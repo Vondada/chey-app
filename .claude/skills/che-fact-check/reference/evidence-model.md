@@ -13,17 +13,22 @@
 | Owner corrects his own fact | `ownerFactCorrection` + `addOwnerMemory` | The old record is kept as history (`superseded_by`). |
 | Record provenance | `research_memory.js` `addOwnerMemory` | Default source `che_note`. `owner_attested` only for owner sources. |
 | One-time audit | `auditMemoryProvenance` | Downgrades and never deletes. Runs once per record. |
+| News question ("biggest AI story today") | `source_verification.js` `newsQuestion` → `newsResearch` (via `optionalResearch`) | GDELT and Hacker News listings; each article is opened and must exist, carry its headline and fall in the asked days. Only those are receipts (`research.articles`). |
+| Links, headlines, outlets, publication dates in a reply | `guardCitations` | Every link is opened. A citation counts only when its page exists, is from the named outlet, carries the quoted headline and date, and says the sentence's specific terms. A news answer's events must appear in an article opened this turn. Removed sentences are named in the reply; "Sources I opened" and corroboration ("2 independent outlets" / "only one outlet") are added. |
+| A broken citation or a claim shown false | `recordDisproven`, `downgradeDisproven`, `invalidateKnowledge` | `che_disproven_claims_v1`. Research notes become `disproven`, learned lines move to `invalidated_knowledge`, cached answers become `invalidated`. Nothing is deleted. The claim needs a fresh source before CHE says it again. |
+| Owner says "that link is a 404" / "is that article real?" | `externalCorrection` → `recheckExternalClaim` (route `che_source_check`, 0 model calls) | Re-opens the earlier answer's links and searches for its coined names. Admits and records a failure; keeps a claim whose source holds up. |
 | Prompt separation | `memoryPromptContext` | `OWNER-STATED MEMORIES` vs `CHE NOTES AND INFERENCES`. |
 
 ## Final boundary order in `worker.js`
 Each reply passes through these steps, in this order:
 1. `guardClaimedResearchActions`
-2. `guardOwnerAttributions`
-3. `guardRememberBlock`
-4. `sanitizeOwnerText`
-5. `recordAnswerEvidence`
+2. `guardCitations` (source_verification.js)
+3. `guardOwnerAttributions`
+4. `guardRememberBlock`
+5. `sanitizeOwnerText`
+6. `recordAnswerEvidence`
 
-`claim_check.mjs` runs steps 1–3. Other guards, such as location/weather and `guardOwnerReply`, run on their own paths.
+`claim_check.mjs` runs steps 1, 3 and 4. Step 2 opens pages, so it is tested through `/api/chat` against a simulated web in `server/cloudflare/source_verification.test.mjs`. Other guards, such as location/weather and `guardOwnerReply`, run on their own paths.
 
 A fake search, browse or comparison claim replaces the **whole** reply. Anything else in it may rest on the search that never ran, so harmless lines are lost as well. An unsupported owner attribution removes only its sentence.
 

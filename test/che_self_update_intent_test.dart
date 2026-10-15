@@ -280,4 +280,23 @@ Again: ANSWER IN CHAT ONLY. ZERO REPOSITORY CHANGES. NO PR.''';
     );
     expect(cheIsTerminalChatOnlyRequest('Explain "chat-only" mode. Do not modify your code.'), isTrue);
   });
+
+  test('news questions need live sources; fiction and personal chat do not', () {
+    for (final q in [
+      'What was the biggest AI news story on October 15, 2026?',
+      "What's the latest news in tech?",
+      'Did Apple announce anything today?',
+      'Any breaking headlines?',
+    ]) {
+      expect(cheNeedsLiveSources(q), isTrue, reason: q);
+    }
+    for (final q in [
+      'Write a news story about a robot uprising',
+      'What did you release today?',
+      'What is the capital of France?',
+      'Release the lock on the front door',
+    ]) {
+      expect(cheNeedsLiveSources(q), isFalse, reason: q);
+    }
+  });
 }

@@ -222,6 +222,37 @@ bool cheTurnRequiresVerifiedRemoteEvidence(
   return false;
 }
 
+/// True for a question about current news or events ("biggest AI news story
+/// today", "did Apple announce anything this week"). Such an answer needs
+/// articles CHE opens on her server; the on-device model has none and would
+/// only guess, so offline she says she cannot check (owner, 2026-10-15: an
+/// invented MIT Technology Review article). A request to write a story is
+/// fiction, not a question.
+bool cheNeedsLiveSources(String raw) {
+  final text = raw.trim();
+  if (text.isEmpty) return false;
+  final news = RegExp(
+    r"\b(?:news|headlines?|top stor(?:y|ies)|biggest stor(?:y|ies)|breaking|what(?:'s| is| was)? (?:happening|happened|going on)|announc(?:e|ed|es|ements?)|launch(?:ed|es)?|releas(?:e|ed|es)|unveil(?:ed|s)?)\b",
+    caseSensitive: false,
+  );
+  if (!news.hasMatch(text)) return false;
+  if (RegExp(r'\b(?:write|draft|compose|make up|invent|imagine|pretend|role.?play)\b[^.?!]{0,60}\b(?:news|story|article|headline|report|press release)\b', caseSensitive: false).hasMatch(text)) {
+    return false;
+  }
+  final named = RegExp(r'\b(?:news|headlines?|breaking)\b', caseSensitive: false).hasMatch(text);
+  final when = RegExp(
+    r'\b(?:today|tonight|yesterday|this (?:morning|week|month)|last (?:night|week)|latest|recent(?:ly)?|right now|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2})\b',
+    caseSensitive: false,
+  ).hasMatch(text);
+  if (!named && !when) return false;
+  // "What did you release today?" is about CHE or the owner, not the world.
+  return named || !RegExp(r"\b(?:i|i'm|me|my|mine|we|our|us|you|your|yours)\b", caseSensitive: false).hasMatch(text);
+}
+
+/// What CHE says offline to a news question instead of guessing.
+const cheOfflineNewsReply =
+    "I can't reach my research tools right now, so I can't check the news. I won't guess at headlines or articles. Ask me again when I'm back online, sir.";
+
 bool cheIsTerminalChatOnlyRequest(String raw) {
   final text = _cheWithoutQuotedText(raw.trim());
   final responseDirective = RegExp(

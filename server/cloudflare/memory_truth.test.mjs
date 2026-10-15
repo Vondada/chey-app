@@ -386,7 +386,10 @@ test('deploy check: the live memory probe runs the real chat route in an isolate
     assert.equal(report.memory_route_model_calls, 0);
     assert.ok(report.total >= 10);
     // Only the live model's own answer may downgrade to a deploy warning.
-    assert.deepEqual(report.steps.filter((step) => step.optional).map((step) => step.name), ['Model answer has no unsupported owner claims']);
+    assert.deepEqual(report.steps.filter((step) => step.optional).map((step) => step.name), ['News answer rests on opened articles', 'Model answer has no unsupported owner claims']);
+    // A page that answers but says nothing of the claim never vouches for it.
+    const recheck = report.steps.find((step) => step.name === 'Source re-check: the invented article is admitted, not defended');
+    assert.match(recheck.reply, /^You're right to question it, sir\. I checked again just now: the link works, but technologyreview\.com's page does not mention MedMind/);
     assert.equal(JSON.stringify([...stores.get('owner').entries()]), ownerBefore, "the owner's CHE is never touched");
     assert.deepEqual(vectorWrites.filter((url) => /che_memory\?on_conflict/.test(url)), [], 'no test conversation reaches shared vector memory');
     const probe = stores.get('memory-truth-probe').get('che');

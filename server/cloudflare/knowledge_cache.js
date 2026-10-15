@@ -103,6 +103,16 @@ export async function rememberKnowledge(storage, entry, now = Date.now()) {
     expires_at: Number.isFinite(entry.ttl_ms) ? now + entry.ttl_ms : null,
     volatile: entry.volatile === true,
   };
+  // The articles a research answer rests on (opened by CHE), so a cached
+  // answer still carries its receipts.
+  if (Array.isArray(entry.articles) && entry.articles.length) {
+    record.articles = entry.articles.filter((a) => a?.ok).slice(0, 6).map((a) => ({
+      ok: true, url: String(a.url || ''), final_url: String(a.final_url || a.url || ''), title: String(a.title || '').slice(0, 300),
+      publisher: String(a.publisher || '').slice(0, 120), host: String(a.host || '').slice(0, 120), published: String(a.published || '').slice(0, 40),
+      author: String(a.author || '').slice(0, 120), description: String(a.description || '').slice(0, 500), text: String(a.text || '').slice(0, 4000),
+      checked_at: a.checked_at || now,
+    }));
+  }
   await storage.put(entryKey(key), record);
   const index = (await storage.get(INDEX)) || {};
   index[key] = now;
@@ -116,6 +126,27 @@ export async function rememberKnowledge(storage, entry, now = Date.now()) {
   }
   await storage.put(INDEX, index);
   return record;
+}
+
+/**
+ * Marks every cached answer that carries a claim shown false as invalidated
+ * (kept for history, never reused). `carries(record)` decides. Returns the
+ * number of entries changed.
+ */
+export async function invalidateKnowledge(storage, carries, reason = '', now = Date.now()) {
+  if (!storage?.get || !storage?.put) return 0;
+  const index = (await storage.get(INDEX)) || {};
+  let changed = 0;
+  for (const key of Object.keys(index)) {
+    const record = await storage.get(entryKey(key));
+    if (!record || record.verification_status === 'invalidated' || record.verification_status === 'owner_attested' || !carries(record)) continue;
+    await storage.put(entryKey(key), {
+      ...record, verification_status: 'invalidated', invalidated_from: record.verification_status,
+      invalidated_reason: String(reason).slice(0, 200), invalidated_at: now,
+    });
+    changed += 1;
+  }
+  return changed;
 }
 
 /** Forgets what CHE knows for this key (owner said "don't reuse that answer"). */
@@ -168,7 +199,9 @@ export async function markPureResearch(storage, question) {
 export async function cachedResearch(storage, question, research, now = Date.now()) {
   const key = researchKey(question);
   const hit = await recallKnowledge(storage, key, { now });
-  if (hit && ['source_backed', 'source_verified'].includes(hit.verification_status)) return { summary: hit.answer, sources: hit.sources, limitation: hit.limitation || undefined, cached: true, verified_at: hit.verified_at };
+  if (hit && ['source_backed', 'source_verified'].includes(hit.verification_status)) {
+    return { summary: hit.answer, sources: hit.sources, limitation: hit.limitation || undefined, cached: true, verified_at: hit.verified_at, ...(hit.articles ? { articles: hit.articles, engine: 'news' } : {}) };
+  }
   const fresh = await research();
   if (fresh?.summary && Array.isArray(fresh.sources) && fresh.sources.some((s) => /^https:\/\//i.test(String(s)))) {
     const volatile = isVolatile(question);
@@ -176,6 +209,7 @@ export async function cachedResearch(storage, question, research, now = Date.now
       key,
       answer: fresh.summary,
       sources: fresh.sources,
+      articles: fresh.articles,
       limitation: fresh.limitation,
       source: 'research_library',
       verified: true,
