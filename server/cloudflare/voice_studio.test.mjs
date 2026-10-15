@@ -86,6 +86,7 @@ async function owner(provider) {
   const saved = new Map();
   const env = {
     CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_TIMEZONE: 'America/Chicago',
+    CHE_VOICE_PROBE_TOKEN: 'o'.repeat(40),
     ELEVENLABS_API_KEY: KEY, CHE_ELEVENLABS_PREFERRED: '1', CHE_ELEVENLABS_VOICE_ID: 'baseVoiceabcdefgh',
     FISH_API_KEY: FISH_KEY, CHE_FISH_PREFERRED: '1', CHE_FISH_VOICE_ID: 'fishVoiceabcdefgh',
     AI: { run: async (_model, input) => { inputs.push(input); return { response: 'Model answer, sir.' }; } },
@@ -100,7 +101,7 @@ async function owner(provider) {
   const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
   const settle = async () => { while (pending.length) await pending.shift(); };
   return {
-    token, saved,
+    token, saved, state,
     data: () => saved.get('che') || {},
     modelCalls: () => inputs.length,
     async say(message) {
@@ -282,6 +283,24 @@ test('"switch to Fish" makes Fish first, and "switch to ElevenLabs" puts ElevenL
   const back = await me.say('switch to ElevenLabs');
   assert.match(back.reply, /Switched back to ElevenLabs/);
   assert.equal(me.data().voice_choice, undefined);
+});
+
+// The deploy check sends this deploy's probe token to the owner's object. The object was
+// created with an older env, so it must take the token from the voice settings it is given.
+test('the Command Center readiness check accepts this deploy\'s probe token, not only the one the object was created with', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  const NEW_TOKEN = 'n'.repeat(40);
+  const ask = () => me.state.fetch(new Request('https://che.internal/api/commands/readiness', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${NEW_TOKEN}`, 'Content-Type': 'application/json' },
+    body: '{}',
+  }));
+  assert.equal((await ask()).status, 404, 'a token the object was not given is refused');
+  await me.state.setVoiceSecrets({ CHE_VOICE_PROBE_TOKEN: NEW_TOKEN });
+  const ok = await ask();
+  assert.equal(ok.status, 200);
+  assert.equal(Number.isInteger((await ok.json()).available), true);
 });
 
 test('the test harness restores the real fetch', () => {

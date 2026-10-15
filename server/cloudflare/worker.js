@@ -491,7 +491,13 @@ async function commandCenterProbe(env, token) {
   // a probe-token-gated endpoint; never pretend an unknown count is zero.
   let readiness;
   try {
-    const response = await env.CHE_STATE.getByName('owner').fetch(new Request('https://che.internal/api/commands/readiness', {
+    // The owner's object keeps the env it was created with, so this deploy's probe token is
+    // handed to it first. Without that, a token issued by a new deploy is refused (HTTP 404).
+    const owner = env.CHE_STATE.getByName('owner');
+    if (typeof owner.setVoiceSecrets === 'function') {
+      await owner.setVoiceSecrets({ ...voiceSecretsFrom(env), CHE_VOICE_PROBE_TOKEN: String(env.CHE_VOICE_PROBE_TOKEN || '') });
+    }
+    const response = await owner.fetch(new Request('https://che.internal/api/commands/readiness', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: '{}',
@@ -4777,7 +4783,9 @@ export class CheState extends DurableObject {
       // Internal release probe: only the per-deploy random token may read
       // connector readiness, with no user data, keys, or saved workflows.
       if (request.method === 'POST' && path === '/api/commands/readiness') {
-        if (!voiceProbeAuthorized(request, this.env)) return json({ detail: 'Not found.' }, 404);
+        // The probe's token for this deploy arrives with the voice settings; the captured env is the fallback.
+        const probeEnv = { CHE_VOICE_PROBE_TOKEN: this.voiceSecrets?.CHE_VOICE_PROBE_TOKEN || this.env.CHE_VOICE_PROBE_TOKEN };
+        if (!voiceProbeAuthorized(request, probeEnv)) return json({ detail: 'Not found.' }, 404);
         return json(await this.commandReadiness());
       }
       if (request.method === 'POST' && path === '/api/pair') {
