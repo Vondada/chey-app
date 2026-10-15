@@ -3197,6 +3197,12 @@
    "detail": "CHE has no ad-platform connector yet.",
    "label": "Ad account (Google/Meta)",
    "setup": "CHE has no ad-platform connector yet."
+  },
+  "fundyouredge": {
+   "state": "none",
+   "detail": "Rithmic requires its own licensed API before CHE can read or trade a funded account. Nothing is connected.",
+   "label": "FundYourEdge funded account (Rithmic)",
+   "setup": "Rithmic requires its own licensed API before CHE can read or trade a funded account. Nothing is connected."
   }
  }
 }

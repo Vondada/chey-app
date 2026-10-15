@@ -69,6 +69,8 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
   Map<String, dynamic> _connectors = {};
   bool _loading = true;
   bool _connecting = false;
+  // A spoken disconnect waits for its own yes before anything is removed.
+  String? _pendingDisconnect;
   String _error = '';
   String _message = '';
 
@@ -182,6 +184,25 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
       await _connectYoutube();
       return '';
     }
+    final pending = _pendingDisconnect;
+    if (pending != null) {
+      _pendingDisconnect = null;
+      if (RegExp(r'^(?:yes|yeah|yep|do it|go ahead)$').hasMatch(t)) {
+        await _runDisconnect(pending);
+        return '';
+      }
+      if (RegExp(r'^(?:no|nope|cancel|never mind|stop)$').hasMatch(t)) {
+        _say('Disconnect cancelled. Nothing was removed.');
+        return '';
+      }
+    }
+    final disconnect = RegExp(r'^(?:disconnect|remove|sign out of)\s+(?:my\s+|the\s+)?(gmail|(?:google\s+)?drive|(?:google\s+)?calendar|google ads)$').firstMatch(t);
+    if (disconnect != null) {
+      final service = _googleIdFor(disconnect.group(1)!);
+      _pendingDisconnect = service;
+      _say('Disconnect ${_googleLabels[service]}? CHE revokes its access at Google. Say yes to disconnect, or no to cancel.');
+      return '';
+    }
     final google = RegExp(r'^connect\s+(?:my\s+|the\s+)?(gmail|(?:google\s+)?drive|(?:google\s+)?calendar|google ads)$').firstMatch(t);
     if (google != null) {
       await _connectGoogle(_googleIdFor(google.group(1)!));
@@ -261,6 +282,50 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
     }
   }
 
+  // Removing a Google connection asks first, by button or by voice.
+  Future<void> _disconnectGoogle(String service) async {
+    final label = _googleLabels[service] ?? 'Google';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Disconnect $label?'),
+        content: Text('CHE revokes its $label access at Google and stops using it. Nothing is deleted from $label.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Disconnect')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await _runDisconnect(service);
+  }
+
+  Future<void> _runDisconnect(String service) async {
+    final label = _googleLabels[service] ?? 'Google';
+    setState(() { _connecting = true; _message = ''; });
+    try {
+      final r = await _client.post(
+        Uri.parse('${widget.baseUrl}/api/google/disconnect'),
+        headers: {...widget.headers(), 'content-type': 'application/json'},
+        body: jsonEncode({'service': service}),
+      ).timeout(const Duration(seconds: 18));
+      final raw = jsonDecode(utf8.decode(r.bodyBytes));
+      final data = raw is Map ? raw : <String, dynamic>{};
+      if (r.statusCode != 200) throw StateError((data['detail'] ?? 'CHE could not disconnect $label.').toString());
+      final revoked = data['revoked_at_google'] == true;
+      await _refresh();
+      HapticFeedback.selectionClick();
+      _say(revoked
+          ? '$label disconnected. Google access was revoked.'
+          : '$label removed from CHE. Google did not confirm the revoke, so check your Google Account permissions.');
+    } on Object catch (e) {
+      HapticFeedback.heavyImpact();
+      _say('$label: ${e.toString().replaceFirst('Bad state: ', '')}');
+    } finally {
+      if (mounted) setState(() => _connecting = false);
+    }
+  }
+
   Future<void> _connectBroker() async {
     if (_connecting) return;
     setState(() { _connecting = true; _message = ''; });
@@ -290,7 +355,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
   }
 
   Widget _card(String title, IconData icon, String? connector, String explanation,
-      {VoidCallback? onAction, String action = 'Connect'}) {
+      {VoidCallback? onAction, String action = 'Connect', VoidCallback? onDisconnect}) {
     final status = _status(connector);
     final color = switch (status) {
       'Connected' => CheColors.success,
@@ -325,6 +390,13 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
               OutlinedButton(
                 onPressed: _loading || _connecting ? null : onAction,
                 child: Text(action),
+              ),
+            ],
+            if (onDisconnect != null && _status(connector) == 'Connected') ...[
+              const SizedBox(height: 8),
+              OutlinedButton(
+                onPressed: _loading || _connecting ? null : onDisconnect,
+                child: const Text('Disconnect'),
               ),
             ],
           ]),
@@ -374,18 +446,23 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
               'Use CHE’s existing Google OAuth connection. Publishing still requires approval.',
               onAction: _connectYoutube, action: 'Connect with Google'),
           _card('Gmail', Icons.mail_outline_rounded, 'gmail',
-              'Reads your mail and sends email when you ask. Approved separately from YouTube.',
-              onAction: () => _connectGoogle('gmail'), action: 'Connect Gmail'),
+              'Reads your mail and sends email only when you say yes. Approved separately from YouTube.',
+              onAction: () => _connectGoogle('gmail'), action: 'Connect Gmail',
+              onDisconnect: () => _disconnectGoogle('gmail')),
           _card('Google Drive', Icons.folder_outlined, 'drive',
-              'Sees only files CHE creates or you open with it.',
-              onAction: () => _connectGoogle('drive'), action: 'Connect Drive'),
+              'Sees only files CHE creates or you open with it. Creating a doc waits for your yes.',
+              onAction: () => _connectGoogle('drive'), action: 'Connect Drive',
+              onDisconnect: () => _disconnectGoogle('drive')),
           _card('Google Calendar', Icons.event_note_rounded, 'calendar',
-              'Reads and adds events on your primary calendar when you ask.',
-              onAction: () => _connectGoogle('calendar'), action: 'Connect Calendar'),
+              'Reads your primary calendar. Adding an event waits for your yes.',
+              onAction: () => _connectGoogle('calendar'), action: 'Connect Calendar',
+              onDisconnect: () => _disconnectGoogle('calendar')),
           _heading('Trading'),
           _card('NinjaTrader / Tradovate', Icons.candlestick_chart_rounded, 'broker',
               'Use the existing Tradovate sign-in route. Orders require your separate approval.',
               onAction: _connectBroker, action: 'Connect NinjaTrader'),
+          _card('FundYourEdge funded account', Icons.account_balance_wallet_outlined, 'fundyouredge',
+              'Rithmic account. CHE cannot read or trade it until a licensed Rithmic connection exists.'),
           _heading('Banks & finances'),
           _card('Bank accounts — read only', Icons.account_balance_outlined, null,
               'No secure bank-link provider is configured. CHE cannot see balances or transactions. Do not enter bank passwords in Chat.'),
@@ -394,8 +471,9 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
               onAction: widget.onKeys, action: 'Review Keys'),
           _heading('Business & development'),
           _card('Google Ads', Icons.campaign_outlined, 'google_ads',
-              'Lists the ad accounts you can reach. Needs CHE’s Google Ads developer token from Google.',
-              onAction: () => _connectGoogle('google_ads'), action: 'Connect Google Ads'),
+              'Read-only campaign results. Needs Setup until Google confirms CHE’s access to your accounts.',
+              onAction: () => _connectGoogle('google_ads'), action: 'Connect Google Ads',
+              onDisconnect: () => _disconnectGoogle('google_ads')),
           _card('GitHub code integration', Icons.code_rounded, 'github',
               'Code credentials may be configured. Verify each action and deployment receipt.',
               onAction: widget.onKeys, action: 'Review Keys'),

@@ -11,10 +11,21 @@ reach the app. The app shows state and the signed-in address only.
 | Gmail | `gmail.readonly`, `gmail.send` | List unread or matching mail; send plain-text email on your command |
 | Google Drive | `drive.file` | List files CHE created or you opened with it; create a Google Doc |
 | Google Calendar | `calendar.events` | List events for today, tomorrow or this week; add an event |
-| Google Ads | `adwords` + developer token | List the ad accounts this sign-in can reach (listing only) |
+| Google Ads | `adwords` | Read-only: list the accounts this sign-in can reach, and last-7-day campaign results. Needs Setup until Google confirms CHE's access |
 
-Nothing deletes, modifies or moves anything. Removing a connection is not in the
-app yet: revoke CHE in your Google Account → Security → Third-party access.
+Nothing deletes or modifies anything in your accounts. Disconnect removes CHE's
+grant here and asks Google to revoke it; say "disconnect my Gmail" or use the
+Disconnect button, and confirm. You can also revoke CHE in your Google Account
+under Third-party access.
+
+## Asked first (never done on a guess)
+
+Sending an email, adding a calendar event and creating a Drive doc each read
+back exactly what will happen, then wait for a plain **yes**. A **no** cancels
+it. Any other reply drops it, and a held request expires after ten minutes.
+Reads (checking mail, your calendar, Drive files, Ads results) run at once.
+Campaign changes, budgets and launches are not built and would need your
+explicit approval.
 
 ## Spoken requests (Chat)
 
@@ -35,19 +46,21 @@ after Google returns with the approved permissions.
 
 ## Owner steps (only you can do these)
 
-1. **Google Cloud Console**, the project that holds `CHE_YOUTUBE_CLIENT_ID`:
-   - APIs & Services → Library: enable Gmail API, Google Drive API,
-     Google Calendar API and Google Ads API.
-   - OAuth consent screen → Data access: add
-     `gmail.readonly`, `gmail.send`, `drive.file`, `calendar.events`, `adwords`.
-   - Test users: add your own Google account.
+1. **Google Cloud Console** ([APIs library](https://console.cloud.google.com/apis/library)),
+   the project that holds `CHE_YOUTUBE_CLIENT_ID`:
+   - Enable the Gmail API, Google Drive API, Google Calendar API and Google Ads API.
+   - [Google Auth Platform](https://console.cloud.google.com/auth/overview) → Data
+     access: add `gmail.readonly`, `gmail.send`, `drive.file`, `calendar.events`
+     and `adwords`.
+   - Audience → Test users: add your own Google account.
    - The redirect address does not change; the existing callback is reused.
-2. **Google Ads developer token** (for Google Ads only): apply in Google Ads API
-   Center from a manager account. Then set the Worker secret
-   `CHE_GOOGLE_ADS_DEVELOPER_TOKEN`. Optional: `CHE_GOOGLE_ADS_API_VERSION`
-   (default `v20`).
-3. **Worker variable `CHE_TIMEZONE`**: your IANA zone, for example
-   `America/Chicago`. Calendar times use it. The default is `America/Chicago`.
+2. **Google Ads access** (no developer token is needed for CHE's code any more):
+   Google moved Ads access to the Cloud project. Apply for Basic access in the
+   Google Ads API Overview in Cloud Console. Google requires brand verification
+   for Basic and Standard access. CHE shows Google Ads as Connected only after
+   Google lists a real account for your sign-in.
+3. **Worker variable `CHE_TIMEZONE`**: already set to `America/Chicago` in
+   `wrangler.jsonc`. Change it there if your zone is different.
 4. **Tradovate (NinjaTrader)**: set `CHE_TRADOVATE_OAUTH_CLIENT_ID` and
    `CHE_TRADOVATE_OAUTH_CLIENT_SECRET` as Worker secrets. The deploy does not
    sync them yet.
@@ -61,10 +74,9 @@ after Google returns with the approved permissions.
   Publishing the app removes that limit, but it needs Google's verification
   first: the Gmail read scope is restricted, and the Calendar and Gmail send
   scopes are sensitive.
-- **Email sends immediately** when you ask, under your standing permission. A
-  wrong address is sent. Say the full address.
 - **Drive** shows only what CHE created or you opened with it, by design.
-- **Google Ads** shows nothing until the developer token is approved.
+- **Google Ads** shows Needs Setup until Google approves access and lists your
+  accounts. Nothing is read or changed before that.
 
 ## Not built
 
@@ -73,4 +85,10 @@ after Google returns with the approved permissions.
   passwords.
 - **Meta (Facebook/Instagram) ads.** Needs a Meta app and Meta's app review
   for ads access. Not built against an API we cannot test here.
-- **Disconnect in the app.** Revoke at Google for now.
+- **FundYourEdge trading and account data.** The firm's accounts trade on
+  Rithmic. Rithmic's order API is licensed, with a developer kit, a conformance
+  review and recurring fees before production access, and CHE has no such
+  licence. CHE reports the account as not connected and never prepares or places
+  an order for it. The lower-cost option is for you to read the funded account
+  in the firm's own dashboard or TradeSea and tell CHE the figures; CHE does not
+  log in to those platforms or scrape them.

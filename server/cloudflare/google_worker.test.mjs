@@ -158,3 +158,47 @@ test('Gmail shows as Connected on the Command Center once a grant is stored', as
   assert.equal(status.services.gmail.connected, true);
   assert.equal(JSON.stringify(status).includes('live-refresh-token'), false, 'no token in the status reply');
 });
+
+test('an email request in Chat is held for a yes, with no model call, and a no cancels it', async () => {
+  const me = await owner();
+  const grant = await liveGrant();
+  me.setData((d) => { d.google_connections = { gmail: grant }; });
+  const held = await me.say('send an email to ann@example.com saying lunch at noon');
+  assert.equal(held.done.source, 'che_google');
+  assert.equal(held.done.held, true);
+  assert.equal(held.modelCalls, 0);
+  assert.match(held.raw, /Say yes to send it/);
+  const no = await me.say('no');
+  assert.match(no.raw, /Cancelled, sir\. The email to ann@example\.com was not done\./);
+  assert.equal(no.modelCalls, 0);
+});
+
+test('a yes after a held email runs the send for real, and a failure is reported as one', async () => {
+  const me = await owner();
+  const grant = await liveGrant();
+  me.setData((d) => { d.google_connections = { gmail: grant }; });
+  await me.say('send an email to ann@example.com saying lunch at noon');
+  const yes = await me.say('yes');
+  assert.equal(yes.done.source, 'che_google');
+  assert.equal(yes.modelCalls, 0);
+  assert.match(yes.raw, /The email was not sent, sir\. Google did not answer Gmail\./, 'the offline send is reported as not sent');
+});
+
+test('FundYourEdge is reported as not connected, nothing is checked, and no order is prepared', async () => {
+  const me = await owner();
+  const check = await me.say('check my FundYourEdge account');
+  assert.equal(check.done.source, 'che_brokerage');
+  assert.equal(check.modelCalls, 0);
+  assert.match(check.raw, /FundYourEdge is not connected/);
+  const order = await me.say('prepare an MNQ trade');
+  assert.equal(order.modelCalls, 0);
+  assert.match(order.raw, /cannot prepare or place an order for FundYourEdge/);
+  assert.match(order.raw, /Nothing was prepared or placed/);
+});
+
+test('FundYourEdge shows as Unsupported on the Command Center, with its reason', async () => {
+  const me = await owner();
+  const commands = (await me.get('/api/commands')).body;
+  assert.equal(commands.connectors.fundyouredge.state, 'none');
+  assert.match(commands.connectors.fundyouredge.detail, /Rithmic/);
+});

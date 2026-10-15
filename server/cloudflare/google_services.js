@@ -3,6 +3,7 @@
 // service's permissions, so the owner approves each service on its own screen.
 // It reuses the YouTube module's OAuth client, PKCE, sealed refresh tokens,
 // revoke-on-replace and callback address. Tokens never leave the server.
+import { isOwnerYes } from './owner_action_gate.js';
 import {
   ACCESS_SAFETY_MS, AUTH_URL, PENDING_TTL_MS, TOKEN_URL, codeChallenge, googleClientConfig,
   googleErrorMessage, openToken, postForm, randomToken, revokeGrant, sealToken,
@@ -57,14 +58,16 @@ export const GOOGLE_SERVICES = Object.freeze({
   google_ads: {
     label: 'Google Ads',
     scopes: ['https://www.googleapis.com/auth/adwords'],
-    // Ads needs Google's developer token; without it the grant is kept but not ready.
+    // Connected only when Google lists a real account for this sign-in. Google sets
+    // Ads access by Cloud project; until it confirms CHE's access, the grant is kept
+    // and the status is Needs Setup (NeedsAccess), never Connected.
     async verify(token, fetcher, env) {
-      const dev = developerToken(env);
-      if (!dev) return '';
-      const r = await googleCall(fetcher, 'GET', `${adsApiBase(env)}/customers:listAccessibleCustomers`, token, null, { 'developer-token': dev });
+      const r = await googleCall(fetcher, 'GET', `${adsApiBase(env)}/customers:listAccessibleCustomers`, token, null, adsHeaders(env));
+      if (r.status === 403) throw new NeedsAccess(adsAccessMessage(r));
       if (!r.ok) throw new Error(callError('Google Ads', r));
       const count = (r.json.resourceNames || []).length;
-      return `${count} accessible Google Ads account${count === 1 ? '' : 's'}`;
+      if (!count) throw new NeedsAccess('Needs Setup: Google lists no Google Ads accounts for this sign-in. Sign in with the account that manages your ads.');
+      return `${count} Google Ads account${count === 1 ? '' : 's'}`;
     },
   },
 });
@@ -170,12 +173,17 @@ export async function finishGoogleConnect(env, data, params, fetcher = fetch, or
     await revokeGrant(fetcher, token.json.refresh_token);
     return { ok: false, service: pending.service, error: `${spec.label} needs every permission approved. Connect again and approve them all.` };
   }
-  let account;
+  let account = '';
+  let needsAccess = '';
   try {
     account = await spec.verify(token.json.access_token, fetcher, env);
   } catch (e) {
-    await revokeGrant(fetcher, token.json.refresh_token);
-    return { ok: false, service: pending.service, error: e.message };
+    if (!(e instanceof NeedsAccess)) {
+      await revokeGrant(fetcher, token.json.refresh_token);
+      return { ok: false, service: pending.service, error: e.message };
+    }
+    // The grant is real and kept: the service needs Google's approval, not a new sign-in.
+    needsAccess = e.message;
   }
   // Reconnecting replaces the old grant, so the old one is revoked at Google.
   data.google_connections ||= {};
@@ -183,14 +191,16 @@ export async function finishGoogleConnect(env, data, params, fetcher = fetch, or
   const previousRefresh = previous ? await openToken(env, previous.refresh).catch(() => '') : '';
   if (previousRefresh && previousRefresh !== token.json.refresh_token) await revokeGrant(fetcher, previousRefresh);
   data.google_connections[pending.service] = {
-    status: 'connected',
+    status: needsAccess ? 'needs_access' : 'connected',
     account,
+    access_status_detail: needsAccess,
     scopes: granted.filter((scope) => spec.scopes.includes(scope)),
     connected_at: new Date(now).toISOString(),
     refresh: await sealToken(env, token.json.refresh_token),
     access: await sealToken(env, token.json.access_token),
     access_expires_at: now + Number(token.json.expires_in || 3600) * 1000 - ACCESS_SAFETY_MS,
   };
+  if (needsAccess) return { ok: false, service: pending.service, label: spec.label, error: needsAccess };
   return { ok: true, service: pending.service, label: spec.label, account };
 }
 
@@ -243,6 +253,7 @@ export async function googleStates(env, data) {
     out[id] = {
       connected: status === 'connected', status, label: spec.label,
       account: conn.account || '', connected_at: conn.connected_at || '', scopes: conn.scopes || [],
+      access_status_detail: conn.access_status_detail || '',
     };
   }
   return out;
@@ -252,15 +263,15 @@ export async function googleStates(env, data) {
 export async function googleConnectorStates(env, data) {
   const states = await googleStates(env, data);
   const out = {};
-  for (const [id, s] of Object.entries(states)) {
-    if (id === 'google_ads' && s.connected && !developerToken(env)) {
-      out[id] = { state: 'not_connected', detail: 'Signed in, but CHE needs the Google Ads developer token (CHE_GOOGLE_ADS_DEVELOPER_TOKEN) from Google Ads API approval.' };
-    } else if (s.connected) {
-      out[id] = { state: 'ready', detail: s.account || `${s.label} connected` };
-    } else if (s.status === 'needs_reconnect') {
-      out[id] = { state: 'needs_reconnect', detail: `Reconnect ${s.label}.` };
+  for (const [id, st] of Object.entries(states)) {
+    if (st.connected) {
+      out[id] = { state: 'ready', detail: st.account || `${st.label} connected` };
+    } else if (st.status === 'needs_access') {
+      out[id] = { state: 'not_connected', detail: st.access_status_detail || `${st.label}: Needs Setup. Google has not confirmed CHE's access yet.` };
+    } else if (st.status === 'needs_reconnect') {
+      out[id] = { state: 'needs_reconnect', detail: `Reconnect ${st.label}.` };
     } else {
-      out[id] = { state: 'not_connected', detail: `${s.label} is not connected.` };
+      out[id] = { state: 'not_connected', detail: `${st.label} is not connected.` };
     }
   }
   return out;
@@ -498,13 +509,36 @@ export async function calendarCreate(env, data, { summary, date, time, durationM
 
 // Google Ads: the customer accounts this sign-in can reach (listing only).
 export async function adsCustomers(env, data, fetcher = fetch) {
-  const dev = developerToken(env);
-  if (!dev) return { ok: false, error: 'Google Ads needs the developer token (CHE_GOOGLE_ADS_DEVELOPER_TOKEN) from Google Ads API approval. Nothing was read.' };
   const access = await googleAccessToken(env, data, 'google_ads', fetcher);
   if (!access.ok) return access;
-  const r = await googleCall(fetcher, 'GET', `${adsApiBase(env)}/customers:listAccessibleCustomers`, access.token, null, { 'developer-token': dev });
+  const r = await googleCall(fetcher, 'GET', `${adsApiBase(env)}/customers:listAccessibleCustomers`, access.token, null, adsHeaders(env));
+  if (r.status === 403) return { ok: false, error: adsAccessMessage(r) };
   if (!r.ok) return { ok: false, error: callError('Google Ads', r) };
   return { ok: true, customers: (r.json.resourceNames || []).map((n) => String(n).replace(/^customers\//, '')) };
+}
+
+// Google Ads, read-only: campaign results for the last seven days on one account.
+const ADS_CAMPAIGN_QUERY = 'SELECT campaign.name, campaign.status, metrics.impressions, metrics.clicks, metrics.cost_micros FROM campaign WHERE segments.date DURING LAST_7_DAYS ORDER BY metrics.cost_micros DESC LIMIT 10';
+
+export async function adsCampaignReport(env, data, { customerId } = {}, fetcher = fetch) {
+  const id = String(customerId || '').replace(/\D/g, '');
+  if (!id) return { ok: false, error: 'Google Ads needs one account number to read a report.' };
+  const access = await googleAccessToken(env, data, 'google_ads', fetcher);
+  if (!access.ok) return access;
+  const r = await googleCall(fetcher, 'POST', `${adsApiBase(env)}/customers/${id}/googleAds:searchStream`, access.token, { query: ADS_CAMPAIGN_QUERY }, adsHeaders(env));
+  if (r.status === 403) return { ok: false, error: adsAccessMessage(r) };
+  if (!r.ok) return { ok: false, error: callError('Google Ads', r) };
+  const rows = (Array.isArray(r.json) ? r.json : []).flatMap((chunk) => chunk.results || []);
+  return {
+    ok: true,
+    campaigns: rows.map((row) => ({
+      name: String(row.campaign?.name || '').slice(0, 120),
+      status: String(row.campaign?.status || ''),
+      impressions: Number(row.metrics?.impressions || 0),
+      clicks: Number(row.metrics?.clicks || 0),
+      cost: Number(row.metrics?.costMicros ?? row.metrics?.cost_micros ?? 0) / 1e6,
+    })),
+  };
 }
 
 const TIME_OF_DAY = (hour, minute, meridiem) => {
@@ -520,8 +554,10 @@ export function googleChatIntent(message) {
   const t = String(message || '').trim().replace(/\s+/g, ' ');
   let m = null;
   if (/^(?:check|read|show|list|any)\s+(?:my\s+)?(?:new\s+|unread\s+)?(?:e-?mails?|inbox|gmail)\b/i.test(t)) return { kind: 'gmail_list' };
-  m = t.match(/^(?:send|email|mail)\s+(?:an?\s+)?(?:e-?mail\s+)?to\s+([^\s,;]+@[^\s,;]+)\s*(?:saying|that says|with the message|:)\s*(.+)$/i);
+  m = t.match(/^(?:send|email|mail)\s+(?:an?\s+)?(?:e-?mail\s+)?to\s+(\S+?)[,;]?\s*(?:saying|that says|with the message|:)\s*(.+)$/i);
   if (m) return { kind: 'gmail_send', to: m[1], body: m[2] };
+  // An email request missing its address or text: say so, never let a model claim it was sent.
+  if (/^(?:send|email|mail)\b/i.test(t) && /\be-?mails?\b/i.test(t)) return { kind: 'gmail_incomplete' };
   m = t.match(/^(?:what(?:'s| is)\s+on|show|check|list)\s+(?:my\s+)?(?:google\s+)?calendar(?:\s+(today|tomorrow|this week))?$/i);
   if (m) return { kind: 'calendar_list', range: (m[1] || 'today').toLowerCase() };
   if (/^(?:list|show|check)\s+(?:my\s+)?(?:google\s+)?drive(?:\s+files)?$/i.test(t)) return { kind: 'drive_list' };
@@ -529,12 +565,15 @@ export function googleChatIntent(message) {
   if (m) return { kind: 'drive_create', name: m[1], text: m[2] };
   m = t.match(/^(?:add|schedule|put|create)\s+(?:an?\s+|the\s+)?(?:event|meeting|appointment|calendar event)?\s*(?:called\s+|titled\s+)?(.+?)\s+on\s+(\d{4}-\d{2}-\d{2})\s+at\s+(\d{1,2}):(\d{2})\s*(am|pm)?$/i);
   if (m) return { kind: 'calendar_create', summary: m[1], date: m[2], time: TIME_OF_DAY(m[3], m[4], m[5]?.toLowerCase()) };
+  if (/^(?:list|show|check)\s+(?:my\s+)?google ads(?:\s+accounts?)?$/i.test(t)) return { kind: 'ads_accounts' };
+  if (/^(?:show|check|list)\s+(?:my\s+)?google ads\s+(?:campaigns?|report|performance|results)$/i.test(t)) return { kind: 'ads_report' };
   return null;
 }
 
 const SERVICE_FOR_KIND = {
   gmail_list: 'gmail', gmail_send: 'gmail', drive_list: 'drive', drive_create: 'drive',
   calendar_list: 'calendar', calendar_create: 'calendar',
+  ads_accounts: 'google_ads', ads_report: 'google_ads',
 };
 
 function clock(iso, zone) {
@@ -551,6 +590,9 @@ export async function runGoogleIntent(intent, { env = {}, data, fetcher = fetch,
   const state = data.google_connections?.[service];
   if (!state) {
     return { ok: false, text: `${label} is not connected, sir. Say connect my ${label} or open Connections. Nothing was done.` };
+  }
+  if (state.status === 'needs_access') {
+    return { ok: false, text: `${label} needs Google's approval before CHE can use it, sir. ${state.access_status_detail || ''} Nothing was done.` };
   }
   if (state.status !== 'connected') {
     return { ok: false, text: `Google no longer accepts CHE's ${label} sign-in, sir. Reconnect ${label} on the Connections page. Nothing was done.` };
@@ -580,6 +622,23 @@ export async function runGoogleIntent(intent, { env = {}, data, fetcher = fetch,
     if (!r.ok) return { ok: false, text: `The event was not added, sir. ${r.error}` };
     return { ok: true, text: `Added "${r.summary}" on ${intent.date} at ${intent.time} in your calendar, sir.` };
   }
+  if (intent.kind === 'ads_accounts') {
+    const r = await adsCustomers(env, data, fetcher);
+    if (!r.ok) return { ok: false, text: `I could not read your Google Ads accounts, sir. ${r.error}` };
+    if (!r.customers.length) return { ok: true, text: 'Google lists no Google Ads accounts for this sign-in, sir.' };
+    return { ok: true, text: `Google Ads accounts CHE can read, sir: ${r.customers.join(', ')}.` };
+  }
+  if (intent.kind === 'ads_report') {
+    const list = await adsCustomers(env, data, fetcher);
+    if (!list.ok) return { ok: false, text: `I could not read Google Ads, sir. ${list.error}` };
+    if (!list.customers.length) return { ok: true, text: 'Google lists no Google Ads accounts for this sign-in, sir.' };
+    const account = list.customers[0];
+    const r = await adsCampaignReport(env, data, { customerId: account }, fetcher);
+    if (!r.ok) return { ok: false, text: `I could not read the campaign report, sir. ${r.error}` };
+    if (!r.campaigns.length) return { ok: true, text: `No campaign results in the last seven days for account ${account}, sir.` };
+    const top = r.campaigns.slice(0, 3).map((c) => `${c.name}: $${c.cost.toFixed(2)} spent, ${c.clicks} clicks`).join('; ');
+    return { ok: true, text: `Last seven days, account ${account}, top campaigns: ${top}. Read only; nothing was changed.` };
+  }
   if (intent.kind === 'drive_list') {
     const r = await driveList(env, data, {}, fetcher);
     if (!r.ok) return { ok: false, text: `I could not list your Drive files, sir. ${r.error}` };
@@ -589,4 +648,97 @@ export async function runGoogleIntent(intent, { env = {}, data, fetcher = fetch,
   const r = await driveCreateDoc(env, data, { name: intent.name, text: intent.text }, fetcher);
   if (!r.ok) return { ok: false, text: `The document was not created, sir. ${r.error}` };
   return { ok: true, text: `I created the Google Doc "${r.name}", sir.` };
+}
+
+// A verified sign-in whose service still needs Google's approval (Needs Setup).
+class NeedsAccess extends Error {}
+
+function adsHeaders(env = {}) {
+  const headers = {};
+  const dev = developerToken(env);
+  if (dev) headers['developer-token'] = dev;
+  const login = String(env.CHE_GOOGLE_ADS_LOGIN_CUSTOMER_ID || '').replace(/-/g, '').trim();
+  if (login) headers['login-customer-id'] = login;
+  return headers;
+}
+
+function adsAccessMessage(r) {
+  const reason = String(r.json?.error?.message || 'access not approved').slice(0, 140);
+  return `Needs Setup: Google has not confirmed CHE's Google Ads API access yet (${reason}). Apply in the Google Ads API Overview in Google Cloud Console. CHE shows Connected only after Google lists a real account.`;
+}
+
+// Writes change something outside CHE, so each one waits for the owner's yes.
+export const WRITE_KINDS = new Set(['gmail_send', 'calendar_create', 'drive_create']);
+export const GOOGLE_HOLD_MS = 10 * 60 * 1000;
+export const PENDING_GOOGLE_ACTION_KEY = 'pending_google_action';
+const NO_PHRASES = new Set(['no', 'nope', 'cancel', 'stop', 'never mind', 'no thanks', 'do not', 'dont']);
+
+export function isOwnerNo(text) {
+  const t = String(text || '').toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+  return NO_PHRASES.has(t);
+}
+
+// Why a write cannot be asked for, or null when it can.
+export function googleWriteProblem(intent) {
+  if (intent.kind === 'gmail_send') {
+    const address = String(intent.to || '').trim();
+    if (address.length > 254 || !EMAIL.test(address)) return 'That is not a full email address, so nothing was sent.';
+    if (!String(intent.body || '').trim()) return 'The email has no message text, so nothing was sent.';
+    if (String(intent.body).length > 20000) return 'The email is too long to send from here, so nothing was sent.';
+    return null;
+  }
+  if (intent.kind === 'calendar_create') {
+    if (!String(intent.summary || '').trim()) return 'The event needs a title, so nothing was added.';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(intent.date || ''))) return 'The event needs a date like 2026-10-20, so nothing was added.';
+    if (!/^\d{1,2}:\d{2}$/.test(String(intent.time || ''))) return 'The event needs a time like 14:30, so nothing was added.';
+    return null;
+  }
+  if (intent.kind === 'drive_create') {
+    if (!String(intent.name || '').trim()) return 'The document needs a name, so nothing was created.';
+    if (!String(intent.text || '').trim()) return 'The document has no text, so nothing was created.';
+    return null;
+  }
+  return null;
+}
+
+// What CHE reads back before a write, so the owner hears exactly what will happen.
+export function googleConfirmText(intent) {
+  if (intent.kind === 'gmail_send') {
+    return `Ready to send an email to ${intent.to}, sir, saying: "${String(intent.body).trim().slice(0, 200)}". Say yes to send it, or no to cancel.`;
+  }
+  if (intent.kind === 'calendar_create') {
+    return `Ready to add "${intent.summary}" on ${intent.date} at ${intent.time} to your calendar, sir. Say yes to add it, or no to cancel.`;
+  }
+  return `Ready to create a Google Doc named "${intent.name}", sir, with this text: "${String(intent.text).trim().slice(0, 200)}". Say yes to create it, or no to cancel.`;
+}
+
+// The owner's Chat turn for Gmail, Drive and Calendar. Reads run now; a write is
+// held until a plain yes. A no cancels it, and any other reply drops it. Returns
+// null when the turn is not a Google request.
+export async function googleOwnerStep(message, { storage, env = {}, fetcher = fetch, now = Date.now(), loadData, saveData }) {
+  // Guarded like the rest of the Worker: a storage read that throws or returns nothing is no hold.
+  const held = await Promise.resolve().then(() => storage.get(PENDING_GOOGLE_ACTION_KEY)).catch(() => null);
+  const live = Boolean(held) && now - Number(held.at || 0) < GOOGLE_HOLD_MS;
+  if (held) await storage.put(PENDING_GOOGLE_ACTION_KEY, null);
+  const run = async (intent) => {
+    const data = await loadData();
+    const out = await runGoogleIntent(intent, { env, data, fetcher, now });
+    await saveData(data);
+    return { ok: out.ok, text: out.text };
+  };
+  if (live && isOwnerYes(message)) return run(held.intent);
+  if (live && isOwnerNo(message)) return { ok: true, text: `Cancelled, sir. ${held.summary} was not done.` };
+  const intent = googleChatIntent(message);
+  if (!intent) return null;
+  if (intent.kind === 'gmail_incomplete') return { ok: false, text: 'Tell me the full address and what the email should say, sir. Nothing was sent.' };
+  if (!WRITE_KINDS.has(intent.kind)) return run(intent);
+  const data = await loadData();
+  const state = data.google_connections?.[SERVICE_FOR_KIND[intent.kind]];
+  if (!state || state.status !== 'connected') return run(intent);
+  const problem = googleWriteProblem(intent);
+  if (problem) return { ok: false, text: problem };
+  const summary = intent.kind === 'gmail_send' ? `The email to ${intent.to}`
+    : intent.kind === 'calendar_create' ? `The event "${intent.summary}"` : `The Google Doc "${intent.name}"`;
+  await storage.put(PENDING_GOOGLE_ACTION_KEY, { intent, at: now, summary });
+  return { ok: true, held: true, text: googleConfirmText(intent) };
 }

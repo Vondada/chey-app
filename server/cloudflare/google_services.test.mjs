@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { sealToken } from './youtube_connection.js';
 import {
   adsCustomers, buildRawEmail, calendarCreate, calendarList, calendarWindow, disconnectGoogle,
   driveCreateDoc, driveList, finishGoogleConnect, gmailList, gmailSend, googleAccessToken,
-  googleChatIntent, googleConnectorStates, googleStates, runGoogleIntent, startGoogleConnect,
-  zonedWallTimeToUtc,
+  adsCampaignReport, googleChatIntent, googleConnectorStates, googleOwnerStep, googleStates, GOOGLE_HOLD_MS,
+  PENDING_GOOGLE_ACTION_KEY, runGoogleIntent, startGoogleConnect, zonedWallTimeToUtc,
 } from './google_services.js';
 
 const env = {
@@ -143,28 +144,6 @@ test('a stored token refreshes, and an expired grant becomes needs_reconnect', a
   assert.equal(dead.ok, false);
   assert.match(dead.error, /Reconnect Gmail/);
   assert.equal(data.google_connections.gmail.status, 'needs_reconnect');
-});
-
-test('connector states: ready only when signed in, Ads also needs its developer token', async () => {
-  const data = { google_connections: {
-    gmail: { status: 'connected', account: 'o@example.com', refresh: null, scopes: SCOPE.gmail },
-    google_ads: { status: 'connected', account: '2 accessible', refresh: null, scopes: SCOPE.google_ads },
-  } };
-  // Sealed refresh is unreadable here (no token saved), so states are "needs reconnect" for gmail.
-  const states = await googleStates(env, data);
-  assert.equal(states.drive.status, 'not_connected');
-  assert.equal(states.gmail.connected, false);
-  const healthy = await googleConnectorStates({ ...env, CHE_GOOGLE_ADS_DEVELOPER_TOKEN: 'dev' }, { google_connections: {} });
-  assert.equal(healthy.calendar.state, 'not_connected');
-  assert.match(healthy.calendar.detail, /not connected/);
-});
-
-test('Google Ads refuses to read without its developer token and calls nothing', async () => {
-  const fetcher = fakeGoogle({});
-  const r = await adsCustomers({ ...env }, { google_connections: {} }, fetcher);
-  assert.equal(r.ok, false);
-  assert.match(r.error, /CHE_GOOGLE_ADS_DEVELOPER_TOKEN/);
-  assert.equal(fetcher.calls.length, 0);
 });
 
 test('disconnect revokes at Google and forgets the local copy', async () => {
@@ -310,4 +289,156 @@ test('listing helpers exist and read Drive and Calendar without sending anything
   const cal = await calendarList(env, data, calendarWindow('today', 'America/Chicago', NOW), api);
   assert.equal(cal.events[0].summary, 'Standup');
   assert.ok(api.calls.every((c) => c.method === 'GET'), 'listing never writes');
+});
+
+test('connector states: a grant is ready only with a real account; un-approved Ads is Needs Setup', async () => {
+  assert.equal((await googleConnectorStates(env, { google_connections: {} })).calendar.state, 'not_connected');
+  const withAccount = { google_connections: { google_ads: { status: 'connected', account: '2 Google Ads accounts', refresh: await sealToken(env, 'r') } } };
+  assert.equal((await googleConnectorStates(env, withAccount)).google_ads.state, 'ready');
+  const pending = { google_connections: { google_ads: { status: 'needs_access', account: '',
+    access_status_detail: 'Needs Setup: Google has not confirmed CHE access yet.', refresh: await sealToken(env, 'r') } } };
+  const st = (await googleConnectorStates(env, pending)).google_ads;
+  assert.equal(st.state, 'not_connected');
+  assert.match(st.detail, /Needs Setup/);
+});
+
+test('Google Ads reads nothing without a grant, and never calls Google', async () => {
+  const fetcher = fakeGoogle({});
+  const r = await adsCustomers(env, { google_connections: {} }, fetcher);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /not connected/);
+  assert.equal(fetcher.calls.length, 0);
+});
+
+test('an Ads sign-in Google has not approved is kept as Needs Setup, and the grant is not revoked', async () => {
+  const data = { google_oauth: pendingFor('google_ads') };
+  const fetcher = fakeGoogle({
+    'https://oauth2.googleapis.com/token': tokenHandler({ scope: SCOPE.google_ads }),
+    'https://googleads.googleapis.com/': () => json({ error: { message: 'The user has not approved API access' } }, 403),
+  });
+  const r = await finishGoogleConnect(env, data, { state: 'expected-state', code: 'c' }, fetcher, ORIGIN, NOW);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /Needs Setup/);
+  assert.equal(data.google_connections.google_ads.status, 'needs_access');
+  assert.equal(fetcher.calls.some((c) => c.url.includes('/revoke')), false, 'the real grant is kept');
+});
+
+test('an Ads account list with no accounts is Needs Setup, not Connected', async () => {
+  const data = { google_oauth: pendingFor('google_ads') };
+  const fetcher = fakeGoogle({
+    'https://oauth2.googleapis.com/token': tokenHandler({ scope: SCOPE.google_ads }),
+    'https://googleads.googleapis.com/': () => json({ resourceNames: [] }),
+  });
+  const r = await finishGoogleConnect(env, data, { state: 'expected-state', code: 'c' }, fetcher, ORIGIN, NOW);
+  assert.equal(r.ok, false);
+  assert.equal(data.google_connections.google_ads.status, 'needs_access');
+});
+
+test('the Ads campaign report only reads, and converts micros to currency', async () => {
+  const data = { google_connections: { google_ads: { status: 'connected', account: '1 account', refresh: await sealToken(env, 'r'),
+    access: await sealToken(env, 't'), access_expires_at: Date.now() + 3600000 } } };
+  const fetcher = fakeGoogle({
+    'https://googleads.googleapis.com/': () => json([{ results: [{ campaign: { name: 'Spring', status: 'ENABLED' },
+      metrics: { impressions: '120', clicks: '9', costMicros: '2500000' } }] }]),
+  });
+  const r = await adsCampaignReport(env, data, { customerId: '123-456-7890' }, fetcher);
+  assert.equal(r.ok, true);
+  assert.equal(r.campaigns[0].cost, 2.5);
+  assert.equal(r.campaigns[0].clicks, 9);
+  assert.match(fetcher.calls[0].url, /customers\/1234567890\/googleAds:searchStream$/);
+  const query = JSON.parse(fetcher.calls[0].body).query;
+  assert.match(query, /FROM campaign/);
+  assert.equal(/\b(?:INSERT|UPDATE|DELETE|MUTATE|CREATE)\b/i.test(query), false, 'the query only reads');
+});
+
+test('the Ads read phrases map to read intents, and writes do not', () => {
+  assert.deepEqual(googleChatIntent('list my Google Ads accounts'), { kind: 'ads_accounts' });
+  assert.deepEqual(googleChatIntent('show my google ads campaigns'), { kind: 'ads_report' });
+});
+
+function memoryStorage() {
+  const m = new Map();
+  return { m, get: async (k) => (m.has(k) ? structuredClone(m.get(k)) : undefined), put: async (k, v) => { m.set(k, structuredClone(v)); } };
+}
+
+async function stepSetup(extraData = {}) {
+  const storage = memoryStorage();
+  const grant = { status: 'connected', account: 'owner@example.com', refresh: await sealToken(env, 'r'),
+    access: await sealToken(env, 'live'), access_expires_at: Date.now() + 3600000 };
+  const stored = { google_connections: { gmail: grant, calendar: grant, drive: grant }, ...extraData };
+  return {
+    storage, stored,
+    opts: { storage, env, now: NOW, loadData: async () => structuredClone(stored), saveData: async (d) => { Object.assign(stored, d); } },
+  };
+}
+
+test('an email is held until a plain yes, and nothing is sent before it', async () => {
+  const s = await stepSetup();
+  const fetcher = fakeGoogle({ 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send': () => json({ id: 'sent-1' }) });
+  const held = await googleOwnerStep('send an email to ann@example.com saying lunch at noon', { ...s.opts, fetcher });
+  assert.equal(held.held, true);
+  assert.match(held.text, /Say yes to send it/);
+  assert.equal(fetcher.calls.length, 0, 'nothing was sent');
+  const sent = await googleOwnerStep('yes', { ...s.opts, fetcher });
+  assert.equal(sent.ok, true);
+  assert.match(sent.text, /Sent to ann@example.com/);
+  assert.equal(fetcher.calls.filter((c) => c.method === 'POST').length, 1);
+});
+
+test('a no cancels the held email and sends nothing', async () => {
+  const s = await stepSetup();
+  const fetcher = fakeGoogle({ 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send': () => json({ id: 'x' }) });
+  await googleOwnerStep('send an email to ann@example.com saying hi', { ...s.opts, fetcher });
+  const no = await googleOwnerStep('no', { ...s.opts, fetcher });
+  assert.match(no.text, /Cancelled, sir\. The email to ann@example.com was not done\./);
+  assert.equal(fetcher.calls.length, 0);
+  assert.equal(s.storage.m.get(PENDING_GOOGLE_ACTION_KEY), null);
+});
+
+test('any other reply drops a held write, and an expired hold is not released by a yes', async () => {
+  const s = await stepSetup();
+  const fetcher = fakeGoogle({});
+  await googleOwnerStep('send an email to ann@example.com saying hi', { ...s.opts, fetcher });
+  assert.equal(await googleOwnerStep('what is the weather', { ...s.opts, fetcher }), null);
+  assert.equal(s.storage.m.get(PENDING_GOOGLE_ACTION_KEY), null);
+  await googleOwnerStep('send an email to ann@example.com saying hi', { ...s.opts, fetcher });
+  const late = await googleOwnerStep('yes', { ...s.opts, fetcher, now: NOW + GOOGLE_HOLD_MS + 1 });
+  assert.equal(late, null, 'an expired hold is never released');
+  assert.equal(fetcher.calls.length, 0);
+});
+
+test('a calendar event waits for a yes, then is created in the owner zone', async () => {
+  const s = await stepSetup();
+  const fetcher = fakeGoogle({
+    'https://www.googleapis.com/calendar/v3/calendars/primary/events': () => json({ id: 'e1', summary: 'dentist', start: { dateTime: '2026-10-20T14:30:00' } }),
+  });
+  const held = await googleOwnerStep('add dentist on 2026-10-20 at 2:30 pm', { ...s.opts, fetcher });
+  assert.equal(held.held, true);
+  assert.equal(fetcher.calls.length, 0);
+  const done = await googleOwnerStep('yes', { ...s.opts, fetcher });
+  assert.equal(done.text, 'Added "dentist" on 2026-10-20 at 14:30 in your calendar, sir.');
+  assert.equal(fetcher.calls.filter((c) => c.method === 'POST').length, 1);
+});
+
+test('a write for a service that is not connected says so and holds nothing', async () => {
+  const s = await stepSetup({ google_connections: {} });
+  const r = await googleOwnerStep('send an email to ann@example.com saying hi', { ...s.opts, fetcher: fakeGoogle({}) });
+  assert.match(r.text, /Gmail is not connected, sir/);
+  assert.equal(s.storage.m.get(PENDING_GOOGLE_ACTION_KEY), undefined);
+});
+
+test('a bad address is refused before anything is held', async () => {
+  const s = await stepSetup();
+  const r = await googleOwnerStep('send an email to bob saying hi', { ...s.opts, fetcher: fakeGoogle({}) });
+  assert.equal(r.ok, false);
+  assert.match(r.text, /not a full email address/);
+  assert.equal(s.storage.m.get(PENDING_GOOGLE_ACTION_KEY), undefined);
+});
+
+test('reads run at once and hold nothing', async () => {
+  const s = await stepSetup();
+  const fetcher = fakeGoogle({ 'https://gmail.googleapis.com/gmail/v1/users/me/messages?': () => json({ resultSizeEstimate: 0 }) });
+  const r = await googleOwnerStep('check my email', { ...s.opts, fetcher });
+  assert.equal(r.text, 'No unread email, sir.');
+  assert.equal(s.storage.m.get(PENDING_GOOGLE_ACTION_KEY), undefined);
 });

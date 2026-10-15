@@ -1,0 +1,25 @@
+// FundYourEdge funded accounts trade on Rithmic, the platform the firm documents
+// (TradeSea is one front end). Rithmic's order API is licensed: a developer kit,
+// a conformance review and recurring fees before production access. CHE has no
+// such connection, so it says so and never invents a balance, position or order.
+const FYE = /\bfund\s*your\s*edge\b|\bfundyouredge\b|\bfye\b/i;
+const ORDER_VERB = /\b(?:prepare|place|submit|enter|buy|sell|set up)\b/i;
+const FUTURES = /\b(?:mnq|nq|mes|es|nasdaq|s&p)\b/i;
+
+export function fundyouredgeIntent(message) {
+  const t = String(message || '').trim().replace(/\s+/g, ' ');
+  if (ORDER_VERB.test(t) && (FYE.test(t) || FUTURES.test(t))) return { kind: 'order' };
+  if (!FYE.test(t)) return null;
+  if (/\b(?:check|show|read|open|status|balance|account|positions?|drawdown|payouts?|p&l)\b/i.test(t)) return { kind: 'account' };
+  return null;
+}
+
+// The honest spoken reply, or null when the message is not about this account.
+export function fundyouredgeReply(message) {
+  const intent = fundyouredgeIntent(message);
+  if (!intent) return null;
+  if (intent.kind === 'order') {
+    return 'I cannot prepare or place an order for FundYourEdge, sir. Its accounts trade on Rithmic, and CHE has no licensed Rithmic order connection. Nothing was prepared or placed.';
+  }
+  return 'FundYourEdge is not connected, sir. Its accounts trade on Rithmic, and CHE needs a licensed Rithmic connection to read them. Nothing was checked, so I have no balance, drawdown, positions or payout figures to report.';
+}

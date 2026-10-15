@@ -87,9 +87,10 @@ import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, op
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
 import {
-  disconnectGoogle, finishGoogleConnect, googleChatIntent, googleConnectorStates, googleLabel, googleStates,
-  runGoogleIntent, startGoogleConnect,
+  disconnectGoogle, finishGoogleConnect, googleConnectorStates, googleLabel, googleOwnerStep, googleStates,
+  startGoogleConnect,
 } from './google_services.js';
+import { fundyouredgeReply } from './fundyouredge.js';
 import { CheCodingRuntime, codingRuntimeEnabled, ownerRequiresMergeApproval, recoverableRuntimeFailure, runtimeState, runtimeStateClass, speakRuntimeStatus } from './coding_runtime.js';
 import { handoffIntent, latestHandoff, unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
@@ -7703,15 +7704,17 @@ export class CheState extends DurableObject {
         }
         // "Run the autonomy exam" (5 levels, each harder): real coding runs in
         // dry-run mode, graded deterministically. "Autonomy exam results".
-        // The owner's Gmail, Drive and Calendar requests run for real, and the
-        // reply says the real result. Anything else goes on to the model.
-        const googleAction = ownerDevice && !chatOnlyEvaluation ? googleChatIntent(message) : null;
-        if (googleAction) {
-          const googleData = await this.loadData();
-          const outcome = await runGoogleIntent(googleAction, { env: this.keyEnv || this.env, data: googleData, fetcher: fetch });
-          await this.ctx.storage.put('che', googleData);
-          return ndjsonReply(outcome.text, { source: 'che_google', ok: outcome.ok, model_calls: 0 });
-        }
+        // Gmail, Drive and Calendar: reads run now; sending, adding an event and
+        // creating a Drive doc wait for the owner's yes. Nothing changes on a guess.
+        const googleStep = ownerDevice && !chatOnlyEvaluation ? await googleOwnerStep(message, {
+          storage: this.ctx.storage, env: this.keyEnv || this.env, fetcher: fetch,
+          loadData: () => this.loadData(), saveData: (d) => this.ctx.storage.put('che', d),
+        }) : null;
+        if (googleStep) return ndjsonReply(googleStep.text, { source: 'che_google', ok: googleStep.ok, held: Boolean(googleStep.held), model_calls: 0 });
+        // FundYourEdge has no licensed Rithmic connection, so CHE says so and never
+        // prepares or places an order for it.
+        const brokerReply = ownerDevice && !chatOnlyEvaluation ? fundyouredgeReply(message) : null;
+        if (brokerReply) return ndjsonReply(brokerReply, { source: 'che_brokerage', ok: false, model_calls: 0 });
         const exam = ownerDevice && !chatOnlyEvaluation && !isExistingChangeCommand(selfUpdateChatIntent(message)) ? examIntent(message) : null;
         if (exam?.kind === 'results') {
           const results = await Promise.resolve().then(() => this.ctx.storage.get(EXAM_RESULTS_KEY)).catch(() => null);

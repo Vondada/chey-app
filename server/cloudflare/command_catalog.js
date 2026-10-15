@@ -49,6 +49,7 @@ export const CONNECTORS = Object.freeze({
   sms: { label: 'Twilio SMS', kind: 'secret', setup: 'Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and a sender number as Worker secrets.' },
   bookkeeping: { label: 'Bank or bookkeeping feed', kind: 'none', setup: 'CHE has no bank or bookkeeping connector yet.' },
   ads_account: { label: 'Ad account (Google/Meta)', kind: 'none', setup: 'CHE has no ad-platform connector yet.' },
+  fundyouredge: { label: 'FundYourEdge funded account (Rithmic)', kind: 'none', setup: 'Rithmic requires its own licensed API before CHE can read or trade a funded account. Nothing is connected.' },
 });
 
 export const MODES = Object.freeze({ EXPLORE: 'EXPLORE', PLAN: 'PLAN', BUILD: 'BUILD' });
@@ -636,6 +637,7 @@ export function connectorStatus(env = {}, facts = {}) {
   out.sms = truthy(env.TWILIO_ACCOUNT_SID) && truthy(env.TWILIO_AUTH_TOKEN) ? ok() : missing('Twilio is not connected.');
   out.bookkeeping = { state: 'none', detail: CONNECTORS.bookkeeping.setup };
   out.ads_account = { state: 'none', detail: CONNECTORS.ads_account.setup };
+  out.fundyouredge = { state: 'none', detail: CONNECTORS.fundyouredge.setup };
   return out;
 }
 

@@ -198,6 +198,72 @@ void main() {
     expect(spoken.last, 'Google Drive: Google Drive sign-in is not configured. Open Keys for setup.');
   });
 
+  testWidgets('a connected Google service is removed only after a confirmed yes, by button and by voice', (tester) async {
+    tester.view.physicalSize = const Size(1170, 4200);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    final spoken = <String>[];
+    final posted = <String>[];
+    var connected = true;
+    final client = MockClient((r) async {
+      if (r.method == 'POST' && r.url.path == '/api/google/disconnect') {
+        posted.add(r.body);
+        connected = false;
+        return http.Response(jsonEncode({'ok': true, 'label': 'Gmail', 'was_connected': true, 'revoked_at_google': true}),
+          200, headers: {'content-type': 'application/json'});
+      }
+      return http.Response(jsonEncode({'connectors': {
+        'gmail': connected ? {'state': 'ready', 'detail': 'owner@example.com'} : {'state': 'not_connected', 'detail': 'Gmail is not connected.'},
+      }}), 200, headers: {'content-type': 'application/json'});
+    });
+    await tester.pumpWidget(MaterialApp(theme: CheTheme.dark(),
+      home: CheConnectionsScreen(baseUrl: 'https://che.test', headers: () => {}, client: client,
+        onSpeak: spoken.add, onVoiceSettings: () {}, onKeys: () {})));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Disconnect').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Disconnect Gmail?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+    await tester.pumpAndSettle();
+    expect(posted, isEmpty, reason: 'cancel removes nothing');
+    await tester.tap(find.text('Disconnect').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Disconnect'));
+    await tester.pumpAndSettle();
+    expect(jsonDecode(posted.single)['service'], 'gmail');
+    expect(spoken.last, 'Gmail disconnected. Google access was revoked.');
+
+    posted.clear();
+    connected = true;
+    expect(await tester.runAsync(() => CheConnectionsVoice.handler!('disconnect my gmail')), '');
+    expect(spoken.last, 'Disconnect Gmail? CHE revokes its access at Google. Say yes to disconnect, or no to cancel.');
+    expect(posted, isEmpty, reason: 'a spoken disconnect asks first');
+    expect(await tester.runAsync(() => CheConnectionsVoice.handler!('no')), '');
+    expect(spoken.last, 'Disconnect cancelled. Nothing was removed.');
+    expect(posted, isEmpty);
+    expect(await tester.runAsync(() => CheConnectionsVoice.handler!('disconnect my gmail')), '');
+    expect(await tester.runAsync(() => CheConnectionsVoice.handler!('yes')), '');
+    expect(jsonDecode(posted.single)['service'], 'gmail');
+  });
+
+  testWidgets('FundYourEdge shows Unsupported with its Rithmic reason and no connect button', (tester) async {
+    tester.view.physicalSize = const Size(1170, 4200);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    final client = MockClient((r) async => http.Response(jsonEncode({'connectors': {
+      'fundyouredge': {'state': 'none', 'detail': 'Rithmic requires its own licensed API.'},
+    }}), 200, headers: {'content-type': 'application/json'}));
+    await tester.pumpWidget(MaterialApp(theme: CheTheme.dark(),
+      home: CheConnectionsScreen(baseUrl: 'https://che.test', headers: () => {}, client: client,
+        onVoiceSettings: () {}, onKeys: () {})));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('FundYourEdge funded account'), 200,
+      scrollable: find.byType(Scrollable).first);
+    expect(find.text('FundYourEdge funded account'), findsOneWidget);
+    expect(find.textContaining('Rithmic'), findsWidgets);
+    expect(find.text('Unsupported'), findsWidgets);
+  });
+
   testWidgets('HTTP auth failure clears stale connection claims', (tester) async {
     final client = MockClient((r) async => http.Response('{"detail":"Pair phone"}', 401));
     await tester.pumpWidget(MaterialApp(theme: CheTheme.dark(),
