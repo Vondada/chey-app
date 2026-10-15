@@ -64,7 +64,16 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
-## 2. Current position (Claude, 2026-10-15, ~08:10 UTC — Voice IDs #312 MERGED, iPhone IPA built; probe fix #313 MERGED and deployed, all live checks green)
+## 2. Current position (ChatGPT, 2026-10-15 — PR #315 completion in progress)
+
+- Owner explicitly asked ChatGPT to finish Claude's PR #315 (Connie loudness and anti-fabricated-news fix). GitHub main before this work: `3c915b71d484d303fe2b75e2fcdecbccc6b54ea6` (#314). Existing PR #315 branch: `claude/che-latency-optimization-8ruaus` at original `635924c`.
+- Claude's code already included iPhone native speaker/ducking fix and broader fact-checking, but latest Codex review left two issues: owner-supplied URL treated as proof without opening, and personal "good news" treated as current news.
+- ChatGPT pushed 3 commits on the SAME PR branch: `5da79ef` (guard intent + sources), `77c30ef` (tests), `7dfb02b` (test regex correction). Current head at last read `7dfb02b2b61235549f20cab2acc7484fb6769144`. Only changed `server/cloudflare/source_verification.js` and `source_verification.test.mjs`.
+- On `7dfb02b`: GitHub Worker syntax/unit test job **SUCCESS**, CHE UI Analyze **SUCCESS**; Flutter analyze and iOS native compile **in progress** at last check. Requested fresh independent `@codex review` on head (review running). Do not merge until final CI green and review findings fixed or resolved.
+- Source fix: checkable URLs in model claims must be opened even if pasted by the owner/returned in context; private/action links are never fetched and cannot substantiate an attributed claim. Require explicit news question/request or short news search phrase, not "I have good news". Added three regressions and news-intent assertions.
+- **NOT MERGED / NOT DEPLOYED / NOT INSTALLED** yet. Next: verify 3 workflows + Codex head, address new review concerns, reply/resolve the old two review threads, squash merge #315 with `[worker-deploy] [ios-build]` only if all checks green, then verify Worker deploy `/health` + live probes, IPA/release, and owner iPhone installation/Connie loudness still requires device acceptance.
+
+## 2. Earlier position (Claude, 2026-10-15, ~08:10 UTC — Voice IDs #312 MERGED, iPhone IPA built; probe fix #313 MERGED and deployed, all live checks green)
 
 - `main` is at e3e26cb (#313), on top of 46a3fb5 (#312, Voice IDs in Chat), 65e08db (#311) and 6cf2a0c (#310).
 - Voice IDs (#312): an expandable section at the top of Chat. Paste an ElevenLabs or Fish Audio ID, name it, press Save & Use Voice. The Worker checks it with the provider before saving; a voice that is not found or needs a paid plan is refused with the reason and nothing is switched. Saved voices, the active choice and Connie and Mike (checked with details only, no credits) are kept on the Worker across restarts. Switching is instant. Remove asks first. Preview Voice asks first (it spends a few credits). Keys stay on the Worker.
