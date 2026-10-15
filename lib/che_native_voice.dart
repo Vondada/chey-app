@@ -298,6 +298,9 @@ class CheNativeVoice {
     } on MissingPluginException {
       return null;
     } on PlatformException {
+      // An unsupported route query may return null; an explicit route change
+      // must propagate native failure so UI and voice never announce success.
+      if (method == 'setAudioOutput') rethrow;
       return null;
     }
   }
