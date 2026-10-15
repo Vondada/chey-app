@@ -99,6 +99,21 @@ class IosAudioSessionTest(unittest.TestCase):
         prefer = function(self.swift, "private func setOutputPreference(")
         self.assertNotIn("guard preference != outputPreference else { return }", prefer, "an unchanged choice still re-applies the route")
 
+    def test_failed_native_audio_route_never_acknowledges_a_private_change(self):
+        route = function(self.swift, "private func applyOutputRoute(")
+        self.assertIn("return false", route, "an override exception must fail the caller")
+        self.assertIn("return true", route)
+        output = function(self.swift, "private func setOutputPreference(")
+        self.assertIn("guard configureAudioSession() else", output)
+        self.assertIn("outputPreference = previous", output)
+        self.assertLess(output.index("guard configureAudioSession() else"), output.index("UserDefaults.standard.set"))
+        self.assertIn('code: "audio_route_failed"', self.swift)
+        method = self.swift[self.swift.index('case "setAudioOutput":'):self.swift.index('case "setAudioOutput":') + 440]
+        self.assertIn("if self.setOutputPreference", method)
+        self.assertIn("FlutterError(", method)
+        clip = self.swift[self.swift.index('case "playClip":'):self.swift.index('case "playClip":') + 900]
+        self.assertIn("!self.setOutputPreference(output)", clip)
+
     def test_status_reports_the_new_abilities(self):
         self.assertIn('"output_route_control": true', self.swift)
         self.assertIn('case "audioRoute":', self.swift)
