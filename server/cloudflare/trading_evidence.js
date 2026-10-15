@@ -220,9 +220,13 @@ function conditionOf(c, k, x) {
   return { trend, volatility };
 }
 
-// A deterministic version: the same candidate, filter, parameters and costs always give the same version.
+// Bump this whenever an entry, filter, fill or exit rule changes. The rule code is not in the
+// hash, so without a bump a changed rule would keep loading the old portfolio state and its journal.
+export const ENGINE_VERSION = 'evidence-1';
+
+// A deterministic version: the same engine, candidate, filter, parameters and costs always give the same version.
 export function strategyVersion(candidateId, filterId, params = {}) {
-  const text = JSON.stringify({ candidateId, filterId, params });
+  const text = JSON.stringify({ engine: ENGINE_VERSION, candidateId, filterId, params });
   let h = 2166136261;
   for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619) >>> 0;
   return `v-${h.toString(16).padStart(8, '0')}`;

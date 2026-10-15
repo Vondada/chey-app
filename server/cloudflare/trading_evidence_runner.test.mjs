@@ -64,26 +64,40 @@ function walk(n, seed) {
 const HOUR = 60 * 60_000;
 const T0 = Date.UTC(2026, 9, 15, 15, 0, 0);
 
-test('a tick records its run, journals the closed trade, and a repeat in the hour is skipped', async () => {
+test('a tick records its run, journals a forward trade, and a repeat in the hour is skipped', async () => {
   const store = memStore();
   const candles = bars([...SETUP, WIN_BAR]);
-  const run = await evidenceTick(store, { now: T0, load: feed(candles) });
+  await evidenceTick(store, { now: T0, load: feed(candles.slice(0, 1)) });
+  const run = await evidenceTick(store, { now: T0 + HOUR, load: feed(candles) });
   assert.equal(run.ok, true);
   assert.equal(run.closed, 1);
   assert.equal(run.journal.written, 1);
   assert.equal(run.bars, 5);
   assert.equal(run.last_bar, day(4));
   assert.equal((await readTrades(store)).length, 1);
-  const again = await evidenceTick(store, { now: T0 + 10 * 60_000, load: feed(candles) });
+  const again = await evidenceTick(store, { now: T0 + HOUR + 10 * 60_000, load: feed(candles) });
   assert.match(again.skipped, /within the hour/);
   assert.equal((await readTrades(store)).length, 1);
+});
+
+test('history before the first tick is never journalled as paper: the trade in it is not replayed', async () => {
+  const store = memStore();
+  const candles = bars([...SETUP, WIN_BAR]);
+  const first = await evidenceTick(store, { now: T0, load: feed(candles) });
+  assert.equal(first.ok, true);
+  assert.equal(first.closed, 0, 'the setup in this history is old; it is not traded as paper');
+  assert.equal((await readTrades(store)).length, 0);
+  const pdh = (await readPortfolios(store)).find((pf) => pf.candidate === 'pdh-break' && pf.filter === 'any');
+  assert.equal(pdh.last_bar_time, day(4));
+  assert.equal(pdh.started_from, day(4));
 });
 
 test('a forced repeat on the same bars adds nothing: trades are never recorded twice', async () => {
   const store = memStore();
   const candles = bars([...SETUP, WIN_BAR]);
-  await evidenceTick(store, { now: T0, load: feed(candles) });
-  const forced = await evidenceTick(store, { now: T0 + HOUR, force: true, load: feed(candles) });
+  await evidenceTick(store, { now: T0, load: feed(candles.slice(0, 1)) });
+  await evidenceTick(store, { now: T0 + HOUR, load: feed(candles) });
+  const forced = await evidenceTick(store, { now: T0 + 2 * HOUR, force: true, load: feed(candles) });
   assert.equal(forced.closed, 0);
   assert.equal(forced.journal.written, 0);
   assert.equal((await readTrades(store)).length, 1);
@@ -92,12 +106,13 @@ test('a forced repeat on the same bars adds nothing: trades are never recorded t
 test('portfolio state carries across ticks: a signal on one tick fills on the next', async () => {
   const store = memStore();
   const full = bars([...SETUP, WIN_BAR]);
-  const first = await evidenceTick(store, { now: T0, load: feed(full.slice(0, 3)) });
+  await evidenceTick(store, { now: T0, load: feed(full.slice(0, 1)) });
+  const first = await evidenceTick(store, { now: T0 + HOUR, load: feed(full.slice(0, 3)) });
   assert.equal(first.closed, 0);
   const portfolios = await readPortfolios(store);
   const pdh = portfolios.find((pf) => pf.candidate === 'pdh-break' && pf.filter === 'any');
   assert.ok(pdh.pending, 'the signal from bar 2 waits for the next bar');
-  await evidenceTick(store, { now: T0 + HOUR, load: feed(full) });
+  await evidenceTick(store, { now: T0 + 2 * HOUR, load: feed(full) });
   const trades = await readTrades(store);
   assert.equal(trades.length, 1);
   assert.equal(trades[0].entry.raw, 101.6, 'filled at the next open after the tick boundary');
@@ -150,10 +165,13 @@ test('every trade the engine produces over a long walk passes validation, so non
 
 test('the report answers from records: today, total, win rate with range, best strategy, and what is not shown', async () => {
   const store = memStore();
-  await evidenceTick(store, { now: T0, load: feed(bars([...SETUP, WIN_BAR])) });
+  const candles = bars([...SETUP, WIN_BAR]);
+  await evidenceTick(store, { now: T0, load: feed(candles.slice(0, 1)) });
+  await evidenceTick(store, { now: T0 + HOUR, load: feed(candles) });
   const text = await evidenceReport(store, { now: T0 });
   assert.match(text, /Taken today \(2026-10-15\): 0/, 'the trade is dated by its entry bar, not today');
   assert.match(text, /Recorded in total: 1 \(1 wins, 0 losses, 0 flat\)/);
+  assert.match(text, /counted from bars after 2026-01-01\. Older history is not traded/);
   assert.match(text, /Sample is insufficient/);
   assert.match(text, /No strategy has 30 trades yet/);
   assert.match(text, /4\. More consistently profitable\? Not shown yet\./);

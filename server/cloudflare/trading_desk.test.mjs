@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deskIntent, deskTick, readDesk, setMode, setRiskLimits, setSize, takeAnnouncement, takeTrade, skipTrade, pendingAlert, rememberListed, chooseAccount } from './trading_desk.js';
+import { deskIntent, deskTick, readDesk, setMode, setRiskLimits, setSize, speakDeskStatus, takeAnnouncement, takeTrade, skipTrade, pendingAlert, rememberListed, chooseAccount } from './trading_desk.js';
 import { connectLink, handleCallback, placeBracket, connection, renewToken, accountBalance, pickAccount } from './broker_tradovate.js';
 
 const store = () => {
@@ -8,7 +8,14 @@ const store = () => {
   return { m, get: async (k) => structuredClone(m.get(k)), put: async (k, v) => m.set(k, structuredClone(v)), delete: async (k) => m.delete(k) };
 };
 const LIMITS = { maxContracts: 2, maxRiskDollars: 500 };
-const paperBook = (id = 'p1', symbol = 'es.f') => ({ open: [{ id, symbol, label: 'ES futures', strategy: 'channel-20|any|2', entry: 5820, stop: 5805, target: 5850, why: 'closed above the 20-day high 5815' }] });
+test('the spoken status says what the live limits are, or that none are set', async () => {
+  const s = store();
+  assert.match(speakDeskStatus(await readDesk(s), null), /Live limits are not set, so no live order can be sent\./);
+  await setRiskLimits(s, LIMITS);
+  assert.match(speakDeskStatus(await readDesk(s), null), /Live limits: at most 2 contracts and 500 dollars at risk per order\./);
+});
+
+const paperBook = (id = 'p1', symbol = 'es.f') =>({ open: [{ id, symbol, label: 'ES futures', strategy: 'channel-20|any|2', entry: 5820, stop: 5805, target: 5850, why: 'closed above the 20-day high 5815' }] });
 
 test('voice: switch, connect, take, skip, size, alerts, status', () => {
   assert.deepEqual(deskIntent('CHE, switch to live trading'), { kind: 'mode', mode: 'live' });

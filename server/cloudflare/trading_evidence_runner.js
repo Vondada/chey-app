@@ -57,6 +57,12 @@ export async function evidenceTick(storage, { fetcher = fetch, now = Date.now(),
       } else {
         const ctx = causalContext(data.candles);
         const portfolios = await readPortfolios(storage);
+        // A portfolio that has never seen a bar starts at the newest one. Replaying the whole history
+        // would journal old simulated trades as paper evidence; only bars after this point count.
+        const newest = data.candles[data.candles.length - 1].t;
+        for (const pf of portfolios) {
+          if (pf.last_bar_time == null) Object.assign(pf, { last_bar_time: newest, started_from: newest });
+        }
         const closed = [];
         for (const pf of portfolios) closed.push(...stepPortfolio(pf, data.candles, ctx));
         // Each trade is checked on its own. A refused trade is logged with its reason, and it never
@@ -163,6 +169,8 @@ export async function evidenceReport(storage, { now = Date.now() } = {}) {
   lines.push('');
   lines.push('Data and assumptions:');
   lines.push(`- Source: ${PRICE_SERIES}. Approximate: fills at the next daily open, stop-first when a bar touches both levels.`);
+  const starts = portfolios.map((pf) => pf.started_from).filter(Boolean).sort();
+  lines.push(`- Forward only: trades are counted from bars after ${starts[0] || 'the first successful run'}. Older history is not traded.`);
   lines.push(`- Last successful data: ${lastOk ? `bar ${lastOk.last_bar}, run ${lastOk.at}` : 'none yet'}. Failed runs logged: ${failed}.`);
   lines.push(`- Costs assumed per side: spread ${COSTS.spreadTicks} tick, slippage ${COSTS.slippageTicks} tick, commission $${COSTS.commissionPerSide}, fees $${COSTS.feePerSide} per MNQ contract.`);
   lines.push('- Not connected yet: intraday NQ data, so the 8:30 and 9:30 sessions are not tested.');

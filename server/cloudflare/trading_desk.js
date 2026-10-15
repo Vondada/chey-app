@@ -229,7 +229,11 @@ export async function skipTrade(storage, now = Date.now()) {
 export function speakDeskStatus(desk, conn) {
   const link = conn?.connected ? 'NinjaTrader is connected.' : 'NinjaTrader is not connected yet; say "connect NinjaTrader".';
   const acct = desk.mode !== 'paper' ? (desk.account[desk.mode] ? ` Account: ${desk.account[desk.mode]}.` : desk.mode === 'live' ? ' No live account chosen yet; say "list my trading accounts".' : '') : '';
-  return `You are on ${MODE_NAME[desk.mode]}, sir.${acct} Size: ${desk.qty} ${desk.contract === 'full' ? 'full-size' : 'micro'} contract${desk.qty === 1 ? '' : 's'}. ${link}`;
+  const lim = desk.risk_limits;
+  const limits = lim
+    ? ` Live limits: at most ${lim.maxContracts} contract${lim.maxContracts === 1 ? '' : 's'} and ${lim.maxRiskDollars} dollars at risk per order.`
+    : ' Live limits are not set, so no live order can be sent.';
+  return `You are on ${MODE_NAME[desk.mode]}, sir.${acct} Size: ${desk.qty} ${desk.contract === 'full' ? 'full-size' : 'micro'} contract${desk.qty === 1 ? '' : 's'}.${limits} ${link}`;
 }
 
 /** Saves the accounts just read aloud, so "use account 2" means the second one said. */
