@@ -32,8 +32,10 @@ class CheCommandCenterScreen extends StatefulWidget {
     this.onListen,
     this.initialCommand,
     this.initialSearch = '',
+    this.initialList,
     this.initialSteps,
     this.initialTab = 0,
+    this.statesMaxAge = const Duration(seconds: 60),
   });
 
   final CheCommandClient client;
@@ -51,9 +53,17 @@ class CheCommandCenterScreen extends StatefulWidget {
   /// Explicit Chat request: open the local command library filtered to this goal.
   final String initialSearch;
 
+  /// A list request said in Chat ("show me five YouTube commands and tell me
+  /// which are ready"): the page opens filtered and reads the answer.
+  final CheCommandListRequest? initialList;
+
   /// Opens the builder with these commands (from a chat suggestion card).
   final List<String>? initialSteps;
   final int initialTab;
+
+  /// How old the command states may be when CHE reads a list aloud before
+  /// they are read from CHE again.
+  final Duration statesMaxAge;
 
   @override
   State<CheCommandCenterScreen> createState() => _CheCommandCenterScreenState();
@@ -65,14 +75,28 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
   bool _fromCache = false;
   String _loadError = '';
   late int _tab = widget.initialTab;
-  late String _query = widget.initialSearch.trim();
+  late final CheCommandListRequest? _initialList = widget.initialList ??
+      (widget.initialSearch.trim().isEmpty ? null : CheCommandListRequest(topic: widget.initialSearch.trim()));
+  late String _query = _initialList?.topic ?? '';
   String _category = 'all';
+
+  /// 'ready' or 'setup' while the list shows only those (as CHE read them).
+  String _statusFilter = '';
   String _status = '';
   bool _statusOk = true;
   bool _busy = false;
-  late final _search = TextEditingController(text: widget.initialSearch.trim());
+  late final _search = TextEditingController(text: _query);
   // New search results or a new category start at the top of the list.
   final _libraryScroll = ScrollController();
+  // The banner's own scroll position (never the page's primary one); each
+  // new answer starts at its first line.
+  final _bannerScroll = ScrollController(keepScrollOffset: false);
+
+  /// When the catalog (and its states) last came from CHE.
+  DateTime? _loadedAt;
+
+  /// The latest list request; an older one that finishes later stays quiet.
+  int _listTicket = 0;
 
   void _toTop() {
     if (_libraryScroll.hasClients) _libraryScroll.jumpTo(0);
@@ -92,6 +116,7 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
     widget.store.removeListener(_onStore);
     _search.dispose();
     _libraryScroll.dispose();
+    _bannerScroll.dispose();
     super.dispose();
   }
 
@@ -112,17 +137,16 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
     if (!mounted) return;
     // A Chat voice search explicitly requested these local results, unlike
     // passive navigation which must remain silent.
-    if (widget.initialSearch.trim().isNotEmpty) {
+    final request = _initialList;
+    if (request != null) {
       if (_catalog.commands.isEmpty) {
-        _report('I could not search the command library for "$_query", sir. '
+        _report('I could not search the command library${_query.isEmpty ? '' : ' for "$_query"'}, sir. '
             'CHE has no command catalog on this phone right now. '
             'Check pairing or your connection and retry.', ok: false);
       } else {
-        final found = _catalog.search(_query).take(5).toList();
-        final report = found.isEmpty
-            ? 'No command matches "$_query". Try other words.'
-            : '${found.length} best matches for "$_query". ${_numbered(found)} Say a number to hear one.';
-        _report(report, ok: found.isNotEmpty);
+        // The catalog was just read from CHE, so its states are current.
+        final answer = await _listByVoice(request, fresh: true);
+        if (answer.isNotEmpty) widget.onSpeak?.call(answer);
       }
     }
     final open = widget.initialCommand == null ? null : _catalog.byId(widget.initialCommand!);
@@ -134,16 +158,18 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
   }
 
   /// Quiet: loading shows muted text and never speaks.
-  Future<void> _refresh() async {
+  Future<void> _refresh({Duration? timeout}) async {
     setState(() => _loading = true);
     try {
-      final json = await widget.client.catalogJson();
+      final read = widget.client.catalogJson();
+      final json = timeout == null ? await read : await read.timeout(timeout);
       await widget.store.cacheCatalog(json);
       if (!mounted) return;
       setState(() {
         _catalog = CheCommandCatalog.fromJson(json);
         _fromCache = false;
         _loadError = '';
+        _loadedAt = DateTime.now();
       });
     } on Object catch (e) {
       if (!mounted) return;
@@ -328,6 +354,12 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
   /// What CHE last read as a numbered list (commands or workflows).
   List<Object> _voiceList = const [];
 
+  /// Every match of the last list request, how many were read, and how
+  /// many to read per "more".
+  List<CheCommandInfo> _lastMatches = const [];
+  int _lastShown = 0;
+  int _pageSize = 5;
+
   /// The command the owner last opened or picked ("run it", "favorite it").
   CheCommandInfo? _voiceFocus;
 
@@ -349,16 +381,45 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
     return text;
   }
 
-  String _numbered(List<Object> items) {
-    _voiceList = items;
+  /// Reads [items] as a numbered list; each command with its state. With
+  /// [start], the numbers continue the list already read ("more").
+  String _numbered(List<Object> items, {int start = 0}) {
+    _voiceList = start == 0 ? items : [..._voiceList.take(start), ...items];
+    if (start == 0) {
+      // A new list: "more" continues this one, not an earlier one.
+      _lastMatches = [for (final item in items) if (item is CheCommandInfo) item];
+      _lastShown = _lastMatches.length;
+    }
     return [
       for (final (i, item) in items.indexed)
         switch (item) {
-          CheCommandInfo c => '${i + 1}. ${c.slash}: ${c.summary}',
-          CheSavedWorkflow w => '${i + 1}. ${w.name}: ${w.steps.map((s) => '/${s.command}').join(', then ')}.',
+          CheCommandInfo c => '${start + i + 1}. ${c.slash}: ${_sentence(c.summary)} ${_state(c)}.',
+          CheSavedWorkflow w => '${start + i + 1}. ${w.name}: ${w.steps.map((s) => '/${s.command}').join(', then ')}.',
           _ => '',
         },
     ].join(' ');
+  }
+
+  static String _sentence(String text) {
+    final t = text.trim();
+    return t.isEmpty || RegExp(r'[.!?]$').hasMatch(t) ? t : '$t.';
+  }
+
+  /// A command's state as CHE's catalog reports it, with what is missing.
+  String _state(CheCommandInfo c) => c.status == CheCommandStatus.setupRequired && c.missing.isNotEmpty
+      ? 'Needs setup: ${c.missing.map((m) => m.label).join(', ')}'
+      : cheCommandStatusLabel(c.status);
+
+  /// "3 ready, 2 need setup".
+  String _tally(List<CheCommandInfo> items) {
+    final ready = items.where((c) => c.canRun).length;
+    final setup = items.where((c) => c.status == CheCommandStatus.setupRequired).length;
+    final other = items.length - ready - setup;
+    return [
+      '$ready ready',
+      if (setup > 0) '$setup need${setup == 1 ? 's' : ''} setup',
+      if (other > 0) '$other not available now',
+    ].join(', ');
   }
 
   Object? _fromList(String words) {
@@ -369,7 +430,8 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
 
   /// The command the owner named, with any words after it as its input.
   ({CheCommandInfo command, String input})? _named(String words) {
-    final w = words.trim();
+    // "the trade chart command" names /trade-chart.
+    final w = words.trim().replaceFirst(RegExp(r'^(?:the|my)\s+', caseSensitive: false), '').replaceFirst(RegExp(r'\s+command$', caseSensitive: false), '');
     if (RegExp(r'^(?:it|that|this)(?:\s+(?:one|command))?$', caseSensitive: false).hasMatch(w)) {
       final c = _voiceFocus;
       return c == null ? null : (command: c, input: '');
@@ -382,6 +444,14 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
   }
 
   String _noSuch(String words) {
+    // A group's name ("YouTube") is not one command: say so and list it.
+    final group = _catalog.categoryNamed(words);
+    if (group != null) {
+      final members = _catalog.inCategory(group.id);
+      final read = _readPage(members, 5);
+      return '${group.title} is a group of ${members.length} commands, not one command. $read${_moreHint()} '
+          'Say a number to hear one, or "run" and one name. Nothing was run.';
+    }
     final near = _catalog.search(words).take(3).toList();
     return 'I don\'t have a command called "$words".${near.isEmpty ? '' : ' Closest: ${_numbered(near)} Say a number to hear one.'} Nothing was run.';
   }
@@ -435,8 +505,9 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
       default:
         final query = _query.trim();
         if (query.isNotEmpty) {
-          final found = _catalog.search(query).take(5).toList();
-          return 'Commands, ${found.length} best matches for "$query". ${_numbered(found)} Say a number to hear one, or "run" and its name.';
+          final all = _matching(query, _statusFilter);
+          final read = _readPage(all, 5);
+          return 'Commands, ${all.length} matches for "$query". $read${_moreHint()} Say a number to hear one, or "run" and its name.';
         }
         final mine = <CheCommandInfo>{
           for (final id in [...widget.store.favorites, ...widget.store.recents]) ?_catalog.byId(id),
@@ -475,23 +546,15 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
       Navigator.of(context).popUntil((route) => route == page || route.isFirst);
     }
     switch (v.op) {
+      case CheCommandVoiceOp.repeat:
+        return _status.isEmpty ? _say(_describe()) : _status;
       case CheCommandVoiceOp.describe:
         return _say(_describe());
       case CheCommandVoiceOp.tab:
         setState(() => _tab = switch (v.text) { 'workflows' => 1, 'activity' => 2, _ => 0 });
         return _say(_describe());
       case CheCommandVoiceOp.search:
-        _search.text = v.text;
-        setState(() {
-          _tab = 0;
-          _category = 'all';
-          _query = v.text;
-        });
-        _toTop();
-        final found = _catalog.search(v.text).take(5).toList();
-        return _say(found.isEmpty
-            ? 'No command matches "${v.text}". Try other words.'
-            : '${found.length} best matches for "${v.text}". ${_numbered(found)} Say a number to hear one, or "run" and its name.');
+        return _listByVoice(v.list ?? CheCommandListRequest(topic: v.text));
       case CheCommandVoiceOp.pick:
         final n = v.number ?? 0;
         if (n < 1 || n > _voiceList.length) {
@@ -507,7 +570,12 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
         return _say('${c.spoken} Say "run it" or "favorite it".');
       case CheCommandVoiceOp.open:
         final named = _named(v.text);
-        if (named == null) return _say(_noSuch(v.text), ok: false);
+        // Not a command's name ("show me YouTube"): list what matches it.
+        // Explaining or listing never runs anything.
+        if (named == null) {
+          final topic = cheCommandSpeech(v.text);
+          return _catalog.search(topic).isEmpty ? _say(_noSuch(v.text), ok: false) : _listByVoice(CheCommandListRequest(topic: topic));
+        }
         _voiceFocus = named.command;
         unawaited(_openDetail(named.command));
         return _say('${named.command.spoken} Say "run it" or "favorite it".');
@@ -605,6 +673,137 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
         return null;
     }
   }
+
+  /// Lists commands for a spoken or typed request: filters the library on
+  /// screen, then reads up to the number asked for, each with its state,
+  /// and answers a readiness question. States are re-read from CHE first
+  /// ([fresh] means they were just read). Nothing is run.
+  Future<String> _listByVoice(CheCommandListRequest r, {bool fresh = false}) async {
+    if (r.more) return _moreByVoice(r.count);
+    if (r.followUp && _voiceList.whereType<CheCommandInfo>().isEmpty && !(r.aboutIt && _voiceFocus != null)) {
+      // Nothing read yet: answer about what the screen shows.
+      return _listByVoice(CheCommandListRequest(topic: _query.trim(), readiness: true, only: r.only));
+    }
+    final ticket = ++_listTicket;
+    final stale = fresh ? _staleNote() : await _freshStates();
+    // Asked again while CHE was being reached: only the newest answer is read.
+    if (!mounted || ticket != _listTicket) return '';
+    final focus = _voiceFocus == null ? null : _catalog.byId(_voiceFocus!.id) ?? _voiceFocus;
+    if (r.followUp && r.aboutIt && focus != null) {
+      // "Is it ready?" about the command just picked.
+      return _say('$stale${focus.slash}: ${_state(focus)}.${focus.missing.isEmpty ? '' : ' ${focus.missing.map((m) => m.setup).where((x) => x.isNotEmpty).join(' ')}'}'.trim());
+    }
+    if (r.followUp) return _say('$stale${_readinessOf([for (final c in _voiceList.whereType<CheCommandInfo>()) _catalog.byId(c.id) ?? c], r.only)}');
+
+    final topic = r.topic.trim();
+    final group = topic.isEmpty ? null : _catalog.categoryNamed(topic);
+    final found = _matching(topic, '');
+    final matches = _matching(topic, r.only);
+    // The screen shows exactly what CHE reads, in the same order.
+    _search.text = topic;
+    setState(() {
+      _tab = 0;
+      _category = 'all';
+      _query = topic;
+      _statusFilter = matches.isEmpty ? '' : r.only;
+    });
+    _toTop();
+    final what = group != null ? '${group.title} commands' : topic.isEmpty ? 'commands' : 'commands for "$topic"';
+    if (found.isEmpty || matches.isEmpty) {
+      // The screen no longer shows the list read before, so "more" and
+      // numbers must not continue it.
+      _voiceList = const [];
+      _lastMatches = const [];
+      _lastShown = 0;
+    }
+    if (found.isEmpty) return _say('${stale}No command matches "$topic". Try other words.', ok: false);
+    if (matches.isEmpty) {
+      return _say(r.only == 'ready'
+          ? '${stale}None of the ${found.length} $what is ready: ${_tally(found)}.'
+          : '${stale}All ${found.length} $what are ready.');
+    }
+    final limit = r.all ? 25 : r.count ?? (r.readiness ? 12 : 5);
+    final shown = matches.take(limit).toList();
+    final read = _readPage(matches, limit);
+    final head = switch (r.only) {
+      'ready' => '${matches.length} of the ${found.length} $what ${matches.length == 1 ? 'is' : 'are'} ready.',
+      'setup' => '${matches.length} of the ${found.length} $what ${matches.length == 1 ? 'is' : 'are'} not ready.',
+      _ => group != null
+          ? '${group.title}: ${found.length} commands.'
+          : topic.isEmpty
+              ? 'CHE has ${found.length} commands.'
+              : '${found.length} matches for "$topic".',
+    };
+    final tally = r.only.isEmpty && shown.length > 1 ? ' Of these ${shown.length}: ${_tally(shown)}.' : '';
+    return _say('$stale$head $read$tally${_moreHint()} Say a number to hear one, or "run" and its name.'
+        '${r.runAsked ? ' CHE runs one command at a time. Nothing was run.' : ''}');
+  }
+
+  /// "More": the next commands of the last list, numbered on from it.
+  String _moreByVoice(int? count) {
+    final heard = [for (final c in _voiceList.whereType<CheCommandInfo>()) c.id];
+    final continues = heard.length == _lastShown && [for (final c in _lastMatches.take(_lastShown)) c.id].join(' ') == heard.join(' ');
+    if (_lastMatches.isEmpty || !continues) {
+      return _say('I have no list of commands to continue. Say "search for" and what you want to do.', ok: false);
+    }
+    final start = _lastShown;
+    if (start >= _lastMatches.length) return _say('That was all ${_lastMatches.length}.');
+    final next = _lastMatches.skip(start).take(count ?? _pageSize).toList();
+    final read = _numbered(next, start: start);
+    _lastShown = start + next.length;
+    return _say('${start + 1} to $_lastShown of ${_lastMatches.length}. $read'
+        '${_lastShown < _lastMatches.length ? _moreHint() : ' That is all of them.'}');
+  }
+
+  /// The commands for [topic] (every command when empty), only the ready
+  /// or the not-ready ones for [only]: what the screen lists and CHE reads.
+  List<CheCommandInfo> _matching(String topic, String only) {
+    final found = topic.isEmpty ? _catalog.commands : _catalog.search(topic, limit: _catalog.commands.length);
+    return switch (only) {
+      'ready' => [for (final c in found) if (c.canRun) c],
+      'setup' => [for (final c in found) if (!c.canRun) c],
+      _ => found,
+    };
+  }
+
+  /// Reads the first [size] of [matches] as a numbered list and remembers
+  /// the rest for "more".
+  String _readPage(List<CheCommandInfo> matches, int size) {
+    final read = _numbered(matches.take(size).toList());
+    _lastMatches = matches;
+    _pageSize = size;
+    return read;
+  }
+
+  String _moreHint() {
+    final left = _lastMatches.length - _lastShown;
+    return left > 0 ? ' Say "more" for the next ${left < _pageSize ? left : _pageSize}.' : '';
+  }
+
+  /// Which of the commands just read are ready, keeping their numbers.
+  String _readinessOf(List<CheCommandInfo> read, String only) {
+    final ready = [for (final (i, c) in read.indexed) if (c.canRun) '${i + 1}. ${c.slash}'];
+    final notReady = [for (final (i, c) in read.indexed) if (!c.canRun) '${i + 1}. ${c.slash} (${_state(c)})'];
+    final readyPart = ready.isEmpty ? 'none are ready.' : '${ready.length} ready: ${ready.join(', ')}.';
+    final notPart = notReady.isEmpty ? 'all are ready.' : '${notReady.length} not ready: ${notReady.join('; ')}.';
+    final both = notReady.isEmpty ? readyPart : ready.isEmpty ? notPart : '$readyPart $notPart';
+    return 'Of those ${read.length}: ${switch (only) { 'ready' => readyPart, 'setup' => notPart, _ => both }}';
+  }
+
+  /// Re-reads the catalog when its states are older than
+  /// [CheCommandCenterScreen.statesMaxAge], so the states CHE reads are
+  /// current. Returns a note to say first when CHE could not be reached.
+  Future<String> _freshStates() async {
+    final at = _loadedAt;
+    if (at == null || DateTime.now().difference(at) > widget.statesMaxAge) {
+      await _refresh(timeout: const Duration(seconds: 4));
+    }
+    return _staleNote();
+  }
+
+  String _staleNote() => _loadError.isEmpty && !_fromCache
+      ? ''
+      : 'CHE could not be reached just now, so these states are from ${_fromCache ? 'the copy saved on this iPhone' : 'when this page last loaded'} and may be out of date. ';
 
   Future<String> _saveByVoice(CheSavedWorkflow draft) async {
     setState(() => _busy = true);
@@ -777,7 +976,17 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(child: Text(_status, style: CheType.body)),
+            // A long spoken answer (a numbered list with states) scrolls
+            // inside the banner, so the command list below stays usable.
+            Expanded(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.3),
+                child: Scrollbar(
+                  controller: _bannerScroll,
+                  child: SingleChildScrollView(key: ValueKey(_status), controller: _bannerScroll, child: Text(_status, style: CheType.body)),
+                ),
+              ),
+            ),
             IconButton(
               tooltip: 'Hide this message',
               visualDensity: VisualDensity.compact,
@@ -819,8 +1028,9 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
       );
     }
     final query = _query.trim();
-    final List<CheCommandInfo> shown = query.isNotEmpty
-        ? _catalog.search(query)
+    final filtered = query.isNotEmpty || _statusFilter.isNotEmpty;
+    final List<CheCommandInfo> shown = filtered
+        ? _matching(query, _statusFilter)
         : _category == 'all'
             ? _catalog.commands
             : _catalog.inCategory(_category);
@@ -845,12 +1055,18 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
                       icon: const Icon(Icons.close_rounded),
                       onPressed: () {
                         _search.clear();
-                        setState(() => _query = '');
+                        setState(() {
+                          _query = '';
+                          _statusFilter = '';
+                        });
                       },
                     ),
             ),
             onChanged: (v) {
-              setState(() => _query = v);
+              setState(() {
+                _query = v;
+                _statusFilter = '';
+              });
               _toTop();
             },
           ),
@@ -868,7 +1084,7 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
       ),
     );
     final rows = <Widget>[];
-    if (query.isEmpty && _category == 'all') {
+    if (!filtered && _category == 'all') {
       if (favorites.isNotEmpty) {
         rows.add(const CheSectionHeader('Favorites'));
         rows.addAll(favorites.map(_tile));
@@ -883,8 +1099,9 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
         rows.addAll(_catalog.inCategory(category.id).map(_tile));
       }
     } else {
-      rows.add(CheSectionHeader(query.isNotEmpty
-          ? '${shown.length} match${shown.length == 1 ? '' : 'es'} for "$query"'
+      final only = switch (_statusFilter) { 'ready' => 'ready ', 'setup' => 'not ready ', _ => '' };
+      rows.add(CheSectionHeader(filtered
+          ? '${shown.length} $only${query.isEmpty ? 'command${shown.length == 1 ? '' : 's'}' : 'match${shown.length == 1 ? '' : 'es'} for "$query"'}'
           : _catalog.categories.firstWhere((c) => c.id == _category).title));
       if (shown.isEmpty) {
         rows.add(Text('No command matches that yet. Try other words, or ask CHE in Chat.', style: CheType.bodyDim));
@@ -920,6 +1137,7 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
           setState(() {
             _category = id;
             _query = '';
+            _statusFilter = '';
             _search.clear();
           });
           _toTop();

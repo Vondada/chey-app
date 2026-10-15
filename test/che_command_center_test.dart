@@ -97,6 +97,7 @@ Future<void> openCenter(
   List<String>? spoken,
   double textScale = 1,
   String initialSearch = '',
+  Duration statesMaxAge = const Duration(seconds: 60),
 }) async {
   tester.view.physicalSize = const Size(1170, 4200);
   tester.view.devicePixelRatio = 3;
@@ -118,6 +119,7 @@ Future<void> openCenter(
                 client: CheCommandClient(baseUrl: 'https://che.test', headers: () => const {}, client: che.client),
                 store: s,
                 initialSearch: initialSearch,
+                statesMaxAge: statesMaxAge,
                 onSpeak: spoken?.add,
                 onRunInChat: (message, {bool confirmed = false}) async => ran?.calls.add((message, confirmed)),
               ),
@@ -494,15 +496,110 @@ void main() {
       expect(route?.op, ScreenOp.searchCommands, reason: phrase);
       expect(route?.text, 'youtube', reason: phrase);
     }
+    // Asking CHE what commands she has is answered from her catalog, not by
+    // a model (which told the owner on 2026-10-15 that it had no Commands page).
+    expect(parseScreenCommand('What commands do you have for clients?')?.text, 'clients');
     for (final phrase in [
       'Search YouTube for jazz',
       'Research YouTube video strategy',
       'Find YouTube videos about cooking',
-      'What commands do you have for clients?',
       'Search the web for YouTube commands',
+      // Not CHE's commands.
+      'Show me five Linux commands to list files',
+      'Teach my dog five commands',
+      'What are the voice commands for Siri?',
+      'What does the trade chart command do?',
+      // In Chat, "search for YouTube" alone is not about commands; on the
+      // Commands page it is (che_command_speech_test.dart).
+      'CHE, search for YouTube.',
     ]) {
       expect(parseScreenCommand(phrase)?.op, isNot(ScreenOp.searchCommands), reason: phrase);
     }
+  });
+
+  test('natural speech in Chat: a compound request becomes one list request for the Commands page', () {
+    final video = parseScreenCommand('CHE, open your Commands page and show me five commands you can use to create, edit, and publish '
+        'faceless YouTube videos. Explain which ones are ready to use and which need setup. '
+        'Don\'t just describe the page—actually open it.')!;
+    expect(video.op, ScreenOp.searchCommands);
+    expect(video.text, 'create, edit, and publish faceless youtube videos');
+    expect(video.list!.count, 5);
+    expect(video.list!.readiness, isTrue);
+    expect(video.list!.only, '', reason: 'both ready and setup were asked about');
+    final five = parseScreenCommand('Show me five YouTube commands and tell me which are ready.')!;
+    expect((five.op, five.text, five.list!.count, five.list!.readiness), (ScreenOp.searchCommands, 'youtube', 5, true));
+    expect(parseScreenCommand('open your commands page')?.op, ScreenOp.openCommands);
+    expect(parseScreenCommand('which YouTube commands are ready?')?.list?.only, 'ready');
+    expect(parseScreenCommand('any commands for invoices?')?.text, 'invoices');
+    expect(parseScreenCommand('show me your commands for YouTube')?.text, 'youtube');
+    expect(parseScreenCommand('Search the web for YouTube commands'), isNull);
+    expect(parseScreenCommand('What commands are there for YouTube?')?.text, 'youtube');
+    expect(parseScreenCommand("Which YouTube commands aren't ready?")?.list?.only, 'setup');
+    for (final phrase in [
+      'Why are your commands so slow?',
+      'Do your commands work offline?',
+      'Give me 3 git commands for my website repo',
+      'show me five commands to clean up my videos folder',
+    ]) {
+      expect(parseScreenCommand(phrase), isNull, reason: phrase);
+    }
+    final catalog = CheCommandCatalog.fromJson(fixture);
+    expect(catalog.categoryNamed('YouTube')?.id, 'youtube');
+    expect(catalog.categoryNamed('sales'), isNull, reason: 'an ordinary word is searched, not one category');
+    expect(catalog.search('track an expense').first.id, 'expenses', reason: '"expense" meets "expenses"');
+    expect(parseScreenCommand('search the command library for invoices')?.text, 'invoices');
+    expect(parseScreenCommand('what commands can I use to make money')?.list?.only, '', reason: '"can I use to" is a purpose, not readiness');
+    for (final phrase in ['Which YouTube video commands work in Final Cut?', 'show me the commands for my Tesla', 'I need a command to restart my router']) {
+      expect(parseScreenCommand(phrase), isNull, reason: phrase);
+    }
+  });
+
+  test('natural speech on the Commands page: lists, counts, follow-ups and named commands', () {
+    CheCommandVoice? p(String words) => CheCommandVoice.parse(words);
+    CheCommandListRequest? list(String words) => p(words)?.list;
+    for (final words in [
+      'Show me five YouTube commands and tell me which are ready.',
+      'Show me five YouTube commands show me which ones are ready to use',
+      'Chay, show me 5 you tube comands and tell me which ones are ready',
+      'Can you list five YouTube commands, and which ones work right now?',
+    ]) {
+      final r = list(words);
+      expect(r, isNotNull, reason: words);
+      expect((r!.topic, r.count, r.readiness), ('youtube', 5, true), reason: words);
+    }
+    for (final words in ['CHE, search for YouTube.', 'search for you tube', 'look up YouTube', 'find youtube', 'Show me the YouTube commands']) {
+      expect(list(words)?.topic, 'youtube', reason: words);
+    }
+    expect(list('list the top three trading commands')?.count, 3);
+    expect(list('list the top three trading commands')?.topic, 'trading');
+    expect(list('give me a couple of money commands')?.count, 2);
+    expect(list('show me all the YouTube commands')?.all, isTrue);
+    expect(list('which YouTube commands need setup')?.only, 'setup');
+    expect(list('show me the ready YouTube commands')?.only, 'ready');
+    expect(list('which command should I use to price a website')?.topic, 'price a website');
+    expect(list('what commands can I use to find website clients')?.topic, 'find website clients');
+    // Follow-ups about the list just read.
+    expect(list('which ones are ready?')?.followUp, isTrue);
+    expect(list('Which need setup?')?.only, 'setup');
+    expect(list('show me more')?.more, isTrue);
+    expect(list('the next three')?.count, 3);
+    // Several commands said with "run" are listed, never run.
+    expect(list('run the YouTube commands')?.runAsked, isTrue);
+    // One command named outright still opens or runs.
+    expect(p('open trade chart')?.op, CheCommandVoiceOp.open);
+    expect(p('show me the trade chart command')?.text, 'trade chart');
+    expect(p('tell me about YouTube ideas')?.op, CheCommandVoiceOp.open);
+    expect(p('what does the yt publish command do')?.text, 'yt publish');
+    expect(p('what does number three need')?.text, 'number three');
+    expect(p('Run trade chart NQ')?.op, CheCommandVoiceOp.run);
+    expect(p('show me YouTube')?.op, CheCommandVoiceOp.open, reason: 'the page lists a topic it cannot open');
+    expect(p("what's the status of those")?.op, CheCommandVoiceOp.search, reason: 'about the list, not workflow runs');
+    expect(p("what's the status")?.op, CheCommandVoiceOp.activity);
+    expect(list('what about the trading commands')?.topic, 'trading');
+    expect(list('and the money ones?')?.topic, 'money');
+    expect(list('which one should I use to publish a video')?.topic, 'publish a video');
+    expect(p('read them again')?.op, CheCommandVoiceOp.repeat);
+    expect(p('what can I do here')?.op, CheCommandVoiceOp.describe);
   });
 
   test('voice phrases map to the page\'s actions, deterministically', () {
@@ -542,6 +639,7 @@ void main() {
     expect(cheMatchCommandWords('slash chey plan my week', ids), (id: 'che-plan', rest: 'my week'));
     expect(cheMatchCommandWords('create 3 d obby', ids), (id: 'create-3d', rest: 'obby'));
     expect(cheMatchCommandWords('my errands', ids), isNull, reason: 'a command runs only when its name was said');
+    expect(cheMatchCommandWords('YouTube ideas command for cooking', ids), (id: 'yt-ideas', rest: 'cooking'));
   });
 
   testWidgets('every page action works by voice: read options, pick, favorite, search, tabs, run and back', (tester) async {
@@ -641,7 +739,7 @@ void main() {
     expect(field.controller?.text, 'youtube');
     expect(find.textContaining('MATCHES FOR "YOUTUBE"'), findsOneWidget);
     expect(find.text('/yt-ideas'), findsOneWidget);
-    expect(spoken.any((line) => line.contains('best matches for "youtube"')), isTrue,
+    expect(spoken.any((line) => line.startsWith('YouTube: 11 commands. 1. /yt-ideas: ')), isTrue,
         reason: 'an explicit voice search reads numbered local results');
     expect(che.requests.every((r) => r.url.path == '/api/commands'),
         isTrue, reason: 'searching the catalog never calls web or an AI model');
