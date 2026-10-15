@@ -1,6 +1,8 @@
 // Spoken or typed screen edits. The phone applies these before any model
 // reply, so CHE never asks and never claims a change that did not happen.
 
+import '../commands/che_command_voice.dart';
+
 enum ScreenOp {
   clearChips,
   showChips,
@@ -18,9 +20,13 @@ enum ScreenOp {
 }
 
 class ScreenCommand {
-  const ScreenCommand(this.op, [this.text = '']);
+  const ScreenCommand(this.op, [this.text = '', this.list]);
   final ScreenOp op;
   final String text;
+
+  /// For [ScreenOp.searchCommands]: the whole request (topic, number,
+  /// readiness question), which the Commands page answers.
+  final CheCommandListRequest? list;
 }
 
 final _lead = RegExp(r'^(?:hey\s+)?(?:che|chay|chey)[,:]?\s+', caseSensitive: false);
@@ -66,7 +72,7 @@ ScreenCommand? parseScreenCommand(String raw) {
   }
 
   // "open commands", "show me the command center", "command library".
-  if (RegExp(r'^(?:open|show|show me|go to|take me to|bring up)\s+(?:the\s+|my\s+)?(?:commands?|command center|command library|slash commands)(?:\s+(?:page|screen|list))?$').hasMatch(t) ||
+  if (RegExp(r"^(?:open|show|show me|go to|take me to|bring up)\s+(?:the\s+|my\s+|your\s+|che's\s+)?(?:commands?|command center|command library|slash commands)(?:\s+(?:page|screen|list))?$").hasMatch(t) ||
       RegExp(r'^(?:commands?|command center|command library)$').hasMatch(t)) {
     return const ScreenCommand(ScreenOp.openCommands);
   }
@@ -79,20 +85,13 @@ ScreenCommand? parseScreenCommand(String raw) {
     return const ScreenCommand(ScreenOp.openCommands);
   }
 
-  // Explicit local-catalog intent. "Search YouTube for jazz" still goes
-  // through CHE's normal web/video route; no model is needed for the catalog.
-  if (!RegExp(r'^(?:search|find|look up)\s+(?:the\s+)?(?:web|internet|online)\b').hasMatch(t)) {
-    final commandsFirst = RegExp(
-      r'^(?:search|find|look up)\s+(?:for\s+)?(?:the\s+|my\s+)?(?:commands?|command\s+(?:center|library))\s+(?:for|about|on)\s+(.+)$',
-    ).firstMatch(t);
-    final topicFirst = RegExp(
-      r'^(?:search|find|look up|show(?: me)?)\s+(?:for\s+)?(.+?)\s+(?:commands?|in\s+(?:the\s+|my\s+)?(?:commands?|command\s+(?:center|library)))$',
-    ).firstMatch(t);
-    final topic = (commandsFirst?.group(1) ?? topicFirst?.group(1) ?? '').trim();
-    if (topic.isNotEmpty) {
-      return ScreenCommand(ScreenOp.searchCommands, topic);
-    }
-  }
+  // CHE's own commands, asked for in natural speech: "show me five YouTube
+  // commands and tell me which are ready", "open your Commands page and
+  // show me commands to publish faceless videos". The Commands page lists
+  // them from the catalog; no model is asked and nothing is run. "Search
+  // YouTube for jazz" and "five Linux commands" are not CHE's commands.
+  final list = cheCommandListRequest(raw);
+  if (list != null) return ScreenCommand(ScreenOp.searchCommands, list.topic, list);
 
   final add = RegExp(r'\b(add|put|place|insert)\b').hasMatch(t);
   final remove = RegExp(r'\b(clear|remove|delete|hide|get rid of|take off|clearing|wipe|erase)\b').hasMatch(t);

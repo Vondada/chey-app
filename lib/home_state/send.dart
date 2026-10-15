@@ -436,7 +436,7 @@ extension _CheHomeSend on _CHEHomeState {
         // Navigation now happens directly in sendMessage, not in a frame callback.
         return 'Opening Commands, sir.';
       case ScreenOp.searchCommands:
-        return 'Opening Commands for "${command.text}", sir.';
+        return command.text.isEmpty ? 'Opening Commands, sir.' : 'Opening Commands for "${command.text}", sir.';
       case ScreenOp.openConnections:
         return switch (command.text) {
           'youtube' => 'Opening CHE Connections to connect YouTube, sir.',
@@ -635,6 +635,7 @@ extension _CheHomeSend on _CHEHomeState {
         } else {
           unawaited(_openCommandCenter(
             search: screenCommand.op == ScreenOp.searchCommands ? screenCommand.text : '',
+            list: screenCommand.list,
           ));
         }
         if (_isSpeaking) await _interruptSpeechAndListen(resumeListening: false);

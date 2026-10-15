@@ -452,13 +452,37 @@ class CheCommandCatalog {
     );
   }
 
+  /// The category these words name ("YouTube", "trading", "money
+  /// management"), or null. Only a whole name counts, so "price a website"
+  /// is a search, not the Websites category.
+  CheCommandCategory? categoryNamed(String words) {
+    final said = words.toLowerCase().replaceAll('&', ' and ').replaceAll(RegExp(r'[^a-z0-9 ]+'), ' ').split(RegExp(r'\s+'))
+        .where((w) => w.isNotEmpty && !_generic.contains(w)).join(' ');
+    if (said.isEmpty) return null;
+    for (final c in categories) {
+      final title = c.title.toLowerCase().replaceAll('&', ' and ').replaceAll(RegExp(r'[^a-z0-9 ]+'), ' ').split(RegExp(r'\s+')).where((w) => w.isNotEmpty).join(' ');
+      if (said == c.id || said == title || (_categoryAliases[c.id]?.contains(said) ?? false)) return c;
+    }
+    return null;
+  }
+
   /// Search by command name or by goal ("find website clients"), the same
-  /// deterministic word overlap the Worker uses (command_catalog.js).
+  /// deterministic word overlap the Worker uses (command_catalog.js). On the
+  /// phone a category's name also counts: "YouTube" lists every YouTube
+  /// command, and a goal that names a category ("publish faceless YouTube
+  /// videos") puts that category's commands first.
   List<CheCommandInfo> search(String query, {int limit = 20}) {
     final raw = query.trim().toLowerCase();
     if (raw.isEmpty) return const [];
+    final whole = categoryNamed(raw);
+    if (whole != null) return inCategory(whole.id).take(limit).toList();
     final dashed = raw.replaceFirst(RegExp(r'^/'), '').replaceAll(RegExp(r'\s+'), '-');
     final terms = {for (final w in _words(raw)) _stem(w)};
+    final named = {
+      for (final w in raw.replaceAll(RegExp(r'[^a-z0-9 ]+'), ' ').split(RegExp(r'\s+')))
+        for (final c in categories)
+          if (w == c.id || (_categoryAliases[c.id]?.contains(w) ?? false)) c.id,
+    };
     final scored = <(CheCommandInfo, int)>[];
     for (final c in commands) {
       var score = 0;
@@ -475,6 +499,7 @@ class CheCommandCatalog {
       for (final k in c.keywords) {
         if (k.contains(' ') && raw.contains(k)) score += 8;
       }
+      if (named.contains(c.category)) score += 30;
       if (score > 0) scored.add((c, score));
     }
     scored.sort((a, b) {
@@ -484,6 +509,22 @@ class CheCommandCatalog {
     return [for (final s in scored.take(limit)) s.$1];
   }
 }
+
+// Other words people use for a category's name, keyed by the Worker's
+// category ids. A missing id is simply never matched.
+const _categoryAliases = {
+  'youtube': {'yt', 'youtube videos', 'videos', 'faceless youtube', 'faceless videos', 'youtube channel'},
+  'trading': {'trade', 'trades', 'futures'},
+  'build': {'websites', 'websites and apps', 'apps', 'websites apps and ai'},
+  'money': {'finance', 'finances', 'money management'},
+  'clients': {'client', 'client scouting', 'leads'},
+  'marketing': {'marketing and sales', 'sales'},
+  'office': {'office and automation', 'automation'},
+  'intelligence': {'intelligence and control'},
+};
+
+// Words that do not change which category is meant.
+const _generic = {'the', 'my', 'your', 'all', 'every', 'commands', 'command', 'category', 'section', 'tools', 'che', 'ches', 's'};
 
 const _stop = {
   'a', 'an', 'the', 'and', 'or', 'to', 'for', 'of', 'in', 'on', 'my', 'me', 'i', 'is', 'it', 'with', 'how', 'can', 'do', 'what',
