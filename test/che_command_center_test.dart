@@ -150,7 +150,7 @@ void main() {
     await openCenter(tester, che: che);
     expect(find.text('Commands'), findsOneWidget);
     expect(find.text('All 77'), findsOneWidget);
-    for (final label in ['Intelligence & Control 9', 'YouTube 11', 'Trading 9', 'Websites, Apps & AI 10', 'Money Management 8',
+    for (final label in ['Intelligence & Control 9', 'YouTube 11', 'Trading 9', 'Websites, Apps & AI 16', 'Money Management 8',
       'Client Scouting & Delivery 9', 'Marketing & Sales 7', 'Office & Automation 8']) {
       expect(find.text(label), findsOneWidget, reason: label);
     }
