@@ -64,7 +64,19 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
-## 2. Current position (Claude, 2026-10-15 ~00:55 UTC — PR #308 MERGED to main `091cd9b`; deploy, probes, iPhone IPA and Shorebird verified; owner iPhone test pending)
+## 2. Current position (Claude, 2026-10-15: Trading Room evidence; branch `claude/che-trading-intelligence` at `7b8da21`, pushed, no PR)
+
+- **Branch:** `claude/che-trading-intelligence` from main `091cd9b`. Commits `66267e6` (engine and environment guard) and `7b8da21` (runner, report, Worker wiring). No PR: waiting for the owner's go-ahead.
+- **Built:** `server/cloudflare/trading_evidence.js` (fills at the next open, labelled spread and slippage, gap-aware stops and targets, causal indicators, five candidate strategies, isolated portfolios, record validation, statistics with Wilson and mean intervals, walk-forward folds, a promotion gate that refuses daily evidence, an append-only journal that keeps losers and reports conflicts). `trading_environments.js` (backtest and paper never submit; broker simulation needs a simulation account; funded needs owner approval for the exact order, explicit risk limits, and a person present). `trading_evidence_runner.js` (ten portfolios on NQ daily history, a run log, the report). `worker.js`: the hourly trading tick also runs the evidence pass; chat answers evidence questions before the older trading routes.
+- **Answer:** "how many trades today", "measured win rate", "best strategy" and "consistently profitable" come from the journal. A best strategy is named only with 30 trades. Consistency stays "Not shown yet" on daily data, by rule.
+- **Found and fixed while testing:** a daily bar can open a trade and stop it out on the same bar. The validator refused that, and one refused trade blocked every later pass. Same-bar exits are valid now, and refusals are per trade. Profit factor is null with no trades.
+- **Verified:** trading tests 69/69 (engine, guard, runner, and the 13 legacy `trading_lab` tests). Full server suite 1125/1125 (`node --test ./*.test.mjs`). NOT verified: production deploy of `7b8da21`, a real hourly run on the Worker, and the chat answer on the owner's phone.
+- **NOT built:** intraday NQ data (none is connected, so the 8:30 and 9:30 sessions are untested); the Trading Intelligence dashboard and the iPhone view; scheduled batch experiments with checkpoints and rate limits; the daily summary.
+- **Safety gap, do first:** `guardSubmit` is not yet called by the existing broker paths. `trading_desk.js` still places simulated orders through its own path (flagged for owner review), and `broker_tradovate.js` `placeBracket` is unchanged. Wire the guard into every submit, with tests, before any funded or automatic-placement work.
+- **Next, in order:** (1) guard wiring in trading_desk and the broker submit paths; (2) the owner chooses an intraday NQ data source (a paid provider or a key); (3) batch experiments with checkpoints; (4) the dashboard; (5) the daily summary.
+- **Owner steps:** decide the intraday data source; say go before the PR is opened and merged.
+
+### Earlier position: PR #308 (merged `091cd9b`)
 
 - **Merged:** PR #308 (squash) from `e3b4d6d`, on branch `claude/che-google-connections`. Earlier commits on that branch (`7471c07`, `62c9a46`, `75297ae`) are included.
 - **Built:** Gmail, Google Drive, Google Calendar and Google Ads, each with its own Google sign-in and full scope URLs, on the existing YouTube OAuth client, callback and sealed tokens. YouTube's grant is not revoked by a Google disconnect or reconnect.
