@@ -64,7 +64,20 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
-## 2. Current position (Claude, 2026-10-15: Trading Room evidence; branch `claude/che-trading-intelligence` at `7b8da21`, pushed, no PR)
+## 2. Current position (Claude, 2026-10-15: REA integration merged to main as `839f5b7` (PR #309); deploy verified)
+
+- **Merged:** PR #309, squash `839f5b7` on `main`, title ends `[worker-deploy]`. Branch `claude/che-latency-optimization-8ruaus` at `be517f0`. The squash body lists the branch's old commit messages; its tree is only the REA change set.
+- **Deploy:** run 38666419915. The first attempt uploaded and deployed, then failed only at "Verify live deployed commit" (the health loop never saw the new tag in its retries). The re-run of that job passed every step: live commit, SideStore link, Mary, Fish, the ElevenLabs probe, memory truth and the Command Center check (77 commands).
+- **Verified:** PR checks green on `be517f0`. Real pinned REA 6.5.0 ran on GitHub Actions twice: `rea-7c3e9a10` (branch) and `rea-b1c2d3e4` (main, the production workflow). Both records are on `che-mailbox` under `mailbox/rea/` and pass the Worker's validator (49 files, 48 parsed, 261 import links, evidence id `ev_ae375e06…`).
+- **Found and fixed live:** GitHub rejects `runner.*` in a job-level `env`; the Dart tests still expected 71 commands in two places.
+- **Where it lives:** `server/cloudflare/rea_runner.js` and `rea_evidence.js`; six `rea-*` commands in `command_catalog.js`; `.github/workflows/che-rea-analysis.yml`; `tools/rea/` (pinned lockfile); `docs/CHE_REA.md`; `server/cloudflare/fixtures/rea/` (real REA output).
+- **Not verified:** the owner's phone (`/rea-inspect` in chat); a production chat turn (the sandbox cannot reach the Worker, proxy 403); the iPhone (no client code changed, the catalog is served by the Worker, so no new IPA is needed).
+- **Not built:** native binaries (needs a Ghidra host and Java; reported as unavailable), runtime capture, private targets (refused), comparing REA with CHE's own code.
+- **Cost:** REA and the npm registry are free. GitHub Actions minutes are used per run.
+- **Next, owner side:** try "REA inspect: npm:semver@7.7.2" on the phone. Decide whether to add an external Ghidra host. Decide the approval flow for any private target.
+- **Trading (unchanged):** `claude/che-trading-intelligence` at `7b8da21`, no PR. The environment guard is still not wired into the submit paths.
+
+### Earlier position: Trading Room evidence (branch `claude/che-trading-intelligence` at `7b8da21`, pushed, no PR)
 
 - **Branch:** `claude/che-trading-intelligence` from main `091cd9b`. Commits `66267e6` (engine and environment guard) and `7b8da21` (runner, report, Worker wiring). No PR: waiting for the owner's go-ahead.
 - **Built:** `server/cloudflare/trading_evidence.js` (fills at the next open, labelled spread and slippage, gap-aware stops and targets, causal indicators, five candidate strategies, isolated portfolios, record validation, statistics with Wilson and mean intervals, walk-forward folds, a promotion gate that refuses daily evidence, an append-only journal that keeps losers and reports conflicts). `trading_environments.js` (backtest and paper never submit; broker simulation needs a simulation account; funded needs owner approval for the exact order, explicit risk limits, and a person present). `trading_evidence_runner.js` (ten portfolios on NQ daily history, a run log, the report). `worker.js`: the hourly trading tick also runs the evidence pass; chat answers evidence questions before the older trading routes.
