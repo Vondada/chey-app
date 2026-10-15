@@ -42,7 +42,7 @@ import { premiumVoiceSpeech, premiumVoiceStatuses, readVoiceLog, recordVoiceLog,
 import { handleVideoLine } from './video_route.js';
 import {
   YOUTUBE_CALLBACK_PATH, disconnectYouTube, finishYouTubeConnect, startYouTubeConnect,
-  youtubeAccessToken, youtubeResultPage, youtubeStatus,
+  youtubeAccessToken, youtubeResultPage, youtubeStatus, youtubeStatusSpeech, youtubeUploads,
 } from './youtube_connection.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
@@ -87,7 +87,8 @@ import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, op
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
 import {
-  disconnectGoogle, finishGoogleConnect, googleConnectorStates, googleLabel, googleOwnerStep, googleRecheckPending,
+  disconnectGoogle, finishGoogleConnect, googleChatIntent, googleConnectorStates, googleLabel, googleOwnerStep, googleRecheckPending,
+  googleTurnContext, youtubeChatIntent,
   googleStates, startGoogleConnect,
 } from './google_services.js';
 import { fundyouredgeReply } from './fundyouredge.js';
@@ -4454,11 +4455,8 @@ export class CheState extends DurableObject {
     }
     if (command.local === 'youtube_status') {
       const st = await youtubeStatus(env, data).catch(() => ({ connected: false, status: 'error' }));
-      const uploads = Object.values(data.youtube_uploads || {}).filter((u) => u?.link).sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, 5);
-      const reply = st.connected
-        ? `YouTube is connected${st.channel_title ? ` to ${st.channel_title}` : ''}, sir. ${uploads.length ? `Latest uploads by CHE: ${uploads.map((u, i) => `${i + 1}. ${u.link}`).join(' ')}` : 'CHE has not uploaded a video yet.'} View and subscriber analytics are not connected yet.`
-        : `YouTube is not connected, sir (${st.status || 'not connected'}). Open Mailbox, Keys, YouTube to sign in.`;
-      return ndjsonReply(reply, { source: 'che_youtube_status', ok: Boolean(st.connected), uploads: uploads.length, model_calls: 0 });
+      const uploads = youtubeUploads(data);
+      return ndjsonReply(youtubeStatusSpeech(st, uploads), { source: 'che_youtube_status', ok: Boolean(st.connected), uploads: uploads.length, model_calls: 0 });
     }
     if (command.local === 'pipeline') {
       const summary = pipelineSummary(data);
@@ -7313,9 +7311,15 @@ export class CheState extends DurableObject {
         // words: no interpreter rewrite, clarifying question or model read.
         const memoryRoute = ownerDevice && !body.attachment && (asksForEvidence || Boolean(ownerMemoryQuestion(rawMessage)) ||
           Boolean(ownerFactCorrection(rawMessage, data.memory_records)));
-        let interpretation = memoryRoute
-          ? { kind: 'memory', text: message, passthrough: true }
-          : interpretOwnerTurn(message, { history: ownerHistory, hasHeldAction: Boolean(heldPeek) });
+        // Gmail, Drive, Calendar and YouTube requests are read as written. A model
+        // read here would be slow, and it could invent a meaning the owner did not mean.
+        const googleTurn = ownerDevice && !body.attachment
+          && (Boolean(googleChatIntent(message, { last: await googleTurnContext(this.ctx.storage) })) || youtubeChatIntent(message));
+        let interpretation = googleTurn
+          ? { kind: 'google', text: message, passthrough: true }
+          : memoryRoute
+            ? { kind: 'memory', text: message, passthrough: true }
+            : interpretOwnerTurn(message, { history: ownerHistory, hasHeldAction: Boolean(heldPeek) });
         // The reply model reads a vague turn itself; this extra read is only worth
         // its cost when there is conversation for it to resolve against.
         if (interpretation.kind === 'unclear' && !interpretation.clarify && !interpretation.passthrough && ownerHistory.length > 0) {
@@ -7721,6 +7725,13 @@ export class CheState extends DurableObject {
           loadData: () => this.loadData(), saveData: (d) => this.ctx.storage.put('che', d),
         }) : null;
         if (googleStep) return ndjsonReply(googleStep.text, { source: 'che_google', ok: googleStep.ok, held: Boolean(googleStep.held), model_calls: 0 });
+        // "Check my YouTube channel": the stored sign-in and CHE's own uploads, read here with no model.
+        if (ownerDevice && !chatOnlyEvaluation && youtubeChatIntent(message)) {
+          const ytData = await this.loadData();
+          const st = await youtubeStatus(this.keyEnv || this.env, ytData).catch(() => ({ connected: false, status: 'error' }));
+          const uploads = youtubeUploads(ytData);
+          return ndjsonReply(youtubeStatusSpeech(st, uploads), { source: 'che_youtube_status', ok: Boolean(st.connected), uploads: uploads.length, model_calls: 0 });
+        }
         // FundYourEdge has no licensed Rithmic connection, so CHE says so and never
         // prepares or places an order for it.
         const orderBrokerReady = ownerDevice && !chatOnlyEvaluation

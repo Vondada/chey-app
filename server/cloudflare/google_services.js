@@ -367,6 +367,55 @@ export async function gmailList(env, data, { query = 'is:unread', max = 5 } = {}
   return { ok: true, messages, total: list.json.resultSizeEstimate ?? messages.length };
 }
 
+// Gmail: one message in full, as plain text. The owner asked for it by position or name.
+export async function gmailRead(env, data, { id } = {}, fetcher = fetch) {
+  const messageId = String(id || '');
+  if (!/^[A-Za-z0-9_-]{4,40}$/.test(messageId)) return { ok: false, error: 'That message is not one CHE can open.' };
+  const access = await googleAccessToken(env, data, 'gmail', fetcher);
+  if (!access.ok) return access;
+  const r = await googleCall(fetcher, 'GET', `${GMAIL}/messages/${messageId}?format=full`, access.token);
+  if (!r.ok) return { ok: false, error: callError('Gmail', r) };
+  const header = (name) => String((r.json.payload?.headers || [])
+    .find((h) => String(h.name).toLowerCase() === name.toLowerCase())?.value || '');
+  const text = gmailPlainText(r.json.payload);
+  return {
+    ok: true,
+    from: header('From').slice(0, 200),
+    subject: header('Subject').slice(0, 200) || '(no subject)',
+    date: header('Date').slice(0, 60),
+    body: text.length > 900 ? `${text.slice(0, 900).replace(/\s+\S*$/, '')}... The rest is in Gmail.` : text,
+  };
+}
+
+// The message text: its plain-text part, or its HTML with the tags removed.
+function gmailPlainText(payload) {
+  const parts = [];
+  const walk = (part, depth = 0) => {
+    if (!part || depth > 8) return;
+    if ((part.mimeType === 'text/plain' || part.mimeType === 'text/html') && part.body?.data) {
+      parts.push({ plain: part.mimeType === 'text/plain', text: decodeBase64url(part.body.data) });
+    }
+    for (const child of part.parts || []) walk(child, depth + 1);
+  };
+  walk(payload);
+  const plain = parts.find((p) => p.plain && p.text.trim());
+  const html = parts.find((p) => !p.plain && p.text.trim());
+  const raw = plain ? plain.text
+    : html ? html.text.replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"') : '';
+  return raw.replace(/\s+/g, ' ').trim();
+}
+
+function decodeBase64url(data) {
+  try {
+    const b64 = String(data).replace(/-/g, '+').replace(/_/g, '/');
+    const bin = atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, '='));
+    return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+  } catch {
+    return '';
+  }
+}
+
 const utf8 = (text) => new TextEncoder().encode(text);
 
 function base64(bytes) {
@@ -598,33 +647,91 @@ const TIME_OF_DAY = (hour, minute, meridiem) => {
   return `${pad(h)}:${minute}`;
 };
 
+// The owner's words with the wake word, a polite lead and the closing words
+// taken off. The request itself stays as spoken, names and all.
+export function normalizeGoogleRequest(message) {
+  let t = String(message || '').replace(/[‘’`]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, ' ').trim();
+  t = t.replace(/^(?:(?:hey|ok|okay)\s+)?(?:che|chay|chey|shay)\b[,:!.]?\s*/i, '');
+  t = t.replace(/^(?:(?:please|pls|can you|could you|would you|will you|can you please|could you please|i need you to|i want you to|i'd like you to|go ahead and|just)\s+)+/i, '');
+  return t.replace(/[\s?.!,]+$/, '').replace(/[\s,]+(?:please|pls|thanks|thank you)$/i, '').replace(/[\s?.!,]+$/, '');
+}
+
+const NEWEST = /\b(?:newest|latest|most recent)\b/i;
+const ORDINAL_INDEX = { newest: 0, latest: 0, first: 0, top: 0, one: 0, second: 1, two: 1, third: 2, three: 2, fourth: 3, four: 3, fifth: 4, five: 4 };
+const CALENDAR_RANGE = { today: 'today', tonight: 'today', 'this morning': 'today', 'this afternoon': 'today', tomorrow: 'tomorrow', 'this week': 'this week' };
+const LIST_HEAD = /^(?:check|read|show|list|see|get|pull up|look at|look up|scan|open)\s+(?:me\s+)?(?:(?:my|the|any|all of my|all my|all the)\s+)*(?:(?:new|unread|latest|newest|recent|most recent|incoming|important|all)\s+)*(?:e[- ]?mails?|inbox|gmail|mail)\b/i;
+const ASK_HEAD = /^(?:(?:do|did|have)\s+i\s+(?:have|got|receive|get)|have\s+i\s+got|are\s+there|is\s+there|any|anything|what(?:'s| is| are)|how many)\s+(?:(?:any|anything|new|unread|my|the|in|of|latest|newest|recent|incoming|important|more|other)\s+)*(?:e[- ]?mails?|inbox|gmail|mail)\b/i;
+const ASK_REST = /^(?:do i have|have i got|did i get|have i received)(?:\s+(?:today|now|yet|any))?$/i;
+const PICK_REST = /^(?:(?:and|then|,)\s+)?(?:(?:tell|give|let|show|read)\s+me\s+)?(?:the\s+)?(?:newest|latest|most recent|first)(?:\s+(?:one|e[- ]?mail|message))?$/i;
+const CALENDAR_HEAD = /^(?:what(?:'s| is| are)|show(?: me)?|check|list|read|tell me|see|do i have|have i got|am i)\s+(?:(?:on|in|free|busy)\s+)?(?:(?:my|our|any)\s+)?(?:google\s+)?(?:calendar|schedule|agenda|appointments?|meetings?|events?)\b/i;
+const CALENDAR_VERB_HEAD = /^(?:what\s+do\s+i\s+have|what\s+have\s+i\s+got|am\s+i\s+(?:free|busy))\b/i;
+
 // What the owner says in Chat about Gmail, Drive and Calendar, matched
-// deterministically before any model is asked. Null means "not one of these".
-export function googleChatIntent(message) {
-  const t = String(message || '').trim().replace(/\s+/g, ' ');
-  let m = null;
-  if (/^(?:check|read|show|list|any)\s+(?:my\s+)?(?:new\s+|unread\s+)?(?:e-?mails?|inbox|gmail)\b/i.test(t)) return { kind: 'gmail_list' };
-  m = t.match(/^(?:send|email|mail)\s+(?:an?\s+)?(?:e-?mail\s+)?to\s+(\S+?)[,;]?\s*(?:saying|that says|with the message|:)\s*(.+)$/i);
+// deterministically before any model is asked. `last` is the Google list the
+// owner heard most recently (within 30 minutes), so a follow-up can refer to it.
+// Null means "not one of these".
+export function googleChatIntent(message, { last = null } = {}) {
+  const t = normalizeGoogleRequest(message);
+  if (!t) return null;
+  let m = t.match(/^(?:send|email|mail)\s+(?:an?\s+)?(?:e-?mail\s+)?to\s+(\S+?)[,;]?\s*(?:saying|that says|with the message|:)\s*(.+)$/i);
   if (m) return { kind: 'gmail_send', to: m[1], body: m[2] };
   // An email request missing its address or text: say so, never let a model claim it was sent.
   if (/^(?:send|email|mail)\b/i.test(t) && /\be-?mails?\b/i.test(t)) return { kind: 'gmail_incomplete' };
-  m = t.match(/^(?:what(?:'s| is)\s+on|show|check|list)\s+(?:my\s+)?(?:google\s+)?calendar(?:\s+(today|tomorrow|this week))?$/i);
-  if (m) return { kind: 'calendar_list', range: (m[1] || 'today').toLowerCase() };
-  if (/^(?:list|show|check)\s+(?:my\s+)?(?:google\s+)?drive(?:\s+files)?$/i.test(t)) return { kind: 'drive_list' };
-  m = t.match(/^(?:create|make|save)\s+(?:a\s+)?(?:google\s+)?(?:doc|document|drive file|file)\s+(?:called|named)\s+(.+?)\s+(?:with|saying|containing)\s+(.+)$/i);
-  if (m) return { kind: 'drive_create', name: m[1], text: m[2] };
+  // One email in full: "read my latest unread email".
+  if (/^read\s+(?:me\s+)?(?:(?:my|the|a|an)\s+)?(?:(?:latest|newest|most recent|last|first|next|unread|new)\s+)*e[- ]?mail$/i.test(t)) return { kind: 'gmail_read', pick: 'newest' };
+  // A follow-up on the last Gmail list: "read the newest one", "read number two".
+  m = t.match(/^(?:read|open|show|play)\s+(?:me\s+)?(?:(?:the|that|this)\s+)?(?:(newest|latest|first|top|second|third|fourth|fifth)|number\s+(one|two|three|four|five)|(one|two|three|four|five))(?:\s+(?:one|e[- ]?mail|message))?$/i);
+  if (m && last?.service === 'gmail') return { kind: 'gmail_read', index: ORDINAL_INDEX[(m[1] || m[2] || m[3]).toLowerCase()] };
+  const listed = t.match(LIST_HEAD) || t.match(ASK_HEAD);
+  if (listed) {
+    const rest = t.slice(listed[0].length).trim();
+    const newest = NEWEST.test(listed[0]) || PICK_REST.test(rest);
+    if (!rest || ASK_REST.test(rest) || PICK_REST.test(rest)) return newest ? { kind: 'gmail_list', pick: 'newest' } : { kind: 'gmail_list' };
+    // "check my email from Bob" is not built yet: say so, rather than leave it to a model that cannot see the inbox.
+    if (/\bmy\b/i.test(listed[0]) && !/\b(?:to|about|for|saying|that|which|with|address|settings|password|account|login|sign|app|apps)\b/i.test(rest)) return { kind: 'gmail_unsupported' };
+    return null;
+  }
+  // Calendar: today, tomorrow or this week, read from the real calendar.
+  const calendar = CALENDAR_HEAD.exec(t) || CALENDAR_VERB_HEAD.exec(t);
+  if (calendar) {
+    const rest = t.slice(calendar[0].length).trim();
+    if (!rest) return { kind: 'calendar_list', range: 'today' };
+    const range = rest.match(/^(today|tonight|tomorrow|this week|this morning|this afternoon)$/i);
+    if (range) return { kind: 'calendar_list', range: CALENDAR_RANGE[range[1].toLowerCase()] };
+    if (/^(?:on|for|next|in|this|at)\b/i.test(rest)) return { kind: 'calendar_unsupported' };
+    return null;
+  }
+  m = t.match(/^(?:what about|how about|and|what's on|what is on)\s+(today|tonight|tomorrow|this week)$/i);
+  if (m && last?.service === 'calendar') return { kind: 'calendar_list', range: CALENDAR_RANGE[m[1].toLowerCase()] };
   m = t.match(/^(?:add|schedule|put|create)\s+(?:an?\s+|the\s+)?(?:event|meeting|appointment|calendar event)?\s*(?:called\s+|titled\s+)?(.+?)\s+on\s+(\d{4}-\d{2}-\d{2})\s+at\s+(\d{1,2}):(\d{2})\s*(am|pm)?$/i);
   if (m) return { kind: 'calendar_create', summary: m[1], date: m[2], time: TIME_OF_DAY(m[3], m[4], m[5]?.toLowerCase()) };
+  if (/^(?:list|show|check|see|open|what(?:'s| is| are)(?: in)?)\s+(?:me\s+)?(?:(?:my|all my|any|our)\s+)(?:google\s+)?drive(?:\s+(?:files|documents|docs))?$/i.test(t)) return { kind: 'drive_list' };
+  if (last?.service === 'drive' && /^(?:show|list|read|open)\s+(?:me\s+)?(?:those|these|them|the)\s+(?:files|documents|docs)$/i.test(t)) return { kind: 'drive_list' };
+  m = t.match(/^(?:create|make|save|write)\s+(?:me\s+)?(?:(?:a|an|the|new)\s+)?(?:google\s+)?(?:doc|document|drive file|file)\s+(?:called|named|titled)\s+(.+?)\s+(?:with|saying|containing|that says)\s+(?:the\s+(?:words|text|message|phrase)\s+|the\s+)?(.+)$/i);
+  if (m) return { kind: 'drive_create', name: m[1].trim(), text: m[2].trim().replace(/^["']|["']$/g, '') };
+  if (/^(?:create|make|save|write)\s+(?:me\s+)?(?:(?:a|an|the|new)\s+)?(?:google\s+)?(?:doc|document|drive file|file)\s+(?:called|named|titled)\s+\S/i.test(t)) return { kind: 'drive_incomplete' };
   if (/^(?:list|show|check)\s+(?:my\s+)?google ads(?:\s+accounts?)?$/i.test(t)) return { kind: 'ads_accounts' };
   if (/^(?:show|check|list)\s+(?:my\s+)?google ads\s+(?:campaigns?|report|performance|results)$/i.test(t)) return { kind: 'ads_report' };
   return null;
 }
 
+// "Check my YouTube channel": answered from the stored YouTube sign-in, with no model.
+export function youtubeChatIntent(message) {
+  return /^(?:(?:check|show|read|get|list|look at|tell me about)\s+(?:me\s+)?(?:(?:my|the|our)\s+)?(?:youtube|channel)(?:\s+(?:channel|account|status|info|information|details))?|(?:what(?:'s| is)|show|check)\s+(?:(?:my|the)\s+)?(?:youtube\s+)?channel(?:\s+(?:status|info|information|details))?|is\s+(?:my\s+)?youtube\s+(?:connected|linked|working))$/i.test(normalizeGoogleRequest(message));
+}
+
 const SERVICE_FOR_KIND = {
-  gmail_list: 'gmail', gmail_send: 'gmail', drive_list: 'drive', drive_create: 'drive',
-  calendar_list: 'calendar', calendar_create: 'calendar',
+  gmail_list: 'gmail', gmail_send: 'gmail', gmail_read: 'gmail', gmail_unsupported: 'gmail',
+  drive_list: 'drive', drive_create: 'drive', drive_incomplete: 'drive',
+  calendar_list: 'calendar', calendar_create: 'calendar', calendar_unsupported: 'calendar',
   ads_accounts: 'google_ads', ads_report: 'google_ads',
 };
+
+// The sender's name for speech: "Alex Rivera", not "Alex Rivera <alex@example.com>".
+function senderName(from) {
+  const name = String(from || '').replace(/<[^>]*>/g, '').replace(/"/g, '').trim();
+  return name || String(from || '').trim() || 'an unknown sender';
+}
 
 function clock(iso, zone) {
   if (!iso) return '';
@@ -634,6 +741,7 @@ function clock(iso, zone) {
 }
 
 // Runs one owner request and returns the spoken reply with its real result.
+// `context` (when it is set) is what the owner can refer back to on the next turn.
 export async function runGoogleIntent(intent, { env = {}, data, fetcher = fetch, now = Date.now() } = {}) {
   const service = SERVICE_FOR_KIND[intent.kind];
   const label = GOOGLE_SERVICES[service].label;
@@ -647,13 +755,41 @@ export async function runGoogleIntent(intent, { env = {}, data, fetcher = fetch,
   if (state.status !== 'connected') {
     return { ok: false, text: `Google no longer accepts CHE's ${label} sign-in, sir. Reconnect ${label} on the Connections page. Nothing was done.` };
   }
+  if (intent.kind === 'gmail_unsupported') {
+    return { ok: false, text: 'I can check your unread email and tell you the newest one, or read it, sir. I cannot search your email by sender or topic yet. Nothing was changed.' };
+  }
+  if (intent.kind === 'calendar_unsupported') {
+    return { ok: false, text: 'I can read your calendar for today, tomorrow or this week, sir. Tell me one of those. Nothing was changed.' };
+  }
+  if (intent.kind === 'drive_incomplete') {
+    return { ok: false, text: 'Tell me what the document should say, sir. Nothing was created.' };
+  }
   const zone = safeTimeZone(env.CHE_TIMEZONE || 'America/Chicago');
   if (intent.kind === 'gmail_list') {
     const r = await gmailList(env, data, {}, fetcher);
     if (!r.ok) return { ok: false, text: `I could not read your email, sir. ${r.error}` };
-    if (!r.messages.length) return { ok: true, text: 'No unread email, sir.' };
-    const lines = r.messages.map((m, i) => `${i + 1}: from ${m.from || 'unknown'}, ${m.subject}`);
-    return { ok: true, text: `You have ${r.total} unread email${r.total === 1 ? '' : 's'}, sir. The newest: ${lines.join('. ')}.` };
+    const context = { service: 'gmail', messages: r.messages.map((m) => ({ id: m.id, from: m.from, subject: m.subject })) };
+    if (!r.messages.length) return { ok: true, text: 'No unread email, sir.', context };
+    const count = Math.max(Number(r.total) || 0, r.messages.length);
+    const noun = `${count} unread email${count === 1 ? '' : 's'}`;
+    if (intent.pick === 'newest') {
+      const newest = r.messages[0];
+      return { ok: true, text: `You have ${noun}, sir. The newest is from ${senderName(newest.from)}, subject "${newest.subject}"${newest.date ? `, ${newest.date}` : ''}. Say "read the newest one" to hear it.`, context };
+    }
+    const lines = r.messages.map((m, i) => `${i + 1}: from ${senderName(m.from)}, ${m.subject}`);
+    return { ok: true, text: `You have ${noun}, sir. The newest: ${lines.join('. ')}.`, context };
+  }
+  if (intent.kind === 'gmail_read') {
+    let id = intent.id;
+    if (!id) {
+      const newest = await gmailList(env, data, { max: 1 }, fetcher);
+      if (!newest.ok) return { ok: false, text: `I could not read your email, sir. ${newest.error}` };
+      if (!newest.messages.length) return { ok: true, text: 'No unread email, sir.' };
+      id = newest.messages[0].id;
+    }
+    const r = await gmailRead(env, data, { id }, fetcher);
+    if (!r.ok) return { ok: false, text: `I could not open that email, sir. ${r.error}` };
+    return { ok: true, text: `From ${senderName(r.from)}, subject "${r.subject}"${r.date ? `, ${r.date}` : ''}. ${r.body || 'It has no readable text.'}` };
   }
   if (intent.kind === 'gmail_send') {
     const r = await gmailSend(env, data, { to: intent.to, body: intent.body }, fetcher);
@@ -664,8 +800,9 @@ export async function runGoogleIntent(intent, { env = {}, data, fetcher = fetch,
     const window = calendarWindow(intent.range, zone, now);
     const r = await calendarList(env, data, window, fetcher);
     if (!r.ok) return { ok: false, text: `I could not read your calendar, sir. ${r.error}` };
-    if (!r.events.length) return { ok: true, text: `Nothing on your calendar for ${intent.range}, sir.` };
-    return { ok: true, text: `Your calendar for ${intent.range}, sir: ${r.events.map((e) => `${clock(e.start, zone)} ${e.summary}`).join('; ')}.` };
+    const context = { service: 'calendar', range: intent.range };
+    if (!r.events.length) return { ok: true, text: `Nothing on your calendar for ${intent.range}, sir.`, context };
+    return { ok: true, text: `Your calendar for ${intent.range}, sir: ${r.events.map((e) => `${clock(e.start, zone)} ${e.summary}`).join('; ')}.`, context };
   }
   if (intent.kind === 'calendar_create') {
     const r = await calendarCreate(env, data, { summary: intent.summary, date: intent.date, time: intent.time, timeZone: zone }, fetcher);
@@ -693,12 +830,13 @@ export async function runGoogleIntent(intent, { env = {}, data, fetcher = fetch,
   if (intent.kind === 'drive_list') {
     const r = await driveList(env, data, {}, fetcher);
     if (!r.ok) return { ok: false, text: `I could not list your Drive files, sir. ${r.error}` };
-    if (!r.files.length) return { ok: true, text: 'No Drive files are visible to CHE yet, sir. CHE only sees files it creates or that you open with it.' };
-    return { ok: true, text: `Drive files CHE can see, sir: ${r.files.map((f) => f.name).join('; ')}.` };
+    const context = { service: 'drive' };
+    if (!r.files.length) return { ok: true, text: 'No Drive files are visible to CHE yet, sir. CHE only sees files it creates or that you open with it.', context };
+    return { ok: true, text: `Drive files CHE can see, sir: ${r.files.map((f) => f.name).join('; ')}.`, context };
   }
   const r = await driveCreateDoc(env, data, { name: intent.name, text: intent.text }, fetcher);
   if (!r.ok) return { ok: false, text: `The document was not created, sir. ${r.error}` };
-  return { ok: true, text: `I created the Google Doc "${r.name}", sir.` };
+  return { ok: true, text: `I created the Google Doc "${r.name}", sir.${r.link ? ` Link: ${r.link}` : ''}` };
 }
 
 // A verified sign-in whose service still needs Google's approval (Needs Setup).
@@ -765,25 +903,42 @@ export function googleConfirmText(intent) {
   return `Ready to create a Google Doc named "${intent.name}", sir, with this text: "${String(intent.text).trim().slice(0, 200)}". Say yes to create it, or no to cancel.`;
 }
 
-// The owner's Chat turn for Gmail, Drive and Calendar. Reads run now; a write is
-// held until a plain yes. A no cancels it, and any other reply drops it. Returns
-// null when the turn is not a Google request.
+// The last Google list the owner heard, so "read the newest one" and "what about tomorrow" can refer back to it.
+export const GOOGLE_CONTEXT_KEY = 'google_last_turn';
+export const GOOGLE_CONTEXT_MS = 30 * 60 * 1000;
+
+export async function googleTurnContext(storage, now = Date.now()) {
+  const last = await Promise.resolve().then(() => storage.get(GOOGLE_CONTEXT_KEY)).catch(() => null);
+  return last && now - Number(last.at || 0) < GOOGLE_CONTEXT_MS ? last : null;
+}
+
+// The owner's Chat turn for Gmail, Drive and Calendar. Reads run now; sending an
+// email waits for a plain yes. A no cancels it, and any other reply drops it.
+// Returns null when the turn is not a Google request.
 export async function googleOwnerStep(message, { storage, env = {}, fetcher = fetch, now = Date.now(), loadData, saveData }) {
   // Guarded like the rest of the Worker: a storage read that throws or returns nothing is no hold.
   const held = await Promise.resolve().then(() => storage.get(PENDING_GOOGLE_ACTION_KEY)).catch(() => null);
   const live = Boolean(held) && now - Number(held.at || 0) < GOOGLE_HOLD_MS;
   if (held) await storage.put(PENDING_GOOGLE_ACTION_KEY, null);
+  const last = await googleTurnContext(storage, now);
   const run = async (intent) => {
     const data = await loadData();
     const out = await runGoogleIntent(intent, { env, data, fetcher, now });
     await saveData(data);
+    if (out.context) await storage.put(GOOGLE_CONTEXT_KEY, { ...out.context, at: now });
     return { ok: out.ok, text: out.text };
   };
   if (live && isOwnerYes(message)) return run(held.intent);
   if (live && isOwnerNo(message)) return { ok: true, text: `Cancelled, sir. ${held.summary} was not done.` };
-  const intent = googleChatIntent(message);
-  if (!intent) return null;
-  if (intent.kind === 'gmail_incomplete') return { ok: false, text: 'Tell me the full address and what the email should say, sir. Nothing was sent.' };
+  const parsed = googleChatIntent(message, { last });
+  if (!parsed) return null;
+  if (parsed.kind === 'gmail_incomplete') return { ok: false, text: 'Tell me the full address and what the email should say, sir. Nothing was sent.' };
+  let intent = parsed;
+  if (intent.kind === 'gmail_read' && intent.index !== undefined) {
+    const item = last.messages[intent.index];
+    if (!item) return { ok: false, text: last.messages.length ? `Say a number from 1 to ${last.messages.length}, sir. Nothing was opened.` : 'The last list had no email in it, sir. Nothing was opened.' };
+    intent = { kind: 'gmail_read', id: item.id };
+  }
   if (!WRITE_KINDS.has(intent.kind)) return run(intent);
   const data = await loadData();
   const state = data.google_connections?.[SERVICE_FOR_KIND[intent.kind]];

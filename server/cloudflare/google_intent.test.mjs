@@ -1,0 +1,102 @@
+// What the owner says about Gmail, Drive, Calendar and YouTube is understood
+// deterministically: the wake word, polite leads, speech variants and follow-ups
+// on the last list. Ordinary sentences must not become Google requests.
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { googleChatIntent, normalizeGoogleRequest, youtubeChatIntent } from './google_services.js';
+
+test('the owner\'s mandatory Gmail, Calendar, Drive and YouTube phrases are recognised', () => {
+  assert.deepEqual(googleChatIntent('CHE, check my unread emails and tell me the newest one.'), { kind: 'gmail_list', pick: 'newest' });
+  assert.deepEqual(googleChatIntent('Check my email.'), { kind: 'gmail_list' });
+  assert.deepEqual(googleChatIntent('Do I have any new emails?'), { kind: 'gmail_list' });
+  assert.deepEqual(googleChatIntent('Read my latest unread email.'), { kind: 'gmail_read', pick: 'newest' });
+  assert.deepEqual(googleChatIntent('CHE, what’s on my calendar today?'), { kind: 'calendar_list', range: 'today' });
+  assert.deepEqual(googleChatIntent("What's on my schedule tomorrow?"), { kind: 'calendar_list', range: 'tomorrow' });
+  assert.deepEqual(googleChatIntent('CHE, list my Google Drive files.'), { kind: 'drive_list' });
+  assert.deepEqual(
+    googleChatIntent('Create a Google Doc called Test Plan with the words Connection Verified.'),
+    { kind: 'drive_create', name: 'Test Plan', text: 'Connection Verified' },
+  );
+  assert.equal(youtubeChatIntent('CHE, check my YouTube channel.'), true);
+});
+
+test('speech variants keep the same meaning: wake words, polite leads, punctuation and spacing', () => {
+  assert.deepEqual(googleChatIntent('Chay, check my e-mails'), { kind: 'gmail_list' });
+  assert.deepEqual(googleChatIntent('Hey CHE, can you check my email please?'), { kind: 'gmail_list' });
+  assert.deepEqual(googleChatIntent('chey could you list my unread emails'), { kind: 'gmail_list' });
+  assert.deepEqual(googleChatIntent('CHE check my e mail'), { kind: 'gmail_list' });
+  assert.deepEqual(googleChatIntent('  CHE,   check   my   emails  '), { kind: 'gmail_list' });
+  assert.deepEqual(googleChatIntent('CHE, read my latest unread e-mail'), { kind: 'gmail_read', pick: 'newest' });
+  assert.equal(normalizeGoogleRequest('Hey Chay, please check my inbox, thanks!'), 'check my inbox');
+  assert.equal(normalizeGoogleRequest('CHE: what’s on my calendar tomorrow.'), 'what\'s on my calendar tomorrow');
+});
+
+test('names and words the owner said are kept as spoken', () => {
+  assert.deepEqual(googleChatIntent('Create a Google Doc called Test Plan with the words "Connection Verified".'),
+    { kind: 'drive_create', name: 'Test Plan', text: 'Connection Verified' });
+  assert.deepEqual(googleChatIntent('send an email to ann@example.com saying lunch at noon'),
+    { kind: 'gmail_send', to: 'ann@example.com', body: 'lunch at noon' });
+});
+
+test('an email request that names the newest one is a list with the newest picked', () => {
+  assert.deepEqual(googleChatIntent("what's the newest email"), { kind: 'gmail_list', pick: 'newest' });
+  assert.deepEqual(googleChatIntent('check my unread emails and tell me the latest one'), { kind: 'gmail_list', pick: 'newest' });
+  assert.deepEqual(googleChatIntent('how many unread emails do I have'), { kind: 'gmail_list' });
+});
+
+test('follow-ups resolve only against the list the owner just heard', () => {
+  const gmail = { service: 'gmail', messages: [{ id: 'a' }, { id: 'b' }] };
+  assert.deepEqual(googleChatIntent('read the newest one', { last: gmail }), { kind: 'gmail_read', index: 0 });
+  assert.deepEqual(googleChatIntent('read number two', { last: gmail }), { kind: 'gmail_read', index: 1 });
+  assert.deepEqual(googleChatIntent('CHE, open the second one.', { last: gmail }), { kind: 'gmail_read', index: 1 });
+  assert.equal(googleChatIntent('read the newest one'), null, 'no list heard yet: not a Google request');
+  assert.equal(googleChatIntent('read the newest one', { last: { service: 'calendar' } }), null);
+
+  const calendar = { service: 'calendar', range: 'today' };
+  assert.deepEqual(googleChatIntent('what about tomorrow', { last: calendar }), { kind: 'calendar_list', range: 'tomorrow' });
+  assert.deepEqual(googleChatIntent('and this week?', { last: calendar }), { kind: 'calendar_list', range: 'this week' });
+  assert.equal(googleChatIntent('what about tomorrow'), null, 'no calendar heard yet');
+
+  const drive = { service: 'drive' };
+  assert.deepEqual(googleChatIntent('show me those files', { last: drive }), { kind: 'drive_list' });
+  assert.equal(googleChatIntent('show me those files'), null);
+});
+
+test('requests Google cannot do yet are named, not left to a model that cannot see the account', () => {
+  assert.deepEqual(googleChatIntent('check my email from Bob'), { kind: 'gmail_unsupported' });
+  assert.deepEqual(googleChatIntent("what's on my calendar on Friday"), { kind: 'calendar_unsupported' });
+  assert.deepEqual(googleChatIntent('create a doc called Plan'), { kind: 'drive_incomplete' });
+  assert.deepEqual(googleChatIntent('send an email to ann@example.com'), { kind: 'gmail_incomplete' });
+});
+
+test('ordinary conversation never becomes a Google request', () => {
+  const ordinary = [
+    'I checked my email yesterday and it was fine.',
+    "What's the email address format for Bob?",
+    'Show me the calendar of the French revolution.',
+    'Read my latest blog post.',
+    'Do I have any ideas for dinner?',
+    'Check my youtube video about cats',
+    'Create a spreadsheet called budget',
+    'Send the photo to my mom',
+    'I want to check my email tomorrow',
+    'Please tell me about the email I sent yesterday',
+    'Can you explain what a calendar is?',
+    'Read my notes about the trip',
+    'Why did the build fail?',
+    'open my mail app',
+    'open my email settings',
+  ];
+  for (const message of ordinary) {
+    assert.equal(googleChatIntent(message), null, message);
+    assert.equal(youtubeChatIntent(message), false, message);
+  }
+});
+
+test('YouTube channel questions are recognised, and nothing else is', () => {
+  assert.equal(youtubeChatIntent('check my YouTube channel'), true);
+  assert.equal(youtubeChatIntent("what's my YouTube channel?"), true);
+  assert.equal(youtubeChatIntent('CHE, show my channel status'), true);
+  assert.equal(youtubeChatIntent('is my YouTube connected?'), true);
+  assert.equal(youtubeChatIntent('check my youtube video about cats'), false);
+});
