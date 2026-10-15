@@ -344,6 +344,43 @@ test('fetchArticle tells broken from blocked', async () => {
   assert.equal((await fetchArticle('https://a.example/fine', { fetcher })).ok, true);
 });
 
+test('source-check redirects never fetch a private or action destination', async () => {
+  const visited = [];
+  const fetcher = async (url, options) => {
+    assert.equal(options.redirect, 'manual', 'automatic redirects would execute an unchecked GET');
+    visited.push(url);
+    if (url === 'https://a.example/private') return Response.redirect('https://docs.google.com/document/d/private/edit', 302);
+    if (url === 'https://a.example/action') return Response.redirect('https://news.example.com/unsubscribe?token=abc', 302);
+    if (url === 'https://a.example/safe') return Response.redirect('https://b.example/story', 302);
+    if (url === 'https://b.example/story') return new Response('<html><title>A real story</title><article>Safe article</article></html>', { status: 200 });
+    throw new Error('unsafe redirect destination was opened');
+  };
+  for (const name of ['private', 'action']) {
+    visited.length = 0;
+    const result = await fetchArticle(`https://a.example/${name}`, { fetcher });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /redirect to a private or action link/);
+    assert.deepEqual(visited, [`https://a.example/${name}`]);
+  }
+  visited.length = 0;
+  const safe = await fetchArticle('https://a.example/safe', { fetcher });
+  assert.equal(safe.ok, true);
+  assert.equal(safe.final_url, 'https://b.example/story');
+  assert.deepEqual(visited, ['https://a.example/safe', 'https://b.example/story']);
+});
+
+test('a bare citation URL on a factual sentence is opened even if the owner supplied it', async () => {
+  const url = 'https://a.example/clinical-trial';
+  const visited = [];
+  const checked = await guardCitations(`MegaCure reduced disease by 95% (${url})`, {
+    message: `Can you verify ${url}?`, trusted: [url],
+    fetcher: async (target) => { visited.push(target); return new Response('gone', { status: 404 }); },
+  });
+  assert.deepEqual(visited, [url]);
+  assert.equal(checked.removed.length, 1);
+  assert.doesNotMatch(checked.text, /MegaCure reduced disease/);
+});
+
 test('news questions are recognised; fiction and personal chat are not', () => {
   const now = Date.parse('2026-10-15T20:00:00Z');
   const q = newsQuestion(NEWS_QUESTION, now);
@@ -352,6 +389,8 @@ test('news questions are recognised; fiction and personal chat are not', () => {
   assert.ok(newsQuestion("What's the latest news in tech?", now));
   assert.ok(newsQuestion('Did Apple announce anything today?', now));
   assert.ok(newsQuestion('CHE, tell me the latest news', now));
+  assert.ok(newsQuestion('Please update me on AI news today', now));
+  assert.ok(newsQuestion('Could I get AI news today', now));
   assert.ok(newsQuestion('AI news today', now));
   for (const personal of [
     'I have good news: my baby was born.',
