@@ -365,7 +365,8 @@ export function validateTradeRecord(t) {
   if (!CANDIDATES[t.strategy]) problems.push('unknown strategy');
   if (!(t.stop < t.entry.raw && t.target > t.entry.fill)) problems.push('stop and target are on the wrong side of the entry');
   if (!['stop', 'target'].includes(t.exit.reason)) problems.push('exit reason must be stop or target');
-  if (!(t.entry.time < t.exit.time)) problems.push('exit must come after entry');
+  // Equal times are valid: a bar can open the trade and stop it out on the same bar.
+  if (!(t.entry.time <= t.exit.time)) problems.push('exit must not come before entry');
   for (const v of [t.entry.fill, t.exit.fill, t.net_pnl, t.r_net, t.qty]) if (!finite(v)) problems.push('a price or amount is not a number');
   if (!(t.qty > 0)) problems.push('quantity must be positive');
   if (!t.data?.label) problems.push('data quality label missing');
@@ -424,7 +425,7 @@ export function summarize(trades) {
     expectancy_r_95ci: { low: r4(mean - half), high: r4(mean + half) },
     expectancy_dollars: n ? r2(netPnl / n) : null,
     net_pnl: r2(netPnl),
-    profit_factor: grossLoss ? r2(grossWin / grossLoss) : n && grossWin ? null : 0,
+    profit_factor: grossLoss ? r2(grossWin / grossLoss) : null,   // null: no losing trades, or none at all
     max_drawdown: r2(dd),
     max_drawdown_r: r4(ddR),
     costs_paid: r2(trades.reduce((s, t) => s + t.costs.spread + t.costs.slippage + t.costs.commissions + t.costs.fees, 0)),

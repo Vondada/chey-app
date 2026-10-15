@@ -336,6 +336,15 @@ test('unknown candidates, contracts and non-research sources are refused', () =>
 const winTrade = () => runPortfolio([...SETUP, WIN_BAR]).trades[0];
 const lossTrade = () => runPortfolio([...SETUP, STOP_BAR]).trades[0];
 
+test('a bar that opens a trade and stops it out on the same bar is a valid record', () => {
+  // Bar 3 opens at 101.6 (the entry) and its low, 99, is through the 99.75 stop.
+  const { trades } = runPortfolio([...SETUP.slice(0, 3), [101.6, 102, 99, 100]]);
+  const t = trades[0];
+  assert.equal(t.entry.time, t.exit.time, 'the same daily bar');
+  assert.equal(t.exit.reason, 'stop');
+  assert.deepEqual(validateTradeRecord(t), []);
+});
+
 test('a real trade record passes validation and carries its cost assumptions', () => {
   const t = winTrade();
   assert.deepEqual(validateTradeRecord(t), []);
@@ -348,7 +357,7 @@ test('invalid records are refused with the reason', () => {
   assert.ok(validateTradeRecord({ ...t, portfolio: undefined }).includes('missing portfolio'));
   assert.ok(validateTradeRecord({ ...t, environment: 'backtest' }).some((p) => p.includes('disagree')));
   assert.ok(validateTradeRecord({ ...t, environment: 'funded', source: 'paper' }).length > 0, 'funded records are never journalled here');
-  assert.ok(validateTradeRecord({ ...t, exit: { ...t.exit, time: t.entry.time } }).includes('exit must come after entry'));
+  assert.ok(validateTradeRecord({ ...t, exit: { ...t.exit, time: day(0) } }).includes('exit must not come before entry'));
   assert.ok(validateTradeRecord({ ...t, net_pnl: NaN }).some((p) => p.includes('not a number')));
   assert.ok(validateTradeRecord({ ...t, stop: 103 }).some((p) => p.includes('wrong side')));
 });

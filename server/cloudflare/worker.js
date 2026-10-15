@@ -54,6 +54,7 @@ import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliabil
 import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, guardOwnerAttributions, guardRememberBlock, latestAnswerEvidence, loadRetractions, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions } from './memory_provenance.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
+import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { sanitizeOwnerText } from './che_errors.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
@@ -3307,6 +3308,8 @@ export class CheState extends DurableObject {
     const book = await paperTick(this.ctx.storage, opts);
     await renewToken(this.ctx.storage).catch(() => null);
     await deskTick(this.ctx.storage, book).catch((error) => console.error('Trading desk tick failed:', error?.message || error));
+    // Forward-paper evidence on the same hourly pass. Failures are logged in the run log, not thrown.
+    await evidenceTick(this.ctx.storage, { now: opts.now, force: opts.force }).catch((error) => console.error('Trading evidence tick failed:', error?.message || error));
     return book;
   }
 
@@ -8576,6 +8579,10 @@ export class CheState extends DurableObject {
           }
         }
 
+        // The owner's evidence questions are answered from recorded runs only, never from a guess.
+        if (evidenceIntent(message)) {
+          return ndjsonReply(await evidenceReport(this.ctx.storage), { source: 'che_trading_evidence' });
+        }
         const trade = tradingIntent(message);
         if (trade) {
           if (trade.kind === 'book') {
