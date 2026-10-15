@@ -510,7 +510,15 @@ export function eventClaim(sentence, { allowDescription = false } = {}) {
   const words = [...new Set((text.toLowerCase().match(/[a-z][a-z0-9'’-]{3,}/g) || [])
     .map((w) => w.replace(/['’]s$/, ''))
     .filter((w) => !PLAIN_WORDS.has(w) && !EVENT.test(w) && !/^[a-z]{3,}ed$/.test(w) && !MONTHS.includes(w) && !/day$/.test(w)))];
-  return words.length >= 2 ? { subject, words } : null;
+  if (words.length >= 2) return { subject, words };
+  // Short reports still need proof: "AI surged" and "Apple is doomed"
+  // must not pass just because stop-word filtering left one content word.
+  if (allowDescription && (NEWS_EVENT.test(text) || /\b(?:is|are|was|were|has|have)\b/i.test(text))) {
+    const fallback = [...new Set((text.toLowerCase().match(/[a-z][a-z0-9'’-]{2,}/g) || [])
+      .filter((w) => !PLAIN_WORDS.has(w) && w !== subject.toLowerCase() && !MONTHS.includes(w)))];
+    if (fallback.length) return { subject, words: fallback };
+  }
+  return null;
 }
 
 function supportsEvent(page, claim) {
@@ -630,7 +638,12 @@ export async function guardCitations(reply, {
     // A bare URL attached to an assertion is a citation too. Do not open
     // plain link pointers such as "Your file is at...", "Unsubscribe here"
     // or "Follow the guide at..." that make no claim about the page.
-    const pointer = /^(?:\s*(?:your|the|this|that|our)\s+[^;.!?]{0,90}\b(?:is|are)\s+at\s+https?:\/\/|\s*(?:unsubscribe|subscribe)\s+here\s*:\s*https?:\/\/|\s*(?:follow|visit|open|download|view)\b[^;.!?]{0,90}\b(?:at|here)\s+https?:\/\/|\s*here(?:'s| is| are)\b[^;.!?]{0,90}https?:\/\/)/i.test(s);
+    // Replace one URL with a marker and validate the ENTIRE sentence. A
+    // pointer followed by an assertion (or "proof is at...") is evidence,
+    // not a harmless instruction to open a link.
+    const linkOnly = kind.urls.length === 1 ? s.replace(kind.urls[0], '[LINK]').trim() : '';
+    const pointer = !/\b(?:proof|source|evidence|study|research|claims?|reported|according)\b/i.test(linkOnly)
+      && /^(?:(?:your|the|this|that|our)\s+[^;.!?]{0,90}\b(?:is|are)\s+at\s+\[LINK\]|(?:unsubscribe|subscribe)\s+here\s*:\s*\[LINK\]|(?:follow|visit|open|download|view)\b[^;.!?]{0,90}\b(?:at|here)\s+\[LINK\]|here(?:'s| is| are)\b[^;.!?]{0,90}\[LINK\])[\s.?!]*$/i.test(linkOnly);
     const offered = Boolean(news) || Boolean(hit) || kind.sourceWords || (kind.urls.length > 0 && !pointer);
     const urls = offered ? kind.urls.filter(checkableUrl) : [];
     const unsafe = offered ? kind.urls.filter((u) => !checkableUrl(u)) : [];
