@@ -1,13 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deskIntent, deskTick, readDesk, setMode, setSize, takeAnnouncement, takeTrade, skipTrade, pendingAlert, rememberListed, chooseAccount } from './trading_desk.js';
+import { deskIntent, deskTick, readDesk, setMode, setRiskLimits, setSize, speakDeskStatus, takeAnnouncement, takeTrade, skipTrade, pendingAlert, rememberListed, chooseAccount } from './trading_desk.js';
 import { connectLink, handleCallback, placeBracket, connection, renewToken, accountBalance, pickAccount } from './broker_tradovate.js';
 
 const store = () => {
   const m = new Map();
   return { m, get: async (k) => structuredClone(m.get(k)), put: async (k, v) => m.set(k, structuredClone(v)), delete: async (k) => m.delete(k) };
 };
-const paperBook = (id = 'p1', symbol = 'es.f') => ({ open: [{ id, symbol, label: 'ES futures', strategy: 'channel-20|any|2', entry: 5820, stop: 5805, target: 5850, why: 'closed above the 20-day high 5815' }] });
+const LIMITS = { maxContracts: 2, maxRiskDollars: 500 };
+test('the spoken status says what the live limits are, or that none are set', async () => {
+  const s = store();
+  assert.match(speakDeskStatus(await readDesk(s), null), /Live limits are not set, so no live order can be sent\./);
+  await setRiskLimits(s, LIMITS);
+  assert.match(speakDeskStatus(await readDesk(s), null), /Live limits: at most 2 contracts and 500 dollars at risk per order\./);
+});
+
+const paperBook = (id = 'p1', symbol = 'es.f') =>({ open: [{ id, symbol, label: 'ES futures', strategy: 'channel-20|any|2', entry: 5820, stop: 5805, target: 5850, why: 'closed above the 20-day high 5815' }] });
 
 test('voice: switch, connect, take, skip, size, alerts, status', () => {
   assert.deepEqual(deskIntent('CHE, switch to live trading'), { kind: 'mode', mode: 'live' });
@@ -55,6 +63,7 @@ test('sim mode: CHE places the entry on the simulated account herself and report
 test('live mode: nothing is placed until the owner says take the trade; skip and expiry place nothing', async () => {
   const s = store();
   await setMode(s, 'live');
+  await setRiskLimits(s, LIMITS);
   await rememberListed(s, 'live', ['FYE-1001', 'LIVE1']);
   assert.deepEqual(await chooseAccount(s, { number: 2 }), { mode: 'live', account: 'LIVE1' });
   let placed = [];
@@ -81,10 +90,12 @@ test('live mode: nothing is placed until the owner says take the trade; skip and
 test('taking a trade in paper mode sends nothing; a failed order is reported as not placed', async () => {
   const s = store();
   await setMode(s, 'live');
+  await setRiskLimits(s, LIMITS);
   await deskTick(s, paperBook(), { place: async () => ({ ok: true }) });
   await setMode(s, 'paper');
   assert.match((await takeTrade(s, { place: async () => { throw new Error('must not place'); } })).reply, /paper trading.*Nothing was placed/);
   await setMode(s, 'live');
+  await setRiskLimits(s, LIMITS);
   assert.match((await takeTrade(s, { place: async () => { throw new Error('must not place'); } })).reply, /Which live account.*Nothing was placed/, 'live needs a named account');
   await rememberListed(s, 'live', ['FYE-1001']);
   await chooseAccount(s, { name: 'fye-1001' });
@@ -161,7 +172,7 @@ test('orders: limit entry with stop and target attached, on the right server, ro
     bracket2: { action: 'Sell', orderType: 'Stop', stopPrice: 5805.25, timeInForce: 'GTC' },
   });
   const live = tradovate();
-  assert.equal((await placeBracket(s, 'live', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, account: 'DEMO123' }, { fetcher: live.fetcher })).ok, true);
+  assert.equal((await placeBracket(s, 'live', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, account: 'DEMO123', approval: { account: 'DEMO123', contract: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, expires_at: Date.now() + 3600_000 }, limits: LIMITS }, { fetcher: live.fetcher })).ok, true);
   assert.ok(live.calls.every((c) => c.u.startsWith('https://live.tradovateapi.com/v1')), 'live goes to the live server');
 });
 
@@ -173,9 +184,9 @@ test('orders: rejections, bad brackets, missing sign-in and size limits are refu
   assert.match((await placeBracket(s, 'sim', { root: 'MES', qty: 11, entry: 5820, stop: 5805, target: 5850 })).error, /1 to 10/);
   assert.match((await placeBracket(s, 'paper', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850 })).error, /simulated or the live/);
   const { fetcher } = tradovate({ failure: 'Insufficient margin' });
-  assert.match((await placeBracket(s, 'live', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, account: 'DEMO123' }, { fetcher })).error, /rejected the order: Insufficient margin/);
+  assert.match((await placeBracket(s, 'live', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, account: 'DEMO123', approval: { account: 'DEMO123', contract: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, expires_at: Date.now() + 3600_000 }, limits: LIMITS }, { fetcher })).error, /rejected the order: Insufficient margin/);
   await s.put('tradovate_auth', { access_token: 'tok', expires_at: Date.now() - 1 });
-  assert.match((await placeBracket(s, 'live', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850 }, { fetcher })).error, /expired/);
+  assert.match((await placeBracket(s, 'live', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, account: 'DEMO123', approval: { account: 'DEMO123', contract: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, expires_at: Date.now() - 1000 }, limits: LIMITS }, { fetcher })).error, /expired/);
 });
 
 test('balance and token renewal', async () => {
@@ -220,6 +231,7 @@ test('review fixes: Success response, named live account, forged callbacks, one 
   assert.equal((await s.get('tradovate_oauth_state')).state, state, 'real state survives a forged attempt');
   // Two overlapping "take the trade": the alert is claimed first, one order only.
   await setMode(s, 'live');
+  await setRiskLimits(s, LIMITS);
   await rememberListed(s, 'live', ['LIVE1']);
   await chooseAccount(s, { number: 1 });
   await deskTick(s, paperBook('race'), { place: async () => ({ ok: true }) });
@@ -234,4 +246,97 @@ test('review fixes: Success response, named live account, forged callbacks, one 
   assert.equal((await first).ok, true);
   assert.match(second.reply, /no open trade alert/);
   assert.equal(orders, 1);
+});
+
+// The environment guard, through the one function every broker order passes.
+const brokerStore = async () => {
+  const s = store();
+  await s.put('tradovate_auth', { access_token: 'token', expires_at: Date.now() + 3600_000 });
+  return s;
+};
+const fakeBroker = (calls) => async (url) => {
+  const u = String(url);
+  calls.push(u);
+  const body = u.includes('/account/list') ? [{ id: 7, name: 'DEMO123', active: true }]
+    : u.includes('/contract/suggest') ? [{ name: 'MESZ6' }] : { orderId: 42, failureReason: 'Success' };
+  return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+};
+const order = (over = {}) => ({ root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, account: 'DEMO123', ...over });
+const approval = (over = {}) => ({ account: 'DEMO123', contract: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, expires_at: Date.now() + 3600_000, ...over });
+
+test('a live order is sent only with the owner\'s approval for that exact order, within his limits', async () => {
+  const s = await brokerStore();
+  const calls = [];
+  const fetcher = fakeBroker(calls);
+  const sent = () => calls.filter((u) => u.includes('/order/placeoso')).length;
+  let r = await placeBracket(s, 'live', order({ limits: LIMITS }), { fetcher });
+  assert.match(r.error, /NOT placed.*no owner approval/);
+  r = await placeBracket(s, 'live', order({ approval: approval({ entry: 5821 }), limits: LIMITS }), { fetcher });
+  assert.match(r.error, /does not match this order \(entry\)/);
+  r = await placeBracket(s, 'live', order({ approval: approval({ expires_at: Date.now() - 1000 }), limits: LIMITS }), { fetcher });
+  assert.match(r.error, /expired/);
+  r = await placeBracket(s, 'live', order({ approval: approval() }), { fetcher });
+  assert.match(r.error, /risk limits/, 'an exact approval still needs the owner\'s limits');
+  r = await placeBracket(s, 'live', order({ qty: 3, approval: approval({ qty: 3 }), limits: LIMITS }), { fetcher });
+  assert.match(r.error, /above the owner limit of 2/);
+  r = await placeBracket(s, 'live', order({ approval: approval(), limits: { maxContracts: 2, maxRiskDollars: 50 } }), { fetcher });
+  assert.match(r.error, /risk \$75\.00 is above the owner limit of \$50/, '15 points on MES is $75');
+  assert.equal(sent(), 0, 'no refused order reached the broker');
+  r = await placeBracket(s, 'live', order({ approval: approval(), limits: LIMITS }), { fetcher });
+  assert.equal(r.ok, true);
+  assert.equal(sent(), 1, 'the approved order was sent once');
+});
+
+test('a simulated order needs no approval, and goes only to the simulated (demo) service', async () => {
+  const s = await brokerStore();
+  const calls = [];
+  const r = await placeBracket(s, 'sim', order(), { fetcher: fakeBroker(calls) });
+  assert.equal(r.ok, true);
+  assert.ok(calls.some((u) => u.startsWith('https://demo.tradovateapi.com') && u.includes('/order/placeoso')));
+  assert.ok(!calls.some((u) => u.includes('live.tradovateapi.com')), 'a simulated run never touches the live service');
+});
+
+test('a live order in a contract CHE has no point value for is refused before anything is sent', async () => {
+  const s = await brokerStore();
+  const calls = [];
+  const r = await placeBracket(s, 'live', { root: 'ZZ', qty: 1, entry: 100, stop: 99, target: 102, account: 'DEMO123', approval: approval(), limits: LIMITS }, { fetcher: fakeBroker(calls) });
+  assert.ok(r.error, 'refused');
+  assert.ok(!calls.some((u) => u.includes('/order/placeoso')));
+});
+
+test('"set my live risk limit to 2 contracts and 300 dollars" sets the limits by voice; bad limits are refused', async () => {
+  assert.deepEqual(deskIntent('set my live risk limit to 2 contracts and 300 dollars'), { kind: 'limits', maxContracts: 2, maxRiskDollars: 300 });
+  assert.deepEqual(deskIntent('set the limits to 1 contract and 150.50 dollars'), { kind: 'limits', maxContracts: 1, maxRiskDollars: 150.5 });
+  assert.equal(deskIntent('trade 2 micro contracts').kind, 'size', 'sizing is not a limit');
+  const s = store();
+  assert.match((await setRiskLimits(s, { maxContracts: 11, maxRiskDollars: 100 })).error, /1 to 10 contracts/);
+  assert.match((await setRiskLimits(s, { maxContracts: 1, maxRiskDollars: 0 })).error, /at least 1 dollar/);
+  assert.deepEqual((await setRiskLimits(s, { maxContracts: 2, maxRiskDollars: 300 })).limits, { maxContracts: 2, maxRiskDollars: 300 });
+  assert.deepEqual((await readDesk(s)).risk_limits, { maxContracts: 2, maxRiskDollars: 300 });
+});
+
+test('a live take with no limits sends nothing and keeps the alert; with limits it sends exactly the approved alert', async () => {
+  const s = store();
+  await setMode(s, 'live');
+  await rememberListed(s, 'live', ['LIVE1']);
+  await chooseAccount(s, { number: 1 });
+  const t0 = Date.UTC(2026, 9, 5, 14);
+  await deskTick(s, paperBook(), { place: async () => ({ ok: true }), now: t0 });
+  const sent = [];
+  const place = async (_st, mode, a) => {
+    sent.push(a);
+    return { ok: true, order_id: 9, account: a.account, symbol: 'MESZ6', entry: a.entry, stop: a.stop, target: a.target, qty: a.qty };
+  };
+  const refused = await takeTrade(s, { place, now: t0 + 60_000 });
+  assert.equal(refused.ok, false);
+  assert.match(refused.reply, /Set your live risk limits first.*Nothing was placed/);
+  assert.equal(sent.length, 0);
+  assert.ok(pendingAlert(await readDesk(s), t0 + 60_000), 'the alert stays open for when the limits are set');
+  await setRiskLimits(s, LIMITS);
+  const taken = await takeTrade(s, { place, now: t0 + 90_000 });
+  assert.equal(taken.ok, true);
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0].approval, { account: 'LIVE1', contract: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, expires_at: Date.parse(sent[0].expires_at) });
+  assert.deepEqual(sent[0].limits, LIMITS);
+  assert.equal(sent[0].unattended, false);
 });

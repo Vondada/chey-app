@@ -47,13 +47,14 @@ import {
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
 import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
-import { MODE_NAME, chooseAccount, deskIntent, rememberListed, deskTick, pendingAlert, readDesk, setMode, setSize, skipTrade, speakAlert, speakDeskStatus, takeAnnouncement, takeTrade } from './trading_desk.js';
+import { MODE_NAME, chooseAccount, deskIntent, rememberListed, deskTick, pendingAlert, readDesk, setMode, setRiskLimits, setSize, skipTrade, speakAlert, speakDeskStatus, takeAnnouncement, takeTrade } from './trading_desk.js';
 import { externalGrounding } from './external_grounding.js';
 import { answerEvidenceReceipt, cachedResearch, evidenceReferenceFollowup, factKey, forgetKnowledge, knownAnswer, LAST_ANSWER_EVIDENCE_KEY, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
 import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliability } from './reliability_ledger.js';
 import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, guardOwnerAttributions, guardRememberBlock, latestAnswerEvidence, loadRetractions, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions } from './memory_provenance.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
+import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { sanitizeOwnerText } from './che_errors.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
@@ -3309,6 +3310,8 @@ export class CheState extends DurableObject {
     const book = await paperTick(this.ctx.storage, opts);
     await renewToken(this.ctx.storage).catch(() => null);
     await deskTick(this.ctx.storage, book).catch((error) => console.error('Trading desk tick failed:', error?.message || error));
+    // Forward-paper evidence on the same hourly pass. Failures are logged in the run log, not thrown.
+    await evidenceTick(this.ctx.storage, { now: opts.now, force: opts.force }).catch((error) => console.error('Trading evidence tick failed:', error?.message || error));
     return book;
   }
 
@@ -8563,6 +8566,11 @@ export class CheState extends DurableObject {
             const sized = await setSize(this.ctx.storage, desk.qty, desk.contract);
             return ndjsonReply(sized.error || `Done, sir: I will size entries at ${sized.qty} ${sized.contract === 'full' ? 'full-size' : 'micro'} contract${sized.qty === 1 ? '' : 's'}.`, { source: 'che_trading_desk', ok: !sized.error });
           }
+          if (desk.kind === 'limits') {
+            const limited = await setRiskLimits(this.ctx.storage, { maxContracts: desk.maxContracts, maxRiskDollars: desk.maxRiskDollars });
+            const l = limited.limits;
+            return ndjsonReply(limited.error || `Done, sir: live orders are limited to ${l.maxContracts} contract${l.maxContracts === 1 ? '' : 's'} and $${l.maxRiskDollars} at risk per order.`, { source: 'che_trading_desk', ok: !limited.error });
+          }
           if (desk.kind === 'take') {
             const taken = await takeTrade(this.ctx.storage);
             if (taken.ok) await recordReceipt(this.ctx.storage, { kind: 'trade_placed', key: `trade_placed:${Date.now()}`, detail: taken.reply.slice(0, 300) }).catch(() => null);
@@ -8594,6 +8602,10 @@ export class CheState extends DurableObject {
           }
         }
 
+        // The owner's evidence questions are answered from recorded runs only, never from a guess.
+        if (evidenceIntent(message)) {
+          return ndjsonReply(await evidenceReport(this.ctx.storage), { source: 'che_trading_evidence' });
+        }
         const trade = tradingIntent(message);
         if (trade) {
           if (trade.kind === 'book') {
