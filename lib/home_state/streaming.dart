@@ -403,6 +403,16 @@ extension _CheHomeStreaming on _CHEHomeState {
       }
 
       if (type == 'done') {
+        // "Preview number three": the reply names a free sample from the provider's own
+        // library. It plays here; if it cannot, CHE says so aloud and on screen.
+        final voicePreview = data['voice_preview'];
+        if (voicePreview is Map && voicePreview['voice_id'] is String) {
+          unawaited(CheVoiceStudioPreview.play(voiceId: voicePreview['voice_id'] as String).then((played) {
+            if (played || !mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('The free sample could not play on this iPhone.')));
+            unawaited(speakText('The free sample could not play on this iPhone, sir.', record: false));
+          }));
+        }
         if (data['source'] == 'che_installed_skills' && mounted) {
           final ok = data['ok'] == true;
           // The delta pipeline speaks the result. This receipt adds visible

@@ -47,6 +47,7 @@ import 'che_wake_match.dart';
 import 'che_voice_state.dart';
 import 'che_local_voice_loop.dart';
 import 'che_cloud_voice_picker.dart';
+import 'che_voice_studio.dart';
 import 'che_voice_ui.dart';
 import 'che_app_portal.dart';
 import 'che_video.dart';
@@ -1461,6 +1462,8 @@ OWNER AGENCY
         : (_homeSuggestions.isNotEmpty ? _homeSuggestions : _skillPlugins.quickActions());
     final chat = Column(
       children: [
+        // Voice Studio opens inside Chat. Collapsed, it builds nothing and speaks nothing.
+        CheVoiceStudioSection(onSpeak: (line) => unawaited(speakText(line, record: false))),
         Expanded(
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 260),

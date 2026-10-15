@@ -36,6 +36,8 @@ import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscale
 import { handleEdgeVoice } from './edge_route.js';
 import { marySecretsFrom, preferredElevenLabsDiagnostics, preferredElevenLabsKeyStatus, preferredElevenLabsLastOutcome, preferredElevenLabsSpeech, withMarySecrets } from './preferred_elevenlabs_voice.js';
 import { availableVoiceChoices, validateVoiceChoice, voiceEnvForSelection } from './voice_choices.js';
+import { fetchElevenLibrary, fetchElevenModels, fetchFishModels, fetchFreePreview, filterLibrary, isVoiceId, withFavorite, FAVORITES_LIMIT } from './voice_library.js';
+import { voiceStudioTurn } from './voice_studio_chat.js';
 import { fishAudioDiagnostics, fishAudioKeyStatus, fishAudioSpeech, fishSecretsFrom, readFishUsage } from './fish_audio_voice.js';
 import { cheSpokenText } from './che_pronunciation.js';
 import { premiumVoiceSpeech, premiumVoiceStatuses, readVoiceLog, recordVoiceLog, voiceProbeAuthorized } from './phone_voice.js';
@@ -4861,17 +4863,68 @@ export class CheState extends DurableObject {
         return json({ ...choices, selected: saved,
           message: 'Only provider voices confirmed by your CHE account may be chosen.' });
       }
+      // The owner's library: every voice the connected accounts allow, read live, with
+      // search, a My Voices / Voice Library / built-in grouping and the favourites.
+      if (path === '/api/voice/library' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const env = this.voiceEnv();
+        const url = new URL(request.url);
+        const library = await fetchElevenLibrary(env);
+        const favorites = Array.isArray(data.voice_favorites) ? data.voice_favorites : [];
+        const speech = await fetchElevenModels(env);
+        const fish = String(env.FISH_API_KEY || '').trim()
+          ? await fetchFishModels(env, { own: true }) : { state: 'Needs Setup', reason: 'No Fish Audio key is set.', models: [] };
+        return json({
+          state: library.state, reason: library.reason, complete: library.complete, total: library.voices.length,
+          voices: filterLibrary(library.voices, {
+            query: url.searchParams.get('query') || '',
+            source: url.searchParams.get('source') || 'all',
+            favorites,
+            favoritesOnly: url.searchParams.get('favorites') === '1',
+          }),
+          favorites, selected: data.voice_choice || null,
+          models: { elevenlabs: speech.models, state: speech.state, reason: speech.reason },
+          fish: { models: fish.models, state: fish.state, reason: fish.reason },
+          message: 'Only voices your connected accounts allow are listed. Refresh to see a voice you just added.',
+        });
+      }
+      // A free sample from the provider's own preview. No speech is generated.
+      if (path === '/api/voice/library/preview' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const id = new URL(request.url).searchParams.get('voice_id') || '';
+        if (!isVoiceId(id)) return json({ detail: 'That is not a voice ID CHE can preview.' }, 400);
+        const library = await fetchElevenLibrary(this.voiceEnv());
+        if (library.state !== 'Connected') return json({ detail: library.reason }, 503);
+        const entry = library.voices.find((v) => v.id === id);
+        if (!entry) return json({ detail: 'That voice is not on your account.' }, 404);
+        const sample = await fetchFreePreview(entry.preview);
+        if (!sample.ok) return json({ detail: sample.reason }, 404);
+        return new Response(sample.bytes, { headers: { 'Content-Type': sample.type, 'Cache-Control': 'no-store' } });
+      }
+      if (path === '/api/voice/favorite' && request.method === 'POST') {
+        if (!ownerDevice) return ownerOnly();
+        if (!isVoiceId(body?.voice_id)) return json({ detail: 'That is not a voice ID CHE can keep.' }, 400);
+        data.voice_favorites = withFavorite(data.voice_favorites, String(body.voice_id), body.on === true);
+        await this.ctx.storage.put('che', data);
+        return json({ ok: true, favorites: data.voice_favorites, limit: FAVORITES_LIMIT });
+      }
       if (path === '/api/voice/choice' && request.method === 'POST') {
         if (!ownerDevice) return ownerOnly();
         const choices = await availableVoiceChoices(this.voiceEnv());
         const chosen = validateVoiceChoice(body, choices);
-        if (!chosen) return json({ detail: 'That voice is not available on your connected account, or the speed is invalid.' }, 400);
-        data.voice_choice = chosen;
+        if (!chosen) return json({ detail: 'That voice, model or setting is not available on your connected account, or the speed is invalid.' }, 400);
+        const listed = choices.options.find((o) => o.provider === chosen.provider && o.id === chosen.id);
+        data.voice_choice = { ...chosen, name: listed?.name || '' };
         await this.ctx.storage.put('che', data);
         return json({ ok: true, selected: chosen, message: 'CHE will use this voice for Chat and Read This.' });
       }
       if (path === '/api/voice/preview' && request.method === 'POST') {
         if (!ownerDevice) return ownerOnly();
+        // A generated sample spends the provider's credits. Only a confirmed request makes one;
+        // the free sample from the library is the default.
+        if (body?.confirm_credits !== true) {
+          return json({ detail: 'A generated sample uses credits from your voice provider. Confirm to continue.', needs_confirmation: true }, 409);
+        }
         if (Date.now() - (this.lastVoicePreviewAt || 0) < 5000) {
           return json({ detail: 'Wait a few seconds before another voice preview.' }, 429);
         }
@@ -7311,6 +7364,15 @@ export class CheState extends DurableObject {
         // words: no interpreter rewrite, clarifying question or model read.
         const memoryRoute = ownerDevice && !body.attachment && (asksForEvidence || Boolean(ownerMemoryQuestion(rawMessage)) ||
           Boolean(ownerFactCorrection(rawMessage, data.memory_records)));
+        // Voice Studio: the owner's spoken requests about his voice library are answered
+        // from the provider's account, with no model call. Anything else goes on below.
+        if (ownerDevice && !body.attachment) {
+          const studio = await voiceStudioTurn(this.ctx.storage, data, this.voiceEnv(), message);
+          if (studio) {
+            return ndjsonReply(studio.reply, { source: 'che_voice_studio', ok: studio.ok, model_calls: 0,
+              ...(studio.preview ? { voice_preview: studio.preview } : {}) });
+          }
+        }
         // Gmail, Drive, Calendar and YouTube requests are read as written. A model
         // read here would be slow, and it could invent a meaning the owner did not mean.
         const googleTurn = ownerDevice && !body.attachment
@@ -11051,7 +11113,8 @@ export default {
     // The live voice settings reach the Durable Object before each voice or key
     // request, so a secret change is seen without restarting the object.
     if (['/api/voice/edge', '/api/voice/synthesize', '/api/voice/report',
-      '/api/voice/choices', '/api/voice/choice', '/api/voice/preview', '/api/keys'].includes(path)) {
+      '/api/voice/choices', '/api/voice/choice', '/api/voice/preview', '/api/voice/library',
+      '/api/voice/library/preview', '/api/voice/favorite', '/api/keys'].includes(path)) {
       const owner = env.CHE_STATE.getByName('owner');
       await owner.setVoiceSecrets(voiceSecretsFrom(env));
       return owner.fetch(request);
