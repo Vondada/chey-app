@@ -40,7 +40,6 @@ jobs:
       JOB_ID: ${{ inputs.job_id }}
       TARGET: ${{ inputs.target }}
       EXPECTED_INTEGRITY: ${{ inputs.expected_integrity }}
-      WORK: ${{ runner.temp }}/rea
     steps:
       - name: Checkout the analyzer code (no credentials kept)
         uses: actions/checkout@v4
@@ -56,7 +55,9 @@ jobs:
         id: validate
         run: |
           set -euo pipefail
+          WORK="$RUNNER_TEMP/rea"
           mkdir -p "$WORK/pack" "$WORK/app"
+          echo "WORK=$WORK" >> "$GITHUB_ENV"
           node tools/rea/analyze.mjs validate >> "$GITHUB_ENV"
 
       - name: Fetch the exact tarball and check it against the registry checksum

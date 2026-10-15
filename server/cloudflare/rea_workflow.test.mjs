@@ -42,6 +42,12 @@ test('the workflow runs only on dispatch, and the analysis job can read but not 
   assert.doesNotMatch(WORKFLOW, /secrets\./, 'no secrets reach the analysis');
 });
 
+test('the job-level env uses no runner context, which GitHub rejects there (it parses only in steps)', () => {
+  const analyze = WORKFLOW.slice(WORKFLOW.indexOf('  analyze:'), WORKFLOW.indexOf('    steps:'));
+  assert.doesNotMatch(analyze, /runner\./, 'runner.* is valid only inside steps');
+  assert.match(WORKFLOW, /echo "WORK=\$WORK" >> "\$GITHUB_ENV"/, 'the work folder is set inside the first step');
+});
+
 test('the install runs no scripts and no optional packages, and the analysis has fixed limits', () => {
   assert.match(WORKFLOW, /npm ci --ignore-scripts --omit=optional/);
   assert.match(WORKFLOW, /timeout --kill-after=30 600 node tools\/rea\/node_modules\/rea-agents\/scripts\/rea\.mjs/);
