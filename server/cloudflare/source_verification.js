@@ -493,9 +493,11 @@ const ABOUT_THE_CONVERSATION = new RegExp('^\\W*(?:(?:sir|okay|ok|so|well|also|a
 // "says", "will open", not only the verbs in EVENT.
 const NEWS_EVENT = new RegExp(`${EVENT.source}|\\b[a-z]{3,}ed\\b|\\b(?:says|said|plans?|agreed|confirm(?:s|ed)?|will)\\b`, 'i');
 
-export function eventClaim(sentence) {
+export function eventClaim(sentence, { allowDescription = false } = {}) {
   const text = String(sentence || '').replace(URL_RE, ' ').trim();
-  if (!NEWS_EVENT.test(text) || /\?\s*$/.test(text) || ABOUT_THE_CONVERSATION.test(text)) return null;
+  if ((!allowDescription && !NEWS_EVENT.test(text)) || /\?\s*$/.test(text) || ABOUT_THE_CONVERSATION.test(text)) return null;
+  // "No articles were found" is a research limitation, not a reported event.
+  if (/^(?:no|none|there (?:is|are|were) no)\b[^.?!]{0,100}\b(?:articles?|sources?|reports?|headlines?)\b/i.test(text)) return null;
   // Labelled background ("companies usually announce models in the fall") is not a report of an event.
   if (/\b(?:in general|generally|typically|usually|often|tend to|as background|general background)\b/i.test(text)) return null;
   let subject = '';
@@ -545,9 +547,19 @@ const ACTION_PATH = /(?:unsubscribe|opt-?out|confirm|approve|verify|activate|res
 export function checkableUrl(url) {
   try {
     const u = new URL(url);
-    return /^https?:$/.test(u.protocol) && !u.username && !u.password && !u.port
-      && !u.hostname.startsWith('[') && !['.local', '.internal', '.lan', '.localhost'].some((suffix) => u.hostname.toLowerCase().endsWith(suffix))
-      && !PRIVATE_HOST.test(u.hostname) && !ACTION_PATH.test(`${u.pathname}${u.search}`);
+    if (!/^https?:$/.test(u.protocol) || u.username || u.password || u.port || u.hostname.startsWith('[')
+      || ['.local', '.internal', '.lan', '.localhost'].some((suffix) => u.hostname.toLowerCase().endsWith(suffix))
+      || PRIVATE_HOST.test(u.hostname)) return false;
+    // Servers can decode action paths after receiving a request. Check raw,
+    // percent-decoded and double-encoded forms before any outbound GET.
+    let target = `${u.pathname}${u.search}`;
+    for (let i = 0; i < 4; i++) {
+      if (ACTION_PATH.test(target)) return false;
+      const decoded = decodeURIComponent(target);
+      if (decoded === target) break;
+      target = decoded;
+    }
+    return true;
   } catch (_) {
     return false;
   }
@@ -618,7 +630,7 @@ export async function guardCitations(reply, {
     // A bare URL attached to an assertion is a citation too. Do not open
     // plain link pointers such as "Your file is at...", "Unsubscribe here"
     // or "Follow the guide at..." that make no claim about the page.
-    const pointer = /\b(?:is|are|located|available)\s+(?:at\s+)?https?:\/\/|^\s*(?:here(?:'s| is| are)|open|visit|follow|download|unsubscribe|subscribe|view|link\s*:|url\s*:)/i.test(s);
+    const pointer = /^(?:\s*(?:your|the|this|that|our)\s+[^;.!?]{0,90}\b(?:is|are)\s+at\s+https?:\/\/|\s*(?:unsubscribe|subscribe)\s+here\s*:\s*https?:\/\/|\s*(?:follow|visit|open|download|view)\b[^;.!?]{0,90}\b(?:at|here)\s+https?:\/\/|\s*here(?:'s| is| are)\b[^;.!?]{0,90}https?:\/\/)/i.test(s);
     const offered = Boolean(news) || Boolean(hit) || kind.sourceWords || (kind.urls.length > 0 && !pointer);
     const urls = offered ? kind.urls.filter(checkableUrl) : [];
     const unsafe = offered ? kind.urls.filter((u) => !checkableUrl(u)) : [];
@@ -714,7 +726,9 @@ export async function guardCitations(reply, {
     const specific = m.terms.hard.length > 0 || m.terms.soft.length > 0;
     // In a news answer, a plain event ("Apple launched a thinner phone
     // today.") needs an opened article too, not only one with coined names.
-    const plainEvent = news && !specific ? eventClaim(sentence) : null;
+    // A news answer's descriptive claims ("Apple's new phone is the big
+    // story") need an opened article just as much as "Apple launched...".
+    const plainEvent = news ? eventClaim(sentence, { allowDescription: true }) : null;
     const reportsNews = !/\?\s*$/.test(sentence) && !ABOUT_THE_CONVERSATION.test(sentence) && (NEWS_EVENT.test(sentence) || m.terms.hard.length > 0);
     const newsClaim = Boolean(news) && ((specific && reportsNews) || Boolean(plainEvent));
     if (!(m.cites || m.hit || newsClaim)) return { keep: true, support: [] };
@@ -740,6 +754,12 @@ export async function guardCitations(reply, {
         return fail(m.cites ? `${candidates[0].publisher}'s page does not mention ${missing}` : `no article I retrieved mentions ${missing}`);
       }
       candidates = backing;
+      // A name/figure match alone does not prove the rest of a news sentence.
+      if (plainEvent) {
+        const aboutEvent = candidates.filter((c) => supportsEvent(c, plainEvent));
+        if (!aboutEvent.length) return fail('no article I retrieved supports that news claim');
+        candidates = aboutEvent;
+      }
     } else if (plainEvent) {
       const backing = candidates.filter((c) => supportsEvent(c, plainEvent));
       if (!backing.length) return fail(plainEvent.subject ? `no article I retrieved says this about ${plainEvent.subject}` : 'no article I retrieved says this');
