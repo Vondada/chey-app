@@ -456,12 +456,10 @@ class CheCommandCatalog {
   /// management"), or null. Only a whole name counts, so "price a website"
   /// is a search, not the Websites category.
   CheCommandCategory? categoryNamed(String words) {
-    final said = words.toLowerCase().replaceAll('&', ' and ').replaceAll(RegExp(r'[^a-z0-9 ]+'), ' ').split(RegExp(r'\s+'))
-        .where((w) => w.isNotEmpty && !_generic.contains(w)).join(' ');
+    final said = _plainWords(words).where((w) => !_generic.contains(w)).join(' ');
     if (said.isEmpty) return null;
     for (final c in categories) {
-      final title = c.title.toLowerCase().replaceAll('&', ' and ').replaceAll(RegExp(r'[^a-z0-9 ]+'), ' ').split(RegExp(r'\s+')).where((w) => w.isNotEmpty).join(' ');
-      if (said == c.id || said == title || (_categoryAliases[c.id]?.contains(said) ?? false)) return c;
+      if (said == c.id || said == _plainWords(c.title).join(' ') || (_categoryAliases[c.id]?.contains(said) ?? false)) return c;
     }
     return null;
   }
@@ -479,7 +477,7 @@ class CheCommandCatalog {
     final dashed = raw.replaceFirst(RegExp(r'^/'), '').replaceAll(RegExp(r'\s+'), '-');
     final terms = {for (final w in _words(raw)) _stem(w)};
     final named = {
-      for (final w in raw.replaceAll(RegExp(r'[^a-z0-9 ]+'), ' ').split(RegExp(r'\s+')))
+      for (final w in _plainWords(raw))
         for (final hint in _categoryHints.entries)
           if (hint.value.contains(w)) hint.key,
     };
@@ -537,6 +535,11 @@ const _categoryHints = {
   'office': {'office', 'automation'},
   'intelligence': {'intelligence'},
 };
+
+final _notWord = RegExp(r'[^a-z0-9 ]+');
+final _spaces = RegExp(r'\s+');
+Iterable<String> _plainWords(String text) =>
+    text.toLowerCase().replaceAll('&', ' and ').replaceAll(_notWord, ' ').split(_spaces).where((w) => w.isNotEmpty);
 
 // Words that do not change which category is meant.
 const _generic = {'the', 'my', 'your', 'all', 'every', 'commands', 'command', 'category', 'section', 'tools', 'che', 'ches', 's'};

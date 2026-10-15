@@ -174,7 +174,8 @@ class CheCommandVoice {
     }
     // A named command opens; a name that is not a command (a topic such as
     // "YouTube") is listed by the page instead.
-    if (has(r'^(?:open|show|explain|describe|details\s+(?:for|of|on))\s+(?:me\s+)?(?:the\s+)?(?:command\s+)?(.+?)(?:\s+command)?$|^what\s+does\s+(?:the\s+)?(?:command\s+)?(.+?)(?:\s+command)?\s+(?:do|need|require)$|^tell\s+me\s+(?:about|more about)\s+(?:the\s+)?(?:command\s+)?(.+?)(?:\s+command)?$')) {
+    // "Show me how to set up YouTube" is a question for Chat, not a name.
+    if (has(r'^(?:open|show|explain|describe|details\s+(?:for|of|on))\s+(?!(?:me\s+)?(?:the\s+)?(?:how|why|what|when|where|who|whether|if)\b)(?:me\s+)?(?:the\s+)?(?:command\s+)?(.+?)(?:\s+command)?$|^what\s+does\s+(?:the\s+)?(?:command\s+)?(.+?)(?:\s+command)?\s+(?:do|need|require)$|^tell\s+me\s+(?:about|more about)\s+(?:the\s+)?(?:command\s+)?(.+?)(?:\s+command)?$')) {
       final words = [g(1), g(2), g(3)].firstWhere((w) => w.isNotEmpty, orElse: () => '');
       return CheCommandVoice(CheCommandVoiceOp.open, text: words);
     }
@@ -262,7 +263,10 @@ const _amounts = {
   'few': 3, 'several': 5,
 };
 const _amount = r'(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|a couple of|a couple|couple of|a few|few|several)';
-int? _amountOf(String? raw) => raw == null ? null : int.tryParse(raw) ?? _amounts[raw];
+int? _amountOf(String? raw) {
+  final n = raw == null ? null : int.tryParse(raw) ?? _amounts[raw];
+  return n == null || n < 1 ? null : (n > 25 ? 25 : n);
+}
 
 // "Ready" in the ways it is said. "Available for/to" means "exists for".
 const _readyWords = r"(?:ready|usable|runnable|working(?: (?:right )?now)?|works? (?:right )?now|which (?:ones? |of them )?(?:work|run)|can (?:i |you |we )?(?:use|run)(?: (?:it|them|those|these))?(?: (?:right )?now)?(?! (?:to|for|in|on|with|when|if)\b)|available(?! (?:for|to|on|in)\b))";
@@ -316,6 +320,8 @@ final _catalogWords = RegExp(r"\b(?:youtube|yt|faceless|trading|trades?|futures|
 final _otherCommands = RegExp(r"\b(?:git|linux|unix|bash|zsh|shell|terminal|command line|cmd|powershell|dos|windows|mac ?os|npm|docker|kubectl|sql|excel|vim|siri|alexa|google assistant|python|dog|dogs)\b");
 final _verbLead = RegExp(r'^(?:show|list|give|tell|read|find|search|look|get|pull up|bring up|display|name)\b');
 final _runLead = RegExp(r'^(?:run|start|use|execute|do)\b');
+// Words before "ones" that point back at a list rather than name a topic.
+final _notATopic = RegExp(r'^(?:that|this|these|those|other|next|first|last|same|new|old|which|what|good|best|right|ready|unready|the|of|few|more|both|all|some|any|working|usable)$');
 final _more = RegExp('^(?:(?:show|read|give|tell|list)(?: me| us)? )?(?:(?:the )?next(?: $_amount)?|(?:$_amount )?more|the rest|the others)(?: (?:ones?|commands|of them|please))*\$');
 
 /// Reads a request to list or search commands from the owner's words, or
@@ -334,6 +340,13 @@ CheCommandListRequest? cheCommandListRequest(String raw, {bool onPage = false}) 
     explicit = true;
     t = t.replaceAll(_thePage, ' . ');
   }
+  // "search the command library for invoices": the catalog is "commands".
+  t = t.replaceAll(RegExp(r'\bcommand (?:center|library|list)\b'), 'commands');
+  // "the trading ones", "which money ones": "ones" stands for commands.
+  final ones = RegExp(r"\b([a-z][a-z&'-]*)\s+ones\b").firstMatch(t);
+  if (onPage && ones != null && !_notATopic.hasMatch(ones.group(1)!)) {
+    t = t.replaceRange(ones.start, ones.end, '${ones.group(1)} commands');
+  }
   final askReady = RegExp('\\b$_readyWords\\b').hasMatch(t);
   final onlyReady = RegExp('\\b$_onlyReadyWords\\b').hasMatch(t);
   final askSetup = RegExp('\\b$_setupWords\\b').hasMatch(t);
@@ -350,15 +363,11 @@ CheCommandListRequest? cheCommandListRequest(String raw, {bool onPage = false}) 
     t = t.replaceFirst(RegExp(r'[.?!,;:]+$'), '').trim();
     if (readiness &&
         (RegExp(r"\b(?:ones?|them|they|those|these|it|that list|the list)\b").hasMatch(t) ||
-            RegExp(r'^(?:which|what|how many|are|is|tell me|show me|say|read|explain)\b').hasMatch(t))) {
+            RegExp("^(?:which|what|how many)\\s+(?:(?:are|is|need|needs|require|requires)\\s+)?(?:$_readyWords|$_setupWords)\\b").hasMatch(t))) {
       final it = RegExp(r"\b(?:it|that one|this one|that command|this command)\b").hasMatch(t) && !RegExp(r'\b(?:them|they|those|these|ones)\b').hasMatch(t);
       return CheCommandListRequest(followUp: true, readiness: true, only: onlyOf(), aboutIt: it);
     }
-    // "And the money ones?", "which one should I use to publish a video?"
-    final ones = RegExp(r"^(?:(?:what|how) about\s+)?(?:the\s+)?([a-z][a-z &'-]*?)\s+ones$").firstMatch(t);
-    if (ones != null && !RegExp(r'^(?:that|this|these|those|other|next|first|last|same|new|old|which|what|good|best|right)$').hasMatch(ones.group(1)!)) {
-      return CheCommandListRequest(topic: ones.group(1)!);
-    }
+    // "Which one should I use to publish a video?"
     final which = RegExp(r'^(?:which|what) ones? (?:should|can|could|do|would|will) (?:i|we) use (?:to|for) (.+)$').firstMatch(t);
     if (which != null) return CheCommandListRequest(topic: which.group(1)!);
   }
@@ -403,8 +412,8 @@ CheCommandListRequest? cheCommandListRequest(String raw, {bool onPage = false}) 
   final verbLed = _verbLead.hasMatch(pre);
   final runAsked = _runLead.hasMatch(pre);
   final searchLed = RegExp(r'^(?:search|find|look)\b').hasMatch(pre);
-  final question = RegExp(r"^(?:which|what(?!\s+(?:does|do|did|was)\b)|how many|are there|is there|do you have|do i have)\b").hasMatch(pre);
-  final strip = RegExp(r"^(?:(?:and|also|then|now|so|just|please|ok|okay|but)\s+|(?:can|could|would|will) you\s+|i (?:want|need|would like|'d like)(?: you)? to\s+|(?:show|list|give|tell|read|find|search(?:\s+for)?|look(?:\s+for|\s+up)?|get|pull up|bring up|display|name|pick|choose|suggest|recommend|open|see|share|run|start|use|execute|do)(?:\s+(?:me|us))?\s+|(?:what|how) about\s+|(?:what|which)(?:\s+(?:are|is|of))?\s+|how many\s+|(?:are there|is there|do you have|do i have|have you got|you have|i have)\s+|(?:full|complete|whole)\s+list\s+of\s+|(?:the|your|my|che's|che|some|any|a|an|of|top|first|best|main|good|useful|other|right)\s+)");
+  final question = RegExp(r"^(?:which|what(?!\s+(?:does|do|did|was)\b)|how many|are there|is there|do you have|do i have|are (?:the|my|your|all|any))\b").hasMatch(pre);
+  final strip = RegExp(r"^(?:(?:and|also|then|now|so|just|please|ok|okay|but)\s+|(?:can|could|would|will) you\s+|i (?:want|need|would like|'d like)(?: you)? to\s+|(?:show|list|give|tell|read|find|search(?:\s+for)?|look(?:\s+for|\s+up)?|get|pull up|bring up|display|name|pick|choose|suggest|recommend|open|see|share|run|start|use|execute|do)(?:\s+(?:me|us))?\s+|(?:what|how) about\s+|(?:what|which)(?:\s+(?:are|is|of))?\s+|how many\s+|(?:are there|is there|do you have|do i have|have you got|you have|i have|are|is)\s+|(?:full|complete|whole)\s+list\s+of\s+|(?:the|your|my|che's|che|some|any|a|an|of|top|first|best|main|good|useful|other|right)\s+)");
   var p = '$pre ';
   while (true) {
     final a = RegExp('^$_amount\\s+').firstMatch(p);

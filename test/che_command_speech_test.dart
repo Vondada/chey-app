@@ -28,7 +28,7 @@ void main() {
   testWidgets('screenshot 1: "Show me five YouTube commands and tell me which are ready" lists five with their states', (tester) async {
     final che = center.FakeChe();
     final ran = center.Ran();
-    // Every answer re-reads the states (by default they may be 20 s old).
+    // Every answer re-reads the states (by default they may be a minute old).
     await center.openCenter(tester, che: che, ran: ran, statesMaxAge: Duration.zero);
     final say = voiceOn(tester);
 
@@ -109,7 +109,7 @@ void main() {
     expect(await say('run YouTube'), allOf(contains('YouTube is a group of 11 commands'), contains('Nothing was run.')));
     expect(await say('run the YouTube commands'), contains('Nothing was run.'));
     expect(ran.calls, isEmpty);
-    expect(catalogReads(che), 1, reason: 'states read when the page opened are reused for 20 s, so answers come at once');
+    expect(catalogReads(che), 1, reason: 'states read when the page opened are reused for a minute, so answers come at once');
     expect(await say('run trade chart NQ'), '');
     expect(ran.calls, [('/trade-chart NQ', false)]);
   });
@@ -125,6 +125,14 @@ void main() {
     expect(await say('read them again'), startsWith('4 of the 11 YouTube commands are not ready.'));
     expect(await say('Show me the YouTube commands that need setup'), startsWith('4 of the 11 YouTube commands are not ready.'));
     expect(await say('which commands are there for trading'), startsWith('Trading: 9 commands.'));
+    // A topic in a readiness question is that topic, not the last list.
+    expect(await say('are the trading ones ready?'), startsWith('8 of the 9 Trading commands are ready.'));
+    expect(find.text('/trade-execute'), findsNothing, reason: 'the screen lists only what CHE read: the ready ones');
+    expect(await say('which money ones need setup'), 'All 8 Money Management commands are ready.');
+    expect(await say('show me 0 YouTube commands'), contains('Say "more" for the next 5.'), reason: 'zero is not a page size');
+    // How-to questions are not about the list: they go on to Chat.
+    expect(await say('show me how to set up YouTube'), isNull);
+    expect(await say('is YouTube available'), isNull);
     // "Available" asks what exists: every one, each with its state.
     expect(await say('What YouTube commands are available?'), startsWith('YouTube: 11 commands. 1. /yt-ideas: '));
     expect(await say('find a command to build an invoice'), contains('/invoices: '), reason: '"build" is a verb here, not the Websites category');

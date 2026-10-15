@@ -35,7 +35,7 @@ class CheCommandCenterScreen extends StatefulWidget {
     this.initialList,
     this.initialSteps,
     this.initialTab = 0,
-    this.statesMaxAge = const Duration(seconds: 20),
+    this.statesMaxAge = const Duration(seconds: 60),
   });
 
   final CheCommandClient client;
@@ -79,6 +79,9 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
       (widget.initialSearch.trim().isEmpty ? null : CheCommandListRequest(topic: widget.initialSearch.trim()));
   late String _query = _initialList?.topic ?? '';
   String _category = 'all';
+
+  /// 'ready' or 'setup' while the list shows only those (as CHE read them).
+  String _statusFilter = '';
   String _status = '';
   bool _statusOk = true;
   bool _busy = false;
@@ -445,10 +448,8 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
     final group = _catalog.categoryNamed(words);
     if (group != null) {
       final members = _catalog.inCategory(group.id);
-      final read = _numbered(members.take(5).toList());
-      _lastMatches = members;
-      _pageSize = 5;
-      return '${group.title} is a group of ${members.length} commands, not one command. $read '
+      final read = _readPage(members, 5);
+      return '${group.title} is a group of ${members.length} commands, not one command. $read${_moreHint()} '
           'Say a number to hear one, or "run" and one name. Nothing was run.';
     }
     final near = _catalog.search(words).take(3).toList();
@@ -504,12 +505,9 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
       default:
         final query = _query.trim();
         if (query.isNotEmpty) {
-          final all = _catalog.search(query, limit: _catalog.commands.length);
-          final read = _numbered(all.take(5).toList());
-          _lastMatches = all;
-          _pageSize = 5;
-          return 'Commands, ${all.length} matches for "$query". $read${all.length > 5 ? ' Say "more" for the next ${all.length - 5 < 5 ? all.length - 5 : 5}.' : ''}'
-              ' Say a number to hear one, or "run" and its name.';
+          final all = _matching(query, _statusFilter);
+          final read = _readPage(all, 5);
+          return 'Commands, ${all.length} matches for "$query". $read${_moreHint()} Say a number to hear one, or "run" and its name.';
         }
         final mine = <CheCommandInfo>{
           for (final id in [...widget.store.favorites, ...widget.store.recents]) ?_catalog.byId(id),
@@ -699,20 +697,17 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
 
     final topic = r.topic.trim();
     final group = topic.isEmpty ? null : _catalog.categoryNamed(topic);
-    final found = topic.isEmpty ? _catalog.commands : _catalog.search(topic, limit: _catalog.commands.length);
-    // The screen shows what CHE reads.
+    final found = _matching(topic, '');
+    final matches = _matching(topic, r.only);
+    // The screen shows exactly what CHE reads, in the same order.
     _search.text = topic;
     setState(() {
       _tab = 0;
       _category = 'all';
       _query = topic;
+      _statusFilter = matches.isEmpty ? '' : r.only;
     });
     _toTop();
-    final matches = switch (r.only) {
-      'ready' => [for (final c in found) if (c.canRun) c],
-      'setup' => [for (final c in found) if (!c.canRun) c],
-      _ => found,
-    };
     final what = group != null ? '${group.title} commands' : topic.isEmpty ? 'commands' : 'commands for "$topic"';
     if (found.isEmpty) return _say('${stale}No command matches "$topic". Try other words.', ok: false);
     if (matches.isEmpty) {
@@ -722,9 +717,7 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
     }
     final limit = r.all ? 25 : r.count ?? (r.readiness ? 12 : 5);
     final shown = matches.take(limit).toList();
-    final read = _numbered(shown);
-    _lastMatches = matches;
-    _pageSize = limit;
+    final read = _readPage(matches, limit);
     final head = switch (r.only) {
       'ready' => '${matches.length} of the ${found.length} $what ${matches.length == 1 ? 'is' : 'are'} ready.',
       'setup' => '${matches.length} of the ${found.length} $what ${matches.length == 1 ? 'is' : 'are'} not ready.',
@@ -735,26 +728,49 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
               : '${found.length} matches for "$topic".',
     };
     final tally = r.only.isEmpty && shown.length > 1 ? ' Of these ${shown.length}: ${_tally(shown)}.' : '';
-    final left = matches.length - shown.length;
-    final more = left > 0 ? ' Say "more" for the next ${left < limit ? left : limit}.' : '';
-    return _say('$stale$head $read$tally$more Say a number to hear one, or "run" and its name.'
+    return _say('$stale$head $read$tally${_moreHint()} Say a number to hear one, or "run" and its name.'
         '${r.runAsked ? ' CHE runs one command at a time. Nothing was run.' : ''}');
   }
 
   /// "More": the next commands of the last list, numbered on from it.
   String _moreByVoice(int? count) {
-    final read = [for (final c in _voiceList.whereType<CheCommandInfo>()) c.id];
-    final continues = read.length == _lastShown && [for (final c in _lastMatches.take(_lastShown)) c.id].join(' ') == read.join(' ');
+    final heard = [for (final c in _voiceList.whereType<CheCommandInfo>()) c.id];
+    final continues = heard.length == _lastShown && [for (final c in _lastMatches.take(_lastShown)) c.id].join(' ') == heard.join(' ');
     if (_lastMatches.isEmpty || !continues) {
       return _say('I have no list of commands to continue. Say "search for" and what you want to do.', ok: false);
     }
     final start = _lastShown;
     if (start >= _lastMatches.length) return _say('That was all ${_lastMatches.length}.');
     final next = _lastMatches.skip(start).take(count ?? _pageSize).toList();
+    final read = _numbered(next, start: start);
     _lastShown = start + next.length;
+    return _say('${start + 1} to $_lastShown of ${_lastMatches.length}. $read'
+        '${_lastShown < _lastMatches.length ? _moreHint() : ' That is all of them.'}');
+  }
+
+  /// The commands for [topic] (every command when empty), only the ready
+  /// or the not-ready ones for [only]: what the screen lists and CHE reads.
+  List<CheCommandInfo> _matching(String topic, String only) {
+    final found = topic.isEmpty ? _catalog.commands : _catalog.search(topic, limit: _catalog.commands.length);
+    return switch (only) {
+      'ready' => [for (final c in found) if (c.canRun) c],
+      'setup' => [for (final c in found) if (!c.canRun) c],
+      _ => found,
+    };
+  }
+
+  /// Reads the first [size] of [matches] as a numbered list and remembers
+  /// the rest for "more".
+  String _readPage(List<CheCommandInfo> matches, int size) {
+    final read = _numbered(matches.take(size).toList());
+    _lastMatches = matches;
+    _pageSize = size;
+    return read;
+  }
+
+  String _moreHint() {
     final left = _lastMatches.length - _lastShown;
-    return _say('${start + 1} to $_lastShown of ${_lastMatches.length}. ${_numbered(next, start: start)}'
-        '${left > 0 ? ' Say "more" for the next ${left < _pageSize ? left : _pageSize}.' : ' That is all of them.'}');
+    return left > 0 ? ' Say "more" for the next ${left < _pageSize ? left : _pageSize}.' : '';
   }
 
   /// Which of the commands just read are ready, keeping their numbers.
@@ -773,7 +789,7 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
   Future<String> _freshStates() async {
     final at = _loadedAt;
     if (at == null || DateTime.now().difference(at) > widget.statesMaxAge) {
-      await _refresh(timeout: const Duration(seconds: 6));
+      await _refresh(timeout: const Duration(seconds: 4));
     }
     return _staleNote();
   }
@@ -1005,8 +1021,9 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
       );
     }
     final query = _query.trim();
-    final List<CheCommandInfo> shown = query.isNotEmpty
-        ? _catalog.search(query)
+    final filtered = query.isNotEmpty || _statusFilter.isNotEmpty;
+    final List<CheCommandInfo> shown = filtered
+        ? _matching(query, _statusFilter)
         : _category == 'all'
             ? _catalog.commands
             : _catalog.inCategory(_category);
@@ -1031,12 +1048,18 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
                       icon: const Icon(Icons.close_rounded),
                       onPressed: () {
                         _search.clear();
-                        setState(() => _query = '');
+                        setState(() {
+                          _query = '';
+                          _statusFilter = '';
+                        });
                       },
                     ),
             ),
             onChanged: (v) {
-              setState(() => _query = v);
+              setState(() {
+                _query = v;
+                _statusFilter = '';
+              });
               _toTop();
             },
           ),
@@ -1054,7 +1077,7 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
       ),
     );
     final rows = <Widget>[];
-    if (query.isEmpty && _category == 'all') {
+    if (!filtered && _category == 'all') {
       if (favorites.isNotEmpty) {
         rows.add(const CheSectionHeader('Favorites'));
         rows.addAll(favorites.map(_tile));
@@ -1069,8 +1092,9 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
         rows.addAll(_catalog.inCategory(category.id).map(_tile));
       }
     } else {
-      rows.add(CheSectionHeader(query.isNotEmpty
-          ? '${shown.length} match${shown.length == 1 ? '' : 'es'} for "$query"'
+      final only = switch (_statusFilter) { 'ready' => 'ready ', 'setup' => 'not ready ', _ => '' };
+      rows.add(CheSectionHeader(filtered
+          ? '${shown.length} $only${query.isEmpty ? 'command${shown.length == 1 ? '' : 's'}' : 'match${shown.length == 1 ? '' : 'es'} for "$query"'}'
           : _catalog.categories.firstWhere((c) => c.id == _category).title));
       if (shown.isEmpty) {
         rows.add(Text('No command matches that yet. Try other words, or ask CHE in Chat.', style: CheType.bodyDim));
@@ -1106,6 +1130,7 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
           setState(() {
             _category = id;
             _query = '';
+            _statusFilter = '';
             _search.clear();
           });
           _toTop();

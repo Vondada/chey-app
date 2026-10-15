@@ -97,7 +97,7 @@ Future<void> openCenter(
   List<String>? spoken,
   double textScale = 1,
   String initialSearch = '',
-  Duration statesMaxAge = const Duration(seconds: 20),
+  Duration statesMaxAge = const Duration(seconds: 60),
 }) async {
   tester.view.physicalSize = const Size(1170, 4200);
   tester.view.devicePixelRatio = 3;
@@ -547,6 +547,7 @@ void main() {
     expect(catalog.categoryNamed('YouTube')?.id, 'youtube');
     expect(catalog.categoryNamed('sales'), isNull, reason: 'an ordinary word is searched, not one category');
     expect(catalog.search('track an expense').first.id, 'expenses', reason: '"expense" meets "expenses"');
+    expect(parseScreenCommand('search the command library for invoices')?.text, 'invoices');
     expect(parseScreenCommand('what commands can I use to make money')?.list?.only, '', reason: '"can I use to" is a purpose, not readiness');
     for (final phrase in ['Which YouTube video commands work in Final Cut?', 'show me the commands for my Tesla', 'I need a command to restart my router']) {
       expect(parseScreenCommand(phrase), isNull, reason: phrase);
