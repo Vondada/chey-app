@@ -480,8 +480,8 @@ class CheCommandCatalog {
     final terms = {for (final w in _words(raw)) _stem(w)};
     final named = {
       for (final w in raw.replaceAll(RegExp(r'[^a-z0-9 ]+'), ' ').split(RegExp(r'\s+')))
-        for (final c in categories)
-          if (w == c.id || (_categoryAliases[c.id]?.contains(w) ?? false)) c.id,
+        for (final hint in _categoryHints.entries)
+          if (hint.value.contains(w)) hint.key,
     };
     final scored = <(CheCommandInfo, int)>[];
     for (final c in commands) {
@@ -499,7 +499,7 @@ class CheCommandCatalog {
       for (final k in c.keywords) {
         if (k.contains(' ') && raw.contains(k)) score += 8;
       }
-      if (named.contains(c.category)) score += 30;
+      if (named.contains(c.category)) score += 12;
       if (score > 0) scored.add((c, score));
     }
     scored.sort((a, b) {
@@ -523,6 +523,19 @@ const _categoryAliases = {
   'intelligence': {'intelligence and control'},
 };
 
+// Single words inside a longer goal that point at a category, worth about
+// two word matches. Verbs that name a category are left out: "build an
+// invoice" is not Websites, Apps & AI, and "pricing for apps" is pricing.
+const _categoryHints = {
+  'youtube': {'youtube', 'yt', 'video', 'videos', 'channel', 'faceless'},
+  'trading': {'trading', 'trade', 'trades', 'futures'},
+  'money': {'money', 'finance', 'finances'},
+  'clients': {'clients', 'client', 'leads'},
+  'marketing': {'marketing', 'sales'},
+  'office': {'office', 'automation'},
+  'intelligence': {'intelligence'},
+};
+
 // Words that do not change which category is meant.
 const _generic = {'the', 'my', 'your', 'all', 'every', 'commands', 'command', 'category', 'section', 'tools', 'che', 'ches', 's'};
 
@@ -535,4 +548,9 @@ Iterable<String> _words(String text) => text
     .replaceAll(RegExp(r'[^a-z0-9/& -]+'), ' ')
     .split(RegExp(r'[\s/-]+'))
     .where((w) => w.length > 1 && !_stop.contains(w));
-String _stem(String w) => w.replaceFirst(RegExp(r'ies$'), 'y').replaceFirst(RegExp(r'(?:ing|ed|es|s)$'), '');
+// "invoices" and "invoice", "prices" and "price" meet; "es" goes only where
+// English adds it ("boxes", "matches").
+String _stem(String w) => w
+    .replaceFirst(RegExp(r'ies$'), 'y')
+    .replaceFirst(RegExp(r'(?<=(?:s|x|z|ch|sh))es$'), '')
+    .replaceFirst(RegExp(r'(?:ing|ed|s)$'), '');

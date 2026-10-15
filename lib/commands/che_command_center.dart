@@ -35,6 +35,7 @@ class CheCommandCenterScreen extends StatefulWidget {
     this.initialList,
     this.initialSteps,
     this.initialTab = 0,
+    this.statesMaxAge = const Duration(seconds: 20),
   });
 
   final CheCommandClient client;
@@ -60,6 +61,10 @@ class CheCommandCenterScreen extends StatefulWidget {
   final List<String>? initialSteps;
   final int initialTab;
 
+  /// How old the command states may be when CHE reads a list aloud before
+  /// they are read from CHE again.
+  final Duration statesMaxAge;
+
   @override
   State<CheCommandCenterScreen> createState() => _CheCommandCenterScreenState();
 }
@@ -80,8 +85,15 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
   late final _search = TextEditingController(text: _query);
   // New search results or a new category start at the top of the list.
   final _libraryScroll = ScrollController();
-  // The banner's own scroll position (never the page's primary one).
-  final _bannerScroll = ScrollController();
+  // The banner's own scroll position (never the page's primary one); each
+  // new answer starts at its first line.
+  final _bannerScroll = ScrollController(keepScrollOffset: false);
+
+  /// When the catalog (and its states) last came from CHE.
+  DateTime? _loadedAt;
+
+  /// The latest list request; an older one that finishes later stays quiet.
+  int _listTicket = 0;
 
   void _toTop() {
     if (_libraryScroll.hasClients) _libraryScroll.jumpTo(0);
@@ -154,6 +166,7 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
         _catalog = CheCommandCatalog.fromJson(json);
         _fromCache = false;
         _loadError = '';
+        _loadedAt = DateTime.now();
       });
     } on Object catch (e) {
       if (!mounted) return;
@@ -369,6 +382,11 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
   /// [start], the numbers continue the list already read ("more").
   String _numbered(List<Object> items, {int start = 0}) {
     _voiceList = start == 0 ? items : [..._voiceList.take(start), ...items];
+    if (start == 0) {
+      // A new list: "more" continues this one, not an earlier one.
+      _lastMatches = [for (final item in items) if (item is CheCommandInfo) item];
+      _lastShown = _lastMatches.length;
+    }
     return [
       for (final (i, item) in items.indexed)
         switch (item) {
@@ -427,10 +445,10 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
     final group = _catalog.categoryNamed(words);
     if (group != null) {
       final members = _catalog.inCategory(group.id);
+      final read = _numbered(members.take(5).toList());
       _lastMatches = members;
-      _lastShown = members.take(5).length;
       _pageSize = 5;
-      return '${group.title} is a group of ${members.length} commands, not one command. ${_numbered(members.take(5).toList())} '
+      return '${group.title} is a group of ${members.length} commands, not one command. $read '
           'Say a number to hear one, or "run" and one name. Nothing was run.';
     }
     final near = _catalog.search(words).take(3).toList();
@@ -664,8 +682,10 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
       // Nothing read yet: answer about what the screen shows.
       return _listByVoice(CheCommandListRequest(topic: _query.trim(), readiness: true, only: r.only));
     }
+    final ticket = ++_listTicket;
     final stale = fresh ? _staleNote() : await _freshStates();
-    if (!mounted) return '';
+    // Asked again while CHE was being reached: only the newest answer is read.
+    if (!mounted || ticket != _listTicket) return '';
     if (r.followUp) return _say('$stale${_readinessOf([for (final c in _voiceList.whereType<CheCommandInfo>()) _catalog.byId(c.id) ?? c], r.only)}');
 
     final topic = r.topic.trim();
@@ -691,8 +711,8 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
     }
     final limit = r.all ? 25 : r.count ?? (r.readiness ? 12 : 5);
     final shown = matches.take(limit).toList();
+    final read = _numbered(shown);
     _lastMatches = matches;
-    _lastShown = shown.length;
     _pageSize = limit;
     final head = switch (r.only) {
       'ready' => '${matches.length} of the ${found.length} $what ${matches.length == 1 ? 'is' : 'are'} ready.',
@@ -706,13 +726,13 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
     final tally = r.only.isEmpty && shown.length > 1 ? ' Of these ${shown.length}: ${_tally(shown)}.' : '';
     final left = matches.length - shown.length;
     final more = left > 0 ? ' Say "more" for the next ${left < limit ? left : limit}.' : '';
-    return _say('$stale$head ${_numbered(shown)}$tally$more Say a number to hear one, or "run" and its name.'
+    return _say('$stale$head $read$tally$more Say a number to hear one, or "run" and its name.'
         '${r.runAsked ? ' CHE runs one command at a time. Nothing was run.' : ''}');
   }
 
   /// "More": the next commands of the last list, numbered on from it.
   String _moreByVoice(int? count) {
-    if (_lastMatches.isEmpty) return _say('I have not read a list yet. Say "search for" and what you want to do.', ok: false);
+    if (_lastMatches.isEmpty) return _say('I have not read a list of commands yet. Say "search for" and what you want to do.', ok: false);
     final start = _lastShown;
     if (start >= _lastMatches.length) return _say('That was all ${_lastMatches.length}.');
     final next = _lastMatches.skip(start).take(count ?? _pageSize).toList();
@@ -731,10 +751,14 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
     return 'Of those ${read.length}: ${switch (only) { 'ready' => readyPart, 'setup' => setupPart, _ => '$readyPart $setupPart' }}';
   }
 
-  /// Re-reads the catalog so the states CHE reads are current. Returns a
-  /// note to say first when CHE could not be reached.
+  /// Re-reads the catalog when its states are older than
+  /// [CheCommandCenterScreen.statesMaxAge], so the states CHE reads are
+  /// current. Returns a note to say first when CHE could not be reached.
   Future<String> _freshStates() async {
-    await _refresh(timeout: const Duration(seconds: 6));
+    final at = _loadedAt;
+    if (at == null || DateTime.now().difference(at) > widget.statesMaxAge) {
+      await _refresh(timeout: const Duration(seconds: 6));
+    }
     return _staleNote();
   }
 
@@ -920,7 +944,7 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
                 constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.3),
                 child: Scrollbar(
                   controller: _bannerScroll,
-                  child: SingleChildScrollView(controller: _bannerScroll, child: Text(_status, style: CheType.body)),
+                  child: SingleChildScrollView(key: ValueKey(_status), controller: _bannerScroll, child: Text(_status, style: CheType.body)),
                 ),
               ),
             ),

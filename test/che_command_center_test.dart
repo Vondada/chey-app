@@ -97,6 +97,7 @@ Future<void> openCenter(
   List<String>? spoken,
   double textScale = 1,
   String initialSearch = '',
+  Duration statesMaxAge = const Duration(seconds: 20),
 }) async {
   tester.view.physicalSize = const Size(1170, 4200);
   tester.view.devicePixelRatio = 3;
@@ -118,6 +119,7 @@ Future<void> openCenter(
                 client: CheCommandClient(baseUrl: 'https://che.test', headers: () => const {}, client: che.client),
                 store: s,
                 initialSearch: initialSearch,
+                statesMaxAge: statesMaxAge,
                 onSpeak: spoken?.add,
                 onRunInChat: (message, {bool confirmed = false}) async => ran?.calls.add((message, confirmed)),
               ),
@@ -529,6 +531,8 @@ void main() {
     expect(parseScreenCommand('open your commands page')?.op, ScreenOp.openCommands);
     expect(parseScreenCommand('which YouTube commands are ready?')?.list?.only, 'ready');
     expect(parseScreenCommand('any commands for invoices?')?.text, 'invoices');
+    expect(parseScreenCommand('show me your commands for YouTube')?.text, 'youtube');
+    expect(parseScreenCommand('Search the web for YouTube commands'), isNull);
     expect(parseScreenCommand('what commands can I use to make money')?.list?.only, '', reason: '"can I use to" is a purpose, not readiness');
     for (final phrase in ['Which YouTube video commands work in Final Cut?', 'show me the commands for my Tesla', 'I need a command to restart my router']) {
       expect(parseScreenCommand(phrase), isNull, reason: phrase);

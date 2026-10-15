@@ -28,7 +28,8 @@ void main() {
   testWidgets('screenshot 1: "Show me five YouTube commands and tell me which are ready" lists five with their states', (tester) async {
     final che = center.FakeChe();
     final ran = center.Ran();
-    await center.openCenter(tester, che: che, ran: ran);
+    // Every answer re-reads the states (by default they may be 20 s old).
+    await center.openCenter(tester, che: che, ran: ran, statesMaxAge: Duration.zero);
     final say = voiceOn(tester);
 
     for (final words in [
@@ -63,6 +64,12 @@ void main() {
     expect(more, startsWith('6 to 10 of 11.'));
     expect(more, contains('6. /yt-thumbnail: '));
     expect(await say('number four'), contains('/yt-video'), reason: 'numbers still mean what CHE read');
+    await say('back');
+    expect(await say('show me the next five commands'), startsWith('11 to 11 of 11.'));
+    // Another list read in between: "more" continues that one, never the old numbers.
+    await say('Show me five YouTube commands');
+    expect(await say('run yt thumb'), contains('Closest: 1. /yt-thumbnail'));
+    expect(await say('more'), 'That was all 3.');
     expect(ran.calls, isEmpty);
   });
 
@@ -93,19 +100,26 @@ void main() {
     expect(await say('run YouTube'), allOf(contains('YouTube is a group of 11 commands'), contains('Nothing was run.')));
     expect(await say('run the YouTube commands'), contains('Nothing was run.'));
     expect(ran.calls, isEmpty);
+    expect(catalogReads(che), 1, reason: 'states read when the page opened are reused for 20 s, so answers come at once');
     expect(await say('run trade chart NQ'), '');
     expect(ran.calls, [('/trade-chart NQ', false)]);
   });
 
   testWidgets('readiness questions answer from the catalog, and say when the states could not be re-read', (tester) async {
     final che = center.FakeChe();
-    await center.openCenter(tester, che: che);
+    await center.openCenter(tester, che: che, statesMaxAge: Duration.zero);
     final say = voiceOn(tester);
     final ready = (await say('Which YouTube commands are ready?'))!;
     expect(ready, startsWith('7 of the 11 YouTube commands are ready. 1. /yt-ideas: '));
     expect(ready, isNot(contains('/yt-video')), reason: 'only the ready ones are read');
     expect(await say('how many YouTube commands need setup'), startsWith('4 of the 11 YouTube commands need setup. 1. /yt-video: '));
     expect(await say('read them again'), startsWith('4 of the 11 YouTube commands need setup.'));
+    expect(await say('Show me the YouTube commands that need setup'), startsWith('4 of the 11 YouTube commands need setup.'));
+    // "Available" asks what exists: every one, each with its state.
+    expect(await say('What YouTube commands are available?'), startsWith('YouTube: 11 commands. 1. /yt-ideas: '));
+    expect(await say('find a command to build an invoice'), contains('/invoices: '), reason: '"build" is a verb here, not the Websites category');
+    expect(await say('which commands can price a site'), contains('/pricing: '));
+    expect(await say('search for online marketing commands'), contains('/marketing-plan: '));
     // CHE cannot be reached: the answer still comes, and says how old it is.
     che.offline = true;
     final offline = (await say('show me five trading commands'))!;
