@@ -436,6 +436,40 @@ function mentions(haystack, term) {
   return h.includes(term.toLowerCase());
 }
 
+// The words of a plain news sentence ("Apple launched a thinner phone today.")
+// that an article must share: its subject (the name that opens it) and its
+// content words. A sentence about the conversation ("I'll report back") is not news.
+const PLAIN_WORDS = new Set(('that this these those with from into onto over under about after before than then when where while which '
+  + 'their there they them have been were will would could should also just only more most much many some very what said says reported '
+  + 'today tonight yesterday tomorrow week month year morning evening night earlier later recently latest newest biggest major story '
+  + 'stories news headline headlines announcement company companies sir').split(' '));
+const ABOUT_THE_CONVERSATION = /^\W*(?:i|i'm|i'll|i've|i'd|we|we're|we'll|you|you're|your|let me|ask me|want me|would you|shall i|should i|if you)\b/i;
+
+export function eventClaim(sentence) {
+  const text = String(sentence || '').replace(URL_RE, ' ').trim();
+  if (!EVENT.test(text) || /\?\s*$/.test(text) || ABOUT_THE_CONVERSATION.test(text)) return null;
+  // Labelled background ("companies usually announce models in the fall") is not a report of an event.
+  if (/\b(?:in general|generally|typically|usually|often|tend to|as background|general background)\b/i.test(text)) return null;
+  let subject = '';
+  for (const token of text.replace(/^[^A-Za-z]+/, '').split(/\s+/)) {
+    const word = token.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '').replace(/['’]s$/, '');
+    if (COMMON_CAPS.has(word)) continue;
+    if (/^[A-Z][A-Za-z0-9&-]+$/.test(word)) subject = word;
+    break;
+  }
+  const words = [...new Set((text.toLowerCase().match(/[a-z][a-z0-9'’-]{3,}/g) || [])
+    .map((w) => w.replace(/['’]s$/, ''))
+    .filter((w) => !PLAIN_WORDS.has(w) && !EVENT.test(w) && !MONTHS.includes(w) && !/day$/.test(w)))];
+  return words.length >= 2 ? { subject, words } : null;
+}
+
+function supportsEvent(page, claim) {
+  const haystack = `${page.title} ${page.page_title || ''} ${page.description || ''} ${page.text || ''}`.toLowerCase();
+  if (claim.subject && !new RegExp(`\\b${claim.subject.toLowerCase()}`).test(haystack)) return false;
+  const hits = claim.words.filter((w) => new RegExp(`\\b${w.slice(0, Math.min(5, w.length)).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(haystack)).length;
+  return hits >= Math.max(1, Math.ceil(claim.words.length * 0.4));
+}
+
 function supportsTerms(page, terms) {
   const haystack = `${page.title} ${page.page_title || ''} ${page.description || ''} ${page.text || ''}`.toLowerCase();
   const missingHard = terms.hard.filter((t) => !mentions(haystack, t));
@@ -621,7 +655,10 @@ export async function guardCitations(reply, {
       }
     }
     const specific = m.terms.hard.length > 0 || m.terms.soft.length > 0;
-    const newsClaim = Boolean(news) && specific && (EVENT.test(sentence) || m.terms.hard.length > 0);
+    // In a news answer, a plain event ("Apple launched a thinner phone
+    // today.") needs an opened article too, not only one with coined names.
+    const plainEvent = news && !specific ? eventClaim(sentence) : null;
+    const newsClaim = Boolean(news) && ((specific && (EVENT.test(sentence) || m.terms.hard.length > 0)) || Boolean(plainEvent));
     if (!(m.cites || m.hit || newsClaim)) return { keep: true, support: [] };
     if (!candidates.length) {
       if (!strict) {
@@ -629,7 +666,7 @@ export async function guardCitations(reply, {
         return { keep: true, support: [] };
       }
       return fail(m.hit ? `I earlier gave this without a working source (${m.hit.reason}) and still have none`
-        : news ? 'no article I retrieved says this' : 'I have no source I opened that says this');
+        : news ? (plainEvent?.subject ? `no article I retrieved says this about ${plainEvent.subject}` : 'no article I retrieved says this') : 'I have no source I opened that says this');
     }
     if (specific) {
       const backing = candidates.filter((c) => supportsTerms(c, m.terms).ok);
@@ -644,6 +681,10 @@ export async function guardCitations(reply, {
         }
         return fail(m.cites ? `${candidates[0].publisher}'s page does not mention ${missing}` : `no article I retrieved mentions ${missing}`);
       }
+      candidates = backing;
+    } else if (plainEvent) {
+      const backing = candidates.filter((c) => supportsEvent(c, plainEvent));
+      if (!backing.length) return fail(plainEvent.subject ? `no article I retrieved says this about ${plainEvent.subject}` : 'no article I retrieved says this');
       candidates = backing;
     }
     // Only a claim attributed to a source earns a line in "Sources I opened".

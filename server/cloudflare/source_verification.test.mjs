@@ -123,7 +123,7 @@ async function owner({ saved = new Map(), model = () => 'Understood, sir.' } = {
   };
   // The same phone and CHE, with the model now saying something else.
   const setModel = (next) => { answer = next; };
-  return { say, saved, history, counter, setModel };
+  return { say, saved, history, counter, setModel, state, token, send };
 }
 
 const MEDMIND_REPLY = `The biggest AI news story on October 15, 2026 was Google's release of MedMind, a medical AI model. According to MIT Technology Review's article "Google AI Beats Human Professionals in Medical Imaging Diagnosis" (published October 15, 2026), MedMind outperformed radiologists on imaging benchmarks. Source: ${MEDMIND_URL}`;
@@ -431,4 +431,57 @@ test('outside news, a link that does not back an unattributed sentence is said p
   const out = await che.say('Can MedGemma run on one GPU?');
   assert.match(out.reply, /^MedGemma 4B runs on a single GPU/);
   assert.match(out.reply, /\n\nThe research\.google page does not mention GPU, so it does not back what I said there\./);
+});
+
+// ─── Codex review of #315 ──────────────────────────────────────────────────
+
+const TECH_NEWS = 'What is the biggest tech news today?';
+const AT = Date.parse('2026-10-15T20:00:00Z');
+const appleArticle = (overrides = {}) => ({
+  ok: true, url: 'https://www.theverge.com/2026/10/15/apple-iphone-air', final_url: 'https://www.theverge.com/2026/10/15/apple-iphone-air',
+  title: 'Apple launches the iPhone Air, its thinnest phone yet', publisher: 'The Verge', host: 'theverge.com', published: '2026-10-15T15:00:00Z',
+  description: 'Apple on Wednesday launched the iPhone Air.', text: 'Apple launched the iPhone Air today, its thinnest phone ever at 5.6 millimetres.', ...overrides,
+});
+const offline = async () => { throw new TypeError('fetch failed (offline)'); };
+
+test('a plain news event with no coined name still needs an article that says it', async () => {
+  // Codex's example: nothing retrieved, and no CamelCase name, version or figure.
+  const none = await guardCitations('Apple launched a thinner phone today.', { message: TECH_NEWS, fetcher: offline, now: AT });
+  assert.equal(none.removed.length, 1);
+  assert.doesNotMatch(none.text, /thinner phone/);
+  assert.match(none.text, /^I can't verify that, sir: no article I retrieved says this about Apple\. I did not retrieve any news article/);
+
+  // An article that says it backs it, with its receipt.
+  const backed = await guardCitations('Apple launched a thinner phone today.', { message: TECH_NEWS, research: { engine: 'news', articles: [appleArticle()] }, fetcher: offline, now: AT });
+  assert.deepEqual(backed.removed, []);
+  assert.match(backed.text, /^Apple launched a thinner phone today\.\n\nSources I opened: The Verge, "Apple launches the iPhone Air/);
+
+  // Another company's story does not back it.
+  const samsung = appleArticle({ title: 'Samsung launches its thinnest phone yet', description: 'Samsung on Wednesday launched a thin phone.', text: 'Samsung launched its thinnest phone ever.' });
+  const other = await guardCitations('Apple launched a thinner phone today.', { message: TECH_NEWS, research: { engine: 'news', articles: [samsung] }, fetcher: offline, now: AT });
+  assert.equal(other.removed.length, 1);
+
+  // Talk about the conversation, questions and labelled background are not news events.
+  for (const line of ["I'll report back when I can open the articles.", 'Would you like me to try again?', 'As general background, phone makers usually announce new models in September.']) {
+    const kept = await guardCitations(line, { message: TECH_NEWS, fetcher: offline, now: AT });
+    assert.deepEqual(kept.removed, [], line);
+  }
+});
+
+test('a news request finished in the background opens articles and is checked like a chat reply', async () => {
+  const calls = useWeb({ down: true });
+  const che = await owner({ model: () => 'Apple launched a thinner phone today.' });
+  const res = await che.send('/api/job/create', { title: 'Tech news', prompt: TECH_NEWS }, che.token);
+  assert.equal(res.status, 200);
+  const job = (await res.json()).job;
+  await che.state.alarm();
+  const done = che.saved.get('che').jobs.find((j) => j.id === job.id);
+  assert.equal(done.status, 'complete');
+  assert.doesNotMatch(done.result, /thinner phone/);
+  assert.match(done.result, /no article I retrieved says this about Apple/);
+  assert.match(done.result, /I could not retrieve news articles just now/);
+  assert.ok(calls.some((u) => u.startsWith('https://api.gdeltproject.org/')), 'news research ran for the job');
+  const prompt = che.counter.prompts.find((text) => text.startsWith('You are CHE background work.'));
+  assert.match(prompt, /NO NEWS ARTICLE WAS RETRIEVED \(No news article about tech for .+ could be retrieved and checked/);
+  assert.match(prompt, /SOURCE RULES/);
 });

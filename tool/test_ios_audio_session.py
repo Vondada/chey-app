@@ -54,10 +54,20 @@ class IosAudioSessionTest(unittest.TestCase):
         self.assertIn("applyOutputRoute()", configure)
 
     def test_automatic_output_replaces_only_the_earpiece(self):
-        route = function(self.swift, "private func applyOutputRoute()")
+        route = function(self.swift, "private func applyOutputRoute(")
         auto = route[route.index("default:"):]
         self.assertIn('routeKind(session.currentRoute) == "receiver"', auto)
         self.assertIn("overrideOutputAudioPort(.speaker)", auto)
+        # Codex on #315: Speaker then Automatic, or a device connected later,
+        # must not leave a loudspeaker override that keeps her off Bluetooth.
+        self.assertRegex(auto, r"if speakerForced \|\| newDevice \{\s*try session\.overrideOutputAudioPort\(\.none\)\s*speakerForced = false")
+        self.assertLess(auto.index("overrideOutputAudioPort(.none)"), auto.index("overrideOutputAudioPort(.speaker)"))
+        speaker = route[route.index('case "speaker":'):route.index('case "receiver":')]
+        self.assertIn("speakerForced = true", speaker)
+        receiver = route[route.index('case "receiver":'):route.index("default:")]
+        self.assertIn("speakerForced || routeKind", receiver)
+        observers = function(self.swift, "private func installAudioObservers()")
+        self.assertIn("self.applyOutputRoute(newDevice: reason == .newDeviceAvailable)", observers)
         kinds = function(self.swift, "private func routeKind(")
         for port, kind in ((".builtInReceiver", "receiver"), (".builtInSpeaker", "speaker"), (".bluetoothA2DP", "bluetooth"),
                            (".headphones", "headphones"), (".airPlay", "airplay"), (".carAudio", "car")):

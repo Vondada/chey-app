@@ -10863,6 +10863,12 @@ export class CheState extends DurableObject {
               if (!checkpoint.autonomy) return {id:job.id, status:'queued', result:'', error:''};
             }
           }
+          // A news request finished in the background is answered from
+          // articles opened now, for the day it was asked, like a chat reply.
+          const askedAt = Date.parse(job.created_at || '') || Date.now();
+          const jobResearch = newsQuestion(job.prompt, askedAt)
+            ? await newsResearch(job.prompt, { now: askedAt }).catch((error) => ({ error: `News research failed: ${error?.message || error}`, articles: [] }))
+            : null;
           const answer = await this.env.AI.run(
             this.env.CHE_STRONG_MODEL || STRONG_MODEL,
             {
@@ -10877,7 +10883,12 @@ export class CheState extends DurableObject {
                     'Be concise but complete. Separate verified facts from assumptions.',
                     'Do not claim an external action, live research, device control, payment, trade, or file change occurred unless a connected tool result is actually supplied.',
                     'Use the owner memories only as context; never expose secrets.',
-                  ].join('\n'),
+                    verifiedSourcesContext(jobResearch),
+                    jobResearch && !jobResearch.articles?.some((a) => a.ok)
+                      ? `NO NEWS ARTICLE WAS RETRIEVED${jobResearch.error ? ` (${String(jobResearch.error).replace(/\bHTTP\s+/gi, '')})` : ''}. Do not name any headline, outlet, article, publication date, link or specific news event. Say plainly that news articles could not be retrieved.`
+                      : '',
+                    jobResearch ? 'SOURCE RULES: name an article, headline, outlet, publication date or link only if it appears in VERIFIED SOURCES. Never invent or guess a URL.' : '',
+                  ].filter(Boolean).join('\n'),
                 },
                 {
                   role: 'user',
@@ -10902,6 +10913,7 @@ export class CheState extends DurableObject {
           // wholesale: only the unverifiable citations are removed and named.
           if (result) {
             const sourced = await guardCitations(result, {
+              research: jobResearch, message: job.prompt, now: askedAt,
               disproven: await loadDisproven(this.ctx.storage), fiction: storyRequested(job.prompt), trusted: [job.prompt],
             }).catch(() => null);
             if (sourced) {

@@ -217,6 +217,9 @@ struct CHEAppShortcuts: AppShortcutsProvider {
   private var outputPreference =
     UserDefaults.standard.string(forKey: "che.voice.outputPreference") ?? "auto"
   private var audioObserversInstalled = false
+  // True while a loudspeaker override from the Speaker choice may be in
+  // place; Automatic and Earpiece clear it.
+  private var speakerForced = false
   private var playbackGeneration = 0
   private var pendingClipInfo: [String: Any]?
   private var normalizedClipURL: URL?
@@ -622,7 +625,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
   /// Puts CHE's voice where the owner wants it. Automatic replaces only the
   /// quiet built-in earpiece with the loudspeaker; headphones, Bluetooth,
   /// AirPlay or a car the owner connected keep playing her.
-  private func applyOutputRoute() {
+  private func applyOutputRoute(newDevice: Bool = false) {
     let session = AVAudioSession.sharedInstance()
     do {
       switch outputPreference {
@@ -630,11 +633,20 @@ struct CHEAppShortcuts: AppShortcutsProvider {
         if routeKind(session.currentRoute) != "speaker" {
           try session.overrideOutputAudioPort(.speaker)
         }
+        speakerForced = true
       case "receiver":
-        if routeKind(session.currentRoute) == "speaker" {
+        if speakerForced || routeKind(session.currentRoute) == "speaker" {
           try session.overrideOutputAudioPort(.none)
         }
+        speakerForced = false
       default:
+        // Automatic never keeps a loudspeaker override left by the Speaker
+        // choice, or one set before a device was connected: the owner's
+        // headphones, Bluetooth, AirPlay or car then play her.
+        if speakerForced || newDevice {
+          try session.overrideOutputAudioPort(.none)
+          speakerForced = false
+        }
         if routeKind(session.currentRoute) == "receiver" {
           try session.overrideOutputAudioPort(.speaker)
         }
@@ -707,13 +719,11 @@ struct CHEAppShortcuts: AppShortcutsProvider {
       let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt ?? 0
       let reason = AVAudioSession.RouteChangeReason(rawValue: raw)
       // Headphones unplugged or Bluetooth gone: iOS falls back to the
-      // earpiece, so CHE moves her voice back to the loudspeaker. Her own
-      // override also posts a route change; that one is left alone.
+      // earpiece, so CHE moves her voice back to the loudspeaker. A device
+      // connected in Automatic plays her. Her own override also posts a
+      // route change; that one is left alone.
       if reason == .newDeviceAvailable || reason == .oldDeviceUnavailable || reason == .routeConfigurationChange || reason == .categoryChange {
-        if self.outputPreference != "receiver" &&
-            self.routeKind(AVAudioSession.sharedInstance().currentRoute) == "receiver" {
-          try? AVAudioSession.sharedInstance().overrideOutputAudioPort(.speaker)
-        }
+        self.applyOutputRoute(newDevice: reason == .newDeviceAvailable)
       }
       self.voiceStreamHandler.emit([
         "type": "audio_route",
