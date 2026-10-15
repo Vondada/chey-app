@@ -527,12 +527,33 @@ test('code the owner pasted counts as read; two verified links both back a claim
   assert.match(both.reply, /2 independent outlets I opened report it\./);
 });
 
-test('outside news, a link that does not back an unattributed sentence is said plainly, not deleted', async () => {
+test('a cited non-news medical claim unsupported by the linked article is removed', async () => {
   useWeb({ down: false });
   const che = await owner({ model: () => 'MedGemma 4B runs on a single GPU; see the source at https://research.google/blog/medgemma-open-models/ for MedGemma details and the H100 setup.' });
   const out = await che.say('Can MedGemma run on one GPU?');
-  assert.match(out.reply, /^MedGemma 4B runs on a single GPU/);
-  assert.match(out.reply, /\n\nThe research\.google page does not mention GPU, so it does not back what I said there\./);
+  assert.doesNotMatch(out.reply, /^MedGemma 4B runs on a single GPU/);
+  assert.match(out.reply, /does not mention GPU/);
+});
+
+test('a fabricated treatment rate cited to a recipe is removed, never stated as fact', async () => {
+  const url = 'https://a.example/recipe';
+  const result = await guardCitations(`MegaCure reduced disease by 95% (${url})`, {
+    message: 'What is MegaCure?', trusted: [url],
+    fetcher: async () => new Response('<html><title>Best pasta recipe</title><p>Cook pasta in salted water.</p></html>', { status: 200 }),
+  });
+  assert.equal(result.removed.length, 1);
+  assert.doesNotMatch(result.text, /MegaCure reduced disease by 95%/);
+});
+
+test('a factual claim inside a file-style pointer is not exempt from source verification', async () => {
+  const url = 'https://a.example/trial';
+  const calls = [];
+  const result = await guardCitations(`The results showing MegaCure reduced disease by 95% are at ${url}.`, {
+    message: 'Tell me about the treatment',
+    fetcher: async (requested) => { calls.push(requested); return new Response('missing', { status: 404 }); },
+  });
+  assert.deepEqual(calls, [url]);
+  assert.equal(result.removed.length, 1);
 });
 
 // ─── Codex review of #315 ──────────────────────────────────────────────────
@@ -581,6 +602,18 @@ test('news descriptions without launch verbs still require the article to say th
   });
   assert.deepEqual(verified.removed, []);
   assert.match(verified.text, /Sources I opened:/);
+});
+
+test('short news must match its subject and cannot use stopwords for support', async () => {
+  const unrelated = appleArticle({
+    title: 'Markets and stocks surged sharply', description: 'Markets and stocks surged sharply',
+    text: 'Markets and stocks surged sharply',
+  });
+  const out = await guardCitations('AI surged today, and it was the biggest news story of the day.', {
+    message: TECH_NEWS, research: { engine: 'news', articles: [unrelated] }, fetcher: offline, now: AT,
+  });
+  assert.equal(out.removed.length, 1);
+  assert.doesNotMatch(out.text, /^AI surged/);
 });
 
 test('short unsupported news claims never bypass the opened-source check', async () => {
