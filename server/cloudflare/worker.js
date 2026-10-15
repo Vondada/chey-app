@@ -9783,14 +9783,21 @@ export class CheState extends DurableObject {
         // A chat model cannot create execution evidence by claiming it
         // searched or compared sources. Successful real tools are the only
         // basis for those past-tense claims.
+        // Text the owner pasted (code, an article) has been read: it is in his
+        // own words in this conversation.
+        const pastedText = [rawMessage, ...ownerHistory.filter((turn) => turn?.role === 'user').slice(-4).map((turn) => String(turn.content ?? turn.text ?? ''))]
+          .some((words) => words.length > 400 || /```|^\s*(?:def |function |class |import |const |let |var |final |public |<\w+)/m.test(words));
         reply = guardClaimedResearchActions(reply, {
-          research, tools: skillResults, documentRead: Boolean(multimodal?.summary || body.screen_context), message: rawMessage,
+          research, tools: skillResults, documentRead: Boolean(multimodal?.summary || body.screen_context || pastedText), message: rawMessage,
         }).text;
         // Every link, headline, outlet and date in the reply must match a page
         // CHE opened this turn; a news answer's events must appear in one.
         // A broken citation is recorded so it is never repeated as fact.
         const sourced = await guardCitations(reply, {
           research, message: rawMessage, disproven, fiction: storyRequested(rawMessage),
+          // Links the owner gave or a connector returned are their own receipts.
+          trusted: [rawMessage, body.screen_context, JSON.stringify(skillResults), JSON.stringify(actionResults), JSON.stringify(plugins),
+            ...ownerHistory.filter((turn) => turn?.role === 'user').slice(-6).map((turn) => String(turn.content ?? turn.text ?? ''))],
         }).catch((error) => {
           console.log('CHE source check failed', error?.message || error);
           return { text: reply, removed: [], used: [], disproven: [] };
@@ -10890,12 +10897,12 @@ export class CheState extends DurableObject {
           let result = String(
             answer.response || answer.choices?.[0]?.message?.content || '',
           ).trim().slice(0, 30000);
-          // Background answers pass the same truth checks as chat replies: no
-          // claimed searches without receipts, no link or article unchecked.
+          // Background answers have their cited links, outlets and headlines
+          // checked like chat replies. A long work product is never replaced
+          // wholesale: only the unverifiable citations are removed and named.
           if (result) {
-            result = guardClaimedResearchActions(result, { message: job.prompt }).text;
             const sourced = await guardCitations(result, {
-              message: job.prompt, disproven: await loadDisproven(this.ctx.storage), fiction: storyRequested(job.prompt),
+              disproven: await loadDisproven(this.ctx.storage), fiction: storyRequested(job.prompt), trusted: [job.prompt],
             }).catch(() => null);
             if (sourced) {
               result = sourced.text;

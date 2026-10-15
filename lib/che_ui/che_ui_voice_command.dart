@@ -173,8 +173,10 @@ class CheUiVoiceCommand {
           return 'Done. Volume is ${(v * 100).round()} percent.';
         case 'audioOutput':
           final output = value! as CheAudioOutput;
-          await prefs.setAudioOutput(output);
           final report = await CheNativeVoice.setAudioOutput(output.name);
+          // A build that cannot use the earpiece keeps its old choice, so it
+          // is not switched on unannounced after the next update.
+          if (report != null || output != CheAudioOutput.receiver) await prefs.setAudioOutput(output);
           final choice = switch (output) {
             CheAudioOutput.speaker => 'I will speak through the loudspeaker, even with headphones or Bluetooth connected.',
             CheAudioOutput.receiver => 'I will speak through the earpiece. Hold the iPhone to your ear.',

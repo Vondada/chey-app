@@ -649,9 +649,12 @@ struct CHEAppShortcuts: AppShortcutsProvider {
 
   private func setOutputPreference(_ value: String) {
     let preference = ["auto", "speaker", "receiver"].contains(value) ? value : "auto"
-    guard preference != outputPreference else { return }
-    outputPreference = preference
-    UserDefaults.standard.set(preference, forKey: "che.voice.outputPreference")
+    if preference != outputPreference {
+      outputPreference = preference
+      UserDefaults.standard.set(preference, forKey: "che.voice.outputPreference")
+    }
+    // Called before every reply: even an unchanged choice re-applies the
+    // route, in case another part of the app reset the session since.
     if AVAudioSession.sharedInstance().category == .playAndRecord {
       configureAudioSession()
     }
@@ -706,7 +709,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
       // Headphones unplugged or Bluetooth gone: iOS falls back to the
       // earpiece, so CHE moves her voice back to the loudspeaker. Her own
       // override also posts a route change; that one is left alone.
-      if reason == .newDeviceAvailable || reason == .oldDeviceUnavailable || reason == .routeConfigurationChange {
+      if reason == .newDeviceAvailable || reason == .oldDeviceUnavailable || reason == .routeConfigurationChange || reason == .categoryChange {
         if self.outputPreference != "receiver" &&
             self.routeKind(AVAudioSession.sharedInstance().currentRoute) == "receiver" {
           try? AVAudioSession.sharedInstance().overrideOutputAudioPort(.speaker)
@@ -1021,9 +1024,18 @@ struct CHEAppShortcuts: AppShortcutsProvider {
       return true
     }
     // Her words as the recognizer heard them through the speaker, with a
-    // few misheard: most of them are words she is saying.
-    let matched = heardWords.filter { spokenWords.contains($0) }.count
-    return heardWords.count >= 3 && Double(matched) / Double(heardWords.count) >= 0.7
+    // few misheard: most of the meaningful words are words she is saying.
+    // Short common words ("no", "that", "is", "not", "what") say nothing
+    // about who spoke, so "no, that is not what I asked" is the owner.
+    let common: Set<String> = [
+      "a", "an", "the", "and", "or", "but", "so", "of", "to", "in", "on", "at", "for", "with", "is", "are", "was",
+      "were", "be", "it", "this", "that", "i", "you", "we", "he", "she", "they", "me", "my", "your", "no", "not",
+      "yes", "what", "why", "how", "do", "did", "does", "can", "just", "about", "asked", "ask", "mean", "meant",
+    ]
+    let meaningful = heardWords.filter { !common.contains($0) }
+    guard meaningful.count >= 3 else { return false }
+    let matched = meaningful.filter { spokenWords.contains($0) }.count
+    return Double(matched) / Double(meaningful.count) >= 0.8
   }
 
   private func normalizedWords(_ value: String) -> String {

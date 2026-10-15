@@ -169,8 +169,9 @@ class CheUiControlsScreen extends StatelessWidget {
                       index: prefs.audioOutput.index,
                       onChanged: (i) async {
                         final output = CheAudioOutput.values[i];
-                        await prefs.setAudioOutput(output);
-                        await CheNativeVoice.setAudioOutput(output.name);
+                        // The iPhone first, so the line below reads the new route.
+                        final report = await CheNativeVoice.setAudioOutput(output.name);
+                        if (report != null || output != CheAudioOutput.receiver) await prefs.setAudioOutput(output);
                       },
                     ),
                     const SizedBox(height: CheSpace.xs),

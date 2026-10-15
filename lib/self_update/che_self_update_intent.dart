@@ -239,9 +239,15 @@ bool cheNeedsLiveSources(String raw) {
   if (RegExp(r'\b(?:write|draft|compose|make up|invent|imagine|pretend|role.?play)\b[^.?!]{0,60}\b(?:news|story|article|headline|report|press release)\b', caseSensitive: false).hasMatch(text)) {
     return false;
   }
+  // A question or a request for news, not a statement that mentions it
+  // ("I have good news", "my screen keeps breaking").
+  final asks = text.contains('?') ||
+      RegExp(r"^(?:(?:hey\s+)?(?:che|chay|chey|shay)[,:]?\s+)?(?:please\s+)?(?:what|which|who|when|where|how|is|are|was|were|did|do|does|has|have|any|tell me|give me|show me|read me|catch me up|brief me|update me)\b", caseSensitive: false).hasMatch(text);
+  if (!asks) return false;
   final named = RegExp(r'\b(?:news|headlines?|breaking)\b', caseSensitive: false).hasMatch(text);
+  // The same days the server's newsQuestion reads.
   final when = RegExp(
-    r'\b(?:today|tonight|yesterday|this (?:morning|week|month)|last (?:night|week)|latest|recent(?:ly)?|right now|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2})\b',
+    r'\b(?:today|tonight|yesterday|this (?:morning|week|month)|last (?:night|week)|latest|recent(?:ly)?|right now|so far this|20\d\d-\d\d-\d\d|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2})\b',
     caseSensitive: false,
   ).hasMatch(text);
   if (!named && !when) return false;

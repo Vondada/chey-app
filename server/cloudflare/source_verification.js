@@ -385,7 +385,18 @@ const COMMON_CAPS = new Set(('I AI A The This That These Those It He She They We
 const KNOWN_NAMES = new Set(('openai deepmind youtube chatgpt linkedin paypal github gitlab iphone ipad macbook airpods whatsapp tiktok '
   + 'playstation javascript typescript powerpoint spacex huggingface alphafold alphago biontech fedex mcdonald blackrock softbank '
   + 'medgemma medpalm deepseek xai nvidia anthropic microsoft cloudflare postgresql mongodb macos ios ipados watchos visionos '
-  + 'gemini claude llama mistral copilot bing duckduckgo wikipedia').split(' '));
+  + 'gemini claude llama mistral copilot bing duckduckgo wikipedia hubspot wordpress sharepoint quickbooks turbotax facetime airdrop '
+  + 'carplay homepod applecare appletv imessage icloud ebay etsy ibm intel amd tesla netflix spotify salesforce shopify mailchimp '
+  + 'youtuber openstreetmap stackoverflow techcrunch businessinsider marketwatch newsweek arstechnica').split(' '));
+
+/**
+ * Only coined product names (MedMind) are recorded as claims to re-check:
+ * not versions, figures or real names written in CamelCase (OpenAI), so a
+ * made-up story never marks a real company or product as suspect.
+ */
+export function recordableTerms(terms = []) {
+  return [...new Set(terms)].filter((t) => /^[A-Za-z]+$/.test(t) && /[a-z][A-Z]/.test(t) && !KNOWN_NAMES.has(t.toLowerCase())).slice(0, 6);
+}
 
 /** Sentences of a reply with the separators kept, so removing one keeps the layout. */
 function pieces(text) {
@@ -441,6 +452,23 @@ function outletMatches(page, outlet) {
     || (want === 'apnews' && have.includes('apnews')) || (want === 'associatedpress' && have.includes('apnews'));
 }
 
+// A link is checked when the reply offers it as a source, never a private or
+// one-click link: a Drive or Gmail page needs the owner's sign-in (the check
+// would see a login page), and opening an unsubscribe, confirm or reset link
+// would act on it.
+const SOURCE_CONTEXT = /\b(?:sources?|article|story|stories|report(?:ed|s)?|paper|study|studies|press release|blog post|via|read more|according|published|headline|announced in|coverage)\b/i;
+const PRIVATE_HOST = /(?:^|\.)(?:(?:docs|drive|mail|calendar|accounts|myaccount|photos|meet|chat|keep|contacts)\.google\.com|dropbox\.com|onedrive\.live\.com|sharepoint\.com|notion\.so|icloud\.com|zoom\.us|slack\.com|workers\.dev|localhost)$|^(?:\d+\.){3}\d+$/i;
+const ACTION_PATH = /(?:unsubscribe|opt-?out|confirm|approve|verify|activate|reset|log-?in|sign-?in|oauth|auth\b|token=|delete|cancel|checkout|\bpay\b|invite|accept)/i;
+
+export function checkableUrl(url) {
+  try {
+    const u = new URL(url);
+    return /^https?:$/.test(u.protocol) && !PRIVATE_HOST.test(u.hostname) && !ACTION_PATH.test(`${u.pathname}${u.search}`);
+  } catch (_) {
+    return false;
+  }
+}
+
 function citationKind(sentence) {
   const urls = String(sentence).match(URL_RE) || [];
   const outlets = String(sentence).match(OUTLET_RE) || [];
@@ -448,9 +476,9 @@ function citationKind(sentence) {
   const reporting = REPORTING.test(sentence);
   // "published on Oct 12" or "published "Title" on Oct 12": a publication verb and a day.
   const publishedOn = PUBLISHED_ON.test(sentence) || (/\b(?:published|posted|dated|ran|appeared)\b/i.test(sentence) && datesIn(sentence).length > 0);
-  const cites = urls.length > 0 || (outlets.length > 0 && (reporting || quoted.length > 0 || publishedOn))
+  const cites = (outlets.length > 0 && (reporting || quoted.length > 0 || publishedOn))
     || (quoted.length > 0 && reporting) || (publishedOn && (outlets.length > 0 || reporting));
-  return { cites, urls: urls.map((u) => u.replace(/[.,;:!?]+$/, '')), outlets, quoted, publishedOn };
+  return { cites, urls: urls.map((u) => u.replace(/[.,;:!?]+$/, '')), outlets, quoted, publishedOn, reporting, sourceWords: SOURCE_CONTEXT.test(sentence) };
 }
 
 /** "the technologyreview.com link": a link named so it reads well aloud. */
@@ -462,7 +490,7 @@ export function linkName(url, what = 'link') {
 export function disprovenEntry(item, now = Date.now()) {
   return {
     kind: item.kind, url: item.url || '', status: item.status || 0, headline: clip(item.headline, 200),
-    actual_title: clip(item.actual_title, 200), terms: (item.terms || []).slice(0, 6), reason: clip(item.reason, 200),
+    actual_title: clip(item.actual_title, 200), terms: recordableTerms(item.terms || []), reason: clip(item.reason, 200),
     sentence: clip(item.sentence, 240), from: item.from || 'verification', at: now,
   };
 }
@@ -487,14 +515,26 @@ function disprovenHit(sentence, list) {
  */
 export async function guardCitations(reply, {
   research = null, message = '', fetcher = fetch, now = Date.now(), disproven = [], maxFetch = 3, timeoutMs = 4500, fiction = false,
+  trusted = [],
 } = {}) {
   const text = String(reply || '');
   const none = { text, removed: [], receipts: [], used: [], disproven: [] };
   if (!text.trim() || fiction) return none;
   const news = newsQuestion(message, now);
+  // Links the owner gave or a connector returned this turn are its own
+  // receipts; they are not opened again.
+  const given = new Set(trusted.flatMap((value) => String(value || '').match(URL_RE) || []).map(normalizeUrl));
   const segments = pieces(text);
   const sentences = segments.map((s, i) => ({ s, i })).filter(({ s, i }) => i % 2 === 0 && s.trim());
-  const marks = sentences.map(({ s }) => ({ ...citationKind(s), terms: claimTerms(s), hit: disprovenHit(s, disproven) }));
+  const marks = sentences.map(({ s }) => {
+    const kind = citationKind(s);
+    const hit = disprovenHit(s, disproven);
+    // A link offered as a source (or any link in a news answer) is checked;
+    // "the guide is at https://…" is not a claim about the world.
+    const offered = Boolean(news) || Boolean(hit) || kind.sourceWords;
+    const urls = offered ? kind.urls.filter((u) => checkableUrl(u) && !given.has(normalizeUrl(u))) : [];
+    return { ...kind, urls, cites: kind.cites || urls.length > 0, terms: claimTerms(s), hit };
+  });
   const needsCheck = marks.some((m) => m.cites || m.hit) || (news && sentences.length);
   if (!needsCheck) return none;
 
@@ -521,6 +561,7 @@ export async function guardCitations(reply, {
   const fresh = [];
   const used = new Set();
   const unopened = [];
+  const mismatched = [];
   const tainted = new Map(); // lower case -> as written
   const recent = (sentence) => datesIn(sentence, now).some((d) => now - Date.parse(`${d}T00:00:00Z`) < 180 * DAY_MS);
   const verdicts = marks.map((m, k) => {
@@ -530,19 +571,22 @@ export async function guardCitations(reply, {
     // by a page opened now. An older source named from memory stays, labelled.
     const strict = Boolean(news) || Boolean(m.hit) || (m.cites && recent(sentence));
     let candidates = good;
+    const linked = [];
     for (const url of m.urls) {
       const page = known.get(normalizeUrl(url));
       if (!page || (!page.ok && !page.broken)) {
         if (strict) return fail(page ? `${linkName(url)} could not be opened (${page.error})` : `I could not check ${linkName(url)}`);
-        unopened.push(`${url}${page ? ` (${page.error})` : ''}`);
+        unopened.push(`${linkName(url)}${page ? ` (${page.error})` : ''}`);
         return { keep: true, support: [] };
       }
       if (page.broken) {
         fresh.push(disprovenEntry({ kind: 'broken_citation', url, status: page.status, headline: m.quoted[0], terms: m.terms.hard, reason: `${linkName(url)} returns ${page.error}`, sentence }, now));
         return fail(`${linkName(url)} returns ${page.error}`);
       }
-      candidates = candidates.filter((c) => c === page);
+      linked.push(page);
     }
+    // Several links: the claim may rest on any of them.
+    if (linked.length) candidates = [...new Set(linked)];
     if (m.cites) {
       if (m.outlets.length) {
         // Every outlet named needs a page of its own; the claim may rest on any of them.
@@ -592,6 +636,12 @@ export async function guardCitations(reply, {
       if (!backing.length) {
         const missing = supportsTerms(candidates[0], m.terms).missing.slice(0, 2).join(' or ') || 'it';
         if (m.hit) return fail(`I earlier gave this without a working source (${m.hit.reason}) and still have none`);
+        // Outside news, a link that does not back an unattributed sentence is
+        // said plainly; a claim put in a source's mouth is removed.
+        if (!strict && !(m.outlets.length || m.quoted.length || m.reporting)) {
+          mismatched.push(`${linkName(candidates[0].final_url || candidates[0].url, 'page')} does not mention ${missing}`);
+          return { keep: true, support: [] };
+        }
         return fail(m.cites ? `${candidates[0].publisher}'s page does not mention ${missing}` : `no article I retrieved mentions ${missing}`);
       }
       candidates = backing;
@@ -612,7 +662,7 @@ export async function guardCitations(reply, {
   // A broken link was cited for the claims removed with it: their coined
   // names (not common words or versions) need a source before CHE says them again.
   const coined = [...tainted].filter(([t]) => /^[a-z]+$/.test(t) && !KNOWN_NAMES.has(t) && good.every((g) => !`${g.title} ${g.text}`.toLowerCase().includes(t))).map(([, written]) => written);
-  for (const entry of fresh) entry.terms = [...new Set([...entry.terms.filter((t) => !/\d/.test(t)), ...coined])].slice(0, 6);
+  for (const entry of fresh) entry.terms = recordableTerms([...entry.terms, ...coined]);
   // Differing figures between sources about the same claim are reported, not hidden.
   const conflicts = [];
   verdicts.forEach((v, k) => {
@@ -629,7 +679,7 @@ export async function guardCitations(reply, {
     }
   });
 
-  if (!removed.length && !conflicts.length && !used.size && !unopened.length) return { text, removed, receipts, used: [], disproven: fresh };
+  if (!removed.length && !conflicts.length && !used.size && !unopened.length && !mismatched.length) return { text, removed, receipts, used: [], disproven: fresh };
 
   const removeAt = new Set(verdicts.map((v, k) => (v.keep ? -1 : sentences[k].i)).filter((i) => i >= 0));
   let kept = segments.map((s, i) => (removeAt.has(i) ? '' : s)).join('')
@@ -650,10 +700,12 @@ export async function guardCitations(reply, {
   }
   if (!substantive) kept = '';
   if (conflicts.length) note = `${note} Sources differ: ${[...new Set(conflicts)].slice(0, 2).join('; ')}.`.trim();
+  if (mismatched.length && substantive) note = `${note} ${[...new Set(mismatched)].slice(0, 2).join('; ')}, so it does not back what I said there.`.trim();
   if (unopened.length && substantive) {
     note = `${note} I did not open ${[...new Set(unopened)].slice(0, 3).join(', ')} just now, so treat ${unopened.length === 1 ? 'that reference' : 'those references'} as from memory, not checked.`.trim();
   }
   const footer = usedList.length ? sourcesFooter(usedList, news) : '';
+  note = note.charAt(0).toUpperCase() + note.slice(1);
   return {
     text: [kept, note, footer].filter(Boolean).join('\n\n'),
     removed, receipts, used: usedList, disproven: fresh,
@@ -699,21 +751,37 @@ export function disprovenContext(list = []) {
   }))).slice(0, 2500)}`;
 }
 
-const CORRECTION = /\b(?:404|four oh four|page not found|broken link|dead link|(?:link|url|article|story|source|citation|headline|report|model|announcement|claim)\s+(?:is|was)\s+(?:broken|dead|wrong|fake|false|made up|invented|fabricated|not real)|(?:does|did)(?:n'?t| not) exist|is(?:n'?t| not) real|was(?:n'?t| not) real|no such (?:article|model|story|announcement|thing|product)|there (?:is|was) no (?:such )?(?:article|model|story|announcement)|you (?:made (?:that|it|this) up|invented (?:that|it|this)|hallucinated|fabricated)|(?:i|we) (?:checked|looked|searched|tried)[^.?!]{0,60}(?:can'?t|cannot|couldn'?t|could not) find|that'?s (?:fake|false|made up|not true|wrong|incorrect))\b/i;
+// The owner disputing a cited source or a named claim, not any correction:
+// "that's wrong, I meant my other video" is an ordinary correction.
+const SOURCE_NOUN = '(?:link|url|article|story|source|citation|headline|report|announcement|website|page)';
+const CORRECTION = new RegExp(`\\b(?:404|four oh four|page not found|broken link|dead link|${SOURCE_NOUN}s?\\s+(?:is|was|are|were)\\s+(?:broken|dead|fake|made up|invented|fabricated|not real|wrong)|${SOURCE_NOUN}\\s+(?:does|did)(?:n'?t| not)\\s+(?:exist|work|load|open)|no such ${SOURCE_NOUN}|there (?:is|was) no (?:such )?${SOURCE_NOUN}|you (?:made (?:that|it|this) up|invented (?:that|it|this)|hallucinated|fabricated)(?: (?:that|it|this|the \\w+))?|(?:i|we) (?:checked|looked|searched|tried)[^.?!]{0,60}(?:can'?t|cannot|couldn'?t|could not) find (?:the|that|this|any) ${SOURCE_NOUN})\\b`, 'i');
+// "MedMind doesn't exist" / "MedMind isn't real": a name from the answer.
+const NAMED_DOUBT = /\b([A-Za-z][\w-]{2,})\s+(?:does(?:n'?t| not) exist|is(?:n'?t| not) (?:a )?real(?: \w+)?|was(?:n'?t| not) (?:ever )?(?:released|announced|real))\b/i;
 const RECHECK = /^(?:(?:che|chay|chey|shay)[, ]+)?(?:please\s+)?(?:can you\s+)?(?:check|verify|open|re-?check|double.?check|test)\s+(?:that|this|the|your)\s+(?:link|url|article|source|citation|story)\b|^(?:(?:che|chay|chey|shay)[, ]+)?(?:is|was)\s+(?:that|this|the)\s+(?:article|link|source|story|model|announcement)\s+real\b/i;
 
 /** The earlier answer the owner is correcting or asking to re-check, or null. */
 export function externalCorrection(message, history = []) {
   const text = String(message || '').trim();
-  if (!text || (!CORRECTION.test(text) && !RECHECK.test(text))) return null;
+  const named = NAMED_DOUBT.exec(text)?.[1] || '';
+  if (!text || (!CORRECTION.test(text) && !RECHECK.test(text) && !named)) return null;
   const turns = Array.isArray(history) ? history : [];
   for (let i = turns.length - 1, seen = 0; i >= 0 && seen < 3; i--) {
     if (turns[i]?.role !== 'assistant') continue;
     seen += 1;
     const answer = String(turns[i].content ?? turns[i].text ?? '');
-    const urls = answer.match(URL_RE) || [];
-    const cited = pieces(answer).filter((s, k) => k % 2 === 0 && (citationKind(s).cites || claimTerms(s).hard.length));
-    if (urls.length || cited.length) return { answer, urls: [...new Set(urls.map((u) => u.replace(/[.,;:!?]+$/, '')))].slice(0, 3), sentences: cited.slice(0, 6) };
+    const urls = (answer.match(URL_RE) || []).map((u) => u.replace(/[.,;:!?]+$/, '')).filter(checkableUrl);
+    const parts = pieces(answer).filter((s, k) => k % 2 === 0 && s.trim());
+    // Only an answer that cited a source can be re-checked, or one that
+    // named the very thing the owner says is not real.
+    const cited = parts.filter((s) => citationKind(s).cites || (s.match(URL_RE) || []).length);
+    const naming = named && !CORRECTION.test(text) && !RECHECK.test(text)
+      ? parts.filter((s) => new RegExp(`\\b${named.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(s) && claimTerms(s).hard.some((h) => h.toLowerCase() === named.toLowerCase()))
+      : [];
+    if (named && !CORRECTION.test(text) && !RECHECK.test(text)) {
+      if (naming.length) return { answer, urls: [...new Set(urls)].slice(0, 3), sentences: [...new Set([...naming, ...cited])].slice(0, 6) };
+      continue;
+    }
+    if (urls.length || cited.length) return { answer, urls: [...new Set(urls)].slice(0, 3), sentences: (cited.length ? cited : parts).slice(0, 6) };
   }
   return null;
 }
@@ -771,6 +839,19 @@ export async function recheckExternalClaim(found, { fetcher = fetch, now = Date.
   }
   if (allHeld) {
     return { ok: true, record: [], pages, text: `I checked again, sir: ${findings.join('; ')}. I'm keeping that answer, with that source.` };
+  }
+  if (!pages.length && corroborating.length) {
+    // No link of its own, but real articles mention it: nothing to admit
+    // beyond giving no source; CHE now has them.
+    return {
+      ok: false,
+      record: [],
+      pages: corroborating,
+      text: `I checked again, sir. My earlier answer gave no source, but I found ${corroborating.length === 1 ? 'an article' : 'articles'} that mention ${terms.join(' and ')}: ${corroborating.map((p) => `${p.publisher}, "${clip(p.title, 90)}"`).join('; ')}. I'll only repeat what ${corroborating.length === 1 ? 'it says' : 'they say'}.`,
+    };
+  }
+  if (!findings.length) {
+    return { ok: false, record: [], pages, text: 'I checked again, sir, but my earlier answer had no link or specific name I could check. Tell me which part you doubt and I will look it up.' };
   }
   const also = corroborating.length
     ? ` I did find ${corroborating.length === 1 ? 'one article' : 'articles'} mentioning it: ${corroborating.map((p) => `${p.publisher}, "${clip(p.title, 90)}"`).join('; ')}; I'll only repeat what those say.`

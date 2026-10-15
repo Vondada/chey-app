@@ -371,3 +371,64 @@ test('a reply with no citations is returned as is, with nothing opened', async (
   assert.equal(out.text, 'Sure, sir. I will remind you at 5.');
   assert.equal(opened, 0);
 });
+
+// ─── Review findings (2026-10-15) ──────────────────────────────────────────
+
+test('only links offered as sources are opened: never private, one-click or connector links', async () => {
+  const calls = useWeb({ down: false });
+  const che = await owner({ model: () => 'Your file Budget Plan is at https://docs.google.com/document/d/abc123/edit. Unsubscribe here: https://news.example.com/unsubscribe?token=xyz. The guide is at https://docs.flutter.dev/get-started/install.' });
+  const out = await che.say('Where is my budget plan?');
+  assert.match(out.reply, /^Your file Budget Plan is at https:\/\/docs\.google\.com/);
+  assert.match(out.reply, /unsubscribe\?token=xyz/);
+  assert.deepEqual(calls.filter((u) => /docs\.google|unsubscribe|docs\.flutter/.test(u)), [], 'none of them was fetched');
+});
+
+test('a real name in a made-up story is never recorded as suspect', async () => {
+  useWeb({ list: listings() });
+  const che = await owner({ model: () => 'OpenAI announced its new model in an article at https://www.technologyreview.com/2026/10/15/openai-model/.' });
+  await che.say('Tell me about the new OpenAI model.');
+  const recorded = che.saved.get(DISPROVEN_CLAIMS_KEY) || [];
+  assert.equal(recorded.length, 1, 'the broken link is recorded');
+  assert.deepEqual(recorded[0].terms, [], 'OpenAI itself is not');
+});
+
+test('an ordinary correction is not taken for a disputed source', async () => {
+  useWeb({ down: true });
+  const che = await owner({ model: () => 'Got it, sir: your other video, "Morning Routine", has 52% retention.' });
+  const out = await che.say("That's wrong, I meant my other video", {
+    history: [{ role: 'user', content: 'How is my video doing?' }, { role: 'assistant', content: 'Your YouTube video has 40% retention this week.' }],
+  });
+  assert.notEqual(out.meta.source, 'che_source_check');
+  assert.match(out.reply, /other video/);
+  assert.equal(che.saved.get(DISPROVEN_CLAIMS_KEY), undefined);
+});
+
+test('an answer with no link of its own, which real articles do mention, is not called false', async () => {
+  useWeb({ list: listings({ gdelt: [MEDGEMMA_LISTING] }) });
+  const che = await owner({ model: () => 'Okay, sir.' });
+  const out = await che.say("MedGemma isn't real", {
+    history: [{ role: 'user', content: 'What did Google release?' }, { role: 'assistant', content: 'Google released MedGemma, open medical AI models.' }],
+  });
+  assert.equal(out.meta.source, 'che_source_check');
+  assert.match(out.reply, /^I checked again, sir\. My earlier answer gave no source, but I found an article that mention MedGemma: Google Research, "MedGemma: open models/);
+  assert.equal(che.saved.get(DISPROVEN_CLAIMS_KEY), undefined, 'nothing is recorded as false');
+});
+
+test('code the owner pasted counts as read; two verified links both back a claim', async () => {
+  useWeb({ list: listings({ gdelt: [MEDGEMMA_LISTING, VERGE_LISTING] }) });
+  const pasted = await (await owner({ model: () => "I've reviewed your code: the loop stops one item early." }))
+    .say('What is wrong with this?\n```js\nfor (let i = 0; i < items.length - 1; i++) total += items[i];\n```');
+  assert.match(pasted.reply, /^I've reviewed your code: the loop stops one item early\./);
+
+  const both = await (await owner({ model: () => `Google released MedGemma, as reported at ${MEDGEMMA_URL} and ${VERGE_URL}.` })).say(NEWS_QUESTION);
+  assert.match(both.reply, /^Google released MedGemma, as reported at/);
+  assert.match(both.reply, /2 independent outlets I opened report it\./);
+});
+
+test('outside news, a link that does not back an unattributed sentence is said plainly, not deleted', async () => {
+  useWeb({ down: false });
+  const che = await owner({ model: () => 'MedGemma 4B runs on a single GPU; see the source at https://research.google/blog/medgemma-open-models/ for MedGemma details and the H100 setup.' });
+  const out = await che.say('Can MedGemma run on one GPU?');
+  assert.match(out.reply, /^MedGemma 4B runs on a single GPU/);
+  assert.match(out.reply, /\n\nThe research\.google page does not mention GPU, so it does not back what I said there\./);
+});

@@ -137,6 +137,7 @@ void main() {
       final said = await CheUiVoiceCommand.parse('use the earpiece')!.apply(CheUiPreferences.instance);
       expect(said, contains('Install the newest CHE build from Updates to use the earpiece.'));
       expect(CheNativeVoice.bridgePresent, isTrue);
+      expect(CheUiPreferences.instance.audioOutput, CheAudioOutput.auto, reason: 'not saved where it cannot work');
     });
   });
 }

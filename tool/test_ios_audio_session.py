@@ -67,6 +67,7 @@ class IosAudioSessionTest(unittest.TestCase):
         observers = function(self.swift, "private func installAudioObservers()")
         self.assertIn("AVAudioSession.routeChangeNotification", observers)
         self.assertIn("AVAudioSession.interruptionNotification", observers)
+        self.assertIn(".categoryChange", observers, "a category reset that falls back to the earpiece is corrected")
         self.assertIn(".AVAudioEngineConfigurationChange", observers)
         # A restart storm is impossible: only a stopped engine, a while after a start.
         self.assertIn("!self.audioEngine.isRunning", observers)
@@ -83,6 +84,10 @@ class IosAudioSessionTest(unittest.TestCase):
         self.assertIn("min(-19 - rmsDb, -1 - peakDb, 12)", loud, "never past -1 dBFS peak, at most +12 dB")
         echo = function(self.swift, "private func looksLikeAssistantEcho(")
         self.assertIn("stopWords", echo, "the owner's 'stop' over her voice still interrupts")
+        # Common words never make an interruption look like her own echo.
+        self.assertIn("guard meaningful.count >= 3 else { return false }", echo)
+        prefer = function(self.swift, "private func setOutputPreference(")
+        self.assertNotIn("guard preference != outputPreference else { return }", prefer, "an unchanged choice still re-applies the route")
 
     def test_status_reports_the_new_abilities(self):
         self.assertIn('"output_route_control": true', self.swift)

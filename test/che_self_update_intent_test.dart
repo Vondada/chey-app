@@ -295,6 +295,8 @@ Again: ANSWER IN CHAT ONLY. ZERO REPOSITORY CHANGES. NO PR.''';
       'What did you release today?',
       'What is the capital of France?',
       'Release the lock on the front door',
+      'I have good news, I got the job',
+      'My screen keeps breaking',
     ]) {
       expect(cheNeedsLiveSources(q), isFalse, reason: q);
     }
