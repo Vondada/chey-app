@@ -23,7 +23,7 @@
   - `topic_scout.js` → `faceless_video.js` → `github_video_renderer.js` / `moneyprinter.js` → `youtube_upload.js`.
   - `video_line.js` orchestrates them.
 - **Coding:** `self_development.js`, `coding_runtime.js`, and the OpenCode runner `.github/workflows/che-opencode-runtime.yml`.
-- **Command Center:** `command_catalog.js` holds the 71 commands, their routes, connectors, search and suggestions. Slash dispatch, `/api/commands*` and `runCommandJob` live in `worker.js`; workflows are `command` nodes in `objective_graph.js`. Every command's route is asserted in `command_center.test.mjs`.
+- **Command Center:** `command_catalog.js` holds the 77 commands (71 + 6 REA), their routes, connectors, search and suggestions. Slash dispatch, `/api/commands*` and `runCommandJob` live in `worker.js`; workflows are `command` nodes in `objective_graph.js`. Every command's route is asserted in `command_center.test.mjs`.
 
 ## Flutter (`lib/`)
 - **Shell:** `lib/main.dart`. `_CHEHomeState` is split into `lib/home_state/*.dart` (voice, microphone, send, security, hub_rooms, memory).

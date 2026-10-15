@@ -1,0 +1,181 @@
+name: CHE REA analysis
+
+# Static reverse-engineering analysis of one public npm package at an exact
+# version, with the pinned REA 6.5.0 (tools/rea/package-lock.json). Nothing from
+# the package is executed: the analysis reads files, and the install runs with
+# scripts and optional packages off. The analysis job gets no credentials. Only
+# the publisher job can write, and it writes one bounded summary JSON to the
+# che-mailbox branch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: CHE REA job id (rea-xxxxxxxx)
+        required: true
+        type: string
+      target:
+        description: Public npm package at one exact version (npm:name@version)
+        required: true
+        type: string
+      expected_integrity:
+        description: The npm registry sha512 integrity for that tarball
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: che-rea-${{ inputs.job_id }}
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      JOB_ID: ${{ inputs.job_id }}
+      TARGET: ${{ inputs.target }}
+      EXPECTED_INTEGRITY: ${{ inputs.expected_integrity }}
+    steps:
+      - name: Checkout the analyzer code (no credentials kept)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Validate the job inputs
+        id: validate
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/rea"
+          mkdir -p "$WORK/pack" "$WORK/app"
+          echo "WORK=$WORK" >> "$GITHUB_ENV"
+          node tools/rea/analyze.mjs validate >> "$GITHUB_ENV"
+
+      - name: Fetch the exact tarball and check it against the registry checksum
+        id: fetch
+        run: |
+          set -euo pipefail
+          cd "$WORK/pack"
+          npm pack "${PKG_NAME}@${PKG_VERSION}" --ignore-scripts --silent --pack-destination "$WORK/pack" > "$WORK/pack/name.txt"
+          TARBALL="$WORK/pack/$(tail -n 1 "$WORK/pack/name.txt")"
+          cd "$GITHUB_WORKSPACE"
+          node tools/rea/analyze.mjs check-archive "$TARBALL" "$EXPECTED_INTEGRITY"
+          tar -xzf "$TARBALL" -C "$WORK/app" --no-same-owner --no-same-permissions
+
+      - name: Install the pinned REA (lockfile, no install scripts, no optional packages)
+        id: install
+        working-directory: tools/rea
+        run: npm ci --ignore-scripts --omit=optional --no-audit --no-fund
+
+      - name: Run REA static analysis within fixed limits
+        id: analyze
+        run: |
+          set +e
+          timeout --kill-after=30 600 node tools/rea/node_modules/rea-agents/scripts/rea.mjs \
+            analyze-javascript-application "$WORK/app/package" \
+            --format json --analysis-timeout-ms 300000 --max-heap-mb 1024 \
+            > "$WORK/evidence.json" 2> "$WORK/progress.txt"
+          code=$?
+          echo "REA_EXIT=$code" >> "$GITHUB_ENV"
+          exit $code
+
+      - name: Reduce the evidence to the bounded summary
+        if: always()
+        env:
+          FETCH_OUTCOME: ${{ steps.fetch.outcome }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          ANALYZE_OUTCOME: ${{ steps.analyze.outcome }}
+        run: |
+          set -uo pipefail
+          REASON=""
+          if [ "$FETCH_OUTCOME" != "success" ]; then REASON="The package could not be fetched and verified. Nothing was analyzed.";
+          elif [ "$INSTALL_OUTCOME" != "success" ]; then REASON="The pinned REA could not be installed.";
+          elif [ "$ANALYZE_OUTCOME" != "success" ]; then REASON="REA did not finish within its limits (exit ${REA_EXIT:-unknown}).";
+          fi
+          node tools/rea/analyze.mjs reduce --job "$JOB_ID" --name "${PKG_NAME:-}" --version "${PKG_VERSION:-}" \
+            --integrity "$EXPECTED_INTEGRITY" --exit "${REA_EXIT:-1}" --reason "$REASON" \
+            --evidence "$WORK/evidence.json" --stderr "$WORK/progress.txt" --out "$WORK/summary.json"
+
+      - name: Keep the summary for the publisher
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rea-summary-${{ inputs.job_id }}
+          path: ${{ runner.temp }}/rea/summary.json
+          if-no-files-found: warn
+          retention-days: 3
+
+  # Only this job can write, and it runs no package code. It copies the summary
+  # into the mailbox; CHE checks the record again before using it.
+  publish:
+    needs: analyze
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Fetch the summary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rea-summary-${{ inputs.job_id }}
+          path: ${{ runner.temp }}/summary
+        continue-on-error: true
+
+      - name: Write the record to che-mailbox
+        uses: actions/github-script@v7
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+          TARGET: ${{ inputs.target }}
+          EXPECTED_INTEGRITY: ${{ inputs.expected_integrity }}
+          SUMMARY_DIR: ${{ runner.temp }}/summary
+          ANALYZE_RESULT: ${{ needs.analyze.result }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fs = require('fs');
+            const jobId = String(process.env.JOB_ID || '');
+            if (!/^rea-[0-9a-f]{8}$/.test(jobId)) throw new Error('Invalid REA job id.');
+            let record = null;
+            try {
+              const text = fs.readFileSync(`${process.env.SUMMARY_DIR}/summary.json`, 'utf8');
+              if (text.length <= 65536) record = JSON.parse(text);
+            } catch (_) {
+              record = null;
+            }
+            if (!record || record.schema !== 'che.rea-summary.v1' || record.job_id !== jobId) {
+              const [, name = 'unknown', version = 'unknown'] = String(process.env.TARGET || '').match(/^npm:(.+)@([^@]+)$/) || [];
+              record = {
+                schema: 'che.rea-summary.v1',
+                job_id: jobId,
+                state: 'failed',
+                error: `The analysis produced no summary (job result: ${process.env.ANALYZE_RESULT}).`,
+                target: { kind: 'npm', name, version, integrity: process.env.EXPECTED_INTEGRITY || '' },
+                tool: { name: 'rea-agents', version: '6.5.0' },
+              };
+            }
+            const path = `mailbox/rea/${jobId}.json`;
+            try {
+              await github.rest.repos.createOrUpdateFileContents({
+                ...context.repo,
+                path,
+                branch: 'che-mailbox',
+                message: `REA result: ${jobId} (${record.state})`,
+                content: Buffer.from(`${JSON.stringify(record, null, 1)}\n`).toString('base64'),
+              });
+            } catch (error) {
+              if (error.status === 409 || error.status === 422) {
+                core.info('A result already exists for this job; nothing was overwritten.');
+                return;
+              }
+              throw error;
+            }

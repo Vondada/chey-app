@@ -29,7 +29,7 @@ const MISSION_IDS = {
   intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-recover', 'che-status'],
   youtube: ['yt-ideas', 'yt-research', 'yt-script', 'yt-video', 'yt-voice', 'yt-thumbnail', 'yt-seo', 'yt-publish', 'yt-batch', 'yt-analytics', 'yt-grow'],
   trading: ['trade-open', 'trade-chart', 'trade-setup', 'trade-liquidity', 'trade-risk', 'trade-backtest', 'trade-journal', 'trade-alert', 'trade-execute'],
-  build: ['site-build', 'site-redesign', 'site-audit', 'site-publish', 'app-build', 'app-fix', 'ai-build', 'code-review', 'che-release', 'iphone-update'],
+  build: ['site-build', 'site-redesign', 'site-audit', 'site-publish', 'app-build', 'app-fix', 'ai-build', 'code-review', 'che-release', 'iphone-update', 'rea-inspect', 'rea-explain', 'rea-debug', 'rea-compare', 'rea-rebuild', 'rea-status'],
   money: ['money-dashboard', 'cashflow', 'budget', 'expenses', 'invoices', 'money-forecast', 'pricing', 'profit-report'],
   clients: ['lead-scout', 'lead-audit', 'lead-score', 'lead-match', 'lead-proposal', 'lead-outreach', 'lead-crm', 'lead-followup', 'client-deliver'],
   marketing: ['brand-build', 'marketing-plan', 'social-content', 'ads-plan', 'seo-growth', 'sales-funnel', 'business-launch'],
@@ -100,9 +100,9 @@ async function owner({ saved = new Map(), model = () => 'Here is the answer, sir
 
 // ─── 1. Catalog identities ────────────────────────────────────────────────
 
-test('1. all 71 commands exist exactly as the owner listed them, in 8 categories, each fully described', () => {
-  assert.equal(COMMANDS.length, 71);
-  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 71, 'ids are unique');
+test('1. the owner\'s 71 commands exist exactly as listed, plus six REA commands, in 8 categories, each fully described', () => {
+  assert.equal(COMMANDS.length, 77);
+  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 77, 'ids are unique');
   assert.deepEqual(CATEGORIES.map((c) => c.id), Object.keys(MISSION_IDS));
   for (const [category, ids] of Object.entries(MISSION_IDS)) {
     assert.deepEqual(COMMANDS.filter((c) => c.category === category).map((c) => c.id), ids, category);
@@ -153,7 +153,7 @@ test('2. availability comes from real configuration: ready, needs setup, unsuppo
   const expired = connectorStatus({ CHE_TRADOVATE_OAUTH_CLIENT_ID: 'x', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'y' }, { broker: { expired: true } });
   assert.equal(expired.broker.state, 'needs_reconnect');
   const view = catalogView(bare);
-  assert.equal(view.commands.length, 71);
+  assert.equal(view.commands.length, 77);
   assert.ok(view.commands.every((c) => ['available', 'setup_required', 'unsupported', 'temporarily_unavailable'].includes(c.status)));
 });
 
@@ -557,7 +557,7 @@ test('the Flutter catalog fixture matches what the Worker serves (regenerate: no
   const { fixtureCatalog } = await import('../../tool/dump_command_catalog.mjs');
   const fixture = JSON.parse(readFileSync(new URL('../../test/fixtures/command_catalog.json', import.meta.url), 'utf8'));
   assert.deepEqual(fixture, JSON.parse(JSON.stringify(fixtureCatalog())));
-  assert.equal(fixture.commands.length, 71);
+  assert.equal(fixture.commands.length, 77);
   assert.ok(fixture.templates.length >= 4);
 });
 
@@ -586,4 +586,80 @@ test('the deploy probe checks the live Command Center on an isolated CHE and rep
   assert.equal(report.readiness.connectors.voice, 'ready');
   assert.doesNotMatch(JSON.stringify(report), /el_secret_value/);
   assert.ok(!states.has('owner') || !(await states.get('owner').loadData()).memories?.length, 'the owner\'s memory is untouched');
+});
+
+// ─── 9. REA through the real chat (read-only, pinned, never a coding job) ──
+
+const REA_SEMVER = JSON.parse(readFileSync(new URL('./fixtures/rea/semver-7.7.2.summary.json', import.meta.url), 'utf8'));
+
+// Answers only the npm registry and the GitHub calls REA makes, and records every call.
+async function withGitHub({ resultFor = () => undefined } = {}, run) {
+  const offline = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input?.url || input);
+    const method = String(init.method || 'GET').toUpperCase();
+    seen.push(`${method} ${url}`);
+    if (url === 'https://registry.npmjs.org/semver/7.7.2') {
+      return new Response(JSON.stringify({ name: 'semver', version: '7.7.2', license: 'MIT', dist: { integrity: REA_SEMVER.target.integrity } }), { status: 200 });
+    }
+    if (method === 'POST' && url.endsWith('/actions/workflows/che-rea-analysis.yml/dispatches')) return new Response(null, { status: 204 });
+    const record = url.match(/mailbox\/rea\/(rea-[0-9a-f]{8})\.json/);
+    if (record && method === 'GET') {
+      const body = resultFor(record[1]);
+      return body ? new Response(JSON.stringify({ content: Buffer.from(JSON.stringify(body)).toString('base64') }), { status: 200 }) : new Response('{"message":"Not Found"}', { status: 404 });
+    }
+    return new Response('{"message":"unexpected"}', { status: 500 });
+  };
+  try { return await run(seen); } finally { globalThis.fetch = offline; }
+}
+
+test('an REA request reaches its own read-only route: one analysis run, no model call, no coding job', async () => {
+  await withGitHub({}, async (seen) => {
+    const che = await owner({ env: READY_ENV });
+    const out = await che.say('REA inspect: npm:semver@7.7.2');
+    assert.equal(out.route, 'che_rea');
+    assert.equal(out.modelCalls, 0);
+    assert.match(out.reply, /started for npm semver 7\.7\.2 \(MIT\)/);
+    const posts = seen.filter((s) => s.startsWith('POST'));
+    assert.equal(posts.length, 1, 'exactly one dispatch');
+    assert.match(posts[0], /\/actions\/workflows\/che-rea-analysis\.yml\/dispatches$/);
+    assert.equal((che.saved.get('che')?.jobs || []).length, 0, 'no coding job was created');
+    assert.equal(che.saved.get('rea_jobs').length, 1);
+  });
+});
+
+test('a read-only REA request that asks for a fix still starts no coding job, commit or pull request', async () => {
+  await withGitHub({}, async (seen) => {
+    const che = await owner({ env: READY_ENV });
+    const out = await che.say('REA debug: npm:semver@7.7.2 fix the range parser and open a pull request');
+    assert.equal(out.route, 'che_rea');
+    assert.equal(seen.filter((s) => s.startsWith('POST')).length, 1, 'only the analysis run');
+    assert.equal((che.saved.get('che')?.jobs || []).length, 0);
+  });
+});
+
+test('a finished REA run is answered in chat from its recorded evidence, and reading it dispatches nothing', async () => {
+  let finished = false;
+  await withGitHub({ resultFor: (id) => (finished ? { ...REA_SEMVER, job_id: id } : undefined) }, async (seen) => {
+    const che = await owner({ env: READY_ENV });
+    await che.say('REA inspect: npm:semver@7.7.2');
+    finished = true;
+    const out = await che.say('REA status');
+    assert.equal(out.route, 'che_rea');
+    assert.equal(out.modelCalls, 0);
+    assert.match(out.reply, /Evidence ev_01ccdb10/);
+    assert.match(out.reply, /Limitations REA reported/);
+    assert.equal(seen.filter((s) => s.startsWith('POST')).length, 1, 'reading a result dispatches nothing');
+  });
+});
+
+test('without a GitHub connection an REA request says so plainly and runs nothing', async () => {
+  await withGitHub({}, async (seen) => {
+    const che = await owner();
+    const out = await che.say('REA inspect: npm:semver@7.7.2');
+    assert.equal(out.route, 'che_rea');
+    assert.match(out.reply, /has no GitHub connection/);
+    assert.equal(seen.filter((s) => s.startsWith('POST')).length, 0);
+  });
 });
