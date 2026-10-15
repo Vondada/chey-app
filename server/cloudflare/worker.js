@@ -492,20 +492,26 @@ async function commandCenterProbe(env, token) {
   // a probe-token-gated endpoint; never pretend an unknown count is zero.
   let readiness;
   try {
-    // The owner's object keeps the env it was created with, so this deploy's probe token is
-    // handed to it first. Without that, a token issued by a new deploy is refused (HTTP 404).
     const owner = env.CHE_STATE.getByName('owner');
-    if (typeof owner.setVoiceSecrets === 'function') {
-      await owner.setVoiceSecrets({ ...voiceSecretsFrom(env), CHE_VOICE_PROBE_TOKEN: String(env.CHE_VOICE_PROBE_TOKEN || '') });
+    if (typeof owner.commandReadiness === 'function') {
+      // Asked of the owner's object directly, as the voice probe asks it. There is no token to
+      // hand over, so a stored env cannot refuse this deploy's check.
+      readiness = await owner.commandReadiness();
+    } else {
+      // A stub that exposes only fetch(): hand this deploy's token over first, then ask the route.
+      // Without that, the object keeps the env it was created with and refuses the token (HTTP 404).
+      if (typeof owner.setVoiceSecrets === 'function') {
+        await owner.setVoiceSecrets({ ...voiceSecretsFrom(env), CHE_VOICE_PROBE_TOKEN: String(env.CHE_VOICE_PROBE_TOKEN || '') });
+      }
+      const response = await owner.fetch(new Request('https://che.internal/api/commands/readiness', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: '{}',
+      }));
+      if (!response.ok) throw new Error(`Readiness request returned HTTP ${response.status}`);
+      readiness = await response.json();
     }
-    const response = await owner.fetch(new Request('https://che.internal/api/commands/readiness', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: '{}',
-    }));
-    if (!response.ok) throw new Error(`Readiness request returned HTTP ${response.status}`);
-    readiness = await response.json();
-    if (!Number.isInteger(readiness.available) || !Array.isArray(readiness.setup_required)) {
+    if (!Number.isInteger(readiness?.available) || !Array.isArray(readiness?.setup_required)) {
       throw new Error('Readiness count was not returned');
     }
   } catch (error) {

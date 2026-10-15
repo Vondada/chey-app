@@ -459,7 +459,7 @@ jobs:
           summary(`**Command Center (live Worker):** ${report.passed}/${report.total} live checks passed; ${r.available ?? '?'} commands ready on the owner's CHE; needs setup: ${setup.join('; ') || 'none'}.`);
           for (const step of (report.steps || []).filter((s) => !s.pass && s.optional)) console.log(`::warning title=Command Center check::${step.name}: ${String(step.reply).slice(0, 200)}`);
           if (!report.ok) {
-            console.log(`::error title=Command Center check failed::${(report.steps || []).filter((s) => !s.pass && !s.optional).map((s) => s.name).join('; ') || report.error || 'see log'}`);
+            console.log(`::error title=Command Center check failed::${(report.steps || []).filter((s) => !s.pass && !s.optional).map((s) => s.name).join('; ') || (report.readiness && report.readiness.error) || report.error || 'see log'}`);
             process.exit(1);
           }
           JS
