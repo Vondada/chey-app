@@ -139,6 +139,7 @@ void main() {
       return {'route': route, 'outputs': const [], 'output_volume': 0.7};
     });
     addTearDown(() => messenger.setMockMethodCallHandler(const MethodChannel('che/native_voice'), null));
+    final announced = listenForAnnouncements();
     final semantics = tester.ensureSemantics();
 
     await tester.pumpWidget(const MaterialApp(home: CheUiControlsScreen()));
@@ -158,7 +159,46 @@ void main() {
     expect(native.where((c) => c.method == 'setAudioOutput').single.arguments, 'receiver');
     expect(find.textContaining('The earpiece: hold the iPhone to your ear. Now playing through the earpiece.'), findsOneWidget);
     expect(find.textContaining("CHE's voice (ElevenLabs and Fish) plays at this level."), findsOneWidget);
+    // Codex on #315: the choice is reported, seen and heard, like the spoken command.
+    const done = 'Done. I will speak through the earpiece. Hold the iPhone to your ear. Right now I am playing through the earpiece.';
+    expect(find.descendant(of: find.byType(SnackBar), matching: find.text(done)), findsOneWidget);
+    expect(announced, [done]);
     semantics.dispose();
     await CheUiPreferences.instance.setAudioOutput(CheAudioOutput.auto);
   });
+
+  testWidgets('UI Controls: an earpiece choice an older build cannot apply is reported, not silently ignored', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await CheUiPreferences.instance.load();
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    // An older iPhone build: no route calls, so the bridge answers nothing.
+    messenger.setMockMethodCallHandler(const MethodChannel('che/native_voice'), (call) async => null);
+    addTearDown(() => messenger.setMockMethodCallHandler(const MethodChannel('che/native_voice'), null));
+    final announced = listenForAnnouncements();
+
+    await tester.pumpWidget(const MaterialApp(home: CheUiControlsScreen()));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('Audio output'), 200);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Earpiece'));
+    await tester.pumpAndSettle();
+    const why = 'This CHE build always speaks through the loudspeaker. Install the newest CHE build from Updates to use the earpiece.';
+    expect(CheUiPreferences.instance.audioOutput, CheAudioOutput.auto, reason: 'nothing was changed');
+    expect(find.descendant(of: find.byType(SnackBar), matching: find.text(why)), findsOneWidget);
+    expect(announced, [why]);
+  });
+}
+
+/// What VoiceOver is asked to read aloud.
+List<String> listenForAnnouncements() {
+  final said = <String>[];
+  final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  messenger.setMockDecodedMessageHandler<Object?>(SystemChannels.accessibility, (message) async {
+    final map = message as Map?;
+    final data = map?['data'];
+    if (map?['type'] == 'announce' && data is Map) said.add(data['message'] as String);
+    return null;
+  });
+  addTearDown(() => messenger.setMockDecodedMessageHandler<Object?>(SystemChannels.accessibility, null));
+  return said;
 }

@@ -196,11 +196,22 @@ export async function markPureResearch(storage, question) {
   if (record && !record.pure) await storage.put(key, { ...record, pure: true });
 }
 
-export async function cachedResearch(storage, question, research, now = Date.now()) {
+export async function cachedResearch(storage, question, research, now = Date.now(), { reopen = null } = {}) {
   const key = researchKey(question);
   const hit = await recallKnowledge(storage, key, { now });
   if (hit && ['source_backed', 'source_verified'].includes(hit.verification_status)) {
-    return { summary: hit.answer, sources: hit.sources, limitation: hit.limitation || undefined, cached: true, verified_at: hit.verified_at, ...(hit.articles ? { articles: hit.articles, engine: 'news' } : {}) };
+    if (!hit.articles?.length) {
+      return { summary: hit.answer, sources: hit.sources, limitation: hit.limitation || undefined, cached: true, verified_at: hit.verified_at };
+    }
+    // Saved news articles are receipts only once reopened now: a page that
+    // has since gone, moved or changed its headline means new research.
+    const articles = reopen ? await reopen(hit.articles).catch(() => null) : null;
+    if (articles?.length === hit.articles.length) {
+      return {
+        summary: hit.answer, sources: articles.map((a) => a.final_url || a.url), limitation: hit.limitation || undefined,
+        cached: true, reopened: true, verified_at: hit.verified_at, articles, engine: 'news',
+      };
+    }
   }
   const fresh = await research();
   if (fresh?.summary && Array.isArray(fresh.sources) && fresh.sources.some((s) => /^https:\/\//i.test(String(s)))) {

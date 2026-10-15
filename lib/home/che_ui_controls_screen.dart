@@ -1,11 +1,13 @@
 // UI Controls — live Appearance + Voice reply settings (More → UI Controls).
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../che_native_voice.dart';
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_ui_preferences.dart';
+import '../che_ui/che_ui_voice_command.dart';
 import '../che_ui/che_widgets.dart';
 
 class CheUiControlsScreen extends StatelessWidget {
@@ -168,10 +170,18 @@ class CheUiControlsScreen extends StatelessWidget {
                       options: const ['Automatic', 'Speaker', 'Earpiece'],
                       index: prefs.audioOutput.index,
                       onChanged: (i) async {
-                        final output = CheAudioOutput.values[i];
+                        final view = View.maybeOf(context);
+                        final banner = ScaffoldMessenger.maybeOf(context);
+                        final direction = Directionality.of(context);
                         // The iPhone first, so the line below reads the new route.
-                        final report = await CheNativeVoice.setAudioOutput(output.name);
-                        if (report != null || output != CheAudioOutput.receiver) await prefs.setAudioOutput(output);
+                        final result = await cheSetAudioOutput(CheAudioOutput.values[i]);
+                        // The owner's choice is reported, done or not: a banner,
+                        // a haptic and VoiceOver, as the spoken command says it.
+                        result.applied ? HapticFeedback.lightImpact() : HapticFeedback.heavyImpact();
+                        banner
+                          ?..hideCurrentSnackBar()
+                          ..showSnackBar(SnackBar(content: Text(result.text)));
+                        if (view != null) SemanticsService.sendAnnouncement(view, result.text, direction);
                       },
                     ),
                     const SizedBox(height: CheSpace.xs),

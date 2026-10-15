@@ -53,7 +53,7 @@ import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listA
 import { MODE_NAME, chooseAccount, deskIntent, rememberListed, deskTick, pendingAlert, readDesk, setMode, setRiskLimits, setSize, skipTrade, speakAlert, speakDeskStatus, takeAnnouncement, takeTrade } from './trading_desk.js';
 import { externalGrounding } from './external_grounding.js';
 import { answerEvidenceReceipt, cachedResearch, evidenceReferenceFollowup, factKey, forgetKnowledge, invalidateKnowledge, knownAnswer, LAST_ANSWER_EVIDENCE_KEY, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
-import { claimMatcher, disprovenContext, downgradeDisproven, externalCorrection, guardCitations, loadDisproven, newsQuestion, newsResearch, recheckExternalClaim, recordDisproven, verifiedSourcesContext } from './source_verification.js';
+import { claimMatcher, disprovenContext, downgradeDisproven, externalCorrection, guardCitations, loadDisproven, newsQuestion, newsResearch, reopenArticles, recheckExternalClaim, recordDisproven, verifiedSourcesContext } from './source_verification.js';
 import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliability } from './reliability_ledger.js';
 import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, guardOwnerAttributions, guardRememberBlock, latestAnswerEvidence, loadRetractions, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storyRequested } from './memory_provenance.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
@@ -9190,7 +9190,7 @@ export class CheState extends DurableObject {
           // Verified research is reused until it expires (30 minutes for
           // prices/news/weather, 7 days otherwise) instead of re-researched.
           shouldResearch
-            ? cachedResearch(this.ctx.storage, message, () => optionalResearch(this.env, message))
+            ? cachedResearch(this.ctx.storage, message, () => optionalResearch(this.env, message), Date.now(), { reopen: (saved) => reopenArticles(saved) })
             : Promise.resolve(null),
           useModelPanel
             ? modelPanel(this.env, message)

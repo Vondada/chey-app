@@ -350,6 +350,24 @@ export async function newsResearch(message, { fetcher = fetch, now = Date.now(),
   };
 }
 
+/**
+ * Saved articles reopened before they are used again: each must still exist
+ * and carry its headline. Returns the refreshed articles, or null when any
+ * one no longer holds (the caller then researches afresh).
+ */
+export async function reopenArticles(articles, { fetcher = fetch, now = Date.now(), timeoutMs = 4500 } = {}) {
+  const list = Array.isArray(articles) ? articles : [];
+  if (!list.length) return null;
+  const pages = await Promise.all(list.map((a) => fetchArticle(a.final_url || a.url, { fetcher, timeoutMs, now })));
+  const fresh = [];
+  for (const [i, page] of pages.entries()) {
+    const saved = list[i];
+    if (!page.ok || titleMatch(saved.title, `${page.title} ${page.page_title || ''}`) < 0.5) return null;
+    fresh.push({ ...saved, ...page, listed_title: saved.listed_title, listing: saved.listing, outlets: saved.outlets, published: page.published || saved.published });
+  }
+  return fresh;
+}
+
 /** Prompt block: the articles retrieved this turn, the only news CHE may state as reported. */
 export function verifiedSourcesContext(research) {
   const articles = Array.isArray(research?.articles) ? research.articles.filter((a) => a.ok) : [];
@@ -443,11 +461,18 @@ const PLAIN_WORDS = new Set(('that this these those with from into onto over und
   + 'their there they them have been were will would could should also just only more most much many some very what said says reported '
   + 'today tonight yesterday tomorrow week month year morning evening night earlier later recently latest newest biggest major story '
   + 'stories news headline headlines announcement company companies sir').split(' '));
-const ABOUT_THE_CONVERSATION = /^\W*(?:i|i'm|i'll|i've|i'd|we|we're|we'll|you|you're|your|let me|ask me|want me|would you|shall i|should i|if you)\b/i;
+// An offer, a question to the owner or CHE saying what she could not do is
+// about the conversation; "I found that Apple launched…" still reports news.
+const ABOUT_THE_CONVERSATION = new RegExp('^\\W*(?:(?:sir|okay|ok|so|well|also|and|but)\\W+)*(?:would you|do you|want me|shall i|should i|let me|ask me|if you'
+  + "|i (?:could not|couldn't|cannot|can't|did not|didn't|was unable|wasn't able|have not|haven't|won't)"
+  + "|i(?:'ll| will| can) (?:try|retry|check|look|search|dig|open|read|keep|follow|report back|let you know|tell you more|share more|go deeper))\\b", 'i');
+// In a news answer an event is any reported action: "launched", "expanded",
+// "says", "will open", not only the verbs in EVENT.
+const NEWS_EVENT = new RegExp(`${EVENT.source}|\\b[a-z]{3,}ed\\b|\\b(?:says|said|plans?|agreed|confirm(?:s|ed)?|will)\\b`, 'i');
 
 export function eventClaim(sentence) {
   const text = String(sentence || '').replace(URL_RE, ' ').trim();
-  if (!EVENT.test(text) || /\?\s*$/.test(text) || ABOUT_THE_CONVERSATION.test(text)) return null;
+  if (!NEWS_EVENT.test(text) || /\?\s*$/.test(text) || ABOUT_THE_CONVERSATION.test(text)) return null;
   // Labelled background ("companies usually announce models in the fall") is not a report of an event.
   if (/\b(?:in general|generally|typically|usually|often|tend to|as background|general background)\b/i.test(text)) return null;
   let subject = '';
@@ -459,7 +484,7 @@ export function eventClaim(sentence) {
   }
   const words = [...new Set((text.toLowerCase().match(/[a-z][a-z0-9'’-]{3,}/g) || [])
     .map((w) => w.replace(/['’]s$/, ''))
-    .filter((w) => !PLAIN_WORDS.has(w) && !EVENT.test(w) && !MONTHS.includes(w) && !/day$/.test(w)))];
+    .filter((w) => !PLAIN_WORDS.has(w) && !EVENT.test(w) && !/^[a-z]{3,}ed$/.test(w) && !MONTHS.includes(w) && !/day$/.test(w)))];
   return words.length >= 2 ? { subject, words } : null;
 }
 
@@ -658,7 +683,8 @@ export async function guardCitations(reply, {
     // In a news answer, a plain event ("Apple launched a thinner phone
     // today.") needs an opened article too, not only one with coined names.
     const plainEvent = news && !specific ? eventClaim(sentence) : null;
-    const newsClaim = Boolean(news) && ((specific && (EVENT.test(sentence) || m.terms.hard.length > 0)) || Boolean(plainEvent));
+    const reportsNews = !/\?\s*$/.test(sentence) && !ABOUT_THE_CONVERSATION.test(sentence) && (NEWS_EVENT.test(sentence) || m.terms.hard.length > 0);
+    const newsClaim = Boolean(news) && ((specific && reportsNews) || Boolean(plainEvent));
     if (!(m.cites || m.hit || newsClaim)) return { keep: true, support: [] };
     if (!candidates.length) {
       if (!strict) {
@@ -688,8 +714,9 @@ export async function guardCitations(reply, {
       candidates = backing;
     }
     // Only a claim attributed to a source earns a line in "Sources I opened".
-    if (m.outlets.length || m.quoted.length || m.publishedOn || newsClaim) candidates.forEach((c) => used.add(c));
-    return { keep: true, support: candidates };
+    const attributed = Boolean(m.outlets.length || m.quoted.length || m.publishedOn || newsClaim);
+    if (attributed) candidates.forEach((c) => used.add(c));
+    return { keep: true, support: candidates, attributed };
   });
 
   // A sentence that only carries the name of something removed rests on it.
@@ -728,6 +755,22 @@ export async function guardCitations(reply, {
   const substantive = kept.replace(/\b(?:sir|certainly|sure|okay|of course|here(?:'s| is) (?:what|the)[^.]*|great question)\b/gi, '').replace(/[^A-Za-z0-9]+/g, '').length > 30;
   const reasons = [...new Set(removed.map((r) => r.reason))];
   const usedList = [...used];
+  // Corroboration is per story: sentences resting on a shared page are one
+  // story, and a story counts the outlets that back one of its claims, so
+  // two outlets reporting two different events confirm neither.
+  const stories = [];
+  verdicts.forEach((v) => {
+    if (!v.keep || !v.attributed || !v.support.length) return;
+    const outlets = new Set(v.support.map((p) => p.host || p.publisher)).size;
+    const joined = stories.filter((st) => v.support.some((p) => st.pages.has(p)));
+    const story = { pages: new Set(v.support), outlets };
+    for (const st of joined) {
+      st.pages.forEach((p) => story.pages.add(p));
+      story.outlets = Math.max(story.outlets, st.outlets);
+      stories.splice(stories.indexOf(st), 1);
+    }
+    stories.push(story);
+  });
   const newsGap = news && !good.length;
   let note = '';
   if (removed.length) {
@@ -745,7 +788,7 @@ export async function guardCitations(reply, {
   if (unopened.length && substantive) {
     note = `${note} I did not open ${[...new Set(unopened)].slice(0, 3).join(', ')} just now, so treat ${unopened.length === 1 ? 'that reference' : 'those references'} as from memory, not checked.`.trim();
   }
-  const footer = usedList.length ? sourcesFooter(usedList, news) : '';
+  const footer = usedList.length ? sourcesFooter(usedList, news, stories.map((st) => st.outlets)) : '';
   note = note.charAt(0).toUpperCase() + note.slice(1);
   return {
     text: [kept, note, footer].filter(Boolean).join('\n\n'),
@@ -754,12 +797,21 @@ export async function guardCitations(reply, {
 }
 
 /** "Sources I opened: …", plus how many independent outlets carry the story. */
-export function sourcesFooter(pages, news = false) {
+export function sourcesFooter(pages, news = false, stories = null) {
   const shown = pages.slice(0, 3).map((p) => `${p.publisher}, "${clip(p.title, 110)}"${p.published ? ` (${spokenDay(p.published)})` : ''} ${p.final_url || p.url}`);
-  const outlets = new Set(pages.map((p) => p.host || p.publisher)).size;
-  const corroboration = news
-    ? outlets >= 2 ? ` ${outlets} independent outlets I opened report it.` : ' Only one outlet I opened reports this, so it is not independently confirmed.'
-    : '';
+  // Outlets backing each story; without that, all the pages are one story.
+  const counts = Array.isArray(stories) && stories.length ? stories : [new Set(pages.map((p) => p.host || p.publisher)).size];
+  const confirmed = counts.filter((n) => n >= 2).length;
+  let corroboration = '';
+  if (news && counts.length === 1) {
+    corroboration = counts[0] >= 2 ? ` ${counts[0]} independent outlets I opened report it.` : ' Only one outlet I opened reports this, so it is not independently confirmed.';
+  } else if (news) {
+    corroboration = confirmed === counts.length
+      ? ` Each of these ${counts.length} stories is reported by at least ${Math.min(...counts)} independent outlets I opened.`
+      : !confirmed
+        ? ` Each of these ${counts.length} stories comes from one outlet I opened, so none is independently confirmed.`
+        : ` ${confirmed} of these ${counts.length} stories ${confirmed === 1 ? 'is' : 'are'} reported by two or more outlets I opened; the others come from one outlet and are not independently confirmed.`;
+  }
   return `Sources I opened: ${shown.join('; ')}.${corroboration}`;
 }
 

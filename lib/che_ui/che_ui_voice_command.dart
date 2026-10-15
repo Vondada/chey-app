@@ -172,22 +172,7 @@ class CheUiVoiceCommand {
           await prefs.setVoiceVolume(v);
           return 'Done. Volume is ${(v * 100).round()} percent.';
         case 'audioOutput':
-          final output = value! as CheAudioOutput;
-          final report = await CheNativeVoice.setAudioOutput(output.name);
-          // A build that cannot use the earpiece keeps its old choice, so it
-          // is not switched on unannounced after the next update.
-          if (report != null || output != CheAudioOutput.receiver) await prefs.setAudioOutput(output);
-          final choice = switch (output) {
-            CheAudioOutput.speaker => 'I will speak through the loudspeaker, even with headphones or Bluetooth connected.',
-            CheAudioOutput.receiver => 'I will speak through the earpiece. Hold the iPhone to your ear.',
-            CheAudioOutput.auto => 'I will use your headphones, Bluetooth, AirPlay or car when they are connected, and the loudspeaker otherwise.',
-          };
-          if (report == null) {
-            return output == CheAudioOutput.receiver
-                ? 'This CHE build always speaks through the loudspeaker. Install the newest CHE build from Updates to use the earpiece.'
-                : 'Done. $choice';
-          }
-          return 'Done. $choice Right now I am playing through ${cheAudioRouteSpoken(report)}.';
+          return (await cheSetAudioOutput(value! as CheAudioOutput)).text;
         case 'audioRoute':
           final report = await CheNativeVoice.audioRoute();
           if (report == null) {
@@ -208,4 +193,33 @@ class CheUiVoiceCommand {
     }
     return 'I could not change that setting.';
   }
+}
+
+/// Sets where CHE's voice plays and says what actually happened, for the
+/// spoken command and the UI Controls choice alike. A build that cannot use
+/// the earpiece keeps its old choice, so it is not switched on unannounced
+/// after the next update.
+Future<({bool applied, String text})> cheSetAudioOutput(CheAudioOutput output) async {
+  Map<String, dynamic>? report;
+  try {
+    report = await CheNativeVoice.setAudioOutput(output.name);
+  } catch (_) {
+    return (applied: false, text: 'I could not change where my voice plays. Nothing was changed.');
+  }
+  if (report == null && output == CheAudioOutput.receiver) {
+    return (
+      applied: false,
+      text: 'This CHE build always speaks through the loudspeaker. Install the newest CHE build from Updates to use the earpiece.',
+    );
+  }
+  await CheUiPreferences.instance.setAudioOutput(output);
+  final choice = switch (output) {
+    CheAudioOutput.speaker => 'I will speak through the loudspeaker, even with headphones or Bluetooth connected.',
+    CheAudioOutput.receiver => 'I will speak through the earpiece. Hold the iPhone to your ear.',
+    CheAudioOutput.auto => 'I will use your headphones, Bluetooth, AirPlay or car when they are connected, and the loudspeaker otherwise.',
+  };
+  return (
+    applied: true,
+    text: report == null ? 'Done. $choice' : 'Done. $choice Right now I am playing through ${cheAudioRouteSpoken(report)}.',
+  );
 }

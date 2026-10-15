@@ -485,3 +485,45 @@ test('a news request finished in the background opens articles and is checked li
   assert.match(prompt, /NO NEWS ARTICLE WAS RETRIEVED \(No news article about tech for .+ could be retrieved and checked/);
   assert.match(prompt, /SOURCE RULES/);
 });
+
+test('saved news articles are reopened before they back a reply again', async () => {
+  const pages = { ...PAGES };
+  const calls = useWeb({ list: listings({ gdelt: [MEDGEMMA_LISTING] }), pages });
+  const che = await owner({
+    model: () => `Google Research published "${MEDGEMMA_TITLE}" on October 15, 2026, releasing MedGemma, a collection of open models for medical text and image comprehension. Source: ${MEDGEMMA_URL}`,
+  });
+  const first = await che.say(NEWS_QUESTION);
+  assert.match(first.reply, /Sources I opened: Google Research/);
+
+  // Asked again within the cache's 30 minutes: the saved article is opened again.
+  calls.length = 0;
+  const again = await che.say(NEWS_QUESTION, { history: [] });
+  assert.match(again.reply, /Sources I opened: Google Research/);
+  assert.ok(calls.includes(MEDGEMMA_URL), 'the saved article was reopened');
+  assert.ok(!calls.some((u) => u.startsWith('https://api.gdeltproject.org/')), 'no new search was needed');
+
+  // The page can no longer be opened: the saved copy is not a receipt.
+  delete pages[MEDGEMMA_URL];
+  calls.length = 0;
+  const gone = await che.say(NEWS_QUESTION, { history: [] });
+  assert.doesNotMatch(gone.reply, /Sources I opened|releasing MedGemma/);
+  assert.ok(calls.some((u) => u.startsWith('https://api.gdeltproject.org/')), 'news was researched afresh');
+});
+
+test('two outlets reporting two different stories confirm neither', async () => {
+  const tesla = appleArticle({
+    url: 'https://www.reuters.com/business/tesla-robotaxi-2026-10-15/', final_url: 'https://www.reuters.com/business/tesla-robotaxi-2026-10-15/',
+    title: 'Tesla expands its robotaxi service to Austin', publisher: 'Reuters', host: 'reuters.com',
+    description: 'Tesla on Wednesday expanded its robotaxi service.', text: 'Tesla expanded its robotaxi service to Austin today.',
+  });
+  const research = { engine: 'news', articles: [appleArticle(), tesla] };
+  const two = await guardCitations('Apple launched a thinner phone today. Tesla expanded its robotaxi service to Austin.', { message: TECH_NEWS, research, fetcher: offline, now: AT });
+  assert.deepEqual(two.removed, []);
+  assert.match(two.text, /Each of these 2 stories comes from one outlet I opened, so none is independently confirmed\.$/);
+  assert.doesNotMatch(two.text, /independent outlets I opened report it/);
+
+  // Two outlets on the same story do confirm it; a second, single-outlet story does not.
+  const engadget = appleArticle({ url: 'https://www.engadget.com/apple-iphone-air.html', final_url: 'https://www.engadget.com/apple-iphone-air.html', publisher: 'Engadget', host: 'engadget.com' });
+  const mixed = await guardCitations('Apple launched a thinner phone today. Tesla expanded its robotaxi service to Austin.', { message: TECH_NEWS, research: { engine: 'news', articles: [appleArticle(), engadget, tesla] }, fetcher: offline, now: AT });
+  assert.match(mixed.text, /1 of these 2 stories is reported by two or more outlets I opened; the others come from one outlet and are not independently confirmed\.$/);
+});
