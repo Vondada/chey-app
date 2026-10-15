@@ -287,6 +287,10 @@ Again: ANSWER IN CHAT ONLY. ZERO REPOSITORY CHANGES. NO PR.''';
       "What's the latest news in tech?",
       'Did Apple announce anything today?',
       'Any breaking headlines?',
+      'Could I get AI news today',
+      'Can I have news headlines today',
+      'Can you tell me the latest news',
+      'Would you show me today\'s news',
     ]) {
       expect(cheNeedsLiveSources(q), isTrue, reason: q);
     }
