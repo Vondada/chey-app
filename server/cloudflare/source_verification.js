@@ -231,6 +231,12 @@ const TOPIC_DROP = new RegExp(`\\b(?:what|whats|what's|is|was|were|are|the|a|an|
 export function newsQuestion(message, now = Date.now()) {
   const text = String(message || '');
   if (!NEWS_WORDS.test(text) || FICTION.test(text)) return null;
+  // Personal announcements containing "news" do not request research.
+  // Short spoken questions, imperatives and news-command phrases do.
+  const request = /\?\s*$/.test(text)
+    || /^(?:(?:hey[, ]*)?(?:che|chay|chey)[,!:]?\s*)?(?:please\s+)?(?:what(?:'s| is| was)?|who|where|when|why|how|which|did|does|do|is|are|was|were|has|have|(?:can|could|would|will) you|tell me|give me|show me|find|search|check|look up|summari[sz]e|read me|list)\b/i.test(text)
+    || /^(?:(?:today['’]s|latest|breaking|top|biggest|current|recent)\s+)?(?:[a-z0-9+#-]+\s+){0,3}(?:news|headlines?)\b(?:\s+(?:today|tonight|now|this week))?[.!]?\s*$/i.test(text);
+  if (!request) return null;
   const named = /\bnews\b|\bheadlines?\b|\bbreaking\b/i.test(text);
   if (!named && !WHEN_WORDS.test(text)) return null;
   // "What did you release today?" is about the owner or CHE, not the world.
@@ -580,9 +586,9 @@ export async function guardCitations(reply, {
   const none = { text, removed: [], receipts: [], used: [], disproven: [] };
   if (!text.trim() || fiction) return none;
   const news = newsQuestion(message, now);
-  // Links the owner gave or a connector returned this turn are its own
-  // receipts; they are not opened again.
-  const given = new Set(trusted.flatMap((value) => String(value || '').match(URL_RE) || []).map(normalizeUrl));
+  // Owner and connector links are references, not proof of their content.
+  // "trusted" remains compatible with callers, but never bypasses verification
+  // for a checkable source. Private/action links are never fetched.
   const segments = pieces(text);
   const sentences = segments.map((s, i) => ({ s, i })).filter(({ s, i }) => i % 2 === 0 && s.trim());
   const marks = sentences.map(({ s }) => {
@@ -591,8 +597,9 @@ export async function guardCitations(reply, {
     // A link offered as a source (or any link in a news answer) is checked;
     // "the guide is at https://…" is not a claim about the world.
     const offered = Boolean(news) || Boolean(hit) || kind.sourceWords;
-    const urls = offered ? kind.urls.filter((u) => checkableUrl(u) && !given.has(normalizeUrl(u))) : [];
-    return { ...kind, urls, cites: kind.cites || urls.length > 0, terms: claimTerms(s), hit };
+    const urls = offered ? kind.urls.filter(checkableUrl) : [];
+    const unsafe = offered ? kind.urls.filter((u) => !checkableUrl(u)) : [];
+    return { ...kind, urls, unsafe, cites: kind.cites || urls.length > 0 || unsafe.length > 0, terms: claimTerms(s), hit };
   });
   const needsCheck = marks.some((m) => m.cites || m.hit) || (news && sentences.length);
   if (!needsCheck) return none;
@@ -629,12 +636,14 @@ export async function guardCitations(reply, {
     // News, a recent publication or a claim checked before must be backed
     // by a page opened now. An older source named from memory stays, labelled.
     const strict = Boolean(news) || Boolean(m.hit) || (m.cites && recent(sentence));
+    // A private or one-click link cannot be opened or treated as a receipt.
+    if (m.unsafe.length) return fail(`I cannot safely check ${linkName(m.unsafe[0])} as a source`);
     let candidates = good;
     const linked = [];
     for (const url of m.urls) {
       const page = known.get(normalizeUrl(url));
       if (!page || (!page.ok && !page.broken)) {
-        if (strict) return fail(page ? `${linkName(url)} could not be opened (${page.error})` : `I could not check ${linkName(url)}`);
+        if (strict || m.sourceWords) return fail(page ? `${linkName(url)} could not be opened (${page.error})` : `I could not check ${linkName(url)}`);
         unopened.push(`${linkName(url)}${page ? ` (${page.error})` : ''}`);
         return { keep: true, support: [] };
       }
