@@ -503,7 +503,7 @@ export function eventClaim(sentence, { allowDescription = false } = {}) {
   let subject = '';
   for (const token of text.replace(/^[^A-Za-z]+/, '').split(/\s+/)) {
     const word = token.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '').replace(/['’]s$/, '');
-    if (COMMON_CAPS.has(word)) continue;
+    if (COMMON_CAPS.has(word) && word !== 'AI') continue;
     if (/^[A-Z][A-Za-z0-9&-]+$/.test(word)) subject = word;
     break;
   }
@@ -515,7 +515,8 @@ export function eventClaim(sentence, { allowDescription = false } = {}) {
   // must not pass just because stop-word filtering left one content word.
   if (allowDescription && (NEWS_EVENT.test(text) || /\b(?:is|are|was|were|has|have)\b/i.test(text))) {
     const fallback = [...new Set((text.toLowerCase().match(/[a-z][a-z0-9'’-]{2,}/g) || [])
-      .filter((w) => !PLAIN_WORDS.has(w) && w !== subject.toLowerCase() && !MONTHS.includes(w)))];
+      .filter((w) => w.length >= 3 && !STOP.has(w) && !PLAIN_WORDS.has(w)
+        && w !== subject.toLowerCase() && !MONTHS.includes(w)))];
     if (fallback.length) return { subject, words: fallback };
   }
   return null;
@@ -642,7 +643,9 @@ export async function guardCitations(reply, {
     // pointer followed by an assertion (or "proof is at...") is evidence,
     // not a harmless instruction to open a link.
     const linkOnly = kind.urls.reduce((line, url) => line.replace(url, '[LINK]'), s).trim();
-    const harmlessLinkPointer = /^(?:(?:your|the|this|that|our)\s+[^;.!?]{0,90}\b(?:is|are)\s+at\s+\[LINK\]|(?:unsubscribe|subscribe)\s+here\s*:\s*\[LINK\]|(?:follow|visit|open|download|view)\b[^;.!?]{0,90}\b(?:at|here)\s+\[LINK\]|here(?:'s| is| are)\b[^;.!?]{0,90}\[LINK\])[\s.?!]*$/i;
+    // Only known navigation nouns qualify; a broad "The ... is at" can
+    // smuggle a medical or financial assertion inside its subject.
+    const harmlessLinkPointer = /^(?:(?:your|the|this|that|our)\s+(?:(?:file|folder|document|doc|guide|link|page|video|photo|image|attachment|download|receipt|invoice|email|message)\b[^;.!?]{0,60})\s+(?:is|are)\s+at\s+\[LINK\]|(?:unsubscribe|subscribe)\s+here\s*:\s*\[LINK\]|(?:follow|visit|open|download|view)\b[^;.!?]{0,90}\b(?:at|here)\s+\[LINK\]|here(?:'s| is| are)\b[^;.!?]{0,90}\[LINK\])[\s.?!]*$/i;
     // The sentence tokenizer sometimes groups several URL pointers. All
     // clauses must be pure navigation directions; one factual assertion
     // anywhere in the group makes its source URLs require verification.
@@ -697,7 +700,7 @@ export async function guardCitations(reply, {
     for (const url of m.urls) {
       const page = known.get(normalizeUrl(url));
       if (!page || (!page.ok && !page.broken)) {
-        if (strict || m.sourceWords) return fail(page ? `${linkName(url)} could not be opened (${page.error})` : `I could not check ${linkName(url)}`);
+        if (strict || m.sourceWords || m.urls.length) return fail(page ? `${linkName(url)} could not be opened (${page.error})` : `I could not check ${linkName(url)}`);
         unopened.push(`${linkName(url)}${page ? ` (${page.error})` : ''}`);
         return { keep: true, support: [] };
       }
@@ -766,7 +769,7 @@ export async function guardCitations(reply, {
         if (m.hit) return fail(`I earlier gave this without a working source (${m.hit.reason}) and still have none`);
         // Outside news, a link that does not back an unattributed sentence is
         // said plainly; a claim put in a source's mouth is removed.
-        if (!strict && !(m.outlets.length || m.quoted.length || m.reporting)) {
+        if (!strict && !m.urls.length && !(m.outlets.length || m.quoted.length || m.reporting)) {
           mismatched.push(`${linkName(candidates[0].final_url || candidates[0].url, 'page')} does not mention ${missing}`);
           return { keep: true, support: [] };
         }
