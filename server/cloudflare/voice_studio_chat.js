@@ -29,7 +29,11 @@ export async function voiceStudioTurn(storage, data, env, message, { fetcher = f
     }
     // Names come from both accounts, so "use <Fish name>" works as it does for ElevenLabs.
     ctx.fish = await fetchFishModels(env, { fetcher, own: true });
-    const names = [...ctx.library.voices.map((v) => v.name), ...ctx.fish.models.map((m) => m.name)];
+    const names = [
+      ...(ctx.data.voice_saved || []).map((s) => s.name),
+      ...ctx.library.voices.map((v) => v.name),
+      ...ctx.fish.models.map((m) => m.name),
+    ];
     intent = voiceStudioIntent(message, { last, names });
     if (!intent) return null;
   }
@@ -73,6 +77,9 @@ async function act(intent, ctx) {
 }
 
 async function voiceNamed(name, ctx) {
+  // The owner's saved voices are named first, so "use Mike" works without the library list.
+  const saved = (ctx.data.voice_saved || []).find((s) => s.name === name);
+  if (saved) return { provider: saved.provider, id: saved.id, name: saved.name };
   const library = await libraryFor(ctx);
   const eleven = library.voices.find((v) => v.name === name);
   if (eleven) return { provider: 'elevenlabs', id: eleven.id, name: eleven.name };
@@ -124,7 +131,7 @@ async function switchProvider(provider, ctx) {
     await ctx.storage.put('che', ctx.data);
     return { ok: true, reply: 'Switched back to ElevenLabs, sir. Fish Audio is no longer first.' };
   }
-  const choices = await availableVoiceChoices(ctx.env, ctx.fetcher);
+  const choices = await availableVoiceChoices(ctx.env, ctx.fetcher, ctx.data.voice_saved);
   if (choices.fish !== 'Connected') return { ok: false, reply: 'Fish Audio is not set up for CHE, sir. Nothing changed.' };
   const fish = choices.options.find((o) => o.provider === 'fish');
   if (!fish) return { ok: false, reply: 'Fish Audio has no voice on this account yet, sir. Nothing changed.' };
@@ -138,7 +145,7 @@ async function switchProvider(provider, ctx) {
 // settings the owner already chose are kept when the provider stays ElevenLabs.
 async function useVoice(voice, ctx) {
   if (!voice) return { ok: false, reply: 'I did not find that voice in your library, sir. Nothing changed.' };
-  const choices = await availableVoiceChoices(ctx.env, ctx.fetcher);
+  const choices = await availableVoiceChoices(ctx.env, ctx.fetcher, ctx.data.voice_saved);
   const current = ctx.data.voice_choice || {};
   const carry = voice.provider === 'elevenlabs' && current.provider === 'elevenlabs'
     ? { model_id: current.model_id, settings: current.settings } : {};
@@ -190,7 +197,7 @@ async function changeSetting(intent, ctx) {
     const fraction = intent.percent || intent.value > 1 ? intent.value / 100 : intent.value;
     next.settings[intent.name === 'similarity' ? 'similarity_boost' : intent.name] = fraction;
   }
-  const choices = await availableVoiceChoices(ctx.env, ctx.fetcher);
+  const choices = await availableVoiceChoices(ctx.env, ctx.fetcher, ctx.data.voice_saved);
   const chosen = validateVoiceChoice({ provider: 'elevenlabs', id: current.id, speed: next.speed, model_id: model.id, settings: next.settings }, choices);
   if (!chosen) return { ok: false, reply: `That setting is not allowed for ${model.name}, sir. Nothing changed.` };
   await setChoice(ctx, { ...chosen, name: current.name });
@@ -216,7 +223,7 @@ async function changeModel(spoken, ctx) {
   const settings = { ...(current.settings || {}) };
   if (!model.controls.style) delete settings.style;
   if (!model.controls.use_speaker_boost) delete settings.use_speaker_boost;
-  const choices = await availableVoiceChoices(ctx.env, ctx.fetcher);
+  const choices = await availableVoiceChoices(ctx.env, ctx.fetcher, ctx.data.voice_saved);
   const chosen = validateVoiceChoice({ provider: 'elevenlabs', id: current.id, speed: current.speed ?? 1, model_id: model.id, settings }, choices);
   if (!chosen) return { ok: false, reply: `${current.name || 'That voice'} cannot use ${model.name} right now, sir. Nothing changed.` };
   await setChoice(ctx, { ...chosen, name: current.name });

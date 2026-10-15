@@ -8,32 +8,33 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-Map<String, Object?> _library({String state = 'Connected', String reason = ''}) => {
-      'state': state,
-      'reason': reason,
-      'voices': [
-        {'provider': 'elevenlabs', 'id': 'CONNIEvoice0001', 'name': 'Connie', 'source': 'mine', 'category': 'cloned', 'preview': '', 'labels': {}},
-        {'provider': 'elevenlabs', 'id': 'RACHELvoice0002', 'name': 'Rachel', 'source': 'default', 'category': 'premade', 'preview': 'https://cdn.example.test/r.mp3', 'labels': {}},
+const _connie = 'GO6k0TLODKW6FuTZ6xO5';
+const _mike = 'zfc8CJQpe8Kqyl0vvCzo';
+
+Map<String, Object?> _list({Map<String, Object?>? active}) => {
+      'saved': [
+        {'provider': 'elevenlabs', 'id': _connie, 'name': 'Connie', 'state': 'verified', 'reason': ''},
+        {
+          'provider': 'elevenlabs',
+          'id': _mike,
+          'name': 'Mike',
+          'state': 'paid_plan',
+          'reason': 'This voice needs a paid ElevenLabs plan before it can speak through the API.',
+        },
       ],
-      'favorites': <String>[],
-      'selected': null,
-      'models': {
-        'elevenlabs': [
-          {
-            'id': 'eleven_flash_v2_5',
-            'name': 'Flash v2.5',
-            'explanation': 'Fastest replies, for live conversation.',
-            'credits': '0.5 times the standard credit rate',
-            'controls': {'stability': true, 'similarity_boost': true, 'speed': true, 'style': false, 'use_speaker_boost': true},
-          },
-        ],
-        'state': 'Connected',
-        'reason': '',
-      },
-      'fish': {'models': <Object>[], 'state': 'Needs Setup', 'reason': 'No Fish Audio key is set.'},
-      'total': 2,
-      'complete': true,
+      'active': active,
     };
+
+http.Response _json(Object body, {int status = 200}) =>
+    http.Response(jsonEncode(body), status, headers: {'content-type': 'application/json'});
+
+Future<void> _pump(WidgetTester tester, http.Client client, {List<String>? spoken}) async {
+  await tester.pumpWidget(MaterialApp(
+    theme: CheTheme.dark(),
+    home: Scaffold(body: CheVoiceIdsPanel(client: client, onSpeak: spoken?.add)),
+  ));
+  await tester.pumpAndSettle();
+}
 
 void main() {
   setUp(() {
@@ -43,69 +44,83 @@ void main() {
     });
   });
 
-  testWidgets('Voice Studio lists the account voices by group and says why a key is refused', (tester) async {
-    final client = MockClient((r) async => http.Response(
-          jsonEncode(_library(state: 'Needs Reconnect', reason: 'The ElevenLabs key is missing the voices_read permission.')),
-          200,
-          headers: {'content-type': 'application/json'},
-        ));
-    await tester.pumpWidget(MaterialApp(
-      theme: CheTheme.dark(),
-      home: Scaffold(body: CheVoiceStudioPanel(client: client)),
-    ));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('missing the voices_read permission'), findsOneWidget);
+  testWidgets('Voice IDs lists saved voices with their checked state, and says why one cannot be used', (tester) async {
+    final client = MockClient((r) async => _json(_list()));
+    await _pump(tester, client);
     expect(find.text('Connie'), findsOneWidget);
-    expect(find.text('Rachel'), findsOneWidget);
+    expect(find.text('Mike'), findsOneWidget);
+    expect(find.textContaining('Checked: available to CHE'), findsOneWidget);
+    expect(find.textContaining('paid ElevenLabs plan before it can speak'), findsOneWidget);
   });
 
-  testWidgets('saving keeps the chosen model and sends only the controls that model allows', (tester) async {
+  testWidgets('Save & Use Voice sends the pasted ID and name, with use set, and reports the saved name', (tester) async {
     final posted = <String>[];
+    final spoken = <String>[];
     final client = MockClient((r) async {
       if (r.method == 'POST') {
         posted.add(r.body);
-        return http.Response(jsonEncode({'ok': true, 'selected': {}}), 200, headers: {'content-type': 'application/json'});
+        return _json({
+          'ok': true,
+          'state': 'verified',
+          'saved': [
+            {'provider': 'elevenlabs', 'id': 'NEWvoiceABCDEF12', 'name': 'Rachel', 'state': 'verified', 'reason': ''},
+          ],
+          'active': {'provider': 'elevenlabs', 'id': 'NEWvoiceABCDEF12', 'name': 'Rachel'},
+          'message': 'Rachel is CHE’s voice now.',
+        });
       }
-      return http.Response(jsonEncode(_library()), 200, headers: {'content-type': 'application/json'});
+      return _json(_list());
     });
-    await tester.pumpWidget(MaterialApp(
-      theme: CheTheme.dark(),
-      home: Scaffold(body: CheVoiceStudioPanel(client: client)),
-    ));
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Choose').first);
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.text('Save as CHE’s voice'), 300, scrollable: find.byType(Scrollable).first);
-    await tester.tap(find.text('Save as CHE’s voice'));
+    await _pump(tester, client, spoken: spoken);
+    await tester.enterText(find.byType(TextField).at(0), 'NEWvoiceABCDEF12');
+    await tester.enterText(find.byType(TextField).at(1), 'Rachel');
+    await tester.scrollUntilVisible(find.text('Save & Use Voice'), 300, scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.text('Save & Use Voice'));
     await tester.pumpAndSettle();
     expect(posted, hasLength(1));
     final body = jsonDecode(posted.single) as Map<String, dynamic>;
-    expect(body['id'], 'CONNIEvoice0001');
-    expect(body['model_id'], 'eleven_flash_v2_5');
-    final settings = body['settings'] as Map<String, dynamic>;
-    expect(settings.containsKey('style'), isFalse, reason: 'Flash does not offer style');
-    expect(settings['use_speaker_boost'], isTrue);
+    expect(body['provider'], 'elevenlabs');
+    expect(body['id'], 'NEWvoiceABCDEF12');
+    expect(body['name'], 'Rachel');
+    expect(body['use'], isTrue);
+    expect(spoken.last, startsWith('Rachel is CHE’s voice now'));
+    expect(find.textContaining('Using Rachel'), findsOneWidget);
   });
 
-  testWidgets('a generated sample waits for the owner to confirm the credits; cancel sends nothing', (tester) async {
+  testWidgets('a voice the provider cannot find is refused with its reason, and nothing is saved', (tester) async {
+    final posted = <String>[];
+    final spoken = <String>[];
+    final client = MockClient((r) async {
+      if (r.method == 'POST') {
+        posted.add(r.body);
+        return _json({'ok': false, 'state': 'not_found', 'detail': 'ElevenLabs has no voice with this ID on your account. Check the ID.'}, status: 404);
+      }
+      return _json(_list());
+    });
+    await _pump(tester, client, spoken: spoken);
+    await tester.enterText(find.byType(TextField).at(0), 'NOTonACCOUNT00000');
+    await tester.enterText(find.byType(TextField).at(1), 'Ghost');
+    await tester.scrollUntilVisible(find.text('Save & Use Voice'), 300, scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.text('Save & Use Voice'));
+    await tester.pumpAndSettle();
+    expect(posted, hasLength(1));
+    expect(spoken.last, 'Not saved: ElevenLabs has no voice with this ID on your account. Check the ID.');
+    expect(find.textContaining('Using CHE’s built-in voice.'), findsOneWidget, reason: 'nothing was switched');
+  });
+
+  testWidgets('Remove asks first: cancelling sends nothing', (tester) async {
     final posted = <String>[];
     final client = MockClient((r) async {
       if (r.method == 'POST') posted.add(r.body);
-      return http.Response(jsonEncode(_library()), 200, headers: {'content-type': 'application/json'});
+      return _json(_list());
     });
-    await tester.pumpWidget(MaterialApp(
-      theme: CheTheme.dark(),
-      home: Scaffold(body: CheVoiceStudioPanel(client: client)),
-    ));
+    await _pump(tester, client);
+    await tester.scrollUntilVisible(find.text('Remove').first, 300, scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.text('Remove').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Choose').first);
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.text('Generate a paid sample (uses credits)'), 300, scrollable: find.byType(Scrollable).first);
-    await tester.tap(find.text('Generate a paid sample (uses credits)'));
-    await tester.pumpAndSettle();
-    expect(find.text('Generate a paid sample?'), findsOneWidget);
+    expect(find.text('Remove Connie?'), findsOneWidget);
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
-    expect(posted, isEmpty, reason: 'no credit is spent until the owner confirms');
+    expect(posted, isEmpty, reason: 'nothing is removed without the owner\'s confirmation');
   });
 }

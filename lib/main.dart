@@ -1464,8 +1464,8 @@ OWNER AGENCY
         : (_homeSuggestions.isNotEmpty ? _homeSuggestions : _skillPlugins.quickActions());
     final chat = Column(
       children: [
-        // Voice Studio opens inside Chat. Collapsed, it builds nothing and speaks nothing.
-        CheVoiceStudioSection(onSpeak: (line) => unawaited(speakText(line, record: false))),
+        // Voice IDs opens inside Chat. Collapsed, it builds nothing and speaks nothing.
+        CheVoiceIdsSection(onSpeak: (line) => unawaited(speakText(line, record: false))),
         Expanded(
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 260),

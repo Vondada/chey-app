@@ -1,7 +1,6 @@
-// Voice Studio in Chat: the owner's ElevenLabs and Fish Audio voices, read live from the
-// connected accounts through the Worker. Search, favourites, the provider's free samples,
-// the speech models with their own explanations, and the controls each model allows.
-// Nothing here keeps a key or a provider voice ID: the Worker stores the owner's choice.
+// Voice IDs in Chat: paste an ElevenLabs or Fish Audio voice ID, name it, and use it. The
+// Worker checks each ID with the provider before saving it, and it keeps the keys. This
+// screen only sends an ID and a name, and shows the provider's answer in plain words.
 // Collapsed, the section builds nothing, so nothing loads or speaks until it is opened.
 import 'dart:async';
 import 'dart:convert';
@@ -27,7 +26,12 @@ List<Map<String, dynamic>> _maps(Object? value) => value is List
     ? value.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList()
     : <Map<String, dynamic>>[];
 
-double _unit(Object? value, double fallback) => value is num ? value.toDouble().clamp(0.0, 1.0).toDouble() : fallback;
+String _plain(Object error) => error.toString().replaceFirst('Bad state: ', '');
+
+String _providerName(String provider) => provider == 'fish' ? 'Fish Audio' : 'ElevenLabs';
+
+// Fish Audio's IDs are 32 letters and numbers; ElevenLabs' are shorter.
+bool _looksFish(String id) => RegExp(r'^[a-fA-F0-9]{32}$').hasMatch(id.trim());
 
 /// Plays the free sample the owner asked for in Chat ("preview number three").
 class CheVoiceStudioPreview {
@@ -54,11 +58,11 @@ class CheVoiceStudioPreview {
   }
 }
 
-/// The expandable Voice Studio row at the top of Chat.
-class CheVoiceStudioSection extends StatelessWidget {
-  const CheVoiceStudioSection({super.key, this.onSpeak});
+/// The expandable Voice IDs section at the top of Chat.
+class CheVoiceIdsSection extends StatelessWidget {
+  const CheVoiceIdsSection({super.key, this.onSpeak});
 
-  /// Speaks an action's real result. Only owner actions call it; opening the panel is silent.
+  /// Speaks the result of an action the owner started. Opening the section is silent.
   final ValueChanged<String>? onSpeak;
 
   @override
@@ -69,12 +73,12 @@ class CheVoiceStudioSection extends StatelessWidget {
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
           leading: const Icon(Icons.record_voice_over_rounded, color: CheColors.accent),
-          title: const Text('Voice Studio', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-          subtitle: const Text('Choose and preview CHE’s voice without leaving Chat',
+          title: const Text('Voice IDs', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+          subtitle: const Text('Paste a voice ID, name it, and use it',
               style: TextStyle(fontSize: 14, color: CheColors.textDim)),
           childrenPadding: const EdgeInsets.fromLTRB(4, 0, 4, 12),
           children: [
-            SizedBox(height: 480, child: CheVoiceStudioPanel(onSpeak: onSpeak)),
+            SizedBox(height: 480, child: CheVoiceIdsPanel(onSpeak: onSpeak)),
           ],
         ),
       ),
@@ -82,53 +86,40 @@ class CheVoiceStudioSection extends StatelessWidget {
   }
 }
 
-class CheVoiceStudioPanel extends StatefulWidget {
-  const CheVoiceStudioPanel({super.key, this.client, this.onSpeak});
+class CheVoiceIdsPanel extends StatefulWidget {
+  const CheVoiceIdsPanel({super.key, this.client, this.onSpeak});
   final http.Client? client;
   final ValueChanged<String>? onSpeak;
 
   @override
-  State<CheVoiceStudioPanel> createState() => _CheVoiceStudioPanelState();
+  State<CheVoiceIdsPanel> createState() => _CheVoiceIdsPanelState();
 }
 
-class _CheVoiceStudioPanelState extends State<CheVoiceStudioPanel> {
+class _CheVoiceIdsPanelState extends State<CheVoiceIdsPanel> {
   late final http.Client _client = widget.client ?? http.Client();
-  bool _loading = false;
+  final TextEditingController _idField = TextEditingController();
+  final TextEditingController _nameField = TextEditingController();
   bool _busy = false;
-  String _error = '';
-  String _status = '';
+  bool _loading = false;
   String _base = '';
   String _token = '';
-  String _elevenState = 'Unavailable';
-  String _elevenReason = '';
-  String _fishState = 'Unavailable';
-  String _fishReason = '';
-  List<Map<String, dynamic>> _voices = [];
-  List<Map<String, dynamic>> _models = [];
-  List<Map<String, dynamic>> _fishModels = [];
-  Set<String> _favorites = {};
-  String _query = '';
-  String _source = 'all';
-  bool _favoritesOnly = false;
   String _provider = 'elevenlabs';
-  String _id = '';
-  String _name = '';
-  String _modelId = '';
-  double _speed = 1.0;
-  double _stability = 0.6;
-  double _similarity = 0.82;
-  double _style = 0.15;
-  bool _speakerBoost = true;
+  String _status = '';
+  String _error = '';
+  List<Map<String, dynamic>> _saved = [];
+  Map<String, dynamic>? _active;
 
   @override
   void initState() {
     super.initState();
-    // Built only when the owner opens the section, so this load is owner-started and silent.
+    // Built only when the owner opens the section: this load is owner-started and silent.
     unawaited(_load());
   }
 
   @override
   void dispose() {
+    _idField.dispose();
+    _nameField.dispose();
     if (widget.client == null) _client.close();
     super.dispose();
   }
@@ -142,419 +133,337 @@ class _CheVoiceStudioPanelState extends State<CheVoiceStudioPanel> {
     widget.onSpeak?.call(line);
   }
 
-  void _applySettings(Map<String, dynamic> selected) {
-    final chosenModel = (selected['model_id'] ?? '').toString();
-    _modelId = chosenModel.isNotEmpty ? chosenModel : _defaultModelId();
-    final settings = selected['settings'] is Map ? Map<String, dynamic>.from(selected['settings'] as Map) : <String, dynamic>{};
-    _stability = _unit(settings['stability'], 0.6);
-    _similarity = _unit(settings['similarity_boost'], 0.82);
-    _style = _unit(settings['style'], 0.15);
-    _speakerBoost = settings['use_speaker_boost'] is bool ? settings['use_speaker_boost'] as bool : true;
+  // The Worker's reason in plain words, or a plain fallback.
+  String _reason(http.Response r) {
+    try {
+      final j = jsonDecode(utf8.decode(r.bodyBytes));
+      if (j is Map && j['detail'] != null) return j['detail'].toString();
+    } catch (_) {}
+    return 'CHE did not finish that.';
   }
 
-  String _defaultModelId() {
-    for (final m in _models) {
-      if (m['id'] == 'eleven_flash_v2_5') return 'eleven_flash_v2_5';
-    }
-    return _models.isEmpty ? '' : (_models.first['id'] ?? '').toString();
+  void _apply(Map j) {
+    _saved = _maps(j['saved']);
+    _active = j['active'] is Map ? Map<String, dynamic>.from(j['active'] as Map) : null;
   }
 
-  Map<String, dynamic> get _model => _models.firstWhere((m) => m['id'] == _modelId, orElse: () => <String, dynamic>{});
-
-  Map<String, dynamic> get _controls {
-    final raw = _model['controls'];
-    return raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
-  }
-
-  List<Map<String, dynamic>> get _visible {
-    final words = _query.trim().toLowerCase();
-    return _voices.where((v) {
-      if (_source != 'all' && v['source'] != _source) return false;
-      if (_favoritesOnly && !_favorites.contains(v['id'])) return false;
-      if (words.isEmpty) return true;
-      final labels = v['labels'] is Map ? (v['labels'] as Map).values.join(' ') : '';
-      return '${v['name']} ${v['category']} $labels'.toLowerCase().contains(words);
-    }).toList();
-  }
-
-  Map<String, dynamic> get _choice {
-    final eleven = _provider == 'elevenlabs';
-    return {
-      'provider': _provider,
-      'id': _id,
-      'speed': _speed,
-      if (eleven && _modelId.isNotEmpty) 'model_id': _modelId,
-      if (eleven && _modelId.isNotEmpty)
-        'settings': {
-          'stability': _stability,
-          'similarity_boost': _similarity,
-          if (_controls['style'] == true) 'style': _style,
-          if (_controls['use_speaker_boost'] == true) 'use_speaker_boost': _speakerBoost,
-        },
-    };
-  }
-
-  Future<void> _load({bool announce = false}) async {
-    setState(() { _loading = true; _error = ''; });
+  // [verify] asks the Worker to check every saved voice again (details only, no credits).
+  Future<void> _load({bool verify = false}) async {
+    setState(() { _error = ''; _loading = true; });
     try {
       final conn = await _studioConnection();
       _base = conn.base;
       _token = conn.token;
-      if (_token.isEmpty) throw StateError('Pair this iPhone with CHE before using Voice Studio.');
-      final r = await _client.get(Uri.parse('$_base/api/voice/library'), headers: _auth).timeout(const Duration(seconds: 30));
+      if (_token.isEmpty) throw StateError('Pair this iPhone with CHE first.');
+      final r = await _client.get(Uri.parse('$_base/api/voice/ids${verify ? '?verify=1' : ''}'), headers: _auth)
+          .timeout(const Duration(seconds: 40));
       final j = jsonDecode(utf8.decode(r.bodyBytes));
-      if (r.statusCode != 200 || j is! Map) {
-        throw StateError(j is Map ? (j['detail'] ?? 'CHE did not return your voices.').toString() : 'CHE did not return your voices.');
-      }
+      if (r.statusCode != 200 || j is! Map) throw StateError(_reason(r));
       if (!mounted) return;
-      final voices = _maps(j['voices']);
-      final fish = j['fish'] is Map ? Map<String, dynamic>.from(j['fish'] as Map) : <String, dynamic>{};
-      final models = j['models'] is Map ? Map<String, dynamic>.from(j['models'] as Map) : <String, dynamic>{};
-      final selected = j['selected'] is Map ? Map<String, dynamic>.from(j['selected'] as Map) : <String, dynamic>{};
-      setState(() {
-        _voices = voices;
-        _models = _maps(models['elevenlabs']);
-        _fishModels = _maps(fish['models']);
-        _favorites = {for (final f in (j['favorites'] is List ? j['favorites'] as List : const [])) f.toString()};
-        _elevenState = (j['state'] ?? 'Unavailable').toString();
-        _elevenReason = (j['reason'] ?? '').toString();
-        _fishState = (fish['state'] ?? 'Unavailable').toString();
-        _fishReason = (fish['reason'] ?? '').toString();
-        _provider = (selected['provider'] ?? 'elevenlabs').toString();
-        _id = (selected['id'] ?? '').toString();
-        _name = (selected['name'] ?? '').toString();
-        _speed = ((selected['speed'] is num ? selected['speed'] as num : 1).toDouble()).clamp(0.7, 1.2).toDouble();
-        _applySettings(selected);
-      });
-      if (announce) {
+      setState(() => _apply(j));
+      if (verify) {
         HapticFeedback.selectionClick();
-        _say('Voice library refreshed: ${voices.length} voices. ElevenLabs: $_elevenState.');
+        _say('Voice accounts checked. ${_saved.length} saved.');
       }
     } on Object catch (e) {
-      if (mounted) setState(() => _error = e.toString().replaceFirst('Bad state: ', ''));
-      if (announce) {
+      if (!mounted) return;
+      if (verify) {
         HapticFeedback.heavyImpact();
-        _say('Voice library not refreshed: ${e.toString().replaceFirst('Bad state: ', '')}');
+        _say('Could not check the voices: ${_plain(e)}');
+      } else {
+        setState(() => _error = _plain(e));
       }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<void> _toggleFavorite(Map<String, dynamic> v) async {
-    final id = v['id'].toString();
-    final on = !_favorites.contains(id);
-    try {
-      final r = await _client.post(Uri.parse('$_base/api/voice/favorite'), headers: _json,
-          body: jsonEncode({'voice_id': id, 'on': on})).timeout(const Duration(seconds: 20));
-      final j = jsonDecode(utf8.decode(r.bodyBytes));
-      if (r.statusCode != 200 || j is! Map) throw StateError('the favourite was not saved');
-      if (!mounted) return;
-      setState(() => _favorites = {for (final f in (j['favorites'] as List)) f.toString()});
-      _say(on ? '${v['name']} is a favourite.' : '${v['name']} is no longer a favourite.');
-    } on Object catch (e) {
-      _say('Favourite not saved: ${e.toString().replaceFirst('Bad state: ', '')}');
-    }
-  }
-
-  // Reads the response as audio, or the owner's reason in plain words.
-  Future<void> _playBytes(http.Response r, String label) async {
-    if (r.statusCode != 200 || !(r.headers['content-type'] ?? '').contains('audio')) {
-      var reason = 'This voice did not return playable audio.';
-      try {
-        final j = jsonDecode(utf8.decode(r.bodyBytes));
-        if (j is Map) reason = (j['detail'] ?? reason).toString();
-      } catch (_) {}
-      throw StateError(reason);
-    }
-    await CheNativeVoice.stopAudio();
-    final played = await CheNativeVoice.playAudioBounded(r.bodyBytes);
-    if (!played) throw StateError('CHE received audio but your iPhone could not play it.');
-    HapticFeedback.selectionClick();
-    _say('Playing the $label.');
-  }
-
-  // A free sample from the provider's own preview. No credits are used.
-  Future<void> _playFreeSample(Map<String, dynamic> v) async {
-    final sample = v['preview'] is String ? v['preview'] as String : '';
+  // The owner's press is the consent. The Worker checks the ID with the provider first and
+  // saves it only when the provider confirms it.
+  Future<void> _saveAndUse() async {
     if (_busy) return;
-    if (sample.isEmpty) {
-      _say('${v['name']} has no free sample from ElevenLabs. Nothing was played and no credits were used.');
+    final id = _idField.text.trim();
+    final name = _nameField.text.trim();
+    if (id.isEmpty) {
+      _say('Paste a voice ID first.');
       return;
     }
-    setState(() { _busy = true; _status = 'Loading the free sample…'; });
+    if (name.isEmpty) {
+      _say('Give this voice a name, for example Connie.');
+      return;
+    }
+    setState(() { _busy = true; _status = 'Checking the voice with ${_providerName(_provider)}…'; });
     try {
-      final r = await _client.get(
-        Uri.parse('$_base/api/voice/library/preview?voice_id=${Uri.encodeQueryComponent(v['id'].toString())}'),
-        headers: _auth,
-      ).timeout(const Duration(seconds: 30));
-      await _playBytes(r, 'free sample of ${v['name']}');
+      final r = await _client.post(Uri.parse('$_base/api/voice/ids/save'), headers: _json,
+          body: jsonEncode({'provider': _provider, 'id': id, 'name': name, 'use': true}))
+          .timeout(const Duration(seconds: 60));
+      final j = jsonDecode(utf8.decode(r.bodyBytes));
+      if (r.statusCode != 200 || j is! Map || j['ok'] != true) throw StateError(_reason(r));
+      HapticFeedback.selectionClick();
+      if (!mounted) return;
+      setState(() {
+        _apply(j);
+        _idField.clear();
+        _nameField.clear();
+      });
+      _say('$name is CHE’s voice now. Chat, voice conversations and Read This use it.');
     } on Object catch (e) {
       HapticFeedback.heavyImpact();
-      _say('Sample failed: ${e.toString().replaceFirst('Bad state: ', '')}');
+      _say('Not saved: ${_plain(e)}');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
-  // A generated sample spends the provider's credits, so the owner confirms it first.
-  Future<void> _generatePaidSample() async {
-    if (_busy || _id.isEmpty) return;
-    final allowed = await showDialog<bool>(
+  // Switching is a save of the choice: nothing is checked again, so it is immediate.
+  Future<void> _use(Map<String, dynamic> voice) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final r = await _client.post(Uri.parse('$_base/api/voice/ids/use'), headers: _json,
+          body: jsonEncode({'provider': voice['provider'], 'id': voice['id']})).timeout(const Duration(seconds: 20));
+      final j = jsonDecode(utf8.decode(r.bodyBytes));
+      if (r.statusCode != 200 || j is! Map || j['ok'] != true) throw StateError(_reason(r));
+      HapticFeedback.selectionClick();
+      if (!mounted) return;
+      setState(() => _active = j['active'] is Map ? Map<String, dynamic>.from(j['active'] as Map) : null);
+      _say('Now using ${voice['name']}.');
+    } on Object catch (e) {
+      HapticFeedback.heavyImpact();
+      _say('Not switched: ${_plain(e)}');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _remove(Map<String, dynamic> voice) async {
+    final yes = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Generate a paid sample?'),
-        content: const Text('A generated sample uses credits from your voice provider. Continue?'),
+        title: Text('Remove ${voice['name']}?'),
+        content: const Text('CHE forgets this saved voice. Nothing is deleted at ElevenLabs or Fish Audio.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Generate')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
         ],
       ),
     );
-    if (allowed != true || !mounted) return;
-    setState(() { _busy = true; _status = 'Generating a sample…'; });
+    if (yes != true || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final r = await _client.post(Uri.parse('$_base/api/voice/ids/remove'), headers: _json,
+          body: jsonEncode({'provider': voice['provider'], 'id': voice['id'], 'confirm': true})).timeout(const Duration(seconds: 20));
+      final j = jsonDecode(utf8.decode(r.bodyBytes));
+      if (r.statusCode != 200 || j is! Map || j['ok'] != true) throw StateError(_reason(r));
+      if (!mounted) return;
+      setState(() => _apply(j));
+      _say(j['message']?.toString() ?? 'Removed.');
+    } on Object catch (e) {
+      _say('Not removed: ${_plain(e)}');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  // A short sample of the voice in use. It spends a few credits, so the owner confirms first.
+  Future<void> _previewActive() async {
+    final active = _active;
+    if (_busy || active == null) return;
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Hear a short sample?'),
+        content: Text('A short sample uses a few credits from ${_providerName(active['provider'].toString())}. Continue?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Preview')),
+        ],
+      ),
+    );
+    if (yes != true || !mounted) return;
+    setState(() { _busy = true; _status = 'Making a short sample…'; });
     try {
       final r = await _client.post(Uri.parse('$_base/api/voice/preview'), headers: _json,
-          body: jsonEncode({..._choice, 'confirm_credits': true})).timeout(const Duration(seconds: 55));
-      await _playBytes(r, 'generated sample');
+          body: jsonEncode({'provider': active['provider'], 'id': active['id'], 'speed': 1, 'confirm_credits': true}))
+          .timeout(const Duration(seconds: 55));
+      if (r.statusCode != 200 || !(r.headers['content-type'] ?? '').contains('audio')) throw StateError(_reason(r));
+      await CheNativeVoice.stopAudio();
+      final played = await CheNativeVoice.playAudioBounded(r.bodyBytes);
+      if (!played) throw StateError('CHE received audio but your iPhone could not play it.');
+      _say('Playing a short sample of ${active['name']}.');
     } on Object catch (e) {
       HapticFeedback.heavyImpact();
-      _say('Sample failed: ${e.toString().replaceFirst('Bad state: ', '')}');
+      _say('Preview failed: ${_plain(e)}');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
-  // Choosing a voice saves it: the Worker checks the account first and keeps the choice.
-  Future<void> _saveChoice() async {
-    if (_busy || _id.isEmpty) return;
-    final label = _name.isEmpty ? 'This voice' : _name;
-    setState(() { _busy = true; _status = ''; });
-    try {
-      final r = await _client.post(Uri.parse('$_base/api/voice/choice'), headers: _json,
-          body: jsonEncode(_choice)).timeout(const Duration(seconds: 25));
-      final j = jsonDecode(utf8.decode(r.bodyBytes));
-      if (r.statusCode != 200 || j is! Map || j['ok'] != true) {
-        throw StateError(j is Map ? (j['detail'] ?? 'the voice was not saved').toString() : 'the voice was not saved');
-      }
-      HapticFeedback.selectionClick();
-      _say('$label is CHE’s voice now, for Chat, voice conversations and Read This.');
-    } on Object catch (e) {
-      HapticFeedback.heavyImpact();
-      _say('Not saved: ${e.toString().replaceFirst('Bad state: ', '')}');
-    } finally {
-      if (mounted) setState(() => _busy = false);
+  // What the saved voice's state means to the owner, in plain words.
+  String _stateLine(Map<String, dynamic> voice) {
+    switch (voice['state']) {
+      case 'verified':
+        return 'Checked: available to CHE';
+      case 'unverified':
+        return 'Not checked yet';
+      case 'needs_check':
+        return 'Saves after one short test sentence';
+      case 'paid_plan':
+        return 'Needs a paid ElevenLabs plan';
+      case 'not_found':
+        return 'Not found on your account';
+      case 'needs_reconnect':
+        return 'The key needs attention';
+      default:
+        return (voice['reason'] ?? '').toString();
     }
   }
 
-  void _pick(Map<String, dynamic> v) {
-    setState(() {
-      _provider = (v['provider'] ?? 'elevenlabs').toString();
-      _id = (v['id'] ?? '').toString();
-      _name = (v['name'] ?? '').toString();
-    });
-    _say('${v['name']} is selected. Press Save to use it, or Sample to hear the free sample.');
-  }
+  bool _refused(Map<String, dynamic> voice) =>
+      const {'not_found', 'paid_plan', 'needs_reconnect', 'invalid'}.contains(voice['state']);
 
-  Widget _providerLine() {
-    final lines = <String>[
-      'ElevenLabs: $_elevenState${_elevenReason.isEmpty ? '' : '. $_elevenReason'}',
-      'Fish Audio: $_fishState${_fishReason.isEmpty ? '' : '. $_fishReason'}',
-    ];
-    return Semantics(
-      liveRegion: true,
-      child: Text(lines.join('\n'), style: const TextStyle(color: CheColors.textDim, fontSize: 15, height: 1.35)),
-    );
-  }
-
-  Widget _voiceRow(Map<String, dynamic> v) {
-    final selected = _provider == v['provider'] && _id == v['id'];
-    final favorite = _favorites.contains(v['id']);
-    final group = {'mine': 'My Voices', 'library': 'Voice Library', 'default': 'Built in'}[v['source']] ?? '';
+  Widget _savedRow(Map<String, dynamic> voice) {
+    final isActive = _active != null && _active!['id'] == voice['id'] && _active!['provider'] == voice['provider'];
+    final refused = _refused(voice);
+    final reason = (voice['reason'] ?? '').toString();
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: selected ? CheColors.surfaceHi : CheColors.surface,
+        color: isActive ? CheColors.surfaceHi : CheColors.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: selected ? CheColors.accent : CheColors.stroke),
+        border: Border.all(color: isActive ? CheColors.accent : CheColors.stroke),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            Expanded(child: Semantics(
-              label: '${v['name']}, $group${selected ? ', selected' : ''}',
-              child: Text(v['name'].toString(), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-            )),
-            IconButton(
-              tooltip: favorite ? 'Remove ${v['name']} from favourites' : 'Add ${v['name']} to favourites',
-              icon: Icon(favorite ? Icons.star_rounded : Icons.star_border_rounded, color: CheColors.accent),
-              onPressed: _busy ? null : () => _toggleFavorite(v),
+          Semantics(
+            label: '${voice['name']}, ${_providerName(voice['provider'].toString())}'
+                '${isActive ? ', in use' : ''}. ${_stateLine(voice)}',
+            child: Text(
+              '${voice['name']}${isActive ? '  ·  in use' : ''}',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
             ),
-          ]),
-          Text(group, style: const TextStyle(color: CheColors.textDim, fontSize: 14)),
+          ),
+          Text('${_providerName(voice['provider'].toString())} · ${_stateLine(voice)}',
+              style: TextStyle(color: refused ? CheColors.warning : CheColors.textDim, fontSize: 14)),
+          if (refused && reason.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(reason, style: const TextStyle(color: CheColors.warning, fontSize: 14, height: 1.3)),
+            ),
           const SizedBox(height: 8),
           Row(children: [
-            Expanded(child: FilledButton(
-              onPressed: _busy ? null : () => _pick(v),
-              child: Text(selected ? 'Selected' : 'Choose'),
-            )),
+            Expanded(
+              child: FilledButton(
+                onPressed: _busy || refused || isActive ? null : () => _use(voice),
+                child: Text(isActive ? 'In use' : 'Use'),
+              ),
+            ),
             const SizedBox(width: 8),
-            Expanded(child: OutlinedButton(
-              onPressed: _busy ? null : () => _playFreeSample(v),
-              child: const Text('Sample'),
-            )),
+            TextButton(
+              onPressed: _busy ? null : () => _remove(voice),
+              child: const Text('Remove'),
+            ),
           ]),
         ],
       ),
-    );
-  }
-
-  Widget _filters() {
-    const sources = {'all': 'All', 'mine': 'My Voices', 'library': 'Voice Library', 'default': 'Built in'};
-    return Wrap(spacing: 8, runSpacing: 8, children: [
-      for (final entry in sources.entries)
-        ChoiceChip(
-          label: Text(entry.value),
-          selected: _source == entry.key,
-          onSelected: (_) => setState(() => _source = entry.key),
-        ),
-      FilterChip(
-        label: const Text('Favourites'),
-        selected: _favoritesOnly,
-        onSelected: (on) => setState(() => _favoritesOnly = on),
-      ),
-    ]);
-  }
-
-  Widget _modelSection() {
-    final explanation = (_model['explanation'] ?? '').toString();
-    final credits = (_model['credits'] ?? '').toString();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 12),
-        if (_provider == 'elevenlabs' && _models.isNotEmpty)
-          DropdownButtonFormField<String>(
-            key: ValueKey('model-$_modelId'),
-            initialValue: _models.any((m) => m['id'] == _modelId) ? _modelId : null,
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Speech model'),
-            items: [
-              for (final m in _models)
-                DropdownMenuItem<String>(value: m['id'].toString(), child: Text((m['name'] ?? m['id']).toString())),
-            ],
-            onChanged: _busy ? null : (value) => setState(() => _modelId = value ?? _modelId),
-          ),
-        if (explanation.isNotEmpty) Padding(
-          padding: const EdgeInsets.only(top: 6),
-          child: Text('$explanation Credits: $credits.', style: const TextStyle(color: CheColors.textDim, fontSize: 14, height: 1.35)),
-        ),
-      ],
-    );
-  }
-
-  Widget _controlsSection() {
-    if (_provider == 'fish') {
-      return const Padding(
-        padding: EdgeInsets.only(top: 12),
-        child: Text('Fish Audio offers speed only here. Stability, similarity and style are not offered for Fish.',
-            style: TextStyle(color: CheColors.textDim, fontSize: 14)),
-      );
-    }
-    Widget slider(String label, double value, ValueChanged<double> onChanged) => Semantics(
-      label: label,
-      value: '${(value * 100).round()} percent',
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('$label: ${value.toStringAsFixed(2)}', style: const TextStyle(fontSize: 15)),
-        Slider(value: value, min: 0, max: 1, divisions: 20, label: value.toStringAsFixed(2),
-            onChanged: _busy ? null : onChanged),
-      ]),
-    );
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        slider('Stability', _stability, (x) => setState(() => _stability = x)),
-        slider('Similarity', _similarity, (x) => setState(() => _similarity = x)),
-        if (_controls['style'] == true) slider('Style', _style, (x) => setState(() => _style = x)),
-        if (_controls['use_speaker_boost'] == true)
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Speaker boost'),
-            value: _speakerBoost,
-            onChanged: _busy ? null : (on) => setState(() => _speakerBoost = on),
-          ),
-        Semantics(
-          label: 'Speaking speed',
-          value: '${_speed.toStringAsFixed(2)} times',
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Speaking speed: ${_speed.toStringAsFixed(2)}×', style: const TextStyle(fontSize: 15)),
-            Slider(value: _speed, min: 0.7, max: 1.2, divisions: 10, label: _speed.toStringAsFixed(2),
-                onChanged: _busy ? null : (x) => setState(() => _speed = x)),
-          ]),
-        ),
-      ],
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final visible = _visible;
+    final active = _active;
     return ListView(
       padding: const EdgeInsets.fromLTRB(8, 4, 8, 12),
       children: [
-        _providerLine(),
-        if (_error.isNotEmpty) Padding(
-          padding: const EdgeInsets.only(top: 6),
-          child: Text(_error, style: const TextStyle(color: CheColors.warning, fontSize: 15)),
-        ),
-        const SizedBox(height: 10),
-        TextField(
-          decoration: const InputDecoration(labelText: 'Search voices', prefixIcon: Icon(Icons.search)),
-          onChanged: (text) => setState(() => _query = text),
-        ),
-        const SizedBox(height: 10),
-        _filters(),
-        const SizedBox(height: 10),
-        OutlinedButton.icon(
-          onPressed: _busy || _loading ? null : () => _load(announce: true),
-          icon: const Icon(Icons.refresh),
-          label: Text(_loading ? 'Refreshing…' : 'Refresh library'),
+        const Text(
+          'Paste a voice ID from ElevenLabs or Fish Audio. CHE checks it with the provider before it saves. Your keys stay on the server.',
+          style: TextStyle(color: CheColors.textDim, fontSize: 15, height: 1.35),
         ),
         const SizedBox(height: 12),
-        if (!_loading && visible.isEmpty) const Text(
-          'No voices match. Refresh, or clear the search and filters.',
-          style: TextStyle(color: CheColors.textDim, fontSize: 15),
-        ),
-        for (final v in visible) _voiceRow(v),
-        if (_provider == 'fish' || _fishModels.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Text('Fish Audio voices on this account: ${_fishModels.length}',
-              style: const TextStyle(color: CheColors.textDim, fontSize: 14)),
-        ],
-        _modelSection(),
-        _controlsSection(),
-        const SizedBox(height: 14),
-        FilledButton.icon(
-          onPressed: _busy || _id.isEmpty ? null : _saveChoice,
-          icon: const Icon(Icons.check),
-          label: const Text('Save as CHE’s voice'),
+        Wrap(spacing: 8, children: [
+          ChoiceChip(
+            label: const Text('ElevenLabs'),
+            selected: _provider == 'elevenlabs',
+            onSelected: _busy ? null : (_) => setState(() => _provider = 'elevenlabs'),
+          ),
+          ChoiceChip(
+            label: const Text('Fish Audio'),
+            selected: _provider == 'fish',
+            onSelected: _busy ? null : (_) => setState(() => _provider = 'fish'),
+          ),
+        ]),
+        const SizedBox(height: 10),
+        TextField(
+          controller: _idField,
+          enabled: !_busy,
+          decoration: const InputDecoration(labelText: 'Voice ID', prefixIcon: Icon(Icons.key_outlined)),
+          onChanged: (text) => setState(() {
+            if (text.trim().isNotEmpty) _provider = _looksFish(text) ? 'fish' : 'elevenlabs';
+          }),
         ),
         const SizedBox(height: 8),
-        OutlinedButton.icon(
-          onPressed: _busy || _id.isEmpty ? null : _generatePaidSample,
-          icon: const Icon(Icons.graphic_eq),
-          label: const Text('Generate a paid sample (uses credits)'),
+        TextField(
+          controller: _nameField,
+          enabled: !_busy,
+          decoration: const InputDecoration(labelText: 'Name, for example Connie'),
         ),
-        if (_status.isNotEmpty) Padding(
-          padding: const EdgeInsets.only(top: 14),
-          child: Semantics(
-            liveRegion: true,
-            child: Text(_status, style: const TextStyle(color: CheColors.accent, fontSize: 18, height: 1.3)),
+        const SizedBox(height: 10),
+        FilledButton.icon(
+          onPressed: _busy ? null : _saveAndUse,
+          icon: const Icon(Icons.check),
+          label: const Text('Save & Use Voice'),
+        ),
+        const Padding(
+          padding: EdgeInsets.only(top: 6),
+          child: Text(
+            'If the ElevenLabs key cannot read voice details, saving sends one short test sentence (a few credits).',
+            style: TextStyle(color: CheColors.textDim, fontSize: 13, height: 1.3),
           ),
         ),
+        const SizedBox(height: 12),
+        Text(
+          active == null
+              ? 'Using CHE’s built-in voice.'
+              : 'Using ${active['name']} (${_providerName(active['provider'].toString())}).',
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        Row(children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _busy || active == null ? null : _previewActive,
+              icon: const Icon(Icons.play_arrow_rounded),
+              label: const Text('Preview Voice'),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextButton.icon(
+              onPressed: _busy || _loading ? null : () => _load(verify: true),
+              icon: const Icon(Icons.refresh),
+              label: const Text('Check accounts'),
+            ),
+          ),
+        ]),
+        if (_error.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(_error, style: const TextStyle(color: CheColors.warning, fontSize: 15)),
+          ),
+        const SizedBox(height: 12),
+        for (final voice in _saved) _savedRow(voice),
+        if (_status.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Semantics(
+              liveRegion: true,
+              child: Text(_status, style: const TextStyle(color: CheColors.accent, fontSize: 18, height: 1.3)),
+            ),
+          ),
       ],
     );
   }
+
 }

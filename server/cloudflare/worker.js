@@ -36,6 +36,7 @@ import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscale
 import { handleEdgeVoice } from './edge_route.js';
 import { marySecretsFrom, preferredElevenLabsDiagnostics, preferredElevenLabsKeyStatus, preferredElevenLabsLastOutcome, preferredElevenLabsSpeech, withMarySecrets } from './preferred_elevenlabs_voice.js';
 import { availableVoiceChoices, validateVoiceChoice, voiceEnvForSelection } from './voice_choices.js';
+import { activeVoice, cleanVoiceName, findSaved, seedSaved, suggestProvider, upsertSaved, usableSaved, verifyVoice } from './voice_ids.js';
 import { fetchElevenLibrary, fetchElevenModels, fetchFishModels, fetchFreePreview, filterLibrary, isVoiceId, withFavorite, FAVORITES_LIMIT } from './voice_library.js';
 import { voiceStudioTurn } from './voice_studio_chat.js';
 import { fishAudioDiagnostics, fishAudioKeyStatus, fishAudioSpeech, fishSecretsFrom, readFishUsage } from './fish_audio_voice.js';
@@ -4869,10 +4870,71 @@ export class CheState extends DurableObject {
       // and a persistent choice actually used by Chat and Read This.
       if (path === '/api/voice/choices' && request.method === 'GET') {
         if (!ownerDevice) return ownerOnly();
-        const choices = await availableVoiceChoices(this.voiceEnv());
+        const choices = await availableVoiceChoices(this.voiceEnv(), fetch, seedSaved(data));
         const saved = data.voice_choice || null;
         return json({ ...choices, selected: saved,
           message: 'Only provider voices confirmed by your CHE account may be chosen.' });
+      }
+      // Voice IDs: the owner pastes an ElevenLabs or Fish Audio voice ID, CHE checks it with the
+      // provider, and the owner names and saves it. Switching between saved voices is a save of the
+      // choice, not a new check. Removal needs the owner's confirmation.
+      if (path === '/api/voice/ids' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const env = this.voiceEnv();
+        let saved = seedSaved(data);
+        const checkAll = new URL(request.url).searchParams.get('verify') === '1';
+        // Presets and voices not yet checked are checked now, with the voice details only: no credits.
+        if (checkAll || saved.some((s) => s.state === 'unverified')) {
+          saved = await Promise.all(saved.map(async (s) => {
+            if (!checkAll && s.state !== 'unverified') return s;
+            const check = await verifyVoice(env, s.provider, s.id);
+            return { ...s, state: check.state, reason: check.reason || '', verified_at: check.ok ? new Date().toISOString() : s.verified_at };
+          }));
+          data.voice_saved = saved;
+          await this.ctx.storage.put('che', data);
+        }
+        return json({ saved, active: activeVoice(data) });
+      }
+      if (path === '/api/voice/ids/save' && request.method === 'POST') {
+        if (!ownerDevice) return ownerOnly();
+        const id = String(body?.id || '').trim();
+        const provider = String(body?.provider || suggestProvider(id));
+        // Saving may send one short test sentence, but only when the key cannot read the voice details.
+        const check = await verifyVoice(this.voiceEnv(), provider, id, { allowSpend: true });
+        if (!check.ok) return json({ ok: false, state: check.state, detail: check.reason }, check.state === 'not_found' ? 404 : 409);
+        const name = cleanVoiceName(body?.name) || check.name || 'Unnamed voice';
+        data.voice_saved = upsertSaved(seedSaved(data), { provider, id, name, state: 'verified', reason: '', verified_at: new Date().toISOString() });
+        if (body?.use === true) data.voice_choice = { provider, id, name, speed: data.voice_choice?.speed ?? 1 };
+        await this.ctx.storage.put('che', data);
+        return json({ ok: true, state: 'verified', saved: data.voice_saved, active: activeVoice(data),
+          message: body?.use === true ? `${name} is CHE's voice now.` : `${name} is saved.` });
+      }
+      if (path === '/api/voice/ids/use' && request.method === 'POST') {
+        if (!ownerDevice) return ownerOnly();
+        const saved = seedSaved(data);
+        const entry = findSaved(saved, String(body?.provider || ''), String(body?.id || ''));
+        if (!entry) return json({ ok: false, detail: 'That voice is not in your saved voices. Save it first.' }, 404);
+        if (!usableSaved(entry) && entry.state !== 'unverified') {
+          return json({ ok: false, state: entry.state, detail: `${entry.name} cannot be used: ${entry.reason || 'the provider did not confirm it.'}` }, 409);
+        }
+        data.voice_saved = saved;
+        data.voice_choice = { provider: entry.provider, id: entry.id, name: entry.name, speed: data.voice_choice?.speed ?? 1 };
+        await this.ctx.storage.put('che', data);
+        return json({ ok: true, active: activeVoice(data), message: `CHE is using ${entry.name} now.` });
+      }
+      if (path === '/api/voice/ids/remove' && request.method === 'POST') {
+        if (!ownerDevice) return ownerOnly();
+        if (body?.confirm !== true) return json({ ok: false, needs_confirmation: true, detail: 'Confirm the removal first. Nothing was removed.' }, 409);
+        const saved = seedSaved(data);
+        const provider = String(body?.provider || '');
+        const id = String(body?.id || '');
+        const entry = findSaved(saved, provider, id);
+        if (!entry) return json({ ok: false, detail: 'That voice is not in your saved voices.' }, 404);
+        data.voice_saved = saved.filter((s) => !(s.provider === provider && s.id === id));
+        if (data.voice_choice?.provider === provider && data.voice_choice?.id === id) delete data.voice_choice;
+        await this.ctx.storage.put('che', data);
+        const back = data.voice_choice ? '' : ' CHE is back on its built-in voice.';
+        return json({ ok: true, saved: data.voice_saved, active: activeVoice(data), message: `${entry.name} is removed.${back}` });
       }
       // The owner's library: every voice the connected accounts allow, read live, with
       // search, a My Voices / Voice Library / built-in grouping and the favourites.
@@ -4921,7 +4983,7 @@ export class CheState extends DurableObject {
       }
       if (path === '/api/voice/choice' && request.method === 'POST') {
         if (!ownerDevice) return ownerOnly();
-        const choices = await availableVoiceChoices(this.voiceEnv());
+        const choices = await availableVoiceChoices(this.voiceEnv(), fetch, seedSaved(data));
         const chosen = validateVoiceChoice(body, choices);
         if (!chosen) return json({ detail: 'That voice, model or setting is not available on your connected account, or the speed is invalid.' }, 400);
         const listed = choices.options.find((o) => o.provider === chosen.provider && o.id === chosen.id);
@@ -4939,7 +5001,7 @@ export class CheState extends DurableObject {
         if (Date.now() - (this.lastVoicePreviewAt || 0) < 5000) {
           return json({ detail: 'Wait a few seconds before another voice preview.' }, 429);
         }
-        const choices = await availableVoiceChoices(this.voiceEnv());
+        const choices = await availableVoiceChoices(this.voiceEnv(), fetch, seedSaved(data));
         const chosen = validateVoiceChoice(body, choices);
         if (!chosen) return json({ detail: 'That voice is not available for preview.' }, 400);
         this.lastVoicePreviewAt = Date.now();
@@ -11134,7 +11196,8 @@ export default {
     // request, so a secret change is seen without restarting the object.
     if (['/api/voice/edge', '/api/voice/synthesize', '/api/voice/report',
       '/api/voice/choices', '/api/voice/choice', '/api/voice/preview', '/api/voice/library',
-      '/api/voice/library/preview', '/api/voice/favorite', '/api/keys'].includes(path)) {
+      '/api/voice/library/preview', '/api/voice/favorite', '/api/voice/ids', '/api/voice/ids/save',
+      '/api/voice/ids/use', '/api/voice/ids/remove', '/api/keys'].includes(path)) {
       const owner = env.CHE_STATE.getByName('owner');
       await owner.setVoiceSecrets(voiceSecretsFrom(env));
       return owner.fetch(request);

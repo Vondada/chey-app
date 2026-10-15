@@ -13,7 +13,7 @@ export function parseElevenVoices(payload) {
     .map((v) => ({ id: String(v.voice_id), name: String(v.name || 'Unnamed voice').slice(0, 75), provider: 'elevenlabs' }));
 }
 
-export async function availableVoiceChoices(env = {}, fetcher = fetch) {
+export async function availableVoiceChoices(env = {}, fetcher = fetch, saved = []) {
   const options = [];
   let elevenStatus = 'Needs Setup';
   let elevenReason = '';
@@ -48,6 +48,16 @@ export async function availableVoiceChoices(env = {}, fetcher = fetch) {
     for (const model of fish.models) options.push({ id: model.id, name: model.name, provider: 'fish', source: 'mine', category: 'model' });
     models = { ...models, fish: fish.models };
     if (!fishConfigured) fishStatus = fish.state === 'Connected' ? 'Connected' : fish.state;
+  }
+  // The owner's own named voices are offered whenever their provider's key is set, even when
+  // the library list cannot be read: a voice saved by its ID does not depend on that list.
+  // A voice the provider has refused is not offered.
+  const refused = ['not_found', 'paid_plan', 'invalid', 'needs_reconnect'];
+  for (const entry of Array.isArray(saved) ? saved : []) {
+    const keyed = (entry.provider === 'elevenlabs' && hasElevenKey) || (entry.provider === 'fish' && fishKey);
+    if (!keyed || refused.includes(entry.state)) continue;
+    if (options.some((o) => o.provider === entry.provider && o.id === entry.id)) continue;
+    options.push({ id: entry.id, name: entry.name, provider: entry.provider, source: 'mine', category: 'saved' });
   }
   return {
     options,

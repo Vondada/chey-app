@@ -17,6 +17,13 @@ try { mod = await import(generated.href + '?t=' + Date.now()); } finally { try {
 const { default: worker, CheState } = mod;
 
 const KEY = 'xi-owner-secret-key-7777';
+const MISSING_PERMISSION = '{"detail":{"status":"missing_permissions","message":"The API key you used is missing the permission voices_read to execute this operation."}}';
+const PAID_PLAN = '{"detail":{"status":"paid_plan_required","message":"This is a library voice and requires a paid plan."}}';
+const NOT_FOUND = '{"detail":{"status":"voice_not_found","message":"Voice not found."}}';
+const PRESET_CONNIE = 'GO6k0TLODKW6FuTZ6xO5';
+const PRESET_MIKE = 'zfc8CJQpe8Kqyl0vvCzo';
+const PASTED = 'PASTEDvoiceABCDE1';
+const FISH32 = '0123456789abcdef0123456789abcdef';
 const FISH_KEY = 'fish-owner-secret-8888';
 const CONNIE = 'CONNIEvoice0001';
 const RACHEL = 'RACHELvoice0002';
@@ -36,6 +43,9 @@ function fakeProvider() {
     voicesStatus: 0,
     voicesBody: null,
     speechCalls: 0,
+    details: {},
+    detailsStatus: 0,
+    paid: new Set(),
   };
   state.fetch = async (input, init = {}) => {
     const url = new URL(String(input?.url || input));
@@ -47,6 +57,14 @@ function fakeProvider() {
       const more = !token;
       return Response.json({ voices: page, has_more: more, next_page_token: more ? 'page-two' : undefined });
     }
+    // A voice's own details (the Voice IDs check). Found, not found, paid-plan or missing permission.
+    if (url.host === 'api.elevenlabs.io' && url.pathname.startsWith('/v1/voices/')) {
+      const id = decodeURIComponent(url.pathname.slice('/v1/voices/'.length));
+      if (state.detailsStatus) return new Response(MISSING_PERMISSION, { status: state.detailsStatus, headers: { 'content-type': 'application/json' } });
+      if (state.paid.has(id)) return new Response(PAID_PLAN, { status: 402, headers: { 'content-type': 'application/json' } });
+      if (state.details[id]) return Response.json({ voice_id: id, name: state.details[id] });
+      return new Response(NOT_FOUND, { status: 404, headers: { 'content-type': 'application/json' } });
+    }
     if (url.host === 'api.elevenlabs.io' && url.pathname === '/v1/models') {
       return Response.json([
         { model_id: 'eleven_flash_v2_5', name: 'Flash v2.5', can_do_text_to_speech: true, can_use_style: false, can_use_speaker_boost: true, token_cost_factor: 0.5 },
@@ -54,8 +72,14 @@ function fakeProvider() {
       ]);
     }
     if (url.host === 'api.elevenlabs.io' && url.pathname.startsWith('/v1/text-to-speech/')) {
+      if (state.paid.has(decodeURIComponent(url.pathname.slice('/v1/text-to-speech/'.length)))) return new Response(PAID_PLAN, { status: 402, headers: { 'content-type': 'application/json' } });
       state.speechCalls += 1;
       return new Response(new Uint8Array([9, 9, 9]), { status: 200, headers: { 'content-type': 'audio/mpeg' } });
+    }
+    if (url.host === 'api.fish.audio' && url.pathname.startsWith('/model/')) {
+      const id = decodeURIComponent(url.pathname.slice('/model/'.length));
+      if (id === FISH32) return Response.json({ _id: id, title: 'My Fish voice' });
+      return new Response(NOT_FOUND, { status: 404, headers: { 'content-type': 'application/json' } });
     }
     if (url.host === 'api.fish.audio' && url.pathname === '/model') {
       return Response.json({ items: [{ _id: 'fishmodelABCDEF12', title: 'My Fish voice', languages: ['en'] }], has_more: false });
@@ -101,7 +125,7 @@ async function owner(provider) {
   const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
   const settle = async () => { while (pending.length) await pending.shift(); };
   return {
-    token, saved, state,
+    token, saved, state, env,
     data: () => saved.get('che') || {},
     modelCalls: () => inputs.length,
     async say(message) {
@@ -330,6 +354,134 @@ test('the Command Center readiness check accepts this deploy\'s probe token, not
   const ok = await ask();
   assert.equal(ok.status, 200);
   assert.equal(Number.isInteger((await ok.json()).available), true);
+});
+
+// ─── Voice IDs: paste an ID, check it with the provider, name it, save it, use it ───
+
+test('a pasted ElevenLabs ID is checked with the provider; an unknown ID is refused and nothing is used', async () => {
+  const provider = fakeProvider();
+  provider.details[PASTED] = 'Pasted';
+  const me = await owner(provider);
+  const refused = await me.post('/api/voice/ids/save', { provider: 'elevenlabs', id: 'NOTonACCOUNT00000', name: 'Ghost', use: true });
+  assert.equal(refused.status, 404);
+  assert.equal(refused.body.state, 'not_found');
+  assert.match(refused.body.detail, /no voice with this ID on your account/);
+  assert.equal(me.data().voice_choice, undefined, 'nothing is used');
+  assert.equal((me.data().voice_saved || []).some((s) => s.name === 'Ghost'), false, 'nothing is saved');
+  const saved = await me.post('/api/voice/ids/save', { provider: 'elevenlabs', id: PASTED, name: 'My Pasted', use: true });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.active.name, 'My Pasted');
+  assert.match(saved.body.message, /My Pasted is CHE's voice now/);
+  assert.equal(me.data().voice_choice.id, PASTED);
+  assert.equal(provider.speechCalls, 0, 'a voice the account can read is checked without speech');
+});
+
+test('a key that cannot read voice details still saves a voice, after the one test sentence the owner agreed to', async () => {
+  const provider = fakeProvider();
+  provider.detailsStatus = 401;
+  provider.details[PASTED] = 'Pasted';
+  const me = await owner(provider);
+  const r = await me.post('/api/voice/ids/save', { provider: 'elevenlabs', id: PASTED, name: 'Pasted', use: true });
+  assert.equal(r.status, 200);
+  assert.equal(provider.speechCalls, 1, 'exactly one short test sentence confirmed the voice');
+  assert.equal(me.data().voice_choice.id, PASTED);
+});
+
+test('a voice gated to a paid ElevenLabs plan is named as such, and is not saved or used', async () => {
+  const provider = fakeProvider();
+  provider.paid.add(PASTED);
+  const me = await owner(provider);
+  const r = await me.post('/api/voice/ids/save', { provider: 'elevenlabs', id: PASTED, name: 'Gated', use: true });
+  assert.equal(r.status, 409);
+  assert.equal(r.body.state, 'paid_plan');
+  assert.match(r.body.detail, /needs a paid ElevenLabs plan/);
+  assert.equal(me.data().voice_choice, undefined);
+});
+
+test('the presets Connie and Mike are checked when the page opens: details only, no credits', async () => {
+  const provider = fakeProvider();
+  provider.details[PRESET_CONNIE] = 'Connie';
+  provider.details[PRESET_MIKE] = 'Mike';
+  const me = await owner(provider);
+  const r = await me.get('/api/voice/ids');
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.saved.map((s) => [s.name, s.state]), [['Connie', 'verified'], ['Mike', 'verified']]);
+  assert.equal(provider.speechCalls, 0);
+});
+
+test('a preset the account cannot use says why when the page is checked', async () => {
+  const provider = fakeProvider();
+  provider.details[PRESET_CONNIE] = 'Connie';
+  provider.paid.add(PRESET_MIKE);
+  const me = await owner(provider);
+  const r = await me.get('/api/voice/ids');
+  const mike = r.body.saved.find((s) => s.name === 'Mike');
+  assert.equal(mike.state, 'paid_plan');
+  assert.match(mike.reason, /paid ElevenLabs plan/);
+  const use = await me.post('/api/voice/ids/use', { provider: 'elevenlabs', id: PRESET_MIKE });
+  assert.equal(use.status, 409, 'a voice the provider refused cannot be switched to');
+});
+
+test('saved voices are switched instantly, and the chosen voice is kept on the Worker', async () => {
+  const provider = fakeProvider();
+  provider.details[PRESET_CONNIE] = 'Connie';
+  provider.details[PRESET_MIKE] = 'Mike';
+  const me = await owner(provider);
+  await me.get('/api/voice/ids');
+  const toMike = await me.post('/api/voice/ids/use', { provider: 'elevenlabs', id: PRESET_MIKE });
+  assert.equal(toMike.status, 200);
+  assert.equal(me.data().voice_choice.name, 'Mike');
+  assert.equal(me.saved.get('che').voice_choice.id, PRESET_MIKE, 'stored, so it survives a restart');
+  await me.post('/api/voice/ids/use', { provider: 'elevenlabs', id: PRESET_CONNIE });
+  assert.equal(me.data().voice_choice.name, 'Connie');
+});
+
+test('a spoken "use Mike" switches to the saved voice, and "preview" uses the free-credit confirmation', async () => {
+  const provider = fakeProvider();
+  provider.details[PRESET_CONNIE] = 'Connie';
+  provider.details[PRESET_MIKE] = 'Mike';
+  const me = await owner(provider);
+  await me.get('/api/voice/ids');
+  const said = await me.say('use Mike');
+  assert.equal(said.modelCalls, 0);
+  assert.match(said.reply, /Mike is now CHE's voice/);
+  assert.equal(me.data().voice_choice.id, PRESET_MIKE);
+  const unconfirmed = await me.post('/api/voice/preview', { provider: 'elevenlabs', id: PRESET_MIKE, speed: 1 });
+  assert.equal(unconfirmed.status, 409, 'a sample needs the owner\'s confirmation');
+  const confirmed = await worker.fetch(new Request('https://che.example/api/voice/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${me.token}` },
+    body: JSON.stringify({ provider: 'elevenlabs', id: PRESET_MIKE, speed: 1, confirm_credits: true }),
+  }), me.env);
+  assert.equal(confirmed.status, 200);
+  assert.match(confirmed.headers.get('content-type'), /audio/);
+});
+
+test('removing a saved voice needs confirmation; removing the voice in use returns CHE to its built-in voice', async () => {
+  const provider = fakeProvider();
+  provider.details[PRESET_MIKE] = 'Mike';
+  const me = await owner(provider);
+  await me.post('/api/voice/ids/use', { provider: 'elevenlabs', id: PRESET_MIKE });
+  const unconfirmed = await me.post('/api/voice/ids/remove', { provider: 'elevenlabs', id: PRESET_MIKE });
+  assert.equal(unconfirmed.status, 409);
+  assert.equal(me.data().voice_choice.id, PRESET_MIKE, 'nothing was removed without confirmation');
+  const removed = await me.post('/api/voice/ids/remove', { provider: 'elevenlabs', id: PRESET_MIKE, confirm: true });
+  assert.equal(removed.status, 200);
+  assert.match(removed.body.message, /Mike is removed. CHE is back on its built-in voice/);
+  assert.equal(me.data().voice_choice, undefined);
+  assert.equal((me.data().voice_saved || []).some((s) => s.id === PRESET_MIKE), false);
+});
+
+test('a Fish Audio ID is checked against Fish Audio and saved under its name', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  const bad = await me.post('/api/voice/ids/save', { provider: 'fish', id: '0'.repeat(32), name: 'Nope', use: true });
+  assert.equal(bad.status, 404);
+  assert.match(bad.body.detail, /Fish Audio has no voice model with this ID/);
+  const ok = await me.post('/api/voice/ids/save', { provider: 'fish', id: FISH32, name: 'My Fish', use: true });
+  assert.equal(ok.status, 200);
+  assert.equal(me.data().voice_choice.provider, 'fish');
+  assert.equal(me.data().voice_choice.name, 'My Fish');
 });
 
 test('the test harness restores the real fetch', () => {
