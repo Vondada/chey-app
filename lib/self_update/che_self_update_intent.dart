@@ -242,7 +242,7 @@ bool cheNeedsLiveSources(String raw) {
   // A question or a request for news, not a statement that mentions it
   // ("I have good news", "my screen keeps breaking").
   final asks = text.contains('?') ||
-      RegExp(r"^(?:(?:hey\s+)?(?:che|chay|chey|shay)[,:]?\s+)?(?:please\s+)?(?:what|which|who|when|where|how|is|are|was|were|did|do|does|has|have|any|tell me|give me|show me|read me|catch me up|brief me|update me)\b", caseSensitive: false).hasMatch(text);
+      RegExp(r"^(?:(?:hey\s+)?(?:che|chay|chey|shay)[,:]?\s+)?(?:please\s+)?(?:what|which|who|when|where|how|is|are|was|were|did|do|does|has|have|any|tell me|give me|show me|read me|catch me up|brief me|update me|(?:can|could|would|will) you|(?:can|could|may) i (?:get|have|hear|see))\b", caseSensitive: false).hasMatch(text);
   if (!asks) return false;
   final named = RegExp(r'\b(?:news|headlines?|breaking)\b', caseSensitive: false).hasMatch(text);
   // The same days the server's newsQuestion reads.
