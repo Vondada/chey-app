@@ -389,6 +389,72 @@ export const COMMANDS = Object.freeze([
     prompt: "What's the app build status", produces: 'build status', evidence: 'GitHub Actions run and release asset.', keywords: ['iphone', 'ipa', 'sidestore', 'update', 'install', 'build status'],
   }),
 
+  // REA (reverse engineering). Every REA command routes to rea_runner.js, which
+  // only reads public npm packages at an exact version on the pinned GitHub
+  // runner. None of them starts a coding job; building is the separate
+  // che-build command with its own yes.
+  C('rea-inspect', 'build', 'EXPLORE', 'Reverse-engineer a public npm package (REA).', {
+    title: 'REA: inspect a package',
+    does: 'Runs REA 6.5.0 static analysis on one public npm package at an exact version, on GitHub Actions. Nothing from the package runs here, and no coding job, commit or deploy starts.',
+    needs: ['github'], route: 'che_rea', handler: 'rea_runner.js (REA 6.5.0 in the che-rea-analysis workflow)',
+    input: { name: 'target', required: true, hint: 'npm package and exact version, e.g. npm:semver@7.7.2' },
+    examples: ['REA inspect: npm:semver@7.7.2', 'Reverse engineer npm package semver 7.7.2'],
+    prompt: 'REA inspect: {input}',
+    produces: 'evidence summary', evidence: 'Evidence id, counts REA read, confidence, and every limitation REA reported.',
+    cost: 'Free: the public npm registry and GitHub Actions, through CHE\'s GitHub connection.',
+    keywords: ['reverse engineer', 'rea', 'inspect package', 'analyze javascript', 'npm package', 'electron app'],
+  }),
+  C('rea-explain', 'build', 'EXPLORE', 'Explain how a package is built, from evidence.', {
+    title: 'REA: explain from evidence',
+    does: 'Explains a package\'s structure from its REA evidence and says what that evidence does not show. Reuses recorded evidence when it exists.',
+    needs: ['github'], route: 'che_rea', handler: 'rea_runner.js (REA evidence, reused when recorded)',
+    input: { name: 'question', required: true, hint: 'npm package and exact version, and what to explain' },
+    examples: ['REA explain: npm:semver@7.7.2'],
+    prompt: 'REA explain: {input}',
+    produces: 'explanation', evidence: 'Each fact names its REA evidence id; anything unsupported is labeled.',
+    keywords: ['explain how', 'how does it work', 'how is this built', 'architecture', 'dependencies'],
+  }),
+  C('rea-debug', 'build', 'EXPLORE', 'Investigate a software problem from evidence.', {
+    title: 'REA: debug from evidence',
+    does: 'Reviews a package\'s static evidence for a reported problem. REA cannot see a crash, so the result is static only and says so.',
+    needs: ['github'], route: 'che_rea', handler: 'rea_runner.js (REA static evidence)',
+    input: { name: 'problem', required: true, hint: 'npm package and exact version, and the symptom' },
+    examples: ['REA debug: npm:semver@7.7.2 a valid range is rejected'],
+    prompt: 'REA debug: {input}',
+    produces: 'debug notes', evidence: 'Static facts only; runtime behaviour is labeled as not observed.',
+    keywords: ['debug', 'crash', 'bug', 'broken', 'not working', 'investigate'],
+  }),
+  C('rea-compare', 'build', 'EXPLORE', 'Compare observed software with CHE\'s own code.', {
+    title: 'REA: compare with CHE',
+    does: 'Records REA\'s evidence for a package for comparison with a feature you name. Comparing it with CHE\'s own code is not built yet, so only REA\'s side is returned.',
+    needs: ['github'], route: 'che_rea', handler: 'rea_runner.js (REA evidence; CHE side not built)',
+    input: { name: 'feature', required: true, hint: 'npm package and exact version, and the CHE feature to compare' },
+    examples: ['REA compare: npm:semver@7.7.2'],
+    prompt: 'REA compare: {input}',
+    produces: 'comparison', evidence: 'Each side cites its own evidence; a missing side is named.',
+    keywords: ['compare', 'difference', 'versus', 'how does ours', 'same as'],
+  }),
+  C('rea-rebuild', 'build', 'PLAN', 'Plan an original feature from verified evidence.', {
+    title: 'REA: plan a rebuild',
+    does: 'Writes a plan from REA evidence already recorded. Nothing is built. Building is a separate step that needs your yes.',
+    needs: [], route: 'che_rea', handler: 'rea_runner.js (plan from recorded evidence only)',
+    input: { name: 'feature', required: true, hint: 'The feature to build, and optionally the REA job id' },
+    examples: ['REA rebuild: a search box like the one REA found'],
+    prompt: 'REA rebuild: {input}',
+    produces: 'build plan', evidence: 'Each planned step names the REA facts it relies on.',
+    keywords: ['rebuild', 'build a similar', 'original feature', 'implement from findings'],
+  }),
+  C('rea-status', 'build', 'EXPLORE', 'Show REA jobs, capabilities and results.', {
+    title: 'REA: status and history',
+    does: 'Shows REA\'s capabilities, recent analysis jobs, and the latest finished evidence.',
+    needs: ['github'], route: 'che_rea', handler: 'rea_runner.js (job log and the che-mailbox results)',
+    input: null,
+    examples: ['REA status'],
+    prompt: 'REA status',
+    produces: 'job status', evidence: 'Job ids and the result records they were read from.',
+    keywords: ['rea status', 'rea history', 'analysis status', 'reverse engineering jobs'],
+  }),
+
   // ── Money Management ──────────────────────────────────────────────────
   C('money-dashboard', 'money', 'EXPLORE', 'Financial overview from connected records.', {
     does: 'Reads today\'s Office earnings and Stripe sales. CHE has no bank feed, so spending is only what you tell her.',

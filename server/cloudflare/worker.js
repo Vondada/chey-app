@@ -151,6 +151,7 @@ import {
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
 import { catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, searchCommands, speakUnavailable, suggestCommands, workflowNodes } from './command_catalog.js';
+import { handleReaRequest } from './rea_runner.js';
 import { LAST_RESULTS_KEY, loadCatalog, resourceChoice, resourceIntent, resultLinks, searchCatalog, speakResults } from './resource_catalogs.js';
 import { fiveLayerIntent, LAYER_RESULTS_KEY, reasoningLayer, runReasoningLayer, speakFiveLayerResults } from './reasoning_exam.js';
 import { AUTONOMY_EXAM, EXAM_RESULTS_KEY, examIntent, examLevel, gradeLevel, mergeExamResult, speakExamResults, ungradableEngineFailure } from './autonomy_exam.js';
@@ -466,7 +467,7 @@ async function commandCenterProbe(env, token) {
   };
   try {
     const catalog = await (await call('/api/commands', {}, device)).json().catch(() => ({}));
-    steps.push({ name: 'catalog: 71 commands in 8 categories', pass: catalog.commands?.length === 71 && catalog.categories?.length === 8, ms: 0, route: 'catalog', model_calls: 0, reply: `${catalog.commands?.length} commands` });
+    steps.push({ name: 'catalog: 77 commands in 8 categories', pass: catalog.commands?.length === 77 && catalog.categories?.length === 8, ms: 0, route: 'catalog', model_calls: 0, reply: `${catalog.commands?.length} commands` });
     await step('unknown command answered honestly, nothing run', '/lead-scot barbers',
       ({ done, reply }) => done.source === 'che_command' && done.ok === false && done.model_calls === 0 && /Nothing was run/.test(reply));
     await step('slash command reaches its existing handler', '/trade-journal',
@@ -7421,6 +7422,12 @@ export class CheState extends DurableObject {
           if (savedResourceList) await this.ctx.storage.put(LAST_RESULTS_KEY, null);
         } catch (_) { savedResourceList = null; }
         const learnedHearing = correctionsContext(corrections);
+
+        // REA requests (reverse engineering) take their own read-only route before
+        // any repository or coding routing. They dispatch analysis; they never start
+        // a coding job, commit or deploy.
+        const rea = await handleReaRequest(this.ctx.storage, this.env, message);
+        if (rea) return ndjsonReply(rea.text, { source: 'che_rea', ok: rea.ok });
 
         // Explicit chat-only evaluations are terminal for action routing. The
         // question may discuss coding, PRs, deployment or collaboration, but
