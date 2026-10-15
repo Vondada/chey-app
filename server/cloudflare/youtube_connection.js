@@ -282,6 +282,17 @@ export async function youtubeStatus(env, data) {
   };
 }
 
+// The owner's YouTube uploads by CHE, newest first, at most five.
+export function youtubeUploads(data) {
+  return Object.values(data.youtube_uploads || {}).filter((u) => u?.link).sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, 5);
+}
+
+// The spoken YouTube status. It reads the stored sign-in and CHE's own uploads only.
+export function youtubeStatusSpeech(st, uploads = []) {
+  if (!st.connected) return `YouTube is not connected, sir (${st.status || 'not connected'}). Open Mailbox, Keys, YouTube to sign in.`;
+  return `YouTube is connected${st.channel_title ? ` to ${st.channel_title}` : ''}, sir. ${uploads.length ? `Latest uploads by CHE: ${uploads.map((u, i) => `${i + 1}. ${u.link}`).join(' ')}` : 'CHE has not uploaded a video yet.'} View and subscriber analytics are not connected yet.`;
+}
+
 // Revokes the grant at Google and forgets it here. The local copy is removed
 // even if Google cannot be reached, and the reply says which part worked.
 export async function disconnectYouTube(env, data, fetcher = fetch) {
