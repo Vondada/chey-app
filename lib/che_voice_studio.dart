@@ -45,7 +45,7 @@ class CheVoiceStudioPreview {
       ).timeout(const Duration(seconds: 30));
       if (r.statusCode != 200 || !(r.headers['content-type'] ?? '').contains('audio')) return false;
       await CheNativeVoice.stopAudio();
-      return CheNativeVoice.playAudioBounded(r.bodyBytes);
+      return await CheNativeVoice.playAudioBounded(r.bodyBytes);
     } on Object {
       return false;
     } finally {

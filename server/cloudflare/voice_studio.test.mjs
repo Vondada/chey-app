@@ -273,6 +273,35 @@ test('a chosen model and its settings are saved only where the model allows them
   assert.equal(me.data().voice_choice.model_id, 'eleven_multilingual_v2', 'a refused choice changes nothing');
 });
 
+test('the panel\'s controls can be said aloud; a setting the model does not allow is refused and nothing is saved', async () => {
+  const provider = fakeProvider();
+  const me = await owner(provider);
+  await me.say('show my ElevenLabs library');
+  await me.say('use Connie');
+  const stab = await me.say('set stability to 60 percent');
+  assert.equal(stab.done.model_calls, 0);
+  assert.match(stab.reply, /Stability is 60 percent for Connie/);
+  assert.equal(me.data().voice_choice.settings.stability, 0.6);
+  const boost = await me.say('turn speaker boost off');
+  assert.match(boost.reply, /Speaker boost is off for Connie/);
+  assert.equal(me.data().voice_choice.settings.use_speaker_boost, false);
+  const style = await me.say('set style to 40 percent');
+  assert.match(style.reply, /not allowed for Flash v2\.5/, 'Flash cannot use style');
+  assert.equal(me.data().voice_choice.settings.style, undefined, 'a refused setting is not saved');
+  const model = await me.say('use the multilingual model');
+  assert.match(model.reply, /will speak with Multilingual v2/);
+  assert.equal(me.data().voice_choice.model_id, 'eleven_multilingual_v2');
+  const styled = await me.say('set style to 40 percent');
+  assert.match(styled.reply, /Style is 40 percent for Connie/);
+  const speed = await me.say('set speed to 1.1');
+  assert.match(speed.reply, /Speaking speed is 1\.10 for Connie/);
+  const refused = await me.say('set stability to 150 percent');
+  assert.match(refused.reply, /not allowed for Multilingual v2/);
+  assert.equal(me.data().voice_choice.settings.stability, 0.6, 'an out-of-range value changes nothing');
+  const noModel = await me.say('use the bathroom model');
+  assert.equal(noModel.done.source === 'che_voice_studio', false, 'a model the account does not have is ordinary chat');
+});
+
 test('"switch to Fish" makes Fish first, and "switch to ElevenLabs" puts ElevenLabs back', async () => {
   const provider = fakeProvider();
   const me = await owner(provider);

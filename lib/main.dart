@@ -465,6 +465,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   String? _deviceToken;
   String _agentBaseUrl = _defaultAgentBaseUrl;
+  // A free sample asked for by voice; it plays after CHE finishes the spoken reply.
+  String? _pendingVoicePreviewId;
   String _homeBaseUrl = '';
 
   // Office agents run in the backend Agent Runtime; the app mirrors them.

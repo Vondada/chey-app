@@ -199,6 +199,15 @@ test('"use Connie" is recognised by the name on the account; an unknown name is 
   assert.deepEqual(voiceStudioIntent('use Connie'), { kind: 'needs_names' }, 'names are read only for a spoken name');
 });
 
+test('the panel\'s controls can be said aloud: settings, speaker boost and speech model', () => {
+  assert.deepEqual(voiceStudioIntent('set stability to 60 percent'), { kind: 'control', name: 'stability', value: 60, percent: true });
+  assert.deepEqual(voiceStudioIntent('CHE, change the style to 0.4.'), { kind: 'control', name: 'style', value: 0.4, percent: false });
+  assert.deepEqual(voiceStudioIntent('set speed to 1.1'), { kind: 'control', name: 'speed', value: 1.1, percent: false });
+  assert.deepEqual(voiceStudioIntent('turn speaker boost off'), { kind: 'boost', on: false });
+  assert.deepEqual(voiceStudioIntent('use the multilingual v2 model'), { kind: 'model', spoken: 'multilingual v2' });
+  assert.equal(mightBeVoiceRequest('turn speaker boost off'), true);
+});
+
 test('ordinary conversation is never a voice request', () => {
   for (const message of [
     'read my latest unread email', 'what is the weather', 'show me the calendar', 'save this file',

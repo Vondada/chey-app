@@ -320,6 +320,13 @@ export function voiceStudioIntent(message, { last = null, names = null } = {}) {
   if (/^(?:save|keep|make|set)\s+(?:this|that|it)(?:\s+(?:as|for))?\s+(?:your|my|che'?s|the)?\s*voice$/.test(t) || /^(?:save|keep)\s+(?:this|that|it)$/.test(t)) {
     return { kind: 'save' };
   }
+  // The panel's controls, said aloud. Each is checked against the chosen model's own flags.
+  const control = /^(?:set|make|change)\s+(?:the\s+)?(stability|similarity|style|speed)\s+(?:to\s+)?(\d{1,3}(?:\.\d+)?)\s*(percent|%)?$/.exec(t);
+  if (control) return { kind: 'control', name: control[1], value: Number(control[2]), percent: Boolean(control[3]) };
+  const boost = /^(?:turn|switch)\s+(?:the\s+)?speaker\s+boost\s+(on|off)$/.exec(t);
+  if (boost) return { kind: 'boost', on: boost[1] === 'on' };
+  const model = /^(?:use|switch to|set)\s+(?:the\s+)?(.+?)\s+model$/.exec(t);
+  if (model) return { kind: 'model', spoken: model[1] };
   const number = /^(?:use|choose|pick|select|preview|play|hear|test|switch to)\s+(?:number\s+|voice\s+)?(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})$/.exec(t);
   if (number) {
     const index = NUMBER_WORDS[number[1]] ?? Number(number[1]);
@@ -344,5 +351,5 @@ export function voiceStudioIntent(message, { last = null, names = null } = {}) {
 
 // Whether the message begins like a voice request, so the library is read only then.
 export function mightBeVoiceRequest(message) {
-  return /^(?:use|choose|pick|select|switch|preview|play|hear|test|save|keep|make|set|show|list|read|tell|what|which|refresh|reload|check|update)\b/.test(normalizeVoiceRequest(message));
+  return /^(?:use|choose|pick|select|switch|preview|play|hear|test|save|keep|make|set|change|turn|show|list|read|tell|what|which|refresh|reload|check|update)\b/.test(normalizeVoiceRequest(message));
 }
