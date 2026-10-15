@@ -288,9 +288,12 @@ export async function disconnectYouTube(env, data, fetcher = fetch) {
   const conn = data.youtube;
   if (!conn) return { ok: true, revoked_at_google: false, was_connected: false };
   const refreshToken = await open(env, conn.refresh).catch(() => '');
-  const revoked = await revokeGrant(fetcher, refreshToken);
+  // A Google service connected through the same client may share this sign-in.
+  // Revoking would end it too, so CHE then forgets only YouTube's copy.
+  const sharedWithGoogle = Object.values(data.google_connections || {}).some((c) => Boolean(c?.refresh));
+  const revoked = sharedWithGoogle ? false : await revokeGrant(fetcher, refreshToken);
   delete data.youtube;
-  return { ok: true, was_connected: true, revoked_at_google: revoked };
+  return { ok: true, was_connected: true, revoked_at_google: revoked, kept_at_google: sharedWithGoogle };
 }
 
 // A small page for the browser tab that Google returns to. Text is escaped.

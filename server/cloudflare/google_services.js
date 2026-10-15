@@ -191,7 +191,8 @@ export async function finishGoogleConnect(env, data, params, fetcher = fetch, or
   data.google_connections ||= {};
   const previous = data.google_connections[pending.service];
   const previousRefresh = previous ? await openToken(env, previous.refresh).catch(() => '') : '';
-  if (previousRefresh && previousRefresh !== token.json.refresh_token) await revokeGrant(fetcher, previousRefresh);
+  const sharedNow = sharesGrant(data, pending.service);
+  if (previousRefresh && previousRefresh !== token.json.refresh_token && !sharedNow) await revokeGrant(fetcher, previousRefresh);
   data.google_connections[pending.service] = {
     status: needsAccess ? 'needs_access' : 'connected',
     account,
@@ -239,6 +240,47 @@ export async function googleAccessToken(env, data, service, fetcher = fetch, now
   conn.access = await sealToken(env, refreshed.json.access_token);
   conn.access_expires_at = now + Number(refreshed.json.expires_in || 3600) * 1000 - ACCESS_SAFETY_MS;
   return { ok: true, token: refreshed.json.access_token };
+}
+
+// True when another CHE connection (a Google service or YouTube) uses the same sign-in.
+function sharesGrant(data, service) {
+  return Object.entries(data.google_connections || {}).some(([id, c]) => id !== service && Boolean(c?.refresh))
+    || Boolean(data.youtube?.refresh);
+}
+
+// A grant waiting for Google's approval is checked again on each owner refresh, so
+// an approved account becomes Connected without a reconnect. Returns true when the
+// stored state changed and must be saved.
+export async function googleRecheckPending(env, data, fetcher = fetch) {
+  let changed = false;
+  for (const [id, conn] of Object.entries(data.google_connections || {})) {
+    if (conn?.status !== 'needs_access' || !isGoogleService(id)) continue;
+    const refresh = await openToken(env, conn.refresh).catch(() => '');
+    const config = googleClientConfig(env, '');
+    if (!refresh || config.error) continue;
+    const refreshed = await postForm(fetcher, TOKEN_URL, {
+      client_id: config.clientId, client_secret: config.clientSecret, refresh_token: refresh, grant_type: 'refresh_token',
+    });
+    if (!refreshed.ok || !refreshed.json.access_token) {
+      if (refreshed.json.error === 'invalid_grant') {
+        conn.status = 'needs_reconnect';
+        changed = true;
+      }
+      continue;
+    }
+    try {
+      conn.account = await GOOGLE_SERVICES[id].verify(refreshed.json.access_token, fetcher, env);
+      conn.status = 'connected';
+      conn.access_status_detail = '';
+    } catch (e) {
+      if (!(e instanceof NeedsAccess)) continue;
+      conn.access_status_detail = e.message;
+    }
+    conn.access = await sealToken(env, refreshed.json.access_token);
+    conn.access_expires_at = Date.now() + Number(refreshed.json.expires_in || 3600) * 1000 - ACCESS_SAFETY_MS;
+    changed = true;
+  }
+  return changed;
 }
 
 // What the app may show: status and the signed-in address, never a token.
@@ -289,8 +331,7 @@ export async function disconnectGoogle(env, data, service, fetcher = fetch) {
   const refresh = await openToken(env, conn.refresh).catch(() => '');
   // Google's revoke can end a sign-in that other CHE connections share, YouTube
   // included. So CHE revokes only when nothing else it holds would be affected.
-  const shared = Object.entries(data.google_connections || {}).some(([id, c]) => id !== service && c?.refresh)
-    || Boolean(data.youtube?.refresh);
+  const shared = sharesGrant(data, service);
   const revoked = shared ? false : await revokeGrant(fetcher, refresh);
   delete data.google_connections[service];
   return { ok: true, label, was_connected: true, revoked_at_google: revoked, kept_at_google: shared };
@@ -306,7 +347,8 @@ export async function gmailList(env, data, { query = 'is:unread', max = 5 } = {}
   const list = await googleCall(fetcher, 'GET', `${GMAIL}/messages?${new URLSearchParams({ q: query, maxResults: String(size) })}`, access.token);
   if (!list.ok) return { ok: false, error: callError('Gmail', list) };
   const messages = [];
-  for (const item of (list.json.messages || []).slice(0, size)) {
+  const listed = (list.json.messages || []).slice(0, size);
+  for (const item of listed) {
     const meta = await googleCall(fetcher, 'GET', `${GMAIL}/messages/${encodeURIComponent(item.id)}?${new URLSearchParams([
       ['format', 'metadata'], ['metadataHeaders', 'From'], ['metadataHeaders', 'Subject'], ['metadataHeaders', 'Date'],
     ])}`, access.token);
@@ -321,6 +363,7 @@ export async function gmailList(env, data, { query = 'is:unread', max = 5 } = {}
       snippet: String(meta.json.snippet || '').slice(0, 160),
     });
   }
+  if (listed.length && !messages.length) return { ok: false, error: 'Gmail listed your messages but would not return their details. Try again.' };
   return { ok: true, messages, total: list.json.resultSizeEstimate ?? messages.length };
 }
 
@@ -524,7 +567,7 @@ export async function adsCustomers(env, data, fetcher = fetch) {
 }
 
 // Google Ads, read-only: campaign results for the last seven days on one account.
-const ADS_CAMPAIGN_QUERY = 'SELECT campaign.name, campaign.status, metrics.impressions, metrics.clicks, metrics.cost_micros FROM campaign WHERE segments.date DURING LAST_7_DAYS ORDER BY metrics.cost_micros DESC LIMIT 10';
+const ADS_CAMPAIGN_QUERY = 'SELECT campaign.name, campaign.status, customer.currency_code, metrics.impressions, metrics.clicks, metrics.cost_micros FROM campaign WHERE segments.date DURING LAST_7_DAYS ORDER BY metrics.cost_micros DESC LIMIT 10';
 
 export async function adsCampaignReport(env, data, { customerId } = {}, fetcher = fetch) {
   const id = String(customerId || '').replace(/\D/g, '');
@@ -537,6 +580,7 @@ export async function adsCampaignReport(env, data, { customerId } = {}, fetcher 
   const rows = (Array.isArray(r.json) ? r.json : []).flatMap((chunk) => chunk.results || []);
   return {
     ok: true,
+    currency: String(rows[0]?.customer?.currencyCode || rows[0]?.customer?.currency_code || ''),
     campaigns: rows.map((row) => ({
       name: String(row.campaign?.name || '').slice(0, 120),
       status: String(row.campaign?.status || ''),
@@ -642,7 +686,8 @@ export async function runGoogleIntent(intent, { env = {}, data, fetcher = fetch,
     const r = await adsCampaignReport(env, data, { customerId: account }, fetcher);
     if (!r.ok) return { ok: false, text: `I could not read the campaign report, sir. ${r.error}` };
     if (!r.campaigns.length) return { ok: true, text: `No campaign results in the last seven days for account ${account}, sir.` };
-    const top = r.campaigns.slice(0, 3).map((c) => `${c.name}: $${c.cost.toFixed(2)} spent, ${c.clicks} clicks`).join('; ');
+    const money = r.currency || 'in the account currency';
+    const top = r.campaigns.slice(0, 3).map((c) => `${c.name}: ${c.cost.toFixed(2)} ${money} spent, ${c.clicks} clicks`).join('; ');
     return { ok: true, text: `Last seven days, account ${account}, top campaigns: ${top}. Read only; nothing was changed.` };
   }
   if (intent.kind === 'drive_list') {

@@ -87,8 +87,8 @@ import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, op
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
 import {
-  disconnectGoogle, finishGoogleConnect, googleConnectorStates, googleLabel, googleOwnerStep, googleStates,
-  startGoogleConnect,
+  disconnectGoogle, finishGoogleConnect, googleConnectorStates, googleLabel, googleOwnerStep, googleRecheckPending,
+  googleStates, startGoogleConnect,
 } from './google_services.js';
 import { fundyouredgeReply } from './fundyouredge.js';
 import { CheCodingRuntime, codingRuntimeEnabled, ownerRequiresMergeApproval, recoverableRuntimeFailure, runtimeState, runtimeStateClass, speakRuntimeStatus } from './coding_runtime.js';
@@ -4956,6 +4956,7 @@ export class CheState extends DurableObject {
       }
       if (request.method === 'GET' && path === '/api/google/status') {
         if (!ownerDevice) return ownerOnly();
+        if (await googleRecheckPending(this.keyEnv || this.env, data, fetch).catch(() => false)) await this.ctx.storage.put('che', data);
         return json({ services: await googleStates(this.keyEnv || this.env, data) });
       }
       if (request.method === 'POST' && path === '/api/google/disconnect') {
@@ -6312,6 +6313,8 @@ export class CheState extends DurableObject {
       }
       // The Command Center catalog with live status, saved workflows and runs.
       if (path === '/api/commands' && ['GET', 'POST'].includes(request.method)) {
+        // A Google Ads grant Google has not approved yet is checked again on each refresh.
+        if (await googleRecheckPending(this.keyEnv || this.env, data, fetch).catch(() => false)) await this.ctx.storage.put('che', data);
         const connectors = await this.commandConnectors(data);
         let runs = null;
         try { runs = await this.ctx.storage.get(COMMAND_RUNS_KEY); } catch (_) { runs = null; }

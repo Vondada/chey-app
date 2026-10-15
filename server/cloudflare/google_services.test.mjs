@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { sealToken } from './youtube_connection.js';
+import { disconnectYouTube, sealToken } from './youtube_connection.js';
 import {
   adsCustomers, buildRawEmail, calendarCreate, calendarList, calendarWindow, disconnectGoogle,
   driveCreateDoc, driveList, finishGoogleConnect, gmailList, gmailSend, googleAccessToken,
-  adsApiBase, adsCampaignReport, googleChatIntent, googleConnectorStates, googleOwnerStep, googleStates, GOOGLE_HOLD_MS,
+  adsApiBase, adsCampaignReport, googleChatIntent, googleRecheckPending, googleConnectorStates, googleOwnerStep, googleStates, GOOGLE_HOLD_MS,
   PENDING_GOOGLE_ACTION_KEY, runGoogleIntent, startGoogleConnect, zonedWallTimeToUtc,
 } from './google_services.js';
 
@@ -459,4 +459,74 @@ test('reads run at once and hold nothing', async () => {
   const r = await googleOwnerStep('check my email', { ...s.opts, fetcher });
   assert.equal(r.text, 'No unread email, sir.');
   assert.equal(s.storage.m.get(PENDING_GOOGLE_ACTION_KEY), undefined);
+});
+
+test('a Google Ads grant waiting for approval becomes Connected on the next refresh once Google lists an account', async () => {
+  const data = { google_connections: { google_ads: { status: 'needs_access', account: '', access_status_detail: 'Needs Setup',
+    refresh: await sealToken(env, 'ads-refresh') } } };
+  const fetcher = fakeGoogle({
+    'https://oauth2.googleapis.com/token': () => json({ access_token: 'fresh', expires_in: 3600 }),
+    'https://googleads.googleapis.com/': () => json({ resourceNames: ['customers/1234567890'] }),
+  });
+  assert.equal(await googleRecheckPending(env, data, fetcher), true);
+  assert.equal(data.google_connections.google_ads.status, 'connected');
+  assert.match(data.google_connections.google_ads.account, /1 Google Ads account/);
+});
+
+test('a Google Ads grant still unapproved stays Needs Setup and keeps its grant', async () => {
+  const data = { google_connections: { google_ads: { status: 'needs_access', account: '', access_status_detail: 'Needs Setup',
+    refresh: await sealToken(env, 'ads-refresh') } } };
+  const fetcher = fakeGoogle({
+    'https://oauth2.googleapis.com/token': () => json({ access_token: 'fresh', expires_in: 3600 }),
+    'https://googleads.googleapis.com/': () => json({ error: { message: 'not approved' } }, 403),
+  });
+  await googleRecheckPending(env, data, fetcher);
+  assert.equal(data.google_connections.google_ads.status, 'needs_access');
+  assert.equal(fetcher.calls.some((c) => c.url.includes('/revoke')), false);
+});
+
+test('reconnecting a service does not revoke a grant that another CHE connection shares', async () => {
+  const data = { google_oauth: pendingFor('calendar'), youtube: { refresh: await sealToken(env, 'yt-refresh') },
+    google_connections: { calendar: { status: 'connected', refresh: await sealToken(env, 'old-calendar-refresh') } } };
+  const fetcher = fakeGoogle({
+    'https://oauth2.googleapis.com/token': tokenHandler({ scope: SCOPE.calendar }),
+    'https://www.googleapis.com/calendar/v3/calendars/primary/events': () => json({ items: [] }),
+  });
+  const r = await finishGoogleConnect(env, data, { state: 'expected-state', code: 'c' }, fetcher, ORIGIN, NOW);
+  assert.equal(r.ok, true, r.error);
+  assert.equal(fetcher.calls.some((c) => c.url.includes('/revoke')), false, 'the shared grant is not revoked');
+});
+
+test('disconnecting YouTube does not revoke a grant a Google service shares', async () => {
+  const data = { youtube: { refresh: await sealToken(env, 'yt-refresh') },
+    google_connections: { drive: { status: 'connected', refresh: await sealToken(env, 'drive-refresh') } } };
+  const fetcher = fakeGoogle({ 'https://oauth2.googleapis.com/revoke': () => new Response('', { status: 200 }) });
+  const r = await disconnectYouTube(env, data, fetcher);
+  assert.equal(r.revoked_at_google, false);
+  assert.equal(fetcher.calls.some((c) => c.url.includes('/revoke')), false, 'Google keeps its sign-in');
+  assert.equal(data.youtube, undefined, 'YouTube is still forgotten here');
+});
+
+test('Gmail that lists messages but returns none of their details is an error, not an empty inbox', async () => {
+  const { sealToken: seal } = await import('./youtube_connection.js');
+  const data = { google_connections: { gmail: { status: 'connected', refresh: await seal(env, 'r'),
+    access: await seal(env, 'live'), access_expires_at: Date.now() + 3600000 } } };
+  const fetcher = fakeGoogle({
+    'https://gmail.googleapis.com/gmail/v1/users/me/messages?': () => json({ messages: [{ id: 'm1' }, { id: 'm2' }], resultSizeEstimate: 2 }),
+  });
+  const r = await gmailList(env, data, {}, fetcher);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /would not return their details/);
+});
+
+test('the Ads campaign report says which currency it is in, and reads it from the account', async () => {
+  const data = { google_connections: { google_ads: { status: 'connected', account: '1 account', refresh: await sealToken(env, 'r'),
+    access: await sealToken(env, 't'), access_expires_at: Date.now() + 3600000 } } };
+  const fetcher = fakeGoogle({
+    'https://googleads.googleapis.com/': () => json([{ results: [{ customer: { currencyCode: 'GBP' },
+      campaign: { name: 'Spring', status: 'ENABLED' }, metrics: { impressions: '10', clicks: '1', costMicros: '1500000' } }] }]),
+  });
+  const r = await adsCampaignReport(env, data, { customerId: '1234567890' }, fetcher);
+  assert.equal(r.currency, 'GBP');
+  assert.match(JSON.parse(fetcher.calls[0].body).query, /customer\.currency_code/);
 });
