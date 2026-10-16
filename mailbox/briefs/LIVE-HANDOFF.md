@@ -64,7 +64,41 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
-## 2. Current position (ChatGPT, 2026-10-15 — PR #315 final checks)
+## 2. Current position (Claude, 2026-10-16 ~02:20 UTC — PR #315 MERGED as `6db81c6`; Worker deployed and live; IPA released)
+
+- `main` is at **6db81c6** (#315, squash of `ae4515b`). It covers Connie at full loudness on the loudspeaker and verified news sources with no invented articles.
+- Review history:
+  - Codex reviewed up to `21edef7`, then hit its usage limit.
+  - An independent review agent then ran seven passes, `f3b651c` → `ae4515b`. Every finding was reproduced, fixed and given a regression test. The final pass reported no findings.
+- What `guardCitations` now does:
+  - Only pages opened this turn count as sources; a reference summary never does.
+  - An article's date comes from its own page. A news answer uses only pages dated within the asked days; labelled background is exempt.
+  - A cited claim must be said by its page; sharing a name with the page is not enough.
+  - Source lists cite the nearest claim above them. A broken, unopenable or out-of-date link drops only its own line, or is cut from a shared line. Up to 6 links are opened per reply.
+  - List intros never wipe a reply. An intro with claim words (INTRO_CLAIM) is checked. Any other intro only gets a note when its links don't mention its topic.
+  - Plain navigation links are left alone (PRESENTS).
+  - News questions never replay a reference-only cache, from chat or from a mission step.
+  - The iPhone offline guard and the Worker share `test/fixtures/news_requests.json`.
+- Verified:
+  - Deploy run 38838606879 succeeded. Live commit 6db81c6 is confirmed (Worker version aa36d898).
+  - Live probes: memory truth 12/12, ElevenLabs voice 52 KB in 694 ms, Command Center 5/5, SideStore install link verified at deploy time.
+  - IPA run 38838606970 succeeded (Shorebird release, patchable). Release `che-ios-v1.4.1024890969-b3883860697001`: CHE-unsigned.ipa, 43,172,169 bytes, sha256 bc68ae49…35d4e.
+  - Local and CI checks: Worker 1292/1292, skills 17/17, fact-check replay, dart analyze, flutter test, iOS compile.
+- Not verified:
+  - The owner's iPhone: installing the new IPA, Connie's loudness, and Audio Output.
+  - The Shorebird patch run 38838606967 was still running at 02:19.
+  - `/health` is not reachable from the cloud sandbox; the deploy's live-commit check is the proof.
+  - The SideStore link was probed before the new release was published.
+- Known limits:
+  - A claim citing a private connector link (Drive or Gmail) is refused rather than checked against the connector's text.
+  - The heuristics reduce invented sources and claims; they do not make CHE incapable of hallucination.
+- Next, from the owner's mission, each on its own branch:
+  1. Faceless YouTube (#307): real MP4, narration, thumbnails, titles. No publishing without the owner's yes.
+  2. Google connections end-to-end: needs the owner's sign-in.
+  3. Trading: paper only, real or recorded data.
+  4. Autonomy tests.
+
+## 2. Earlier position (ChatGPT, 2026-10-15 — PR #315 final checks)
 
 - Owner authorized finishing Claude's PR #315. Existing branch `claude/che-latency-optimization-8ruaus` now at **`823c1d5762bd318d9a50c1c626f42717e4275671`**. Main still `3c915b71` at last checked, and PR #315 is unmerged.
 - Completed: fixed and tested supplied-link citation bypass, private/action redirect safety, encoded action URL protection, natural voice news request gating, personal good-news false research triggers, short/descriptive unsourced news headlines, bare citations, and grouped source/pointer clauses. Maintained Claude's iOS Connie loudness/route work. Changes only `server/cloudflare/source_verification.js` and `server/cloudflare/source_verification.test.mjs`.
