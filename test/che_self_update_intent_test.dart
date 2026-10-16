@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:chey/self_update/che_self_update_intent.dart';
 
@@ -303,6 +306,18 @@ Again: ANSWER IN CHAT ONLY. ZERO REPOSITORY CHANGES. NO PR.''';
       'My screen keeps breaking',
     ]) {
       expect(cheNeedsLiveSources(q), isFalse, reason: q);
+    }
+  });
+
+  test('the iPhone and the Worker agree on what is a news request', () {
+    // Same file as server/cloudflare/source_verification.test.mjs: offline,
+    // CHE refuses to guess exactly the requests the Worker researches online.
+    final fixture = jsonDecode(File('test/fixtures/news_requests.json').readAsStringSync()) as Map<String, dynamic>;
+    for (final q in (fixture['requests'] as List).cast<String>()) {
+      expect(cheNeedsLiveSources(q), isTrue, reason: 'request: $q');
+    }
+    for (final q in (fixture['statements'] as List).cast<String>()) {
+      expect(cheNeedsLiveSources(q), isFalse, reason: 'statement: $q');
     }
   });
 }

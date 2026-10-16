@@ -232,7 +232,7 @@ bool cheNeedsLiveSources(String raw) {
   final text = raw.trim();
   if (text.isEmpty) return false;
   final news = RegExp(
-    r"\b(?:news|headlines?|top stor(?:y|ies)|biggest stor(?:y|ies)|breaking|what(?:'s| is| was)? (?:happening|happened|going on)|announc(?:e|ed|es|ements?)|launch(?:ed|es)?|releas(?:e|ed|es)|unveil(?:ed|s)?)\b",
+    r"\b(?:news|headlines?|top stor(?:y|ies)|biggest stor(?:y|ies)|big stor(?:y|ies)|breaking|what(?:'s| is| was)? (?:happening|happened|going on)|announc(?:e|ed|es|ements?)|launch(?:ed|es)?|releas(?:e|ed|es)|unveil(?:ed|s)?)\b",
     caseSensitive: false,
   );
   if (!news.hasMatch(text)) return false;
@@ -240,9 +240,12 @@ bool cheNeedsLiveSources(String raw) {
     return false;
   }
   // A question or a request for news, not a statement that mentions it
-  // ("I have good news", "my screen keeps breaking").
+  // ("I have good news", "my screen keeps breaking"). The same two patterns
+  // as the Worker's newsQuestion (NEWS_ASK, NEWS_PHRASE); both are tested
+  // on test/fixtures/news_requests.json.
   final asks = text.contains('?') ||
-      RegExp(r"^(?:(?:hey\s+)?(?:che|chay|chey|shay)[,:]?\s+)?(?:please\s+)?(?:what|which|who|when|where|how|is|are|was|were|did|do|does|has|have|any|tell me|give me|show me|read me|catch me up|brief me|update me|(?:can|could|would|will) you|(?:can|could|may) i (?:get|have|hear|see))\b", caseSensitive: false).hasMatch(text);
+      RegExp(r"^(?:(?:hey[, ]*)?(?:che|chay|chey|shay)[,!:]?\s*)?(?:please\s+)?(?:what(?:'s| is| was)?|who|where|when|why|how|which|did|does|do|is|are|was|were|has|have|any|(?:can|could|would|will) you|tell me|give me|show me|read me|catch me up|brief me|update me|find|search|check|look up|summari[sz]e|list|(?:can|could|may) i (?:get|have|hear|see)|i(?:'d| would) like (?:an? )?(?:update|news))\b", caseSensitive: false).hasMatch(text) ||
+      RegExp(r"^(?:(?:hey[, ]*)?(?:che|chay|chey|shay)[,!:]?\s*)?(?!(?:i|i'm|we|my|our|you|your|that|this|it|it's|such|no|what)\b)(?![^.!?]*\b(?:good|great|bad|sad|terrible|awful|wonderful|amazing|fantastic|happy|exciting|welcome|some)\s+(?:news|headlines?)\b)(?:(?:today['’]s|latest|breaking|top|biggest|current|recent)\s+)?(?:[a-z0-9+#-]+\s+){0,3}(?:news|headlines?)\b(?:\s+(?:today|tonight|now|this week))?[.!]?\s*$", caseSensitive: false).hasMatch(text);
   if (!asks) return false;
   final named = RegExp(r'\b(?:news|headlines?|breaking)\b', caseSensitive: false).hasMatch(text);
   // The same days the server's newsQuestion reads.

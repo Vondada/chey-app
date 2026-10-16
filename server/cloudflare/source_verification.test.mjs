@@ -9,7 +9,7 @@ import test from 'node:test';
 import { replyFromNdjson } from './brain_memory.js';
 import { rememberKnowledge, researchHit, researchKey } from './knowledge_cache.js';
 import {
-  articleMeta, claimTerms, datesIn, DISPROVEN_CLAIMS_KEY, fetchArticle, guardCitations, newsQuestion, titleMatch,
+  articleMeta, claimTerms, datesIn, DISPROVEN_CLAIMS_KEY, fetchArticle, guardCitations, newsQuestion, newsResearch, reopenArticles, titleMatch,
 } from './source_verification.js';
 import { guardClaimedResearchActions } from './truth_layer.js';
 
@@ -169,7 +169,7 @@ test('a real MedGemma article is verified and its source receipt is given', asyn
   });
   const out = await che.say(NEWS_QUESTION);
   assert.match(out.reply, /releasing MedGemma, a collection of open models/);
-  assert.match(out.reply, /Sources I opened: Google Research, "MedGemma: open models for medical text and image comprehension" \(Oct 15, 2026\) https:\/\/research\.google\/blog\/medgemma-open-models\//);
+  assert.match(out.reply, /Sources I opened: Google Research, "MedGemma: open models for medical text and image comprehension" \(published Oct 15, 2026\) https:\/\/research\.google\/blog\/medgemma-open-models\//);
   assert.match(out.reply, /Only one outlet I opened reports this, so it is not independently confirmed\./);
   assert.ok(out.deltas >= 1, 'streamed to the phone as sentence deltas');
   assert.equal(che.saved.get(DISPROVEN_CLAIMS_KEY), undefined);
@@ -685,4 +685,131 @@ test('two outlets reporting two different stories confirm neither', async () => 
   const engadget = appleArticle({ url: 'https://www.engadget.com/apple-iphone-air.html', final_url: 'https://www.engadget.com/apple-iphone-air.html', publisher: 'Engadget', host: 'engadget.com' });
   const mixed = await guardCitations('Apple launched a thinner phone today. Tesla expanded its robotaxi service to Austin.', { message: TECH_NEWS, research: { engine: 'news', articles: [appleArticle(), engadget, tesla] }, fetcher: offline, now: AT });
   assert.match(mixed.text, /1 of these 2 stories is reported by two or more outlets I opened; the others come from one outlet and are not independently confirmed\.$/);
+});
+
+// ─── Codex review of #315 at 21edef7 ───────────────────────────────────────
+
+/** A fetcher serving only these pages; returns the URLs it was asked for. */
+function site(pages) {
+  const calls = [];
+  const fetcher = async (input) => {
+    const url = String(input?.url || input);
+    calls.push(url);
+    if (pages[url]) return new Response(pages[url], { status: 200, headers: { 'content-type': 'text/html' } });
+    throw new TypeError(`fetch failed (offline: ${new URL(url).host})`);
+  };
+  return { fetcher, calls };
+}
+
+test('a reference summary is never an opened article', async () => {
+  // Research found only a Wikipedia extract; the model repeats it as news anyway.
+  const wiki = 'https://en.wikipedia.org/wiki/IPhone_Air';
+  const research = { engine: 'wikipedia', summary: 'Apple launched a thinner phone today, the iPhone Air.', sources: [wiki], news_error: 'GDELT answered 503' };
+  const news = await guardCitations('Apple launched a thinner phone today.', { message: TECH_NEWS, research, fetcher: offline, now: AT });
+  assert.equal(news.removed.length, 1);
+  assert.doesNotMatch(news.text, /Sources I opened|thinner phone/);
+
+  // Outside news a cited Wikipedia link is opened for real before it backs anything.
+  const claim = `The iPhone Air is Apple's thinnest phone (${wiki}).`;
+  const closed = site({});
+  const unopened = await guardCitations(claim, { message: 'Tell me about the iPhone Air', research, fetcher: closed.fetcher, now: AT });
+  assert.deepEqual(closed.calls, [wiki]);
+  assert.equal(unopened.removed.length, 1);
+  assert.match(unopened.text, /the en\.wikipedia\.org link could not be opened/);
+
+  const open = site({ [wiki]: html({ title: 'iPhone Air', site: 'Wikipedia', published: '', body: 'The iPhone Air is the thinnest phone Apple has made, announced in September 2025.' }) });
+  const opened = await guardCitations(claim, { message: 'Tell me about the iPhone Air', research, fetcher: open.fetcher, now: AT });
+  assert.deepEqual(opened.removed, []);
+  assert.match(opened.text, /^The iPhone Air is Apple's thinnest phone/);
+});
+
+test('a news article needs a publication date from its own page', async () => {
+  const URL_OLD = 'https://www.example-news.com/apple-thin-phone';
+  const undated = html({ title: 'Apple launches a thinner phone', site: 'Example News', published: '', body: 'Apple launched a thinner phone, its thinnest yet.' });
+  // GDELT first saw this page today, but the page itself shows no date: not today's news.
+  useWeb({
+    list: listings({ gdelt: [{ url: URL_OLD, title: 'Apple launches a thinner phone', seendate: '20261015T120000Z', domain: 'example-news.com' }] }),
+    pages: { [URL_OLD]: undated },
+  });
+  const research = await newsResearch(TECH_NEWS, { now: AT });
+  assert.deepEqual(research.articles, []);
+  assert.match(research.failed[0].reason, /its page shows no publication date, so I cannot tell it is from Oct 15, 2026/);
+
+  // A dated page keeps its own date, with the listing time kept apart as when it was found.
+  useWeb({ list: listings({ gdelt: [MEDGEMMA_LISTING] }) });
+  const dated = await newsResearch(NEWS_QUESTION, { now: AT });
+  assert.equal(dated.articles[0].published, '2026-10-15T14:00:00Z');
+  assert.equal(dated.articles[0].date_source, 'page');
+  assert.equal(dated.articles[0].listed_at, '2026-10-15T14:00:00Z');
+  assert.match(dated.summary, /published Oct 15, 2026 \(date from the article page; GDELT listed it Oct 15, 2026\)/);
+
+  // A saved article without a page-given date is not reused as a receipt.
+  const saved = [{ ...appleArticle(), published: '2026-10-15T12:00:00Z' }];
+  const noDate = site({ [saved[0].url]: html({ title: saved[0].title, site: 'The Verge', published: '', body: saved[0].text }) });
+  assert.equal(await reopenArticles(saved, { fetcher: noDate.fetcher, now: AT }), null);
+
+  // A sentence giving a publication date needs a page that shows one.
+  const pageUrl = 'https://www.example-news.com/apple-thin-phone';
+  const undatedSite = site({ [pageUrl]: undated });
+  const claimed = await guardCitations(`Example News published "Apple launches a thinner phone" on October 15, 2026. Source: ${pageUrl}`,
+    { message: 'Did Example News write about Apple?', fetcher: undatedSite.fetcher, now: AT });
+  assert.equal(claimed.removed.length, 1);
+  assert.match(claimed.text, /page shows no publication date, so I cannot confirm Oct 15, 2026/);
+});
+
+test('a cited page must say the claim, not only load', async () => {
+  const recipe = 'https://a.example/recipe';
+  const pasta = site({ [recipe]: html({ title: 'Easy weeknight pasta', site: 'A Example', published: '', body: 'Boil the pasta, add garlic and olive oil, and serve with parmesan.' }) });
+  for (const claim of [`Smoking causes cancer (${recipe}).`, `Smoking typically causes cancer, see ${recipe}.`]) {
+    const out = await guardCitations(claim, { message: 'Does smoking cause cancer?', fetcher: pasta.fetcher, now: AT });
+    assert.equal(out.removed.length, 1, claim);
+    assert.doesNotMatch(out.text, /Smoking/, claim);
+    assert.match(out.text, /page does not say that/, claim);
+  }
+  const health = 'https://health.example.org/smoking';
+  const real = site({ [health]: html({ title: 'Smoking and cancer', site: 'Example Health', published: '', body: 'Smoking causes lung cancer and many other cancers.' }) });
+  const kept = await guardCitations(`Smoking causes cancer (${health}).`, { message: 'Does smoking cause cancer?', fetcher: real.fetcher, now: AT });
+  assert.deepEqual(kept.removed, []);
+  assert.match(kept.text, /^Smoking causes cancer/);
+
+  // A link line words nothing of its own ("read the full story here") is not judged on its words.
+  const pointer = await guardCitations(`Read the full story here: ${health}`, { message: 'Send me that article', fetcher: real.fetcher, now: AT });
+  assert.deepEqual(pointer.removed, []);
+});
+
+test('"Source: <link>" on its own line cites the claim before it', async () => {
+  const study = 'https://health.example.org/study';
+  const page = site({ [study]: html({ title: 'Sleep and memory', site: 'Example Health', published: '2026-09-01T10:00:00Z', body: 'Adults who sleep seven hours remember more.' }) });
+  const out = await guardCitations(`The study says MegaCure reduced disease by 95%. Source: ${study}`, { message: `Summarize ${study}`, fetcher: page.fetcher, now: AT });
+  assert.deepEqual(page.calls, [study]);
+  assert.doesNotMatch(out.text, /reduced disease|Source:/);
+  assert.equal(out.removed.length, 1, 'the source line goes with its claim, not as a second removal');
+  assert.match(out.text, /Example Health's page does not mention MegaCure or 95%/);
+
+  const plain = await guardCitations(`Adults who sleep seven hours remember more.\nSource: ${study}`, { message: `Summarize ${study}`, fetcher: page.fetcher, now: AT });
+  assert.deepEqual(plain.removed, []);
+  assert.match(plain.text, /^Adults who sleep seven hours remember more\.\nSource: https:\/\/health\.example\.org\/study/);
+});
+
+test('the Worker and the iPhone agree on what is a news request', () => {
+  // Same file as test/che_self_update_intent_test.dart: offline, the iPhone
+  // refuses to guess exactly the requests the Worker researches online.
+  const fixture = JSON.parse(readFileSync(new URL('../../test/fixtures/news_requests.json', import.meta.url), 'utf8'));
+  for (const q of fixture.requests) assert.ok(newsQuestion(q, AT), `request: ${q}`);
+  for (const q of fixture.statements) assert.equal(newsQuestion(q, AT), null, `statement: ${q}`);
+});
+
+test('a link given for navigation is not checked as a source', async () => {
+  // Google Drive, Gmail and similar links need the owner's sign-in; giving one is not a claim.
+  const folder = 'https://drive.google.com/drive/folders/abc123';
+  for (const reply of [`Here's your Google Drive folder:\n${folder}`, `Your Drive folder: ${folder}`, `Here it is, sir.\n${folder}`]) {
+    const web = site({});
+    const out = await guardCitations(reply, { message: 'Open my Drive folder', fetcher: web.fetcher, now: AT });
+    assert.equal(out.text, reply, reply);
+    assert.deepEqual(web.calls, [], reply);
+  }
+  // A claim resting on a private link still cannot pass as checked.
+  const claim = await guardCitations(`Your Q3 report shows revenue up 12%.\n${folder}`, { message: 'Summarize my report', fetcher: offline, now: AT });
+  assert.equal(claim.removed.length, 1);
+  assert.match(claim.text, /I cannot safely check the drive\.google\.com link as a source/);
 });
