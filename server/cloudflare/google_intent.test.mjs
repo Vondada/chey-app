@@ -100,3 +100,19 @@ test('YouTube channel questions are recognised, and nothing else is', () => {
   assert.equal(youtubeChatIntent('is my YouTube connected?'), true);
   assert.equal(youtubeChatIntent('check my youtube video about cats'), false);
 });
+
+// Near-miss phrasings used to fall to a model that cannot see the account, or
+// were answered with the wrong refusal ("check my calendar for tomorrow" was
+// told to name tomorrow; "email ann@… saying hi" was told to give an address).
+test('everyday Drive, Calendar and Gmail wordings reach the real integration', () => {
+  assert.deepEqual(googleChatIntent('CHE, list my recent Drive files'), { kind: 'drive_list' });
+  assert.deepEqual(googleChatIntent('what files are in my Google Drive?'), { kind: 'drive_list' });
+  assert.deepEqual(googleChatIntent('check my calendar for tomorrow'), { kind: 'calendar_list', range: 'tomorrow' });
+  assert.deepEqual(googleChatIntent('What meetings do I have today?'), { kind: 'calendar_list', range: 'today' });
+  assert.deepEqual(googleChatIntent('what events have I got this week'), { kind: 'calendar_list', range: 'this week' });
+  assert.deepEqual(googleChatIntent('email ann@example.com saying I will be late'), { kind: 'gmail_send', to: 'ann@example.com', body: 'I will be late' });
+  assert.deepEqual(googleChatIntent('email the team saying hi'), { kind: 'gmail_incomplete' }, 'no address: nothing is guessed');
+  // "latest email" is the newest in the inbox; only "unread" or "new" narrows it.
+  assert.deepEqual(googleChatIntent('read my latest email'), { kind: 'gmail_read', pick: 'newest', scope: 'inbox' });
+  assert.deepEqual(googleChatIntent('read my newest unread email'), { kind: 'gmail_read', pick: 'newest' });
+});

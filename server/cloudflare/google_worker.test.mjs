@@ -391,3 +391,36 @@ test('ordinary conversation about email never calls Google', async () => {
     assert.equal(calls.length, 0, 'no Google request for ordinary talk');
   });
 });
+
+// Gmail's resultSizeEstimate is an estimate whenever more pages exist; CHE
+// never speaks it as an exact count. "Read my latest email" reads the inbox.
+test('a Gmail list with more pages is spoken as "about", and "read my latest email" reads the inbox', async () => {
+  const me = await owner();
+  const grant = await liveGrant();
+  me.setData((d) => { d.google_connections = { gmail: grant }; });
+  const offline = globalThis.fetch;
+  const queries = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input?.url || input);
+    const reply = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+    if (/\/messages\?/.test(url)) {
+      queries.push(new URL(url).searchParams.get('q'));
+      return reply({ messages: [{ id: 'msg-newest-1' }], resultSizeEstimate: 201, nextPageToken: 'page-2' });
+    }
+    if (/msg-newest-1\?format=metadata/.test(url)) return reply({ payload: meta(NEWEST_FROM, 'Lunch on Tuesday', 'Mon, 12 Oct 2026 09:14:00 -0500') });
+    if (/msg-newest-1\?format=full/.test(url)) {
+      return reply({ payload: { ...meta(NEWEST_FROM, 'Lunch on Tuesday', 'Mon, 12 Oct 2026 09:14:00 -0500'), mimeType: 'text/plain', body: { data: b64url('See you at noon.') } } });
+    }
+    throw new TypeError(`offline test: no fake for ${url}`);
+  };
+  try {
+    const listed = await me.say('CHE, check my unread emails and tell me the newest one.');
+    assert.match(spoken(listed.raw), /You have about 201 unread emails, sir\. The newest is from Alex Rivera/);
+    const read = await me.say('read my latest email');
+    assert.equal(read.modelCalls, 0);
+    assert.match(spoken(read.raw), /See you at noon\./);
+    assert.deepEqual(queries, ['is:unread', 'in:inbox']);
+  } finally {
+    globalThis.fetch = offline;
+  }
+});

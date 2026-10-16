@@ -364,7 +364,10 @@ export async function gmailList(env, data, { query = 'is:unread', max = 5 } = {}
     });
   }
   if (listed.length && !messages.length) return { ok: false, error: 'Gmail listed your messages but would not return their details. Try again.' };
-  return { ok: true, messages, total: list.json.resultSizeEstimate ?? messages.length };
+  // One page holds every match only when Google sends no next page. Otherwise
+  // resultSizeEstimate is Google's estimate, so it is never spoken as exact.
+  const more = Boolean(list.json.nextPageToken) || (list.json.messages || []).length > listed.length;
+  return { ok: true, messages, total: more ? Math.max(Number(list.json.resultSizeEstimate) || 0, listed.length) : listed.length, approximate: more };
 }
 
 // Gmail: one message in full, as plain text. The owner asked for it by position or name.
@@ -664,7 +667,7 @@ const ASK_HEAD = /^(?:(?:do|did|have)\s+i\s+(?:have|got|receive|get)|have\s+i\s+
 const ASK_REST = /^(?:do i have|have i got|did i get|have i received)(?:\s+(?:today|now|yet|any))?$/i;
 const PICK_REST = /^(?:(?:and|then|,)\s+)?(?:(?:tell|give|let|show|read)\s+me\s+)?(?:the\s+)?(?:newest|latest|most recent|first)(?:\s+(?:one|e[- ]?mail|message))?$/i;
 const CALENDAR_HEAD = /^(?:what(?:'s| is| are)|show(?: me)?|check|list|read|tell me|see|do i have|have i got|am i)\s+(?:(?:on|in|free|busy)\s+)?(?:(?:my|our|any)\s+)?(?:google\s+)?(?:calendar|schedule|agenda|appointments?|meetings?|events?)\b/i;
-const CALENDAR_VERB_HEAD = /^(?:what\s+do\s+i\s+have|what\s+have\s+i\s+got|am\s+i\s+(?:free|busy))\b/i;
+const CALENDAR_VERB_HEAD = /^(?:what\s+(?:(?:meetings?|events?|appointments?)\s+)?do\s+i\s+have|what\s+(?:(?:meetings?|events?|appointments?)\s+)?have\s+i\s+got|am\s+i\s+(?:free|busy))\b/i;
 
 // What the owner says in Chat about Gmail, Drive and Calendar, matched
 // deterministically before any model is asked. `last` is the Google list the
@@ -673,12 +676,15 @@ const CALENDAR_VERB_HEAD = /^(?:what\s+do\s+i\s+have|what\s+have\s+i\s+got|am\s+
 export function googleChatIntent(message, { last = null } = {}) {
   const t = normalizeGoogleRequest(message);
   if (!t) return null;
-  let m = t.match(/^(?:send|email|mail)\s+(?:an?\s+)?(?:e-?mail\s+)?to\s+(\S+?)[,;]?\s*(?:saying|that says|with the message|:)\s*(.+)$/i);
+  let m = t.match(/^(?:send|email|mail)\s+(?:an?\s+)?(?:e-?mail\s+)?to\s+(\S+?)[,;]?\s*(?:saying|that says|with the message|:)\s*(.+)$/i)
+    || t.match(/^(?:email|mail)\s+([^\s@]+@\S+?)[,;]?\s*(?:saying|that says|with the message|:)\s*(.+)$/i);
   if (m) return { kind: 'gmail_send', to: m[1], body: m[2] };
   // An email request missing its address or text: say so, never let a model claim it was sent.
   if (/^(?:send|email|mail)\b/i.test(t) && /\be-?mails?\b/i.test(t)) return { kind: 'gmail_incomplete' };
   // One email in full: "read my latest unread email".
-  if (/^read\s+(?:me\s+)?(?:(?:my|the|a|an)\s+)?(?:(?:latest|newest|most recent|last|first|next|unread|new)\s+)*e[- ]?mail$/i.test(t)) return { kind: 'gmail_read', pick: 'newest' };
+  if (/^read\s+(?:me\s+)?(?:(?:my|the|a|an)\s+)?(?:(?:latest|newest|most recent|last|first|next|unread|new)\s+)*e[- ]?mail$/i.test(t)) {
+    return /\b(?:unread|new)\b/i.test(t) ? { kind: 'gmail_read', pick: 'newest' } : { kind: 'gmail_read', pick: 'newest', scope: 'inbox' };
+  }
   // A follow-up on the last Gmail list: "read the newest one", "read number two".
   m = t.match(/^(?:read|open|show|play)\s+(?:me\s+)?(?:(?:the|that|this)\s+)?(?:(newest|latest|first|top|second|third|fourth|fifth)|number\s+(one|two|three|four|five)|(one|two|three|four|five))(?:\s+(?:one|e[- ]?mail|message))?$/i);
   if (m && last?.service === 'gmail') return { kind: 'gmail_read', index: ORDINAL_INDEX[(m[1] || m[2] || m[3]).toLowerCase()] };
@@ -696,7 +702,7 @@ export function googleChatIntent(message, { last = null } = {}) {
   if (calendar) {
     const rest = t.slice(calendar[0].length).trim();
     if (!rest) return { kind: 'calendar_list', range: 'today' };
-    const range = rest.match(/^(today|tonight|tomorrow|this week|this morning|this afternoon)$/i);
+    const range = rest.match(/^(?:for\s+)?(today|tonight|tomorrow|this week|this morning|this afternoon)$/i);
     if (range) return { kind: 'calendar_list', range: CALENDAR_RANGE[range[1].toLowerCase()] };
     if (/^(?:on|for|next|in|this|at)\b/i.test(rest)) return { kind: 'calendar_unsupported' };
     return null;
@@ -705,7 +711,8 @@ export function googleChatIntent(message, { last = null } = {}) {
   if (m && last?.service === 'calendar') return { kind: 'calendar_list', range: CALENDAR_RANGE[m[1].toLowerCase()] };
   m = t.match(/^(?:add|schedule|put|create)\s+(?:an?\s+|the\s+)?(?:event|meeting|appointment|calendar event)?\s*(?:called\s+|titled\s+)?(.+?)\s+on\s+(\d{4}-\d{2}-\d{2})\s+at\s+(\d{1,2}):(\d{2})\s*(am|pm)?$/i);
   if (m) return { kind: 'calendar_create', summary: m[1], date: m[2], time: TIME_OF_DAY(m[3], m[4], m[5]?.toLowerCase()) };
-  if (/^(?:list|show|check|see|open|what(?:'s| is| are)(?: in)?)\s+(?:me\s+)?(?:(?:my|all my|any|our)\s+)(?:google\s+)?drive(?:\s+(?:files|documents|docs))?$/i.test(t)) return { kind: 'drive_list' };
+  if (/^(?:list|show|check|see|open|what(?:'s| is| are)(?: in)?)\s+(?:me\s+)?(?:(?:my|all my|any|our)\s+)(?:(?:recent|latest|newest)\s+)?(?:google\s+)?drive(?:\s+(?:files|documents|docs))?$/i.test(t)
+    || /^what\s+(?:files|documents|docs)\s+(?:are|do i have)\s+(?:in|on)\s+(?:my\s+)?(?:google\s+)?drive$/i.test(t)) return { kind: 'drive_list' };
   if (last?.service === 'drive' && /^(?:show|list|read|open)\s+(?:me\s+)?(?:those|these|them|the)\s+(?:files|documents|docs)$/i.test(t)) return { kind: 'drive_list' };
   m = t.match(/^(?:create|make|save|write)\s+(?:me\s+)?(?:(?:a|an|the|new)\s+)?(?:google\s+)?(?:doc|document|drive file|file)\s+(?:called|named|titled)\s+(.+?)\s+(?:with|saying|containing|that says)\s+(?:the\s+(?:words|text|message|phrase)\s+|the\s+)?(.+)$/i);
   if (m) return { kind: 'drive_create', name: m[1].trim(), text: m[2].trim().replace(/^["']|["']$/g, '') };
@@ -771,7 +778,7 @@ export async function runGoogleIntent(intent, { env = {}, data, fetcher = fetch,
     const context = { service: 'gmail', messages: r.messages.map((m) => ({ id: m.id, from: m.from, subject: m.subject })) };
     if (!r.messages.length) return { ok: true, text: 'No unread email, sir.', context };
     const count = Math.max(Number(r.total) || 0, r.messages.length);
-    const noun = `${count} unread email${count === 1 ? '' : 's'}`;
+    const noun = `${r.approximate ? 'about ' : ''}${count} unread email${count === 1 ? '' : 's'}`;
     if (intent.pick === 'newest') {
       const newest = r.messages[0];
       return { ok: true, text: `You have ${noun}, sir. The newest is from ${senderName(newest.from)}, subject "${newest.subject}"${newest.date ? `, ${newest.date}` : ''}. Say "read the newest one" to hear it.`, context };
@@ -782,9 +789,10 @@ export async function runGoogleIntent(intent, { env = {}, data, fetcher = fetch,
   if (intent.kind === 'gmail_read') {
     let id = intent.id;
     if (!id) {
-      const newest = await gmailList(env, data, { max: 1 }, fetcher);
+      const inbox = intent.scope === 'inbox';
+      const newest = await gmailList(env, data, { max: 1, query: inbox ? 'in:inbox' : 'is:unread' }, fetcher);
       if (!newest.ok) return { ok: false, text: `I could not read your email, sir. ${newest.error}` };
-      if (!newest.messages.length) return { ok: true, text: 'No unread email, sir.' };
+      if (!newest.messages.length) return { ok: true, text: inbox ? 'Your inbox is empty, sir.' : 'No unread email, sir.' };
       id = newest.messages[0].id;
     }
     const r = await gmailRead(env, data, { id }, fetcher);
