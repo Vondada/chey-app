@@ -1059,9 +1059,24 @@ test('an intro that states something is checked; one about its links stays', asy
   const pasta = 'https://food.example.com/pasta';
   const soup = 'https://food.example.com/soup';
   const web = site({ [pasta]: html({ title: 'Easy pasta', site: 'Food Example', published: '', body: 'Boil the pasta.' }), [soup]: html({ title: 'Soup', site: 'Food Example', published: '', body: 'Carrots and leeks.' }) });
-  for (const intro of ['Here are the reasons the moon landing was staged:', 'Here are reports the election was rigged:', 'Here are studies where vaccines triggered autism:']) {
+  for (const intro of ['Here are the reasons the moon landing was staged:', 'Here are reports the election was rigged:']) {
     const out = await guardCitations(`${intro}\n- ${pasta}\n- ${soup}`, { message: 'Is that true?', fetcher: web.fetcher, now: AT });
     assert.equal(out.removed.length, 1, intro);
     assert.ok(!out.text.includes(intro), intro);
+  }
+  // Any other intro is never wiped; when its links do not back it, CHE says so.
+  const flagged = await guardCitations(`Here are studies where vaccines triggered autism:\n- ${pasta}\n- ${soup}`, { message: 'Is that true?', fetcher: web.fetcher, now: AT });
+  assert.match(flagged.text, /none of the links I listed mentions studies or vaccines, so it does not back what I said there/i);
+  const video = 'https://youtu.be/dQw4w9WgXcQ';
+  const cafe = 'https://cafe.example.com/';
+  const deli = 'https://deli.example.com/';
+  const local = site({
+    [video]: html({ title: 'Rick Astley - Never Gonna Give You Up (Official Music Video)', site: 'YouTube', published: '', body: 'Official video.' }),
+    [cafe]: html({ title: 'Corner Cafe', site: 'Corner Cafe', published: '', body: 'Coffee and pastries, 7am to 9pm.' }),
+    [deli]: html({ title: 'Main Street Deli', site: 'Main Street Deli', published: '', body: 'Sandwiches until 10pm.' }),
+  });
+  for (const reply of [`Here's a song you might like:\n- ${video}`, `Here are a few places that are open now:\n- ${cafe}\n- ${deli}`]) {
+    const out = await guardCitations(reply, { message: 'Any ideas?', fetcher: local.fetcher, now: AT });
+    assert.equal(out.text, reply, reply);
   }
 });

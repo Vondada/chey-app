@@ -604,8 +604,12 @@ const LIST_INTRO = /^\W*(?:(?:sir|okay|ok|so|sure|also|and)\W+)*(?:here(?:'s| is
 const INTRO_GENERIC = new Set(('few couple options option ideas idea things thing might help like enjoy found what useful good great best more other '
   + 'list results result picks suggestions recommendations resources choices ways steps these those below some your you here there '
   + 'easy quick simple nice cool favorite favourite popular helpful interesting latest new videos articles pages sites websites links posts '
-  + 'guides tutorials files documents photos images reads options sir also want need').split(' '));
-const INTRO_CLAIM = /\b(?:caus\w*|link(?:ed|ing)|shows? that|show(?:ed|ing|n)|prov(?:e|es|ed|ing|en)|cur(?:e|es|ed|ing)|lead(?:s|ing) to|prevent\w*|kill\w*|harm\w*|safe|unsafe|dangerous|deadly|toxic|poison\w*|true|false|fake|hoax\w*|scam\w*|lies|lied|conspirac\w*|cover.?up|proof|evidence|because|according|says?|confirms?|reveals?)\b/i;
+  + 'guides tutorials files documents photos images reads options sir also want need song songs track tracks recipe recipes podcast '
+  + 'podcasts episode episodes book books movie movies show shows place places restaurant restaurants shop shops store stores app apps').split(' '));
+// An intro with these words makes a claim and is checked like any other
+// sentence. Any other intro never wipes a reply: if no listed page mentions
+// its topic, CHE keeps it and says the links do not back it.
+const INTRO_CLAIM = /\b(?:caus\w*|link(?:ed|ing)|shows? that|prov(?:e|es|ed|ing|en)|cur(?:e|es|ed|ing)|lead(?:s|ing) to|poison\w*|hoax\w*|scam\w*|lies|lied|conspirac\w*|cover.?up|proof|evidence|because|according|says?|confirms?|reveals?|(?:is|are|was|were)\s+(?:not\s+)?(?:safe|unsafe|dangerous|deadly|toxic|true|false|fake|real|staged|rigged|faked|stolen|fraudulent|a hoax|a lie|a scam))\b/i;
 const SOURCE_CONTEXT = /\b(?:sources?|article|story|stories|report(?:ed|s)?|paper|study|studies|press release|blog post|via|read more|according|published|headline|announced in|coverage)\b/i;
 const PRIVATE_HOST = /(?:^|\.)(?:(?:docs|drive|mail|calendar|accounts|myaccount|photos|meet|chat|keep|contacts)\.google\.com|dropbox\.com|onedrive\.live\.com|sharepoint\.com|notion\.so|icloud\.com|zoom\.us|slack\.com|workers\.dev|localhost)$|^(?:\d+\.){3}\d+$/i;
 const ACTION_PATH = /(?:unsubscribe|opt-?out|confirm|approve|verify|activate|reset|log-?in|sign-?in|oauth|auth\b|token=|delete|cancel|checkout|\bpay\b|invite|accept)/i;
@@ -734,7 +738,6 @@ export async function guardCitations(reply, {
     const line = sentences[j].s.trim();
     const rest = line.replace(LIST_INTRO, '');
     return !marks[j].links && line.length <= 120 && /:\s*$/.test(line) && LIST_INTRO.test(line) && !INTRO_CLAIM.test(rest)
-      && !/\b(?:is|are|was|were)\s+[a-z]/i.test(rest)
       && !marks[j].terms.hard.length && !marks[j].terms.soft.length && !marks[j].outlets.length && !marks[j].quoted.length && !marks[j].reporting;
   };
   marks.forEach((m, k) => {
@@ -799,15 +802,15 @@ export async function guardCitations(reply, {
     const sentence = sentences[k].s;
     const fail = (reason) => ({ keep: false, reason });
     if (m.carrierOf != null) return { keep: true, support: [] };
-    // A list intro must be about what it lists: one of its topic words on one
-    // of the pages that opened. If not, only the intro goes; its links stay.
+    // A list intro should be about what it lists: one of its topic words on
+    // one of the pages that opened. If not, the reply stays and says so.
     const under = marks.filter((c) => c.introOf === k);
     if (under.length) {
       const topic = [...new Set((sentence.replace(LIST_INTRO, '').toLowerCase().match(/[a-z][a-z0-9'’-]{3,}/g) || [])
         .filter((w) => !STOP.has(w) && !PLAIN_WORDS.has(w) && !LINK_WORDS.has(w) && !INTRO_GENERIC.has(w) && !LINK_WORDS.has(w.replace(/s$/, ''))))];
       const pages = under.flatMap((c) => c.urls).map((u) => known.get(normalizeUrl(u))).filter((p) => p?.ok);
       const says = (p) => topic.some((w) => new RegExp(`\\b${w.slice(0, 4).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(`${p.title} ${p.page_title || ''} ${p.description || ''} ${p.text || ''}`.toLowerCase()));
-      if (topic.length && pages.length && !pages.some(says)) return fail('the links I listed are not about that');
+      if (topic.length && pages.length && !pages.some(says)) mismatched.push(`none of the links I listed mentions ${topic.slice(0, 2).join(' or ')}`);
       return { keep: true, support: [] };
     }
     const listed = marks.some((c) => c.carrierOf === k && c.carried?.length);
