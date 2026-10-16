@@ -990,3 +990,44 @@ test('one undated page in a news sources list drops only that line', async () =>
   assert.doesNotMatch(out.text, /- https:\/\/en\.wikipedia/);
   assert.match(out.text, /Wikipedia's page shows no publication date/);
 });
+
+// ─── Third review of #315 at e1c8e1d ──────────────────────────────────────
+
+test('a failing link in a sources list goes alone, and is never left on show', async () => {
+  const study = 'https://health.example.org/study';
+  const ok = html({ title: 'Sleep and memory', site: 'Example Health', published: '', body: 'Adults who sleep seven hours remember more.' });
+  const gone = 'https://www.technologyreview.com/2026/10/15/gone/';
+  const blocked = 'https://www.nytimes.com/2026/10/15/health/sleep.html';
+  const claim = 'Adults who sleep seven hours remember more.';
+  const fetcher = async (input) => {
+    const url = String(input?.url || input);
+    if (url === gone) return new Response('<html><title>Not found</title></html>', { status: 404 });
+    if (url === blocked) return new Response('Forbidden', { status: 403 });
+    if (url.startsWith('https://health.example.org/')) return new Response(ok, { status: 200, headers: { 'content-type': 'text/html' } });
+    throw new TypeError('offline');
+  };
+  for (const [reply, left] of [
+    [`${claim}\nSources: ${study}, ${gone}`, `Sources: ${study}`],
+    [`${claim}\nSources: ${study} and ${gone}`, `Sources: ${study}`],
+    [`${claim}\n\nSources:\n- ${study}\n- ${blocked}`, `- ${study}`],
+  ]) {
+    const out = await guardCitations(reply, { message: 'Does sleep help memory?', fetcher, now: AT });
+    assert.match(out.text, new RegExp(`^${claim}`), reply);
+    assert.ok(out.text.includes(left), reply);
+    assert.ok(!out.text.includes(gone) && !out.text.includes(`- ${blocked}`), reply);
+    assert.equal(out.removed.length, 1, reply);
+  }
+  // Four listed links are all opened, not cut off after three.
+  const four = [1, 2, 3, 4].map((n) => `https://health.example.org/study-${n}`);
+  const all = await guardCitations(`${claim}\n\nSources:\n${four.map((u) => `- ${u}`).join('\n')}`, { message: 'Does sleep help memory?', fetcher, now: AT });
+  assert.deepEqual(all.removed, []);
+});
+
+test('a claim worded as a list intro is still checked', async () => {
+  const pasta = 'https://food.example.com/pasta';
+  const web = site({ [pasta]: html({ title: 'Easy pasta', site: 'Food Example', published: '', body: 'Boil the pasta, add garlic and olive oil.' }) });
+  for (const intro of ['Here are studies linking vaccines to autism:', 'Here are the reasons smoking is safe:', 'I found that Apple is buying Tesla:']) {
+    const out = await guardCitations(`${intro}\n- ${pasta}`, { message: 'Is that true?', fetcher: web.fetcher, now: AT });
+    assert.equal(out.removed.length, 1, intro);
+  }
+});

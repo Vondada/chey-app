@@ -596,7 +596,10 @@ const PRESENTS = new RegExp(`^\\W*(?:(?:sir|okay|ok|so|sure|also|and|here(?:'s| 
 // "Sources:", "References:", "Further reading:" head a list of links that cite the claim above it.
 const SOURCE_HEADING = /^\W*(?:sources?|references?|citations?|further reading|read more|learn more|more info(?:rmation)?|links?|see also|bibliography|via|related (?:links|reading))\b[^.!?[\]]{0,40}$/i;
 // "Here's what I found:", "Here are a few options:" introduce a list; the list is not a claim.
-const LIST_INTRO = /^\W*(?:(?:sir|okay|ok|so|sure|also|and)\W+)*(?:here(?:'s| is| are)|i(?:'ve| have)? found|these are|below are|some|a few|a couple|try these|check these|you (?:might|may|could) (?:like|enjoy|try))\b(?![^:]*\b(?:proof|evidence|shows?|proves?|because|caus\w*|cur(?:e|es|ed|ing)|according|says?|confirms?|reveals?)\b)[^.!?[\]]{0,100}:\s*$/i;
+// Only a plain intro qualifies: no names, and nothing after its opening words
+// that states something ("Here are studies linking vaccines to autism:").
+const LIST_INTRO = /^\W*(?:(?:sir|okay|ok|so|sure|also|and)\W+)*(?:here(?:'s| is| are)|i(?:'ve| have)? found|these are|below are|some|a few|a couple|try these|check these|you (?:might|may|could) (?:like|enjoy|try))\b/i;
+const INTRO_CLAIM = /\b(?:that|which|who|is|are|was|were|be|been|being|has|have|had|does|did|caus\w*|link\w*|show\w*|prov\w*|cur(?:e|es|ed|ing)|lead\w*|prevent\w*|kill\w*|harm\w*|safe|unsafe|dangerous|deadly|true|false|fake|proof|evidence|why|how|because|according|says?|confirms?|reveals?)\b/i;
 const SOURCE_CONTEXT = /\b(?:sources?|article|story|stories|report(?:ed|s)?|paper|study|studies|press release|blog post|via|read more|according|published|headline|announced in|coverage)\b/i;
 const PRIVATE_HOST = /(?:^|\.)(?:(?:docs|drive|mail|calendar|accounts|myaccount|photos|meet|chat|keep|contacts)\.google\.com|dropbox\.com|onedrive\.live\.com|sharepoint\.com|notion\.so|icloud\.com|zoom\.us|slack\.com|workers\.dev|localhost)$|^(?:\d+\.){3}\d+$/i;
 const ACTION_PATH = /(?:unsubscribe|opt-?out|confirm|approve|verify|activate|reset|log-?in|sign-?in|oauth|auth\b|token=|delete|cancel|checkout|\bpay\b|invite|accept)/i;
@@ -667,7 +670,7 @@ function disprovenHit(sentence, list) {
  * disproven } where `disproven` lists newly broken citations to record.
  */
 export async function guardCitations(reply, {
-  research = null, message = '', fetcher = fetch, now = Date.now(), disproven = [], maxFetch = 3, timeoutMs = 4500, fiction = false,
+  research = null, message = '', fetcher = fetch, now = Date.now(), disproven = [], maxFetch = 6, timeoutMs = 4500, fiction = false,
   trusted = [],
 } = {}) {
   const text = String(reply || '');
@@ -721,8 +724,11 @@ export async function guardCitations(reply, {
   // After a sentence that asserts nothing ("Here's your Drive folder:") the
   // line is only a link and is not opened.
   const heading = (j) => !marks[j].links && (SOURCE_HEADING.test(sentences[j].s.trim()) || (marks[j].sourceWords && !asserts(sentences[j].s, marks[j])));
-  const intro = (j) => !marks[j].links && LIST_INTRO.test(sentences[j].s.trim()) && !marks[j].terms.hard.length
-    && !marks[j].outlets.length && !marks[j].quoted.length && !marks[j].reporting;
+  const intro = (j) => {
+    const line = sentences[j].s.trim();
+    return !marks[j].links && line.length <= 120 && /:\s*$/.test(line) && LIST_INTRO.test(line) && !INTRO_CLAIM.test(line.replace(LIST_INTRO, ''))
+      && !marks[j].terms.hard.length && !marks[j].terms.soft.length && !marks[j].outlets.length && !marks[j].quoted.length && !marks[j].reporting;
+  };
   marks.forEach((m, k) => {
     if (!m.sourceLine || m.hit) return;
     let j = k - 1;
@@ -797,6 +803,7 @@ export async function guardCitations(reply, {
     for (const url of m.urls) {
       const page = known.get(normalizeUrl(url));
       if (!page || (!page.ok && !page.broken)) {
+        if (listed) { drop.set(url, page ? `${linkName(url)} could not be opened (${page.error})` : `I could not check ${linkName(url)}`); continue; }
         if (strict || m.sourceWords || m.urls.length) return fail(page ? `${linkName(url)} could not be opened (${page.error})` : `I could not check ${linkName(url)}`);
         unopened.push(`${linkName(url)}${page ? ` (${page.error})` : ''}`);
         return { keep: true, support: [] };
@@ -922,8 +929,17 @@ export async function guardCitations(reply, {
     if (m.carrierOf == null || !m.carried) return;
     if (!verdicts[m.carrierOf].keep) verdicts[k] = { keep: false, reason: verdicts[m.carrierOf].reason, carried: true };
     else {
-      const why = m.carried.map((u) => dropped.get(m.carrierOf)?.get(u)).filter(Boolean);
-      if (why.length && why.length === m.carried.length) verdicts[k] = { keep: false, reason: why[0] };
+      const gone = m.carried.filter((u) => dropped.get(m.carrierOf)?.has(u));
+      if (!gone.length) return;
+      const reason = dropped.get(m.carrierOf).get(gone[0]);
+      if (gone.length === m.carried.length) verdicts[k] = { keep: false, reason };
+      else {
+        // "Sources: A, B" with B broken keeps "Sources: A".
+        const line = gone.reduce((text, u) => text.replace(u, ''), sentences[k].s)
+          .replace(/[(<[]\s*[)>\]]/g, '').replace(/([:\-–—])\s*(?:(?:,|;|\band\b)\s*)+/i, '$1 ')
+          .replace(/\s*[,;]\s*(?:(?:,|;|\band\b)\s*)+/gi, ', ').replace(/(?:\s*(?:,|;|\band\b))+\s*$/i, '').replace(/[ \t]{2,}/g, ' ');
+        verdicts[k] = { keep: true, support: [], trimmed: line, reason };
+      }
     }
   });
   // A heading goes once every line under it has gone.
@@ -932,7 +948,7 @@ export async function guardCitations(reply, {
     const lines = marks.map((c, i) => ({ c, i })).filter(({ c, i }) => i > k && c.carrierOf === m.carrierOf && c.carried);
     if (lines.length && lines.every(({ i }) => !verdicts[i].keep)) verdicts[k] = { keep: false, reason: verdicts[lines[0].i].reason, carried: true };
   });
-  verdicts.forEach((v, k) => { if (!v.keep && !v.carried) removed.push({ sentence: clip(sentences[k].s, 240), reason: v.reason }); });
+  verdicts.forEach((v, k) => { if ((!v.keep && !v.carried) || v.trimmed != null) removed.push({ sentence: clip(sentences[k].s, 240), reason: v.reason }); });
   // A broken link was cited for the claims removed with it: their coined
   // names (not common words or versions) need a source before CHE says them again.
   const coined = [...tainted].filter(([t]) => /^[a-z]+$/.test(t) && !KNOWN_NAMES.has(t) && good.every((g) => !`${g.title} ${g.text}`.toLowerCase().includes(t))).map(([, written]) => written);
@@ -956,7 +972,8 @@ export async function guardCitations(reply, {
   if (!removed.length && !conflicts.length && !used.size && !unopened.length && !mismatched.length) return { text, removed, receipts, used: [], disproven: fresh };
 
   const removeAt = new Set(verdicts.map((v, k) => (v.keep ? -1 : sentences[k].i)).filter((i) => i >= 0));
-  let kept = segments.map((s, i) => (removeAt.has(i) ? '' : s)).join('')
+  const trimmedAt = new Map(verdicts.map((v, k) => [sentences[k].i, v.trimmed]).filter(([, t]) => t != null));
+  let kept = segments.map((s, i) => (removeAt.has(i) ? '' : trimmedAt.get(i) ?? s)).join('')
     .replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/^(?:[ \t]*(?:[-*•]|\d+[.)])[ \t]*\n)+/gm, '').replace(/[ \t]{2,}/g, ' ').trim();
   const substantive = kept.replace(/\b(?:sir|certainly|sure|okay|of course|here(?:'s| is) (?:what|the)[^.]*|great question)\b/gi, '').replace(/[^A-Za-z0-9]+/g, '').length > 30;
   const reasons = [...new Set(removed.map((r) => r.reason))];
