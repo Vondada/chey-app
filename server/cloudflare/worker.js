@@ -8355,7 +8355,8 @@ export class CheState extends DurableObject {
             : null;
           // Saved news articles are receipts only once reopened: a news hit goes
           // the full way, where cachedResearch reopens them and the reply is checked.
-          if (researched?.pure === true && !researched.articles?.length) {
+          // A news question never takes this shortcut, even with no articles saved.
+          if (researched?.pure === true && !researched.articles?.length && !newsQuestion(message)) {
             await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY,
               answerEvidenceReceipt({ research: researched }))).catch(() => null);
             await recordReliability(this.ctx.storage, { kind: 'retrieval', workflow: 'research', outcome: 'answered_from_memory', tokens_saved: 3000 });
@@ -9192,7 +9193,7 @@ export class CheState extends DurableObject {
           // Verified research is reused until it expires (30 minutes for
           // prices/news/weather, 7 days otherwise) instead of re-researched.
           shouldResearch
-            ? cachedResearch(this.ctx.storage, message, () => optionalResearch(this.env, message), Date.now(), { reopen: (saved) => reopenArticles(saved) })
+            ? cachedResearch(this.ctx.storage, message, () => optionalResearch(this.env, message), Date.now(), { reopen: (saved) => reopenArticles(saved), news: Boolean(newsQuestion(message)) })
             : Promise.resolve(null),
           useModelPanel
             ? modelPanel(this.env, message)
@@ -10762,7 +10763,7 @@ export class CheState extends DurableObject {
   async advanceMissions(data) {
     await resolveKnownNodes(data, async (question) => {
       const research = await researchHit(this.ctx.storage, question).catch(() => null);
-      if (research?.answer && !research.articles?.length) return { answer: research.answer, source: research.source || 'research_cache', verified_at: research.verified_at };
+      if (research?.answer && !research.articles?.length && !newsQuestion(question)) return { answer: research.answer, source: research.source || 'research_cache', verified_at: research.verified_at };
       return knownAnswer(this.ctx.storage, question, { memories: data.memories || [] });
     }).catch(() => 0);
     return advanceObjectives(data, (fields) => enqueueJob(data, fields));

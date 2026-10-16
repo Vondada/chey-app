@@ -196,10 +196,12 @@ export async function markPureResearch(storage, question) {
   if (record && !record.pure) await storage.put(key, { ...record, pure: true });
 }
 
-export async function cachedResearch(storage, question, research, now = Date.now(), { reopen = null } = {}) {
+export async function cachedResearch(storage, question, research, now = Date.now(), { reopen = null, news = false } = {}) {
   const key = researchKey(question);
   const hit = await recallKnowledge(storage, key, { now });
-  if (hit && ['source_backed', 'source_verified'].includes(hit.verification_status)) {
+  // A news question is answered from articles opened now; a reference
+  // summary saved for it is never replayed as the news.
+  if (hit && ['source_backed', 'source_verified'].includes(hit.verification_status) && (hit.articles?.length || !news)) {
     if (!hit.articles?.length) {
       return { summary: hit.answer, sources: hit.sources, limitation: hit.limitation || undefined, cached: true, verified_at: hit.verified_at };
     }
@@ -214,7 +216,8 @@ export async function cachedResearch(storage, question, research, now = Date.now
     }
   }
   const fresh = await research();
-  if (fresh?.summary && Array.isArray(fresh.sources) && fresh.sources.some((s) => /^https:\/\//i.test(String(s)))) {
+  if (fresh?.summary && Array.isArray(fresh.sources) && fresh.sources.some((s) => /^https:\/\//i.test(String(s)))
+    && !(news && !fresh.articles?.length)) {
     const volatile = isVolatile(question);
     await rememberKnowledge(storage, {
       key,

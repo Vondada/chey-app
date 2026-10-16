@@ -754,7 +754,11 @@ test('a news article needs a publication date from its own page', async () => {
   const claimed = await guardCitations(`Example News published "Apple launches a thinner phone" on October 15, 2026. Source: ${pageUrl}`,
     { message: 'Did Example News write about Apple?', fetcher: undatedSite.fetcher, now: AT });
   assert.equal(claimed.removed.length, 1);
-  assert.match(claimed.text, /page shows no publication date, so I cannot confirm Oct 15, 2026/);
+  assert.match(claimed.text, /Example News's page shows no publication date/);
+  const summary = await guardCitations(`Example News published "Apple launches a thinner phone" on October 15, 2026.\nSource: ${pageUrl}`,
+    { message: 'Summarize that page for me', fetcher: undatedSite.fetcher, now: AT });
+  assert.equal(summary.removed.length, 1);
+  assert.match(summary.text, /page shows no publication date, so I cannot confirm Oct 15, 2026/);
 });
 
 test('a cited page must say the claim, not only load', async () => {
@@ -837,4 +841,104 @@ test('a repeated news question never skips reopening through the early cache ans
   assert.notEqual(again.meta.source, 'che_research_cache');
   assert.doesNotMatch(again.reply, /releasing MedGemma|Sources:? .*research\.google/);
   assert.ok(calls.includes(MEDGEMMA_URL), 'the saved article was tried again before any reuse');
+});
+
+// ─── Independent review of #315 at f3b651c ────────────────────────────────
+
+test('a link listed under "Sources:" is still opened and checked against the claim', async () => {
+  const gone = 'https://www.technologyreview.com/2026/10/15/medmind-radiology/';
+  useWeb();
+  const out = await guardCitations(`MedMind beat radiologists on imaging benchmarks.\n\nSources:\n- ${gone}`, { message: 'Tell me about MedMind', now: AT });
+  assert.equal(out.removed.length, 1);
+  assert.doesNotMatch(out.text, /beat radiologists|- https|Sources:/);
+  assert.equal(out.disproven[0]?.kind, 'broken_citation');
+
+  // Every "Source:" line after a claim cites that claim.
+  const study = 'https://health.example.org/study';
+  const second = 'https://health.example.org/missing';
+  const page = site({ [study]: html({ title: 'Sleep and memory', site: 'Example Health', published: '', body: 'Adults who sleep seven hours remember more.' }) });
+  const two = await guardCitations(`Adults who sleep seven hours remember more.\nSource: ${study}\nSource: ${second}`, { message: 'Does sleep help memory?', fetcher: page.fetcher, now: AT });
+  assert.deepEqual([...page.calls].sort(), [second, study].sort());
+  assert.equal(two.removed.length, 1);
+});
+
+test('links that present something to the owner are not judged as sources', async () => {
+  const urls = ['https://myshop.example/', 'https://music.example.com/track/123', 'https://food.example.com/chili', 'https://tracking.example.com/1Z999', 'https://maps.example.com/dir/restaurant'];
+  const web = site(Object.fromEntries(urls.map((u) => [u, html({ title: 'Welcome', site: 'Example', published: '', body: 'Welcome.' })])));
+  for (const reply of [`Your website is live at ${urls[0]}`, `Check out this song: ${urls[1]}`, `Try this recipe: ${urls[2]}`,
+    `Your order shipped: ${urls[3]}`, `Directions to the restaurant: ${urls[4]}`]) {
+    const out = await guardCitations(reply, { message: 'Thanks', fetcher: web.fetcher, now: AT });
+    assert.equal(out.text, reply, reply);
+  }
+  // A claim dressed as a pointer is still checked.
+  for (const reply of [`See the study showing smoking cures cancer: ${urls[2]}`, `Use ibuprofen to cure migraines: ${urls[2]}`, `Watch the video that proves vaccines cause autism: ${urls[1]}`]) {
+    const claim = await guardCitations(reply, { message: 'Is that true?', fetcher: web.fetcher, now: AT });
+    assert.equal(claim.removed.length, 1, reply);
+  }
+});
+
+test('a name on the page does not prove the rest of a cited claim', async () => {
+  const chili = 'https://food.example.com/texas-chili';
+  const dose = 'https://health.example.org/tylenol-dosage';
+  const web = site({
+    [chili]: html({ title: 'Texas chili', site: 'Food Example', published: '', body: 'This Texas chili uses dried chiles, beef and cumin.' }),
+    [dose]: html({ title: 'Tylenol dosage', site: 'Example Health', published: '', body: 'Tylenol relieves mild pain and reduces fever. Adults take 325 to 650 mg every 4 to 6 hours.' }),
+  });
+  for (const reply of [`Smoking causes cancer in Texas (${chili}).`, `Studies show Tylenol causes autism (${dose}).`]) {
+    const out = await guardCitations(reply, { message: 'Is that true?', fetcher: web.fetcher, now: AT });
+    assert.equal(out.removed.length, 1, reply);
+    assert.match(out.text, /page does not say that/, reply);
+  }
+  const kept = await guardCitations(`Tylenol relieves pain and fever (${dose}).`, { message: 'What is Tylenol for?', fetcher: web.fetcher, now: AT });
+  assert.deepEqual(kept.removed, []);
+});
+
+test('in a news answer a page the reply links must be from the days asked about', async () => {
+  const old = 'https://www.example-news.com/2019/apple-thin-phone';
+  const undated = 'https://www.example-news.com/apple-thin-phone';
+  const today = 'https://www.example-news.com/2026/apple-thin-phone';
+  const page = (published) => html({ title: 'Apple launches a thinner phone', site: 'Example News', published, body: 'Apple launched a thinner phone today, its thinnest yet.' });
+  const web = site({ [old]: page('2019-03-01T10:00:00Z'), [undated]: page(''), [today]: page('2026-10-15T15:00:00Z') });
+  for (const [url, why] of [[old, /published it Mar 1, 2019, outside Oct 15, 2026/], [undated, /shows no publication date, so I cannot tell it is from Oct 15, 2026/]]) {
+    for (const reply of [`Apple launched a thinner phone today (${url}).`, `Apple launched a thinner phone today.\nSource: ${url}`]) {
+      const out = await guardCitations(reply, { message: TECH_NEWS, fetcher: web.fetcher, now: AT });
+      assert.equal(out.removed.length, 1, reply);
+      assert.doesNotMatch(out.text, /Sources I opened|thinner phone today/, reply);
+      assert.match(out.text, why, reply);
+    }
+  }
+  const kept = await guardCitations(`Apple launched a thinner phone today (${today}).`, { message: TECH_NEWS, fetcher: web.fetcher, now: AT });
+  assert.deepEqual(kept.removed, []);
+  assert.match(kept.text, /Sources I opened: Example News/);
+  // Labelled background may link an older page; it is still checked for what it says.
+  const background = await guardCitations(`For background, Apple launched a thinner phone in 2019 (${old}).`, { message: TECH_NEWS, fetcher: web.fetcher, now: AT });
+  assert.deepEqual(background.removed, []);
+});
+
+test('a news question answered only from a reference summary is never replayed from the cache', async () => {
+  const calls = useWeb({ list: listings() });
+  const web = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input?.url || input);
+    if (!url.startsWith('https://en.wikipedia.org/w/api.php')) return web(input, init);
+    calls.push(url);
+    return Response.json({ query: { pages: { 1: { title: 'MedGemma', fullurl: 'https://en.wikipedia.org/wiki/MedGemma',
+      extract: 'MedGemma was released by Google on October 15, 2026, beating doctors on every benchmark.' } } } });
+  };
+  const che = await owner({ model: () => 'Google released MedGemma today, beating doctors on every benchmark.' });
+  const ask = { history: [], requested_capabilities: ['web_research'] };
+  const first = await che.say(NEWS_QUESTION, ask);
+  assert.doesNotMatch(first.reply, /beating doctors/);
+  // Even a record saved before this fix, marked pure, is not replayed.
+  assert.equal([...che.saved.keys()].find((k) => k.startsWith('kc:research:')), undefined, 'a news question with no opened article is not saved as research');
+  // A record saved before this fix, marked pure, is not replayed either.
+  const topic = 'research:what was the biggest ai news story on october 15 2026';
+  che.saved.set(`kc:${topic}`, {
+    key: topic, answer: 'MedGemma: MedGemma was released by Google on October 15, 2026, beating doctors on every benchmark.', source: 'research_library',
+    sources: ['https://en.wikipedia.org/wiki/MedGemma'], verification_status: 'source_backed', superseded: [], confidence: 0.85,
+    verified_at: Date.now(), expires_at: Date.now() + 1_800_000, volatile: true, pure: true,
+  });
+  const again = await che.say(NEWS_QUESTION, ask);
+  assert.notEqual(again.meta.source, 'che_research_cache');
+  assert.doesNotMatch(again.reply, /beating doctors/);
 });

@@ -19,7 +19,8 @@
     "Catch me up on the news",
     "Look up the latest headlines",
     "Latest tech headlines",
-    "I'd like an update on the news"
+    "I'd like an update on the news",
+    "Big tech news today"
   ],
   "statements": [
     "Write a news story about a robot uprising",
@@ -33,6 +34,12 @@
     "That is great news.",
     "Really good news",
     "I have news.",
-    "My screen keeps breaking"
+    "My screen keeps breaking",
+    "Thanks for the news.",
+    "Big news!",
+    "Old news.",
+    "Awesome news!",
+    "Wow big news",
+    "Guess what? I have good news!"
   ]
 }

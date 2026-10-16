@@ -240,8 +240,8 @@ const WHEN_WORDS = new RegExp(`\\b(?:today|tonight|yesterday|this (?:morning|wee
 // offline guard (cheNeedsLiveSources) uses the same two patterns, and both
 // are tested on test/fixtures/news_requests.json.
 const NEWS_ASK = /^(?:(?:hey[, ]*)?(?:che|chay|chey|shay)[,!:]?\s*)?(?:please\s+)?(?:what(?:'s| is| was)?|who|where|when|why|how|which|did|does|do|is|are|was|were|has|have|any|(?:can|could|would|will) you|tell me|give me|show me|read me|catch me up|brief me|update me|find|search|check|look up|summari[sz]e|list|(?:can|could|may) i (?:get|have|hear|see)|i(?:'d| would) like (?:an? )?(?:update|news))\b/i;
-// "AI news today", "Latest tech headlines"; not "Good news!" or "I have news."
-const NEWS_PHRASE = /^(?:(?:hey[, ]*)?(?:che|chay|chey|shay)[,!:]?\s*)?(?!(?:i|i'm|we|my|our|you|your|that|this|it|it's|such|no|what)\b)(?![^.!?]*\b(?:good|great|bad|sad|terrible|awful|wonderful|amazing|fantastic|happy|exciting|welcome|some)\s+(?:news|headlines?)\b)(?:(?:today['’]s|latest|breaking|top|biggest|current|recent)\s+)?(?:[a-z0-9+#-]+\s+){0,3}(?:news|headlines?)\b(?:\s+(?:today|tonight|now|this week))?[.!]?\s*$/i;
+// "AI news today", "Latest tech headlines"; not "Good news!", "Thanks for the news." or "I have news."
+const NEWS_PHRASE = /^(?:(?:hey[, ]*)?(?:che|chay|chey|shay)[,!:]?\s*)?(?!(?:i|i'm|we|my|our|you|your|that|this|it|it's|such|no|what|thanks|thank|wow|oh|ah|aw|ooh|yay|great|nice|cool|awesome|yes|yeah|sounds|love|lol|haha|congrats|congratulations)\b)(?![^.!?]*\b(?:good|great|bad|sad|terrible|awful|wonderful|amazing|fantastic|happy|exciting|welcome|some|big|huge|old|awesome|cool|nice|fun|fake|crazy|shocking|interesting|incredible|horrible|wild|best|worst)\s+(?:news|headlines?)\b)(?:(?:today['’]s|latest|breaking|top|biggest|current|recent)\s+)?(?:[a-z0-9+#-]+\s+){0,3}(?:news|headlines?)\b(?:\s+(?:today|tonight|now|this week))?[.!]?\s*$/i;
 const FICTION = /\b(?:write|draft|compose|make up|invent|imagine|pretend|role.?play)\b[^.?!]{0,60}\b(?:news|story|article|headline|report|press release)\b/i;
 const TOPIC_DROP = new RegExp(`\\b(?:what|whats|what's|is|was|were|are|the|a|an|biggest|big|top|main|most|important|latest|recent|recently|breaking|news|story|stories|headline|headlines|today|tonight|yesterday|this|last|week|month|morning|night|right|now|so|far|on|in|of|for|about|tell|me|give|show|any|some|happening|happened|going|announced|announcements?|released|releases|launched|launches|unveiled|che|chay|hey|please|sir|can|you|i|my|there|been|has|have|did|do|from|around|world|day|${MONTH_RE}|\\d{1,4}(?:st|nd|rd|th)?)\\b`, 'gi');
 
@@ -514,6 +514,8 @@ function asserts(sentence, mark) {
 // "says", "will open", not only the verbs in EVENT.
 const NEWS_EVENT = new RegExp(`${EVENT.source}|\\b[a-z]{3,}ed\\b|\\b(?:says|said|plans?|agreed|confirm(?:s|ed)?|will)\\b`, 'i');
 
+const BACKGROUND = /\b(?:in general|generally|typically|usually|often|tend to|as background|general background|for background)\b/i;
+
 export function eventClaim(sentence, { allowDescription = false, cited = false } = {}) {
   const text = String(sentence || '').replace(URL_RE, ' ').trim();
   if ((!allowDescription && !cited && !NEWS_EVENT.test(text)) || /\?\s*$/.test(text) || ABOUT_THE_CONVERSATION.test(text)) return null;
@@ -521,7 +523,7 @@ export function eventClaim(sentence, { allowDescription = false, cited = false }
   if (/^(?:no|none|there (?:is|are|were) no)\b[^.?!]{0,100}\b(?:articles?|sources?|reports?|headlines?)\b/i.test(text)) return null;
   // Labelled background ("companies usually announce models in the fall") is
   // not a report of an event; a sentence that cites a page still says what the page says.
-  if (!cited && /\b(?:in general|generally|typically|usually|often|tend to|as background|general background)\b/i.test(text)) return null;
+  if (!cited && BACKGROUND.test(text)) return null;
   let subject = '';
   for (const token of text.replace(/^[^A-Za-z]+/, '').split(/\s+/)) {
     const word = token.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '').replace(/['’]s$/, '');
@@ -574,6 +576,16 @@ function outletMatches(page, outlet) {
 // would see a login page), and opening an unsubscribe, confirm or reset link
 // would act on it.
 const SOURCE_LINE = /^\W*(?:(?:sources?|via|references?|citations?|read more|more|link|details|see)\s*[:\-–—]?\s*)?(?:[(<\[]*\[LINK\][)>\]]*[\s,;]*(?:and\s+)?)+[.!]?\s*$/i;
+// A link that presents something to the owner ("Try this recipe: <link>",
+// "Your order shipped: <link>", "Directions to the restaurant: <link>") is not
+// offered as proof of anything; a clause saying what it shows ("showing…") is.
+const PRESENTS = new RegExp('^\\W*(?:(?:sir|okay|ok|so|sure|also|and|here(?:\'s| is| are))\\W+)*(?:'
+  + '(?:(?:check out|check|try|watch|listen to|hear|read|see|view|visit|open|download|follow|use|book|order|shop|join|install|play|explore|browse|grab|get|take a look at|have a look at|look at|go to|head to|tune in to|stream|enjoy|save|bookmark|track)\\s+)?'
+  + '(?:(?:this|that|these|those|the|a|an|my|your|our|his|her|their)\\s+)?(?:[a-z0-9\'’-]+\\s+){0,3}?'
+  + '(?:directions|map|route|menu|recipe|tickets?|playlist|song|track|album|podcast|episode|video|trailer|clip|tutorial|guide|manual|instructions|website|site|homepage|profile|listing|booking|reservation|tracking|schedule|agenda|form|portal|dashboard|repo|repository|app|link|page|file|folder|document|doc|photo|image|channel|livestream|event|store|shop|product|coupon|deal|offer)s?\\b'
+  + '|your\\s+[a-z][\\w\'’ -]{0,40}?\\s+(?:(?:is|are|was|were|has been|have been)\\s+)?(?:now\\s+)?(?:live|ready|up|online|available|done|complete|finished|published|posted|shipped|delivered|booked|confirmed|scheduled|saved|uploaded|created|sent|on (?:its|the) way)\\b)'
+  + '(?![^\\[]*\\b(?:that|which|who|why|how|showing|shows?|proves?|proving|says?|said|finds?|found|reveals?|confirms?|according|because|causes?|cures?|is|are|was|were)\\b)'
+  + '[^.!?;:\\[]{0,80}[:\\-–—]?\\s*(?:at|here|on|in|via)?\\s*[(<\\[]*\\[LINK\\][)>\\]]*(?:\\s+to\\s+[a-z][^.!?;:\\[]{0,60})?[\\s.!]*$', 'i');
 const SOURCE_CONTEXT = /\b(?:sources?|article|story|stories|report(?:ed|s)?|paper|study|studies|press release|blog post|via|read more|according|published|headline|announced in|coverage)\b/i;
 const PRIVATE_HOST = /(?:^|\.)(?:(?:docs|drive|mail|calendar|accounts|myaccount|photos|meet|chat|keep|contacts)\.google\.com|dropbox\.com|onedrive\.live\.com|sharepoint\.com|notion\.so|icloud\.com|zoom\.us|slack\.com|workers\.dev|localhost)$|^(?:\d+\.){3}\d+$/i;
 const ACTION_PATH = /(?:unsubscribe|opt-?out|confirm|approve|verify|activate|reset|log-?in|sign-?in|oauth|auth\b|token=|delete|cancel|checkout|\bpay\b|invite|accept)/i;
@@ -675,10 +687,11 @@ export async function guardCitations(reply, {
     // clauses must be pure navigation directions; one factual assertion
     // anywhere in the group makes its source URLs require verification.
     const clauses = linkOnly.split(/\.\s+|;\s+/).filter((part) => part.trim());
+    const terms = claimTerms(s);
     const pointer = kind.urls.length > 0 && clauses.length > 0
       && clauses.every((part) => !/\b(?:proof|source|evidence|study|research|claims?|reported|according)\b/i.test(part)
-        && harmlessLinkPointer.test(part.trim()));
-    const terms = claimTerms(s);
+        && harmlessLinkPointer.test(part.trim()))
+      || (kind.urls.length > 0 && PRESENTS.test(linkOnly) && !terms.hard.length && !kind.outlets.length && !kind.quoted.length && !kind.reporting && !kind.publishedOn);
     // "Source: <link>", "Read more: <link>" or a bare link line says nothing itself.
     const sourceLine = kind.urls.length > 0 && SOURCE_LINE.test(linkOnly);
     // A link next to an assertion is its citation; a link in a sentence that
@@ -687,19 +700,32 @@ export async function guardCitations(reply, {
       || (kind.urls.length > 0 && !pointer && (sourceLine || asserts(s, { ...kind, terms })));
     const urls = offered ? kind.urls.filter(checkableUrl) : [];
     const unsafe = offered ? kind.urls.filter((u) => !checkableUrl(u)) : [];
-    return { ...kind, urls, unsafe, cites: kind.cites || urls.length > 0 || unsafe.length > 0, terms, hit, sourceLine };
+    return { ...kind, urls, unsafe, cites: kind.cites || urls.length > 0 || unsafe.length > 0, terms, hit, sourceLine, linkOnly, links: kind.urls.length };
   });
-  // Such a line cites the sentence before it ("The study says X. Source: <link>"),
-  // which is checked against that link; the line stays or goes with it. After a
-  // sentence that asserts nothing it is only a link and is not opened.
+  // Such a line cites the nearest claim above it, past a "Sources:" heading and
+  // other link lines ("The study says X. Source: <link>"): that claim is checked
+  // against the link, and the line (and heading) stay or go with it. A claim
+  // with a link of its own leaves the line to be opened as a listed source, as
+  // does a heading with no claim above it, and any link in a news answer.
+  // After a sentence that asserts nothing ("Here's your Drive folder:") the
+  // line is only a link and is not opened.
+  const heading = (j) => !marks[j].links && marks[j].sourceWords && !asserts(sentences[j].s, marks[j]);
   marks.forEach((m, k) => {
-    if (!m.sourceLine || news || m.hit) return;
-    const claim = marks[k - 1];
-    const prior = sentences[k - 1]?.s || '';
-    if (claim && !claim.urls.length && !claim.unsafe.length && !claim.sourceLine && !/\?\s*$/.test(prior) && asserts(prior, claim)) {
-      Object.assign(claim, { urls: m.urls, unsafe: m.unsafe, cites: true });
-      Object.assign(m, { urls: [], unsafe: [], cites: false, carrierOf: k - 1 });
-    } else Object.assign(m, { urls: [], unsafe: [], cites: false });
+    if (!m.sourceLine || m.hit) return;
+    let j = k - 1;
+    let listed = Boolean(news) || /^\W*(?:sources?|references?|citations?|via)\b/i.test(m.linkOnly);
+    const headings = [];
+    for (; j >= 0 && (marks[j].sourceLine || heading(j)); j -= 1) if (!marks[j].sourceLine) { listed = true; headings.push(j); }
+    const claim = marks[j];
+    const prior = sentences[j]?.s || '';
+    if (claim && !/\?\s*$/.test(prior) && asserts(prior, claim)) {
+      if (claim.links) return;
+      claim.urls.push(...m.urls);
+      claim.unsafe.push(...m.unsafe);
+      claim.cites = true;
+      Object.assign(m, { urls: [], unsafe: [], cites: false, carrierOf: j });
+      for (const h of headings) marks[h].carrierOf = j;
+    } else if (!listed) Object.assign(m, { urls: [], unsafe: [], cites: false });
   });
   const needsCheck = marks.some((m) => m.cites || m.hit) || (news && sentences.length);
   if (!needsCheck) return none;
@@ -718,7 +744,12 @@ export async function guardCitations(reply, {
     known.set(normalizeUrl(page.url), page);
     if (page.final_url) known.set(normalizeUrl(page.final_url), page);
   }
-  const good = receipts.filter((r) => r.ok);
+  // In a news answer a page counts only when its own date falls in the days
+  // asked about, whether research or the reply's own link opened it.
+  const undated = (page) => !Number.isFinite(Date.parse(page.published || ''));
+  const dateMiss = (page) => (undated(page) ? `${page.publisher || linkName(page.final_url || page.url, 'page')}'s page shows no publication date, so I cannot tell it is from ${news.label}`
+    : outside(page.published, news) ? `${page.publisher || linkName(page.final_url || page.url, 'page')} published it ${spokenDay(page.published)}, outside ${news.label}` : '');
+  const good = receipts.filter((r) => r.ok && !(news && dateMiss(r)));
 
   const removed = [];
   const fresh = [];
@@ -749,6 +780,8 @@ export async function guardCitations(reply, {
         fresh.push(disprovenEntry({ kind: 'broken_citation', url, status: page.status, headline: m.quoted[0], terms: m.terms.hard, reason: `${linkName(url)} returns ${page.error}`, sentence }, now));
         return fail(`${linkName(url)} returns ${page.error}`);
       }
+      // Labelled background ("For background, see <link>") is not today's news.
+      if (news && dateMiss(page) && !BACKGROUND.test(sentence)) return fail(dateMiss(page));
       linked.push(page);
     }
     // Several links: the claim may rest on any of them.
@@ -831,15 +864,15 @@ export async function guardCitations(reply, {
       const backing = candidates.filter((c) => supportsEvent(c, plainEvent));
       if (!backing.length) return fail(plainEvent.subject ? `no article I retrieved says this about ${plainEvent.subject}` : 'no article I retrieved says this');
       candidates = backing;
-    } else if (m.cites) {
-      // A page that loads proves nothing: "Smoking causes cancer (<link>)"
-      // needs that page to say it, even with no name or figure to match.
-      const said = eventClaim(sentence, { cited: true });
-      if (said) {
-        const backing = candidates.filter((c) => supportsEvent(c, said));
-        if (!backing.length) return fail(`${candidates[0].publisher || linkName(candidates[0].final_url || candidates[0].url, 'page')}'s page does not say that`);
-        candidates = backing;
-      }
+    }
+    // A page that loads proves nothing, and neither does a name it shares:
+    // "Smoking causes cancer (<link>)" or "... in Texas (<a Texas recipe>)"
+    // needs that page to say the claim.
+    const said = m.cites && !plainEvent ? eventClaim(sentence, { cited: true }) : null;
+    if (said) {
+      const backing = candidates.filter((c) => supportsEvent(c, said));
+      if (!backing.length) return fail(`${candidates[0].publisher ? `${candidates[0].publisher}'s page` : linkName(candidates[0].final_url || candidates[0].url, 'page')} does not say that`);
+      candidates = backing;
     }
     // Only a claim attributed to a source earns a line in "Sources I opened".
     const attributed = Boolean(m.outlets.length || m.quoted.length || m.publishedOn || newsClaim);
