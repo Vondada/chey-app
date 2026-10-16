@@ -27,8 +27,9 @@ on:
       - "tools/che_video_render.py"
 permissions:
   contents: read
+# One group per render job, so queued renders never cancel each other.
 concurrency:
-  group: free-video-${{ inputs.job_id || github.sha }}
+  group: free-video-${{ github.event.client_payload.job_id || inputs.job_id || github.run_id }}
   cancel-in-progress: false
 jobs:
   render:
@@ -64,10 +65,9 @@ jobs:
         env:
           TOPIC: ${{ github.event.client_payload.topic || inputs.topic || '3 surprising facts about space' }}
           DURATION: ${{ github.event.client_payload.seconds || inputs.seconds || '15' }}
-          # CHE's Fish voice narrates with the expressive model (Drama 3) when
-          # set up. Without these, or on any Fish error, Piper narrates.
-          # CHE_FISH_NARRATION=0 (variable) keeps narration on Piper, and the
-          # owner switch-off CHE_FISH_PREFERRED=0 stops every Fish call.
+          # Free by default: the Piper voice narrates. Fish (a paid service)
+          # narrates only when the owner sets the repository variable
+          # CHE_FISH_NARRATION=1; CHE_FISH_PREFERRED=0 stops every Fish call.
           FISH_API_KEY: ${{ secrets.FISH_API_KEY }}
           CHE_FISH_PREFERRED: ${{ secrets.CHE_FISH_PREFERRED || vars.CHE_FISH_PREFERRED || '1' }}
           CHE_FISH_VOICE_ID: ${{ secrets.CHE_FISH_VOICE_ID || vars.CHE_FISH_VOICE_ID }}

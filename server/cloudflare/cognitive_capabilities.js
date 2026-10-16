@@ -44,8 +44,10 @@ export function inferTurnCapabilities(message, attachment = null) {
   ])) add('rendering', 'image_generation');
 
   if (any(value, [
-    /\b(generate|create|make|render|animate)\b[^.]{0,80}\b(video|clip|animation)\b/,
+    /\b(generate|create|make|render|animate|produce)\b[^.]{0,80}\b(video|clip|animation|mp4|reel|(?:youtube|yt|faceless)\s+shorts?)\b/,
     /\bvideo generation\b/,
+    // "Use the free GitHub video renderer" follows a video request.
+    /\b(use|try|run|start)\b[^.]{0,40}\b(?:video\s+)?renderer\b(?![^.]{0,30}\bimages?\b)/,
   ])) add('video_generation');
 
   if (attachment || any(value, [

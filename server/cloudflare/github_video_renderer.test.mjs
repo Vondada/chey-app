@@ -32,7 +32,23 @@ function storedZip(files) {
   v.setUint32(16,offset,true);
   return concat([...locals,directory,end]);
 }
-const video=Uint8Array.from([0,0,0,24,102,116,121,112,105,115,111,109,0,0,0,0]);
+// A minimal real MP4 layout: ftyp, then moov with a 15-second movie header
+// and H.264 + AAC sample entries.
+function box(type, ...parts) {
+  const payload = concat(parts.map((p) => (p instanceof Uint8Array ? p : text(p))));
+  const out = new Uint8Array(8 + payload.length);
+  new DataView(out.buffer).setUint32(0, out.length); out.set(text(type), 4); out.set(payload, 8);
+  return out;
+}
+function mvhd(seconds, scale = 1000) {
+  const body = new Uint8Array(100); const v = new DataView(body.buffer);
+  v.setUint32(12, scale); v.setUint32(16, Math.round(seconds * scale));
+  return box('mvhd', body);
+}
+function mp4(seconds = 15, codecs = 'avc1 mp4a') {
+  return concat([box('ftyp', 'isom', new Uint8Array(4)), box('moov', mvhd(seconds), box('trak', box('stsd', codecs)))]);
+}
+const video=mp4();
 const png=new Uint8Array(32);
 png.set([137,80,78,71,13,10,26,10],0);
 new DataView(png.buffer).setUint32(16,1280);

@@ -55,7 +55,7 @@ class FishNarrationTest(unittest.TestCase):
         self.cache = tempfile.mkdtemp()
         self.env = mock.patch.dict(os.environ, {
             'FISH_API_KEY': 'fish-test-key', 'CHE_FISH_VOICE_ID': VOICE,
-            'CHE_NARRATION_CACHE': self.cache, 'CHE_FISH_EXPRESSIVE_MODEL': '', 'CHE_FISH_NARRATION': '',
+            'CHE_NARRATION_CACHE': self.cache, 'CHE_FISH_EXPRESSIVE_MODEL': '', 'CHE_FISH_NARRATION': '1',
             'CHE_FISH_PREFERRED': '1',
         })
         self.env.start()
@@ -93,6 +93,9 @@ class FishNarrationTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {'FISH_API_KEY': ''}):
             self.assertIsNone(render.fish_narration('Hello.'))
         with mock.patch.dict(os.environ, {'CHE_FISH_NARRATION': '0'}):
+            self.assertIsNone(render.fish_narration('Hello.'))
+        # Free by default: without the owner's opt-in Fish is never called.
+        with mock.patch.dict(os.environ, {'CHE_FISH_NARRATION': ''}):
             self.assertIsNone(render.fish_narration('Hello.'))
         with mock.patch.dict(os.environ, {'CHE_FISH_PREFERRED': '0'}):
             self.assertIsNone(render.fish_narration('Hello.'))
