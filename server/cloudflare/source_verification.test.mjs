@@ -1059,7 +1059,8 @@ test('an intro that states something is checked; one about its links stays', asy
   const pasta = 'https://food.example.com/pasta';
   const soup = 'https://food.example.com/soup';
   const web = site({ [pasta]: html({ title: 'Easy pasta', site: 'Food Example', published: '', body: 'Boil the pasta.' }), [soup]: html({ title: 'Soup', site: 'Food Example', published: '', body: 'Carrots and leeks.' }) });
-  for (const intro of ['Here are the reasons the moon landing was staged:', 'Here are reports the election was rigged:']) {
+  for (const intro of ['Here are the reasons the moon landing was staged:', 'Here are reports the election was rigged:', 'Here are foods that prevent cancer:',
+    'Here are studies showing vaccines harm children:', "Here are the reasons vaccines aren't safe:"]) {
     const out = await guardCitations(`${intro}\n- ${pasta}\n- ${soup}`, { message: 'Is that true?', fetcher: web.fetcher, now: AT });
     assert.equal(out.removed.length, 1, intro);
     assert.ok(!out.text.includes(intro), intro);
