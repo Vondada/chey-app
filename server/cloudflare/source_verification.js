@@ -599,7 +599,7 @@ const SOURCE_HEADING = /^\W*(?:sources?|references?|citations?|further reading|r
 // Only a plain intro qualifies: no names, and nothing after its opening words
 // that states something ("Here are studies linking vaccines to autism:").
 const LIST_INTRO = /^\W*(?:(?:sir|okay|ok|so|sure|also|and)\W+)*(?:here(?:'s| is| are)|i(?:'ve| have)? found|these are|below are|some|a few|a couple|try these|check these|you (?:might|may|could) (?:like|enjoy|try))\b/i;
-const INTRO_CLAIM = /\b(?:that|which|who|is|are|was|were|be|been|being|has|have|had|does|did|caus\w*|link\w*|show\w*|prov\w*|cur(?:e|es|ed|ing)|lead\w*|prevent\w*|kill\w*|harm\w*|safe|unsafe|dangerous|deadly|true|false|fake|proof|evidence|why|how|because|according|says?|confirms?|reveals?)\b/i;
+const INTRO_CLAIM = /\b(?:caus\w*|link(?:ed|ing)|shows? that|show(?:ed|ing|n)|prov(?:e|es|ed|ing|en)|cur(?:e|es|ed|ing)|lead(?:s|ing) to|prevent\w*|kill\w*|harm\w*|safe|unsafe|dangerous|deadly|toxic|poison\w*|true|false|fake|hoax\w*|scam\w*|lies|lied|conspirac\w*|cover.?up|proof|evidence|because|according|says?|confirms?|reveals?)\b/i;
 const SOURCE_CONTEXT = /\b(?:sources?|article|story|stories|report(?:ed|s)?|paper|study|studies|press release|blog post|via|read more|according|published|headline|announced in|coverage)\b/i;
 const PRIVATE_HOST = /(?:^|\.)(?:(?:docs|drive|mail|calendar|accounts|myaccount|photos|meet|chat|keep|contacts)\.google\.com|dropbox\.com|onedrive\.live\.com|sharepoint\.com|notion\.so|icloud\.com|zoom\.us|slack\.com|workers\.dev|localhost)$|^(?:\d+\.){3}\d+$/i;
 const ACTION_PATH = /(?:unsubscribe|opt-?out|confirm|approve|verify|activate|reset|log-?in|sign-?in|oauth|auth\b|token=|delete|cancel|checkout|\bpay\b|invite|accept)/i;
@@ -935,7 +935,8 @@ export async function guardCitations(reply, {
       if (gone.length === m.carried.length) verdicts[k] = { keep: false, reason };
       else {
         // "Sources: A, B" with B broken keeps "Sources: A".
-        const line = gone.reduce((text, u) => text.replace(u, ''), sentences[k].s)
+        // Each link is matched whole, so cutting one never cuts into another.
+        const line = sentences[k].s.replace(URL_RE, (u) => { const bare = u.replace(/[.,;:!?]+$/, ''); return gone.includes(bare) ? u.slice(bare.length) : u; })
           .replace(/[(<[]\s*[)>\]]/g, '').replace(/([:\-–—])\s*(?:(?:,|;|\band\b)\s*)+/i, '$1 ')
           .replace(/\s*[,;]\s*(?:(?:,|;|\band\b)\s*)+/gi, ', ').replace(/(?:\s*(?:,|;|\band\b))+\s*$/i, '').replace(/[ \t]{2,}/g, ' ');
         verdicts[k] = { keep: true, support: [], trimmed: line, reason };

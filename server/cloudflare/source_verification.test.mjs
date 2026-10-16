@@ -1031,3 +1031,26 @@ test('a claim worded as a list intro is still checked', async () => {
     assert.equal(out.removed.length, 1, intro);
   }
 });
+
+// ─── Fourth review of #315 at 7ed6f08 ─────────────────────────────────────
+
+test('everyday list intros stay lists; a trimmed link never cuts into another', async () => {
+  const a = 'https://help.example.com/restart';
+  const b = 'https://help.example.com/restart-2';
+  const web = site({ [a]: html({ title: 'Reset', site: 'Help Example', published: '', body: 'Hold the button.' }), [b]: html({ title: 'Reset 2', site: 'Help Example', published: '', body: 'Unplug it.' }) });
+  for (const intro of ['Here are some videos that might help:', 'Some good options are:', "Here's how to reset it:", 'Here are some useful links:', 'Here are some shows you might like:']) {
+    const reply = `${intro}\n- ${a}\n- ${b}`;
+    const out = await guardCitations(reply, { message: 'How do I reset it?', fetcher: web.fetcher, now: AT });
+    assert.equal(out.text, reply, reply);
+  }
+  const study = 'https://health.example.org/study';
+  const stud = 'https://health.example.org/stud';
+  const fetcher = async (input) => {
+    const url = String(input?.url || input);
+    if (url === stud) return new Response('gone', { status: 404 });
+    return new Response(html({ title: 'Sleep and memory', site: 'Example Health', published: '', body: 'Adults who sleep seven hours remember more.' }), { status: 200, headers: { 'content-type': 'text/html' } });
+  };
+  const out = await guardCitations(`Adults who sleep seven hours remember more.\nSources: ${study}, ${stud}`, { message: 'Does sleep help memory?', fetcher, now: AT });
+  assert.ok(out.text.includes(`Sources: ${study}\n`) || out.text.includes(`Sources: ${study}\n\n`) || new RegExp(`Sources: ${study.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s|$)`).test(out.text), out.text);
+  assert.ok(!out.text.includes(`${stud},`) && !/stud(?!y)/.test(out.text.replace(/the health\.example\.org link[^.]*\./g, '')), out.text);
+});
