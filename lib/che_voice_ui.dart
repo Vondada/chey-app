@@ -124,6 +124,8 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
     this.fallbackReason,
     this.maryStatus = '',
     this.fishStatus = '',
+    this.audioRoute = '',
+    this.lastPlayback = const {},
   });
 
   final CheVoiceSnapshot snapshot;
@@ -135,6 +137,10 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
   final String maryStatus;
   /// Fish's (CHE's own voice) status from the last server reply.
   final String fishStatus;
+  /// Where CHE's voice plays now, as the iPhone last reported it.
+  final String audioRoute;
+  /// The iPhone's report on the last ElevenLabs or Fish clip.
+  final Map<String, dynamic> lastPlayback;
 
   @override
   Widget build(BuildContext context) {
@@ -215,6 +221,10 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
             row('CHE voice (ElevenLabs)', cheMaryStateLabel(maryStatus)),
             row('Fish Audio (backup)', cheFishStateLabel(fishStatus)),
             row('Playback engine', cheVoiceEngineLabel(playbackEngine)),
+            row('Audio output', _outputText()),
+            row('iPhone volume', cheIphoneVolumePercent(lastPlayback) == null ? '—' : '${cheIphoneVolumePercent(lastPlayback)}% (the volume buttons)'),
+            row('Voice Volume', lastPlayback['volume'] is num ? '${((lastPlayback['volume'] as num) * 100).round()}%' : '—'),
+            row('Last clip loudness', _loudnessText()),
             row('Why not spoken', fallbackReason ?? '—'),
             row('Last interruption', snapshot.lastInterruptionReason ?? '—'),
             row(
@@ -228,6 +238,27 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+extension on CheVoiceDiagnosticsSheet {
+  String _outputText() {
+    final route = audioRoute.isNotEmpty ? audioRoute : lastPlayback['route']?.toString() ?? '';
+    if (route.isEmpty) return '—';
+    final shown = lastPlayback['route']?.toString() == route
+        ? cheAudioRouteSpoken(lastPlayback)
+        : cheAudioRouteLabel(route);
+    final choice = lastPlayback['preference']?.toString();
+    final label = shown[0].toUpperCase() + shown.substring(1);
+    return choice == null ? label : '$label · choice: ${switch (choice) { 'speaker' => 'Speaker', 'receiver' => 'Earpiece', _ => 'Automatic' }}';
+  }
+
+  String _loudnessText() {
+    final rms = lastPlayback['rms_db'];
+    if (rms is! num) return '—';
+    final gain = lastPlayback['gain_db'];
+    final raised = gain is num && gain > 0 ? ', raised ${gain.toStringAsFixed(1)} dB' : ', played as sent';
+    return '${rms.toStringAsFixed(1)} dBFS speech, peak ${(lastPlayback['peak_db'] as num? ?? 0).toStringAsFixed(1)} dBFS$raised';
   }
 }
 

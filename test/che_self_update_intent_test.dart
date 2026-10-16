@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:chey/self_update/che_self_update_intent.dart';
 
@@ -279,5 +282,42 @@ Again: ANSWER IN CHAT ONLY. ZERO REPOSITORY CHANGES. NO PR.''';
       isFalse,
     );
     expect(cheIsTerminalChatOnlyRequest('Explain "chat-only" mode. Do not modify your code.'), isTrue);
+  });
+
+  test('news questions need live sources; fiction and personal chat do not', () {
+    for (final q in [
+      'What was the biggest AI news story on October 15, 2026?',
+      "What's the latest news in tech?",
+      'Did Apple announce anything today?',
+      'Any breaking headlines?',
+      'Could I get AI news today',
+      'Can I have news headlines today',
+      'Can you tell me the latest news',
+      'Would you show me today\'s news',
+    ]) {
+      expect(cheNeedsLiveSources(q), isTrue, reason: q);
+    }
+    for (final q in [
+      'Write a news story about a robot uprising',
+      'What did you release today?',
+      'What is the capital of France?',
+      'Release the lock on the front door',
+      'I have good news, I got the job',
+      'My screen keeps breaking',
+    ]) {
+      expect(cheNeedsLiveSources(q), isFalse, reason: q);
+    }
+  });
+
+  test('the iPhone and the Worker agree on what is a news request', () {
+    // Same file as server/cloudflare/source_verification.test.mjs: offline,
+    // CHE refuses to guess exactly the requests the Worker researches online.
+    final fixture = jsonDecode(File('test/fixtures/news_requests.json').readAsStringSync()) as Map<String, dynamic>;
+    for (final q in (fixture['requests'] as List).cast<String>()) {
+      expect(cheNeedsLiveSources(q), isTrue, reason: 'request: $q');
+    }
+    for (final q in (fixture['statements'] as List).cast<String>()) {
+      expect(cheNeedsLiveSources(q), isFalse, reason: 'statement: $q');
+    }
   });
 }

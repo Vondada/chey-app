@@ -512,14 +512,28 @@ export function guardClaimedResearchActions(reply, { research = null, tools = []
   // "- Compared the info") claims the same actions.
   const stepReport = /(?:^|\n)[ \t]*(?:\d+[.)]|[-*•])[ \t]*\**[ \t]*(?:searched|looked up|researched|browsed|pulled|compared|cross.?checked|fact.?checked|verified|reviewed|checked)\b/i.test(text);
   const claimedSourceLook = /\b(?:i|we)(?:'ve|\s+have)?\s+(?:looked at|checked|went over|compared)\s+(?:the|each|every|all|both|several|multiple|those|these)\s+(?:\w+\s+){0,2}(?:sources?|articles?|sites?|websites?)\b/i.test(text);
+  // Opening, reading or clicking a page or article (2026-10-15: "I opened the
+  // MIT Technology Review article" with nothing opened), "after browsing
+  // several news sites", and reading code all claim work that left a receipt.
+  const claimedOpen = /\b(?:i|we)(?:'ve|\s+have)?\s+(?:just\s+|already\s+|also\s+)?(?:opened|visited|clicked(?:\s+on)?|browsed|read|followed|loaded|pulled\s+up|skimmed)\s+(?:through\s+)?(?:the|that|this|your|their|its|each|both|all|several|those|these|a\s+few|some)\s+(?:[\w'-]+\s+){0,4}(?:links?|urls?|pages?|articles?|sites?|websites?|stor(?:y|ies)|posts?|press\s+releases?|reports?|papers?|studies|sources?)\b/i.test(text)
+    || /\b(?:after|from)\s+(?:searching|browsing|checking|reviewing|reading|scanning|comparing|looking\s+(?:at|through))\s+(?:through\s+)?(?:\w+\s+){0,3}(?:sources?|sites?|websites?|news|articles?|outlets?|the\s+web|online|reports?|pages?)\b/i.test(text);
+  const claimedCode = /\b(?:i|we)(?:'ve|\s+have)?\s+(?:just\s+|already\s+|also\s+)?(?:inspected|reviewed|examined|read(?:\s+through)?|looked\s+(?:at|through)|went\s+through|scanned|audited)\s+(?:the|your|my|its|their|che's)\s+(?:[\w'-]+\s+){0,2}(?:code(?:base)?|source\s+code|repo(?:sitory)?|source\s+files?|worker\.js|dart\s+files?)\b/i.test(text);
+  const opened = (Array.isArray(research?.articles) && research.articles.some((a) => a?.ok)) || actualResearch;
   const anyReceipt = actualResearch || comparisonReceipt || successful.length > 0;
   if ((claimedBrowser && !actualBrowser) || (claimedSearch && !actualResearch) ||
       (claimedComparison && !comparisonReceipt) ||
       (claimedVerification && !anyReceipt) ||
       (claimedDocumentReview && !anyReceipt && !documentRead) ||
-      ((stepReport || claimedSourceLook) && !anyReceipt)) {
+      ((stepReport || claimedSourceLook) && !anyReceipt) ||
+      (claimedOpen && !opened && !successful.length && !documentRead)) {
     return {
       text: 'I need to correct that, sir: I do not have execution receipts proving I performed the search or comparison I described. I have not independently fact-checked that answer.',
+      corrected: true,
+    };
+  }
+  if (claimedCode && !successful.length && !documentRead) {
+    return {
+      text: 'I need to correct that, sir: I did not read any code for this answer, so I cannot claim I reviewed it. Ask me to inspect the code and I will read it first.',
       corrected: true,
     };
   }

@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'che_kokoro_voice.dart';
 import 'che_speech_style.dart';
+import 'che_ui/che_ui_preferences.dart';
 
 class CheLocalAI {
   static const MethodChannel _channel = MethodChannel('che/local_ai');
@@ -228,8 +229,39 @@ class CheNativeVoice {
   /// example AVAudioPlayer's error), or empty when it played.
   static String lastPlaybackError = '';
 
-  static Future<bool> playAudio(Uint8List bytes) async {
+  /// What the iPhone reported for the last clip: where it played ("speaker",
+  /// "receiver", "bluetooth", "headphones", ...), the iPhone's own volume,
+  /// CHE's Voice Volume, the clip's loudness and any gain added. Empty on a
+  /// build without that report.
+  static Map<String, dynamic> lastPlayback = const {};
+
+  /// Plays one ElevenLabs or Fish clip. [text] is what the clip says, so the
+  /// iPhone never takes CHE's own voice for the owner interrupting. [volume]
+  /// (0 to 1) and [output] ("auto", "speaker" or "receiver") default to the
+  /// owner's Voice Volume and Audio Output.
+  static Future<bool> playAudio(Uint8List bytes, {String text = '', double? volume, String? output}) async {
     lastPlaybackError = '';
+    final prefs = CheUiPreferences.instance;
+    try {
+      final value = await _methods.invokeMethod<Object?>('playClip', {
+        'bytes': bytes,
+        'text': text,
+        'volume': (volume ?? prefs.voiceVolume).clamp(0.0, 1.0),
+        'output': output ?? prefs.audioOutput.name,
+        'normalize': true,
+      });
+      bridgePresent = true;
+      if (value is Map) lastPlayback = Map<String, dynamic>.from(value);
+      final played = value is Map ? value['played'] == true : value == true;
+      if (!played) lastPlaybackError = 'the audio player stopped or did not start';
+      return played;
+    } on MissingPluginException {
+      // An iPhone build from before playClip: play the same bytes the old way.
+    } on PlatformException catch (error) {
+      final detail = (error.details ?? error.message ?? '').toString().trim();
+      lastPlaybackError = detail.isEmpty ? error.code : '${error.code}: $detail';
+      return false;
+    }
     try {
       final played = await _methods.invokeMethod<bool>('playAudio', bytes) ?? false;
       bridgePresent = true;
@@ -248,6 +280,31 @@ class CheNativeVoice {
     }
   }
 
+  /// Where CHE's voice plays right now, as iOS reports it, or null on a
+  /// build that cannot say.
+  static Future<Map<String, dynamic>?> audioRoute() => _routeCall('audioRoute');
+
+  /// Tells the iPhone where CHE's voice should play ("auto", "speaker" or
+  /// "receiver"). Returns the route iOS reports afterwards, or null on a
+  /// build without output control (it plays on the loudspeaker).
+  static Future<Map<String, dynamic>?> setAudioOutput(String output) => _routeCall('setAudioOutput', output);
+
+  // An older build answers "not implemented" here while its voice bridge
+  // works, so these calls never mark the bridge missing.
+  static Future<Map<String, dynamic>?> _routeCall(String method, [Object? arguments]) async {
+    try {
+      final value = await _methods.invokeMethod<Object?>(method, arguments);
+      return value is Map ? Map<String, dynamic>.from(value) : null;
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      // An unsupported route query may return null; an explicit route change
+      // must propagate native failure so UI and voice never announce success.
+      if (method == 'setAudioOutput') rethrow;
+      return null;
+    }
+  }
+
   /// How long one clip may play before it counts as stuck. Scales with the bytes
   /// for compressed speech, but is capped: uncompressed WAV (24 kHz PCM16 from
   /// the Gemini route) is about 20 times larger per second of audio, and an
@@ -260,10 +317,16 @@ class CheNativeVoice {
   /// Plays one clip but never waits forever. A player that stops reporting
   /// completion would otherwise hold the whole speech turn in silence. On
   /// timeout the audio is stopped and the caller shows that chunk and why.
-  static Future<bool> playAudioBounded(Uint8List bytes, {Duration? limit}) async {
+  static Future<bool> playAudioBounded(
+    Uint8List bytes, {
+    Duration? limit,
+    String text = '',
+    double? volume,
+    String? output,
+  }) async {
     final wait = limit ?? playbackDeadline(bytes.length);
     try {
-      return await playAudio(bytes).timeout(wait);
+      return await playAudio(bytes, text: text, volume: volume, output: output).timeout(wait);
     } on TimeoutException {
       lastPlaybackError = 'playback did not finish within ${wait.inSeconds} seconds';
       try {
@@ -296,4 +359,37 @@ class CheNativeVoice {
     result['local_voice_speed'] = s['speed'];
     return result;
   }
+}
+
+/// What CHE says for an output route the iPhone reports.
+String cheAudioRouteLabel(String route) => switch (route) {
+      'speaker' => 'the loudspeaker',
+      'receiver' => 'the earpiece',
+      'bluetooth' => 'Bluetooth',
+      'headphones' => 'headphones',
+      'airplay' => 'AirPlay',
+      'car' => 'your car',
+      'usb' => 'a USB audio device',
+      'external' => 'an external audio output',
+      'none' => 'no audio output',
+      '' => 'an output this CHE build cannot report',
+      _ => 'another audio output',
+    };
+
+/// "the loudspeaker" or "Bluetooth (AirPods Pro)", from the iPhone's report.
+String cheAudioRouteSpoken(Map<String, dynamic> report) {
+  final route = report['route']?.toString() ?? '';
+  final outputs = report['outputs'];
+  final name = outputs is List && outputs.isNotEmpty && outputs.first is Map
+      ? ((outputs.first as Map)['name']?.toString() ?? '').trim()
+      : '';
+  final label = cheAudioRouteLabel(route);
+  final named = ['bluetooth', 'headphones', 'airplay', 'car', 'usb', 'external'].contains(route) && name.isNotEmpty;
+  return named ? '$label ($name)' : label;
+}
+
+/// The iPhone's own volume as a percentage, or null when it was not reported.
+int? cheIphoneVolumePercent(Map<String, dynamic> report) {
+  final v = report['output_volume'];
+  return v is num ? (v.clamp(0, 1) * 100).round() : null;
 }

@@ -10,6 +10,11 @@ enum CheDeskDensity { comfortable, compact }
 
 enum CheTextScalePref { small, defaultScale, large }
 
+/// Where CHE's voice plays. [auto]: the loudspeaker, or the headphones,
+/// Bluetooth, AirPlay or car the owner connected. [speaker]: always the
+/// loudspeaker. [receiver]: the earpiece, held to the ear.
+enum CheAudioOutput { auto, speaker, receiver }
+
 /// Singleton ChangeNotifier for live UI + voice reply preferences.
 class CheUiPreferences extends ChangeNotifier {
   CheUiPreferences._();
@@ -22,6 +27,7 @@ class CheUiPreferences extends ChangeNotifier {
   static const _voiceEnabledKey = 'che.ui.voiceResponsesEnabled';
   static const _voiceVolumeKey = 'che.ui.voiceVolume';
   static const _handsFreeKey = 'che.ui.handsFreeWake';
+  static const _audioOutputKey = 'che.ui.audioOutput';
 
   bool _loaded = false;
   bool get isLoaded => _loaded;
@@ -33,6 +39,7 @@ class CheUiPreferences extends ChangeNotifier {
   CheTextScalePref textScalePref = CheTextScalePref.defaultScale;
   bool voiceResponsesEnabled = true;
   double voiceVolume = 1.0;
+  CheAudioOutput audioOutput = CheAudioOutput.auto;
   // Owner rule: the mic never opens by itself when CHE launches. Hands-free
   // wake listening is opt-in ("turn on hands-free").
   bool handsFreeWake = false;
@@ -63,6 +70,10 @@ class CheUiPreferences extends ChangeNotifier {
     voiceResponsesEnabled = prefs.getBool(_voiceEnabledKey) ?? true;
     voiceVolume = (prefs.getDouble(_voiceVolumeKey) ?? 1.0).clamp(0.0, 1.0);
     handsFreeWake = prefs.getBool(_handsFreeKey) ?? false;
+    audioOutput = CheAudioOutput.values.firstWhere(
+      (o) => o.name == prefs.getString(_audioOutputKey),
+      orElse: () => CheAudioOutput.auto,
+    );
     _loaded = true;
     notifyListeners();
   }
@@ -134,6 +145,14 @@ class CheUiPreferences extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_voiceVolumeKey, v);
+  }
+
+  Future<void> setAudioOutput(CheAudioOutput output) async {
+    if (audioOutput == output) return;
+    audioOutput = output;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_audioOutputKey, output.name);
   }
 
   Future<void> setHandsFreeWake(bool enabled) async {

@@ -27,6 +27,13 @@ extension _CheHomeStreaming on _CHEHomeState {
       return null;
     }
 
+    // News needs articles CHE opens on her server; the offline model would
+    // only guess at headlines, so she says she cannot check.
+    if (cheNeedsLiveSources(userMessage)) {
+      onPartial(cheOfflineNewsReply);
+      return cheOfflineNewsReply;
+    }
+
     // Saved library passages first: the owner asked CHE to remember these.
     final library = await _offlineLibrary.search(userMessage);
     final local = await CheLocalAI.respond(

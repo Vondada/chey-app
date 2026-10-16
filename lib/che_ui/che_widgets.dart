@@ -295,21 +295,27 @@ class PillToggle extends StatelessWidget {
           Row(children: [
             for (var i = 0; i < options.length; i++)
               Expanded(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () {
-                    if (i == index) return;
-                    HapticFeedback.selectionClick();
-                    onChanged(i);
-                  },
-                  child: Center(
-                    child: AnimatedDefaultTextStyle(
-                      duration: CheMotion.d(context, CheMotion.fast),
-                      style: CheType.label.copyWith(
-                        color: i == index ? CheColors.text : CheColors.textDim,
-                        fontWeight: i == index ? FontWeight.w700 : FontWeight.w500,
+                // VoiceOver reads each choice as a button and says which is selected.
+                child: Semantics(
+                  button: true,
+                  selected: i == index,
+                  inMutuallyExclusiveGroup: true,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      if (i == index) return;
+                      HapticFeedback.selectionClick();
+                      onChanged(i);
+                    },
+                    child: Center(
+                      child: AnimatedDefaultTextStyle(
+                        duration: CheMotion.d(context, CheMotion.fast),
+                        style: CheType.label.copyWith(
+                          color: i == index ? CheColors.text : CheColors.textDim,
+                          fontWeight: i == index ? FontWeight.w700 : FontWeight.w500,
+                        ),
+                        child: Text(options[i], maxLines: 1, overflow: TextOverflow.ellipsis),
                       ),
-                      child: Text(options[i], maxLines: 1, overflow: TextOverflow.ellipsis),
                     ),
                   ),
                 ),

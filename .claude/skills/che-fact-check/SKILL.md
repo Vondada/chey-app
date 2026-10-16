@@ -24,6 +24,8 @@ None of these is ever owner evidence:
 
 A claim to have searched, browsed, compared, verified or reviewed documents needs a tool or research receipt from **this** turn.
 
+A link, headline, outlet or publication date counts only when a page CHE opened this turn says it (`source_verification.js`). A 404 is never a verified article. News answers rest only on articles opened this turn, and CHE's earlier replies are never evidence.
+
 The full rules, the file map and the final-boundary order are in `reference/evidence-model.md`.
 
 ## Check a drafted reply (deterministic: CHE's own guards, no model)
