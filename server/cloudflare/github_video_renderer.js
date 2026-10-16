@@ -45,6 +45,20 @@ function refusal(status, what) {
   return { code: 'rejected', retryable: false, error: `GitHub rejected ${what} (HTTP ${status}).` };
 }
 
+// GitHub answers a rate limit with 403 as well as 429: no requests left in the
+// hour, a Retry-After, or a "secondary rate limit" message. That is a pause,
+// not a token without permission.
+async function refusalOf(response, what) {
+  if (response.status === 403) {
+    const headers = response.headers;
+    let limited = headers?.get?.('x-ratelimit-remaining') === '0' || Boolean(headers?.get?.('retry-after'));
+    if (!limited) limited = /rate limit/i.test(await response.clone().text().catch(() => ''));
+    if (limited) return { code: 'rate_limited', retryable: true,
+      error: `GitHub's rate limit paused ${what} (HTTP 403); it is worth trying again in a few minutes.` };
+  }
+  return refusal(response.status, what);
+}
+
 /**
  * Queue one render on the owner's GitHub Actions. workflow_dispatch first;
  * a token without Actions:write falls back to repository_dispatch, which needs
@@ -76,7 +90,9 @@ export async function startGithubVideo(env, topic, seconds = 15, fetcher = fetch
       error: 'GitHub Actions could not be reached. If the render was queued it will appear under this task; nothing else was started.' };
   }
   if (response.status === 204) return { ok: true, pending: true, task_id: taskId, provider: 'github-actions-offline', dispatch_method: 'workflow_dispatch', stage: 'queued' };
-  if (response.status === 401 || response.status === 429 || response.status >= 500) return { ok: false, task_id: taskId, ...refusal(response.status, 'the video workflow') };
+  const first = await refusalOf(response, 'the video workflow');
+  // A bad token or a busy GitHub fails the fallback too: say so once.
+  if (response.status === 401 || first.retryable) return { ok: false, task_id: taskId, ...first };
   // 403 (no Actions:write), 404 or 422: the Contents-write repository event.
   let fallback;
   try {
@@ -90,9 +106,10 @@ export async function startGithubVideo(env, topic, seconds = 15, fetcher = fetch
     return { ok: true, pending: true, task_id: taskId,
       provider: 'github-actions-offline', dispatch_method: 'repository_dispatch', stage: 'queued' };
   }
-  const why = refusal(fallback.status, 'the repository-dispatch fallback');
+  const why = await refusalOf(fallback, 'the repository-dispatch fallback');
+  if (why.retryable) return { ok: false, task_id: taskId, ...why };
   return { ok: false, task_id: taskId, code: why.code, retryable: why.retryable,
-    error: `GitHub refused both ways to start the free renderer (workflow HTTP ${response.status}, repository HTTP ${fallback.status}). ${refusal(response.status, 'the video workflow').error} The CHE_GITHUB_TOKEN requires Actions:write or Contents:write for Vondada/chey-app.` };
+    error: `GitHub refused both ways to start the free renderer (workflow HTTP ${response.status}, repository HTTP ${fallback.status}). ${first.error} The CHE_GITHUB_TOKEN requires Actions:write or Contents:write for Vondada/chey-app.` };
 }
 
 // Minutes after dispatch with no run before CHE says GitHub never started it.
@@ -107,7 +124,7 @@ export async function githubVideoStatus(env, taskId, fetcher = fetch, { dispatch
       headers: githubHeaders(env), signal: AbortSignal.timeout(15000),
     });
     if (!list.ok) {
-      const why = refusal(list.status, 'the video job lookup');
+      const why = await refusalOf(list, 'the video job lookup');
       // Busy GitHub is a pause, not a failed video.
       if (why.retryable) return { ok: true, pending: true, task_id: taskId, stage: 'checking', detail: why.error };
       return { ok: false, task_id: taskId, code: why.code, error: why.error };
@@ -136,7 +153,11 @@ export async function githubVideoStatus(env, taskId, fetcher = fetch, { dispatch
     const artifactsReply = await fetcher(root + '/actions/runs/' + job.id + '/artifacts?per_page=100', {
       headers: githubHeaders(env), signal: AbortSignal.timeout(15000),
     });
-    if (!artifactsReply.ok) return { ok: false, task_id: taskId, run_id: job.id, code: 'artifact', error: `The rendered files could not be listed (HTTP ${artifactsReply.status}).` };
+    if (!artifactsReply.ok) {
+      const why = await refusalOf(artifactsReply, 'the rendered-file listing');
+      if (why.retryable) return { ok: true, pending: true, task_id: taskId, run_id: job.id, stage: 'checking', detail: why.error };
+      return { ok: false, task_id: taskId, run_id: job.id, code: 'artifact', error: `The rendered files could not be listed (HTTP ${artifactsReply.status}).` };
+    }
     const artifacts = await readJson(artifactsReply);
     const named = (artifacts.artifacts || []).filter(a => a.name === 'che-video-' + taskId);
     const artifact = named.find(a => !a.expired);
@@ -180,6 +201,7 @@ export async function githubVideoStatus(env, taskId, fetcher = fetch, { dispatch
       voice_provider: String(manifest.voice_provider || ''),
       retention_days: 30, paid_media: manifest.paid_media === true, youtube_uploaded: false };
   } catch (error) {
+    if (error?.retryable) return { ok: true, pending: true, task_id: taskId, stage: 'checking', detail: error.message };
     return { ok: false, task_id: taskId, code: 'unverified',
       error: 'Could not verify GitHub video files: ' + String(error?.message || 'unavailable').slice(0,140) };
   }
@@ -245,7 +267,10 @@ async function downloadArchive(env, artifactId, fetcher) {
   const response = await fetcher('https://api.github.com/repos/' + REPO + '/actions/artifacts/' + artifactId + '/zip', {
     headers: githubHeaders(env), signal: AbortSignal.timeout(25000),
   });
-  if (!response.ok) throw new Error('Artifact download HTTP ' + response.status);
+  if (!response.ok) {
+    const why = await refusalOf(response, 'the rendered-file download');
+    throw Object.assign(new Error(why.retryable ? why.error : 'Artifact download HTTP ' + response.status), { retryable: why.retryable });
+  }
   const size = Number(response.headers.get('content-length') || 0);
   if (size > MAX_ARCHIVE_BYTES) throw new Error('Video artifact exceeds preview limit.');
   const bytes = new Uint8Array(await response.arrayBuffer());

@@ -44,10 +44,12 @@ export function inferTurnCapabilities(message, attachment = null) {
   ])) add('rendering', 'image_generation');
 
   if (any(value, [
-    /\b(generate|create|make|render|animate|produce)\b[^.]{0,80}\b(video|clip|animation|mp4|reel|(?:youtube|yt|faceless)\s+shorts?)\b/,
+    // A video noun is the object: "make sure the mp4 plays", "my fishing
+    // reel" and "a paper clip" are not video requests.
+    /\b(generate|create|make(?!\s+sure)|render|animate|produce)\b[^.]{0,80}(?:\b(video|animation|mp4|(?:youtube|yt|faceless|instagram|tiktok)\s+(?:shorts?|reels?))\b|\b(?:a|an|instagram|facebook|youtube|tiktok)\s+reels?\b|(?<!\b(?:paper|hair|binder|money|tie|bulldog|chip|bag)\s)\bclips?\b)/,
     /\bvideo generation\b/,
-    // "Use the free GitHub video renderer" follows a video request.
-    /\b(use|try|run|start)\b[^.]{0,40}\b(?:video\s+)?renderer\b(?![^.]{0,30}\bimages?\b)/,
+    // "Use the free GitHub video renderer": the video renderer, never its tests.
+    /\b(use|try|start)\b[^.]{0,40}\bvideo\s+renderer\b(?!\s+(?:tests?|code|bug))/,
   ])) add('video_generation');
 
   if (attachment || any(value, [

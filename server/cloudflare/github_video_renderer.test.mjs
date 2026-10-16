@@ -195,3 +195,32 @@ test('repository_dispatch runs remain discoverable without workflow_dispatch-onl
   assert.equal(outcome.stage,'queued');
   assert.ok(urls[0].endsWith('/runs?per_page=100'));
 });
+
+test('a GitHub rate limit (403 or 429) is a pause, not a missing permission', async () => {
+  const limited = [
+    new Response('{}', { status: 403, headers: { 'x-ratelimit-remaining': '0' } }),
+    new Response('{"message":"You have exceeded a secondary rate limit."}', { status: 403 }),
+    new Response('{}', { status: 403, headers: { 'retry-after': '60' } }),
+    new Response('{}', { status: 429 }),
+  ];
+  for (const reply of limited) {
+    const status = await githubVideoStatus(env, 'gha_' + 'a'.repeat(32), async () => reply.clone());
+    assert.equal(status.ok, true, 'the task is kept');
+    assert.equal(status.stage, 'checking');
+  }
+  const forbidden = await githubVideoStatus(env, 'gha_' + 'a'.repeat(32), async () => new Response('{"message":"Resource not accessible by integration"}', { status: 403 }));
+  assert.equal(forbidden.ok, false);
+  assert.equal(forbidden.code, 'forbidden');
+
+  // A rate-limited dispatch is not retried through the fallback, and is not
+  // blamed on the token's permissions.
+  const calls = [];
+  const started = await startGithubVideo(env, 'space facts', 15, async (url) => {
+    calls.push(String(url));
+    return new Response('{"message":"API rate limit exceeded"}', { status: 403 });
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(started.code, 'rate_limited');
+  assert.equal(started.retryable, true);
+  assert.doesNotMatch(started.error, /lacks the permission|Actions:write/);
+});

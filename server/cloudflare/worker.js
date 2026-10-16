@@ -9141,20 +9141,54 @@ export class CheState extends DurableObject {
         const videoAsk = requestedCapabilities.includes('video_generation');
         const priorVideo = await this.ctx.storage.get('che_video_pending');
         const priorAge = priorVideo?.dispatched_at ? Date.now() - Date.parse(priorVideo.dispatched_at) : Infinity;
-        const statusAsk = /\b(video|render|clip|short|mp4)\b/i.test(message) &&
+        // A bare "short" is a trading word too ("my short position").
+        const statusAsk = /\b(video|render|rendering|clip|mp4|(?:youtube|yt)\s+short)\b/i.test(message) &&
           /\b(check|status|ready|finished|done|preview|show|progress|how(?:'s| is)|where)\b/i.test(message);
-        const wantsAnother = /\b(new|another|second|different|again)\b/i.test(message);
+        // "15-second" is a length, not "a second video"; "the new iPhone" is not a new video.
+        const wantsAnother = /\b(another|different)\b|\bnew (?:video|short|clip|reel|render|one)\b|\b(?:a|the) second (?:video|short|clip|one)\b|\bone more\b|\bagain\b/i.test(message);
+        // A different subject is its own video, not a status check of this one.
+        const namedNow = videoAsk ? videoRequestTopic(message) : '';
+        const otherSubject = Boolean(namedNow && priorVideo?.topic && namedNow.toLowerCase() !== String(priorVideo.topic).toLowerCase());
+        // Videos started while another was rendering are checked too when the
+        // owner asks, so none is lost.
+        const earlierVideos = (await this.ctx.storage.get('che_video_earlier')) || [];
+        let earlierNote = '';
+        if (statusAsk && earlierVideos.length) {
+          const still = [];
+          for (const video of earlierVideos) {
+            const checked = await generateVideo(this.keyEnv || this.env, this.ctx.storage, {
+              task_id: video.task_id, prompt: video.prompt || 'Verified video render', title: video.title, thumbnail: true,
+              dispatched_at: video.dispatched_at ? Date.parse(video.dispatched_at) : 0,
+            });
+            const about = video.topic ? ` about ${video.topic}` : '';
+            if (checked.pending) {
+              still.push(video);
+              earlierNote += ` Your earlier video${about} is still on GitHub (task ${video.task_id}).`;
+            } else if (checked.item?.verified) {
+              earlierNote += ` Your earlier video${about} is ready too: "${checked.item.title}", in your media library.`;
+            } else {
+              earlierNote += ` Your earlier video${about} was not made. ${checked.detail || 'No valid MP4 was returned.'}`;
+            }
+          }
+          await this.ctx.storage.put('che_video_earlier', still);
+          if (!priorVideo?.task_id) {
+            return ndjsonReply(`${earlierNote.trim()} Nothing was uploaded to YouTube.`,
+              { ok: true, video_status: still.length ? 'queued' : 'checked', source: 'video_renderer' });
+          }
+        }
         let earlierFailure = '';
-        if (priorVideo?.task_id && (statusAsk || (videoAsk && !wantsAnother && priorAge < 30 * 60_000))) {
+        if (priorVideo?.task_id && (statusAsk || (videoAsk && !wantsAnother && !otherSubject && priorAge < 30 * 60_000))) {
           const checked = await generateVideo(this.keyEnv || this.env, this.ctx.storage, {
             task_id: priorVideo.task_id, prompt: priorVideo.prompt, title: priorVideo.title, thumbnail: true,
             dispatched_at: priorVideo.dispatched_at ? Date.parse(priorVideo.dispatched_at) : 0,
           });
           if (checked.pending) {
-            const stage = checked.stage === 'running' ? 'rendering on GitHub' : 'queued on GitHub';
+            const stage = checked.stage === 'running' ? 'rendering on GitHub'
+              : checked.stage === 'checking' ? 'still on GitHub, but GitHub asked me to wait before checking it again' : 'queued on GitHub';
+            const status = checked.stage === 'running' ? 'rendering' : checked.stage === 'checking' ? 'checking' : 'queued';
             return ndjsonReply(
-              `Your video${priorVideo.topic ? ` about ${priorVideo.topic}` : ''} is ${stage}, sir (task ${priorVideo.task_id}). No MP4 is ready yet, and I did not start a second one.`,
-              { video_status: checked.stage === 'running' ? 'rendering' : 'queued', task_id: priorVideo.task_id, ok: true, source: 'video_renderer' },
+              `Your video${priorVideo.topic ? ` about ${priorVideo.topic}` : ''} is ${stage}, sir (task ${priorVideo.task_id}). No MP4 is ready yet, and I did not start a second one.${earlierNote}`,
+              { video_status: status, task_id: priorVideo.task_id, ok: true, source: 'video_renderer' },
             );
           }
           if (checked.item?.verified) {
@@ -9163,7 +9197,7 @@ export class CheState extends DurableObject {
             const size = item.video_bytes ? `, ${(item.video_bytes / 1048576).toFixed(1)} MB` : '';
             const seconds = item.duration_verified && item.duration_seconds ? `${Math.round(item.duration_seconds)} seconds` : 'length not verified';
             return ndjsonReply(
-              `Your video is ready, sir: "${item.title}", ${seconds}${size}, with narration and a ${item.thumbnail_media_id ? '1280 by 720 thumbnail' : 'thumbnail I could not save'}. It is in your media library. Nothing was uploaded to YouTube.`, {
+              `Your video is ready, sir: "${item.title}", ${seconds}${size}, with narration and a ${item.thumbnail_media_id ? '1280 by 720 thumbnail' : 'thumbnail I could not save'}. It is in your media library. Nothing was uploaded to YouTube.${earlierNote}`, {
               ok: true, video_status: 'complete', media_type: 'video', source: 'video_renderer',
               media_id: item.id, title: item.title, description: item.description || '',
               media_url: `${new URL(request.url).origin}/api/media/${item.id}/video`,
@@ -9178,7 +9212,7 @@ export class CheState extends DurableObject {
           }
           await this.ctx.storage.delete('che_video_pending');
           if (!videoAsk || statusAsk) {
-            return ndjsonReply(`Your video was not made, sir. ${checked.detail || 'No valid MP4 was returned.'} Nothing was uploaded.`,
+            return ndjsonReply(`Your video was not made, sir. ${checked.detail || 'No valid MP4 was returned.'} Nothing was uploaded.${earlierNote}`,
               { ok: false, video_status: checked.stage || 'failed', task_id: priorVideo.task_id, source: 'video_renderer' });
           }
           earlierFailure = `The earlier render failed (${checked.detail || 'no valid MP4'}), so I started a new one. `;
@@ -9190,20 +9224,30 @@ export class CheState extends DurableObject {
           // The subject the owner named; a follow-up such as "use the free
           // renderer" keeps the subject of the request it follows.
           const lastTopic = await this.ctx.storage.get('che_video_last_topic');
-          const named = videoRequestTopic(message);
+          const named = namedNow;
           const recentTopic = lastTopic?.topic && Date.now() - Number(lastTopic.at || 0) < 30 * 60_000 ? lastTopic.topic : '';
           const topic = named || recentTopic || DEFAULT_VIDEO_TOPIC;
           await this.ctx.storage.put('che_video_last_topic', { topic, at: Date.now() });
-          const seconds = Math.min(90, Math.max(5, Number(/\b(\d{1,2})[- ]?(?:seconds?|secs?|s)\b/i.exec(message)?.[1]) || 15));
+          // "the 90s" is a decade, not a length.
+          const length = /\b(\d{1,2})[- ]?(seconds?|secs?|minutes?|mins?)\b/i.exec(message);
+          const seconds = Math.min(90, Math.max(5, length ? Number(length[1]) * (/^m/i.test(length[2]) ? 60 : 1) : 15));
           const made = await generateVideo(mediaEnv, this.ctx.storage, {
             prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 8000),
             topic,
             title: message.slice(0, 60),
             seconds,
             thumbnail: true,
-            new_job: wantsAnother,
+            new_job: wantsAnother || Boolean(earlierFailure),
           });
           if (made.pending) {
+            // A render still under way when this one starts keeps being tracked.
+            const running = await this.ctx.storage.get('che_video_pending');
+            let alsoNote = '';
+            if (running?.task_id && running.task_id !== made.job_id) {
+              const kept = (await this.ctx.storage.get('che_video_earlier')) || [];
+              await this.ctx.storage.put('che_video_earlier', [running, ...kept.filter((v) => v.task_id !== running.task_id)].slice(0, 3));
+              alsoNote = ` Your video${running.topic ? ` about ${running.topic}` : ''} keeps rendering too (task ${running.task_id}).`;
+            }
             await this.ctx.storage.put('che_video_pending', {
               task_id: made.job_id, prompt: message.slice(0, 8000), title: message.slice(0, 60), topic,
               created_at: new Date().toISOString(), dispatched_at: new Date().toISOString(), engine: made.engine || '',
@@ -9211,7 +9255,7 @@ export class CheState extends DurableObject {
             const chosen = !named && !recentTopic ? ` You did not name a subject, so I chose ${topic}.` : '';
             const engine = made.engine === 'github-actions-offline' ? 'The free GitHub renderer' : 'The video renderer';
             return ndjsonReply(
-              `${earlierFailure}${engine} ${made.reused ? 'already has this job' : 'accepted the job'}, sir: a ${seconds}-second vertical video about ${topic}, with free narration, a thumbnail, a title and a description. Task ${made.job_id} is queued. No MP4 is ready yet, and nothing will be uploaded to YouTube.${chosen} Ask me whether your video is ready in about two minutes.`,
+              `${earlierFailure}${engine} ${made.reused ? 'already has this job' : 'accepted the job'}, sir: a ${seconds}-second vertical video about ${topic}, with free narration, a thumbnail, a title and a description. Task ${made.job_id} is queued. No MP4 is ready yet, and nothing will be uploaded to YouTube.${chosen} Ask me whether your video is ready in about two minutes.${alsoNote}`,
               { ok: true, video_status: 'queued', task_id: made.job_id, source: 'video_renderer', topic },
             );
           }

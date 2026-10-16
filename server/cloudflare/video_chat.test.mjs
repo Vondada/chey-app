@@ -8,6 +8,7 @@ import { replyFromNdjson } from './brain_memory.js';
 import { generateVideo } from './media.js';
 import { mp4Facts } from './github_video_renderer.js';
 import { videoRequestTopic } from './video_route.js';
+import { inferTurnCapabilities } from './cognitive_capabilities.js';
 
 const generated = new URL('./.video_chat.test.generated.mjs', import.meta.url);
 writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
@@ -258,8 +259,124 @@ test('the renderer topic is the subject, never the memory context (the owner\'s 
   assert.equal(gh.dispatches.length, 1);
 });
 
+test('a dispatch GitHub never answered is sent again under the same task, once', async () => {
+  const env = { CHE_GITHUB_TOKEN: 'gh', CHE_GITHUB_REPO: 'Vondada/chey-app' };
+  for (const arrived of [false, true]) {
+    const gh = github();
+    const saved = new Map();
+    const storage = { get: async (k) => saved.get(k), put: async (k, v) => saved.set(k, v), delete: async (k) => saved.delete(k) };
+    const real = globalThis.fetch;
+    // The first dispatch gets no answer; it may or may not have reached GitHub.
+    globalThis.fetch = async (input, init) => {
+      globalThis.fetch = real;
+      if (arrived) await real(input, init);
+      throw new TypeError('network connection lost');
+    };
+    const first = await generateVideo(env, storage, { prompt: 'space facts', topic: 'space facts', seconds: 15 });
+    assert.equal(first.status, 502);
+    assert.equal(first.code, 'unreachable');
+    const retry = await generateVideo(env, storage, { prompt: 'space facts', topic: 'space facts', seconds: 15 });
+    assert.equal(retry.status, 202, retry.detail);
+    assert.equal(gh.runs.length, 1, arrived ? 'the run that arrived is the video' : 'the retry reached GitHub');
+    assert.equal(retry.job_id, gh.runs[0].job, 'one task ID throughout');
+    assert.equal(gh.dispatches.length, 1);
+    const third = await generateVideo(env, storage, { prompt: 'space facts', topic: 'space facts', seconds: 15 });
+    assert.equal(third.job_id, retry.job_id);
+    assert.equal(gh.dispatches.length, 1, 'once queued, asking again reuses it');
+  }
+});
+
+test('a rate-limited status check keeps the video instead of calling it failed', async () => {
+  const gh = github();
+  const che = await owner();
+  const queued = await che.say(OWNER_ASK);
+  const real = globalThis.fetch;
+  globalThis.fetch = async (input, init) => String(input?.url || input).includes('/runs?')
+    ? new Response('{"message":"API rate limit exceeded"}', { status: 403, headers: { 'x-ratelimit-remaining': '0' } })
+    : real(input, init);
+  const paused = await che.say('Is my video ready?');
+  assert.match(paused.reply, /still on GitHub, but GitHub asked me to wait before checking it again, sir \(task gha_/);
+  assert.equal(paused.meta.video_status, 'checking');
+  globalThis.fetch = real;
+  gh.finish('success');
+  const done = await che.say('Is my video ready?');
+  assert.equal(done.meta.video_status, 'complete');
+  assert.equal(gh.dispatches.length, 1);
+  assert.equal(queued.meta.task_id, gh.runs[0].job);
+});
+
 test('video requests are recognised; ordinary "short" is not', () => {
-  for (const [m, topic] of [[OWNER_ASK, ''], ['Use the free GitHub video renderer.', ''], ['Create a YouTube Short about black holes with narration', 'black holes'], ['Make me a 15 second video on the history of coffee', 'history of coffee']]) {
+  for (const [m, topic] of [[OWNER_ASK, ''], ['Use the free GitHub video renderer.', ''], ['Create a YouTube Short about black holes with narration', 'black holes'], ['Make me a 15 second video on the history of coffee', 'history of coffee'],
+    ['Make a video for TikTok', ''], ['Hey CHE, I need a video', ''], ['Make a video about black holes for my channel', 'black holes'],
+    ['Make a video about black holes please, thanks', 'black holes'], ['Make a video please, thanks', ''], ['Make a video about the 90s', '90s'], ['I specifically want the free GitHub video renderer. Use it.', ''], ['I asked for the free renderer, so just use it', '']]) {
     assert.equal(videoRequestTopic(m), topic, m);
   }
+  for (const m of [OWNER_ASK, 'Use the free GitHub video renderer.', 'Create a video clip from this idea.', 'Make an Instagram reel about coffee', 'Create a reel about black holes']) {
+    assert.ok(inferTurnCapabilities(m).includes('video_generation'), m);
+  }
+  for (const m of ['Should we use the Impeller renderer in Flutter instead of Skia?', 'How do I make my fishing reel cast farther?',
+    'Make sure the mp4 plays on my phone', 'Run the renderer tests', 'Run the video renderer tests', 'Make a paper clip holder for my desk']) {
+    assert.ok(!inferTurnCapabilities(m).includes('video_generation'), m);
+  }
+});
+
+test('one request is one video: a length is not "a second video", and a failed one is redone', async () => {
+  const gh = github();
+  const che = await owner();
+  await che.say(OWNER_ASK);
+  const twice = await che.say(OWNER_ASK);
+  assert.equal(gh.dispatches.length, 1, '"15-second" never means a second video');
+  assert.match(twice.reply, /did not start a second one/);
+  gh.finish('failure', null);
+  const redo = await che.say(OWNER_ASK);
+  assert.match(redo.reply, /^The earlier render failed \(The render failed on GitHub/);
+  assert.equal(gh.dispatches.length, 2, 'the failed render is not offered again as queued');
+  assert.notEqual(redo.meta.task_id, gh.dispatches[0].inputs.job_id);
+  assert.equal(redo.meta.task_id, gh.dispatches[1].inputs.job_id);
+  // The same through the API path: a failure seen there is not reused either.
+  gh.finish('failure', null);
+  const env = { CHE_GITHUB_TOKEN: 'gh', CHE_GITHUB_REPO: 'Vondada/chey-app' };
+  const failedId = gh.dispatches[1].inputs.job_id;
+  const checked = await generateVideo(env, { get: async (k) => che.saved.get(k), put: async (k, v) => che.saved.set(k, v), delete: async (k) => che.saved.delete(k), list: async () => new Map() }, { task_id: failedId, prompt: 'x' });
+  assert.equal(checked.status, 502);
+  const again = await che.say(OWNER_ASK);
+  assert.equal(gh.dispatches.length, 3);
+  assert.notEqual(again.meta.task_id, failedId);
+});
+
+test('a different subject is its own video, and both are tracked', async () => {
+  const gh = github();
+  const che = await owner();
+  await che.say('Make a video about black holes.');
+  const coffee = await che.say('Make a video about the history of coffee.');
+  assert.equal(gh.dispatches.length, 2);
+  assert.equal(gh.dispatches[1].inputs.topic, 'history of coffee');
+  assert.match(coffee.reply, /accepted the job, sir: a 15-second vertical video about history of coffee/);
+  assert.match(coffee.reply, /Your video about black holes keeps rendering too \(task gha_/);
+  gh.runs[0].status = 'in_progress';
+  const both = await che.say('Is my video ready?');
+  assert.match(both.reply, /Your video about history of coffee is queued on GitHub/);
+  assert.match(both.reply, /Your earlier video about black holes is still on GitHub/);
+  Object.assign(gh.runs[0], { status: 'completed', conclusion: 'success' });
+  gh.artifacts[gh.runs[0].id] = [{ id: 5000 + gh.runs[0].id, name: `che-video-${gh.runs[0].job}`, expired: false }];
+  const first = await che.say('Is my video ready?');
+  assert.match(first.reply, /Your earlier video about black holes is ready too: "3 SPACE FACTS THAT SOUND IMPOSSIBLE", in your media library\./);
+  gh.finish('success');
+  const second = await che.say('Is my video ready?');
+  assert.equal(second.meta.video_status, 'complete');
+  assert.doesNotMatch(second.reply, /earlier video/, 'a finished earlier video is reported once');
+});
+
+test('trading and other sentences are not video status checks or lengths', async () => {
+  const gh = github();
+  const che = await owner();
+  await che.say(OWNER_ASK);
+  const short = await che.say("How's my short position on NQ doing?");
+  assert.notEqual(short.meta.source, 'video_renderer');
+  assert.equal(short.meta.video_status, undefined);
+  await che.say('Make a video about the 90s');
+  assert.equal(gh.dispatches.at(-1).inputs.topic, '90s');
+  assert.equal(gh.dispatches.at(-1).inputs.seconds, '15', '"the 90s" is not 90 seconds');
+  await che.say('Make a 1-minute video about volcanoes');
+  assert.equal(gh.dispatches.at(-1).inputs.seconds, '60');
 });

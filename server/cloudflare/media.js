@@ -293,6 +293,9 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
           detail: `The free GitHub render is ${result.stage === 'running' ? 'running' : 'queued'}. No finished MP4 exists yet.${result.detail ? ` ${result.detail}` : ''}` };
       }
       if (!result.ok || !result.verified) {
+        // Asking for the same video again must start a new render, not
+        // return this failed one.
+        if (dispatched) await storage.put?.(DISPATCHED_KEY + renderTaskId, { ...dispatched, failed: true });
         return { status: 502, stage: result.stage || 'failed', code: result.code || 'failed', run_id: result.run_id || null,
           detail: result.error || 'GitHub video was not verified.' };
       }
@@ -389,10 +392,18 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
       // within half an hour returns the job already queued.
       const key = DISPATCH_KEY + await requestKey(`${topic.toLowerCase()}|${seconds}`);
       const earlier = await storage.get?.(key).catch?.(() => null) ?? null;
-      if (earlier?.task_id && Date.now() - Number(earlier.at || 0) < DISPATCH_REUSE_MS && !body.new_job) {
-        return { pending: true, task_id: earlier.task_id, reused: true };
+      const failed = earlier?.task_id ? (await storage.get?.(DISPATCHED_KEY + earlier.task_id).catch?.(() => null))?.failed : false;
+      const recent = earlier?.task_id && Date.now() - Number(earlier.at || 0) < DISPATCH_REUSE_MS && !body.new_job && !failed;
+      if (recent && !earlier.retry) return { pending: true, task_id: earlier.task_id, reused: true };
+      // The earlier attempt never got an answer from GitHub. If it arrived
+      // anyway its run carries the task ID and that run is the video;
+      // otherwise the same ID is sent again, so it is still one video.
+      const retryId = recent && earlier.retry ? earlier.task_id : '';
+      if (retryId && (await githubVideoStatus(env, retryId, fetcher)).run_id) {
+        await storage.put?.(key, { task_id: retryId, at: Date.now(), topic });
+        return { pending: true, task_id: retryId, reused: true };
       }
-      const result = await startGithubVideo(env, topic, seconds, fetcher, { taskId: earlier?.retry ? earlier.task_id : '' });
+      const result = await startGithubVideo(env, topic, seconds, fetcher, { taskId: retryId });
       if (!result.ok) {
         // An unreachable GitHub may still have queued it: keep the task ID so
         // a retry checks that run instead of starting a second video.
