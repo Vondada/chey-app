@@ -813,3 +813,28 @@ test('a link given for navigation is not checked as a source', async () => {
   assert.equal(claim.removed.length, 1);
   assert.match(claim.text, /I cannot safely check the drive\.google\.com link as a source/);
 });
+
+test('a repeated news question never skips reopening through the early cache answer', async () => {
+  // Codex on 21edef7: a pure research turn with no history could return the
+  // saved news summary and links directly, without opening any page again.
+  const pages = { ...PAGES };
+  const calls = useWeb({ list: listings({ gdelt: [MEDGEMMA_LISTING] }), pages });
+  const che = await owner({
+    model: () => `Google Research published "${MEDGEMMA_TITLE}" on October 15, 2026, releasing MedGemma, a collection of open models for medical text and image comprehension. Source: ${MEDGEMMA_URL}`,
+  });
+  const ask = { history: [], requested_capabilities: ['web_research'] };
+  const first = await che.say(NEWS_QUESTION, ask);
+  assert.match(first.reply, /Sources I opened: Google Research/);
+  // In production nothing else rides on a plain news turn, so the record is
+  // marked pure, which is what lets the early cache answer apply.
+  const key = [...che.saved.keys()].find((k) => k.startsWith('kc:research:'));
+  assert.equal(che.saved.get(key).articles.length, 1);
+  che.saved.set(key, { ...che.saved.get(key), pure: true });
+
+  delete pages[MEDGEMMA_URL];
+  calls.length = 0;
+  const again = await che.say(NEWS_QUESTION, ask);
+  assert.notEqual(again.meta.source, 'che_research_cache');
+  assert.doesNotMatch(again.reply, /releasing MedGemma|Sources:? .*research\.google/);
+  assert.ok(calls.includes(MEDGEMMA_URL), 'the saved article was tried again before any reuse');
+});

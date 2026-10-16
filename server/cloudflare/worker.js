@@ -8353,7 +8353,9 @@ export class CheState extends DurableObject {
           const researched = !rememberFact && plainCaps && !conversationContext && !actionAsk
             ? await researchHit(this.ctx.storage, message).catch(() => null)
             : null;
-          if (researched?.pure === true) {
+          // Saved news articles are receipts only once reopened: a news hit goes
+          // the full way, where cachedResearch reopens them and the reply is checked.
+          if (researched?.pure === true && !researched.articles?.length) {
             await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY,
               answerEvidenceReceipt({ research: researched }))).catch(() => null);
             await recordReliability(this.ctx.storage, { kind: 'retrieval', workflow: 'research', outcome: 'answered_from_memory', tokens_saved: 3000 });
@@ -10760,7 +10762,7 @@ export class CheState extends DurableObject {
   async advanceMissions(data) {
     await resolveKnownNodes(data, async (question) => {
       const research = await researchHit(this.ctx.storage, question).catch(() => null);
-      if (research?.answer) return { answer: research.answer, source: research.source || 'research_cache', verified_at: research.verified_at };
+      if (research?.answer && !research.articles?.length) return { answer: research.answer, source: research.source || 'research_cache', verified_at: research.verified_at };
       return knownAnswer(this.ctx.storage, question, { memories: data.memories || [] });
     }).catch(() => 0);
     return advanceObjectives(data, (fields) => enqueueJob(data, fields));
