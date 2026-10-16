@@ -599,6 +599,12 @@ const SOURCE_HEADING = /^\W*(?:sources?|references?|citations?|further reading|r
 // Only a plain intro qualifies: no names, and nothing after its opening words
 // that states something ("Here are studies linking vaccines to autism:").
 const LIST_INTRO = /^\W*(?:(?:sir|okay|ok|so|sure|also|and)\W+)*(?:here(?:'s| is| are)|i(?:'ve| have)? found|these are|below are|some|a few|a couple|try these|check these|you (?:might|may|could) (?:like|enjoy|try))\b/i;
+// Words an intro uses about any list ("Here are some useful options:"); the
+// rest are its topic, which at least one listed page must mention.
+const INTRO_GENERIC = new Set(('few couple options option ideas idea things thing might help like enjoy found what useful good great best more other '
+  + 'list results result picks suggestions recommendations resources choices ways steps these those below some your you here there '
+  + 'easy quick simple nice cool favorite favourite popular helpful interesting latest new videos articles pages sites websites links posts '
+  + 'guides tutorials files documents photos images reads options sir also want need').split(' '));
 const INTRO_CLAIM = /\b(?:caus\w*|link(?:ed|ing)|shows? that|show(?:ed|ing|n)|prov(?:e|es|ed|ing|en)|cur(?:e|es|ed|ing)|lead(?:s|ing) to|prevent\w*|kill\w*|harm\w*|safe|unsafe|dangerous|deadly|toxic|poison\w*|true|false|fake|hoax\w*|scam\w*|lies|lied|conspirac\w*|cover.?up|proof|evidence|because|according|says?|confirms?|reveals?)\b/i;
 const SOURCE_CONTEXT = /\b(?:sources?|article|story|stories|report(?:ed|s)?|paper|study|studies|press release|blog post|via|read more|according|published|headline|announced in|coverage)\b/i;
 const PRIVATE_HOST = /(?:^|\.)(?:(?:docs|drive|mail|calendar|accounts|myaccount|photos|meet|chat|keep|contacts)\.google\.com|dropbox\.com|onedrive\.live\.com|sharepoint\.com|notion\.so|icloud\.com|zoom\.us|slack\.com|workers\.dev|localhost)$|^(?:\d+\.){3}\d+$/i;
@@ -726,7 +732,9 @@ export async function guardCitations(reply, {
   const heading = (j) => !marks[j].links && (SOURCE_HEADING.test(sentences[j].s.trim()) || (marks[j].sourceWords && !asserts(sentences[j].s, marks[j])));
   const intro = (j) => {
     const line = sentences[j].s.trim();
-    return !marks[j].links && line.length <= 120 && /:\s*$/.test(line) && LIST_INTRO.test(line) && !INTRO_CLAIM.test(line.replace(LIST_INTRO, ''))
+    const rest = line.replace(LIST_INTRO, '');
+    return !marks[j].links && line.length <= 120 && /:\s*$/.test(line) && LIST_INTRO.test(line) && !INTRO_CLAIM.test(rest)
+      && !/\b(?:is|are|was|were)\s+[a-z]/i.test(rest)
       && !marks[j].terms.hard.length && !marks[j].terms.soft.length && !marks[j].outlets.length && !marks[j].quoted.length && !marks[j].reporting;
   };
   marks.forEach((m, k) => {
@@ -739,6 +747,7 @@ export async function guardCitations(reply, {
     // sources; a private link in it (a Drive file) is navigation.
     if (j >= 0 && intro(j)) {
       if (!news) Object.assign(m, { unsafe: [], cites: m.urls.length > 0 });
+      m.introOf = j;
       return;
     }
     const claim = marks[j];
@@ -790,6 +799,17 @@ export async function guardCitations(reply, {
     const sentence = sentences[k].s;
     const fail = (reason) => ({ keep: false, reason });
     if (m.carrierOf != null) return { keep: true, support: [] };
+    // A list intro must be about what it lists: one of its topic words on one
+    // of the pages that opened. If not, only the intro goes; its links stay.
+    const under = marks.filter((c) => c.introOf === k);
+    if (under.length) {
+      const topic = [...new Set((sentence.replace(LIST_INTRO, '').toLowerCase().match(/[a-z][a-z0-9'’-]{3,}/g) || [])
+        .filter((w) => !STOP.has(w) && !PLAIN_WORDS.has(w) && !LINK_WORDS.has(w) && !INTRO_GENERIC.has(w) && !LINK_WORDS.has(w.replace(/s$/, ''))))];
+      const pages = under.flatMap((c) => c.urls).map((u) => known.get(normalizeUrl(u))).filter((p) => p?.ok);
+      const says = (p) => topic.some((w) => new RegExp(`\\b${w.slice(0, 4).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(`${p.title} ${p.page_title || ''} ${p.description || ''} ${p.text || ''}`.toLowerCase()));
+      if (topic.length && pages.length && !pages.some(says)) return fail('the links I listed are not about that');
+      return { keep: true, support: [] };
+    }
     const listed = marks.some((c) => c.carrierOf === k && c.carried?.length);
     const drop = new Map();
     dropped.set(k, drop);

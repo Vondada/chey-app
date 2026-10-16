@@ -948,7 +948,7 @@ test('a news question answered only from a reference summary is never replayed f
 test('a list of links after an intro line is a list, not a claim', async () => {
   const a = 'https://food.example.com/chili';
   const b = 'https://food.example.com/soup';
-  const web = site({ [a]: html({ title: 'Chili', site: 'Food Example', published: '', body: 'Beans, beef and cumin.' }), [b]: html({ title: 'Soup', site: 'Food Example', published: '', body: 'Carrots and leeks.' }) });
+  const web = site({ [a]: html({ title: 'Chili recipe', site: 'Food Example', published: '', body: 'An easy dinner: beans, beef and cumin. Song of the week: none.' }), [b]: html({ title: 'Soup recipe', site: 'Food Example', published: '', body: 'Carrots and leeks for dinner.' }) });
   for (const intro of ["Here's what I found:", 'Here are a few options, sir:', 'Here are two songs you might like:', 'Here are some easy dinner recipes:', 'References:', 'Further reading:']) {
     const reply = `${intro}\n- ${a}\n- ${b}`;
     const out = await guardCitations(reply, { message: 'Any ideas for dinner?', fetcher: web.fetcher, now: AT });
@@ -1037,7 +1037,7 @@ test('a claim worded as a list intro is still checked', async () => {
 test('everyday list intros stay lists; a trimmed link never cuts into another', async () => {
   const a = 'https://help.example.com/restart';
   const b = 'https://help.example.com/restart-2';
-  const web = site({ [a]: html({ title: 'Reset', site: 'Help Example', published: '', body: 'Hold the button.' }), [b]: html({ title: 'Reset 2', site: 'Help Example', published: '', body: 'Unplug it.' }) });
+  const web = site({ [a]: html({ title: 'Reset your router', site: 'Help Example', published: '', body: 'Hold the button for ten seconds. Our shows and help videos explain more.' }), [b]: html({ title: 'Reset 2', site: 'Help Example', published: '', body: 'Unplug it.' }) });
   for (const intro of ['Here are some videos that might help:', 'Some good options are:', "Here's how to reset it:", 'Here are some useful links:', 'Here are some shows you might like:']) {
     const reply = `${intro}\n- ${a}\n- ${b}`;
     const out = await guardCitations(reply, { message: 'How do I reset it?', fetcher: web.fetcher, now: AT });
@@ -1053,4 +1053,15 @@ test('everyday list intros stay lists; a trimmed link never cuts into another', 
   const out = await guardCitations(`Adults who sleep seven hours remember more.\nSources: ${study}, ${stud}`, { message: 'Does sleep help memory?', fetcher, now: AT });
   assert.ok(out.text.includes(`Sources: ${study}\n`) || out.text.includes(`Sources: ${study}\n\n`) || new RegExp(`Sources: ${study.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s|$)`).test(out.text), out.text);
   assert.ok(!out.text.includes(`${stud},`) && !/stud(?!y)/.test(out.text.replace(/the health\.example\.org link[^.]*\./g, '')), out.text);
+});
+
+test('an intro that states something is checked; one about its links stays', async () => {
+  const pasta = 'https://food.example.com/pasta';
+  const soup = 'https://food.example.com/soup';
+  const web = site({ [pasta]: html({ title: 'Easy pasta', site: 'Food Example', published: '', body: 'Boil the pasta.' }), [soup]: html({ title: 'Soup', site: 'Food Example', published: '', body: 'Carrots and leeks.' }) });
+  for (const intro of ['Here are the reasons the moon landing was staged:', 'Here are reports the election was rigged:', 'Here are studies where vaccines triggered autism:']) {
+    const out = await guardCitations(`${intro}\n- ${pasta}\n- ${soup}`, { message: 'Is that true?', fetcher: web.fetcher, now: AT });
+    assert.equal(out.removed.length, 1, intro);
+    assert.ok(!out.text.includes(intro), intro);
+  }
 });
