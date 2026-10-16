@@ -942,3 +942,51 @@ test('a news question answered only from a reference summary is never replayed f
   assert.notEqual(again.meta.source, 'che_research_cache');
   assert.doesNotMatch(again.reply, /beating doctors/);
 });
+
+// ─── Second review of #315 at a8da634 ─────────────────────────────────────
+
+test('a list of links after an intro line is a list, not a claim', async () => {
+  const a = 'https://food.example.com/chili';
+  const b = 'https://food.example.com/soup';
+  const web = site({ [a]: html({ title: 'Chili', site: 'Food Example', published: '', body: 'Beans, beef and cumin.' }), [b]: html({ title: 'Soup', site: 'Food Example', published: '', body: 'Carrots and leeks.' }) });
+  for (const intro of ["Here's what I found:", 'Here are a few options, sir:', 'Here are two songs you might like:', 'Here are some easy dinner recipes:', 'References:', 'Further reading:']) {
+    const reply = `${intro}\n- ${a}\n- ${b}`;
+    const out = await guardCitations(reply, { message: 'Any ideas for dinner?', fetcher: web.fetcher, now: AT });
+    assert.equal(out.text, reply, reply);
+  }
+  // A broken link in such a list is still caught; a claim ending in a colon is still a claim.
+  const gone = 'https://www.technologyreview.com/2026/10/15/gone/';
+  useWeb();
+  const broken = await guardCitations(`Here's what I found:\n- ${gone}`, { message: 'Find me something', now: AT });
+  assert.equal(broken.removed.length, 1);
+  const claim = await guardCitations(`Smoking cures cancer:\n- ${a}`, { message: 'Is that true?', fetcher: web.fetcher, now: AT });
+  assert.equal(claim.removed.length, 1);
+});
+
+test('a presented link cannot carry an unchecked claim', async () => {
+  const page = 'https://video.example.com/watch/1';
+  const web = site({ [page]: html({ title: 'Cooking with herbs', site: 'Video Example', published: '', body: 'A short video about cooking with fresh herbs.' }) });
+  for (const reply of [`See the FDA page approving ivermectin for COVID ${page}`, `Watch the video of NASA faking the moon landing: ${page}`,
+    `Watch this video ${page} to see how vaccines cause autism.`, `Doctors recommend this product: ${page}`]) {
+    const out = await guardCitations(reply, { message: 'Is that true?', fetcher: web.fetcher, now: AT });
+    assert.equal(out.removed.length, 1, reply);
+  }
+  // A name in a presented link is checked against the page, not removed for the imperative.
+  const song = 'https://music.example.com/track/9';
+  const music = site({ [song]: html({ title: 'Anti-Hero', site: 'Music Example', published: '', body: 'Anti-Hero by Taylor Swift, from the album Midnights.' }) });
+  const kept = await guardCitations(`Check out this song by Taylor Swift: ${song}`, { message: 'Play me something', fetcher: music.fetcher, now: AT });
+  assert.equal(kept.text, `Check out this song by Taylor Swift: ${song}`);
+});
+
+test('one undated page in a news sources list drops only that line', async () => {
+  const wiki = 'https://en.wikipedia.org/wiki/MedGemma';
+  const pages = { ...PAGES, [wiki]: html({ title: 'MedGemma', site: 'Wikipedia', published: '', body: 'MedGemma is a collection of open medical models from Google.' }) };
+  useWeb({ list: listings({ gdelt: [MEDGEMMA_LISTING] }), pages });
+  const research = await newsResearch(NEWS_QUESTION, { now: AT });
+  const out = await guardCitations(`Google Research released MedGemma, a collection of open models for medical text and image comprehension.\n\nSources:\n- ${MEDGEMMA_URL}\n- ${wiki}`,
+    { message: NEWS_QUESTION, research, now: AT });
+  assert.match(out.text, /^Google Research released MedGemma/);
+  assert.match(out.text, new RegExp(`- ${MEDGEMMA_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.doesNotMatch(out.text, /- https:\/\/en\.wikipedia/);
+  assert.match(out.text, /Wikipedia's page shows no publication date/);
+});

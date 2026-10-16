@@ -525,16 +525,19 @@ export function eventClaim(sentence, { allowDescription = false, cited = false }
   // not a report of an event; a sentence that cites a page still says what the page says.
   if (!cited && BACKGROUND.test(text)) return null;
   let subject = '';
+  // "Try this recipe…": an opening imperative is neither the subject nor something the page must say.
+  const first = (text.match(/^[^A-Za-z]*([A-Za-z]+)/) || [])[1]?.toLowerCase() || '';
+  const lead = cited && IMPERATIVE_WORDS.has(first) ? first : '';
   for (const token of text.replace(/^[^A-Za-z]+/, '').split(/\s+/)) {
     const word = token.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '').replace(/['’]s$/, '');
-    if (COMMON_CAPS.has(word) && word !== 'AI') continue;
+    if ((COMMON_CAPS.has(word) && word !== 'AI') || (cited && IMPERATIVE_WORDS.has(word.toLowerCase()))) continue;
     if (/^[A-Z][A-Za-z0-9&-]+$/.test(word)) subject = word;
     break;
   }
   const words = [...new Set((text.toLowerCase().match(/[a-z][a-z0-9'’-]{3,}/g) || [])
     .map((w) => w.replace(/['’]s$/, ''))
     .filter((w) => !PLAIN_WORDS.has(w) && !EVENT.test(w) && !/^[a-z]{3,}ed$/.test(w) && !MONTHS.includes(w) && !/day$/.test(w)
-      && !(cited && (LINK_WORDS.has(w) || STOP.has(w)))))];
+      && !(cited && (LINK_WORDS.has(w) || STOP.has(w) || w === lead))))];
   if (words.length >= 2) return { subject, words };
   if (cited) return words.length ? { subject, words } : null;
   // Short reports still need proof: "AI surged" and "Apple is doomed"
@@ -578,14 +581,22 @@ function outletMatches(page, outlet) {
 const SOURCE_LINE = /^\W*(?:(?:sources?|via|references?|citations?|read more|more|link|details|see)\s*[:\-–—]?\s*)?(?:[(<\[]*\[LINK\][)>\]]*[\s,;]*(?:and\s+)?)+[.!]?\s*$/i;
 // A link that presents something to the owner ("Try this recipe: <link>",
 // "Your order shipped: <link>", "Directions to the restaurant: <link>") is not
-// offered as proof of anything; a clause saying what it shows ("showing…") is.
-const PRESENTS = new RegExp('^\\W*(?:(?:sir|okay|ok|so|sure|also|and|here(?:\'s| is| are))\\W+)*(?:'
-  + '(?:(?:check out|check|try|watch|listen to|hear|read|see|view|visit|open|download|follow|use|book|order|shop|join|install|play|explore|browse|grab|get|take a look at|have a look at|look at|go to|head to|tune in to|stream|enjoy|save|bookmark|track)\\s+)?'
-  + '(?:(?:this|that|these|those|the|a|an|my|your|our|his|her|their)\\s+)?(?:[a-z0-9\'’-]+\\s+){0,3}?'
+// offered as proof of anything. Only that shape qualifies: no names, nothing
+// after the link, and no words that say what the page shows or proves.
+const IMPERATIVE = '(?:check out|check|try|watch|listen to|hear|read|see|view|visit|open|download|follow|use|book|order|shop|join|install|play|explore|browse|grab|get|take a look at|have a look at|look at|go to|head to|tune in to|stream|enjoy|save|bookmark|track)';
+const IMPERATIVE_WORDS = new Set('check try watch listen hear read see view visit open download follow use book order shop join install play explore browse grab get take look go head tune stream enjoy save bookmark track'.split(' '));
+const DETERMINER = '(?:this|that|these|those|the|a|an|my|your|our|his|her|their)';
+const PRESENTS = new RegExp(`^\\W*(?:(?:sir|okay|ok|so|sure|also|and|here(?:'s| is| are))\\W+)*`
+  + '(?!.*\\b(?:cur(?:e|es|ed|ing)|caus\\w*|prov(?:e|es|ed|ing|en)|fak(?:e|es|ed|ing)|hoax\\w*|scam\\w*|fraud\\w*|lies|lied|lying|approv\\w*|recommend\\w*|show(?:s|ed|ing|n)?|why|how|because|according|truth|secrets?|expos\\w*)\\b)'
+  + `(?:(?:${IMPERATIVE}\\s+)?(?:${DETERMINER}\\s+(?:[a-z0-9'’-]+\\s+){0,2}?)?`
   + '(?:directions|map|route|menu|recipe|tickets?|playlist|song|track|album|podcast|episode|video|trailer|clip|tutorial|guide|manual|instructions|website|site|homepage|profile|listing|booking|reservation|tracking|schedule|agenda|form|portal|dashboard|repo|repository|app|link|page|file|folder|document|doc|photo|image|channel|livestream|event|store|shop|product|coupon|deal|offer)s?\\b'
-  + '|your\\s+[a-z][\\w\'’ -]{0,40}?\\s+(?:(?:is|are|was|were|has been|have been)\\s+)?(?:now\\s+)?(?:live|ready|up|online|available|done|complete|finished|published|posted|shipped|delivered|booked|confirmed|scheduled|saved|uploaded|created|sent|on (?:its|the) way)\\b)'
-  + '(?![^\\[]*\\b(?:that|which|who|why|how|showing|shows?|proves?|proving|says?|said|finds?|found|reveals?|confirms?|according|because|causes?|cures?|is|are|was|were)\\b)'
-  + '[^.!?;:\\[]{0,80}[:\\-–—]?\\s*(?:at|here|on|in|via)?\\s*[(<\\[]*\\[LINK\\][)>\\]]*(?:\\s+to\\s+[a-z][^.!?;:\\[]{0,60})?[\\s.!]*$', 'i');
+  + `(?:\\s+(?:to|for)\\s+(?:${DETERMINER}\\s+)?[a-z'’-]+(?:\\s+[a-z'’-]+)?)?`
+  + "|your\\s+[a-z][a-z'’ -]{0,40}?\\s+(?:(?:is|are|was|were|has been|have been)\\s+)?(?:now\\s+)?(?:live|ready|up|online|available|done|complete|finished|published|posted|shipped|delivered|booked|confirmed|scheduled|saved|uploaded|created|sent|on (?:its|the) way)\\b)"
+  + '(?:\\s*[:\\-–—]|\\s+(?:at|here|below|on|via))?\\s*(?:here|below)?\\s*[(<\\[]*\\[LINK\\][)>\\]]*[\\s.!]*$', 'i');
+// "Sources:", "References:", "Further reading:" head a list of links that cite the claim above it.
+const SOURCE_HEADING = /^\W*(?:sources?|references?|citations?|further reading|read more|learn more|more info(?:rmation)?|links?|see also|bibliography|via|related (?:links|reading))\b[^.!?[\]]{0,40}$/i;
+// "Here's what I found:", "Here are a few options:" introduce a list; the list is not a claim.
+const LIST_INTRO = /^\W*(?:(?:sir|okay|ok|so|sure|also|and)\W+)*(?:here(?:'s| is| are)|i(?:'ve| have)? found|these are|below are|some|a few|a couple|try these|check these|you (?:might|may|could) (?:like|enjoy|try))\b(?![^:]*\b(?:proof|evidence|shows?|proves?|because|caus\w*|cur(?:e|es|ed|ing)|according|says?|confirms?|reveals?)\b)[^.!?[\]]{0,100}:\s*$/i;
 const SOURCE_CONTEXT = /\b(?:sources?|article|story|stories|report(?:ed|s)?|paper|study|studies|press release|blog post|via|read more|according|published|headline|announced in|coverage)\b/i;
 const PRIVATE_HOST = /(?:^|\.)(?:(?:docs|drive|mail|calendar|accounts|myaccount|photos|meet|chat|keep|contacts)\.google\.com|dropbox\.com|onedrive\.live\.com|sharepoint\.com|notion\.so|icloud\.com|zoom\.us|slack\.com|workers\.dev|localhost)$|^(?:\d+\.){3}\d+$/i;
 const ACTION_PATH = /(?:unsubscribe|opt-?out|confirm|approve|verify|activate|reset|log-?in|sign-?in|oauth|auth\b|token=|delete|cancel|checkout|\bpay\b|invite|accept)/i;
@@ -691,7 +702,7 @@ export async function guardCitations(reply, {
     const pointer = kind.urls.length > 0 && clauses.length > 0
       && clauses.every((part) => !/\b(?:proof|source|evidence|study|research|claims?|reported|according)\b/i.test(part)
         && harmlessLinkPointer.test(part.trim()))
-      || (kind.urls.length > 0 && PRESENTS.test(linkOnly) && !terms.hard.length && !kind.outlets.length && !kind.quoted.length && !kind.reporting && !kind.publishedOn);
+      || (kind.urls.length > 0 && PRESENTS.test(linkOnly) && !terms.hard.length && !terms.soft.length && !kind.outlets.length && !kind.quoted.length && !kind.reporting && !kind.publishedOn);
     // "Source: <link>", "Read more: <link>" or a bare link line says nothing itself.
     const sourceLine = kind.urls.length > 0 && SOURCE_LINE.test(linkOnly);
     // A link next to an assertion is its citation; a link in a sentence that
@@ -709,13 +720,21 @@ export async function guardCitations(reply, {
   // does a heading with no claim above it, and any link in a news answer.
   // After a sentence that asserts nothing ("Here's your Drive folder:") the
   // line is only a link and is not opened.
-  const heading = (j) => !marks[j].links && marks[j].sourceWords && !asserts(sentences[j].s, marks[j]);
+  const heading = (j) => !marks[j].links && (SOURCE_HEADING.test(sentences[j].s.trim()) || (marks[j].sourceWords && !asserts(sentences[j].s, marks[j])));
+  const intro = (j) => !marks[j].links && LIST_INTRO.test(sentences[j].s.trim()) && !marks[j].terms.hard.length
+    && !marks[j].outlets.length && !marks[j].quoted.length && !marks[j].reporting;
   marks.forEach((m, k) => {
     if (!m.sourceLine || m.hit) return;
     let j = k - 1;
     let listed = Boolean(news) || /^\W*(?:sources?|references?|citations?|via)\b/i.test(m.linkOnly);
     const headings = [];
     for (; j >= 0 && (marks[j].sourceLine || heading(j)); j -= 1) if (!marks[j].sourceLine) { listed = true; headings.push(j); }
+    // A list a line introduces: its public links are opened as listed
+    // sources; a private link in it (a Drive file) is navigation.
+    if (j >= 0 && intro(j)) {
+      if (!news) Object.assign(m, { unsafe: [], cites: m.urls.length > 0 });
+      return;
+    }
     const claim = marks[j];
     const prior = sentences[j]?.s || '';
     if (claim && !/\?\s*$/.test(prior) && asserts(prior, claim)) {
@@ -723,7 +742,7 @@ export async function guardCitations(reply, {
       claim.urls.push(...m.urls);
       claim.unsafe.push(...m.unsafe);
       claim.cites = true;
-      Object.assign(m, { urls: [], unsafe: [], cites: false, carrierOf: j });
+      Object.assign(m, { urls: [], unsafe: [], cites: false, carrierOf: j, carried: [...m.urls, ...m.unsafe] });
       for (const h of headings) marks[h].carrierOf = j;
     } else if (!listed) Object.assign(m, { urls: [], unsafe: [], cites: false });
   });
@@ -758,10 +777,16 @@ export async function guardCitations(reply, {
   const mismatched = [];
   const tainted = new Map(); // lower case -> as written
   const recent = (sentence) => datesIn(sentence, now).some((d) => now - Date.parse(`${d}T00:00:00Z`) < 180 * DAY_MS);
+  // A listed source line that fails on its own (broken, or outside the news
+  // days) is dropped; its claim fails only when none of its links stands.
+  const dropped = new Map(); // claim index -> Map(url -> reason)
   const verdicts = marks.map((m, k) => {
     const sentence = sentences[k].s;
     const fail = (reason) => ({ keep: false, reason });
     if (m.carrierOf != null) return { keep: true, support: [] };
+    const listed = marks.some((c) => c.carrierOf === k && c.carried?.length);
+    const drop = new Map();
+    dropped.set(k, drop);
     // News, a recent publication or a claim checked before must be backed
     // by a page opened now. An older source named from memory stays, labelled.
     const strict = Boolean(news) || Boolean(m.hit) || (m.cites && recent(sentence));
@@ -778,12 +803,17 @@ export async function guardCitations(reply, {
       }
       if (page.broken) {
         fresh.push(disprovenEntry({ kind: 'broken_citation', url, status: page.status, headline: m.quoted[0], terms: m.terms.hard, reason: `${linkName(url)} returns ${page.error}`, sentence }, now));
+        if (listed) { drop.set(url, `${linkName(url)} returns ${page.error}`); continue; }
         return fail(`${linkName(url)} returns ${page.error}`);
       }
       // Labelled background ("For background, see <link>") is not today's news.
-      if (news && dateMiss(page) && !BACKGROUND.test(sentence)) return fail(dateMiss(page));
+      if (news && dateMiss(page) && !BACKGROUND.test(sentence)) {
+        if (listed) { drop.set(url, dateMiss(page)); continue; }
+        return fail(dateMiss(page));
+      }
       linked.push(page);
     }
+    if (drop.size && !linked.length) return fail([...drop.values()][0]);
     // Several links: the claim may rest on any of them.
     if (linked.length) candidates = [...new Set(linked)];
     if (m.cites) {
@@ -887,9 +917,20 @@ export async function guardCitations(reply, {
     verdicts[k] = { keep: false, reason: 'it depends on the claim above' };
   });
 
-  // A source line goes with the claim it cited.
+  // A source line goes with the claim it cited, and alone when its own link failed.
   marks.forEach((m, k) => {
-    if (m.carrierOf != null && !verdicts[m.carrierOf].keep) verdicts[k] = { keep: false, reason: verdicts[m.carrierOf].reason, carried: true };
+    if (m.carrierOf == null || !m.carried) return;
+    if (!verdicts[m.carrierOf].keep) verdicts[k] = { keep: false, reason: verdicts[m.carrierOf].reason, carried: true };
+    else {
+      const why = m.carried.map((u) => dropped.get(m.carrierOf)?.get(u)).filter(Boolean);
+      if (why.length && why.length === m.carried.length) verdicts[k] = { keep: false, reason: why[0] };
+    }
+  });
+  // A heading goes once every line under it has gone.
+  marks.forEach((m, k) => {
+    if (m.carrierOf == null || m.carried) return;
+    const lines = marks.map((c, i) => ({ c, i })).filter(({ c, i }) => i > k && c.carrierOf === m.carrierOf && c.carried);
+    if (lines.length && lines.every(({ i }) => !verdicts[i].keep)) verdicts[k] = { keep: false, reason: verdicts[lines[0].i].reason, carried: true };
   });
   verdicts.forEach((v, k) => { if (!v.keep && !v.carried) removed.push({ sentence: clip(sentences[k].s, 240), reason: v.reason }); });
   // A broken link was cited for the claims removed with it: their coined
