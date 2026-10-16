@@ -94,7 +94,10 @@ def fish_narration(text):
     key=os.environ.get('FISH_API_KEY','').strip()
     voice=os.environ.get('CHE_FISH_VOICE_ID','').strip()
     off=('0','false','no')
-    if os.environ.get('CHE_FISH_NARRATION','1').strip().lower() in off: return None
+    # Fish is a paid service: it narrates only when the owner opts in with the
+    # repository variable CHE_FISH_NARRATION=1. By default the free Piper
+    # voice narrates, so a free render never spends Fish credit.
+    if os.environ.get('CHE_FISH_NARRATION','').strip().lower() not in ('1','true','yes'): return None
     if os.environ.get('CHE_FISH_PREFERRED','1').strip().lower() in off: return None
     if not key or not re.fullmatch(r'[A-Za-z0-9_-]{8,80}',voice): return None
     def setting(name,default):
@@ -179,7 +182,7 @@ def render(topic, seconds, out):
     im.save(out/'thumbnail.png')
     (out/'narration.txt').write_text(narration,encoding='utf-8')
     # Neural speech is mandatory; never fall back to the robotic eSpeak voice.
-    # Fish (Drama 3) first when set up, then the free Piper voice.
+    # The free Piper voice, or Fish (Drama 3) when the owner opted in.
     voice_provider,voice_model,voice_cache='piper-neural','en_US-kristin-medium','none'
     wav=None
     fish=fish_narration(spoken(narration))

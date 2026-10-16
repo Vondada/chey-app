@@ -11,6 +11,11 @@ name: Deploy CHE Worker
 # A server/cloudflare push must never be silently skipped after green CI.
 on:
   workflow_dispatch:
+    inputs:
+      video_check:
+        description: Also render one real 15-second video through the free GitHub renderer and verify it
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -31,7 +36,7 @@ jobs:
     # changes. Do not add a commit-message gate here: follow-up fixes can merge
     # without a marker and must still deploy the exact green main commit.
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: ${{ inputs.video_check && 30 || 15 }}
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
@@ -462,6 +467,48 @@ jobs:
             console.log(`::error title=Command Center check failed::${(report.steps || []).filter((s) => !s.pass && !s.optional).map((s) => s.name).join('; ') || (report.readiness && report.readiness.error) || report.error || 'see log'}`);
             process.exit(1);
           }
+          JS
+
+      - name: Render and verify one real video through the live Worker (opt-in)
+        if: inputs.video_check
+        run: |
+          node --input-type=module <<'JS'
+          // The live Worker queues a render on the free GitHub renderer with its
+          // own token, then checks the finished files itself (MP4 length and
+          // codecs, thumbnail size, manifest). Free narration; nothing uploaded.
+          import { appendFileSync } from 'node:fs';
+          const summary = (line) => appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
+          const ask = async (body) => {
+            const response = await fetch('https://chey-app.henryjavoni.workers.dev/api/video/probe', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${process.env.CHE_VOICE_PROBE_TOKEN}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify(body), signal: AbortSignal.timeout(60000),
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.json();
+          };
+          const started = await ask({});
+          console.log(`start: ${JSON.stringify(started)}`);
+          if (started.stage !== 'queued' || !started.task_id) {
+            console.log(`::error title=Video check: not queued::${started.detail || started.code || 'no task'}`);
+            process.exit(1);
+          }
+          let last = started;
+          const until = Date.now() + 20 * 60_000;
+          while (Date.now() < until) {
+            await new Promise((resolve) => setTimeout(resolve, 20000));
+            try { last = await ask({ task_id: started.task_id }); } catch (error) { console.log(`poll: ${error.message}`); continue; }
+            console.log(`poll: ${last.stage}${last.run_id ? ` (run ${last.run_id})` : ''}`);
+            if (!['queued', 'running', 'checking'].includes(last.stage)) break;
+          }
+          console.log(`result: ${JSON.stringify(last)}`);
+          if (last.stage !== 'complete') {
+            console.log(`::error title=Video check: ${last.stage}::${last.detail || 'no verified video'}`);
+            process.exit(1);
+          }
+          const line = `task ${last.task_id}, run ${last.github_run_id}, "${last.title}", ${last.duration_seconds} s, ${last.video_bytes} bytes ${last.video_codec}/${last.audio_codec}, ${last.width}x${last.height}, thumbnail ${last.thumbnail_media_id ? 'saved' : 'missing'}, voice ${last.voice_provider}, paid ${last.paid_media}, uploaded ${last.youtube_uploaded}`;
+          console.log(`::notice title=Video check passed::${line}`);
+          summary(`**Free video (live Worker):** ${line}.`);
           JS
 
       - name: Fish measurement key

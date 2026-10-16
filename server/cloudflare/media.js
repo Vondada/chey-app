@@ -260,6 +260,21 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
   return { status: 200, item: record };
 }
 
+const DISPATCH_KEY = 'che_video_dispatch:';
+const DISPATCHED_KEY = 'che_video_dispatched:';
+const DISPATCH_REUSE_MS = 30 * 60_000;
+
+async function requestKey(text) {
+  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
+  return [...bytes.slice(0, 12)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// The free renderer's topic: the subject only, at most 500 characters.
+function videoTopicText(text) {
+  const clean = String(text || '').split('\nCHE RETRIEVAL CONTEXT')[0].replace(/\s+/g, ' ').trim();
+  return clean.length > 500 ? clean.slice(0, 497).replace(/\s+\S*$/, '') : clean;
+}
+
 export async function generateVideo(env, storage, body, fetcher = fetch) {
   const prompt = String(body.prompt || '').trim().slice(0, 8000);
   const renderTaskId = String(body.task_id || '').trim();
@@ -271,9 +286,19 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
     const earlier = (await listMedia(storage)).find((item) => item.render_task_id === renderTaskId && item.verified);
     if (earlier) return { status: 200, item: earlier, duplicate: true };
     if (renderTaskId.startsWith('gha_')) {
-      const result = await githubVideoStatus(env, renderTaskId, fetcher);
-      if (result.pending) return { status: 202, pending: true, job_id: renderTaskId, detail: 'Offline GitHub video is rendering. No finished MP4 exists yet.' };
-      if (!result.ok || !result.verified) return { status: 502, detail: result.error || 'GitHub video was not verified.' };
+      const dispatched = await storage.get?.(DISPATCHED_KEY + renderTaskId).catch?.(() => null) ?? null;
+      const result = await githubVideoStatus(env, renderTaskId, fetcher, { dispatchedAt: Number(body.dispatched_at || dispatched?.at || 0) });
+      if (result.pending) {
+        return { status: 202, pending: true, job_id: renderTaskId, stage: result.stage || 'queued', run_id: result.run_id || null,
+          detail: `The free GitHub render is ${result.stage === 'running' ? 'running' : 'queued'}. No finished MP4 exists yet.${result.detail ? ` ${result.detail}` : ''}` };
+      }
+      if (!result.ok || !result.verified) {
+        // Asking for the same video again must start a new render, not
+        // return this failed one.
+        if (dispatched) await storage.put?.(DISPATCHED_KEY + renderTaskId, { ...dispatched, failed: true });
+        return { status: 502, stage: result.stage || 'failed', code: result.code || 'failed', run_id: result.run_id || null,
+          detail: result.error || 'GitHub video was not verified.' };
+      }
       const vidId = crypto.randomUUID(), thumbId = crypto.randomUUID();
       const base = {
         engine: 'github-actions-offline', github_artifact_id: result.artifact_id,
@@ -283,7 +308,9 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
         durability: env.CHE_DATA_BUCKET ? 'r2' : 'github-artifact-30-days',
       };
       const videoItem = {
-        ...base, id: vidId, root_id: vidId, kind: 'video', mode: 'video',
+        ...base, id: vidId, root_id: vidId, kind: 'video', mode: 'video', github_run_id: result.run_id,
+        video_bytes: result.video_bytes, video_codec: result.video_codec, audio_codec: result.audio_codec,
+        voice_provider: result.voice_provider || '',
         title: result.title || String(body.title || prompt).slice(0, 80),
         prompt: prompt.slice(0, 8000), description: result.description,
         mime_type: 'video/mp4', thumbnail_media_id: thumbId,
@@ -353,17 +380,48 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
       return { url: result.media_url, verified: true };
     } });
   }
+  const free = [];
   if (githubVideoConfigured(env) && !renderTaskId) {
+    // The free renderer takes the subject, not the whole chat turn with its
+    // memory context (which ran past its 500-character limit).
+    const topic = videoTopicText(body.topic || prompt);
+    const seconds = Number(body.seconds || body.duration_seconds) || 15;
+    free.push('github-actions-offline');
     engines.push({ id: 'github-actions-offline', run: async () => {
-      const result = await startGithubVideo(env, prompt, Number(body.seconds || body.duration_seconds) || 15, fetcher);
-      if (!result.ok) throw new Error(result.error || 'GitHub offline renderer unavailable.');
-      return { pending: true, task_id: result.task_id };
+      // One request is one video: the same subject and length asked again
+      // within half an hour returns the job already queued.
+      const key = DISPATCH_KEY + await requestKey(`${topic.toLowerCase()}|${seconds}`);
+      const earlier = await storage.get?.(key).catch?.(() => null) ?? null;
+      const failed = earlier?.task_id ? (await storage.get?.(DISPATCHED_KEY + earlier.task_id).catch?.(() => null))?.failed : false;
+      const recent = earlier?.task_id && Date.now() - Number(earlier.at || 0) < DISPATCH_REUSE_MS && !body.new_job && !failed;
+      if (recent && !earlier.retry) return { pending: true, task_id: earlier.task_id, reused: true };
+      // The earlier attempt never got an answer from GitHub. If it arrived
+      // anyway its run carries the task ID and that run is the video;
+      // otherwise the same ID is sent again, so it is still one video.
+      const retryId = recent && earlier.retry ? earlier.task_id : '';
+      if (retryId && (await githubVideoStatus(env, retryId, fetcher)).run_id) {
+        await storage.put?.(key, { task_id: retryId, at: Date.now(), topic });
+        return { pending: true, task_id: retryId, reused: true };
+      }
+      const result = await startGithubVideo(env, topic, seconds, fetcher, { taskId: retryId });
+      if (!result.ok) {
+        // An unreachable GitHub may still have queued it: keep the task ID so
+        // a retry checks that run instead of starting a second video.
+        if (result.code === 'unreachable' && result.task_id) await storage.put?.(key, { task_id: result.task_id, at: Date.now(), retry: true });
+        const failure = new Error(result.error || 'GitHub offline renderer unavailable.');
+        failure.code = result.code;
+        throw failure;
+      }
+      await storage.put?.(key, { task_id: result.task_id, at: Date.now(), topic });
+      await storage.put?.(DISPATCHED_KEY + result.task_id, { at: Date.now(), topic, seconds, method: result.dispatch_method || '' });
+      return { pending: true, task_id: result.task_id, topic };
     } });
   }
   if (paidMediaEnabled(env) && env.GEMINI_API_KEY) {
     engines.push({ id: 'gemini-omni-video', run: async () => geminiVideo(env, prompt, fetcher) });
   }
   const errors = [];
+  const failureCodes = [];
   let generated;
   for (const engine of engines) {
     try {
@@ -373,21 +431,31 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
       break;
     } catch (error) {
       errors.push(`${engine.id}: ${error.message}`);
+      if (error.code) failureCodes.push(error.code);
       console.log('CHE video error:', engine.id, error.message);
     }
   }
   if (!generated) {
     const paidReady = Boolean(env.GEMINI_API_KEY) && !paidMediaEnabled(env);
+    // A free engine that was tried and failed is the answer; the paid switch
+    // is only the reason when no free renderer exists at all.
+    if (engines.length) {
+      const paidNote = paidReady ? ` Paid HD video stays off until you enable ${missingPaidSwitch(env)}.` : '';
+      return { status: 502, code: failureCodes[0] || 'failed', free_engines: free,
+        detail: `${errors.map((e) => e.replace(/^[a-z-]+: /, '')).join(' ')}${paidNote}`.trim() };
+    }
     return {
-      status: engines.length ? 502 : paidReady ? 402 : 503,
+      status: paidReady ? 402 : 503,
+      code: 'not_configured',
       detail: paidReady
-        ? `HD video generation is connected but disabled until the owner explicitly enables ${missingPaidSwitch(env)}.`
-        : `All video engines failed (${errors.join(' | ') || 'none configured'}).`,
+        ? `No free video renderer is set up (it needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the Worker), and HD video generation is connected but disabled until the owner explicitly enables ${missingPaidSwitch(env)}.`
+        : 'No video renderer is set up. The free GitHub renderer needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the Worker.',
       requires_owner_confirmation: paidReady,
     };
   }
   if (generated.pending) {
-    return { status: 202, pending: true, job_id: generated.task_id,
+    return { status: 202, pending: true, job_id: generated.task_id, engine: record.engine, reused: generated.reused === true,
+      topic: generated.topic || '',
       detail: 'Renderer accepted the job. No MP4 or thumbnail exists yet; poll /api/video/line?task_id=' + encodeURIComponent(generated.task_id) + '.' };
   }
   record.mime_type = 'video/mp4';

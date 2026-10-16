@@ -42,7 +42,7 @@ import { voiceStudioTurn } from './voice_studio_chat.js';
 import { fishAudioDiagnostics, fishAudioKeyStatus, fishAudioSpeech, fishSecretsFrom, readFishUsage } from './fish_audio_voice.js';
 import { cheSpokenText } from './che_pronunciation.js';
 import { premiumVoiceSpeech, premiumVoiceStatuses, readVoiceLog, recordVoiceLog, voiceProbeAuthorized } from './phone_voice.js';
-import { handleVideoLine } from './video_route.js';
+import { handleVideoLine, videoRequestTopic } from './video_route.js';
 import {
   YOUTUBE_CALLBACK_PATH, disconnectYouTube, finishYouTubeConnect, startYouTubeConnect,
   youtubeAccessToken, youtubeResultPage, youtubeStatus, youtubeStatusSpeech, youtubeUploads,
@@ -1431,6 +1431,9 @@ export function selectReadyJobs(jobs, now = Date.now(), limit = 4) {
 }
 const BUSY_REPLY = "I'm on it, sir. I'll have your full answer for you shortly.";
 const WORK_POLICY = 'ACCESSIBILITY: support typing OR voice, numbered options, large text for all speech, visible status plus distinct haptics. Never depend on hearing or sight alone. AUTONOMY: finish authorized queued and multi-step work; stand by pauses it and Chay, resume restarts it. OWNER PERMISSION (Sep 28, 2026): CHE has the owner’s full standing permission to act, including sending messages and emails; ask first only when something costs money (paying, buying, ordering, subscribing, transferring), before deleting or removing anything, or when a decision is genuinely the owner’s. App-specific permission is still required before acting in an app. Report what was done afterward. HONESTY: never claim completion without a real result. Busy work is saved and retried with exponential backoff (5, 10, then 20 minutes; at most 3 retries) and then moved to a terminal dead-letter state; report exhaustion honestly. Use available fallback engines, and say which capability failed only after all options fail. LINKS (permanent rule): when you send the owner to a website, page, sign-up, dashboard, documentation or GitHub item, include its full https:// address once, only if you know it is real (never guess one); CHE’s chat turns it into an “Open …” action that opens inside CHE, and he can say “open it” or “open link 2”. Name the destination (“Open Supabase”), never tell him to copy or paste a URL, and do not add links that are not needed.';
+
+// A video request that names no subject gets this one, and CHE says so.
+const DEFAULT_VIDEO_TOPIC = '3 surprising facts about space';
 
 function ragReference(query, vectorMemoryContext, maxChars = 9000) {
   const base = String(query || '').trim();
@@ -3886,6 +3889,34 @@ export class CheState extends DurableObject {
   // The env every voice route uses: stored keys, then the live voice settings.
   voiceEnv() {
     return withMarySecrets(this.keyEnv || this.env, this.voiceSecrets);
+  }
+
+  // The opt-in deploy video check: a real 15-second render through the free
+  // GitHub renderer with the live Worker's own token, then CHE's own checks of
+  // the finished files. The video lands in the owner's media library like any
+  // video the owner asks for. No paid engine is used and nothing is uploaded.
+  async videoProbe({ task_id = '' } = {}) {
+    let env = this.env;
+    try { env = withStoredKeys(this.env, await storedKeys(this.ctx.storage)); } catch (_) { /* Worker secrets only */ }
+    if (!task_id) {
+      const made = await generateVideo(env, this.ctx.storage, {
+        prompt: 'Deploy check: a 15-second faceless video of space facts', topic: DEFAULT_VIDEO_TOPIC, seconds: 15, new_job: true,
+      });
+      return { stage: made.pending ? 'queued' : 'failed', task_id: made.job_id || '', engine: made.engine || '',
+        detail: made.pending ? '' : made.detail || '', code: made.code || '' };
+    }
+    const checked = await generateVideo(env, this.ctx.storage, { task_id, prompt: 'Deploy check video' });
+    if (checked.pending) return { stage: checked.stage || 'queued', task_id, run_id: checked.run_id || null };
+    const item = checked.item;
+    if (!item?.verified) return { stage: checked.stage || 'failed', task_id, detail: checked.detail || '', code: checked.code || '' };
+    return {
+      stage: 'complete', task_id, media_id: item.id, title: item.title, description: item.description || '',
+      duration_seconds: item.duration_seconds, duration_verified: item.duration_verified === true,
+      video_bytes: item.video_bytes || 0, video_codec: item.video_codec || '', audio_codec: item.audio_codec || '',
+      width: item.width, height: item.height, thumbnail_media_id: item.thumbnail_media_id || null,
+      github_run_id: item.github_run_id || null, artifact_id: item.github_artifact_id || null,
+      voice_provider: item.voice_provider || '', storage: item.blob, paid_media: item.paid_media === true, youtube_uploaded: false,
+    };
   }
 
   // The deploy check: one real ElevenLabs call with the live settings, the
@@ -8931,6 +8962,14 @@ export class CheState extends DurableObject {
         for (const inferred of inferTurnCapabilities(message, body.attachment)) {
           addCapability(inferred);
         }
+        // "I want the free GitHub renderer" right after a video request is
+        // that request again, not a question for the model.
+        if (!requestedCapabilities.includes('video_generation')
+            && /\b(?:free|github)\b[^.?!]{0,30}\brender(?:er|ing)?\b|\bvideo\s+render(?:er|ing)\b/i.test(message)
+            && /\b(?:use|want|wanted|requested|asked for|try|switch|go with|instead|make it with)\b/i.test(message)) {
+          const lastVideo = await this.ctx.storage.get('che_video_last_topic');
+          if (lastVideo?.at && Date.now() - Number(lastVideo.at) < 30 * 60_000) addCapability('video_generation');
+        }
         if (/\b(?:change|redesign|modify|fix|update|rearrange|move|restyle|improve)\b[\s\S]{0,80}\b(?:your|che|the)\s+(?:ui|screen|interface|layout|app|code)\b|\b(?:proofread|review|write|edit|refactor)\b[\s\S]{0,50}\bcode\b/i.test(message)) {
           addCapability('self_development');
         }
@@ -9096,57 +9135,128 @@ export class CheState extends DurableObject {
             ? { url: `${new URL(request.url).origin}/api/media/${made.item.id}/image` }
             : { error: made.detail };
         }
-        // A previously accepted asynchronous video can be checked without
-        // asking the model to invent a progress report or starting a new job.
+        // Video is a tool execution, never a model promise. A queued render is
+        // checked, not restarted: one request is one video. The free GitHub
+        // renderer is used by default; paid engines stay off unless enabled.
+        const videoAsk = requestedCapabilities.includes('video_generation');
         const priorVideo = await this.ctx.storage.get('che_video_pending');
-        if (priorVideo?.task_id && /\b(video|render|clip)\b/i.test(message) &&
-            /\b(check|status|ready|finished|done|preview|show)\b/i.test(message)) {
+        const priorAge = priorVideo?.dispatched_at ? Date.now() - Date.parse(priorVideo.dispatched_at) : Infinity;
+        // A bare "short" is a trading word too ("my short position").
+        const statusAsk = /\b(video|render|rendering|clip|mp4|(?:youtube|yt)\s+short)\b/i.test(message) &&
+          /\b(check|status|ready|finished|done|preview|show|progress|how(?:'s| is)|where)\b/i.test(message);
+        // "15-second" is a length, not "a second video"; "the new iPhone" is not a new video.
+        const wantsAnother = /\b(another|different)\b|\bnew (?:video|short|clip|reel|render|one)\b|\b(?:a|the) second (?:video|short|clip|one)\b|\bone more\b|\bagain\b/i.test(message);
+        // A different subject is its own video, not a status check of this one.
+        const namedNow = videoAsk ? videoRequestTopic(message) : '';
+        const otherSubject = Boolean(namedNow && priorVideo?.topic && namedNow.toLowerCase() !== String(priorVideo.topic).toLowerCase());
+        // Videos started while another was rendering are checked too when the
+        // owner asks, so none is lost.
+        const earlierVideos = (await this.ctx.storage.get('che_video_earlier')) || [];
+        let earlierNote = '';
+        if (statusAsk && earlierVideos.length) {
+          const still = [];
+          for (const video of earlierVideos) {
+            const checked = await generateVideo(this.keyEnv || this.env, this.ctx.storage, {
+              task_id: video.task_id, prompt: video.prompt || 'Verified video render', title: video.title, thumbnail: true,
+              dispatched_at: video.dispatched_at ? Date.parse(video.dispatched_at) : 0,
+            });
+            const about = video.topic ? ` about ${video.topic}` : '';
+            if (checked.pending) {
+              still.push(video);
+              earlierNote += ` Your earlier video${about} is still on GitHub (task ${video.task_id}).`;
+            } else if (checked.item?.verified) {
+              earlierNote += ` Your earlier video${about} is ready too: "${checked.item.title}", in your media library.`;
+            } else {
+              earlierNote += ` Your earlier video${about} was not made. ${checked.detail || 'No valid MP4 was returned.'}`;
+            }
+          }
+          await this.ctx.storage.put('che_video_earlier', still);
+          if (!priorVideo?.task_id) {
+            return ndjsonReply(`${earlierNote.trim()} Nothing was uploaded to YouTube.`,
+              { ok: true, video_status: still.length ? 'queued' : 'checked', source: 'video_renderer' });
+          }
+        }
+        let earlierFailure = '';
+        if (priorVideo?.task_id && (statusAsk || (videoAsk && !wantsAnother && !otherSubject && priorAge < 30 * 60_000))) {
           const checked = await generateVideo(this.keyEnv || this.env, this.ctx.storage, {
             task_id: priorVideo.task_id, prompt: priorVideo.prompt, title: priorVideo.title, thumbnail: true,
+            dispatched_at: priorVideo.dispatched_at ? Date.parse(priorVideo.dispatched_at) : 0,
           });
-          if (checked.pending) return ndjsonReply(
-            `Your video task ${priorVideo.task_id} is still rendering, sir. No MP4 is ready yet.`,
-            { video_status: 'rendering', task_id: priorVideo.task_id, ok: true },
-          );
+          if (checked.pending) {
+            const stage = checked.stage === 'running' ? 'rendering on GitHub'
+              : checked.stage === 'checking' ? 'still on GitHub, but GitHub asked me to wait before checking it again' : 'queued on GitHub';
+            const status = checked.stage === 'running' ? 'rendering' : checked.stage === 'checking' ? 'checking' : 'queued';
+            return ndjsonReply(
+              `Your video${priorVideo.topic ? ` about ${priorVideo.topic}` : ''} is ${stage}, sir (task ${priorVideo.task_id}). No MP4 is ready yet, and I did not start a second one.${earlierNote}`,
+              { video_status: status, task_id: priorVideo.task_id, ok: true, source: 'video_renderer' },
+            );
+          }
           if (checked.item?.verified) {
             await this.ctx.storage.delete('che_video_pending');
-            return ndjsonReply('Your MP4 is verified and stored in CHE, sir. Nothing was uploaded. Thumbnail availability is included in the receipt.', {
-              ok: true, video_status: 'preview', media_type: 'video',
-              media_id: checked.item.id,
-              media_url: `${new URL(request.url).origin}/api/media/${checked.item.id}/video`,
-              thumbnail_media_id: checked.item.thumbnail_media_id || null,
-              thumbnail_url: checked.item.thumbnail_media_id
-                ? `${new URL(request.url).origin}/api/media/${checked.item.thumbnail_media_id}/image` : null,
-              duration_seconds: checked.item.duration_seconds || null,
-              duration_verified: checked.item.duration_verified === true,
-              thumbnail_error: checked.item.thumbnail_error || null,
-              storage_warning: checked.item.storage_warning || null,
+            const item = checked.item;
+            const size = item.video_bytes ? `, ${(item.video_bytes / 1048576).toFixed(1)} MB` : '';
+            const seconds = item.duration_verified && item.duration_seconds ? `${Math.round(item.duration_seconds)} seconds` : 'length not verified';
+            return ndjsonReply(
+              `Your video is ready, sir: "${item.title}", ${seconds}${size}, with narration and a ${item.thumbnail_media_id ? '1280 by 720 thumbnail' : 'thumbnail I could not save'}. It is in your media library. Nothing was uploaded to YouTube.${earlierNote}`, {
+              ok: true, video_status: 'complete', media_type: 'video', source: 'video_renderer',
+              media_id: item.id, title: item.title, description: item.description || '',
+              media_url: `${new URL(request.url).origin}/api/media/${item.id}/video`,
+              thumbnail_media_id: item.thumbnail_media_id || null,
+              thumbnail_url: item.thumbnail_media_id
+                ? `${new URL(request.url).origin}/api/media/${item.thumbnail_media_id}/image` : null,
+              duration_seconds: item.duration_seconds || null,
+              duration_verified: item.duration_verified === true,
+              thumbnail_error: item.thumbnail_error || null,
+              storage_warning: item.storage_warning || null,
             });
           }
-          return ndjsonReply(`Your video is not ready, sir. ${checked.detail || 'No valid MP4 was returned.'}`,
-            { ok: false, video_status: 'failed', task_id: priorVideo.task_id });
+          await this.ctx.storage.delete('che_video_pending');
+          if (!videoAsk || statusAsk) {
+            return ndjsonReply(`Your video was not made, sir. ${checked.detail || 'No valid MP4 was returned.'} Nothing was uploaded.${earlierNote}`,
+              { ok: false, video_status: checked.stage || 'failed', task_id: priorVideo.task_id, source: 'video_renderer' });
+          }
+          earlierFailure = `The earlier render failed (${checked.detail || 'no valid MP4'}), so I started a new one. `;
         }
 
-        // Video creation is a tool execution, never a model promise.
-        // The existing media service persists verified completions and
-        // returns real pending job IDs when the renderer is asynchronous.
         let videoGeneration = null;
-        if (requestedCapabilities.includes('video_generation')) {
+        if (videoAsk) {
           const mediaEnv = this.keyEnv || this.env;
+          // The subject the owner named; a follow-up such as "use the free
+          // renderer" keeps the subject of the request it follows.
+          const lastTopic = await this.ctx.storage.get('che_video_last_topic');
+          const named = namedNow;
+          const recentTopic = lastTopic?.topic && Date.now() - Number(lastTopic.at || 0) < 30 * 60_000 ? lastTopic.topic : '';
+          const topic = named || recentTopic || DEFAULT_VIDEO_TOPIC;
+          await this.ctx.storage.put('che_video_last_topic', { topic, at: Date.now() });
+          // "the 90s" is a decade, not a length.
+          const length = /\b(\d{1,2})[- ]?(seconds?|secs?|minutes?|mins?)\b/i.exec(message);
+          const seconds = Math.min(90, Math.max(5, length ? Number(length[1]) * (/^m/i.test(length[2]) ? 60 : 1) : 15));
           const made = await generateVideo(mediaEnv, this.ctx.storage, {
             prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 8000),
+            topic,
             title: message.slice(0, 60),
-            seconds: 15,
+            seconds,
             thumbnail: true,
+            new_job: wantsAnother || Boolean(earlierFailure),
           });
           if (made.pending) {
+            // A render still under way when this one starts keeps being tracked.
+            const running = await this.ctx.storage.get('che_video_pending');
+            let alsoNote = '';
+            if (running?.task_id && running.task_id !== made.job_id) {
+              const kept = (await this.ctx.storage.get('che_video_earlier')) || [];
+              await this.ctx.storage.put('che_video_earlier', [running, ...kept.filter((v) => v.task_id !== running.task_id)].slice(0, 3));
+              alsoNote = ` Your video${running.topic ? ` about ${running.topic}` : ''} keeps rendering too (task ${running.task_id}).`;
+            }
             await this.ctx.storage.put('che_video_pending', {
-              task_id: made.job_id, prompt: message.slice(0, 8000), title: message.slice(0, 60),
-              created_at: new Date().toISOString(),
+              task_id: made.job_id, prompt: message.slice(0, 8000), title: message.slice(0, 60), topic,
+              created_at: new Date().toISOString(), dispatched_at: new Date().toISOString(), engine: made.engine || '',
             });
+            const chosen = !named && !recentTopic ? ` You did not name a subject, so I chose ${topic}.` : '';
+            const engine = made.engine === 'github-actions-offline' ? 'The free GitHub renderer' : 'The video renderer';
             return ndjsonReply(
-              `The video renderer accepted the job, sir. Task ${made.job_id} is rendering. No MP4 or thumbnail is ready yet. Nothing was uploaded.`,
-              { ok: true, video_status: 'rendering', task_id: made.job_id },
+              `${earlierFailure}${engine} ${made.reused ? 'already has this job' : 'accepted the job'}, sir: a ${seconds}-second vertical video about ${topic}, with free narration, a thumbnail, a title and a description. Task ${made.job_id} is queued. No MP4 is ready yet, and nothing will be uploaded to YouTube.${chosen} Ask me whether your video is ready in about two minutes.${alsoNote}`,
+              { ok: true, video_status: 'queued', task_id: made.job_id, source: 'video_renderer', topic },
             );
           }
           videoGeneration = made.item?.verified
@@ -9155,10 +9265,10 @@ export class CheState extends DurableObject {
                 thumbnail_id: made.item.thumbnail_media_id || null,
                 thumbnail_error: made.item.thumbnail_error || null,
                 storage_warning: made.item.storage_warning || null }
-            : { error: made.detail || 'The video provider returned no verified file.' };
+            : { error: made.detail || 'The video provider returned no verified file.', code: made.code || '' };
         }
 
-        if (requestedCapabilities.includes('video_generation')) {
+        if (videoAsk) {
           if (videoGeneration?.url) {
             return ndjsonReply(
               'A verified video file is ready for preview, sir. Duration and thumbnail are not yet verified. Nothing was uploaded.',
@@ -9172,7 +9282,7 @@ export class CheState extends DurableObject {
           }
           return ndjsonReply(
             `No video was created, sir. ${videoGeneration?.error || 'The renderer did not return an MP4.'} No thumbnail or YouTube upload is complete.`,
-            { ok: false, video_status: 'not_created', source: 'video_renderer' },
+            { ok: false, video_status: 'not_created', source: 'video_renderer', error_code: videoGeneration?.code || '' },
           );
         }
         if (imageGeneration?.url) {
@@ -11330,6 +11440,14 @@ export default {
       if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
       const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
       return json(await commandCenterProbe(env, token));
+    }
+    // The opt-in deploy video check (deploy run with video_check): same
+    // per-deploy token; without it the route does not exist.
+    if (path === '/api/video/probe' && request.method === 'POST') {
+      if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
+      const body = await request.json().catch(() => ({}));
+      const taskId = /^gha_[a-f0-9]{32}$/.test(String(body.task_id || '')) ? String(body.task_id) : '';
+      return json(await env.CHE_STATE.getByName('owner').videoProbe({ task_id: taskId }));
     }
     if (path === '/api/memory/probe' && request.method === 'POST') {
       if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);

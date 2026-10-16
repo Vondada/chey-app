@@ -10,6 +10,25 @@ import { githubVideoConfigured, startGithubVideo, githubVideoStatus } from './gi
 import { generateVideo } from './media.js';
 import { recordReceipt } from './truth_layer.js';
 
+// The words of a video request that say how to make it, not what it is about.
+const VIDEO_SPEC = /\b(?:please|can you|could you|would you|i want|i'd like|i would like|for me|me|now|create|make|generate|render|produce|build|do|give me|use|using|try|run|start|with|plus|and|an?|the|free|github|actions?|renderer|rendering|engine|offline|faceless|youtube|yt|shorts?|reels?|tiktok|vertical|hd|real|actual|playable|mp4|videos?|clips?|narration|narrated|narrator|voice ?over|voice|thumbnails?|titles?|descriptions?|tags|captions?|\d+(?:\.\d+)?[- ]?(?:seconds?|secs?|minutes?|mins?)(?:[- ]long)?|long|one|new|another|quick|simple|instead|again|it|that|this|hey|hi|ok|okay|pls|thanks|thank you|i need|i want|need|wanted|want|asked for|asked|requested|said|told you|i|we|you|specifically|really|just|actually|also|still|so|for|my|our|channel|instagram|facebook|platform|page|account|feed|story|stories)\b/gi;
+
+/**
+ * What a spoken video request is about: "a 15-second space-facts video" is
+ * "space facts", "a YouTube Short about black holes" is "black holes". A
+ * request that only says how to make it ("with narration and a thumbnail",
+ * "use the free GitHub renderer") has no subject and returns ''.
+ */
+export function videoRequestTopic(message) {
+  const text = String(message || '').replace(/^\W*(?:hey[, ]*)?(?:che|chay|chey|shay)\b[,!:]?\s*/i, '').trim();
+  const about = /(?:\b(?:about|covering|explaining|featuring|regarding|on the topic of)|\b(?:videos?|shorts?|clips?|reels?|mp4)\s+(?:on|of))\s+(.{3,}?)\s*(?:[.!?]+\s*$|$|,?\s+(?:with|and (?:add|include|give)|using|please|thanks|thank you|for (?:youtube|tiktok|instagram|facebook|my|our|the channel))\b)/i.exec(text);
+  const candidate = about ? about[1]
+    : text.replace(VIDEO_SPEC, ' ').replace(/[^A-Za-z0-9'’ -]+/g, ' ').replace(/(?:^|\s)-+|-+(?=\s|$)/g, ' ');
+  const topic = candidate.replace(/-/g, ' ').replace(/\s+/g, ' ').trim().replace(/^(?:a|an|the|my|some)\s+/i, '');
+  // A decade ("the 90s") is a subject too.
+  return /[A-Za-z]{3,}|\b\d{2,4}s\b/.test(topic) ? topic.slice(0, 200) : '';
+}
+
 function statusFor(result) {
   if (result?.pending) return 202;
   if (result?.ok) return 200;
@@ -34,7 +53,7 @@ export async function handleVideoLine(request, env, parsedBody, youtube = {}, st
       const finished = await generateVideo(env, storage, {
         task_id: taskId, prompt: 'Verified video render',
       }, fetcher);
-      if (finished.pending) result = { ok: true, pending: true, task_id: taskId, stage: 'rendering' };
+      if (finished.pending) result = { ok: true, pending: true, task_id: taskId, stage: finished.stage || 'queued', run_id: finished.run_id || null };
       else if (finished.item?.verified) {
         const origin = new URL(request.url).origin;
         result = {
@@ -47,7 +66,7 @@ export async function handleVideoLine(request, env, parsedBody, youtube = {}, st
           duration_verified: finished.item.duration_verified === true,
           status: 'complete',
         };
-      } else result = { ok: false, task_id: taskId, error: finished.detail || 'No verified video file was returned.' };
+      } else result = { ok: false, task_id: taskId, stage: finished.stage || 'failed', code: finished.code || 'failed', error: finished.detail || 'No verified video file was returned.' };
     } else result = taskId.startsWith('gha_')
       ? await githubVideoStatus(env, taskId, fetcher)
       : await moneyPrinterStatus(env, taskId, fetcher);
