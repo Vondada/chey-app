@@ -371,9 +371,11 @@ export async function refreshLibrary(env, storage, { all = false, limit = 12 } =
   return result;
 }
 
+const SOURCE_LIST = () => Object.entries(CODING_SOURCES).map(([id, s]) => ({ id, title: s.title, repo: s.repo, framework: s.framework }));
+
 export function libraryStatus(storage, now = Date.now()) {
   const lib = new CheLibrary(storage);
-  if (!lib.init()) return { entries: [], counts: {} };
+  if (!lib.init()) return { available: false, entries: [], counts: { total: 0 }, sources: SOURCE_LIST() };
   const rows = lib.list({ shelf: SHELF }).map((row) => ({ ...citation(row, now), chars: row.chars }));
   const counts = { total: rows.length, docs: 0, outcomes: 0, rea: 0, stale: 0, superseded: 0, removed_upstream: 0 };
   for (const row of rows) {
@@ -384,7 +386,7 @@ export function libraryStatus(storage, now = Date.now()) {
     else if (row.kind === 'rea') counts.rea += 1;
     if (row.stale && row.status === 'current') counts.stale += 1;
   }
-  return { entries: rows, counts, sources: Object.entries(CODING_SOURCES).map(([id, s]) => ({ id, title: s.title, repo: s.repo, framework: s.framework })) };
+  return { available: true, entries: rows, counts, sources: SOURCE_LIST() };
 }
 
 // ─── The owner's phrases ────────────────────────────────────────────────
@@ -481,6 +483,7 @@ export function speakResults(query, hits, now = Date.now()) {
 
 export function speakStatus(status, { staleOnly = false } = {}) {
   const c = status.counts;
+  if (status.available === false) return 'My coding library storage is not available right now, sir, so I cannot read it. Nothing was changed.';
   if (!c.total) return `My coding library is empty, sir. I can read official documentation from ${status.sources.map((s) => s.framework).join(', ')}. Say, for example, "learn the Flutter docs about navigation".`;
   const current = status.entries.filter((e) => e.status === 'current');
   const stale = current.filter((e) => e.stale);
