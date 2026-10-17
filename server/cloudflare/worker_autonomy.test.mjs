@@ -104,6 +104,60 @@ test('an interrupted job with attempts left is requeued with backoff and its att
   assert.ok(job.retry_at > Date.now(), 'backoff, not an immediate hot loop');
 });
 
+// The real wake path is alarm(), not a direct processJobs() call. With Office
+// autonomy paused, the alarm used to skip processJobs entirely, so an approved
+// merge never ran and an interrupted job read "running" forever.
+test('autonomy paused: the alarm still runs an approved merge and ends interrupted jobs', async () => {
+  const saved = new Map();
+  const state = new CheState({ storage: storageFor(saved) }, {
+    CHE_DISABLE_KEYLESS_AI: '1', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r',
+    AI: { run: async () => { throw new Error('no model may run while paused'); } },
+  });
+  const stale = new Date(Date.now() - 10 * 60_000).toISOString();
+  const now = new Date().toISOString();
+  saved.set('che', { autonomy: false, devices: {}, memories: [], jobs: [
+    { id: 'merge', kind: 'merge_pr', prompt: 'merge 5', pr_number: 5, status: 'queued', attempts: 0, retry_at: 0, created_at: now, updated_at: now },
+    { id: 'cut', kind: 'verify_deploy', prompt: 'verify', status: 'running', attempts: 1, created_at: stale, updated_at: stale },
+    { id: 'chat', prompt: 'Summarise the week', status: 'running', attempts: 1, created_at: stale, updated_at: stale },
+  ] });
+  const calls = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => { calls.push(String(url)); throw new TypeError('offline test'); };
+  try {
+    await state.alarm();
+  } finally {
+    globalThis.fetch = original;
+  }
+  const jobs = Object.fromEntries(saved.get('che').jobs.map((j) => [j.id, j]));
+  assert.ok(calls.some((u) => u.endsWith('/repos/o/r/pulls/5')), 'the approved merge job read its pull request');
+  assert.notEqual(jobs.cut.status, 'running', 'an interrupted owner-approved job is no longer reported running');
+  assert.equal(jobs.chat.status, 'queued', 'interrupted Office work waits for resume instead of reading "running"');
+  assert.ok(jobs.chat.retry_at > Date.now());
+});
+
+test('autonomy paused with nothing approved: the alarm sweeps interrupted jobs and starts nothing', async () => {
+  const saved = new Map();
+  let aiCalls = 0;
+  const state = new CheState({ storage: storageFor(saved) }, { CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { aiCalls += 1; return { response: 'x' }; } } });
+  const stale = new Date(Date.now() - 10 * 60_000).toISOString();
+  saved.set('che', { autonomy: false, devices: {}, memories: [], jobs: [
+    { id: 'dead', prompt: 'Draft', status: 'running', attempts: MAX_JOB_ATTEMPTS, created_at: stale, updated_at: stale },
+    { id: 'wait', prompt: 'Plan the trip', status: 'queued', attempts: 0, retry_at: 0, created_at: stale, updated_at: stale },
+  ] });
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError('offline test'); };
+  try {
+    await state.alarm();
+  } finally {
+    globalThis.fetch = original;
+  }
+  const jobs = Object.fromEntries(saved.get('che').jobs.map((j) => [j.id, j]));
+  assert.equal(jobs.dead.status, 'failed');
+  assert.equal(jobs.dead.dead_letter, true);
+  assert.equal(jobs.wait.status, 'queued', 'paused Office work is not started');
+  assert.equal(aiCalls, 0);
+});
+
 test('temporary failures back off 5/10/20 minutes, then dead-letter', async () => {
   const saved = new Map();
   const state = new CheState({ storage: storageFor(saved) }, { CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { const e = new Error('503 overloaded'); e.status = 503; throw e; } } });

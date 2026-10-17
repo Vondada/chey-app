@@ -687,6 +687,14 @@ test('merge requires CI, a CHE branch, no conflict, and pins the checked head; W
 
   const running = await mergeSelfUpdatePr(E, 9, fakeRepo({ pr: OPEN_PR(), checks: { h9: [{ name: 'analyze', status: 'in_progress' }] } }).fetcher);
   assert.equal(running.retryable, true);
+  // No check has reported yet: that is CI not started, never a pass. Nothing is merged.
+  const unstarted = fakeRepo({ pr: OPEN_PR(), checks: { h9: [] } });
+  const early = await mergeSelfUpdatePr(E, 9, unstarted.fetcher);
+  assert.equal(early.status, 409);
+  assert.equal(early.retryable, true);
+  assert.match(early.detail, /^CI is still running/, 'the spoken merge path queues the merge-after-CI job');
+  assert.equal(early.ci, undefined, 'not reported as a CI failure, so no repair starts');
+  assert.ok(!unstarted.calls.some((c) => c.method === 'PUT'), 'nothing merged before any check reported');
   const red = await mergeSelfUpdatePr(E, 9, fakeRepo({ pr: OPEN_PR(), checks: { h9: [{ name: 'Worker tests', status: 'completed', conclusion: 'failure' }] } }).fetcher);
   assert.equal(red.status, 409);
   const foreign = await mergeSelfUpdatePr(E, 9, fakeRepo({ pr: OPEN_PR({ head: { sha: 'h9', ref: 'feature/human' } }), checks: green }).fetcher);

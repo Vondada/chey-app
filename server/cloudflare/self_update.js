@@ -482,6 +482,9 @@ export async function mergeSelfUpdatePr(env, number, fetcher = fetch) {
   if (!branch.startsWith(BRANCH_PREFIX)) return { status: 403, detail: 'CHE only merges her own owner-approved update branches.', failure_class: FAILURE_CLASS.AUTHORIZATION };
   if (status.ci === 'failed') return { status: 409, detail: `CI failed: ${status.failed_checks.join(', ')}.`, ci: status, failure_class: FAILURE_CLASS.INTERNAL };
   if (status.ci === 'running') return { status: 409, detail: 'CI is still running.', ci: status, retryable: true, failure_class: FAILURE_CLASS.TEMPORARY_EXTERNAL };
+  // No check has reported yet (GitHub creates them seconds after a push). Every
+  // PR to main runs CI here, so zero checks is "not started", never "passed".
+  if (status.ci === 'none') return { status: 409, detail: 'CI is still running: no check has reported yet.', retryable: true, failure_class: FAILURE_CLASS.TEMPORARY_EXTERNAL };
   if (status.mergeable === false || status.mergeable_state === 'dirty') {
     return { status: 409, detail: 'The pull request has a merge conflict with the base branch.', merge_conflict: true, failure_class: FAILURE_CLASS.INTERNAL };
   }

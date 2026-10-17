@@ -391,3 +391,63 @@ test('ordinary conversation about email never calls Google', async () => {
     assert.equal(calls.length, 0, 'no Google request for ordinary talk');
   });
 });
+
+// A Gmail grant Google revoked used to read Ready on the Connections page and
+// in the Command Center until the owner happened to use Gmail.
+test('a revoked Gmail grant reads Reconnect on refresh, and the owner\'s phrase says so with no model', async () => {
+  const me = await owner();
+  const grant = { ...(await liveGrant()), access_expires_at: Date.now() - 1000 };
+  me.setData((d) => { d.google_connections = { gmail: grant }; });
+  const offline = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input?.url || input);
+    calls.push(url);
+    if (url === 'https://oauth2.googleapis.com/token') return new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 });
+    throw new TypeError(`offline test: no fake for ${url}`);
+  };
+  try {
+    const commands = (await me.get('/api/commands')).body;
+    assert.equal(commands.connectors.gmail.state, 'needs_reconnect');
+    const r = await me.say('CHE, check my unread emails and tell me the newest one.');
+    assert.equal(r.done.source, 'che_google');
+    assert.equal(r.modelCalls, 0);
+    assert.match(spoken(r.raw), /Google no longer accepts CHE's Gmail sign-in, sir\. Reconnect Gmail/);
+    assert.ok(!calls.some((u) => u.includes('gmail.googleapis.com')), 'no Gmail read with a revoked grant');
+  } finally {
+    globalThis.fetch = offline;
+  }
+});
+
+// Gmail's resultSizeEstimate is an estimate whenever more pages exist; CHE
+// never speaks it as an exact count. "Read my latest email" reads the inbox.
+test('a Gmail list with more pages is spoken as "about", and "read my latest email" reads the inbox', async () => {
+  const me = await owner();
+  const grant = await liveGrant();
+  me.setData((d) => { d.google_connections = { gmail: grant }; });
+  const offline = globalThis.fetch;
+  const queries = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input?.url || input);
+    const reply = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+    if (/\/messages\?/.test(url)) {
+      queries.push(new URL(url).searchParams.get('q'));
+      return reply({ messages: [{ id: 'msg-newest-1' }], resultSizeEstimate: 201, nextPageToken: 'page-2' });
+    }
+    if (/msg-newest-1\?format=metadata/.test(url)) return reply({ payload: meta(NEWEST_FROM, 'Lunch on Tuesday', 'Mon, 12 Oct 2026 09:14:00 -0500') });
+    if (/msg-newest-1\?format=full/.test(url)) {
+      return reply({ payload: { ...meta(NEWEST_FROM, 'Lunch on Tuesday', 'Mon, 12 Oct 2026 09:14:00 -0500'), mimeType: 'text/plain', body: { data: b64url('See you at noon.') } } });
+    }
+    throw new TypeError(`offline test: no fake for ${url}`);
+  };
+  try {
+    const listed = await me.say('CHE, check my unread emails and tell me the newest one.');
+    assert.match(spoken(listed.raw), /You have about 201 unread emails, sir\. The newest is from Alex Rivera/);
+    const read = await me.say('read my latest email');
+    assert.equal(read.modelCalls, 0);
+    assert.match(spoken(read.raw), /See you at noon\./);
+    assert.deepEqual(queries, ['is:unread', 'in:inbox']);
+  } finally {
+    globalThis.fetch = offline;
+  }
+});

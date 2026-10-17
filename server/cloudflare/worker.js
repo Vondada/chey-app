@@ -10096,9 +10096,13 @@ export class CheState extends DurableObject {
     });
     // Paper trading keeps learning even when autonomy is off (no money moves).
     await this.tradingTick().catch(() => null);
-    if ((await this.loadData()).autonomy) {
-      await this.recoverOpenCodeFailure().catch((error) => console.error('OpenCode recovery watch failed:', error?.message || error));
-      await this.processJobs();
+    const autonomyOn = Boolean((await this.loadData()).autonomy);
+    if (autonomyOn) await this.recoverOpenCodeFailure().catch((error) => console.error('OpenCode recovery watch failed:', error?.message || error));
+    // processJobs decides what may run while Office autonomy is paused: the
+    // owner's approved merges, deploy checks and Command Center runs, plus the
+    // sweep that ends interrupted "running" jobs. Gating it here stranded them.
+    await this.processJobs();
+    if (autonomyOn) {
       await processAgentWork({
         env: this.env,
         load: () => this.loadData(),
@@ -10923,13 +10927,15 @@ export class CheState extends DurableObject {
     // Pausing Office autonomy never strands an update the owner explicitly
     // approved: its merge and deploy check still run once CI allows.
     const ownerApprovedOnly = !data.autonomy;
-    if (ownerApprovedOnly && !data.jobs.some((job) => OWNER_APPROVED_JOB_KINDS.has(job.kind) && job.status === 'queued')) return false;
     const now = Date.now();
+    let swept = false;
     for (const job of data.jobs) {
       // A job left "running" for 5 minutes was interrupted (Worker restart,
       // isolate eviction, CPU limit). It is requeued only while it still has
       // attempts left; otherwise it is dead-lettered instead of looping.
+      // This runs while autonomy is paused too, so no job reads "running" forever.
       if (job.status === 'running' && Date.parse(job.updated_at) <= now - jobStaleMs(job)) {
+        swept = true;
         const attempts = Number(job.attempts || 0);
         if (attempts >= MAX_JOB_ATTEMPTS) {
           Object.assign(job, {
@@ -10941,6 +10947,10 @@ export class CheState extends DurableObject {
           job.retry_at = now + backoffMs(attempts, 60_000, 15 * 60_000);
         }
       }
+    }
+    if (ownerApprovedOnly && !data.jobs.some((job) => OWNER_APPROVED_JOB_KINDS.has(job.kind) && job.status === 'queued')) {
+      if (swept) await this.ctx.storage.put('che', data);
+      return false;
     }
     // A level the sweep above just dead-lettered still starts the next one.
     advanceExamChains(data);
