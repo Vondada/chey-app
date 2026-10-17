@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -221,5 +222,105 @@ test('a verify that throws reverts the attempt and reports the failure, not a si
     const result = verify({ cwd: r.cwd, dir: r.dir, baseSha: r.base });
     assert.equal(result.ok, false);
     assert.equal(readFileSync(join(r.cwd, 'src/a.mjs'), 'utf8'), 'export const a = 1;\n', 'the unverified edit is reverted');
+  } finally { r.cleanup(); }
+});
+
+
+test('a modified persisted checkpoint is refused before touching source', () => {
+  const r = repo();
+  try {
+    snapshot({ cwd: r.cwd, dir: r.dir });
+    writeFileSync(join(r.cwd, 'src/a.mjs'), 'export const a = 2;\n');
+    assert.equal(verify({ cwd: r.cwd, dir: r.dir, baseSha: r.base }).ok, true);
+    const patch = join(r.dir, 'checkpoint.patch');
+    writeFileSync(patch, readFileSync(patch, 'utf8').replace('a = 2', 'a = 8'));
+    const fresh = join(r.root, 'fresh');
+    git(r.root, ['clone', '-q', r.cwd, fresh]);
+    git(fresh, ['checkout', '-q', r.base]);
+    const result = restore({ cwd: fresh, dir: r.dir });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'checkpoint_integrity_failure');
+    assert.equal(readFileSync(join(fresh, 'src/a.mjs'), 'utf8'), 'export const a = 1;\n');
+  } finally { r.cleanup(); }
+});
+
+test('a checkpoint from another base SHA is refused', () => {
+  const r = repo();
+  try {
+    snapshot({ cwd: r.cwd, dir: r.dir });
+    writeFileSync(join(r.cwd, 'src/a.mjs'), 'export const a = 2;\n');
+    assert.equal(verify({ cwd: r.cwd, dir: r.dir, baseSha: r.base }).ok, true);
+    git(r.cwd, ['add', '.']);
+    git(r.cwd, ['commit', '-q', '-m', 'new base']);
+    const result = restore({ cwd: r.cwd, dir: r.dir });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'checkpoint_base_mismatch');
+  } finally { r.cleanup(); }
+});
+
+test('a forged digest cannot make an unsafe workflow patch safe', () => {
+  const r = repo();
+  try {
+    snapshot({ cwd: r.cwd, dir: r.dir });
+    mkdirSync(join(r.cwd, '.github/workflows'), { recursive: true });
+    writeFileSync(join(r.cwd, '.github/workflows/evil.yml'), 'on: push\n');
+    git(r.cwd, ['add', '-N', '.github/workflows/evil.yml']);
+    const patch = git(r.cwd, ['diff', '--no-renames', '--binary', 'HEAD']);
+    const fresh = join(r.root, 'fresh');
+    git(r.root, ['clone', '-q', r.cwd, fresh]);
+    git(fresh, ['checkout', '-q', r.base]);
+    writeFileSync(join(r.dir, 'checkpoint.patch'), patch);
+    writeFileSync(join(r.dir, 'checkpoint.json'), JSON.stringify({
+      base_sha: r.base, files: ['.github/workflows/evil.yml'],
+      bytes: Buffer.byteLength(patch), patch_sha256: createHash('sha256').update(patch).digest('hex'),
+    }));
+    const result = restore({ cwd: fresh, dir: r.dir });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'checkpoint_unsafe_paths');
+    assert.equal(existsSync(join(fresh, '.github/workflows/evil.yml')), false);
+  } finally { r.cleanup(); }
+});
+
+test('a forged safe-looking file list cannot disguise the patch paths', () => {
+  const r = repo();
+  try {
+    snapshot({ cwd: r.cwd, dir: r.dir });
+    writeFileSync(join(r.cwd, 'src/a.mjs'), 'export const a = 2;\n');
+    assert.equal(verify({ cwd: r.cwd, dir: r.dir, baseSha: r.base }).ok, true);
+    const metaPath = join(r.dir, 'checkpoint.json');
+    const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
+    meta.files = ['src/config.json'];
+    writeFileSync(metaPath, JSON.stringify(meta));
+    const fresh = join(r.root, 'fresh');
+    git(r.root, ['clone', '-q', r.cwd, fresh]);
+    git(fresh, ['checkout', '-q', r.base]);
+    const result = restore({ cwd: fresh, dir: r.dir });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'checkpoint_unsafe_paths');
+    assert.equal(readFileSync(join(fresh, 'src/a.mjs'), 'utf8'), 'export const a = 1;\n');
+  } finally { r.cleanup(); }
+});
+
+test('invalid JavaScript introduced into a saved patch rolls back when replayed', () => {
+  const r = repo();
+  try {
+    snapshot({ cwd: r.cwd, dir: r.dir });
+    writeFileSync(join(r.cwd, 'src/a.mjs'), 'export const a = 2;\n');
+    assert.equal(verify({ cwd: r.cwd, dir: r.dir, baseSha: r.base }).ok, true);
+    writeFileSync(join(r.cwd, 'src/a.mjs'), 'export const a = ;\n');
+    const patch = git(r.cwd, ['diff', '--no-renames', '--binary', 'HEAD']);
+    writeFileSync(join(r.dir, 'checkpoint.patch'), patch);
+    const metaPath = join(r.dir, 'checkpoint.json');
+    const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
+    meta.bytes = Buffer.byteLength(patch);
+    meta.patch_sha256 = createHash('sha256').update(patch).digest('hex');
+    writeFileSync(metaPath, JSON.stringify(meta));
+    const fresh = join(r.root, 'fresh');
+    git(r.root, ['clone', '-q', r.cwd, fresh]);
+    git(fresh, ['checkout', '-q', r.base]);
+    const result = restore({ cwd: fresh, dir: r.dir });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'checkpoint_syntax_failure');
+    assert.equal(readFileSync(join(fresh, 'src/a.mjs'), 'utf8'), 'export const a = 1;\n');
   } finally { r.cleanup(); }
 });
