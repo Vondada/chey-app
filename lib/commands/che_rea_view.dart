@@ -8,7 +8,6 @@
 // speak; Read this and the owner's own actions do.
 import 'dart:async';
 
-import 'package:flutter/cupertino.dart' show CupertinoAlertDialog, CupertinoDialogAction, showCupertinoDialog;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -25,11 +24,6 @@ import 'che_rea_voice.dart';
 /// speaks every reply). `confirmed` is true only after the owner approved on
 /// this page.
 typedef CheSendInChat = Future<({bool sent, String reply})> Function(String message, {bool confirmed});
-
-/// The question asked before a build; nothing is sent until the owner says yes.
-String cheReaBuildQuestion(int features) =>
-    '${features == 1 ? 'Build this feature' : 'Build these $features features'} into CHE as a draft pull request? '
-    'Nothing merges or deploys without your separate yes.';
 
 /// What Read this says about one investigation, from CHE's record only.
 String cheReaSummary(CheReaInvestigation i) {
@@ -486,12 +480,6 @@ class _CheReaInvestigationScreenState extends State<CheReaInvestigationScreen> {
   bool _messageLive = true;
   Object? _screen;
 
-  /// A spoken build waiting for the owner's yes.
-  Future<String> Function()? _voiceConfirm;
-
-  /// Answers the build dialog while it is open ('voice-yes' / 'voice-no').
-  void Function(String answer)? _answerDialog;
-
   static final _safeId = RegExp(r'^[A-Za-z0-9_-]{1,64}$');
 
   @override
@@ -625,37 +613,12 @@ class _CheReaInvestigationScreenState extends State<CheReaInvestigationScreen> {
   String get _noPlan => 'There is no plan to build yet. Choose features in the feature map, then use Plan selected. Nothing was sent.';
 
   Future<void> _buildPressed() async {
-    final n = _planFeatures;
-    if (n == 0) {
+    if (_planFeatures == 0) {
       _result(_noPlan, ok: false);
       return;
     }
-    HapticFeedback.mediumImpact();
-    final answer = await showCupertinoDialog<String>(
-      context: context,
-      builder: (ctx) {
-        _answerDialog = (a) => Navigator.of(ctx).pop(a);
-        return CupertinoAlertDialog(
-          title: const Text('Build into CHE?'),
-          content: Text([
-            cheReaBuildQuestion(n),
-            if (_planNames.isNotEmpty) 'Features: ${_planNames.join(', ')}.',
-          ].join('\n\n')),
-          actions: [
-            CupertinoDialogAction(onPressed: () => Navigator.pop(ctx, 'cancel'), child: const Text('Cancel')),
-            CupertinoDialogAction(isDefaultAction: true, onPressed: () => Navigator.pop(ctx, 'build'), child: const Text('Build')),
-          ],
-        );
-      },
-    );
-    _answerDialog = null;
-    if (!mounted) return;
-    // A spoken yes or no answered the dialog and has already acted.
-    if (answer == 'voice-yes' || answer == 'voice-no') return;
-    if (answer != 'build') {
-      _result('Build cancelled. Nothing was sent.');
-      return;
-    }
+    // The owner's Build press authorizes a draft coding job. The existing
+    // merge and deployment gates still require separate approval.
     await _send('/rea-build ${_inv.id}', confirmed: true);
   }
 
@@ -704,19 +667,6 @@ class _CheReaInvestigationScreenState extends State<CheReaInvestigationScreen> {
   Future<String?> _voice(String words) async {
     if (!mounted) return null;
     final v = CheReaVoiceRequest.parse(words);
-    final pending = _voiceConfirm;
-    _voiceConfirm = null;
-    final dialog = _answerDialog;
-    if (dialog != null && (v?.op == CheReaVoiceOp.yes || v?.op == CheReaVoiceOp.no)) {
-      // The build question is on screen: a spoken answer counts as pressing it.
-      dialog(v!.op == CheReaVoiceOp.yes ? 'voice-yes' : 'voice-no');
-      if (v.op == CheReaVoiceOp.no) return _say('Build cancelled. Nothing was sent.');
-      return _send('/rea-build ${_inv.id}', confirmed: true, byVoice: true);
-    }
-    if (pending != null) {
-      if (v?.op == CheReaVoiceOp.yes) return pending();
-      if (v?.op == CheReaVoiceOp.no) return _say('Build cancelled. Nothing was sent.');
-    }
     if (v == null) return null;
     switch (v.op) {
       case CheReaVoiceOp.yes || CheReaVoiceOp.no:
@@ -783,12 +733,10 @@ class _CheReaInvestigationScreenState extends State<CheReaInvestigationScreen> {
     return _loadError.isEmpty ? _say('Refreshed. ${cheReaSummary(_inv)}') : _say('Could not reach CHE: $_loadError. The page was not updated.', ok: false);
   }
 
-  String _buildByVoice() {
-    final n = _planFeatures;
-    if (n == 0) return _say(_noPlan, ok: false);
-    // Owner rule for /rea-build: ask first; only a plain yes next sends it.
-    _voiceConfirm = () => _send('/rea-build ${_inv.id}', confirmed: true, byVoice: true);
-    return _say('${cheReaBuildQuestion(n)}${_planNames.isEmpty ? '' : ' Features: ${_planNames.join(', ')}.'} Say yes to build, or no to cancel.');
+  Future<String> _buildByVoice() async {
+    if (_planFeatures == 0) return _say(_noPlan, ok: false);
+    // A direct spoken Build command is already authorization for a draft job.
+    return _send('/rea-build ${_inv.id}', confirmed: true, byVoice: true);
   }
 
   // ── UI ───────────────────────────────────────────────────────────────
