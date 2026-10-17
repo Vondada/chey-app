@@ -1,6 +1,6 @@
 // REA investigation pages: list, detail and actions, through a MockClient
 // that records every request and a fake chat turn that records every
-// command. Opening the pages never speaks; Read this does; Build asks first.
+// command. Opening the pages never speaks; Read this does; direct Build starts a draft job.
 import 'dart:convert';
 import 'dart:io';
 
@@ -12,7 +12,6 @@ import 'package:chey/commands/che_command_voice.dart';
 import 'package:chey/commands/che_rea_models.dart';
 import 'package:chey/commands/che_rea_view.dart';
 import 'package:chey/commands/che_rea_voice.dart';
-import 'package:flutter/cupertino.dart' show CupertinoAlertDialog, CupertinoDialogAction;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -216,7 +215,7 @@ void main() {
     handle.dispose();
   });
 
-  testWidgets('Build asks first: Cancel sends nothing; Build sends exactly "/rea-build <id>"', (tester) async {
+  testWidgets('Build starts exactly one draft-PR job without a second confirmation', (tester) async {
     final handle = tester.ensureSemantics();
     final rea = FakeRea();
     final chat = FakeChat()..reply = 'Started coding job job-81 for 2 features. It opens a draft pull request; nothing merges.';
@@ -224,31 +223,12 @@ void main() {
     await openDetail(tester, rea: rea, chat: chat, spoken: spoken);
 
     await press(tester, 'Build');
-    expect(find.byType(CupertinoAlertDialog), findsOneWidget);
-    expect(find.textContaining('Build these 2 features into CHE as a draft pull request? Nothing merges or deploys without your separate yes.'), findsOneWidget);
-    expect(find.textContaining('Features: Quick search, Offline notes.'), findsOneWidget);
-    final dialogBuild = find.widgetWithText(CupertinoDialogAction, 'Build');
-    final dialogCancel = find.widgetWithText(CupertinoDialogAction, 'Cancel');
-    expect(tester.getSemantics(dialogBuild), isSemantics(isButton: true, label: 'Build'));
-    expect(tester.getSemantics(dialogCancel), isSemantics(isButton: true, label: 'Cancel'));
-    expect(chat.sent, isEmpty, reason: 'nothing is sent while the question is open');
-
-    await tester.tap(dialogCancel);
-    await tester.pumpAndSettle();
-    expect(find.byType(CupertinoAlertDialog), findsNothing);
-    expect(chat.sent, isEmpty, reason: 'Cancel sends nothing');
-    expect(find.text('Build cancelled. Nothing was sent.'), findsOneWidget);
-    expect(spoken, ['Build cancelled. Nothing was sent.'], reason: 'the owner\'s action is reported aloud');
-
-    await press(tester, 'Build');
-    await tester.tap(find.widgetWithText(CupertinoDialogAction, 'Build'));
-    await tester.pumpAndSettle();
-    expect(chat.sent, [('/rea-build rea-1a2b3c4d', true)], reason: 'exactly one build command, marked as approved on this page');
+    expect(chat.sent, [('/rea-build rea-1a2b3c4d', true)], reason: 'the direct Build press authorizes a draft job');
     final reply = find.byWidgetPredicate((w) => w is SelectableText && w.data == chat.reply);
-    expect(reply, findsOneWidget, reason: "CHE's reply is on screen");
-    expect(tester.widget<SelectableText>(reply).style!.fontSize, greaterThanOrEqualTo(20), reason: 'large text');
-    expect(spoken, ['Build cancelled. Nothing was sent.'], reason: 'Chat speaks the reply; the page adds no second voice');
-    expect(rea.paths.where((p) => !p.startsWith('GET /api/rea/')), isEmpty, reason: 'actions go through Chat, never a route of their own');
+    expect(reply, findsOneWidget, reason: "CHE's actual reply is on screen");
+    expect(tester.widget<SelectableText>(reply).style!.fontSize, greaterThanOrEqualTo(20));
+    expect(spoken, isEmpty, reason: 'Chat speaks the reply; the page adds no second voice');
+    expect(rea.paths.where((p) => !p.startsWith('GET /api/rea/')), isEmpty, reason: 'actions go through Chat');
     handle.dispose();
   });
 
@@ -282,7 +262,6 @@ void main() {
     final spoken = <String>[];
     await openDetail(tester, rea: rea, chat: chat, spoken: spoken);
     await press(tester, 'Build');
-    expect(find.byType(CupertinoAlertDialog), findsNothing);
     expect(find.textContaining('There is no plan to build yet'), findsOneWidget);
     await press(tester, 'Plan selected');
     expect(find.text('Choose at least one feature in the feature map first. Nothing was sent.'), findsOneWidget);
@@ -310,7 +289,7 @@ void main() {
     expect(read.onPressed, isNotNull);
   });
 
-  testWidgets('voice: describe, choose features, plan, build only after a spoken yes', (tester) async {
+  testWidgets('voice: describe, choose features, plan, and build directly without a second yes', (tester) async {
     final chat = FakeChat();
     final spoken = <String>[];
     await openDetail(tester, rea: FakeRea(), chat: chat, spoken: spoken);
@@ -319,28 +298,26 @@ void main() {
     expect(await say('read the features'), contains('2. Offline notes: CHE is missing it, high complexity, chosen for the plan.'));
     expect(await say('search for youtube'), isNull, reason: 'not for this page: the Command Center answers it');
 
-    expect(await say('build it'), allOf(contains('Build these 2 features into CHE'), endsWith('Say yes to build, or no to cancel.')));
-    expect(await say('no'), 'Build cancelled. Nothing was sent.');
-    expect(chat.sent, isEmpty);
-    expect(await say('yes'), isNull, reason: 'the question was answered; a later yes is for Chat');
+    expect(await say('build it'), '');
+    await tester.pumpAndSettle();
+    expect(chat.sent, [('/rea-build rea-1a2b3c4d', true)]);
+    expect(await say('yes'), isNull, reason: 'there is no pending approval dialog');
 
     expect(await say('plan features one and three'), '');
     await tester.pumpAndSettle();
-    expect(await say('build'), contains('Say yes to build'));
-    expect(await say('yes'), '');
+    expect(await say('build'), '');
     await tester.pumpAndSettle();
-    expect(chat.sent, [('/rea-rebuild rea-1a2b3c4d f1 f3', false), ('/rea-build rea-1a2b3c4d', true)]);
+    expect(chat.sent, [
+      ('/rea-build rea-1a2b3c4d', true),
+      ('/rea-rebuild rea-1a2b3c4d f1 f3', false),
+      ('/rea-build rea-1a2b3c4d', true),
+    ]);
     expect(find.text(chat.reply), findsOneWidget);
-    expect(spoken, isEmpty, reason: 'Chat speaks the answers to spoken requests, once');
+    expect(spoken, isEmpty, reason: 'Chat speaks responses once');
 
-    // A spoken yes also answers the build question on screen.
     await press(tester, 'Build');
-    expect(find.byType(CupertinoAlertDialog), findsOneWidget);
-    expect(await say('yes'), '');
-    await tester.pumpAndSettle();
-    expect(find.byType(CupertinoAlertDialog), findsNothing);
     expect(chat.sent.last, ('/rea-build rea-1a2b3c4d', true));
-    expect(chat.sent.length, 3);
+    expect(chat.sent.length, 4);
   });
 
   testWidgets('large Dynamic Type: the detail lays out without overflow', (tester) async {
