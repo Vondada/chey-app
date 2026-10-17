@@ -42,3 +42,27 @@ test('library saves a whole script and recalls the right scene offline from its 
   lib.remove(saved.id);
   assert.equal(lib.list().length, 0);
 });
+
+test('a library page read stays on public web hosts, re-checks every redirect and is size-capped', async () => {
+  const { fetchReadable, readablePublicUrl } = await import('./library.js');
+  for (const bad of ['http://localhost/admin', 'https://127.0.0.1/', 'http://169.254.169.254/latest/meta-data/', 'https://[::1]/',
+    'https://printer.local/', 'https://api.internal/', 'https://chey-app.henryjavoni.workers.dev/api/state', 'https://user:pw@example.com/', 'https://example.com:8443/', 'file:///etc/passwd', 'https://intranet/']) {
+    assert.equal(readablePublicUrl(bad), false, bad);
+  }
+  assert.equal(readablePublicUrl('https://docs.example.com/guide/oauth'), true);
+  const asked = [];
+  const fetcher = async (url, init) => {
+    asked.push(url);
+    assert.equal(init.redirect, 'manual');
+    if (url === 'https://example.com/moved') return new Response('', { status: 302, headers: { location: 'http://169.254.169.254/latest/meta-data/' } });
+    if (url === 'https://example.com/hop') return new Response('', { status: 301, headers: { location: '/page' } });
+    return new Response(`<html><title>Page</title><body>${'x'.repeat(3_000_000)}</body></html>`, { status: 200, headers: { 'content-type': 'text/html' } });
+  };
+  assert.match((await fetchReadable('https://example.com/moved', fetcher)).error, /public web pages/);
+  assert.equal(asked.includes('http://169.254.169.254/latest/meta-data/'), false, 'the private redirect target is never fetched');
+  assert.match((await fetchReadable('http://localhost:8787/', fetcher)).error, /public web pages/);
+  const page = await fetchReadable('https://example.com/hop', fetcher);
+  assert.equal(page.title, 'Page');
+  assert.ok(asked.includes('https://example.com/page'), 'a public redirect is followed');
+  assert.ok(page.text.length <= 2_000_000);
+});
