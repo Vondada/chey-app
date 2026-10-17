@@ -506,7 +506,7 @@ class CheReaInvestigation {
 }
 
 /// One source CHE found with a similar name, numbered as she reads it out.
-/// Only an https link CHE sent is kept: choosing it sends "Investigate <url>".
+/// Only an https link CHE sent is kept: choosing it sends "Investigate" and the link.
 class CheReaChoice {
   const CheReaChoice({required this.number, required this.label, required this.url});
   final int number;
