@@ -68,19 +68,43 @@ jobs:
         working-directory: tools/rea/web
         run: node node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
 
+      # The hostname check in observe.mjs is not a connection-time DNS pin.
+      # Protect the actual kernel egress path against DNS rebinding: even if a
+      # public name later resolves to a private address, no socket can reach it.
+      # This runs AFTER dependency installation; if firewall setup fails, skip
+      # observation and publish an honest failure record instead.
+      - name: Deny private-address egress at the connection layer
+        id: egress
+        if: steps.install.outcome == 'success' && steps.browser.outcome == 'success'
+        run: |
+          set -euo pipefail
+          for cidr in 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.168.0.0/16 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4; do
+            sudo iptables -A OUTPUT -d "$cidr" -j REJECT
+          done
+          # An OS-local DNS stub is permitted only on its DNS port. Normal TCP
+          # and HTTP traffic to loopback remains blocked.
+          sudo iptables -I OUTPUT 1 -d 127.0.0.0/8 -p udp --dport 53 -j ACCEPT
+          for cidr in ::/128 ::1/128 fc00::/7 fe80::/10 ff00::/8 ::ffff:0:0/96 64:ff9b::/96 64:ff9b:1::/48 2001:db8::/32; do
+            sudo ip6tables -A OUTPUT -d "$cidr" -j REJECT
+          done
+          sudo iptables -C OUTPUT -d 169.254.0.0/16 -j REJECT
+          sudo ip6tables -C OUTPUT -d fc00::/7 -j REJECT
+
       - name: Observe the page within fixed limits
         id: observe
         if: always() && steps.validate.outcome == 'success'
         env:
           INSTALL_OUTCOME: ${{ steps.install.outcome }}
           BROWSER_OUTCOME: ${{ steps.browser.outcome }}
+          EGRESS_OUTCOME: ${{ steps.egress.outcome }}
         run: |
           set -uo pipefail
           REASON=""
           if [ "$INSTALL_OUTCOME" != "success" ]; then REASON="The pinned Playwright could not be installed. No page was opened.";
           elif [ "$BROWSER_OUTCOME" != "success" ]; then REASON="The pinned Chromium could not be installed. No page was opened.";
+          elif [ "$EGRESS_OUTCOME" != "success" ]; then REASON="The private-address egress firewall could not be enforced. No page was opened.";
           fi
-          timeout --kill-after=15 150 node tools/rea/web/observe.mjs observe --job "$JOB_ID" --url "$WEB_URL" \
+          timeout --kill-after=15 150 node tools/rea/web/observe.mjs observe --job "$JOB_ID" --url "$TARGET_URL" \
             --reason "$REASON" --out "$WORK/out"
 
       - name: Keep the record for the publisher
