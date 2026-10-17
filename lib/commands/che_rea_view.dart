@@ -362,7 +362,10 @@ class _CheReaInvestigationsScreenState extends State<CheReaInvestigationsScreen>
           IconButton(
             tooltip: 'Read this list aloud',
             icon: const Icon(Icons.volume_up_rounded),
-            onPressed: () => widget.onSpeak?.call(_summary()),
+            onPressed: () {
+              final text = _say(_summary());
+              widget.onSpeak?.call(text);
+            },
           ),
           IconButton(
             tooltip: 'Refresh investigations',
