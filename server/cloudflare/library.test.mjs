@@ -42,3 +42,46 @@ test('library saves a whole script and recalls the right scene offline from its 
   lib.remove(saved.id);
   assert.equal(lib.list().length, 0);
 });
+
+test('a library page read stays on public web hosts, re-checks every redirect and is size-capped', async () => {
+  const { fetchReadable, readablePublicUrl } = await import('./library.js');
+  for (const bad of ['http://localhost/admin', 'https://127.0.0.1/', 'http://169.254.169.254/latest/meta-data/', 'https://[::1]/',
+    'https://printer.local/', 'https://api.internal/', 'https://chey-app.henryjavoni.workers.dev/api/state', 'https://user:pw@example.com/', 'https://example.com:8443/', 'file:///etc/passwd', 'https://intranet/']) {
+    assert.equal(readablePublicUrl(bad), false, bad);
+  }
+  assert.equal(readablePublicUrl('https://docs.example.com/guide/oauth'), true);
+  const asked = [];
+  const fetcher = async (url, init) => {
+    asked.push(url);
+    assert.equal(init.redirect, 'manual');
+    if (url === 'https://example.com/moved') return new Response('', { status: 302, headers: { location: 'http://169.254.169.254/latest/meta-data/' } });
+    if (url === 'https://example.com/hop') return new Response('', { status: 301, headers: { location: '/page' } });
+    return new Response(`<html><title>Page</title><body>${'x'.repeat(3_000_000)}</body></html>`, { status: 200, headers: { 'content-type': 'text/html' } });
+  };
+  assert.match((await fetchReadable('https://example.com/moved', fetcher)).error, /public web pages/);
+  assert.equal(asked.includes('http://169.254.169.254/latest/meta-data/'), false, 'the private redirect target is never fetched');
+  assert.match((await fetchReadable('http://localhost:8787/', fetcher)).error, /public web pages/);
+  const page = await fetchReadable('https://example.com/hop', fetcher);
+  assert.equal(page.title, 'Page');
+  assert.ok(asked.includes('https://example.com/page'), 'a public redirect is followed');
+  assert.ok(page.text.length <= 2_000_000);
+});
+
+test('a library page is read as a stream and cancelled at 2 MB; a declared oversize page is never read', async () => {
+  const { fetchReadable } = await import('./library.js');
+  let pulled = 0;
+  let cancelled = false;
+  const endless = new ReadableStream({
+    pull(controller) { pulled += 1; controller.enqueue(new TextEncoder().encode('a'.repeat(65536))); },
+    cancel() { cancelled = true; },
+  });
+  const page = await fetchReadable('https://example.com/endless', async () => new Response(endless, { status: 200, headers: { 'content-type': 'text/plain' } }));
+  assert.equal(page.text.length, 2_000_000);
+  assert.equal(cancelled, true, 'the stream was cancelled at the cap');
+  assert.ok(pulled <= 40, `read about 2 MB, not the whole body (${pulled} chunks)`);
+  let bodyRead = false;
+  const big = new ReadableStream({ pull(controller) { bodyRead = true; controller.close(); } }, { highWaterMark: 0 });
+  const refused = await fetchReadable('https://example.com/big', async () => new Response(big, { status: 200, headers: { 'content-length': '50000000' } }));
+  assert.match(refused.error, /too large/);
+  assert.equal(bodyRead, false);
+});

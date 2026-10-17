@@ -6,6 +6,8 @@
 // LIKE fallback, so CHE can answer "what happened when…" from the saved text
 // instead of the internet.
 
+import { readCapped } from './plugin_runtime.js';
+
 const CHUNK_CHARS = 1400;
 const MAX_DOC_CHARS = 3_000_000;
 
@@ -144,15 +146,44 @@ export function libraryIntent(message) {
   return { url, text: pasted, title: titled.trim() };
 }
 
+// A public web page only: no credentials, odd ports, raw IP addresses,
+// local/internal names or CHE's own workers.dev host.
+export function readablePublicUrl(url) {
+  let u;
+  try { u = new URL(url); } catch (_) { return false; }
+  const host = u.hostname.toLowerCase().replace(/\.$/, '');
+  if (!/^https?:$/.test(u.protocol) || u.username || u.password || u.port) return false;
+  if (!host.includes('.') || host.startsWith('[') || host.includes(':') || /^[\d.]+$/.test(host) || /^0x/i.test(host)) return false;
+  return !/(?:^|\.)(?:localhost|local|internal|lan|home|arpa|workers\.dev)$/.test(host);
+}
+
+const MAX_READABLE_BYTES = 2_000_000;
+
 export async function fetchReadable(url, fetcher = fetch) {
   let parsed;
   try { parsed = new URL(url); } catch (_) { return { error: 'That link is not valid.' }; }
   if (!/^https?:$/.test(parsed.protocol)) return { error: 'Only web links can be read.' };
-  const response = await fetcher(parsed.toString(), { headers: { 'User-Agent': 'Mozilla/5.0 (CHE Library)' } });
+  // Redirects are followed by hand so every hop is checked again.
+  let current = parsed.toString();
+  let response;
+  for (let hop = 0; ; hop++) {
+    if (!readablePublicUrl(current)) return { error: 'Only public web pages can be read.' };
+    response = await fetcher(current, { headers: { 'User-Agent': 'Mozilla/5.0 (CHE Library)' }, redirect: 'manual' });
+    if (![301, 302, 303, 307, 308].includes(response.status)) break;
+    const next = response.headers?.get?.('location');
+    if (!next || hop >= 3) return { error: 'The page kept redirecting.' };
+    try { current = new URL(next, current).toString(); } catch (_) { return { error: 'The page redirected to an invalid link.' }; }
+  }
   if (!response.ok) return { error: `The page answered ${response.status}.` };
   const type = response.headers?.get?.('content-type') || '';
-  const raw = await response.text();
-  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(raw)?.[1]?.trim() || parsed.hostname;
+  // A declared oversize page is refused unread; any other body is read as a
+  // stream and cancelled at the cap, so it is never buffered whole.
+  if (Number(response.headers?.get?.('content-length') || 0) > MAX_READABLE_BYTES) {
+    response.body?.cancel?.().catch?.(() => {});
+    return { error: 'That page is too large to read.' };
+  }
+  const raw = await readCapped(response, MAX_READABLE_BYTES);
+  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(raw)?.[1]?.trim() || new URL(current).hostname;
   const text = /html/i.test(type) || /<html|<body/i.test(raw) ? htmlToText(raw) : raw;
   return { title: htmlToText(title).slice(0, 200), text };
 }
