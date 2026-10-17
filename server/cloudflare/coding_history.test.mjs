@@ -44,6 +44,14 @@ const HISTORY = [
   'chay how did the coding job go',
   'Which files did you change in the coding job? Don\'t touch anything.',
   'Check the status of the workflow run for the coding job.',
+  // Fourth review: wordings missed on main too.
+  'Chay, coding status',
+  'any updates on the coding job',
+  'how far along is the coding job',
+  'Do not start anything. Why did the coding job stop?',
+  "Don't change anything, just tell me the status of the last coding run.",
+  'Did the coding job fix the bug?',
+  'Why did the coding job fail to merge the PR?',
 ];
 
 for (const message of HISTORY) {
@@ -96,6 +104,51 @@ const NOT_HISTORY = [
   'How is my coding progress in the Python course?',
   'Show me the code that reports coding status.',
   'How far is it to get to Phoenix?',
+  // Fourth review: turns other routes own (email, memory, handoff, deployment, inspection) ...
+  'Email me the latest coding run status',
+  'Email Claude the latest coding run status',
+  'Remember that the last coding job failed because of quota',
+  "Continue Claude's task on the latest coding run",
+  "Pick up Codex's handoff for the last coding job",
+  'Is the last coding job deployed?',
+  'Is the latest coding run live in production?',
+  'Did the last coding job get deployed?',
+  'How does the coding job report its status?',
+  'How does CHE decide the coding job status?',
+  'What function computes the coding job status?',
+  'Explain the code path for coding job status.',
+  'Read coding_history.js and explain the coding job status receipt.',
+  // ... actions, which a status receipt would seem to confirm ...
+  'Revert the last coding job.',
+  'Roll back the latest coding run.',
+  'Deploy the last coding job.',
+  'merge the latest coding run',
+  'Close the pull request from the last coding job.',
+  'Abort the current coding job.',
+  'Kill the current coding job.',
+  'Pause the current coding job.',
+  'can u fix the last coding job',
+  'Latest coding run failed: fix the failover tests.',
+  'che why did the coding job fail retry it',
+  'Summarize the latest coding run and email it to me',
+  'Text my wife the latest coding run status',
+  'Remind me tomorrow to check the latest coding run',
+  // ... other jobs, other subjects, and coding jobs in general.
+  'How far did it get with the YouTube upload?',
+  'How far did che get on my essay?',
+  'Find the latest coding jobs near me.',
+  'What time was my last coding session on my calendar?',
+  'How much did the last coding run cost?',
+  'What states can a coding job be in?',
+  'Why do coding jobs fail so often? Look at the code.',
+  "Just answer from memory, don't check anything: why did the coding job fail?",
+  // A second request with no punctuation, and records other routes keep.
+  'whats the latest coding run fix whatever failed',
+  'Show me my recent coding sessions in the course',
+  'How many tokens did the latest coding run use?',
+  "What's the status of the coding task in my objectives?",
+  'Did the iPhone build from the latest coding run finish?',
+  "What's the status of my coding job application?",
 ];
 
 for (const message of NOT_HISTORY) {
@@ -167,7 +220,7 @@ test('tests are reported only as the runtime states them: failed, passed, runnin
 
 test('when the record cannot be read, the reply gives the real reason and claims no run or result', () => {
   const text = codingHistoryReceipt({ kind: 'runtime', sessionId: 'ocr-12345678', status: { status: 502, detail: 'Could not read OpenCode runtime status (network).' } });
-  assert.match(text, /I could not read its record: Could not read OpenCode runtime status \(network\)\./);
+  assert.match(text, /I could not read its record: Could not read OpenCode runtime status \(network\)\. Its state/);
   assert.match(text, /UNVERIFIED/);
   assert.doesNotMatch(text, /actions\/runs/);
   assert.doesNotMatch(text, /GitHub answered/, 'a malformed id or record is not a GitHub answer');
@@ -207,7 +260,7 @@ test('a finished built-in job reads back its own result and error, and never den
 test('a newer run whose record cannot be read is named beside the active built-in job', () => {
   const text = codingHistoryReceipt({ kind: 'job', job: { id: 'job-abcdef123456', status: 'running' }, unreadRun: { sessionId: 'ocr-12345678', status: { status: 502, detail: 'OpenCode runtime result is not valid compact JSON.' } } });
   assert.match(text, /The latest coding job is running, sir\./);
-  assert.match(text, /A newer coding run, ocr-12345678, exists, but I could not read its record: OpenCode runtime result is not valid compact JSON\.; its state is UNVERIFIED\./);
+  assert.match(text, /A newer coding run, ocr-12345678, exists, but I could not read its record: OpenCode runtime result is not valid compact JSON; its state is UNVERIFIED\./);
 });
 
 test('a pending resume is spoken with its time and attempt, and the failure that caused it stays visible', () => {
@@ -224,8 +277,21 @@ test('a run GitHub confirms is still live is not called unverified', () => {
 });
 
 test('no coding run recorded is said plainly, not invented', () => {
-  assert.equal(codingHistoryReceipt({ kind: 'none' }), 'No coding job has started yet, sir. Nothing is running.');
-  assert.equal(codingHistoryReceipt({ kind: 'runtime', sessionId: '', status: null }), 'No coding job has started yet, sir. Nothing is running.');
+  // Other kinds of job may be running, so the reply says nothing about them (fourth review).
+  assert.equal(codingHistoryReceipt({ kind: 'none' }), 'No coding job has started yet, sir.');
+  assert.equal(codingHistoryReceipt({ kind: 'runtime', sessionId: '', status: null }), 'No coding job has started yet, sir.');
+});
+
+test('odd record contents are never spoken as made-up values', () => {
+  const job = codingHistoryReceipt({ kind: 'job', job: { id: 'job-odd000000001', result: { pr: 1 }, error: ['x'] } });
+  assert.match(job, /^The latest coding job status is unknown, sir\./, 'a job with no status is not called queued');
+  assert.doesNotMatch(job, /\[object Object\]|Result:|Error:/);
+  const run = codingHistoryReceipt({ kind: 'runtime', sessionId: 'ocr-12345678', status: { status: 200, state: 'tests_failed', pr_number: '412', changed_files: '3', models_tried: [{ id: 'm' }, 'groq/qwen3'], model: { id: 'm' } } });
+  assert.match(run, /Tests failed on pull request 412/);
+  assert.match(run, /Pull request: #412\./);
+  assert.match(run, /Files changed: 3\./);
+  assert.match(run, /Models tried: groq\/qwen3\./);
+  assert.doesNotMatch(run, /\[object Object\]/);
 });
 
 test('an unverified liveness is shown as unverified, never as a confirmed state', () => {

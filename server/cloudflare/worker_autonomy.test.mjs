@@ -3429,8 +3429,8 @@ async function codingStatusChat(saved, { record = null, contents = null } = {}) 
   const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => ({ response: 'ok' }) } };
   const { chat } = await pairedChat(env, saved);
   const lines = async (res) => (await res.text()).trim().split('\n').map((line) => JSON.parse(line));
-  const ask = async (message) => {
-    const out = await lines(await chat(message));
+  const ask = async (message, extra = {}) => {
+    const out = await lines(await chat(message, extra));
     return { text: out.filter((line) => line.type === 'delta').map((line) => line.delta).join(''), done: out.find((line) => line.type === 'done') || {} };
   };
   const realFetch = globalThis.fetch;
@@ -3492,7 +3492,40 @@ test('coding status falls back to the active built-in job when the newer run rec
   try {
     const { text } = await ask('What is the latest coding run?');
     assert.match(text, /^The latest coding job is running, sir\./);
-    assert.match(text, /A newer coding run, ocr-6550098c, exists, but I could not read its record: Could not read OpenCode runtime status \(500\)\.; its state is UNVERIFIED\./);
+    assert.match(text, /A newer coding run, ocr-6550098c, exists, but I could not read its record: Could not read OpenCode runtime status \(500\); its state is UNVERIFIED\./);
+  } finally {
+    restore();
+  }
+});
+
+test('a built-in job newer than an old merged session is the record reported, so no old test result is claimed', async () => {
+  const saved = new Map();
+  const record = { session_id: 'ocr-6550098c', state: 'merged', pr_number: 412, changed_files: 3, run_id: 1234, updated_at: new Date(Date.now() - 3 * 86_400_000).toISOString() };
+  const { ask, restore } = await codingStatusChat(saved, { record });
+  saved.set('che_runtime_last_session', 'ocr-6550098c');
+  saved.set('che_runtime_last_session_at', new Date(Date.now() - 3 * 86_400_000).toISOString());
+  const data = saved.get('che');
+  const at = new Date(Date.now() - 3_600_000).toISOString();
+  data.jobs = [{ id: 'job-fail00000001', kind: 'self_development', status: 'failed', error: 'Tests failed: 3 failing', created_at: at, updated_at: at }];
+  saved.set('che', data);
+  try {
+    for (const message of ['Did the last coding job pass its tests?', 'Why did that coding job fail?', 'coding status']) {
+      const { text } = await ask(message);
+      assert.match(text, /The latest coding job status is failed, sir\./, message);
+      assert.match(text, /Error: Tests failed: 3 failing\./, message);
+      assert.doesNotMatch(text, /ocr-6550098c|merged|Tests: passed/, message);
+    }
+  } finally {
+    restore();
+  }
+});
+
+test('a coding question sent with an attachment is left for the route that reads the attachment', async () => {
+  const saved = new Map();
+  const { ask, restore } = await codingStatusChat(saved);
+  try {
+    const { done } = await ask('Why did the coding job fail?', { attachment: { name: 'run-log.txt', media_type: 'document', base64: Buffer.from('Tests failed: 3 failing').toString('base64') } });
+    assert.notEqual(done.source, 'che_coding_history');
   } finally {
     restore();
   }

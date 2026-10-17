@@ -336,9 +336,13 @@ export function recoverableRuntimeFailure(result = {}) {
 export function speakRuntimeStatus(result = {}) {
   const state = runtimeState(result);
   const files = Number(result.changed_files || 0);
-  // A record without a change count says so, rather than claiming nothing changed.
-  const changed = files ? `changed ${files} file${files === 1 ? '' : 's'} (+${Number(result.additions || 0)}/-${Number(result.deletions || 0)})`
-    : Number.isInteger(result.changed_files) ? 'no files changed yet' : 'no file change recorded';
+  const diff = `(+${Number(result.additions || 0)}/-${Number(result.deletions || 0)})`;
+  // A record without a change count says so, rather than claiming nothing changed. `changed`
+  // follows "I"; `changes` follows "failed with".
+  const counted = Number.isInteger(result.changed_files);
+  const changed = files ? `changed ${files} file${files === 1 ? '' : 's'} ${diff}` : counted ? 'changed no files' : 'recorded no change count';
+  const changes = files ? `${files} file${files === 1 ? '' : 's'} changed ${diff}` : counted ? 'no files changed yet' : 'no change count recorded';
+  const pr = Number(result.pr_number) > 0 ? `pull request ${Number(result.pr_number)}` : 'its pull request';
   const parts = [];
   // GitHub could not be asked whether the silent run is alive: say so rather
   // than calling it running or failed.
@@ -362,18 +366,18 @@ export function speakRuntimeStatus(result = {}) {
     }
     case 'resuming': parts.push('I am resuming the coding job from its verified checkpoint on my OpenCode runner now.'); break;
     case 'implemented': parts.push(`My coding runner ${changed}.`); break;
-    case 'pr_open': parts.push(`I ${changed} and opened pull request ${result.pr_number || ''}. Tests are running.`); break;
-    case 'reviewing': parts.push(`Tests passed. My reviewer is checking pull request ${result.pr_number || ''}.`); break;
-    case 'approved_waiting_owner': parts.push(`Tests and independent review passed for pull request ${result.pr_number || ''}. It is waiting for your approval, sir; I have not merged or deployed it.`); break;
-    case 'merged': parts.push(`Done. I ${changed}, tests passed, my reviewer approved, and I merged pull request ${result.pr_number || ''}.`); break;
+    case 'pr_open': parts.push(`I ${changed} and opened ${pr === 'its pull request' ? 'a pull request' : pr}. Tests are running.`); break;
+    case 'reviewing': parts.push(`Tests passed. My reviewer is checking ${pr}.`); break;
+    case 'approved_waiting_owner': parts.push(`Tests and independent review passed for ${pr}. It is waiting for your approval, sir; I have not merged or deployed it.`); break;
+    case 'merged': parts.push(`Done. I ${changed}, tests passed, my reviewer approved, and I merged ${pr}.`); break;
     case 'review_rejected': parts.push(`Tests passed but my reviewer rejected it: ${String(result.review || '').slice(0, 200)}. I did not merge.`); break;
-    case 'tests_failed': parts.push(`Tests failed on pull request ${result.pr_number || ''}, so I did not merge it.`); break;
+    case 'tests_failed': parts.push(`Tests failed on ${pr}, so I did not merge it.`); break;
     case 'rolled_back': parts.push('A merged change broke main, so I rolled it back automatically.'); break;
     case 'no_change': parts.push('My runner found nothing that needed changing.'); break;
     case 'opencode_failed': {
       const tried = (Array.isArray(result.models_tried) ? result.models_tried : []).slice(0, 6);
       const cause = runtimeFailureCause(result);
-      parts.push(`The OpenCode attempt failed with ${changed}${tried.length ? ` after trying ${tried.length} model${tried.length === 1 ? '' : 's'} (${tried.join(', ')})` : ''}${cause.words ? `; the last one failed because ${cause.words}` : ''}.`);
+      parts.push(`The OpenCode attempt failed with ${changes}${tried.length ? ` after trying ${tried.length} model${tried.length === 1 ? '' : 's'} (${tried.join(', ')})` : ''}${cause.words ? `; the last one failed because ${cause.words}` : ''}.`);
       parts.push('I am recovering the coding job automatically with my own coding team on other engines.');
       if (['too_large', 'quota', 'access'].includes(cause.kind)) parts.push('OpenCode itself needs a model key with enough quota and token limit (for example a paid Gemini key, or an OpenRouter key) to run this request.');
       break;

@@ -7903,23 +7903,25 @@ export class CheState extends DurableObject {
         // records answer, with their evidence. Asking never runs an investigation, never inspects
         // repository files and never starts a job. A message for another AI ("tell Claude the
         // coding run failed", "ask ChatGPT why the coding job failed") stays with the mailbox and consult routes.
-        if (codingHistoryIntent(message) && !mailboxIntent(message) && !consultIntent(message)) {
+        // A turn with an attachment is about that attachment, which this route cannot read.
+        if (!body.attachment && codingHistoryIntent(message) && !mailboxIntent(message) && !consultIntent(message)) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false });
           const jobs = (await this.loadData()).jobs || [];
           // enqueueJob uses unshift, so the first match is the newest.
           const selfJobs = jobs.filter((item) => item.kind === 'self_development');
           const activeJob = selfJobs.find((item) => ['queued', 'running'].includes(item.status)) || null;
+          const newestJob = selfJobs.reduce((newest, item) => (String(item.created_at || '') > String(newest?.created_at || '') ? item : newest), selfJobs[0] || null);
           const sessionId = String(await this.ctx.storage.get('che_runtime_last_session') || '').trim();
           const runtimeAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
           const request = String(await this.ctx.storage.get('che_runtime_last_request') || await this.ctx.storage.get('che_runtime_last_request_summary') || '').trim();
-          // The newer of the active built-in job and the runtime session wins (an unstamped legacy
-          // session counts as older work). Recovery clears the session stamp when it hands the
-          // mission to a background job; from then on that job is the truth, not the dead session.
-          const runtimeIsNewer = Boolean(sessionId) && (!activeJob || (runtimeAt && runtimeAt > String(activeJob.created_at || '')));
-          const handedOff = Boolean(sessionId) && !runtimeAt && selfJobs.length > 0;
+          // The newest record wins: the runtime session only when it was accepted after every
+          // built-in job (an unstamped legacy session counts as older work). So a built-in job
+          // that ran after an old session is reported, not the old session's result; and after
+          // recovery clears the stamp to hand a mission to a background job, that job is the truth.
+          const runtimeIsNewer = Boolean(sessionId) && (!newestJob || (Boolean(runtimeAt) && runtimeAt > String(newestJob.created_at || '')));
           let subject = { kind: 'none' };
-          if (activeJob && !runtimeIsNewer) subject = { kind: 'job', job: activeJob };
-          else if (sessionId && !handedOff) {
+          if (!runtimeIsNewer && (activeJob || newestJob)) subject = { kind: 'job', job: activeJob || newestJob };
+          else if (runtimeIsNewer) {
             let status = await new CheCodingRuntime(this.env).getStatus(sessionId, { acceptedAt: runtimeAt });
             if (status.status === 200) {
               // A pending resume is shown until the runner claims it; then the record decides.
@@ -7931,11 +7933,11 @@ export class CheState extends DurableObject {
               subject = { kind: 'runtime', sessionId, status };
             } else if (activeJob) subject = { kind: 'job', job: activeJob, unreadRun: { sessionId, status } };
             else subject = { kind: 'runtime', sessionId, status };
-          } else if (selfJobs[0]) subject = { kind: 'job', job: selfJobs[0] };
+          }
           const stale = subject.job?.status === 'running' && Date.parse(subject.job.updated_at || 0) <= Date.now() - jobStaleMs(subject.job);
           return ndjsonReply(codingHistoryReceipt({ ...subject, stale, request, repo: this.env.CHE_GITHUB_REPO }), {
             source: 'che_coding_history',
-            session_id: sessionId || null,
+            session_id: subject.kind === 'runtime' || subject.unreadRun ? sessionId : null,
             state: subject.status?.state || null,
             background_job_id: subject.job?.id || null,
             background_job_status: subject.job ? (stale ? 'interrupted' : subject.job.status) : null,

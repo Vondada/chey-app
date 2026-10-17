@@ -8,11 +8,19 @@ import { runtimeState, runtimeStateClass, speakRuntimeStatus } from './coding_ru
 const DEFAULT_REPO = 'Vondada/chey-app';
 
 function listed(value) {
-  return Array.isArray(value) ? value.map((item) => String(item || '').trim()).filter(Boolean) : [];
+  return Array.isArray(value) ? value.filter((item) => typeof item === 'string').map((item) => item.trim()).filter(Boolean) : [];
 }
 
+// Only text and numbers are read back: an object in a record field is not spoken as "[object Object]".
 function clip(value, max = 300) {
-  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, max);
+  if (!['string', 'number'].includes(typeof value)) return '';
+  return String(value).replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+// Counts the runner writes as numbers, accepted as numeric text too.
+function count(value) {
+  const n = typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value) : value;
+  return Number.isInteger(n) && n >= 0 ? n : null;
 }
 
 // Record text read back as one spoken sentence.
@@ -33,7 +41,7 @@ function testLine(state) {
 // The built-in job's state, in the words "coding status" has always used. `stale`: a running job
 // that stopped reporting progress (the Worker's jobStaleMs rule) is not confirmed running.
 function jobState(job, stale) {
-  const status = String(job.status || 'queued');
+  const status = clip(job.status) || 'unknown';
   const checkpoint = job.checkpoint ? ' Its recovery checkpoint is saved.' : '';
   if (stale) {
     return `The latest coding job stopped reporting progress and is not confirmed running, sir. ${job.checkpoint
@@ -64,7 +72,8 @@ function jobReceipt(job, stale, unread) {
 
 function unreadReason(status) {
   if (!status) return 'I could not read its record';
-  return status.detail ? `I could not read its record: ${clip(status.detail, 160)}` : `I could not read its record (HTTP ${status.status})`;
+  const detail = clip(status.detail, 160).replace(/[.!?]+$/, '');
+  return detail ? `I could not read its record: ${detail}` : `I could not read its record (HTTP ${status.status})`;
 }
 
 // `unreadRun`: a newer runtime session whose record could not be read, reported beside the
@@ -74,7 +83,8 @@ export function codingHistoryReceipt({ kind = 'none', job = null, stale = false,
     const unread = unreadRun ? `A newer coding run, ${unreadRun.sessionId}, exists, but ${unreadReason(unreadRun.status)}; its state is UNVERIFIED.` : '';
     return jobReceipt(job, stale, unread);
   }
-  if (kind !== 'runtime' || !sessionId) return 'No coding job has started yet, sir. Nothing is running.';
+  // Other kinds of job may be running, so nothing is said about them.
+  if (kind !== 'runtime' || !sessionId) return 'No coding job has started yet, sir.';
   if (!status || Number(status.status) !== 200) {
     return `Coding run ${sessionId}: ${unreadReason(status)}. Its state, run and result are UNVERIFIED.`;
   }
@@ -87,17 +97,19 @@ export function codingHistoryReceipt({ kind = 'none', job = null, stale = false,
   lines.push(status.liveness === 'unverified' && runtimeStateClass(status) === 'active'
     ? `State: UNVERIFIED, last recorded as ${state.replace(/_/g, ' ')}.`
     : `State: ${state.replace(/_/g, ' ')}.`);
-  lines.push(speakRuntimeStatus(status));
+  const files = count(status.changed_files);
+  const pr = count(status.pr_number);
+  lines.push(speakRuntimeStatus({ ...status, changed_files: files ?? undefined, pr_number: pr || undefined }));
   const failure = [status.failure, clip(status.error)].filter(Boolean).join(' - ');
   if (failure) lines.push(`${['waiting_capacity', 'resuming'].includes(state) ? 'Last failure' : 'Failure'}: ${sentence(failure)}`);
   const runId = Number(status.run_id) || 0;
   lines.push(runId ? `GitHub run: https://github.com/${repo || DEFAULT_REPO}/actions/runs/${runId}` : 'GitHub run: not recorded.');
   const tried = listed(status.models_tried);
   if (tried.length) lines.push(`Models tried: ${tried.join(', ')}.`);
-  else if (status.model) lines.push(`Model: ${String(status.model)}.`);
+  else if (clip(status.model)) lines.push(`Model: ${clip(status.model)}.`);
   else lines.push('Models tried: not recorded.');
-  lines.push(Number.isInteger(status.changed_files) ? `Files changed: ${status.changed_files}.` : 'Files changed: not recorded.');
-  lines.push(Number.isInteger(status.pr_number) && status.pr_number > 0 ? `Pull request: #${status.pr_number}.` : 'Pull request: none recorded.');
+  lines.push(files === null ? 'Files changed: not recorded.' : `Files changed: ${files}.`);
+  lines.push(pr ? `Pull request: #${pr}.` : 'Pull request: none recorded.');
   lines.push(testLine(state));
   // heartbeat 'stale': GitHub confirmed the run is alive but its progress file is old.
   if (status.heartbeat === 'stale' && status.liveness !== 'unverified') lines.push('GitHub shows the run is still live, but it has not reported progress recently.');
