@@ -3561,3 +3561,21 @@ test('messages for other AIs about a coding run go to the mailbox and consult ro
     restore();
   }
 });
+
+test('"what are you doing" answers from the job records, starts nothing and calls no model', async () => {
+  const saved = new Map();
+  let modelCalls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => { modelCalls++; return { response: 'I am researching three things.' }; } } };
+  const { chat } = await pairedChat(env, saved);
+  const textOf = async (res) => (await res.text()).trim().split('\n').map((line) => JSON.parse(line)).filter((line) => line.type === 'delta').map((line) => line.delta).join('');
+  const data = saved.get('che');
+  const now = new Date().toISOString();
+  data.jobs = [{ id: 'job-verify01', kind: 'verify_app_build', title: 'Verify iPhone build', status: 'running', created_at: now, updated_at: now }];
+  saved.set('che', data);
+  const before = modelCalls;
+  const reply = await textOf(await chat('What are you doing?'));
+  assert.match(reply, /Running or queued: Verify iPhone build \(running\)\./);
+  assert.doesNotMatch(reply, /researching/);
+  assert.equal(modelCalls, before, 'no model call');
+  assert.equal(saved.get('che').jobs.length, 1, 'nothing started');
+});
