@@ -1644,9 +1644,9 @@
   {
    "id": "rea-inspect",
    "category": "build",
-   "title": "REA: inspect a package",
-   "summary": "Reverse-engineer a public npm package (REA).",
-   "does": "Runs REA 6.5.0 static analysis on one public npm package at an exact version, on GitHub Actions. Nothing from the package runs here, and no coding job, commit or deploy starts.",
+   "title": "REA: investigate",
+   "summary": "Investigate an app, website, repository or package (REA).",
+   "does": "Investigates a public GitHub repository, web page, App Store listing or npm package and maps its features and architecture with citations. Packages run REA 6.5.0 on GitHub Actions. Nothing from the target runs here, and no coding job, commit or deploy starts.",
    "mode": "EXPLORE",
    "approval": {
     "required": false,
@@ -1655,47 +1655,118 @@
    "input": {
     "name": "target",
     "required": true,
-    "hint": "npm package and exact version, e.g. npm:semver@7.7.2"
+    "hint": "An app name, link, GitHub repository, or npm:name@version"
    },
    "examples": [
-    "REA inspect: npm:semver@7.7.2",
-    "Reverse engineer npm package semver 7.7.2"
+    "REA inspect: https://github.com/excalidraw/excalidraw",
+    "Investigate the Excalidraw app and tell me how its features work",
+    "REA inspect: npm:semver@7.7.2"
    ],
-   "needs": [
+   "needs": [],
+   "optional": [
     "github"
    ],
-   "optional": [],
-   "handler": "rea_runner.js (REA 6.5.0 in the che-rea-analysis workflow)",
+   "handler": "rea_runner.js (rea_targets.js adapters; REA 6.5.0 for npm in the che-rea-analysis workflow)",
    "route": "che_rea",
-   "produces": "evidence summary",
-   "evidence": "Evidence id, counts REA read, confidence, and every limitation REA reported.",
-   "cost": "Free: the public npm registry and GitHub Actions, through CHE's GitHub connection.",
+   "produces": "investigation",
+   "evidence": "Every feature and finding cites the file and line, page, or listing it came from; unknowns are listed.",
+   "cost": "Free: public GitHub, web pages, the App Store listing API, the npm registry and GitHub Actions.",
    "keywords": [
     "reverse engineer",
     "rea",
+    "investigate app",
+    "study this app",
+    "how does this app work",
     "inspect package",
-    "analyze javascript",
     "npm package",
-    "electron app"
+    "website features"
    ],
-   "status": "setup_required",
-   "missing": [
-    {
-     "id": "github",
-     "label": "GitHub connection",
-     "state": "not_connected",
-     "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets.",
-     "detail": "GitHub is not connected."
-    }
+   "status": "available",
+   "missing": [],
+   "optional_missing": [
+    "github"
+   ]
+  },
+  {
+   "id": "rea-discover",
+   "category": "build",
+   "title": "REA: discover sources",
+   "summary": "Identify software and the public sources REA can use.",
+   "does": "Identifies an app by name or link and lists the public sources REA can read (repository, website, App Store listing) and what it cannot reach. Reads nothing in depth.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "target",
+    "required": true,
+    "hint": "An app name or link"
+   },
+   "examples": [
+    "REA discover: Excalidraw"
    ],
+   "needs": [],
+   "optional": [],
+   "handler": "rea_runner.js (rea_targets.identifyTarget, GitHub and App Store search)",
+   "route": "che_rea",
+   "produces": "source list",
+   "evidence": "Each source is a real link CHE found; nothing is assumed.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "discover",
+    "identify app",
+    "find the source",
+    "which sources"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "rea-features",
+   "category": "build",
+   "title": "REA: feature map",
+   "summary": "Map an investigated app's features, screens and interactions.",
+   "does": "Lists each feature REA found with its purpose, how it is used, the evidence, unknowns and effort. Uses the recorded investigation; nothing new is run.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "investigation",
+    "required": false,
+    "hint": "REA job id, or leave empty for the latest"
+   },
+   "examples": [
+    "REA features",
+    "Map the features of that app"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "rea_runner.js (rea_features.buildFeatureMap over recorded evidence)",
+   "route": "che_rea",
+   "produces": "feature map",
+   "evidence": "Each feature names its file, page or listing evidence.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "feature map",
+    "map features",
+    "screens",
+    "interactions",
+    "what can it do"
+   ],
+   "status": "available",
+   "missing": [],
    "optional_missing": []
   },
   {
    "id": "rea-explain",
    "category": "build",
-   "title": "REA: explain from evidence",
-   "summary": "Explain how a package is built, from evidence.",
-   "does": "Explains a package's structure from its REA evidence and says what that evidence does not show. Reuses recorded evidence when it exists.",
+   "title": "REA: architecture",
+   "summary": "Explain how investigated software is built, from evidence.",
+   "does": "Explains the architecture REA recorded (frameworks, entry points, navigation, storage, tests) and separates what was observed from what is inferred or unknown.",
    "mode": "EXPLORE",
    "approval": {
     "required": false,
@@ -1703,20 +1774,19 @@
    },
    "input": {
     "name": "question",
-    "required": true,
-    "hint": "npm package and exact version, and what to explain"
+    "required": false,
+    "hint": "REA job id or npm:name@version, and what to explain"
    },
    "examples": [
-    "REA explain: npm:semver@7.7.2"
+    "REA explain: npm:semver@7.7.2",
+    "REA architecture"
    ],
-   "needs": [
-    "github"
-   ],
+   "needs": [],
    "optional": [],
-   "handler": "rea_runner.js (REA evidence, reused when recorded)",
+   "handler": "rea_runner.js (recorded evidence)",
    "route": "che_rea",
    "produces": "explanation",
-   "evidence": "Each fact names its REA evidence id; anything unsupported is labeled.",
+   "evidence": "Each finding is labelled observed, inferred or unknown, with its source.",
    "cost": "Free engines only, unless you turned paid AI on.",
    "keywords": [
     "explain how",
@@ -1725,16 +1795,8 @@
     "architecture",
     "dependencies"
    ],
-   "status": "setup_required",
-   "missing": [
-    {
-     "id": "github",
-     "label": "GitHub connection",
-     "state": "not_connected",
-     "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets.",
-     "detail": "GitHub is not connected."
-    }
-   ],
+   "status": "available",
+   "missing": [],
    "optional_missing": []
   },
   {
@@ -1789,8 +1851,8 @@
    "id": "rea-compare",
    "category": "build",
    "title": "REA: compare with CHE",
-   "summary": "Compare observed software with CHE's own code.",
-   "does": "Records REA's evidence for a package for comparison with a feature you name. Comparing it with CHE's own code is not built yet, so only REA's side is returned.",
+   "summary": "Compare investigated software with CHE's own code.",
+   "does": "Checks each feature REA found against CHE's live repository and command catalog, says whether CHE has it, partly has it or lacks it, with the files, and recommends the useful gaps.",
    "mode": "EXPLORE",
    "approval": {
     "required": false,
@@ -1798,46 +1860,52 @@
    },
    "input": {
     "name": "feature",
-    "required": true,
-    "hint": "npm package and exact version, and the CHE feature to compare"
+    "required": false,
+    "hint": "REA job id, or leave empty for the latest investigation"
    },
    "examples": [
-    "REA compare: npm:semver@7.7.2"
+    "REA compare",
+    "Which of those features could improve your app?"
    ],
    "needs": [
+    "repo"
+   ],
+   "optional": [
     "github"
    ],
-   "optional": [],
-   "handler": "rea_runner.js (REA evidence; CHE side not built)",
+   "handler": "rea_runner.js (rea_features.compareWithChe over CHE's repository at main)",
    "route": "che_rea",
    "produces": "comparison",
-   "evidence": "Each side cites its own evidence; a missing side is named.",
+   "evidence": "Each \"CHE has it\" names CHE's file at the current commit; a check that could not run says unknown.",
    "cost": "Free engines only, unless you turned paid AI on.",
    "keywords": [
     "compare",
     "difference",
     "versus",
-    "how does ours",
-    "same as"
+    "features you are missing",
+    "gap",
+    "could improve"
    ],
    "status": "setup_required",
    "missing": [
     {
-     "id": "github",
-     "label": "GitHub connection",
+     "id": "repo",
+     "label": "CHE repository name",
      "state": "not_connected",
-     "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets.",
-     "detail": "GitHub is not connected."
+     "setup": "Add CHE_GITHUB_REPO (owner/name of CHE's own repository) as a Worker setting. Its public tree can be read without a token.",
+     "detail": "CHE_GITHUB_REPO is not set."
     }
    ],
-   "optional_missing": []
+   "optional_missing": [
+    "github"
+   ]
   },
   {
    "id": "rea-rebuild",
    "category": "build",
-   "title": "REA: plan a rebuild",
-   "summary": "Plan an original feature from verified evidence.",
-   "does": "Writes a plan from REA evidence already recorded. Nothing is built. Building is a separate step that needs your yes.",
+   "title": "REA: plan",
+   "summary": "Plan an original version of chosen features.",
+   "does": "Writes an original-implementation plan with acceptance checks for the features you choose, from recorded evidence. Nothing is built.",
    "mode": "PLAN",
    "approval": {
     "required": false,
@@ -1846,57 +1914,64 @@
    "input": {
     "name": "feature",
     "required": true,
-    "hint": "The feature to build, and optionally the REA job id"
+    "hint": "Feature numbers or names, and optionally the REA job id"
    },
    "examples": [
-    "REA rebuild: a search box like the one REA found"
+    "REA plan: f2 f4",
+    "REA rebuild: the search feature"
    ],
    "needs": [],
    "optional": [],
-   "handler": "rea_runner.js (plan from recorded evidence only)",
+   "handler": "rea_runner.js (rea_features.planFor over recorded evidence)",
    "route": "che_rea",
    "produces": "build plan",
-   "evidence": "Each planned step names the REA facts it relies on.",
+   "evidence": "Each planned step names the REA evidence it relies on.",
    "cost": "Free engines only, unless you turned paid AI on.",
    "keywords": [
     "rebuild",
     "build a similar",
     "original feature",
-    "implement from findings"
+    "implement from findings",
+    "plan"
    ],
    "status": "available",
    "missing": [],
    "optional_missing": []
   },
   {
-   "id": "rea-status",
+   "id": "rea-build",
    "category": "build",
-   "title": "REA: status and history",
-   "summary": "Show REA jobs, capabilities and results.",
-   "does": "Shows REA's capabilities, recent analysis jobs, and the latest finished evidence.",
-   "mode": "EXPLORE",
+   "title": "REA: build",
+   "summary": "Build an approved REA plan into CHE as a draft PR.",
+   "does": "Hands the approved plan to CHE's existing coding job: original code, tests and review, then a draft pull request. Nothing merges or deploys without your separate yes.",
+   "mode": "BUILD",
    "approval": {
     "required": false,
     "reason": ""
    },
-   "input": null,
+   "input": {
+    "name": "plan",
+    "required": false,
+    "hint": "REA job id, or leave empty for the latest plan"
+   },
    "examples": [
-    "REA status"
+    "REA build",
+    "Build those features into yourself"
    ],
    "needs": [
+    "model",
     "github"
    ],
    "optional": [],
-   "handler": "rea_runner.js (job log and the che-mailbox results)",
+   "handler": "rea_runner.js → worker.queueSelfDevelopment (draft PR pipeline)",
    "route": "che_rea",
-   "produces": "job status",
-   "evidence": "Job ids and the result records they were read from.",
+   "produces": "pull request",
+   "evidence": "The coding job id, then the pull request number, CI checks and review outcome.",
    "cost": "Free engines only, unless you turned paid AI on.",
    "keywords": [
-    "rea status",
-    "rea history",
-    "analysis status",
-    "reverse engineering jobs"
+    "build those features",
+    "build it into yourself",
+    "implement the plan"
    ],
    "status": "setup_required",
    "missing": [
@@ -1908,6 +1983,85 @@
      "detail": "GitHub is not connected."
     }
    ],
+   "optional_missing": []
+  },
+  {
+   "id": "rea-verify",
+   "category": "build",
+   "title": "REA: verify",
+   "summary": "Check a REA build against its acceptance checks.",
+   "does": "Reads the build's pull request, its CI checks and changed tests, and says which acceptance checks are proven. The iPhone itself is never claimed verified.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "investigation",
+    "required": false,
+    "hint": "REA job id, or leave empty for the latest build"
+   },
+   "examples": [
+    "REA verify"
+   ],
+   "needs": [
+    "github"
+   ],
+   "optional": [],
+   "handler": "rea_runner.js (rea_features.verifyBuild over GitHub)",
+   "route": "che_rea",
+   "produces": "verification",
+   "evidence": "Pull request, check-run results and test files from GitHub.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "verify build",
+    "did it pass",
+    "acceptance checks"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "github",
+     "label": "GitHub connection",
+     "state": "not_connected",
+     "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets.",
+     "detail": "GitHub is not connected."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "rea-status",
+   "category": "build",
+   "title": "REA: status and capabilities",
+   "summary": "Show REA investigations, capabilities and results.",
+   "does": "Shows what REA can and cannot analyze, recent investigations with their stage, and the latest finished evidence.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "REA status",
+    "What can REA analyze?"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "rea_runner.js (investigation log and the che-mailbox results)",
+   "route": "che_rea",
+   "produces": "job status",
+   "evidence": "Job ids and the result records they were read from.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "rea status",
+    "rea history",
+    "analysis status",
+    "reverse engineering jobs",
+    "rea capabilities"
+   ],
+   "status": "available",
+   "missing": [],
    "optional_missing": []
   },
   {
@@ -3442,6 +3596,12 @@
    "detail": "GitHub is not connected.",
    "label": "GitHub connection",
    "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets."
+  },
+  "repo": {
+   "state": "not_connected",
+   "detail": "CHE_GITHUB_REPO is not set.",
+   "label": "CHE repository name",
+   "setup": "Add CHE_GITHUB_REPO (owner/name of CHE's own repository) as a Worker setting. Its public tree can be read without a token."
   },
   "stripe": {
    "state": "not_connected",

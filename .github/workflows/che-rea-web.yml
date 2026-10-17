@@ -1,0 +1,250 @@
+name: CHE REA website observation
+
+# Observes one public web page once, in an isolated headless Chromium driven by the pinned
+# Playwright 1.56.1 (tools/rea/web/package-lock.json). No sign-in, nothing typed, no form
+# submitted, no download, no link followed away from the page, and no request to a private
+# or local address (tools/rea/web/observe.mjs). The observe job gets no credentials. Only the
+# publisher job can write, and it writes one bounded record and at most two screenshots to
+# the che-mailbox branch, never over an existing result.
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: CHE REA job id (rea-xxxxxxxx)
+        required: true
+        type: string
+      url:
+        description: One public http(s) web page
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: che-rea-web-${{ inputs.job_id }}
+  cancel-in-progress: false
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      JOB_ID: ${{ inputs.job_id }}
+      TARGET_URL: ${{ inputs.url }}
+    steps:
+      - name: Checkout the observer code (no credentials kept)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Validate the job inputs
+        id: validate
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/rea-web"
+          mkdir -p "$WORK/out"
+          echo "WORK=$WORK" >> "$GITHUB_ENV"
+          node tools/rea/web/observe.mjs validate --out "$WORK/out" >> "$GITHUB_ENV"
+
+      - name: Install the pinned Playwright (lockfile, no install scripts)
+        id: install
+        working-directory: tools/rea/web
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # The Chromium build made for the pinned Playwright, not the runner's Google Chrome: the
+      # image updates Chrome on its own schedule, and a browser the driver was not built for
+      # can break it. --only-shell installs just the headless build.
+      # Installed outside the runner's home, so the observer user (below) can run it.
+      - name: Install the matching headless Chromium
+        id: browser
+        working-directory: tools/rea/web
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: /opt/rea-browsers
+        run: |
+          set -euo pipefail
+          sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0755 /opt/rea-browsers
+          node node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+          chmod -R a+rX /opt/rea-browsers
+
+      # The hostname check in observe.mjs is not a connection-time DNS pin. The kernel rules
+      # in egress.sh are: every socket the observer user opens to a private, loopback or
+      # link-local address is rejected, whatever a name resolved to. They match that user only,
+      # so the runner itself (which needs loopback to finish the job) is untouched. If they
+      # cannot be put in place, no page is opened and an honest failure record is published.
+      - name: Deny private-address egress for the observer user
+        id: egress
+        if: steps.install.outcome == 'success' && steps.browser.outcome == 'success'
+        run: |
+          set -euo pipefail
+          bash tools/rea/web/egress.sh rea-observer
+          # The observer runs from a copy it can read; the runner's home stays private.
+          sudo install -d -m 0755 /opt/rea-run /opt/rea-run/tools/rea
+          sudo cp -r server /opt/rea-run/server
+          sudo cp -r tools/rea/web /opt/rea-run/tools/rea/web
+          sudo chmod -R a+rX /opt/rea-run
+          sudo install -d -o rea-observer -m 0700 /opt/rea-out /opt/rea-home
+
+      - name: Observe the page within fixed limits
+        id: observe
+        if: always() && steps.validate.outcome == 'success'
+        env:
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          BROWSER_OUTCOME: ${{ steps.browser.outcome }}
+          EGRESS_OUTCOME: ${{ steps.egress.outcome }}
+        run: |
+          set -uo pipefail
+          REASON=""
+          if [ "$INSTALL_OUTCOME" != "success" ]; then REASON="The pinned Playwright could not be installed. No page was opened.";
+          elif [ "$BROWSER_OUTCOME" != "success" ]; then REASON="The pinned Chromium could not be installed. No page was opened.";
+          elif [ "$EGRESS_OUTCOME" != "success" ]; then REASON="The private-address egress firewall could not be enforced. No page was opened.";
+          fi
+          if [ -z "$REASON" ]; then
+            # The browser and every connection it makes run as the firewalled user.
+            sudo -u rea-observer env PATH="$PATH" HOME=/opt/rea-home PLAYWRIGHT_BROWSERS_PATH=/opt/rea-browsers \
+              timeout --kill-after=15 150 node /opt/rea-run/tools/rea/web/observe.mjs observe --job "$JOB_ID" --url "$TARGET_URL" \
+              --reason "" --out /opt/rea-out
+            sudo cp -r /opt/rea-out/. "$WORK/out/"
+            sudo chown -R "$(id -u):$(id -g)" "$WORK/out"
+          else
+            # No browser is opened: the observer only writes the failure record.
+            timeout --kill-after=15 150 node tools/rea/web/observe.mjs observe --job "$JOB_ID" --url "$TARGET_URL" \
+              --reason "$REASON" --out "$WORK/out"
+          fi
+
+      - name: Keep the record for the publisher
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rea-web-${{ inputs.job_id }}
+          path: ${{ runner.temp }}/rea-web/out/
+          if-no-files-found: warn
+          retention-days: 3
+
+  # Only this job can write, and it runs no observer or browser code. It copies the record and
+  # the screenshots the record lists into the mailbox; CHE checks the record again before use.
+  publish:
+    needs: observe
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Fetch the record artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rea-web-${{ inputs.job_id }}
+          path: ${{ runner.temp }}/record
+        continue-on-error: true
+
+      - name: Write the record to che-mailbox
+        uses: actions/github-script@v7
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+          TARGET_URL: ${{ inputs.url }}
+          RECORD_DIR: ${{ runner.temp }}/record
+          OBSERVE_RESULT: ${{ needs.observe.result }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fs = require('fs');
+            const jobId = String(process.env.JOB_ID || '');
+            if (!/^rea-[0-9a-f]{8}$/.test(jobId)) throw new Error('Invalid REA job id.');
+            const dir = process.env.RECORD_DIR;
+            const branch = 'che-mailbox';
+            const path = `mailbox/rea/${jobId}.json`;
+            let record = null;
+            try {
+              const text = fs.readFileSync(`${dir}/summary.json`, 'utf8');
+              if (Buffer.byteLength(text) <= 65536) record = JSON.parse(text);
+            } catch (_) {
+              record = null;
+            }
+            if (!record || record.schema !== 'che.rea-web.v1' || record.job_id !== jobId || !['complete', 'failed', 'refused'].includes(record.state)) {
+              let url = '';
+              let host = '';
+              try {
+                const u = new URL(String(process.env.TARGET_URL || '').trim());
+                u.username = '';
+                u.password = '';
+                if (/^https?:$/.test(u.protocol) && u.href.length <= 2048) [url, host] = [u.href, u.hostname];
+              } catch (_) {
+                url = '';
+              }
+              record = {
+                schema: 'che.rea-web.v1',
+                job_id: jobId,
+                state: 'failed',
+                error: `The observation produced no record (job result: ${process.env.OBSERVE_RESULT}).`,
+                tool: { name: 'playwright', version: '1.56.1', browser: 'chromium', analysis: 'public page observed in an isolated browser; no sign-in, no form submitted' },
+                target: { url, final_url: '', status: 0, host },
+                observed_at: new Date().toISOString(),
+                screenshots: [],
+                limitations: [],
+              };
+            }
+            // A result that already exists is never replaced, and no screenshot is added to it.
+            try {
+              await github.rest.repos.getContent({ ...context.repo, path, ref: branch });
+              core.info('A result already exists for this job; nothing was overwritten.');
+              return;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            // A 409 or 422 means the file already exists, or that another run moved the branch at
+            // the same moment. Only a file that is really there counts as existing (it is never
+            // overwritten); a branch race is retried, so no result or screenshot is dropped.
+            async function exists(file) {
+              try {
+                await github.rest.repos.getContent({ ...context.repo, path: file, ref: branch });
+                return true;
+              } catch (error) {
+                if (error.status === 404) return false;
+                throw error;
+              }
+            }
+            async function create(file, message, content) {
+              for (let attempt = 1; ; attempt++) {
+                try {
+                  await github.rest.repos.createOrUpdateFileContents({ ...context.repo, path: file, branch, message, content });
+                  return true;
+                } catch (error) {
+                  if (error.status !== 409 && error.status !== 422) throw error;
+                  if (await exists(file)) {
+                    core.info(`${file} already exists; nothing was overwritten.`);
+                    return false;
+                  }
+                  if (attempt >= 5) throw error;
+                  core.info(`${file}: che-mailbox moved during the write (${error.status}); trying again.`);
+                  await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
+                }
+              }
+            }
+            // Only the two known file names, only JPEG bytes, each at most 400 KB.
+            const files = { desktop: 'desktop.jpg', mobile: 'mobile.jpg' };
+            const kept = [];
+            for (const shot of Array.isArray(record.screenshots) ? record.screenshots.slice(0, 2) : []) {
+              const file = files[shot && shot.label];
+              if (!file || shot.file !== file || kept.some((item) => item.file === file)) continue;
+              let bytes = null;
+              try {
+                bytes = fs.readFileSync(`${dir}/${file}`);
+              } catch (_) {
+                bytes = null;
+              }
+              if (!bytes || bytes.length > 409600 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) continue;
+              if (await create(`mailbox/rea/${jobId}/${file}`, `REA web screenshot: ${jobId} ${shot.label}`, bytes.toString('base64'))) {
+                kept.push({ ...shot, bytes: bytes.length });
+              }
+            }
+            record.screenshots = kept;
+            await create(path, `REA web result: ${jobId} (${record.state})`, Buffer.from(`${JSON.stringify(record, null, 1)}\n`).toString('base64'));

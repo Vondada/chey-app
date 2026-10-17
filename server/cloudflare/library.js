@@ -159,31 +159,99 @@ export function readablePublicUrl(url) {
 
 const MAX_READABLE_BYTES = 2_000_000;
 
-export async function fetchReadable(url, fetcher = fetch) {
+// True for an address that is not on the public Internet: private, loopback, link-local,
+// shared, documentation, multicast and reserved IPv4; on IPv6, anything outside global unicast
+// (2000::/3), plus the documentation and NAT64/6to4 forms that can carry a private IPv4.
+export function privateIp(ip) {
+  const v = String(ip || '').trim().toLowerCase();
+  const v4 = v.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const [a, b, c] = v4.slice(1, 4).map(Number);
+    return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 192 && b === 0 && (c === 0 || c === 2))
+      || (a === 198 && (b === 18 || b === 19)) || (a === 198 && b === 51 && c === 100) || (a === 203 && b === 0 && c === 113);
+  }
+  if (!v.includes(':')) return true;
+  const mapped = v.match(/(?:::ffff:|^::)(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (mapped) return privateIp(mapped[1]);
+  if (!/^[23]/.test(v)) return true;
+  return /^2001:0?db8:|^2002:|^2001:0{0,4}:|^64:ff9b:/.test(v);
+}
+
+// Where a name really points, over DNS-over-HTTPS, before anything is requested from it.
+// Workers reach only the public Internet (a private network needs a VPC binding, and CHE has
+// none), and this refuses a public-looking name whose answers are private. A name that does
+// not resolve, or a DNS answer that cannot be read, is refused too.
+export async function publicDns(host, fetcher = fetch, signal = undefined) {
+  const answers = [];
+  for (const type of ['A', 'AAAA']) {
+    let body;
+    try {
+      const res = await fetcher(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(host)}&type=${type}`, { headers: { accept: 'application/dns-json' }, signal });
+      body = res.ok ? await res.json() : null;
+    } catch (_) {
+      body = null;
+    }
+    if (!body || ![0, 3].includes(Number(body.Status))) return { ok: false, reason: `CHE could not check where ${host} points, so it was not read.` };
+    for (const a of body.Answer || []) if (a?.type === 1 || a?.type === 28) answers.push(String(a.data || ''));
+  }
+  if (!answers.length) return { ok: false, reason: `${host} does not resolve to an address, so it was not read.` };
+  const inside = answers.find(privateIp);
+  return inside ? { ok: false, private: true, reason: `${host} points at a private network address (${inside}), so it was not read.` } : { ok: true };
+}
+
+// One public page, raw. Redirects are followed by hand so every hop is checked
+// again; a declared oversize page is refused unread and any other body is read
+// as a stream and cut at the cap, so it is never buffered whole.
+// `beforeFetch(url)` may refuse a hop (for example by robots.txt) before it is requested.
+// One deadline (`timeoutMs`) covers every hop and the body, so a server that accepts the
+// connection and then stalls cannot hold the Worker request open.
+export async function fetchPublicPage(url, fetcher = fetch, { maxBytes = MAX_READABLE_BYTES, userAgent = 'Mozilla/5.0 (CHE Library)', beforeFetch = null, timeoutMs = 15_000, dns = publicDns } = {}) {
   let parsed;
   try { parsed = new URL(url); } catch (_) { return { error: 'That link is not valid.' }; }
   if (!/^https?:$/.test(parsed.protocol)) return { error: 'Only web links can be read.' };
-  // Redirects are followed by hand so every hop is checked again.
+  const signal = AbortSignal.timeout(timeoutMs);
+  const TIMED_OUT = { error: 'The page took too long to answer.', timed_out: true };
+  const late = new Promise((resolve) => signal.addEventListener('abort', () => resolve(TIMED_OUT), { once: true }));
+  const timed = (promise) => Promise.race([promise, late]);
   let current = parsed.toString();
   let response;
   for (let hop = 0; ; hop++) {
     if (!readablePublicUrl(current)) return { error: 'Only public web pages can be read.' };
-    response = await fetcher(current, { headers: { 'User-Agent': 'Mozilla/5.0 (CHE Library)' }, redirect: 'manual' });
+    // Every hop's name is checked where it points, so a redirect cannot reach a private address.
+    const where = await timed(dns(new URL(current).hostname, fetcher, signal));
+    if (where === TIMED_OUT) return TIMED_OUT;
+    if (!where.ok) return { error: where.reason, refused: Boolean(where.private), dns: true };
+    if (beforeFetch && hop > 0) {
+      const allowed = await beforeFetch(current);
+      if (allowed && allowed.allowed === false) return { error: allowed.reason || 'That page may not be read.', refused: true };
+    }
+    response = await timed(fetcher(current, { headers: { 'User-Agent': userAgent }, redirect: 'manual', signal }));
+    if (response === TIMED_OUT) return TIMED_OUT;
     if (![301, 302, 303, 307, 308].includes(response.status)) break;
     const next = response.headers?.get?.('location');
     if (!next || hop >= 3) return { error: 'The page kept redirecting.' };
     try { current = new URL(next, current).toString(); } catch (_) { return { error: 'The page redirected to an invalid link.' }; }
   }
-  if (!response.ok) return { error: `The page answered ${response.status}.` };
+  if (!response.ok) return { error: `The page answered ${response.status}.`, status: response.status, final_url: current };
   const type = response.headers?.get?.('content-type') || '';
-  // A declared oversize page is refused unread; any other body is read as a
-  // stream and cancelled at the cap, so it is never buffered whole.
-  if (Number(response.headers?.get?.('content-length') || 0) > MAX_READABLE_BYTES) {
+  if (Number(response.headers?.get?.('content-length') || 0) > maxBytes) {
     response.body?.cancel?.().catch?.(() => {});
     return { error: 'That page is too large to read.' };
   }
-  const raw = await readCapped(response, MAX_READABLE_BYTES);
-  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(raw)?.[1]?.trim() || new URL(current).hostname;
+  const raw = await timed(readCapped(response, maxBytes));
+  if (raw === TIMED_OUT) {
+    response.body?.cancel?.().catch?.(() => {});
+    return TIMED_OUT;
+  }
+  return { raw, type, status: response.status, final_url: current };
+}
+
+export async function fetchReadable(url, fetcher = fetch) {
+  const page = await fetchPublicPage(url, fetcher);
+  if (page.error) return { error: page.error };
+  const { raw, type } = page;
+  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(raw)?.[1]?.trim() || new URL(page.final_url).hostname;
   const text = /html/i.test(type) || /<html|<body/i.test(raw) ? htmlToText(raw) : raw;
   return { title: htmlToText(title).slice(0, 200), text };
 }

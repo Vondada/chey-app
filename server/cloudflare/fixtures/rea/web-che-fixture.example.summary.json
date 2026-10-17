@@ -1,0 +1,276 @@
+{
+ "schema": "che.rea-web.v1",
+ "job_id": "rea-5eb0c0de",
+ "state": "complete",
+ "tool": {
+  "name": "playwright",
+  "version": "1.56.1",
+  "browser": "chromium",
+  "analysis": "public page observed in an isolated browser; no sign-in, no form submitted"
+ },
+ "target": {
+  "url": "http://che-fixture.example/",
+  "final_url": "http://che-fixture.example/",
+  "status": 200,
+  "host": "che-fixture.example"
+ },
+ "observed_at": "2026-10-17T04:46:57.235Z",
+ "page": {
+  "title": "CHE observer fixture",
+  "lang": "en",
+  "description": "A static page for testing CHE's website observer.",
+  "generator": "CHE fixture 1.0",
+  "viewport_meta": true,
+  "load_ms": 74,
+  "console_errors": 1,
+  "framework_hints": [
+   "WordPress",
+   "generator: CHE fixture 1.0"
+  ],
+  "third_party_hosts": [
+   "cdn.fixture-cdn.example"
+  ]
+ },
+ "landmarks": {
+  "header": 1,
+  "nav": 1,
+  "main": 1,
+  "footer": 1,
+  "aside": 0,
+  "search": 1
+ },
+ "headings": [
+  {
+   "level": 1,
+   "text": "Observer fixture"
+  },
+  {
+   "level": 2,
+   "text": "Sign in"
+  },
+  {
+   "level": 2,
+   "text": "Newsletter"
+  },
+  {
+   "level": 3,
+   "text": "Pictures"
+  }
+ ],
+ "nav_links": [
+  {
+   "text": "Guides",
+   "href": "http://che-fixture.example/guides/"
+  },
+  {
+   "text": "Getting started",
+   "href": "http://che-fixture.example/docs/start"
+  },
+  {
+   "text": "API reference",
+   "href": "http://che-fixture.example/docs/api"
+  },
+  {
+   "text": "Blog",
+   "href": "http://che-fixture.example/blog/"
+  }
+ ],
+ "interactive": [
+  {
+   "role": "link",
+   "name": "Skip to content"
+  },
+  {
+   "role": "link",
+   "name": "Fixture home"
+  },
+  {
+   "role": "link",
+   "name": "Guides"
+  },
+  {
+   "role": "button",
+   "name": "Docs"
+  },
+  {
+   "role": "link",
+   "name": "Blog"
+  },
+  {
+   "role": "searchbox",
+   "name": "Search the fixture",
+   "type": "search"
+  },
+  {
+   "role": "textbox",
+   "name": "Email",
+   "type": "email"
+  },
+  {
+   "role": "textbox",
+   "name": "Password",
+   "type": "password"
+  },
+  {
+   "role": "button",
+   "name": "Sign in"
+  },
+  {
+   "role": "textbox",
+   "name": "Your email",
+   "type": "email"
+  },
+  {
+   "role": "combobox",
+   "name": "Country"
+  },
+  {
+   "role": "button",
+   "name": "Subscribe"
+  },
+  {
+   "role": "button",
+   "name": ""
+  }
+ ],
+ "forms": [
+  {
+   "purpose_hint": "search",
+   "method": "get",
+   "fields": [
+    {
+     "type": "search",
+     "label": "Search the fixture",
+     "required": false
+    }
+   ]
+  },
+  {
+   "purpose_hint": "sign-in",
+   "method": "post",
+   "fields": [
+    {
+     "type": "email",
+     "label": "Email",
+     "required": true
+    },
+    {
+     "type": "password",
+     "label": "Password",
+     "required": true
+    }
+   ]
+  },
+  {
+   "purpose_hint": "newsletter",
+   "method": "post",
+   "fields": [
+    {
+     "type": "email",
+     "label": "Your email",
+     "required": false
+    },
+    {
+     "type": "select-one",
+     "label": "Country",
+     "required": false
+    }
+   ]
+  }
+ ],
+ "interactions": [
+  {
+   "action": "focus-search",
+   "target": "Search the fixture",
+   "observed": "Focused the search box; a suggestion list or dialog appeared. Nothing was typed."
+  },
+  {
+   "action": "tab-order",
+   "target": "Tab 1",
+   "observed": "link \"Skip to content\""
+  },
+  {
+   "action": "tab-order",
+   "target": "Tab 2",
+   "observed": "link \"Fixture home\""
+  },
+  {
+   "action": "tab-order",
+   "target": "Tab 3",
+   "observed": "link \"Guides\""
+  },
+  {
+   "action": "tab-order",
+   "target": "Tab 4",
+   "observed": "button \"Docs\""
+  },
+  {
+   "action": "tab-order",
+   "target": "Tab 5",
+   "observed": "link \"Blog\""
+  },
+  {
+   "action": "tab-order",
+   "target": "Tab 6",
+   "observed": "searchbox \"Search the fixture\""
+  },
+  {
+   "action": "tab-order",
+   "target": "Tab 7",
+   "observed": "textbox \"Email\""
+  },
+  {
+   "action": "tab-order",
+   "target": "Tab 8",
+   "observed": "textbox \"Password\""
+  },
+  {
+   "action": "tab-order",
+   "target": "Tab 9",
+   "observed": "button \"Sign in\""
+  },
+  {
+   "action": "tab-order",
+   "target": "Tab 10",
+   "observed": "textbox \"Your email\""
+  },
+  {
+   "action": "open-menu",
+   "target": "Docs",
+   "observed": "aria-expanded is now true. 2 items became visible: Getting started, API reference."
+  }
+ ],
+ "responsive": {
+  "mobile_horizontal_overflow": true,
+  "mobile_nav_toggle": true
+ },
+ "accessibility": {
+  "images": 2,
+  "images_missing_alt": 1,
+  "buttons_without_name": 1,
+  "inputs_without_label": 1
+ },
+ "screenshots": [
+  {
+   "label": "desktop",
+   "file": "desktop.jpg",
+   "width": 1280,
+   "height": 800,
+   "bytes": 30721
+  },
+  {
+   "label": "mobile",
+   "file": "mobile.jpg",
+   "width": 390,
+   "height": 844,
+   "bytes": 23322
+  }
+ ],
+ "limitations": [
+  "Observed once, as an anonymous visitor in a headless browser. Signed-in areas, personalised content and later changes are not covered.",
+  "Accessible names and roles are approximate, worked out from the page markup.",
+  "Nothing was typed, no form was submitted, no file was downloaded, and only menu buttons in the header or navigation were pressed.",
+  "10 requests to private or local network addresses were blocked.",
+  "1 later request that would have left the page or sent data was stopped."
+ ]
+}
