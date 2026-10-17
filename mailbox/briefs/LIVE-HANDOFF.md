@@ -64,6 +64,16 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-17 ~13:40 UTC — owner's master directive started; EXPLORE history fix in draft PR #330)
+
+- **main** is `a3be02c` (#328). Nothing from this block is merged.
+- **PR #330 (DRAFT)**, branch `claude/che-execution-history-explore` at `bef856a`: coding execution-history questions are read-only and answered from the stored runtime record (`codingHistoryIntent` in `code_scout.js`, `coding_history.js`, route in `worker.js` before repository inspection). Offline tests: `coding_history.test.mjs` 19/19; Worker suite 1460 run, 1453 pass, 0 fail, 7 skipped.
+- **Live GitHub records (read-only):** run 39031928523 (`ocr-ee486cba`) and run 39023896713 (`ocr-6550098c`) both completed `failure`. They are regression fixtures, not answers.
+- **NOT verified:** the live Worker route through `/api/chat`; the owner's two exact 17 Oct EXPLORE transcripts (not in this repo; ask the owner to paste them); independent review (none done); merge and deploy (not done); iPhone build.
+- **Still open from the master directive:** intent contract across all modes; outcome-based completion checks; failure recovery upgrades; regression suite for the 20 categories; UX receipts; the iPhone update.
+
+---
+
 ## 2. Current position (Claude, 2026-10-17 ~13:00 UTC — #328 live; BYOK rule satisfied on main; Coding Library reconciled locally, NOT pushed)
 
 - **main** is `a3be02c` (#328). Deploy run 39032277486 succeeded. Shorebird run 39032277542: the patch step succeeded at 12:38:22. **iPhone install NOT verified**: the owner must open the app twice to take the patch.
