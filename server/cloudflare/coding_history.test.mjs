@@ -20,6 +20,9 @@ const HISTORY = [
   'What files did the coding job change?',
   'Inspect the coding job history and tell me the files.',
   "What's the latest coding job status?",
+  'Check your recent coding runs on GitHub Actions and tell me the run IDs, results, model errors, file changes and PRs.',
+  'Look at your recent coding executions and tell me what happened.',
+  'Show me the GitHub Actions runs for your coding jobs.',
 ];
 
 for (const message of HISTORY) {
@@ -46,6 +49,8 @@ const NOT_HISTORY = [
   'Look at https://github.com/example/app and tell me the coding job state.',
   'CHE, investigate why coding jobs produce delayed responses. This is READ-ONLY.',
   'CHE, investigate your coding status bug and report verified findings.',
+  'Review the GitHub Actions workflow for the coding runtime.',
+  'Retry the last coding job.',
 ];
 
 for (const message of NOT_HISTORY) {

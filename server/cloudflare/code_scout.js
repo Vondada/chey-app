@@ -314,7 +314,10 @@ export function codingHistoryIntent(message) {
   if (!text || ownerBuildAuthorization(text)) return false;
   if (/https?:\/\/|\bnpm:|\bgithub\.com\//i.test(text)) return false;
   const codingSubject = /\b(?:coding|opencode|job|run|attempt|session)\b/i.test(text);
-  const latestRecord = /\b(?:latest|last|most\s+recent|newest|previous|current)\s+(?:coding|opencode|self[- ]development)\s+(?:execution\s+|run\s+|job\s+|session\s+|attempt\s+)?(?:history|run|job|session|attempt|log|result|status|execution|state)\b/i;
+  const latestRecord = /\b(?:latest|last|most\s+recent|recent|newest|previous|current)\s+(?:coding|opencode|self[- ]development)\s+(?:execution\s+|run\s+|job\s+|session\s+|attempt\s+)?(?:history|runs?|jobs?|sessions?|attempts?|logs?|results?|status|executions?|state)\b/i;
+  // "Your coding runs on GitHub Actions": the workflow runs are the execution record, not the workflow file.
+  const actionsRuns = /\b(?:coding|opencode)\b/i.test(text)
+    && /\b(?:github\s+actions?|workflow)\s+(?:runs?|history|results?|executions?)\b|\bruns?\s+(?:on|in)\s+github\s+actions\b/i.test(text);
   const executionHistory = /\b(?:coding|opencode|self[- ]development)\s+(?:job\s+|run\s+|execution\s+)?history\b/i;
   const howFar = /\bhow\s+far\s+(?:did|has|have)\s+(?:claude|che|chey|chay|shay|she|it|the\s+(?:coding|build)\s+(?:job|run|session)|the\s+(?:job|run|session))\b[\s\S]{0,20}\b(?:get|gotten|got|come)\b/i;
   const whyFailed = codingSubject && (/\b(?:why|how)\s+(?:did|has|does|do|is|was)\b[\s\S]{0,40}\b(?:fail|failed|stopped|stuck|broke|broken)\b/i.test(text) || /\bexplain\s+why\b[\s\S]{0,40}\b(?:fail|failed|stopped|stuck)\b/i.test(text));
@@ -324,14 +327,14 @@ export function codingHistoryIntent(message) {
   const askedAboutState = /^\s*(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:what|how|show|tell|give|is|are|check|read)\b|\?\s*$/i.test(text);
   const stateQuestion = askedAboutState
     && codingSubject
-    && (/\b(?:state|status|result|progress|outcome)\b[\s\S]{0,30}\b(?:coding|job|run|attempt|session)\b/i.test(text) || /\b(?:coding|job|run|attempt|session)\b[\s\S]{0,30}\b(?:state|status|result|progress|outcome)\b/i.test(text));
+    && (/\b(?:states?|status|results?|progress|outcomes?)\b[\s\S]{0,30}\b(?:coding|jobs?|runs?|attempts?|sessions?)\b/i.test(text) || /\b(?:coding|jobs?|runs?|attempts?|sessions?)\b[\s\S]{0,30}\b(?:states?|status|results?|progress|outcomes?)\b/i.test(text));
   // "What files did the coding job change?" is history; "what files should I change" and
   // "what would the coding job change" are planning, so a modal verb excludes them.
   const changedFiles = /\bwhat\s+files\b/i.test(text)
     && /\b(?:changed|touched|modified|edited|did|has|have)\b/i.test(text)
     && /\b(?:coding|job|run|attempt|session)\b/i.test(text)
     && !/\b(?:should|would|could|might|shall|will)\b/i.test(text);
-  return latestRecord.test(text) || executionHistory.test(text) || howFar.test(text) || whyFailed || whatHappened.test(text)
+  return latestRecord.test(text) || actionsRuns || executionHistory.test(text) || howFar.test(text) || whyFailed || whatHappened.test(text)
     || actualResult.test(text) || stateQuestion || changedFiles;
 }
 
