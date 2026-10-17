@@ -476,7 +476,9 @@ async function runInvestigation(storage, env, inv, target, { fetcher, now, featu
   // The isolated browser run adds screenshots and interactions for a web page.
   if (target.kind === 'website' && inv.state === 'complete' && reaConfigured(env)) {
     const sent = await gh(env, 'POST', `/actions/workflows/${encodeURIComponent(REA_WEB_WORKFLOW)}/dispatches`, { ref: REA_WORKFLOW_REF, inputs: { job_id: inv.id, url: facts.final_url } }, fetcher);
-    inv.browser = sent.ok ? { state: 'queued', requested_at: iso(now) } : { state: 'failed', error: `GitHub did not start the browser run (status ${sent.status || 'none'}).` };
+    inv.browser = sent.ok ? { state: 'queued', requested_at: iso(now) } : { state: 'failed', error: `GitHub did not start the browser run (status ${sent.status || 'none'}${sent.data?.message ? `: ${cleanText(sent.data.message, 120)}` : ''}).` };
+    // A browser run that never started is said, never left as a silent wait for screenshots.
+    if (!sent.ok) inv.limitations.push(`Browser run: ${inv.browser.error}`);
   }
   setStage(inv, 'remember', 'done', 'Saved to the investigation log and CHE\'s memory.', now);
   inv.stage = 'architecture';
@@ -599,6 +601,7 @@ export function investigationView(inv) {
     comparison: inv.comparison, proposals: inv.proposals || [], plan: inv.plan ? { features: inv.plan.features, steps: inv.plan.steps, acceptance: inv.plan.acceptance, approved: Boolean(inv.plan.approved) } : null,
     build: inv.build ? { job_id: inv.build.job_id, state: inv.build.state, pr_number: inv.build.pr_number || null, pr_url: inv.build.pr_url || '', note: inv.build.note || '' } : null,
     verification: inv.verification, limitations: [...new Set(inv.limitations || [])].slice(0, 12), alternatives: inv.alternatives || [],
+    browser: inv.browser ? { state: inv.browser.state, error: inv.browser.error || '' } : null,
     // A name with no exact match: the numbered sources the owner can choose from (state needs_choice).
     choices: inv.state === 'needs_choice' ? (inv.candidates || []).map((label, i) => ({ number: i + 1, label, url: inv.candidate_targets?.[i] || '' })).filter((c) => c.url) : [],
   };
@@ -652,6 +655,7 @@ function investigationAnswer(inv, { reused = false } = {}) {
   lines.push(`${reused ? 'Reusing my investigation' : 'REA investigation'} ${inv.id} of ${t.label}${t.version ? ` (${t.kind === 'github' ? `commit ${t.version.slice(0, 12)}` : t.version})` : ''}.`);
   lines.push(t.kind === 'website' ? 'Method: I read the public page once; robots.txt was respected and nothing was signed into.' : t.kind === 'app_store' ? 'Method: I read its public App Store listing.' : 'Method: I read its public files on GitHub at that commit. Nothing from it was run.');
   if (inv.browser?.state === 'queued') lines.push('An isolated browser run is also collecting screenshots and menu behaviour; ask "REA status" in a few minutes.');
+  if (inv.browser?.state === 'failed') lines.push(`${inv.browser.error} So there are no screenshots; the features below come from the page itself.`);
   lines.push('', `Features found (${inv.features.length}):`);
   lines.push(inv.features.length ? list(inv.features.slice(0, 8).map((f) => `${f.name}: ${f.purpose} Evidence: ${f.evidence[0]?.label || 'none'}`)) : 'None in what was read.');
   const observed = inv.architecture.filter((a) => a.kind === 'observed').slice(0, 5);
