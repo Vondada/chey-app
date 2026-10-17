@@ -78,7 +78,7 @@ test('the install runs no scripts, the browser is the pinned build, and the run 
   assert.match(OBSERVE_JOB, /node node_modules\/playwright-core\/cli\.js install --with-deps --only-shell chromium/);
   assert.match(OBSERVE_JOB, /timeout-minutes: 10/);
   assert.match(OBSERVE_JOB, /node-version: 24/);
-  assert.match(OBSERVE_JOB, /timeout --kill-after=15 150 node tools\/rea\/web\/observe\.mjs observe --job "\$JOB_ID" --url "\$WEB_URL"/);
+  assert.match(OBSERVE_JOB, /timeout --kill-after=15 150 node tools\/rea\/web\/observe\.mjs observe --job "\$JOB_ID" --url "\$TARGET_URL"/);
   assert.match(OBSERVE_JOB, /if: always\(\) && steps\.validate\.outcome == 'success'/, 'a failed install still produces a failed record');
   assert.match(OBSERVER_SOURCE, /const NAV_TIMEOUT_MS = 25_000;/);
   assert.match(OBSERVER_SOURCE, /const BUDGET_MS = 90_000;/);
