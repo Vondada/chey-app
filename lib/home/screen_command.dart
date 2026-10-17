@@ -100,7 +100,9 @@ ScreenCommand? parseScreenCommand(String raw) {
   if (t.contains('\n') || t.length > 180) return null;
   if (!RegExp(
     r'^(?:(?:start off (?:with|wit) )?(?:clear(?:ing)?|remove|delete|hide|get rid of|take off|wipe|erase|add|put|place|insert|show|bring back|put back|restore)\b)',
-  ).hasMatch(t)) return null;
+  ).hasMatch(t)) {
+    return null;
+  }
 
   final add = RegExp(r'\b(add|put|place|insert)\b').hasMatch(t);
   final remove = RegExp(r'\b(clear|remove|delete|hide|get rid of|take off|clearing|wipe|erase)\b').hasMatch(t);
@@ -133,9 +135,13 @@ ScreenCommand? parseScreenCommand(String raw) {
   // must never clear CHE's visible conversation.
   if (last && RegExp(
     r'^(?:remove|delete|erase)\s+(?:(?:the|my)\s+)?(?:last|previous)\s+(?:message|bubble|reply)$',
-  ).hasMatch(t)) return const ScreenCommand(ScreenOp.removeLast);
+  ).hasMatch(t)) {
+    return const ScreenCommand(ScreenOp.removeLast);
+  }
   if (RegExp(
     r'^(?:clear|remove|delete|wipe|erase)\s+(?:(?:all|the|my|entire)\s+){0,2}(?:chat(?:\s+(?:history|messages))?|messages|screen\s+text|the\s+text|everything\s+on\s+(?:the\s+)?screen)$',
-  ).hasMatch(t)) return const ScreenCommand(ScreenOp.clearChat);
+  ).hasMatch(t)) {
+    return const ScreenCommand(ScreenOp.clearChat);
+  }
   return null;
 }
