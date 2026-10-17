@@ -48,7 +48,7 @@ test('browser observations enforce connection-layer private-IP denial and refuse
   assert.match(OBSERVE_JOB, /EGRESS_OUTCOME/);
   assert.match(OBSERVE_JOB, /egress firewall could not be enforced/);
   assert.match(OBSERVE_JOB, /--url "\$TARGET_URL"/, 'the validated URL is passed to the observer');
-  assert.doesNotMatch(OBSERVE_JOB, /--url "\$WEB_URL"/, 'an undefined variable must never be used');
+  assert.doesNotMatch(OBSERVE_JOB, /--url "\$TARGET_URL"/, 'an undefined variable must never be used');
   assert.match(OBSERVER_SOURCE, /context\.routeWebSocket\(\/\.\*\/, \(ws\) =>/);
   assert.doesNotMatch(OBSERVER_SOURCE, /ws\.connectToServer\(/, 'no client WebSocket frames are forwarded');
 });
