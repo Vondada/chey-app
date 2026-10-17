@@ -73,7 +73,11 @@ Then, on GitHub:
 - **Independent review of #328 did NOT complete** (Codex usage limit). #328 was merged before review finished.
 - **Coding Library reconcile (local only):** worktree `claude/che-coding-library-reconcile` from `origin/main` a3be02c. Cherry-picked `f9bc0dc`→`e671c2c`, `3b94445`→`b5c92a2`, `211f3a8`→`1635a8d`. No conflicts. The REA commits on the old branch are already on main via #324, so they were not taken. Worker suite: 1452 run, 1445 pass, 0 fail, 7 skipped. The Dart tests from these commits were NOT run (no Flutter here). Not pushed, no PR. The old `claude/che-coding-library` (211f3a8) was not force-pushed.
 - **Next, after owner approval:** decide the paid variable; approve pushing the reconcile under a new branch name (no PR unless asked); then build the Flutter Coding Library page and run `flutter test`.
-- **Held, still unanswered by the owner:** local commit `10eb36e` on `chatgpt/che-coding-free-first-capped-paid` (unpushed). Options: push to a new branch from `origin/main` with no PR, drop it, or keep it held. Also the game-style UI branch choice.
+- **Pushed on the owner's approval (new branches from `origin/main` a3be02c, NO PR):**
+  - `claude/che-coding-paid-gate-report` at `de43369`: the held `10eb36e` re-applied. Its BYOK conflict was resolved to main's stricter zero-spend rule (a missing or nonzero `byok_usage_monthly` blocks). Gate 15/15, tools 55/55, failover 25/25.
+  - `claude/che-coding-library-reconcile` at `1635a8d`: the Coding Library commits. Worker suite 1452 run, 1445 pass, 0 fail, 7 skipped. Dart not run.
+- **Local branch `chatgpt/che-coding-free-first-capped-paid` still holds `10eb36e` (ahead 1).** Its content is now on the new branch as `de43369`. The stop hook keeps flagging the local branch until it is reset to `origin/chatgpt/...`. Not reset: needs the owner's yes.
+- **Still open:** the game-style UI branch choice; the paid variable `CHE_CODING_PAID_FALLBACK`; the Flutter Coding Library page.
 
 ---
 
