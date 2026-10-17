@@ -46,8 +46,8 @@ export function validateMonthlyCap(payload, ceiling = MAX_CODING_PAID_USD, { byo
   }
   // Live tripwire: BYOK spend on this key this month means a BYOK route is in use.
   const byokSpend = key.byok_usage_monthly;
-  if (typeof byokSpend === 'number' && Number.isFinite(byokSpend) && byokSpend > 0) {
-    return { ok: false, reason: 'This key has separately billed BYOK spend this month, which the cap does not count. Paid coding stays blocked.' };
+  if (typeof byokSpend !== 'number' || !Number.isFinite(byokSpend) || byokSpend !== 0) {
+    return { ok: false, reason: 'This key must report exactly zero BYOK spend this month; missing or nonzero usage cannot be treated as safe.' };
   }
   return { ok: true, limit, remaining: left, byok: 'confirmed_none' };
 }
