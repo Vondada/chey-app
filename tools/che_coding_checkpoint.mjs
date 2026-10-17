@@ -16,6 +16,7 @@
 // Exit codes: 0 ok, 1 refused (reverted), 2 the revert itself failed (stop attempts).
 
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +27,10 @@ export const CHECKPOINT_META = 'checkpoint.json';
 export const SNAPSHOT = 'untracked-before.txt';
 export const NEXT_PROMPT = 'next-prompt.txt';
 export const REVERT_FAILED = 2;
+
+const sha256 = (data) => createHash('sha256').update(data).digest('hex');
+const exactPaths = (list) => Array.isArray(list) && list.every((p) => typeof p === 'string' && p.length > 0 && !p.includes('\0'));
+const sorted = (list) => [...list].sort().join('\0');
 
 function git(cwd, args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
@@ -111,6 +116,7 @@ function verifyTree({ cwd, dir, baseSha }) {
   const meta = {
     seq: (readMeta(dir)?.seq || 0) + 1,
     base_sha: String(baseSha || ''),
+    patch_sha256: sha256(patch),
     files,
     additions,
     deletions,
@@ -171,14 +177,64 @@ export function advance({ cwd, dir, baseSha = '', basePrompt = '', attempt = 1 }
   return verdict;
 }
 
+// A mailbox checkpoint is data, not trusted instructions. Before applying it to
+// another runner, prove that its bytes, base and paths match the source that
+// originally passed the checkpoint verifier. Inspect the *patch*, not only its
+// claimed metadata, so a mailbox edit cannot introduce forbidden paths.
+function checkSavedPatch({ cwd, dir, patchPath }) {
+  const meta = readMeta(dir);
+  const patch = readFileSync(patchPath);
+  if (!meta || !/^[0-9a-f]{40}$/i.test(String(meta.base_sha || '')) ||
+      meta.base_sha !== git(cwd, ['rev-parse', 'HEAD']).trim()) {
+    return { reason: 'checkpoint_base_mismatch' };
+  }
+  if (patch.length > CHECKPOINT_MAX_BYTES || patch.length === 0 ||
+      meta.bytes !== patch.length || !/^[0-9a-f]{64}$/.test(String(meta.patch_sha256 || '')) ||
+      sha256(patch) !== meta.patch_sha256) {
+    return { reason: 'checkpoint_integrity_failure' };
+  }
+  if (!exactPaths(meta.files) || !meta.files.length ||
+      unsafeCodingPaths(meta.files).length) return { reason: 'checkpoint_unsafe_paths' };
+  // With -z, git apply --numstat emits "<add>\\t<del>\\t<path>\\0"
+  // even for filenames containing tabs/newlines. Do not parse human-readable diffs.
+  const fileStats = git(cwd, ['apply', '--numstat', '-z', patchPath]).split('\0').filter(Boolean);
+  const actual = fileStats.map((row) => {
+    const first = row.indexOf('\t');
+    const second = row.indexOf('\t', first + 1);
+    return first >= 0 && second > first ? row.slice(second + 1) : '';
+  });
+  if (!exactPaths(actual) || actual.some((p) => !p) ||
+      actual.length !== meta.files.length || sorted(actual) !== sorted(meta.files) ||
+      unsafeCodingPaths(actual).length) return { reason: 'checkpoint_unsafe_paths' };
+  return { meta, files: actual };
+}
+
 export function restore({ cwd, dir }) {
   const patchPath = join(dir, CHECKPOINT_PATCH);
   if (!existsSync(patchPath)) return { ok: true, restored: false };
+  let applied = false;
   try {
+    const verdict = checkSavedPatch({ cwd, dir, patchPath });
+    if (verdict.reason) return { ok: false, restored: false, reason: verdict.reason };
     git(cwd, ['apply', '--check', patchPath]);
     git(cwd, ['apply', patchPath]);
-    return { ok: true, restored: true, meta: readMeta(dir) };
+    applied = true;
+    // The saved patch might have been syntactically valid when captured but
+    // must also be valid after replay on the exact checked-out base.
+    const checks = verdict.files.map((path) => syntaxCheck(cwd, path));
+    if (checks.some((c) => c.error)) {
+      git(cwd, ['apply', '--reverse', patchPath]);
+      applied = false;
+      return { ok: false, restored: false, reason: 'checkpoint_syntax_failure' };
+    }
+    return { ok: true, restored: true, meta: verdict.meta };
   } catch (error) {
+    if (applied) {
+      // A refused replay cannot leave half-applied source for the next model.
+      try { git(cwd, ['apply', '--reverse', patchPath]); } catch (rollbackError) {
+        throw new Error('Checkpoint replay failed and could not be rolled back safely: ' + String(rollbackError?.message || rollbackError).slice(0, 200));
+      }
+    }
     return { ok: false, restored: false, reason: 'checkpoint_no_longer_applies', detail: String(error?.stderr || error?.message || error).slice(0, 240) };
   }
 }
