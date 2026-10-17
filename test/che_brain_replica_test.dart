@@ -1,0 +1,287 @@
+// The phone's Brain replica: durable local writes, offline search, an outbox
+// cleared only on acknowledgement, pull paging, conflicts kept, digests that
+// match the Worker's, and a journal that survives a restart. The Worker is a
+// fake here with the same reconcile outcomes brain_store.js returns; the
+// Worker's own rules are tested in server/cloudflare/brain_store.test.mjs.
+// Nothing in this file is proof of behavior on a physical iPhone.
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:chey/memory/che_brain_replica.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+/// A tiny in-memory Worker: enough of /api/brain/push and /api/brain/changes to
+/// exercise the client. Outcomes mirror brain_store.js.
+class FakeWorker {
+  final Map<String, Map<String, dynamic>> records = {};
+  final Set<String> ops = {};
+  int seq = 0;
+  int pushes = 0;
+  bool failPush = false;
+  bool failChanges = false;
+  Set<String> sensitive = {};
+
+  Map<String, dynamic> _write(Map<String, dynamic> record, {required int rev, bool deleted = false, String origin = 'cloud'}) {
+    seq += 1;
+    final stored = {
+      ...record, 'rev': rev, 'seq': seq, 'deleted': deleted, 'origin': origin,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+      if (deleted) ...{'title': '', 'body': '', 'links': []},
+    };
+    records['${record['id']}'] = stored;
+    return stored;
+  }
+
+  Future<({int status, String body})> post(Uri uri, Map<String, String> headers, String body) async {
+    pushes += 1;
+    if (failPush) return (status: 503, body: 'down');
+    final payload = jsonDecode(body) as Map<String, dynamic>;
+    final results = <Map<String, dynamic>>[];
+    for (final raw in (payload['ops'] as List).whereType<Map>()) {
+      final op = Map<String, dynamic>.from(raw);
+      final opId = '${op['op_id']}';
+      if (ops.contains(opId)) {
+        results.add({'op_id': opId, 'outcome': 'duplicate', 'id': op['id'] ?? (op['record'] as Map?)?['id']});
+        continue;
+      }
+      ops.add(opId);
+      if (op['type'] == 'delete') {
+        final id = '${op['id']}';
+        final current = records[id];
+        final stored = _write(current ?? {'id': id, 'kind': 'note', 'region': 'Learned Knowledge', 'path': ''}, rev: ((current?['rev'] as int?) ?? 0) + 1, deleted: true, origin: '${payload['device']}');
+        results.add({'op_id': opId, 'id': id, 'outcome': 'deleted', 'rev': stored['rev'], 'record': stored});
+        continue;
+      }
+      final record = Map<String, dynamic>.from(op['record'] as Map);
+      final id = '${record['id']}';
+      if (sensitive.contains(id)) {
+        results.add({'op_id': opId, 'id': id, 'outcome': 'rejected', 'reason': 'rejected_sensitive_or_empty'});
+        continue;
+      }
+      final current = records[id];
+      if (current == null) {
+        final stored = _write(record, rev: 1, origin: '${payload['device']}');
+        results.add({'op_id': opId, 'id': id, 'outcome': 'created', 'rev': stored['rev']});
+      } else if (op['base_rev'] == current['rev']) {
+        final stored = _write(record, rev: (current['rev'] as int) + 1, origin: '${payload['device']}');
+        results.add({'op_id': opId, 'id': id, 'outcome': 'updated', 'rev': stored['rev'], 'record': stored});
+      } else {
+        results.add({'op_id': opId, 'id': id, 'outcome': 'conflict', 'rev': current['rev'], 'conflict_id': '$id@conflict', 'record': current});
+      }
+    }
+    return (status: 200, body: jsonEncode({'results': results, 'seq': seq, 'digest': digest()}));
+  }
+
+  Map<String, int> digest() {
+    var sum = 0;
+    for (final r in records.values) {
+      sum = (sum + cheFnv1a32('${r['id']}:${r['rev']}')) % 4294967296;
+    }
+    return {'count': records.length, 'sum': sum};
+  }
+
+  Future<({int status, String body})> get(Uri uri, Map<String, String> headers) async {
+    if (failChanges) return (status: 500, body: 'down');
+    final since = int.tryParse(uri.queryParameters['since'] ?? '0') ?? 0;
+    final limit = int.tryParse(uri.queryParameters['limit'] ?? '500') ?? 500;
+    final rows = records.values.where((r) => (r['seq'] as int) > since).toList()..sort((a, b) => (a['seq'] as int).compareTo(b['seq'] as int));
+    final page = rows.take(limit).toList();
+    return (status: 200, body: jsonEncode({
+      'records': page, 'next': page.isEmpty ? since : page.last['seq'], 'more': rows.length > limit, 'seq': seq, 'digest': digest(),
+    }));
+  }
+
+  void cloudWrite(String id, {required String title, required String body, String region = 'Learned Knowledge', String path = 'Notes', String kind = 'note'}) {
+    final current = records[id];
+    _write({'id': id, 'kind': kind, 'region': region, 'path': path, 'title': title, 'body': body, 'verification': 'owner_attested', 'source': {'kind': 'test'}, 'links': [], 'created_at': '2026-10-01T00:00:00.000Z'}, rev: ((current?['rev'] as int?) ?? 0) + 1);
+  }
+}
+
+Future<Directory> freshDir() async => (await Directory.systemTemp.createTemp('che_brain_replica_')).absolute;
+
+void main() {
+  test('fnv1a32 matches the Worker reference values', () {
+    expect(cheFnv1a32(''), 0x811c9dc5);
+    expect(cheFnv1a32('a'), 0xe40c292c);
+    expect(cheFnv1a32('mem:abc:3'), isNot(cheFnv1a32('mem:abc:4')));
+  });
+
+  test('A: a memory saved offline is durable, searchable, and queued; a restart replays the journal', () async {
+    final dir = await freshDir();
+    final brain = CheBrainReplica(directory: dir);
+    final saved = await brain.remember(kind: 'memory', region: 'Personal Memory', path: 'Family', body: 'My sister Ana lives in Lisbon.');
+    expect(saved.pending, isTrue);
+    expect(saved.rev, 0);
+    expect(brain.pendingOps, 1);
+    expect(brain.search('where does my sister live').first.id, saved.id);
+    expect(brain.folders().firstWhere((f) => f['region'] == 'Personal Memory')['count'], 1);
+
+    final again = CheBrainReplica(directory: dir);
+    await again.load();
+    expect(again.count, 1);
+    expect(again.pendingOps, 1, reason: 'the outbox survives a restart');
+    expect(again.search('Lisbon').first.title, 'My sister Ana lives in Lisbon.');
+  });
+
+  test('B: push then pull; the outbox is cleared only on acknowledgement; digests match the Worker', () async {
+    final dir = await freshDir();
+    final worker = FakeWorker();
+    final brain = CheBrainReplica(directory: dir, deviceName: 'iphone');
+    await brain.remember(id: 'mem:1', kind: 'memory', region: 'Personal Memory', body: 'The boiler is serviced every October.');
+    worker.cloudWrite('note:cloud', title: 'From the cloud', body: 'The Worker learned this while the phone was away.');
+
+    worker.failPush = true;
+    final failed = await brain.sync('https://che.example', const {}, get: worker.get, post: worker.post);
+    expect(failed.ok, isFalse);
+    expect(failed.pendingAfter, 1, reason: 'a failed push drops nothing');
+    expect(brain.get('mem:1')!.pending, isTrue);
+    expect(failed.speech(), contains('Nothing was lost'));
+
+    worker.failPush = false;
+    final receipt = await brain.sync('https://che.example', const {}, get: worker.get, post: worker.post);
+    expect(receipt.ok, isTrue);
+    expect(receipt.pushed, 1);
+    expect(receipt.acknowledged, 1);
+    expect(receipt.pulled, 2, reason: 'its own record comes back with its seq, plus the cloud note');
+    expect(brain.pendingOps, 0);
+    expect(brain.get('mem:1')!.rev, 1);
+    expect(brain.get('mem:1')!.pending, isFalse);
+    expect(brain.get('note:cloud')!.title, 'From the cloud');
+    expect(receipt.digestChecked, isTrue);
+    expect(receipt.digestMatch, isTrue);
+    expect(brain.digest().sum, worker.digest()['sum']);
+    expect(receipt.speech(), contains('Both copies match'));
+
+    final idle = await brain.sync('https://che.example', const {}, get: worker.get, post: worker.post);
+    expect(idle.pushed, 0);
+    expect(idle.pulled, 0);
+    expect(idle.digestMatch, isTrue);
+  });
+
+  test('C: a delete here becomes a tombstone there, and a cloud delete removes the record here', () async {
+    final dir = await freshDir();
+    final worker = FakeWorker();
+    final brain = CheBrainReplica(directory: dir);
+    await brain.remember(id: 'mem:gone', kind: 'memory', region: 'Personal Memory', body: 'Temporary note to forget.');
+    await brain.sync('https://che.example', const {}, get: worker.get, post: worker.post);
+    await brain.forget('mem:gone');
+    expect(brain.search('temporary').isEmpty, isTrue);
+    await brain.sync('https://che.example', const {}, get: worker.get, post: worker.post);
+    expect(worker.records['mem:gone']!['deleted'], isTrue);
+    expect(brain.get('mem:gone')!.deleted, isTrue);
+    expect(brain.count, 0);
+    expect(brain.tombstones, 1);
+    expect(brain.digest().sum, worker.digest()['sum']);
+
+    worker.cloudWrite('note:x', title: 'Will vanish', body: 'Deleted on the Memory screen later.');
+    await brain.sync('https://che.example', const {}, get: worker.get, post: worker.post);
+    expect(brain.get('note:x'), isNotNull);
+    worker._write(worker.records['note:x']!, rev: 2, deleted: true);
+    await brain.sync('https://che.example', const {}, get: worker.get, post: worker.post);
+    expect(brain.get('note:x')!.deleted, isTrue);
+    expect(brain.search('vanish').isEmpty, isTrue);
+  });
+
+  test('D: a concurrent edit is kept as a conflict with both copies, and a rejected record stays marked, never dropped', () async {
+    final dir = await freshDir();
+    final worker = FakeWorker();
+    final brain = CheBrainReplica(directory: dir);
+    await brain.remember(id: 'note:b', kind: 'note', region: 'Learned Knowledge', body: 'Version one.');
+    await brain.sync('https://che.example', const {}, get: worker.get, post: worker.post);
+    worker.cloudWrite('note:b', title: 'Cloud edit', body: 'Version two, from the cloud.');
+    await brain.remember(id: 'note:b', kind: 'note', region: 'Learned Knowledge', body: 'Version two, from the phone.');
+    worker.sensitive.add('mem:secret');
+    await brain.remember(id: 'mem:secret', kind: 'memory', region: 'Personal Memory', body: 'Something the Worker refuses.');
+    final receipt = await brain.sync('https://che.example', const {}, get: worker.get, post: worker.post);
+    expect(receipt.conflicts, 1);
+    expect(receipt.rejected, 1);
+    expect(brain.pendingOps, 0);
+    expect(brain.conflicts.length, 1);
+    expect(brain.conflicts.first.local['body'], 'Version two, from the phone.');
+    expect(brain.conflicts.first.server['body'], 'Version two, from the cloud.');
+    expect(brain.get('note:b')!.excerpt, 'Version two, from the cloud.', reason: 'the stored copy is current until the owner decides');
+    expect(brain.get('mem:secret')!.syncNote, startsWith('rejected'));
+    expect(brain.get('mem:secret')!.excerpt, 'Something the Worker refuses.');
+    expect(receipt.speech(), contains('conflict'));
+
+    await brain.resolveConflict(brain.conflicts.first.id, keepLocal: true);
+    expect(brain.conflicts, isEmpty);
+    expect(brain.pendingOps, 1, reason: 'keeping the local copy re-queues it on top of the cloud revision');
+    final after = await brain.sync('https://che.example', const {}, get: worker.get, post: worker.post);
+    expect(after.conflicts, 0);
+    expect(worker.records['note:b']!['body'], 'Version two, from the phone.');
+  });
+
+  test('E: pull pages through many changes, an interrupted pull resumes from its cursor, and long bodies live in files', () async {
+    final dir = await freshDir();
+    final worker = FakeWorker();
+    for (var i = 0; i < 1203; i += 1) {
+      worker.cloudWrite('note:$i', title: 'Note $i', body: i == 7 ? 'Long body. ' * 400 : 'Body of note $i about topic ${i % 13}.');
+    }
+    final brain = CheBrainReplica(directory: dir);
+    var calls = 0;
+    Future<({int status, String body})> flaky(Uri uri, Map<String, String> h) async {
+      calls += 1;
+      if (calls == 2) return (status: 500, body: 'cut off');
+      return worker.get(uri, h);
+    }
+    final first = await brain.sync('https://che.example', const {}, get: flaky, post: worker.post);
+    expect(first.ok, isFalse);
+    expect(first.pulled, 500);
+    expect(brain.since, 500);
+    final second = await brain.sync('https://che.example', const {}, get: flaky, post: worker.post);
+    expect(second.ok, isTrue);
+    expect(second.pulled, 703);
+    expect(brain.count, 1203);
+    expect(second.digestMatch, isTrue);
+    final long = brain.get('note:7')!;
+    expect(long.inlineBody, isFalse);
+    expect(long.excerpt.length, 600);
+    expect((await brain.bodyOf('note:7')).length, 'Long body. '.length * 400);
+    expect(brain.list(region: 'Learned Knowledge', limit: 5).length, 5);
+    final reopened = CheBrainReplica(directory: dir);
+    await reopened.load();
+    expect(reopened.count, 1203);
+    expect(reopened.since, brain.since);
+  });
+
+  test('F: a queued offline request is a task record that says it did not run', () async {
+    final brain = CheBrainReplica(directory: await freshDir());
+    final queued = await brain.queueRemoteRequest('send the report to Claude');
+    expect(queued.region, 'Active and Historical Tasks');
+    expect(queued.path, 'Queued offline');
+    expect(queued.excerpt, startsWith('Queued, not run'));
+    expect(queued.verification, 'unknown');
+    expect(brain.status()['pending_ops'], 1);
+  });
+
+  test('G: scale on the VM: 10k records load, search and digest in bounded time (not iPhone proof)', () async {
+    final dir = await freshDir();
+    final worker = FakeWorker();
+    final n = int.tryParse(Platform.environment['CHE_BRAIN_SCALE'] ?? '') ?? 10000;
+    for (var i = 0; i < n; i += 1) {
+      worker.cloudWrite('note:$i', title: 'Record $i', body: 'Topic ${i % 97} detail ${i % 11} word${i % 7}.');
+    }
+    final brain = CheBrainReplica(directory: dir);
+    final watch = Stopwatch()..start();
+    final receipt = await brain.sync('https://che.example', const {}, get: worker.get, post: worker.post);
+    final syncMs = watch.elapsedMilliseconds;
+    expect(receipt.pulled, n);
+    expect(receipt.digestMatch, isTrue);
+    watch.reset();
+    final hits = brain.search('topic 42 detail 3');
+    final searchMs = watch.elapsedMilliseconds;
+    expect(hits, isNotEmpty);
+    watch.reset();
+    await brain.compact();
+    final reopened = CheBrainReplica(directory: dir);
+    await reopened.load();
+    final loadMs = watch.elapsedMilliseconds;
+    expect(reopened.count, n);
+    // Printed so the numbers are in the test log; the limits only catch a pathological slowdown.
+    // ignore: avoid_print
+    print('brain replica scale n=$n sync=${syncMs}ms search=${searchMs}ms load=${loadMs}ms');
+    expect(searchMs, lessThan(2000));
+    expect(loadMs, lessThan(30000));
+  }, timeout: const Timeout(Duration(minutes: 5)));
+}

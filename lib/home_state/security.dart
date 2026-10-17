@@ -398,6 +398,7 @@ extension _CheHomeSecurity on _CHEHomeState {
 
       // Keep the phone's copy of CHE's library current for offline recall.
       unawaited(_offlineLibrary.sync(cheAgentBaseUrl, _authHeaders));
+      unawaited(_syncBrainReplica());
       unawaited(_refreshMailboxBadge());
 
       final data = jsonDecode(response.body);
@@ -570,6 +571,8 @@ extension _CheHomeSecurity on _CHEHomeState {
 
       if (mounted) _set(() {});
     } catch (_) {
+      // Offline: the Brain replica still holds every synced memory and conversation.
+      await _hydrateFromBrainReplica();
       if (!silent && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(

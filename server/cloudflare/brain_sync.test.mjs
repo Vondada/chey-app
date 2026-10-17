@@ -1,0 +1,184 @@
+// The Brain through the Worker: the phone's sync endpoints, the owner gate, and the
+// hooks that keep the state blob, the chat and the Brain telling one story.
+import assert from 'node:assert/strict';
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import test from 'node:test';
+import { fnv1a32 } from './brain_store.js';
+
+const generated = new URL('./.brain_sync.test.generated.mjs', import.meta.url);
+writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
+  "import { DurableObject } from 'cloudflare:workers';",
+  'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }',
+));
+let mod;
+try { mod = await import(generated.href + '?t=' + Date.now()); } finally { try { unlinkSync(generated); } catch (_) {} }
+const { default: worker, CheState } = mod;
+
+globalThis.fetch = async (input) => {
+  throw new TypeError(`fetch failed (brain_sync tests are offline: ${new URL(String(input?.url || input)).host})`);
+};
+
+async function sqlFor() {
+  let DatabaseSync;
+  try { ({ DatabaseSync } = await import('node:sqlite')); } catch (_) { return null; }
+  const db = new DatabaseSync(':memory:');
+  return { exec: (q, ...p) => {
+    const stmt = db.prepare(q);
+    return /^\s*SELECT/i.test(q) ? stmt.all(...p) : (stmt.run(...p), []);
+  } };
+}
+
+function storageFor(saved, sql) {
+  return {
+    sql,
+    get: async (key) => (saved.has(key) ? structuredClone(saved.get(key)) : undefined),
+    put: async (key, value) => {
+      if (typeof key === 'object') { for (const [k, v] of Object.entries(key)) saved.set(k, structuredClone(v)); return; }
+      saved.set(key, structuredClone(value));
+    },
+    delete: async (key) => saved.delete(key),
+    list: async ({ prefix = '', reverse = false, limit, startAfter } = {}) => {
+      let keys = [...saved.keys()].filter((k) => k.startsWith(prefix) && (!startAfter || k > startAfter)).sort();
+      if (reverse) keys.reverse();
+      if (limit) keys = keys.slice(0, limit);
+      return new Map(keys.map((k) => [k, structuredClone(saved.get(k))]));
+    },
+    setAlarm: async () => {},
+    deleteAlarm: async () => {},
+  };
+}
+
+async function owner({ saved = new Map(), model = () => 'Understood, sir.' } = {}) {
+  const sql = await sqlFor();
+  if (!sql) return null;
+  const waits = [];
+  const env = {
+    CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1',
+    AI: { run: async (_model, input) => ({ response: model(input) }) },
+  };
+  const state = new CheState({ storage: storageFor(saved, sql), waitUntil: (p) => waits.push(p) }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const call = (path, { method = 'GET', body, token = '' } = {}) => worker.fetch(new Request(`https://che.example${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  }), env);
+  const token = (await (await call('/api/pair', { method: 'POST', body: { code: '123456' } })).json()).device_token;
+  const settle = async () => { while (waits.length) await Promise.allSettled(waits.splice(0)); };
+  return { call, token, saved, settle };
+}
+
+test('the Brain endpoints are the owner’s only', async (t) => {
+  const che = await owner();
+  if (!che) return t.skip('node:sqlite unavailable');
+  for (const path of ['/api/brain/status', '/api/brain/changes', '/api/brain/folders', '/api/brain/search?q=x', '/api/brain/conflicts']) {
+    assert.equal((await che.call(path)).status, 401, `${path} without a paired device`);
+  }
+  assert.equal((await che.call('/api/brain/push', { method: 'POST', body: { ops: [] } })).status, 401);
+  const status = await (await che.call('/api/brain/status', { token: che.token })).json();
+  assert.equal(status.available, true);
+  assert.equal(status.records, 0);
+  assert.equal(status.regions.length, 16);
+});
+
+test('a memory saved on the phone is pushed once, joins CHE’s memory list with the same id, and comes back through /changes', async (t) => {
+  const che = await owner();
+  if (!che) return t.skip('node:sqlite unavailable');
+  const op = { op_id: 'phone-1', type: 'put', record: {
+    id: 'mem:11111111-1111-4111-8111-111111111111', kind: 'memory', region: 'Personal Memory', path: 'Family',
+    title: 'Sister', body: 'My sister is called Ana.', verification: 'owner_attested', source: { kind: 'memory_record' },
+  } };
+  const pushed = await (await che.call('/api/brain/push', { method: 'POST', token: che.token, body: { ops: [op], device: 'iphone' } })).json();
+  assert.equal(pushed.results[0].outcome, 'created');
+  assert.equal(pushed.results[0].rev, 1);
+  assert.equal(pushed.digest.count, 1);
+  const state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.ok(state.memories.includes('My sister is called Ana.'), 'the owner memory list has it');
+  assert.equal(state.memory_records.find((r) => r.text === 'My sister is called Ana.').id, '11111111-1111-4111-8111-111111111111');
+  assert.equal(state.memory_records[0].verification_status, 'owner_attested');
+
+  const replay = await (await che.call('/api/brain/push', { method: 'POST', token: che.token, body: { ops: [op] } })).json();
+  assert.equal(replay.results[0].outcome, 'duplicate', 'the same op twice changes nothing');
+  assert.equal((await (await che.call('/api/state', { token: che.token })).json()).memories.length, 1);
+
+  const changes = await (await che.call('/api/brain/changes?since=0', { token: che.token })).json();
+  const mine = changes.records.find((r) => r.id === op.record.id);
+  assert.ok(mine);
+  assert.equal(mine.body, 'My sister is called Ana.');
+  assert.equal(mine.verification, 'owner_attested');
+  assert.equal(mine.deleted, false);
+  assert.equal(changes.digest.count, changes.records.length);
+  // The projection of the state blob did not rewrite the phone's record into a conflict.
+  const conflicts = await (await che.call('/api/brain/conflicts', { token: che.token })).json();
+  assert.equal(conflicts.conflicts.length, 0);
+});
+
+test('deleting a memory on the Memory screen leaves a tombstone every replica receives, and clear tombstones them all', async (t) => {
+  const che = await owner();
+  if (!che) return t.skip('node:sqlite unavailable');
+  for (const text of ['The owner’s car is blue.', 'The owner’s dog is Rex.']) {
+    assert.equal((await che.call('/api/memory/add', { method: 'POST', token: che.token, body: { memory: text } })).status, 200);
+  }
+  const before = await (await che.call('/api/brain/changes?since=0', { token: che.token })).json();
+  const car = before.records.find((r) => r.body === 'The owner’s car is blue.');
+  assert.ok(car, 'the state blob memory was projected into the Brain');
+  assert.equal(car.region, 'Personal Memory');
+  assert.equal(car.verification, 'owner_attested');
+  const state = await (await che.call('/api/state', { token: che.token })).json();
+  const index = state.memories.indexOf('The owner’s car is blue.');
+  assert.equal((await che.call('/api/memory/delete', { method: 'POST', token: che.token, body: { index } })).status, 200);
+  const after = await (await che.call(`/api/brain/changes?since=${before.next}`, { token: che.token })).json();
+  const tomb = after.records.find((r) => r.id === car.id);
+  assert.ok(tomb, 'the deletion is a change the phone pulls');
+  assert.equal(tomb.deleted, true);
+  assert.equal(tomb.body, '');
+  assert.equal((await che.call('/api/memory/clear', { method: 'POST', token: che.token, body: {} })).status, 200);
+  const status = await (await che.call('/api/brain/status', { token: che.token })).json();
+  assert.equal(status.by_kind.memory ?? 0, 0, 'no live memory records after clear');
+  assert.ok(status.tombstones >= 2);
+  const search = await (await che.call('/api/brain/search?q=dog%20rex', { token: che.token })).json();
+  assert.equal(search.hits.length, 0, 'a deleted memory is not searchable');
+});
+
+test('an owner chat exchange is kept word for word in Conversations and Corrections, with the same id as its brainmem record', async (t) => {
+  const che = await owner({ model: () => 'We decided the lighthouse script ends with Maya keeping the key, sir, and the epilogue with Jonah was cut.' });
+  if (!che) return t.skip('node:sqlite unavailable');
+  const res = await che.call('/api/chat', { method: 'POST', token: che.token, body: { message: 'What did we decide about the lighthouse script ending?', history: [] } });
+  assert.equal(res.status, 200);
+  await res.text();
+  await che.settle();
+  const legacy = await (await che.call('/api/brain/memories', { token: che.token })).json();
+  assert.equal(legacy.memories.length, 1);
+  const status = await (await che.call('/api/brain/status', { token: che.token })).json();
+  assert.equal(status.by_kind.conversation, 1);
+  const record = await (await che.call(`/api/brain/record?id=conv:${legacy.memories[0].id}`, { token: che.token })).json();
+  assert.equal(record.region, 'Conversations and Corrections');
+  assert.match(record.body, /You said: What did we decide about the lighthouse script ending\?/);
+  assert.match(record.body, /epilogue with Jonah was cut\./, 'the whole answer, not the first sentences');
+  assert.equal(record.source.full_text, true);
+  const hits = await (await che.call('/api/brain/search?q=lighthouse%20script%20ending', { token: che.token })).json();
+  assert.equal(hits.hits[0].id, record.id);
+  const folders = await (await che.call('/api/brain/folders', { token: che.token })).json();
+  assert.equal(folders.regions.find((r) => r.region === 'Conversations and Corrections').count, 1);
+});
+
+test('a concurrent edit from the phone is kept as a conflict, never dropped, and the owner can pick a side', async (t) => {
+  const che = await owner();
+  if (!che) return t.skip('node:sqlite unavailable');
+  const record = { id: 'note:x', kind: 'note', region: 'Learned Knowledge', path: 'Notes', title: 'Boiler', body: 'The boiler service is every October.', verification: 'owner_attested' };
+  await che.call('/api/brain/push', { method: 'POST', token: che.token, body: { ops: [{ op_id: 'a', type: 'put', record }] } });
+  await che.call('/api/brain/record', { method: 'POST', token: che.token, body: { record: { ...record, body: 'The boiler service is every November.' }, base_rev: 1 } });
+  const pushed = await (await che.call('/api/brain/push', { method: 'POST', token: che.token, body: { ops: [{ op_id: 'b', type: 'put', record: { ...record, body: 'The boiler service is every September.' }, base_rev: 1 }] } })).json();
+  assert.equal(pushed.results[0].outcome, 'conflict');
+  assert.equal(pushed.results[0].record.body, 'The boiler service is every November.', 'the phone learns the stored copy');
+  const open = await (await che.call('/api/brain/conflicts', { token: che.token })).json();
+  assert.equal(open.conflicts.length, 1);
+  assert.equal(open.conflicts[0].incoming.body, 'The boiler service is every September.');
+  const resolved = await (await che.call('/api/brain/conflicts/resolve', { method: 'POST', token: che.token, body: { id: open.conflicts[0].id, choice: 'incoming' } })).json();
+  assert.equal(resolved.ok, true);
+  const now = await (await che.call('/api/brain/record?id=note:x', { token: che.token })).json();
+  assert.equal(now.body, 'The boiler service is every September.');
+  assert.equal(now.rev, 3);
+  const digest = (await (await che.call('/api/brain/status', { token: che.token })).json()).digest;
+  assert.equal(digest.sum, fnv1a32('note:x:3'), 'one record, so the digest is its own id:rev hash');
+});

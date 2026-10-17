@@ -86,7 +86,8 @@ export function addOwnerMemory(data, text, opts = {}) {
     ? Math.max(0, Math.min(1, Number(opts.confidence)))
     : 1;
   const record = {
-    id: cryptoRandomId(),
+    // A memory first saved on the phone keeps the id its Brain record already has.
+    id: clip(opts.id, 80) || cryptoRandomId(),
     text: memory,
     title: clip(opts.title || memory, 160),
     category: clip(opts.category || 'Memory', 60) || 'Memory',

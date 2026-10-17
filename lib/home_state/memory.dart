@@ -8,11 +8,20 @@ extension _CheHomeMemory on _CHEHomeState {
     final clean = memory.trim();
     if (clean.isEmpty) return;
 
-    final response = await http.post(
-      Uri.parse('$cheAgentBaseUrl/api/memory/add'),
-      headers: _authHeaders,
-      body: jsonEncode({'memory': clean}),
-    );
+    http.Response response;
+    try {
+      response = await http.post(
+        Uri.parse('$cheAgentBaseUrl/api/memory/add'),
+        headers: _authHeaders,
+        body: jsonEncode({'memory': clean}),
+      );
+    } catch (_) {
+      // No connection: the memory is kept in the Brain replica on the phone and
+      // reaches the cloud at the next sync. It is never dropped.
+      await _brainReplica.remember(kind: 'memory', region: 'Personal Memory', path: 'Memory', body: clean, source: {'kind': 'memory_record'});
+      if (mounted) _set(() {});
+      return;
+    }
 
     if (response.statusCode == 401) {
       await _clearSecuritySession();
@@ -20,6 +29,89 @@ extension _CheHomeMemory on _CHEHomeState {
     }
 
     await _loadAgentState(silent: true);
+  }
+
+  // ── Brain replica (lib/memory/che_brain_replica.dart) ──────────────────────
+
+  Future<({int status, String body})> _brainGet(Uri uri, Map<String, String> headers) async {
+    final res = await http.get(uri, headers: headers).timeout(const Duration(seconds: 30));
+    return (status: res.statusCode, body: res.body);
+  }
+
+  Future<({int status, String body})> _brainPost(Uri uri, Map<String, String> headers, String body) async {
+    final res = await http.post(uri, headers: headers, body: body).timeout(const Duration(seconds: 30));
+    return (status: res.statusCode, body: res.body);
+  }
+
+  /// Push the phone's changes, pull the cloud's, compare digests. Quiet: the
+  /// receipt is shown in the Brain tab, never spoken on its own.
+  Future<CheBrainSyncReceipt?> _syncBrainReplica() async {
+    if (_deviceToken == null || _deviceToken!.isEmpty || _brainSyncing) return null;
+    _brainSyncing = true;
+    try {
+      final receipt = await _brainReplica.sync(cheAgentBaseUrl, _authHeaders, get: _brainGet, post: _brainPost);
+      if (mounted) _set(() {});
+      return receipt;
+    } catch (_) {
+      return null;
+    } finally {
+      _brainSyncing = false;
+    }
+  }
+
+  /// When the cloud cannot be reached, the lists the rooms read come from the replica.
+  Future<void> _hydrateFromBrainReplica() async {
+    try {
+      await _brainReplica.load();
+    } catch (_) {
+      return;
+    }
+    if (memoryRecords.isEmpty) {
+      memoryRecords = _brainReplica.list(region: 'Personal Memory', limit: 2000).map((r) => {
+        'id': r.id.startsWith('mem:') ? r.id.substring(4) : r.id, 'text': r.excerpt, 'title': r.title, 'category': r.path.isEmpty ? 'Memory' : r.path,
+        'source': '${r.source['legacy_source'] ?? r.source['kind'] ?? 'brain'}', 'verification_status': r.verification,
+        'created_at': r.createdAt, 'active': r.source['active'] != false, 'scope': '${r.source['scope'] ?? 'owner'}',
+      }).toList();
+      savedMemories = memoryRecords.map((r) => '${r['text']}').toList();
+    }
+    if (conversationMemories.isEmpty) {
+      conversationMemories = _brainReplica.list(region: 'Conversations and Corrections', limit: 2000).map((r) => {
+        'id': r.id.startsWith('conv:') ? r.id.substring(5) : r.id, 'at': r.createdAt, 'title': r.title, 'body': r.excerpt,
+        'links': [for (final l in r.links) if ('${l['to']}'.startsWith('conv:')) '${l['to']}'.substring(5)],
+      }).toList();
+    }
+    if (mounted) _set(() {});
+  }
+
+  /// Replica records for the Brain room. Loaded once; before that the list is empty, never invented.
+  List<Map<String, dynamic>> _brainReplicaRecords() {
+    unawaited(_brainReplica.load());
+    return _brainReplica.records.map((r) => r.toJson()).toList();
+  }
+
+  /// Recall for the offline answer: the records that share the most words with the question, labeled.
+  Future<List<String>> _brainReplicaContext(String message) async {
+    try {
+      await _brainReplica.load();
+      return _brainReplica.search(message, limit: 4).map((r) => 'BRAIN (${r.region}; ${r.verification.replaceAll('_', ' ')}): ${r.title} — ${r.excerpt}').toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// One quiet caption for the Brain tab: real counts and the last sync receipt.
+  String _brainReplicaLine() {
+    final receipt = _brainReplica.lastReceipt;
+    final pending = _brainReplica.pendingOps;
+    final count = _brainReplica.count;
+    final sync = receipt == null
+        ? 'not synced yet'
+        : !receipt.ok
+            ? 'last sync failed, nothing lost'
+            : receipt.digestChecked
+                ? (receipt.digestMatch ? 'in step with the cloud' : 'catching up with the cloud')
+                : 'synced';
+    return 'Brain on this phone: $count record${count == 1 ? '' : 's'} · $sync${pending > 0 ? ' · $pending waiting to send' : ''}';
   }
 
   Future<void> deleteMemory(int index) async {

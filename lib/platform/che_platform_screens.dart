@@ -639,10 +639,13 @@ const ColorFilter cheInvertColors = ColorFilter.matrix(<double>[
 ]);
 
 class CheOfflineBrainPanel extends StatefulWidget {
-  const CheOfflineBrainPanel({super.key, this.health, this.compact = false});
+  const CheOfflineBrainPanel({super.key, this.health, this.compact = false, this.replicaLine});
 
   /// One status line (shown above the inverted brain) instead of the page.
   final bool compact;
+
+  /// Real counts from the Brain replica on the phone, when the caller has them.
+  final String? replicaLine;
 
   final CheLocalBrainHealth? health;
 
@@ -694,23 +697,34 @@ class _CheOfflineBrainPanelState extends State<CheOfflineBrainPanel> {
   Widget build(BuildContext context) {
     final model = cheDefaultLocalBrainModel;
     final health = _health;
-    final label = _loading
+    final replica = widget.replicaLine;
+    final label = (_loading
         ? 'Checking CHE Brain Offline.'
-        : 'CHE Brain — Offline. ${model.modelId}. Status ${health?.status ?? 'unknown'}. ${health?.detail ?? ''}';
+        : 'CHE Brain — Offline. ${model.modelId}. Status ${health?.status ?? 'unknown'}. ${health?.detail ?? ''}')
+        + (replica == null ? '' : ' $replica.');
     if (widget.compact) {
+      final captionStyle = CheType.caption.copyWith(color: CheColors.textDim);
       return Semantics(
         container: true,
         label: label,
         excludeSemantics: true,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 2, 16, 4),
-          child: Text(
-            _loading
-                ? 'Checking the on-device brain…'
-                : 'On-device ${model.modelId} · ${health?.status ?? 'unknown'}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: CheType.caption.copyWith(color: CheColors.textDim),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _loading
+                    ? 'Checking the on-device brain…'
+                    : 'On-device ${model.modelId} · ${health?.status ?? 'unknown'}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: captionStyle,
+              ),
+              if (replica != null)
+                Text(replica, maxLines: 1, overflow: TextOverflow.ellipsis, style: captionStyle),
+            ],
           ),
         ),
       );

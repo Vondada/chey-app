@@ -96,6 +96,7 @@ import 'local_server/activity_local.dart';
 import 'plugins/che_plugin_webapp.dart';
 import 'mailbox/che_mailbox_screen.dart';
 import 'memory/che_offline_library.dart';
+import 'memory/che_brain_replica.dart';
 import 'memory/che_knowledge_cache.dart';
 import 'self_update/che_patch_banner.dart';
 import 'self_update/che_update_screen.dart';
@@ -745,6 +746,9 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   // Offline library: word-for-word copies of memorized texts, on the phone.
   final CheOfflineLibrary _offlineLibrary = CheOfflineLibrary();
+  // The phone's replica of CHE's one Brain: offline recall, local writes, sync.
+  final CheBrainReplica _brainReplica = CheBrainReplica();
+  bool _brainSyncing = false;
   final CheKnowledgeCache _knowledge = CheKnowledgeCache();
 
   // Self-development: approved che-update proposals become pull requests.
@@ -1839,6 +1843,7 @@ OWNER AGENCY
                 brainLinks: brainLinks,
                 suggestions: suggestions,
                 conversationMemories: conversationMemories,
+                brainRecords: _brainReplicaRecords(),
               ),
               brainLinks: brainLinks,
               onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
