@@ -210,6 +210,7 @@ function githubFeatures(facts, found, architecture, documented, limitations) {
   limitations.push('Only public files at this commit were read; nothing was built or run.');
   if (facts.tree_truncated) limitations.push('The file tree was too large to list in full, so some files were not considered.');
   limitations.push(`Read ${facts.reads} files directly (manifests, README and navigation files). Other files are known only by name.`);
+  if (facts.unread?.length) limitations.push(`${facts.unread.length} file${facts.unread.length === 1 ? '' : 's'} could not be read, so ${facts.unread.length === 1 ? 'it adds' : 'they add'} nothing: ${facts.unread.join(', ')}.`);
 }
 
 const FRAMEWORKS = [

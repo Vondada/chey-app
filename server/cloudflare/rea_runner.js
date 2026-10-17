@@ -63,6 +63,7 @@ const BUILD_NAMED = /\b(?:add|build|implement)\b\s+(?:the\s+|that\s+)?([\w\s-]{3
 const RECALL = /\bremember (?:that|the) (?:app|website|site|repo(?:sitory)?|package|project)\b[\s\S]{0,40}\b(?:we|you) (?:looked at|investigated|studied|checked|analy[sz]ed|researched)\b/i;
 const PRONOUN_TARGET = /\b(?:this|that|the) (?:app|application|website|site|web ?app|repo(?:sitory)?|project|software|tool)\b/i;
 const NOT_REA = /\b(?:seo|audit|summari[sz]e|remember (?:this|that) (?:page|link)|save (?:this|that)|memori[sz]e|my (?:website|site|app)|your (?:own )?(?:code|app|website|repo))\b/i;
+const NO_CODE_CHANGE = /\b(?:do\s+not|don['’]t|never|without)\s+(?:modify\w*|chang\w*|touch\w*|edit\w*|writ\w*|open\w*)\s+(?:your|the|any|a)?\s*(?:code|pull request|pr)\b|\b(?:chat|conversation)[- ]only\b|\banswer (?:only )?in (?:this )?chat\b/i;
 const OWN_AREAS = /^(?:office|workshop|command center|commands?|brain|mailbox|connections?|trading(?: desk)?|studio|che|chey|keys|settings)$/i;
 
 // `REA inspect: npm:semver@7.7.2`, `REA rebuild: a copy of the search box`, `REA status`.
@@ -762,7 +763,7 @@ async function buildInvestigation(storage, env, inv, { build, owner, wanted, now
 }
 
 // Returns null for any message that is not a REA request, so the caller carries on unchanged.
-export async function handleReaRequest(storage, env, message, { fetcher = fetch, now = Date.now(), random, history = [], build = null, jobLookup = null, remember = null, owner = true } = {}) {
+export async function handleReaRequest(storage, env, message, { fetcher = fetch, now = Date.now(), random, history = [], build = null, jobLookup = null, remember = null, owner = true, codingBlocked = false } = {}) {
   const request = parseReaRequest(message, { history });
   if (!request) return null;
   const jobs = await refreshReaJobs(storage, env, now, fetcher);
@@ -854,6 +855,9 @@ export async function handleReaRequest(storage, env, message, { fetcher = fetch,
   if (request.command === 'build') {
     const wanted = (request.input.replace(/rea-[0-9a-f]{8}/, '').match(/\bf\d{1,2}\b/g)) || (request.input.replace(/rea-[0-9a-f]{8}/, '').trim() ? [request.input.replace(/rea-[0-9a-f]{8}/, '').trim()] : []);
     if (request.followup && wanted.length && !pickFeatures(inv.features, wanted).length) return null;
+    if (codingBlocked || NO_CODE_CHANGE.test(message)) {
+      return { ok: false, investigation_id: inv.id, text: `You asked me not to change code or open a pull request in this message, so I did not start a build from investigation ${inv.id}. Nothing was changed. Say "build those features into yourself" on its own when you want it built.` };
+    }
     const result = await buildInvestigation(storage, env, inv, { build, owner, wanted, now });
     await rememberInvestigation(remember, inv);
     return { ...result, investigation_id: inv.id };

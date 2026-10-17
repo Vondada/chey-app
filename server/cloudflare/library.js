@@ -162,7 +162,8 @@ const MAX_READABLE_BYTES = 2_000_000;
 // One public page, raw. Redirects are followed by hand so every hop is checked
 // again; a declared oversize page is refused unread and any other body is read
 // as a stream and cut at the cap, so it is never buffered whole.
-export async function fetchPublicPage(url, fetcher = fetch, { maxBytes = MAX_READABLE_BYTES, userAgent = 'Mozilla/5.0 (CHE Library)' } = {}) {
+// `beforeFetch(url)` may refuse a hop (for example by robots.txt) before it is requested.
+export async function fetchPublicPage(url, fetcher = fetch, { maxBytes = MAX_READABLE_BYTES, userAgent = 'Mozilla/5.0 (CHE Library)', beforeFetch = null } = {}) {
   let parsed;
   try { parsed = new URL(url); } catch (_) { return { error: 'That link is not valid.' }; }
   if (!/^https?:$/.test(parsed.protocol)) return { error: 'Only web links can be read.' };
@@ -170,6 +171,10 @@ export async function fetchPublicPage(url, fetcher = fetch, { maxBytes = MAX_REA
   let response;
   for (let hop = 0; ; hop++) {
     if (!readablePublicUrl(current)) return { error: 'Only public web pages can be read.' };
+    if (beforeFetch && hop > 0) {
+      const allowed = await beforeFetch(current);
+      if (allowed && allowed.allowed === false) return { error: allowed.reason || 'That page may not be read.', refused: true };
+    }
     response = await fetcher(current, { headers: { 'User-Agent': userAgent }, redirect: 'manual' });
     if (![301, 302, 303, 307, 308].includes(response.status)) break;
     const next = response.headers?.get?.('location');

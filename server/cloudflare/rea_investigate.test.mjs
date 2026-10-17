@@ -10,6 +10,7 @@ import {
 } from './rea_runner.js';
 import { identifyTarget } from './rea_targets.js';
 import { REA_WEB_PIN } from './rea_web_evidence.js';
+import { commandById, commandStatus, connectorStatus } from './command_catalog.js';
 
 const T0 = Date.UTC(2026, 9, 17, 9, 0, 0);
 const ENV = { CHE_GITHUB_TOKEN: 'test-token', CHE_GITHUB_REPO: 'Vondada/chey-app' };
@@ -78,14 +79,14 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), { status
 // One fake internet. `opts` turns on failures for the recovery tests.
 function world(opts = {}) {
   const calls = [];
-  const state = { sha: opts.sha || SHA, metaStatus: opts.metaStatus || 200, records: opts.records || {}, robots: opts.robots ?? 'User-agent: *\nAllow: /\n', html: opts.html ?? HTML, codeSearchStatus: opts.codeSearchStatus || 200, cheTreeStatus: opts.cheTreeStatus || 200, prs: opts.prs || {} };
+  const state = { sha: opts.sha || SHA, metaStatus: opts.metaStatus || 200, treeStatus: opts.treeStatus || 200, records: opts.records || {}, robots: opts.robots ?? 'User-agent: *\nAllow: /\n', html: opts.html ?? HTML, codeSearchStatus: opts.codeSearchStatus || 200, cheTreeStatus: opts.cheTreeStatus || 200, prs: opts.prs || {} };
   const fetcher = async (url, init = {}) => {
     const u = String(url);
     const method = String(init.method || 'GET').toUpperCase();
     calls.push({ url: u, method, body: init.body ? JSON.parse(init.body) : null });
     if (u === 'https://api.github.com/repos/acme/sketchpad') return state.metaStatus === 200 ? json({ full_name: 'acme/sketchpad', private: false, default_branch: 'main', license: { spdx_id: 'MIT', name: 'MIT License' }, description: 'Notes and sketches', stargazers_count: 4200, topics: ['notes'], homepage: 'https://sketchpad.example.org' }) : json({ message: 'unavailable' }, state.metaStatus);
     if (u.startsWith('https://api.github.com/repos/acme/sketchpad/commits/')) return json({ sha: state.sha });
-    if (u.startsWith('https://api.github.com/repos/acme/sketchpad/git/trees/')) return json({ sha: state.sha, tree: TREE.map((path) => ({ path, type: 'blob' })) });
+    if (u.startsWith('https://api.github.com/repos/acme/sketchpad/git/trees/')) return state.treeStatus === 200 ? json({ sha: state.sha, tree: TREE.map((path) => ({ path, type: 'blob' })) }) : json({ message: 'API rate limit exceeded' }, state.treeStatus);
     if (u === 'https://api.github.com/repos/acme/sketchpad/languages') return json({ TypeScript: 90000, CSS: 2000 });
     if (u.startsWith('https://api.github.com/search/code') && u.includes('repo%3Aacme%2Fsketchpad')) return json({ items: [{ path: 'src/search/SearchBox.tsx' }] });
     if (u.startsWith('https://raw.githubusercontent.com/acme/sketchpad/')) {
@@ -105,6 +106,9 @@ function world(opts = {}) {
     if (runs) return json({ check_runs: Object.values(state.prs).find((p) => p.pr.head.sha === runs[1])?.checks || [] });
     if (u === 'https://shop.example.com/robots.txt' || u === 'https://walled.example.com/robots.txt') return new Response(state.robots, { status: 200 });
     if (u === 'https://shop.example.com/' || u === 'https://shop.example.com') return new Response(state.html, { status: 200, headers: { 'content-type': 'text/html' } });
+    if (u === 'https://hop.example.com/robots.txt') return new Response('User-agent: *\nAllow: /\n', { status: 200 });
+    if (u === 'https://hop.example.com/') return new Response(null, { status: 301, headers: { location: 'https://private.example.net/app' } });
+    if (u === 'https://private.example.net/robots.txt') return new Response('User-agent: *\nDisallow: /app\n', { status: 200 });
     if (u.startsWith('https://walled.example.com/')) return new Response('<html><head><title>Just a moment...</title></head><body class="cf-chl-"></body></html>', { status: 403, headers: { 'content-type': 'text/html' } });
     if (u.startsWith('https://itunes.apple.com/')) {
       const found = /Chase|1232780281|Notion/.test(u);
@@ -440,4 +444,43 @@ test('a bare "build it into yourself" belongs to an investigation only while it 
   const built = await che.say('Build those approved features into yourself.', { now: T0 + 7 * 3600_000, history: onTopic });
   assert.match(built.text, /Building /);
   assert.equal(che.built.length, 1);
+});
+
+test('Codex #324: a build is never queued when the same message says chat only, no code change or no pull request', async () => {
+  const w = world();
+  const che = cheWith(w);
+  await che.say('Investigate https://github.com/acme/sketchpad');
+  await che.say('REA compare');
+  for (const message of ['Build those features into yourself, but do not modify your code; answer in this chat only.', 'Build those approved features into yourself, but don\'t open a pull request.']) {
+    const reply = await che.say(message);
+    assert.match(reply.text, /did not start a build/, message);
+  }
+  const blocked = await che.say('Build those approved features into yourself.', { codingBlocked: true });
+  assert.match(blocked.text, /did not start a build/);
+  assert.equal(che.built.length, 0);
+});
+
+test('Codex #324: a redirect to another site is read only if that site\'s robots.txt allows it', async () => {
+  const w = world();
+  const reply = await cheWith(w).say('Investigate https://hop.example.com/ and how its features work');
+  assert.match(reply.text, /robots\.txt asks automated readers not to read \/app/);
+  assert.ok(!w.calls.some((c) => c.url === 'https://private.example.net/app'), 'the disallowed page was never requested');
+});
+
+test('Codex #324: an unreadable file tree fails the investigation (retryable) instead of mapping an empty repository', async () => {
+  const w = world({ treeStatus: 403 });
+  const che = cheWith(w);
+  const reply = await che.say('Investigate https://github.com/acme/sketchpad');
+  assert.equal(reply.ok, false);
+  assert.match(reply.text, /GitHub did not list the files of acme\/sketchpad at a{12} \(status 403\)\. Nothing was mapped\. Ask me again/);
+  const { investigations: [inv] } = await reaInvestigations(che.store, ENV, { fetcher: w.fetcher, now: T0 });
+  assert.equal(inv.features.length, 0);
+  assert.equal(inv.state, 'failed');
+});
+
+test('Codex #324: public-target REA commands work without a GitHub connection; the npm path says when it needs one', () => {
+  const bare = connectorStatus({ AI: {} });
+  assert.equal(commandStatus(commandById('rea-inspect'), bare).status, 'available');
+  assert.equal(commandStatus(commandById('rea-compare'), bare).status, 'available');
+  assert.equal(commandStatus(commandById('rea-build'), bare).status, 'setup_required', 'building still needs GitHub');
 });

@@ -7902,7 +7902,13 @@ export class CheState extends DurableObject {
         // a coding job, commit or deploy.
         // Building from an investigation is the one REA step that changes code:
         // it reuses the self-development job (draft PR, never a merge).
-        const rea = await handleReaRequest(this.ctx.storage, this.keyEnv || this.env, message, this.reaOptions({ history: ownerHistory, owner: ownerDevice }));
+        // The turn's own prohibitions ("answer in chat only", "no pull request")
+        // hold for REA builds too, before anything can be queued.
+        const reaPolicy = currentTurnActionPolicy(message);
+        const rea = await handleReaRequest(this.ctx.storage, this.keyEnv || this.env, message, {
+          ...this.reaOptions({ history: ownerHistory, owner: ownerDevice }),
+          codingBlocked: reaPolicy.terminalChatOnly || reaPolicy.restrictions.noPr || reaPolicy.restrictions.noCommitPush,
+        });
         if (rea) {
           return ndjsonReply(rea.text, {
             source: 'che_rea', ok: rea.ok,

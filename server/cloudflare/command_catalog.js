@@ -399,7 +399,8 @@ export const COMMANDS = Object.freeze([
   C('rea-inspect', 'build', 'EXPLORE', 'Investigate an app, website, repository or package (REA).', {
     title: 'REA: investigate',
     does: 'Investigates a public GitHub repository, web page, App Store listing or npm package and maps its features and architecture with citations. Packages run REA 6.5.0 on GitHub Actions. Nothing from the target runs here, and no coding job, commit or deploy starts.',
-    needs: ['github'], route: 'che_rea', handler: 'rea_runner.js (rea_targets.js adapters; REA 6.5.0 for npm in the che-rea-analysis workflow)',
+    // Repositories, pages and listings are public reads; only npm packages need the GitHub runner, and the handler says so.
+    needs: [], optional: ['github'], route: 'che_rea', handler: 'rea_runner.js (rea_targets.js adapters; REA 6.5.0 for npm in the che-rea-analysis workflow)',
     input: { name: 'target', required: true, hint: 'An app name, link, GitHub repository, or npm:name@version' },
     examples: ['REA inspect: https://github.com/excalidraw/excalidraw', 'Investigate the Excalidraw app and tell me how its features work', 'REA inspect: npm:semver@7.7.2'],
     prompt: 'REA inspect: {input}',
@@ -453,7 +454,7 @@ export const COMMANDS = Object.freeze([
   C('rea-compare', 'build', 'EXPLORE', 'Compare investigated software with CHE\'s own code.', {
     title: 'REA: compare with CHE',
     does: 'Checks each feature REA found against CHE\'s live repository and command catalog, says whether CHE has it, partly has it or lacks it, with the files, and recommends the useful gaps.',
-    needs: ['github'], route: 'che_rea', handler: 'rea_runner.js (rea_features.compareWithChe over CHE\'s repository at main)',
+    needs: [], optional: ['github'], route: 'che_rea', handler: 'rea_runner.js (rea_features.compareWithChe over CHE\'s repository at main)',
     input: { name: 'feature', required: false, hint: 'REA job id, or leave empty for the latest investigation' },
     examples: ['REA compare', 'Which of those features could improve your app?'],
     prompt: 'REA compare: {input}',

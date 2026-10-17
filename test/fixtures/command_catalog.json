@@ -1662,10 +1662,10 @@
     "Investigate the Excalidraw app and tell me how its features work",
     "REA inspect: npm:semver@7.7.2"
    ],
-   "needs": [
+   "needs": [],
+   "optional": [
     "github"
    ],
-   "optional": [],
    "handler": "rea_runner.js (rea_targets.js adapters; REA 6.5.0 for npm in the che-rea-analysis workflow)",
    "route": "che_rea",
    "produces": "investigation",
@@ -1681,17 +1681,11 @@
     "npm package",
     "website features"
    ],
-   "status": "setup_required",
-   "missing": [
-    {
-     "id": "github",
-     "label": "GitHub connection",
-     "state": "not_connected",
-     "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets.",
-     "detail": "GitHub is not connected."
-    }
-   ],
-   "optional_missing": []
+   "status": "available",
+   "missing": [],
+   "optional_missing": [
+    "github"
+   ]
   },
   {
    "id": "rea-discover",
@@ -1873,10 +1867,10 @@
     "REA compare",
     "Which of those features could improve your app?"
    ],
-   "needs": [
+   "needs": [],
+   "optional": [
     "github"
    ],
-   "optional": [],
    "handler": "rea_runner.js (rea_features.compareWithChe over CHE's repository at main)",
    "route": "che_rea",
    "produces": "comparison",
@@ -1890,17 +1884,11 @@
     "gap",
     "could improve"
    ],
-   "status": "setup_required",
-   "missing": [
-    {
-     "id": "github",
-     "label": "GitHub connection",
-     "state": "not_connected",
-     "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets.",
-     "detail": "GitHub is not connected."
-    }
-   ],
-   "optional_missing": []
+   "status": "available",
+   "missing": [],
+   "optional_missing": [
+    "github"
+   ]
   },
   {
    "id": "rea-rebuild",

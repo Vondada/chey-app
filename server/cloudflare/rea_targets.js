@@ -250,6 +250,10 @@ export async function inspectGithubRepo(env, fullName, { feature = '' } = {}, fe
     getJson(fetcher, `https://api.github.com/repos/${full}/git/trees/${sha}?recursive=1`, ghHeaders(env)),
     getJson(fetcher, `https://api.github.com/repos/${full}/languages`, ghHeaders(env)),
   ]);
+  // No file list means nothing was read: a retryable failure, never an empty repository.
+  if (!tree.ok || !Array.isArray(tree.data?.tree)) {
+    return { ok: false, status: tree.status, reason: `GitHub did not list the files of ${full} at ${sha.slice(0, 12)} (status ${tree.status || 'none'}). Nothing was mapped.` };
+  }
   const entries = (Array.isArray(tree.data?.tree) ? tree.data.tree : []).filter((e) => e?.type === 'blob').slice(0, MAX_TREE_PATHS);
   const paths = entries.map((e) => String(e.path || '')).filter(Boolean);
   const license = String(meta.data?.license?.spdx_id || '').toLowerCase();
@@ -290,7 +294,8 @@ export async function inspectGithubRepo(env, fullName, { feature = '' } = {}, fe
   const routeFiles = paths.filter((p) => SOURCE.test(p) && ROUTE_FILE.test(p) && !SKIP.test(p) && !TEST_FILE.test(p))
     .sort((a, b) => a.split('/').length - b.split('/').length).slice(0, MAX_SOURCE_READS);
   const texts = await Promise.all([...manifestPaths, ...(readmePath ? [readmePath] : []), ...routeFiles].map(async (path) => [path, await getText(fetcher, rawUrl(full, sha, path))]));
-  facts.reads = texts.length;
+  facts.reads = texts.filter(([, text]) => text).length;
+  facts.unread = texts.filter(([, text]) => !text).map(([path]) => path).slice(0, 10);
   for (const [path, text] of texts) {
     if (!text) continue;
     if (manifestPaths.includes(path)) {
@@ -493,7 +498,15 @@ export async function inspectWebsite(url, fetcher = fetch) {
   if (!readablePublicUrl(url)) return { ok: false, reason: 'Only public web pages can be investigated: no sign-in links, local addresses, raw IP addresses or odd ports.' };
   const robots = await robotsAllows(url, fetcher);
   if (!robots.allowed) return { ok: false, refused: true, reason: robots.reason };
-  const page = await fetchPublicPage(url, fetcher, { maxBytes: MAX_HTML_BYTES, userAgent: 'Mozilla/5.0 (compatible; CHE-REA)' }).catch((error) => ({ error: String(error?.message || error).slice(0, 120) }));
+  // A redirect to another site is read only if that site's robots.txt allows it too.
+  const allowedOrigins = new Map([[new URL(url).origin, robots]]);
+  const beforeFetch = async (next) => {
+    const origin = new URL(next).origin;
+    if (!allowedOrigins.has(origin)) allowedOrigins.set(origin, await robotsAllows(next, fetcher));
+    return allowedOrigins.get(origin);
+  };
+  const page = await fetchPublicPage(url, fetcher, { maxBytes: MAX_HTML_BYTES, userAgent: 'Mozilla/5.0 (compatible; CHE-REA)', beforeFetch }).catch((error) => ({ error: String(error?.message || error).slice(0, 120) }));
+  if (page.refused) return { ok: false, refused: true, reason: page.error };
   if (page.error) {
     const walled = [401, 403, 429, 503].includes(page.status);
     return { ok: false, refused: walled, reason: walled ? `The site answered ${page.status}: it needs a sign-in or blocks automated readers. CHE does not get around sign-ins or bot protection.` : `The page could not be read: ${page.error}` };
