@@ -264,4 +264,20 @@ void main() {
     expect(CheCommandVoice.parse('open investigations')?.op, CheCommandVoiceOp.investigations);
     expect(CheCommandVoice.parse('show me the REA investigations')?.op, CheCommandVoiceOp.investigations);
   });
+
+  test('needs_choice is its own state, and only https choices CHE sent are kept, numbered', () {
+    final i = CheReaInvestigation.fromJson({
+      'id': 'rea-0a1b2c3d', 'state': 'needs_choice', 'target': {'label': 'Doodle', 'kind': 'app_name'},
+      'choices': [
+        {'number': 1, 'label': 'GitHub repository acme/sketchpad', 'url': 'https://github.com/acme/sketchpad'},
+        {'label': 'Second', 'url': 'https://apps.apple.com/us/app/x/id1'},
+        {'number': 3, 'label': 'Bad', 'url': 'http://insecure.example'},
+        {'number': 4, 'label': 'Spaced', 'url': 'https://a b'},
+      ],
+    });
+    expect(i.state, CheReaState.needsChoice);
+    expect(cheReaStateLabel(i.state), 'Needs your choice: no exact match');
+    expect([for (final c in i.choices) '${c.number} ${c.url}'], ['1 https://github.com/acme/sketchpad', '2 https://apps.apple.com/us/app/x/id1']);
+    expect(CheReaInvestigation.fromJson({'id': 'rea-0a1b2c3e', 'state': 'complete'}).choices, isEmpty);
+  });
 }

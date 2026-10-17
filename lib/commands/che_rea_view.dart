@@ -40,6 +40,7 @@ String cheReaSummary(CheReaInvestigation i) {
   return [
     '${i.title}, ${cheReaTargetKindLabel(i.target.kind)}${i.target.version.isEmpty ? '' : ', version ${i.target.version}'}.',
     '${cheReaStateLabel(i.state)}. ${i.stageText}.',
+    if (i.choices.isNotEmpty) '${cheReaChoicesText(i)} Say "choose" and a number, or "number" and a number.',
     i.features.isEmpty ? 'No features mapped yet.' : '${i.features.length} feature${i.features.length == 1 ? '' : 's'} mapped.',
     if (compared) 'Compared with CHE: she has $has, partly has $partial, is missing $missing${unknown > 0 ? ', $unknown unknown' : ''}.'
     else if (i.features.isNotEmpty) 'Not compared with CHE yet.',
@@ -56,6 +57,10 @@ String cheReaSummary(CheReaInvestigation i) {
   ].join(' ');
 }
 
+/// "No source has exactly that name, so CHE did not guess. Choices: 1. …, 2. …."
+String cheReaChoicesText(CheReaInvestigation i) =>
+    'No public source has exactly that name, so CHE did not guess. Choices: ${[for (final c in i.choices) '${c.number}. ${c.label}'].join(', ')}.';
+
 String _short(Object e) {
   final t = e is TimeoutException ? 'CHE did not answer in time' : e.toString();
   return t.length > 240 ? '${t.substring(0, 240)}…' : t;
@@ -68,7 +73,7 @@ Color _stateColor(CheReaState s) => switch (s) {
       CheReaState.complete => CheColors.success,
       CheReaState.running || CheReaState.queued => CheColors.accent,
       CheReaState.failed => CheColors.danger,
-      CheReaState.stalled || CheReaState.limited => CheColors.warning,
+      CheReaState.stalled || CheReaState.limited || CheReaState.needsChoice => CheColors.warning,
       CheReaState.unknown => CheColors.textDim,
     };
 
@@ -593,6 +598,7 @@ class _CheReaInvestigationScreenState extends State<CheReaInvestigationScreen> {
 
   // ── Actions ──────────────────────────────────────────────────────────
 
+  Future<String> _investigateChoice(CheReaChoice c, {bool byVoice = false}) => _send('Investigate ${c.url}', byVoice: byVoice);
   Future<String> _mapFeatures({bool byVoice = false}) => _send('/rea-features ${_inv.id}', byVoice: byVoice);
   Future<String> _compare({bool byVoice = false}) => _send('/rea-compare ${_inv.id}', byVoice: byVoice);
   Future<String> _verify({bool byVoice = false}) => _send('/rea-verify ${_inv.id}', byVoice: byVoice);
@@ -680,6 +686,12 @@ class _CheReaInvestigationScreenState extends State<CheReaInvestigationScreen> {
         return _refreshByVoice();
       case CheReaVoiceOp.pick:
         final n = v.numbers.firstOrNull ?? 0;
+        // While CHE waits for the owner to choose a source, a number picks that source.
+        if (_inv.choices.isNotEmpty) {
+          final c = _inv.choices.where((x) => x.number == n).firstOrNull;
+          if (c == null) return _say('There is no choice $n. ${cheReaChoicesText(_inv)}', ok: false);
+          return _investigateChoice(c, byVoice: true);
+        }
         if (n < 1 || n > _options.length) return _say('There is no option $n. $_optionsText', ok: false);
         return _option(n - 1);
       case CheReaVoiceOp.mapFeatures:
@@ -787,6 +799,7 @@ class _CheReaInvestigationScreenState extends State<CheReaInvestigationScreen> {
                 live: _messageLive,
                 onHide: () => setState(() => _message = ''),
               ),
+            ..._choicesSection(),
             ..._target(),
             ..._stages(),
             ..._sources(),
@@ -1038,6 +1051,35 @@ class _CheReaInvestigationScreenState extends State<CheReaInvestigationScreen> {
             ),
           ),
       ];
+
+  List<Widget> _choicesSection() {
+    final choices = _inv.choices;
+    if (choices.isEmpty) return const [];
+    return [
+      const _Heading('Choose the right one'),
+      Text('No public source has exactly this name, so CHE did not guess. Nothing has been read from these yet.', style: _bodyLarge),
+      const SizedBox(height: 8),
+      for (final c in choices)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Semantics(
+            button: true,
+            label: 'Investigate choice ${c.number}: ${c.label}',
+            excludeSemantics: true,
+            child: SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: () => _investigateChoice(c),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text('${c.number}. ${c.label}', style: _bodyLarge, textAlign: TextAlign.start),
+                ),
+              ),
+            ),
+          ),
+        ),
+    ];
+  }
 
   List<Widget> _planSection() {
     final p = _inv.plan;

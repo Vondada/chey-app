@@ -58,7 +58,7 @@ String cheReaTargetKindLabel(CheReaTargetKind kind) => switch (kind) {
       CheReaTargetKind.unknown => 'unknown kind',
     };
 
-enum CheReaState { queued, running, complete, failed, stalled, limited, unknown }
+enum CheReaState { queued, running, complete, failed, stalled, limited, needsChoice, unknown }
 
 CheReaState cheReaStateFrom(Object? raw) => switch (_lower(raw)) {
       'queued' => CheReaState.queued,
@@ -67,6 +67,7 @@ CheReaState cheReaStateFrom(Object? raw) => switch (_lower(raw)) {
       'failed' => CheReaState.failed,
       'stalled' => CheReaState.stalled,
       'limited' => CheReaState.limited,
+      'needs_choice' => CheReaState.needsChoice,
       _ => CheReaState.unknown,
     };
 
@@ -78,6 +79,8 @@ String cheReaStateLabel(CheReaState state) => switch (state) {
       CheReaState.stalled => 'Stalled',
       // CHE could not inspect it all, and says what else it can do.
       CheReaState.limited => 'Limited: could not inspect everything',
+      // No source had exactly that name; CHE offers the similar ones instead of guessing.
+      CheReaState.needsChoice => 'Needs your choice: no exact match',
       CheReaState.unknown => 'State unknown',
     };
 
@@ -398,6 +401,7 @@ class CheReaInvestigation {
     required this.build,
     required this.verification,
     required this.limitations,
+    this.choices = const [],
   });
 
   final String id;
@@ -423,6 +427,9 @@ class CheReaInvestigation {
   final CheReaBuild? build;
   final CheReaVerification? verification;
   final List<String> limitations;
+
+  /// The sources to choose from when no source had exactly the name (state needsChoice).
+  final List<CheReaChoice> choices;
 
   /// What the target is called, or the id when CHE sent no label.
   String get title => target.label.isNotEmpty ? target.label : (target.url.isNotEmpty ? target.url : id);
@@ -494,7 +501,23 @@ class CheReaInvestigation {
         build: CheReaBuild.fromJson(_map(j['build'])),
         verification: CheReaVerification.fromJson(_map(j['verification'])),
         limitations: _strings(j['limitations']),
+        choices: CheReaChoice.listFrom(j['choices']),
       );
+}
+
+/// One source CHE found with a similar name, numbered as she reads it out.
+/// Only an https link CHE sent is kept: choosing it sends "Investigate <url>".
+class CheReaChoice {
+  const CheReaChoice({required this.number, required this.label, required this.url});
+  final int number;
+  final String label;
+  final String url;
+
+  static List<CheReaChoice> listFrom(Object? v) => [
+        for (final (i, c) in _maps(v).indexed)
+          if (RegExp(r'^https://[^\s]+$').hasMatch(_s(c['url'])))
+            CheReaChoice(number: c['number'] is num ? (c['number'] as num).toInt() : i + 1, label: _s(c['label']), url: _s(c['url'])),
+      ];
 }
 
 /// GET /api/rea/investigations: newest first, with REA's capabilities.

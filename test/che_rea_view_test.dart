@@ -381,4 +381,43 @@ void main() {
     expect(find.text('Example Notes'), findsOneWidget);
     expect(spoken, isEmpty, reason: 'navigating to and through REA pages never speaks');
   });
+
+  testWidgets('no exact match: the numbered choices are shown, read, and chosen by button or by number', (tester) async {
+    final rea = FakeRea()
+      ..first = {
+        ...record(0),
+        'state': 'needs_choice',
+        'stage': 'discover',
+        'features': <Object>[],
+        'comparison': null,
+        'plan': null,
+        'build': null,
+        'verification': null,
+        'choices': [
+          {'number': 1, 'label': 'GitHub repository acme/sketchpad (4200 stars)', 'url': 'https://github.com/acme/sketchpad'},
+          {'number': 2, 'label': 'App Store: Doodle Jump by Lima Sky', 'url': 'https://apps.apple.com/us/app/doodle-jump/id307727765'},
+          {'number': 3, 'label': 'Not a link', 'url': 'javascript:alert(1)'},
+        ],
+      };
+    final chat = FakeChat()..reply = 'REA investigation rea-a0000002 of acme/sketchpad.';
+    final spoken = <String>[];
+    await openDetail(tester, rea: rea, chat: chat, spoken: spoken);
+    expect(find.text('Choose the right one'), findsOneWidget);
+    expect(find.text('Needs your choice: no exact match'), findsWidgets);
+    expect(find.bySemanticsLabel('Investigate choice 1: GitHub repository acme/sketchpad (4200 stars)'), findsOneWidget);
+    expect(find.textContaining('Not a link'), findsNothing, reason: 'only https links CHE sent are offered');
+    expect(spoken, isEmpty, reason: 'opening the page is silent');
+
+    final say = CheReaVoice.handler!;
+    expect(await say("what's on my screen"), contains('Choices: 1. GitHub repository acme/sketchpad (4200 stars), 2. App Store: Doodle Jump by Lima Sky.'));
+    expect(await say('number three'), contains('There is no choice 3.'));
+    expect(chat.sent, isEmpty);
+    expect(await say('number two'), '');
+    await tester.pumpAndSettle();
+    expect(chat.sent.single, ('Investigate https://apps.apple.com/us/app/doodle-jump/id307727765', false));
+
+    await press(tester, '1. GitHub repository acme/sketchpad (4200 stars)');
+    expect(chat.sent.last, ('Investigate https://github.com/acme/sketchpad', false));
+    expect(find.text(chat.reply), findsOneWidget, reason: "CHE's answer is shown large");
+  });
 }
