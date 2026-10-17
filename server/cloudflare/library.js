@@ -6,6 +6,8 @@
 // LIKE fallback, so CHE can answer "what happened when…" from the saved text
 // instead of the internet.
 
+import { readCapped } from './plugin_runtime.js';
+
 const CHUNK_CHARS = 1400;
 const MAX_DOC_CHARS = 3_000_000;
 
@@ -155,7 +157,7 @@ export function readablePublicUrl(url) {
   return !/(?:^|\.)(?:localhost|local|internal|lan|home|arpa|workers\.dev)$/.test(host);
 }
 
-const MAX_READABLE_CHARS = 2_000_000;
+const MAX_READABLE_BYTES = 2_000_000;
 
 export async function fetchReadable(url, fetcher = fetch) {
   let parsed;
@@ -174,7 +176,13 @@ export async function fetchReadable(url, fetcher = fetch) {
   }
   if (!response.ok) return { error: `The page answered ${response.status}.` };
   const type = response.headers?.get?.('content-type') || '';
-  const raw = (await response.text()).slice(0, MAX_READABLE_CHARS);
+  // A declared oversize page is refused unread; any other body is read as a
+  // stream and cancelled at the cap, so it is never buffered whole.
+  if (Number(response.headers?.get?.('content-length') || 0) > MAX_READABLE_BYTES) {
+    response.body?.cancel?.().catch?.(() => {});
+    return { error: 'That page is too large to read.' };
+  }
+  const raw = await readCapped(response, MAX_READABLE_BYTES);
   const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(raw)?.[1]?.trim() || new URL(current).hostname;
   const text = /html/i.test(type) || /<html|<body/i.test(raw) ? htmlToText(raw) : raw;
   return { title: htmlToText(title).slice(0, 200), text };

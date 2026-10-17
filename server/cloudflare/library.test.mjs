@@ -66,3 +66,22 @@ test('a library page read stays on public web hosts, re-checks every redirect an
   assert.ok(asked.includes('https://example.com/page'), 'a public redirect is followed');
   assert.ok(page.text.length <= 2_000_000);
 });
+
+test('a library page is read as a stream and cancelled at 2 MB; a declared oversize page is never read', async () => {
+  const { fetchReadable } = await import('./library.js');
+  let pulled = 0;
+  let cancelled = false;
+  const endless = new ReadableStream({
+    pull(controller) { pulled += 1; controller.enqueue(new TextEncoder().encode('a'.repeat(65536))); },
+    cancel() { cancelled = true; },
+  });
+  const page = await fetchReadable('https://example.com/endless', async () => new Response(endless, { status: 200, headers: { 'content-type': 'text/plain' } }));
+  assert.equal(page.text.length, 2_000_000);
+  assert.equal(cancelled, true, 'the stream was cancelled at the cap');
+  assert.ok(pulled <= 40, `read about 2 MB, not the whole body (${pulled} chunks)`);
+  let bodyRead = false;
+  const big = new ReadableStream({ pull(controller) { bodyRead = true; controller.close(); } }, { highWaterMark: 0 });
+  const refused = await fetchReadable('https://example.com/big', async () => new Response(big, { status: 200, headers: { 'content-length': '50000000' } }));
+  assert.match(refused.error, /too large/);
+  assert.equal(bodyRead, false);
+});
