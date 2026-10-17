@@ -37,3 +37,8 @@ test('external textures and corrupt binary views cannot pass the offline contrac
   assert.throws(() => validateGlb(changedModel((m) => { m.images[0].uri = 'https://example.invalid/texture.png'; })), /Textures must be embedded/);
   assert.throws(() => validateGlb(changedModel((m) => { m.bufferViews[0].byteOffset = m.buffers[0].byteLength; })), /Buffer view exceeds BIN/);
 });
+
+test('a character whose meshes are not in the active scene would render blank, so it fails', () => {
+  assert.throws(() => validateGlb(changedModel((m) => { m.scenes[m.scene ?? 0].nodes = []; })), /active scene has no root nodes/);
+  assert.throws(() => validateGlb(changedModel((m) => { for (const node of m.nodes) delete node.mesh; })), /no triangles/);
+});

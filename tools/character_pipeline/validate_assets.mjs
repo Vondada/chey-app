@@ -52,8 +52,26 @@ export function validateGlb(bytes) {
       assert.ok(sampler && model.accessors?.[sampler.input] && model.accessors?.[sampler.output] && model.nodes?.[channel.target?.node], 'Invalid animation target or sampler');
     }
   }
+  // The viewer attaches only the active scene, so only meshes reachable from
+  // its root nodes are drawn; orphaned meshes would render a blank character.
+  const scene = model.scenes?.[model.scene ?? 0];
+  assert.ok(scene?.nodes?.length > 0, 'The active scene has no root nodes');
+  const reachable = new Set();
+  const seen = new Set();
+  const walk = (index) => {
+    assert.ok(Number.isInteger(index) && model.nodes?.[index], 'Scene refers to a missing node');
+    if (seen.has(index)) return;
+    seen.add(index);
+    const node = model.nodes[index];
+    if (Number.isInteger(node.mesh)) {
+      assert.ok(model.meshes?.[node.mesh], 'Node refers to a missing mesh');
+      reachable.add(node.mesh);
+    }
+    for (const child of node.children || []) walk(child);
+  };
+  for (const root of scene.nodes) walk(root);
   let triangles = 0;
-  for (const mesh of model.meshes || []) {
+  for (const mesh of [...reachable].map((i) => model.meshes[i])) {
     for (const primitive of mesh.primitives || []) {
       assert.equal(primitive.mode ?? 4, 4, 'Crew meshes must use triangles');
       assert.ok(model.accessors?.[primitive.attributes?.POSITION], 'Mesh has no positions');
