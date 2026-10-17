@@ -1,0 +1,533 @@
+{
+ "schema": "che.rea-web.v1",
+ "job_id": "rea-c48c8bd5",
+ "state": "complete",
+ "tool": {
+  "name": "playwright",
+  "version": "1.56.1",
+  "browser": "chromium",
+  "analysis": "public page observed in an isolated browser; no sign-in, no form submitted"
+ },
+ "target": {
+  "url": "https://www.wikipedia.org/",
+  "final_url": "https://www.wikipedia.org/",
+  "status": 200,
+  "host": "www.wikipedia.org"
+ },
+ "observed_at": "2026-10-17T10:34:24.483Z",
+ "page": {
+  "title": "Wikipedia",
+  "lang": "en",
+  "description": "Wikipedia is a free online encyclopedia, created and edited by volunteers around the world and hosted by the Wikimedia Foundation.",
+  "generator": "",
+  "viewport_meta": true,
+  "load_ms": 458,
+  "console_errors": 0,
+  "framework_hints": [],
+  "third_party_hosts": []
+ },
+ "landmarks": {
+  "header": 0,
+  "nav": 3,
+  "main": 1,
+  "footer": 1,
+  "aside": 0,
+  "search": 1
+ },
+ "headings": [
+  {
+   "level": 1,
+   "text": "Wikipedia The Free Encyclopedia"
+  },
+  {
+   "level": 3,
+   "text": "The internet we were promised"
+  }
+ ],
+ "nav_links": [
+  {
+   "text": "English 7,249,000+ articles",
+   "href": "https://en.wikipedia.org/"
+  },
+  {
+   "text": "日本語 1,521,000+ 記事",
+   "href": "https://ja.wikipedia.org/"
+  },
+  {
+   "text": "Deutsch 3.156.000+ Artikel",
+   "href": "https://de.wikipedia.org/"
+  },
+  {
+   "text": "Français 2 783 000+ articles",
+   "href": "https://fr.wikipedia.org/"
+  },
+  {
+   "text": "Русский 2 121 000+ статей",
+   "href": "https://ru.wikipedia.org/"
+  },
+  {
+   "text": "Español 2.141.000+ artículos",
+   "href": "https://es.wikipedia.org/"
+  },
+  {
+   "text": "Italiano 1.989.000+ voci",
+   "href": "https://it.wikipedia.org/"
+  },
+  {
+   "text": "中文 1,559,000+ 条目 / 條目",
+   "href": "https://zh.wikipedia.org/"
+  },
+  {
+   "text": "Português 1.184.000+ artigos",
+   "href": "https://pt.wikipedia.org/"
+  },
+  {
+   "text": "Polski 1 710 000+ haseł",
+   "href": "https://pl.wikipedia.org/"
+  },
+  {
+   "text": "Al-ʿArabīyah",
+   "href": "https://ar.wikipedia.org/"
+  },
+  {
+   "text": "",
+   "href": "https://de.wikipedia.org/"
+  },
+  {
+   "text": "English",
+   "href": "https://en.wikipedia.org/"
+  },
+  {
+   "text": "Español",
+   "href": "https://es.wikipedia.org/"
+  },
+  {
+   "text": "Fārsi",
+   "href": "https://fa.wikipedia.org/"
+  },
+  {
+   "text": "",
+   "href": "https://fr.wikipedia.org/"
+  },
+  {
+   "text": "",
+   "href": "https://it.wikipedia.org/"
+  },
+  {
+   "text": "Maṣrī",
+   "href": "https://arz.wikipedia.org/"
+  },
+  {
+   "text": "",
+   "href": "https://nl.wikipedia.org/"
+  },
+  {
+   "text": "Nihongo",
+   "href": "https://ja.wikipedia.org/"
+  },
+  {
+   "text": "",
+   "href": "https://pl.wikipedia.org/"
+  },
+  {
+   "text": "",
+   "href": "https://pt.wikipedia.org/"
+  },
+  {
+   "text": "",
+   "href": "https://ceb.wikipedia.org/"
+  },
+  {
+   "text": "",
+   "href": "https://sv.wikipedia.org/"
+  },
+  {
+   "text": "Ukrayins’ka",
+   "href": "https://uk.wikipedia.org/"
+  },
+  {
+   "text": "",
+   "href": "https://vi.wikipedia.org/"
+  },
+  {
+   "text": "",
+   "href": "https://war.wikipedia.org/"
+  },
+  {
+   "text": "Zhōngwén",
+   "href": "https://zh.wikipedia.org/"
+  },
+  {
+   "text": "Russkiy",
+   "href": "https://ru.wikipedia.org/"
+  },
+  {
+   "text": "",
+   "href": "https://af.wikipedia.org/"
+  },
+  {
+   "text": "Anglisht",
+   "href": "https://sq.wikipedia.org/"
+  },
+  {
+   "text": "",
+   "href": "https://ast.wikipedia.org/"
+  },
+  {
+   "text": "",
+   "href": "https://az.wikipedia.org/"
+  },
+  {
+   "text": "Bǎlgarski",
+   "href": "https://bg.wikipedia.org/"
+  },
+  {
+   "text": "Bân-lâm-gú",
+   "href": "https://zh-min-nan.wikipedia.org/"
+  },
+  {
+   "text": "Bangla",
+   "href": "https://bn.wikipedia.org/"
+  },
+  {
+   "text": "Belaruskaya",
+   "href": "https://be.wikipedia.org/"
+  },
+  {
+   "text": "",
+   "href": "https://ca.wikipedia.org/"
+  },
+  {
+   "text": "",
+   "href": "https://cs.wikipedia.org/"
+  },
+  {
+   "text": "",
+   "href": "https://cy.wikipedia.org/"
+  }
+ ],
+ "interactive": [
+  {
+   "role": "link",
+   "name": "English 7,249,000+ articles"
+  },
+  {
+   "role": "link",
+   "name": "日本語 1,521,000+ 記事"
+  },
+  {
+   "role": "link",
+   "name": "Deutsch 3.156.000+ Artikel"
+  },
+  {
+   "role": "link",
+   "name": "Français 2 783 000+ articles"
+  },
+  {
+   "role": "link",
+   "name": "Русский 2 121 000+ статей"
+  },
+  {
+   "role": "link",
+   "name": "Español 2.141.000+ artículos"
+  },
+  {
+   "role": "link",
+   "name": "Italiano 1.989.000+ voci"
+  },
+  {
+   "role": "link",
+   "name": "中文 1,559,000+ 条目 / 條目"
+  },
+  {
+   "role": "link",
+   "name": "Português 1.184.000+ artigos"
+  },
+  {
+   "role": "link",
+   "name": "Polski 1 710 000+ haseł"
+  },
+  {
+   "role": "searchbox",
+   "name": "Search Wikipedia",
+   "type": "search"
+  },
+  {
+   "role": "button",
+   "name": "Search"
+  },
+  {
+   "role": "button",
+   "name": "Read Wikipedia in your language"
+  },
+  {
+   "role": "button",
+   "name": "minimize"
+  },
+  {
+   "role": "link",
+   "name": "Donate now"
+  },
+  {
+   "role": "link",
+   "name": "I already donated"
+  },
+  {
+   "role": "radio",
+   "name": "$2.75",
+   "type": "radio"
+  },
+  {
+   "role": "radio",
+   "name": "$5",
+   "type": "radio"
+  },
+  {
+   "role": "radio",
+   "name": "$10",
+   "type": "radio"
+  },
+  {
+   "role": "radio",
+   "name": "$20",
+   "type": "radio"
+  },
+  {
+   "role": "radio",
+   "name": "$30",
+   "type": "radio"
+  },
+  {
+   "role": "radio",
+   "name": "$50",
+   "type": "radio"
+  },
+  {
+   "role": "radio",
+   "name": "$100",
+   "type": "radio"
+  },
+  {
+   "role": "radio",
+   "name": "Other",
+   "type": "radio"
+  },
+  {
+   "role": "radio",
+   "name": "One time",
+   "type": "radio"
+  },
+  {
+   "role": "radio",
+   "name": "Give monthly",
+   "type": "radio"
+  },
+  {
+   "role": "link",
+   "name": "Donate now"
+  },
+  {
+   "role": "link",
+   "name": "donor privacy policy"
+  },
+  {
+   "role": "link",
+   "name": "Wikimedia Foundation"
+  },
+  {
+   "role": "button",
+   "name": "COLLAPSE"
+  },
+  {
+   "role": "link",
+   "name": "Donate now"
+  },
+  {
+   "role": "link",
+   "name": "You can support our work with a donation."
+  },
+  {
+   "role": "link",
+   "name": "Download Wikipedia for Android or iOS"
+  },
+  {
+   "role": "link",
+   "name": "Google Play Store"
+  },
+  {
+   "role": "link",
+   "name": "Apple App Store"
+  },
+  {
+   "role": "link",
+   "name": "Commons Free media collection"
+  },
+  {
+   "role": "link",
+   "name": "Wikivoyage Free travel guide"
+  },
+  {
+   "role": "link",
+   "name": "Wiktionary Free dictionary"
+  },
+  {
+   "role": "link",
+   "name": "Wikibooks Free textbooks"
+  },
+  {
+   "role": "link",
+   "name": "Wikidata Free knowledge base"
+  },
+  {
+   "role": "link",
+   "name": "Wikiversity Free learning resources"
+  },
+  {
+   "role": "link",
+   "name": "Wikiquote Free quote compendium"
+  },
+  {
+   "role": "link",
+   "name": "MediaWiki Free & open wiki software"
+  },
+  {
+   "role": "link",
+   "name": "Wikisource Free content library"
+  },
+  {
+   "role": "link",
+   "name": "Wikispecies Free species directory"
+  },
+  {
+   "role": "link",
+   "name": "Wikifunctions Free function library"
+  },
+  {
+   "role": "link",
+   "name": "Meta-Wiki Community coordination & documentation"
+  },
+  {
+   "role": "link",
+   "name": "Creative Commons Attribution-ShareAlike License"
+  },
+  {
+   "role": "link",
+   "name": "Terms of Use"
+  },
+  {
+   "role": "link",
+   "name": "Privacy Policy"
+  }
+ ],
+ "forms": [
+  {
+   "purpose_hint": "search",
+   "method": "get",
+   "fields": [
+    {
+     "type": "search",
+     "label": "Search Wikipedia",
+     "required": false
+    },
+    {
+     "type": "select-one",
+     "label": "en",
+     "required": false
+    }
+   ]
+  }
+ ],
+ "interactions": [
+  {
+   "action": "focus-search",
+   "target": "Search Wikipedia",
+   "observed": "Focused the search box; nothing else appeared. Nothing was typed."
+  },
+  {
+   "action": "tab-order",
+   "target": "Tab 1",
+   "observed": "link \"English 7,249,000+ articles\""
+  },
+  {
+   "action": "tab-order",
+   "target": "Tab 2",
+   "observed": "link \"日本語 1,521,000+ 記事\""
+  },
+  {
+   "action": "tab-order",
+   "target": "Tab 3",
+   "observed": "link \"Deutsch 3.156.000+ Artikel\""
+  },
+  {
+   "action": "tab-order",
+   "target": "Tab 4",
+   "observed": "link \"Français 2 783 000+ articles\""
+  },
+  {
+   "action": "tab-order",
+   "target": "Tab 5",
+   "observed": "link \"Русский 2 121 000+ статей\""
+  },
+  {
+   "action": "tab-order",
+   "target": "Tab 6",
+   "observed": "link \"Español 2.141.000+ artículos\""
+  },
+  {
+   "action": "tab-order",
+   "target": "Tab 7",
+   "observed": "link \"Italiano 1.989.000+ voci\""
+  },
+  {
+   "action": "tab-order",
+   "target": "Tab 8",
+   "observed": "link \"中文 1,559,000+ 条目 / 條目\""
+  },
+  {
+   "action": "tab-order",
+   "target": "Tab 9",
+   "observed": "link \"Português 1.184.000+ artigos\""
+  },
+  {
+   "action": "tab-order",
+   "target": "Tab 10",
+   "observed": "link \"Polski 1 710 000+ haseł\""
+  },
+  {
+   "action": "open-menu",
+   "target": "Read Wikipedia in your language",
+   "observed": "aria-expanded is now true. 348 items became visible: العربية, Deutsch, English, Español, فارسی, Français, Italiano, مصرى."
+  }
+ ],
+ "responsive": {
+  "mobile_horizontal_overflow": false,
+  "mobile_nav_toggle": true
+ },
+ "accessibility": {
+  "images": 7,
+  "images_missing_alt": 0,
+  "buttons_without_name": 0,
+  "inputs_without_label": 0
+ },
+ "screenshots": [
+  {
+   "label": "desktop",
+   "file": "desktop.jpg",
+   "width": 1280,
+   "height": 800,
+   "bytes": 89421
+  },
+  {
+   "label": "mobile",
+   "file": "mobile.jpg",
+   "width": 390,
+   "height": 844,
+   "bytes": 52094
+  }
+ ],
+ "limitations": [
+  "Observed once, as an anonymous visitor in a headless browser. Signed-in areas, personalised content and later changes are not covered.",
+  "Accessible names and roles are approximate, worked out from the page markup.",
+  "Nothing was typed, no form was submitted, no file was downloaded, and only menu buttons in the header or navigation were pressed."
+ ]
+}
