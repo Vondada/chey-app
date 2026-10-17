@@ -64,6 +64,24 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-17 ~21:20 UTC — #330 fixed after three reviews, fourth review running; activity-status branch ready, no PR)
+
+- **main** is still `a3be02c` (#328). Nothing below is merged or deployed.
+- **PR #330 (DRAFT)**, branch `claude/che-execution-history-explore`, head `5254fd6`. Every coding-status and history question is answered by one read-only route, `che_coding_history`:
+  - `codingHistoryIntent` in `code_scout.js`;
+  - `coding_history.js`;
+  - the route near the top of the chat handler in `worker.js`.
+  - The old "coding status" block was folded in. It keeps the resume, retry and GitHub-unconfirmed wording through `speakRuntimeStatus`, and adds evidence lines: run link, models, files, PR and tests, or "not recorded".
+  - It defers to mailbox/consult for messages addressed to another AI; `/che-explore` and "Inspect your codebase…" stay repository inspection.
+  - Worker suite 1540 run, 1533 pass, 0 fail, 7 skipped; skills 17/17 (includes replay `explore-coding-history.json`).
+  - Reviews 1–3 found blocking issues, fixed in `28856b7`, `42b53a5` and `5254fd6`. Review 3's 76 probe turns now route correctly.
+  - **Next:** a fourth review is running. If it is clean and CI is green, mark ready and squash-merge with `[worker-deploy]`, then verify the deploy and live commit.
+- **Branch `claude/che-activity-status`** at `2174eaa`, stacked on `5254fd6`, NO PR yet: "what are you doing" / "what's finished" answered from jobs, missions and runtime records with zero model calls (`activity_status.js`). Worker suite 1548 run, 1541 pass, 0 fail, 7 skipped. Open its PR after #330 merges.
+- **Owner's two exact 17 Oct transcripts** are not in the repo; ask the owner to paste them.
+- **Still open from the master directive:** intent contract across all modes, outcome-based completion, continuity phrases ("continue where you stopped", "I already did that"), the 20-category regression suite, UI truth receipts, the iPhone update (Worker-only so far), a live small coding run (free models only; `CHE_CODING_PAID_FALLBACK` still unread from here).
+
+---
+
 ## 2. Current position (Claude, 2026-10-17 ~13:40 UTC — owner's master directive started; EXPLORE history fix in draft PR #330)
 
 - **main** is `a3be02c` (#328). Nothing from this block is merged.
