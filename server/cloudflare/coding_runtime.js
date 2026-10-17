@@ -312,10 +312,11 @@ export function runtimeStateClass(result = {}) {
   return 'unknown';
 }
 
-// Why the last model failed, from the runtime record's own error text. A request too large for
-// the key's token limit, a used-up quota or a model the key cannot use fails the same way on a
-// retry, so those are not retried automatically (2026-10-17, ocr-8e7f69c5: Gemini quota, a Groq
-// model the key could not use, and a Groq 7,000-token limit against a 10,182-token request).
+// Why the last model failed, from the runtime record's own error text, so CHE can say it
+// (2026-10-17, ocr-8e7f69c5: Gemini quota, a Groq model the key could not use, and a Groq
+// 7,000-token limit against a 10,182-token request). Recovery is not decided by it: recovery
+// hands the job to CHE's own coding team on other engines (recoverOpenCodeFailure), which these
+// OpenCode key limits do not bind.
 export function runtimeFailureCause(result = {}) {
   const text = String(result.error || '');
   if (/ContextOverflowError|Request too large|tokens per minute|context length/i.test(text)) return { kind: 'too_large', words: 'the request is larger than the token limit of that model key' };
@@ -324,14 +325,10 @@ export function runtimeFailureCause(result = {}) {
   if (Number(result.opencode_exit_code) === 124 || /timed out/i.test(text)) return { kind: 'timeout', words: 'it ran out of time' };
   return { kind: 'unknown', words: '' };
 }
-const REPEATS_ON_RETRY = ['too_large', 'quota', 'access'];
-
 export function recoverableRuntimeFailure(result = {}) {
   const state = runtimeState(result);
   // Unsafe-file guards and authorization failures are deliberately excluded:
-  // they need policy/owner handling, not an automatic coding retry. So is a
-  // model failure that a retry would repeat.
-  if (state === 'opencode_failed' && REPEATS_ON_RETRY.includes(runtimeFailureCause(result).kind)) return false;
+  // they need policy/owner handling, not an automatic coding retry.
   return ['opencode_failed', 'deliver_failed', 'tests_failed', 'review_rejected'].includes(state)
     || ['dispatch_stale', 'runtime_stale'].includes(String(result.failure || ''));
 }
@@ -364,12 +361,11 @@ export function speakRuntimeStatus(result = {}) {
     case 'rolled_back': parts.push('A merged change broke main, so I rolled it back automatically.'); break;
     case 'no_change': parts.push('My runner found nothing that needed changing.'); break;
     case 'opencode_failed': {
-      const tried = (Array.isArray(result.models_tried) ? result.models_tried : []).slice(0, 5);
+      const tried = (Array.isArray(result.models_tried) ? result.models_tried : []).slice(0, 6);
       const cause = runtimeFailureCause(result);
       parts.push(`The OpenCode attempt failed with ${changed}${tried.length ? ` after trying ${tried.length} model${tried.length === 1 ? '' : 's'} (${tried.join(', ')})` : ''}${cause.words ? `; the last one failed because ${cause.words}` : ''}.`);
-      parts.push(recoverableRuntimeFailure(result)
-        ? 'I am recovering the coding job automatically.'
-        : 'Retrying now would fail the same way, so I stopped it. A model key with enough quota and token limit (for example a paid Gemini key, or an OpenRouter key) would let it run. Nothing was merged or deployed.');
+      parts.push('I am recovering the coding job automatically with my own coding team on other engines.');
+      if (['too_large', 'quota', 'access'].includes(cause.kind)) parts.push('OpenCode itself needs a model key with enough quota and token limit (for example a paid Gemini key, or an OpenRouter key) to run this request.');
       break;
     }
     case 'deliver_failed': parts.push('The coding change could not be delivered. I am recovering the coding job automatically.'); break;

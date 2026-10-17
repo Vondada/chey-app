@@ -417,7 +417,7 @@ jobs:
             opencode_exit_code: exitCode,
             patch_artifact: patch ? artifactName : null,
             failure: unsafe.length ? 'unsafe_files' : (process.env.PREFLIGHT_FAILURE || (exitCode !== 0 ? 'opencode_failed' : null)),
-            models_tried: String(process.env.TRIED || '').trim().split(/\s+/).filter(Boolean).slice(0, 5),
+            models_tried: String(process.env.TRIED || '').trim().split(/\s+/).filter(Boolean).slice(0, 6),
             error: exitCode !== 0 ? String(process.env.OPENCODE_ERROR || '').slice(0, 400) : null,
           };
           fs.writeFileSync('/tmp/che-runtime-result.json', JSON.stringify(result));

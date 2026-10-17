@@ -432,23 +432,31 @@ esac
   assert.ok(!candidates.some((m) => /lite/.test(m)));
 });
 
-test('the real ocr-8e7f69c5 record is spoken with its cause, and a failure a retry would repeat is not retried', async () => {
+test('the real ocr-8e7f69c5 record is spoken with its cause and the recovery that really happens', async () => {
   const { runtimeFailureCause } = await import('./coding_runtime.js');
   const record = {
     session_id: 'ocr-8e7f69c5', runtime: 'opencode', state: 'blocked', failure: 'opencode_failed', changed_files: 0, opencode_exit_code: 124,
-    models_tried: ['google/gemini-2.5-pro', 'google/gemini-3.1-pro-preview', 'google/gemini-omni-flash-preview', 'groq/llama-3.3-70b-versatile', 'groq/qwen/qwen3.8-27b'],
+    models_tried: ['google/gemini-2.5-pro', 'google/gemini-3.1-pro-preview', 'google/gemini-omni-flash-preview', 'groq/llama-3.3-70b-versatile', 'groq/qwen/qwen3.8-27b', 'google/gemini-2.5-flash'],
     error: '{ type : error , error :{ name : ContextOverflowError , data :{ message : Request too large for model `qwen/qwen3.8-27b` on input tokens per minute (ITPM): Limit 7000, Requested 10182',
   };
   assert.equal(runtimeFailureCause(record).kind, 'too_large');
-  assert.equal(recoverableRuntimeFailure(record), false, 'the same request on the same keys fails the same way');
+  // Codex #327: recovery runs CHE's own coding team on other engines, which these OpenCode key limits do not bind.
+  assert.equal(recoverableRuntimeFailure(record), true);
   const spoken = speakRuntimeStatus(record);
-  assert.match(spoken, /failed with no files changed yet after trying 5 models \(google\/gemini-2\.5-pro, .*groq\/qwen\/qwen3\.8-27b\); the last one failed because the request is larger than the token limit/);
-  assert.match(spoken, /Retrying now would fail the same way, so I stopped it/);
-  assert.doesNotMatch(spoken, /recovering/);
+  assert.match(spoken, /failed with no files changed yet after trying 6 models \(google\/gemini-2\.5-pro, .*google\/gemini-2\.5-flash\); the last one failed because the request is larger than the token limit/);
+  assert.match(spoken, /recovering the coding job automatically with my own coding team on other engines/);
+  assert.match(spoken, /OpenCode itself needs a model key with enough quota and token limit/);
   for (const [error, kind] of [['You exceeded your current quota, please check your plan', 'quota'], ['The model `x` does not exist or you do not have access to it.', 'access'], ['socket hang up', 'unknown']]) {
     assert.equal(runtimeFailureCause({ error }).kind, kind, error);
   }
-  const transient = { state: 'blocked', failure: 'opencode_failed', error: 'socket hang up' };
-  assert.equal(recoverableRuntimeFailure(transient), true, 'an unknown or temporary failure is still recovered');
-  assert.match(speakRuntimeStatus(transient), /I am recovering the coding job automatically/);
+  assert.doesNotMatch(speakRuntimeStatus({ state: 'blocked', failure: 'opencode_failed', error: 'socket hang up' }), /needs a model key/);
+});
+
+test('Codex #327: the record keeps every model the run may try, so the last cause belongs to the last model listed', () => {
+  const workflow = readFileSync(new URL('../../.github/workflows/che-opencode-runtime.yml', import.meta.url), 'utf8');
+  const limit = Number(workflow.match(/awk 'NF' \| head -(\d+) \| tr/)[1]);
+  assert.equal(limit, 6);
+  assert.match(workflow, new RegExp(`models_tried: String\\(process\\.env\\.TRIED \\|\\| ''\\)\\.trim\\(\\)\\.split\\(/\\\\s\\+/\\)\\.filter\\(Boolean\\)\\.slice\\(0, ${limit}\\)`));
+  const spoken = speakRuntimeStatus({ state: 'blocked', failure: 'opencode_failed', models_tried: ['a/1', 'a/2', 'a/3', 'a/4', 'a/5', 'a/6'] });
+  assert.match(spoken, /after trying 6 models \(a\/1, a\/2, a\/3, a\/4, a\/5, a\/6\)/);
 });
