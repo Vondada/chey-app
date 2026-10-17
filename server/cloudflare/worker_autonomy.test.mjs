@@ -3359,9 +3359,9 @@ test('coding history answers from the built-in job when no runtime record exists
   saved.set('che', data);
   const jobsBefore = saved.get('che').jobs.length;
   const reply = await textOf(await chat('What is the state of the coding job?'));
-  assert.match(reply, /built-in job job-abcdef12/);
-  assert.match(reply, /State: running\./);
-  assert.doesNotMatch(reply, /No coding run is recorded/);
+  assert.match(reply, /The latest coding job is running, sir\./);
+  assert.match(reply, /Built-in job: job-abcdef12\./);
+  assert.doesNotMatch(reply, /No coding job has started/);
   assert.doesNotMatch(reply, /\.(?:js|mjs|json)\b/, 'no repository file names');
   assert.equal(saved.get('che').jobs.length, jobsBefore, 'a history question starts no job');
 });
@@ -3382,7 +3382,8 @@ test('coding history reads the stored runtime record of a failed run, with its r
   try {
     const reply = await textOf(await chat('Why did that coding job fail?'));
     assert.match(reply, /Request: Fix the coding failover tests\./);
-    assert.match(reply, /Failure: opencode_failed - quota exhausted/);
+    assert.match(reply, /State: opencode failed\./);
+    assert.match(reply, /Failure: opencode_failed - quota exhausted\./);
     assert.match(reply, /github\.com\/o\/r\/actions\/runs\/39023896713/);
     assert.match(reply, /Models tried: groq\/qwen3\./);
     assert.match(reply, /Tests: not recorded/);
@@ -3403,9 +3404,9 @@ test('coding history after a recovery hand-off reads the recovery job, never the
   // Recovery cleared the session stamp but kept the id.
   saved.set('che_runtime_last_session', 'ocr-1234abcd');
   const reply = await textOf(await chat('What is the state of the coding job?'));
-  assert.match(reply, /built-in job job-recovery/);
-  assert.match(reply, /State: complete\./);
-  assert.doesNotMatch(reply, /ocr-1234abcd|State: queued/);
+  assert.match(reply, /The latest coding job status is complete, sir\./);
+  assert.match(reply, /Built-in job: job-recovery/);
+  assert.doesNotMatch(reply, /ocr-1234abcd|is queued/);
 });
 
 test('coding history does not call an idle built-in job running', async () => {
@@ -3418,6 +3419,99 @@ test('coding history does not call an idle built-in job running', async () => {
   data.jobs = [{ id: 'job-idle000001', kind: 'self_development', status: 'running', created_at: old, updated_at: old }];
   saved.set('che', data);
   const reply = await textOf(await chat('Why did that coding job fail?'));
-  assert.match(reply, /State: interrupted/);
-  assert.doesNotMatch(reply, /State: running/);
+  assert.match(reply, /stopped reporting progress and is not confirmed running/);
+  assert.doesNotMatch(reply, /is running, sir/);
+});
+
+// Third independent review of #330: one coding-status answer for every phrasing, which keeps the
+// old route's resume, retry and unconfirmed-run wording, and leaves messages for other AIs alone.
+async function codingStatusChat(saved, { record = null, contents = null } = {}) {
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => ({ response: 'ok' }) } };
+  const { chat } = await pairedChat(env, saved);
+  const lines = async (res) => (await res.text()).trim().split('\n').map((line) => JSON.parse(line));
+  const ask = async (message) => {
+    const out = await lines(await chat(message));
+    return { text: out.filter((line) => line.type === 'delta').map((line) => line.delta).join(''), done: out.find((line) => line.type === 'done') || {} };
+  };
+  const realFetch = globalThis.fetch;
+  // Every GitHub call is answered here; nothing leaves the test.
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('/contents/') && contents) return contents();
+    if (String(url).includes('/contents/') && record) return new Response(JSON.stringify({ content: Buffer.from(JSON.stringify(record)).toString('base64') }), { status: 200 });
+    return new Response('{}', { status: 404 });
+  };
+  return { ask, restore: () => { globalThis.fetch = realFetch; } };
+}
+
+test('coding status with a pending resume says when it resumes, for the old phrases and the new ones alike', async () => {
+  const saved = new Map();
+  const record = { session_id: 'ocr-6550098c', state: 'blocked', failure: 'opencode_failed', failure_kind: 'quota', error: 'quota exhausted', run_id: 39023896713, models_tried: ['groq/qwen3'], changed_files: 0, updated_at: new Date().toISOString() };
+  const { ask, restore } = await codingStatusChat(saved, { record });
+  saved.set('che_runtime_last_session', 'ocr-6550098c');
+  saved.set('che_runtime_last_session_at', new Date(Date.now() - 3_600_000).toISOString());
+  saved.set('che_runtime_resume', { session_id: 'ocr-6550098c', attempt: 1, next_at: '2099-01-01T20:51:00Z' });
+  try {
+    for (const message of ['coding status', 'What is the status of the coding job?', 'What happened to my coding job?', 'Why did that coding job fail?']) {
+      const { text, done } = await ask(message);
+      assert.equal(done.source, 'che_coding_history', message);
+      assert.match(text, /will resume it from that checkpoint at 20:51 UTC, attempt 1 of 3/, message);
+      assert.match(text, /Last failure: opencode_failed - quota exhausted\./, message);
+      assert.doesNotMatch(text, /State: (?:blocked|opencode failed)/, message);
+    }
+    assert.ok(saved.get('che_runtime_resume'), 'asking is a read: the pending resume is untouched');
+  } finally {
+    restore();
+  }
+});
+
+test('coding status calls a queued built-in job with retries "retrying automatically"', async () => {
+  const saved = new Map();
+  const { ask, restore } = await codingStatusChat(saved);
+  const data = saved.get('che');
+  const at = new Date(Date.now() - 60_000).toISOString();
+  data.jobs = [{ id: 'job-retry0000001', kind: 'self_development', status: 'queued', retry_count: 2, created_at: at, updated_at: at }];
+  saved.set('che', data);
+  try {
+    const { text, done } = await ask('What is the status of the coding job?');
+    assert.match(text, /^The latest coding job is retrying automatically, sir\./);
+    assert.equal(done.background_job_status, 'queued');
+  } finally {
+    restore();
+  }
+});
+
+test('coding status falls back to the active built-in job when the newer run record cannot be read', async () => {
+  const saved = new Map();
+  const { ask, restore } = await codingStatusChat(saved, { contents: () => new Response('{}', { status: 500 }) });
+  const data = saved.get('che');
+  const jobAt = new Date(Date.now() - 2 * 3_600_000).toISOString();
+  data.jobs = [{ id: 'job-active000001', kind: 'self_development', status: 'running', created_at: jobAt, updated_at: new Date().toISOString() }];
+  saved.set('che', data);
+  saved.set('che_runtime_last_session', 'ocr-6550098c');
+  saved.set('che_runtime_last_session_at', new Date(Date.now() - 3_600_000).toISOString());
+  try {
+    const { text } = await ask('What is the latest coding run?');
+    assert.match(text, /^The latest coding job is running, sir\./);
+    assert.match(text, /A newer coding run, ocr-6550098c, exists, but I could not read its record: Could not read OpenCode runtime status \(500\)\.; its state is UNVERIFIED\./);
+  } finally {
+    restore();
+  }
+});
+
+test('messages for other AIs about a coding run go to the mailbox and consult routes, not the status receipt', async () => {
+  const saved = new Map();
+  const { ask, restore } = await codingStatusChat(saved);
+  try {
+    for (const [message, source] of [
+      ['Tell Claude the latest coding run failed.', 'che_mailbox'],
+      ['Message Codex: the last coding run failed, please take a look.', 'che_mailbox'],
+      ['Ask Claude: what files did the coding job change?', 'che_consult'],
+      ['Ask ChatGPT why did the coding job fail?', 'che_consult'],
+    ]) {
+      const { done } = await ask(message);
+      assert.equal(done.source, source, message);
+    }
+  } finally {
+    restore();
+  }
 });

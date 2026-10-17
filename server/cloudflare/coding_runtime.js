@@ -336,7 +336,9 @@ export function recoverableRuntimeFailure(result = {}) {
 export function speakRuntimeStatus(result = {}) {
   const state = runtimeState(result);
   const files = Number(result.changed_files || 0);
-  const changed = files ? `changed ${files} file${files === 1 ? '' : 's'} (+${Number(result.additions || 0)}/-${Number(result.deletions || 0)})` : 'no files changed yet';
+  // A record without a change count says so, rather than claiming nothing changed.
+  const changed = files ? `changed ${files} file${files === 1 ? '' : 's'} (+${Number(result.additions || 0)}/-${Number(result.deletions || 0)})`
+    : Number.isInteger(result.changed_files) ? 'no files changed yet' : 'no file change recorded';
   const parts = [];
   // GitHub could not be asked whether the silent run is alive: say so rather
   // than calling it running or failed.

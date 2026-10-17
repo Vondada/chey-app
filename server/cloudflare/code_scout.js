@@ -304,50 +304,82 @@ export function repositoryImplementationIntent(message) {
   return currentTurnActionPolicy(message).codingJobAllowed;
 }
 
-// Read-only history of CHE's own coding runs ("latest coding execution history", "how far
-// did Claude get", "why did that coding job fail", "what files did the coding job change").
-// These are answered from the stored job and runtime records: never a job, never a file list.
-// The checks run in order, and each earlier stage keeps its route:
-//   1. an investigation target (URL, package, reference repo, App Store) belongs to REA;
-//   2. a change instruction anywhere in the turn ("fix ...", "build a view of ...") is not history;
-//   3. the subject must be CHE's coding work, not its code, its screens or another kind of job;
-//   4. then the question itself must ask about that work's record.
+// Read-only history and status of CHE's own coding runs ("latest coding execution history",
+// "coding status", "how far did Claude get", "why did that coding job fail", "what files did the
+// coding job change"). These are answered from the stored job and runtime records: never a job,
+// never a file list. The checks run in order, and each earlier stage keeps its route:
+//   1. a Command Center command, or a request to read CHE's codebase, is repository inspection;
+//   2. an investigation target (URL, package, reference repo, App Store) belongs to REA;
+//   3. a change instruction anywhere in the turn ("fix ...", "build a view of ...") is not history;
+//   4. the subject must be CHE's coding work, not its code, its screens, a course or another job;
+//   5. then the question itself must ask about that work's record.
+// Messages addressed to another AI ("tell Claude ...", "ask ChatGPT ...") are deferred by the
+// Worker route to the mailbox and consult routes.
 const HISTORY_TARGET = /https?:\/\/|\bnpm[:\s]|\bgithub\.com\/|\b(?:reference|starred)\s+repo|\bapp\s+store\b/i;
+const CODEBASE_READ = /\b(?:inspect|read|explore|search|scan|trace|audit|open)\s+(?:your|the|che['’]s|my)\s+(?:own\s+)?(?:codebase|code\s*base|source(?:\s+code)?|repo(?:sitory)?|code)\b|\bwith\s+file\s+paths\b/i;
 const CHANGE_INSTRUCTION = /(?:^|[.;!?]\s*|\b(?:and|then|also|please|now)\s+|\b(?:can|could|would|will)\s+you\s+|\bi\s+(?:want|need)\s+you\s+to\s+|^(?:che|chay|chey|shay)[,:]?\s+)(?:build|fix|improve|implement|add|create|make|change|update|refactor|repair|patch|redesign|design|rewrite|remove|delete|retry|rerun|restart|resume|start|run|launch|queue|cancel|stop)\b/i;
-const CODE_SUBJECT = /\b(?:code|source|bug|view|page|screen|dashboard|ui|widget|feature)\s+(?:for|of|in)\s+(?:the\s+|your\s+|che['’]s\s+)?(?:coding|opencode)\b|\b(?:coding|opencode)\s+(?:(?:jobs?|runs?)\s+)?(?:history\s+)?(?:view|page|screen|dashboard|ui|widget|runner|runtime|pipeline|code|source|bug|workflow)\b/i;
+// The code, screens or teaching material about coding, not a coding run's record. "Coding status
+// bug", "coding status code", "Coding Library" and "coding progress in the Python course" are subjects.
+const CODE_SUBJECT = new RegExp([
+  /\b(?:code|source|bug|view|page|screen|dashboard|ui|widget|feature)\s+(?:for|of|in)\s+(?:the\s+|your\s+|che['’]s\s+)?(?:coding|opencode)\b/.source,
+  /\b(?:coding|opencode)\s+(?:(?:status|state|jobs?|runs?|history|sessions?|results?|progress)\s+){0,2}(?:view|page|screen|dashboard|ui|widget|runner|runtime|pipeline|code|source|bugs?|workflow|routes?|routing|handler|function|module|library|course|class|lesson|tutorial|exercises?|bootcamp|practice|homework|challenges?|interview|language|skills?)\b/.source,
+  // How the code works or where it lives: "explain how the coding status route works",
+  // "which file handles the coding status", "where is the coding status handled".
+  /\bhow\b(?!\s+far\b)[\s\S]{0,80}\b(?:works?(?!\s+out)|is\s+(?:answered|built|implemented|handled|decided|routed|computed|stored|wired))\b/.source,
+  /\b(?:which|what)\s+(?:file|files|function|module|class|handler|route)\s+(?:handles|answers|builds|controls|decides|implements|owns|contains|runs|is\s+responsible)\b/.source,
+  /\bwhere\s+(?:is|are|does|do)\b[\s\S]{0,50}\b(?:handled|implemented|defined|stored|computed|decided|code|lives?)\b/.source,
+  /\b(?:python|javascript|typescript|swift|java|dart|flutter)\s+(?:course|class|lesson|tutorial)\b/.source,
+  // "Show me the code that reports coding status": the code, not the status.
+  /\bcode\s+(?:that|which|behind|responsible)\b/.source,
+].join('|'), 'i');
 const CODING = /\b(?:coding|opencode|self[- ]development)\b/i;
+// A coding run, job or session: the record a history question is about.
+const WORK = '(?:coding|opencode|self[- ]development)\\s+(?:jobs?|runs?|sessions?|attempts?|executions?|tasks?|work)';
 const STATE_WORD = /\b(?:states?|status|results?|progress|outcomes?)\b/i;
+// The phrases the old "coding status" route answered, kept word for word.
+const STATUS_PHRASE = /^\s*(?:che[,:]?\s*)?(?:(?:what(?:'s|’s| is)\s+)?(?:the|my)\s+)?(?:coding job|coding)\s+status\??\s*$|^\s*what is the status of (?:the|my) coding job\??\s*$|^\s*how(?:'s|’s| is) (?:the|my) coding job( going)?\??\s*$|^\s*what happened (?:to|with) (?:the|my|that) coding job\??\s*$|^\s*check (?:the )?(?:coding|opencode) (?:logs?|job)\??\s*$/i;
 
 export function codingHistoryIntent(message) {
   const raw = String(message || '').trim();
   const text = withoutQuotedText(raw);
   if (!text || ownerBuildAuthorization(text)) return false;
+  if (/^\s*\//.test(raw) || CODEBASE_READ.test(text)) return false;
   if (HISTORY_TARGET.test(raw)) return false;
   if (CHANGE_INSTRUCTION.test(text)) return false;
+  if (STATUS_PHRASE.test(text)) return true;
   if (CODE_SUBJECT.test(text)) return false;
   const coding = CODING.test(text);
-  const howFar = /\bhow\s+far\s+(?:did|has|have)\s+(?:claude|che|chey|chay|shay|she|it|the\s+(?:coding|build)\s+(?:job|run|session)|the\s+(?:job|run|session))\b[\s\S]{0,20}\b(?:get|gotten|got|come)\b/i.test(text);
+  const howFar = /\bhow\s+far\s+(?:did|has|have)\s+(?:claude|che|chey|chay|shay|she|it|the\s+(?:coding|build)\s+(?:job|run|session)|the\s+(?:job|run|session))\b[\s\S]{0,20}\b(?:get|gotten|got|come)\b/i.test(text)
+    || /\bhow\s+far\s+(?:the|my|that|your)\s+(?:coding|opencode)\s+(?:job|run|session)\s+(?:got|has\s+gotten|has\s+come|came)\b/i.test(text);
   if (howFar) return true;
   if (!coding) return false;
+  const work = new RegExp(`\\b${WORK}\\b`, 'i');
   const latestRecord = /\b(?:latest|last|most\s+recent|recent|newest|previous|current)\s+(?:coding|opencode|self[- ]development)\s+(?:execution\s+|run\s+|job\s+|session\s+|attempt\s+)?(?:history|runs?|jobs?|sessions?|attempts?|logs?|results?|status|executions?|state)\b/i.test(text);
   // "Your coding runs on GitHub Actions": the workflow runs are the execution record, not the workflow file.
   const actionsRuns = /\b(?:github\s+actions?|workflow)\s+(?:runs?|history|results?|executions?)\b|\bruns?\s+(?:on|in)\s+github\s+actions\b/i.test(text);
   const history = /\b(?:coding|opencode|self[- ]development)(?:\s+(?:jobs?|runs?|executions?|sessions?))?(?:['’]s)?\s+(?:execution\s+)?history\b/i.test(text);
-  // A question about the state or result, not an investigation: "Investigate your coding status bug" is inspection.
-  const asked = /^\s*(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:what|how|show|tell|give|is|are|check|read|explain|describe|summari[sz]e|report|inspect|look)\b|\?\s*$/i.test(text);
-  const near = (noun) => new RegExp(`${STATE_WORD.source}[\\s\\S]{0,30}\\b${noun}|\\b${noun}[\\s\\S]{0,30}${STATE_WORD.source}`, 'i').test(text);
-  const state = asked && near('(?:coding|opencode)');
-  const failed = /\b(?:why|how)\s+(?:did|has|does|do|is|was)\b[\s\S]{0,40}\b(?:fail|failed|stop|stopped|stuck|broke|broken)\b/i.test(text)
+  // A question about a coding run's state or result, not an investigation: "Investigate your
+  // coding status bug" is inspection, and "my coding progress" alone is not a run.
+  const asked = /^\s*(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:what|whats|how|show|tell|give|is|are|check|read|explain|describe|summari[sz]e|report|inspect|look)\b|\?\s*$/i.test(text);
+  const near = new RegExp(`${STATE_WORD.source}[\\s\\S]{0,30}\\b${WORK}|\\b${WORK}[\\s\\S]{0,30}${STATE_WORD.source}`, 'i');
+  const state = asked && (near.test(text) || /\b(?:coding|opencode)\s+(?:status|state)\s*[?.!]*\s*$/i.test(text));
+  const ofRun = '(?:the\\s+|that\\s+|this\\s+|my\\s+|your\\s+|ur\\s+|the\\s+last\\s+|the\\s+latest\\s+)?(?:coding|opencode)\\s+(?:jobs?|runs?|attempts?|sessions?)';
+  const failed = /\b(?:(?:why|how)\s+(?:did|has|does|do|is|was)|why['’]d)\b[\s\S]{0,40}\b(?:fail|failed|stop|stopped|stuck|broke|broken)\b/i.test(text)
     || /\bexplain\s+why\b[\s\S]{0,40}\b(?:fail|failed|stop|stopped|stuck)\b/i.test(text)
-    || /\b(?:did|has|have)\s+(?:the\s+|that\s+|this\s+|my\s+|your\s+|the\s+last\s+|the\s+latest\s+)?(?:coding|opencode)\s+(?:jobs?|runs?|attempts?|sessions?)\s+(?:fail|failed|stop|stopped|finish|finished|succeed|succeeded|pass|passed|work|worked)\b/i.test(text);
-  const happened = /\bwhat\s+(?:happened|went\s+wrong)\s+(?:to|with)\s+(?:the|my|that|this|the\s+last|the\s+latest|your)\s+(?:coding|opencode)\s+(?:job|run|attempt|session)\b/i.test(text);
+    || new RegExp(`\\b(?:did|has|have)\\s+${ofRun}\\s+(?:fail|failed|stop|stopped|finish|finished|succeed|succeeded|pass|passed|work|worked|merge|merged|open|opened|create|created|raise|raised)\\b`, 'i').test(text);
+  const happened = /\bwhat\s+(?:happened|went\s+wrong)\s+(?:to|with)\s+(?:the|my|that|this|the\s+last|the\s+latest|your)\s+(?:coding|opencode)\s+(?:job|run|attempt|session)\b/i.test(text)
+    || new RegExp(`\\bhow\\s+did\\s+${ofRun}\\s+go\\b|\\b(?:is|are)\\s+${ofRun}\\s+(?:still\\s+)?(?:running|done|finished|working|stuck|alive|queued)\\b`, 'i').test(text);
   const actualResult = /\bshow\s+me\s+the\s+actual\s+(?:result|outcome|evidence)\b/i.test(text);
-  // "Inspect that coding job": the job's record, not the code that runs it (stage 3 already removed that).
+  // "Inspect that coding job": the job's record, not the code that runs it (stage 4 already removed that).
   const inspectJob = /\b(?:inspect|check|look\s+at|review|show\s+me|examine)\s+(?:that|the|my|this|your|the\s+last|the\s+latest)\s+(?:coding|opencode)\s+(?:jobs?|runs?|sessions?|attempts?)\b/i.test(text);
   // "What files did the coding job change?" is history; "what files should I change" and
-  // "what would the coding job change" are planning, so a modal verb excludes them.
+  // "what would the coding job change" are planning, so a modal verb excludes them. The files
+  // must belong to a coding run and have been changed by it: "which coding files have tests" and
+  // "do not modify files" are not.
   const changedFiles = /\bfiles\b/i.test(text)
-    && /\b(?:changed|touched|modified|edited|did|has|have)\b/i.test(text)
+    && work.test(text)
+    && (/\b(?:changed|touched|modified|edited|added|created|deleted|removed|wrote)\b/i.test(text)
+      || /\b(?:did|has|have)\b[\s\S]{0,60}\b(?:change|touch|modify|edit|add|create|delete|remove|write)\b/i.test(text))
     && !/\b(?:should|would|could|might|shall|will)\b/i.test(text);
   return latestRecord || actionsRuns || history || state || failed || happened || actualResult || inspectJob || changedFiles;
 }
