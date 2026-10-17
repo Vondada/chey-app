@@ -218,7 +218,10 @@ jobs:
         shell: bash
         env:
           REQUESTED: ${{ inputs.model }}
-          CHE_ALLOW_PAID_MODELS: ${{ vars.CHE_ALLOW_PAID_MODELS }}
+          # NEVER use paid unless the owner enables this AFTER creating a capped key.
+          CHE_CODING_PAID_FALLBACK: ${{ vars.CHE_CODING_PAID_FALLBACK }}
+          # Only providers whose account is confirmed to be a FREE plan belong here.
+          CHE_CODING_FREE_PROVIDERS: ${{ vars.CHE_CODING_FREE_PROVIDERS }}
           HAS_GOOGLE: ${{ secrets.GEMINI_API_KEY != '' }}
           HAS_OPENROUTER: ${{ secrets.OPENROUTER_API_KEY != '' }}
           HAS_GROQ: ${{ secrets.GROQ_API_KEY != '' }}
@@ -233,6 +236,7 @@ jobs:
           K_GROQ: ${{ secrets.GROQ_API_KEY }}
           K_MISTRAL: ${{ secrets.MISTRAL_API_KEY }}
           K_CEREBRAS: ${{ secrets.CEREBRAS_API_KEY }}
+          K_PAID_OPENROUTER: ${{ secrets.CHE_CODING_OPENROUTER_PAID_KEY }}
         run: |
           # OpenCode lists a provider's models only when that provider's key is
           # visible, so expose exactly one key for exactly one listing call.
@@ -245,37 +249,76 @@ jobs:
           keyed=""
           for p in GOOGLE ANTHROPIC OPENAI OPENROUTER GROQ MISTRAL CEREBRAS; do v=K_$p; [ -n "${!v}" ] && keyed="$keyed ${p,,}"; done
           echo "Providers with a GitHub Actions key:${keyed:- none}"
-          # "auto": first provider with a configured key, strongest coding
-          # model OpenCode lists for it. Only that provider's key is exposed.
-          model="$REQUESTED"
-          candidates="$model"
-          if [ "$model" = auto ]; then
-            # Ranked fallbacks across every keyed provider: strong stable models
-            # first, then strong previews, then the rest (free-tier keys often
-            # cannot use Pro models, so a cheaper model must still be tried).
-            candidates=""
-            for p in openrouter:HAS_OPENROUTER google:HAS_GOOGLE anthropic:HAS_ANTHROPIC openai:HAS_OPENAI groq:HAS_GROQ mistral:HAS_MISTRAL cerebras:HAS_CEREBRAS; do
-              prov=${p%%:*}; flag=${p##*:}
-              [ "${!flag}" = true ] || continue
-              list=$(list_models "$prov" | grep -E "^$prov/" | grep -iE "gemini|claude|gpt|qwen|deepseek|llama|mistral|codestral|devstral|kimi|glm|grok" | grep -viE "tts|image|audio|embed|vision|guard|[-_.]lite|[-_.]nano|[-_.]mini|[-_]8b|lyria|veo|imagen|live|robotics|computer-use|customtools|learnlm|aqa|search|transcribe|realtime|moderation" || true)
-              # OpenRouter: free (":free") models only unless the owner sets the repo
-              # variable CHE_ALLOW_PAID_MODELS=true, so the $10 credit is never spent.
-              if [ "$prov" = openrouter ] && [ "${CHE_ALLOW_PAID_MODELS:-}" != true ]; then list=$(printf '%s\n' "$list" | grep -E ":free$" || true); fi
-              [ -n "$list" ] || continue
-              strong=$(echo "$list" | grep -iE "coder|codestral|devstral|pro|sonnet|opus|gpt-5|large|70b" || true)
-              # Up to two strong stable models, then the best stable fast model (free-tier keys
-              # often have no quota for Pro models but do for Flash), then previews.
-              fast=$(echo "$list" | grep -iE "flash|haiku|turbo" | grep -viE "preview|exp" | sort -rV | head -1 || true)
-              ranked=$( { echo "$strong" | grep -viE "preview|exp" | sort -rV | head -2 || true; echo "$fast"; echo "$strong" | sort -rV; echo "$list" | sort -rV; } | awk 'NF && !seen[$0]++' | head -3)
-              candidates="$candidates $(echo $ranked)"
-            done
-            candidates=$(echo $candidates | tr ' ' '\n' | awk 'NF' | head -6 | tr '\n' ' ')
-            model=$(echo $candidates | cut -d' ' -f1)
+          # Free first. A paid OpenRouter key is only a FINAL fallback and
+          # is never included in free model discovery (or charged on a probe).
+          # Default to OpenRouter :free only: we cannot infer if other provider
+          # API keys are linked to a paid account. Add each confirmed-free
+          # provider to CHE_CODING_FREE_PROVIDERS explicitly.
+          free_providers="${CHE_CODING_FREE_PROVIDERS:-openrouter}"
+          enabled_free() {
+            case ",$free_providers," in *",$1,"*) return 0;; *) return 1;; esac
+          }
+          first=""; second=""; paid_candidates=""; paid_requested=""
+          if [ "$REQUESTED" != auto ]; then
+            prov=${REQUESTED%%/*}
+            if [ "$prov" = openrouter ] && [[ "$REQUESTED" != *:free ]]; then
+              case "$REQUESTED" in
+                openrouter/qwen/qwen3-coder|openrouter/deepseek/deepseek-chat) paid_requested="$REQUESTED";;
+                *) echo "::error::Paid model not on CHE's small-budget coding allowlist."; exit 1;;
+              esac
+            elif [ "$prov" = openrouter ] && [[ "$REQUESTED" == *:free ]]; then
+              first="$REQUESTED"
+            elif enabled_free "$prov" && [ "$prov" != openrouter ]; then
+              first="$REQUESTED"
+            else
+              echo "::error::Explicit model is not in a verified free provider or the capped paid allowlist."; exit 1
+            fi
           fi
-          if [ -z "$model" ]; then echo "::error::No usable AI model for the OpenCode runner. Providers with a key:${keyed:- none}. Add one provider key (e.g. OPENROUTER_API_KEY or GEMINI_API_KEY) as a GitHub Actions secret."; exit 1; fi
-          echo "Model candidates: $candidates"
-          echo "candidates=$candidates" >> "$GITHUB_OUTPUT"
-          echo "Using model $model"
+          for prov in openrouter google groq cerebras mistral; do
+            enabled_free "$prov" || continue
+            case $prov in
+              openrouter) [ "$HAS_OPENROUTER" = true ] || continue;;
+              google) [ "$HAS_GOOGLE" = true ] || continue;;
+              groq) [ "$HAS_GROQ" = true ] || continue;;
+              cerebras) [ "$HAS_CEREBRAS" = true ] || continue;;
+              mistral) [ "$HAS_MISTRAL" = true ] || continue;;
+            esac
+            list=$(list_models "$prov" | grep -E "^$prov/" || true)
+            case $prov in
+              openrouter) list=$(printf '%s\n' "$list" | grep -E ':free$' | grep -iE 'coder|qwen|deepseek|glm|kimi|gpt|llama' || true);;
+              google) list=$(printf '%s\n' "$list" | grep -iE 'flash' | grep -viE 'preview|exp|image|tts|live' || true);;
+              groq) list=$(printf '%s\n' "$list" | grep -iE 'gpt-oss|qwen' || true);;
+              cerebras) list=$(printf '%s\n' "$list" | grep -iE 'coder|qwen|gpt-oss|llama' || true);;
+              mistral) list=$(printf '%s\n' "$list" | grep -iE 'codestral|devstral' || true);;
+            esac
+            [ -n "$list" ] || continue
+            ranked=$(printf '%s\n' "$list" | grep -viE 'guard|embed|audio|[-_.]8b' | sort -rV | head -2 || true)
+            one=$(printf '%s\n' "$ranked" | sed -n '1p')
+            two=$(printf '%s\n' "$ranked" | sed -n '2p')
+            [ -z "$one" ] || first="$first $one"
+            [ -z "$two" ] || second="$second $two"
+          done
+          free_candidates=$(printf '%s\n' $first $second | awk 'NF && !seen[$0]++' | head -6 | tr '\n' ' ')
+          if [ "$CHE_CODING_PAID_FALLBACK" = true ] && [ -n "$K_PAID_OPENROUTER" ]; then
+            # An isolated, owner-capped paid key; never reuse the free OpenRouter key.
+            paid_list=$(env OPENROUTER_API_KEY="$K_PAID_OPENROUTER" opencode models openrouter 2>/dev/null || true)
+            for candidate in $paid_requested openrouter/qwen/qwen3-coder openrouter/deepseek/deepseek-chat; do
+              [ -n "$candidate" ] || continue
+              if printf '%s\n' "$paid_list" | grep -Fxq "$candidate"; then
+                case " $paid_candidates " in *" $candidate "*) ;; *) paid_candidates="$paid_candidates $candidate";; esac
+              fi
+            done
+            paid_candidates=$(echo "$paid_candidates" | xargs)
+          fi
+          if [ -z "$free_candidates" ] && [ -z "$paid_candidates" ]; then
+            echo "::error::No eligible free models, and capped paid fallback is not configured/approved."
+            exit 1
+          fi
+          model=$(printf '%s\n' $free_candidates $paid_candidates | head -1)
+          echo "Free model candidates: $free_candidates"
+          echo "Paid fallback models: ${paid_candidates:-disabled}"
+          echo "free_candidates=$free_candidates" >> "$GITHUB_OUTPUT"
+          echo "paid_candidates=$paid_candidates" >> "$GITHUB_OUTPUT"
           echo "model=$model" >> "$GITHUB_OUTPUT"
 
       - name: Run OpenCode in the isolated checkout
@@ -283,7 +326,9 @@ jobs:
         shell: bash
         env:
           OPENCODE_CONFIG: /tmp/che-opencode-config.json
-          CANDIDATES: ${{ steps.model.outputs.candidates }}
+          FREE_CANDIDATES: ${{ steps.model.outputs.free_candidates }}
+          PAID_CANDIDATES: ${{ steps.model.outputs.paid_candidates }}
+          CHE_CODING_PAID_FALLBACK: ${{ vars.CHE_CODING_PAID_FALLBACK }}
           # Keys are held under private names; each attempt exposes only the
           # selected provider's key under the name OpenCode reads.
           K_GOOGLE: ${{ secrets.GEMINI_API_KEY }}
@@ -293,6 +338,7 @@ jobs:
           K_GROQ: ${{ secrets.GROQ_API_KEY }}
           K_MISTRAL: ${{ secrets.MISTRAL_API_KEY }}
           K_CEREBRAS: ${{ secrets.CEREBRAS_API_KEY }}
+          K_PAID_OPENROUTER: ${{ secrets.CHE_CODING_OPENROUTER_PAID_KEY }}
           K_HF: ${{ secrets.HF_TOKEN }}
         run: |
           set +e
@@ -304,22 +350,45 @@ jobs:
           # a request too large for the key's token limit) until the time budget runs out. An
           # error event naming one of them stops that model at once, so the next one gets the
           # time. Only error events count: file text the agent reads never stops it.
-          FATAL='ContextOverflowError|exceeded your current quota|RESOURCE_EXHAUSTED|insufficient_quota|does not exist or you do not have access|Request too large for model|"statusCode": ?(401|403|404)'
+          FATAL='ContextOverflowError|exceeded your current quota|RESOURCE_EXHAUSTED|insufficient_quota|rate.?limit|too many requests|does not exist or you do not have access|Request too large for model|"statusCode": ?(401|403|404|429)'
           fatal_seen() {
             { grep -E '"type": ?"error"' /tmp/opencode-events.jsonl 2>/dev/null; grep -iE 'error' /tmp/opencode-stderr.log 2>/dev/null; } | grep -qE "$FATAL"
           }
-          for m in $CANDIDATES; do
-            # Total coding budget 14 min so the job never hits its hard limit.
-            left=$(( 840 - ($(date +%s) - start) ))
-            [ "$left" -ge 90 ] || { echo "::warning::Coding time budget used up before trying $m."; break; }
-            [ "$left" -le 300 ] || left=300
-            case ${m%%/*} in
-              google|gemini) kv=("GEMINI_API_KEY=$K_GOOGLE" "GOOGLE_GENERATIVE_AI_API_KEY=$K_GOOGLE");;
-              anthropic) kv=("ANTHROPIC_API_KEY=$K_ANTHROPIC");; openai) kv=("OPENAI_API_KEY=$K_OPENAI");;
-              openrouter) kv=("OPENROUTER_API_KEY=$K_OPENROUTER");; groq) kv=("GROQ_API_KEY=$K_GROQ");;
-              mistral) kv=("MISTRAL_API_KEY=$K_MISTRAL");; cerebras) kv=("CEREBRAS_API_KEY=$K_CEREBRAS");;
-              huggingface) kv=("HF_TOKEN=$K_HF");; *) kv=();;
-            esac
+          for m in $FREE_CANDIDATES $PAID_CANDIDATES; do
+            paid=no
+            case " $PAID_CANDIDATES " in *" $m "*) paid=yes;; esac
+            # Reserve time for the final capped model when enabled. Do not
+            # waste the 14-minute runner window repeatedly timing out on free keys.
+            remaining=$(( 840 - ($(date +%s) - start) ))
+            if [ "$paid" = no ] && [ -n "$PAID_CANDIDATES" ]; then
+              left=$((remaining - 180))
+              [ "$left" -ge 60 ] || { echo "::notice::Free-model time exhausted; moving to the capped final fallback."; continue; }
+            else
+              left=$remaining
+              [ "$left" -ge 60 ] || { echo "::warning::Coding session time exhausted."; break; }
+            fi
+            if [ "$paid" = yes ]; then
+              # Not even an explicitly selected paid model bypasses this gate.
+              # The server verifies <= $15/month, monthly reset and remaining credit.
+              if [ "$CHE_CODING_PAID_FALLBACK" != true ]; then
+                echo "::warning::Paid fallback not authorized."; continue
+              fi
+              if ! CHE_CODING_OPENROUTER_PAID_KEY="$K_PAID_OPENROUTER" node tools/che_coding_paid_gate.mjs; then
+                echo "::warning::Paid coding withheld: key cap or authorization failed."; continue
+              fi
+              kv=("OPENROUTER_API_KEY=$K_PAID_OPENROUTER")
+              [ "$left" -le 300 ] || left=300
+            else
+              [ "$left" -le 120 ] || left=120
+              case ${m%%/*} in
+                google) kv=("GEMINI_API_KEY=$K_GOOGLE" "GOOGLE_GENERATIVE_AI_API_KEY=$K_GOOGLE");;
+                groq) kv=("GROQ_API_KEY=$K_GROQ");;
+                cerebras) kv=("CEREBRAS_API_KEY=$K_CEREBRAS");;
+                mistral) kv=("MISTRAL_API_KEY=$K_MISTRAL");;
+                openrouter) kv=("OPENROUTER_API_KEY=$K_OPENROUTER");;
+                *) echo "::error::Non-free or unknown provider blocked."; continue;;
+              esac
+            fi
             used=$m; tried="$tried $m"
             echo "Trying $m"
             : >/tmp/opencode-events.jsonl; : >/tmp/opencode-stderr.log
