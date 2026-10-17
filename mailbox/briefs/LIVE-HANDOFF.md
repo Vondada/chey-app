@@ -64,6 +64,38 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-17 ~08:50 UTC — #324 review rounds; Coding Library and runtime fixes in flight)
+
+- **main** is `fa117f6` (#326). Nothing below is merged yet.
+- **PR #324 (REA 2.0 backend)**, head `67651f3`.
+  - Fixed the CI hang on b8e186f: global iptables rejects left the GitHub runner unable to finish its job. They are now user-scoped (`tools/rea/web/egress.sh`, owner match on `rea-observer`), and the real runner proves loopback and link-local are blocked for the observer and kept for the runner.
+  - Fixed 5 rounds of Codex P1/P2 findings, each with a regression test:
+    - robots.txt: CHE-REA groups are honoured, paths are percent-normalised, precedence counts octets, an unreachable robots.txt means disallow, and one deadline bounds every read;
+    - `/rea-verify` waits for both always-on workflows on the head;
+    - inexact repositories and App Store names are offered as numbered choices instead of being picked;
+    - no repeated re-verification;
+    - incomplete code searches stay unknown;
+    - browser findings join the feature map;
+    - publisher branch races are retried;
+    - `/rea-compare` needs `CHE_GITHUB_REPO`.
+  - Required checks were green on 8efd42c and earlier heads. Codex is reviewing 67651f3.
+  - **Next:** exact-head CI green and Codex clear → squash merge with `[worker-deploy]` → verify the deploy → `rea_check` live (B/C/D/G) → `rea_build_feature` for Test E (draft PR, not merged).
+- **PR #325 (iPhone REA view)**, head `d7deb9b`, waits on #324. Then: merge main, run CI, merge, Shorebird. The iPhone install is NOT claimed.
+- **PR #327 (new, coding runtime)**, branch `claude/che-coding-executor`.
+  - Root cause of `ocr-8e7f69c5`: Gemini quota exhausted; Groq had no access to one model, and the other has a 7k ITPM limit against a 10,182-token request; OpenCode retried until its 300 s timeout.
+  - Fixes:
+    - a watchdog stops a model at its first fatal error event;
+    - a stable Flash model is now among the candidates;
+    - a blocked session turns the run red;
+    - CHE names the cause and does not auto-retry a failure that would repeat.
+  - **Owner action for real coding runs:** a model key with enough quota (a paid Gemini key, or OpenRouter).
+- **Coding Library**, branch `claude/che-coding-library` (pushed, no PR until #324 merges).
+  - A coding shelf on `library.js`: official docs (Flutter, Dart, TypeScript, React, Python, Cloudflare, GitHub) read at an exact commit, with the licence GitHub reports.
+  - Cited search; passages fed to the coding crew (≤1,800 chars); every job's outcome recorded; REA saves; refresh and stale detection.
+  - 5 commands (`/library-*`), `/api/coding-library` routes, docs in `docs/CHE_CODING_LIBRARY.md`. Worker 1408/1408.
+  - The Flutter page is not built yet; it follows after #325.
+- **Trading Room:** not started (phases 1–3 first, per the owner's order).
+
 ## 2. Current position (ChatGPT, 2026-10-17 ~07:10 UTC — PR validation handoff)
 
 - **PR #326 MERGED** squash commit `fa117f6bf1591c809e456f5aaea53b30c1ee412f` on `main` (chat-clear screen command fix). Required GitHub Worker/Flutter/UI checks green; separate Cloudflare Workers Builds red but explicitly non-gating per `.claude/skills/che-release/SKILL.md`. Shorebird run `39011397864` successful. **iPhone installation unverified**, do not say phone updated.
