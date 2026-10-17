@@ -781,3 +781,36 @@ test('Codex #324: REA status reports comparison available with only the reposito
   assert.match(compare({ CHE_GITHUB_REPO: 'Vondada/chey-app' }).needs, /without a token[\s\S]*CHE_GITHUB_TOKEN enables code search/);
   assert.equal(compare(ENV).needs, '');
 });
+
+test('Codex #324: repeated comparisons advance through the features the search budget skipped', async () => {
+  const { compareWithChe } = await import('./rea_features.js');
+  const features = Array.from({ length: 7 }, (_, i) => ({ id: `f${i + 1}`, kind: 'documented', name: `Gizmo${i} widget thing`, che: {} }));
+  const w = world();
+  const searchCount = () => w.calls.filter((c) => c.url.startsWith('https://api.github.com/search/code')).length;
+  await compareWithChe(ENV, features, w.fetcher);
+  assert.equal(searchCount(), 4);
+  const second = await compareWithChe(ENV, features, w.fetcher);
+  assert.equal(searchCount(), 7, 'the second compare searched only the three not checked yet');
+  assert.deepEqual(features.map((f) => f.che.status), Array(7).fill('missing'));
+  assert.equal(second.counts.unknown, 0);
+  await compareWithChe(ENV, features, w.fetcher);
+  assert.equal(searchCount(), 7, 'nothing is searched twice against the same CHE commit');
+});
+
+test('Codex #324: asking about the same app by name again reuses the investigation at the same commit', async () => {
+  const w = world();
+  const che = cheWith(w);
+  const first = await che.say('CHE, investigate the Sketchpad app and tell me how its features work.');
+  assert.equal(first.ok, true);
+  const treeReads = () => w.calls.filter((c) => c.url.startsWith('https://api.github.com/repos/acme/sketchpad/git/trees/')).length;
+  const searches = () => w.calls.filter((c) => c.url.startsWith('https://api.github.com/search/repositories')).length;
+  const before = { trees: treeReads(), searches: searches() };
+  const again = await che.say('Investigate the Sketchpad app');
+  assert.equal(again.investigation_id, first.investigation_id, 'the same investigation');
+  assert.equal(again.reused, first.investigation_id);
+  assert.equal(treeReads(), before.trees, 'the repository was not read again');
+  assert.equal(searches(), before.searches, 'no second repository search');
+  w.state.sha = 'f'.repeat(40);
+  const moved = await che.say('Investigate the Sketchpad app');
+  assert.notEqual(moved.investigation_id, first.investigation_id, 'a new commit is investigated again');
+});

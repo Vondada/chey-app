@@ -379,6 +379,12 @@ export async function compareWithChe(env, features, fetcher = fetch) {
     for (const p of named) evidence.push(link(`CHE file ${p} (name match only)`, blobUrl(repo, sha, p)));
     let searched = false;
     const unmatched = !known.length && !named.length && !commands.length;
+    // A search already finished against this same CHE commit is kept, so each "REA compare"
+    // spends its search budget on the features not checked yet and the rest are reached in turn.
+    if (unmatched && token && sha && feature.che?.searched_sha === sha && ['partial', 'missing'].includes(feature.che.status)) {
+      counts[feature.che.status] += 1;
+      continue;
+    }
     // An unauthenticated tree proves file names, not the absence of source code.
     // Without code search, do not report a feature as missing or propose rebuilding it.
     if (unmatched && !token) {
@@ -415,7 +421,7 @@ export async function compareWithChe(env, features, fetcher = fetch) {
     }
     const partial = named.length || commands.length || evidence.some((e) => /code search/.test(e.label));
     const status = known.length ? 'has' : partial ? 'partial' : 'missing';
-    feature.che = { status, evidence: evidence.slice(0, 5), checked_at: sha.slice(0, 12), ...(status === 'missing' ? { searched: searched || !token ? (searched ? 'tree and code search' : 'file names only') : 'tree' } : {}) };
+    feature.che = { status, evidence: evidence.slice(0, 5), checked_at: sha.slice(0, 12), ...(searched ? { searched_sha: sha } : {}), ...(status === 'missing' ? { searched: searched || !token ? (searched ? 'tree and code search' : 'file names only') : 'tree' } : {}) };
     counts[status] += 1;
   }
   return { ok: Boolean(paths), sha, counts };

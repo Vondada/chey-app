@@ -363,7 +363,7 @@ function targetLabel(target, facts = {}) {
 
 function newInvestigation(id, target, now) {
   return {
-    id, target: { kind: target.kind, label: targetLabel(target), url: target.url || '', version: '' },
+    id, target: { kind: target.kind, label: targetLabel(target), url: target.url || '', version: '', ...(target.kind === 'app_name' ? { requested: String(target.name || '').slice(0, 80) } : {}) },
     state: 'running', stage: 'understand', stages: freshStages(), created_at: iso(now), updated_at: iso(now),
     sources: [], screenshots: [], features: [], architecture: [], comparison: null, proposals: [], plan: null,
     build: null, verification: null, limitations: [], cache_key: '', browser: null, attempts: 1,
@@ -741,13 +741,19 @@ async function startOrReuse(storage, env, jobs, target, opts) {
     earlier.limitations = [];
     return { inv: await runInvestigation(storage, env, earlier, target, { fetcher, now, feature }), resumed: true };
   }
-  // GitHub targets are reused when the commit is the same, so no file is read twice.
-  if (target.kind === 'github') {
-    const recent = [...jobs].reverse().filter((j) => j.kind === 'investigation' && j.state === 'complete' && j.cache_key?.startsWith(`github:${target.full_name.toLowerCase()}@`));
+  // GitHub targets are reused when the commit is the same, so no file is read twice. An app
+  // name that an earlier investigation resolved to a repository is the same target: one HEAD
+  // read, instead of the search and the whole repository again.
+  const headOf = (full) => fetcher(`https://api.github.com/repos/${full}/commits/HEAD`, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'CHE-REA', ...(env.CHE_GITHUB_TOKEN ? { Authorization: `Bearer ${env.CHE_GITHUB_TOKEN}` } : {}) } }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  const full = target.kind === 'github' ? target.full_name.toLowerCase()
+    : target.kind === 'app_name' ? ([...jobs].reverse().find((j) => j.kind === 'investigation' && j.state === 'complete' && String(j.target?.requested || '').toLowerCase() === String(target.name || '').toLowerCase() && j.cache_key?.startsWith('github:'))?.cache_key || '').slice('github:'.length).split('@')[0]
+      : '';
+  if (full && !feature) {
+    const recent = [...jobs].reverse().filter((j) => j.kind === 'investigation' && j.state === 'complete' && j.cache_key?.startsWith(`github:${full}@`));
     if (recent.length) {
-      const head = await fetcher(`https://api.github.com/repos/${target.full_name}/commits/HEAD`, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'CHE-REA', ...(env.CHE_GITHUB_TOKEN ? { Authorization: `Bearer ${env.CHE_GITHUB_TOKEN}` } : {}) } }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-      const hit = head?.sha && recent.find((j) => j.cache_key === `github:${target.full_name.toLowerCase()}@${head.sha}`);
-      if (hit && !feature) return { inv: await loadInvestigation(storage, hit.id), reused: true };
+      const head = await headOf(full);
+      const hit = head?.sha && recent.find((j) => j.cache_key === `github:${full}@${head.sha}`);
+      if (hit) return { inv: await loadInvestigation(storage, hit.id), reused: true };
     }
   }
   if (target.kind === 'website') {
