@@ -63,36 +63,35 @@ jobs:
       # The Chromium build made for the pinned Playwright, not the runner's Google Chrome: the
       # image updates Chrome on its own schedule, and a browser the driver was not built for
       # can break it. --only-shell installs just the headless build.
+      # Installed outside the runner's home, so the observer user (below) can run it.
       - name: Install the matching headless Chromium
         id: browser
         working-directory: tools/rea/web
-        run: node node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: /opt/rea-browsers
+        run: |
+          set -euo pipefail
+          sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0755 /opt/rea-browsers
+          node node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+          chmod -R a+rX /opt/rea-browsers
 
-      # The hostname check in observe.mjs is not a connection-time DNS pin.
-      # Protect the actual kernel egress path against DNS rebinding: even if a
-      # public name later resolves to a private address, no socket can reach it.
-      # This runs AFTER dependency installation; if firewall setup fails, skip
-      # observation and publish an honest failure record instead.
-      - name: Deny private-address egress at the connection layer
+      # The hostname check in observe.mjs is not a connection-time DNS pin. The kernel rules
+      # in egress.sh are: every socket the observer user opens to a private, loopback or
+      # link-local address is rejected, whatever a name resolved to. They match that user only,
+      # so the runner itself (which needs loopback to finish the job) is untouched. If they
+      # cannot be put in place, no page is opened and an honest failure record is published.
+      - name: Deny private-address egress for the observer user
         id: egress
         if: steps.install.outcome == 'success' && steps.browser.outcome == 'success'
         run: |
           set -euo pipefail
-          for cidr in 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.168.0.0/16 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4; do
-            sudo iptables -I OUTPUT 1 -d "$cidr" -j REJECT
-          done
-          # An OS-local DNS stub is permitted only on its DNS port. Normal TCP
-          # and HTTP traffic to loopback remains blocked.
-          sudo iptables -I OUTPUT 1 -d 127.0.0.0/8 -p udp --dport 53 -j ACCEPT
-          for cidr in ::/128 ::1/128 fc00::/7 fe80::/10 ff00::/8 ::ffff:0:0/96 64:ff9b::/96 64:ff9b:1::/48 2001:db8::/32; do
-            sudo ip6tables -I OUTPUT 1 -d "$cidr" -j REJECT
-          done
-          sudo iptables -C OUTPUT -d 169.254.0.0/16 -j REJECT
-          sudo ip6tables -C OUTPUT -d fc00::/7 -j REJECT
-          # Disable remaining IPv6 egress, including transition/tunneling ranges
-          # that can encode IPv4 destinations. Public IPv4 observation still works.
-          sudo ip6tables -I OUTPUT 1 -j REJECT
-          sudo ip6tables -C OUTPUT -j REJECT
+          bash tools/rea/web/egress.sh rea-observer
+          # The observer runs from a copy it can read; the runner's home stays private.
+          sudo install -d -m 0755 /opt/rea-run /opt/rea-run/tools/rea
+          sudo cp -r server /opt/rea-run/server
+          sudo cp -r tools/rea/web /opt/rea-run/tools/rea/web
+          sudo chmod -R a+rX /opt/rea-run
+          sudo install -d -o rea-observer -m 0700 /opt/rea-out /opt/rea-home
 
       - name: Observe the page within fixed limits
         id: observe
@@ -108,8 +107,18 @@ jobs:
           elif [ "$BROWSER_OUTCOME" != "success" ]; then REASON="The pinned Chromium could not be installed. No page was opened.";
           elif [ "$EGRESS_OUTCOME" != "success" ]; then REASON="The private-address egress firewall could not be enforced. No page was opened.";
           fi
-          timeout --kill-after=15 150 node tools/rea/web/observe.mjs observe --job "$JOB_ID" --url "$TARGET_URL" \
-            --reason "$REASON" --out "$WORK/out"
+          if [ -z "$REASON" ]; then
+            # The browser and every connection it makes run as the firewalled user.
+            sudo -u rea-observer env PATH="$PATH" HOME=/opt/rea-home PLAYWRIGHT_BROWSERS_PATH=/opt/rea-browsers \
+              timeout --kill-after=15 150 node /opt/rea-run/tools/rea/web/observe.mjs observe --job "$JOB_ID" --url "$TARGET_URL" \
+              --reason "" --out /opt/rea-out
+            sudo cp -r /opt/rea-out/. "$WORK/out/"
+            sudo chown -R "$(id -u):$(id -g)" "$WORK/out"
+          else
+            # No browser is opened: the observer only writes the failure record.
+            timeout --kill-after=15 150 node tools/rea/web/observe.mjs observe --job "$JOB_ID" --url "$TARGET_URL" \
+              --reason "$REASON" --out "$WORK/out"
+          fi
 
       - name: Keep the record for the publisher
         if: always()

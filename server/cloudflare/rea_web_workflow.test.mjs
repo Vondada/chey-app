@@ -18,6 +18,8 @@ const WORKFLOW = read('.github/workflows/che-rea-web.yml');
 const PKG = JSON.parse(read('tools/rea/web/package.json'));
 const LOCK = JSON.parse(read('tools/rea/web/package-lock.json'));
 const OBSERVER_SOURCE = read('tools/rea/web/observe.mjs');
+const EGRESS = read('tools/rea/web/egress.sh');
+const CI_WORKFLOW = read('.github/workflows/flutter-check.yml');
 const OBSERVER = new URL('../../tools/rea/web/observe.mjs', import.meta.url).pathname;
 const OBSERVE_JOB = WORKFLOW.slice(WORKFLOW.indexOf('\n  observe:\n'), WORKFLOW.indexOf('\n  publish:\n'));
 const PUBLISH_JOB = WORKFLOW.slice(WORKFLOW.indexOf('\n  publish:\n'));
@@ -40,12 +42,20 @@ test('the observer pins one exact Playwright version, and the lockfile carries t
 
 test('browser observations enforce connection-layer private-IP denial and refuse WebSockets', () => {
   assert.match(OBSERVE_JOB, /id: egress/);
-  assert.match(OBSERVE_JOB, /sudo iptables -I OUTPUT 1 -d "\$cidr" -j REJECT/);
-  assert.match(OBSERVE_JOB, /sudo ip6tables -I OUTPUT 1 -d "\$cidr" -j REJECT/);
-  assert.match(OBSERVE_JOB, /sudo ip6tables -I OUTPUT 1 -j REJECT/, 'IPv6 tunnel addresses cannot bypass destination restrictions');
-  assert.match(OBSERVE_JOB, /169\.254\.0\.0\/16/);
-  assert.match(OBSERVE_JOB, /127\.0\.0\.0\/8/);
-  assert.match(OBSERVE_JOB, /fc00::\/7/);
+  assert.match(OBSERVE_JOB, /bash tools\/rea\/web\/egress\.sh rea-observer/);
+  // The browser runs as the firewalled user; the rules match only that user.
+  assert.match(OBSERVE_JOB, /sudo -u rea-observer env PATH="\$PATH" HOME=\/opt\/rea-home PLAYWRIGHT_BROWSERS_PATH=\/opt\/rea-browsers/);
+  assert.match(EGRESS, /sudo iptables -I OUTPUT 1 -m owner --uid-owner "\$uid" -d "\$cidr" -j REJECT/);
+  assert.match(EGRESS, /sudo ip6tables -I OUTPUT 1 -m owner --uid-owner "\$uid" -j REJECT/, 'IPv6, mapped and tunnel forms included, is refused for the observer');
+  for (const cidr of ['127.0.0.0/8', '169.254.0.0/16', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '100.64.0.0/10']) assert.ok(EGRESS.includes(cidr), cidr);
+  assert.match(EGRESS, /--dport 53 -j ACCEPT/, 'only DNS to the configured resolvers stays open');
+  // A rule without the owner match would also cut the runner off and hang the job (seen on b8e186f).
+  for (const line of EGRESS.split('\n').filter((l) => /^\s*sudo ip6?tables -I/.test(l))) {
+    assert.match(line, /-m owner --uid-owner "\$uid"/, `user-scoped: ${line.trim()}`);
+  }
+  assert.doesNotMatch(OBSERVE_JOB, /sudo ip6?tables -[IA] OUTPUT/, 'no global rule in the workflow itself');
+  assert.doesNotMatch(CI_WORKFLOW, /sudo ip6?tables -[IA] OUTPUT/, 'CI checks the scoped rules, never adds global ones');
+  assert.match(CI_WORKFLOW, /sudo -u rea-observer curl -s -m 5 http:\/\/127\.0\.0\.1:8765\//);
   assert.match(OBSERVE_JOB, /EGRESS_OUTCOME/);
   assert.match(OBSERVE_JOB, /egress firewall could not be enforced/);
   assert.match(OBSERVE_JOB, /--url "\$TARGET_URL"/, 'the validated URL is passed to the observer');

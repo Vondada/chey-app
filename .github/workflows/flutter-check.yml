@@ -93,16 +93,19 @@ jobs:
         run: python3 -m unittest discover -s tools -p 'test_che_video_render.py'
       - name: Claude Code project skills (.claude/skills) tests
         run: node --test .claude/skills/tests/*.test.mjs
-      # A network policy defined only in YAML text is not enough. Verify the
-      # GitHub-hosted Linux runner actually accepts kernel-level egress rules.
-      # This step runs last, after the browser and other integration tests.
-      - name: REA observer kernel egress guard capability
+      # A network policy defined only in YAML text is not enough: prove on the real Linux
+      # runner that egress.sh blocks the observer user from loopback and link-local addresses
+      # while the runner's own traffic still works (rules matching only that user).
+      - name: REA observer kernel egress guard (user-scoped)
         run: |
           set -euo pipefail
-          sudo iptables -A OUTPUT -d 169.254.0.0/16 -j REJECT
-          sudo iptables -C OUTPUT -d 169.254.0.0/16 -j REJECT
-          sudo iptables -A OUTPUT -d 127.0.0.0/8 -j REJECT
-          sudo iptables -C OUTPUT -d 127.0.0.0/8 -j REJECT
-          sudo ip6tables -A OUTPUT -j REJECT
-          sudo ip6tables -C OUTPUT -j REJECT
+          bash tools/rea/web/egress.sh rea-observer
+          python3 -m http.server 8765 --bind 127.0.0.1 >/dev/null 2>&1 &
+          server=$!
+          sleep 1
+          curl -sf -m 5 http://127.0.0.1:8765/ >/dev/null || { echo "the runner itself lost loopback"; exit 1; }
+          if sudo -u rea-observer curl -s -m 5 http://127.0.0.1:8765/ >/dev/null; then echo "the observer reached loopback"; exit 1; fi
+          if sudo -u rea-observer curl -s -m 5 http://169.254.169.254/ >/dev/null; then echo "the observer reached the metadata address"; exit 1; fi
+          kill "$server"
+          echo "observer user: loopback and link-local refused; runner unaffected"
 
