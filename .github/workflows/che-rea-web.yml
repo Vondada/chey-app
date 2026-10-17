@@ -79,19 +79,19 @@ jobs:
         run: |
           set -euo pipefail
           for cidr in 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.168.0.0/16 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4; do
-            sudo iptables -A OUTPUT -d "$cidr" -j REJECT
+            sudo iptables -I OUTPUT 1 -d "$cidr" -j REJECT
           done
           # An OS-local DNS stub is permitted only on its DNS port. Normal TCP
           # and HTTP traffic to loopback remains blocked.
           sudo iptables -I OUTPUT 1 -d 127.0.0.0/8 -p udp --dport 53 -j ACCEPT
           for cidr in ::/128 ::1/128 fc00::/7 fe80::/10 ff00::/8 ::ffff:0:0/96 64:ff9b::/96 64:ff9b:1::/48 2001:db8::/32; do
-            sudo ip6tables -A OUTPUT -d "$cidr" -j REJECT
+            sudo ip6tables -I OUTPUT 1 -d "$cidr" -j REJECT
           done
           sudo iptables -C OUTPUT -d 169.254.0.0/16 -j REJECT
           sudo ip6tables -C OUTPUT -d fc00::/7 -j REJECT
           # Disable remaining IPv6 egress, including transition/tunneling ranges
           # that can encode IPv4 destinations. Public IPv4 observation still works.
-          sudo ip6tables -A OUTPUT -j REJECT
+          sudo ip6tables -I OUTPUT 1 -j REJECT
           sudo ip6tables -C OUTPUT -j REJECT
 
       - name: Observe the page within fixed limits
