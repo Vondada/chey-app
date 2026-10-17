@@ -38,6 +38,21 @@ test('the observer pins one exact Playwright version, and the lockfile carries t
   assert.match(WORKFLOW, /version: '1\.56\.1'/, 'the publisher\'s fallback record names the same version');
 });
 
+test('browser observations enforce connection-layer private-IP denial and refuse WebSockets', () => {
+  assert.match(OBSERVE_JOB, /id: egress/);
+  assert.match(OBSERVE_JOB, /sudo iptables -A OUTPUT -d "\$cidr" -j REJECT/);
+  assert.match(OBSERVE_JOB, /sudo ip6tables -A OUTPUT -d "\$cidr" -j REJECT/);
+  assert.match(OBSERVE_JOB, /169\.254\.0\.0\/16/);
+  assert.match(OBSERVE_JOB, /127\.0\.0\.0\/8/);
+  assert.match(OBSERVE_JOB, /fc00::\/7/);
+  assert.match(OBSERVE_JOB, /EGRESS_OUTCOME/);
+  assert.match(OBSERVE_JOB, /egress firewall could not be enforced/);
+  assert.match(OBSERVE_JOB, /--url "\$TARGET_URL"/, 'the validated URL is passed to the observer');
+  assert.doesNotMatch(OBSERVE_JOB, /--url "\$WEB_URL"/, 'an undefined variable must never be used');
+  assert.match(OBSERVER_SOURCE, /context\.routeWebSocket\(\/\.\*\/, \(ws\) =>/);
+  assert.doesNotMatch(OBSERVER_SOURCE, /ws\.connectToServer\(/, 'no client WebSocket frames are forwarded');
+});
+
 test('the workflow runs only on dispatch, and the observe job can read but not write', () => {
   assert.match(WORKFLOW, /^on:\n {2}workflow_dispatch:/m);
   assert.doesNotMatch(WORKFLOW, /^ {2}(push|pull_request|schedule):/m, 'no automatic runs');
