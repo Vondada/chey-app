@@ -29,7 +29,7 @@ const MISSION_IDS = {
   intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-recover', 'che-status'],
   youtube: ['yt-ideas', 'yt-research', 'yt-script', 'yt-video', 'yt-voice', 'yt-thumbnail', 'yt-seo', 'yt-publish', 'yt-batch', 'yt-analytics', 'yt-grow'],
   trading: ['trade-open', 'trade-chart', 'trade-setup', 'trade-liquidity', 'trade-risk', 'trade-backtest', 'trade-journal', 'trade-alert', 'trade-execute'],
-  build: ['site-build', 'site-redesign', 'site-audit', 'site-publish', 'app-build', 'app-fix', 'ai-build', 'code-review', 'che-release', 'iphone-update', 'rea-inspect', 'rea-discover', 'rea-features', 'rea-explain', 'rea-debug', 'rea-compare', 'rea-rebuild', 'rea-build', 'rea-verify', 'rea-status'],
+  build: ['site-build', 'site-redesign', 'site-audit', 'site-publish', 'app-build', 'app-fix', 'ai-build', 'code-review', 'che-release', 'iphone-update', 'rea-inspect', 'rea-discover', 'rea-features', 'rea-explain', 'rea-debug', 'rea-compare', 'rea-rebuild', 'rea-build', 'rea-verify', 'rea-status', 'library-search', 'library-learn', 'library-status', 'library-refresh', 'library-save'],
   money: ['money-dashboard', 'cashflow', 'budget', 'expenses', 'invoices', 'money-forecast', 'pricing', 'profit-report'],
   clients: ['lead-scout', 'lead-audit', 'lead-score', 'lead-match', 'lead-proposal', 'lead-outreach', 'lead-crm', 'lead-followup', 'client-deliver'],
   marketing: ['brand-build', 'marketing-plan', 'social-content', 'ads-plan', 'seo-growth', 'sales-funnel', 'business-launch'],
@@ -109,7 +109,7 @@ async function owner({ saved = new Map(), model = () => 'Here is the answer, sir
 
 // ─── 1. Catalog identities ────────────────────────────────────────────────
 
-test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA commands, in 8 categories, each fully described', () => {
+test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA and five Coding Library commands, in 8 categories, each fully described', () => {
   assert.equal(COMMANDS.length, 86);
   assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 86, 'ids are unique');
   assert.deepEqual(CATEGORIES.map((c) => c.id), Object.keys(MISSION_IDS));

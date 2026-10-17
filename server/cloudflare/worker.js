@@ -11847,7 +11847,9 @@ export class CheState extends DurableObject {
     // Every finished job leaves its outcome on the Coding Library shelf for the next similar request.
     const done = async (result) => {
       await this.recordCodingOutcome(job, prepared, result).catch(() => null);
-      return result;
+      // The receipt names the Coding Library passages the team was given (titles only).
+      const used = (prepared?.library_refs || []).map((r) => r.title).slice(0, 3);
+      return used.length && result.result ? { ...result, result: `${result.result}\nCoding Library passages the team used: ${used.join('; ')}.` } : result;
     };
     await recordCrewThread(this.ctx.storage, { request: job.request || job.prompt, discussion: prepared?.discussion, outcome: crewOutcome(prepared) }).catch(() => null);
     if (prepared.status === 200 && prepared.proposal) {
