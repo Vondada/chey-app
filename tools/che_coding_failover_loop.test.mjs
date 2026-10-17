@@ -231,3 +231,76 @@ test('a resumed checkpoint that no longer applies is discarded, and the run star
   assert.equal(result.calls[0], `${FREE_B}|base|export const a = 7;`);
   assert.equal(existsSync(join(resumedDir, 'checkpoint.patch')), false);
 });
+
+
+function runFakePaid(box, gateExit = 0) {
+  const lines = workflow.split('\n');
+  const start = lines.findIndex(line => line.trim() === '- name: Run capped paid OpenRouter only after free attempts');
+  assert.ok(start > 0);
+  const index = lines.findIndex((line, i) => i > start && line === '        run: |');
+  assert.ok(index > start);
+  const body = [];
+  for (let i = index + 1; i < lines.length; i++) {
+    if (lines[i] && !lines[i].startsWith('          ')) break;
+    body.push(lines[i].slice(10));
+  }
+  writeFileSync(join(box.trusted, 'tools/che_coding_paid_gate.mjs'), 'process.exit(' + gateExit + ');\n');
+  const output = join(box.root, 'paid-output');
+  writeFileSync(output, '');
+  const result = spawnSync('bash', ['-c', body.join('\n').replaceAll('/tmp/', box.tmp + '/')], {
+    cwd: box.repo, encoding: 'utf8', timeout: 120000,
+    env: {
+      PATH: box.bin + ':' + process.env.PATH,
+      HOME: box.root, RUNNER_TEMP: box.runnerTemp,
+      CHE_TRUSTED_TOOLS: box.trusted, BASE_SHA: box.base,
+      OPENCODE_CONFIG: box.tmp + '/che-opencode-config.json',
+      PAID_CANDIDATES: PAID, CHE_CODING_PAID_FALLBACK: 'true',
+      CHE_CODING_OPENROUTER_NO_BYOK: 'true',
+      K_PAID_OPENROUTER: 'dummy-capped-key',
+      FREE_FAILURE_KIND: 'quota', FREE_RESUMABLE: 'true',
+      FAKE_PLAN: box.plan, FAKE_CALLS: box.calls, GITHUB_OUTPUT: output,
+    },
+  });
+  const outputs = Object.fromEntries(readFileSync(output, 'utf8').split('\n').filter(Boolean).map(line => {
+    const at = line.indexOf('=');
+    return [line.slice(0, at), line.slice(at + 1)];
+  }));
+  const calls = existsSync(box.calls) ? readFileSync(box.calls, 'utf8').trim().split('\n').filter(Boolean) : [];
+  return { status: result.status, stderr: result.stderr, stdout: result.stdout, outputs, calls };
+}
+
+test('the separately gated final paid step continues from a free-engine checkpoint', () => {
+  const box = sandbox();
+  const plan = {
+    [FREE_A]: { writes: { 'src/a.mjs': 'export const a = 2;\n' }, stderr: 'quota exceeded', exit: 1 },
+    [FREE_B]: { stderr: 'rate limit reached', exit: 1 },
+    [PAID]: { writes: { 'src/final.mjs': 'export const final = true;\n' }, exit: 0 },
+  };
+  const free = run(box, { free: FREE_A + ' ' + FREE_B, paid: PAID, plan });
+  assert.notEqual(free.outputs.exit_code, '0');
+  assert.deepEqual(free.calls.map(x => x.split('|')[0]), [FREE_A, FREE_B]);
+  const paid = runFakePaid(box, 0);
+  assert.equal(paid.status, 0, paid.stderr);
+  assert.equal(paid.outputs.exit_code, '0', paid.stderr);
+  assert.equal(paid.outputs.model, PAID);
+  assert.deepEqual(paid.calls.map(x => x.split('|')[0]), [FREE_A, FREE_B, PAID]);
+  assert.equal(paid.calls[2], PAID + '|progress|export const a = 2;');
+  assert.equal(readFileSync(join(box.repo, 'src/final.mjs'), 'utf8'), 'export const final = true;\n');
+});
+
+test('the final paid step cannot invoke a model when its cap gate refuses', () => {
+  const box = sandbox();
+  const plan = {
+    [FREE_A]: { stderr: 'quota exceeded', exit: 1 },
+    [PAID]: { writes: { 'src/a.mjs': 'export const a = 99;\n' }, exit: 0 },
+  };
+  const free = run(box, { free: FREE_A, paid: PAID, plan });
+  assert.notEqual(free.outputs.exit_code, '0');
+  const paid = runFakePaid(box, 2);
+  assert.equal(paid.status, 0, paid.stderr);
+  assert.notEqual(paid.outputs.exit_code, '0');
+  assert.equal(paid.outputs.failure_kind, 'quota');
+  assert.equal(paid.outputs.resumable, 'true');
+  assert.deepEqual(paid.calls.map(x => x.split('|')[0]), [FREE_A]);
+  assert.equal(readFileSync(join(box.repo, 'src/a.mjs'), 'utf8'), 'export const a = 1;\n');
+});
