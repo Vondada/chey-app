@@ -64,6 +64,16 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-17 ~23:45 UTC — #330 after eight reviews, ninth running; Brain PR #331 draft open, its first review running)
+
+**PR #330 (`claude/che-execution-history-explore`, head `d115119`)** — coding history route. Reviews 6, 7 and 8 each found a second-request drop in a new shape and each is fixed with regression cases: same-record follow-ups only (660f783), prohibitions on CHE's own actions only (ef971b6), a prohibition must cover its whole clause and "my tasks/jobs" are not the record (d115119). `coding_history.test.mjs` 284 cases; Worker 1729/1736 (7 skipped); CI green on `d115119`; all three reviewers' `/api/chat` harnesses re-run head vs main (1 000+ turns): no drop, no job, no GitHub write. **Review 9 is running.** Next step: if it is clean → `update_pull_request draft:false`, squash-merge with `[worker-deploy]` in the title and `expectedHeadSha` = head, verify the deploy run and `/health` commit. If it finds a drop → fix the mechanism (never a phrase), add the wording to the test, re-run `scratchpad/cmp_fix6.mjs` harnesses, push, review again.
+
+**PR #331 (`claude/che-unified-brain`, head `0ff8048`, DRAFT)** — Unified Brain phases 1–4: `server/cloudflare/brain_store.js` (one record model over DO SQLite: 16 regions, 18 relationship types, fact-check verification labels, explained significance, reconcile rules, digest), owner-only `/api/brain/*` sync endpoints, hooks (word-for-word chat records, legacy projection by hash, resumable brainmem backfill, tombstones on delete/clear, phone memories into `data.memories` with the same id), `lib/memory/che_brain_replica.dart` (pure Dart replica: journal+snapshot, outbox cleared on ack, paged pull, conflicts kept, receipts) wired into state load / offline answer / saveMemory / Brain room / status caption. Tests: brain_store 12, brain_sync 5, che_brain_replica 8; Worker 1451/1458, dart analyze clean, flutter +442. `docs/CHE_UNIFIED_BRAIN.md` = audit + design + verified/not + remaining phases. **First independent review running.** Next: fix findings, mark ready, merge with `[worker-deploy]` after the owner's standing authorization for validated engineering repairs; the Flutter side needs an IPA/Shorebird patch (pure Dart, patchable). Not verified on an iPhone.
+
+**Activity-status branch** `claude/che-activity-status` (dfd299f, worktree `scratchpad/activity`): rebase after #330 merges, open PR, review, merge, deploy.
+
+Owner still owed: the two 17 Oct transcripts (ask him directly); a live free-model coding run; the iPhone update.
+
 ## 2. Current position (Claude, 2026-10-17 ~21:20 UTC — #330 fixed after three reviews, fourth review running; activity-status branch ready, no PR)
 
 - **main** is still `a3be02c` (#328). Nothing below is merged or deployed.
