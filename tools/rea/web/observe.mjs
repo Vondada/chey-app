@@ -174,16 +174,32 @@ async function resolveNavigation(url) {
   return { refused: 'The page kept redirecting, so CHE stopped.' };
 }
 
-// A public name that resolves to a private address is blocked too. A name the runner cannot
-// resolve is left to the browser, which uses the same resolver and fails on it as well.
+// Refuse hostnames that resolve privately, fail to resolve, or time out. Never
+// cache a public verdict for the whole observation: DNS can change during a
+// page load. The kernel egress firewall separately enforces the socket target.
 const answers = new Map();
 function resolvesPrivate(host) {
   if (!host || isIP(host.replace(/^\[|\]$/g, ''))) return Promise.resolve(false);
-  if (!answers.has(host)) {
-    const ask = lookup(host, { all: true }).then((list) => list.some((item) => privateAddress(item.address)), () => false);
-    answers.set(host, Promise.race([ask, new Promise((resolve) => { setTimeout(resolve, 3000, false).unref(); })]));
-  }
-  return answers.get(host);
+  const now = Date.now();
+  const recent = answers.get(host);
+  if (recent && recent.until > now) return recent.pending;
+  const pending = new Promise((resolve) => {
+    let finished = false;
+    const finish = (blocked) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
+      resolve(blocked);
+    };
+    const timeout = setTimeout(() => finish(true), 3000);
+    timeout.unref();
+    lookup(host, { all: true }).then(
+      (list) => finish(!list.length || list.some((item) => privateAddress(item.address))),
+      () => finish(true),
+    );
+  });
+  answers.set(host, { until: now + 1000, pending });
+  return pending;
 }
 
 // Runs in every page before the page's own scripts: no form can be submitted, by CHE or by the
