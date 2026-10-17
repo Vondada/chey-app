@@ -89,6 +89,14 @@ const HISTORY = [
   "Don't change anything. What happened to the coding job?",
   "coding status. don't touch anything",
   'What happened to the coding job the other day?',
+  // Eighth review: prohibitions that cover their whole clause stay asides.
+  'Do not start a coding job. What is the latest coding execution history?',
+  'coding status. do not under any circumstances retry',
+  'is the coding job still retrying',
+  'did the coding job crash or time out',
+  'when did the coding job start running',
+  'how long did the coding job take in total',
+  'did the coding job pass or fail in the end',
 ];
 
 for (const message of HISTORY) {
@@ -271,6 +279,33 @@ const NOT_HISTORY = [
   'coding status your reliability',
   'what happened to the coding job my trades',
   'coding status and tell dad the coding job failed',
+  // Eighth review: a request riding in a prohibition clause is still a request, and "my tasks"
+  // or "my jobs" are the owner's own items, not the coding record.
+  "coding status. don't retry but do tell mom",
+  "coding status. don't rerun remind me about the dentist",
+  "coding status. don't retry how are my trades",
+  "coding status. don't retry what's the weather",
+  "coding status. don't retry stop all jobs",
+  "coding status. don't retry pause autonomy",
+  "coding status. don't retry remember im on vacation next week",
+  'coding status. no need to rerun i fixed it so note it down',
+  "did the coding job pass. don't merge but do open an issue",
+  "coding status. don't rerun hand it to claude",
+  "coding status. don't make me ask again message me when its done",
+  "coding status. don't start another job but keep me posted",
+  "coding status. don't retry buy the dip",
+  'never retry tell dad. coding status',
+  "don't do anything else tell mom i love her. whats the coding status",
+  "coding status. don't stop until it passes",
+  "coding status. what's the status of my tasks",
+  'coding status and tell me the status of my tasks',
+  'coding status and tell me everything about my tasks',
+  'what happened to the coding job? status of my jobs',
+  'why is the coding app stuck',
+  'why did the coding stream stop',
+  'why did my coding test fail',
+  'coding status to post',
+  'coding status to forward',
 ];
 
 for (const message of NOT_HISTORY) {
