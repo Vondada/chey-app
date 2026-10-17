@@ -73,7 +73,8 @@ import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, m
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { applyModelReading, asksAboutScreen, interpretOwnerTurn, interpretWithModel } from './speech_intent.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
-import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
+import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingHistoryIntent, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
+import { codingHistoryReceipt } from './coding_history.js';
 import { webAppPage } from './web_app.js';
 import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachmentText, condenseSkills, loadLearnedSkills, READ_FOR_SKILLS, redactSensitive, saveLearnedSkills, speakLearned, speakSkillList } from './self_skills.js';
 import { APPROVED_SKILLS, handleInstalledSkill, installedSkillIntent, installedSkillsContext } from './installed_skills.js';
@@ -7923,6 +7924,17 @@ export class CheState extends DurableObject {
         // those words are subject matter, not permission to act.
         const turnActionPolicy = currentTurnActionPolicy(message);
         const chatOnlyEvaluation = turnActionPolicy.terminalChatOnly;
+
+        // Read-only history of CHE's coding runs: the stored runtime record answers,
+        // with its evidence. Asking never inspects repository files or starts a job.
+        if (codingHistoryIntent(message)) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job history, sir.', { source: 'che_coding_history', ok: false });
+          const sessionId = String(await this.ctx.storage.get('che_runtime_last_session') || '').trim();
+          const runtimeAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
+          const request = String(await this.ctx.storage.get('che_runtime_last_request') || await this.ctx.storage.get('che_runtime_last_request_summary') || '').trim();
+          const status = sessionId ? await new CheCodingRuntime(this.env).getStatus(sessionId, { acceptedAt: runtimeAt }) : null;
+          return ndjsonReply(codingHistoryReceipt({ sessionId, status, request }), { source: 'che_coding_history', session_id: sessionId || null });
+        }
 
         const directRepositoryInspection = repositoryInspectionIntent(message);
         const recentRepositoryEvidenceRequest = [...ownerHistory]

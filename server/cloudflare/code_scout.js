@@ -304,11 +304,33 @@ export function repositoryImplementationIntent(message) {
   return currentTurnActionPolicy(message).codingJobAllowed;
 }
 
+// Read-only history of CHE's own coding runs ("latest coding execution history",
+// "how far did Claude get", "why did that coding job fail"). These are answered from
+// the stored runtime record. They never start a job or inspect repository files. An
+// explicit build instruction in the same turn still wins: "fix the coding job" is BUILD.
+export function codingHistoryIntent(message) {
+  const text = withoutQuotedText(String(message || '').trim());
+  if (!text || ownerBuildAuthorization(text)) return false;
+  if (/\b(?:start|run|launch|queue|create|kick\s+off)\s+(?:a|an|another|the\s+next|a\s+new)\s+(?:coding|opencode|self[- ]development)\b/i.test(text)) return false;
+  const latestRecord = /\b(?:latest|last|most\s+recent|newest|previous)\s+(?:coding|opencode|self[- ]development)\s+(?:execution\s+|run\s+|job\s+|session\s+|attempt\s+)?(?:history|run|job|session|attempt|log|result|status|execution)\b/i;
+  const executionHistory = /\b(?:coding|opencode|self[- ]development)\s+(?:execution\s+)?history\b/i;
+  const howFar = /\bhow\s+far\s+(?:did|has|have)\s+(?:claude|che|chey|chay|shay|she|it|the\s+(?:coding|build)\s+(?:job|run|session)|the\s+(?:job|run|session))\b[\s\S]{0,20}\b(?:get|gotten|got|come)\b/i;
+  const whyFailed = /\b(?:why|how)\s+(?:did|has|does)\s+(?:the|that|this|my|the\s+last|the\s+latest)\s+(?:coding\s+)?(?:job|run|attempt|session)\s+(?:fail|stop|break|get\s+stuck)/i;
+  const whatHappened = /\bwhat\s+(?:happened|went\s+wrong)\s+(?:to|with)\s+(?:the|my|that|this|the\s+last|the\s+latest)\s+(?:coding\s+)?(?:job|run|attempt|session)\b/i;
+  const actualResult = /\bshow\s+me\s+the\s+actual\s+(?:result|outcome|evidence)\b[\s\S]{0,60}\b(?:coding|job|run|attempt|session)\b/i;
+  // "What files did the coding job change?": the question word, a change verb and the job noun, in any order.
+  const changedFiles = /\bwhat\s+files\b/i.test(text) && /\b(?:changed?|touched?|modif\w*)\b/i.test(text) && /\b(?:coding|job|run|attempt|session)\b/i.test(text);
+  return changedFiles || [latestRecord, executionHistory, howFar, whyFailed, whatHappened, actualResult].some((pattern) => pattern.test(text));
+}
+
 export function repositoryInspectionIntent(message) {
   const text = withoutQuotedText(String(message || '').trim());
   if (explicitChatOnlyResponseDirective(text)) return false;
   const policy = currentTurnActionPolicy(text);
   if (policy.mode === EXECUTION_MODE.BUILD) return false;
+
+  // Read-only coding history is answered from the runtime record, never by reading repository files.
+  if (codingHistoryIntent(text)) return false;
 
   // Existing status/mission/change controls have dedicated deterministic
   // routes later in the Worker; source inspection must never hijack them.
