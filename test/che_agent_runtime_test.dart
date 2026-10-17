@@ -184,7 +184,7 @@ void main() {
   });
 
   test('coding status renders every authoritative active and terminal state', () {
-    const active = {'queued', 'running', 'retrying', 'recovering', 'implemented', 'pr_open', 'reviewing'};
+    const active = {'queued', 'running', 'retrying', 'recovering', 'waiting_capacity', 'resuming', 'implemented', 'pr_open', 'reviewing'};
     const terminal = {'interrupted', 'approved_waiting_owner', 'merged', 'review_rejected', 'tests_failed', 'rolled_back', 'no_change', 'blocked', 'failed', 'cancelled', 'dead_letter', 'opencode_failed', 'deliver_failed'};
     for (final state in {...active, ...terminal}) {
       final status = CheCodingJobStatus.fromNdjson(

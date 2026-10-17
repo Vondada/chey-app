@@ -416,6 +416,8 @@ const _codingJobStates = <String>{
   'running',
   'retrying',
   'recovering',
+  'waiting_capacity',
+  'resuming',
   'interrupted',
   'implemented',
   'pr_open',
@@ -449,13 +451,15 @@ class CheCodingJobStatus {
   final String state;
   final String speech;
 
-  bool get active => const {'queued', 'running', 'retrying', 'recovering', 'implemented', 'pr_open', 'reviewing'}.contains(state);
+  bool get active => const {'queued', 'running', 'retrying', 'recovering', 'waiting_capacity', 'resuming', 'implemented', 'pr_open', 'reviewing'}.contains(state);
 
   String get label => switch (state) {
         'queued' => 'Queued',
         'running' => 'Running',
         'retrying' => 'Retrying',
         'recovering' => 'Recovering',
+        'waiting_capacity' => 'Waiting for free capacity',
+        'resuming' => 'Resuming from checkpoint',
         'interrupted' => 'Interrupted',
         'implemented' => 'Implemented',
         'pr_open' => 'PR open',
