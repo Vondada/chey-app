@@ -41,6 +41,15 @@ export function startWebFixture({ robots = 'User-agent: *\nDisallow: /private/\n
       // A permitted page whose iframe and data request point into the disallowed /private/.
       case '/framed':
         return send(200, 'text/html; charset=utf-8', '<!doctype html><title>Framed</title><h1>Framed</h1><iframe src="/private/frame" title="Inner"></iframe><script>fetch("/private/data").catch(() => {}); fetch("/open-data").catch(() => {});</script>');
+      // The same, behind allowed addresses that redirect into /private/; one redirect stays allowed.
+      case '/redirected':
+        return send(200, 'text/html; charset=utf-8', '<!doctype html><title>Redirected</title><h1>Redirected</h1><iframe src="/hop-frame" title="Inner"></iframe><script>fetch("/hop-data").catch(() => {}); fetch("/hop-ok").then((r) => r.text()).then((t) => { document.title = "Redirected " + t; }).catch(() => {});</script>');
+      case '/hop-frame':
+        return res.writeHead(302, { location: '/private/frame', 'cache-control': 'no-store' }).end();
+      case '/hop-data':
+        return res.writeHead(302, { location: '/private/data', 'cache-control': 'no-store' }).end();
+      case '/hop-ok':
+        return res.writeHead(302, { location: '/open-data', 'cache-control': 'no-store' }).end();
       case '/private/frame':
       case '/private/data':
       case '/open-data':

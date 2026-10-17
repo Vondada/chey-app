@@ -279,11 +279,26 @@ async function guard(context, net) {
       // targets too: a path robots.txt disallows is never requested. Scripts, styles, images and
       // fonts the page needs to draw itself are fetched as a browser would.
       if (['document', 'xhr', 'fetch'].includes(request.resourceType())) {
-        const target = request.url();
-        if (!verdicts.has(target)) verdicts.set(target, await robotsCheck(target));
-        if (!verdicts.get(target).allowed) {
-          net.robots += 1;
-          return await route.abort('blockedbyclient');
+        // The browser follows a sub-request's redirects without routing them again, so the
+        // chain is followed here, hop by hop, each checked (public address, robots.txt) before
+        // it is requested; the page gets the final answer.
+        let target = request.url();
+        for (let hop = 0; ; hop++) {
+          if (!verdicts.has(target)) verdicts.set(target, await robotsCheck(target));
+          if (!verdicts.get(target).allowed) {
+            net.robots += 1;
+            return await route.abort('blockedbyclient');
+          }
+          const response = await route.fetch({ url: target, maxRedirects: 0, timeout: NAV_TIMEOUT_MS });
+          if (!REDIRECT.includes(response.status())) return await route.fulfill({ response });
+          let next = '';
+          try { next = new URL(response.headers().location || '', target).href; } catch (_) { next = ''; }
+          const nextHost = hostOf(next);
+          if (!next || hop >= 5 || webTargetProblem(next) || blockedHost(nextHost) || (await resolvesPrivate(nextHost))) {
+            net.blocked += 1;
+            return await route.abort('blockedbyclient');
+          }
+          target = next;
         }
       }
       if (request.resourceType() === 'script') net.scripts.add(host);

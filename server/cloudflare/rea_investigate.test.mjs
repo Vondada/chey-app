@@ -875,3 +875,29 @@ test('Codex #324: REA verify reads every page of changed files before saying no 
   const broken = async (url) => (String(url).endsWith('&page=2') ? json({ message: 'rate limited' }, 403) : fetcher(url));
   assert.equal((await verifyBuild(ENV, 5, broken)).state, 'pending', 'a page that failed leaves the files unread, never "no test changed"');
 });
+
+test('Codex #324: a feature whose name has no searchable word stays "not checked", never "missing"', async () => {
+  const { compareWithChe } = await import('./rea_features.js');
+  const features = [{ id: 'f1', kind: 'documented', name: 'AI', che: {} }];
+  const w = world();
+  const result = await compareWithChe(ENV, features, w.fetcher);
+  assert.equal(features[0].che.status, 'unknown');
+  assert.match(features[0].che.evidence[0].label, /no word CHE's code search can use/);
+  assert.equal(result.counts.missing, 0);
+});
+
+test('Codex #324: a pull request with more changed files than GitHub lists is not verified from the partial list', async () => {
+  const { verifyBuild } = await import('./rea_features.js');
+  const head = 'b'.repeat(40);
+  const fetcher = async (url) => {
+    const u = String(url);
+    if (u.endsWith('/pulls/6')) return json({ number: 6, state: 'open', draft: true, changed_files: 3400, head: { sha: head }, html_url: 'https://github.com/Vondada/chey-app/pull/6' });
+    if (/\/pulls\/6\/files\?per_page=100/.test(u)) return json(Array.from({ length: 100 }, (_, i) => ({ filename: `lib/f${u.length}-${i}.dart` })));
+    if (u.includes('/check-runs')) return json({ check_runs: [{ name: 'analyze', status: 'completed', conclusion: 'success' }] });
+    if (u.includes('/actions/runs?head_sha=')) return json({ workflow_runs: greenWorkflows(head) });
+    return json({}, 404);
+  };
+  const result = await verifyBuild(ENV, 6, fetcher);
+  assert.equal(result.state, 'pending', 'never "failed: no test file changed" from a truncated list');
+  assert.match(result.note, /changes 3400 files and GitHub listed only 3000/);
+});

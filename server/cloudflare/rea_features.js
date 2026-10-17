@@ -419,6 +419,12 @@ export async function compareWithChe(env, features, fetcher = fetch) {
         evidence.push(link(`CHE file ${item.path} mentions "${terms[0]}" (code search)`, blobUrl(repo, sha, item.path)));
       }
     }
+    // A name with no searchable word ("AI") was never searched: not checked, never "missing".
+    if (unmatched && !searched) {
+      feature.che = { status: 'unknown', evidence: [link('Not checked: the feature\'s name has no word CHE\'s code search can use.', '')] };
+      counts.unknown += 1;
+      continue;
+    }
     const partial = named.length || commands.length || evidence.some((e) => /code search/.test(e.label));
     const status = known.length ? 'has' : partial ? 'partial' : 'missing';
     feature.che = { status, evidence: evidence.slice(0, 5), checked_at: sha.slice(0, 12), ...(searched ? { searched_sha: sha } : {}), ...(status === 'missing' ? { searched: searched || !token ? (searched ? 'tree and code search' : 'file names only') : 'tree' } : {}) };
@@ -525,6 +531,11 @@ export async function verifyBuild(env, prNumber, fetcher = fetch) {
   const refused = !runs.ok ? ['check runs', runs] : !files.ok || !Array.isArray(files.data) ? ['changed files', files] : !workflowRuns.ok || !Array.isArray(workflowRuns.data?.workflow_runs) ? ['workflow runs', workflowRuns] : null;
   if (refused) {
     return { state: 'pending', checks: [], note: `GitHub did not return the ${refused[0]} of pull request #${prNumber} (status ${refused[1].status || 'none'}), so it is not verified yet. Ask again in a minute.`, pr_url: String(pr.data?.html_url || ''), head };
+  }
+  // GitHub lists at most 3,000 changed files; a longer pull request cannot be judged by its list.
+  const changedCount = Number(pr.data?.changed_files);
+  if (Number.isFinite(changedCount) && changedCount > files.data.length) {
+    return { state: 'pending', checks: [], note: `Pull request #${prNumber} changes ${changedCount} files and GitHub listed only ${files.data.length}, so whether its tests changed cannot be checked from GitHub's file list. It is not verified.`, pr_url: String(pr.data?.html_url || ''), head };
   }
   const testFiles = files.data.map((f) => String(f.filename)).filter((p) => /(?:^|\/)test\/|\.test\.|_test\.dart$/.test(p));
   const blocking = checks.filter((c) => !/^Workers Builds/i.test(c.name));
