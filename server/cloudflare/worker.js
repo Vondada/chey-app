@@ -209,9 +209,14 @@ const OWNER_CHAT_REQUESTS = new WeakSet();
 // use: chat, its own profile, notifications and Core requests, read-aloud
 // voice, and signing itself out. Every other route reads or changes the
 // owner's data, keys, money, messages, media or connections.
-export function guestRouteAllowed(method, path) {
+// A private-access device enrolled into the owner's own profile gets only
+// chat, read-aloud, its profile view and sign-out: that profile's
+// notifications and Core requests are the owner's.
+export function guestRouteAllowed(method, path, { ownerProfile = false } = {}) {
   if (method === 'POST' && ['/api/chat', '/api/security/revoke_self', '/api/voice/edge', '/api/voice/synthesize', '/api/voice/report'].includes(path)) return true;
-  if (method === 'GET' && ['/api/platform', '/api/core/rules'].includes(path)) return true;
+  if (method === 'GET' && path === '/api/platform') return true;
+  if (ownerProfile) return false;
+  if (method === 'GET' && path === '/api/core/rules') return true;
   if (['GET', 'POST'].includes(method) && ['/api/notifications', '/api/core/requests'].includes(path)) return true;
   return method === 'POST' && /^\/api\/notifications\/[^/]+\/read$/.test(path);
 }
@@ -278,6 +283,9 @@ function appendNdjson(response, later) {
 }
 
 const FAST_MODEL = '@cf/meta/llama-3.2-3b-instruct';
+const PARENTAL_GUIDANCE_RULES = 'PARENTAL GUIDANCE PROFILE (this person is a child or teen the owner supervises; these rules override other style rules): keep every answer age-appropriate and kind; no sexual, graphic violent, drug or gambling content; for self-harm or danger, respond with care, tell them to talk to a parent or trusted adult now and give the 988 Suicide & Crisis Lifeline (call or text 988 in the US); never help buy, order, subscribe, pay, sign up for accounts, share their name, address, school, photos or location, or meet or message strangers; help with homework by teaching, not doing it for them.';
+// Requests a family/guest device may never run, answered without a model.
+const GUEST_OWNER_ACTION = /^\s*\/|\b(?:merge|deploy|roll\s?back|pull request|PR|(?:update|change) your (?:code|app)|coding (?:job|status)|flagstaff|mail\s?box|stand\s?by|autonomy|remember (?:that|this|my)|memori[sz]e|forget (?:that|this|my)|send (?:a |an )?(?:text|sms|email|message)|trade|youtube|upload|publish|api keys?|delete|revoke)\b/i;
 // 8B on purpose: Cloudflare's free 10k neurons/day last ~10x longer than with 70B.
 const STRONG_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
 
@@ -4512,6 +4520,35 @@ export class CheState extends DurableObject {
   // held for a plain yes (or the Command Center's confirm button); anything
   // else is re-sent through /api/chat as its ordinary request, so every owner
   // gate, truth guard and receipt applies exactly as if he had said it.
+  // Chat for a family/guest device: conversation only. It never reaches a
+  // tool, the owner's data, memory, mailbox, autonomy, money, messages,
+  // media, code or connections; owner actions are refused with no model call.
+  async guestChat(body, message, tenant) {
+    if (parseSlashCommand(message)) return ndjsonReply('Only the CHE owner can run commands, sir.', { source: 'che_command', ok: false, model_calls: 0 });
+    if (GUEST_OWNER_ACTION.test(message)) {
+      return ndjsonReply('Only the CHE owner can do that. Nothing was changed. I can still talk it through with you.', { source: 'che_guest', ok: false, model_calls: 0 });
+    }
+    const history = (Array.isArray(body.history) ? body.history : [])
+      .filter((turn) => ['user', 'assistant'].includes(turn?.role) && typeof turn.content === 'string')
+      .slice(-10).map((turn) => ({ role: turn.role, content: turn.content.slice(0, 4000) }));
+    const system = [
+      `You are CHE, a friendly assistant, talking with ${String(tenant?.name || 'a family member').slice(0, 80)}, a family member of CHE's owner. Be warm, clear and short.`,
+      tenant?.role === 'parental_guidance' ? PARENTAL_GUIDANCE_RULES : '',
+      'This is conversation only: you have no tools here and cannot send messages, buy, pay, trade, change settings, read or change anyone\'s data, make media or run jobs. Never claim you did any of these. You know nothing about the owner\'s private life, memories or accounts and must not guess.',
+    ].filter(Boolean).join('\n');
+    try {
+      const answer = await this.env.AI.run(this.env.CHE_FAST_MODEL || FAST_MODEL, {
+        messages: [{ role: 'system', content: system }, ...history, { role: 'user', content: message }],
+        max_tokens: 700,
+        che_audit: { task: message.slice(0, 160), agent: 'CHE', route: 'guest_chat' },
+      });
+      const reply = String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim();
+      return ndjsonReply(reply || 'I could not answer that just now. Please try again.', { source: 'che_guest', ok: Boolean(reply), model_calls: 1 });
+    } catch (_) {
+      return ndjsonReply('I could not reach my engines just now. Please try again in a moment.', { source: 'che_guest', ok: false, model_calls: 1 });
+    }
+  }
+
   async runSlashCommand(request, body, data, parsed, { confirmed = false } = {}) {
     const command = parsed.command;
     if (!command) {
@@ -4965,10 +5002,13 @@ export class CheState extends DurableObject {
       // Repository writes, merges, deploys and rollbacks are the owner's
       // consequential actions. Family/guest tenants (and anything they relay)
       // can never authorize them.
-      const ownerDevice = activeTenant?.role === 'owner';
+      // The owner's own phones are paired with the code ('full'); devices from
+      // before per-device records existed have no record and stay the owner's.
+      // A 'private' enrollment is never the owner, even inside his profile.
+      const ownerDevice = activeTenant?.role === 'owner' && platformDevice?.access !== 'private';
       if (ownerDevice) OWNER_CHAT_REQUESTS.add(request);
       const ownerOnly = () => json({ detail: 'Only the CHE owner can change, merge or deploy CHE’s code.' }, 403);
-      if (!ownerDevice && !guestRouteAllowed(request.method, path)) {
+      if (!ownerDevice && !guestRouteAllowed(request.method, path, { ownerProfile: activeTenant?.role === 'owner' })) {
         return json({ detail: 'Only the CHE owner can use that. This profile can chat, read aloud, and manage its own notifications.' }, 403);
       }
 
@@ -5230,7 +5270,8 @@ export class CheState extends DurableObject {
       }
       // CHE Home platform: tenant-scoped identity, devices, notifications and Core.
       if (request.method === 'GET' && path === '/api/platform') {
-        return json(platformView(data, activeTenant.id, tokenHash));
+        const view = platformView(data, activeTenant.id, tokenHash);
+        return json(ownerDevice ? view : { ...view, devices: [], notifications: activeTenant?.role === 'owner' ? [] : view.notifications, core_requests: activeTenant?.role === 'owner' ? [] : view.core_requests });
       }
       // Owner removes a lost or retired device from any other device.
       if (request.method === 'POST' && path === '/api/platform/devices/revoke') {
@@ -7472,6 +7513,8 @@ export class CheState extends DurableObject {
         }
         const rawMessage = String(body.message || '').trim().slice(0, 16000);
         if (!rawMessage) return json({ detail: 'Message required.' }, 400);
+        // A family/guest device never reaches the owner's chat routes below.
+        if (!ownerDevice) return this.guestChat(body, rawMessage.slice(0, 4000), activeTenant);
         // Command Center: a plain yes releases a held command (once, fresh);
         // "/name …" runs a catalog command; "run my X workflow" starts a saved
         // workflow. Each runs through this same route and its gates.
@@ -9546,7 +9589,7 @@ export class CheState extends DurableObject {
               capabilityPromptLine(capabilityRegistry),
               'MATURE TOOL USE: infer the owner’s goal, then use the best available capability without waiting for the owner to name a model, provider, agent, or tool. Search/retrieve when knowledge may be current or missing. Use stored owner context only when relevant. For independent complex subtasks, parallelize only when it materially helps.',
               activeTenant?.role === 'parental_guidance'
-                ? 'PARENTAL GUIDANCE PROFILE (this person is a child or teen the owner supervises; these rules override other style rules): keep every answer age-appropriate and kind; no sexual, graphic violent, drug or gambling content; for self-harm or danger, respond with care, tell them to talk to a parent or trusted adult now and give the 988 Suicide & Crisis Lifeline (call or text 988 in the US); never help buy, order, subscribe, pay, sign up for accounts, share their name, address, school, photos or location, or meet or message strangers; help with homework by teaching, not doing it for them.'
+                ? PARENTAL_GUIDANCE_RULES
                 : '',
               'HONESTY (highest priority): never claim an action happened unless a tool in this turn returned success, and give the receipt (link, ID or result) when it did. Label anything unverified as unverified. Say "I don\u2019t know" or "I can\u2019t do that yet" instead of guessing. Never invent plugins, settings, panels, features, services, outages, prices, sales or numbers.',
               'CONTEXT PRIORITY: current owner message > verified tool results from this turn > active conversation > explicit stored/retrieved owner context > cached/general knowledge. The newest owner correction wins conflicts. Short follow-ups continue the most recent unresolved subject/action; do not restart from scratch.',

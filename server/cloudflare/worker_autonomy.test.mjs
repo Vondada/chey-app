@@ -849,12 +849,71 @@ test('a family/guest chat never receives the owner\'s memories, imported context
   prompts.length = 0;
   await (await send('/api/chat', { message: question, history: [] }, family)).text();
   const guestPrompts = prompts.join('\n');
-  assert.match(guestPrompts, /PARENTAL GUIDANCE PROFILE/, 'the guest turn reached the full prompt');
+  assert.match(guestPrompts, /PARENTAL GUIDANCE PROFILE/, 'the guest turn reached a model, with the parental rules');
   for (const secret of secrets) assert.doesNotMatch(guestPrompts, secret);
   prompts.length = 0;
   await (await send('/api/chat', { message: question, history: [] }, owner)).text();
   const ownerPrompts = prompts.join('\n');
   for (const secret of secrets) assert.match(ownerPrompts, secret, 'the owner\'s own turn still uses his data');
+});
+
+test('a family/guest chat cannot lock Flagstaff, write memories, stand CHE by or read the mailbox', async () => {
+  const saved = new Map();
+  let aiCalls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { aiCalls += 1; return { response: 'ok' }; } } };
+  const { send, family } = await ownerAndFamily(env, saved);
+  saved.set('web_mailbox_open', true);
+  const before = saved.get('che');
+  const records = (before.memory_records || []).length;
+  const memories = (before.memories || []).length;
+  const autonomy = before.autonomy;
+  for (const message of ['lock Flagstaff', 'Remember that my favorite color is green', 'stand by', 'read the mailbox', 'Read my mailbox']) {
+    const reply = replyFromNdjson(await (await send('/api/chat', { message, history: [] }, family)).text());
+    assert.match(reply, /Only the CHE owner/, message);
+  }
+  assert.equal(saved.get('web_mailbox_open'), true, 'Flagstaff stays open');
+  const after = saved.get('che');
+  assert.equal((after.memory_records || []).length, records, 'no owner memory record written');
+  assert.equal((after.memories || []).length, memories);
+  assert.equal(after.autonomy, autonomy, 'autonomy unchanged');
+  assert.equal(aiCalls, 0, 'owner actions are refused without a model call');
+  // Ordinary talk still works, as conversation only.
+  const plain = replyFromNdjson(await (await send('/api/chat', { message: 'Help me with fractions', history: [] }, family)).text());
+  assert.equal(plain, 'ok');
+  assert.equal(aiCalls, 1);
+});
+
+test('a private enrollment inside the owner profile is not the owner; the owner\'s own phones still are', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'ok' }) } };
+  const state = new CheState({ storage: storageFor(saved) }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, body, token = '', method = 'POST') => worker.fetch(new Request(`https://che.example${path}`, {
+    method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    ...(method === 'GET' ? {} : { body: JSON.stringify(body) }),
+  }), env);
+  const owner = (await (await send('/api/pair', { code: '123456', device_name: 'Owner phone' })).json()).device_token;
+  // The shipped app's "Create private enrollment" sends no tenant_id.
+  const invite = (await (await send('/api/platform/enrollments', { access: 'private', ttl_minutes: 10 }, owner)).json()).enrollment;
+  assert.equal(invite.tenant_id, 'owner-369');
+  const enrolled = await (await send('/api/enroll', { enrollment_token: invite.token, device_name: 'Shared tablet' })).json();
+  assert.equal(enrolled.access, 'private');
+  const priv = enrolled.device_token;
+  for (const [path, method] of [['/api/state', 'GET'], ['/api/keys', 'GET'], ['/api/notifications', 'GET'], ['/api/core/requests', 'GET'],
+    ['/api/twilio/sms/send', 'POST'], ['/api/stripe/proposals', 'GET'], ['/api/logs', 'GET'], ['/api/platform/enrollments', 'POST']]) {
+    assert.equal((await send(path, { to: '+15551234567', body: 'hi', access: 'full' }, priv, method)).status, 403, `${method} ${path}`);
+  }
+  const view = await (await send('/api/platform', {}, priv, 'GET')).json();
+  assert.deepEqual(view.devices, [], 'the owner\'s device list stays hidden');
+  assert.match(replyFromNdjson(await (await send('/api/chat', { message: 'stand by', history: [] }, priv)).text()), /Only the CHE owner/);
+  // The owner's paired phone, and a phone paired before per-device records existed.
+  assert.equal((await send('/api/state', {}, owner, 'GET')).status, 200);
+  const legacy = (await (await send('/api/pair', { code: '123456', device_name: 'Old phone' })).json()).device_token;
+  const data = saved.get('che');
+  for (const [hash, device] of Object.entries(data.platform.devices)) if (device.name === 'Old phone') delete data.platform.devices[hash];
+  saved.set('che', data);
+  assert.equal((await send('/api/state', {}, legacy, 'GET')).status, 200);
+  assert.equal((await send('/api/keys', {}, legacy, 'GET')).status, 200);
 });
 
 test('pairing code guesses are capped across all addresses and old failures are pruned', async () => {
