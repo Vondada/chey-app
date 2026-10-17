@@ -323,3 +323,17 @@ test('robots.txt, bot checks and sign-in walls stop the observation with a refus
   assert.match(members.record.error, /needs a sign-in \(HTTP 401\)/);
   for (const run of [robots, challenge, members]) assert.equal(validateWebSummary(run.record).ok, true);
 });
+
+test('Codex #324: a redirect into a path robots.txt disallows is refused before that page is requested', { skip: E2E, timeout: 120_000 }, async () => {
+  const moved = await observeFixture('/moved');
+  assert.equal(moved.record.state, 'refused');
+  assert.match(moved.record.error, /robots\.txt .*Disallow: \/private\//);
+  assert.equal(moved.log.some((e) => e.path === '/private/page'), false, 'the disallowed destination was never requested');
+  assert.equal(validateWebSummary(moved.record).ok, true);
+});
+
+test('Codex #324: nothing but GET and HEAD leaves the browser, even before the page has loaded', { skip: E2E, timeout: 120_000 }, async () => {
+  const early = await observeFixture('/early-post');
+  assert.equal(early.record.state, 'complete');
+  assert.deepEqual(early.log.filter((e) => !['GET', 'HEAD', 'CONNECT'].includes(e.method)), [], 'no POST or beacon reached the network');
+});

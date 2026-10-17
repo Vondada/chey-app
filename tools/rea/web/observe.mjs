@@ -151,6 +151,29 @@ async function robotsCheck(url) {
   return { allowed: true, note: 'robots.txt kept redirecting, so it was treated as allowing this page.' };
 }
 
+// The redirect chain, followed here before the browser opens anything, so every hop is
+// checked (public address, robots.txt) before it is requested. Returns the address to open.
+const REDIRECT = [301, 302, 303, 307, 308];
+async function resolveNavigation(url) {
+  let current = url;
+  for (let hop = 0; hop <= 5; hop++) {
+    const host = new URL(current).hostname;
+    if (webTargetProblem(current) || (await resolvesPrivate(host))) return { refused: 'The page moved to an address that is not a public web page, so CHE stopped.' };
+    const robots = await robotsCheck(current);
+    if (!robots.allowed) return { refused: `The page moved to an address on ${host} whose robots.txt asks automated visitors not to open it (${robots.rule}). CHE respects it.` };
+    let response;
+    try {
+      response = await fetch(current, { redirect: 'manual', headers: { 'user-agent': ROBOTS_AGENT }, signal: AbortSignal.timeout(15_000) });
+    } catch (_) {
+      return { url: current }; // The browser reports the failure in its own words.
+    }
+    response.body?.cancel().catch(() => {});
+    if (!REDIRECT.includes(response.status)) return { url: current };
+    try { current = new URL(response.headers.get('location') || '', current).href; } catch (_) { return { refused: 'The page redirected to an address that is not valid, so CHE stopped.' }; }
+  }
+  return { refused: 'The page kept redirecting, so CHE stopped.' };
+}
+
 // A public name that resolves to a private address is blocked too. A name the runner cannot
 // resolve is left to the browser, which uses the same resolver and fails on it as well.
 const answers = new Map();
@@ -175,10 +198,12 @@ function pageRules() {
   });
 }
 
-// Every request is checked before it leaves the browser. Once the page has loaded, the main
-// frame may not navigate and nothing but GET and HEAD is sent.
+// Every request is checked before it leaves the browser. Nothing but GET and HEAD is ever
+// sent. Each hop of the main page's navigation, redirects included, is checked against its
+// robots.txt before it is requested; once the page has loaded, the main frame may not navigate.
 async function guard(context, net) {
   let locked = false;
+  const verdicts = new Map();
   const hostOf = (url) => { try { return new URL(url).hostname; } catch (_) { return ''; } };
   await context.addInitScript(pageRules);
   await context.route('**/*', async (route) => {
@@ -191,9 +216,26 @@ async function guard(context, net) {
       }
       let mainFrame = false;
       try { mainFrame = request.isNavigationRequest() && !request.frame().parentFrame(); } catch (_) { mainFrame = false; }
-      if (locked && (mainFrame || !['GET', 'HEAD'].includes(request.method()))) {
+      if (!['GET', 'HEAD'].includes(request.method()) || (locked && mainFrame)) {
         net.held += 1;
         return await route.abort('blockedbyclient');
+      }
+      if (mainFrame) {
+        const target = request.url();
+        if (!verdicts.has(target)) verdicts.set(target, await robotsCheck(target));
+        const verdict = verdicts.get(target);
+        if (!verdict.allowed) {
+          net.refused = { host, rule: verdict.rule };
+          return await route.abort('blockedbyclient');
+        }
+        // The browser does not route the hops of a redirect it follows itself, so a redirect
+        // seen here (one the check above did not get, e.g. for the browser only) stops the run.
+        const response = await route.fetch({ maxRedirects: 0, timeout: NAV_TIMEOUT_MS });
+        if (REDIRECT.includes(response.status())) {
+          net.redirected = true;
+          return await route.abort('blockedbyclient');
+        }
+        return await route.fulfill({ response });
       }
       if (request.resourceType() === 'script') net.scripts.add(host);
       return await route.continue();
@@ -599,7 +641,9 @@ async function runBrowser(url, base, limitations) {
   };
   try {
     const { chromium } = await import('playwright-core');
-    browser = await chromium.launch({ headless: true, executablePath: process.env.CHE_REA_CHROMIUM || undefined, args: LAUNCH_ARGS, timeout: left(30_000) });
+    // An explicit proxy (tests only; runners have none) also carries the navigation fetches above.
+    const proxy = process.env.http_proxy || process.env.HTTP_PROXY || '';
+    browser = await chromium.launch({ headless: true, executablePath: process.env.CHE_REA_CHROMIUM || undefined, args: LAUNCH_ARGS, timeout: left(30_000), ...(proxy ? { proxy: { server: proxy } } : {}) });
     const desktop = await browser.newContext({ ...CONTEXT, viewport: DESKTOP });
     const lock = await guard(desktop, net);
     const page = await desktop.newPage();
@@ -610,10 +654,18 @@ async function runBrowser(url, base, limitations) {
     page.on('pageerror', () => { net.consoleErrors += 1; });
     page.setDefaultTimeout(5000);
 
+    const start = await resolveNavigation(url);
+    if (start.refused) return { record: { ...base, state: 'refused', error: start.refused, limitations } };
     let response;
     try {
-      response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: left(NAV_TIMEOUT_MS) });
+      response = await page.goto(start.url, { waitUntil: 'domcontentloaded', timeout: left(NAV_TIMEOUT_MS) });
     } catch (error) {
+      if (net.redirected) {
+        return { record: { ...base, state: 'refused', error: 'The page redirected inside the browser to an address CHE had not checked against its robots.txt, so CHE stopped before opening it.', limitations } };
+      }
+      if (net.refused) {
+        return { record: { ...base, state: 'refused', error: `The page moved to an address on ${net.refused.host} whose robots.txt asks automated visitors not to open it (${net.refused.rule}). CHE respects it.`, limitations } };
+      }
       return { record: { ...base, ...navigationFailure(error, expired), limitations } };
     }
     await page.waitForLoadState('load', { timeout: left(15_000) })

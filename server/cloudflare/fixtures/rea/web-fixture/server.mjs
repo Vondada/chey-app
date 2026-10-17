@@ -32,6 +32,12 @@ export function startWebFixture({ robots = 'User-agent: *\nDisallow: /private/\n
         return send(401, 'text/html', '<!doctype html><title>Members</title><form><input type="password"></form>');
       case '/robots.txt':
         return send(200, 'text/plain', robots);
+      // A permitted address that redirects into a disallowed one.
+      case '/moved':
+        return res.writeHead(302, { location: '/private/page', 'cache-control': 'no-store' }).end();
+      // A page whose first script tries to write before the page has loaded.
+      case '/early-post':
+        return send(200, 'text/html; charset=utf-8', '<!doctype html><title>Early</title><script>fetch("/early-beacon", { method: "POST", body: "x" }).catch(() => {}); navigator.sendBeacon && navigator.sendBeacon("/early-beacon2", "y");</script><h1>Early</h1>');
       case '/app.js':
         return send(200, 'text/javascript', APP.replaceAll('__PORT__', String(port)));
       case '/logo.png':

@@ -75,52 +75,6 @@ export function blockedHost(host) {
   return localName(name);
 }
 
-// '*' matches any run of characters; a final '$' anchors the end. Greedy and linear, so a
-// hostile robots.txt cannot make the match slow.
-function ruleMatches(pattern, path) {
-  const anchored = pattern.endsWith('$');
-  const parts = (anchored ? pattern.slice(0, -1) : pattern).split('*');
-  if (!path.startsWith(parts[0])) return false;
-  let at = parts[0].length;
-  for (let i = 1; i < parts.length; i++) {
-    const part = parts[i];
-    if (anchored && i === parts.length - 1) return path.length - part.length >= at && path.endsWith(part);
-    const found = path.indexOf(part, at);
-    if (found < 0) return false;
-    at = found + part.length;
-  }
-  return anchored ? at === path.length : true;
-}
-
-export function robotsRules(text) {
-  const groups = [];
-  let current = null;
-  let inAgents = false;
-  for (const raw of String(text ?? '').slice(0, 512 * 1024).split(/\r\n|\r|\n/)) {
-    const found = raw.replace(/#.*$/, '').trim().match(/^([A-Za-z-]+)\s*:\s*(.*)$/);
-    if (!found) continue;
-    const key = found[1].toLowerCase();
-    const value = found[2].trim();
-    if (key === 'user-agent') {
-      if (!inAgents) groups.push((current = { agents: [], rules: [] }));
-      current.agents.push(value.toLowerCase());
-      inAgents = true;
-    } else {
-      inAgents = false;
-      if ((key === 'allow' || key === 'disallow') && current) current.rules.push({ allow: key === 'allow', path: value.slice(0, 500) });
-    }
-  }
-  return groups.filter((group) => group.agents.includes('*')).flatMap((group) => group.rules);
-}
-
-export function robotsVerdict(text, path) {
-  const target = String(path || '/');
-  if (target === '/robots.txt') return { allowed: true, rule: '' };
-  let best = null;
-  for (const rule of robotsRules(text)) {
-    if (!rule.path || !ruleMatches(rule.path, target)) continue;
-    if (!best || rule.path.length > best.path.length || (rule.path.length === best.path.length && rule.allow)) best = rule;
-  }
-  if (!best) return { allowed: true, rule: '' };
-  return { allowed: best.allow, rule: `${best.allow ? 'Allow' : 'Disallow'}: ${best.path}` };
-}
+// robots.txt matching lives with the Worker's copy of the rules, so the browser and the
+// Worker's page read apply the same RFC 9309 semantics.
+export { robotsRules, robotsVerdict } from '../../../server/cloudflare/rea_web_evidence.js';

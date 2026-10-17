@@ -10,6 +10,7 @@ import { cleanText } from './rea_evidence.js';
 import { commandById, searchCommands } from './command_catalog.js';
 
 const clip = (value, max = 200) => cleanText(value, max);
+const MAX_CHE_SEARCHES = 4;
 const STATIC_UNKNOWN = 'Runtime behaviour was not observed: this was a static read.';
 const MAX_FEATURES = 16;
 
@@ -357,8 +358,15 @@ export async function compareWithChe(env, features, fetcher = fetch) {
       && terms.some((t) => t.length >= 4 && p.toLowerCase().split('/').pop().includes(t.toLowerCase()))).slice(0, 3);
     for (const p of named) evidence.push(link(`CHE file ${p} (name match only)`, blobUrl(repo, sha, p)));
     let searched = false;
+    const unmatched = !known.length && !named.length && !commands.length;
+    // Past the search budget a feature was never searched, so it is "not checked", never "missing".
+    if (unmatched && token && terms[0] && searches >= MAX_CHE_SEARCHES) {
+      feature.che = { status: 'unknown', evidence: [link(`Not checked: CHE's code search allows ${MAX_CHE_SEARCHES} searches per comparison, and this feature's name matches no CHE file. Ask "REA compare" again to check the rest.`, '')] };
+      counts.unknown += 1;
+      continue;
+    }
     // Before calling a feature missing, search CHE's code for it (GitHub allows 10 searches a minute).
-    if (!known.length && !named.length && !commands.length && token && searches < 4 && terms[0]) {
+    if (unmatched && token && searches < MAX_CHE_SEARCHES && terms[0]) {
       searches += 1;
       searched = true;
       const found = await fetcher(`https://api.github.com/search/code?q=${encodeURIComponent(`${terms[0]} repo:${repo}`)}&per_page=5`, { headers }).then(async (r) => ({ ok: r.ok, data: await r.json().catch(() => null) })).catch(() => ({ ok: false }));
@@ -450,7 +458,11 @@ export async function verifyBuild(env, prNumber, fetcher = fetch) {
   const head = String(pr.data?.head?.sha || '');
   const [runs, files] = await Promise.all([get(`/commits/${head}/check-runs?per_page=50`), get(`/pulls/${Number(prNumber)}/files?per_page=100`)]);
   const checks = (runs.data?.check_runs || []).map((r) => ({ name: clip(r.name, 80), state: r.status === 'completed' ? clip(r.conclusion || 'unknown', 20) : clip(r.status, 20), url: String(r.html_url || '') }));
-  const testFiles = (files.data || []).map((f) => String(f.filename)).filter((p) => /(?:^|\/)test\/|\.test\.|_test\.dart$/.test(p));
+  // A refused file list leaves the tests unproven: pending, never a crash or a pass.
+  if (!files.ok || !Array.isArray(files.data) || !runs.ok) {
+    return { state: 'pending', checks: [], note: `GitHub did not return the ${!runs.ok ? 'check runs' : 'changed files'} of pull request #${prNumber} (status ${(!runs.ok ? runs : files).status || 'none'}), so it is not verified yet. Ask again in a minute.`, pr_url: String(pr.data?.html_url || ''), head };
+  }
+  const testFiles = files.data.map((f) => String(f.filename)).filter((p) => /(?:^|\/)test\/|\.test\.|_test\.dart$/.test(p));
   const blocking = checks.filter((c) => !/^Workers Builds/i.test(c.name));
   const failed = blocking.filter((c) => !['success', 'skipped', 'neutral'].includes(c.state) && !['queued', 'in_progress', 'pending', 'waiting'].includes(c.state));
   const running = blocking.filter((c) => ['queued', 'in_progress', 'pending', 'waiting'].includes(c.state));

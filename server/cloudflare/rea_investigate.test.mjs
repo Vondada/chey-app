@@ -339,7 +339,7 @@ test('F. recovery: a GitHub outage fails truthfully and the retry continues the 
 test('C. a public page: robots.txt and bot checks are respected; a normal page is mapped and one isolated browser run is sent', async () => {
   const blocked = world({ robots: 'User-agent: *\nDisallow: /\n' });
   const r1 = await cheWith(blocked).say('Investigate https://shop.example.com and tell me how its features work');
-  assert.match(r1.text, /robots\.txt asks automated readers not to read \/\. CHE respects that/);
+  assert.match(r1.text, /robots\.txt asks automated readers not to read \/ \(Disallow: \/\)\. CHE respects that/);
   assert.ok(!blocked.calls.some((c) => c.url === 'https://shop.example.com/'), 'the page itself was never fetched');
 
   const walled = world();
@@ -483,4 +483,38 @@ test('Codex #324: public-target REA commands work without a GitHub connection; t
   assert.equal(commandStatus(commandById('rea-inspect'), bare).status, 'available');
   assert.equal(commandStatus(commandById('rea-compare'), bare).status, 'available');
   assert.equal(commandStatus(commandById('rea-build'), bare).status, 'setup_required', 'building still needs GitHub');
+});
+
+test('Codex #324: features past the code-search budget stay "not checked", never "missing"', async () => {
+  const { compareWithChe } = await import('./rea_features.js');
+  const features = Array.from({ length: 7 }, (_, i) => ({ id: `f${i + 1}`, kind: 'documented', name: `Gizmo${i} widget thing`, che: {} }));
+  const w = world();
+  const result = await compareWithChe(ENV, features, w.fetcher);
+  const searches = w.calls.filter((c) => c.url.startsWith('https://api.github.com/search/code')).length;
+  assert.equal(searches, 4);
+  assert.deepEqual(features.map((f) => f.che.status), ['missing', 'missing', 'missing', 'missing', 'unknown', 'unknown', 'unknown']);
+  assert.equal(result.counts.unknown, 3);
+  assert.match(features[6].che.evidence[0].label, /Not checked/);
+});
+
+test('Codex #324: robots.txt wildcards follow RFC 9309; "Disallow: /*.pdf$" does not block a page', async () => {
+  const w = world({ robots: 'User-agent: *\nDisallow: /*.pdf$\nDisallow: /private/\n' });
+  const reply = await cheWith(w).say('Investigate https://shop.example.com and how its features work');
+  assert.equal(reply.ok, true, reply.text);
+  assert.ok(w.calls.some((c) => c.url === 'https://shop.example.com/'), 'the page was read');
+});
+
+test('Codex #324: a refused PR file list leaves verification pending instead of crashing', async () => {
+  const { verifyBuild } = await import('./rea_features.js');
+  const head = 'e'.repeat(40);
+  const fetcher = async (url) => {
+    const u = String(url);
+    if (u.endsWith('/pulls/7')) return json({ number: 7, state: 'open', draft: true, head: { sha: head }, html_url: 'https://github.com/Vondada/chey-app/pull/7' });
+    if (u.endsWith('/pulls/7/files?per_page=100')) return json({ message: 'API rate limit exceeded' }, 403);
+    if (u.includes('/check-runs')) return json({ check_runs: [{ name: 'analyze', status: 'completed', conclusion: 'success' }] });
+    return json({}, 404);
+  };
+  const result = await verifyBuild(ENV, 7, fetcher);
+  assert.equal(result.state, 'pending');
+  assert.match(result.note, /did not return the changed files of pull request #7 \(status 403\)/);
 });

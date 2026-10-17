@@ -10,6 +10,7 @@
 import { cleanText, NPM_NAME } from './rea_evidence.js';
 import { fetchPublicPage, readablePublicUrl } from './library.js';
 import { reusableLicense } from './code_scout.js';
+import { robotsVerdict } from './rea_web_evidence.js';
 
 const UA = 'CHE-REA';
 const MAX_TREE_PATHS = 6000;
@@ -393,21 +394,9 @@ export async function robotsAllows(url, fetcher = fetch) {
   try { parsed = new URL(url); } catch (_) { return { allowed: false, reason: 'That link is not valid.' }; }
   const page = await fetchPublicPage(`${parsed.origin}/robots.txt`, fetcher, { maxBytes: 200_000, userAgent: UA }).catch(() => ({ error: 'unreachable' }));
   if (page.error || !page.raw) return { allowed: true, checked: false };
-  let applies = false;
-  const disallow = [];
-  const allow = [];
-  for (const raw of String(page.raw).split('\n')) {
-    const line = raw.replace(/#.*$/, '').trim();
-    const [key, ...rest] = line.split(':');
-    const value = rest.join(':').trim();
-    if (/^user-agent$/i.test(key)) applies = value === '*' || /che-rea/i.test(value);
-    else if (applies && /^disallow$/i.test(key) && value) disallow.push(value);
-    else if (applies && /^allow$/i.test(key) && value) allow.push(value);
-  }
-  const path = parsed.pathname || '/';
-  const longest = (list) => list.filter((rule) => path.startsWith(rule.replace(/\*.*$/, ''))).reduce((n, r) => Math.max(n, r.length), -1);
-  const blocked = longest(disallow) > longest(allow);
-  return blocked ? { allowed: false, checked: true, reason: `The site's robots.txt asks automated readers not to read ${path}. CHE respects that.` } : { allowed: true, checked: true };
+  const path = `${parsed.pathname || '/'}${parsed.search || ''}`;
+  const verdict = robotsVerdict(page.raw, path);
+  return verdict.allowed ? { allowed: true, checked: true } : { allowed: false, checked: true, rule: verdict.rule, reason: `The site's robots.txt asks automated readers not to read ${parsed.pathname || '/'} (${verdict.rule}). CHE respects that.` };
 }
 
 const attr = (tag, name) => tag.match(new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i'))?.slice(1).find((v) => v !== undefined) || '';
