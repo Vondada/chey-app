@@ -59,13 +59,14 @@ function jobState(job, stale) {
 }
 
 // A built-in job keeps its outcome as result and error text, which is read back as written.
-function jobReceipt(job, stale, unread) {
+function jobReceipt(job, stale, unread, olderActive) {
   const lines = [jobState(job, stale), `Built-in job: ${String(job.id || '').slice(0, 12)}.`];
   const asked = clip(job.request || job.title || job.prompt);
   if (asked) lines.push(`Request: ${asked}.`);
   if (clip(job.result)) lines.push(`Result: ${sentence(job.result)}`);
   if (clip(job.error)) lines.push(`Error: ${sentence(job.error)}`);
   lines.push('Its record has no GitHub run link, model list or changed-file count.');
+  if (olderActive) lines.push(`An older coding job, ${String(olderActive.id || '').slice(0, 12)}, is still ${Number(olderActive.retry_count || 0) > 0 && olderActive.status === 'queued' ? 'retrying' : clip(olderActive.status) || 'active'}.`);
   if (unread) lines.push(unread);
   return lines.join(' ');
 }
@@ -78,10 +79,11 @@ function unreadReason(status) {
 
 // `unreadRun`: a newer runtime session whose record could not be read, reported beside the
 // active built-in job instead of being silently dropped.
-export function codingHistoryReceipt({ kind = 'none', job = null, stale = false, sessionId = '', status = null, request = '', repo = '', unreadRun = null } = {}) {
+// `olderActive`: an older built-in job still queued or running beside the newest one reported.
+export function codingHistoryReceipt({ kind = 'none', job = null, stale = false, sessionId = '', status = null, request = '', repo = '', unreadRun = null, olderActive = null } = {}) {
   if (kind === 'job' && job) {
     const unread = unreadRun ? `A newer coding run, ${unreadRun.sessionId}, exists, but ${unreadReason(unreadRun.status)}; its state is UNVERIFIED.` : '';
-    return jobReceipt(job, stale, unread);
+    return jobReceipt(job, stale, unread, olderActive);
   }
   // Other kinds of job may be running, so nothing is said about them.
   if (kind !== 'runtime' || !sessionId) return 'No coding job has started yet, sir.';
@@ -99,12 +101,25 @@ export function codingHistoryReceipt({ kind = 'none', job = null, stale = false,
     : `State: ${state.replace(/_/g, ' ')}.`);
   const files = count(status.changed_files);
   const pr = count(status.pr_number);
-  lines.push(speakRuntimeStatus({ ...status, changed_files: files ?? undefined, pr_number: pr || undefined }));
-  const failure = [status.failure, clip(status.error)].filter(Boolean).join(' - ');
+  const tried = listed(status.models_tried);
+  // The spoken sentence reads only fields of the expected type, so an odd record cannot put
+  // "[object Object]" or "NaN" into it.
+  lines.push(speakRuntimeStatus({
+    ...status,
+    changed_files: files ?? undefined,
+    pr_number: pr || undefined,
+    additions: count(status.additions) ?? undefined,
+    deletions: count(status.deletions) ?? undefined,
+    models_tried: tried,
+    failure: clip(status.failure),
+    error: clip(status.error, 2000),
+    review: clip(status.review),
+    remaining: clip(status.remaining),
+  }));
+  const failure = [clip(status.failure), clip(status.error)].filter(Boolean).join(' - ');
   if (failure) lines.push(`${['waiting_capacity', 'resuming'].includes(state) ? 'Last failure' : 'Failure'}: ${sentence(failure)}`);
   const runId = Number(status.run_id) || 0;
   lines.push(runId ? `GitHub run: https://github.com/${repo || DEFAULT_REPO}/actions/runs/${runId}` : 'GitHub run: not recorded.');
-  const tried = listed(status.models_tried);
   if (tried.length) lines.push(`Models tried: ${tried.join(', ')}.`);
   else if (clip(status.model)) lines.push(`Model: ${clip(status.model)}.`);
   else lines.push('Models tried: not recorded.');

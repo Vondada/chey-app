@@ -3531,6 +3531,19 @@ test('a coding question sent with an attachment is left for the route that reads
   }
 });
 
+test('routes that answered before the old coding-status route still answer first', async () => {
+  const saved = new Map();
+  const { ask, restore } = await codingStatusChat(saved);
+  try {
+    for (const message of ['Is the last coding job live?', 'Show me the diff from the latest coding run', 'Show me your reliability report for the latest coding runs', 'What did I tell you about the last coding job?', "What's in the mailbox about the last coding job?"]) {
+      const { done } = await ask(message);
+      assert.notEqual(done.source, 'che_coding_history', message);
+    }
+  } finally {
+    restore();
+  }
+});
+
 test('messages for other AIs about a coding run go to the mailbox and consult routes, not the status receipt', async () => {
   const saved = new Map();
   const { ask, restore } = await codingStatusChat(saved);

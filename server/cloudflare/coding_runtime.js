@@ -336,12 +336,14 @@ export function recoverableRuntimeFailure(result = {}) {
 export function speakRuntimeStatus(result = {}) {
   const state = runtimeState(result);
   const files = Number(result.changed_files || 0);
-  const diff = `(+${Number(result.additions || 0)}/-${Number(result.deletions || 0)})`;
+  // Line counts only when the record holds them.
+  const diff = Number.isFinite(Number(result.additions)) && Number.isFinite(Number(result.deletions)) && result.additions !== undefined && result.deletions !== undefined
+    ? ` (+${Number(result.additions)}/-${Number(result.deletions)})` : '';
   // A record without a change count says so, rather than claiming nothing changed. `changed`
   // follows "I"; `changes` follows "failed with".
   const counted = Number.isInteger(result.changed_files);
-  const changed = files ? `changed ${files} file${files === 1 ? '' : 's'} ${diff}` : counted ? 'changed no files' : 'recorded no change count';
-  const changes = files ? `${files} file${files === 1 ? '' : 's'} changed ${diff}` : counted ? 'no files changed yet' : 'no change count recorded';
+  const changed = files ? `changed ${files} file${files === 1 ? '' : 's'}${diff}` : counted ? 'changed no files' : 'recorded no change count';
+  const changes = files ? `${files} file${files === 1 ? '' : 's'} changed${diff}` : counted ? 'no files changed yet' : 'no change count recorded';
   const pr = Number(result.pr_number) > 0 ? `pull request ${Number(result.pr_number)}` : 'its pull request';
   const parts = [];
   // GitHub could not be asked whether the silent run is alive: say so rather
@@ -370,7 +372,11 @@ export function speakRuntimeStatus(result = {}) {
     case 'reviewing': parts.push(`Tests passed. My reviewer is checking ${pr}.`); break;
     case 'approved_waiting_owner': parts.push(`Tests and independent review passed for ${pr}. It is waiting for your approval, sir; I have not merged or deployed it.`); break;
     case 'merged': parts.push(`Done. I ${changed}, tests passed, my reviewer approved, and I merged ${pr}.`); break;
-    case 'review_rejected': parts.push(`Tests passed but my reviewer rejected it: ${String(result.review || '').slice(0, 200)}. I did not merge.`); break;
+    case 'review_rejected': {
+      const review = typeof result.review === 'string' ? result.review.trim().slice(0, 200) : '';
+      parts.push(`Tests passed but my reviewer rejected it${review ? `: ${review}` : ''}. I did not merge.`);
+      break;
+    }
     case 'tests_failed': parts.push(`Tests failed on ${pr}, so I did not merge it.`); break;
     case 'rolled_back': parts.push('A merged change broke main, so I rolled it back automatically.'); break;
     case 'no_change': parts.push('My runner found nothing that needed changing.'); break;

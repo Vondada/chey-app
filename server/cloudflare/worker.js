@@ -7899,52 +7899,6 @@ export class CheState extends DurableObject {
         } catch (_) { savedResourceList = null; }
         const learnedHearing = correctionsContext(corrections);
 
-        // Coding status and history come before every other route: the stored job and runtime
-        // records answer, with their evidence. Asking never runs an investigation, never inspects
-        // repository files and never starts a job. A message for another AI ("tell Claude the
-        // coding run failed", "ask ChatGPT why the coding job failed") stays with the mailbox and consult routes.
-        // A turn with an attachment is about that attachment, which this route cannot read.
-        if (!body.attachment && codingHistoryIntent(message) && !mailboxIntent(message) && !consultIntent(message)) {
-          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false });
-          const jobs = (await this.loadData()).jobs || [];
-          // enqueueJob uses unshift, so the first match is the newest.
-          const selfJobs = jobs.filter((item) => item.kind === 'self_development');
-          const activeJob = selfJobs.find((item) => ['queued', 'running'].includes(item.status)) || null;
-          const newestJob = selfJobs.reduce((newest, item) => (String(item.created_at || '') > String(newest?.created_at || '') ? item : newest), selfJobs[0] || null);
-          const sessionId = String(await this.ctx.storage.get('che_runtime_last_session') || '').trim();
-          const runtimeAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
-          const request = String(await this.ctx.storage.get('che_runtime_last_request') || await this.ctx.storage.get('che_runtime_last_request_summary') || '').trim();
-          // The newest record wins: the runtime session only when it was accepted after every
-          // built-in job (an unstamped legacy session counts as older work). So a built-in job
-          // that ran after an old session is reported, not the old session's result; and after
-          // recovery clears the stamp to hand a mission to a background job, that job is the truth.
-          const runtimeIsNewer = Boolean(sessionId) && (!newestJob || (Boolean(runtimeAt) && runtimeAt > String(newestJob.created_at || '')));
-          let subject = { kind: 'none' };
-          if (!runtimeIsNewer && (activeJob || newestJob)) subject = { kind: 'job', job: activeJob || newestJob };
-          else if (runtimeIsNewer) {
-            let status = await new CheCodingRuntime(this.env).getStatus(sessionId, { acceptedAt: runtimeAt });
-            if (status.status === 200) {
-              // A pending resume is shown until the runner claims it; then the record decides.
-              // Status is a read: the alarm path clears a claimed resume and runs recovery.
-              const pendingResume = await this.ctx.storage.get('che_runtime_resume');
-              if (pendingResume?.session_id === sessionId && resumeAction({ pending: pendingResume, status }) !== 'claimed') {
-                status = { ...status, state: pendingResume.dispatched_at ? 'resuming' : 'waiting_capacity', resume_at: pendingResume.next_at, resume_attempt: pendingResume.attempt, resume_limit: RESUME_LIMIT };
-              }
-              subject = { kind: 'runtime', sessionId, status };
-            } else if (activeJob) subject = { kind: 'job', job: activeJob, unreadRun: { sessionId, status } };
-            else subject = { kind: 'runtime', sessionId, status };
-          }
-          const stale = subject.job?.status === 'running' && Date.parse(subject.job.updated_at || 0) <= Date.now() - jobStaleMs(subject.job);
-          return ndjsonReply(codingHistoryReceipt({ ...subject, stale, request, repo: this.env.CHE_GITHUB_REPO }), {
-            source: 'che_coding_history',
-            session_id: subject.kind === 'runtime' || subject.unreadRun ? sessionId : null,
-            state: subject.status?.state || null,
-            background_job_id: subject.job?.id || null,
-            background_job_status: subject.job ? (stale ? 'interrupted' : subject.job.status) : null,
-            model_calls: 0,
-          });
-        }
-
         // REA requests (reverse engineering) take their own read-only route before
         // any repository or coding routing. They dispatch analysis; they never start
         // a coding job, commit or deploy.
@@ -7952,8 +7906,10 @@ export class CheState extends DurableObject {
         // it reuses the self-development job (draft PR, never a merge).
         // The turn's own prohibitions ("answer in chat only", "no pull request")
         // hold for REA builds too, before anything can be queued.
+        // A question about a coding record ("inspect that coding job") is not an REA follow-up;
+        // the coding history route below answers it. Named REA targets never match it.
         const reaPolicy = currentTurnActionPolicy(message);
-        const rea = await handleReaRequest(this.ctx.storage, this.keyEnv || this.env, message, {
+        const rea = codingHistoryIntent(message) ? null : await handleReaRequest(this.ctx.storage, this.keyEnv || this.env, message, {
           ...this.reaOptions({ history: ownerHistory, owner: ownerDevice }),
           codingBlocked: reaPolicy.terminalChatOnly || reaPolicy.restrictions.noPr || reaPolicy.restrictions.noCommitPush,
         });
@@ -8853,7 +8809,55 @@ export class CheState extends DurableObject {
           const active = ((await this.loadData()).objectives || []).filter((o) => o.status !== 'complete').slice(0, 3);
           return ndjsonReply(active.length ? `${active.map(speakObjective).join(' ')} Sir.` : 'No mission is in progress, sir.', { source: 'che_mission_status', model_calls: 0 });
         }
-        // "coding status" is answered by the coding history route above, from the same records.
+        // "coding status" and every other question about a coding record: the stored job and
+        // runtime records answer, with their evidence. Asking never runs an investigation, never
+        // inspects repository files and never starts a job. The route sits where the old exact
+        // "coding status" route sat, so every route above keeps its turns as before; repository
+        // inspection and REA follow-ups above skip these questions themselves. Of the routes below,
+        // a handoff, a message for another AI ("tell Claude the coding run failed") and a
+        // consultation ("ask ChatGPT why the coding job failed") keep theirs.
+        // A turn with an attachment is about that attachment, which this route cannot read.
+        if (!body.attachment && codingHistoryIntent(message) && !handoffIntent(message) && !mailboxIntent(message) && !consultIntent(message)) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false });
+          const jobs = (await this.loadData()).jobs || [];
+          // enqueueJob uses unshift, so the first match is the newest.
+          const selfJobs = jobs.filter((item) => item.kind === 'self_development');
+          const activeJob = selfJobs.find((item) => ['queued', 'running'].includes(item.status)) || null;
+          const newestJob = selfJobs.reduce((newest, item) => (String(item.created_at || '') > String(newest?.created_at || '') ? item : newest), selfJobs[0] || null);
+          const sessionId = String(await this.ctx.storage.get('che_runtime_last_session') || '').trim();
+          const runtimeAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
+          const request = String(await this.ctx.storage.get('che_runtime_last_request') || await this.ctx.storage.get('che_runtime_last_request_summary') || '').trim();
+          // The newest record wins: the runtime session only when it was accepted after every
+          // built-in job (an unstamped legacy session counts as older work). So a built-in job
+          // that ran after an old session is reported, not the old session's result; and after
+          // recovery clears the stamp to hand a mission to a background job, that job is the truth.
+          const runtimeIsNewer = Boolean(sessionId) && (!newestJob || (Boolean(runtimeAt) && runtimeAt > String(newestJob.created_at || '')));
+          let subject = { kind: 'none' };
+          // The newest job is reported; an older one still queued or running is named beside it.
+          if (!runtimeIsNewer && newestJob) subject = { kind: 'job', job: newestJob, olderActive: activeJob && activeJob !== newestJob ? activeJob : null };
+          else if (runtimeIsNewer) {
+            let status = await new CheCodingRuntime(this.env).getStatus(sessionId, { acceptedAt: runtimeAt });
+            if (status.status === 200) {
+              // A pending resume is shown until the runner claims it; then the record decides.
+              // Status is a read: the alarm path clears a claimed resume and runs recovery.
+              const pendingResume = await this.ctx.storage.get('che_runtime_resume');
+              if (pendingResume?.session_id === sessionId && resumeAction({ pending: pendingResume, status }) !== 'claimed') {
+                status = { ...status, state: pendingResume.dispatched_at ? 'resuming' : 'waiting_capacity', resume_at: pendingResume.next_at, resume_attempt: pendingResume.attempt, resume_limit: RESUME_LIMIT };
+              }
+              subject = { kind: 'runtime', sessionId, status };
+            } else if (activeJob) subject = { kind: 'job', job: activeJob, unreadRun: { sessionId, status } };
+            else subject = { kind: 'runtime', sessionId, status };
+          }
+          const stale = subject.job?.status === 'running' && Date.parse(subject.job.updated_at || 0) <= Date.now() - jobStaleMs(subject.job);
+          return ndjsonReply(codingHistoryReceipt({ ...subject, stale, request, repo: this.env.CHE_GITHUB_REPO }), {
+            source: 'che_coding_history',
+            session_id: subject.kind === 'runtime' || subject.unreadRun ? sessionId : null,
+            state: subject.status?.state || null,
+            background_job_id: subject.job?.id || null,
+            background_job_status: subject.job ? (stale ? 'interrupted' : subject.job.status) : null,
+            model_calls: 0,
+          });
+        }
         if (/^\s*(?:che[,:]?\s*)?(?:please\s+)?resume (?:the|my|that) coding job[.!]?\s*$/i.test(message)) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can resume coding jobs.', { source: 'che_coding_resume', ok: false });
           const current = await this.loadData();

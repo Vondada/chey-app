@@ -52,6 +52,11 @@ const HISTORY = [
   "Don't change anything, just tell me the status of the last coding run.",
   'Did the coding job fix the bug?',
   'Why did the coding job fail to merge the PR?',
+  // Fifth review: the question may carry time words, the record, or a plain read request.
+  'Why did the coding job fail last night?',
+  'Latest coding execution history?',
+  'Did the coding run pass its tests?',
+  'What files did the coding job change? Tell me the paths.',
 ];
 
 for (const message of HISTORY) {
@@ -149,6 +154,36 @@ const NOT_HISTORY = [
   "What's the status of the coding task in my objectives?",
   'Did the iPhone build from the latest coding run finish?',
   "What's the status of my coding job application?",
+  // Fifth review: a second request after the question, punctuated or spoken without punctuation ...
+  'Why did the last coding job fail? Recover it.',
+  'Why did the coding job fail? Debug it.',
+  'Why did the coding job stop? Kick it off again.',
+  'What files did the coding job change? Put them back.',
+  'Is the coding job still running? Switch it to Claude.',
+  'Why did the coding job fail? Learn from it.',
+  'why did the coding job fail cancel it',
+  'why did the coding job fail rerun the tests',
+  'why did the coding job fail tell claude',
+  'did the coding job pass approve it',
+  'did the coding job finish open a PR',
+  'what files did the coding job change roll them back',
+  'what happened to the coding job resume',
+  'how far did claude get finish it',
+  'che how far did claude get pick up where he left off',
+  'how far did claude get do claude\'s handoff',
+  'what is the status of the coding job terminate it',
+  // ... messages to or about another AI ...
+  'Can you tell Claude the latest coding run failed?',
+  'hey che tell claude the latest coding run failed',
+  'Did Claude reply about the last coding run?',
+  'What did Claude say about the last coding job?',
+  'Has Codex answered about the latest coding run?',
+  // ... and statements that ask for a change.
+  'the latest coding run status needs to be fixed',
+  'the coding job status should be shorter',
+  'the coding job status should say the PR number',
+  'your coding history needs improving',
+  'latest coding run status is too long',
 ];
 
 for (const message of NOT_HISTORY) {
@@ -280,6 +315,22 @@ test('no coding run recorded is said plainly, not invented', () => {
   // Other kinds of job may be running, so the reply says nothing about them (fourth review).
   assert.equal(codingHistoryReceipt({ kind: 'none' }), 'No coding job has started yet, sir.');
   assert.equal(codingHistoryReceipt({ kind: 'runtime', sessionId: '', status: null }), 'No coding job has started yet, sir.');
+});
+
+test('odd record fields never reach the spoken state sentence', () => {
+  const run = codingHistoryReceipt({ kind: 'runtime', sessionId: 'ocr-12345678', status: { status: 200, state: 'blocked', failure: 'opencode_failed', error: 'x', models_tried: [{ id: 'm' }, 'gemini'], changed_files: 1, additions: 'lots', deletions: null } });
+  assert.doesNotMatch(run, /\[object Object\]|NaN/);
+  assert.match(run, /failed with 1 file changed after trying 1 model \(gemini\)/, 'no line counts the record does not hold');
+  const odd = codingHistoryReceipt({ kind: 'runtime', sessionId: 'ocr-12345678', status: { status: 200, state: 'review_rejected', failure: { code: 1 }, error: 'x', review: { notes: 'y' } } });
+  assert.doesNotMatch(odd, /\[object Object\]/);
+  assert.match(odd, /Failure: x\./);
+  assert.match(odd, /my reviewer rejected it\. I did not merge\./);
+});
+
+test('an older job still active is named beside the newest job, not hidden behind it or in front of it', () => {
+  const text = codingHistoryReceipt({ kind: 'job', job: { id: 'job-newfail00001', status: 'failed', error: 'Tests failed: 3 failing' }, olderActive: { id: 'job-oldqueue0001', status: 'queued', retry_count: 2 } });
+  assert.match(text, /^The latest coding job status is failed, sir\./);
+  assert.match(text, /An older coding job, job-oldqueue, is still retrying\./);
 });
 
 test('odd record contents are never spoken as made-up values', () => {
