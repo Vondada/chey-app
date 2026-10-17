@@ -159,7 +159,7 @@ extension _CheHomeSend on _CHEHomeState {
       return true;
     }
     final updateCommand = RegExp(
-      r'^(?:(?:chay|chey|shay|che)[, ]+)?(?:update yourself|check (?:for (?:an |any )?|(?:my )?(?:che )?)?updates?|install (?:the )?che update|download (?:the )?che update)\s*[.!?]*$',
+      r'^(?:(?:chay|chey|shay|che)[, ]+)?(?:please\s+)?(?:update yourself|check\s+(?:for\s+)?(?:(?:an|any|my|the|new|che)\s+)*updates?|install (?:the )?che update|download (?:the )?che update)(?:,?\s+please)?\s*[.!?]*$',
       caseSensitive: false,
     );
     if (updateCommand.hasMatch(message.trim())) {

@@ -29,6 +29,12 @@ void main() {
       'check updates',
       'CHE, check for updates',
       'check my updates',
+      'please check for updates',
+      'check for new updates',
+      'check for my updates',
+      'check for the updates',
+      'CHE, check for any new updates, please',
+      'check  updates',
     ]) {
       expect(opensUpdates(phrase), isTrue, reason: phrase);
     }
