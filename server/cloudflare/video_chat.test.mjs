@@ -52,19 +52,31 @@ const manifest = (extra = {}) => JSON.stringify({ status: 'verified', title: '3 
 /** A simulated GitHub: dispatches create runs; tests move them along. */
 function github({ dispatch = 204, fallback = 204 } = {}) {
   const gh = { dispatches: [], runs: [], artifacts: {}, calls: [] };
+  // GitHub's real refusal for a token without a permission: its message and
+  // the permission the call needed.
+  const refused = (status, needs) => status === 403
+    ? new Response(JSON.stringify({ message: 'Resource not accessible by personal access token', documentation_url: 'https://docs.github.com/rest/actions/workflows#create-a-workflow-dispatch-event', status: '403' }),
+      { status, headers: { 'x-accepted-github-permissions': needs, 'x-github-request-id': 'ABCD:1234:5678' } })
+    : new Response(null, { status });
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input?.url || input);
     gh.calls.push(url);
+    const headers = new Headers(init.headers || {});
+    // Like the real API: no User-Agent, no service (the production failure).
+    if (url.startsWith('https://api.github.com/') && !headers.get('user-agent')) {
+      gh.refusedNoAgent = (gh.refusedNoAgent || 0) + 1;
+      return new Response(JSON.stringify({ message: 'Request forbidden by administrative rules. Please make sure your request has a User-Agent header (https://docs.github.com/en/rest/overview/resources-in-the-rest-api#user-agent-required). Check https://developer.github.com for other possible causes.' }), { status: 403 });
+    }
     const body = init.body ? JSON.parse(init.body) : null;
     if (url.endsWith('/actions/workflows/che-video-render.yml/dispatches')) {
       gh.dispatches.push({ kind: 'workflow', ...body });
       if (dispatch === 204) gh.runs.push({ id: 900 + gh.runs.length, display_title: `CHE free render ${body.inputs.job_id}`, status: 'queued', conclusion: null, job: body.inputs.job_id });
-      return new Response(null, { status: dispatch });
+      return refused(dispatch, 'actions=write');
     }
     if (url.endsWith('/repos/Vondada/chey-app/dispatches')) {
       gh.dispatches.push({ kind: 'repository', ...body });
       if (fallback === 204) gh.runs.push({ id: 900 + gh.runs.length, display_title: `CHE free render ${body.client_payload.job_id}`, status: 'queued', conclusion: null, job: body.client_payload.job_id });
-      return new Response(null, { status: fallback });
+      return refused(fallback, 'contents=write');
     }
     if (url.includes('/actions/workflows/che-video-render.yml/runs')) return Response.json({ workflow_runs: gh.runs });
     let m = /\/actions\/runs\/(\d+)\/artifacts/.exec(url);
@@ -195,7 +207,8 @@ test('every GitHub failure is reported as itself, with what to do', async () => 
   che = await owner();
   out = await che.say(OWNER_ASK);
   assert.match(out.reply, /GitHub refused both ways to start the free renderer \(workflow HTTP 403, repository HTTP 403\)/);
-  assert.match(out.reply, /Actions: read and write, or Contents: read and write/);
+  assert.match(out.reply, /CHE_GITHUB_TOKEN is missing a permission this call needs\. GitHub says this call needs: actions=write\. GitHub said: "Resource not accessible by personal access token" \(request ABCD:1234:5678\)\./);
+  assert.match(out.reply, /GitHub says this call needs: contents=write/);
 
   // No Actions:write but Contents:write: the fallback queues it.
   gh = github({ dispatch: 403, fallback: 204 });
@@ -308,7 +321,7 @@ test('a rate-limited status check keeps the video instead of calling it failed',
 test('video requests are recognised; ordinary "short" is not', () => {
   for (const [m, topic] of [[OWNER_ASK, ''], ['Use the free GitHub video renderer.', ''], ['Create a YouTube Short about black holes with narration', 'black holes'], ['Make me a 15 second video on the history of coffee', 'history of coffee'],
     ['Make a video for TikTok', ''], ['Hey CHE, I need a video', ''], ['Make a video about black holes for my channel', 'black holes'],
-    ['Make a video about black holes please, thanks', 'black holes'], ['Make a video please, thanks', ''], ['Make a video about the 90s', '90s'], ['I specifically want the free GitHub video renderer. Use it.', ''], ['I asked for the free renderer, so just use it', '']]) {
+    ['Make a video about black holes please, thanks', 'black holes'], ['Make a video please, thanks', ''], ['Make a video about the 90s', '90s'], ['I specifically want the free GitHub video renderer. Use it.', ''], ['Create a 15-second faceless YouTube Short about black holes, including narration, attractive thumbnail, title, and real MP4.', 'black holes'], ['Make a video about volcanoes plus a thumbnail', 'volcanoes'], ['Make a video about black holes including how stars collapse', 'black holes including how stars collapse'], ['Make a video about dogs with funny hats', 'dogs with funny hats'], ['Make a video about the moon along with an attractive thumbnail', 'moon'], ['I asked for the free renderer, so just use it', '']]) {
     assert.equal(videoRequestTopic(m), topic, m);
   }
   for (const m of [OWNER_ASK, 'Use the free GitHub video renderer.', 'Create a video clip from this idea.', 'Make an Instagram reel about coffee', 'Create a reel about black holes']) {
@@ -379,4 +392,17 @@ test('trading and other sentences are not video status checks or lengths', async
   assert.equal(gh.dispatches.at(-1).inputs.seconds, '15', '"the 90s" is not 90 seconds');
   await che.say('Make a 1-minute video about volcanoes');
   assert.equal(gh.dispatches.at(-1).inputs.seconds, '60');
+});
+
+test('every request carries a User-Agent, so GitHub serves it (the October 17 production 403)', async () => {
+  const gh = github();
+  const che = await owner();
+  const out = await che.say('Create a 15-second faceless YouTube Short about black holes, including narration, attractive thumbnail, title, and real MP4.');
+  assert.equal(gh.refusedNoAgent || 0, 0, 'GitHub never saw a request without a User-Agent');
+  assert.equal(out.meta.video_status, 'queued');
+  assert.equal(gh.dispatches[0].inputs.topic, 'black holes');
+  gh.finish('success');
+  const done = await che.say('Is my video ready?');
+  assert.equal(done.meta.video_status, 'complete');
+  assert.equal(gh.refusedNoAgent || 0, 0);
 });

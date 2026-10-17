@@ -10,12 +10,45 @@ function credentials(env) {
   return String(env.CHE_GITHUB_REPO || '') === REPO && Boolean(env.CHE_GITHUB_TOKEN);
 }
 
+// GitHub refuses any API request without a User-Agent (HTTP 403, "Request
+// forbidden by administrative rules"), and a Cloudflare Worker's fetch sends
+// none. Without this header every dispatch from the Worker failed with 403
+// whatever the token's permissions were.
+const USER_AGENT = 'CHE-Video-Renderer';
+
 function githubHeaders(env) {
   return {
     'Accept': 'application/vnd.github+json',
     'Authorization': 'Bearer ' + env.CHE_GITHUB_TOKEN,
     'X-GitHub-Api-Version': '2022-11-28',
+    'User-Agent': USER_AGENT,
   };
+}
+
+// GitHub's own words about a refusal, safe to show and log: its message, the
+// request ID GitHub support can look up, and the permissions the call needed.
+// Anything shaped like a token is removed; the token itself is never included.
+function scrub(text, env) {
+  let out = String(text || '');
+  const token = String(env?.CHE_GITHUB_TOKEN || '');
+  if (token.length >= 8) out = out.split(token).join('[hidden]');
+  return out.replace(/\b(?:github_pat|gh[pousr])_[A-Za-z0-9_]{8,}/g, '[hidden]').replace(/Bearer\s+\S+/gi, 'Bearer [hidden]')
+    .replace(/\s+/g, ' ').trim().slice(0, 200);
+}
+
+export function githubDetail(response, bodyText, env) {
+  let body = {};
+  try { body = JSON.parse(bodyText || '{}'); } catch (_) { body = { message: bodyText }; }
+  const header = (name) => scrub(response?.headers?.get?.(name) || '', env);
+  const detail = { http: response?.status || 0 };
+  const message = scrub(body?.message || '', env);
+  if (message) detail.message = message;
+  if (header('x-github-request-id')) detail.request_id = header('x-github-request-id');
+  if (header('x-accepted-github-permissions')) detail.accepted_permissions = header('x-accepted-github-permissions');
+  if (header('x-github-sso')) detail.sso = header('x-github-sso');
+  const docs = String(body?.documentation_url || '');
+  if (/^https:\/\/docs\.github\.com\//.test(docs)) detail.documentation_url = docs.slice(0, 200);
+  return detail;
 }
 
 async function readJson(response) {
@@ -48,15 +81,30 @@ function refusal(status, what) {
 // GitHub answers a rate limit with 403 as well as 429: no requests left in the
 // hour, a Retry-After, or a "secondary rate limit" message. That is a pause,
 // not a token without permission.
-async function refusalOf(response, what) {
+async function refusalOf(response, what, env) {
+  const text = await response.clone().text().catch(() => '');
+  const github = githubDetail(response, text, env);
+  const said = github.message ? ` GitHub said: "${github.message}"${github.request_id ? ` (request ${github.request_id})` : ''}.` : '';
   if (response.status === 403) {
     const headers = response.headers;
-    let limited = headers?.get?.('x-ratelimit-remaining') === '0' || Boolean(headers?.get?.('retry-after'));
-    if (!limited) limited = /rate limit/i.test(await response.clone().text().catch(() => ''));
-    if (limited) return { code: 'rate_limited', retryable: true,
+    const limited = headers?.get?.('x-ratelimit-remaining') === '0' || Boolean(headers?.get?.('retry-after')) || /rate limit/i.test(text);
+    if (limited) return { code: 'rate_limited', retryable: true, github,
       error: `GitHub's rate limit paused ${what} (HTTP 403); it is worth trying again in a few minutes.` };
+    if (/user-agent/i.test(github.message || '')) return { code: 'request_rejected', retryable: false, github,
+      error: `GitHub rejected CHE's request for ${what} (HTTP 403) because it had no User-Agent header. This is a CHE defect, not your token.${said}` };
+    if (github.sso) return { code: 'sso_required', retryable: false, github,
+      error: `GitHub refused ${what} (HTTP 403): the token is not authorized for single sign-on.${said} Owner action: authorize the token for SSO in GitHub's token settings.` };
+    if (/not accessible by (?:personal access token|integration)/i.test(github.message || '')) {
+      const needs = github.accepted_permissions ? ` GitHub says this call needs: ${github.accepted_permissions}.` : '';
+      return { code: 'forbidden', retryable: false, github,
+        error: `GitHub refused ${what} (HTTP 403): CHE_GITHUB_TOKEN is missing a permission this call needs.${needs}${said} Owner action: add that permission for Vondada/chey-app to the token saved as CHE_GITHUB_TOKEN.` };
+    }
+    // A 403 GitHub did not explain is reported as itself, not guessed at.
+    return { code: 'forbidden', retryable: false, github,
+      error: `GitHub refused ${what} (HTTP 403).${said}${github.accepted_permissions ? ` Permissions this call accepts: ${github.accepted_permissions}.` : ''}` };
   }
-  return refusal(response.status, what);
+  const why = refusal(response.status, what);
+  return { ...why, github, error: why.error + said };
 }
 
 /**
@@ -90,7 +138,7 @@ export async function startGithubVideo(env, topic, seconds = 15, fetcher = fetch
       error: 'GitHub Actions could not be reached. If the render was queued it will appear under this task; nothing else was started.' };
   }
   if (response.status === 204) return { ok: true, pending: true, task_id: taskId, provider: 'github-actions-offline', dispatch_method: 'workflow_dispatch', stage: 'queued' };
-  const first = await refusalOf(response, 'the video workflow');
+  const first = await refusalOf(response, 'the video workflow', env);
   // A bad token or a busy GitHub fails the fallback too: say so once.
   if (response.status === 401 || first.retryable) return { ok: false, task_id: taskId, ...first };
   // 403 (no Actions:write), 404 or 422: the Contents-write repository event.
@@ -106,10 +154,12 @@ export async function startGithubVideo(env, topic, seconds = 15, fetcher = fetch
     return { ok: true, pending: true, task_id: taskId,
       provider: 'github-actions-offline', dispatch_method: 'repository_dispatch', stage: 'queued' };
   }
-  const why = await refusalOf(fallback, 'the repository-dispatch fallback');
+  const why = await refusalOf(fallback, 'the repository-dispatch fallback', env);
   if (why.retryable) return { ok: false, task_id: taskId, ...why };
-  return { ok: false, task_id: taskId, code: why.code, retryable: why.retryable,
-    error: `GitHub refused both ways to start the free renderer (workflow HTTP ${response.status}, repository HTTP ${fallback.status}). ${first.error} The CHE_GITHUB_TOKEN requires Actions:write or Contents:write for Vondada/chey-app.` };
+  const sameDefect = why.code === 'request_rejected' && first.code === 'request_rejected';
+  return { ok: false, task_id: taskId, code: sameDefect ? 'request_rejected' : why.code, retryable: why.retryable,
+    github: { workflow_dispatch: first.github, repository_dispatch: why.github },
+    error: `GitHub refused both ways to start the free renderer (workflow HTTP ${response.status}, repository HTTP ${fallback.status}). ${first.error} ${why.error}${sameDefect ? '' : ' Starting a render needs Actions: write (workflow) or Contents: write (repository event) on Vondada/chey-app.'}` };
 }
 
 // Minutes after dispatch with no run before CHE says GitHub never started it.
@@ -124,7 +174,7 @@ export async function githubVideoStatus(env, taskId, fetcher = fetch, { dispatch
       headers: githubHeaders(env), signal: AbortSignal.timeout(15000),
     });
     if (!list.ok) {
-      const why = await refusalOf(list, 'the video job lookup');
+      const why = await refusalOf(list, 'the video job lookup', env);
       // Busy GitHub is a pause, not a failed video.
       if (why.retryable) return { ok: true, pending: true, task_id: taskId, stage: 'checking', detail: why.error };
       return { ok: false, task_id: taskId, code: why.code, error: why.error };
@@ -154,7 +204,7 @@ export async function githubVideoStatus(env, taskId, fetcher = fetch, { dispatch
       headers: githubHeaders(env), signal: AbortSignal.timeout(15000),
     });
     if (!artifactsReply.ok) {
-      const why = await refusalOf(artifactsReply, 'the rendered-file listing');
+      const why = await refusalOf(artifactsReply, 'the rendered-file listing', env);
       if (why.retryable) return { ok: true, pending: true, task_id: taskId, run_id: job.id, stage: 'checking', detail: why.error };
       return { ok: false, task_id: taskId, run_id: job.id, code: 'artifact', error: `The rendered files could not be listed (HTTP ${artifactsReply.status}).` };
     }
@@ -264,11 +314,20 @@ export function mp4Facts(bytes) {
 }
 
 async function downloadArchive(env, artifactId, fetcher) {
-  const response = await fetcher('https://api.github.com/repos/' + REPO + '/actions/artifacts/' + artifactId + '/zip', {
-    headers: githubHeaders(env), signal: AbortSignal.timeout(25000),
+  let response = await fetcher('https://api.github.com/repos/' + REPO + '/actions/artifacts/' + artifactId + '/zip', {
+    headers: githubHeaders(env), signal: AbortSignal.timeout(25000), redirect: 'manual',
   });
+  // GitHub answers with a short-lived signed link to its file storage. That
+  // link is fetched without the GitHub token: the token must not leave GitHub,
+  // and the storage service refuses a request that carries a foreign one.
+  const location = response.status >= 300 && response.status < 400 ? response.headers.get('location') || '' : '';
+  if (location) {
+    if (!/^https:\/\//.test(location)) throw new Error('Artifact download redirect was not HTTPS.');
+    response = await fetcher(location, { headers: { 'User-Agent': USER_AGENT }, signal: AbortSignal.timeout(25000) });
+    if (!response.ok) throw new Error('Artifact storage download HTTP ' + response.status);
+  }
   if (!response.ok) {
-    const why = await refusalOf(response, 'the rendered-file download');
+    const why = await refusalOf(response, 'the rendered-file download', env);
     throw Object.assign(new Error(why.retryable ? why.error : 'Artifact download HTTP ' + response.status), { retryable: why.retryable });
   }
   const size = Number(response.headers.get('content-length') || 0);
@@ -320,4 +379,59 @@ export async function githubVideoFile(env, artifactId, filename, fetcher = fetch
   if (!['video.mp4','thumbnail.png'].includes(filename)) return null;
   const archive = await downloadArchive(env, artifactId, fetcher);
   return zipEntry(archive, filename);
+}
+
+/**
+ * Read-only check of the free renderer's GitHub access, for the deploy check
+ * and the owner: is the token recognized, can it see the repository and the
+ * workflow, is the workflow enabled, and what does GitHub itself say. Nothing
+ * is dispatched, and no token value or fingerprint is ever returned.
+ */
+export async function githubVideoDiagnosis(env, fetcher = fetch, { source = '' } = {}) {
+  const token = String(env.CHE_GITHUB_TOKEN || '');
+  const kind = !token ? 'missing' : token.startsWith('github_pat_') ? 'fine-grained personal access token'
+    : token.startsWith('ghp_') ? 'classic personal access token' : token.startsWith('ghs_') ? 'GitHub App installation token'
+      : token.startsWith('gho_') ? 'OAuth app token' : 'unrecognized format';
+  const report = { repo_setting: scrub(env.CHE_GITHUB_REPO || '', env), token_present: Boolean(token), token_kind: kind,
+    token_source: source, user_agent: USER_AGENT, checks: [] };
+  if (!credentials(env)) {
+    report.verdict = token ? `CHE_GITHUB_REPO is "${report.repo_setting}", not Vondada/chey-app.` : 'CHE_GITHUB_TOKEN is not on the Worker.';
+    return report;
+  }
+  const root = 'https://api.github.com/repos/' + REPO;
+  const look = async (name, url) => {
+    const check = { name };
+    try {
+      const reply = await fetcher(url, { headers: githubHeaders(env), signal: AbortSignal.timeout(10000) });
+      const text = await reply.text().catch(() => '');
+      Object.assign(check, githubDetail(reply, text, env), { ok: reply.ok });
+      let data = {};
+      try { data = JSON.parse(text); } catch (_) { /* not JSON */ }
+      if (reply.ok && name === 'user') check.login = scrub(data.login || '', env);
+      if (reply.ok && name === 'repository') Object.assign(check, { visible: data.full_name === REPO, default_branch: scrub(data.default_branch || '', env) });
+      if (reply.ok && name === 'workflow') Object.assign(check, { state: scrub(data.state || '', env), path: scrub(data.path || '', env) });
+      if (reply.ok && name === 'rate_limit') check.core_remaining = Number(data.resources?.core?.remaining ?? -1);
+      const expires = reply.headers?.get?.('github-authentication-token-expiration');
+      if (expires) report.token_expires = scrub(expires, env);
+      const scopes = reply.headers?.get?.('x-oauth-scopes');
+      if (scopes) report.classic_scopes = scrub(scopes, env);
+    } catch (_) {
+      Object.assign(check, { ok: false, http: 0, message: 'GitHub could not be reached.' });
+    }
+    report.checks.push(check);
+    return check;
+  };
+  const repo = await look('repository', root);
+  await look('user', 'https://api.github.com/user');
+  const workflow = await look('workflow', root + '/actions/workflows/' + WORKFLOW);
+  await look('rate_limit', 'https://api.github.com/rate_limit');
+  report.verdict = repo.http === 401 ? 'GitHub does not recognize CHE_GITHUB_TOKEN (HTTP 401): it is invalid, expired or revoked.'
+    : /user-agent/i.test(repo.message || '') ? 'GitHub rejected the request itself (no User-Agent); this is a CHE defect.'
+      : repo.http === 404 ? 'The token cannot see Vondada/chey-app: the repository is not selected for this token, or it belongs to another account.'
+        : !repo.ok ? `GitHub refused the repository lookup (HTTP ${repo.http}).`
+          : workflow.http === 404 ? 'The token sees the repository but not che-video-render.yml (missing on main, or no Actions: read).'
+            : !workflow.ok ? `GitHub refused the workflow lookup (HTTP ${workflow.http}).`
+              : workflow.state && workflow.state !== 'active' ? `The video workflow is ${workflow.state} on GitHub. Owner action: enable it under Actions.`
+                : 'The token is recognized and can read the repository and the video workflow. Only a dispatch proves Actions: write.';
+  return report;
 }

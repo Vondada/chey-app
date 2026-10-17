@@ -410,6 +410,7 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
         if (result.code === 'unreachable' && result.task_id) await storage.put?.(key, { task_id: result.task_id, at: Date.now(), retry: true });
         const failure = new Error(result.error || 'GitHub offline renderer unavailable.');
         failure.code = result.code;
+        if (result.github) failure.github = result.github;
         throw failure;
       }
       await storage.put?.(key, { task_id: result.task_id, at: Date.now(), topic });
@@ -422,6 +423,7 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
   }
   const errors = [];
   const failureCodes = [];
+  let githubDetail = null;
   let generated;
   for (const engine of engines) {
     try {
@@ -432,6 +434,7 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
     } catch (error) {
       errors.push(`${engine.id}: ${error.message}`);
       if (error.code) failureCodes.push(error.code);
+      if (error.github && !githubDetail) githubDetail = error.github;
       console.log('CHE video error:', engine.id, error.message);
     }
   }
@@ -441,7 +444,7 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
     // is only the reason when no free renderer exists at all.
     if (engines.length) {
       const paidNote = paidReady ? ` Paid HD video stays off until you enable ${missingPaidSwitch(env)}.` : '';
-      return { status: 502, code: failureCodes[0] || 'failed', free_engines: free,
+      return { status: 502, code: failureCodes[0] || 'failed', free_engines: free, ...(githubDetail ? { github: githubDetail } : {}),
         detail: `${errors.map((e) => e.replace(/^[a-z-]+: /, '')).join(' ')}${paidNote}`.trim() };
     }
     return {

@@ -487,10 +487,45 @@ jobs:
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             return response.json();
           };
-          const started = await ask({});
+          // 1. The same secret, from GitHub Actions: what GitHub says about it
+          //    here. Only statuses, GitHub's messages and permission headers are
+          //    printed, never the token.
+          const gh = async (url) => {
+            const r = await fetch(url, { headers: { Authorization: `Bearer ${process.env.CHE_GITHUB_TOKEN}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'CHE-Deploy-Check' } });
+            const body = await r.json().catch(() => ({}));
+            return { http: r.status, message: String(body.message || '').slice(0, 160), login: body.login, state: body.state,
+              accepted: r.headers.get('x-accepted-github-permissions') || '', expires: r.headers.get('github-authentication-token-expiration') || '' };
+          };
+          const actionsSide = {
+            repository: await gh('https://api.github.com/repos/Vondada/chey-app'),
+            user: await gh('https://api.github.com/user'),
+            workflow: await gh('https://api.github.com/repos/Vondada/chey-app/actions/workflows/che-video-render.yml'),
+          };
+          console.log(`actions side: ${JSON.stringify(actionsSide)}`);
+          // 2. The live Worker's own view of its credential (read-only).
+          const workerSide = await ask({ diagnose: true });
+          console.log(`worker side: ${JSON.stringify(workerSide)}`);
+          const workerExpires = workerSide.token_expires || '';
+          const actionsExpires = actionsSide.repository.expires || actionsSide.user.expires || '';
+          const same = workerExpires && actionsExpires ? workerExpires === actionsExpires : null;
+          console.log(`same credential on both sides (by GitHub's expiry date): ${same === null ? 'unknown' : same}`);
+          summary(`**Video credential:** Actions repo HTTP ${actionsSide.repository.http}, workflow ${actionsSide.workflow.state || actionsSide.workflow.http}; Worker: ${workerSide.verdict}${same === false ? ' (the Worker has a DIFFERENT token than the Actions secret)' : ''}.`);
+          // 3. The owner's own request, through the live Worker.
+          const message = 'Create a 15-second faceless YouTube Short about black holes, including narration, attractive thumbnail, title, and real MP4.';
+          const started = await ask({ message });
           console.log(`start: ${JSON.stringify(started)}`);
           if (started.stage !== 'queued' || !started.task_id) {
             console.log(`::error title=Video check: not queued::${started.detail || started.code || 'no task'}`);
+            process.exit(1);
+          }
+          if (started.topic !== 'black holes' || started.seconds !== 15) {
+            console.log(`::error title=Video check: wrong request::topic "${started.topic}", ${started.seconds} s`);
+            process.exit(1);
+          }
+          // 4. Asking again is the same job, never a second render.
+          const again = await ask({ message, reuse: true });
+          if (again.task_id !== started.task_id) {
+            console.log(`::error title=Video check: duplicate job::${again.task_id} after ${started.task_id}`);
             process.exit(1);
           }
           let last = started;
@@ -506,7 +541,21 @@ jobs:
             console.log(`::error title=Video check: ${last.stage}::${last.detail || 'no verified video'}`);
             process.exit(1);
           }
-          const line = `task ${last.task_id}, run ${last.github_run_id}, "${last.title}", ${last.duration_seconds} s, ${last.video_bytes} bytes ${last.video_codec}/${last.audio_codec}, ${last.width}x${last.height}, thumbnail ${last.thumbnail_media_id ? 'saved' : 'missing'}, voice ${last.voice_provider}, paid ${last.paid_media}, uploaded ${last.youtube_uploaded}`;
+          // 5. The files as the phone gets them: a playable MP4 with sound,
+          //    the thumbnail and a title, and nothing uploaded or paid for.
+          const problems = [
+            !(last.retrieved && last.retrieved.playable) && 'the stored MP4 could not be read back as playable',
+            !(last.retrieved && last.retrieved.thumbnail_bytes > 0) && 'the thumbnail could not be read back',
+            last.audio_codec !== 'aac' && 'no narration audio track',
+            !String(last.title || '').trim() && 'no title',
+            last.paid_media !== false && 'paid media was used',
+            last.youtube_uploaded !== false && 'something was uploaded',
+          ].filter(Boolean);
+          if (problems.length) {
+            console.log(`::error title=Video check: files::${problems.join('; ')}`);
+            process.exit(1);
+          }
+          const line = `task ${last.task_id}, run ${last.github_run_id}, "${last.title}", ${last.duration_seconds} s, ${last.video_bytes} bytes ${last.video_codec}/${last.audio_codec}, ${last.width}x${last.height}, read back ${last.retrieved.video_bytes} bytes (${last.retrieved.seconds} s) + thumbnail ${last.retrieved.thumbnail_bytes} bytes, voice ${last.voice_provider}, paid ${last.paid_media}, uploaded ${last.youtube_uploaded}`;
           console.log(`::notice title=Video check passed::${line}`);
           summary(`**Free video (live Worker):** ${line}.`);
           JS

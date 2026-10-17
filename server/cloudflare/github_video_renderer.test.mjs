@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { startGithubVideo, githubVideoStatus, githubVideoFile } from './github_video_renderer.js';
+import { startGithubVideo, githubVideoStatus, githubVideoFile, githubVideoDiagnosis } from './github_video_renderer.js';
 import { generateVideo, readBlob } from './media.js';
 
 const env={ CHE_GITHUB_REPO: 'Vondada/chey-app', CHE_GITHUB_TOKEN: 'test-token' };
@@ -128,7 +128,7 @@ test('GitHub media records are made only after render and artifact verification'
 test('missing GitHub Actions permission or renderer fails without fake previews',async()=>{
   const denied=await startGithubVideo(env,'Three facts about space',15,async()=>new Response('{}',{status:403}));
   assert.equal(denied.ok,false);
-  assert.match(denied.error,/Actions:write or Contents:write/);
+  assert.match(denied.error,/needs Actions: write \(workflow\) or Contents: write \(repository event\)/);
   assert.equal(denied.media_url,undefined);
   const missing=await startGithubVideo({},'Space video',15,async()=>{throw Error('must not call')});
   assert.equal(missing.ok,false);
@@ -223,4 +223,70 @@ test('a GitHub rate limit (403 or 429) is a pause, not a missing permission', as
   assert.equal(started.code, 'rate_limited');
   assert.equal(started.retryable, true);
   assert.doesNotMatch(started.error, /lacks the permission|Actions:write/);
+});
+
+test('GitHub\'s own refusal is reported as itself, with nothing secret in it', async () => {
+  const token = 'github_pat_' + 'A1b2C3d4'.repeat(8);
+  const secretEnv = { ...env, CHE_GITHUB_TOKEN: token };
+  // The production failure: no User-Agent, so GitHub refused both dispatches.
+  const noAgent = () => new Response(JSON.stringify({ message: 'Request forbidden by administrative rules. Please make sure your request has a User-Agent header' }), { status: 403 });
+  const rejected = await startGithubVideo(secretEnv, 'black holes', 15, async () => noAgent());
+  assert.equal(rejected.code, 'request_rejected');
+  assert.match(rejected.error, /no User-Agent header\. This is a CHE defect, not your token/);
+  assert.doesNotMatch(rejected.error, /Owner action/);
+  // A refusal that echoes the token never repeats it.
+  const echoed = await startGithubVideo(secretEnv, 'black holes', 15, async () => new Response(JSON.stringify({ message: `Bad credentials for ${token}` }), { status: 422 }));
+  assert.doesNotMatch(JSON.stringify(echoed), /A1b2C3d4/);
+  assert.match(echoed.error, /\[hidden\]/);
+  // Every call names CHE and never sends the token anywhere but GitHub.
+  const seen = [];
+  await startGithubVideo(secretEnv, 'black holes', 15, async (url, init) => { seen.push([String(url), new Headers(init.headers)]); return new Response(null, { status: 204 }); });
+  assert.equal(seen[0][1].get('user-agent'), 'CHE-Video-Renderer');
+});
+
+test('the artifact link GitHub redirects to is fetched without the GitHub token', async () => {
+  const calls = [];
+  const fetcher = async (url, init = {}) => {
+    calls.push({ url: String(url), auth: new Headers(init.headers).get('authorization') });
+    if (String(url).endsWith('/zip')) return new Response(null, { status: 302, headers: { location: 'https://storage.example/signed?sig=1' } });
+    if (String(url).startsWith('https://storage.example/')) return new Response(zip);
+    throw new Error('unexpected ' + url);
+  };
+  const bytes = await githubVideoFile(env, 77, 'video.mp4', fetcher);
+  assert.equal(bytes.length, video.length);
+  assert.equal(calls[1].url, 'https://storage.example/signed?sig=1');
+  assert.equal(calls[1].auth, null, 'the token never leaves GitHub');
+});
+
+test('the diagnosis says what GitHub says, read-only, with no token value', async () => {
+  const token = 'github_pat_' + 'Z9y8X7w6'.repeat(8);
+  const seen = [];
+  const fetcher = async (url, init = {}) => {
+    seen.push({ url: String(url), method: init.method || 'GET' });
+    const h = { 'github-authentication-token-expiration': '2027-01-15 00:00:00 UTC', 'x-github-request-id': 'R1' };
+    if (String(url).endsWith('/repos/Vondada/chey-app')) return new Response(JSON.stringify({ full_name: 'Vondada/chey-app', default_branch: 'main' }), { headers: h });
+    if (String(url).endsWith('/user')) return new Response(JSON.stringify({ login: 'Vondada' }), { headers: h });
+    if (String(url).endsWith('/che-video-render.yml')) return new Response(JSON.stringify({ state: 'disabled_manually', path: '.github/workflows/che-video-render.yml' }), { headers: h });
+    return new Response(JSON.stringify({ resources: { core: { remaining: 4990 } } }), { headers: h });
+  };
+  const report = await githubVideoDiagnosis({ ...env, CHE_GITHUB_TOKEN: token }, fetcher, { source: 'worker_secret' });
+  assert.equal(report.token_kind, 'fine-grained personal access token');
+  assert.equal(report.token_source, 'worker_secret');
+  assert.equal(report.token_expires, '2027-01-15 00:00:00 UTC');
+  assert.equal(report.checks.find((c) => c.name === 'user').login, 'Vondada');
+  assert.match(report.verdict, /disabled_manually on GitHub\. Owner action: enable it under Actions/);
+  assert.ok(seen.every((c) => c.method === 'GET'), 'nothing is dispatched');
+  assert.doesNotMatch(JSON.stringify(report), /Z9y8X7w6/);
+});
+
+test('the renderer status check also names CHE, so GitHub answers it', async () => {
+  const { probeVideoEngine } = await import('./video_engine.js');
+  const seen = [];
+  const status = await probeVideoEngine(env, async (url, init = {}) => {
+    const headers = new Headers(init.headers);
+    seen.push(headers.get('user-agent'));
+    return headers.get('user-agent') ? new Response('{"state":"active"}') : new Response('{}', { status: 403 });
+  });
+  assert.deepEqual(seen, ['CHE-Video-Renderer']);
+  assert.equal(status.ready, true);
 });
