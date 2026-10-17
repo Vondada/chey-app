@@ -9,6 +9,7 @@ import {
   handleReaRequest, parseReaRequest, reaInvestigations, refreshInvestigations, REA_JOBS_KEY, REA_WEB_WORKFLOW, STAGES,
 } from './rea_runner.js';
 import { identifyTarget } from './rea_targets.js';
+import { compareWithChe } from './rea_features.js';
 import { REA_WEB_PIN } from './rea_web_evidence.js';
 import { commandById, commandStatus, connectorStatus } from './command_catalog.js';
 
@@ -245,6 +246,17 @@ test('D. comparison reads CHE\'s live repository: has, partial, missing, and unk
   await che3.say('REA compare');
   const { investigations: [inv3] } = await reaInvestigations(che3.store, ENV, { fetcher: limited.fetcher, now: T0 });
   assert.equal(inv3.features.find((f) => f.name === 'Export and share').che.status, 'unknown', 'a code search that failed never reads as "missing"');
+});
+
+test('an unauthenticated CHE source tree cannot prove that a feature is missing', async () => {
+  const w = world();
+  const features = [{ id: 'f1', name: 'Export and share', kind: 'export' }];
+  const compared = await compareWithChe({ CHE_GITHUB_REPO: ENV.CHE_GITHUB_REPO }, features, w.fetcher);
+  assert.equal(compared.ok, true, 'the public repository tree is readable');
+  assert.equal(features[0].che.status, 'unknown', 'no authenticated content search, no missing claim');
+  assert.equal(compared.counts.missing, 0);
+  assert.equal(compared.counts.unknown, 1);
+  assert.equal(w.calls.some((c) => c.url.includes('/search/code')), false, 'search was not actually performed');
 });
 
 test('plan writes steps and acceptance checks only; build needs the owner, starts one draft-PR job, never a merge', async () => {
