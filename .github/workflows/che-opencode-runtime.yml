@@ -1,4 +1,8 @@
 name: CHE OpenCode coding runtime
+# The Worker matches a run to its session by this title (coding_runtime.js
+# RUNTIME_RUN_TITLE_PREFIX). An expression in run-name is display text only:
+# it never reaches a shell, and the claim job still validates job_id.
+run-name: CHE OpenCode runtime ${{ inputs.job_id }}
 
 on:
   workflow_dispatch:

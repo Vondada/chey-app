@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { validateUpdateFiles } from './self_update.js';
-import { CheCodingRuntime, codingRuntimeEnabled, ownerRequiresMergeApproval, recoverableRuntimeFailure, runtimeSessionId, runtimeState, runtimeStateClass, speakRuntimeStatus, validateRuntimeRequest } from './coding_runtime.js';
+import { CheCodingRuntime, RUNTIME_RUN_TITLE_PREFIX, codingRuntimeEnabled, ownerRequiresMergeApproval, recoverableRuntimeFailure, runtimeSessionId, runtimeState, runtimeStateClass, speakRuntimeStatus, validateRuntimeRequest } from './coding_runtime.js';
 
 function response(status, data = null) {
   return new Response(data === null ? null : JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
@@ -227,6 +227,61 @@ test('a GitHub error during the liveness check never declares a silent run faile
     : response(404, { message: 'Not Found' })) }).getStatus(id, { acceptedAt: old });
   assert.equal(gone.state, 'failed');
   assert.equal(gone.failure, 'runtime_stale');
+});
+
+test('another session\'s queued run never keeps this silent session alive', async () => {
+  const mine = 'ocr-1234abcd';
+  const other = 'ocr-99990000';
+  const accepted = Date.now() - 36 * 60_000;
+  const old = new Date(accepted).toISOString();
+  const at = (ms) => new Date(accepted + ms).toISOString();
+  const runtime = (runs, seen = []) => new CheCodingRuntime(env, { fetcher: async (url) => {
+    const u = String(url);
+    if (u.includes('/contents/mailbox/runtime/')) return response(404, { message: 'Not Found' });
+    if (u.includes('/actions/workflows/')) { seen.push(u); return response(200, { workflow_runs: runs }); }
+    return response(404, { message: 'Not Found' });
+  } });
+
+  // The workflow titles every run with its session id, through the dispatch input.
+  const workflow = readFileSync(new URL('../../.github/workflows/che-opencode-runtime.yml', import.meta.url), 'utf8');
+  assert.match(workflow, new RegExp(`^run-name: ${RUNTIME_RUN_TITLE_PREFIX}\\$\\{\\{ inputs\\.job_id \\}\\}$`, 'm'));
+
+  // Only the other session is queued; this session's own run already finished.
+  const seen = [];
+  const dead = await runtime([
+    { status: 'queued', display_title: `${RUNTIME_RUN_TITLE_PREFIX}${other}`, created_at: at(30_000) },
+    { status: 'completed', display_title: `${RUNTIME_RUN_TITLE_PREFIX}${mine}`, created_at: at(5_000) },
+  ], seen).getStatus(mine, { acceptedAt: old });
+  assert.equal(dead.state, 'failed', 'the other session\'s run proves nothing about this one');
+  assert.equal(dead.failure, 'dispatch_stale');
+  assert.equal(recoverableRuntimeFailure(dead), true);
+  assert.match(seen[0], /created=%3E%3D/, 'the lookup is bounded to runs since this dispatch');
+
+  // No run of this session at all, only another session's: still not alive.
+  const absent = await runtime([{ status: 'in_progress', display_title: `${RUNTIME_RUN_TITLE_PREFIX}${other}`, created_at: at(10_000) }]).getStatus(mine, { acceptedAt: old });
+  assert.equal(absent.state, 'failed');
+
+  // This session's own titled run is live: dispatching, never failed.
+  const live = await runtime([
+    { status: 'completed', display_title: `${RUNTIME_RUN_TITLE_PREFIX}${other}`, created_at: at(30_000) },
+    { status: 'queued', display_title: `${RUNTIME_RUN_TITLE_PREFIX}${mine}`, created_at: at(5_000) },
+  ]).getStatus(mine, { acceptedAt: old });
+  assert.equal(live.state, 'dispatching');
+  assert.equal(recoverableRuntimeFailure(live), false);
+
+  // A run from before the run-name change carries only the workflow name.
+  // It counts only when GitHub created it right after this dispatch.
+  const legacyTitle = 'CHE OpenCode coding runtime';
+  const legacy = await runtime([{ status: 'queued', display_title: legacyTitle, created_at: at(20_000) }]).getStatus(mine, { acceptedAt: old });
+  assert.equal(legacy.state, 'dispatching', 'a pre-change run created with this dispatch is its pending run');
+  const lateLegacy = await runtime([{ status: 'queued', display_title: legacyTitle, created_at: at(20 * 60_000) }]).getStatus(mine, { acceptedAt: old });
+  assert.equal(lateLegacy.state, 'failed', 'an unnamed run created long after this dispatch is someone else\'s');
+
+  // A full page without this session's run cannot prove it dead.
+  const crowded = Array.from({ length: 100 }, (_, i) => ({ status: 'completed', display_title: `${RUNTIME_RUN_TITLE_PREFIX}ocr-${String(i).padStart(8, '0')}`, created_at: at(60_000) }));
+  const busy = await runtime(crowded).getStatus(mine, { acceptedAt: old });
+  assert.equal(busy.liveness, 'unverified');
+  assert.equal(recoverableRuntimeFailure(busy), false);
 });
 
 test('getStatus normalizes a completed result that still reports running', async () => {

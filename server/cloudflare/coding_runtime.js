@@ -10,6 +10,14 @@ const RUNTIME_STALE_MS = 35 * 60_000;
 // still be working (its jobs time out within an hour and hosted runners stop
 // any job at six hours), so the bounded stale rule applies again.
 const RUNTIME_UNVERIFIED_MAX_MS = 6 * 60 * 60_000;
+// The runtime workflow's run-name is this prefix plus the dispatched session
+// id (che-opencode-runtime.yml), so a run proves only its own session alive.
+export const RUNTIME_RUN_TITLE_PREFIX = 'CHE OpenCode runtime ';
+// Runs dispatched before the workflow carried that run-name show no session
+// id. Such a run can stand in for this session only if GitHub created it
+// within this window of the dispatch being accepted.
+const UNNAMED_RUN_MATCH_MS = 5 * 60_000;
+const RUN_LIST_PAGE = 100;
 
 const SECRET_LIKE = [
   /\bBEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY\b/i,
@@ -201,7 +209,7 @@ export class CheCodingRuntime {
   // look up). Only 'dead' and 'unverifiable' let the stale rule declare the
   // run failed; 'unknown' never does, so a GitHub hiccup cannot spawn a
   // duplicate recovery job for work that is still running.
-  async workflowRunAlive({ runId = 0, acceptedAt = '' } = {}) {
+  async workflowRunAlive({ sessionId = '', runId = 0, acceptedAt = '' } = {}) {
     if (Number(runId) > 0) {
       const run = await gh(this.env, 'GET', `/actions/runs/${Number(runId)}`, null, this.fetcher);
       // A run id GitHub does not know (deleted run) is not live work.
@@ -211,16 +219,30 @@ export class CheCodingRuntime {
     }
     const since = Date.parse(String(acceptedAt || ''));
     if (!Number.isFinite(since)) return 'unverifiable';
-    const listed = await gh(this.env, 'GET', `/actions/workflows/${encodeURIComponent(this.workflow)}/runs?per_page=20`, null, this.fetcher);
+    const from = new Date(since - 60_000).toISOString();
+    const listed = await gh(this.env, 'GET', `/actions/workflows/${encodeURIComponent(this.workflow)}/runs?per_page=${RUN_LIST_PAGE}&created=${encodeURIComponent(`>=${from}`)}`, null, this.fetcher);
     if (listed.status === 404) return 'dead';
     if (!listed.ok) return 'unknown';
     const runs = Array.isArray(listed.data?.workflow_runs) ? listed.data.workflow_runs : [];
-    // Only an uncompleted run created at/after this session was accepted can
-    // be its still-pending dispatch (60s of clock-skew slack).
-    const alive = runs.some((run) => String(run?.status || '') !== 'completed'
+    const open = (run) => String(run?.status || '') !== 'completed';
+    const title = (run) => String(run?.display_title || run?.name || '');
+    // A run titled with this session's id is the authority, alive or not.
+    const id = String(sessionId || '').trim();
+    const own = id ? runs.filter((run) => title(run) === `${RUNTIME_RUN_TITLE_PREFIX}${id}`) : [];
+    if (own.length) return own.some(open) ? 'alive' : 'dead';
+    // Another session's titled run never proves this one alive. Only a run
+    // from before the run-name change (no session id in its title) can be
+    // this session's pending dispatch, and only when GitHub created it right
+    // after this dispatch was accepted (60s of clock-skew slack).
+    const unnamed = runs.some((run) => open(run)
+      && !title(run).startsWith(RUNTIME_RUN_TITLE_PREFIX)
       && Number.isFinite(Date.parse(String(run?.created_at || '')))
-      && Date.parse(run.created_at) >= since - 60_000);
-    return alive ? 'alive' : 'dead';
+      && Date.parse(run.created_at) >= since - 60_000
+      && Date.parse(run.created_at) <= since + UNNAMED_RUN_MATCH_MS);
+    if (unnamed) return 'alive';
+    // A full page may have pushed this session's run out of view: unknown,
+    // never dead, so a busy workflow cannot trigger a duplicate recovery.
+    return runs.length >= RUN_LIST_PAGE ? 'unknown' : 'dead';
   }
 
   async getStatus(sessionId, { acceptedAt = '', now = Date.now() } = {}) {
@@ -231,7 +253,7 @@ export class CheCodingRuntime {
     if (found.status === 404) {
       const accepted = Date.parse(String(acceptedAt || ''));
       if (Number.isFinite(accepted) && now - accepted > RUNTIME_STALE_MS) {
-        const liveness = await this.workflowRunAlive({ acceptedAt });
+        const liveness = await this.workflowRunAlive({ sessionId: id, acceptedAt });
         if (liveness === 'alive') {
           // The dispatch is real but the runner has not claimed it yet.
           return { status: 200, runtime: 'opencode', session_id: id, state: 'dispatching' };
@@ -251,7 +273,7 @@ export class CheCodingRuntime {
        if (parsed.status === 'stopped') parsed.state = 'stopped';
        const heartbeat = Date.parse(String(parsed.updated_at || parsed.started_at || parsed.claimed_at || acceptedAt || ''));
        if (parsed.state === 'running' && Number.isFinite(heartbeat) && now - heartbeat > RUNTIME_STALE_MS) {
-         const liveness = await this.workflowRunAlive({ runId: Number(parsed.run_id) || 0, acceptedAt });
+         const liveness = await this.workflowRunAlive({ sessionId: id, runId: Number(parsed.run_id) || 0, acceptedAt });
          if (liveness === 'alive') {
            return { status: 200, runtime: 'opencode', ...parsed, heartbeat: 'stale' };
          }
