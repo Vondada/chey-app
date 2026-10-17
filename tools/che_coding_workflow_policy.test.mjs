@@ -72,7 +72,9 @@ test('even an explicit paid request stays behind the free-first and approval gat
 });
 test('runtime checks monthly key cap immediately before paid model execution', () => {
   assert.match(workflow, /node "\$CHE_TRUSTED_TOOLS\/tools\/che_coding_paid_gate\.mjs"/);
-  assert.match(workflow, /for m in \$FREE_CANDIDATES \$PAID_CANDIDATES/);
+  assert.match(workflow, /for m in \$FREE_CANDIDATES;/);
+  assert.match(workflow, /for m in \$PAID_CANDIDATES;/);
+  assert.match(workflow, /Run capped paid OpenRouter only after free attempts/);
   assert.match(workflow, /CHE_CODING_OPENROUTER_PAID_KEY/);
   assert.doesNotMatch(workflow, /CHE_ALLOW_PAID_MODELS/);
   assert.match(workflow, /remaining - 180/);
@@ -100,11 +102,21 @@ test('the runner decides paid use only with a trusted gate, copied from the base
   assert.doesNotMatch(workflow, /node tools\/che_coding_checkpoint\.mjs/);
 });
 
-test('the paid key is read once and unset, so no agent process inherits it', () => {
-  const run = workflow.slice(workflow.indexOf('- name: Run OpenCode in the isolated checkout'), workflow.indexOf('- name: Build compact result and patch'));
-  assert.match(run, /paid_key="\$K_PAID_OPENROUTER"; unset K_PAID_OPENROUTER/);
-  assert.match(run, /-u K_PAID_OPENROUTER/);
-  assert.doesNotMatch(run, /OPENROUTER_API_KEY="\$K_PAID_OPENROUTER"/);
+test('the paid key is absent from the free coding step and is gated in a separate step', () => {
+  const start = workflow.indexOf('- name: Run OpenCode in the isolated checkout');
+  const paid = workflow.indexOf('- name: Run capped paid OpenRouter only after free attempts');
+  const result = workflow.indexOf('- name: Build compact result and patch');
+  assert.ok(start >= 0 && paid > start && result > paid);
+  const freeStep = workflow.slice(start, paid);
+  const paidStep = workflow.slice(paid, result);
+  assert.doesNotMatch(freeStep, /K_PAID_OPENROUTER: \$\{\{ secrets\./);
+  assert.doesNotMatch(freeStep, /paid_key="\$K_PAID_OPENROUTER"/);
+  assert.match(freeStep, /for m in \$FREE_CANDIDATES;/);
+  assert.match(paidStep, /K_PAID_OPENROUTER: \$\{\{ secrets\.CHE_CODING_OPENROUTER_PAID_KEY \}\}/);
+  assert.match(paidStep, /steps\.opencode\.outputs\.exit_code != '0'/);
+  assert.match(paidStep, /vars\.CHE_CODING_PAID_FALLBACK == 'true'/);
+  assert.match(paidStep, /paid_key="\$K_PAID_OPENROUTER"; unset K_PAID_OPENROUTER/);
+  assert.match(paidStep, /node "\$CHE_TRUSTED_TOOLS\/tools\/che_coding_paid_gate\.mjs"/);
 });
 
 test('the claim job passes the resume count to the runtime job (the resume could never start without it)', () => {
