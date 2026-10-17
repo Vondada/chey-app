@@ -17,6 +17,7 @@ dependencies:
   image_picker: ^1.2.0
   file_picker: ^10.3.3
   url_launcher: ^6.3.2
+  app_links: ^6.3.2
   webview_flutter: ^4.14.1
   flutter_webrtc: ^1.6.2+hotfix.3
   porcupine_flutter: ^4.0.0
