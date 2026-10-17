@@ -491,9 +491,11 @@ jobs:
           CHE_CODING_OPENROUTER_NO_BYOK: ${{ vars.CHE_CODING_OPENROUTER_NO_BYOK }}
           K_PAID_OPENROUTER: ${{ secrets.CHE_CODING_OPENROUTER_PAID_KEY }}
           BASE_SHA: ${{ inputs.base_sha }}
+          FREE_FAILURE_KIND: ${{ steps.opencode.outputs.failure_kind }}
+          FREE_RESUMABLE: ${{ steps.opencode.outputs.resumable }}
         run: |
           set +e
-          code=1; used=""; tried=""; failure_kind="unknown"; failure_resumable=false; err=""
+          code=1; used=""; tried=""; failure_kind="${FREE_FAILURE_KIND:-unknown}"; failure_resumable="${FREE_RESUMABLE:-false}"; err=""
           paid_key="$K_PAID_OPENROUTER"; unset K_PAID_OPENROUTER
           if [ -z "$PAID_CANDIDATES" ]; then
             echo "::notice::No eligible capped paid coding model."
