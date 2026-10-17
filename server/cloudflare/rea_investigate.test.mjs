@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import {
   handleReaRequest, parseReaRequest, reaInvestigations, refreshInvestigations, REA_JOBS_KEY, REA_WEB_WORKFLOW, STAGES,
 } from './rea_runner.js';
-import { identifyTarget } from './rea_targets.js';
+import { identifyTarget, inspectWebsite } from './rea_targets.js';
 import { compareWithChe } from './rea_features.js';
 import { REA_WEB_PIN } from './rea_web_evidence.js';
 import { commandById, commandStatus, connectorStatus } from './command_catalog.js';
@@ -257,6 +257,30 @@ test('an unauthenticated CHE source tree cannot prove that a feature is missing'
   assert.equal(compared.counts.missing, 0);
   assert.equal(compared.counts.unknown, 1);
   assert.equal(w.calls.some((c) => c.url.includes('/search/code')), false, 'search was not actually performed');
+});
+
+test('robots.txt applies to a disallowed redirect path on the same origin', async () => {
+  const urls = [];
+  const fetcher = async (url) => {
+    const href = String(url);
+    urls.push(href);
+    if (href === 'https://shop.example.com/robots.txt') {
+      return new Response('User-agent: *\nDisallow: /private', { status: 200 });
+    }
+    if (href === 'https://shop.example.com/start') {
+      return new Response(null, { status: 302, headers: { location: '/private' } });
+    }
+    if (href === 'https://shop.example.com/private') {
+      return new Response('<html><body>PRIVATE</body></html>', { status: 200, headers: { 'content-type': 'text/html' } });
+    }
+    throw new Error('Unexpected URL: ' + href);
+  };
+  const result = await inspectWebsite('https://shop.example.com/start', fetcher);
+  assert.equal(result.ok, false);
+  assert.equal(result.refused, true);
+  assert.ok(!urls.includes('https://shop.example.com/private'), 'the denied redirect target was never fetched');
+  assert.equal(urls.filter((u) => u === 'https://shop.example.com/robots.txt').length, 2,
+    'each path was independently evaluated against robots rules');
 });
 
 test('plan writes steps and acceptance checks only; build needs the owner, starts one draft-PR job, never a merge', async () => {
