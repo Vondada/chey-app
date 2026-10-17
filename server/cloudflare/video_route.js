@@ -21,12 +21,18 @@ const VIDEO_SPEC = /\b(?:please|can you|could you|would you|i want|i'd like|i wo
  */
 export function videoRequestTopic(message) {
   const text = String(message || '').replace(/^\W*(?:hey[, ]*)?(?:che|chay|chey|shay)\b[,!:]?\s*/i, '').trim();
-  const about = /(?:\b(?:about|covering|explaining|featuring|regarding|on the topic of)|\b(?:videos?|shorts?|clips?|reels?|mp4)\s+(?:on|of))\s+(.{3,}?)\s*(?:[.!?]+\s*$|$|,?\s+(?:with|and (?:add|include|give)|using|please|thanks|thank you|for (?:youtube|tiktok|instagram|facebook|my|our|the channel))\b)/i.exec(text);
+  const about = /(?:\b(?:about|covering|explaining|featuring|regarding|on the topic of)|\b(?:videos?|shorts?|clips?|reels?|mp4)\s+(?:on|of))\s+(.{3,}?)\s*(?:[.!?]+\s*$|$|,?\s+(?:with|including|plus|along with|together with|and (?:add|include|give)|using|please|thanks|thank you|for (?:youtube|tiktok|instagram|facebook|my|our|the channel))\b)/i.exec(text);
   const candidate = about ? about[1]
     : text.replace(VIDEO_SPEC, ' ').replace(/[^A-Za-z0-9'’ -]+/g, ' ').replace(/(?:^|\s)-+|-+(?=\s|$)/g, ' ');
   const topic = candidate.replace(/-/g, ' ').replace(/\s+/g, ' ').trim().replace(/^(?:a|an|the|my|some)\s+/i, '');
   // A decade ("the 90s") is a subject too.
   return /[A-Za-z]{3,}|\b\d{2,4}s\b/.test(topic) ? topic.slice(0, 200) : '';
+}
+
+/** The length a request asks for, 5 to 90 seconds; "the 90s" is a decade, not a length. */
+export function videoRequestSeconds(message) {
+  const length = /\b(\d{1,2})[- ]?(seconds?|secs?|minutes?|mins?)\b/i.exec(String(message || ''));
+  return Math.min(90, Math.max(5, length ? Number(length[1]) * (/^m/i.test(length[2]) ? 60 : 1) : 15));
 }
 
 function statusFor(result) {

@@ -33,6 +33,7 @@ import {
 import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv } from './ai_router.js';
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
+import { githubVideoDiagnosis, mp4Facts } from './github_video_renderer.js';
 import { handleEdgeVoice } from './edge_route.js';
 import { marySecretsFrom, preferredElevenLabsDiagnostics, preferredElevenLabsKeyStatus, preferredElevenLabsLastOutcome, preferredElevenLabsSpeech, withMarySecrets } from './preferred_elevenlabs_voice.js';
 import { availableVoiceChoices, validateVoiceChoice, voiceEnvForSelection } from './voice_choices.js';
@@ -42,7 +43,7 @@ import { voiceStudioTurn } from './voice_studio_chat.js';
 import { fishAudioDiagnostics, fishAudioKeyStatus, fishAudioSpeech, fishSecretsFrom, readFishUsage } from './fish_audio_voice.js';
 import { cheSpokenText } from './che_pronunciation.js';
 import { premiumVoiceSpeech, premiumVoiceStatuses, readVoiceLog, recordVoiceLog, voiceProbeAuthorized } from './phone_voice.js';
-import { handleVideoLine, videoRequestTopic } from './video_route.js';
+import { handleVideoLine, videoRequestTopic, videoRequestSeconds } from './video_route.js';
 import {
   YOUTUBE_CALLBACK_PATH, disconnectYouTube, finishYouTubeConnect, startYouTubeConnect,
   youtubeAccessToken, youtubeResultPage, youtubeStatus, youtubeStatusSpeech, youtubeUploads,
@@ -3895,22 +3896,40 @@ export class CheState extends DurableObject {
   // GitHub renderer with the live Worker's own token, then CHE's own checks of
   // the finished files. The video lands in the owner's media library like any
   // video the owner asks for. No paid engine is used and nothing is uploaded.
-  async videoProbe({ task_id = '' } = {}) {
+  async videoProbe({ task_id = '', message = '', diagnose = false, reuse = false } = {}) {
     let env = this.env;
     try { env = withStoredKeys(this.env, await storedKeys(this.ctx.storage)); } catch (_) { /* Worker secrets only */ }
+    if (diagnose) {
+      // Which credential the Worker really uses, and what GitHub says about it.
+      const source = this.env.CHE_GITHUB_TOKEN ? 'worker_secret' : env.CHE_GITHUB_TOKEN ? 'stored_key' : 'missing';
+      return githubVideoDiagnosis(env, fetch, { source });
+    }
     if (!task_id) {
+      // The owner's own words choose the subject and length, as in chat; a
+      // repeat with reuse must return the same job, never a second render.
+      const text = String(message || '').slice(0, 500);
+      const topic = videoRequestTopic(text) || DEFAULT_VIDEO_TOPIC;
+      const seconds = videoRequestSeconds(text);
       const made = await generateVideo(env, this.ctx.storage, {
-        prompt: 'Deploy check: a 15-second faceless video of space facts', topic: DEFAULT_VIDEO_TOPIC, seconds: 15, new_job: true,
+        prompt: text || 'Deploy check: a 15-second faceless video of space facts', topic, seconds, new_job: !reuse,
       });
       return { stage: made.pending ? 'queued' : 'failed', task_id: made.job_id || '', engine: made.engine || '',
-        detail: made.pending ? '' : made.detail || '', code: made.code || '' };
+        topic, seconds, reused: made.reused === true,
+        detail: made.pending ? '' : made.detail || '', code: made.code || '', ...(made.github ? { github: made.github } : {}) };
     }
     const checked = await generateVideo(env, this.ctx.storage, { task_id, prompt: 'Deploy check video' });
     if (checked.pending) return { stage: checked.stage || 'queued', task_id, run_id: checked.run_id || null };
     const item = checked.item;
     if (!item?.verified) return { stage: checked.stage || 'failed', task_id, detail: checked.detail || '', code: checked.code || '' };
+    // Read the files back the way the phone's media links do, so "complete"
+    // means the phone can actually get a playable MP4 and the thumbnail.
+    const video = await readBlob(env, this.ctx.storage, item).catch(() => null);
+    const thumbnail = item.thumbnail_media_id
+      ? await readBlob(env, this.ctx.storage, (await listMedia(this.ctx.storage)).find((m) => m.id === item.thumbnail_media_id) || {}).catch(() => null) : null;
+    const facts = video ? mp4Facts(video) : { ok: false };
     return {
       stage: 'complete', task_id, media_id: item.id, title: item.title, description: item.description || '',
+      retrieved: { video_bytes: video?.length || 0, playable: facts.ok === true, seconds: facts.seconds || 0, thumbnail_bytes: thumbnail?.length || 0 },
       duration_seconds: item.duration_seconds, duration_verified: item.duration_verified === true,
       video_bytes: item.video_bytes || 0, video_codec: item.video_codec || '', audio_codec: item.audio_codec || '',
       width: item.width, height: item.height, thumbnail_media_id: item.thumbnail_media_id || null,
@@ -9228,9 +9247,7 @@ export class CheState extends DurableObject {
           const recentTopic = lastTopic?.topic && Date.now() - Number(lastTopic.at || 0) < 30 * 60_000 ? lastTopic.topic : '';
           const topic = named || recentTopic || DEFAULT_VIDEO_TOPIC;
           await this.ctx.storage.put('che_video_last_topic', { topic, at: Date.now() });
-          // "the 90s" is a decade, not a length.
-          const length = /\b(\d{1,2})[- ]?(seconds?|secs?|minutes?|mins?)\b/i.exec(message);
-          const seconds = Math.min(90, Math.max(5, length ? Number(length[1]) * (/^m/i.test(length[2]) ? 60 : 1) : 15));
+          const seconds = videoRequestSeconds(message);
           const made = await generateVideo(mediaEnv, this.ctx.storage, {
             prompt: ragReference(message, vectorMemoryContext, 3500).slice(0, 8000),
             topic,
@@ -11447,7 +11464,9 @@ export default {
       if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
       const body = await request.json().catch(() => ({}));
       const taskId = /^gha_[a-f0-9]{32}$/.test(String(body.task_id || '')) ? String(body.task_id) : '';
-      return json(await env.CHE_STATE.getByName('owner').videoProbe({ task_id: taskId }));
+      return json(await env.CHE_STATE.getByName('owner').videoProbe({
+        task_id: taskId, message: String(body.message || '').slice(0, 500), diagnose: body.diagnose === true, reuse: body.reuse === true,
+      }));
     }
     if (path === '/api/memory/probe' && request.method === 'POST') {
       if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
