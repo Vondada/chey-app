@@ -80,6 +80,15 @@ jobs:
         run: for f in server/cloudflare/*.js; do node --check "$f" || exit 1; done
       - name: Run Worker unit tests
         run: node --test server/cloudflare/*.test.mjs
+      # The unit run above skips the website observer's browser tests; this installs the
+      # pinned Playwright and its headless Chromium and runs them against the local fixture page.
+      - name: REA website observer in a real browser (local fixture, no internet)
+        env:
+          CHE_REA_WEB_E2E: required
+        run: |
+          npm ci --prefix tools/rea/web --ignore-scripts --no-audit --no-fund
+          node tools/rea/web/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+          node --test server/cloudflare/rea_web_workflow.test.mjs
       - name: Video narration tests (Fish Drama 3, cache, Piper fallback)
         run: python3 -m unittest discover -s tools -p 'test_che_video_render.py'
       - name: Claude Code project skills (.claude/skills) tests
