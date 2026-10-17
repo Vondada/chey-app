@@ -27,13 +27,15 @@ test('the live tripwire blocks paid use when this key has BYOK spend, even when 
   const spent = { data: { ...verified.data, byok_usage_monthly: 0.42 } };
   const verdict = validateMonthlyCap(spent, MAX_CODING_PAID_USD, CONFIRMED);
   assert.equal(verdict.ok, false);
-  assert.match(verdict.reason, /separately billed BYOK spend/);
+  assert.match(verdict.reason, /exactly zero BYOK spend/);
 });
 
-test('an absent BYOK spend field with the owner confirmation still passes; absent include flag without confirmation does not', () => {
+test('absent or malformed BYOK usage cannot bypass the owner-confirmed zero-spend tripwire', () => {
   const { byok_usage_monthly: _omitted, include_byok_in_limit: _flag, ...sparse } = verified.data;
-  assert.equal(validateMonthlyCap({ data: sparse }, MAX_CODING_PAID_USD, CONFIRMED).ok, true);
+  assert.equal(validateMonthlyCap({ data: sparse }, MAX_CODING_PAID_USD, CONFIRMED).ok, false);
   assert.equal(validateMonthlyCap({ data: sparse }).ok, false);
+  assert.equal(validateMonthlyCap({ data: { ...verified.data, byok_usage_monthly: '0' } }, MAX_CODING_PAID_USD, CONFIRMED).ok, false);
+  assert.equal(validateMonthlyCap({ data: { ...verified.data, byok_usage_monthly: -1 } }, MAX_CODING_PAID_USD, CONFIRMED).ok, false);
 });
 
 test('refuse uncapped, larger, wrong reset, exhausted, low-balance and privileged keys, even when BYOK is confirmed', () => {
