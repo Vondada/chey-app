@@ -16,18 +16,20 @@ function testLine(state) {
   return 'Tests: not recorded in the runtime record, so none are claimed.';
 }
 
-function jobReceipt(job) {
+// `stale`: a running job that stopped reporting progress (the Worker's jobStaleMs rule) is not
+// confirmed running, the same wording as "coding status".
+function jobReceipt(job, stale) {
   const state = job.dead_letter ? 'dead letter' : String(job.status || 'unknown').replace(/_/g, ' ');
   return [
     `Latest coding job: built-in job ${String(job.id || '').slice(0, 12)}.`,
-    `State: ${state}.`,
+    stale ? 'State: interrupted. It stopped reporting progress and is not confirmed running.' : `State: ${state}.`,
     job.checkpoint ? 'Its recovery checkpoint is saved.' : 'No recovery checkpoint is saved.',
-    'It has no runtime record, so GitHub run, models tried, files changed, pull request and tests are not recorded.',
+    'Its record holds no GitHub run, models tried, files changed, pull request or test results.',
   ].join(' ');
 }
 
-export function codingHistoryReceipt({ kind = 'none', job = null, sessionId = '', status = null, request = '', repo = '' } = {}) {
-  if (kind === 'job' && job) return jobReceipt(job);
+export function codingHistoryReceipt({ kind = 'none', job = null, stale = false, sessionId = '', status = null, request = '', repo = '' } = {}) {
+  if (kind === 'job' && job) return jobReceipt(job, stale);
   if (kind !== 'runtime' || !sessionId) return 'No coding run is recorded for CHE yet, sir. Nothing is running.';
   if (!status || Number(status.status) !== 200) {
     const reason = status?.status ? `GitHub answered HTTP ${status.status}` : 'GitHub did not answer';
@@ -48,6 +50,9 @@ export function codingHistoryReceipt({ kind = 'none', job = null, sessionId = ''
   lines.push(Number.isInteger(status.changed_files) ? `Files changed: ${status.changed_files}.` : 'Files changed: not recorded.');
   lines.push(Number.isInteger(status.pr_number) && status.pr_number > 0 ? `Pull request: #${status.pr_number}.` : 'Pull request: none recorded.');
   lines.push(testLine(String(status.state || '')));
-  if (status.liveness === 'unverified' || status.heartbeat === 'stale') lines.push('Live state: UNVERIFIED, GitHub could not confirm the run.');
+  // getStatus marks liveness 'unverified' when GitHub could not be asked, and heartbeat 'stale'
+  // when GitHub confirmed the run is alive but its progress file is old.
+  if (status.liveness === 'unverified') lines.push('Live state: UNVERIFIED, GitHub could not confirm the run.');
+  else if (status.heartbeat === 'stale') lines.push('GitHub shows the run is still live, but it has not reported progress recently.');
   return lines.join(' ');
 }

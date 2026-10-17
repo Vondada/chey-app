@@ -7918,7 +7918,8 @@ export class CheState extends DurableObject {
           if (activeJob && !runtimeIsNewer) subject = { kind: 'job', job: activeJob };
           else if (sessionId && !handedOff) subject = { kind: 'runtime', sessionId, status: await new CheCodingRuntime(this.env).getStatus(sessionId, { acceptedAt: runtimeAt }) };
           else if (selfJobs[0]) subject = { kind: 'job', job: selfJobs[0] };
-          return ndjsonReply(codingHistoryReceipt({ ...subject, request, repo: this.env.CHE_GITHUB_REPO }), { source: 'che_coding_history', session_id: sessionId || null, background_job_id: subject.job?.id || null });
+          const stale = subject.job?.status === 'running' && Date.parse(subject.job.updated_at || 0) <= Date.now() - jobStaleMs(subject.job);
+          return ndjsonReply(codingHistoryReceipt({ ...subject, stale, request, repo: this.env.CHE_GITHUB_REPO }), { source: 'che_coding_history', session_id: sessionId || null, background_job_id: subject.job?.id || null });
         }
 
         // REA requests (reverse engineering) take their own read-only route before

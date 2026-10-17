@@ -23,6 +23,12 @@ const HISTORY = [
   'Check your recent coding runs on GitHub Actions and tell me the run IDs, results, model errors, file changes and PRs.',
   'Look at your recent coding executions and tell me what happened.',
   'Show me the GitHub Actions runs for your coding jobs.',
+  'Show me the files the coding job changed.',
+  "Explain the coding job's status.",
+  "Explain the coding job's history.",
+  'Inspect that coding job.',
+  'Did the coding job fail?',
+  'Why did the coding run stop?',
 ];
 
 for (const message of HISTORY) {
@@ -51,6 +57,16 @@ const NOT_HISTORY = [
   'CHE, investigate your coding status bug and report verified findings.',
   'Review the GitHub Actions workflow for the coding runtime.',
   'Retry the last coding job.',
+  // Second review: investigations, change instructions and other kinds of job keep their routes.
+  'Investigate npm semver 7.7.2 and tell me the coding job history.',
+  'Investigate "https://github.com/example/app" and tell me the coding job history.',
+  'Study the reference repo and compare its coding job history with yours.',
+  'Inspect the code for the coding job history bug.',
+  'Build a dashboard of the coding job history.',
+  'Please improve the coding job history view.',
+  "Fix the coding job's history and tell me the latest coding run.",
+  "What's the status of the YouTube upload job?",
+  'Stop.',
 ];
 
 for (const message of NOT_HISTORY) {
@@ -133,6 +149,18 @@ test('a running built-in job with no runtime record is reported as that job, not
   assert.match(text, /State: running\./);
   assert.match(text, /recovery checkpoint is saved/);
   assert.doesNotMatch(text, /No coding run is recorded/);
+});
+
+test('a running built-in job that stopped reporting progress is not reported as running', () => {
+  const text = codingHistoryReceipt({ kind: 'job', stale: true, job: { id: 'job-abcdef123456', status: 'running' } });
+  assert.match(text, /State: interrupted\. It stopped reporting progress and is not confirmed running\./);
+  assert.doesNotMatch(text, /State: running/);
+});
+
+test('a run GitHub confirms is still live is not called unverified', () => {
+  const text = codingHistoryReceipt({ kind: 'runtime', sessionId: 'ocr-12345678', status: { status: 200, state: 'running', heartbeat: 'stale', run_id: 5 } });
+  assert.match(text, /GitHub shows the run is still live, but it has not reported progress recently\./);
+  assert.doesNotMatch(text, /UNVERIFIED/);
 });
 
 test('no coding run recorded is said plainly, not invented', () => {

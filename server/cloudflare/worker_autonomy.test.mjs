@@ -3390,3 +3390,34 @@ test('coding history reads the stored runtime record of a failed run, with its r
     globalThis.fetch = realFetch;
   }
 });
+
+test('coding history after a recovery hand-off reads the recovery job, never the dead session', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => ({ response: 'ok' }) } };
+  const { chat } = await pairedChat(env, saved);
+  const textOf = async (res) => (await res.text()).trim().split('\n').map((line) => JSON.parse(line)).filter((line) => line.type === 'delta').map((line) => line.delta).join('');
+  const data = saved.get('che');
+  const at = new Date(Date.now() - 60_000).toISOString();
+  data.jobs = [{ id: 'job-recovery01', kind: 'self_development', status: 'complete', created_at: at, updated_at: at }];
+  saved.set('che', data);
+  // Recovery cleared the session stamp but kept the id.
+  saved.set('che_runtime_last_session', 'ocr-1234abcd');
+  const reply = await textOf(await chat('What is the state of the coding job?'));
+  assert.match(reply, /built-in job job-recovery/);
+  assert.match(reply, /State: complete\./);
+  assert.doesNotMatch(reply, /ocr-1234abcd|State: queued/);
+});
+
+test('coding history does not call an idle built-in job running', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => ({ response: 'ok' }) } };
+  const { chat } = await pairedChat(env, saved);
+  const textOf = async (res) => (await res.text()).trim().split('\n').map((line) => JSON.parse(line)).filter((line) => line.type === 'delta').map((line) => line.delta).join('');
+  const data = saved.get('che');
+  const old = new Date(Date.now() - 3 * 3_600_000).toISOString();
+  data.jobs = [{ id: 'job-idle000001', kind: 'self_development', status: 'running', created_at: old, updated_at: old }];
+  saved.set('che', data);
+  const reply = await textOf(await chat('Why did that coding job fail?'));
+  assert.match(reply, /State: interrupted/);
+  assert.doesNotMatch(reply, /State: running/);
+});
