@@ -773,6 +773,90 @@ test('a family/guest tenant device cannot request code changes, open PRs or merg
   assert.equal(aiCalls, 0);
 });
 
+async function ownerAndFamily(env, saved) {
+  const state = new CheState({ storage: storageFor(saved) }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, body, token = '', method = 'POST') => worker.fetch(new Request(`https://che.example${path}`, {
+    method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    ...(method === 'GET' ? {} : { body: JSON.stringify(body) }),
+  }), env);
+  const owner = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
+  const tenant = (await (await send('/api/platform/tenants', { name: 'Family', role: 'parental_guidance' }, owner)).json()).tenant;
+  const invite = (await (await send('/api/platform/enrollments', { tenant_id: tenant.id, access: 'private', ttl_minutes: 10 }, owner)).json()).enrollment;
+  const family = (await (await send('/api/enroll', { enrollment_token: invite.token, device_name: 'Kid phone' })).json()).device_token;
+  return { send, owner, family };
+}
+
+test('a family/guest device cannot read or change the owner\'s data, money, messages or connections', async () => {
+  const saved = new Map();
+  let aiCalls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', TWILIO_ACCOUNT_SID: 'AC1', TWILIO_AUTH_TOKEN: 't', TWILIO_FROM_NUMBER: '+15550001111',
+    AI: { run: async () => { aiCalls += 1; return { response: 'ok' }; } } };
+  const { send, owner, family } = await ownerAndFamily(env, saved);
+  await send('/api/memory/add', { memory: 'My favorite food is sushi' }, owner);
+  await send('/api/logs', { conversationId: 'owner-talk', user: { text: 'private owner words' }, che: { text: 'reply' } }, owner);
+  const realFetch = globalThis.fetch;
+  let outbound = 0;
+  // Only calls a guest route could cause count (an owner request's background work may finish meanwhile).
+  globalThis.fetch = async (u) => { if (/twilio|google|youtube|openai|elevenlabs|fish\.audio|tradovate|stripe/i.test(String(u?.url || u))) outbound += 1; return new Response('{}', { status: 200 }); };
+  try {
+    const denied = [
+      ['/api/state', 'GET'], ['/api/logs', 'GET'], ['/api/logs/owner-talk', 'GET'], ['/api/keys', 'GET'],
+      ['/api/library', 'GET'], ['/api/media', 'GET'], ['/api/pipeline', 'GET'], ['/api/trading/paper', 'GET'],
+      ['/api/memory/clear', 'POST'], ['/api/twilio/sms/send', 'POST'], ['/api/twilio/sms/bulk', 'POST'],
+      ['/api/youtube/connect/start', 'POST'], ['/api/youtube/disconnect', 'POST'], ['/api/media/generate', 'POST'],
+      ['/api/nightly/run', 'POST'], ['/api/plugins/tool', 'POST'], ['/api/vault/add', 'POST'],
+    ];
+    for (const [path, method] of denied) {
+      const res = await send(path, { to: '+15551234567', body: 'hi', numbers: ['+15551234567'], owner_approved: true, name: 'x', content: 'y' }, family, method);
+      assert.equal(res.status, 403, `${method} ${path}`);
+      assert.doesNotMatch(await res.text(), /sushi|private owner words/, `${method} ${path} leaks nothing`);
+    }
+    assert.equal(outbound, 0, 'no SMS, plugin call, OAuth or paid media request went out');
+    assert.equal(aiCalls, 0);
+    // The owner still has every route, and the family device keeps its own.
+    assert.equal((await send('/api/state', {}, owner, 'GET')).status, 200);
+    assert.equal((await send('/api/logs/owner-talk', {}, owner, 'GET')).status, 200);
+    assert.equal((await send('/api/platform', {}, family, 'GET')).status, 200);
+    assert.equal((await send('/api/notifications', {}, family, 'GET')).status, 200);
+    assert.equal((await send('/api/core/rules', {}, family, 'GET')).status, 200);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.equal((await send('/api/security/revoke_self', {}, family)).status, 200);
+  assert.equal((await send('/api/platform', {}, family, 'GET')).status, 401);
+});
+
+test('a family/guest chat never receives the owner\'s memories, imported context or nightly notes', async () => {
+  const saved = new Map();
+  const prompts = [];
+  // The fast (compact) attempt fails once so the full quality prompt is seen too.
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1',
+    AI: { run: async (_model, input) => {
+      const text = JSON.stringify(input?.messages || input || '');
+      prompts.push(text);
+      if (/Your own tools, which you run yourself/.test(text)) throw new Error('compact attempt refused in this test');
+      return { response: 'Sure thing.' };
+    } } };
+  const { send, owner, family } = await ownerAndFamily(env, saved);
+  await (await send('/api/chat', { message: 'Remember that my locker code word is OWNERFACT9921', history: [] }, owner)).text();
+  const data = saved.get('che');
+  data.owner_context = [{ id: 'c1', type: 'People', title: 'Bank contact', text: 'OWNER-PRIVATE-CONTEXT-7731', source: 'import' }];
+  data.nightly_reviews = [{ at: new Date().toISOString(), summary: 'OWNER-NIGHTLY-5150', lessons: [], open_threads: [] }];
+  saved.set('che', data);
+  const question = 'Tell me about the quarterly plan for the business and garden in a long detailed answer please';
+  const secrets = [/OWNERFACT9921/, /OWNER-PRIVATE-CONTEXT-7731/, /OWNER-NIGHTLY-5150/];
+  prompts.length = 0;
+  await (await send('/api/chat', { message: question, history: [] }, family)).text();
+  const guestPrompts = prompts.join('\n');
+  assert.match(guestPrompts, /PARENTAL GUIDANCE PROFILE/, 'the guest turn reached the full prompt');
+  for (const secret of secrets) assert.doesNotMatch(guestPrompts, secret);
+  prompts.length = 0;
+  await (await send('/api/chat', { message: question, history: [] }, owner)).text();
+  const ownerPrompts = prompts.join('\n');
+  for (const secret of secrets) assert.match(ownerPrompts, secret, 'the owner\'s own turn still uses his data');
+});
+
 test('coding status and resume use the newest built-in job and stay truthful when autonomy is paused', async () => {
   const saved = new Map();
   const env = { CHE_PAIR_CODE: '123456', AI: { run: async () => ({ response: 'ok' }) } };
