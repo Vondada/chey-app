@@ -62,7 +62,7 @@ All ten are in the Command Center under Websites, Apps & AI. Each one routes to 
 
 Plain speech works too: "CHE, investigate this app and tell me how its interface and features work", "Which of those features could improve your app?", "Build those approved features into yourself", "Remember that app we looked at? Add the export feature we discussed." npm phrases keep working as before ("reverse engineer npm package semver 7.7.2").
 
-The iPhone's Investigations page (Commands → Activity → Open investigations, or "open investigations") reads `GET /api/rea/investigations`; its buttons send these commands through chat. Screenshots come from `GET /api/rea/files/<id>/desktop.jpg` and only when the investigation lists them.
+These read-only routes serve the investigations to the app: `GET /api/rea/investigations`, `GET /api/rea/investigations/<id>` and `GET /api/rea/files/<id>/desktop.jpg` (screenshots, only when the investigation lists them). The iPhone Investigations page that reads them is part of the Flutter app update (the REA view), not of this Worker change. Until that update is installed, investigations are used through chat and the deploy check.
 
 ## Permission rules (enforced in code)
 

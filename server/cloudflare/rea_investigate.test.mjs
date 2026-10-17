@@ -706,3 +706,30 @@ test('Codex #324: an App Store search with no exact name is offered as a choice,
   const { investigations } = await reaInvestigations(che.store, ENV, { fetcher, now: T0 });
   assert.ok(investigations.some((i) => i.target.kind === 'app_store' && /id307727765/.test(i.target.url)), 'the chosen listing was investigated');
 });
+
+test('Codex #324: robots precedence counts path octets, so "*" or "$" never makes a rule more specific', async () => {
+  const { robotsVerdict } = await import('./rea_web_evidence.js');
+  assert.equal(robotsVerdict('User-agent: *\nDisallow: /foo$\nAllow: /foo\n', '/foo').allowed, true, 'equal octets: Allow wins');
+  assert.equal(robotsVerdict('User-agent: *\nDisallow: /foo*\nAllow: /foo\n', '/foo').allowed, true);
+  assert.equal(robotsVerdict('User-agent: *\nAllow: /fo*\nDisallow: /foo\n', '/foo').allowed, false, 'the longer literal path still wins');
+  assert.equal(robotsVerdict('User-agent: *\nDisallow: /foo$\n', '/foo').allowed, false);
+});
+
+test('Codex #324: what only the browser run saw joins the feature map, and earlier feature ids stay valid', async () => {
+  const blank = '<html><head><title>App</title></head><body><div id="root"></div><script src="/app.js"></script></body></html>';
+  const w = world({ html: blank });
+  const che = cheWith(w);
+  const reply = await che.say('Investigate https://shop.example.com');
+  let { investigations: [inv] } = await reaInvestigations(che.store, ENV, { fetcher: w.fetcher, now: T0 });
+  assert.equal(inv.features.length, 0, 'scripts were not run, so the static read found nothing');
+  w.state.records[reply.investigation_id] = WEB_RECORD(reply.investigation_id);
+  await refreshInvestigations(che.store, ENV, { fetcher: w.fetcher, now: T0 + 180_000 });
+  ({ investigations: [inv] } = await reaInvestigations(che.store, ENV, { fetcher: w.fetcher, now: T0 + 180_000 }));
+  const search = inv.features.find((f) => f.name === 'Search');
+  assert.ok(search, 'the search field drawn by scripts is now a feature');
+  assert.ok(search.evidence.some((e) => /^Browser run/.test(e.label)), 'cited as a browser observation');
+  assert.ok(inv.features.some((f) => f.name === 'Screen navigation'));
+  assert.deepEqual(inv.features.map((f) => f.id), inv.features.map((_, i) => `f${i + 1}`));
+  const compared = await che.say('REA compare');
+  assert.match(compared.text, /Search/, 'the comparison now runs on the browser-found features');
+});

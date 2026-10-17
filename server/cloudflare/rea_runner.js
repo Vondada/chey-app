@@ -30,7 +30,7 @@ import {
   PRIVATE_APP_ALTERNATIVES, PRIVATE_APP_LIMITS,
 } from './rea_targets.js';
 import {
-  buildFeatureMap, buildRequestFor, compareWithChe, pickFeatures, planFor, proposeImprovements, verifyBuild,
+  browserFeatures, buildFeatureMap, buildRequestFor, compareWithChe, pickFeatures, planFor, proposeImprovements, verifyBuild,
 } from './rea_features.js';
 import { validateWebSummary } from './rea_web_evidence.js';
 
@@ -513,6 +513,20 @@ async function refreshBrowser(storage, env, inv, fetcher, now) {
   }
   if (w.responsive) inv.architecture.push({ label: 'Phone layout (browser run)', detail: `${w.responsive.mobile_horizontal_overflow ? 'Scrolls sideways at 390 px' : 'Fits 390 px'}; ${w.responsive.mobile_nav_toggle ? 'has a menu toggle' : 'no menu toggle'}.`, kind: 'observed', evidence: [] });
   if (w.page?.load_ms != null) inv.architecture.push({ label: 'Load time (browser run)', detail: `${w.page.load_ms} ms on a GitHub runner, ${w.page.console_errors ?? 0} console errors.`, kind: 'observed', evidence: [] });
+  // What only the browser saw joins the feature map: new features get the next ids (earlier
+  // ids, and the plans that name them, stay valid) and known ones gain the browser evidence.
+  let added = 0;
+  for (const f of browserFeatures(w)) {
+    const known = inv.features.find((x) => x.kind === f.kind);
+    if (known) {
+      for (const e of f.evidence) if (known.evidence.length < 6 && !known.evidence.some((x) => x.label === e.label)) known.evidence.push(e);
+    } else if (inv.features.length < 16) {
+      const next = Math.max(0, ...inv.features.map((x) => Number(String(x.id).slice(1)) || 0)) + 1;
+      inv.features.push({ ...f, id: `f${next}` });
+      added += 1;
+    }
+  }
+  if (added && inv.comparison) inv.limitations.push(`The browser run found ${added} more ${added === 1 ? 'feature' : 'features'} after the comparison; ask "REA compare" to check ${added === 1 ? 'it' : 'them'} against CHE.`);
   inv.limitations.push(...(w.limitations || []).slice(0, 4).map((l) => `Browser run: ${l}`));
   return saveInvestigation(storage, inv);
 }
