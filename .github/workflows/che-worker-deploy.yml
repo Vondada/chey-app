@@ -605,7 +605,10 @@ jobs:
           };
           const failures = [];
           const check = (ok, what) => { summary(`- ${ok ? 'PASS' : 'FAIL'} ${what}`); if (!ok) failures.push(what); };
-          const show = (title, text) => { summary(`\n<details><summary>${title}</summary>\n\n\`\`\`\n${String(text).slice(0, 6000)}\n\`\`\`\n</details>\n`); };
+          // Each reply goes to the job log too, so a failed check can be diagnosed from the log alone.
+          // Replies quote the target's own text, so "::" is broken up: no line can act as a workflow command.
+          const plain = (text) => String(text).replace(/::/g, ': :');
+          const show = (title, text) => { summary(`\n<details><summary>${title}</summary>\n\n\`\`\`\n${String(text).slice(0, 6000)}\n\`\`\`\n</details>\n`); console.log(`::group::${plain(title)}\n${plain(String(text).slice(0, 4000))}\n::endgroup::`); };
           const repo = String(process.env.REA_REPO || '').trim();
           const site = String(process.env.REA_SITE || '').trim();
           if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || !/^https:\/\/[^\s]+$/.test(site)) throw new Error('rea_repo must be owner/name and rea_site an https link.');
@@ -620,6 +623,7 @@ jobs:
           show(`B. ${repo}`, b.text);
           const inv = b.investigation || {};
           const sha = String(inv.target?.version || '');
+          console.log(plain(`B features (${(inv.features || []).length}): ${(inv.features || []).map((f) => f.name).join(', ')}`));
           check(b.ok && /^[0-9a-f]{40}$/.test(sha), `B: ${repo} read at an exact commit (${sha.slice(0, 12)})`);
           const cites = (inv.features || []).flatMap((f) => f.evidence || []).filter((e) => e.url);
           check((inv.features || []).length >= 3 && cites.length >= 3 && cites.every((e) => e.url.startsWith(`https://github.com/${repo}/blob/${sha}/`) || !e.url.includes('github.com')), `B: ${(inv.features || []).length} features, every source citation pinned to that commit`);
@@ -641,7 +645,9 @@ jobs:
           const web = cw.investigation || {};
           check((cw.ok && (web.features || []).length >= 2) || web.state === 'limited', `C: ${site} ${web.state === 'limited' ? 'refused honestly' : `mapped with ${(web.features || []).length} features`}`);
           let shots = web.screenshots || [];
-          for (let i = 0; i < 16 && cw.ok && !shots.length; i++) {
+          console.log(plain(`C state: ${web.state}; browser: ${JSON.stringify(web.browser || null)}; limitations: ${(web.limitations || []).join(' | ')}`));
+          // Wait for screenshots only while a browser run was really started.
+          for (let i = 0; i < 16 && cw.ok && web.browser?.state === 'queued' && !shots.length; i++) {
             await new Promise((resolve) => setTimeout(resolve, 30000));
             const again = await ask(`REA features: ${cw.investigation_id}`);
             shots = again.investigation?.screenshots || [];
