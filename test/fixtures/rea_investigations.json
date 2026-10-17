@@ -1,0 +1,113 @@
+{
+  "investigations": [
+    {
+      "id": "rea-1a2b3c4d",
+      "target": { "kind": "website", "label": "Example Notes", "url": "https://notes.example.com/", "version": "sha256:9f2c41d0" },
+      "state": "running",
+      "stage": "architecture",
+      "stages": [
+        { "id": "understand", "label": "Understand the request", "state": "done", "note": "" },
+        { "id": "discover", "label": "Discover sources", "state": "done", "note": "" },
+        { "id": "inspect", "label": "Inspect", "state": "done", "note": "Public page observed in an isolated browser." },
+        { "id": "map", "label": "Map behavior", "state": "done", "note": "" },
+        { "id": "architecture", "label": "Architecture", "state": "running", "note": "" },
+        { "id": "compare", "label": "Compare with CHE", "state": "done", "note": "" },
+        { "id": "plan", "label": "Plan", "state": "pending", "note": "" },
+        { "id": "build", "label": "Build", "state": "pending", "note": "" },
+        { "id": "test", "label": "Test", "state": "pending", "note": "" },
+        { "id": "review", "label": "Review", "state": "pending", "note": "" },
+        { "id": "integrate", "label": "Integrate", "state": "skipped", "note": "Nothing to integrate before a build." },
+        { "id": "verify", "label": "Verify", "state": "pending", "note": "" },
+        { "id": "remember", "label": "Remember", "state": "blocked", "note": "Waits for verification." }
+      ],
+      "created_at": "2026-10-16T09:00:00Z",
+      "updated_at": "2026-10-16T09:30:00Z",
+      "sources": [
+        { "label": "Home page", "url": "https://notes.example.com/" },
+        { "label": "Help center", "url": "https://notes.example.com/help" }
+      ],
+      "screenshots": [],
+      "features": [
+        {
+          "id": "f1", "name": "Quick search", "purpose": "Find a note by any word in it.",
+          "user_sees": "A search box at the top of every page.", "operated_by": "Typing in the search box; results update as you type.",
+          "inputs": ["search words"], "outputs": ["matching notes"], "components": ["search box", "results list"], "dependencies": [],
+          "evidence": [{ "label": "Search box on the home page", "url": "https://notes.example.com/#search" }],
+          "unknowns": ["Whether search covers attachments."], "complexity": "low", "cost": "none",
+          "che": { "status": "partial", "evidence": [{ "label": "CHE searches memories, not notes", "url": "lib/brain/brain_search.dart" }] },
+          "feasible": { "ok": true, "note": "Fits CHE's existing search." }
+        },
+        {
+          "id": "f2", "name": "Offline notes", "purpose": "Read and write notes without a connection.",
+          "user_sees": "An offline badge.", "operated_by": "Automatic when the connection drops.",
+          "inputs": [], "outputs": [], "components": [], "dependencies": ["local storage"],
+          "evidence": [{ "label": "Offline badge in the header", "url": "https://notes.example.com/" }],
+          "unknowns": [], "complexity": "high", "cost": "none",
+          "che": { "status": "missing", "evidence": [] },
+          "feasible": { "ok": true, "note": "" }
+        },
+        {
+          "id": "f3", "name": "Share link", "purpose": "Share one note by link.",
+          "user_sees": "A Share button on each note.", "operated_by": "Pressing Share copies a link.",
+          "inputs": [], "outputs": ["a link"], "components": [], "dependencies": [],
+          "evidence": [], "unknowns": [], "complexity": "medium", "cost": "",
+          "che": { "status": "has", "evidence": [{ "label": "CHE shares chat replies", "url": "lib/home_state/home_ui.dart" }] },
+          "feasible": { "ok": true, "note": "" }
+        }
+      ],
+      "architecture": [
+        { "label": "Single-page app", "detail": "One HTML page loads a JavaScript bundle.", "kind": "observed", "evidence": [{ "label": "Page source", "url": "https://notes.example.com/" }] },
+        { "label": "Service worker", "detail": "A service worker is registered.", "kind": "observed", "evidence": [] },
+        { "label": "Client-side search index", "detail": "Search answers without a network request, so the index is probably on the device.", "kind": "inferred", "evidence": [] },
+        { "label": "Server language", "detail": "Not visible from the public page.", "kind": "unknown", "evidence": [] }
+      ],
+      "comparison": { "has": 1, "partial": 1, "missing": 1, "unknown": 0 },
+      "proposals": [{ "feature_id": "f2", "name": "Offline notes", "why": "CHE cannot keep notes without a connection." }],
+      "plan": {
+        "features": ["f1", "f2"],
+        "steps": ["Add a note search to CHE's memory screen.", "Cache notes on the iPhone for offline reading."],
+        "acceptance": ["A typed word finds the note within one second.", "Notes open with the iPhone offline."],
+        "approved": false
+      },
+      "build": null,
+      "verification": null,
+      "limitations": ["Only the public pages were observed; nothing behind a sign-in."]
+    },
+    {
+      "id": "rea-5e6f7a8b",
+      "target": { "kind": "npm", "label": "semver", "url": "https://www.npmjs.com/package/semver", "version": "7.7.2" },
+      "state": "complete",
+      "stage": "remember",
+      "stages": [
+        { "id": "understand", "state": "done" }, { "id": "discover", "state": "done" }, { "id": "inspect", "state": "done" },
+        { "id": "map", "state": "done" }, { "id": "architecture", "state": "done" }, { "id": "compare", "state": "done" },
+        { "id": "plan", "state": "done" }, { "id": "build", "state": "done" }, { "id": "test", "state": "done" },
+        { "id": "review", "state": "done" }, { "id": "integrate", "state": "done" }, { "id": "verify", "state": "done" },
+        { "id": "remember", "state": "done" }
+      ],
+      "created_at": "2026-10-15T12:00:00Z",
+      "updated_at": "2026-10-15T14:00:00Z",
+      "sources": [{ "label": "npm registry", "url": "https://registry.npmjs.org/semver/7.7.2" }],
+      "screenshots": [{ "label": "desktop", "file": "desktop.jpg" }],
+      "features": [
+        {
+          "id": "f1", "name": "Range check", "purpose": "Say whether a version is inside a range.", "user_sees": "", "operated_by": "A function call.",
+          "inputs": ["version", "range"], "outputs": ["true or false"], "components": [], "dependencies": [],
+          "evidence": [], "unknowns": [], "complexity": "low", "cost": "",
+          "che": { "status": "missing", "evidence": [] }, "feasible": { "ok": true, "note": "" }
+        }
+      ],
+      "architecture": [],
+      "comparison": { "has": 0, "partial": 0, "missing": 1, "unknown": 0 },
+      "proposals": [],
+      "plan": { "features": ["f1"], "steps": ["Add a version range check."], "acceptance": ["Tests pass."], "approved": true },
+      "build": { "job_id": "job-77", "state": "draft_pr_open", "pr_number": 412, "pr_url": "https://github.com/Vondada/chey-app/pull/412", "note": "Draft only; nothing merged." },
+      "verification": { "state": "passed", "checks": [{ "name": "flutter test", "state": "passed", "url": "https://github.com/Vondada/chey-app/actions/runs/1" }], "note": "" },
+      "limitations": []
+    }
+  ],
+  "capabilities": [
+    { "id": "npm", "label": "npm packages", "available": true, "needs": [] },
+    { "id": "app_store", "label": "App Store apps", "available": false, "needs": ["an App Store link"] }
+  ]
+}

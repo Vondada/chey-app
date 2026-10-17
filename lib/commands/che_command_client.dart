@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'che_command_models.dart';
+import 'che_rea_models.dart';
 
 class CheCommandResult {
   const CheCommandResult({required this.ok, required this.message, this.body = const {}});
@@ -93,6 +94,33 @@ class CheCommandClient {
       return CheCommandResult(ok: false, message: e.message, body: e.body);
     }
   }
+
+  // ── REA investigations (read only; actions are chat commands) ─────────
+
+  /// GET /api/rea/investigations: newest first, with REA's capabilities.
+  Future<CheReaInvestigationList> reaInvestigations() async =>
+      CheReaInvestigationList.fromJson(await _send(() => _client.get(_uri('/api/rea/investigations'), headers: headers())));
+
+  /// `GET /api/rea/investigations/<id>`. A missing record is CHE's 404 reason.
+  Future<CheReaInvestigation> reaInvestigation(String id) async {
+    final body = await _send(() => _client.get(_uri('/api/rea/investigations/${Uri.encodeComponent(id)}'), headers: headers()));
+    final record = body['investigation'];
+    if (record is! Map) throw CheCommandException('CHE sent no record for investigation $id.', body);
+    return CheReaInvestigation.fromJson(Map<String, dynamic>.from(record));
+  }
+
+  static final _safeName = RegExp(r'^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$');
+
+  /// Where one captured screenshot is served (`GET /api/rea/files/<id>/<file>`),
+  /// or null when CHE is not connected or a name could leave that folder.
+  /// Load it with [reaFileHeaders]: the same paired-device headers as every
+  /// other request.
+  Uri? reaFileUri(String investigationId, String file) {
+    if (baseUrl.isEmpty || !_safeName.hasMatch(investigationId) || !_safeName.hasMatch(file) || file.contains('..')) return null;
+    return _uri('/api/rea/files/$investigationId/$file');
+  }
+
+  Map<String, String> reaFileHeaders() => headers();
 
   /// approve | retry | pause | resume | cancel one workflow run (or step).
   Future<CheCommandResult> control(String missionId, String action, {String? stepId}) async {

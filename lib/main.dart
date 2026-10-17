@@ -550,8 +550,23 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
         onListen: () => unawaited(toggleListening()),
         onRunInChat: _runCommandInChat,
+        onSendInChat: _sendCommandInChat,
       ),
     ));
+  }
+
+  /// [_runCommandInChat] for a page that stays open (REA investigations): the
+  /// same chat turn, then CHE's reply text so the page can show it. `sent` is
+  /// false when Chat was still answering and nothing was sent.
+  Future<({bool sent, String reply})> _sendCommandInChat(String message, {bool confirmed = false}) async {
+    if (_isSending || !mounted) return (sent: false, reply: '');
+    final from = messages.length;
+    await _runCommandInChat(message, confirmed: confirmed);
+    final replies = [
+      for (final m in messages.skip(from))
+        if (m['role'] == 'assistant' && (m['text'] ?? '').trim().isNotEmpty) m['text']!,
+    ];
+    return (sent: true, reply: replies.lastOrNull ?? '');
   }
 
   /// Sends a command through the normal chat turn, so CHE answers it in the
