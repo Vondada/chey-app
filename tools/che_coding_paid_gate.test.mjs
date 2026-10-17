@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, copyFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MAX_CODING_PAID_USD, validateMonthlyCap, paidGate, keyStatusSummary } from './che_coding_paid_gate.mjs';
+import { MAX_CODING_PAID_USD, validateMonthlyCap, paidGate, keyStatusSummary, endpointSummary, reportExitCode } from './che_coding_paid_gate.mjs';
 
 // The owner's real key today: cap set, monthly reset, BYOK not counted, nothing spent.
 const verified = { data: { limit: 15, limit_reset: 'monthly', limit_remaining: 15, include_byok_in_limit: false, is_provisioning_key: false, is_management_key: false, byok_usage_monthly: 0 } };
@@ -123,4 +123,29 @@ test('the script is not run when merely imported, so tests stay offline', () => 
     cwd: new URL('.', import.meta.url).pathname, encoding: 'utf8',
   });
   assert.equal(out.trim(), 'function');
+});
+
+test('a refusal says whether the key itself failed (key) or only BYOK policy blocks it (byok)', () => {
+  assert.equal(validateMonthlyCap(verified).kind, 'byok', 'BYOK not ruled out is a policy block, not a key failure');
+  assert.equal(validateMonthlyCap({ data: { ...verified.data, limit: 20 } }, MAX_CODING_PAID_USD, CONFIRMED).kind, 'key');
+  assert.equal(validateMonthlyCap({ data: { ...verified.data, byok_usage_monthly: 1 } }, MAX_CODING_PAID_USD, CONFIRMED).kind, 'byok');
+});
+
+test('the report mode is green when the key is verified and only BYOK policy blocks; a key failure is red; the runtime never reports', () => {
+  assert.equal(reportExitCode({ ok: true }), 0);
+  assert.equal(reportExitCode({ ok: false, kind: 'byok' }), 0, 'the key is verified; the policy is stated in the summary');
+  assert.equal(reportExitCode({ ok: false, kind: 'key' }), 2, 'an unverified key is a failure');
+  assert.equal(reportExitCode({ ok: false, kind: 'policy' }), 2, 'paid not enabled: not verified');
+});
+
+test('the endpoint summary names providers and BYOK-like boolean fields, and never carries text values', () => {
+  const summary = endpointSummary({ data: { endpoints: [
+    { provider_name: 'Alibaba', is_byok: false, api_key: 'sk-or-secret-value', name: 'Alibaba | qwen3' },
+    { provider_name: 'DeepInfra', byok: true, custom_key: false },
+  ] } });
+  assert.equal(summary.endpoints, 2);
+  assert.deepEqual(summary.providers, ['Alibaba', 'DeepInfra']);
+  assert.deepEqual(summary.flags, { is_byok: false, byok: true, custom_key: false });
+  assert.doesNotMatch(JSON.stringify(summary), /secret/);
+  assert.deepEqual(endpointSummary({}), { endpoints: 0, providers: [], flags: {} });
 });

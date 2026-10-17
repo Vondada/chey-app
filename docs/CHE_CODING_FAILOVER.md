@@ -41,8 +41,10 @@ If the key status cannot be read, or any requirement fails, paid use stays off.
 ## Owner steps (in order)
 
 1. **Check the key status without spending.** Run the workflow `CHE coding paid-key cap
-   check`. Its log prints the key's status fields and numbers (never the key). The
-   limit, reset and balance should show as above.
+   check` (manual). It reads the key's status and one read-only endpoint listing. Its
+   log and job summary print the key's status fields and numbers (never the key). The
+   check is green when the cap is verified, even if BYOK policy still blocks paid use;
+   the summary says which. A key whose cap cannot be verified fails the check.
 2. **Rule BYOK in or out.** If the check blocks only on BYOK:
    - if the OpenRouter workspace this key belongs to has no BYOK provider keys, set the
      repository variable `CHE_CODING_OPENROUTER_NO_BYOK` to `true`; or

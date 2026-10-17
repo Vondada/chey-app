@@ -1,16 +1,17 @@
 name: CHE coding paid-key cap check
 
 # Manual, non-billable check of the owner's capped paid coding key. It calls only
-# OpenRouter's key-status endpoint (GET /api/v1/key): no model, no inference, no
-# charge. It prints the verified cap and remaining balance, never the key itself.
-# Paid coding stays off unless CHE_CODING_PAID_FALLBACK=true is also set.
+# OpenRouter's read-only endpoints (GET /api/v1/key, and the Qwen3 Coder endpoint
+# listing): no model call, no inference, no charge. It prints the key's status fields
+# and numbers, never the key itself, and writes a job summary.
+#
+# This is a report, not a gate: when the key's cap is verified but BYOK policy keeps paid
+# use off, the check is green and its summary says so. A key whose cap cannot be verified
+# fails. The runtime never uses this report; it still withholds paid use unless the gate
+# passes. Run it with workflow_dispatch after the owner changes the key or the variables.
 
 on:
   workflow_dispatch:
-  # Runs when this file changes, so the check can run on a feature branch before it reaches main.
-  push:
-    paths:
-      - .github/workflows/che-coding-key-check.yml
 
 permissions:
   contents: read
@@ -26,9 +27,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Verify the paid key cap through the provider API
+      - name: Verify the paid key cap and BYOK status (non-billable)
         env:
           CHE_CODING_PAID_FALLBACK: 'true'
           CHE_CODING_OPENROUTER_PAID_KEY: ${{ secrets.CHE_CODING_OPENROUTER_PAID_KEY }}
           CHE_CODING_OPENROUTER_NO_BYOK: ${{ vars.CHE_CODING_OPENROUTER_NO_BYOK }}
-        run: node tools/che_coding_paid_gate.mjs
+        run: node tools/che_coding_paid_gate.mjs --report
