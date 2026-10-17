@@ -21,7 +21,11 @@ const VIDEO_SPEC = /\b(?:please|can you|could you|would you|i want|i'd like|i wo
  */
 export function videoRequestTopic(message) {
   const text = String(message || '').replace(/^\W*(?:hey[, ]*)?(?:che|chay|chey|shay)\b[,!:]?\s*/i, '').trim();
-  const about = /(?:\b(?:about|covering|explaining|featuring|regarding|on the topic of)|\b(?:videos?|shorts?|clips?|reels?|mp4)\s+(?:on|of))\s+(.{3,}?)\s*(?:[.!?]+\s*$|$|,?\s+(?:with|including|plus|along with|together with|and (?:add|include|give)|using|please|thanks|thank you|for (?:youtube|tiktok|instagram|facebook|my|our|the channel))\b)/i.exec(text);
+  // "with", "including" and "plus" end the subject only when what follows is
+  // how to make it ("including narration"), never more of the subject
+  // ("black holes including how stars collapse", "dogs with funny hats").
+  const spec = '(?:(?:a|an|the|some|free|real|natural|attractive|nice|good|great|catchy|clickable|bold|short|female|male|ai|voice)\\s+)*(?:narration|narrator|voice[- ]?over|voice|thumbnails?|titles?|descriptions?|tags|captions?|subtitles|music|mp4|audio|script|hook)\\b';
+  const about = new RegExp(`(?:\\b(?:about|covering|explaining|featuring|regarding|on the topic of)|\\b(?:videos?|shorts?|clips?|reels?|mp4)\\s+(?:on|of))\\s+(.{3,}?)\\s*(?:[.!?]+\\s*$|$|,?\\s+(?:(?:with|including|plus|along with|together with)\\s+(?=${spec})|(?:and (?:add|include|give)|using|please|thanks|thank you|for (?:youtube|tiktok|instagram|facebook|my|our|the channel))\\b))`, 'i').exec(text);
   const candidate = about ? about[1]
     : text.replace(VIDEO_SPEC, ' ').replace(/[^A-Za-z0-9'’ -]+/g, ' ').replace(/(?:^|\s)-+|-+(?=\s|$)/g, ' ');
   const topic = candidate.replace(/-/g, ' ').replace(/\s+/g, ' ').trim().replace(/^(?:a|an|the|my|some)\s+/i, '');
