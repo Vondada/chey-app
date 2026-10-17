@@ -80,8 +80,32 @@ jobs:
         run: for f in server/cloudflare/*.js; do node --check "$f" || exit 1; done
       - name: Run Worker unit tests
         run: node --test server/cloudflare/*.test.mjs
+      # The unit run above skips the website observer's browser tests; this installs the
+      # pinned Playwright and its headless Chromium and runs them against the local fixture page.
+      - name: REA website observer in a real browser (local fixture, no internet)
+        env:
+          CHE_REA_WEB_E2E: required
+        run: |
+          npm ci --prefix tools/rea/web --ignore-scripts --no-audit --no-fund
+          node tools/rea/web/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+          node --test server/cloudflare/rea_web_workflow.test.mjs
       - name: Video narration tests (Fish Drama 3, cache, Piper fallback)
         run: python3 -m unittest discover -s tools -p 'test_che_video_render.py'
       - name: Claude Code project skills (.claude/skills) tests
         run: node --test .claude/skills/tests/*.test.mjs
+      # A network policy defined only in YAML text is not enough: prove on the real Linux
+      # runner that egress.sh blocks the observer user from loopback and link-local addresses
+      # while the runner's own traffic still works (rules matching only that user).
+      - name: REA observer kernel egress guard (user-scoped)
+        run: |
+          set -euo pipefail
+          bash tools/rea/web/egress.sh rea-observer
+          python3 -m http.server 8765 --bind 127.0.0.1 >/dev/null 2>&1 &
+          server=$!
+          sleep 1
+          curl -sf -m 5 http://127.0.0.1:8765/ >/dev/null || { echo "the runner itself lost loopback"; exit 1; }
+          if sudo -u rea-observer curl -s -m 5 http://127.0.0.1:8765/ >/dev/null; then echo "the observer reached loopback"; exit 1; fi
+          if sudo -u rea-observer curl -s -m 5 http://169.254.169.254/ >/dev/null; then echo "the observer reached the metadata address"; exit 1; fi
+          kill "$server"
+          echo "observer user: loopback and link-local refused; runner unaffected"
 

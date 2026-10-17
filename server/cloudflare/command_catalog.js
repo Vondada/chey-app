@@ -45,6 +45,7 @@ export const CONNECTORS = Object.freeze({
   image_generation: { label: 'Image generation', kind: 'secret', setup: 'Workers AI images are built in when the AI binding is on; HD providers need their key and the paid-media switch.' },
   voice: { label: 'CHE voice (ElevenLabs or Fish)', kind: 'secret', setup: 'Add ELEVENLABS_API_KEY (or FISH_API_KEY) as a Worker secret.' },
   github: { label: 'GitHub connection', kind: 'secret', setup: 'Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets.' },
+  repo: { label: 'CHE repository name', kind: 'secret', setup: 'Add CHE_GITHUB_REPO (owner/name of CHE\'s own repository) as a Worker setting. Its public tree can be read without a token.' },
   stripe: { label: 'Stripe', kind: 'secret', setup: 'Add STRIPE_SECRET_KEY (or CHE_PAYMENTS_URL) as a Worker secret.' },
   sms: { label: 'Twilio SMS', kind: 'secret', setup: 'Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and a sender number as Worker secrets.' },
   bookkeeping: { label: 'Bank or bookkeeping feed', kind: 'none', setup: 'CHE has no bank or bookkeeping connector yet.' },
@@ -88,6 +89,7 @@ const C = (id, category, mode, summary, extra) => Object.freeze({
   evidence: extra.evidence || 'Facts carry their source; anything else is labeled as opinion or estimate.',
   cost: extra.cost || 'Free engines only, unless you turned paid AI on.',
   keywords: Object.freeze(extra.keywords || []),
+  aliases: Object.freeze(extra.aliases || []),
 });
 
 export const COMMANDS = Object.freeze([
@@ -389,30 +391,56 @@ export const COMMANDS = Object.freeze([
     prompt: "What's the app build status", produces: 'build status', evidence: 'GitHub Actions run and release asset.', keywords: ['iphone', 'ipa', 'sidestore', 'update', 'install', 'build status'],
   }),
 
-  // REA (reverse engineering). Every REA command routes to rea_runner.js, which
-  // only reads public npm packages at an exact version on the pinned GitHub
-  // runner. None of them starts a coding job; building is the separate
-  // che-build command with its own yes.
-  C('rea-inspect', 'build', 'EXPLORE', 'Reverse-engineer a public npm package (REA).', {
-    title: 'REA: inspect a package',
-    does: 'Runs REA 6.5.0 static analysis on one public npm package at an exact version, on GitHub Actions. Nothing from the package runs here, and no coding job, commit or deploy starts.',
-    needs: ['github'], route: 'che_rea', handler: 'rea_runner.js (REA 6.5.0 in the che-rea-analysis workflow)',
-    input: { name: 'target', required: true, hint: 'npm package and exact version, e.g. npm:semver@7.7.2' },
-    examples: ['REA inspect: npm:semver@7.7.2', 'Reverse engineer npm package semver 7.7.2'],
+  // REA (reverse engineering and investigation). Every REA command routes to
+  // rea_runner.js. Investigating reads public sources only (npm packages on the
+  // pinned GitHub runner, public GitHub repositories, public web pages, App
+  // Store listings) and never starts a coding job. /rea-build is the one step
+  // that changes code: it hands an approved plan to CHE's existing
+  // self-development job, which opens a draft pull request and never merges.
+  C('rea-inspect', 'build', 'EXPLORE', 'Investigate an app, website, repository or package (REA).', {
+    title: 'REA: investigate',
+    does: 'Investigates a public GitHub repository, web page, App Store listing or npm package and maps its features and architecture with citations. Packages run REA 6.5.0 on GitHub Actions. Nothing from the target runs here, and no coding job, commit or deploy starts.',
+    // Repositories, pages and listings are public reads; only npm packages need the GitHub runner, and the handler says so.
+    needs: [], optional: ['github'], route: 'che_rea', handler: 'rea_runner.js (rea_targets.js adapters; REA 6.5.0 for npm in the che-rea-analysis workflow)',
+    input: { name: 'target', required: true, hint: 'An app name, link, GitHub repository, or npm:name@version' },
+    examples: ['REA inspect: https://github.com/excalidraw/excalidraw', 'Investigate the Excalidraw app and tell me how its features work', 'REA inspect: npm:semver@7.7.2'],
     prompt: 'REA inspect: {input}',
-    produces: 'evidence summary', evidence: 'Evidence id, counts REA read, confidence, and every limitation REA reported.',
-    cost: 'Free: the public npm registry and GitHub Actions, through CHE\'s GitHub connection.',
-    keywords: ['reverse engineer', 'rea', 'inspect package', 'analyze javascript', 'npm package', 'electron app'],
+    produces: 'investigation', evidence: 'Every feature and finding cites the file and line, page, or listing it came from; unknowns are listed.',
+    cost: 'Free: public GitHub, web pages, the App Store listing API, the npm registry and GitHub Actions.',
+    keywords: ['reverse engineer', 'rea', 'investigate app', 'study this app', 'how does this app work', 'inspect package', 'npm package', 'website features'],
+    aliases: ['rea-investigate'],
   }),
-  C('rea-explain', 'build', 'EXPLORE', 'Explain how a package is built, from evidence.', {
-    title: 'REA: explain from evidence',
-    does: 'Explains a package\'s structure from its REA evidence and says what that evidence does not show. Reuses recorded evidence when it exists.',
-    needs: ['github'], route: 'che_rea', handler: 'rea_runner.js (REA evidence, reused when recorded)',
-    input: { name: 'question', required: true, hint: 'npm package and exact version, and what to explain' },
-    examples: ['REA explain: npm:semver@7.7.2'],
+  C('rea-discover', 'build', 'EXPLORE', 'Identify software and the public sources REA can use.', {
+    title: 'REA: discover sources',
+    does: 'Identifies an app by name or link and lists the public sources REA can read (repository, website, App Store listing) and what it cannot reach. Reads nothing in depth.',
+    needs: [], route: 'che_rea', handler: 'rea_runner.js (rea_targets.identifyTarget, GitHub and App Store search)',
+    input: { name: 'target', required: true, hint: 'An app name or link' },
+    examples: ['REA discover: Excalidraw'],
+    prompt: 'REA discover: {input}',
+    produces: 'source list', evidence: 'Each source is a real link CHE found; nothing is assumed.',
+    keywords: ['discover', 'identify app', 'find the source', 'which sources'],
+  }),
+  C('rea-features', 'build', 'EXPLORE', 'Map an investigated app\'s features, screens and interactions.', {
+    title: 'REA: feature map',
+    does: 'Lists each feature REA found with its purpose, how it is used, the evidence, unknowns and effort. Uses the recorded investigation; nothing new is run.',
+    needs: [], route: 'che_rea', handler: 'rea_runner.js (rea_features.buildFeatureMap over recorded evidence)',
+    input: { name: 'investigation', required: false, hint: 'REA job id, or leave empty for the latest' },
+    examples: ['REA features', 'Map the features of that app'],
+    prompt: 'REA features: {input}',
+    produces: 'feature map', evidence: 'Each feature names its file, page or listing evidence.',
+    keywords: ['feature map', 'map features', 'screens', 'interactions', 'what can it do'],
+    aliases: ['rea-map'],
+  }),
+  C('rea-explain', 'build', 'EXPLORE', 'Explain how investigated software is built, from evidence.', {
+    title: 'REA: architecture',
+    does: 'Explains the architecture REA recorded (frameworks, entry points, navigation, storage, tests) and separates what was observed from what is inferred or unknown.',
+    needs: [], route: 'che_rea', handler: 'rea_runner.js (recorded evidence)',
+    input: { name: 'question', required: false, hint: 'REA job id or npm:name@version, and what to explain' },
+    examples: ['REA explain: npm:semver@7.7.2', 'REA architecture'],
     prompt: 'REA explain: {input}',
-    produces: 'explanation', evidence: 'Each fact names its REA evidence id; anything unsupported is labeled.',
+    produces: 'explanation', evidence: 'Each finding is labelled observed, inferred or unknown, with its source.',
     keywords: ['explain how', 'how does it work', 'how is this built', 'architecture', 'dependencies'],
+    aliases: ['rea-architecture'],
   }),
   C('rea-debug', 'build', 'EXPLORE', 'Investigate a software problem from evidence.', {
     title: 'REA: debug from evidence',
@@ -424,35 +452,59 @@ export const COMMANDS = Object.freeze([
     produces: 'debug notes', evidence: 'Static facts only; runtime behaviour is labeled as not observed.',
     keywords: ['debug', 'crash', 'bug', 'broken', 'not working', 'investigate'],
   }),
-  C('rea-compare', 'build', 'EXPLORE', 'Compare observed software with CHE\'s own code.', {
+  C('rea-compare', 'build', 'EXPLORE', 'Compare investigated software with CHE\'s own code.', {
     title: 'REA: compare with CHE',
-    does: 'Records REA\'s evidence for a package for comparison with a feature you name. Comparing it with CHE\'s own code is not built yet, so only REA\'s side is returned.',
-    needs: ['github'], route: 'che_rea', handler: 'rea_runner.js (REA evidence; CHE side not built)',
-    input: { name: 'feature', required: true, hint: 'npm package and exact version, and the CHE feature to compare' },
-    examples: ['REA compare: npm:semver@7.7.2'],
+    does: 'Checks each feature REA found against CHE\'s live repository and command catalog, says whether CHE has it, partly has it or lacks it, with the files, and recommends the useful gaps.',
+    // The comparison reads CHE's repository, so its name is required; the token only adds code search.
+    needs: ['repo'], optional: ['github'], route: 'che_rea', handler: 'rea_runner.js (rea_features.compareWithChe over CHE\'s repository at main)',
+    input: { name: 'feature', required: false, hint: 'REA job id, or leave empty for the latest investigation' },
+    examples: ['REA compare', 'Which of those features could improve your app?'],
     prompt: 'REA compare: {input}',
-    produces: 'comparison', evidence: 'Each side cites its own evidence; a missing side is named.',
-    keywords: ['compare', 'difference', 'versus', 'how does ours', 'same as'],
+    produces: 'comparison', evidence: 'Each "CHE has it" names CHE\'s file at the current commit; a check that could not run says unknown.',
+    keywords: ['compare', 'difference', 'versus', 'features you are missing', 'gap', 'could improve'],
+    aliases: ['rea-gap'],
   }),
-  C('rea-rebuild', 'build', 'PLAN', 'Plan an original feature from verified evidence.', {
-    title: 'REA: plan a rebuild',
-    does: 'Writes a plan from REA evidence already recorded. Nothing is built. Building is a separate step that needs your yes.',
-    needs: [], route: 'che_rea', handler: 'rea_runner.js (plan from recorded evidence only)',
-    input: { name: 'feature', required: true, hint: 'The feature to build, and optionally the REA job id' },
-    examples: ['REA rebuild: a search box like the one REA found'],
+  C('rea-rebuild', 'build', 'PLAN', 'Plan an original version of chosen features.', {
+    title: 'REA: plan',
+    does: 'Writes an original-implementation plan with acceptance checks for the features you choose, from recorded evidence. Nothing is built.',
+    needs: [], route: 'che_rea', handler: 'rea_runner.js (rea_features.planFor over recorded evidence)',
+    input: { name: 'feature', required: true, hint: 'Feature numbers or names, and optionally the REA job id' },
+    examples: ['REA plan: f2 f4', 'REA rebuild: the search feature'],
     prompt: 'REA rebuild: {input}',
-    produces: 'build plan', evidence: 'Each planned step names the REA facts it relies on.',
-    keywords: ['rebuild', 'build a similar', 'original feature', 'implement from findings'],
+    produces: 'build plan', evidence: 'Each planned step names the REA evidence it relies on.',
+    keywords: ['rebuild', 'build a similar', 'original feature', 'implement from findings', 'plan'],
+    aliases: ['rea-plan'],
   }),
-  C('rea-status', 'build', 'EXPLORE', 'Show REA jobs, capabilities and results.', {
-    title: 'REA: status and history',
-    does: 'Shows REA\'s capabilities, recent analysis jobs, and the latest finished evidence.',
-    needs: ['github'], route: 'che_rea', handler: 'rea_runner.js (job log and the che-mailbox results)',
+  C('rea-build', 'build', 'BUILD', 'Build an approved REA plan into CHE as a draft PR.', {
+    title: 'REA: build',
+    does: 'Hands the approved plan to CHE\'s existing coding job: original code, tests and review, then a draft pull request. Nothing merges or deploys without your separate yes.',
+    needs: ['model', 'github'], route: 'che_rea', handler: 'rea_runner.js → worker.queueSelfDevelopment (draft PR pipeline)',
+    input: { name: 'plan', required: false, hint: 'REA job id, or leave empty for the latest plan' },
+    examples: ['REA build', 'Build those features into yourself'],
+    prompt: 'REA build: {input}',
+    produces: 'pull request', evidence: 'The coding job id, then the pull request number, CI checks and review outcome.',
+    keywords: ['build those features', 'build it into yourself', 'implement the plan'],
+  }),
+  C('rea-verify', 'build', 'EXPLORE', 'Check a REA build against its acceptance checks.', {
+    title: 'REA: verify',
+    does: 'Reads the build\'s pull request, its CI checks and changed tests, and says which acceptance checks are proven. The iPhone itself is never claimed verified.',
+    needs: ['github'], route: 'che_rea', handler: 'rea_runner.js (rea_features.verifyBuild over GitHub)',
+    input: { name: 'investigation', required: false, hint: 'REA job id, or leave empty for the latest build' },
+    examples: ['REA verify'],
+    prompt: 'REA verify: {input}',
+    produces: 'verification', evidence: 'Pull request, check-run results and test files from GitHub.',
+    keywords: ['verify build', 'did it pass', 'acceptance checks'],
+  }),
+  C('rea-status', 'build', 'EXPLORE', 'Show REA investigations, capabilities and results.', {
+    title: 'REA: status and capabilities',
+    does: 'Shows what REA can and cannot analyze, recent investigations with their stage, and the latest finished evidence.',
+    needs: [], route: 'che_rea', handler: 'rea_runner.js (investigation log and the che-mailbox results)',
     input: null,
-    examples: ['REA status'],
+    examples: ['REA status', 'What can REA analyze?'],
     prompt: 'REA status',
     produces: 'job status', evidence: 'Job ids and the result records they were read from.',
-    keywords: ['rea status', 'rea history', 'analysis status', 'reverse engineering jobs'],
+    keywords: ['rea status', 'rea history', 'analysis status', 'reverse engineering jobs', 'rea capabilities'],
+    aliases: ['rea-capabilities', 'rea-history'],
   }),
 
   // ── Money Management ──────────────────────────────────────────────────
@@ -670,7 +722,8 @@ export const COMMANDS = Object.freeze([
   }),
 ]);
 
-const BY_ID = new Map(COMMANDS.map((c) => [c.id, c]));
+// Aliases are other names for one command (/rea-map is /rea-features), never a second command.
+const BY_ID = new Map(COMMANDS.flatMap((c) => [[c.id, c], ...c.aliases.map((a) => [a, c])]));
 export function commandById(id) { return BY_ID.get(String(id || '').toLowerCase().replace(/^\//, '')) || null; }
 
 // ─── Availability ─────────────────────────────────────────────────────────
@@ -699,6 +752,7 @@ export function connectorStatus(env = {}, facts = {}) {
   out.image_generation = (runtime.image_generation ?? Boolean(env.CHE_IMAGE_GEN_URL || env.AI)) ? ok() : missing('No image engine is configured.');
   out.voice = truthy(env.ELEVENLABS_API_KEY) || truthy(env.FISH_API_KEY) ? ok() : missing('No ElevenLabs or Fish key.');
   out.github = truthy(env.CHE_GITHUB_TOKEN) && truthy(env.CHE_GITHUB_REPO) ? ok() : missing('GitHub is not connected.');
+  out.repo = truthy(env.CHE_GITHUB_REPO) ? ok() : missing('CHE_GITHUB_REPO is not set.');
   out.stripe = truthy(env.STRIPE_SECRET_KEY) || truthy(env.CHE_PAYMENTS_URL) ? ok() : missing('Stripe is not connected.');
   out.sms = truthy(env.TWILIO_ACCOUNT_SID) && truthy(env.TWILIO_AUTH_TOKEN) ? ok() : missing('Twilio is not connected.');
   out.bookkeeping = { state: 'none', detail: CONNECTORS.bookkeeping.setup };

@@ -16,6 +16,26 @@ on:
         description: Also render one real 15-second video through the free GitHub renderer and verify it
         type: boolean
         default: false
+      rea_check:
+        description: Also run the REA acceptance investigations (public repository, web page, CHE comparison, private iOS app) on the live Worker
+        type: boolean
+        default: false
+      rea_repo:
+        description: Public GitHub repository (owner/name) for the REA repository test
+        type: string
+        default: vercel/commerce
+      rea_feature:
+        description: The repository feature whose source the REA test must cite
+        type: string
+        default: search
+      rea_site:
+        description: Public web page for the REA website test
+        type: string
+        default: https://www.python.org/
+      rea_build_feature:
+        description: Owner-authorized REA build test only. A feature id from the comparison (for example f3); CHE opens a draft pull request and never merges it. Empty = no build.
+        type: string
+        default: ''
   push:
     branches:
       - main
@@ -36,7 +56,7 @@ jobs:
     # changes. Do not add a commit-message gate here: follow-up fixes can merge
     # without a marker and must still deploy the exact green main commit.
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.video_check && 30 || 15 }}
+    timeout-minutes: ${{ (inputs.video_check || inputs.rea_check) && 30 || 15 }}
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
@@ -558,6 +578,92 @@ jobs:
           const line = `task ${last.task_id}, run ${last.github_run_id}, "${last.title}", ${last.duration_seconds} s, ${last.video_bytes} bytes ${last.video_codec}/${last.audio_codec}, ${last.width}x${last.height}, read back ${last.retrieved.video_bytes} bytes (${last.retrieved.seconds} s) + thumbnail ${last.retrieved.thumbnail_bytes} bytes, voice ${last.voice_provider}, paid ${last.paid_media}, uploaded ${last.youtube_uploaded}`;
           console.log(`::notice title=Video check passed::${line}`);
           summary(`**Free video (live Worker):** ${line}.`);
+          JS
+
+      - name: Run the REA acceptance investigations through the live Worker (opt-in)
+        if: inputs.rea_check
+        env:
+          REA_REPO: ${{ inputs.rea_repo }}
+          REA_FEATURE: ${{ inputs.rea_feature }}
+          REA_SITE: ${{ inputs.rea_site }}
+          REA_BUILD_FEATURE: ${{ inputs.rea_build_feature }}
+        run: |
+          node --input-type=module <<'JS'
+          // Real investigations on the live Worker, recorded in the owner's REA
+          // log so the iPhone's Investigations page shows them. Read-only,
+          // except the one owner-authorized build test (draft PR, never merged).
+          import { appendFileSync } from 'node:fs';
+          const summary = (line) => appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
+          const ask = async (message, extra = {}) => {
+            const response = await fetch('https://chey-app.henryjavoni.workers.dev/api/rea/probe', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${process.env.CHE_VOICE_PROBE_TOKEN}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ message, ...extra }), signal: AbortSignal.timeout(90000),
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.json();
+          };
+          const failures = [];
+          const check = (ok, what) => { summary(`- ${ok ? 'PASS' : 'FAIL'} ${what}`); if (!ok) failures.push(what); };
+          const show = (title, text) => { summary(`\n<details><summary>${title}</summary>\n\n\`\`\`\n${String(text).slice(0, 6000)}\n\`\`\`\n</details>\n`); };
+          const repo = String(process.env.REA_REPO || '').trim();
+          const site = String(process.env.REA_SITE || '').trim();
+          if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || !/^https:\/\/[^\s]+$/.test(site)) throw new Error('rea_repo must be owner/name and rea_site an https link.');
+          const feature = String(process.env.REA_FEATURE || '').replace(/[^\w -]/g, '').slice(0, 30);
+          summary('### REA acceptance (live Worker)');
+
+          const caps = await ask('REA capabilities');
+          check(/Public GitHub repositories[^\n]*: available/.test(caps.text) && /Native binaries \(Ghidra\): not available/.test(caps.text), 'capabilities state what REA can and cannot analyze');
+
+          // B. Public source investigation with real citations at the exact commit.
+          const b = await ask(`CHE, investigate https://github.com/${repo} and how its ${feature} feature works.`);
+          show(`B. ${repo}`, b.text);
+          const inv = b.investigation || {};
+          const sha = String(inv.target?.version || '');
+          check(b.ok && /^[0-9a-f]{40}$/.test(sha), `B: ${repo} read at an exact commit (${sha.slice(0, 12)})`);
+          const cites = (inv.features || []).flatMap((f) => f.evidence || []).filter((e) => e.url);
+          check((inv.features || []).length >= 3 && cites.length >= 3 && cites.every((e) => e.url.startsWith(`https://github.com/${repo}/blob/${sha}/`) || !e.url.includes('github.com')), `B: ${(inv.features || []).length} features, every source citation pinned to that commit`);
+          check((inv.features || []).some((f) => (f.evidence || []).some((e) => /#L\d+$/.test(e.url) && new RegExp(feature, 'i').test(`${f.name} ${e.label}`))), `B: the ${feature} feature is cited by file and line`);
+          check((inv.architecture || []).some((a) => a.label === 'Licence') && (inv.architecture || []).some((a) => a.label === 'Navigation'), 'B: licence and navigation reported (observed or unknown)');
+
+          // D. Comparison against CHE's live repository.
+          const d = await ask(`REA compare: ${b.investigation_id}`);
+          show('D. Compared with CHE', d.text);
+          const c = d.investigation?.comparison || {};
+          check(c.ok === true && /^[0-9a-f]{40}$/.test(String(c.sha || '')), `D: compared with CHE's repository at ${String(c.sha || '').slice(0, 12)}`);
+          const total = (c.has || 0) + (c.partial || 0) + (c.missing || 0) + (c.unknown || 0);
+          check(total === (d.investigation?.features || []).length, `D: every feature classified (has ${c.has}, partial ${c.partial}, missing ${c.missing}, unknown ${c.unknown})`);
+          check((d.investigation?.features || []).filter((f) => f.che?.status === 'has').every((f) => (f.che.evidence || []).some((e) => e.url.includes(`Vondada/chey-app/blob/${c.sha}/`))), 'D: every "CHE has it" names a CHE file at that commit');
+
+          // C. A public web page, plus the isolated browser run.
+          const cw = await ask(`Investigate ${site} and tell me how its interface and features work.`);
+          show(`C. ${site}`, cw.text);
+          const web = cw.investigation || {};
+          check((cw.ok && (web.features || []).length >= 2) || web.state === 'limited', `C: ${site} ${web.state === 'limited' ? 'refused honestly' : `mapped with ${(web.features || []).length} features`}`);
+          let shots = web.screenshots || [];
+          for (let i = 0; i < 16 && cw.ok && !shots.length; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 30000));
+            const again = await ask(`REA features: ${cw.investigation_id}`);
+            shots = again.investigation?.screenshots || [];
+            if (/Browser run: /.test((again.investigation?.limitations || []).join(' '))) break;
+          }
+          check(!cw.ok || shots.length >= 1, `C: isolated browser run published ${shots.length} real screenshots`);
+
+          // G. An app CHE cannot reach.
+          const g = await ask('CHE, analyze the private iOS app Chase Mobile internals and tell me how it works.');
+          show('G. Private iOS app', g.text);
+          check(g.investigation?.state === 'limited' && /does not decrypt/.test(g.text) && /I did not claim anything about its internals/.test(g.text), 'G: honest limits, no claimed internals, alternatives offered');
+
+          // E. Only when the owner named a feature for the one authorized test build.
+          const pick = String(process.env.REA_BUILD_FEATURE || '').trim();
+          if (/^f\d{1,2}$/.test(pick)) {
+            const e = await ask(`REA build: ${b.investigation_id} ${pick}`, { allow_build: true });
+            show('E. Build (draft PR, not merged)', e.text);
+            check(Boolean(e.build_job_id) && /draft pull request/.test(e.text), `E: coding job ${String(e.build_job_id).slice(0, 8)} started for ${pick}`);
+          }
+          const v = await ask(`REA verify: ${b.investigation_id}`);
+          show('Verify', v.text);
+          if (failures.length) { console.log(failures.join('\n')); process.exit(1); }
           JS
 
       - name: Fish measurement key
