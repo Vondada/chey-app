@@ -29,7 +29,7 @@ const MISSION_IDS = {
   intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-recover', 'che-status'],
   youtube: ['yt-ideas', 'yt-research', 'yt-script', 'yt-video', 'yt-voice', 'yt-thumbnail', 'yt-seo', 'yt-publish', 'yt-batch', 'yt-analytics', 'yt-grow'],
   trading: ['trade-open', 'trade-chart', 'trade-setup', 'trade-liquidity', 'trade-risk', 'trade-backtest', 'trade-journal', 'trade-alert', 'trade-execute'],
-  build: ['site-build', 'site-redesign', 'site-audit', 'site-publish', 'app-build', 'app-fix', 'ai-build', 'code-review', 'che-release', 'iphone-update', 'rea-inspect', 'rea-explain', 'rea-debug', 'rea-compare', 'rea-rebuild', 'rea-status'],
+  build: ['site-build', 'site-redesign', 'site-audit', 'site-publish', 'app-build', 'app-fix', 'ai-build', 'code-review', 'che-release', 'iphone-update', 'rea-inspect', 'rea-discover', 'rea-features', 'rea-explain', 'rea-debug', 'rea-compare', 'rea-rebuild', 'rea-build', 'rea-verify', 'rea-status'],
   money: ['money-dashboard', 'cashflow', 'budget', 'expenses', 'invoices', 'money-forecast', 'pricing', 'profit-report'],
   clients: ['lead-scout', 'lead-audit', 'lead-score', 'lead-match', 'lead-proposal', 'lead-outreach', 'lead-crm', 'lead-followup', 'client-deliver'],
   marketing: ['brand-build', 'marketing-plan', 'social-content', 'ads-plan', 'seo-growth', 'sales-funnel', 'business-launch'],
@@ -100,9 +100,9 @@ async function owner({ saved = new Map(), model = () => 'Here is the answer, sir
 
 // ─── 1. Catalog identities ────────────────────────────────────────────────
 
-test('1. the owner\'s 71 commands exist exactly as listed, plus six REA commands, in 8 categories, each fully described', () => {
-  assert.equal(COMMANDS.length, 77);
-  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 77, 'ids are unique');
+test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA commands, in 8 categories, each fully described', () => {
+  assert.equal(COMMANDS.length, 81);
+  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 81, 'ids are unique');
   assert.deepEqual(CATEGORIES.map((c) => c.id), Object.keys(MISSION_IDS));
   for (const [category, ids] of Object.entries(MISSION_IDS)) {
     assert.deepEqual(COMMANDS.filter((c) => c.category === category).map((c) => c.id), ids, category);
@@ -153,7 +153,7 @@ test('2. availability comes from real configuration: ready, needs setup, unsuppo
   const expired = connectorStatus({ CHE_TRADOVATE_OAUTH_CLIENT_ID: 'x', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'y' }, { broker: { expired: true } });
   assert.equal(expired.broker.state, 'needs_reconnect');
   const view = catalogView(bare);
-  assert.equal(view.commands.length, 77);
+  assert.equal(view.commands.length, 81);
   assert.ok(view.commands.every((c) => ['available', 'setup_required', 'unsupported', 'temporarily_unavailable'].includes(c.status)));
 });
 
@@ -193,6 +193,22 @@ test('3. a slash command and its plain-English request reach the same handler', 
   assert.equal((await che.say('What have I told you about my business?')).route, 'che_memory_provenance');
   assert.deepEqual(parseSlashCommand('/Trade-Chart  NQ please'), { name: 'trade-chart', command: commandById('trade-chart'), input: 'NQ please' });
   assert.equal(parseSlashCommand('Analyze the NQ chart'), null);
+});
+
+test('REA aliases are other names for one command, never a second command', async () => {
+  assert.equal(commandById('rea-map').id, 'rea-features');
+  assert.equal(commandById('rea-gap').id, 'rea-compare');
+  assert.equal(commandById('rea-plan').id, 'rea-rebuild');
+  assert.equal(commandById('rea-architecture').id, 'rea-explain');
+  assert.equal(commandById('rea-capabilities').id, 'rea-status');
+  const che = await owner({ env: READY_ENV });
+  for (const slash of ['/rea-capabilities', '/rea-map', '/rea-gap', '/rea-verify']) {
+    const out = await che.say(slash);
+    assert.equal(out.route, 'che_rea', slash);
+    assert.equal(out.modelCalls, 0, slash);
+  }
+  assert.match((await che.say('/rea-capabilities')).reply, /Native binaries \(Ghidra\): not available/);
+  assert.match((await che.say('/rea-gap')).reply, /no REA investigation to use yet[\s\S]*Nothing was run/);
 });
 
 test('unknown commands, missing input and missing setup are answered honestly with nothing run', async () => {
@@ -557,7 +573,7 @@ test('the Flutter catalog fixture matches what the Worker serves (regenerate: no
   const { fixtureCatalog } = await import('../../tool/dump_command_catalog.mjs');
   const fixture = JSON.parse(readFileSync(new URL('../../test/fixtures/command_catalog.json', import.meta.url), 'utf8'));
   assert.deepEqual(fixture, JSON.parse(JSON.stringify(fixtureCatalog())));
-  assert.equal(fixture.commands.length, 77);
+  assert.equal(fixture.commands.length, 81);
   assert.ok(fixture.templates.length >= 4);
 });
 
@@ -676,7 +692,7 @@ test('the owner\'s six spoken phrases are answered from the catalog with no mode
   for (const words of variants('CHE, open your Commands page.')) {
     const out = await che.say(words);
     assert.equal(out.route, 'che_command_center', words);
-    assert.match(out.reply, /77 commands in 8 groups[\s\S]*2\. YouTube, 11[\s\S]*Nothing was run/, words);
+    assert.match(out.reply, /81 commands in 8 groups[\s\S]*2\. YouTube, 11[\s\S]*Nothing was run/, words);
   }
   for (const words of variants('CHE, search for YouTube.')) {
     const out = await che.say(words);

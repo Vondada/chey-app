@@ -159,31 +159,38 @@ export function readablePublicUrl(url) {
 
 const MAX_READABLE_BYTES = 2_000_000;
 
-export async function fetchReadable(url, fetcher = fetch) {
+// One public page, raw. Redirects are followed by hand so every hop is checked
+// again; a declared oversize page is refused unread and any other body is read
+// as a stream and cut at the cap, so it is never buffered whole.
+export async function fetchPublicPage(url, fetcher = fetch, { maxBytes = MAX_READABLE_BYTES, userAgent = 'Mozilla/5.0 (CHE Library)' } = {}) {
   let parsed;
   try { parsed = new URL(url); } catch (_) { return { error: 'That link is not valid.' }; }
   if (!/^https?:$/.test(parsed.protocol)) return { error: 'Only web links can be read.' };
-  // Redirects are followed by hand so every hop is checked again.
   let current = parsed.toString();
   let response;
   for (let hop = 0; ; hop++) {
     if (!readablePublicUrl(current)) return { error: 'Only public web pages can be read.' };
-    response = await fetcher(current, { headers: { 'User-Agent': 'Mozilla/5.0 (CHE Library)' }, redirect: 'manual' });
+    response = await fetcher(current, { headers: { 'User-Agent': userAgent }, redirect: 'manual' });
     if (![301, 302, 303, 307, 308].includes(response.status)) break;
     const next = response.headers?.get?.('location');
     if (!next || hop >= 3) return { error: 'The page kept redirecting.' };
     try { current = new URL(next, current).toString(); } catch (_) { return { error: 'The page redirected to an invalid link.' }; }
   }
-  if (!response.ok) return { error: `The page answered ${response.status}.` };
+  if (!response.ok) return { error: `The page answered ${response.status}.`, status: response.status, final_url: current };
   const type = response.headers?.get?.('content-type') || '';
-  // A declared oversize page is refused unread; any other body is read as a
-  // stream and cancelled at the cap, so it is never buffered whole.
-  if (Number(response.headers?.get?.('content-length') || 0) > MAX_READABLE_BYTES) {
+  if (Number(response.headers?.get?.('content-length') || 0) > maxBytes) {
     response.body?.cancel?.().catch?.(() => {});
     return { error: 'That page is too large to read.' };
   }
-  const raw = await readCapped(response, MAX_READABLE_BYTES);
-  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(raw)?.[1]?.trim() || new URL(current).hostname;
+  const raw = await readCapped(response, maxBytes);
+  return { raw, type, status: response.status, final_url: current };
+}
+
+export async function fetchReadable(url, fetcher = fetch) {
+  const page = await fetchPublicPage(url, fetcher);
+  if (page.error) return { error: page.error };
+  const { raw, type } = page;
+  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(raw)?.[1]?.trim() || new URL(page.final_url).hostname;
   const text = /html/i.test(type) || /<html|<body/i.test(raw) ? htmlToText(raw) : raw;
   return { title: htmlToText(title).slice(0, 200), text };
 }

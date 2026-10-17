@@ -157,8 +157,8 @@ import {
 } from './research_memory.js';
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
-import { catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes } from './command_catalog.js';
-import { handleReaRequest } from './rea_runner.js';
+import { COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes } from './command_catalog.js';
+import { handleReaRequest, loadInvestigation, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
 import { LAST_RESULTS_KEY, loadCatalog, resourceChoice, resourceIntent, resultLinks, searchCatalog, speakResults } from './resource_catalogs.js';
 import { fiveLayerIntent, LAYER_RESULTS_KEY, reasoningLayer, runReasoningLayer, speakFiveLayerResults } from './reasoning_exam.js';
 import { AUTONOMY_EXAM, EXAM_RESULTS_KEY, examIntent, examLevel, gradeLevel, mergeExamResult, speakExamResults, ungradableEngineFailure } from './autonomy_exam.js';
@@ -507,7 +507,7 @@ async function commandCenterProbe(env, token) {
   };
   try {
     const catalog = await (await call('/api/commands', {}, device)).json().catch(() => ({}));
-    steps.push({ name: 'catalog: 77 commands in 8 categories', pass: catalog.commands?.length === 77 && catalog.categories?.length === 8, ms: 0, route: 'catalog', model_calls: 0, reply: `${catalog.commands?.length} commands` });
+    steps.push({ name: `catalog: ${COMMANDS.length} commands in 8 categories`, pass: catalog.commands?.length === COMMANDS.length && catalog.categories?.length === 8, ms: 0, route: 'catalog', model_calls: 0, reply: `${catalog.commands?.length} commands` });
     await step('unknown command answered honestly, nothing run', '/lead-scot barbers',
       ({ done, reply }) => done.source === 'che_command' && done.ok === false && done.model_calls === 0 && /Nothing was run/.test(reply));
     await step('slash command reaches its existing handler', '/trade-journal',
@@ -3916,6 +3916,34 @@ export class CheState extends DurableObject {
   // GitHub renderer with the live Worker's own token, then CHE's own checks of
   // the finished files. The video lands in the owner's media library like any
   // video the owner asks for. No paid engine is used and nothing is uploaded.
+  // What REA needs from CHE's own systems: the coding job queue, the job log
+  // (for a build's state) and memory. Nothing else is shared with it.
+  reaOptions({ history = [], owner = false } = {}) {
+    return {
+      history,
+      owner,
+      build: (request) => this.queueSelfDevelopment({ request, groundedRequest: request, immediate: true }),
+      jobLookup: async (id) => ((await this.loadData().catch(() => ({})))?.jobs || []).find((job) => job.id === id) || null,
+      remember: (memory) => rememberThread(this.ctx.storage, memory),
+    };
+  }
+
+  // The opt-in deploy REA check: real investigations through the owner's own
+  // REA log, so the iPhone shows them. Building is never part of it unless
+  // the deploy run explicitly asks for the one owner-authorized test build.
+  async reaProbe({ message = '', allow_build = false } = {}) {
+    const text = String(message || '').slice(0, 500);
+    const started = Date.now();
+    const options = this.reaOptions({ history: [], owner: true });
+    if (!allow_build) options.build = null;
+    const result = await handleReaRequest(this.ctx.storage, this.keyEnv || this.env, text, options).catch((error) => ({ ok: false, text: `REA error: ${String(error?.message || error).slice(0, 200)}` }));
+    if (!result) return { ok: false, routed: false, text: 'Not a REA request.' };
+    const investigation = result.investigation_id
+      ? await reaInvestigationDetail(this.ctx.storage, this.keyEnv || this.env, result.investigation_id, { jobLookup: options.jobLookup }).catch(() => null)
+      : null;
+    return { ok: result.ok, routed: true, ms: Date.now() - started, text: result.text, investigation_id: result.investigation_id || '', build_job_id: result.build_job_id || '', investigation };
+  }
+
   async videoProbe({ task_id = '', message = '', diagnose = false, reuse = false } = {}) {
     let env = this.env;
     try { env = withStoredKeys(this.env, await storedKeys(this.ctx.storage)); } catch (_) { /* Worker secrets only */ }
@@ -6661,6 +6689,30 @@ export class CheState extends DurableObject {
       if (path === '/api/office/packets' && request.method === 'GET') {
         return json({ packets: (data.office_packets || []).slice(0, 100) });
       }
+      // REA investigations for the iPhone's REA view. Read-only; actions go
+      // through chat commands (/rea-compare, /rea-build…) like every command.
+      if (path === '/api/rea/investigations' && request.method === 'GET') {
+        return json(await reaInvestigations(this.ctx.storage, this.keyEnv || this.env, { jobLookup: (id) => (data.jobs || []).find((job) => job.id === id) || null }));
+      }
+      const reaDetail = /^\/api\/rea\/investigations\/(rea-[0-9a-f]{8})$/.exec(path);
+      if (reaDetail && request.method === 'GET') {
+        const investigation = await reaInvestigationDetail(this.ctx.storage, this.keyEnv || this.env, reaDetail[1], { jobLookup: (id) => (data.jobs || []).find((job) => job.id === id) || null });
+        return investigation ? json({ investigation }) : json({ detail: 'There is no REA investigation with that id.' }, 404);
+      }
+      // A screenshot is served only when its investigation lists it.
+      const reaFile = /^\/api\/rea\/files\/(rea-[0-9a-f]{8})\/((?:desktop|mobile)\.jpg)$/.exec(path);
+      if (reaFile && request.method === 'GET') {
+        const inv = await loadInvestigation(this.ctx.storage, reaFile[1]);
+        if (!inv?.screenshots?.some((shot) => shot.file === reaFile[2])) return json({ detail: 'No such screenshot.' }, 404);
+        const env = this.keyEnv || this.env;
+        const found = await fetch(`https://api.github.com/repos/${env.CHE_GITHUB_REPO}/contents/mailbox/rea/${reaFile[1]}/${reaFile[2]}?ref=che-mailbox`, {
+          headers: { Authorization: `Bearer ${env.CHE_GITHUB_TOKEN}`, Accept: 'application/vnd.github.raw', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'CHE-REA' },
+        }).catch(() => null);
+        if (!found?.ok) return json({ detail: 'The screenshot could not be read from GitHub.' }, 502);
+        const bytes = new Uint8Array(await found.arrayBuffer());
+        if (bytes.length > 600_000 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return json({ detail: 'The stored screenshot is not a valid image.' }, 502);
+        return new Response(bytes, { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=3600' } });
+      }
       // The Command Center catalog with live status, saved workflows and runs.
       if (path === '/api/commands' && ['GET', 'POST'].includes(request.method)) {
         // A Google Ads grant Google has not approved yet is checked again on each refresh.
@@ -7830,8 +7882,16 @@ export class CheState extends DurableObject {
         // REA requests (reverse engineering) take their own read-only route before
         // any repository or coding routing. They dispatch analysis; they never start
         // a coding job, commit or deploy.
-        const rea = await handleReaRequest(this.ctx.storage, this.env, message);
-        if (rea) return ndjsonReply(rea.text, { source: 'che_rea', ok: rea.ok });
+        // Building from an investigation is the one REA step that changes code:
+        // it reuses the self-development job (draft PR, never a merge).
+        const rea = await handleReaRequest(this.ctx.storage, this.keyEnv || this.env, message, this.reaOptions({ history: ownerHistory, owner: ownerDevice }));
+        if (rea) {
+          return ndjsonReply(rea.text, {
+            source: 'che_rea', ok: rea.ok,
+            ...(rea.investigation_id ? { rea_investigation: rea.investigation_id } : {}),
+            ...(rea.build_job_id ? { background_job_id: rea.build_job_id } : {}),
+          });
+        }
 
         // Explicit chat-only evaluations are terminal for action routing. The
         // question may discuss coding, PRs, deployment or collaboration, but
@@ -11619,6 +11679,12 @@ export default {
       return json(await env.CHE_STATE.getByName('owner').videoProbe({
         task_id: taskId, message: String(body.message || '').slice(0, 500), diagnose: body.diagnose === true, reuse: body.reuse === true,
       }));
+    }
+    // The opt-in deploy REA check (deploy run with rea_check): same token.
+    if (path === '/api/rea/probe' && request.method === 'POST') {
+      if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
+      const body = await request.json().catch(() => ({}));
+      return json(await env.CHE_STATE.getByName('owner').reaProbe({ message: String(body.message || '').slice(0, 500), allow_build: body.allow_build === true }));
     }
     if (path === '/api/memory/probe' && request.method === 'POST') {
       if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
