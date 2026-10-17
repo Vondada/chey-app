@@ -361,25 +361,31 @@ const CODING = /\b(?:coding|opencode|self[- ]development)\b/i;
 // A coding run, job or session: the record a history question is about.
 const WORK = '(?:coding|opencode|self[- ]development)\\s+(?:jobs?|runs?|sessions?|attempts?|executions?|tasks?|work)';
 // One particular record, not coding jobs in general ("what states can a coding job be in").
-const DEFINITE = /\b(?:the|that|this|my|your|ur|her|its|che['’]?s|chey['’]?s|last|latest|recent|newest|previous|current)\s+(?:(?:last|latest|recent|newest|previous|current|most\s+recent|failed|own)\s+)?(?:coding|opencode|self[- ]development)\b|\b(?:coding|opencode)\s+(?:status|state|history)\b/i;
+const DEFINITE = /\b(?:the|that|this|my|your|ur|her|its|che['’]?s|chey['’]?s|last|latest|recent|newest|previous|current)\s+(?:(?:last|latest|recent|newest|previous|current|most\s+recent|failed|own)\s+)?(?:coding|opencode|self[- ]development)\b|\b(?:coding|opencode)\s+(?:(?:jobs?|runs?)\s+)?(?:status|state|history|progress)\b/i;
 const STATE_WORD = /\b(?:states?|status|results?|progress|outcomes?|updates?|news)\b/i;
 // The phrases the old "coding status" route answered, kept word for word.
 const STATUS_PHRASE = new RegExp(`^\\s*(?:${WAKE})?(?:(?:what(?:'s|’s| is)\\s+)?(?:the|my)\\s+)?(?:coding job|coding)\\s+status\\??\\s*$|^\\s*what is the status of (?:the|my) coding job\\??\\s*$|^\\s*how(?:'s|’s| is) (?:the|my) coding job( going)?\\??\\s*$|^\\s*what happened (?:to|with) (?:the|my|that) coding job\\??\\s*$|^\\s*check (?:the )?(?:coding|opencode) (?:logs?|job)\\??\\s*$`, 'i');
+// "Don't change anything," "never retry it": a prohibition on CHE's own actions, which a read-only answer
+// honors by itself. "Don't forget to remind me" and "don't let it happen again" ask for something.
+const PROHIBITION = `(?:do\\s+not|don['’]t|never|no\\s+need\\s+to)\\s+(?:(?:actually|ever|just|even|go\\s+and|try\\s+to|attempt\\s+to)\\s+)*(?:${ACTION_VERB}|do\\s+(?:anything|something|any\\s+\\w+|a\\s+thing|more|work)|touch\\s+\\w+|modify|edit|alter)\\b`;
 // How the turn opens once wake words, "please" and leading "don't change anything," clauses are set aside.
-const OPENING_ASIDE = new RegExp(`^\\s*(?:(?:hey|hi|ok|okay|so|and|um|uh)[,\\s]+)*(?:${WAKE})?(?:(?:do\\s+not|don['’]t|never|no\\s+need\\s+to)\\b[^.!?;,]*[.!?;,]\\s*)*(?:(?:please|just|only|quickly|now|so|then|but)\\s+)*`, 'i');
+const OPENING_ASIDE = new RegExp(`^\\s*(?:(?:hey|hi|ok|okay|so|and|um|uh)[,\\s]+)*(?:${WAKE})?(?:${PROHIBITION}[^.!?;,]*[.!?;,]\\s*)*(?:(?:please|just|only|quickly|now|so|then|but)\\s+)*`, 'i');
 const QUESTION_OPENING = /^(?:what(?:['’]s|s)?|which|why(?:['’]d)?|how(?:['’]s|s)?|did(?:n['’]?t)?|does(?:n['’]?t)?|do|has(?:n['’]?t)?|have(?:n['’]?t)?|had|is(?:n['’]?t)?|are(?:n['’]?t)?|was(?:n['’]?t)?|were(?:n['’]?t)?|when|where|any|tell|show|give|check|read|explain|describe|summari[sz]e|report|inspect|look|review|examine|list|walk\s+me\s+through|(?:can|could|would|will)\s+(?:you|u)\s+(?:please\s+)?(?:tell|show|give|check|read|explain|describe|summari[sz]e|list|look|inspect|review)|i\s+(?:want|need|would\s+like|['’]d\s+like)\s+to\s+(?:know|see|hear)|let\s+me\s+(?:know|see|hear))\b/i;
 // A bare record noun phrase ("latest coding execution history?") is a question too, but only when
 // nothing but the record follows it: "the coding job status should be shorter" is a request.
-const NOUN_OPENING = /^(?:the|my|your|ur|her|che['’]s|latest|last|recent|newest|current|previous|most\s+recent|coding|opencode)\b/i;
+const NOUN_OPENING = /^(?:the|my|your|ur|her|che['’]s|latest|last|recent|newest|current|previous|most\s+recent|coding|opencode|status|state|progress|history|update|news)\b/i;
 // Talking to or about another AI's messages belongs to the mailbox, consult and status routes.
 const PEERS = 'claude|chatgpt|codex|gemini|cursor|copilot|grok|mistral|groq|deepseek|openai';
 const PEER_TALK = new RegExp(`\\b(?:tell|ask|message|text|e-?mail|ping|notify|let)\\s+(?:${PEERS})\\b|\\b(?:${PEERS})(?:['’]s)?\\s+(?:say|said|reply|replied|respond|responded|answer|answered|write|wrote|think|thinks|thought|messages?|notes?|handoff)\\b|\\b(?:did|has|have)\\s+(?:${PEERS})\\s+(?:say|reply|respond|answer|write|get\\s+back|message)\\b`, 'i');
 // Clauses: sentences, plus "and tell me ..."-style read requests joined to a question.
 const CLAUSE_BREAK = /[.;:!?]+|,?\s+(?:and|then|also)\s+(?=(?:tell|show|give|list|explain|read|summari[sz]e|describe|report|what|why|how|which|when|did|is|was)\b)/i;
-const NEGATION_CLAUSE = /^(?:(?:please\s+)?(?:do\s+not|don['’]t|never|no\s+need\s+to))\b/i;
+const NEGATION_CLAUSE = new RegExp(`^(?:please\\s+)?${PROHIBITION}`, 'i');
 // What may follow the question inside its own clause: filler, time words, the record itself, its
 // tests or pull request. Any verb there is a second request ("why did it fail cancel it").
 const RECORD_REF = '(?:(?:the|that|this|my|your|ur|its|her|che[\'’]s)\\s+)?(?:(?:last|latest|recent|newest|previous|current|most\\s+recent|failed)\\s+)?(?:(?:coding|opencode|self[- ]development)\\s+)?(?:jobs?|runs?|sessions?|attempts?|executions?|tasks?|runner|work)';
+const FIELD = '(?:details?|errors?(?:\\s+messages?)?|failures?(?:\\s+reasons?)?|reasons?|logs?|results?|status|state|summary|receipt|evidence|(?:changed\\s+)?files?|file\\s+(?:list|paths?|names?)|paths?|filenames?|models?|run\\s+(?:ids?|links?|urls?)|links?|urls?|pull\\s+requests?|prs?|tests?(?:\\s+results?)?|progress|outcomes?|diff|changes|bugs?|issues?|problems?|features?|requests?|branch(?:es)?|commits?|workflows?)';
+// One field or a list of them: "the run IDs, results, model errors, file changes and PRs".
+const FIELDS = `${FIELD}(?:\\s*(?:,\\s*(?:and\\s+)?|and\\s+)(?:(?:the|its|model|file|test|run|github|error)\\s+)*${FIELD})*`;
 const ALLOWED_TAIL = new RegExp(`^(?:${[
   '[\\s?.!,;:\'"’]+',
   'please', 'sir', 'thanks', 'thank\\s+you', 'ok(?:ay)?', 'now', 'yet', 'so\\s+far', 'today', 'tonight', 'yesterday', 'last\\s+night',
@@ -388,14 +394,14 @@ const ALLOWED_TAIL = new RegExp(`^(?:${[
   'che', 'chay', 'chey', 'shay',
   `(?:in|on|for|from|of|with|by|during|about)\\s+(?:it|that|them|${RECORD_REF})`,
   '(?:on|in|from)\\s+(?:github(?:\\s+actions)?|the\\s+runner|opencode|the\\s+runtime)',
-  '(?:the|a|an|any|its|that|this|all|my|your|ur)\\s+[a-z][\\w\'’-]*(?:\\s+[a-z][\\w\'’-]*){0,2}',
+  `(?:(?:the|a|an|its|their|all\\s+the|any)\\s+)?${FIELDS}`,
+  'the\\s+other\\s+(?:day|night|week)',
   `to\\s+${ACTION_VERB}`,
   'and\\s+(?:why|when|how|what\\s+happened)',
 ].join('|')})*$`, 'i');
 // A clause that is only courtesy ("thanks", "please, sir").
 const FILLER = /^(?:[\s?.!,;:'"’]+|please|sir|thanks|thank\s+you|ok(?:ay)?|che|chay|chey|shay)*$/i;
 const TAIL_VERB = new RegExp(`(?<!\\bto\\s)\\b(?:${ACTION_VERB}|tell|ask|recover|debug|diagnose|redo|rebuild|kick|put|switch|learn|terminate|rollback|approve|finish|cancel|stop|delete)\\b`, 'i');
-const VERB_AT_END = new RegExp(`\\b(?:${ACTION_VERB}|recover|debug|redo|rebuild|terminate|approve|finish)\\s*$`, 'i');
 
 function okTail(tail) {
   return tail.length <= 120 && ALLOWED_TAIL.test(tail) && !TAIL_VERB.test(tail);
@@ -405,9 +411,6 @@ function okTail(tail) {
 // "why?" or "what happened?", a request for one of its fields ("show me the error"), or a question
 // about it ("did it pass?"). Anything else, read verbs included ("give it another go", "tell Mom",
 // "how are my trades?", "what's the weather?"), is another request, and its own route takes the turn.
-const FIELD = '(?:details?|errors?(?:\\s+messages?)?|failures?(?:\\s+reasons?)?|reasons?|logs?|results?|status|state|summary|receipt|evidence|(?:changed\\s+)?files?|file\\s+(?:list|paths?|names?)|paths?|filenames?|models?|run\\s+(?:ids?|links?|urls?)|links?|urls?|pull\\s+requests?|prs?|tests?(?:\\s+results?)?|progress|outcomes?|diff|changes)';
-// One field or a list of them: "the run IDs, results, model errors, file changes and PRs".
-const FIELDS = `${FIELD}(?:\\s*(?:,\\s*(?:and\\s+)?|and\\s+)(?:(?:the|its|model|file|test|run|github|error)\\s+)*${FIELD})*`;
 const REF = `(?:it|that|they|${RECORD_REF})`;
 const FOLLOW_UP = [
   /^(?:(?:and|so|but)\s+)?(?:why|how\s+come|when|since\s+when|what\s+happened|what\s+went\s+wrong|what\s+failed|where\s+did\s+it\s+(?:stop|fail|get\s+stuck)|how\s+long(?:\s+did\s+it\s+(?:take|run))?|is\s+that\s+(?:all|it)|(?:tell|show)\s+me(?:\s+(?:what\s+happened|what\s+went\s+wrong|why|how|when|everything|more))?|let\s+me\s+know|i\s+(?:want|need)\s+to\s+know|explain|be\s+(?:brief|honest|specific)|quick\s+question)\b/i,
@@ -427,7 +430,7 @@ const FOLLOW_UP_TAIL = new RegExp(`^(?:${[
   'che', 'chay', 'chey', 'shay',
   `(?:in|on|for|from|of|with|by|during|about)\\s+(?:it|that|them|${RECORD_REF})`,
   '(?:on|in|from)\\s+(?:github(?:\\s+actions)?|the\\s+runner|opencode|the\\s+runtime)',
-  `(?:(?:the|its|their|all\\s+the|any)\\s+)?${FIELDS}`,
+  `(?:(?:the|a|an|its|their|all\\s+the|any)\\s+)?${FIELDS}`,
   'and\\s+(?:why|when|how|what\\s+happened)',
 ].join('|')})*$`, 'i');
 
@@ -443,7 +446,7 @@ function followUp(body) {
 
 // Where the question about a coding record ends in this clause, or -1 when it asks none.
 function questionEnd(clause, { coding, text }) {
-  const ofRun = '(?:the\\s+|that\\s+|this\\s+|my\\s+|your\\s+|ur\\s+|the\\s+last\\s+|the\\s+latest\\s+)?(?:coding|opencode)\\s+(?:jobs?|runs?|attempts?|sessions?)';
+  const ofRun = '(?:(?:the|that|this|my|your|ur)\\s+(?:(?:last|latest|previous|recent|newest|current|most\\s+recent)\\s+)?)?(?:coding|opencode)\\s+(?:jobs?|runs?|attempts?|sessions?)';
   const anchors = [
     // "How far did Claude get?" names no coding word; "how far did it get with the upload" is another job.
     /\bhow\s+far\s+(?:did|has|have)\s+(?:claude|codex|chatgpt|the\s+(?:coding|build)\s+(?:job|run|session))\b[\s\S]{0,20}\b(?:get|gotten|got|come)\b/gi,
@@ -463,6 +466,16 @@ function questionEnd(clause, { coding, text }) {
       /\bwhat\s+(?:happened|went\s+wrong)\s+(?:to|with)\s+(?:the|my|that|this|the\s+last|the\s+latest|your)\s+(?:coding|opencode)\s+(?:job|run|attempt|session)\b/gi,
       new RegExp(`\\bhow\\s+did\\s+${ofRun}\\s+go\\b|\\b(?:is|are)\\s+${ofRun}\\s+(?:still\\s+)?(?:running|done|finished|working|stuck|alive|queued)\\b|\\bwhat\\s+did\\s+${ofRun}\\s+do\\b`, 'gi'),
       /\bshow\s+me\s+the\s+actual\s+(?:result|outcome|evidence)\b/gi,
+      // The same record asked about in other words: how it is doing, whether it crashed, which model,
+      // how long, when, what is blocking it. Each names the coding job itself.
+      new RegExp(`\\bhow(?:['’]?s|\\s+is)\\s+${ofRun}(?:\\s+(?:going|doing|coming\\s+along|looking))?\\b`, 'gi'),
+      new RegExp(`\\b(?:did|has|have)\\s+${ofRun}\\s+(?:crash|crashed|die|died|time[d]?\\s+out|hang|hung|get\\s+stuck|pass\\s+or\\s+fail|succeed\\s+or\\s+fail)\\b`, 'gi'),
+      new RegExp(`\\b(?:which|what)\\s+models?\\s+(?:did|does|is|was)\\s+${ofRun}\\s+(?:use|using|run\\s+on|try|pick)\\b`, 'gi'),
+      new RegExp(`\\bhow\\s+long\\s+(?:did|has|is)\\s+${ofRun}\\s+(?:take|taken|run|running|been\\s+running|last)\\b`, 'gi'),
+      new RegExp(`\\bwhen\\s+did\\s+${ofRun}\\s+(?:start|begin|finish|end|run|fail|stop|last\\s+run)\\b`, 'gi'),
+      new RegExp(`\\bwhat(?:['’]?s|\\s+is)\\s+(?:going\\s+on|blocking|wrong|happening|new|the\\s+latest|the\\s+hold-?up)\\s+(?:with|on)\\s+${ofRun}\\b`, 'gi'),
+      new RegExp(`\\bis\\s+${ofRun}\\s+(?:retrying|recovering|blocked|failing|passing|green|red|ok|okay|alright|healthy)\\b`, 'gi'),
+      new RegExp(`\\bhow\\s+did\\s+${ofRun}\\s+(?:go|do|turn\\s+out|end(?:\\s+up)?)\\b`, 'gi'),
       // "Inspect that coding job": the job's record, not the code that runs it.
       /\b(?:inspect|check|look\s+at|review|show\s+me|examine)\s+(?:that|the|my|this|your|the\s+last|the\s+latest)\s+(?:coding|opencode)\s+(?:jobs?|runs?|sessions?|attempts?)\b/gi,
     );

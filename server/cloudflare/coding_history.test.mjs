@@ -69,6 +69,26 @@ const HISTORY = [
   'Why did the coding job fail? Show me the error details.',
   'What happened to my coding job? Did it pass the tests?',
   'What files did the coding job change? Tell me the paths.',
+  // Seventh review: the same record asked about in other words, and prohibitions as asides.
+  'hows the coding job',
+  'how is the coding job doing',
+  'whats going on with the coding job',
+  'did the coding job crash',
+  'did the coding job time out',
+  'which model did the coding job use',
+  'what model did the coding job run on',
+  'how long did the coding job take',
+  'when did the coding job start',
+  'is the coding job retrying',
+  'did the coding job pass or fail',
+  'how did my last coding job go',
+  'status of the coding job',
+  'whats the latest on the coding job',
+  'coding job state',
+  'Did the coding job open a pull request?',
+  "Don't change anything. What happened to the coding job?",
+  "coding status. don't touch anything",
+  'What happened to the coding job the other day?',
 ];
 
 for (const message of HISTORY) {
@@ -232,6 +252,25 @@ const NOT_HISTORY = [
   "What's the coding status? Show me the trading lab.",
   'whats the coding status and tell me when its done',
   'Why did the coding job fail? Show me the failing test file.',
+  // Seventh review: "don't forget to…" and "never do that again" ask for something; only a
+  // prohibition on CHE's own actions ("don't change anything") is an aside.
+  "coding status. Don't forget to remind me about the dentist.",
+  "Coding status. Don't forget to remind me to call the bank at 3.",
+  "Don't forget to pick up milk; coding status?",
+  "don't forget to call mom, what's the coding status",
+  'coding status. don\'t forget to book the dentist',
+  "What's the coding status? Don't forget my 3pm meeting.",
+  "Why did the coding job fail? Don't let it happen again.",
+  'Why did the coding job fail? Never do that again.',
+  // A noun phrase after the question is another subject, not filler.
+  'coding status my trades',
+  'coding status then my trades',
+  'whats the coding status my trades',
+  'coding status the weather',
+  'coding status the time',
+  'coding status your reliability',
+  'what happened to the coding job my trades',
+  'coding status and tell dad the coding job failed',
 ];
 
 for (const message of NOT_HISTORY) {
