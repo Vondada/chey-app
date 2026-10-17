@@ -243,13 +243,11 @@ async function guard(context, net) {
       // The page closed while the request was in flight.
     }
   });
-  await context.routeWebSocket(/.*/, async (ws) => {
-    const host = hostOf(ws.url());
-    if (blockedHost(host) || (await resolvesPrivate(host))) {
-      net.blocked += 1;
-      return ws.close();
-    }
-    ws.connectToServer();
+  // Even a public WebSocket can carry state-changing client frames.
+  // Refuse the connection before the page can forward any messages.
+  await context.routeWebSocket(/.*/, (ws) => {
+    net.blocked += 1;
+    return ws.close();
   });
   context.on('page', (page) => {
     page.on('dialog', (dialog) => dialog.dismiss().catch(() => {}));
