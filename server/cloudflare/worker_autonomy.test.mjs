@@ -3539,6 +3539,11 @@ test('routes that answered before the old coding-status route still answer first
       const { done } = await ask(message);
       assert.notEqual(done.source, 'che_coding_history', message);
     }
+    // A trading question beside a coding one keeps its own route instead of being dropped.
+    for (const message of ['What is the latest coding run? How are my trades doing?', 'coding status. how are my trades?']) {
+      const { done } = await ask(message);
+      assert.equal(done.source, 'che_trading', message);
+    }
   } finally {
     restore();
   }

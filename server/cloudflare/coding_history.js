@@ -60,7 +60,8 @@ function jobState(job, stale) {
 
 // A built-in job keeps its outcome as result and error text, which is read back as written.
 function jobReceipt(job, stale, unread, olderActive) {
-  const lines = [jobState(job, stale), `Built-in job: ${String(job.id || '').slice(0, 12)}.`];
+  const id = clip(job.id).slice(0, 12);
+  const lines = [jobState(job, stale), id ? `Built-in job: ${id}.` : 'Built-in job: its record has no id.'];
   const asked = clip(job.request || job.title || job.prompt);
   if (asked) lines.push(`Request: ${asked}.`);
   if (clip(job.result)) lines.push(`Result: ${sentence(job.result)}`);
@@ -90,13 +91,15 @@ export function codingHistoryReceipt({ kind = 'none', job = null, stale = false,
   if (!status || Number(status.status) !== 200) {
     return `Coding run ${sessionId}: ${unreadReason(status)}. Its state, run and result are UNVERIFIED.`;
   }
-  const state = runtimeState(status);
+  // A state that is not text is not read back as "[object Object]"; it is unknown.
+  const record = { ...status, state: typeof status.state === 'string' ? status.state : 'unknown', failure: clip(status.failure) };
+  const state = runtimeState(record);
   const lines = [`Latest coding run: ${sessionId}.`];
   const asked = clip(request);
   if (asked) lines.push(`Request: ${asked}.`);
   // getStatus marks liveness 'unverified' when GitHub could not be asked; the run is then
   // neither running nor failed, whatever its last record said.
-  lines.push(status.liveness === 'unverified' && runtimeStateClass(status) === 'active'
+  lines.push(status.liveness === 'unverified' && runtimeStateClass(record) === 'active'
     ? `State: UNVERIFIED, last recorded as ${state.replace(/_/g, ' ')}.`
     : `State: ${state.replace(/_/g, ' ')}.`);
   const files = count(status.changed_files);
@@ -105,7 +108,7 @@ export function codingHistoryReceipt({ kind = 'none', job = null, stale = false,
   // The spoken sentence reads only fields of the expected type, so an odd record cannot put
   // "[object Object]" or "NaN" into it.
   lines.push(speakRuntimeStatus({
-    ...status,
+    ...record,
     changed_files: files ?? undefined,
     pr_number: pr || undefined,
     additions: count(status.additions) ?? undefined,
@@ -120,7 +123,8 @@ export function codingHistoryReceipt({ kind = 'none', job = null, stale = false,
   if (failure) lines.push(`${['waiting_capacity', 'resuming'].includes(state) ? 'Last failure' : 'Failure'}: ${sentence(failure)}`);
   const runId = Number(status.run_id) || 0;
   lines.push(runId ? `GitHub run: https://github.com/${repo || DEFAULT_REPO}/actions/runs/${runId}` : 'GitHub run: not recorded.');
-  if (tried.length) lines.push(`Models tried: ${tried.join(', ')}.`);
+  const unreadable = Array.isArray(status.models_tried) ? status.models_tried.length - tried.length : 0;
+  if (tried.length) lines.push(`Models tried: ${tried.join(', ')}${unreadable > 0 ? `, plus ${unreadable} entr${unreadable === 1 ? 'y' : 'ies'} I could not read` : ''}.`);
   else if (clip(status.model)) lines.push(`Model: ${clip(status.model)}.`);
   else lines.push('Models tried: not recorded.');
   lines.push(files === null ? 'Files changed: not recorded.' : `Files changed: ${files}.`);

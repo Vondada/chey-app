@@ -386,7 +386,7 @@ const ALLOWED_TAIL = new RegExp(`^(?:${[
   'this\\s+(?:morning|afternoon|evening|week|time)', 'last\\s+time', 'earlier', 'lately', 'recently', 'again', 'exactly', 'right\\s+now',
   'already', 'at\\s+all', 'or\\s+not', 'in\\s+(?:detail|full|short|brief)', 'briefly', 'aloud', 'out\\s+loud', 'for\\s+me', 'then', 'anyway',
   'che', 'chay', 'chey', 'shay',
-  `(?:in|on|for|from|of|with|by|during|about)\\s+${RECORD_REF}`,
+  `(?:in|on|for|from|of|with|by|during|about)\\s+(?:it|that|them|${RECORD_REF})`,
   '(?:on|in|from)\\s+(?:github(?:\\s+actions)?|the\\s+runner|opencode|the\\s+runtime)',
   '(?:the|a|an|any|its|that|this|all|my|your|ur)\\s+[a-z][\\w\'’-]*(?:\\s+[a-z][\\w\'’-]*){0,2}',
   `to\\s+${ACTION_VERB}`,
@@ -399,6 +399,46 @@ const VERB_AT_END = new RegExp(`\\b(?:${ACTION_VERB}|recover|debug|redo|rebuild|
 
 function okTail(tail) {
   return tail.length <= 120 && ALLOWED_TAIL.test(tail) && !TAIL_VERB.test(tail);
+}
+
+// A sentence beside the question counts only when it asks about the same record: a bare "tell me",
+// "why?" or "what happened?", a request for one of its fields ("show me the error"), or a question
+// about it ("did it pass?"). Anything else, read verbs included ("give it another go", "tell Mom",
+// "how are my trades?", "what's the weather?"), is another request, and its own route takes the turn.
+const FIELD = '(?:details?|errors?(?:\\s+messages?)?|failures?(?:\\s+reasons?)?|reasons?|logs?|results?|status|state|summary|receipt|evidence|(?:changed\\s+)?files?|file\\s+(?:list|paths?|names?)|paths?|filenames?|models?|run\\s+(?:ids?|links?|urls?)|links?|urls?|pull\\s+requests?|prs?|tests?(?:\\s+results?)?|progress|outcomes?|diff|changes)';
+// One field or a list of them: "the run IDs, results, model errors, file changes and PRs".
+const FIELDS = `${FIELD}(?:\\s*(?:,\\s*(?:and\\s+)?|and\\s+)(?:(?:the|its|model|file|test|run|github|error)\\s+)*${FIELD})*`;
+const REF = `(?:it|that|they|${RECORD_REF})`;
+const FOLLOW_UP = [
+  /^(?:(?:and|so|but)\s+)?(?:why|how\s+come|when|since\s+when|what\s+happened|what\s+went\s+wrong|what\s+failed|where\s+did\s+it\s+(?:stop|fail|get\s+stuck)|how\s+long(?:\s+did\s+it\s+(?:take|run))?|is\s+that\s+(?:all|it)|(?:tell|show)\s+me(?:\s+(?:what\s+happened|what\s+went\s+wrong|why|how|when|everything|more))?|let\s+me\s+know|i\s+(?:want|need)\s+to\s+know|explain|be\s+(?:brief|honest|specific)|quick\s+question)\b/i,
+  new RegExp(`^(?:(?:can|could|would|will)\\s+(?:you|u)\\s+(?:please\\s+)?)?(?:tell|show|give|read|explain|list|summari[sz]e|describe|report)(?:\\s+(?:me|us))?\\s+(?:the\\s+|its\\s+|their\\s+|all\\s+the\\s+|any\\s+)?${FIELDS}\\b`, 'i'),
+  new RegExp(`^(?:what(?:['’]s|\\s+is|\\s+was|\\s+were|\\s+are)|how(?:['’]s|\\s+is|\\s+are))\\s+(?:its|their|the)\\s+${FIELDS}\\b`, 'i'),
+  new RegExp(`^(?:did|does|has|have|is|was|were|are|had)(?:n['’]?t)?\\s+(?:${REF}|the\\s+tests?|the\\s+(?:pr|pull\\s+request))\\s+(?:(?:still|already|actually|ever|even|really|finally)\\s+)?(?:pass(?:ed)?|fail(?:ed)?|finish(?:ed)?|complete(?:d)?|succeed(?:ed)?|merged?|running|run|ran|work(?:ed|ing)?|stop(?:ped)?|crash(?:ed)?|done|open(?:ed)?|changed?\\s+(?:any(?:thing)?|files?)|get\\s+(?:merged|reviewed|approved)|push(?:ed)?|time[ds]?\\s+out|go\\s+through|stuck|alive|queued)\\b`, 'i'),
+  new RegExp(`^(?:what|which\\s+(?:files?|models?|tests?)|why|when|where|how\\s+long|how\\s+many\\s+(?:files|tests))\\s+(?:did|does|has|is|was)\\s+${REF}\\s+(?:change|use|fail|stop|break|do|take|try|run|touch|hit|report|say|produce|output)\\b`, 'i'),
+];
+
+// What may follow a follow-up: filler and the record's own fields ("did it pass the tests"), never
+// a free noun phrase, or "show me my letters" and "tell me when it's done" would pass as follow-ups.
+const FOLLOW_UP_TAIL = new RegExp(`^(?:${[
+  '[\\s?.!,;:\'"’]+',
+  'please', 'sir', 'thanks', 'thank\\s+you', 'ok(?:ay)?', 'now', 'yet', 'so\\s+far', 'today', 'tonight', 'yesterday', 'last\\s+night',
+  'this\\s+(?:morning|afternoon|evening|week|time)', 'last\\s+time', 'earlier', 'lately', 'recently', 'again', 'exactly', 'right\\s+now',
+  'already', 'at\\s+all', 'or\\s+not', 'in\\s+(?:detail|full|short|brief)', 'briefly', 'aloud', 'out\\s+loud', 'for\\s+me', 'then', 'anyway',
+  'che', 'chay', 'chey', 'shay',
+  `(?:in|on|for|from|of|with|by|during|about)\\s+(?:it|that|them|${RECORD_REF})`,
+  '(?:on|in|from)\\s+(?:github(?:\\s+actions)?|the\\s+runner|opencode|the\\s+runtime)',
+  `(?:(?:the|its|their|all\\s+the|any)\\s+)?${FIELDS}`,
+  'and\\s+(?:why|when|how|what\\s+happened)',
+].join('|')})*$`, 'i');
+
+// True when one follow-up form covers the clause, with only harmless words after it.
+function followUp(body) {
+  return FOLLOW_UP.some((re) => {
+    const match = re.exec(body);
+    if (!match) return false;
+    const tail = body.slice(match[0].length);
+    return tail.length <= 120 && FOLLOW_UP_TAIL.test(tail) && !TAIL_VERB.test(tail);
+  });
 }
 
 // Where the question about a coding record ends in this clause, or -1 when it asks none.
@@ -456,8 +496,8 @@ export function codingHistoryIntent(message) {
   const coding = CODING.test(text);
   // One particular record, not coding jobs in general.
   if (coding && !DEFINITE.test(text)) return false;
-  // Every clause must be the question, a "don't change anything" aside, or a plain read request;
-  // anything else in the turn is another request, and its own route takes the whole turn.
+  // Every clause must be the question, a "don't change anything" aside, or a follow-up about the
+  // same record; anything else in the turn is another request, and its own route takes the whole turn.
   let asked = false;
   for (const part of text.split(CLAUSE_BREAK)) {
     const body = part.replace(OPENING_ASIDE, '').trim();
@@ -467,7 +507,7 @@ export function codingHistoryIntent(message) {
       if (!QUESTION_OPENING.test(body) && !NOUN_OPENING.test(body)) return false;
       if (!okTail(body.slice(end))) return false;
       asked = true;
-    } else if (!QUESTION_OPENING.test(body) || trailingAction(body) || VERB_AT_END.test(body)) {
+    } else if (!followUp(body)) {
       return false;
     }
   }

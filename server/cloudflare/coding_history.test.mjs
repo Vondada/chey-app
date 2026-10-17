@@ -57,6 +57,18 @@ const HISTORY = [
   'Latest coding execution history?',
   'Did the coding run pass its tests?',
   'What files did the coding job change? Tell me the paths.',
+  // Sixth review: a separate sentence about the same record still belongs to the question.
+  'Why did the coding job fail? Tell me.',
+  'Why did the coding job fail? Show me the error.',
+  "Did the coding job open a pull request? What's its status?",
+  'What happened to my coding job? Did it pass?',
+  'Why did the coding job fail? What happened with it?',
+  "What's the latest coding run? Which model did it use?",
+  'Tell me: what happened to the coding job?',
+  'What is the latest coding run? Show me the run link and the files.',
+  'Why did the coding job fail? Show me the error details.',
+  'What happened to my coding job? Did it pass the tests?',
+  'What files did the coding job change? Tell me the paths.',
 ];
 
 for (const message of HISTORY) {
@@ -184,6 +196,42 @@ const NOT_HISTORY = [
   'the coding job status should say the PR number',
   'your coding history needs improving',
   'latest coding run status is too long',
+  // Sixth review: a second sentence that starts with a read verb or asks about something else is
+  // another request; the turn goes to its own route instead of a receipt that drops it.
+  'Why did the coding job fail? Give it another go.',
+  'Why did the coding job fail? Have another go.',
+  'Why did the coding job fail? How about another try?',
+  'Why did the coding job fail? What about trying again?',
+  'why did the coding job fail and give it another go',
+  'Did the coding job pass? Give it the green light.',
+  'Did the coding job pass? Check it in.',
+  'Why did the coding job fail? Show me a fix and apply it.',
+  'Why did the coding job fail? Tell me, then get it working.',
+  'Which files did the coding job change? Give them back the old code.',
+  'How far did Claude get? Give it to Codex.',
+  'How far did Claude get? Tell me and hand off to Codex.',
+  "What's the coding status? Show it to Claude.",
+  "What's the coding status? Tell me and Claude.",
+  'Why did the coding job fail? Explain it to Codex.',
+  'Did the coding job pass? Tell Mom.',
+  'whats the coding status and tell mom',
+  "What's the coding status? Give me a reminder in an hour.",
+  'Why did the coding job fail? Look into it.',
+  'Why did the coding job fail? Do what you suggested.',
+  'What is the latest coding run? How are my trades doing?',
+  'coding status and how are the trades doing',
+  'coding status. how are my trades?',
+  "What's the coding status? How did the backtest go?",
+  "What's the coding status? And what's the weather?",
+  "What's the coding status? Also what time is it?",
+  // A bare "show me" or "tell me" is a follow-up only when nothing but the record's fields follows.
+  'coding status? show me my letters',
+  "What's the coding status? Show me my paper trades.",
+  "What's the coding status? Show me your avatar.",
+  "What's the coding status? Show me your installed skills.",
+  "What's the coding status? Show me the trading lab.",
+  'whats the coding status and tell me when its done',
+  'Why did the coding job fail? Show me the failing test file.',
 ];
 
 for (const message of NOT_HISTORY) {
@@ -341,7 +389,7 @@ test('odd record contents are never spoken as made-up values', () => {
   assert.match(run, /Tests failed on pull request 412/);
   assert.match(run, /Pull request: #412\./);
   assert.match(run, /Files changed: 3\./);
-  assert.match(run, /Models tried: groq\/qwen3\./);
+  assert.match(run, /Models tried: groq\/qwen3, plus 1 entry I could not read\./);
   assert.doesNotMatch(run, /\[object Object\]/);
 });
 
