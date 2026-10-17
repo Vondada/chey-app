@@ -1313,3 +1313,44 @@ test('sourceWindow numbers source lines, keeps a named function and a matching c
   assert.equal(isTestPath('server/cloudflare/x.js'), false);
 });
 
+
+test('Coding Library: the crew gets the matching cited passages, bounded, and the result names them', async (t) => {
+  let DatabaseSync;
+  try { ({ DatabaseSync } = await import('node:sqlite')); } catch (_) { return t.skip('node:sqlite unavailable'); }
+  const { CheLibrary } = await import('./library.js');
+  const db = new DatabaseSync(':memory:');
+  const mem = memoryStore();
+  mem.sql = { exec: (q, ...p) => { const s = db.prepare(q); return /^\s*SELECT/i.test(q) ? s.all(...p) : (s.run(...p), []); } };
+  new CheLibrary(mem).add({
+    title: 'Flutter: Text widget',
+    text: 'Flutter: Text widget\nSource: https://docs.flutter.dev/ui/widgets/text\n\nA Text widget shows a string of text with a single style. The Ready banner text is a plain String passed to Text.',
+    meta: { shelf: 'coding', kind: 'doc', repo: 'flutter/website', path: 'sites/docs/src/content/ui/widgets/text.md', url: 'https://github.com/flutter/website/blob/a/x', docs_url: 'https://docs.flutter.dev/ui/widgets/text', version: 'a'.repeat(40), license: 'NOASSERTION', framework: 'Flutter', trust: 'official-docs', retrieved_at: new Date().toISOString(), verified_at: new Date().toISOString(), status: 'current' },
+  });
+  const payloads = [];
+  const env = {
+    CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r',
+    AI: {
+      run: async (_model, input) => {
+        const system = input.messages[0].content;
+        const payload = JSON.parse(input.messages[1].content);
+        payloads.push({ role: system.split(',')[0], payload });
+        if (system.includes('Architect')) return { response: JSON.stringify({ plan: 'p', search_terms: ['Ready. Type or speak a request.'], paths: ['lib/main.dart'] }) };
+        if (system.includes('Review')) return { response: JSON.stringify({ approved: true, target_correct: true, notes: [] }) };
+        return { response: JSON.stringify({ summary: 's', edits: [{ path: 'lib/main.dart', find: "'Ready. Type or speak a request.'", replace: "'Ready, sir.'" }] }) };
+      },
+    },
+  };
+  const out = await prepareSelfUpdate(env, 'make the Ready banner text say Ready, sir', fakeGitHub(), mem);
+  assert.equal(out.status, 200, out.detail);
+  const planner = payloads.find((p) => p.payload.owner_request);
+  assert.match(planner.payload.coding_library, /^CODING LIBRARY \(reference text[\s\S]*\[1\] Flutter: Text widget \(https:\/\/docs\.flutter\.dev\/ui\/widgets\/text; flutter\/website at aaaaaaaaaaaa; licence NOASSERTION\)/);
+  assert.ok(planner.payload.coding_library.length <= 2200, 'bounded');
+  assert.ok(payloads.some((p) => p.payload.inspected && /Text widget/.test(p.payload.coding_library || '')), 'engineers get it too');
+  assert.deepEqual(out.library_refs.map((r) => r.title), ['Flutter: Text widget']);
+
+  const plain = [];
+  const out2 = await prepareSelfUpdate({ ...env, AI: { run: async (m, input) => { plain.push(JSON.parse(input.messages[1].content)); return env.AI.run(m, input); } } }, 'make the Ready banner say Ready, sir', fakeGitHub(), memoryStore());
+  assert.equal(out2.status, 200);
+  assert.ok(plain.every((p) => p.coding_library === undefined), 'no library storage: the job runs exactly as before');
+  assert.deepEqual(out2.library_refs, []);
+});

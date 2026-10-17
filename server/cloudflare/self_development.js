@@ -14,6 +14,7 @@ import { isSelfUpdateEditablePath, isSelfUpdateReadablePath, validateUpdateFiles
 import { cachedCodeIndex, gitBlobSha, loadCodeIndex } from './code_index.js';
 import { ENGINEERING_PLAYBOOK } from './engineering_playbook.js';
 import { CHE_SELF_BRIEF } from './che_self_knowledge.js';
+import { codingContext } from './coding_library.js';
 import {
   AgentBudget,
   FAILURE_CLASS,
@@ -296,6 +297,7 @@ function fitPayload(build, maxChars) {
   const payload = build(evidenceBudget);
   if (Array.isArray(payload.team_chat)) payload.team_chat = payload.team_chat.slice(-4);
   if (typeof payload.team_lessons === 'string') payload.team_lessons = payload.team_lessons.slice(-1500);
+  if (typeof payload.coding_library === 'string') payload.coding_library = payload.coding_library.slice(0, 800);
   return JSON.stringify(payload);
 }
 
@@ -2029,10 +2031,14 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
   if (!task || !ownerIntent) return { status: 400, detail: 'Describe the requested app change.' };
   const ctx = createContext(env, task, options);
   // Every result carries the crew's conversation (shown to the owner as a group chat).
-  const finish = (result) => ({ ...result, discussion: result.discussion || (ctx.chat || []).slice(-30), diagnostics: { budget: ctx.budget.snapshot(), genuine_passes: ctx.genuinePasses || 0, events: ctx.diagnostics.slice(-40), outcomes: ctx.outcomes.slice(-30) } });
+  // Coding Library passages on this request (coding_library.js): cited reference text, bounded,
+  // the same for every agent. None on the shelf leaves the job exactly as before.
+  const library = memory?.sql ? codingContext(memory, ownerIntent, { budget: 1800 }) : { text: '', refs: [] };
+  const finish = (result) => ({ ...result, library_refs: library.refs, discussion: result.discussion || (ctx.chat || []).slice(-30), diagnostics: { budget: ctx.budget.snapshot(), genuine_passes: ctx.genuinePasses || 0, events: ctx.diagnostics.slice(-40), outcomes: ctx.outcomes.slice(-30) } });
 
   try {
     const lessons = await loadLessons(memory);
+    if (library.refs.length) note(ctx, { stage: 'library', kind: 'coding_library_used', refs: library.refs.map((r) => r.title).slice(0, 3) });
     const index = await sourceIndex(env, fetcher);
     if (index.error || !index.paths?.length) {
       const { failure_class: failureClass, kind } = classifyFailure({ status: index.status, detail: index.error || '' });
@@ -2070,6 +2076,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
           editable_source_files: listForBudget(index.editable_paths, Math.floor(budget * 0.6)),
           readable_source_files: listForBudget(index.paths.filter((p) => !isSelfUpdateEditablePath(p)), Math.floor(budget * 0.15)),
           team_lessons: lessonText(lessons),
+          coding_library: library.text || undefined,
         }),
         maxTokens: 1200,
         provider: member.provider,
@@ -2374,6 +2381,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
           discovery: discovery || undefined,
           failed_strategies: failedStrategies.slice(-6),
           team_lessons: lessonText(lessons),
+          coding_library: library.text || undefined,
           team_chat: chat.slice(-20),
         }),
         maxTokens: 6000,

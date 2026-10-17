@@ -159,7 +159,8 @@ import {
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
 import { COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes } from './command_catalog.js';
-import { handleReaRequest, loadInvestigation, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
+import { handleReaRequest, loadInvestigation, REA_JOBS_KEY, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
+import { CODING_SOURCES, codingLibraryIntent, learnDocs, libraryStatus, recordOutcome, refreshLibrary, saveInvestigation as saveInvestigationToLibrary, searchCodingLibrary, speakLearned as speakLibraryLearned, speakRefresh as speakLibraryRefresh, speakResults as speakLibraryResults, speakStatus as speakLibraryStatus } from './coding_library.js';
 import { LAST_RESULTS_KEY, loadCatalog, resourceChoice, resourceIntent, resultLinks, searchCatalog, speakResults } from './resource_catalogs.js';
 import { fiveLayerIntent, LAYER_RESULTS_KEY, reasoningLayer, runReasoningLayer, speakFiveLayerResults } from './reasoning_exam.js';
 import { AUTONOMY_EXAM, EXAM_RESULTS_KEY, examIntent, examLevel, gradeLevel, mergeExamResult, speakExamResults, ungradableEngineFailure } from './autonomy_exam.js';
@@ -6048,6 +6049,24 @@ export class CheState extends DurableObject {
         return json({ ok: new CheLibrary(this.ctx.storage).remove(String(id || '')) });
       }
 
+      // ─── Coding Library: the coding shelf of the library (coding_library.js) ───
+      if (path === '/api/coding-library' && request.method === 'GET') {
+        const q = new URL(request.url).searchParams.get('q');
+        return json(q ? { query: q, hits: searchCodingLibrary(this.ctx.storage, q, { limit: 8 }) } : libraryStatus(this.ctx.storage));
+      }
+      if (path === '/api/coding-library/learn' && request.method === 'POST') {
+        const receipt = await learnDocs(this.keyEnv || this.env, this.ctx.storage, { source: String(body.source || ''), topic: String(body.topic || ''), max: Number(body.max) || undefined });
+        return json({ ...receipt, text: speakLibraryLearned(receipt) }, receipt.ok ? 200 : 422);
+      }
+      if (path === '/api/coding-library/refresh' && request.method === 'POST') {
+        const result = await refreshLibrary(this.keyEnv || this.env, this.ctx.storage, { all: Boolean(body.all) });
+        return json({ ...result, text: speakLibraryRefresh(result) }, result.ok ? 200 : 503);
+      }
+      if (path === '/api/coding-library/save-rea' && request.method === 'POST') {
+        const answer = await this.codingLibraryTurn({ action: 'save_rea', id: String(body.id || '') });
+        return json(answer, answer.ok ? 200 : 422);
+      }
+
       // ─── Unread / importance badge for the app ────────────────────────
       if (path === '/api/mailbox/badge' && request.method === 'GET') {
         const flag = await unreadIncoming(this.ctx.storage, this.env);
@@ -7916,6 +7935,15 @@ export class CheState extends DurableObject {
             ...(rea.investigation_id ? { rea_investigation: rea.investigation_id } : {}),
             ...(rea.build_job_id ? { background_job_id: rea.build_job_id } : {}),
           });
+        }
+
+        // The Coding Library (coding_library.js): official docs saved at an exact commit, CHE's
+        // own coding outcomes and REA investigations. Learning stores reference text only; it
+        // never starts a coding job, and nothing it reads is an instruction.
+        const codingLibrary = ownerDevice ? codingLibraryIntent(message) : null;
+        if (codingLibrary) {
+          const answer = await this.codingLibraryTurn(codingLibrary).catch((error) => ({ ok: false, text: `My coding library could not answer, sir: ${String(error?.message || error).slice(0, 160)}. Nothing was saved.` }));
+          return ndjsonReply(answer.text, { source: 'che_coding_library', ok: answer.ok, coding_library: answer.receipt || null });
         }
 
         // Explicit chat-only evaluations are terminal for action routing. The
@@ -11744,6 +11772,57 @@ export class CheState extends DurableObject {
     return grounded;
   }
 
+  // One Coding Library turn, spoken and shown as large text.
+  async codingLibraryTurn(intent) {
+    const env = this.keyEnv || this.env;
+    const storage = this.ctx.storage;
+    if (intent.action === 'learn') {
+      if (!intent.source) return { ok: false, text: `Which documentation should I read, sir? I can read the official docs for ${Object.values(CODING_SOURCES).map((s) => s.framework).join(', ')}. For example: "learn the Flutter docs about navigation".` };
+      const receipt = await learnDocs(env, storage, { source: intent.source, topic: intent.topic });
+      return { ok: receipt.ok, text: speakLibraryLearned(receipt), receipt };
+    }
+    if (intent.action === 'search') {
+      const hits = searchCodingLibrary(storage, intent.query, { limit: 5 });
+      return { ok: hits.length > 0, text: speakLibraryResults(intent.query, hits) };
+    }
+    if (intent.action === 'refresh') {
+      const result = await refreshLibrary(env, storage, { all: intent.all });
+      return { ok: result.ok && !result.failed.length, text: speakLibraryRefresh(result) };
+    }
+    if (intent.action === 'save_rea') {
+      const jobs = (await storage.get(REA_JOBS_KEY)) || [];
+      const entry = intent.id
+        ? jobs.find((j) => j.id === intent.id)
+        : [...jobs].reverse().find((j) => j.kind === 'investigation' && ['complete', 'limited'].includes(j.state));
+      const inv = entry?.kind === 'investigation' ? await loadInvestigation(storage, entry.id) : null;
+      if (!inv) return { ok: false, text: intent.id ? `There is no REA investigation ${intent.id}, sir. Nothing was saved.` : 'There is no finished REA investigation to save yet, sir. Say "investigate" with an app, page or repository first.' };
+      const saved = saveInvestigationToLibrary(storage, inv);
+      if (saved.error) return { ok: false, text: `${saved.error} Investigation ${inv.id} is ${inv.state}.` };
+      return { ok: true, text: saved.duplicate ? `Investigation ${inv.id} of ${inv.target?.label} is already in my coding library, sir.` : `I saved REA investigation ${inv.id} of ${inv.target?.label} to my coding library, sir, with its evidence labels. My coding jobs will find it when a request matches.` };
+    }
+    return { ok: true, text: speakLibraryStatus(libraryStatus(storage), { staleOnly: Boolean(intent.stale) }) };
+  }
+
+  // What a finished coding job did, kept on the Coding Library shelf. Only real evidence:
+  // the pull request link from the job's own result, the proposal's files, the passages used.
+  async recordCodingOutcome(job, prepared, result) {
+    const text = `${result?.result || ''} ${result?.owner_message || ''}`;
+    const prUrl = text.match(/https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/)?.[0] || '';
+    const state = result?.status !== 'complete' ? 'failed'
+      : prUrl ? 'draft pull request opened'
+        : prepared?.already_satisfied ? 'already done; no change needed'
+          : prepared?.proposal ? 'built and reviewed; waiting for approval' : 'complete';
+    recordOutcome(this.ctx.storage, {
+      request: job.request || job.prompt,
+      state,
+      job_id: job.id,
+      pr_url: prUrl,
+      files: (prepared?.proposal?.files || []).map((f) => f.path),
+      refs: prepared?.library_refs || [],
+      error: result?.status === 'complete' ? '' : result?.error || result?.owner_message || '',
+    });
+  }
+
   async runSelfDevelopmentJob(job) {
     // Real peer replies to this job's collaboration packets are engineering
     // input (untrusted advice); peers that have not replied are simply absent.
@@ -11765,6 +11844,11 @@ export class CheState extends DurableObject {
     // exactly as the foreground path passes intentRequest, so recalled text
     // that names other files can never become an owner-named target.
     const prepared = await prepareSelfUpdate(this.env, groundedPrompt, fetch, this.ctx.storage, { ownerInitiated: true, intentRequest: prompt, checkpoint: job.checkpoint || null });
+    // Every finished job leaves its outcome on the Coding Library shelf for the next similar request.
+    const done = async (result) => {
+      await this.recordCodingOutcome(job, prepared, result).catch(() => null);
+      return result;
+    };
     await recordCrewThread(this.ctx.storage, { request: job.request || job.prompt, discussion: prepared?.discussion, outcome: crewOutcome(prepared) }).catch(() => null);
     if (prepared.status === 200 && prepared.proposal) {
       await recordReceipt(this.ctx.storage, { kind: 'proposal_ready', key: `proposal:${job.id}`, job_id: job.id, files: prepared.proposal.files.map((f) => f.path) });
@@ -11785,29 +11869,29 @@ export class CheState extends DurableObject {
         const ready = (Array.isArray(readyStored) ? readyStored : []).filter((item) => item.pending?.from_job !== job.id);
         ready.push({ pending: reviewed, topic: job.study_topic || '', at: reviewed.reviewed_at });
         await this.ctx.storage.put(READY_PROPOSALS_KEY, ready.slice(-10));
-        return {
+        return done({
           id: job.id,
           status: 'complete',
           result: proposalSummaryMessage(prepared.proposal, 'The coding job I saved finished, sir.'),
           owner_message: `${job.study_topic ? `The ${job.study_topic} build` : 'Another coding job'} finished and passed review, sir. It waits behind the change you have not decided on yet, so nothing is overwritten.`,
           error: '',
-        };
+        });
       }
       await this.ctx.storage.put(PENDING_SELF_UPDATE_KEY, reviewed);
       if ((await this.loadData().catch(() => ({})))?.autonomy !== false) {
         const auto = await autoOpenReviewedPr(this.env, this.ctx.storage, prepared.proposal);
-        return { id: job.id, status: 'complete', result: auto.message, owner_message: auto.message, error: '' };
+        return done({ id: job.id, status: 'complete', result: auto.message, owner_message: auto.message, error: '' });
       }
-      return {
+      return done({
         id: job.id,
         status: 'complete',
         result: proposalSummaryMessage(prepared.proposal, 'The coding job I saved finished, sir.'),
         owner_message: 'The coding job I saved finished, sir. The change was built and independently reviewed; say "create the PR" or approve the update card to open it.',
         error: '',
-      };
+      });
     }
     if (prepared.status === 200 && prepared.already_satisfied) {
-      return { id: job.id, status: 'complete', result: String(prepared.summary || ''), owner_message: 'The coding job finished, sir: the team verified the app already does that, so no change was needed.', error: '' };
+      return done({ id: job.id, status: 'complete', result: String(prepared.summary || ''), owner_message: 'The coding job finished, sir: the team verified the app already does that, so no change was needed.', error: '' });
     }
     // A pre-implementation engine failure is recoverable even when the
     // preparation layer classified the aggregate result as INTERNAL. With zero
@@ -11830,14 +11914,14 @@ export class CheState extends DurableObject {
         from_job: job.id,
       });
     }
-    return {
+    return done({
       id: job.id,
       status: 'failed',
       result: '',
       failure_class: prepared.failure_class || FAILURE_CLASS.INTERNAL,
       owner_message: prepared.owner_message || ownerEngineeringMessage(prepared.failure_class || FAILURE_CLASS.INTERNAL),
       error: String(prepared.detail || 'Coding job failed.').slice(0, 1000),
-    };
+    });
   }
 }
 

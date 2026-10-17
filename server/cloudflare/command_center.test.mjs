@@ -42,8 +42,9 @@ const SITE_HTML = '<!doctype html><html lang="en"><head><meta charset="utf-8"><m
 const siteModel = (input) => (/website|web app|change the website|<html|html document/i.test(JSON.stringify(input.messages?.slice(-1) || '')) && /build|change|edit/i.test(JSON.stringify(input.messages?.slice(-1) || ''))
   ? SITE_HTML : 'Here is the answer, sir.');
 
-function storageFor(saved) {
+function storageFor(saved, sql = null) {
   return {
+    ...(sql ? { sql } : {}),
     get: async (key) => (saved.has(key) ? structuredClone(saved.get(key)) : undefined),
     put: async (key, value) => saved.set(key, structuredClone(value)),
     delete: async (key) => saved.delete(key),
@@ -60,7 +61,15 @@ const READY_ENV = {
 
 // A paired owner phone. `model` answers every model call; `inputs` keeps
 // what each call was sent, so tests can see exactly what reached a model.
-async function owner({ saved = new Map(), model = () => 'Here is the answer, sir.', env: extra = {} } = {}) {
+// `sql: true` gives the Durable Object a real SQLite store (node:sqlite), as production has.
+async function sqlite() {
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(':memory:');
+  return { exec: (q, ...p) => { const s = db.prepare(q); return /^\s*SELECT/i.test(q) ? s.all(...p) : (s.run(...p), []); } };
+}
+
+async function owner({ saved = new Map(), model = () => 'Here is the answer, sir.', env: extra = {}, sql = false } = {}) {
+  const store = sql ? await sqlite() : null;
   const inputs = [];
   const pending = [];
   const env = {
@@ -69,7 +78,7 @@ async function owner({ saved = new Map(), model = () => 'Here is the answer, sir
   };
   let state;
   const connect = () => {
-    state = new CheState({ storage: storageFor(saved), waitUntil: (p) => pending.push(p) }, env);
+    state = new CheState({ storage: storageFor(saved, store), waitUntil: (p) => pending.push(p) }, env);
     env.CHE_STATE = { getByName: () => state };
     return state;
   };
@@ -101,8 +110,8 @@ async function owner({ saved = new Map(), model = () => 'Here is the answer, sir
 // ─── 1. Catalog identities ────────────────────────────────────────────────
 
 test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA commands, in 8 categories, each fully described', () => {
-  assert.equal(COMMANDS.length, 81);
-  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 81, 'ids are unique');
+  assert.equal(COMMANDS.length, 86);
+  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 86, 'ids are unique');
   assert.deepEqual(CATEGORIES.map((c) => c.id), Object.keys(MISSION_IDS));
   for (const [category, ids] of Object.entries(MISSION_IDS)) {
     assert.deepEqual(COMMANDS.filter((c) => c.category === category).map((c) => c.id), ids, category);
@@ -153,7 +162,7 @@ test('2. availability comes from real configuration: ready, needs setup, unsuppo
   const expired = connectorStatus({ CHE_TRADOVATE_OAUTH_CLIENT_ID: 'x', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'y' }, { broker: { expired: true } });
   assert.equal(expired.broker.state, 'needs_reconnect');
   const view = catalogView(bare);
-  assert.equal(view.commands.length, 81);
+  assert.equal(view.commands.length, 86);
   assert.ok(view.commands.every((c) => ['available', 'setup_required', 'unsupported', 'temporarily_unavailable'].includes(c.status)));
 });
 
@@ -573,7 +582,7 @@ test('the Flutter catalog fixture matches what the Worker serves (regenerate: no
   const { fixtureCatalog } = await import('../../tool/dump_command_catalog.mjs');
   const fixture = JSON.parse(readFileSync(new URL('../../test/fixtures/command_catalog.json', import.meta.url), 'utf8'));
   assert.deepEqual(fixture, JSON.parse(JSON.stringify(fixtureCatalog())));
-  assert.equal(fixture.commands.length, 81);
+  assert.equal(fixture.commands.length, 86);
   assert.ok(fixture.templates.length >= 4);
 });
 
@@ -692,7 +701,7 @@ test('the owner\'s six spoken phrases are answered from the catalog with no mode
   for (const words of variants('CHE, open your Commands page.')) {
     const out = await che.say(words);
     assert.equal(out.route, 'che_command_center', words);
-    assert.match(out.reply, /81 commands in 8 groups[\s\S]*2\. YouTube, 11[\s\S]*Nothing was run/, words);
+    assert.match(out.reply, /86 commands in 8 groups[\s\S]*2\. YouTube, 11[\s\S]*Nothing was run/, words);
   }
   for (const words of variants('CHE, search for YouTube.')) {
     const out = await che.say(words);
@@ -760,4 +769,72 @@ test('a fast command or screen reply drops a held payment or app request, so a l
     const yes = await che.say('yes');
     assert.doesNotMatch(yes.reply, /laptop|spotify/i, `${phrase}: a later yes releases nothing`);
   }
+});
+
+// ─── Coding Library (coding_library.js) ───────────────────────────────────
+
+// A public GitHub serving flutter/website's real docs layout at one commit.
+async function withFlutterDocs(run) {
+  const offline = globalThis.fetch;
+  const seen = [];
+  const sha = 'a'.repeat(40);
+  const pages = { 'cookbook/navigation/named-routes.md': '---\ntitle: Navigate with named routes\n---\n\nUse `Navigator.pushNamed` to move to a named route.\n' };
+  const ok = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input?.url || input);
+    seen.push(`${String(init.method || 'GET').toUpperCase()} ${url}`);
+    if (url === 'https://api.github.com/repos/flutter/website') return ok({ default_branch: 'main', license: { spdx_id: 'NOASSERTION', name: 'Other' } });
+    if (url === 'https://api.github.com/repos/flutter/website/commits/main') return ok({ sha });
+    const levels = { [sha]: 'sites', 't-sites': 'docs', 't-docs': 'src', 't-src': 'content' };
+    const tree = url.match(/\/repos\/flutter\/website\/git\/trees\/([^?]+)(\?recursive=1)?$/);
+    if (tree && tree[2]) return ok({ tree: Object.keys(pages).map((path) => ({ path, type: 'blob', sha: 'b1' })) });
+    if (tree && levels[tree[1]]) return ok({ tree: [{ path: levels[tree[1]], type: 'tree', sha: `t-${levels[tree[1]]}` }] });
+    const raw = url.match(/^https:\/\/raw\.githubusercontent\.com\/flutter\/website\/[0-9a-f]{40}\/sites\/docs\/src\/content\/(.+)$/);
+    if (raw && pages[raw[1]]) return new Response(pages[raw[1]], { status: 200 });
+    return new Response('{"message":"unexpected"}', { status: 500 });
+  };
+  try { return await run(seen); } finally { globalThis.fetch = offline; }
+}
+
+test('Coding Library: commands and spoken phrases reach the library route, with no model call and no coding job', async (t) => {
+  try { await import('node:sqlite'); } catch (_) { return t.skip('node:sqlite unavailable'); }
+  await withFlutterDocs(async (seen) => {
+    const che = await owner({ sql: true });
+    for (const words of ['/library-status', 'What is in your coding library?']) {
+      const out = await che.say(words);
+      assert.equal(out.route, 'che_coding_library', words);
+      assert.equal(out.modelCalls, 0, words);
+      assert.match(out.reply, /My coding library is empty[\s\S]*Flutter, Dart, TypeScript, React, Python, Cloudflare Workers, GitHub/, words);
+    }
+    const learned = await che.say('CHE, learn the Flutter docs about navigation');
+    assert.equal(learned.route, 'che_coding_library');
+    assert.equal(learned.modelCalls, 0);
+    assert.match(learned.reply, /I saved Flutter documentation on "navigation" to my coding library, sir: 1 added[\s\S]*flutter\/website at commit aaaaaaaaaaaa[\s\S]*Licence GitHub reports: Other[\s\S]*not new training/);
+    assert.ok(seen.every((s) => s.startsWith('GET ')), 'learning only reads');
+    assert.equal((che.saved.get('che')?.jobs || []).length, 0, 'no coding job was created');
+
+    for (const words of ['/library-search named route', 'Search your coding library for named routes']) {
+      const out = await che.say(words);
+      assert.equal(out.route, 'che_coding_library', words);
+      assert.equal(out.modelCalls, 0, words);
+      assert.match(out.reply, /Navigator\.pushNamed[\s\S]*https:\/\/docs\.flutter\.dev\/cookbook\/navigation\/named-routes, flutter\/website at aaaaaaa, licence NOASSERTION, confirmed today/, words);
+    }
+    const status = await che.say('/library-status');
+    assert.match(status.reply, /1 documentation page, 0 coding job outcomes and 0 REA investigations/);
+    const api = await che.get('/api/coding-library');
+    assert.equal(api.counts.docs, 1);
+    assert.equal(api.entries[0].docs_url, 'https://docs.flutter.dev/cookbook/navigation/named-routes');
+    assert.equal((await che.get('/api/coding-library?q=named%20route')).hits.length, 1);
+    assert.equal((await che.get('/api/library')).docs.length, 0, 'the owner\'s own memorized texts list is unchanged');
+    const save = await che.say('/library-save');
+    assert.equal(save.route, 'che_coding_library');
+    assert.match(save.reply, /no finished REA investigation to save yet/);
+  });
+});
+
+test('Coding Library: without SQLite storage CHE says so instead of claiming an empty or saved library', async () => {
+  const che = await owner();
+  const out = await che.say('What is in your coding library?');
+  assert.equal(out.route, 'che_coding_library');
+  assert.match(out.reply, /storage is not available right now/);
 });
