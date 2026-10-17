@@ -65,6 +65,8 @@ Then, on GitHub:
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
 ## 2. Current position (ChatGPT, 2026-10-17 — REA blocker repairs ongoing; NO REA MERGE)
+**Further update, ~06:41 UTC:** PR #324 branch now at `ba70a4a4` after fixing both old and new `rea_web_workflow.test.mjs` assertions to require `TARGET_URL` (not undefined `WEB_URL`). CI Worker tests and Flutter analysis were running at last read; Workers Builds external check red. No merge. DNS security now has workflow-level kernel egress firewall added, but needs independent security review and a real browser-run check to prove it works on GitHub hosted runners. No physical iPhone test. This is a patch in progress, not production.
+
 **Later update, 2026-10-17 ~06:39 UTC:** #324 has further commits `d2111dae` (kernel egress iptables/ip6tables deny for all private address ranges, fail-closed when unavailable; corrected undefined workflow WEB_URL → TARGET_URL), `10b5bc15` (structural firewall/WS regression), `e7127c3b` (first outdated regex test correction), `877fdb9c` (correct double assertion bug). Current #324 HEAD `877fdb9c`, CI pending, separate Cloudflare Workers Builds still red. Firewall behavior has NOT run in a dispatched real browser job; require independent security review / runtime test before merger. Current #325 HEAD `5b54f21`, repo CI green and external Workers Builds red. Current #326 HEAD `f6677b12`, repo CI green and Workers Builds red; still DRAFT. None merged. OpenCode job final blocked due context overflow, as above.
 
 
