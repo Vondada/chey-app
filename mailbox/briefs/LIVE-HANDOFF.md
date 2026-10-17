@@ -64,6 +64,23 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-17 ~11:25 UTC — coding failover: PR #328 in review, WIP)
+
+- **main** is `a3b8d8d` (#329). **Nothing from this entry is merged yet.**
+- **PR #328** (`chatgpt/che-coding-free-first-capped-paid`, head `d626521` at last push). Now titled "free-first routing, verified checkpoints and resume, $15-capped paid last". Still a DRAFT until the independent review and exact-head CI pass.
+  - Routing, paid gate and the cap check were already on the PR. This session added:
+    - failure classification (`server/cloudflare/coding_failover.mjs`); only quota, rate limit and timeout may resume;
+    - verified checkpoints (`tools/che_coding_checkpoint.mjs`): a failed model's change is kept only if it passes path rules, a 300 KB cap and syntax checks; otherwise it is reverted before the next model;
+    - bounded resume (15/60/180 min, max 3) on the same session id, with the checkpoint saved to `mailbox/runtime/checkpoints/<job>.json`; the claim allows the resume; then CHE's own team;
+    - source-edit anchor recovery in `applyEdits` (near-miss re-anchor, already-applied no-op, ambiguous stays an error);
+    - Flutter: "Waiting for free capacity" and "Resuming from checkpoint" in the coding card.
+  - Verified locally: Worker 1434/1434; checkpoint 9/9; runner-loop 6/6 against the real workflow step with a fake `opencode`; resume 5/5; anchor recovery 6/6; `run_checks.sh origin/main` passes. Flutter NOT run here (no Flutter on this machine).
+- **Real key check** (run 39026957737, a non-billable GET /api/v1/key): cap at most $15 and monthly reset PASSED. The gate stopped on `include_byok_in_limit`, which is not true on the key. Paid stays OFF.
+  - **Owner action:** in OpenRouter, turn on "include BYOK in limit" for that key, then run the workflow `CHE coding paid-key cap check`.
+- **Actions variables are NOT set.** This session's proxy returns 403 for the Actions variables API, and the gh token is invalid. `CHE_CODING_PAID_FALLBACK` stays unset, so paid is off. Owner sets it only after the key check passes and the owner approves spending. `CHE_CODING_FREE_PROVIDERS` defaults to `openrouter` only.
+- **Next:** the independent review's findings; exact-head CI green; squash-merge with `[worker-deploy]`; verify the deploy and `/health`; then a no-change live dispatch to prove a free model finishes a real run (only after the merge, and only with a request that cannot merge code).
+- **Not done:** the Gmail routing defect (task #34); Coding Library page; Trading Room; Phase 3-5 acceptance; the iPhone install of the Shorebird patch is still unverified.
+
 ## 2. Current position (Claude, 2026-10-17 ~10:40 UTC — #324, #325, #329 MERGED and deployed; live REA acceptance PASSED)
 
 - **main** is `a3b8d8d` (#329), on top of `f69d3ab` (#325) and `d63936e` (#324).
