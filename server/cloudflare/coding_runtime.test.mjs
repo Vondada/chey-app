@@ -137,6 +137,98 @@ test('missing or silent runtime records become failed after the bounded stale wi
   assert.doesNotMatch(speakRuntimeStatus(running), /is running/i);
 });
 
+test('a silent session whose workflow run is still live is never declared failed', async () => {
+  const id = 'ocr-1234abcd';
+  const old = new Date(Date.now() - 36 * 60_000).toISOString();
+
+  // No claim file, but an uncompleted dispatch run created after acceptance:
+  // the runner simply has not claimed it yet (e.g. queued concurrency).
+  const dispatching = new CheCodingRuntime(env, { fetcher: async (url) => {
+    const u = String(url);
+    if (u.includes('/contents/mailbox/runtime/')) return response(404, { message: 'Not Found' });
+    if (u.includes('/actions/workflows/')) return response(200, { workflow_runs: [{ status: 'in_progress', created_at: new Date(Date.now() - 35 * 60_000).toISOString() }] });
+    return response(404, { message: 'Not Found' });
+  } });
+  const dispatch = await dispatching.getStatus(id, { acceptedAt: old });
+  assert.equal(dispatch.state, 'dispatching', 'a live dispatch is reported as still dispatching, never dead');
+  assert.equal(recoverableRuntimeFailure(dispatch), false, 'a live run is never recovery material');
+
+  // Old heartbeat, but the claimed run itself is still in progress.
+  const content = Buffer.from(JSON.stringify({ session_id: id, state: 'running', claimed_at: old, run_id: 77 })).toString('base64');
+  const liveRun = new CheCodingRuntime(env, { fetcher: async (url) => {
+    const u = String(url);
+    if (u.includes('/contents/mailbox/runtime/')) return response(200, { content });
+    if (u.includes('/actions/runs/77')) return response(200, { status: 'in_progress' });
+    return response(404, { message: 'Not Found' });
+  } });
+  const running = await liveRun.getStatus(id, { acceptedAt: old });
+  assert.equal(running.state, 'running', 'GitHub confirms the run is in progress');
+  assert.equal(recoverableRuntimeFailure(running), false);
+
+  // The same silent record after its run completed is genuinely stale.
+  const finishedRun = new CheCodingRuntime(env, { fetcher: async (url) => {
+    const u = String(url);
+    if (u.includes('/contents/mailbox/runtime/')) return response(200, { content });
+    if (u.includes('/actions/runs/77')) return response(200, { status: 'completed' });
+    return response(404, { message: 'Not Found' });
+  } });
+  const stale = await finishedRun.getStatus(id, { acceptedAt: old });
+  assert.equal(stale.state, 'failed');
+  assert.equal(stale.failure, 'runtime_stale');
+  assert.equal(recoverableRuntimeFailure(stale), true);
+});
+
+test('a GitHub error during the liveness check never declares a silent run failed', async () => {
+  const id = 'ocr-1234abcd';
+  const old = new Date(Date.now() - 36 * 60_000).toISOString();
+  const actionsCalls = [];
+  const flaky = (record) => async (url, init = {}) => {
+    const u = String(url);
+    if (u.includes('/contents/mailbox/runtime/')) return record ? response(200, { content: record }) : response(404, { message: 'Not Found' });
+    if (u.includes('/actions/')) {
+      actionsCalls.push({ url: u, headers: init.headers || {} });
+      return response(503, { message: 'Service Unavailable' });
+    }
+    return response(404, { message: 'Not Found' });
+  };
+
+  // No execution record and GitHub cannot list runs: unverified, not dead.
+  const dispatch = await new CheCodingRuntime(env, { fetcher: flaky(null) }).getStatus(id, { acceptedAt: old });
+  assert.equal(dispatch.state, 'queued');
+  assert.equal(dispatch.liveness, 'unverified');
+  assert.equal(dispatch.failure, undefined);
+  assert.equal(recoverableRuntimeFailure(dispatch), false, 'an unverified run is never recovery material');
+  assert.match(speakRuntimeStatus(dispatch), /could not confirm/i);
+  assert.doesNotMatch(speakRuntimeStatus(dispatch), /currently running|queued on|stopped reporting|never started/i, 'neither running nor dead is claimed');
+
+  // Old heartbeat on a claimed run and GitHub cannot read that run.
+  const content = Buffer.from(JSON.stringify({ session_id: id, state: 'running', claimed_at: old, run_id: 77 })).toString('base64');
+  const running = await new CheCodingRuntime(env, { fetcher: flaky(content) }).getStatus(id, { acceptedAt: old });
+  assert.equal(running.state, 'running');
+  assert.equal(running.liveness, 'unverified');
+  assert.equal(recoverableRuntimeFailure(running), false);
+  assert.doesNotMatch(speakRuntimeStatus(running), /currently running/i);
+
+  // Every extra GitHub call identifies itself; GitHub refuses requests without a User-Agent.
+  assert.ok(actionsCalls.length >= 2);
+  assert.ok(actionsCalls.some((call) => call.url.includes('/actions/runs/77')));
+  assert.ok(actionsCalls.some((call) => /\/actions\/workflows\/[^/]+\/runs/.test(call.url)));
+  for (const call of actionsCalls) assert.ok(call.headers['User-Agent'], `User-Agent sent to ${call.url}`);
+
+  // Past the bound no CHE run can still be working, so the stale rule applies again.
+  const ancient = new Date(Date.now() - 7 * 60 * 60_000).toISOString();
+  const expired = await new CheCodingRuntime(env, { fetcher: flaky(null) }).getStatus(id, { acceptedAt: ancient });
+  assert.equal(expired.state, 'failed');
+  assert.equal(expired.failure, 'dispatch_stale');
+
+  // A run id GitHub no longer knows is not live work.
+  const gone = await new CheCodingRuntime(env, { fetcher: async (url) => (String(url).includes('/contents/mailbox/runtime/')
+    ? response(200, { content })
+    : response(404, { message: 'Not Found' })) }).getStatus(id, { acceptedAt: old });
+  assert.equal(gone.state, 'failed');
+  assert.equal(gone.failure, 'runtime_stale');
+});
+
 test('getStatus normalizes a completed result that still reports running', async () => {
   const id = 'ocr-deadbeef';
   const value = Buffer.from(JSON.stringify({ session_id: id, status: 'complete', state: 'running', changed_files: 1 })).toString('base64');

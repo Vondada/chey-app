@@ -6,6 +6,7 @@ import test from 'node:test';
 import { replyFromNdjson } from './brain_memory.js';
 import { researchKey, isSafeToStore, rememberKnowledge, markPureResearch } from './knowledge_cache.js';
 import { COMPLETE_CHAT_ONLY_AUTONOMY_EXAM } from './autonomy_exam_fixture.mjs';
+import { idempotencyKey } from './recovery_policy.js';
 
 const generated = new URL('./.worker_autonomy.test.generated.mjs', import.meta.url);
 writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
@@ -53,7 +54,7 @@ test('BUILD acceptance returns the durable job id before provider work starts', 
     CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r',
     AI: { run: async () => { aiCalls += 1; return { response: 'unused' }; } },
   }, saved);
-  const response = await api('/api/change/request', { request: 'Fix the coding status bug in your app.' });
+  const response = await api('/api/change/request', { request: 'Fix the coding status bug in your app.' }, BACKGROUND_JOB_HEADERS);
   const body = await response.json();
   assert.equal(response.status, 202);
   assert.match(body.background_job_id, /^[0-9a-f-]{36}$/);
@@ -61,6 +62,240 @@ test('BUILD acceptance returns the durable job id before provider work starts', 
   assert.match(body.message, /queued, not running yet/i);
   assert.equal(aiCalls, 0, 'acceptance never waits for a provider');
   assert.equal(saved.get('che').jobs[0].id, body.background_job_id);
+});
+
+test('legacy app builds without the background-job header get the same honest body with 200', async () => {
+  const saved = new Map();
+  const { api } = await pairedChat({
+    CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r',
+    AI: { run: async () => ({ response: 'unused' }) },
+  }, saved);
+  const response = await api('/api/change/request', { request: 'Fix the coding status bug in your app.' });
+  const body = await response.json();
+  assert.equal(response.status, 200, 'installed builds treat non-200 as a failed start');
+  assert.match(body.background_job_id, /^[0-9a-f-]{36}$/);
+  assert.equal(body.background_job_status, 'queued');
+  assert.match(body.message, /accepted coding job/i);
+  assert.equal(saved.get('che').jobs[0].id, body.background_job_id);
+});
+
+test('recovery-worded BUILD without a failed record is still accepted durably', async () => {
+  const saved = new Map();
+  let aiCalls = 0;
+  const { api } = await pairedChat({
+    CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r',
+    AI: { run: async () => { aiCalls += 1; return { response: 'unused' }; } },
+  }, saved);
+  // Recovery wording, but no failed-engineering record exists: this is an
+  // ordinary BUILD and must never fall into the synchronous recovery path.
+  const response = await api('/api/change/request', { request: 'Fix the failed login task in your app before it blocks the release.' }, BACKGROUND_JOB_HEADERS);
+  const body = await response.json();
+  assert.equal(response.status, 202);
+  assert.match(body.background_job_id, /^[0-9a-f-]{36}$/);
+  assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'self_development').length, 1);
+  assert.equal(aiCalls, 0, 'acceptance never waits for a provider');
+});
+
+test('recovery-worded BUILD with an unresolved failed record uses the bounded sync recovery path', async () => {
+  const saved = new Map();
+  const { api } = await pairedChat({
+    CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r',
+    AI: { run: async () => ({ response: 'ok' }) },
+  }, saved);
+  saved.set('che_failed_engineering', {
+    request: 'Add the missing offline banner to the home screen.',
+    failed_strategies: ['a-strategy'],
+    fingerprints: ['fp'],
+    failed_anchors: ['lib/main.dart'],
+    outcomes: [],
+    root_cause: 'unknown',
+    diagnosis: 'the crew could not find the banner',
+    recovery_runs: 0,
+    recovery_lock_until: 0,
+  });
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+  try {
+    const response = await api('/api/change/request', { request: 'Retry the failed coding job in your app.' }, BACKGROUND_JOB_HEADERS);
+    const body = await response.json();
+    assert.notEqual(response.status, 202, 'a real recovery runs through the bounded sync path, not durable acceptance');
+    assert.equal(body.background_job_id, undefined, 'the sync recovery path never fabricates a job id');
+    assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'self_development').length, 0, 'recovery is never queued as a duplicate job');
+    const record = saved.get('che_failed_engineering');
+    assert.equal(record.failed_strategies[0], 'a-strategy', 'the retained failure evidence survives the recovery attempt');
+    assert.equal(record.recovery_lock_until, 0, 'the recovery lock is released after the attempt');
+    assert.ok(Number(record.recovery_runs) >= 0 && Number(record.recovery_runs) <= 1, 'the recovery attempt is counted against its budget');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('a stale coding-status report claims a checkpoint only when one exists', async () => {
+  const stale = new Date(Date.now() - 30 * 60_000).toISOString();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'ok' }) } };
+  const textOf = async (res) => (await res.text()).trim().split('\n').map((line) => JSON.parse(line)).filter((line) => line.type === 'delta').map((line) => line.delta).join('');
+
+  const withoutCheckpoint = new Map();
+  const first = await pairedChat(env, withoutCheckpoint);
+  // Merge into the paired state; overwriting it would drop the owner device.
+  const firstData = withoutCheckpoint.get('che');
+  firstData.autonomy = true;
+  firstData.jobs = [{ id: 'j-no-checkpoint', kind: 'self_development', prompt: 'x', status: 'running', updated_at: stale, created_at: stale, attempts: 1 }];
+  const noCheckpointText = await textOf(await first.chat('coding status'));
+  assert.match(noCheckpointText, /not confirmed running/i);
+  assert.doesNotMatch(noCheckpointText, /checkpoint is saved/i);
+  assert.match(noCheckpointText, /no checkpoint/i);
+
+  const withCheckpoint = new Map();
+  const second = await pairedChat(env, withCheckpoint);
+  const secondData = withCheckpoint.get('che');
+  secondData.autonomy = true;
+  secondData.jobs = [{ id: 'j-checkpoint', kind: 'self_development', prompt: 'x', status: 'running', updated_at: stale, created_at: stale, attempts: 1, checkpoint: { step: 2 } }];
+  const checkpointText = await textOf(await second.chat('coding status'));
+  assert.match(checkpointText, /not confirmed running/i);
+  assert.match(checkpointText, /checkpoint is saved/i);
+});
+
+test('a repeated mission after recovery cites the live recovery job instead of the dead session', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_CODING_RUNTIME: 'opencode', CHE_OPENCODE_MODEL: 'a/model', AI: { run: async () => ({ response: 'ok' }) } };
+  const { state } = await pairedChat(env, saved);
+  const request = 'Fix the coding status bug in your app and merge it after tests pass.';
+  // A dead runtime session whose recovery already queued a live job.
+  saved.set('che_runtime_last_mission_key', idempotencyKey('opencode:mission', request));
+  saved.set('che_runtime_last_session', 'ocr-1234abcd');
+  saved.set('che_runtime_last_session_at', new Date(Date.now() - 36 * 60_000).toISOString());
+  const data = saved.get('che');
+  data.jobs = [{ id: 'recovery-job-1', kind: 'self_development', request, prompt: request, status: 'running', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }];
+  let dispatched = 0;
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('/dispatches')) dispatched += 1;
+    return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+  };
+  try {
+    const started = await state.startOpenCodeSession(request);
+    assert.equal(started.status, 202);
+    assert.equal(started.runtime, 'builtin', 'the dedup cites the builtin recovery job, not the dead session');
+    assert.equal(started.job_id, 'recovery-job-1', 'the watchable job id is the live recovery job');
+    assert.equal(started.deduplicated, true);
+    assert.equal(dispatched, 0, 'a live recovery job prevents a duplicate session dispatch');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('after its recovery job finished, a dead session neither answers coding status nor swallows a repeat', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_CODING_RUNTIME: 'opencode', CHE_OPENCODE_MODEL: 'a/model', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'ok' }) } };
+  const { state, chat } = await pairedChat(env, saved);
+  const request = 'Fix the coding status bug in your app and merge it after tests pass.';
+  // Recovery cleared the session stamp and handed the mission to a job that has since finished.
+  saved.set('che_runtime_last_mission_key', idempotencyKey('opencode:mission', request));
+  saved.set('che_runtime_last_session', 'ocr-1234abcd');
+  saved.set('che_runtime_last_session_at', '');
+  saved.set('che_runtime_last_job_id', 'recovery-job-1');
+  saved.get('che').jobs = [{ id: 'recovery-job-1', kind: 'self_development', request, prompt: request, status: 'complete', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }];
+  let dispatched = 0;
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('/dispatches')) { dispatched += 1; return new Response(null, { status: 204 }); }
+    if (u.includes('/commits/main')) return new Response(JSON.stringify({ sha: 'a'.repeat(40) }), { status: 200 });
+    // The dead session never published a record.
+    return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+  };
+  try {
+    const status = (await (await chat('coding status')).text()).trim().split('\n').map((line) => JSON.parse(line)).filter((line) => line.type === 'delta').map((line) => line.delta).join('');
+    assert.match(status, /latest coding job status is complete/i, 'the finished recovery job is the truth');
+    assert.doesNotMatch(status, /queued on my OpenCode runner/i, 'a dead session is never reported as queued');
+
+    const started = await state.startOpenCodeSession(request);
+    assert.equal(started.status, 202);
+    assert.notEqual(started.deduplicated, true, 'the repeat is not swallowed by the dead session');
+    assert.notEqual(started.session_id, 'ocr-1234abcd');
+    assert.equal(dispatched, 1, 'exactly one fresh dispatch');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('a deferred "fix this" job keeps its flag and is grounded at execution, while owner intent stays ungrounded', async () => {
+  const saved = new Map();
+  const request = 'Fix the slow microphone button in your app.';
+  const planner = [];
+  const env = {
+    CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_DISABLE_KEYLESS_AI: '1',
+    AI: { run: async (_model, input) => {
+      // Planner calls carry both the owner's intent and the engineering context.
+      const payload = (() => { try { return JSON.parse(String(input.messages?.[1]?.content || '')); } catch (_) { return null; } })();
+      if (payload && typeof payload.owner_request === 'string' && typeof payload.engineering_context === 'string') planner.push(payload);
+      const error = new Error("I'm having trouble reaching my cloud engines, sir.");
+      error.category = 'temporary_cloud_unavailable';
+      throw error;
+    } },
+  };
+  const { state, api } = await pairedChat(env, saved);
+  const original = globalThis.fetch;
+  const github = GITHUB_OK({ 'lib/main.dart': "class A { String s = 'Ready'; }\n" });
+  globalThis.fetch = async (url, init = {}) => {
+    if (String(url).includes('/search/repositories')) {
+      return new Response(JSON.stringify({ items: [{ full_name: 'acme/mic-kit', stargazers_count: 900, description: 'Responsive microphone button', html_url: 'https://github.com/acme/mic-kit', license: { spdx_id: 'MIT', name: 'MIT License' } }] }), { status: 200 });
+    }
+    return github(url, init);
+  };
+  try {
+    const response = await api('/api/change/request', { request, fix_this: true }, BACKGROUND_JOB_HEADERS);
+    assert.equal(response.status, 202);
+    const job = saved.get('che').jobs.find((item) => item.kind === 'self_development');
+    assert.equal(job.fix_this, true, 'the deferred job keeps the "fix this" request');
+    assert.doesNotMatch(job.prompt, /REFERENCE PROJECTS/, 'grounding is computed at execution, not stored at acceptance');
+
+    await state.processJobs();
+    assert.ok(planner.length >= 1, 'the crew planner ran for the deferred job');
+    for (const payload of planner) {
+      assert.match(payload.engineering_context, /REFERENCE PROJECTS[\s\S]*acme\/mic-kit/, 'the deferred job got the fix-this grounding');
+      assert.doesNotMatch(payload.owner_request, /REFERENCE PROJECTS|acme\/mic-kit/, 'grounding never becomes owner intent');
+      assert.match(payload.owner_request, /slow microphone button/);
+    }
+    const plain = await state.groundSelfDevelopmentPrompt({ request, prompt: request }, request);
+    assert.doesNotMatch(plain, /REFERENCE PROJECTS/, 'only a "fix this" job scouts reference projects');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('a read-only question about a failed job spends no coding or recovery budget', async () => {
+  const saved = new Map();
+  const { api } = await pairedChat({
+    CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', CHE_DISABLE_KEYLESS_AI: '1',
+    AI: { run: async () => ({ response: 'The last job stopped because review rejected its diff.' }) },
+  }, saved);
+  saved.set('che_failed_engineering', {
+    request: 'Add the missing offline banner to the home screen.',
+    failed_strategies: ['a-strategy'], fingerprints: ['fp'], failed_anchors: ['lib/main.dart'], outcomes: [],
+    root_cause: 'unknown', diagnosis: 'the crew could not find the banner', recovery_runs: 0, recovery_lock_until: 0,
+  });
+  const original = globalThis.fetch;
+  const mutations = [];
+  globalThis.fetch = async (url, init = {}) => {
+    if ((init.method || 'GET') !== 'GET') mutations.push(String(url));
+    return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+  };
+  try {
+    const response = await api('/api/change/request', { request: 'Diagnose why the failed coding job stopped and tell me what went wrong. Do not change any code.' }, BACKGROUND_JOB_HEADERS);
+    const body = await response.json();
+    assert.notEqual(response.status, 202);
+    assert.equal(body.execution_mode, 'EXPLORE');
+    assert.equal(body.background_job_id, undefined);
+    assert.equal((saved.get('che').jobs || []).filter((j) => j.kind === 'self_development').length, 0, 'no coding job');
+    const record = saved.get('che_failed_engineering');
+    assert.equal(record.recovery_runs, 0, 'the recovery budget is untouched');
+    assert.equal(record.recovery_lock_until, 0, 'no recovery lock is taken');
+    assert.deepEqual(mutations, [], 'nothing is written to GitHub');
+  } finally {
+    globalThis.fetch = original;
+  }
 });
 
 test('failed BUILD job creation reports failure and never claims progress', async () => {
@@ -190,14 +425,22 @@ test('/health reports the running version for deployment verification', async ()
 async function pairedChat(env, saved) {
   const state = new CheState({ storage: storageFor(saved) }, env);
   env.CHE_STATE = { getByName: () => state };
-  const send = (path, body, token = '') => worker.fetch(new Request(`https://che.example${path}`, {
+  const send = (path, body, token = '', extraHeaders = {}) => worker.fetch(new Request(`https://che.example${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extraHeaders },
     body: JSON.stringify(body),
   }), env);
   const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
-  return { state, chat: (message, extra = {}) => send('/api/chat', { message, ...extra }, token), api: (path, body) => send(path, body, token) };
+  return {
+    state,
+    chat: (message, extra = {}) => send('/api/chat', { message, ...extra }, token),
+    api: (path, body, extraHeaders = {}) => send(path, body, token, extraHeaders),
+  };
 }
+
+// The current app announces background-job support; builds that predate it
+// send no marker header and must keep receiving 200.
+const BACKGROUND_JOB_HEADERS = { 'x-che-background-jobs': '1' };
 
 const GITHUB_OK = (files) => async (url) => {
   const u = String(url);
@@ -936,6 +1179,7 @@ test('OpenCode terminal failure is recovered by the alarm path without owner sta
     assert.match(jobs[0].request, /exact owner mission through automatic recovery/);
     assert.equal(saved.get('che_runtime_last_session_at'), '');
     assert.equal(saved.get('che_runtime_monitor_until'), 0);
+    assert.equal(saved.get('che_runtime_last_job_id'), jobs[0].id, 'the watchable job id follows the live recovery job, not the dead session');
     const again = await state.recoverOpenCodeFailure();
     assert.equal(again, null, 'a recovered terminal attempt cannot enqueue twice');
     assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'self_development').length, 1);
