@@ -64,6 +64,17 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (ChatGPT, 2026-10-17 ~12:30 UTC — #328 MERGED, live Worker commit verified; iPhone patch verification pending)
+
+- **Current main**: `a3be02cdab7d8ff27522c256e22df05c1d80b805`, squash merge of **PR #328** (free-first coding engine, $15 capped paid-last, verified checkpoints and bounded resume). Branch `chatgpt/che-coding-free-first-capped-paid` last tested head `d2b043f97689195840db0480b712c4ceb93bead8`.
+- Exact-head required CI passed: `CHE UI Analyze` and `Check CHE Flutter client`, including Worker tests, Flutter analysis/tests, and mocked free-to-free/free-to-paid/fail-closed fallback.
+- Security/reliability fixes made in ChatGPT continuation on #328: checked checkpoint base SHA and SHA-256, actual patch paths and syntax before replay; offline tamper/forged metadata regressions; isolated capped paid key in a separate step after the free agent exits (no paid key env in free model runner); reject missing/non-numeric BYOK usage if account is confirmed no-BYOK; fake paid step tests without network.
+- **OpenRouter key verification PASSED**, run 39029556796 attempt 2: limit $15, monthly reset, available $15, zero BYOK monthly spend. `CHE_CODING_OPENROUTER_NO_BYOK=true` was seen by the workflow; account has no BYOK routes according to the owner's confirmation. **Paid inference not activated**: `CHE_CODING_PAID_FALLBACK` remains unset/unverified; there were NO paid OpenRouter coding requests in this completion.
+- **Production**: GitHub `Deploy CHE Worker` run 39032277486; steps Deploy and Verify live deployed commit completed SUCCESS on `a3be02c`; additional voice/memory/Command Center probes were still executing when this entry was written. Do not claim entire deploy job green until it finishes.
+- **iPhone**: `CHE Shorebird` run 39032277542 started from merge and was still IN PROGRESS. Do not claim patch installed on owner's iPhone; owner only has an iPhone, no Mac.
+- **Live end-to-end coding** still unverified on new backend. The concurrent old-base runtime job `ocr-ee486cba` (run 39031928523, started before #328 merge) cannot prove the new coding fallback.
+- **Remaining after #328**: verify deploy's final probes and Shorebird patch, then a no-cost free-model coding job showing actual output/status; paid final fallback requires explicit variable `CHE_CODING_PAID_FALLBACK=true` only under the capped-use authorization, no billable test. Coding Library branch `claude/che-coding-library` SHA `211f3a8` diverges (38 ahead, 4 behind old main) and contains stale REA changes: selectively rebase/cherry-pick Coding Library work, DO NOT merge the whole stale branch. Its Flutter page remains missing. Phase 3 autonomy and Trading Room require separate implementation/acceptance.
+
 ## 2. Current position (Claude, 2026-10-17 ~11:25 UTC — coding failover: PR #328 in review, WIP)
 
 - **main** is `a3b8d8d` (#329). **Nothing from this entry is merged yet.**
