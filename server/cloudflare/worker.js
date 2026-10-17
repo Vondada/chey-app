@@ -4538,11 +4538,20 @@ export class CheState extends DurableObject {
   // list, a number from the list CHE just read, or "run the X command",
   // which goes through runSlashCommand and its every gate. Null lets the
   // turn continue as before.
+  // Any turn that is not a yes replaces a held payment, delete or app
+  // request, so a later unrelated "yes" can never release it. Fast-path
+  // replies drop both holds before they answer, as the full route does.
+  async dropHeldActions() {
+    try {
+      await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, null);
+      await this.ctx.storage.put(PENDING_APP_ACTION_KEY, null);
+    } catch (_) { /* nothing was held */ }
+  }
+
   async answerCommandSpeech(request, body, data, said, { ownerDevice = false } = {}) {
     if (said.kind === 'run') {
       if (!ownerDevice) return ndjsonReply('Only the CHE owner can run commands, sir.', { source: 'che_command', ok: false, model_calls: 0 });
       if (said.command) {
-        try { await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, null); } catch (_) { /* nothing was held */ }
         return this.runSlashCommand(request, body, data, { name: said.command.id, command: said.command, input: said.input }, { confirmed: body.command_confirmed === true });
       }
       const near = (said.candidates.length ? said.candidates.map((c) => c.id) : searchCommands(said.words, { limit: 3 }).map((r) => r.id)).map((id) => `/${id}`);
@@ -7510,11 +7519,12 @@ export class CheState extends DurableObject {
           if (slash) {
             if (!ownerDevice) return ndjsonReply('Only the CHE owner can run commands, sir.', { source: 'che_command', ok: false, model_calls: 0 });
             // Like any other turn, a new command replaces a held request.
-            try { await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, null); } catch (_) { /* nothing was held */ }
+            await this.dropHeldActions();
             return this.runSlashCommand(request, body, data, slash, { confirmed: body.command_confirmed === true });
           }
           const savedWorkflow = ownerDevice ? findSavedWorkflow(data.command_workflows, rawMessage) : null;
           if (savedWorkflow) {
+            await this.dropHeldActions();
             const started = await this.startCommandWorkflow(data, savedWorkflow, { ownerDevice });
             return ndjsonReply(started.spoken, { source: 'che_command_workflow', ok: started.ok, objective_id: started.objective?.id || null, model_calls: 0 });
           }
@@ -7522,11 +7532,15 @@ export class CheState extends DurableObject {
           // catalog with live states and no model (owner, 2026-10-16).
           const said = body.attachment || body.workflow_step ? null : readCommandSpeech(rawMessage, body.history);
           if (said) {
+            // Cleared before answering: a command run below may hold its own
+            // new confirmation, which must survive.
+            if (ownerDevice) await this.dropHeldActions();
             const spoken = await this.answerCommandSpeech(request, body, data, said, { ownerDevice });
             if (spoken) return spoken;
           }
           // "What is on my screen?" with no screen sent: say so, never guess.
           if (!body.attachment && !String(body.screen_context || '').trim() && asksAboutScreen(rawMessage)) {
+            if (ownerDevice) await this.dropHeldActions();
             return ndjsonReply('I can\'t see your screen from here, sir: this message came without any screen report from your phone, so I won\'t guess. '
               + 'In CHE\'s iPhone app, ask "what is on my screen?" and the app answers from the page it has open.', { source: 'che_screen', ok: false, model_calls: 0 });
           }

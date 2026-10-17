@@ -731,3 +731,17 @@ test('"Run the video command" reaches the real video handler once it is ready, a
   assert.equal(run.route, commandById('yt-video').route, run.reply.slice(0, 160));
   assert.equal(commandFromWords('video').command.id, 'yt-video');
 });
+
+test('a fast command or screen reply drops a held payment or app request, so a later yes releases nothing', async () => {
+  for (const phrase of ['Show me five YouTube commands and tell me which are ready.', 'What is on my screen?', 'Run the video command.']) {
+    const che = await owner();
+    che.saved.set('che:pending_owner_action', { kinds: ['money'], text: 'buy me a new laptop', at: Date.now() });
+    che.saved.set('che:pending_app_action', { app: 'spotify', text: 'open spotify', at: Date.now() });
+    const out = await che.say(phrase);
+    assert.equal(out.modelCalls, 0, phrase);
+    assert.equal(che.saved.get('che:pending_owner_action') ?? null, null, `${phrase}: the money hold is gone`);
+    assert.equal(che.saved.get('che:pending_app_action') ?? null, null, `${phrase}: the app hold is gone`);
+    const yes = await che.say('yes');
+    assert.doesNotMatch(yes.reply, /laptop|spotify/i, `${phrase}: a later yes releases nothing`);
+  }
+});
