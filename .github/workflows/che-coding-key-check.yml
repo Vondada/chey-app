@@ -30,4 +30,5 @@ jobs:
         env:
           CHE_CODING_PAID_FALLBACK: 'true'
           CHE_CODING_OPENROUTER_PAID_KEY: ${{ secrets.CHE_CODING_OPENROUTER_PAID_KEY }}
+          CHE_CODING_OPENROUTER_NO_BYOK: ${{ vars.CHE_CODING_OPENROUTER_NO_BYOK }}
         run: node tools/che_coding_paid_gate.mjs

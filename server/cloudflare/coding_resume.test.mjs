@@ -22,8 +22,10 @@ const JOB = '6f1c2b9e-3d4a-4b5c-8d6e-7f8091a2b3c4';
 const REQUEST = 'Fix the coding status wording so it names the resume attempt.';
 const BRANCH = `che/auto/${JOB.slice(0, 8)}`;
 const SESSION = runtimeSessionId({ repo: REPO, baseSha: BASE, targetBranch: BRANCH, ownerRequest: REQUEST, jobId: JOB, model: 'auto' });
+const queuedRun = () => ({ display_title: `CHE OpenCode runtime ${SESSION}`, status: 'queued', created_at: new Date().toISOString() });
 
-function harness({ record, dispatch = 202, now = Date.now() }) {
+// `runs` is what GitHub lists for the workflow; a queued run with this session's title is live.
+function harness({ record, dispatch = 202, now = Date.now(), runs = [] }) {
   const saved = new Map([
     ['che_runtime_last_session', SESSION],
     ['che_runtime_last_session_at', new Date(now - 2 * 60_000).toISOString()],
@@ -48,10 +50,14 @@ function harness({ record, dispatch = 202, now = Date.now() }) {
     if (path.includes(`/contents/mailbox/runtime/${SESSION}.json`)) {
       return new Response(JSON.stringify({ content: Buffer.from(JSON.stringify(record.current)).toString('base64') }), { status: 200 });
     }
+    if (path.includes('/actions/workflows/') && path.includes('/runs?')) {
+      return new Response(JSON.stringify({ workflow_runs: runs }), { status: 200 });
+    }
     if (path.includes('/dispatches')) {
       dispatches.push(JSON.parse(String(init.body || '{}')));
       return new Response(null, { status: dispatch });
     }
+    if (path.endsWith('/commits/main')) return new Response(JSON.stringify({ sha: BASE }), { status: 200 });
     return new Response('{}', { status: 404 });
   };
   return { state, saved, dispatches, restore: () => { globalThis.fetch = original; } };
@@ -65,7 +71,7 @@ const blocked = (extra = {}) => ({
 test('a quota failure with a checkpoint waits for its backoff, dispatches the same session, and is live once claimed', async () => {
   const now = Date.now();
   const record = { current: blocked() };
-  const h = harness({ record, now });
+  const h = harness({ record, now, runs: [queuedRun()] });
   try {
     const waiting = await h.state.recoverOpenCodeFailure();
     assert.equal(waiting.state, 'waiting_capacity');
@@ -73,9 +79,8 @@ test('a quota failure with a checkpoint waits for its backoff, dispatches the sa
     assert.equal(h.dispatches.length, 0, 'nothing is dispatched before the backoff ends');
     const pending = h.saved.get('che_runtime_resume');
     assert.equal(pending.session_id, SESSION);
-    assert.equal(Date.parse(pending.next_at) - now >= RESUME_BACKOFF_MS[0] - 5_000, true, 'first backoff is 15 minutes');
+    assert.ok(Date.parse(pending.next_at) - now >= RESUME_BACKOFF_MS[0] - 5_000, 'first backoff is 15 minutes');
 
-    // The backoff ends: the same session is dispatched with the same base, branch and job.
     pending.next_at = new Date(now - 1000).toISOString();
     h.saved.set('che_runtime_resume', pending);
     const resuming = await h.state.recoverOpenCodeFailure();
@@ -85,12 +90,10 @@ test('a quota failure with a checkpoint waits for its backoff, dispatches the sa
     assert.equal(h.dispatches[0].inputs.base_sha, BASE);
     assert.equal(h.dispatches[0].inputs.target_branch, BRANCH);
 
-    // Until the runner claims it, the old "blocked" record is not judged again: no second resume.
     const still = await h.state.recoverOpenCodeFailure();
     assert.equal(still.state, 'resuming');
     assert.equal(h.dispatches.length, 1, 'a waiting resume never dispatches twice');
 
-    // The runner claims the resume: its record carries the new claim count, so the session is live.
     record.current = { ...record.current, state: 'running', resume_count: 1, resumable: false };
     const live = await h.state.recoverOpenCodeFailure();
     assert.equal(live.recovered, false);
@@ -99,9 +102,24 @@ test('a quota failure with a checkpoint waits for its backoff, dispatches the sa
   } finally { h.restore(); }
 });
 
+test('a dispatched resume whose run is still queued keeps waiting past the old window: no duplicate team job', async () => {
+  const now = Date.now();
+  const h = harness({ record: { current: blocked() }, now, runs: [queuedRun()] });
+  try {
+    h.saved.set('che_runtime_resume', {
+      session_id: SESSION, job_id: JOB, base_sha: BASE, target_branch: BRANCH, request: REQUEST,
+      resume_count: 0, attempt: 1, failure_kind: 'quota', next_at: new Date(now - 90 * 60_000).toISOString(),
+      dispatched_at: new Date(now - 40 * 60_000).toISOString(), dispatch_failures: 0,
+    });
+    const step = await h.state.recoverOpenCodeFailure();
+    assert.equal(step.state, 'resuming', 'a live run is waited for');
+    assert.equal(h.saved.has('che_runtime_resume'), true);
+    assert.equal((h.saved.get('che')?.jobs || []).filter((job) => job.kind === 'self_development').length, 0);
+  } finally { h.restore(); }
+});
+
 test('resumes are bounded: after RESUME_LIMIT resumes, CHE\'s own coding team takes over instead of looping', async () => {
-  const record = { current: blocked({ resume_count: RESUME_LIMIT }) };
-  const h = harness({ record });
+  const h = harness({ record: { current: blocked({ resume_count: RESUME_LIMIT }) } });
   try {
     const recovered = await h.state.recoverOpenCodeFailure();
     assert.equal(recovered.recovered, true);
@@ -112,8 +130,7 @@ test('resumes are bounded: after RESUME_LIMIT resumes, CHE\'s own coding team ta
 });
 
 test('a non-capacity failure (access, too large, unknown) is never resumed, even with a checkpoint', async () => {
-  const record = { current: blocked({ resumable: false, failure_kind: 'access' }) };
-  const h = harness({ record });
+  const h = harness({ record: { current: blocked({ resumable: false, failure_kind: 'access' }) } });
   try {
     const recovered = await h.state.recoverOpenCodeFailure();
     assert.equal(recovered.recovered, true, 'it goes straight to CHE\'s own team');
@@ -121,10 +138,9 @@ test('a non-capacity failure (access, too large, unknown) is never resumed, even
   } finally { h.restore(); }
 });
 
-test('a resume nobody claims within the window is given up, and CHE\'s own team takes over', async () => {
+test('a dispatched resume with no live run that was never claimed is given up, and CHE\'s own team takes over', async () => {
   const now = Date.now();
-  const record = { current: blocked() };
-  const h = harness({ record, now });
+  const h = harness({ record: { current: blocked() }, now, runs: [] });
   try {
     h.saved.set('che_runtime_resume', {
       session_id: SESSION, job_id: JOB, base_sha: BASE, target_branch: BRANCH, request: REQUEST,
@@ -135,6 +151,23 @@ test('a resume nobody claims within the window is given up, and CHE\'s own team 
     assert.equal(h.saved.has('che_runtime_resume'), false);
     assert.equal(h.saved.get('che_runtime_resume_blocked'), SESSION);
     assert.equal(recovered.recovered, true);
+  } finally { h.restore(); }
+});
+
+test('a new owner mission is refused while a dispatched resume may still be running, so two runners never work at once', async () => {
+  const now = Date.now();
+  const h = harness({ record: { current: blocked() }, now, runs: [queuedRun()] });
+  try {
+    h.saved.set('che_runtime_resume', {
+      session_id: SESSION, job_id: JOB, base_sha: BASE, target_branch: BRANCH, request: REQUEST,
+      resume_count: 0, attempt: 1, failure_kind: 'quota', next_at: new Date(now - 60_000).toISOString(),
+      dispatched_at: new Date(now - 60_000).toISOString(), dispatch_failures: 0,
+    });
+    const started = await h.state.startOpenCodeSession('Update your code: a different change to the status wording');
+    assert.equal(started.status, 409, JSON.stringify(started));
+    assert.match(started.detail, /still resuming/);
+    assert.equal(h.dispatches.length, 0, 'no second runner was dispatched');
+    assert.equal(h.saved.has('che_runtime_resume'), true, 'the live resume is left alone');
   } finally { h.restore(); }
 });
 

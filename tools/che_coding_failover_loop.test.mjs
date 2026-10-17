@@ -45,6 +45,13 @@ function sandbox() {
   git(repo, ['add', '.']);
   git(repo, ['commit', '-q', '-m', 'base']);
   const base = git(repo, ['rev-parse', 'HEAD']).trim();
+  // The runner stages the same tools from the base into a trusted directory before any attempt.
+  const trusted = join(root, 'trusted');
+  mkdirSync(join(trusted, 'tools'), { recursive: true });
+  mkdirSync(join(trusted, 'server/cloudflare'), { recursive: true });
+  cpSync(join(ROOT, 'tools/che_coding_checkpoint.mjs'), join(trusted, 'tools/che_coding_checkpoint.mjs'));
+  cpSync(join(ROOT, 'tools/che_coding_paid_gate.mjs'), join(trusted, 'tools/che_coding_paid_gate.mjs'));
+  cpSync(join(ROOT, 'server/cloudflare/coding_failover.mjs'), join(trusted, 'server/cloudflare/coding_failover.mjs'));
   const bin = join(root, 'bin');
   mkdirSync(bin);
   writeFileSync(join(bin, 'opencode'), `#!/usr/bin/env node
@@ -66,7 +73,7 @@ process.exit(step.exit === undefined ? 0 : step.exit);
   const tmp = join(root, 'tmp');
   mkdirSync(tmp);
   writeFileSync(join(tmp, 'che-runtime-prompt.txt'), 'ORIGINAL REQUEST: finish the change.');
-  return { root, repo, base, bin, runnerTemp, tmp, calls: join(root, 'calls.log'), plan: join(root, 'plan.json') };
+  return { root, repo, base, bin, runnerTemp, tmp, trusted, calls: join(root, 'calls.log'), plan: join(root, 'plan.json') };
 }
 
 // Runs the real step. Its /tmp paths are redirected into the sandbox so tests never collide.
@@ -83,6 +90,7 @@ function run(box, { plan, free, paid = '', env = {} }) {
       PATH: `${box.bin}:${process.env.PATH}`,
       HOME: box.root,
       RUNNER_TEMP: box.runnerTemp,
+      CHE_TRUSTED_TOOLS: box.trusted,
       BASE_SHA: box.base,
       FREE_CANDIDATES: free,
       PAID_CANDIDATES: paid,

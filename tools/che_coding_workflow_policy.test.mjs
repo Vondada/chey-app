@@ -71,7 +71,7 @@ test('even an explicit paid request stays behind the free-first and approval gat
   assert.match(p.paid_candidates, /^openrouter\/qwen\/qwen3-coder/);
 });
 test('runtime checks monthly key cap immediately before paid model execution', () => {
-  assert.match(workflow, /node tools\/che_coding_paid_gate\.mjs/);
+  assert.match(workflow, /node "\$CHE_TRUSTED_TOOLS\/tools\/che_coding_paid_gate\.mjs"/);
   assert.match(workflow, /for m in \$FREE_CANDIDATES \$PAID_CANDIDATES/);
   assert.match(workflow, /CHE_CODING_OPENROUTER_PAID_KEY/);
   assert.doesNotMatch(workflow, /CHE_ALLOW_PAID_MODELS/);
@@ -86,8 +86,56 @@ test('the workflow resume limit is the same number the failover policy uses', as
 });
 
 test('a failed model that changed files is checkpointed or reverted, never silently passed on', () => {
-  assert.match(workflow, /node tools\/che_coding_checkpoint\.mjs advance/);
+  assert.match(workflow, /node "\$CHE_TRUSTED_TOOLS\/tools\/che_coding_checkpoint\.mjs" advance/);
   assert.doesNotMatch(workflow, /A model that already edited files is not retried on another model/);
   assert.match(workflow, /BASE_SHA: \$\{\{ inputs\.base_sha \}\}/);
   assert.match(workflow, /Checkout the exact base this session was dispatched for/);
+});
+
+test('the runner decides paid use only with a trusted gate, copied from the base before any attempt', () => {
+  assert.match(workflow, /Stage trusted coding tools/);
+  assert.match(workflow, /cp tools\/che_coding_paid_gate\.mjs tools\/che_coding_checkpoint\.mjs "\$trust\/tools\/"/);
+  assert.match(workflow, /CHE_TRUSTED_TOOLS=\$trust/);
+  assert.doesNotMatch(workflow, /node tools\/che_coding_paid_gate\.mjs/);
+  assert.doesNotMatch(workflow, /node tools\/che_coding_checkpoint\.mjs/);
+});
+
+test('the paid key is read once and unset, so no agent process inherits it', () => {
+  const run = workflow.slice(workflow.indexOf('- name: Run OpenCode in the isolated checkout'), workflow.indexOf('- name: Build compact result and patch'));
+  assert.match(run, /paid_key="\$K_PAID_OPENROUTER"; unset K_PAID_OPENROUTER/);
+  assert.match(run, /-u K_PAID_OPENROUTER/);
+  assert.doesNotMatch(run, /OPENROUTER_API_KEY="\$K_PAID_OPENROUTER"/);
+});
+
+test('the claim job passes the resume count to the runtime job (the resume could never start without it)', () => {
+  const claim = workflow.slice(workflow.indexOf('  claim:'), workflow.indexOf('  runtime:'));
+  assert.match(claim, /resume_count: \$\{\{ steps\.claim\.outputs\.resume_count \}\}/);
+  assert.match(workflow, /fromJSON\(needs\.claim\.outputs\.resume_count \|\| '0'\) > 0/);
+});
+
+test('only an implemented session becomes a patch and a PR; a blocked one keeps only its checkpoint', () => {
+  assert.match(workflow, /const patch = state === 'implemented' \? git\('diff', '--no-renames', '--binary'\) : '';/);
+  assert.match(workflow, /--diff-filter=ACMRD'\)\.split\('\\0'\)/);
+});
+
+test('a failed source baseline stops every attempt, so a revert can never delete files it should keep', () => {
+  assert.match(workflow, /Could not record the source baseline, so no attempt will run/);
+  assert.match(workflow, /\[ -z "\$baseline_failed" \] \|\| break/);
+});
+
+test('a revert that fails stops the attempts instead of continuing on a dirty tree', () => {
+  assert.match(workflow, /verdict_rc=\$\?/);
+  assert.match(workflow, /"\$verdict_rc" = 2/);
+});
+
+test('the paid-model switch no longer reaches autopilot, which uses only free OpenRouter models with the main key', () => {
+  const autopilot = readFileSync(new URL('../.github/workflows/che-autopilot.yml', import.meta.url), 'utf8');
+  assert.doesNotMatch(autopilot, /CHE_ALLOW_PAID_MODELS/);
+  assert.match(autopilot, /if \[ "\$provider" = openrouter \]; then list=\$\(printf/);
+});
+
+test('the key-check and gate pass the owner\'s BYOK confirmation, and only as a repository variable', () => {
+  assert.match(workflow, /CHE_CODING_OPENROUTER_NO_BYOK: \$\{\{ vars\.CHE_CODING_OPENROUTER_NO_BYOK \}\}/);
+  const check = readFileSync(new URL('../.github/workflows/che-coding-key-check.yml', import.meta.url), 'utf8');
+  assert.match(check, /CHE_CODING_OPENROUTER_NO_BYOK: \$\{\{ vars\.CHE_CODING_OPENROUTER_NO_BYOK \}\}/);
 });

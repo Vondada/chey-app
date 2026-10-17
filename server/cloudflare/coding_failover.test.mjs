@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyModelFailure, resumeDecision, unsafeCodingPaths, progressPrompt, RESUME_LIMIT, RESUME_BACKOFF_MS } from './coding_failover.mjs';
+import { classifyModelFailure, resumeDecision, resumeAction, newMissionAction, unsafeCodingPaths, progressPrompt, RESUME_LIMIT, RESUME_BACKOFF_MS } from './coding_failover.mjs';
 
 test('quota, rate limit and timeout are capacity failures that may resume; access and size are not', () => {
   assert.deepEqual(
@@ -64,4 +64,32 @@ test('the next model is told what is verified, so it continues instead of reread
   assert.match(prompt, /VERIFIED PROGRESS \(attempt 2; do not redo or revert it\)/);
   assert.match(prompt, /server\/cloudflare\/agent_runtime\.js, tools\/x\.mjs \(\+12\/-3\)/);
   assert.match(progressPrompt({ basePrompt: 'x', files: [] }), /No files are changed yet/);
+});
+
+test('the coding tools and the gate are unsafe paths: an attempt can never change the code that judges it', () => {
+  const tools = ['tools/che_coding_paid_gate.mjs', 'tools/che_coding_checkpoint.mjs', 'server/cloudflare/coding_failover.mjs', '.opencode/config.json'];
+  assert.deepEqual(unsafeCodingPaths(tools), tools);
+  assert.deepEqual(unsafeCodingPaths(['server/cloudflare/coding_runtime.js', 'tools/che_video_render.py']), []);
+});
+
+test('a pending resume waits for its backoff, dispatches once, then waits for a claim, is claimed, or is given up only with no live run', () => {
+  const now = Date.parse('2026-10-17T12:00:00Z');
+  const pending = { next_at: new Date(now + 60_000).toISOString(), resume_count: 1 };
+  assert.equal(resumeAction({ pending, now }), 'wait_backoff');
+  assert.equal(resumeAction({ pending: { ...pending, next_at: new Date(now - 1).toISOString() }, now }), 'dispatch');
+  const dispatched = { ...pending, dispatched_at: new Date(now - 60_000).toISOString() };
+  assert.equal(resumeAction({ pending: dispatched, status: { resume_count: 2 }, runAlive: 'dead', now }), 'claimed');
+  assert.equal(resumeAction({ pending: dispatched, status: { resume_count: 2 }, now }), 'claimed', 'a claim counts whether or not the run is listed');
+  assert.equal(resumeAction({ pending: dispatched, status: { resume_count: 2 }, runAlive: 'dead', now }), 'claimed');
+  assert.equal(resumeAction({ pending: dispatched, status: { resume_count: 0 }, runAlive: 'alive', now }), 'wait_claim');
+  assert.equal(resumeAction({ pending: dispatched, status: { resume_count: 0 }, runAlive: 'unknown', now }), 'wait_claim', 'an unknown run is never treated as dead');
+  assert.equal(resumeAction({ pending: dispatched, status: { resume_count: 0 }, runAlive: 'dead', now }), 'give_up');
+});
+
+test('a new owner mission starts unless a dispatched resume may still be running', () => {
+  assert.equal(newMissionAction({ pending: null }), 'start');
+  assert.equal(newMissionAction({ pending: { dispatched_at: '' }, runAlive: 'alive' }), 'abandon', 'a resume still waiting for its backoff has no runner');
+  assert.equal(newMissionAction({ pending: { dispatched_at: 'x' }, runAlive: 'alive' }), 'refuse');
+  assert.equal(newMissionAction({ pending: { dispatched_at: 'x' }, runAlive: 'unknown' }), 'refuse');
+  assert.equal(newMissionAction({ pending: { dispatched_at: 'x' }, runAlive: 'dead' }), 'abandon');
 });

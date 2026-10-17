@@ -209,7 +209,6 @@ jobs:
           HAS_ANTHROPIC: ${{ secrets.ANTHROPIC_API_KEY != '' }}
           HAS_MISTRAL: ${{ secrets.MISTRAL_API_KEY != '' }}
           HAS_CEREBRAS: ${{ secrets.CEREBRAS_API_KEY != '' }}
-          CHE_ALLOW_PAID_MODELS: ${{ vars.CHE_ALLOW_PAID_MODELS }}
           K_GOOGLE: ${{ secrets.GEMINI_API_KEY }}
           K_ANTHROPIC: ${{ secrets.ANTHROPIC_API_KEY }}
           K_OPENAI: ${{ secrets.OPENAI_API_KEY }}
@@ -244,8 +243,9 @@ jobs:
               else [ "$provider" = "$implementer_provider" ] || continue; fi
               list=$(list_models "$provider" | grep -E "^$provider/" | grep -iE "gemini|claude|gpt|qwen|deepseek|llama|mistral|codestral|devstral|kimi|glm|grok" | grep -viE "tts|image|audio|embed|vision|guard|[-_.]lite|[-_.]nano|[-_.]mini|[-_]8b|lyria|veo|imagen|live|robotics|computer-use|customtools|learnlm|aqa|search|transcribe|realtime|moderation" || true)
               # OpenRouter: free (":free") models only unless the owner sets the repo
-              # variable CHE_ALLOW_PAID_MODELS=true, so the $10 credit is never spent.
-              if [ "$provider" = openrouter ] && [ "${CHE_ALLOW_PAID_MODELS:-}" != true ]; then list=$(printf '%s\n' "$list" | grep -E ":free$" || true); fi
+              # the main key pays for nothing it does not need to. Paid OpenRouter models are used
+              # only by the capped runtime gate (CHE_CODING_OPENROUTER_PAID_KEY), never with this key.
+              if [ "$provider" = openrouter ]; then list=$(printf '%s\n' "$list" | grep -E ":free$" || true); fi
               list=$(printf '%s\n' "$list" | grep -vxF "$IMPLEMENTER_MODEL" || true)
               strong=$(printf '%s\n' "$list" | grep -iE "coder|codestral|devstral|pro|sonnet|opus|gpt-5|large|70b" || true)
               ranked=$( { printf '%s\n' "$strong" | grep -viE "preview|exp" | sort -rV || true; printf '%s\n' "$strong" | sort -rV; printf '%s\n' "$list" | sort -rV; } | awk 'NF && !seen[$0]++' | head -2)

@@ -375,10 +375,17 @@ sleep 60
   chmodSync(join(bin, 'opencode'), 0o755);
   writeFileSync('/tmp/che-runtime-prompt.txt', 'OWNER REQUEST: a tiny change');
   const output = join(dir, 'output');
+  // The runner stages the gate and verifier from the base before any attempt; the step uses that copy.
+  const trusted = join(dir, 'trusted');
+  const { copyFileSync } = await import('node:fs');
+  spawnSync('mkdir', ['-p', join(trusted, 'tools'), join(trusted, 'server/cloudflare')]);
+  copyFileSync(new URL('../../tools/che_coding_checkpoint.mjs', import.meta.url), join(trusted, 'tools/che_coding_checkpoint.mjs'));
+  copyFileSync(new URL('../../tools/che_coding_paid_gate.mjs', import.meta.url), join(trusted, 'tools/che_coding_paid_gate.mjs'));
+  copyFileSync(new URL('./coding_failover.mjs', import.meta.url), join(trusted, 'server/cloudflare/coding_failover.mjs'));
   const started = Date.now();
   const res = spawnSync('bash', ['-c', runStepScript('Run OpenCode in the isolated checkout')], {
     cwd: repo,
-    env: { PATH: `${bin}:${process.env.PATH}`, FREE_CANDIDATES: 'google/quota groq/small groq/reads', GITHUB_OUTPUT: output, HOME: dir },
+    env: { PATH: `${bin}:${process.env.PATH}`, FREE_CANDIDATES: 'google/quota groq/small groq/reads', GITHUB_OUTPUT: output, HOME: dir, RUNNER_TEMP: dir, CHE_TRUSTED_TOOLS: trusted, BASE_SHA: 'a'.repeat(40) },
     encoding: 'utf8',
     timeout: 60_000,
   });

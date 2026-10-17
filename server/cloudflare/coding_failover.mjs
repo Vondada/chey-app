@@ -64,7 +64,11 @@ export function resumeDecision({ resumable = false, resumeCount = 0, now = Date.
 // step and its checkpoint verifier, so a checkpoint cannot carry a file the
 // final patch would refuse.
 const UNSAFE_PATHS = [
-  /^(?:\.github\/|\.git\/)/i,
+  /^(?:\.github\/|\.git\/|\.opencode\/)/i,
+  // The gate and the verifier decide paid use and what a checkpoint may contain: an attempt
+  // must never change them. The runner also runs trusted copies taken from the base.
+  /^tools\/che_coding_/i,
+  /^server\/cloudflare\/coding_failover\.mjs$/i,
   /(?:^|\/)(?:\.env(?:\.|$)|secrets?\b|credentials?\b)/i,
   /\.(?:pem|p12|mobileprovision|key|keystore|jks)$/i,
   /^(?:pubspec\.ya?ml|pubspec\.lock|server\/cloudflare\/(?:package(?:-lock)?\.json|wrangler\.jsonc))$/i,
@@ -95,3 +99,29 @@ export function progressPrompt({ basePrompt = '', files = [], additions = 0, del
 
 // Failure kinds the Worker may report as resumable, for the spoken status.
 export const RESUMABLE_KINDS = Object.freeze(['quota', 'rate_limit', 'timeout']);
+
+// A saved resume: the session id it dispatches, and the count it expects the runner to
+// claim. `dispatched_at` is set once the same session was dispatched again.
+// Decides what a pending resume should do now. Pure: the Worker supplies what it read.
+//   'wait_backoff'  the backoff has not ended; nothing is dispatched
+//   'dispatch'      the backoff ended; dispatch the same session
+//   'wait_claim'    dispatched, and a run is queued or running but has not claimed yet
+//   'claimed'       the runner claimed the resume (its claim count is in the record)
+//   'give_up'       dispatched, no live run and never claimed: nothing will resume it
+export function resumeAction({ pending, status = {}, runAlive = 'unknown', now = Date.now() } = {}) {
+  if (!pending) return 'none';
+  if (!pending.dispatched_at) return Date.parse(pending.next_at) > now ? 'wait_backoff' : 'dispatch';
+  if (Number(status.resume_count || 0) >= Number(pending.resume_count || 0) + 1) return 'claimed';
+  if (runAlive === 'alive' || runAlive === 'unknown') return 'wait_claim';
+  return 'give_up';
+}
+
+// What a new owner mission does with a resume still pending. A resume that may still
+// run (dispatched, and a run is alive or cannot be checked) refuses the new mission, so
+// two runners never open PRs for different work. Otherwise the pending resume is dropped.
+export function newMissionAction({ pending = null, runAlive = 'unknown' } = {}) {
+  if (!pending) return 'start';
+  if (pending.dispatched_at && (runAlive === 'alive' || runAlive === 'unknown')) return 'refuse';
+  return 'abandon';
+}
+

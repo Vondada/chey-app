@@ -1496,40 +1496,6 @@ export function nearestSource(current, find, context = 3) {
   return { from: from + 1, to, text: lines.slice(from, to).map((line, k) => `${from + k + 1}| ${line}`).join('\n') };
 }
 
-// A find block that is almost right (one stale line in four, a changed comment) is
-// re-anchored to the single place in the file that matches it best. The best window must
-// allow for the stale lines and beat every other window by at least two matching lines, so
-// two similar places stay an ambiguous error and the real lines go back to the engineer.
-// Three lines or more, so a short find is never guessed.
-const FUZZY_MIN_LINES = 3;
-const FUZZY_MARGIN = 2;
-export function fuzzyLocate(current, find) {
-  const want = String(find).split('\n').map(looseLine).filter(Boolean);
-  if (want.length < FUZZY_MIN_LINES) return null;
-  const lines = String(current).split('\n');
-  const code = [];
-  lines.forEach((line, index) => { if (looseLine(line)) code.push(index); });
-  let best = null;
-  let runnerUp = 0;
-  for (let c = 0; c + want.length <= code.length; c += 1) {
-    let hits = 0;
-    for (let j = 0; j < want.length; j += 1) if (looseLine(lines[code[c + j]]) === want[j]) hits += 1;
-    if (!best || hits > best.hits) {
-      if (best) runnerUp = Math.max(runnerUp, best.hits);
-      best = { c, hits };
-    } else {
-      runnerUp = Math.max(runnerUp, hits);
-    }
-  }
-  const allowedStale = Math.floor(want.length / 4);
-  if (!best || best.hits < want.length - allowedStale || best.hits - runnerUp < FUZZY_MARGIN) return null;
-  const first = code[best.c];
-  const last = code[best.c + want.length - 1];
-  const start = lines.slice(0, first).reduce((sum, line) => sum + line.length + 1, 0);
-  const end = lines.slice(0, last + 1).reduce((sum, line) => sum + line.length + 1, 0) - 1;
-  return { start, end, score: Math.round((best.hits / want.length) * 100) / 100 };
-}
-
 export function applyEdits(sources, edits) {
   const next = new Map(sources);
   const recovered = [];
@@ -1553,16 +1519,13 @@ export function applyEdits(sources, edits) {
         next.set(path, current.slice(0, loose.start) + replace + current.slice(loose.end));
         continue;
       }
-      // An earlier pass already made this change: the find text is gone and the replacement
-      // is in the file exactly once. Applying it again would duplicate the work, so it is a no-op.
-      if (replace.trim().length >= 20 && current.split(replace).length === 2) {
+      // An earlier pass already made this change: the find text is gone and the whole
+      // replacement is in the file exactly once. Applying it again would duplicate the work.
+      // Only a multi-line replacement of some length counts, so a common line is never taken
+      // for an applied change. A stale find is never guessed onto a nearby block.
+      const block = replace.trim();
+      if (block.includes('\n') && block.length >= 60 && current.split(replace).length === 2) {
         recovered.push({ path, how: 'already_applied' });
-        continue;
-      }
-      const fuzzy = fuzzyLocate(current, unnumbered);
-      if (fuzzy) {
-        next.set(path, current.slice(0, fuzzy.start) + replace + current.slice(fuzzy.end));
-        recovered.push({ path, how: 'fuzzy', score: fuzzy.score });
         continue;
       }
       const near = nearestSource(current, unnumbered);
@@ -2558,10 +2521,9 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         failStrategy(/ambiguous/.test(applied.error) ? 'ambiguous_anchor' : 'missing_anchor', applied.error);
         return null;
       }
-      const reanchored = (applied.recovered || []).filter((item) => item.how === 'fuzzy').length;
       const alreadyApplied = (applied.recovered || []).filter((item) => item.how === 'already_applied').length;
-      if (reanchored || alreadyApplied) {
-        chat.push({ from: 'CHE', msg: `${member.name}'s edits matched the current source${reanchored ? ` after re-anchoring ${reanchored} edit${reanchored === 1 ? '' : 's'} to the one clear match` : ''}${alreadyApplied ? `; ${alreadyApplied} already in place and not repeated` : ''}.` });
+      if (alreadyApplied) {
+        chat.push({ from: 'CHE', msg: `${member.name}'s edit${alreadyApplied === 1 ? ' was' : 's were'} already in the current source; not applied twice.` });
       }
       for (const file of requestedFiles) {
         const path = String(file?.path || '').trim();

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { snapshot, verify, restore, revert, readMeta } from './che_coding_checkpoint.mjs';
@@ -171,5 +171,55 @@ test('revert with no checkpoint returns the working tree to the base', () => {
     assert.equal(readFileSync(join(r.cwd, 'src/a.mjs'), 'utf8'), 'export const a = 1;\n');
     assert.equal(existsSync(join(r.cwd, 'src/new.mjs')), false);
     assert.equal(git(r.cwd, ['status', '--porcelain']).trim(), '');
+  } finally { r.cleanup(); }
+});
+
+test('a renamed workflow is refused: the old path is checked too, so the rename cannot hide a deletion', () => {
+  const r = repo();
+  try {
+    mkdirSync(join(r.cwd, '.github/workflows'), { recursive: true });
+    writeFileSync(join(r.cwd, '.github/workflows/x.yml'), 'on: push\n');
+    git(r.cwd, ['add', '.']);
+    git(r.cwd, ['commit', '-q', '-m', 'workflow']);
+    const base = git(r.cwd, ['rev-parse', 'HEAD']).trim();
+    snapshot({ cwd: r.cwd, dir: r.dir });
+    // A staged rename: the new path looks innocent on its own, but the old one is a deletion.
+    mkdirSync(join(r.cwd, 'tools'), { recursive: true });
+    renameSync(join(r.cwd, '.github/workflows/x.yml'), join(r.cwd, 'tools/x.yml'));
+    git(r.cwd, ['add', '-A']);
+    writeFileSync(join(r.cwd, 'tools/x.yml'), 'on: push\nrun: echo\n');
+    const result = verify({ cwd: r.cwd, dir: r.dir, baseSha: base });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'unsafe_files');
+    assert.ok(result.files.includes('.github/workflows/x.yml'), 'the deleted workflow path is among the refused files');
+    assert.equal(existsSync(join(r.cwd, '.github/workflows/x.yml')), true, 'the workflow is restored by the revert');
+  } finally { r.cleanup(); }
+});
+
+test('file names git would quote (non-ASCII, quotes) are verified and reverted correctly, never left behind', () => {
+  const r = repo();
+  try {
+    snapshot({ cwd: r.cwd, dir: r.dir });
+    writeFileSync(join(r.cwd, 'src/caf\u00e9.mjs'), 'export const c = 1;\n');
+    assert.equal(verify({ cwd: r.cwd, dir: r.dir, baseSha: r.base }).ok, true, 'a valid quoted-name file is a checkpoint');
+    writeFileSync(join(r.cwd, 'src/bad"quote.mjs'), 'export const q = ;\n');
+    const broken = verify({ cwd: r.cwd, dir: r.dir, baseSha: r.base });
+    assert.equal(broken.ok, false);
+    assert.equal(broken.reason, 'syntax');
+    assert.equal(existsSync(join(r.cwd, 'src/bad"quote.mjs')), false, 'the broken quoted-name file is removed');
+    assert.equal(readMeta(r.dir).seq, 1, 'the failed attempt is not checkpointed');
+  } finally { r.cleanup(); }
+});
+
+test('a verify that throws reverts the attempt and reports the failure, not a silent partial state', () => {
+  const r = repo();
+  try {
+    snapshot({ cwd: r.cwd, dir: r.dir });
+    writeFileSync(join(r.cwd, 'src/a.mjs'), 'export const a = 7;\n');
+    // A directory the verifier cannot write its checkpoint into: the write throws after the checks.
+    mkdirSync(join(r.dir, 'checkpoint.json'), { recursive: true });
+    const result = verify({ cwd: r.cwd, dir: r.dir, baseSha: r.base });
+    assert.equal(result.ok, false);
+    assert.equal(readFileSync(join(r.cwd, 'src/a.mjs'), 'utf8'), 'export const a = 1;\n', 'the unverified edit is reverted');
   } finally { r.cleanup(); }
 });

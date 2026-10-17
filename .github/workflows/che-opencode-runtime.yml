@@ -48,6 +48,7 @@ jobs:
       contents: write
     outputs:
       claimed: ${{ steps.claim.outputs.claimed }}
+      resume_count: ${{ steps.claim.outputs.resume_count }}
     steps:
       - name: Claim stable coding session
         id: claim
@@ -141,6 +142,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+
+      - name: Stage trusted coding tools
+        shell: bash
+        run: |
+          # The attempts edit the working tree, so the gate that decides paid use and the
+          # checkpoint verifier are copied from the exact base before any attempt runs.
+          trust="$RUNNER_TEMP/che-trusted"
+          mkdir -p "$trust/tools" "$trust/server/cloudflare"
+          cp tools/che_coding_paid_gate.mjs tools/che_coding_checkpoint.mjs "$trust/tools/"
+          cp server/cloudflare/coding_failover.mjs "$trust/server/cloudflare/"
+          echo "CHE_TRUSTED_TOOLS=$trust" >> "$GITHUB_ENV"
 
       - name: Decode and guard task
         id: guard
@@ -369,17 +381,25 @@ jobs:
           K_PAID_OPENROUTER: ${{ secrets.CHE_CODING_OPENROUTER_PAID_KEY }}
           K_HF: ${{ secrets.HF_TOKEN }}
           BASE_SHA: ${{ inputs.base_sha }}
+          CHE_CODING_OPENROUTER_NO_BYOK: ${{ vars.CHE_CODING_OPENROUTER_NO_BYOK }}
         run: |
           set +e
+          # The paid key is read once and removed from this shell's environment, so no child
+          # process (an agent included) inherits it. Only the gate and the paid attempt use it.
+          paid_key="$K_PAID_OPENROUTER"; unset K_PAID_OPENROUTER
           prompt=$(cat /tmp/che-runtime-prompt.txt)
           code=1; used=""; tried=""
           start=$(date +%s)
           # Checkpoint tool: untracked files that exist before any attempt are never deleted.
           # A checkpoint saved by an earlier run of this session is restored first.
           ckpt="$RUNNER_TEMP/che-checkpoint"
-          node tools/che_coding_checkpoint.mjs snapshot --dir "$ckpt" >/dev/null
+          baseline_failed=""
+          if ! node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" snapshot --dir "$ckpt" >/dev/null; then
+            echo "::error::Could not record the source baseline, so no attempt will run."
+            baseline_failed=1
+          fi
           if [ -f "$ckpt/checkpoint.patch" ]; then
-            if node tools/che_coding_checkpoint.mjs restore --dir "$ckpt" >/tmp/checkpoint-restore.json; then
+            if node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" restore --dir "$ckpt" >/tmp/checkpoint-restore.json; then
               echo "Restored verified checkpoint: $(head -c 300 /tmp/checkpoint-restore.json)"
             else
               echo "::warning::The saved checkpoint no longer applies to this base; starting from the base."
@@ -397,6 +417,7 @@ jobs:
             { grep -E '"type": ?"error"' /tmp/opencode-events.jsonl 2>/dev/null; grep -iE 'error' /tmp/opencode-stderr.log 2>/dev/null; } | grep -qE "$FATAL"
           }
           for m in $FREE_CANDIDATES $PAID_CANDIDATES; do
+            [ -z "$baseline_failed" ] || break
             paid=no
             case " $PAID_CANDIDATES " in *" $m "*) paid=yes;; esac
             # Reserve time for the final capped model when enabled. Do not
@@ -415,10 +436,10 @@ jobs:
               if [ "$CHE_CODING_PAID_FALLBACK" != true ]; then
                 echo "::warning::Paid fallback not authorized."; continue
               fi
-              if ! CHE_CODING_OPENROUTER_PAID_KEY="$K_PAID_OPENROUTER" node tools/che_coding_paid_gate.mjs; then
+              if ! CHE_CODING_OPENROUTER_PAID_KEY="$paid_key" node "$CHE_TRUSTED_TOOLS/tools/che_coding_paid_gate.mjs"; then
                 echo "::warning::Paid coding withheld: key cap or authorization failed."; continue
               fi
-              kv=("OPENROUTER_API_KEY=$K_PAID_OPENROUTER")
+              kv=("OPENROUTER_API_KEY=$paid_key")
               [ "$left" -le 300 ] || left=300
             else
               [ "$left" -le 120 ] || left=120
@@ -434,7 +455,7 @@ jobs:
             used=$m; tried="$tried $m"
             echo "Trying $m"
             : >/tmp/opencode-events.jsonl; : >/tmp/opencode-stderr.log
-            env -u K_GOOGLE -u K_ANTHROPIC -u K_OPENAI -u K_OPENROUTER -u K_GROQ -u K_MISTRAL -u K_CEREBRAS -u K_HF "${kv[@]}" \
+            env -u K_GOOGLE -u K_ANTHROPIC -u K_OPENAI -u K_OPENROUTER -u K_GROQ -u K_MISTRAL -u K_CEREBRAS -u K_HF -u K_PAID_OPENROUTER "${kv[@]}" \
               timeout --signal=TERM --kill-after=15s "${left}s" \
               opencode run --format json --auto --model "$m" "$prompt" \
               >/tmp/opencode-events.jsonl 2>/tmp/opencode-stderr.log &
@@ -449,9 +470,9 @@ jobs:
             [ -n "$stopped" ] && code=75
             [ "$code" = 0 ] && break
             # The kind decides whether this session may resume later from its checkpoint.
-            cat /tmp/opencode-stderr.log /tmp/opencode-events.jsonl 2>/dev/null >/tmp/opencode-failure.txt
-            failure_kind=$(node tools/che_coding_checkpoint.mjs classify --exit "$code" --field kind </tmp/opencode-failure.txt)
-            failure_resumable=$(node tools/che_coding_checkpoint.mjs classify --exit "$code" --field resumable </tmp/opencode-failure.txt)
+            { grep -E '"type": ?"error"' /tmp/opencode-events.jsonl 2>/dev/null; cat /tmp/opencode-stderr.log 2>/dev/null; } >/tmp/opencode-failure.txt
+            failure_kind=$(node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" classify --exit "$code" --field kind </tmp/opencode-failure.txt)
+            failure_resumable=$(node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" classify --exit "$code" --field resumable </tmp/opencode-failure.txt)
             why=$( { tail -c 4000 /tmp/opencode-stderr.log; grep -iE 'error|quota|rate|denied|invalid|not found' /tmp/opencode-events.jsonl | tail -2; } 2>/dev/null | redact)
             [ "$code" = 124 ] && why="timed out after ${left}s. $why"
             [ "$code" = 75 ] && why="stopped after $(( $(date +%s) - start ))s of the run: this model cannot do the request with this key. $why"
@@ -460,10 +481,12 @@ jobs:
             # checkpoint the next model continues from; anything else is reverted.
             if [ -n "$(git status --porcelain)" ]; then
               attempt=$((attempt + 1))
-              if node tools/che_coding_checkpoint.mjs advance --dir "$ckpt" --base "$BASE_SHA" --prompt-file /tmp/che-runtime-prompt.txt --attempt "$attempt" >/tmp/checkpoint-verdict.json; then
+              if node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" advance --dir "$ckpt" --base "$BASE_SHA" --prompt-file /tmp/che-runtime-prompt.txt --attempt "$attempt" >/tmp/checkpoint-verdict.json; then
                 prompt=$(cat "$ckpt/next-prompt.txt")
                 echo "::notice::$m left verified progress; the next model continues from it."
               else
+                verdict_rc=$?
+                if [ "$verdict_rc" = 2 ]; then echo "::error::Could not revert unverified edits; no further attempts run."; break; fi
                 echo "::warning::$m left changes that did not verify; reverted to the last checkpoint: $(head -c 300 /tmp/checkpoint-verdict.json)"
               fi
             fi
@@ -503,13 +526,19 @@ jobs:
           // Intent-to-add makes untracked source files visible to git diff without
           // staging their contents or committing anything.
           try { git('add', '-N', '--', '.'); } catch (_) { /* diff still reports tracked edits */ }
-          const files = git('diff', '--name-only', '--diff-filter=ACMRD').trim().split('\n').filter(Boolean);
-          // The same path rules the checkpoint verifier uses (server/cloudflare/coding_failover.mjs).
-          const unsafe = files.length ? JSON.parse(cp.execFileSync('node', ['tools/che_coding_checkpoint.mjs', 'unsafe', ...files], { encoding: 'utf8' })) : [];
+          // NUL-separated and without rename pairing: a renamed file shows its old path (a deletion) too.
+          const files = git('diff', '--no-renames', '-z', '--name-only', '--diff-filter=ACMRD').split('\0').filter(Boolean);
+          // The same path rules the checkpoint verifier uses, from the trusted copy taken at the base.
+          const unsafe = files.length ? JSON.parse(cp.execFileSync('node', [`${process.env.CHE_TRUSTED_TOOLS}/tools/che_coding_checkpoint.mjs`, 'unsafe', ...files], { encoding: 'utf8' })) : [];
           const rawExit = String(process.env.EXIT_CODE || '').trim();
           const exitCode = /^\d+$/.test(rawExit) ? Number(rawExit) : 1;
-          const patch = unsafe.length ? '' : git('diff', '--binary');
-          const numstat = git('diff', '--numstat').trim().split('\n').filter(Boolean);
+          const state = unsafe.length || exitCode !== 0 || process.env.OPENCODE_OUTCOME !== 'success'
+            ? 'blocked'
+            : files.length ? 'implemented' : 'no_change';
+          // Only an implemented session becomes a patch (and so a PR). A blocked session keeps its
+          // verified checkpoint in the result for a bounded resume, and is never delivered as a change.
+          const patch = state === 'implemented' ? git('diff', '--no-renames', '--binary') : '';
+          const numstat = git('diff', '--no-renames', '--numstat').trim().split('\n').filter(Boolean);
           let additions = 0;
           let deletions = 0;
           for (const row of numstat) {
@@ -517,9 +546,6 @@ jobs:
             if (/^\d+$/.test(a)) additions += Number(a);
             if (/^\d+$/.test(d)) deletions += Number(d);
           }
-          const state = unsafe.length || exitCode !== 0 || process.env.OPENCODE_OUTCOME !== 'success'
-            ? 'blocked'
-            : files.length ? 'implemented' : 'no_change';
           const artifactName = `che-opencode-${process.env.JOB_ID}`;
           const result = {
             session_id: process.env.JOB_ID,
