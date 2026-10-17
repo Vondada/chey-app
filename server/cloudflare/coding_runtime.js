@@ -312,10 +312,26 @@ export function runtimeStateClass(result = {}) {
   return 'unknown';
 }
 
+// Why the last model failed, from the runtime record's own error text. A request too large for
+// the key's token limit, a used-up quota or a model the key cannot use fails the same way on a
+// retry, so those are not retried automatically (2026-10-17, ocr-8e7f69c5: Gemini quota, a Groq
+// model the key could not use, and a Groq 7,000-token limit against a 10,182-token request).
+export function runtimeFailureCause(result = {}) {
+  const text = String(result.error || '');
+  if (/ContextOverflowError|Request too large|tokens per minute|context length/i.test(text)) return { kind: 'too_large', words: 'the request is larger than the token limit of that model key' };
+  if (/exceeded your current quota|RESOURCE_EXHAUSTED|insufficient_quota|quota exceeded/i.test(text)) return { kind: 'quota', words: 'the provider\'s quota for that key is used up' };
+  if (/does not exist or you do not have access|statusCode\W+40[134]|invalid api key|unauthori[sz]ed/i.test(text)) return { kind: 'access', words: 'the key has no access to that model' };
+  if (Number(result.opencode_exit_code) === 124 || /timed out/i.test(text)) return { kind: 'timeout', words: 'it ran out of time' };
+  return { kind: 'unknown', words: '' };
+}
+const REPEATS_ON_RETRY = ['too_large', 'quota', 'access'];
+
 export function recoverableRuntimeFailure(result = {}) {
   const state = runtimeState(result);
   // Unsafe-file guards and authorization failures are deliberately excluded:
-  // they need policy/owner handling, not an automatic coding retry.
+  // they need policy/owner handling, not an automatic coding retry. So is a
+  // model failure that a retry would repeat.
+  if (state === 'opencode_failed' && REPEATS_ON_RETRY.includes(runtimeFailureCause(result).kind)) return false;
   return ['opencode_failed', 'deliver_failed', 'tests_failed', 'review_rejected'].includes(state)
     || ['dispatch_stale', 'runtime_stale'].includes(String(result.failure || ''));
 }
@@ -347,7 +363,15 @@ export function speakRuntimeStatus(result = {}) {
     case 'tests_failed': parts.push(`Tests failed on pull request ${result.pr_number || ''}, so I did not merge it.`); break;
     case 'rolled_back': parts.push('A merged change broke main, so I rolled it back automatically.'); break;
     case 'no_change': parts.push('My runner found nothing that needed changing.'); break;
-    case 'opencode_failed': parts.push('The OpenCode attempt failed. I am recovering the coding job automatically.'); break;
+    case 'opencode_failed': {
+      const tried = (Array.isArray(result.models_tried) ? result.models_tried : []).slice(0, 5);
+      const cause = runtimeFailureCause(result);
+      parts.push(`The OpenCode attempt failed with ${changed}${tried.length ? ` after trying ${tried.length} model${tried.length === 1 ? '' : 's'} (${tried.join(', ')})` : ''}${cause.words ? `; the last one failed because ${cause.words}` : ''}.`);
+      parts.push(recoverableRuntimeFailure(result)
+        ? 'I am recovering the coding job automatically.'
+        : 'Retrying now would fail the same way, so I stopped it. A model key with enough quota and token limit (for example a paid Gemini key, or an OpenRouter key) would let it run. Nothing was merged or deployed.');
+      break;
+    }
     case 'deliver_failed': parts.push('The coding change could not be delivered. I am recovering the coding job automatically.'); break;
     case 'failed': case 'cancelled': case 'dead_letter':
       parts.push(result.failure === 'dispatch_stale'

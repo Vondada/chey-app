@@ -431,3 +431,24 @@ esac
   assert.ok(candidates.includes('groq/llama-3.3-70b-versatile'), 'other providers still follow');
   assert.ok(!candidates.some((m) => /lite/.test(m)));
 });
+
+test('the real ocr-8e7f69c5 record is spoken with its cause, and a failure a retry would repeat is not retried', async () => {
+  const { runtimeFailureCause } = await import('./coding_runtime.js');
+  const record = {
+    session_id: 'ocr-8e7f69c5', runtime: 'opencode', state: 'blocked', failure: 'opencode_failed', changed_files: 0, opencode_exit_code: 124,
+    models_tried: ['google/gemini-2.5-pro', 'google/gemini-3.1-pro-preview', 'google/gemini-omni-flash-preview', 'groq/llama-3.3-70b-versatile', 'groq/qwen/qwen3.8-27b'],
+    error: '{ type : error , error :{ name : ContextOverflowError , data :{ message : Request too large for model `qwen/qwen3.8-27b` on input tokens per minute (ITPM): Limit 7000, Requested 10182',
+  };
+  assert.equal(runtimeFailureCause(record).kind, 'too_large');
+  assert.equal(recoverableRuntimeFailure(record), false, 'the same request on the same keys fails the same way');
+  const spoken = speakRuntimeStatus(record);
+  assert.match(spoken, /failed with no files changed yet after trying 5 models \(google\/gemini-2\.5-pro, .*groq\/qwen\/qwen3\.8-27b\); the last one failed because the request is larger than the token limit/);
+  assert.match(spoken, /Retrying now would fail the same way, so I stopped it/);
+  assert.doesNotMatch(spoken, /recovering/);
+  for (const [error, kind] of [['You exceeded your current quota, please check your plan', 'quota'], ['The model `x` does not exist or you do not have access to it.', 'access'], ['socket hang up', 'unknown']]) {
+    assert.equal(runtimeFailureCause({ error }).kind, kind, error);
+  }
+  const transient = { state: 'blocked', failure: 'opencode_failed', error: 'socket hang up' };
+  assert.equal(recoverableRuntimeFailure(transient), true, 'an unknown or temporary failure is still recovered');
+  assert.match(speakRuntimeStatus(transient), /I am recovering the coding job automatically/);
+});
