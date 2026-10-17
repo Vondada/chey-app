@@ -64,6 +64,31 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-17 ~10:25 UTC — #324 and #325 MERGED; live REA acceptance found two gaps, fix PR #329)
+
+- **main** is `f69d3ab` (#325), on top of `d63936e` (#324).
+- **#324 MERGED** (squash `d63936e`, `[worker-deploy]`).
+  - Required checks were green on head `de76950`. Worker suite 1408/0 with main merged in. All 37 review threads resolved.
+  - Codex could not review the last commit: its usage limit is reached. Adding credits is the owner's call (spending).
+  - Deploy run 39023032319 green: live commit, SideStore link, Mary/Fish settings, ElevenLabs call, memory truth, Command Center.
+- **#325 MERGED** (squash `f69d3ab`). Branch updated with main (`99f8b0b`); 3 required checks green. Local `flutter analyze` clean; `flutter test` 434 pass / 1 skipped. Both dependency threads answered and resolved.
+  - Shorebird patch run 39023474663 was building at last read. **iPhone install NOT verified.**
+- **Live REA acceptance** (deploy dispatch 39023130474, `rea_check=true`, vercel/commerce / search / python.org) **FAILED 2 checks**:
+  - **B:** vercel/commerce mapped only 2 features; the check wants at least 3. Citations were pinned to the commit and search was cited by line.
+  - **C:** no `che-rea-web.yml` run was ever started, so there were 0 screenshots. The page read itself passed. The cause is unknown, because the replies go only to the job summary.
+  - Passed: capabilities, D (compare with CHE at a commit, every feature classified), G (private iOS app honest limits), and the verify call.
+- **PR #329** (`claude/rea-browser-dispatch-truth`, `[worker-deploy]`):
+  - a refused browser dispatch is now spoken, listed as a `Browser run:` limitation and shown in the view (`browser: {state, error}`);
+  - the acceptance step logs replies, B's feature names and C's browser state (with `::` broken up against workflow-command injection), and waits only while a run is queued.
+  - Regression test included; run_checks green.
+- **Next:**
+  1. merge #329 when green and verify its deploy;
+  2. re-dispatch `che-worker-deploy.yml` with `rea_check=true` and read the log for C's browser state and B's feature names;
+  3. fix the real cause;
+  4. then run Test E (`rea_build_feature`, draft PR only, never merged).
+- Also seen: a new OpenCode runtime run `ocr-6550098c` started 10:10 UTC (not started by me; check its receipt).
+- Coding Library branch `claude/che-coding-library` (211f3a8) is still unmerged with no PR; it needs main merged and a PR after REA acceptance passes.
+
 ## 2. Current position (Claude, 2026-10-17 ~08:50 UTC — #324 review rounds; Coding Library and runtime fixes in flight)
 
 - **main** is `fa117f6` (#326). Nothing below is merged yet.
