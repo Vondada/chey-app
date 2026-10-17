@@ -359,6 +359,13 @@ export async function compareWithChe(env, features, fetcher = fetch) {
     for (const p of named) evidence.push(link(`CHE file ${p} (name match only)`, blobUrl(repo, sha, p)));
     let searched = false;
     const unmatched = !known.length && !named.length && !commands.length;
+    // An unauthenticated tree proves file names, not the absence of source code.
+    // Without code search, do not report a feature as missing or propose rebuilding it.
+    if (unmatched && !token) {
+      feature.che = { status: 'unknown', evidence: [link('Not checked: CHE code search is unavailable without the GitHub token.', '')] };
+      counts.unknown += 1;
+      continue;
+    }
     // Past the search budget a feature was never searched, so it is "not checked", never "missing".
     if (unmatched && token && terms[0] && searches >= MAX_CHE_SEARCHES) {
       feature.che = { status: 'unknown', evidence: [link(`Not checked: CHE's code search allows ${MAX_CHE_SEARCHES} searches per comparison, and this feature's name matches no CHE file. Ask "REA compare" again to check the rest.`, '')] };
