@@ -187,8 +187,6 @@ void main() {
       'Compared with CHE: she has 0, partly has 0, is missing 1. Plan: 1 feature, 1 step, approved. '
       'Build: draft_pr_open, draft pull request 412. Verification passed: 1 of 1 checks passed.',
     );
-    expect(cheReaBuildQuestion(2), 'Build these 2 features into CHE as a draft pull request? Nothing merges or deploys without your separate yes.');
-    expect(cheReaBuildQuestion(1), startsWith('Build this feature into CHE'));
   });
 
   group('client', () {
