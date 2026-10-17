@@ -159,10 +159,10 @@ test('every free model out of capacity: the run is blocked, names the cause and 
   assert.equal(result.outputs.failure_kind, 'quota');
   assert.equal(result.outputs.resumable, 'true');
   assert.deepEqual(result.calls.map((line) => line.split('|')[0]), [FREE_A, FREE_B], 'paid never ran');
-  assert.match(result.stdout + result.stderr, /Paid fallback not authorized/);
+  assert.doesNotMatch(result.stdout + result.stderr, /Capped paid LAST fallback/);
 });
 
-test('paid fallback is withheld when enabled but no verified capped key exists, and no paid request is made', () => {
+test('the free coding step never invokes a paid model even when the paid flag is enabled', () => {
   const box = sandbox();
   const result = run(box, {
     free: FREE_A,
@@ -172,7 +172,7 @@ test('paid fallback is withheld when enabled but no verified capped key exists, 
   });
   assert.notEqual(result.outputs.exit_code, '0');
   assert.deepEqual(result.calls.map((line) => line.split('|')[0]), [FREE_A]);
-  assert.match(result.stdout + result.stderr, /Paid coding withheld/);
+  assert.doesNotMatch(result.stdout + result.stderr, /Capped paid LAST fallback/);
 });
 
 test('resume: a later run restores the checkpoint saved by an earlier run and finishes from it', () => {
