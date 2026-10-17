@@ -132,14 +132,10 @@ ScreenCommand? parseScreenCommand(String raw) {
   // Shared words in a programming request (e.g. "remove" and "chat")
   // must never clear CHE's visible conversation.
   if (last && RegExp(
-    r'^(?:remove|delete|erase)\s+(?:(?:the|my)\s+)?(?:last|previous)\s+(?:message|bubble|reply)
-}
-,
+    r'^(?:remove|delete|erase)\s+(?:(?:the|my)\s+)?(?:last|previous)\s+(?:message|bubble|reply)$',
   ).hasMatch(t)) return const ScreenCommand(ScreenOp.removeLast);
   if (RegExp(
-    r'^(?:clear|remove|delete|wipe|erase)\s+(?:(?:all|the|my|entire)\s+){0,2}(?:chat(?:\s+(?:history|messages))?|messages|screen\s+text|the\s+text|everything\s+on\s+(?:the\s+)?screen)
-}
-,
+    r'^(?:clear|remove|delete|wipe|erase)\s+(?:(?:all|the|my|entire)\s+){0,2}(?:chat(?:\s+(?:history|messages))?|messages|screen\s+text|the\s+text|everything\s+on\s+(?:the\s+)?screen)$',
   ).hasMatch(t)) return const ScreenCommand(ScreenOp.clearChat);
   return null;
 }
