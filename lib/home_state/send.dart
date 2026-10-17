@@ -697,6 +697,32 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // "What is on my screen?": answered from the page really in front of the
+    // owner (its registered page, tab and controls), never a model's guess.
+    // Pages with their own voice routes (Commands, the browser) answered above.
+    if (_pendingAttachment == null && cheAsksAboutScreen(message)) {
+      final reply = CheScreenAwareness.describe();
+      if (mounted) {
+        final onChat = _shellTab == 1 && (ModalRoute.of(context)?.isCurrent ?? true);
+        _set(() {
+          controller.clear();
+          messages
+            ..add({'role': 'user', 'text': message})
+            ..add({'role': 'assistant', 'text': reply});
+        });
+        // Large visible text on whatever page is in front, for a deaf owner too.
+        if (!onChat) {
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+            content: Text(reply, style: const TextStyle(fontSize: 18, height: 1.3)),
+            duration: const Duration(seconds: 10),
+          ));
+        }
+      }
+      HapticFeedback.mediumImpact();
+      await speakText(reply, record: false);
+      return;
+    }
+
     // One-step video search in CHE's own browser: "search YouTube for jazz",
     // "find new videos about Mars", "play lofi beats video". Inside the
     // browser, "read the videos" / "play number one" / "pause" take over.

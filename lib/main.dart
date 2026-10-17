@@ -26,6 +26,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:url_launcher/url_launcher.dart';
 import 'che_job_activity_banner.dart';
 import 'che_mic_supervisor.dart';
+import 'che_ui/che_screen_awareness.dart';
 import 'che_ui/che_ui_voice_command.dart';
 import 'che_native_voice.dart';
 import 'che_edge_voice.dart';
@@ -1172,6 +1173,7 @@ OWNER AGENCY
   @override
   void initState() {
     super.initState();
+    _screenToken = CheScreenAwareness.register(context, _shellScreenReport);
     unawaited(CheNotifications.requestPermission());
     unawaited(_syncUiVoicePrefs());
     CheUiPreferences.instance.addListener(_onUiPrefsChanged);
@@ -1306,6 +1308,7 @@ OWNER AGENCY
 
   @override
   void dispose() {
+    CheScreenAwareness.unregister(_screenToken);
     CheUiPreferences.instance.removeListener(_onUiPrefsChanged);
     WidgetsBinding.instance.removeObserver(this);
     _mic.dispose();
@@ -1347,6 +1350,40 @@ OWNER AGENCY
   // ============================================================
   // UI
   // ============================================================
+
+  Object? _screenToken;
+
+  /// The shell as "What is on my screen?" reports it: the selected bottom
+  /// tab and its own controls, from the real navigation state.
+  CheScreenReport _shellScreenReport() {
+    final tabs = [for (final t in ChePhoneTab.values) t.label];
+    final lastReply = messages.lastWhere((m) => m['role'] == 'assistant', orElse: () => const {})['text']?.trim() ?? '';
+    return switch (_shellTab) {
+      1 => CheScreenReport(
+          page: 'Chat',
+          tab: 'Chat',
+          tabs: tabs,
+          detail: messages.isEmpty
+              ? 'No messages yet in this chat'
+              : '${messages.length} messages in this chat${lastReply.isEmpty ? '' : '; my last reply begins: "${lastReply.length > 140 ? '${lastReply.substring(0, 140)}…' : lastReply}"'}',
+          controls: ['Talk to CHE', 'Commands', 'Conversations', 'New chat', 'Mailbox and Flagstaff', 'the message box', 'the bottom tabs'],
+        ),
+      2 => CheScreenReport(
+          page: 'the Office',
+          tab: _officePane == 0 ? 'Crew' : 'Projects',
+          tabs: const ['Crew', 'Projects'],
+          detail: '${_officeRuntime.agents.length} agents, ${_officeRuntime.working} working'
+              '${_officeRuntime.error == null ? '' : '. Office note: ${_officeRuntime.error}'}',
+          controls: const ['Crew office pane', 'Projects office pane', 'the bottom tabs: Home, Chat, Office, Apps, More'],
+        ),
+      3 => CheScreenReport(page: 'Apps', tab: 'Apps', tabs: tabs, controls: const ['the app list', 'the bottom tabs']),
+      4 => CheScreenReport(page: 'More', tab: 'More', tabs: tabs,
+          controls: const ['Talk to CHE', 'Trading Room', 'Conversations', 'Mailbox and Flagstaff', 'Keys', 'UI Controls', 'Connections', 'Change CHE’s voice', 'Voice replies', 'Projects and Businesses', 'Language and translate', 'the bottom tabs']),
+      _ => CheScreenReport(page: 'Home', tab: 'Home', tabs: tabs,
+          detail: '${_officeRuntime.agents.length} agents, ${_officeRuntime.working} working',
+          controls: const ['CHE avatar, to talk', 'Office status', 'Find an agent', 'War Room', 'the bottom tabs']),
+    };
+  }
 
   void _goShellTab(int i) {
     if (i < 0 || i > 4) return;

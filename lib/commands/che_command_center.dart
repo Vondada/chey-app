@@ -9,6 +9,7 @@ import 'package:flutter/cupertino.dart' show CupertinoAlertDialog, CupertinoDial
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../che_ui/che_screen_awareness.dart';
 import '../che_ui/che_theme.dart';
 import 'che_command_client.dart';
 import 'che_command_detail.dart';
@@ -107,11 +108,37 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
     super.initState();
     widget.store.addListener(_onStore);
     CheCommandCenterVoice.handler = _voice;
+    _screen = CheScreenAwareness.register(context, _screenReport);
     unawaited(_start());
+  }
+
+  Object? _screen;
+
+  /// This page as "What is on my screen?" reports it.
+  CheScreenReport _screenReport() {
+    const tabs = ['Library', 'Workflows', 'Activity'];
+    final shown = _tab == 0 ? _matching(_query.trim(), _statusFilter) : const <CheCommandInfo>[];
+    return CheScreenReport(
+      page: 'Commands',
+      tab: tabs[_tab],
+      tabs: tabs,
+      detail: _loading && _catalog.isEmpty
+          ? 'The command list is still loading from CHE'
+          : _catalog.isEmpty
+              ? 'No command list: ${_loadError.isEmpty ? 'CHE has not sent one yet' : _loadError}'
+              : switch (_tab) {
+                  1 => '${_catalog.workflows.length} saved workflows and ${_catalog.templates.length} templates',
+                  2 => _catalog.missions.isEmpty ? 'No workflow runs yet' : '${_catalog.missions.length} workflow runs; latest: ${_catalog.missions.first.spoken}',
+                  _ => '${_query.trim().isEmpty ? 'All ${_catalog.commands.length} commands' : '${shown.length} commands for "${_query.trim()}"'}'
+                      '${shown.isEmpty ? '' : ', first ${shown.first.slash}'}. ${_tally(shown)}',
+                },
+      controls: const ['Back to Chat', 'Speak to CHE', 'Read this page aloud', 'Refresh from CHE', 'Search commands or describe a goal', 'Library, Workflows and Activity tabs'],
+    );
   }
 
   @override
   void dispose() {
+    CheScreenAwareness.unregister(_screen);
     if (CheCommandCenterVoice.handler == _voice) CheCommandCenterVoice.handler = null;
     widget.store.removeListener(_onStore);
     _search.dispose();
@@ -507,12 +534,12 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
         if (query.isNotEmpty) {
           final all = _matching(query, _statusFilter);
           final read = _readPage(all, 5);
-          return 'Commands, ${all.length} matches for "$query". $read${_moreHint()} Say a number to hear one, or "run" and its name.';
+          return 'Commands, Library tab, ${all.length} matches for "$query". $read${_moreHint()} Say a number to hear one, or "run" and its name.';
         }
         final mine = <CheCommandInfo>{
           for (final id in [...widget.store.favorites, ...widget.store.recents]) ?_catalog.byId(id),
         }.take(5).toList();
-        return '${_pageSummary()} Tabs: 1. Library, 2. Workflows, 3. Activity.'
+        return '${_pageSummary()} The Library tab is open. Tabs: 1. Library, 2. Workflows, 3. Activity.'
             '${mine.isEmpty ? '' : ' Your commands: ${_numbered(mine)}'} Say "search for" and what you want to do, a command\'s name, or "back to chat".';
     }
   }

@@ -509,9 +509,9 @@ void main() {
       'Teach my dog five commands',
       'What are the voice commands for Siri?',
       'What does the trade chart command do?',
-      // In Chat, "search for YouTube" alone is not about commands; on the
-      // Commands page it is (che_command_speech_test.dart).
-      'CHE, search for YouTube.',
+      // A group's bare name ("CHE, search for YouTube.") is CHE's catalog
+      // (owner, 2026-10-16; che_owner_phrases_test.dart); more words are not.
+      'CHE, search for YouTube videos about cats.',
     ]) {
       expect(parseScreenCommand(phrase)?.op, isNot(ScreenOp.searchCommands), reason: phrase);
     }

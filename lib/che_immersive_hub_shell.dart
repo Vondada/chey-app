@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'che_ui/che_screen_awareness.dart';
+
 typedef CheImmersivePageBuilder = Widget Function(bool active);
 
 /// CHE's room navigator. Replaces the crowded 9-item tab bar with a single
@@ -44,7 +46,18 @@ class _CheImmersiveHubShellState extends State<CheImmersiveHubShell>
       vsync: this,
     )..addListener(_syncIndex);
     WidgetsBinding.instance.addPostFrameCallback((_) => _revealPill(animate: false));
+    // "What is on my screen?": the rooms sheet and its selected room. A room
+    // that reports itself (the Brain, Creator Studio) answers instead.
+    _screen = CheScreenAwareness.register(context, () => CheScreenReport(
+          page: 'the rooms sheet',
+          tab: _label(_index),
+          tabs: [for (var i = 0; i < widget.tabs.length; i++) _label(i)],
+          detail: 'The ${_label(_index)} room is open, ${_index + 1} of ${widget.tabs.length}',
+          controls: const ['Close rooms', 'the room tabs'],
+        ));
   }
+
+  Object? _screen;
 
   void _syncIndex() {
     final next = _controller.index;
@@ -69,6 +82,7 @@ class _CheImmersiveHubShellState extends State<CheImmersiveHubShell>
 
   @override
   void dispose() {
+    CheScreenAwareness.unregister(_screen);
     _controller
       ..removeListener(_syncIndex)
       ..dispose();

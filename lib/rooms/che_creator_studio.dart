@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../che_ui/che_rooms.dart';
+import '../che_ui/che_screen_awareness.dart';
 import '../che_ui/che_theme.dart';
 import '../widgets/che_native_scene_world.dart';
 
@@ -67,9 +68,28 @@ class _CheCreatorStudioState extends State<CheCreatorStudio> with SingleTickerPr
 
   late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
   int _view = 0;
+  Object? _screen;
+
+  @override
+  void initState() {
+    super.initState();
+    // "What is on my screen?" while the studio is the room in front.
+    _screen = CheScreenAwareness.register(context, () => CheScreenReport(
+          page: 'Creator Studio',
+          tab: _view == 0 ? 'Studio' : 'Music',
+          tabs: const ['Studio', 'Music'],
+          detail: _view == 1
+              ? 'The Music room: playlists, connected audio and the car'
+              : '${widget.speaking ? 'On air: CHE is speaking' : _rendering ? 'On air: rendering in the cloud' : 'Studio ready, not on air'}. '
+                  'Render queue: ${widget.jobs.isEmpty ? 'nothing rendering' : '${widget.jobs.length} jobs, first "${widget.jobs.first['title'] ?? 'Render job'}" ${widget.jobs.first['status'] ?? 'queued'}'}. '
+                  'Create: ${widget.actions.isEmpty ? 'no actions' : [for (final a in widget.actions) '${a.title} (${a.connected ? 'ready' : 'needs ${a.connectorName}'})'].join(', ')}',
+          controls: const ['Studio', 'Music', 'Close rooms'],
+        ));
+  }
 
   @override
   void dispose() {
+    CheScreenAwareness.unregister(_screen);
     _c.dispose();
     super.dispose();
   }
