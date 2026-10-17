@@ -35,7 +35,8 @@ changes are made by this repository change.
    $15-or-less MONTHLY key limit, BYOK counted against the cap, and >= $0.50
    remaining. A failed check, unavailable API, uncapped/oversized key, or
    disabled flag never sends a paid request.
-7. To stop paid coding immediately, change `CHE_CODING_PAID_FALLBACK=false`
+7. Verify the capped key without spending anything: run the workflow **CHE coding paid-key cap check**. It calls only OpenRouter's key-status endpoint and prints the verified cap, reset and balance, never the key. If it blocks, read its reason: a key with "include BYOK in limit" off must have that option turned on in OpenRouter, and a key that is not monthly must be recreated with a monthly limit.
+8. To stop paid coding immediately, change `CHE_CODING_PAID_FALLBACK=false`
    and revoke/disable that dedicated key in OpenRouter. Changes to the
    repository or Flutter app alone don't enable credit spending.
 
@@ -59,9 +60,17 @@ through that key, not unrelated accounts, credits bought manually, taxes or
 provider BYOK bills. Provider/model availability and rates can change.
 Free-tier request and token limits still apply. A coding attempt with partial
 edits stops for review rather than blindly stacking incompatible patches.
-The next large-job improvement is persistent, independently validated
-checkpoints across separate GitHub Actions sessions; this PR implements
-**per-session** fallback, not infinite execution or cross-session resume.
+**Checkpoints and resume.** After a model that changed files fails, CHE keeps the
+change only if it passes the path rules (no workflow, git, secret, signing or
+platform-config files), stays under 300 KB and every changed JavaScript or JSON file
+parses. The next model then starts from that verified state with a progress note.
+A change that fails any check is reverted before the next model runs. A session
+blocked by free capacity (quota, rate limit, timeout) is saved to the CHE mailbox and
+resumes from its checkpoint after 15, 60 and 180 minutes, at most three times, on the
+same session id. A checkpoint that no longer applies to its base is discarded and the
+job starts from the base. After the third resume, CHE's own coding team takes over.
+Too-large and access failures are never resumed: waiting cannot fix them.
+Tests and review still run on the final change, and the syntax check is not a substitute for them.
 Never claim a coding task completed until real source diffs, tests, review,
 merge and production version are verified.
 
