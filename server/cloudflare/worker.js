@@ -99,6 +99,7 @@ import {
 } from './google_services.js';
 import { fundyouredgeReply } from './fundyouredge.js';
 import { CheCodingRuntime, codingRuntimeEnabled, ownerRequiresMergeApproval, recoverableRuntimeFailure, runtimeState, runtimeStateClass, speakRuntimeStatus } from './coding_runtime.js';
+import { newMissionAction, RESUME_LIMIT, resumeAction, resumeDecision } from './coding_failover.mjs';
 import { handoffIntent, latestHandoff, unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
 import { LA_AGENCIA_ROLES, agentActionGuard, ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
@@ -8852,6 +8853,21 @@ export class CheState extends DurableObject {
               const runtimeLifecycle = runtimeState(status);
               // Status is a read. Automatic recovery runs from the alarm path,
               // never as a side effect of asking what happened to a job.
+              // A pending resume is shown only until the runner claims it; the record decides.
+              const pendingResume = await this.ctx.storage.get('che_runtime_resume');
+              if (pendingResume && pendingResume.session_id === id) {
+                if (resumeAction({ pending: pendingResume, status }) === 'claimed') {
+                  await this.ctx.storage.delete('che_runtime_resume');
+                } else {
+                  return runtimeReply({
+                    ...status,
+                    state: pendingResume.dispatched_at ? 'resuming' : 'waiting_capacity',
+                    resume_at: pendingResume.next_at,
+                    resume_attempt: pendingResume.attempt,
+                    resume_limit: RESUME_LIMIT,
+                  });
+                }
+              }
               return runtimeReply(status);
             }
           }
@@ -11097,6 +11113,14 @@ export class CheState extends DurableObject {
     const priorKey = String(await this.ctx.storage.get('che_runtime_last_mission_key') || '');
     const priorSession = String(await this.ctx.storage.get('che_runtime_last_session') || '');
     if (priorKey === missionKey && priorSession) {
+      const pendingResume = await this.ctx.storage.get('che_runtime_resume');
+      if (pendingResume && pendingResume.session_id === priorSession) {
+        const priorStatus = await runtime.getStatus(priorSession, { acceptedAt: String(await this.ctx.storage.get('che_runtime_last_session_at') || '') }).catch(() => ({}));
+        if (resumeAction({ pending: pendingResume, status: priorStatus }) !== 'claimed') {
+          return { status: 202, runtime: 'opencode', job_id: pendingResume.job_id, session_id: priorSession, state: pendingResume.dispatched_at ? 'resuming' : 'waiting_capacity', deduplicated: true };
+        }
+        await this.ctx.storage.delete('che_runtime_resume');
+      }
       // An automatic recovery of this mission may already own the work as a
       // live background job; it outranks the possibly-dead runtime session so
       // a repeated request never cites a dead session or dispatches twice.
@@ -11116,15 +11140,30 @@ export class CheState extends DurableObject {
         return { status: 202, runtime: 'opencode', job_id: priorJobId, session_id: priorSession, state: runtimeState(prior), deduplicated: true };
       }
     }
+    // A resume still pending for an earlier session must not run beside this mission. A run
+    // that may still be live refuses the new mission; otherwise the pending resume is dropped.
+    const pendingResume = await this.ctx.storage.get('che_runtime_resume');
+    if (pendingResume) {
+      const runAlive = pendingResume.dispatched_at
+        ? await runtime.workflowRunAlive({ sessionId: pendingResume.session_id, acceptedAt: pendingResume.dispatched_at }).catch(() => 'unknown')
+        : 'unknown';
+      if (newMissionAction({ pending: pendingResume, runAlive }) === 'refuse') {
+        return { status: 409, runtime: 'opencode', detail: 'A previous coding job is still resuming from its checkpoint. Ask again when it finishes or stops.' };
+      }
+      await this.abandonOpenCodeResume(pendingResume);
+    }
     const jobId = crypto.randomUUID();
+    const targetBranch = `che/auto/${jobId.slice(0, 8)}`;
     const started = await runtime.createSession({
       jobId,
       ownerRequest,
       baseSha,
-      targetBranch: `che/auto/${jobId.slice(0, 8)}`,
+      targetBranch,
       executionMode: policy.mode,
     });
     if (started.status === 202) {
+      await this.ctx.storage.put('che_runtime_last_base_sha', baseSha);
+      await this.ctx.storage.put('che_runtime_last_branch', targetBranch);
       await this.ctx.storage.put('che_runtime_last_session', started.session_id);
       await this.ctx.storage.put('che_runtime_last_job_id', started.job_id || jobId);
       await this.ctx.storage.put('che_runtime_last_session_at', new Date().toISOString());
@@ -11149,14 +11188,101 @@ export class CheState extends DurableObject {
     return advanceObjectives(data, (fields) => enqueueJob(data, fields));
   }
 
+  // Drives a pending resume one step, decided by the pure policy in coding_failover.mjs:
+  // wait out the backoff, dispatch the same session (same job id, base and branch, so the
+  // same session id), and wait for its runner to claim it. A dispatched resume with no live
+  // run that was never claimed is given up, and CHE's own coding team takes over. The old
+  // record stays "blocked" until the claim, so it is not judged again meanwhile.
+  async driveOpenCodeResume(pending, status) {
+    const runtime = new CheCodingRuntime(this.env);
+    const runAlive = pending.dispatched_at
+      ? await runtime.workflowRunAlive({ sessionId: pending.session_id, acceptedAt: pending.dispatched_at }).catch(() => 'unknown')
+      : 'unknown';
+    const action = resumeAction({ pending, status, runAlive });
+    if (action === 'claimed') {
+      await this.ctx.storage.delete('che_runtime_resume');
+      return { waiting: false };
+    }
+    if (action === 'give_up') {
+      await this.abandonOpenCodeResume(pending, { blocked: true });
+      return { waiting: false };
+    }
+    if (action === 'wait_claim') return { waiting: true, state: 'resuming' };
+    if (action === 'wait_backoff') return { waiting: true, state: 'waiting_capacity' };
+    const started = await runtime.createSession({
+      jobId: pending.job_id,
+      ownerRequest: pending.request,
+      baseSha: pending.base_sha,
+      targetBranch: pending.target_branch,
+      executionMode: 'BUILD',
+    }).catch(() => null);
+    if (started?.status === 202 && started.session_id === pending.session_id) {
+      const now = new Date().toISOString();
+      await this.ctx.storage.put('che_runtime_resume', { ...pending, dispatched_at: now });
+      await this.ctx.storage.put('che_runtime_last_session_at', now);
+      await this.ctx.storage.put('che_runtime_monitor_until', Date.now() + 60 * 60_000);
+      await this.scheduleWork();
+      return { waiting: true, state: 'resuming' };
+    }
+    const failures = Number(pending.dispatch_failures || 0) + 1;
+    if (failures >= 3) {
+      await this.abandonOpenCodeResume(pending, { blocked: true });
+      return { waiting: false };
+    }
+    await this.ctx.storage.put('che_runtime_resume', { ...pending, dispatch_failures: failures, next_at: new Date(Date.now() + 15 * 60_000).toISOString() });
+    return { waiting: true, state: 'waiting_capacity' };
+  }
+
+  // Removes a pending resume. One that gave up is never retried for this session.
+  async abandonOpenCodeResume(pending, { blocked = false } = {}) {
+    await this.ctx.storage.delete('che_runtime_resume');
+    if (blocked) await this.ctx.storage.put('che_runtime_resume_blocked', pending.session_id);
+  }
+
   async recoverOpenCodeFailure() {
     const id = String(await this.ctx.storage.get('che_runtime_last_session') || '');
     const runtimeAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
     if (!id || !runtimeAt) return null;
-    const status = await new CheCodingRuntime(this.env).getStatus(id, { acceptedAt: runtimeAt }).catch(() => null);
+    const runtime = new CheCodingRuntime(this.env);
+    let status = await runtime.getStatus(id, { acceptedAt: runtimeAt }).catch(() => null);
     if (!status || status.status !== 200) return null;
+    const pending = await this.ctx.storage.get('che_runtime_resume');
+    if (pending && pending.session_id === id) {
+      const step = await this.driveOpenCodeResume(pending, status);
+      if (step.waiting) return { status: { ...status, state: step.state }, state: step.state, recovered: false };
+      // The resumed run owns the session now: judge its own record, not the old one.
+      status = await runtime.getStatus(id, { acceptedAt: runtimeAt }).catch(() => status);
+    }
     const state = runtimeState(status);
     if (recoverableRuntimeFailure(status)) {
+      // A capacity failure that kept its verified checkpoint resumes this same session
+      // after a backoff, at most RESUME_LIMIT times. Only when that budget is spent, or
+      // the failure cannot be waited out, does CHE's own coding team take over.
+      const blocked = String(await this.ctx.storage.get('che_runtime_resume_blocked') || '') === id;
+      const plan = !blocked && status.resumable === true
+        ? resumeDecision({ resumable: true, resumeCount: Number(status.resume_count || 0) })
+        : { resume: false };
+      if (plan.resume) {
+        const resumeState = {
+          session_id: id,
+          job_id: String(await this.ctx.storage.get('che_runtime_last_job_id') || ''),
+          base_sha: String(await this.ctx.storage.get('che_runtime_last_base_sha') || ''),
+          target_branch: String(await this.ctx.storage.get('che_runtime_last_branch') || ''),
+          request: String(await this.ctx.storage.get('che_runtime_last_request') || ''),
+          resume_count: Number(status.resume_count || 0),
+          attempt: plan.attempt,
+          failure_kind: String(status.failure_kind || 'unknown'),
+          next_at: plan.at,
+          dispatched_at: '',
+          dispatch_failures: 0,
+        };
+        if (resumeState.job_id && resumeState.base_sha && resumeState.target_branch && resumeState.request) {
+          await this.ctx.storage.put('che_runtime_resume', resumeState);
+          await this.ctx.storage.put('che_runtime_monitor_until', Date.parse(plan.at) + 5 * 60_000);
+          await this.scheduleWork();
+          return { status, state: 'waiting_capacity', recovered: false, resume: resumeState };
+        }
+      }
       const summary = String(await this.ctx.storage.get('che_runtime_last_request_summary') || '').trim();
       const request = String(await this.ctx.storage.get('che_runtime_last_request') || summary).trim();
       if (!request) return { status, state, recovered: false };

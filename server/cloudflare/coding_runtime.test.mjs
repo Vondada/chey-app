@@ -375,10 +375,17 @@ sleep 60
   chmodSync(join(bin, 'opencode'), 0o755);
   writeFileSync('/tmp/che-runtime-prompt.txt', 'OWNER REQUEST: a tiny change');
   const output = join(dir, 'output');
+  // The runner stages the gate and verifier from the base before any attempt; the step uses that copy.
+  const trusted = join(dir, 'trusted');
+  const { copyFileSync } = await import('node:fs');
+  spawnSync('mkdir', ['-p', join(trusted, 'tools'), join(trusted, 'server/cloudflare')]);
+  copyFileSync(new URL('../../tools/che_coding_checkpoint.mjs', import.meta.url), join(trusted, 'tools/che_coding_checkpoint.mjs'));
+  copyFileSync(new URL('../../tools/che_coding_paid_gate.mjs', import.meta.url), join(trusted, 'tools/che_coding_paid_gate.mjs'));
+  copyFileSync(new URL('./coding_failover.mjs', import.meta.url), join(trusted, 'server/cloudflare/coding_failover.mjs'));
   const started = Date.now();
   const res = spawnSync('bash', ['-c', runStepScript('Run OpenCode in the isolated checkout')], {
     cwd: repo,
-    env: { PATH: `${bin}:${process.env.PATH}`, CANDIDATES: 'google/quota groq/small groq/reads', GITHUB_OUTPUT: output, HOME: dir },
+    env: { PATH: `${bin}:${process.env.PATH}`, FREE_CANDIDATES: 'google/quota groq/small groq/reads', GITHUB_OUTPUT: output, HOME: dir, RUNNER_TEMP: dir, CHE_TRUSTED_TOOLS: trusted, BASE_SHA: 'a'.repeat(40) },
     encoding: 'utf8',
     timeout: 60_000,
   });
@@ -405,7 +412,7 @@ test('a blocked coding session turns the run red after its record is posted, nev
   assert.doesNotMatch(publish.slice(fail, fail + 600), /\$\{\{ inputs\.[a-z_]+ \}\}[^\n]*\n[^\n]*echo/, 'inputs reach the shell only through env');
 });
 
-test('auto model choice keeps a stable fast model per provider, so a key without Pro quota still has one to try', async () => {
+test('auto free-first choice uses stable Flash instead of Pro and never selects paid models without approval', async () => {
   const { mkdtempSync, writeFileSync, chmodSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
@@ -422,13 +429,15 @@ esac
   chmodSync(join(dir, 'opencode'), 0o755);
   const output = join(dir, 'output');
   const res = spawnSync('bash', ['-c', runStepScript('Resolve model')], {
-    env: { PATH: `${dir}:${process.env.PATH}`, REQUESTED: 'auto', HAS_GOOGLE: 'true', HAS_GROQ: 'true', K_GOOGLE: 'x', K_GROQ: 'y', GITHUB_OUTPUT: output },
+    env: { PATH: `${dir}:${process.env.PATH}`, REQUESTED: 'auto', HAS_GOOGLE: 'true', HAS_GROQ: 'true', CHE_CODING_FREE_PROVIDERS: 'google,groq', K_GOOGLE: 'x', K_GROQ: 'y', GITHUB_OUTPUT: output },
     encoding: 'utf8',
   });
   assert.equal(res.status, 0, res.stderr);
-  const candidates = readFileSync(output, 'utf8').match(/candidates=(.*)/)[1].trim().split(' ');
-  assert.deepEqual(candidates.slice(0, 3), ['google/gemini-2.5-pro', 'google/gemini-2.5-flash', 'google/gemini-3.1-pro-preview']);
-  assert.ok(candidates.includes('groq/llama-3.3-70b-versatile'), 'other providers still follow');
+  const candidates = readFileSync(output, 'utf8').match(/free_candidates=(.*)/)[1].trim().split(' ');
+  assert.ok(candidates.includes('google/gemini-2.5-flash'), 'stable Flash remains usable when Pro has no quota');
+  assert.ok(candidates.every((m) => !/pro|preview|lite/.test(m)), 'never choose Pro, preview or Lite as free coding engines');
+  assert.ok(candidates.includes('groq/qwen/qwen3.8-27b'), 'other verified-free providers still follow');
+  assert.match(readFileSync(output, 'utf8'), /paid_candidates=\n/);
   assert.ok(!candidates.some((m) => /lite/.test(m)));
 });
 
@@ -454,8 +463,9 @@ test('the real ocr-8e7f69c5 record is spoken with its cause and the recovery tha
 
 test('Codex #327: the record keeps every model the run may try, so the last cause belongs to the last model listed', () => {
   const workflow = readFileSync(new URL('../../.github/workflows/che-opencode-runtime.yml', import.meta.url), 'utf8');
-  const limit = Number(workflow.match(/awk 'NF' \| head -(\d+) \| tr/)[1]);
-  assert.equal(limit, 6);
+  const freeLimit = Number(workflow.match(/head -(\d+) \| tr '\\n' ' '/)[1]);
+  const limit = freeLimit + 2; // Qwen Coder and DeepSeek final fallbacks
+  assert.equal(limit, 8);
   assert.match(workflow, new RegExp(`models_tried: String\\(process\\.env\\.TRIED \\|\\| ''\\)\\.trim\\(\\)\\.split\\(/\\\\s\\+/\\)\\.filter\\(Boolean\\)\\.slice\\(0, ${limit}\\)`));
   const spoken = speakRuntimeStatus({ state: 'blocked', failure: 'opencode_failed', models_tried: ['a/1', 'a/2', 'a/3', 'a/4', 'a/5', 'a/6'] });
   assert.match(spoken, /after trying 6 models \(a\/1, a\/2, a\/3, a\/4, a\/5, a\/6\)/);

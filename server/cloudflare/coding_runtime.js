@@ -305,7 +305,7 @@ export function runtimeState(result = {}) {
 
 export function runtimeStateClass(result = {}) {
   const state = runtimeState(result);
-  if (['queued', 'dispatching', 'running', 'retrying', 'recovering'].includes(state)) return 'active';
+  if (['queued', 'dispatching', 'running', 'retrying', 'recovering', 'waiting_capacity', 'resuming'].includes(state)) return 'active';
   if (['implemented', 'pr_open', 'reviewing', 'approved_waiting_owner'].includes(state)) return 'progress';
   if (['complete', 'merged', 'no_change', 'rolled_back'].includes(state)) return 'complete';
   if (['opencode_failed', 'deliver_failed', 'tests_failed', 'review_rejected', 'failed', 'cancelled', 'dead_letter'].includes(state)) return 'failed';
@@ -351,6 +351,14 @@ export function speakRuntimeStatus(result = {}) {
     case 'running': parts.push('The coding job is currently running on my OpenCode runner.'); break;
     case 'retrying': parts.push('The coding job is retrying automatically.'); break;
     case 'recovering': parts.push('The coding job is recovering automatically.'); break;
+    case 'waiting_capacity': {
+      const at = Date.parse(String(result.resume_at || ''));
+      const when = Number.isFinite(at) ? ` at ${new Date(at).toISOString().slice(11, 16)} UTC` : '';
+      const why = result.failure_kind ? ` (${String(result.failure_kind).replace(/_/g, ' ')})` : '';
+      parts.push(`The coding job ran out of free model capacity${why}. I kept its verified progress and will resume it from that checkpoint${when}, attempt ${Number(result.resume_attempt) || 1} of ${Number(result.resume_limit) || 3}. Nothing is lost.`);
+      break;
+    }
+    case 'resuming': parts.push('I am resuming the coding job from its verified checkpoint on my OpenCode runner now.'); break;
     case 'implemented': parts.push(`My coding runner ${changed}.`); break;
     case 'pr_open': parts.push(`I ${changed} and opened pull request ${result.pr_number || ''}. Tests are running.`); break;
     case 'reviewing': parts.push(`Tests passed. My reviewer is checking pull request ${result.pr_number || ''}.`); break;

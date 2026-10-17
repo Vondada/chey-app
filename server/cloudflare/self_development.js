@@ -1498,6 +1498,7 @@ export function nearestSource(current, find, context = 3) {
 
 export function applyEdits(sources, edits) {
   const next = new Map(sources);
+  const recovered = [];
   for (const edit of Array.isArray(edits) ? edits : []) {
     const path = String(edit?.path || '').trim();
     const requestedFind = typeof edit?.find === 'string' ? edit.find : '';
@@ -1518,6 +1519,15 @@ export function applyEdits(sources, edits) {
         next.set(path, current.slice(0, loose.start) + replace + current.slice(loose.end));
         continue;
       }
+      // An earlier pass already made this change: the find text is gone and the whole
+      // replacement is in the file exactly once. Applying it again would duplicate the work.
+      // Only a multi-line replacement of some length counts, so a common line is never taken
+      // for an applied change. A stale find is never guessed onto a nearby block.
+      const block = replace.trim();
+      if (block.includes('\n') && block.length >= 60 && current.split(replace).length === 2) {
+        recovered.push({ path, how: 'already_applied' });
+        continue;
+      }
       const near = nearestSource(current, unnumbered);
       return {
         error: `In ${path}, the "find" text does not exist exactly in current source. Re-read this file and regenerate the edit from the inspected source; do not ask the owner to copy source text.${near ? ` The closest real code in ${path} is lines ${near.from}-${near.to}:\n${near.text}` : ` Nothing like that text exists anywhere in ${path}: the element you anchored on is not in this file. CHE now gives this file the most room in "inspected" (the whole file when it fits); anchor on code that is actually there.`}`,
@@ -1528,7 +1538,7 @@ export function applyEdits(sources, edits) {
     if (current.indexOf(find, first + 1) >= 0) return { error: `In ${path}, the proposed edit is ambiguous because it matches more than once. Re-read the surrounding function or widget and regenerate a uniquely anchored edit.`, anchor_path: path };
     next.set(path, current.slice(0, first) + replace + current.slice(first + find.length));
   }
-  return { sources: next };
+  return { sources: next, recovered };
 }
 
 // A change "implements" something only if it touches real code: lines that
@@ -2510,6 +2520,10 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         feedbacks[i] = applied.error;
         failStrategy(/ambiguous/.test(applied.error) ? 'ambiguous_anchor' : 'missing_anchor', applied.error);
         return null;
+      }
+      const alreadyApplied = (applied.recovered || []).filter((item) => item.how === 'already_applied').length;
+      if (alreadyApplied) {
+        chat.push({ from: 'CHE', msg: `${member.name}'s edit${alreadyApplied === 1 ? ' was' : 's were'} already in the current source; not applied twice.` });
       }
       for (const file of requestedFiles) {
         const path = String(file?.path || '').trim();

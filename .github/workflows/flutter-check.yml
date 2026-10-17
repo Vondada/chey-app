@@ -93,6 +93,10 @@ jobs:
         run: python3 -m unittest discover -s tools -p 'test_che_video_render.py'
       - name: Claude Code project skills (.claude/skills) tests
         run: node --test .claude/skills/tests/*.test.mjs
+      - name: CHE free-first coding and paid cap regression tests
+        run: node --test tools/che_coding_paid_gate.test.mjs tools/che_coding_workflow_policy.test.mjs
+      - name: CHE coding failover, checkpoint and resume tests
+        run: node --test tools/che_coding_checkpoint.test.mjs tools/che_coding_failover_loop.test.mjs
       # A network policy defined only in YAML text is not enough: prove on the real Linux
       # runner that egress.sh blocks the observer user from loopback and link-local addresses
       # while the runner's own traffic still works (rules matching only that user).
