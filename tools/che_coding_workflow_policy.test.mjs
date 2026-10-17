@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 
 const workflow = readFileSync(new URL('../.github/workflows/che-opencode-runtime.yml', import.meta.url), 'utf8');
 const start = workflow.indexOf('      - name: Resolve model');
-const stop = workflow.indexOf('      - name: Run OpenCode', start);
+const stop = workflow.indexOf('\n      - name: ', start + 10) + 1;
 assert.ok(start > 0 && stop > start);
 const modelBlock = workflow.slice(start, stop);
 const scriptMatch = modelBlock.match(/        run: \|\n([\s\S]*)$/);
@@ -76,4 +76,18 @@ test('runtime checks monthly key cap immediately before paid model execution', (
   assert.match(workflow, /CHE_CODING_OPENROUTER_PAID_KEY/);
   assert.doesNotMatch(workflow, /CHE_ALLOW_PAID_MODELS/);
   assert.match(workflow, /remaining - 180/);
+});
+
+test('the workflow resume limit is the same number the failover policy uses', async () => {
+  const { RESUME_LIMIT } = await import('../server/cloudflare/coding_failover.mjs');
+  const declared = workflow.match(/const MAX_RESUMES = (\d+);/);
+  assert.ok(declared, 'the claim step declares MAX_RESUMES');
+  assert.equal(Number(declared[1]), RESUME_LIMIT);
+});
+
+test('a failed model that changed files is checkpointed or reverted, never silently passed on', () => {
+  assert.match(workflow, /node tools\/che_coding_checkpoint\.mjs advance/);
+  assert.doesNotMatch(workflow, /A model that already edited files is not retried on another model/);
+  assert.match(workflow, /BASE_SHA: \$\{\{ inputs\.base_sha \}\}/);
+  assert.match(workflow, /Checkout the exact base this session was dispatched for/);
 });
