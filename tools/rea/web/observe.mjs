@@ -179,6 +179,13 @@ async function resolveNavigation(url) {
 // page load. The kernel egress firewall separately enforces the socket target.
 const answers = new Map();
 function resolvesPrivate(host) {
+  // Only the isolated CI fixture uses a synthetic public hostname with an
+  // HTTP proxy. Its DNS name deliberately does not exist. Never enable this
+  // for ordinary observations or for arbitrary hostname input.
+  if (process.env.CHE_REA_FIXTURE_PROXY === '1' &&
+      (host === 'che-fixture.example' || host === 'cdn.fixture-cdn.example')) {
+    return Promise.resolve(false);
+  }
   if (!host || isIP(host.replace(/^\[|\]$/g, ''))) return Promise.resolve(false);
   const now = Date.now();
   const recent = answers.get(host);
