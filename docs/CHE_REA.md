@@ -24,7 +24,7 @@ Every investigation moves through the same 13 stages, each with its evidence not
 - A GitHub link or `owner/name repo` is read at its current commit. Facts: licence, languages, manifests (dependencies with line numbers), README feature bullets, file-based routes (Next.js, SvelteKit, Remix, Nuxt) and routes declared in code (React Router, GoRouter, Flutter named routes, HTTP routes), entry points, tests and CI. A named feature ("how its search feature works") is searched in the code and cited by file and line.
 - A web link is read once, after robots.txt allows it. A sign-in wall or bot check stops the read; CHE does not get around them. The isolated browser run then adds screenshots, menus, focus and phone layout.
 - An App Store link (or an app name with no public source) reads the public listing.
-- An app name is matched to a public repository by name and stars, and to an App Store listing.
+- An app name is matched only to a public repository or App Store listing with exactly that name. Similar names are read out as a numbered choice ("number two" picks one) and nothing is read from them until the owner chooses.
 - A private app ("the private iOS app X internals", an IPA or APK) gets the plain list of what CHE cannot reach and what she can do instead. Only the public listing is shown.
 - Messages about CHE's own code ("your current repository") never become investigations.
 
@@ -57,7 +57,7 @@ All ten are in the Command Center under Websites, Apps & AI. Each one routes to 
 | `/rea-compare` | `/rea-gap` | Read-only | Each feature against CHE's live repository, and the gaps worth adding. |
 | `/rea-rebuild` | `/rea-plan` | Plan only | An original-implementation plan with acceptance checks. Nothing is built. |
 | `/rea-build` | | Build | Hands the approved plan to CHE's coding job: a draft pull request. Never a merge. |
-| `/rea-verify` | | Read-only | The build's pull request, CI checks and changed tests. The iPhone is never claimed verified. |
+| `/rea-verify` | | Read-only | The build's pull request, CI checks and changed tests. It passes only after both always-on PR workflows (`flutter-check.yml`, `che-ui-analyze.yml`) have finished green on the head commit. The iPhone is never claimed verified. |
 | `/rea-status` | `/rea-capabilities`, `/rea-history` | Read-only | What REA can and cannot analyze, and recent investigations. |
 
 Plain speech works too: "CHE, investigate this app and tell me how its interface and features work", "Which of those features could improve your app?", "Build those approved features into yourself", "Remember that app we looked at? Add the export feature we discussed." npm phrases keep working as before ("reverse engineer npm package semver 7.7.2").
@@ -122,7 +122,7 @@ CHE can observe one public web page once, in an isolated headless browser on Git
 ### What it never does (enforced in code)
 
 1. **Only public pages.** The address follows the same rule as the Worker's page reader (`readablePublicUrl`): http or https only, with no user name or password, no port, no IP address, and no localhost, `.local`, `.internal`, `.lan`, `.home`, `.arpa` or `workers.dev` name. A refused address becomes a `refused` record that gives the reason.
-2. **robots.txt is respected.** The `User-agent: *` group is matched as RFC 9309 describes. A disallowed page is refused before the browser starts. If robots.txt cannot be read, the page is treated as allowed and the record says so.
+2. **robots.txt is respected.** REA obeys the group that names its own product token, `CHE-REA` for the page read and `CHE-REA-web` (or `CHE-REA`) for the browser. It falls back to `User-agent: *` only when no group names it. Rules are matched as RFC 9309 describes, after both the path and the rule are put in one percent-encoded form (`/%70rivate` is `/private`). A disallowed page is refused before the browser starts. If robots.txt cannot be read, the page is treated as allowed and the record says so.
 3. **No private network.** No request goes to a private, loopback, link-local or reserved address, or to a local name. That includes public names that resolve to such an address, and it protects the runner's metadata endpoint (169.254.169.254). WebSockets are checked the same way, and WebRTC may use only proxied UDP.
 4. **No sign-ins or bot checks.** The run ends as `refused`, with no screenshot and nothing recorded from the page, when any of these happens:
    - the page answers HTTP 401, 407, 403 or 429

@@ -377,12 +377,19 @@ export async function compareWithChe(env, features, fetcher = fetch) {
       searches += 1;
       searched = true;
       const found = await fetcher(`https://api.github.com/search/code?q=${encodeURIComponent(`${terms[0]} repo:${repo}`)}&per_page=5`, { headers }).then(async (r) => ({ ok: r.ok, data: await r.json().catch(() => null) })).catch(() => ({ ok: false }));
-      if (!found.ok) {
+      if (!found.ok || !Array.isArray(found.data?.items)) {
         feature.che = { status: 'unknown', evidence: [link(`CHE's code search did not answer, so "${terms[0]}" was not checked.`, '')] };
         counts.unknown += 1;
         continue;
       }
-      for (const item of (found.data?.items || []).filter((i) => /^(?:lib|server\/cloudflare)\//.test(i.path) && !/\.test\.|_test\.dart$/.test(i.path)).slice(0, 3)) {
+      const hits = found.data.items.filter((i) => /^(?:lib|server\/cloudflare)\//.test(i.path) && !/\.test\.|_test\.dart$/.test(i.path)).slice(0, 3);
+      // A search GitHub cut short proves nothing about what it did not reach.
+      if (!hits.length && found.data.incomplete_results) {
+        feature.che = { status: 'unknown', evidence: [link(`GitHub's code search for "${terms[0]}" stopped before it finished, so it was not checked.`, '')] };
+        counts.unknown += 1;
+        continue;
+      }
+      for (const item of hits) {
         evidence.push(link(`CHE file ${item.path} mentions "${terms[0]}" (code search)`, blobUrl(repo, sha, item.path)));
       }
     }
@@ -451,8 +458,15 @@ export function buildRequestFor(investigation) {
 }
 
 /**
- * Verification of a build from GitHub: the pull request, its check runs on
- * the head commit, and whether it changed any test file.
+ * Every pull request to main runs these workflows (neither has a path filter). A build passes
+ * only when each has a completed, successful run on the head commit: a check that reported
+ * early, before GitHub registered the others, is never taken as every check passing.
+ */
+export const REQUIRED_PR_WORKFLOWS = Object.freeze(['.github/workflows/flutter-check.yml', '.github/workflows/che-ui-analyze.yml']);
+
+/**
+ * Verification of a build from GitHub: the pull request, its check runs and
+ * workflow runs on the head commit, and whether it changed any test file.
  */
 export async function verifyBuild(env, prNumber, fetcher = fetch) {
   const repo = String(env?.CHE_GITHUB_REPO || '').trim();
@@ -463,20 +477,35 @@ export async function verifyBuild(env, prNumber, fetcher = fetch) {
   const pr = await get(`/pulls/${Number(prNumber)}`);
   if (!pr.ok) return { state: 'pending', checks: [], note: `GitHub did not return pull request #${prNumber} (status ${pr.status || 'none'}).` };
   const head = String(pr.data?.head?.sha || '');
-  const [runs, files] = await Promise.all([get(`/commits/${head}/check-runs?per_page=50`), get(`/pulls/${Number(prNumber)}/files?per_page=100`)]);
+  const [runs, files, workflowRuns] = await Promise.all([
+    get(`/commits/${head}/check-runs?per_page=50`),
+    get(`/pulls/${Number(prNumber)}/files?per_page=100`),
+    get(`/actions/runs?head_sha=${head}&per_page=50`),
+  ]);
   const checks = (runs.data?.check_runs || []).map((r) => ({ name: clip(r.name, 80), state: r.status === 'completed' ? clip(r.conclusion || 'unknown', 20) : clip(r.status, 20), url: String(r.html_url || '') }));
-  // A refused file list leaves the tests unproven: pending, never a crash or a pass.
-  if (!files.ok || !Array.isArray(files.data) || !runs.ok) {
-    return { state: 'pending', checks: [], note: `GitHub did not return the ${!runs.ok ? 'check runs' : 'changed files'} of pull request #${prNumber} (status ${(!runs.ok ? runs : files).status || 'none'}), so it is not verified yet. Ask again in a minute.`, pr_url: String(pr.data?.html_url || ''), head };
+  // A refused file, check or workflow list leaves the build unproven: pending, never a crash or a pass.
+  const refused = !runs.ok ? ['check runs', runs] : !files.ok || !Array.isArray(files.data) ? ['changed files', files] : !workflowRuns.ok || !Array.isArray(workflowRuns.data?.workflow_runs) ? ['workflow runs', workflowRuns] : null;
+  if (refused) {
+    return { state: 'pending', checks: [], note: `GitHub did not return the ${refused[0]} of pull request #${prNumber} (status ${refused[1].status || 'none'}), so it is not verified yet. Ask again in a minute.`, pr_url: String(pr.data?.html_url || ''), head };
   }
   const testFiles = files.data.map((f) => String(f.filename)).filter((p) => /(?:^|\/)test\/|\.test\.|_test\.dart$/.test(p));
   const blocking = checks.filter((c) => !/^Workers Builds/i.test(c.name));
   const failed = blocking.filter((c) => !['success', 'skipped', 'neutral'].includes(c.state) && !['queued', 'in_progress', 'pending', 'waiting'].includes(c.state));
   const running = blocking.filter((c) => ['queued', 'in_progress', 'pending', 'waiting'].includes(c.state));
-  const state = failed.length ? 'failed' : running.length || !blocking.length ? 'pending' : testFiles.length ? 'passed' : 'failed';
+  // The newest run of each required workflow for this exact commit.
+  const required = REQUIRED_PR_WORKFLOWS.map((path) => {
+    const run = workflowRuns.data.workflow_runs.filter((r) => r?.path === path && r?.head_sha === head).sort((a, b) => Number(b.id) - Number(a.id))[0];
+    return { path, name: clip(run?.name || path.split('/').pop(), 80), state: !run ? 'missing' : run.status !== 'completed' ? 'running' : run.conclusion === 'success' ? 'success' : clip(run.conclusion || 'unknown', 20) };
+  });
+  const requiredFailed = required.filter((r) => !['missing', 'running', 'success'].includes(r.state));
+  const requiredWaiting = required.filter((r) => r.state === 'missing' || r.state === 'running');
+  const state = failed.length || requiredFailed.length ? 'failed' : running.length || requiredWaiting.length || !blocking.length ? 'pending' : testFiles.length ? 'passed' : 'failed';
   const note = [
     `Pull request #${prNumber} is ${pr.data?.merged ? 'merged' : pr.data?.state}${pr.data?.draft ? ' (draft)' : ''}, head ${head.slice(0, 7)}.`,
-    failed.length ? `Failing: ${failed.map((c) => c.name).join(', ')}.` : running.length ? `Still running: ${running.map((c) => c.name).join(', ')}.` : blocking.length ? 'Every required check passed.' : 'No checks have reported yet.',
+    failed.length || requiredFailed.length ? `Failing: ${[...new Set([...failed.map((c) => c.name), ...requiredFailed.map((r) => r.name)])].join(', ')}.`
+      : running.length ? `Still running: ${running.map((c) => c.name).join(', ')}.`
+        : requiredWaiting.length ? `Waiting for ${requiredWaiting.map((r) => r.name).join(' and ')} to ${requiredWaiting.some((r) => r.state === 'missing') ? 'start' : 'finish'} on this commit.`
+          : blocking.length ? 'Every required check passed.' : 'No checks have reported yet.',
     testFiles.length ? `${testFiles.length} test files changed.` : 'No test file changed, so the acceptance checks are not proven.',
     'Not verified on the iPhone.',
   ].join(' ');

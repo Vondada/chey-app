@@ -3,7 +3,7 @@
 //   blockedHost(host)       true for a private, loopback, link-local or reserved IP literal,
 //                           or a local name; the browser never sends a request there
 //   privateAddress(ip)      the address half of that rule, also used on DNS answers
-//   robotsVerdict(text, p)  RFC 9309 matching for the '*' group: longest rule wins, Allow on a tie
+//   robotsVerdict(text, p, agents)  RFC 9309 matching: the group naming REA's own token, else '*'; longest rule wins, Allow on a tie
 
 import { isIP } from 'node:net';
 
@@ -77,4 +77,4 @@ export function blockedHost(host) {
 
 // robots.txt matching lives with the Worker's copy of the rules, so the browser and the
 // Worker's page read apply the same RFC 9309 semantics.
-export { robotsRules, robotsVerdict } from '../../../server/cloudflare/rea_web_evidence.js';
+export { REA_ROBOTS_AGENTS, robotsRules, robotsVerdict } from '../../../server/cloudflare/rea_web_evidence.js';
