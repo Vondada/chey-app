@@ -107,7 +107,9 @@ function world(opts = {}) {
     if (u.startsWith('https://api.github.com/repos/Vondada/chey-app/commits/main')) return json({ sha: CHE_SHA });
     if (u.startsWith('https://api.github.com/repos/Vondada/chey-app/git/trees/')) return state.cheTreeStatus === 200 ? json({ tree: CHE_TREE.map((path) => ({ path, type: 'blob' })) }) : json({ message: 'down' }, state.cheTreeStatus);
     if (u.startsWith('https://api.github.com/search/code')) return state.codeSearchStatus === 200 ? json({ items: [], incomplete_results: state.codeSearchIncomplete }) : json({ message: 'rate limited' }, state.codeSearchStatus);
-    if (u.startsWith('https://api.github.com/repos/Vondada/chey-app/actions/workflows/') && method === 'POST') return new Response(null, { status: 204 });
+    if (u.startsWith('https://api.github.com/repos/Vondada/chey-app/actions/workflows/') && method === 'POST') {
+      return state.dispatchStatus ? json({ message: 'Resource not accessible by personal access token' }, state.dispatchStatus) : new Response(null, { status: 204 });
+    }
     const record = u.match(/contents\/mailbox\/rea\/(rea-[0-9a-f]{8})\.json/);
     if (record) return state.records[record[1]] ? json({ content: Buffer.from(JSON.stringify(state.records[record[1]])).toString('base64') }) : json({ message: 'Not Found' }, 404);
     const pr = u.match(/\/repos\/Vondada\/chey-app\/pulls\/(\d+)(\/files)?/);
@@ -378,6 +380,20 @@ test('F. recovery: a GitHub outage fails truthfully and the retry continues the 
   assert.equal(inv.stages.find((s) => s.id === 'build').state, 'failed');
   const rebuilt = await che.say('Build those approved features into yourself.');
   assert.match(rebuilt.text, /Building/, 'a failed build can be started again on request');
+});
+
+test('live acceptance C: a browser run GitHub refuses to start is said aloud and shown, never left as a silent wait', async () => {
+  const w = world();
+  w.state.dispatchStatus = 403;
+  const che = cheWith(w);
+  const reply = await che.say('Investigate https://shop.example.com and tell me how its interface and features work');
+  assert.equal(reply.ok, true, 'the page itself was still read and mapped');
+  assert.doesNotMatch(reply.text, /An isolated browser run is also collecting/);
+  assert.match(reply.text, /GitHub did not start the browser run \(status 403: Resource not accessible by personal access token\)\. So there are no screenshots/);
+  const { investigations: [inv] } = await reaInvestigations(che.store, ENV, { fetcher: w.fetcher, now: T0 });
+  assert.deepEqual(inv.browser, { state: 'failed', error: 'GitHub did not start the browser run (status 403: Resource not accessible by personal access token).' });
+  assert.ok(inv.limitations.some((l) => /^Browser run: GitHub did not start the browser run \(status 403/.test(l)), 'listed as a limitation');
+  assert.deepEqual(inv.screenshots, []);
 });
 
 test('C. a public page: robots.txt and bot checks are respected; a normal page is mapped and one isolated browser run is sent', async () => {
