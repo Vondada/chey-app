@@ -141,6 +141,7 @@ void main() {
     await tester.tap(find.byTooltip('Read this list aloud'));
     await tester.pumpAndSettle();
     expect(spoken.single, startsWith('Investigations. 2 investigations, newest first. 1. Example Notes, website: Running, Stage 5 of 13, Architecture.'));
+    expect(find.text(spoken.single), findsOneWidget, reason: 'the exact spoken list must also be visible for deaf owners');
     handle.dispose();
   });
 
