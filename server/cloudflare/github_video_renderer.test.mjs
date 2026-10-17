@@ -278,3 +278,15 @@ test('the diagnosis says what GitHub says, read-only, with no token value', asyn
   assert.ok(seen.every((c) => c.method === 'GET'), 'nothing is dispatched');
   assert.doesNotMatch(JSON.stringify(report), /Z9y8X7w6/);
 });
+
+test('the renderer status check also names CHE, so GitHub answers it', async () => {
+  const { probeVideoEngine } = await import('./video_engine.js');
+  const seen = [];
+  const status = await probeVideoEngine(env, async (url, init = {}) => {
+    const headers = new Headers(init.headers);
+    seen.push(headers.get('user-agent'));
+    return headers.get('user-agent') ? new Response('{"state":"active"}') : new Response('{}', { status: 403 });
+  });
+  assert.deepEqual(seen, ['CHE-Video-Renderer']);
+  assert.equal(status.ready, true);
+});

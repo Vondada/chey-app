@@ -37,6 +37,9 @@ export async function probeVideoEngine(env = {}, fetcher = fetch) {
         headers: {
           'Authorization': 'Bearer ' + env.CHE_GITHUB_TOKEN,
           'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          // GitHub refuses requests without a User-Agent (HTTP 403).
+          'User-Agent': 'CHE-Video-Renderer',
         },
         signal: AbortSignal.timeout(12000),
       });
