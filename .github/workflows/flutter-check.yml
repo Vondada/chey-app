@@ -93,4 +93,16 @@ jobs:
         run: python3 -m unittest discover -s tools -p 'test_che_video_render.py'
       - name: Claude Code project skills (.claude/skills) tests
         run: node --test .claude/skills/tests/*.test.mjs
+      # A network policy defined only in YAML text is not enough. Verify the
+      # GitHub-hosted Linux runner actually accepts kernel-level egress rules.
+      # This step runs last, after the browser and other integration tests.
+      - name: REA observer kernel egress guard capability
+        run: |
+          set -euo pipefail
+          sudo iptables -A OUTPUT -d 169.254.0.0/16 -j REJECT
+          sudo iptables -C OUTPUT -d 169.254.0.0/16 -j REJECT
+          sudo iptables -A OUTPUT -d 127.0.0.0/8 -j REJECT
+          sudo iptables -C OUTPUT -d 127.0.0.0/8 -j REJECT
+          sudo ip6tables -A OUTPUT -j REJECT
+          sudo ip6tables -C OUTPUT -j REJECT
 
