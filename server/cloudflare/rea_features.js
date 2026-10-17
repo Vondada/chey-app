@@ -245,7 +245,7 @@ export function frameworksFrom(facts) {
 
 function websiteFeatures(facts, found, architecture, limitations) {
   const page = facts.final_url || facts.url;
-  const cite = (label) => ({ label: `Page ${facts.host}: ${clip(label, 120)}`, url: page });
+  const cite = (label) => ({ label: `${facts.via_browser ? 'Browser run, page' : 'Page'} ${facts.host}: ${clip(label, 120)}`, url: page });
   const forms = facts.forms || [];
   const hasType = (t) => forms.some((f) => f.fields.some((x) => x.type === t)) || (facts.loose_inputs || []).some((x) => x.type === t);
   if (hasType('search') || facts.landmarks?.search || (facts.loose_inputs || []).some((x) => /^(?:q|query|search|s)$/.test(x.name))) addEvidence(found, KIND_BY_ID.get('search'), cite('a search field'));
@@ -283,6 +283,26 @@ function websiteFeatures(facts, found, architecture, limitations) {
   limitations.push(facts.robots_checked ? 'robots.txt was checked and allows this page.' : 'robots.txt could not be read, so the page was treated as allowed.');
   limitations.push(browser ? 'An isolated browser opened the page without signing in and submitted no forms.' : 'Static read of one page: scripts were not run, so content drawn by JavaScript may be missing.');
   limitations.push('Pages behind a sign-in were not opened.');
+}
+
+/**
+ * Features found by the isolated browser run (a validated che.rea-web.v1 record): a page
+ * drawn by JavaScript shows its search, menus and forms only once scripts have run, so the
+ * static read can miss them. Each is cited as a browser observation of the page.
+ */
+export function browserFeatures(record = {}) {
+  const t = record.target || {};
+  const facts = {
+    kind: 'website', via_browser: true, host: t.host || '', url: t.url || '', final_url: t.final_url || t.url || '',
+    forms: (record.forms || []).map((f) => ({ method: f.method || 'get', fields: (f.fields || []).map((x) => ({ type: f.purpose_hint === 'search' && x.type === 'text' ? 'search' : x.type, label: x.label || '' })) })),
+    landmarks: record.landmarks || {}, nav_links: record.nav_links || [],
+    buttons: (record.interactive || []).filter((i) => i.role === 'button').map((i) => i.name || ''),
+    loose_inputs: [], alternates: 0, videos: 0, skip_link: false, browser: record,
+    title: record.page?.title || '', headings: record.headings || [], framework_hints: record.page?.framework_hints || [],
+  };
+  const found = new Map();
+  websiteFeatures(facts, found, [], []);
+  return [...found.values()].map(({ kind, evidence }) => featureFromKind(kind, evidence, facts));
 }
 
 function appStoreFeatures(facts, found, architecture, documented, limitations) {

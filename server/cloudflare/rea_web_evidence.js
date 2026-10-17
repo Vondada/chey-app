@@ -247,11 +247,14 @@ export function robotsPath(value) {
 export function robotsVerdict(text, path, agents = []) {
   const target = robotsPath(path || '/');
   if (target === '/robots.txt') return { allowed: true, rule: '' };
+  // The most specific rule wins: the most path octets, so '*' and '$' do not count.
+  // An Allow wins a tie.
+  const octets = (rule) => rule.path.replace(/[*$]/g, '').length;
   let best = null;
   for (const raw of robotsRules(text, agents)) {
     const rule = { ...raw, path: robotsPath(raw.path) };
     if (!rule.path || !ruleMatches(rule.path, target)) continue;
-    if (!best || rule.path.length > best.path.length || (rule.path.length === best.path.length && rule.allow)) best = rule;
+    if (!best || octets(rule) > octets(best) || (octets(rule) === octets(best) && rule.allow)) best = rule;
   }
   if (!best) return { allowed: true, rule: '' };
   return { allowed: best.allow, rule: `${best.allow ? 'Allow' : 'Disallow'}: ${best.path}` };
