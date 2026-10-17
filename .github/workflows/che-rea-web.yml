@@ -89,6 +89,10 @@ jobs:
           done
           sudo iptables -C OUTPUT -d 169.254.0.0/16 -j REJECT
           sudo ip6tables -C OUTPUT -d fc00::/7 -j REJECT
+          # Disable remaining IPv6 egress, including transition/tunneling ranges
+          # that can encode IPv4 destinations. Public IPv4 observation still works.
+          sudo ip6tables -A OUTPUT -j REJECT
+          sudo ip6tables -C OUTPUT -j REJECT
 
       - name: Observe the page within fixed limits
         id: observe
