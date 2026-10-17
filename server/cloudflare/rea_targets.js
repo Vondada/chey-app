@@ -488,11 +488,13 @@ export async function inspectWebsite(url, fetcher = fetch) {
   const robots = await robotsAllows(url, fetcher);
   if (!robots.allowed) return { ok: false, refused: true, reason: robots.reason };
   // A redirect to another site is read only if that site's robots.txt allows it too.
-  const allowedOrigins = new Map([[new URL(url).origin, robots]]);
+  // Robots rules apply to paths, not only origins. A redirect within the
+  // same origin can land on a disallowed path, so cache decisions by URL.
+  const checkedUrls = new Map([[new URL(url).href, robots]]);
   const beforeFetch = async (next) => {
-    const origin = new URL(next).origin;
-    if (!allowedOrigins.has(origin)) allowedOrigins.set(origin, await robotsAllows(next, fetcher));
-    return allowedOrigins.get(origin);
+    const href = new URL(next).href;
+    if (!checkedUrls.has(href)) checkedUrls.set(href, await robotsAllows(href, fetcher));
+    return checkedUrls.get(href);
   };
   const page = await fetchPublicPage(url, fetcher, { maxBytes: MAX_HTML_BYTES, userAgent: 'Mozilla/5.0 (compatible; CHE-REA)', beforeFetch }).catch((error) => ({ error: String(error?.message || error).slice(0, 120) }));
   if (page.refused) return { ok: false, refused: true, reason: page.error };
