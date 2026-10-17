@@ -42,6 +42,7 @@ test('browser observations enforce connection-layer private-IP denial and refuse
   assert.match(OBSERVE_JOB, /id: egress/);
   assert.match(OBSERVE_JOB, /sudo iptables -A OUTPUT -d "\$cidr" -j REJECT/);
   assert.match(OBSERVE_JOB, /sudo ip6tables -A OUTPUT -d "\$cidr" -j REJECT/);
+  assert.match(OBSERVE_JOB, /sudo ip6tables -A OUTPUT -j REJECT/, 'IPv6 tunnel addresses cannot bypass destination restrictions');
   assert.match(OBSERVE_JOB, /169\.254\.0\.0\/16/);
   assert.match(OBSERVE_JOB, /127\.0\.0\.0\/8/);
   assert.match(OBSERVE_JOB, /fc00::\/7/);
