@@ -1,0 +1,196 @@
+name: CHE REA website observation
+
+# Observes one public web page once, in an isolated headless Chromium driven by the pinned
+# Playwright 1.56.1 (tools/rea/web/package-lock.json). No sign-in, nothing typed, no form
+# submitted, no download, no link followed away from the page, and no request to a private
+# or local address (tools/rea/web/observe.mjs). The observe job gets no credentials. Only the
+# publisher job can write, and it writes one bounded record and at most two screenshots to
+# the che-mailbox branch, never over an existing result.
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: CHE REA job id (rea-xxxxxxxx)
+        required: true
+        type: string
+      url:
+        description: One public http(s) web page
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: che-rea-web-${{ inputs.job_id }}
+  cancel-in-progress: false
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      JOB_ID: ${{ inputs.job_id }}
+      TARGET_URL: ${{ inputs.url }}
+    steps:
+      - name: Checkout the observer code (no credentials kept)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Validate the job inputs
+        id: validate
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/rea-web"
+          mkdir -p "$WORK/out"
+          echo "WORK=$WORK" >> "$GITHUB_ENV"
+          node tools/rea/web/observe.mjs validate --out "$WORK/out" >> "$GITHUB_ENV"
+
+      - name: Install the pinned Playwright (lockfile, no install scripts)
+        id: install
+        working-directory: tools/rea/web
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # The Chromium build made for the pinned Playwright, not the runner's Google Chrome: the
+      # image updates Chrome on its own schedule, and a browser the driver was not built for
+      # can break it. --only-shell installs just the headless build.
+      - name: Install the matching headless Chromium
+        id: browser
+        working-directory: tools/rea/web
+        run: node node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+
+      - name: Observe the page within fixed limits
+        id: observe
+        if: always() && steps.validate.outcome == 'success'
+        env:
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          BROWSER_OUTCOME: ${{ steps.browser.outcome }}
+        run: |
+          set -uo pipefail
+          REASON=""
+          if [ "$INSTALL_OUTCOME" != "success" ]; then REASON="The pinned Playwright could not be installed. No page was opened.";
+          elif [ "$BROWSER_OUTCOME" != "success" ]; then REASON="The pinned Chromium could not be installed. No page was opened.";
+          fi
+          timeout --kill-after=15 150 node tools/rea/web/observe.mjs observe --job "$JOB_ID" --url "$WEB_URL" \
+            --reason "$REASON" --out "$WORK/out"
+
+      - name: Keep the record for the publisher
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rea-web-${{ inputs.job_id }}
+          path: ${{ runner.temp }}/rea-web/out/
+          if-no-files-found: warn
+          retention-days: 3
+
+  # Only this job can write, and it runs no observer or browser code. It copies the record and
+  # the screenshots the record lists into the mailbox; CHE checks the record again before use.
+  publish:
+    needs: observe
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Fetch the record artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rea-web-${{ inputs.job_id }}
+          path: ${{ runner.temp }}/record
+        continue-on-error: true
+
+      - name: Write the record to che-mailbox
+        uses: actions/github-script@v7
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+          TARGET_URL: ${{ inputs.url }}
+          RECORD_DIR: ${{ runner.temp }}/record
+          OBSERVE_RESULT: ${{ needs.observe.result }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fs = require('fs');
+            const jobId = String(process.env.JOB_ID || '');
+            if (!/^rea-[0-9a-f]{8}$/.test(jobId)) throw new Error('Invalid REA job id.');
+            const dir = process.env.RECORD_DIR;
+            const branch = 'che-mailbox';
+            const path = `mailbox/rea/${jobId}.json`;
+            let record = null;
+            try {
+              const text = fs.readFileSync(`${dir}/summary.json`, 'utf8');
+              if (Buffer.byteLength(text) <= 65536) record = JSON.parse(text);
+            } catch (_) {
+              record = null;
+            }
+            if (!record || record.schema !== 'che.rea-web.v1' || record.job_id !== jobId || !['complete', 'failed', 'refused'].includes(record.state)) {
+              let url = '';
+              let host = '';
+              try {
+                const u = new URL(String(process.env.TARGET_URL || '').trim());
+                u.username = '';
+                u.password = '';
+                if (/^https?:$/.test(u.protocol) && u.href.length <= 2048) [url, host] = [u.href, u.hostname];
+              } catch (_) {
+                url = '';
+              }
+              record = {
+                schema: 'che.rea-web.v1',
+                job_id: jobId,
+                state: 'failed',
+                error: `The observation produced no record (job result: ${process.env.OBSERVE_RESULT}).`,
+                tool: { name: 'playwright', version: '1.56.1', browser: 'chromium', analysis: 'public page observed in an isolated browser; no sign-in, no form submitted' },
+                target: { url, final_url: '', status: 0, host },
+                observed_at: new Date().toISOString(),
+                screenshots: [],
+                limitations: [],
+              };
+            }
+            // A result that already exists is never replaced, and no screenshot is added to it.
+            try {
+              await github.rest.repos.getContent({ ...context.repo, path, ref: branch });
+              core.info('A result already exists for this job; nothing was overwritten.');
+              return;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            async function create(file, message, content) {
+              try {
+                await github.rest.repos.createOrUpdateFileContents({ ...context.repo, path: file, branch, message, content });
+                return true;
+              } catch (error) {
+                if (error.status === 409 || error.status === 422) {
+                  core.info(`${file} already exists; nothing was overwritten.`);
+                  return false;
+                }
+                throw error;
+              }
+            }
+            // Only the two known file names, only JPEG bytes, each at most 400 KB.
+            const files = { desktop: 'desktop.jpg', mobile: 'mobile.jpg' };
+            const kept = [];
+            for (const shot of Array.isArray(record.screenshots) ? record.screenshots.slice(0, 2) : []) {
+              const file = files[shot && shot.label];
+              if (!file || shot.file !== file || kept.some((item) => item.file === file)) continue;
+              let bytes = null;
+              try {
+                bytes = fs.readFileSync(`${dir}/${file}`);
+              } catch (_) {
+                bytes = null;
+              }
+              if (!bytes || bytes.length > 409600 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) continue;
+              if (await create(`mailbox/rea/${jobId}/${file}`, `REA web screenshot: ${jobId} ${shot.label}`, bytes.toString('base64'))) {
+                kept.push({ ...shot, bytes: bytes.length });
+              }
+            }
+            record.screenshots = kept;
+            await create(path, `REA web result: ${jobId} (${record.state})`, Buffer.from(`${JSON.stringify(record, null, 1)}\n`).toString('base64'));

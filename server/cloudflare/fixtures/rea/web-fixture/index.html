@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A static page for testing CHE's website observer.">
+<meta name="generator" content="CHE fixture 1.0">
+<title>CHE observer fixture</title>
+<link rel="stylesheet" href="/wp-content/themes/fixture/style.css">
+<script src="http://cdn.fixture-cdn.example/lib.js"></script>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 0; color: #1d2433; background: #fff; }
+  header { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; padding: 12px 20px; background: #eef2f7; }
+  nav ul { list-style: none; display: flex; gap: 16px; margin: 0; padding: 0; }
+  nav ul ul { position: absolute; flex-direction: column; background: #fff; padding: 8px; }
+  nav ul ul[hidden] { display: none; }
+  .menu-toggle { display: none; }
+  main { padding: 20px; max-width: 900px; }
+  .wide { width: 600px; height: 40px; background: #dde3ec; }
+  @media (max-width: 600px) { nav ul { display: none; } .menu-toggle { display: inline-block; } }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header>
+  <a href="/"><img src="/logo.png" alt="Fixture home" width="32" height="32"></a>
+  <button class="menu-toggle" aria-label="Open navigation" aria-expanded="false" aria-controls="primary">&#9776;</button>
+  <nav id="primary" aria-label="Primary">
+    <ul>
+      <li><a href="/guides/">Guides</a></li>
+      <li>
+        <button id="docs-button" type="button" aria-expanded="false" aria-controls="docs-menu">Docs</button>
+        <ul id="docs-menu" hidden>
+          <li><a href="/docs/start">Getting started</a></li>
+          <li><a href="/docs/api">API reference</a></li>
+        </ul>
+      </li>
+      <li><a href="/blog/">Blog</a></li>
+    </ul>
+  </nav>
+  <form role="search" action="/search" method="get">
+    <label for="q">Search the fixture</label>
+    <input id="q" name="q" type="search" placeholder="Search">
+  </form>
+</header>
+<main id="main">
+  <h1>Observer fixture</h1>
+  <p>This page exists so the observer can be tested without the internet.</p>
+  <h2>Sign in</h2>
+  <form id="signin" method="post" action="/signin">
+    <label>Email <input type="email" name="email" value="owner@example.com" required></label>
+    <label>Password <input type="password" name="password" required></label>
+    <input type="hidden" name="csrf" value="fixture-secret-token">
+    <button type="submit">Sign in</button>
+  </form>
+  <h2>Newsletter</h2>
+  <form class="newsletter" method="post" action="/subscribe">
+    <input type="email" name="news" placeholder="Your email">
+    <label>Country <select name="country"><option>Iceland</option><option selected>Norway</option></select></label>
+    <button type="submit">Subscribe</button>
+  </form>
+  <h3>Pictures</h3>
+  <img src="/photo.png" width="40" height="40">
+  <button class="icon" style="width:24px;height:24px"></button>
+  <div class="wide"></div>
+</main>
+<footer><p>Fixture footer</p></footer>
+<ul id="suggestions" role="listbox" hidden><li role="option">Suggestion one</li></ul>
+<script src="/app.js"></script>
+</body>
+</html>
