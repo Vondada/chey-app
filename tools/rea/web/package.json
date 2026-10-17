@@ -1,0 +1,12 @@
+{
+  "name": "che-rea-web-observer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned Playwright for CHE's website observation on GitHub Actions. Install with npm ci --ignore-scripts.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": { "node": ">=22.19.0 <27" },
+  "dependencies": {
+    "playwright-core": "1.56.1"
+  }
+}
