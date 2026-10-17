@@ -7,6 +7,10 @@ name: CHE coding paid-key cap check
 
 on:
   workflow_dispatch:
+  # Runs when this file changes, so the check can run on a feature branch before it reaches main.
+  push:
+    paths:
+      - .github/workflows/che-coding-key-check.yml
 
 permissions:
   contents: read
