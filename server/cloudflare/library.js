@@ -57,6 +57,9 @@ export class CheLibrary {
     if (this.ready || !this.sql) return Boolean(this.sql);
     this.sql.exec('CREATE TABLE IF NOT EXISTS lib_docs (id TEXT PRIMARY KEY, title TEXT, source TEXT, chars INTEGER, chunks INTEGER, added TEXT)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS lib_chunks (doc_id TEXT, n INTEGER, body TEXT, PRIMARY KEY (doc_id, n))');
+    // Shelf metadata (coding_library.js): where a text came from, its version and licence.
+    // Texts without a row are the owner's own saved texts, the default shelf.
+    this.sql.exec('CREATE TABLE IF NOT EXISTS lib_meta (doc_id TEXT PRIMARY KEY, shelf TEXT, kind TEXT, repo TEXT, path TEXT, url TEXT, docs_url TEXT, version TEXT, blob_sha TEXT, license TEXT, topic TEXT, framework TEXT, language TEXT, trust TEXT, retrieved_at TEXT, verified_at TEXT, status TEXT, extra TEXT)');
     try {
       this.sql.exec('CREATE VIRTUAL TABLE IF NOT EXISTS lib_fts USING fts5(body, doc_id UNINDEXED, n UNINDEXED)');
       this.fts = true;
@@ -65,7 +68,7 @@ export class CheLibrary {
     return true;
   }
 
-  add({ title, text, source = '' }) {
+  add({ title, text, source = '', meta = null }) {
     if (!this.init()) return { error: 'Library storage is not available.' };
     const body = String(text || '').slice(0, MAX_DOC_CHARS);
     if (body.trim().length < 20) return { error: 'There was nothing readable to save.' };
@@ -78,12 +81,32 @@ export class CheLibrary {
     });
     this.sql.exec('INSERT INTO lib_docs (id, title, source, chars, chunks, added) VALUES (?, ?, ?, ?, ?, ?)',
       id, name, String(source).slice(0, 500), body.length, chunks.length, new Date().toISOString());
+    if (meta) this.setMeta(id, meta);
     return { id, title: name, chars: body.length, chunks: chunks.length };
   }
 
-  list() {
+  setMeta(id, meta) {
+    if (!this.init()) return false;
+    const m = { ...(this.meta(id) || {}), ...meta };
+    const v = (key, max = 500) => String(m[key] ?? '').slice(0, max);
+    this.sql.exec('INSERT OR REPLACE INTO lib_meta (doc_id, shelf, kind, repo, path, url, docs_url, version, blob_sha, license, topic, framework, language, trust, retrieved_at, verified_at, status, extra) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      id, v('shelf', 40), v('kind', 40), v('repo', 200), v('path'), v('url', 1000), v('docs_url', 1000), v('version', 80), v('blob_sha', 80), v('license', 80),
+      v('topic', 200), v('framework', 80), v('language', 80), v('trust', 40), v('retrieved_at', 40), v('verified_at', 40), v('status', 40), v('extra', 4000));
+    return true;
+  }
+
+  meta(id) {
+    if (!this.init()) return null;
+    return [...this.sql.exec('SELECT * FROM lib_meta WHERE doc_id = ?', String(id || ''))][0] || null;
+  }
+
+  // The owner's own texts by default; a named shelf lists only that shelf, with its metadata.
+  list({ shelf = '' } = {}) {
     if (!this.init()) return [];
-    return [...this.sql.exec('SELECT id, title, source, chars, chunks, added FROM lib_docs ORDER BY added DESC LIMIT 200')];
+    if (shelf) {
+      return [...this.sql.exec('SELECT d.id AS id, d.title AS title, d.source AS source, d.chars AS chars, d.chunks AS chunks, d.added AS added, m.* FROM lib_docs d JOIN lib_meta m ON m.doc_id = d.id WHERE m.shelf = ? ORDER BY d.added DESC LIMIT 500', shelf)];
+    }
+    return [...this.sql.exec("SELECT id, title, source, chars, chunks, added FROM lib_docs WHERE id NOT IN (SELECT doc_id FROM lib_meta WHERE shelf != '') ORDER BY added DESC LIMIT 200")];
   }
 
   chunks(id) {
@@ -95,21 +118,29 @@ export class CheLibrary {
     if (!this.init()) return false;
     this.sql.exec('DELETE FROM lib_chunks WHERE doc_id = ?', id);
     if (this.fts) this.sql.exec('DELETE FROM lib_fts WHERE doc_id = ?', id);
+    this.sql.exec('DELETE FROM lib_meta WHERE doc_id = ?', id);
     this.sql.exec('DELETE FROM lib_docs WHERE id = ?', id);
     return true;
   }
 
-  search(question, limit = 5) {
+  // The owner's own texts by default. With `shelf`, only that shelf's texts whose status is
+  // not in `skipStatus`; each hit then carries its doc id so the shelf can cite it.
+  search(question, limit = 5, { shelf = '', skipStatus = [], terms: given = null } = {}) {
     if (!this.init()) return [];
-    const terms = queryTerms(question);
+    const terms = given || queryTerms(question);
     if (!terms.length) return [];
+    const skip = skipStatus.map(String);
+    const scope = shelf
+      ? `AND d.id IN (SELECT doc_id FROM lib_meta WHERE shelf = ?${skip.length ? ` AND status NOT IN (${skip.map(() => '?').join(', ')})` : ''})`
+      : "AND d.id NOT IN (SELECT doc_id FROM lib_meta WHERE shelf != '')";
+    const scopeArgs = shelf ? [shelf, ...skip] : [];
     let rows = [];
     if (this.fts) {
       try {
         const match = terms.map((t) => `"${t.replace(/"/g, '')}"`).join(' OR ');
         rows = [...this.sql.exec(
-          'SELECT lib_fts.body AS body, lib_fts.doc_id AS doc_id, lib_fts.n AS n, lib_docs.title AS title FROM lib_fts JOIN lib_docs ON lib_docs.id = lib_fts.doc_id WHERE lib_fts MATCH ? ORDER BY bm25(lib_fts) LIMIT ?',
-          match, limit,
+          `SELECT lib_fts.body AS body, lib_fts.doc_id AS doc_id, lib_fts.n AS n, d.title AS title FROM lib_fts JOIN lib_docs d ON d.id = lib_fts.doc_id WHERE lib_fts MATCH ? ${scope} ORDER BY bm25(lib_fts) LIMIT ?`,
+          match, ...scopeArgs, limit,
         )];
       } catch (_) { rows = []; }
     }
@@ -117,8 +148,8 @@ export class CheLibrary {
       const scored = new Map();
       for (const term of terms) {
         for (const row of this.sql.exec(
-          'SELECT c.body AS body, c.doc_id AS doc_id, c.n AS n, d.title AS title FROM lib_chunks c JOIN lib_docs d ON d.id = c.doc_id WHERE lower(c.body) LIKE ? LIMIT 200',
-          `%${term}%`,
+          `SELECT c.body AS body, c.doc_id AS doc_id, c.n AS n, d.title AS title FROM lib_chunks c JOIN lib_docs d ON d.id = c.doc_id WHERE lower(c.body) LIKE ? ${scope} LIMIT 200`,
+          `%${term}%`, ...scopeArgs,
         )) {
           const key = `${row.doc_id}:${row.n}`;
           const prev = scored.get(key) || { ...row, score: 0 };
@@ -128,7 +159,7 @@ export class CheLibrary {
       }
       rows = [...scored.values()].sort((a, b) => b.score - a.score).slice(0, limit);
     }
-    return rows.map((row) => ({ title: row.title, part: Number(row.n) + 1, text: row.body }));
+    return rows.map((row) => ({ title: row.title, part: Number(row.n) + 1, text: row.body, ...(shelf ? { doc_id: row.doc_id } : {}) }));
   }
 }
 
