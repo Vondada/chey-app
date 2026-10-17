@@ -378,15 +378,11 @@ jobs:
           K_GROQ: ${{ secrets.GROQ_API_KEY }}
           K_MISTRAL: ${{ secrets.MISTRAL_API_KEY }}
           K_CEREBRAS: ${{ secrets.CEREBRAS_API_KEY }}
-          K_PAID_OPENROUTER: ${{ secrets.CHE_CODING_OPENROUTER_PAID_KEY }}
           K_HF: ${{ secrets.HF_TOKEN }}
           BASE_SHA: ${{ inputs.base_sha }}
-          CHE_CODING_OPENROUTER_NO_BYOK: ${{ vars.CHE_CODING_OPENROUTER_NO_BYOK }}
         run: |
           set +e
-          # The paid key is read once and removed from this shell's environment, so no child
-          # process (an agent included) inherits it. Only the gate and the paid attempt use it.
-          paid_key="$K_PAID_OPENROUTER"; unset K_PAID_OPENROUTER
+          # This free-coding step never receives the capped paid key.
           prompt=$(cat /tmp/che-runtime-prompt.txt)
           code=1; used=""; tried=""
           start=$(date +%s)
@@ -416,42 +412,26 @@ jobs:
           fatal_seen() {
             { grep -E '"type": ?"error"' /tmp/opencode-events.jsonl 2>/dev/null; grep -iE 'error' /tmp/opencode-stderr.log 2>/dev/null; } | grep -qE "$FATAL"
           }
-          for m in $FREE_CANDIDATES $PAID_CANDIDATES; do
+          for m in $FREE_CANDIDATES; do
             [ -z "$baseline_failed" ] || break
-            paid=no
-            case " $PAID_CANDIDATES " in *" $m "*) paid=yes;; esac
-            # Reserve time for the final capped model when enabled. Do not
-            # waste the 14-minute runner window repeatedly timing out on free keys.
+            # Leave time for a dedicated capped paid step only when enabled.
             remaining=$(( 840 - ($(date +%s) - start) ))
-            if [ "$paid" = no ] && [ -n "$PAID_CANDIDATES" ]; then
+            if [ -n "$PAID_CANDIDATES" ]; then
               left=$((remaining - 180))
-              [ "$left" -ge 60 ] || { echo "::notice::Free-model time exhausted; moving to the capped final fallback."; continue; }
+              [ "$left" -ge 60 ] || { echo "::notice::Free time exhausted; paid fallback stays isolated."; break; }
             else
               left=$remaining
-              [ "$left" -ge 60 ] || { echo "::warning::Coding session time exhausted."; failure_kind=timeout; failure_resumable=true; break; }
+              [ "$left" -ge 60 ] || { echo "::warning::Free coding session time exhausted."; failure_kind=timeout; failure_resumable=true; break; }
             fi
-            if [ "$paid" = yes ]; then
-              # Not even an explicitly selected paid model bypasses this gate.
-              # The server verifies <= $15/month, monthly reset and remaining credit.
-              if [ "$CHE_CODING_PAID_FALLBACK" != true ]; then
-                echo "::warning::Paid fallback not authorized."; continue
-              fi
-              if ! CHE_CODING_OPENROUTER_PAID_KEY="$paid_key" node "$CHE_TRUSTED_TOOLS/tools/che_coding_paid_gate.mjs"; then
-                echo "::warning::Paid coding withheld: key cap or authorization failed."; continue
-              fi
-              kv=("OPENROUTER_API_KEY=$paid_key")
-              [ "$left" -le 300 ] || left=300
-            else
-              [ "$left" -le 120 ] || left=120
-              case ${m%%/*} in
-                google) kv=("GEMINI_API_KEY=$K_GOOGLE" "GOOGLE_GENERATIVE_AI_API_KEY=$K_GOOGLE");;
-                groq) kv=("GROQ_API_KEY=$K_GROQ");;
-                cerebras) kv=("CEREBRAS_API_KEY=$K_CEREBRAS");;
-                mistral) kv=("MISTRAL_API_KEY=$K_MISTRAL");;
-                openrouter) kv=("OPENROUTER_API_KEY=$K_OPENROUTER");;
-                *) echo "::error::Non-free or unknown provider blocked."; continue;;
-              esac
-            fi
+            [ "$left" -le 120 ] || left=120
+            case ${m%%/*} in
+              google) kv=("GEMINI_API_KEY=$K_GOOGLE" "GOOGLE_GENERATIVE_AI_API_KEY=$K_GOOGLE");;
+              groq) kv=("GROQ_API_KEY=$K_GROQ");;
+              cerebras) kv=("CEREBRAS_API_KEY=$K_CEREBRAS");;
+              mistral) kv=("MISTRAL_API_KEY=$K_MISTRAL");;
+              openrouter) kv=("OPENROUTER_API_KEY=$K_OPENROUTER");;
+              *) echo "::error::Non-free provider blocked in free phase."; continue;;
+            esac
             used=$m; tried="$tried $m"
             echo "Trying $m"
             : >/tmp/opencode-events.jsonl; : >/tmp/opencode-stderr.log
@@ -499,7 +479,6 @@ jobs:
           echo "model=$used" >> "$GITHUB_OUTPUT"
           echo "tried=$tried" >> "$GITHUB_OUTPUT"
           [ "$code" = 0 ] || echo "error=$err" >> "$GITHUB_OUTPUT"
-          rm -f /tmp/che-runtime-prompt.txt /tmp/che-opencode-config.json
 
       - name: Build compact result and patch
         id: result
