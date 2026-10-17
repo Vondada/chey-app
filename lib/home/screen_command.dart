@@ -94,12 +94,21 @@ ScreenCommand? parseScreenCommand(String raw) {
   final list = cheCommandListRequest(raw);
   if (list != null) return ScreenCommand(ScreenOp.searchCommands, list.topic, list);
 
+  // A prompt about editing code is not a phone-screen action. Only a short,
+  // direct edit request may change the displayed conversation or controls.
+  // Navigation and command-library requests were handled above.
+  if (t.contains('\n') || t.length > 180) return null;
+  if (!RegExp(
+    r'^(?:(?:start off (?:with|wit) )?(?:clear(?:ing)?|remove|delete|hide|get rid of|take off|wipe|erase|add|put|place|insert|show|bring back|put back|restore)\b)',
+  ).hasMatch(t)) {
+    return null;
+  }
+
   final add = RegExp(r'\b(add|put|place|insert)\b').hasMatch(t);
   final remove = RegExp(r'\b(clear|remove|delete|hide|get rid of|take off|clearing|wipe|erase)\b').hasMatch(t);
   final show = RegExp(r'\b(show|bring back|put back|restore)\b').hasMatch(t);
   final chips = RegExp(r'\b(bubble|bubbles|chip|chips|suggestion|suggestions)\b').hasMatch(t);
   final greeting = RegExp(r'\b(greeting|hello line|status line)\b').hasMatch(t);
-  final chat = RegExp(r'\b(chat|messages|screen text|the text|everything on (?:the )?screen)\b').hasMatch(t);
   final last = RegExp(r'\b(last|previous)\b').hasMatch(t) && RegExp(r'\b(message|bubble|reply)\b').hasMatch(t);
 
   if (chips && remove && !add) {
@@ -121,7 +130,18 @@ ScreenCommand? parseScreenCommand(String raw) {
   if (chips && show) return const ScreenCommand(ScreenOp.showChips);
   if (greeting && remove) return const ScreenCommand(ScreenOp.hideGreeting);
   if (greeting && show) return const ScreenCommand(ScreenOp.showGreeting);
-  if (last && remove) return const ScreenCommand(ScreenOp.removeLast);
-  if (chat && remove) return const ScreenCommand(ScreenOp.clearChat);
+  // Destructive local edits must match the *entire* owner instruction.
+  // Shared words in a programming request (e.g. "remove" and "chat")
+  // must never clear CHE's visible conversation.
+  if (last && RegExp(
+    r'^(?:remove|delete|erase)\s+(?:(?:the|my)\s+)?(?:last|previous)\s+(?:message|bubble|reply)$',
+  ).hasMatch(t)) {
+    return const ScreenCommand(ScreenOp.removeLast);
+  }
+  if (RegExp(
+    r'^(?:clear|remove|delete|wipe|erase)\s+(?:(?:all|the|my|entire)\s+){0,2}(?:chat(?:\s+(?:history|messages))?|messages|screen\s+text|the\s+text|everything\s+on\s+(?:the\s+)?screen)$',
+  ).hasMatch(t)) {
+    return const ScreenCommand(ScreenOp.clearChat);
+  }
   return null;
 }
