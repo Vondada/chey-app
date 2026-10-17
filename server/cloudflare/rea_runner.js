@@ -599,6 +599,8 @@ export function investigationView(inv) {
     comparison: inv.comparison, proposals: inv.proposals || [], plan: inv.plan ? { features: inv.plan.features, steps: inv.plan.steps, acceptance: inv.plan.acceptance, approved: Boolean(inv.plan.approved) } : null,
     build: inv.build ? { job_id: inv.build.job_id, state: inv.build.state, pr_number: inv.build.pr_number || null, pr_url: inv.build.pr_url || '', note: inv.build.note || '' } : null,
     verification: inv.verification, limitations: [...new Set(inv.limitations || [])].slice(0, 12), alternatives: inv.alternatives || [],
+    // A name with no exact match: the numbered sources the owner can choose from (state needs_choice).
+    choices: inv.state === 'needs_choice' ? (inv.candidates || []).map((label, i) => ({ number: i + 1, label, url: inv.candidate_targets?.[i] || '' })).filter((c) => c.url) : [],
   };
 }
 

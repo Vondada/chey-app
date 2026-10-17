@@ -631,6 +631,9 @@ test('Codex #324: an app name with no exact repository is never mapped to a simi
   assert.equal(asked.ok, false);
   assert.match(asked.text, /did not guess[\s\S]*1\. GitHub repository acme\/sketchpad \(4200 stars\)[\s\S]*Say the number/);
   assert.ok(!w.calls.some((c) => c.url.startsWith('https://api.github.com/repos/acme/sketchpad/git/trees/')), 'nothing was read from the similar repository');
+  const { investigations: [choosing] } = await reaInvestigations(che.store, ENV, { fetcher, now: T0 });
+  assert.equal(choosing.state, 'needs_choice');
+  assert.deepEqual(choosing.choices, [{ number: 1, label: 'GitHub repository acme/sketchpad (4200 stars)', url: 'https://github.com/acme/sketchpad' }], 'the app shows the same numbered choices');
   assert.equal(await che.say('number two', { history: [{ role: 'assistant', content: asked.text }] }).then((r) => r?.ok ?? null), null, 'no second candidate: not taken as a choice');
   const picked = await che.say('number one', { history: [{ role: 'assistant', content: asked.text }] });
   assert.equal(picked.ok, true);
