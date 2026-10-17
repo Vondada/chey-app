@@ -7,7 +7,7 @@ import test from 'node:test';
 import { replyFromNdjson } from './brain_memory.js';
 import {
   CATEGORIES, COMMANDS, SUGGESTION_RULES, catalogView, commandById, commandStatus, connectorStatus,
-  describeWorkflow, dispatchPrompt, findSavedWorkflow, parseSlashCommand, searchCommands, suggestCommands, workflowNodes,
+  commandFromWords, describeWorkflow, dispatchPrompt, findSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, suggestCommands, workflowNodes,
 } from './command_catalog.js';
 import { advanceObjectives, approveNode, createObjective, retryNode } from './objective_graph.js';
 import { classifyOwnerActions } from './owner_action_gate.js';
@@ -662,4 +662,72 @@ test('without a GitHub connection an REA request says so plainly and runs nothin
     assert.match(out.reply, /has no GitHub connection/);
     assert.equal(seen.filter((s) => s.startsWith('POST')).length, 0);
   });
+});
+
+// ─── The owner's spoken Command Center phrases (iPhone, 2026-10-16) ───────
+
+test('the owner\'s six spoken phrases are answered from the catalog with no model, in every spelling', async () => {
+  const che = await owner();
+  const variants = (phrase) => {
+    const bare = phrase.replace(/^CHE,\s*/, '');
+    const plain = bare.replace(/[.,?!]/g, '');
+    return [phrase, plain.toLowerCase(), `Chay ${plain}`, `Chey, ${bare}`, `Hey CHE ${plain}`, `hey che, ${plain.toLowerCase()}.`];
+  };
+  for (const words of variants('CHE, open your Commands page.')) {
+    const out = await che.say(words);
+    assert.equal(out.route, 'che_command_center', words);
+    assert.match(out.reply, /77 commands in 8 groups[\s\S]*2\. YouTube, 11[\s\S]*Nothing was run/, words);
+  }
+  for (const words of variants('CHE, search for YouTube.')) {
+    const out = await che.say(words);
+    assert.equal(out.route, 'che_command_center', words);
+    assert.match(out.reply, /^YouTube: 11 commands\. 1\. \/yt-ideas: /, words);
+  }
+  let list;
+  for (const words of variants('Show me five YouTube commands and tell me which are ready.')) {
+    list = await che.say(words);
+    assert.equal(list.route, 'che_command_center', words);
+    assert.match(list.reply, /4\. \/yt-video: Generate and assemble videos\. Needs setup: Video renderer\./, words);
+    assert.match(list.reply, /Of these 5: 3 ready, 2 need setup\./, words);
+    assert.doesNotMatch(list.reply, /6\. /, words);
+  }
+  const history = [{ role: 'user', content: 'Show me five YouTube commands and tell me which are ready.' }, { role: 'assistant', content: list.reply }];
+  for (const words of variants('Show me number four.')) {
+    const out = await che.say(words, { history });
+    assert.equal(out.route, 'che_command_center', words);
+    assert.match(out.reply, /^Number 4: \/yt-video\. [\s\S]*It needs setup\. Video renderer: /, words);
+  }
+  // The list was read on the phone's Commands page, not in this chat: no guess.
+  const elsewhere = await che.say('Show me number four.', { history: [history[0], { role: 'assistant', content: 'Opening Commands for "youtube", sir.' }] });
+  assert.match(elsewhere.reply, /I don't have that numbered list[\s\S]*won't guess/);
+  for (const words of variants('Run the video command.')) {
+    const out = await che.say(words);
+    assert.equal(out.route, 'che_command', words);
+    assert.equal(out.done.command, 'yt-video', words);
+    assert.match(out.reply, /^\/yt-video needs setup, sir\. Video renderer: [\s\S]*Nothing was run\.$/, words);
+  }
+  for (const words of variants('What is on my screen?')) {
+    const out = await che.say(words);
+    assert.equal(out.route, 'che_screen', words);
+    assert.match(out.reply, /can't see your screen from here[\s\S]*won't guess/, words);
+  }
+  assert.equal(che.inputs.length, 0, 'no model was asked for any of them');
+  // A name part two commands share runs neither; other requests are untouched.
+  assert.match((await che.say('run the publish command')).reply, /could be \/yt-publish or \/site-publish[\s\S]*Nothing was run/);
+  assert.equal(readCommandSpeech('Search YouTube for jazz'), null);
+  assert.equal(readCommandSpeech('search for money'), null);
+  assert.equal(readCommandSpeech('run a backtest on NQ'), null);
+  assert.equal(readCommandSpeech('four', []).command, null, 'a bare number with no list in the chat names nothing');
+});
+
+test('"Run the video command" reaches the real video handler once it is ready, and asks for its topic first', async () => {
+  const che = await owner({ env: READY_ENV });
+  const view = await che.get('/api/commands');
+  assert.equal(view.commands.find((c) => c.id === 'yt-video').status, 'available', 'the free GitHub renderer is configured here');
+  const bare = await che.say('Run the video command.');
+  assert.equal(bare.route, 'che_command');
+  assert.match(bare.reply, /^\/yt-video needs video topic, sir\.[\s\S]*Nothing was run/);
+  const run = await che.say('run the video command about octopus intelligence');
+  assert.equal(run.route, commandById('yt-video').route, run.reply.slice(0, 160));
+  assert.equal(commandFromWords('video').command.id, 'yt-video');
 });

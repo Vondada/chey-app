@@ -70,7 +70,7 @@ import { cachedCodeIndex } from './code_index.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
-import { applyModelReading, interpretOwnerTurn, interpretWithModel } from './speech_intent.js';
+import { applyModelReading, asksAboutScreen, interpretOwnerTurn, interpretWithModel } from './speech_intent.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { webAppPage } from './web_app.js';
@@ -156,7 +156,7 @@ import {
 } from './research_memory.js';
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
-import { catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, searchCommands, speakUnavailable, suggestCommands, workflowNodes } from './command_catalog.js';
+import { catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes } from './command_catalog.js';
 import { handleReaRequest } from './rea_runner.js';
 import { LAST_RESULTS_KEY, loadCatalog, resourceChoice, resourceIntent, resultLinks, searchCatalog, speakResults } from './resource_catalogs.js';
 import { fiveLayerIntent, LAYER_RESULTS_KEY, reasoningLayer, runReasoningLayer, speakFiveLayerResults } from './reasoning_exam.js';
@@ -4534,6 +4534,50 @@ export class CheState extends DurableObject {
     return this.handleRequest(inner);
   }
 
+  // The owner's spoken Command Center requests (readCommandSpeech): open,
+  // list, a number from the list CHE just read, or "run the X command",
+  // which goes through runSlashCommand and its every gate. Null lets the
+  // turn continue as before.
+  async answerCommandSpeech(request, body, data, said, { ownerDevice = false } = {}) {
+    if (said.kind === 'run') {
+      if (!ownerDevice) return ndjsonReply('Only the CHE owner can run commands, sir.', { source: 'che_command', ok: false, model_calls: 0 });
+      if (said.command) {
+        try { await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, null); } catch (_) { /* nothing was held */ }
+        return this.runSlashCommand(request, body, data, { name: said.command.id, command: said.command, input: said.input }, { confirmed: body.command_confirmed === true });
+      }
+      const near = (said.candidates.length ? said.candidates.map((c) => c.id) : searchCommands(said.words, { limit: 3 }).map((r) => r.id)).map((id) => `/${id}`);
+      return ndjsonReply(`${said.candidates.length ? `"${said.words}" could be ${near.join(' or ')}` : `I don't have a command called "${said.words}"`}, sir.${!said.candidates.length && near.length ? ` Closest: ${near.join(', ')}.` : ''} Say its full name. Nothing was run.`,
+        { source: 'che_command', ok: false, model_calls: 0 });
+    }
+    if (!ownerDevice) return null;
+    const view = catalogView(await this.commandConnectors(data));
+    if (said.kind === 'open') {
+      const ready = view.commands.filter((c) => c.status === 'available').length;
+      const setup = view.commands.filter((c) => c.status === 'setup_required').length;
+      return ndjsonReply(`I can't open a page from this connection, sir; the Commands page opens in CHE's iPhone app. It holds ${view.commands.length} commands in ${view.categories.length} groups, ${ready} ready now${setup ? ` and ${setup} needing setup` : ''}: `
+        + `${view.categories.map((g, i) => `${i + 1}. ${g.title}, ${view.commands.filter((c) => c.category === g.id).length}`).join('; ')}. Say "show me five YouTube commands" to hear one group. Nothing was run.`,
+        { source: 'che_command_center', ok: true, model_calls: 0 });
+    }
+    if (said.kind === 'list') return ndjsonReply(speakCommandList(view, said), { source: 'che_command_center', ok: true, model_calls: 0 });
+    if (said.kind === 'pick') {
+      const c = said.command && view.commands.find((x) => x.id === said.command.id);
+      if (c) {
+        const state = c.status === 'available' ? 'Ready.' : speakUnavailable(said.command, commandStatus(said.command, view.connectors)).replace(/^\/\S+ /, 'It ').replace(/, sir\./, '.').replace(/ Nothing was run\.$/, '');
+        return ndjsonReply(`Number ${said.number}: /${c.id}. ${c.summary} ${c.does} ${state} Say "run /${c.id}" to run it. Nothing was run.`, { source: 'che_command_center', ok: true, command: c.id, model_calls: 0 });
+      }
+      // A number right after a command list that was read elsewhere (the
+      // phone's Commands page): CHE does not have that list, so she says so.
+      const lastUser = [...(Array.isArray(body.history) ? body.history : [])].reverse().find((h) => String(h?.role) === 'user');
+      const before = lastUser ? readCommandSpeech(lastUser.content || lastUser.text || '') : null;
+      if (before?.kind === 'list' || before?.kind === 'open') {
+        return ndjsonReply(`I don't have that numbered list in this conversation, sir, so I won't guess which command is number ${said.number}. Ask for the list again, or say the command's name. Nothing was run.`,
+          { source: 'che_command_center', ok: false, model_calls: 0 });
+      }
+      return null;
+    }
+    return null;
+  }
+
   // The few commands with no chat route of their own: thin wrappers over the
   // existing functions, answered from real results only.
   async runLocalCommand(command, input, request, data) {
@@ -7473,6 +7517,18 @@ export class CheState extends DurableObject {
           if (savedWorkflow) {
             const started = await this.startCommandWorkflow(data, savedWorkflow, { ownerDevice });
             return ndjsonReply(started.spoken, { source: 'che_command_workflow', ok: started.ok, objective_id: started.objective?.id || null, model_calls: 0 });
+          }
+          // Spoken requests about CHE's own commands, answered from the
+          // catalog with live states and no model (owner, 2026-10-16).
+          const said = body.attachment || body.workflow_step ? null : readCommandSpeech(rawMessage, body.history);
+          if (said) {
+            const spoken = await this.answerCommandSpeech(request, body, data, said, { ownerDevice });
+            if (spoken) return spoken;
+          }
+          // "What is on my screen?" with no screen sent: say so, never guess.
+          if (!body.attachment && !String(body.screen_context || '').trim() && asksAboutScreen(rawMessage)) {
+            return ndjsonReply('I can\'t see your screen from here, sir: this message came without any screen report from your phone, so I won\'t guess. '
+              + 'In CHE\'s iPhone app, ask "what is on my screen?" and the app answers from the page it has open.', { source: 'che_screen', ok: false, model_calls: 0 });
           }
         }
         // Always-on speech learning: corrections teach her how the owner's voice
