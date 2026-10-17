@@ -7899,6 +7899,28 @@ export class CheState extends DurableObject {
         } catch (_) { savedResourceList = null; }
         const learnedHearing = correctionsContext(corrections);
 
+        // Read-only history of CHE's coding runs comes before every other route: the stored job
+        // and runtime records answer, with their evidence. Asking never runs an investigation,
+        // never inspects repository files and never starts a job.
+        if (codingHistoryIntent(message)) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job history, sir.', { source: 'che_coding_history', ok: false });
+          const jobs = (await this.loadData()).jobs || [];
+          const selfJobs = jobs.filter((item) => item.kind === 'self_development');
+          const activeJob = selfJobs.find((item) => ['queued', 'running'].includes(item.status)) || null;
+          const sessionId = String(await this.ctx.storage.get('che_runtime_last_session') || '').trim();
+          const runtimeAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
+          const request = String(await this.ctx.storage.get('che_runtime_last_request') || await this.ctx.storage.get('che_runtime_last_request_summary') || '').trim();
+          // Same precedence as "coding status": the newer of the active built-in job and the
+          // runtime session wins, and after a recovery hand-off the job is the truth, not the dead session.
+          const runtimeIsNewer = Boolean(sessionId) && (!activeJob || (runtimeAt && runtimeAt > String(activeJob.created_at || '')));
+          const handedOff = Boolean(sessionId) && !runtimeAt && selfJobs.length > 0;
+          let subject = { kind: 'none' };
+          if (activeJob && !runtimeIsNewer) subject = { kind: 'job', job: activeJob };
+          else if (sessionId && !handedOff) subject = { kind: 'runtime', sessionId, status: await new CheCodingRuntime(this.env).getStatus(sessionId, { acceptedAt: runtimeAt }) };
+          else if (selfJobs[0]) subject = { kind: 'job', job: selfJobs[0] };
+          return ndjsonReply(codingHistoryReceipt({ ...subject, request, repo: this.env.CHE_GITHUB_REPO }), { source: 'che_coding_history', session_id: sessionId || null, background_job_id: subject.job?.id || null });
+        }
+
         // REA requests (reverse engineering) take their own read-only route before
         // any repository or coding routing. They dispatch analysis; they never start
         // a coding job, commit or deploy.
@@ -7924,17 +7946,6 @@ export class CheState extends DurableObject {
         // those words are subject matter, not permission to act.
         const turnActionPolicy = currentTurnActionPolicy(message);
         const chatOnlyEvaluation = turnActionPolicy.terminalChatOnly;
-
-        // Read-only history of CHE's coding runs: the stored runtime record answers,
-        // with its evidence. Asking never inspects repository files or starts a job.
-        if (codingHistoryIntent(message)) {
-          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job history, sir.', { source: 'che_coding_history', ok: false });
-          const sessionId = String(await this.ctx.storage.get('che_runtime_last_session') || '').trim();
-          const runtimeAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
-          const request = String(await this.ctx.storage.get('che_runtime_last_request') || await this.ctx.storage.get('che_runtime_last_request_summary') || '').trim();
-          const status = sessionId ? await new CheCodingRuntime(this.env).getStatus(sessionId, { acceptedAt: runtimeAt }) : null;
-          return ndjsonReply(codingHistoryReceipt({ sessionId, status, request }), { source: 'che_coding_history', session_id: sessionId || null });
-        }
 
         const directRepositoryInspection = repositoryInspectionIntent(message);
         const recentRepositoryEvidenceRequest = [...ownerHistory]

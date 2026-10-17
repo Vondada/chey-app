@@ -304,23 +304,35 @@ export function repositoryImplementationIntent(message) {
   return currentTurnActionPolicy(message).codingJobAllowed;
 }
 
-// Read-only history of CHE's own coding runs ("latest coding execution history",
-// "how far did Claude get", "why did that coding job fail"). These are answered from
-// the stored runtime record. They never start a job or inspect repository files. An
-// explicit build instruction in the same turn still wins: "fix the coding job" is BUILD.
+// Read-only history of CHE's own coding runs ("latest coding execution history", "how far
+// did Claude get", "why did that coding job fail", "what files did the coding job change").
+// These are answered from the stored job and runtime records. They never start a job or
+// inspect repository files. A URL or package reference is an investigation target (REA),
+// and an explicit build instruction in the same turn still wins: "fix the coding job" is BUILD.
 export function codingHistoryIntent(message) {
   const text = withoutQuotedText(String(message || '').trim());
   if (!text || ownerBuildAuthorization(text)) return false;
-  if (/\b(?:start|run|launch|queue|create|kick\s+off)\s+(?:a|an|another|the\s+next|a\s+new)\s+(?:coding|opencode|self[- ]development)\b/i.test(text)) return false;
-  const latestRecord = /\b(?:latest|last|most\s+recent|newest|previous)\s+(?:coding|opencode|self[- ]development)\s+(?:execution\s+|run\s+|job\s+|session\s+|attempt\s+)?(?:history|run|job|session|attempt|log|result|status|execution)\b/i;
-  const executionHistory = /\b(?:coding|opencode|self[- ]development)\s+(?:execution\s+)?history\b/i;
+  if (/https?:\/\/|\bnpm:|\bgithub\.com\//i.test(text)) return false;
+  const codingSubject = /\b(?:coding|opencode|job|run|attempt|session)\b/i.test(text);
+  const latestRecord = /\b(?:latest|last|most\s+recent|newest|previous|current)\s+(?:coding|opencode|self[- ]development)\s+(?:execution\s+|run\s+|job\s+|session\s+|attempt\s+)?(?:history|run|job|session|attempt|log|result|status|execution|state)\b/i;
+  const executionHistory = /\b(?:coding|opencode|self[- ]development)\s+(?:job\s+|run\s+|execution\s+)?history\b/i;
   const howFar = /\bhow\s+far\s+(?:did|has|have)\s+(?:claude|che|chey|chay|shay|she|it|the\s+(?:coding|build)\s+(?:job|run|session)|the\s+(?:job|run|session))\b[\s\S]{0,20}\b(?:get|gotten|got|come)\b/i;
-  const whyFailed = /\b(?:why|how)\s+(?:did|has|does)\s+(?:the|that|this|my|the\s+last|the\s+latest)\s+(?:coding\s+)?(?:job|run|attempt|session)\s+(?:fail|stop|break|get\s+stuck)/i;
+  const whyFailed = codingSubject && (/\b(?:why|how)\s+(?:did|has|does|do|is|was)\b[\s\S]{0,40}\b(?:fail|failed|stopped|stuck|broke|broken)\b/i.test(text) || /\bexplain\s+why\b[\s\S]{0,40}\b(?:fail|failed|stopped|stuck)\b/i.test(text));
   const whatHappened = /\bwhat\s+(?:happened|went\s+wrong)\s+(?:to|with)\s+(?:the|my|that|this|the\s+last|the\s+latest)\s+(?:coding\s+)?(?:job|run|attempt|session)\b/i;
   const actualResult = /\bshow\s+me\s+the\s+actual\s+(?:result|outcome|evidence)\b[\s\S]{0,60}\b(?:coding|job|run|attempt|session)\b/i;
-  // "What files did the coding job change?": the question word, a change verb and the job noun, in any order.
-  const changedFiles = /\bwhat\s+files\b/i.test(text) && /\b(?:changed?|touched?|modif\w*)\b/i.test(text) && /\b(?:coding|job|run|attempt|session)\b/i.test(text);
-  return changedFiles || [latestRecord, executionHistory, howFar, whyFailed, whatHappened, actualResult].some((pattern) => pattern.test(text));
+  // A question about the state or result, not an investigation: "Investigate your coding status bug" is inspection.
+  const askedAboutState = /^\s*(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:what|how|show|tell|give|is|are|check|read)\b|\?\s*$/i.test(text);
+  const stateQuestion = askedAboutState
+    && codingSubject
+    && (/\b(?:state|status|result|progress|outcome)\b[\s\S]{0,30}\b(?:coding|job|run|attempt|session)\b/i.test(text) || /\b(?:coding|job|run|attempt|session)\b[\s\S]{0,30}\b(?:state|status|result|progress|outcome)\b/i.test(text));
+  // "What files did the coding job change?" is history; "what files should I change" and
+  // "what would the coding job change" are planning, so a modal verb excludes them.
+  const changedFiles = /\bwhat\s+files\b/i.test(text)
+    && /\b(?:changed|touched|modified|edited|did|has|have)\b/i.test(text)
+    && /\b(?:coding|job|run|attempt|session)\b/i.test(text)
+    && !/\b(?:should|would|could|might|shall|will)\b/i.test(text);
+  return latestRecord.test(text) || executionHistory.test(text) || howFar.test(text) || whyFailed || whatHappened.test(text)
+    || actualResult.test(text) || stateQuestion || changedFiles;
 }
 
 export function repositoryInspectionIntent(message) {

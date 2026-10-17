@@ -3347,3 +3347,46 @@ test('paired-chat reply boundary removes made-up browsing and cross-check action
   const receipt = saved.get('che_last_answer_evidence');
   assert.equal(receipt?.kind, 'unverified');
 });
+
+test('coding history answers from the built-in job when no runtime record exists, and starts nothing', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => ({ response: 'ok' }) } };
+  const { chat } = await pairedChat(env, saved);
+  const textOf = async (res) => (await res.text()).trim().split('\n').map((line) => JSON.parse(line)).filter((line) => line.type === 'delta').map((line) => line.delta).join('');
+  const data = saved.get('che');
+  const created = new Date(Date.now() - 60_000).toISOString();
+  data.jobs = [{ id: 'job-abcdef123456', kind: 'self_development', status: 'running', created_at: created, updated_at: created }];
+  saved.set('che', data);
+  const jobsBefore = saved.get('che').jobs.length;
+  const reply = await textOf(await chat('What is the state of the coding job?'));
+  assert.match(reply, /built-in job job-abcdef12/);
+  assert.match(reply, /State: running\./);
+  assert.doesNotMatch(reply, /No coding run is recorded/);
+  assert.doesNotMatch(reply, /\.(?:js|mjs|json)\b/, 'no repository file names');
+  assert.equal(saved.get('che').jobs.length, jobsBefore, 'a history question starts no job');
+});
+
+test('coding history reads the stored runtime record of a failed run, with its run link and models', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => ({ response: 'ok' }) } };
+  const { chat } = await pairedChat(env, saved);
+  const textOf = async (res) => (await res.text()).trim().split('\n').map((line) => JSON.parse(line)).filter((line) => line.type === 'delta').map((line) => line.delta).join('');
+  const record = { session_id: 'ocr-6550098c', state: 'blocked', failure: 'opencode_failed', error: 'quota exhausted', run_id: 39023896713, models_tried: ['groq/qwen3'], changed_files: 0, updated_at: new Date().toISOString() };
+  saved.set('che_runtime_last_session', 'ocr-6550098c');
+  saved.set('che_runtime_last_session_at', new Date(Date.now() - 3_600_000).toISOString());
+  saved.set('che_runtime_last_request', 'Fix the coding failover tests');
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => String(url).includes('/contents/')
+    ? new Response(JSON.stringify({ content: Buffer.from(JSON.stringify(record)).toString('base64') }), { status: 200 })
+    : realFetch(url, init);
+  try {
+    const reply = await textOf(await chat('Why did that coding job fail?'));
+    assert.match(reply, /Request: Fix the coding failover tests\./);
+    assert.match(reply, /Failure: opencode_failed - quota exhausted/);
+    assert.match(reply, /github\.com\/o\/r\/actions\/runs\/39023896713/);
+    assert.match(reply, /Models tried: groq\/qwen3\./);
+    assert.match(reply, /Tests: not recorded/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
