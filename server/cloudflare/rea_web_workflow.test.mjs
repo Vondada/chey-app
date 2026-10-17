@@ -129,7 +129,7 @@ function publisherScript() {
   return lines.filter((line) => line.startsWith('            ') || line === '').map((line) => line.slice(12)).join('\n');
 }
 
-async function publish({ files = {}, existing = new Set(), env = {} } = {}) {
+async function publish({ files = {}, existing = new Set(), env = {}, conflicts = {} } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'rea-web-publish-'));
   for (const [name, content] of Object.entries(files)) writeFileSync(join(dir, name), content);
   const writes = [];
@@ -145,6 +145,11 @@ async function publish({ files = {}, existing = new Set(), env = {} } = {}) {
           assert.equal(branch, 'che-mailbox');
           assert.equal(sha, undefined, 'never an update of an existing file');
           if (existing.has(path)) throw Object.assign(new Error('exists'), { status: 422 });
+          // Another run moved che-mailbox at the same moment: a 409 for a file that is not there.
+          if (conflicts[path] > 0) {
+            conflicts[path] -= 1;
+            throw Object.assign(new Error('is at abc but expected def'), { status: 409 });
+          }
           writes.push({ path, content: Buffer.from(content, 'base64') });
         },
       },
@@ -176,13 +181,25 @@ test('the publisher writes the screenshots first, then the record, and only on c
   assert.equal(validateWebSummary(written).ok, true);
 });
 
+test('Codex #324: a branch race between two runs is retried, so no record or screenshot is dropped', async () => {
+  const record = { ...REAL, job_id: JOB };
+  const writes = await publish({
+    files: { 'summary.json': JSON.stringify(record), 'desktop.jpg': JPEG, 'mobile.jpg': JPEG },
+    conflicts: { [`mailbox/rea/${JOB}.json`]: 2, [`mailbox/rea/${JOB}/desktop.jpg`]: 1 },
+  });
+  assert.deepEqual(writes.map((w) => w.path), [`mailbox/rea/${JOB}/desktop.jpg`, `mailbox/rea/${JOB}/mobile.jpg`, `mailbox/rea/${JOB}.json`]);
+  const published = JSON.parse(writes[2].content);
+  assert.deepEqual(published.screenshots.map((s) => s.file), ['desktop.jpg', 'mobile.jpg'], 'both screenshots stay listed');
+  await assert.rejects(publish({ files: { 'summary.json': JSON.stringify(record) }, conflicts: { [`mailbox/rea/${JOB}.json`]: 9 } }), /expected def/, 'a race that never ends fails the run instead of claiming success');
+});
+
 test('the publisher never overwrites: an existing record stops everything', async () => {
   const writes = await publish({
     files: { 'summary.json': JSON.stringify({ ...REAL, job_id: JOB }), 'desktop.jpg': JPEG },
     existing: new Set([`mailbox/rea/${JOB}.json`]),
   });
   assert.deepEqual(writes, []);
-  assert.match(WORKFLOW, /error\.status === 409 \|\| error\.status === 422/);
+  assert.match(WORKFLOW, /if \(error\.status !== 409 && error\.status !== 422\) throw error;\s*if \(await exists\(file\)\)/, 'a conflict counts as "exists" only after checking the path');
 });
 
 test('the publisher drops screenshots that are not JPEG, too large, renamed or already present', async () => {
@@ -299,9 +316,9 @@ if (existsSync(PLAYWRIGHT)) {
 }
 const E2E = browserReady || process.env.CHE_REA_WEB_E2E === 'required' ? false : 'tools/rea/web is not installed with a browser here';
 
-async function observeFixture(path) {
+async function observeFixture(path, options = {}) {
   assert.ok(browserReady, 'CHE_REA_WEB_E2E=required, but the pinned Chromium could not start');
-  const fixture = await startWebFixture();
+  const fixture = await startWebFixture(options);
   const out = mkdtempSync(join(tmpdir(), 'rea-web-e2e-'));
   const env = { ...process.env, http_proxy: fixture.proxy, HTTP_PROXY: fixture.proxy, NODE_USE_ENV_PROXY: '1', CHE_REA_FIXTURE_PROXY: '1' };
   const code = await new Promise((resolve) => {
@@ -338,6 +355,15 @@ test('a real browser observes the fixture page and nothing leaves it that should
   }
   assert.deepEqual(record.screenshots.map((s) => [s.file, s.width, s.height]), [['desktop.jpg', 1280, 800], ['mobile.jpg', 390, 844]]);
   assert.ok(statSync(join(out, 'summary.json')).size <= 64 * 1024);
+});
+
+test('Codex #324: an unreachable robots.txt (HTTP 503) stops the browser before the page is opened', { skip: E2E, timeout: 120_000 }, async () => {
+  const { record, log } = await observeFixture('/', { robotsStatus: 503 });
+  assert.equal(record.state, 'refused');
+  assert.match(record.error, /robots\.txt answered HTTP 503\. RFC 9309 treats an unreachable robots\.txt as asking automated visitors not to open the site/);
+  assert.equal(log.some((e) => e.path === '/'), false, 'the page itself was never requested');
+  const missing = await observeFixture('/', { robotsStatus: 404 });
+  assert.equal(missing.record.state, 'complete', 'a missing robots.txt (404) allows the page');
 });
 
 test('robots.txt, bot checks and sign-in walls stop the observation with a refusal', { skip: E2E, timeout: 120_000 }, async () => {

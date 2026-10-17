@@ -388,12 +388,18 @@ export function featureTerms(feature) {
 
 // ─── Public web pages (static read) ──────────────────────────────────────
 
-// robots.txt as it applies to REA's own agent (CHE-REA), else to '*'. Unreachable or missing robots.txt means allowed.
+// robots.txt as it applies to REA's own agent (CHE-REA), else to '*'. RFC 9309 2.3.1: a 4xx
+// answer (or too many redirects) means there is no robots.txt, so the page is allowed; an
+// unreachable one (network error, timeout, 5xx, a redirect off the public web) means do not read.
 export async function robotsAllows(url, fetcher = fetch) {
   let parsed;
   try { parsed = new URL(url); } catch (_) { return { allowed: false, reason: 'That link is not valid.' }; }
-  const page = await fetchPublicPage(`${parsed.origin}/robots.txt`, fetcher, { maxBytes: 200_000, userAgent: UA }).catch(() => ({ error: 'unreachable' }));
-  if (page.error || !page.raw) return { allowed: true, checked: false };
+  const page = await fetchPublicPage(`${parsed.origin}/robots.txt`, fetcher, { maxBytes: 512 * 1024, userAgent: UA }).catch(() => ({ error: 'unreachable' }));
+  const missing = page.error && ((page.status >= 400 && page.status < 500) || page.error === 'The page kept redirecting.');
+  if (missing || (!page.error && !page.raw)) return { allowed: true, checked: false };
+  if (page.error) {
+    return { allowed: false, checked: false, unreachable: true, reason: `${parsed.host}'s robots.txt could not be read (${page.status ? `HTTP ${page.status}` : clip(page.error, 60)}). RFC 9309 treats an unreachable robots.txt as asking automated readers not to read the site, so CHE did not read the page. Ask again later.` };
+  }
   const path = `${parsed.pathname || '/'}${parsed.search || ''}`;
   const verdict = robotsVerdict(page.raw, path, REA_ROBOTS_AGENTS.static);
   return verdict.allowed ? { allowed: true, checked: true } : { allowed: false, checked: true, rule: verdict.rule, reason: `The site's robots.txt asks automated readers not to read ${parsed.pathname || '/'} (${verdict.rule}). CHE respects that.` };
@@ -486,7 +492,8 @@ export function analyzeHtml(html, pageUrl) {
 export async function inspectWebsite(url, fetcher = fetch) {
   if (!readablePublicUrl(url)) return { ok: false, reason: 'Only public web pages can be investigated: no sign-in links, local addresses, raw IP addresses or odd ports.' };
   const robots = await robotsAllows(url, fetcher);
-  if (!robots.allowed) return { ok: false, refused: true, reason: robots.reason };
+  // An unreachable robots.txt is temporary: a retryable failure, not a refusal.
+  if (!robots.allowed) return { ok: false, refused: !robots.unreachable, status: robots.unreachable ? 503 : undefined, reason: robots.reason };
   // A redirect to another site is read only if that site's robots.txt allows it too.
   // Robots rules apply to paths, not only origins. A redirect within the
   // same origin can land on a disallowed path, so cache decisions by URL.
@@ -497,7 +504,10 @@ export async function inspectWebsite(url, fetcher = fetch) {
     return checkedUrls.get(href);
   };
   const page = await fetchPublicPage(url, fetcher, { maxBytes: MAX_HTML_BYTES, userAgent: 'Mozilla/5.0 (compatible; CHE-REA)', beforeFetch }).catch((error) => ({ error: String(error?.message || error).slice(0, 120) }));
-  if (page.refused) return { ok: false, refused: true, reason: page.error };
+  if (page.refused) {
+    const hop = [...checkedUrls.values()].find((v) => v && v.allowed === false);
+    return { ok: false, refused: !hop?.unreachable, status: hop?.unreachable ? 503 : undefined, reason: page.error };
+  }
   if (page.error) {
     const walled = [401, 403, 429, 503].includes(page.status);
     return { ok: false, refused: walled, reason: walled ? `The site answered ${page.status}: it needs a sign-in or blocks automated readers. CHE does not get around sign-ins or bot protection.` : `The page could not be read: ${page.error}` };

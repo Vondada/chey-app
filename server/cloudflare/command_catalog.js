@@ -45,6 +45,7 @@ export const CONNECTORS = Object.freeze({
   image_generation: { label: 'Image generation', kind: 'secret', setup: 'Workers AI images are built in when the AI binding is on; HD providers need their key and the paid-media switch.' },
   voice: { label: 'CHE voice (ElevenLabs or Fish)', kind: 'secret', setup: 'Add ELEVENLABS_API_KEY (or FISH_API_KEY) as a Worker secret.' },
   github: { label: 'GitHub connection', kind: 'secret', setup: 'Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets.' },
+  repo: { label: 'CHE repository name', kind: 'secret', setup: 'Add CHE_GITHUB_REPO (owner/name of CHE\'s own repository) as a Worker setting. Its public tree can be read without a token.' },
   stripe: { label: 'Stripe', kind: 'secret', setup: 'Add STRIPE_SECRET_KEY (or CHE_PAYMENTS_URL) as a Worker secret.' },
   sms: { label: 'Twilio SMS', kind: 'secret', setup: 'Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and a sender number as Worker secrets.' },
   bookkeeping: { label: 'Bank or bookkeeping feed', kind: 'none', setup: 'CHE has no bank or bookkeeping connector yet.' },
@@ -454,7 +455,8 @@ export const COMMANDS = Object.freeze([
   C('rea-compare', 'build', 'EXPLORE', 'Compare investigated software with CHE\'s own code.', {
     title: 'REA: compare with CHE',
     does: 'Checks each feature REA found against CHE\'s live repository and command catalog, says whether CHE has it, partly has it or lacks it, with the files, and recommends the useful gaps.',
-    needs: [], optional: ['github'], route: 'che_rea', handler: 'rea_runner.js (rea_features.compareWithChe over CHE\'s repository at main)',
+    // The comparison reads CHE's repository, so its name is required; the token only adds code search.
+    needs: ['repo'], optional: ['github'], route: 'che_rea', handler: 'rea_runner.js (rea_features.compareWithChe over CHE\'s repository at main)',
     input: { name: 'feature', required: false, hint: 'REA job id, or leave empty for the latest investigation' },
     examples: ['REA compare', 'Which of those features could improve your app?'],
     prompt: 'REA compare: {input}',
@@ -750,6 +752,7 @@ export function connectorStatus(env = {}, facts = {}) {
   out.image_generation = (runtime.image_generation ?? Boolean(env.CHE_IMAGE_GEN_URL || env.AI)) ? ok() : missing('No image engine is configured.');
   out.voice = truthy(env.ELEVENLABS_API_KEY) || truthy(env.FISH_API_KEY) ? ok() : missing('No ElevenLabs or Fish key.');
   out.github = truthy(env.CHE_GITHUB_TOKEN) && truthy(env.CHE_GITHUB_REPO) ? ok() : missing('GitHub is not connected.');
+  out.repo = truthy(env.CHE_GITHUB_REPO) ? ok() : missing('CHE_GITHUB_REPO is not set.');
   out.stripe = truthy(env.STRIPE_SECRET_KEY) || truthy(env.CHE_PAYMENTS_URL) ? ok() : missing('Stripe is not connected.');
   out.sms = truthy(env.TWILIO_ACCOUNT_SID) && truthy(env.TWILIO_AUTH_TOKEN) ? ok() : missing('Twilio is not connected.');
   out.bookkeeping = { state: 'none', detail: CONNECTORS.bookkeeping.setup };

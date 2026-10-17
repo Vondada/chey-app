@@ -13,7 +13,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 export const FIXTURE_HOST = 'che-fixture.example';
 export const FIXTURE_CDN = 'cdn.fixture-cdn.example';
 
-export function startWebFixture({ robots = 'User-agent: *\nDisallow: /private/\n' } = {}) {
+export function startWebFixture({ robots = 'User-agent: *\nDisallow: /private/\n', robotsStatus = 200 } = {}) {
   const log = [];
   const server = createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || 'direct.invalid'}`);
@@ -31,7 +31,7 @@ export function startWebFixture({ robots = 'User-agent: *\nDisallow: /private/\n
       case '/members':
         return send(401, 'text/html', '<!doctype html><title>Members</title><form><input type="password"></form>');
       case '/robots.txt':
-        return send(200, 'text/plain', robots);
+        return send(robotsStatus, 'text/plain', robots);
       // A permitted address that redirects into a disallowed one.
       case '/moved':
         return res.writeHead(302, { location: '/private/page', 'cache-control': 'no-store' }).end();

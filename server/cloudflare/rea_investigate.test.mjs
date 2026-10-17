@@ -520,8 +520,12 @@ test('Codex #324: an unreadable file tree fails the investigation (retryable) in
 test('Codex #324: public-target REA commands work without a GitHub connection; the npm path says when it needs one', () => {
   const bare = connectorStatus({ AI: {} });
   assert.equal(commandStatus(commandById('rea-inspect'), bare).status, 'available');
-  assert.equal(commandStatus(commandById('rea-compare'), bare).status, 'available');
   assert.equal(commandStatus(commandById('rea-build'), bare).status, 'setup_required', 'building still needs GitHub');
+  // Codex #324: comparing reads CHE's own repository, so with no repository name it needs setup.
+  const compare = commandStatus(commandById('rea-compare'), bare);
+  assert.equal(compare.status, 'setup_required');
+  assert.deepEqual(compare.missing.map((m) => m.id), ['repo']);
+  assert.equal(commandStatus(commandById('rea-compare'), connectorStatus({ AI: {}, CHE_GITHUB_REPO: 'Vondada/chey-app' })).status, 'available', 'the public tree needs no token');
 });
 
 test('Codex #324: features past the code-search budget stay "not checked", never "missing"', async () => {
@@ -732,4 +736,21 @@ test('Codex #324: what only the browser run saw joins the feature map, and earli
   assert.deepEqual(inv.features.map((f) => f.id), inv.features.map((_, i) => `f${i + 1}`));
   const compared = await che.say('REA compare');
   assert.match(compared.text, /Search/, 'the comparison now runs on the browser-found features');
+});
+
+test('Codex #324: an unreachable robots.txt stops the read and is retryable; a missing one (4xx) allows it', async () => {
+  for (const [answer, allowed] of [[() => new Response('down', { status: 503 }), false], [() => { throw new TypeError('connect timeout'); }, false], [() => new Response('nope', { status: 404 }), true], [() => new Response('gone', { status: 410 }), true]]) {
+    const w = world();
+    const fetcher = async (url, init) => (String(url) === 'https://shop.example.com/robots.txt' ? answer() : w.fetcher(url, init));
+    const che = cheWith({ ...w, fetcher }, { fetcher });
+    const out = await che.say('Investigate https://shop.example.com/');
+    const pageRead = w.calls.some((c) => c.url === 'https://shop.example.com/');
+    assert.equal(pageRead, allowed, String(answer));
+    if (!allowed) {
+      assert.match(out.text, /robots\.txt could not be read[\s\S]*RFC 9309[\s\S]*did not read the page/);
+      const { investigations: [inv] } = await reaInvestigations(che.store, ENV, { fetcher, now: T0 });
+      assert.equal(inv.state, 'failed', 'a temporary stop, not a refusal');
+      assert.match(out.text, /Ask me again/, 'retryable');
+    }
+  }
 });

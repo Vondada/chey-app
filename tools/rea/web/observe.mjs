@@ -117,20 +117,23 @@ function writeRecord(out, record, shots = []) {
   return summary;
 }
 
-// Robots rules for the '*' group. A robots.txt that cannot be read allows the page, and the
-// record says it could not be read.
+// robots.txt as RFC 9309 2.3.1 reads it: a 4xx answer (or too many redirects) means there is
+// no robots.txt, so the page is allowed; an unreachable robots.txt (a network error, a timeout,
+// a 5xx answer, a redirect to an address that is not public) means do not open anything.
+const UNREACHABLE = (why) => ({ allowed: false, unreachable: true, rule: '', note: `${why} RFC 9309 treats an unreachable robots.txt as asking automated visitors not to open the site, so CHE stopped. Try again later.` });
+
 async function robotsCheck(url) {
   const target = new URL(url);
   let address = `${target.origin}/robots.txt`;
   for (let hop = 0; hop <= 5; hop++) {
     if (webTargetProblem(address) || (await resolvesPrivate(new URL(address).hostname))) {
-      return { allowed: true, note: 'robots.txt redirected to an address that is not public, so it was not read.' };
+      return UNREACHABLE('robots.txt redirected to an address that is not public, so it could not be read.');
     }
     let response;
     try {
       response = await fetch(address, { redirect: 'manual', headers: { 'user-agent': ROBOTS_AGENT }, signal: AbortSignal.timeout(10_000) });
     } catch (_) {
-      return { allowed: true, note: 'robots.txt could not be reached, so it was treated as allowing this page.' };
+      return UNREACHABLE('robots.txt could not be reached.');
     }
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       response.body?.cancel().catch(() => {});
@@ -143,13 +146,16 @@ async function robotsCheck(url) {
     }
     if (!response.ok) {
       response.body?.cancel().catch(() => {});
-      return { allowed: true, note: `robots.txt answered HTTP ${response.status}, so it was treated as allowing this page.` };
+      return UNREACHABLE(`robots.txt answered HTTP ${response.status}.`);
     }
     const verdict = robotsVerdict(await readCapped(response, 512 * 1024), `${target.pathname}${target.search}`, REA_ROBOTS_AGENTS.browser);
     return { ...verdict, note: '' };
   }
-  return { allowed: true, note: 'robots.txt kept redirecting, so it was treated as allowing this page.' };
+  return { allowed: true, note: 'robots.txt kept redirecting, so it was treated as missing (RFC 9309), which allows this page.' };
 }
+
+// Why a robots verdict stops the run: the site's own rule (`ruled`), or robots.txt being unreachable.
+const robotsStop = (robots, ruled) => (robots.unreachable ? robots.note : ruled);
 
 // The redirect chain, followed here before the browser opens anything, so every hop is
 // checked (public address, robots.txt) before it is requested. Returns the address to open.
@@ -160,7 +166,7 @@ async function resolveNavigation(url) {
     const host = new URL(current).hostname;
     if (webTargetProblem(current) || (await resolvesPrivate(host))) return { refused: 'The page moved to an address that is not a public web page, so CHE stopped.' };
     const robots = await robotsCheck(current);
-    if (!robots.allowed) return { refused: `The page moved to an address on ${host} whose robots.txt asks automated visitors not to open it (${robots.rule}). CHE respects it.` };
+    if (!robots.allowed) return { refused: robotsStop(robots, `The page moved to an address on ${host} whose robots.txt asks automated visitors not to open it (${robots.rule}). CHE respects it.`) };
     let response;
     try {
       response = await fetch(current, { redirect: 'manual', headers: { 'user-agent': ROBOTS_AGENT }, signal: AbortSignal.timeout(15_000) });
@@ -248,7 +254,7 @@ async function guard(context, net) {
         if (!verdicts.has(target)) verdicts.set(target, await robotsCheck(target));
         const verdict = verdicts.get(target);
         if (!verdict.allowed) {
-          net.refused = { host, rule: verdict.rule };
+          net.refused = { host, rule: verdict.rule, note: verdict.unreachable ? verdict.note : '' };
           return await route.abort('blockedbyclient');
         }
         // The browser does not route the hops of a redirect it follows itself, so a redirect
@@ -685,7 +691,7 @@ async function runBrowser(url, base, limitations) {
         return { record: { ...base, state: 'refused', error: 'The page redirected inside the browser to an address CHE had not checked against its robots.txt, so CHE stopped before opening it.', limitations } };
       }
       if (net.refused) {
-        return { record: { ...base, state: 'refused', error: `The page moved to an address on ${net.refused.host} whose robots.txt asks automated visitors not to open it (${net.refused.rule}). CHE respects it.`, limitations } };
+        return { record: { ...base, state: 'refused', error: net.refused.note || `The page moved to an address on ${net.refused.host} whose robots.txt asks automated visitors not to open it (${net.refused.rule}). CHE respects it.`, limitations } };
       }
       return { record: { ...base, ...navigationFailure(error, expired), limitations } };
     }
@@ -703,7 +709,7 @@ async function runBrowser(url, base, limitations) {
     if (new URL(finalUrl).origin !== new URL(url).origin) {
       const robots = await robotsCheck(finalUrl);
       if (!robots.allowed) {
-        return { record: { ...base, state: 'refused', error: `The page moved to ${new URL(finalUrl).hostname}, whose robots.txt asks automated visitors not to open it (${robots.rule}). CHE respects it.`, limitations } };
+        return { record: { ...base, state: 'refused', error: robotsStop(robots, `The page moved to ${new URL(finalUrl).hostname}, whose robots.txt asks automated visitors not to open it (${robots.rule}). CHE respects it.`), limitations } };
       }
       if (robots.note) limitations.push(robots.note);
     }
@@ -793,7 +799,7 @@ async function observe(argv) {
     return writeRecord(f.out, {
       ...base,
       state: 'refused',
-      error: `The site's robots.txt asks automated visitors not to open this page (${robots.rule}). CHE respects it.`,
+      error: robotsStop(robots, `The site's robots.txt asks automated visitors not to open this page (${robots.rule}). CHE respects it.`),
       limitations: ['Nothing was opened in the browser.'],
     });
   }

@@ -200,16 +200,33 @@ jobs:
             } catch (error) {
               if (error.status !== 404) throw error;
             }
-            async function create(file, message, content) {
+            // A 409 or 422 means the file already exists, or that another run moved the branch at
+            // the same moment. Only a file that is really there counts as existing (it is never
+            // overwritten); a branch race is retried, so no result or screenshot is dropped.
+            async function exists(file) {
               try {
-                await github.rest.repos.createOrUpdateFileContents({ ...context.repo, path: file, branch, message, content });
+                await github.rest.repos.getContent({ ...context.repo, path: file, ref: branch });
                 return true;
               } catch (error) {
-                if (error.status === 409 || error.status === 422) {
-                  core.info(`${file} already exists; nothing was overwritten.`);
-                  return false;
-                }
+                if (error.status === 404) return false;
                 throw error;
+              }
+            }
+            async function create(file, message, content) {
+              for (let attempt = 1; ; attempt++) {
+                try {
+                  await github.rest.repos.createOrUpdateFileContents({ ...context.repo, path: file, branch, message, content });
+                  return true;
+                } catch (error) {
+                  if (error.status !== 409 && error.status !== 422) throw error;
+                  if (await exists(file)) {
+                    core.info(`${file} already exists; nothing was overwritten.`);
+                    return false;
+                  }
+                  if (attempt >= 5) throw error;
+                  core.info(`${file}: che-mailbox moved during the write (${error.status}); trying again.`);
+                  await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
+                }
               }
             }
             // Only the two known file names, only JPEG bytes, each at most 400 KB.

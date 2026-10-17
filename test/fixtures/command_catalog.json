@@ -1867,7 +1867,9 @@
     "REA compare",
     "Which of those features could improve your app?"
    ],
-   "needs": [],
+   "needs": [
+    "repo"
+   ],
    "optional": [
     "github"
    ],
@@ -1884,8 +1886,16 @@
     "gap",
     "could improve"
    ],
-   "status": "available",
-   "missing": [],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "repo",
+     "label": "CHE repository name",
+     "state": "not_connected",
+     "setup": "Add CHE_GITHUB_REPO (owner/name of CHE's own repository) as a Worker setting. Its public tree can be read without a token.",
+     "detail": "CHE_GITHUB_REPO is not set."
+    }
+   ],
    "optional_missing": [
     "github"
    ]
@@ -3586,6 +3596,12 @@
    "detail": "GitHub is not connected.",
    "label": "GitHub connection",
    "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets."
+  },
+  "repo": {
+   "state": "not_connected",
+   "detail": "CHE_GITHUB_REPO is not set.",
+   "label": "CHE repository name",
+   "setup": "Add CHE_GITHUB_REPO (owner/name of CHE's own repository) as a Worker setting. Its public tree can be read without a token."
   },
   "stripe": {
    "state": "not_connected",
