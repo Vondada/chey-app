@@ -9,6 +9,7 @@ import {
   handleReaRequest, parseReaRequest, reaInvestigations, refreshInvestigations, REA_JOBS_KEY, REA_WEB_WORKFLOW, STAGES,
 } from './rea_runner.js';
 import { identifyTarget } from './rea_targets.js';
+import { REA_WEB_PIN } from './rea_web_evidence.js';
 
 const T0 = Date.UTC(2026, 9, 17, 9, 0, 0);
 const ENV = { CHE_GITHUB_TOKEN: 'test-token', CHE_GITHUB_REPO: 'Vondada/chey-app' };
@@ -59,7 +60,7 @@ const HTML = `<!doctype html><html lang="en"><head><title>Acme Shop</title><meta
 
 const WEB_RECORD = (jobId) => ({
   schema: 'che.rea-web.v1', job_id: jobId, state: 'complete',
-  tool: { name: 'playwright', version: '1.48.2', browser: 'chromium', analysis: 'public page observed in an isolated browser; no sign-in, no form submitted' },
+  tool: { name: 'playwright', version: REA_WEB_PIN.version, browser: 'chromium', analysis: 'public page observed in an isolated browser; no sign-in, no form submitted' },
   target: { url: 'https://shop.example.com/', final_url: 'https://shop.example.com/', status: 200, host: 'shop.example.com' },
   observed_at: new Date(T0 + 120_000).toISOString(),
   page: { title: 'Acme Shop', lang: 'en', description: 'Shoes and bags', generator: '', viewport_meta: true, load_ms: 812, console_errors: 0, framework_hints: ['Next.js'], third_party_hosts: [] },

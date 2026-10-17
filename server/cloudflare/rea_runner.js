@@ -489,14 +489,12 @@ async function refreshBrowser(storage, env, inv, fetcher, now) {
   }
   inv.browser = { state: 'complete', observed_at: w.observed_at };
   inv.screenshots = (w.screenshots || []).map((x) => ({ label: x.label === 'mobile' ? 'Phone width (390 px)' : 'Desktop width (1280 px)', file: x.file }));
-  const browserFacts = { kind: 'website', ...inv.facts_web, browser: w };
   for (const step of (w.interactions || []).slice(0, 5)) {
     inv.architecture.push({ label: `Browser: ${cleanText(step.action, 30)}`, detail: cleanText(`${step.target}: ${step.observed}`, 300), kind: 'observed', evidence: [linkOf(w.target?.final_url || inv.target.url, w.target?.final_url || inv.target.url)] });
   }
   if (w.responsive) inv.architecture.push({ label: 'Phone layout (browser run)', detail: `${w.responsive.mobile_horizontal_overflow ? 'Scrolls sideways at 390 px' : 'Fits 390 px'}; ${w.responsive.mobile_nav_toggle ? 'has a menu toggle' : 'no menu toggle'}.`, kind: 'observed', evidence: [] });
   if (w.page?.load_ms != null) inv.architecture.push({ label: 'Load time (browser run)', detail: `${w.page.load_ms} ms on a GitHub runner, ${w.page.console_errors ?? 0} console errors.`, kind: 'observed', evidence: [] });
   inv.limitations.push(...(w.limitations || []).slice(0, 4).map((l) => `Browser run: ${l}`));
-  void browserFacts;
   return saveInvestigation(storage, inv);
 }
 

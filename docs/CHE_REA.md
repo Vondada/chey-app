@@ -1,15 +1,40 @@
-# CHE and REA (reverse engineering)
+# CHE and REA (reverse engineering and investigation)
 
-REA is `rea-agents`, an MIT-licensed reverse-engineering tool (https://github.com/morluto/rea). CHE uses one pinned version of its static JavaScript analysis to inspect a public npm package, explain what its files show, and plan an original feature from that evidence.
+REA is CHE's investigation route. Version 1 runs `rea-agents` (MIT, https://github.com/morluto/rea), pinned, on one public npm package at an exact version. REA 2.0 keeps that route unchanged and adds investigations of other public targets through the same job log: a public GitHub repository, a public web page (plus an isolated browser run), an App Store listing, and an honest answer for apps CHE cannot reach. Findings become a feature map, are compared with CHE's live repository, and an approved plan is built through CHE's existing self-development job as a draft pull request.
 
 ## What runs where
 
 | Part | Where | Why |
 | --- | --- | --- |
-| Commands and answers (`rea_runner.js`) | Cloudflare Worker | Deterministic: parsing, permissions, job log, answers |
+| Commands, stages and answers (`rea_runner.js`) | Cloudflare Worker | Deterministic: parsing, permissions, the job log, answers |
+| Target adapters (`rea_targets.js`) | Cloudflare Worker | Plain GETs of public data: the GitHub API and raw files at one commit, one page fetch, the App Store listing API |
+| Feature map, CHE comparison, plan, verify (`rea_features.js`) | Cloudflare Worker | Deterministic: no model call |
 | Evidence reduction (`rea_evidence.js`) | Worker and runner | One format; the Worker checks every record it reads |
 | REA analysis (`tools/rea`, `che-rea-analysis.yml`) | GitHub Actions, Linux, Node 24 | REA runs on Node, which a Worker cannot run. The iPhone cannot run it either |
-| Native binaries (Ghidra) | Not set up | Needs an external analysis host with Ghidra and Java. Nothing is run |
+| Browser observation (`tools/rea/web`, `che-rea-web.yml`) | GitHub Actions, headless Chromium | No credentials in the browser job; see "Website observation" |
+| Building (`queueSelfDevelopment`) | CHE's existing coding job | Draft pull request with tests and review; never a merge |
+| Native binaries (Ghidra), APKs, IPAs | Not set up | Each needs its own host; nothing is run |
+
+## The stages
+
+Every investigation moves through the same 13 stages, each with its evidence note: understand, discover, inspect, map, architecture, compare, plan, build, test, review, integrate, verify, remember. Inspection fills the first five and remember. Compare runs when asked ("which of those features could improve your app?"). Plan, build, test, review and verify run only after the owner asks to build. Integrate (merge and deploy) always waits for the owner's separate yes.
+
+## How CHE decides
+
+- A GitHub link or `owner/name repo` is read at its current commit. Facts: licence, languages, manifests (dependencies with line numbers), README feature bullets, file-based routes (Next.js, SvelteKit, Remix, Nuxt) and routes declared in code (React Router, GoRouter, Flutter named routes, HTTP routes), entry points, tests and CI. A named feature ("how its search feature works") is searched in the code and cited by file and line.
+- A web link is read once, after robots.txt allows it. A sign-in wall or bot check stops the read; CHE does not get around them. The isolated browser run then adds screenshots, menus, focus and phone layout.
+- An App Store link (or an app name with no public source) reads the public listing.
+- An app name is matched to a public repository by name and stars, and to an App Store listing.
+- A private app ("the private iOS app X internals", an IPA or APK) gets the plain list of what CHE cannot reach and what she can do instead. Only the public listing is shown.
+- Messages about CHE's own code ("your current repository") never become investigations.
+
+## Comparing with CHE
+
+Each feature kind names the CHE files that implement it. A feature counts as "CHE has it" only when one of those files exists in CHE's tree at the current main commit; the answer links that file at that commit. A file whose name matches, or a command named for that kind, is "partly". Before anything is called "missing", CHE's code is searched. An unreadable tree, or a search that failed, is "not checked", never "missing".
+
+## Untrusted target text
+
+README lines and listing text are data. Lines that read like instructions to an AI are dropped and counted as a limitation. Features known only from the target's own wording are never proposed automatically; the owner must name them, and the build request quotes them as target text. The build request always says: original code only, no copied source, branding, text or assets, and no merge or deploy.
 
 ## The pin
 
@@ -20,22 +45,28 @@ REA is `rea-agents`, an MIT-licensed reverse-engineering tool (https://github.co
 
 ## Commands
 
-All six are in the Command Center under Websites, Apps & AI. Each one routes to `rea_runner.js` and never to a coding job.
+All ten are in the Command Center under Websites, Apps & AI. Each one routes to `rea_runner.js`.
 
-| Command | Mode | What it does |
-| --- | --- | --- |
-| `/rea-inspect` | Read-only | Runs static analysis on `npm:<name>@<exact version>`. |
-| `/rea-explain` | Read-only | Explains the structure from the recorded evidence; reuses it when present. |
-| `/rea-debug` | Read-only | Reviews static evidence for a symptom. It cannot see a crash, and says so. |
-| `/rea-compare` | Read-only | Returns REA's side. Comparing with CHE's own code is not built yet. |
-| `/rea-rebuild` | Plan only | Writes a plan from recorded evidence. Nothing is built. |
-| `/rea-status` | Read-only | Capabilities, recent jobs, and the latest finished evidence. |
+| Command | Aliases | Mode | What it does |
+| --- | --- | --- | --- |
+| `/rea-inspect` | `/rea-investigate` | Read-only | Investigates an app name, link, GitHub repository or `npm:<name>@<exact version>`. |
+| `/rea-discover` | | Read-only | Names the target and the public sources REA can use; reads nothing in depth. |
+| `/rea-features` | `/rea-map` | Read-only | The feature map: purpose, use, evidence, unknowns, effort. |
+| `/rea-explain` | `/rea-architecture` | Read-only | Architecture, split into observed, inferred and unknown. |
+| `/rea-debug` | | Read-only | Static evidence for a symptom; it cannot see a crash, and says so. |
+| `/rea-compare` | `/rea-gap` | Read-only | Each feature against CHE's live repository, and the gaps worth adding. |
+| `/rea-rebuild` | `/rea-plan` | Plan only | An original-implementation plan with acceptance checks. Nothing is built. |
+| `/rea-build` | | Build | Hands the approved plan to CHE's coding job: a draft pull request. Never a merge. |
+| `/rea-verify` | | Read-only | The build's pull request, CI checks and changed tests. The iPhone is never claimed verified. |
+| `/rea-status` | `/rea-capabilities`, `/rea-history` | Read-only | What REA can and cannot analyze, and recent investigations. |
 
-Plain phrases work too, such as `REA inspect: npm:semver@7.7.2`, or "reverse engineer npm package semver 7.7.2".
+Plain speech works too: "CHE, investigate this app and tell me how its interface and features work", "Which of those features could improve your app?", "Build those approved features into yourself", "Remember that app we looked at? Add the export feature we discussed." npm phrases keep working as before ("reverse engineer npm package semver 7.7.2").
+
+The iPhone's Investigations page (Commands → Activity → Open investigations, or "open investigations") reads `GET /api/rea/investigations`; its buttons send these commands through chat. Screenshots come from `GET /api/rea/files/<id>/desktop.jpg` and only when the investigation lists them.
 
 ## Permission rules (enforced in code)
 
-1. **Inspection is not permission to change anything.** Inspect, explain, debug and compare dispatch one analysis run. The Worker test proves no coding job, commit or pull request starts, even when the request says "fix" or "open a pull request".
+1. **Inspection is not permission to change anything.** Inspect, explain, debug and compare read public data or dispatch one analysis run; only `/rea-build` (or "build those features into yourself" from the owner's own device) starts a coding job, and that job opens a draft pull request. The Worker test proves no coding job, commit or pull request starts, even when the request says "fix" or "open a pull request".
 2. **Public targets only, at one exact version.** Ranges (`^7`), tags (`latest`), URLs, local paths and devices are refused with the reason. A private target needs its own approval flow, which is not built.
 3. **Integrity first.** The registry's sha512 for the exact tarball is checked before anything is extracted. A mismatch stops the run.
 4. **Archives are checked.** Symbolic links, hard links, entries that leave the folder, more than 20,000 entries, or more than 200 MB unpacked are refused.
@@ -60,11 +91,10 @@ See `CHE_COMMAND_CENTER.md` for how commands run, and `server/cloudflare/fixture
 
 ## Not built yet
 
-- Native binary analysis (needs a Ghidra host and Java).
-- Runtime capture or observation of running software (each target would need approval first).
-- Private targets.
-- Comparing REA evidence with CHE's own code.
-- An iPhone screen for findings and history. The Command Center lists the commands from the catalog; findings appear in chat.
+- Native binary analysis (needs a Ghidra host and Java), APK analysis (apktool or jadx), and anything inside an installed iOS app (encrypted per device; no macOS host).
+- Runtime capture of installed software.
+- Analysis of screenshots or recordings the owner sends. REA says so and suggests a public link instead.
+- Google Play listings (CHE asks for the app's website or source instead).
 
 ## Cost and owner decisions
 
