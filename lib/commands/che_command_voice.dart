@@ -46,6 +46,7 @@ enum CheCommandVoiceOp {
   repeat,
   yes,
   no,
+  investigations,
 }
 
 class CheCommandVoice {
@@ -108,6 +109,10 @@ class CheCommandVoice {
     // "your Commands page".
     if (has(r"^(?:what'?s|what is)\s+on\s+(?:the\s+|this\s+|my\s+)?(?:screen|page)(?:\s+(?:right\s+)?now)?$|^what\s+am\s+i\s+looking\s+at$|^what\s+(?:screen|page)\s+am\s+i\s+on$|^(?:read|describe)(?:\s+(?:this|the|my))?(?:\s+(?:page|screen))?(?:\s+aloud)?$|^where am i$|^(?:what are|read|list)(?:\s+me)?\s+(?:my\s+|the\s+)?(?:options|choices)$|^(?:open|show)\s+(?:the\s+)?commands?(?:\s+page)?$|^(?:open|go\s+to|bring\s+up|take\s+me\s+to)\s+(?:the\s+|your\s+|my\s+|che'?s\s+)?(?:commands?|command\s+(?:center|library))(?:\s+(?:page|screen|tab))?$|^help$")) {
       return const CheCommandVoice(CheCommandVoiceOp.describe);
+    }
+    // REA investigations: their own page, reached from here.
+    if (has(r"^(?:open|show|go\s+to|bring\s+up|take\s+me\s+to|list|read)?\s*(?:me\s+)?(?:the\s+|my\s+|che'?s\s+)?(?:rea\s+|reverse[\s-]engineering\s+)?investigations?(?:\s+(?:page|screen|list|tab))?$")) {
+      return const CheCommandVoice(CheCommandVoiceOp.investigations);
     }
     if (has(r'^(?:show|open|go\s+to|switch\s+to)?\s*(?:the\s+|my\s+)?(library|workflows?|activity|history|runs)(?:\s+tab)?$')) {
       final w = g(1).toLowerCase();

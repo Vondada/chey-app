@@ -109,6 +109,7 @@ class CheCommandDetailScreen extends StatelessWidget {
     required this.onToggleFavorite,
     required this.onAddToWorkflow,
     this.onSpeak,
+    this.onOpenInvestigations,
   });
 
   final CheCommandInfo command;
@@ -118,6 +119,9 @@ class CheCommandDetailScreen extends StatelessWidget {
   final Future<bool> Function() onToggleFavorite;
   final void Function(CheCommandInfo command) onAddToWorkflow;
   final void Function(String text)? onSpeak;
+
+  /// REA commands link to the investigations they produce.
+  final VoidCallback? onOpenInvestigations;
 
   @override
   Widget build(BuildContext context) {
@@ -200,6 +204,14 @@ class CheCommandDetailScreen extends StatelessWidget {
               icon: const Icon(Icons.account_tree_rounded),
               label: const Text('Add to a workflow'),
             ),
+            if (c.id.startsWith('rea-') && onOpenInvestigations != null) ...[
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: onOpenInvestigations,
+                icon: const Icon(Icons.travel_explore_rounded),
+                label: const Text('Open REA investigations'),
+              ),
+            ],
             const SizedBox(height: 10),
             _FavoriteButton(initial: favorite, slash: c.slash, onToggle: onToggleFavorite),
           ],

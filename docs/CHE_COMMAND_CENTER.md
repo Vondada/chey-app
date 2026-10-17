@@ -35,6 +35,14 @@ Everything on the page also works by voice. The page has its own **Speak to CHE*
 
 A command that needs setup, or is missing its input, says what is missing and runs nothing. An approval command asks for a spoken yes in Chat.
 
+## REA investigations
+
+**Where:** Commands → **Activity** → **Open investigations**, the **Open REA investigations** button on any REA command's details, or say "open investigations". The list shows each investigation's target, kind, state and current stage. One investigation shows, in order: target, all 13 stages with their state, sources, the screenshots the browser run actually captured (or "No screenshots were captured"), the feature map with CHE's has/partial/missing status and its evidence, architecture findings (Observed, Inferred, Unknown), the comparison counts, proposals, plan, build, verification and limitations. Data is read only from `GET /api/rea/investigations[/<id>]` and `GET /api/rea/files/<id>/<file>` with the paired-device headers (`lib/commands/che_rea_models.dart`, `che_command_client.dart`).
+
+Buttons send chat commands through the same chat turn as **Run** (`_runCommandInChat` in `lib/main.dart`, wrapped by `_sendCommandInChat` so the page can show CHE's reply large): **Map features** `/rea-features <id>`, **Compare with CHE** `/rea-compare <id>`, **Plan selected** `/rea-rebuild <id> f1 f3` (features chosen with the checkboxes), **Build** `/rea-build <id>` and **Verify** `/rea-verify <id>`. Build first asks "Build these N features into CHE as a draft pull request? Nothing merges or deploys without your separate yes." and sends nothing on Cancel. Opening or refreshing never speaks; **Read this** reads a short summary.
+
+By voice on those pages (`lib/commands/che_rea_voice.dart`): "read this", "number two", "read the features", "feature 2", "select features 1 and 3", "plan selected" / "plan features 1 and 3", "map features", "compare with CHE", "build it" (then a plain "yes" or "no"), "verify", "refresh", "go back".
+
 ## How it works (no second assistant)
 
 | Piece | Where | Reuses |

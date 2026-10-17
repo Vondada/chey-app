@@ -17,6 +17,8 @@ import 'che_command_models.dart';
 import 'che_command_store.dart';
 import 'che_command_voice.dart';
 import 'che_command_widgets.dart';
+import 'che_rea_view.dart';
+import 'che_rea_voice.dart';
 import 'che_workflow_builder.dart';
 
 /// Runs a command in CHE's chat. `confirmed` is true only after the owner
@@ -29,6 +31,7 @@ class CheCommandCenterScreen extends StatefulWidget {
     required this.client,
     required this.store,
     required this.onRunInChat,
+    this.onSendInChat,
     this.onSpeak,
     this.onListen,
     this.initialCommand,
@@ -42,6 +45,11 @@ class CheCommandCenterScreen extends StatefulWidget {
   final CheCommandClient client;
   final CheCommandStore store;
   final CheRunInChat onRunInChat;
+
+  /// The same chat turn as [onRunInChat] for a page that stays open (REA
+  /// investigations), returning CHE's reply. Without it those pages hand the
+  /// command to [onRunInChat] and say her answer is in Chat.
+  final CheSendInChat? onSendInChat;
   final void Function(String text)? onSpeak;
 
   /// Starts or stops CHE's microphone (the same as Chat's mic button). What
@@ -244,9 +252,26 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
           unawaited(_openBuilder(CheSavedWorkflow(name: '', steps: [CheWorkflowStepDraft(command: c.id)])));
         },
         onSpeak: widget.onSpeak,
+        onOpenInvestigations: _openInvestigations,
       ),
     ));
   }
+
+  /// REA investigations (Activity, a REA command's details, or "open
+  /// investigations"). Their actions run through Chat's normal turn.
+  Future<void> _openInvestigations() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheReaInvestigationsScreen(client: widget.client, send: _sendInChat, onSpeak: widget.onSpeak),
+    ));
+  }
+
+  CheSendInChat get _sendInChat =>
+      widget.onSendInChat ??
+      (message, {bool confirmed = false}) async {
+        await widget.onRunInChat(message, confirmed: confirmed);
+        return (sent: true, reply: '');
+      };
 
   Future<void> _openBuilder([CheSavedWorkflow? initial]) async {
     await Navigator.of(context).push(MaterialPageRoute<void>(
@@ -528,7 +553,8 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
         _voiceList = const [];
         return 'Commands, Activity tab. ${missions.isEmpty ? 'No workflow runs yet.' : [for (final (i, m) in missions.indexed) '${i + 1}. ${m.spoken}'].join(' ')}'
             '${_catalog.runs.isEmpty ? '' : ' Last command: /${_catalog.runs.first.command}, ${cheStepStatusLabel(_catalog.runs.first.status).toLowerCase()}.'}'
-            '${missions.isEmpty ? '' : ' Say approve, retry, pause, resume or cancel.'}';
+            '${missions.isEmpty ? '' : ' Say approve, retry, pause, resume or cancel.'}'
+            ' Say "open investigations" for REA investigations.';
       default:
         final query = _query.trim();
         if (query.isNotEmpty) {
@@ -546,6 +572,12 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
 
   Future<String?> _voice(String words) async {
     if (!mounted) return null;
+    // An open REA investigation page answers its own routes first.
+    final rea = CheReaVoice.handler;
+    if (rea != null) {
+      final answer = await rea(words);
+      if (answer != null || !mounted) return answer;
+    }
     final v = CheCommandVoice.parse(words);
     final pending = _voiceConfirm;
     _voiceConfirm = null;
@@ -690,6 +722,10 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
         });
         if (result.ok) unawaited(_refresh());
         return _say(result.ok ? result.message : 'CHE did not start it: ${result.message}', ok: result.ok);
+      case CheCommandVoiceOp.investigations:
+        setState(() => _tab = 2);
+        unawaited(_openInvestigations());
+        return _say('REA investigations are open. Say "read this" to hear the list, or a number to open one.');
       case CheCommandVoiceOp.activity:
         setState(() => _tab = 2);
         final m = v.target.isEmpty ? null : _missionNamed(v.target);
@@ -1267,6 +1303,15 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(CheSpace.gutter, 0, CheSpace.gutter, 32),
       children: [
+        const CheSectionHeader('REA investigations'),
+        Text('What CHE found when she investigated a package, repository, website or app, and the plan, build and checks that followed.',
+            style: CheType.bodyDim),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: _openInvestigations,
+          icon: const Icon(Icons.travel_explore_rounded),
+          label: const Text('Open investigations'),
+        ),
         const CheSectionHeader('Workflow runs'),
         if (missions.isEmpty) Text('No workflow runs yet.', style: CheType.bodyDim),
         for (final m in missions)
