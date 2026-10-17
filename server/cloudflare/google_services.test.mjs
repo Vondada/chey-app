@@ -485,6 +485,34 @@ test('a Google Ads grant still unapproved stays Needs Setup and keeps its grant'
   assert.equal(fetcher.calls.some((c) => c.url.includes('/revoke')), false);
 });
 
+// A grant Google revoked, or expired (seven days for an app in testing mode),
+// used to read Ready until the owner happened to use the service.
+test('a refresh renews lapsed access and turns a revoked Google or YouTube grant into Reconnect, not Ready', async () => {
+  const lapsed = async (refresh) => ({ status: 'connected', account: 'owner@example.com', refresh: await sealToken(env, refresh),
+    access: await sealToken(env, 'old-access'), access_expires_at: Date.now() - 1000 });
+  const data = {
+    google_connections: { gmail: await lapsed('revoked-refresh'), drive: await lapsed('good-refresh') },
+    youtube: { ...(await lapsed('revoked-yt-refresh')), channel_title: 'Test Channel' },
+  };
+  const fetcher = fakeGoogle({
+    'https://oauth2.googleapis.com/token': (_u, init) => (String(init.body).includes('refresh_token=good-refresh')
+      ? json({ access_token: 'fresh', expires_in: 3600 })
+      : json({ error: 'invalid_grant' }, 400)),
+  });
+  assert.equal(await googleRecheckPending(env, data, fetcher), true);
+  assert.equal(data.google_connections.gmail.status, 'needs_reconnect');
+  assert.equal(data.google_connections.drive.status, 'connected');
+  assert.ok(data.google_connections.drive.access_expires_at > Date.now(), 'a good grant is renewed');
+  assert.equal(data.youtube.status, 'needs_reconnect');
+  const ready = await googleConnectorStates(env, data);
+  assert.equal(ready.gmail.state, 'needs_reconnect');
+  assert.equal(ready.drive.state, 'ready');
+  // Access still valid: nothing is sent to Google on a refresh.
+  const quiet = fakeGoogle({});
+  assert.equal(await googleRecheckPending(env, { google_connections: { drive: data.google_connections.drive } }, quiet), false);
+  assert.equal(quiet.calls.length, 0);
+});
+
 test('reconnecting a service does not revoke a grant that another CHE connection shares', async () => {
   const data = { google_oauth: pendingFor('calendar'), youtube: { refresh: await sealToken(env, 'yt-refresh') },
     google_connections: { calendar: { status: 'connected', refresh: await sealToken(env, 'old-calendar-refresh') } } };

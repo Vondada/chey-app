@@ -6,7 +6,7 @@
 import { isOwnerYes } from './owner_action_gate.js';
 import {
   ACCESS_SAFETY_MS, AUTH_URL, PENDING_TTL_MS, TOKEN_URL, codeChallenge, googleClientConfig,
-  googleErrorMessage, openToken, postForm, randomToken, revokeGrant, sealToken,
+  googleErrorMessage, openToken, postForm, randomToken, revokeGrant, sealToken, youtubeAccessToken,
 } from './youtube_connection.js';
 
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
@@ -249,8 +249,11 @@ function sharesGrant(data, service) {
 }
 
 // A grant waiting for Google's approval is checked again on each owner refresh, so
-// an approved account becomes Connected without a reconnect. Returns true when the
-// stored state changed and must be saved.
+// an approved account becomes Connected without a reconnect. A connected grant
+// (YouTube too) whose short-lived access has lapsed is renewed, so one Google
+// revoked or expired (seven days for an app in testing mode) reads Reconnect,
+// not Ready. Valid access sends nothing. Returns true when the stored state
+// changed and must be saved.
 export async function googleRecheckPending(env, data, fetcher = fetch) {
   let changed = false;
   for (const [id, conn] of Object.entries(data.google_connections || {})) {
@@ -280,6 +283,13 @@ export async function googleRecheckPending(env, data, fetcher = fetch) {
     conn.access_expires_at = Date.now() + Number(refreshed.json.expires_in || 3600) * 1000 - ACCESS_SAFETY_MS;
     changed = true;
   }
+  const now = Date.now();
+  const lapsed = (conn) => conn?.status === 'connected' && !(Number(conn.access_expires_at) > now);
+  const renewals = Object.entries(data.google_connections || {})
+    .filter(([id, conn]) => isGoogleService(id) && lapsed(conn))
+    .map(([id]) => googleAccessToken(env, data, id, fetcher, now).then((r) => r.ok || data.google_connections[id]?.status !== 'connected'));
+  if (lapsed(data.youtube)) renewals.push(youtubeAccessToken(env, data, fetcher, now).then((r) => r.changed === true));
+  if ((await Promise.all(renewals.map((p) => p.catch(() => false)))).some(Boolean)) changed = true;
   return changed;
 }
 

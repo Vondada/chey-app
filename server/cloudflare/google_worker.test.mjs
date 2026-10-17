@@ -392,6 +392,33 @@ test('ordinary conversation about email never calls Google', async () => {
   });
 });
 
+// A Gmail grant Google revoked used to read Ready on the Connections page and
+// in the Command Center until the owner happened to use Gmail.
+test('a revoked Gmail grant reads Reconnect on refresh, and the owner\'s phrase says so with no model', async () => {
+  const me = await owner();
+  const grant = { ...(await liveGrant()), access_expires_at: Date.now() - 1000 };
+  me.setData((d) => { d.google_connections = { gmail: grant }; });
+  const offline = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input?.url || input);
+    calls.push(url);
+    if (url === 'https://oauth2.googleapis.com/token') return new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 });
+    throw new TypeError(`offline test: no fake for ${url}`);
+  };
+  try {
+    const commands = (await me.get('/api/commands')).body;
+    assert.equal(commands.connectors.gmail.state, 'needs_reconnect');
+    const r = await me.say('CHE, check my unread emails and tell me the newest one.');
+    assert.equal(r.done.source, 'che_google');
+    assert.equal(r.modelCalls, 0);
+    assert.match(spoken(r.raw), /Google no longer accepts CHE's Gmail sign-in, sir\. Reconnect Gmail/);
+    assert.ok(!calls.some((u) => u.includes('gmail.googleapis.com')), 'no Gmail read with a revoked grant');
+  } finally {
+    globalThis.fetch = offline;
+  }
+});
+
 // Gmail's resultSizeEstimate is an estimate whenever more pages exist; CHE
 // never speaks it as an exact count. "Read my latest email" reads the inbox.
 test('a Gmail list with more pages is spoken as "about", and "read my latest email" reads the inbox', async () => {
