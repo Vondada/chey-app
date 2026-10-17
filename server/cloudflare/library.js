@@ -163,10 +163,16 @@ const MAX_READABLE_BYTES = 2_000_000;
 // again; a declared oversize page is refused unread and any other body is read
 // as a stream and cut at the cap, so it is never buffered whole.
 // `beforeFetch(url)` may refuse a hop (for example by robots.txt) before it is requested.
-export async function fetchPublicPage(url, fetcher = fetch, { maxBytes = MAX_READABLE_BYTES, userAgent = 'Mozilla/5.0 (CHE Library)', beforeFetch = null } = {}) {
+// One deadline (`timeoutMs`) covers every hop and the body, so a server that accepts the
+// connection and then stalls cannot hold the Worker request open.
+export async function fetchPublicPage(url, fetcher = fetch, { maxBytes = MAX_READABLE_BYTES, userAgent = 'Mozilla/5.0 (CHE Library)', beforeFetch = null, timeoutMs = 15_000 } = {}) {
   let parsed;
   try { parsed = new URL(url); } catch (_) { return { error: 'That link is not valid.' }; }
   if (!/^https?:$/.test(parsed.protocol)) return { error: 'Only web links can be read.' };
+  const signal = AbortSignal.timeout(timeoutMs);
+  const TIMED_OUT = { error: 'The page took too long to answer.', timed_out: true };
+  const late = new Promise((resolve) => signal.addEventListener('abort', () => resolve(TIMED_OUT), { once: true }));
+  const timed = (promise) => Promise.race([promise, late]);
   let current = parsed.toString();
   let response;
   for (let hop = 0; ; hop++) {
@@ -175,7 +181,8 @@ export async function fetchPublicPage(url, fetcher = fetch, { maxBytes = MAX_REA
       const allowed = await beforeFetch(current);
       if (allowed && allowed.allowed === false) return { error: allowed.reason || 'That page may not be read.', refused: true };
     }
-    response = await fetcher(current, { headers: { 'User-Agent': userAgent }, redirect: 'manual' });
+    response = await timed(fetcher(current, { headers: { 'User-Agent': userAgent }, redirect: 'manual', signal }));
+    if (response === TIMED_OUT) return TIMED_OUT;
     if (![301, 302, 303, 307, 308].includes(response.status)) break;
     const next = response.headers?.get?.('location');
     if (!next || hop >= 3) return { error: 'The page kept redirecting.' };
@@ -187,7 +194,11 @@ export async function fetchPublicPage(url, fetcher = fetch, { maxBytes = MAX_REA
     response.body?.cancel?.().catch?.(() => {});
     return { error: 'That page is too large to read.' };
   }
-  const raw = await readCapped(response, maxBytes);
+  const raw = await timed(readCapped(response, maxBytes));
+  if (raw === TIMED_OUT) {
+    response.body?.cancel?.().catch?.(() => {});
+    return TIMED_OUT;
+  }
   return { raw, type, status: response.status, final_url: current };
 }
 

@@ -150,7 +150,8 @@ export function reaCapabilities(env = {}) {
     { id: 'websites', label: 'Public web pages: layout, navigation, forms, accessibility and page markers (robots.txt respected; no sign-ins)', available: true, needs: '' },
     { id: 'website_browser', label: 'An isolated browser run of a public page: screenshots, menus, phone layout (GitHub Actions)', available: ready, needs: github },
     { id: 'app_store_listings', label: 'Public App Store listings: version, description and advertised features', available: true, needs: '' },
-    { id: 'compare_with_che', label: 'Comparing findings with CHE\'s live repository and command catalog', available: ready, needs: github },
+    // Comparing reads CHE's public tree, so it needs only the repository name; the token adds code search.
+    { id: 'compare_with_che', label: 'Comparing findings with CHE\'s live repository and command catalog', available: /^[\w.-]+\/[\w.-]+$/.test(String(env.CHE_GITHUB_REPO || '').trim()), needs: /^[\w.-]+\/[\w.-]+$/.test(String(env.CHE_GITHUB_REPO || '').trim()) ? (ready ? '' : 'Works without a token; features whose names match no CHE file stay "not checked" until CHE_GITHUB_TOKEN enables code search.') : 'The repository name (CHE_GITHUB_REPO) on the Worker.' },
     { id: 'build_from_plan', label: 'Building an approved plan through CHE\'s coding job as a draft pull request', available: ready, needs: github },
     { id: 'native_binaries', label: 'Native binaries (Ghidra)', available: false, needs: 'An external analysis host with Ghidra and Java. None is set up, so nothing is run.' },
     { id: 'android_packages', label: 'Android APK files (apktool or jadx)', available: false, needs: 'A host with apktool or jadx. None is set up, so APKs are not opened.' },

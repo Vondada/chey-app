@@ -754,3 +754,30 @@ test('Codex #324: an unreachable robots.txt stops the read and is retryable; a m
     }
   }
 });
+
+test('Codex #324: a robots.txt that accepts the connection and then stalls is a bounded, retryable stop', async (t) => {
+  const { robotsAllows } = await import('./rea_targets.js');
+  const stalledHeaders = (url, init) => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)));
+  const stalledBody = async () => new Response(new ReadableStream({ start() {} }), { status: 200 });
+  // Node does not keep the event loop alive for AbortSignal.timeout alone (the Worker does).
+  const keepAlive = setInterval(() => {}, 50);
+  t.after(() => clearInterval(keepAlive));
+  for (const fetcher of [stalledHeaders, stalledBody]) {
+    const started = Date.now();
+    const verdict = await robotsAllows('https://shop.example.com/', fetcher, { timeoutMs: 150 });
+    assert.ok(Date.now() - started < 2000, 'bounded');
+    assert.equal(verdict.allowed, false);
+    assert.equal(verdict.unreachable, true);
+    assert.match(verdict.reason, /took too long to answer[\s\S]*RFC 9309/);
+  }
+});
+
+test('Codex #324: REA status reports comparison available with only the repository name, and says what the token adds', async () => {
+  const { reaCapabilities } = await import('./rea_runner.js');
+  const compare = (env) => reaCapabilities(env).find((c) => c.id === 'compare_with_che');
+  assert.equal(compare({}).available, false);
+  assert.match(compare({}).needs, /CHE_GITHUB_REPO/);
+  assert.equal(compare({ CHE_GITHUB_REPO: 'Vondada/chey-app' }).available, true);
+  assert.match(compare({ CHE_GITHUB_REPO: 'Vondada/chey-app' }).needs, /without a token[\s\S]*CHE_GITHUB_TOKEN enables code search/);
+  assert.equal(compare(ENV).needs, '');
+});

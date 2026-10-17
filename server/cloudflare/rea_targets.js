@@ -391,10 +391,10 @@ export function featureTerms(feature) {
 // robots.txt as it applies to REA's own agent (CHE-REA), else to '*'. RFC 9309 2.3.1: a 4xx
 // answer (or too many redirects) means there is no robots.txt, so the page is allowed; an
 // unreachable one (network error, timeout, 5xx, a redirect off the public web) means do not read.
-export async function robotsAllows(url, fetcher = fetch) {
+export async function robotsAllows(url, fetcher = fetch, { timeoutMs = 10_000 } = {}) {
   let parsed;
   try { parsed = new URL(url); } catch (_) { return { allowed: false, reason: 'That link is not valid.' }; }
-  const page = await fetchPublicPage(`${parsed.origin}/robots.txt`, fetcher, { maxBytes: 512 * 1024, userAgent: UA }).catch(() => ({ error: 'unreachable' }));
+  const page = await fetchPublicPage(`${parsed.origin}/robots.txt`, fetcher, { maxBytes: 512 * 1024, userAgent: UA, timeoutMs }).catch(() => ({ error: 'unreachable' }));
   const missing = page.error && ((page.status >= 400 && page.status < 500) || page.error === 'The page kept redirecting.');
   if (missing || (!page.error && !page.raw)) return { allowed: true, checked: false };
   if (page.error) {
