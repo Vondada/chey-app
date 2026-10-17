@@ -52,6 +52,9 @@ test('browser observations enforce connection-layer private-IP denial and refuse
   assert.doesNotMatch(OBSERVE_JOB, /--url "\$WEB_URL"/, 'an undefined variable must never be used');
   assert.match(OBSERVER_SOURCE, /context\.routeWebSocket\(\/\.\*\/, \(ws\) =>/);
   assert.doesNotMatch(OBSERVER_SOURCE, /ws\.connectToServer\(/, 'no client WebSocket frames are forwarded');
+  assert.match(OBSERVER_SOURCE, /until: now \+ 1000/, 'public DNS decisions expire quickly');
+  assert.match(OBSERVER_SOURCE, /setTimeout\(\(\) => finish\(true\), 3000\)/, 'unanswered DNS fails closed');
+  assert.match(OBSERVER_SOURCE, /\(\) => finish\(true\)/, 'DNS failures are blocked, not accepted');
 });
 
 test('the workflow runs only on dispatch, and the observe job can read but not write', () => {
