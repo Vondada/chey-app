@@ -295,6 +295,7 @@ export const STAGES = Object.freeze([
 ]);
 const STAGE_IDS = STAGES.map(([id]) => id);
 const DETAIL_LIMIT = 100_000;
+const FOLLOWUP_WINDOW_MS = 6 * 3600_000;
 
 const detailKey = (id) => `${REA_DETAIL_PREFIX}${id}`;
 const iso = (now) => new Date(now).toISOString();
@@ -808,6 +809,15 @@ export async function handleReaRequest(storage, env, message, { fetcher = fetch,
 
   const inv = await resolveInvestigation(storage, jobs, request.input);
   if (!inv) return request.followup ? null : { ok: false, text: 'There is no REA investigation to use yet. Say "investigate" with an app name, a public link or a repository first. Nothing was run.' };
+  // "Build those into yourself" belongs to an investigation only while it is the
+  // conversation's subject: the last reply was REA's, or it was worked on in
+  // the last six hours. "Remember that app…" names it, so it always applies.
+  if (request.followup && request.command !== 'recall' && !(request.command === 'build' && RECALL.test(message))) {
+    const lastReply = [...(Array.isArray(history) ? history : [])].reverse().find((h) => h?.role === 'assistant');
+    const reaReply = /\brea-[0-9a-f]{8}\b/.test(String(lastReply?.content || ''));
+    const recent = now - Date.parse(inv.updated_at || 0) < FOLLOWUP_WINDOW_MS;
+    if (!reaReply && !(recent && !lastReply)) return null;
+  }
 
   if (request.command === 'recall') {
     const check = await stillCurrent(env, inv, fetcher);

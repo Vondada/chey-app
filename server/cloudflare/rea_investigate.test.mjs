@@ -427,3 +427,17 @@ test('a follow-up with no investigation on record falls through to ordinary chat
   assert.equal(await che.say('Build those approved features into yourself.'), null);
   assert.equal(w.calls.length, 0);
 });
+
+test('a bare "build it into yourself" belongs to an investigation only while it is the subject of the conversation', async () => {
+  const w = world();
+  const che = cheWith(w);
+  const first = await che.say('Investigate https://github.com/acme/sketchpad');
+  await che.say('REA compare');
+  const otherTopic = [{ role: 'user', content: 'Plan a dark mode switch' }, { role: 'assistant', content: 'Here is a plan for a dark mode switch.' }];
+  assert.equal(await che.say('Build it into yourself.', { history: otherTopic }), null, 'another subject came up since: ordinary routing decides');
+  assert.equal(await che.say('Build those approved features into yourself.', { now: T0 + 7 * 3600_000 }), null, 'stale and not in this conversation');
+  const onTopic = [{ role: 'assistant', content: `Compared acme/sketchpad with CHE (investigation ${first.investigation_id}).` }];
+  const built = await che.say('Build those approved features into yourself.', { now: T0 + 7 * 3600_000, history: onTopic });
+  assert.match(built.text, /Building /);
+  assert.equal(che.built.length, 1);
+});
