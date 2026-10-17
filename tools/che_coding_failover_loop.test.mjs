@@ -189,8 +189,13 @@ test('resume: a later run restores the checkpoint saved by an earlier run and fi
   const saved = join(first.runnerTemp, 'che-checkpoint');
   assert.ok(existsSync(join(saved, 'checkpoint.patch')), 'the verified checkpoint was kept');
 
-  // The runner's fetch step restores the saved checkpoint into a fresh runner at the same base.
+  // The actual runner checks out the exact commit SHA that made the checkpoint.
+  // Independent mock repos may contain identical files but different commit IDs;
+  // reusing an arbitrary commit here would (correctly) fail the integrity gate.
   const later = sandbox();
+  git(later.repo, ['fetch', '-q', first.repo, 'HEAD']);
+  git(later.repo, ['checkout', '-q', first.base]);
+  later.base = first.base;
   const resumedDir = join(later.runnerTemp, 'che-checkpoint');
   mkdirSync(resumedDir, { recursive: true });
   cpSync(join(saved, 'checkpoint.patch'), join(resumedDir, 'checkpoint.patch'));
