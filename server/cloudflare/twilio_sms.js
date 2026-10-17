@@ -401,16 +401,14 @@ export async function handleInboundSms(env, data, {
 } = {}) {
   const params = parseFormBody(rawBody);
   const token = String(env?.TWILIO_AUTH_TOKEN || '').trim();
-  if (token) {
-    try {
-      await verifyTwilioSignature(token, publicUrl, params, signature);
-    } catch (error) {
-      if (error.message === 'twilio_auth_token_missing') {
-        // Should not happen when token present
-      } else {
-        return { status: 403, twiml: TWIML_EMPTY, detail: 'Invalid Twilio signature.' };
-      }
-    }
+  // Fail closed: without the auth token no request can be proven to come from
+  // Twilio, so nothing is recorded (a forged SMS would otherwise queue jobs,
+  // push out real ones and change opt-outs).
+  if (!token) return { status: 503, twiml: TWIML_EMPTY, detail: 'Twilio is not configured.' };
+  try {
+    await verifyTwilioSignature(token, publicUrl, params, signature);
+  } catch (_) {
+    return { status: 403, twiml: TWIML_EMPTY, detail: 'Invalid Twilio signature.' };
   }
 
   const from = normalizeE164(params.From) || String(params.From || '').trim();
