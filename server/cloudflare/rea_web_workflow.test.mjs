@@ -52,6 +52,9 @@ test('browser observations enforce connection-layer private-IP denial and refuse
   assert.doesNotMatch(OBSERVE_JOB, /--url "\$WEB_URL"/, 'an undefined variable must never be used');
   assert.match(OBSERVER_SOURCE, /context\.routeWebSocket\(\/\.\*\/, \(ws\) =>/);
   assert.doesNotMatch(OBSERVER_SOURCE, /ws\.connectToServer\(/, 'no client WebSocket frames are forwarded');
+  assert.match(OBSERVER_SOURCE, /CHE_REA_FIXTURE_PROXY === '1'/, 'synthetic proxy hosts require explicit test mode');
+  assert.match(OBSERVER_SOURCE, /host === 'che-fixture\.example' \|\| host === 'cdn\.fixture-cdn\.example'/,
+    'the test bypass cannot accept other hostnames');
   assert.match(OBSERVER_SOURCE, /until: now \+ 1000/, 'public DNS decisions expire quickly');
   assert.match(OBSERVER_SOURCE, /setTimeout\(\(\) => finish\(true\), 3000\)/, 'unanswered DNS fails closed');
   assert.match(OBSERVER_SOURCE, /\(\) => finish\(true\)/, 'DNS failures are blocked, not accepted');
@@ -290,7 +293,7 @@ async function observeFixture(path) {
   assert.ok(browserReady, 'CHE_REA_WEB_E2E=required, but the pinned Chromium could not start');
   const fixture = await startWebFixture();
   const out = mkdtempSync(join(tmpdir(), 'rea-web-e2e-'));
-  const env = { ...process.env, http_proxy: fixture.proxy, HTTP_PROXY: fixture.proxy, NODE_USE_ENV_PROXY: '1' };
+  const env = { ...process.env, http_proxy: fixture.proxy, HTTP_PROXY: fixture.proxy, NODE_USE_ENV_PROXY: '1', CHE_REA_FIXTURE_PROXY: '1' };
   const code = await new Promise((resolve) => {
     const child = spawn('node', [OBSERVER, 'observe', '--job', JOB, '--url', `http://che-fixture.example${path}`, '--out', out], { env, stdio: 'ignore' });
     child.on('exit', resolve);
