@@ -857,6 +857,27 @@ test('a family/guest chat never receives the owner\'s memories, imported context
   for (const secret of secrets) assert.match(ownerPrompts, secret, 'the owner\'s own turn still uses his data');
 });
 
+test('pairing code guesses are capped across all addresses and old failures are pruned', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', AI: { run: async () => ({ response: 'ok' }) } };
+  const state = new CheState({ storage: storageFor(saved) }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const pair = (code, ip) => worker.fetch(new Request('https://che.example/api/pair', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': ip }, body: JSON.stringify({ code }),
+  }), env);
+  assert.equal((await pair('123456', '198.51.100.1')).status, 200);
+  const data = saved.get('che');
+  data.failures = { '203.0.113.250': [Date.now() - 3_600_000] };
+  saved.set('che', data);
+  // Four wrong guesses from each of 8 addresses: no single address hits its own limit.
+  const statuses = [];
+  for (let ip = 0; ip < 8; ip++) for (let i = 0; i < 4; i++) statuses.push((await pair('000000', `192.0.2.${ip}`)).status);
+  assert.equal(statuses.filter((s) => s === 403).length, 30, 'thirty wrong guesses in 15 minutes, then the cap');
+  assert.ok(statuses.slice(30).every((s) => s === 429));
+  assert.equal((await pair('123456', '192.0.2.200')).status, 429, 'the cap holds until it cools down');
+  assert.equal(Object.hasOwn(saved.get('che').failures, '203.0.113.250'), false, 'an hour-old failure was pruned');
+});
+
 test('coding status and resume use the newest built-in job and stay truthful when autonomy is paused', async () => {
   const saved = new Map();
   const env = { CHE_PAIR_CODE: '123456', AI: { run: async () => ({ response: 'ok' }) } };

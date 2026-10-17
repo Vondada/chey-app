@@ -224,6 +224,8 @@ const EVIDENCE_SPLIT_REQUESTS = new WeakSet();
 // created, and they can reach /api/chat and nothing else.
 const COMMAND_REQUESTS = new WeakSet();
 const WORKFLOW_STEP_REQUESTS = new WeakSet();
+// Wrong pairing codes allowed per 15 minutes across every address.
+const PAIR_FAILURES_GLOBAL_LIMIT = 30;
 // A command's own reply saying it could not do the work: the step failed.
 const COMMAND_FAILURE_REPLY = /^(?:I (?:could not|couldn['’]t|can['’]t|cannot|was unable)\b|No video was created\b|The free data source did not answer\b)/i;
 const COMMAND_RUNS_KEY = 'che:command_runs';
@@ -4884,8 +4886,18 @@ export class CheState extends DurableObject {
         const secret = this.env.CHE_PAIR_CODE;
         if (!secret || !/^\d{6,12}$/.test(secret)) return json({ detail: 'Set CHE_PAIR_CODE as a server secret.' }, 503);
         const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
-        const recent = (data.failures[ip] || []).filter((at) => at > Date.now() - 900_000);
-        if (recent.length >= 5) return json({ detail: 'Too many attempts. Wait 15 minutes.' }, 429);
+        // Old failures are dropped so rotating addresses cannot grow CHE's
+        // state without bound, and a cap across all addresses stops a
+        // many-IP guess at the pairing code. Paired devices keep working.
+        const since = Date.now() - 900_000;
+        data.failures = data.failures && typeof data.failures === 'object' ? data.failures : {};
+        for (const [key, times] of Object.entries(data.failures)) {
+          const kept = Array.isArray(times) ? times.filter((at) => at > since) : [];
+          if (kept.length) data.failures[key] = kept; else delete data.failures[key];
+        }
+        const recent = data.failures[ip] || [];
+        const everywhere = Object.values(data.failures).reduce((sum, times) => sum + times.length, 0);
+        if (recent.length >= 5 || everywhere >= PAIR_FAILURES_GLOBAL_LIMIT) return json({ detail: 'Too many attempts. Wait 15 minutes.' }, 429);
         const code = String(body.code || '');
         if ((await digest(code)) !== (await digest(secret))) {
           data.failures[ip] = [...recent, Date.now()];
