@@ -323,6 +323,15 @@ export function clearInterpretationCache() {
   readingCache.clear();
 }
 
+// "What is on my screen?" CHE can answer it only from what the phone sends
+// about its screen; with nothing sent, a model would only guess.
+export function asksAboutScreen(text) {
+  const t = String(text || '').trim().toLowerCase().replace(/[’]/g, "'").replace(/[.!?]+$/, '')
+    .replace(/^(?:(?:hey|hi|ok|okay)[\s,]+)?(?:che|chay|chey|shay)[\s,.:!]+/, '')
+    .replace(/^(?:please|can you|could you)\s+/, '').trim();
+  return /^(?:(?:tell me |say )?what(?:'s| is) on (?:my|the|this) (?:screen|page)(?: (?:right )?now)?|what am i looking at|what (?:screen|page) am i on|describe (?:my|the|this) (?:screen|page)|what do you see on (?:my|the) screen)$/.test(t);
+}
+
 // Asks the reply model only for turns the rules could not read. Cached and capped,
 // and a failure simply means no reading.
 export async function interpretWithModel({ runText, text, history = [], timeoutMs = 4000, now = Date.now() }) {

@@ -67,7 +67,6 @@ class CheCommandVoice {
   /// Commands named for a new workflow, in order.
   final List<String> items;
 
-  static final _lead = RegExp(r'^(?:hey\s+)?(?:che|chay|chey)[,:]?\s+', caseSensitive: false);
   static final _polite = RegExp(r'^(?:please\s+|can you\s+|could you\s+|would you\s+|i want to\s+|i want you to\s+|let\x27s\s+)', caseSensitive: false);
   static const _numbers = {
     'one': 1, 'first': 1, 'two': 2, 'second': 2, 'to': 2, 'too': 2, 'three': 3, 'third': 3, 'four': 4, 'for': 4, 'fourth': 4,
@@ -87,7 +86,8 @@ class CheCommandVoice {
     // Case is kept so a command's input ("NQ", "Joe's Barbershop") arrives
     // as said; every pattern ignores case.
     var t = raw.trim().replaceAll(RegExp(r'[.!?]+$'), '').replaceAll('’', "'");
-    t = t.replaceFirst(_lead, '').replaceFirst(_polite, '').trim();
+    // CHE's name however speech spells it: "CHE,", "Chay", "Hey CHE", "Che.".
+    t = (cheWakeRemainder(t) ?? t).replaceFirst(_polite, '').trim();
     if (t.isEmpty) return null;
     RegExpMatch? m;
     bool has(String pattern) => (m = RegExp(pattern, caseSensitive: false).firstMatch(t)) != null;
@@ -103,7 +103,10 @@ class CheCommandVoice {
       return const CheCommandVoice(CheCommandVoiceOp.repeat);
     }
     if (has(r"^what can i do(?:\s+(?:here|on this page))?$")) return const CheCommandVoice(CheCommandVoiceOp.describe);
-    if (has(r"^(?:what'?s|what is)\s+on\s+(?:the\s+|this\s+)?(?:screen|page)$|^(?:read|describe)(?:\s+(?:this|the))?(?:\s+(?:page|screen))?(?:\s+aloud)?$|^where am i$|^(?:what are|read|list)(?:\s+me)?\s+(?:my\s+|the\s+)?(?:options|choices)$|^(?:open|show)\s+(?:the\s+)?commands?(?:\s+page)?$|^help$")) {
+    // "What is on my screen?", and "open your Commands page" said while it is
+    // already open: the page says where the owner is, never a search for
+    // "your Commands page".
+    if (has(r"^(?:what'?s|what is)\s+on\s+(?:the\s+|this\s+|my\s+)?(?:screen|page)(?:\s+(?:right\s+)?now)?$|^what\s+am\s+i\s+looking\s+at$|^what\s+(?:screen|page)\s+am\s+i\s+on$|^(?:read|describe)(?:\s+(?:this|the|my))?(?:\s+(?:page|screen))?(?:\s+aloud)?$|^where am i$|^(?:what are|read|list)(?:\s+me)?\s+(?:my\s+|the\s+)?(?:options|choices)$|^(?:open|show)\s+(?:the\s+)?commands?(?:\s+page)?$|^(?:open|go\s+to|bring\s+up|take\s+me\s+to)\s+(?:the\s+|your\s+|my\s+|che'?s\s+)?(?:commands?|command\s+(?:center|library))(?:\s+(?:page|screen|tab))?$|^help$")) {
       return const CheCommandVoice(CheCommandVoiceOp.describe);
     }
     if (has(r'^(?:show|open|go\s+to|switch\s+to)?\s*(?:the\s+|my\s+)?(library|workflows?|activity|history|runs)(?:\s+tab)?$')) {
@@ -192,22 +195,28 @@ class CheCommandVoice {
 
 /// Matches spoken words to a command id. Speech gives "trade chart",
 /// "YouTube ideas" or "slash che plan"; the id is the longest leading run of
-/// words that names a command. Returns the id and the words after it (the
-/// command's input), or null when no command is named. Never fuzzy: a
-/// command runs only when its name was actually said.
+/// words that names a command. "The video command" names /yt-video too: the
+/// words are the end of exactly one command's name. Returns the id and the
+/// words after it (the command's input), or null when no command is named.
+/// Never fuzzy: a command runs only when its name was actually said, and a
+/// name part two commands share ("publish", "status") names neither.
 ({String id, String rest})? cheMatchCommandWords(String words, Set<String> ids) {
   final tokens = words.trim().replaceFirst(RegExp(r'^(?:slash\s+|/)', caseSensitive: false), '').split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
   String piece(String token) {
     final w = token.toLowerCase().replaceFirst(RegExp(r'^/'), '');
     return w == 'youtube' ? 'yt' : w == 'chey' || w == 'chay' ? 'che' : w;
   }
+  String name(int n) => tokens.take(n).map(piece).join('-').replaceAll(RegExp(r'-+'), '-').replaceAll(RegExp(r'-d\b'), 'd');
+  // "yt ideas command for cooking": the input is "cooking".
+  String rest(int n) => tokens.skip(n).join(' ').replaceFirst(RegExp(r'^command\b\s*', caseSensitive: false), '').replaceFirst(RegExp(r'^(?:for|on|with|about|to)\s+', caseSensitive: false), '');
   for (var n = tokens.length; n >= 1; n--) {
-    final id = tokens.take(n).map(piece).join('-').replaceAll(RegExp(r'-+'), '-').replaceAll(RegExp(r'-d\b'), 'd');
-    if (ids.contains(id)) {
-      // "yt ideas command for cooking": the input is "cooking".
-      final rest = tokens.skip(n).join(' ').replaceFirst(RegExp(r'^command\b\s*', caseSensitive: false), '').replaceFirst(RegExp(r'^(?:for|on|with|about|to)\s+', caseSensitive: false), '');
-      return (id: id, rest: rest);
-    }
+    if (ids.contains(name(n))) return (id: name(n), rest: rest(n));
+  }
+  for (var n = tokens.length; n >= 1; n--) {
+    final end = name(n);
+    final named = [for (final id in ids) if (id.endsWith('-$end')) id];
+    if (named.length == 1) return (id: named.single, rest: rest(n));
+    if (named.length > 1) return null;
   }
   return null;
 }
@@ -316,6 +325,8 @@ final _cheOwn = RegExp(r"\b(?:your|che's|che)\s+(?:own\s+)?commands?\b|\bcommand
 // Words like "website" or "videos" are left out: "3 git commands for my
 // website repo" is not about CHE.
 final _catalogWords = RegExp(r"\b(?:youtube|yt|faceless|trading|trades?|futures|nq|money|budget|cash ?flow|invoices?|expenses|clients?|marketing|seo|office)\b");
+// A command group's whole name, said alone: nothing else is searched for.
+final _groupName = RegExp(r"^(?:youtube|yt|trading)(?: (?:group|category|section))?$");
 // Other systems' commands.
 final _otherCommands = RegExp(r"\b(?:git|linux|unix|bash|zsh|shell|terminal|command line|cmd|powershell|dos|windows|mac ?os|npm|docker|kubectl|sql|excel|vim|siri|alexa|google assistant|python|dog|dogs)\b");
 final _verbLead = RegExp(r'^(?:show|list|give|tell|read|find|search|look|get|pull up|bring up|display|name)\b');
@@ -389,11 +400,14 @@ CheCommandListRequest? cheCommandListRequest(String raw, {bool onPage = false}) 
     singular = m.group(0) == 'command';
     break;
   }
-  if (main == null && (onPage || explicit)) {
-    // "search for youtube", "look up trading": a search of the catalog.
+  if (main == null) {
+    // "search for youtube", "look up trading": a search of the catalog. In
+    // Chat only a command group's bare name ("search for YouTube", owner
+    // 2026-10-16) is CHE's catalog; any other search stays Chat's.
     for (final c in clauses) {
       final s = RegExp(r'^(?:search|look)(?:\s+(?:for|up))?\s+(.+)$|^find(?:\s+me)?\s+(.+)$').firstMatch(c);
       if (s == null) continue;
+      if (!onPage && !explicit && !_groupName.hasMatch(s.group(1) ?? s.group(2)!)) continue;
       main = c;
       post = 'for ${s.group(1) ?? s.group(2)}';
       pre = 'search';

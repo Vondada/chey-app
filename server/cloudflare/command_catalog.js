@@ -809,6 +809,91 @@ export function searchCommands(query, { limit = 10 } = {}) {
   return scored.slice(0, limit).map((x) => ({ id: x.c.id, score: x.score }));
 }
 
+// ─── Natural speech about CHE's own commands ─────────────────────────────
+// The owner's spoken requests (iPhone, 2026-10-16), read the way the phone's
+// Commands page reads them, so /api/chat answers them from the catalog with
+// no model: "open your Commands page", "search for YouTube", "show me five
+// YouTube commands and tell me which are ready", "show me number four",
+// "run the video command". Anything else returns null.
+
+const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, for: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, first: 1, second: 2, third: 3, fourth: 4, fifth: 5 };
+const numberOf = (w) => (/^\d{1,2}$/.test(w) ? Number(w) : NUMBER_WORDS[w] || null);
+const NUM = '(\\d{1,2}|one|two|three|four|for|five|six|seven|eight|nine|ten|eleven|twelve|first|second|third|fourth|fifth)';
+// A group's bare name: "search for YouTube" means CHE's YouTube commands.
+const GROUP_WORDS = { youtube: 'youtube', yt: 'youtube', trading: 'trading' };
+
+function speechText(message) {
+  return String(message || '').trim().toLowerCase().replace(/[’]/g, "'")
+    .replace(/^(?:(?:hey|hi|ok|okay)[\s,.!]+)?(?:che|chay|chey|shay|c\.h\.e\.?)(?![a-z'])[\s,.:;!?-]*/, '')
+    .replace(/^(?:please|can you|could you|would you)\s+/, '')
+    .replace(/\b(?:you|u)[\s-]?tubes?\b/g, 'youtube')
+    .replace(/[.!?]+$/, '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * "video" names /yt-video: the words are a command id, or the end of
+ * exactly one command's id. Returns { command, input } or { candidates }.
+ */
+export function commandFromWords(words) {
+  const tokens = String(words || '').toLowerCase().replace(/^(?:the|my)\s+/, '').split(/\s+/).filter(Boolean)
+    .map((w) => (w === 'youtube' ? 'yt' : w === 'chey' || w === 'chay' ? 'che' : w.replace(/^\//, '')));
+  const id = (n) => tokens.slice(0, n).join('-');
+  const rest = (n) => tokens.slice(n).join(' ').replace(/^(?:for|on|about|with|to)\s+/, '');
+  for (let n = tokens.length; n >= 1; n--) if (BY_ID.has(id(n))) return { command: BY_ID.get(id(n)), input: rest(n) };
+  for (let n = tokens.length; n >= 1; n--) {
+    const named = COMMANDS.filter((c) => c.id.endsWith(`-${id(n)}`));
+    if (named.length === 1) return { command: named[0], input: rest(n) };
+    if (named.length > 1) return { candidates: named };
+  }
+  return null;
+}
+
+/** The numbered command list in CHE's last reply: index → command id. */
+function listedCommands(history) {
+  const last = [...(Array.isArray(history) ? history : [])].reverse().find((h) => String(h?.role) === 'assistant');
+  const text = String(last?.content || last?.text || '');
+  return [...text.matchAll(/(?:^|\s)(\d{1,2})\.\s+\/([a-z][a-z0-9-]{1,30})\b/g)].reduce((m, [, n, cid]) => (m[n] ||= cid, m), {});
+}
+
+/** What the owner asked about CHE's commands, or null. */
+export function readCommandSpeech(message, history = []) {
+  const t = speechText(message);
+  if (!t || t.length > 300) return null;
+  if (/^(?:open|go to|bring up|take me to|show(?: me)?)\s+(?:the |your |my |che's )?(?:commands?|command (?:center|library))(?: (?:page|screen|tab|list))?$/.test(t)) return { kind: 'open' };
+  const search = /^(?:search|look)(?: for| up)? (.+)$/.exec(t);
+  if (search && GROUP_WORDS[search[1]]) return { kind: 'list', topic: GROUP_WORDS[search[1]], count: 5, readiness: false };
+  // "show me five youtube commands (and tell me which are ready)".
+  const list = new RegExp(`^(?:show|list|read|give|tell)(?: me)? (?:the )?(?:${NUM} )?(?:(youtube|yt|trading) )?commands?(?: for (youtube|trading))?(?:,? (?:and )?(?:tell|show) me which (?:ones )?(?:are|is) (ready|working)(?: to use)?)?$`).exec(t);
+  if (list && (list[2] || list[3])) return { kind: 'list', topic: GROUP_WORDS[list[2] || list[3]], count: numberOf(list[1] || '') || 5, readiness: Boolean(list[4]) };
+  const pick = new RegExp(`^(?:show me|open|read|pick|tell me about)?\\s*(?:the )?(?:number|option) ${NUM}$|^${NUM}$`).exec(t);
+  if (pick) {
+    const n = numberOf(pick[1] || pick[2]);
+    const id = listedCommands(history)[n];
+    return id ? { kind: 'pick', number: n, command: BY_ID.get(id) || null, id } : { kind: 'pick', number: n, command: null, id: '' };
+  }
+  const run = /^(?:run|start|execute|launch|use)\s+(?:the |my )?(.+?) command(?:\s+(?:for|on|about|with)\s+(.+))?$/.exec(t);
+  if (run && !/^(?:the|a|an|this|that|it)$/.test(run[1])) {
+    const found = commandFromWords(run[1]);
+    return { kind: 'run', words: run[1], command: found?.command || null, input: String(run[2] || found?.input || '').trim(), candidates: found?.candidates || [] };
+  }
+  return null;
+}
+
+/** The deterministic reply for a list request, with live states. */
+export function speakCommandList(view, { topic = '', count = 5, readiness = false } = {}) {
+  const group = CATEGORIES.find((c) => c.id === topic);
+  const found = group ? view.commands.filter((c) => c.category === group.id) : searchCommands(topic, { limit: 25 }).map((r) => view.commands.find((c) => c.id === r.id)).filter(Boolean);
+  if (!found.length) return `No command matches "${topic}", sir. Nothing was run.`;
+  const shown = found.slice(0, count);
+  const state = (c) => (c.status === 'available' ? 'Ready' : c.status === 'setup_required' ? `Needs setup: ${c.missing.map((m) => m.label).join(', ')}` : STATUS_WORDS[c.status] || c.status);
+  const ready = shown.filter((c) => c.status === 'available').length;
+  const setup = shown.filter((c) => c.status === 'setup_required').length;
+  const other = shown.length - ready - setup;
+  const tally = [`${ready} ready`, setup ? `${setup} need${setup === 1 ? 's' : ''} setup` : '', other ? `${other} not available now` : ''].filter(Boolean).join(', ');
+  return `${group ? group.title : `"${topic}"`}: ${found.length} commands. ${shown.map((c, i) => `${i + 1}. /${c.id}: ${c.summary} ${state(c)}.`).join(' ')}`
+    + `${shown.length > 1 || readiness ? ` Of these ${shown.length}: ${tally}.` : ''} Say a number to hear one, or "run" and its name. Nothing was run.`;
+}
+
 // ─── Contextual suggestions ───────────────────────────────────────────────
 
 // Common owner goals → the commands that serve them, in execution order.

@@ -1,6 +1,7 @@
 // Spoken or typed screen edits. The phone applies these before any model
 // reply, so CHE never asks and never claims a change that did not happen.
 
+import '../che_wake_match.dart';
 import '../commands/che_command_voice.dart';
 
 enum ScreenOp {
@@ -29,7 +30,6 @@ class ScreenCommand {
   final CheCommandListRequest? list;
 }
 
-final _lead = RegExp(r'^(?:hey\s+)?(?:che|chay|chey)[,:]?\s+', caseSensitive: false);
 final _polite = RegExp(r'^(?:please\s+|can you\s+|could you\s+|i want you to\s+)', caseSensitive: false);
 
 // Which Connections row a spoken "connect ..." means.
@@ -44,7 +44,8 @@ String _connectTarget(String spoken) {
 
 ScreenCommand? parseScreenCommand(String raw) {
   var t = raw.trim().toLowerCase().replaceAll(RegExp(r'[.!?]+$'), '');
-  t = t.replaceFirst(_lead, '').replaceFirst(_polite, '').trim();
+  // CHE's name however speech spells it: "CHE,", "Chay", "Hey CHE", "Che.".
+  t = (cheWakeRemainder(t) ?? t).replaceFirst(_polite, '').trim();
   if (t.isEmpty) return null;
 
   // On-device navigation only. A spoken connect opens Connections and starts

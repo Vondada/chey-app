@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../che_ui/che_screen_awareness.dart';
 import '../che_ui/che_theme.dart';
 
 /// Spoken control for the Connections page while it is the open route.
@@ -60,8 +61,11 @@ class CheConnectionsScreen extends StatefulWidget {
 class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
   late final http.Client _client = widget.client ?? http.Client();
 
+  Object? _screen;
+
   @override
   void dispose() {
+    CheScreenAwareness.unregister(_screen);
     if (CheConnectionsVoice.handler == _voice) CheConnectionsVoice.handler = null;
     if (widget.client == null) _client.close();
     super.dispose();
@@ -78,6 +82,18 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
   void initState() {
     super.initState();
     CheConnectionsVoice.handler = _voice;
+    // "What is on my screen?": the rows and their verified states.
+    _screen = CheScreenAwareness.register(context, () => CheScreenReport(
+          page: 'Connections',
+          detail: _loading && _connectors.isEmpty
+              ? 'Connection states are still loading from CHE'
+              : _error.isNotEmpty
+                  ? 'Connection check failed: $_error'
+                  : 'YouTube channel: ${_status('youtube')}. Gmail: ${_status('gmail')}. Google Drive: ${_status('drive')}. '
+                      'Google Calendar: ${_status('calendar')}. NinjaTrader: ${_status('broker')}. Google Ads: ${_status('google_ads')}. '
+                      'Bank accounts: ${_status(null)}',
+          controls: const ['Back', 'Refresh verified connections', 'Connect with Google', 'Connect Gmail', 'Connect Drive', 'Connect Calendar', 'Connect NinjaTrader', 'Connect Google Ads', 'Change CHE’s voice'],
+        ));
     unawaited(_refresh());
     if (widget.autoConnect == 'youtube') {
       WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_connectYoutube()));

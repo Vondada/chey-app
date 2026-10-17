@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../che_local_brain.dart';
+import '../che_ui/che_screen_awareness.dart';
 import '../che_ui/che_theme.dart';
 import 'che_core_sphere.dart';
 import 'che_platform_client.dart';
@@ -515,6 +516,26 @@ class CheTwoBrainsView extends StatefulWidget {
 
 class _CheTwoBrainsViewState extends State<CheTwoBrainsView> {
   int _index = 0;
+  Object? _screen;
+
+  @override
+  void initState() {
+    super.initState();
+    // "What is on my screen?" while the Brain is in front of the owner.
+    _screen = CheScreenAwareness.register(context, () => CheScreenReport(
+          page: 'the Brain',
+          tab: _index == 0 ? 'Live' : 'Offline',
+          tabs: const ['Live', 'Offline'],
+          detail: '${cheBrainPresentations[_index].title}: ${cheBrainPresentations[_index].detail}',
+          controls: const ['Back', 'Live', 'Offline', 'the memory constellation'],
+        ));
+  }
+
+  @override
+  void dispose() {
+    CheScreenAwareness.unregister(_screen);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
