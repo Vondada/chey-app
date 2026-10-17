@@ -480,21 +480,80 @@ jobs:
           echo "tried=$tried" >> "$GITHUB_OUTPUT"
           [ "$code" = 0 ] || echo "error=$err" >> "$GITHUB_OUTPUT"
 
+      - name: Run capped paid OpenRouter only after free attempts
+        id: paid
+        if: steps.guard.outcome == 'success' && steps.model.outcome == 'success' && steps.opencode.outcome == 'success' && steps.opencode.outputs.exit_code != '0' && vars.CHE_CODING_PAID_FALLBACK == 'true'
+        shell: bash
+        env:
+          OPENCODE_CONFIG: /tmp/che-opencode-config.json
+          PAID_CANDIDATES: ${{ steps.model.outputs.paid_candidates }}
+          CHE_CODING_PAID_FALLBACK: ${{ vars.CHE_CODING_PAID_FALLBACK }}
+          CHE_CODING_OPENROUTER_NO_BYOK: ${{ vars.CHE_CODING_OPENROUTER_NO_BYOK }}
+          K_PAID_OPENROUTER: ${{ secrets.CHE_CODING_OPENROUTER_PAID_KEY }}
+          BASE_SHA: ${{ inputs.base_sha }}
+        run: |
+          set +e
+          code=1; used=""; tried=""; failure_kind="unknown"; failure_resumable=false; err=""
+          paid_key="$K_PAID_OPENROUTER"; unset K_PAID_OPENROUTER
+          if [ -z "$PAID_CANDIDATES" ]; then
+            echo "::notice::No eligible capped paid coding model."
+          elif ! CHE_CODING_OPENROUTER_PAID_KEY="$paid_key" node "$CHE_TRUSTED_TOOLS/tools/che_coding_paid_gate.mjs"; then
+            echo "::warning::Paid coding withheld: $15 monthly cap could not be verified."
+          else
+            ckpt="$RUNNER_TEMP/che-checkpoint"
+            if [ -f "$ckpt/next-prompt.txt" ]; then
+              prompt=$(cat "$ckpt/next-prompt.txt")
+            else
+              prompt=$(cat /tmp/che-runtime-prompt.txt)
+            fi
+            # Both selected models are on the paid allowlist. Each attempt has a
+            # bounded clock; the provider-enforced $15/month cap is checked first.
+            for m in $PAID_CANDIDATES; do
+              used=$m; tried="$tried $m"
+              echo "Capped paid LAST fallback: $m"
+              : > /tmp/opencode-events.jsonl; : > /tmp/opencode-stderr.log
+              env -u K_GOOGLE -u K_ANTHROPIC -u K_OPENAI -u K_OPENROUTER -u K_GROQ -u K_MISTRAL -u K_CEREBRAS -u K_HF -u K_PAID_OPENROUTER "OPENROUTER_API_KEY=$paid_key" \
+                timeout --signal=TERM --kill-after=15s 180s opencode run --format json --auto --model "$m" "$prompt" \
+                > /tmp/opencode-events.jsonl 2> /tmp/opencode-stderr.log
+              code=$?
+              { tail -c 4000 /tmp/opencode-stderr.log; grep -iE 'error|quota|rate|denied|invalid|not found' /tmp/opencode-events.jsonl | tail -2; } > /tmp/opencode-failure.txt
+              failure_kind=$(node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" classify --exit "$code" --field kind < /tmp/opencode-failure.txt)
+              failure_resumable=$(node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" classify --exit "$code" --field resumable < /tmp/opencode-failure.txt)
+              err=$(tail -c 400 /tmp/opencode-stderr.log | sed -E 's/(AIza|sk-|gsk_|csk_|hf_|sk-or-)[A-Za-z0-9_-]{8,}/[key]/g' | tr '\n"' '  ' | cut -c1-350)
+              if [ "$code" = 0 ]; then break; fi
+              echo "::warning::$m failed; checking the next capped model if time remains."
+              if [ -n "$(git status --porcelain)" ]; then
+                if node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" advance --dir "$ckpt" --base "$BASE_SHA" --prompt-file /tmp/che-runtime-prompt.txt --attempt 7 > /tmp/checkpoint-verdict.json; then
+                  prompt=$(cat "$ckpt/next-prompt.txt")
+                else
+                  rc=$?
+                  if [ "$rc" = 2 ]; then echo "::error::Could not revert unsafe paid-attempt edits."; break; fi
+                fi
+              fi
+            done
+          fi
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          echo "model=$used" >> "$GITHUB_OUTPUT"
+          echo "tried=$tried" >> "$GITHUB_OUTPUT"
+          echo "failure_kind=$failure_kind" >> "$GITHUB_OUTPUT"
+          echo "resumable=$failure_resumable" >> "$GITHUB_OUTPUT"
+          [ "$code" = 0 ] || echo "error=$err" >> "$GITHUB_OUTPUT"
+
       - name: Build compact result and patch
         id: result
         if: always()
         env:
-          EXIT_CODE: ${{ steps.opencode.outputs.exit_code }}
+          EXIT_CODE: ${{ steps.paid.outputs.exit_code || steps.opencode.outputs.exit_code }}
           OPENCODE_OUTCOME: ${{ steps.opencode.outcome }}
           PREFLIGHT_FAILURE: ${{ steps.guard.outputs.failure }}
           JOB_ID: ${{ inputs.job_id }}
           BASE_SHA: ${{ inputs.base_sha }}
           TARGET_BRANCH: ${{ inputs.target_branch }}
-          MODEL: ${{ steps.opencode.outputs.model || inputs.model }}
-          TRIED: ${{ steps.opencode.outputs.tried }}
-          OPENCODE_ERROR: ${{ steps.opencode.outputs.error }}
-          FAILURE_KIND: ${{ steps.opencode.outputs.failure_kind }}
-          RESUMABLE: ${{ steps.opencode.outputs.resumable }}
+          MODEL: ${{ steps.paid.outputs.model || steps.opencode.outputs.model || inputs.model }}
+          TRIED: ${{ steps.opencode.outputs.tried }} ${{ steps.paid.outputs.tried }}
+          OPENCODE_ERROR: ${{ steps.paid.outputs.error || steps.opencode.outputs.error }}
+          FAILURE_KIND: ${{ steps.paid.outputs.failure_kind || steps.opencode.outputs.failure_kind }}
+          RESUMABLE: ${{ steps.paid.outputs.resumable || steps.opencode.outputs.resumable }}
           RESUME_COUNT: ${{ needs.claim.outputs.resume_count }}
           RUN_ID: ${{ github.run_id }}
         run: |
