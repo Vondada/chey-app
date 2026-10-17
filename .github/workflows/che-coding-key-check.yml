@@ -1,0 +1,29 @@
+name: CHE coding paid-key cap check
+
+# Manual, non-billable check of the owner's capped paid coding key. It calls only
+# OpenRouter's key-status endpoint (GET /api/v1/key): no model, no inference, no
+# charge. It prints the verified cap and remaining balance, never the key itself.
+# Paid coding stays off unless CHE_CODING_PAID_FALLBACK=true is also set.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify the paid key cap through the provider API
+        env:
+          CHE_CODING_PAID_FALLBACK: 'true'
+          CHE_CODING_OPENROUTER_PAID_KEY: ${{ secrets.CHE_CODING_OPENROUTER_PAID_KEY }}
+        run: node tools/che_coding_paid_gate.mjs
