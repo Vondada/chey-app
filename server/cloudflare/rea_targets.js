@@ -546,7 +546,14 @@ function listingFrom(item) {
   };
 }
 
-/** The public App Store listing by id, or the best match for a name. */
+// "Notion: Notes, Docs, Tasks" is the app Notion: the name before a tagline, letters and digits only.
+export const appNameKey = (name) => String(name || '').split(/\s+[-–—|:]\s+|:\s+/)[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/**
+ * The public App Store listing by id, or the listing whose name is exactly the name asked for.
+ * A search with no exact name returns ok: false with the listings it found as `candidates`,
+ * so a similarly named app is never taken as the one the owner meant.
+ */
 export async function lookupAppStore({ id = '', name = '' } = {}, fetcher = fetch) {
   const url = id
     ? `https://itunes.apple.com/lookup?id=${encodeURIComponent(id)}&country=us`
@@ -555,9 +562,12 @@ export async function lookupAppStore({ id = '', name = '' } = {}, fetcher = fetc
   if (!found.ok) return { ok: false, reason: `The App Store did not answer (status ${found.status || 'none'}).` };
   const results = (found.data?.results || []).map(listingFrom).filter(Boolean);
   if (!results.length) return { ok: false, reason: id ? 'The App Store has no app with that id.' : `The App Store search found no app called "${clip(name, 60)}".` };
-  const wanted = String(name || '').toLowerCase();
-  const best = results.find((r) => r.name.toLowerCase() === wanted) || results.find((r) => r.name.toLowerCase().includes(wanted)) || results[0];
-  return { ok: true, listing: best, others: results.filter((r) => r !== best).map((r) => ({ name: r.name, seller: r.seller, url: r.url })) };
+  if (id) return { ok: true, listing: results[0], others: [] };
+  const wanted = appNameKey(name);
+  const best = wanted ? results.find((r) => appNameKey(r.name) === wanted) : null;
+  const brief = (r) => ({ name: r.name, seller: r.seller, url: r.url, id: r.id });
+  if (!best) return { ok: false, reason: `The App Store has no app named exactly "${clip(name, 60)}".`, candidates: results.map(brief) };
+  return { ok: true, listing: best, others: results.filter((r) => r !== best).map(brief) };
 }
 
 // What CHE cannot reach in someone else's installed app, said once, plainly.

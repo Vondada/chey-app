@@ -232,11 +232,24 @@ export function robotsRules(text, agents = []) {
   return [];
 }
 
+// RFC 9309 2.2.2: paths compare in one form. Non-ASCII is percent-encoded, an escaped
+// unreserved character is decoded (/%70rivate is /private) and other escapes are uppercased,
+// for both the request path and every rule. '*' and '$' keep their rule meaning.
+export function robotsPath(value) {
+  return String(value ?? '')
+    .replace(/[^\x00-\x7F]/gu, (c) => encodeURIComponent(c))
+    .replace(/%([0-9a-fA-F]{2})/g, (_, hex) => {
+      const ch = String.fromCharCode(parseInt(hex, 16));
+      return /[A-Za-z0-9\-._~]/.test(ch) ? ch : `%${hex.toUpperCase()}`;
+    });
+}
+
 export function robotsVerdict(text, path, agents = []) {
-  const target = String(path || '/');
+  const target = robotsPath(path || '/');
   if (target === '/robots.txt') return { allowed: true, rule: '' };
   let best = null;
-  for (const rule of robotsRules(text, agents)) {
+  for (const raw of robotsRules(text, agents)) {
+    const rule = { ...raw, path: robotsPath(raw.path) };
     if (!rule.path || !ruleMatches(rule.path, target)) continue;
     if (!best || rule.path.length > best.path.length || (rule.path.length === best.path.length && rule.allow)) best = rule;
   }

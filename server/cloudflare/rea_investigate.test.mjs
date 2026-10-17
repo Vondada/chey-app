@@ -85,7 +85,7 @@ const greenWorkflows = (head) => [
 // One fake internet. `opts` turns on failures for the recovery tests.
 function world(opts = {}) {
   const calls = [];
-  const state = { sha: opts.sha || SHA, metaStatus: opts.metaStatus || 200, treeStatus: opts.treeStatus || 200, records: opts.records || {}, robots: opts.robots ?? 'User-agent: *\nAllow: /\n', html: opts.html ?? HTML, codeSearchStatus: opts.codeSearchStatus || 200, cheTreeStatus: opts.cheTreeStatus || 200, prs: opts.prs || {} };
+  const state = { sha: opts.sha || SHA, metaStatus: opts.metaStatus || 200, treeStatus: opts.treeStatus || 200, records: opts.records || {}, robots: opts.robots ?? 'User-agent: *\nAllow: /\n', html: opts.html ?? HTML, codeSearchStatus: opts.codeSearchStatus || 200, codeSearchIncomplete: Boolean(opts.codeSearchIncomplete), cheTreeStatus: opts.cheTreeStatus || 200, prs: opts.prs || {} };
   const fetcher = async (url, init = {}) => {
     const u = String(url);
     const method = String(init.method || 'GET').toUpperCase();
@@ -102,7 +102,7 @@ function world(opts = {}) {
     if (u.startsWith('https://api.github.com/search/repositories')) return json({ items: u.includes('Sketchpad') ? [{ full_name: 'acme/sketchpad', name: 'sketchpad', stargazers_count: 4200, private: false, license: { spdx_id: 'MIT' } }] : [] });
     if (u.startsWith('https://api.github.com/repos/Vondada/chey-app/commits/main')) return json({ sha: CHE_SHA });
     if (u.startsWith('https://api.github.com/repos/Vondada/chey-app/git/trees/')) return state.cheTreeStatus === 200 ? json({ tree: CHE_TREE.map((path) => ({ path, type: 'blob' })) }) : json({ message: 'down' }, state.cheTreeStatus);
-    if (u.startsWith('https://api.github.com/search/code')) return state.codeSearchStatus === 200 ? json({ items: [] }) : json({ message: 'rate limited' }, state.codeSearchStatus);
+    if (u.startsWith('https://api.github.com/search/code')) return state.codeSearchStatus === 200 ? json({ items: [], incomplete_results: state.codeSearchIncomplete }) : json({ message: 'rate limited' }, state.codeSearchStatus);
     if (u.startsWith('https://api.github.com/repos/Vondada/chey-app/actions/workflows/') && method === 'POST') return new Response(null, { status: 204 });
     const record = u.match(/contents\/mailbox\/rea\/(rea-[0-9a-f]{8})\.json/);
     if (record) return state.records[record[1]] ? json({ content: Buffer.from(JSON.stringify(state.records[record[1]])).toString('base64') }) : json({ message: 'Not Found' }, 404);
@@ -616,7 +616,7 @@ test('Codex #324: an app name with no exact repository is never mapped to a simi
   const che = cheWith({ ...w, fetcher }, { fetcher });
   const asked = await che.say('Investigate the Doodle app and tell me how its features work.');
   assert.equal(asked.ok, false);
-  assert.match(asked.text, /did not guess[\s\S]*1\. acme\/sketchpad \(4200 stars\)[\s\S]*Say the number/);
+  assert.match(asked.text, /did not guess[\s\S]*1\. GitHub repository acme\/sketchpad \(4200 stars\)[\s\S]*Say the number/);
   assert.ok(!w.calls.some((c) => c.url.startsWith('https://api.github.com/repos/acme/sketchpad/git/trees/')), 'nothing was read from the similar repository');
   assert.equal(await che.say('number two', { history: [{ role: 'assistant', content: asked.text }] }).then((r) => r?.ok ?? null), null, 'no second candidate: not taken as a choice');
   const picked = await che.say('number one', { history: [{ role: 'assistant', content: asked.text }] });
@@ -654,4 +654,55 @@ test('Codex #324: reading investigations does not re-verify a finished build on 
   assert.equal(prReads(), before, 'a passed build is not fetched again on every read');
   assert.match((await che.say('REA verify')).text, /: passed\./);
   assert.ok(prReads() > before, 'asking "REA verify" still reads GitHub fresh');
+});
+
+test('Codex #324: robots paths compare in RFC 9309 form, so an escaped letter cannot slip past a rule', async () => {
+  const { robotsVerdict, robotsPath } = await import('./rea_web_evidence.js');
+  assert.equal(robotsVerdict('User-agent: *\nDisallow: /private\n', '/%70rivate/page').allowed, false, '/%70rivate is /private');
+  assert.equal(robotsVerdict('User-agent: *\nDisallow: /%70rivate\n', '/private').allowed, false, 'the rule is normalized too');
+  assert.equal(robotsVerdict('User-agent: *\nDisallow: /~user\n', '/%7euser/x').allowed, false);
+  assert.equal(robotsVerdict('User-agent: *\nDisallow: /café\n', '/caf%c3%a9/menu').allowed, false, 'non-ASCII rules match their encoded form');
+  assert.equal(robotsVerdict('User-agent: *\nDisallow: /a/b\n', '/a%2Fb').allowed, true, 'an escaped reserved "/" stays a different path');
+  assert.equal(robotsVerdict('User-agent: *\nDisallow: /*.pdf$\n', '/%66iles/x.pdf').allowed, false, 'wildcards still apply after decoding');
+  assert.equal(robotsPath('/a%2fb%41'), '/a%2FbA');
+});
+
+test('Codex #324: a code search GitHub cut short never makes a feature "missing"', async () => {
+  const w = world({ codeSearchIncomplete: true });
+  const che = cheWith(w);
+  await che.say('Investigate https://github.com/acme/sketchpad');
+  await che.say('REA compare');
+  const { investigations: [inv] } = await reaInvestigations(che.store, ENV, { fetcher: w.fetcher, now: T0 });
+  const feature = inv.features.find((f) => f.name === 'Export and share');
+  assert.equal(feature.che.status, 'unknown');
+  assert.match(feature.che.evidence[0].label, /stopped before it finished/);
+  assert.ok(!inv.features.some((f) => f.che?.status === 'missing'), 'nothing is proposed for rebuilding from an incomplete search');
+});
+
+test('Codex #324: an App Store search with no exact name is offered as a choice, never taken as the app', async () => {
+  const w = world();
+  const doodle = { trackId: 307727765, trackName: 'Doodle Jump - Insanely Good!', sellerName: 'Lima Sky', bundleId: 'com.limasky.doodlejump', version: '3.2', primaryGenreName: 'Games', formattedPrice: 'Free', trackViewUrl: 'https://apps.apple.com/us/app/doodle-jump/id307727765?uo=4', description: 'Jump.', screenshotUrls: [] };
+  const fetcher = async (url, init) => {
+    const u = String(url);
+    if (u.startsWith('https://api.github.com/search/repositories') && u.includes('Doodle')) return json({ items: [{ full_name: 'acme/sketchpad', name: 'sketchpad', stargazers_count: 4200, private: false }] });
+    if (u.startsWith('https://itunes.apple.com/search') && u.includes('Doodle')) return json({ results: [doodle] });
+    if (u.startsWith('https://itunes.apple.com/lookup?id=307727765')) return json({ results: [doodle] });
+    return w.fetcher(url, init);
+  };
+  const { appNameKey, lookupAppStore } = await import('./rea_targets.js');
+  assert.equal(appNameKey('Notion: Notes, Docs, Tasks'), 'notion');
+  assert.equal(appNameKey('Doodle Jump - Insanely Good!'), 'doodlejump');
+  const store = await lookupAppStore({ name: 'Doodle' }, fetcher);
+  assert.equal(store.ok, false, '"Doodle Jump" is not "Doodle"');
+  assert.equal(store.candidates[0].name, 'Doodle Jump - Insanely Good!');
+  assert.equal((await lookupAppStore({ name: 'Doodle Jump' }, fetcher)).ok, true, 'the exact name before the tagline is accepted');
+
+  const che = cheWith({ ...w, fetcher }, { fetcher });
+  const asked = await che.say('Investigate the Doodle app');
+  assert.match(asked.text, /1\. GitHub repository acme\/sketchpad[\s\S]*2\. App Store: Doodle Jump - Insanely Good! by Lima Sky/);
+  const picked = await che.say('number two', { history: [{ role: 'assistant', content: asked.text }] });
+  assert.equal(picked.ok, true);
+  assert.match(picked.text, /App Store listing/);
+  const { investigations } = await reaInvestigations(che.store, ENV, { fetcher, now: T0 });
+  assert.ok(investigations.some((i) => i.target.kind === 'app_store' && /id307727765/.test(i.target.url)), 'the chosen listing was investigated');
 });

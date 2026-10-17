@@ -377,12 +377,19 @@ export async function compareWithChe(env, features, fetcher = fetch) {
       searches += 1;
       searched = true;
       const found = await fetcher(`https://api.github.com/search/code?q=${encodeURIComponent(`${terms[0]} repo:${repo}`)}&per_page=5`, { headers }).then(async (r) => ({ ok: r.ok, data: await r.json().catch(() => null) })).catch(() => ({ ok: false }));
-      if (!found.ok) {
+      if (!found.ok || !Array.isArray(found.data?.items)) {
         feature.che = { status: 'unknown', evidence: [link(`CHE's code search did not answer, so "${terms[0]}" was not checked.`, '')] };
         counts.unknown += 1;
         continue;
       }
-      for (const item of (found.data?.items || []).filter((i) => /^(?:lib|server\/cloudflare)\//.test(i.path) && !/\.test\.|_test\.dart$/.test(i.path)).slice(0, 3)) {
+      const hits = found.data.items.filter((i) => /^(?:lib|server\/cloudflare)\//.test(i.path) && !/\.test\.|_test\.dart$/.test(i.path)).slice(0, 3);
+      // A search GitHub cut short proves nothing about what it did not reach.
+      if (!hits.length && found.data.incomplete_results) {
+        feature.che = { status: 'unknown', evidence: [link(`GitHub's code search for "${terms[0]}" stopped before it finished, so it was not checked.`, '')] };
+        counts.unknown += 1;
+        continue;
+      }
+      for (const item of hits) {
         evidence.push(link(`CHE file ${item.path} mentions "${terms[0]}" (code search)`, blobUrl(repo, sha, item.path)));
       }
     }

@@ -395,7 +395,8 @@ async function runInvestigation(storage, env, inv, target, { fetcher, now, featu
         inv.target.version = store.listing.version;
       }
       if (repo && repo.exact) inv.alternatives.push(`A public repository with the same name exists (${repo.full_name}); say "investigate the GitHub repository ${repo.full_name}" if it is the same app.`);
-      setStage(inv, 'discover', store.ok ? 'done' : 'blocked', store.ok ? 'Public App Store listing found; the app itself is not reachable.' : 'No public listing found; the app itself is not reachable.', now);
+      for (const l of (store.candidates || []).slice(0, 2)) inv.alternatives.push(`The App Store has ${cleanText(l.name, 60)} by ${cleanText(l.seller, 40)}, a similar name that is not confirmed to be this app: ${l.url}`);
+      setStage(inv, 'discover', store.ok ? 'done' : 'blocked', store.ok ? 'Public App Store listing found; the app itself is not reachable.' : store.candidates?.length ? 'No App Store listing has exactly this name; similar ones are listed, not used. The app itself is not reachable.' : 'No public listing found; the app itself is not reachable.', now);
       setStage(inv, 'inspect', 'blocked', 'The binary, source, private APIs and sandbox data are not accessible to CHE.', now);
     } else if (repo) {
       inv.sources.push(linkOf(`GitHub: ${repo.full_name} (${repo.stars} stars)`, `https://github.com/${repo.full_name}`));
@@ -409,10 +410,14 @@ async function runInvestigation(storage, env, inv, target, { fetcher, now, featu
       inv.target = { ...inv.target, kind: 'app_store', url: store.listing.url };
       if (similar.length) inv.alternatives = similar.map((r) => `${r.full_name} (${r.stars} stars) has a similar name but is not confirmed to be this app; say "investigate the GitHub repository ${r.full_name}" if it is.`);
       setStage(inv, 'discover', 'done', 'No public repository has this exact name; the public App Store listing is the source.', now);
-    } else if (similar.length) {
+    } else if (similar.length || store.candidates?.length) {
       inv.state = 'needs_choice';
-      inv.candidates = similar.map((r) => `${r.full_name} (${r.stars} stars)`);
-      inv.candidate_repos = similar.map((r) => r.full_name);
+      const choices = [
+        ...similar.map((r) => ({ label: `GitHub repository ${r.full_name} (${r.stars} stars)`, url: `https://github.com/${r.full_name}` })),
+        ...(store.candidates || []).map((l) => ({ label: `App Store: ${cleanText(l.name, 60)} by ${cleanText(l.seller, 40)}`, url: l.url })),
+      ].filter((c) => c.url).slice(0, 4);
+      inv.candidates = choices.map((c) => c.label);
+      inv.candidate_targets = choices.map((c) => c.url);
       setStage(inv, 'discover', 'blocked', `No public repository or App Store listing is named exactly "${cleanText(target.name, 60)}", so none was picked.`, now);
       return saveInvestigation(storage, inv);
     } else {
@@ -617,8 +622,8 @@ function investigationAnswer(inv, { reused = false } = {}) {
   if (inv.state === 'needs_choice') {
     return [
       `No public repository or App Store listing is named exactly "${inv.target.label}", so I did not guess which one you mean, sir. Investigation ${inv.id}.`,
-      'Public repositories with similar names:', list(inv.candidates || []),
-      'Say the number of the one you mean, or "investigate the GitHub repository" and its owner/name. Nothing was read from any of them yet.',
+      'Sources with similar names:', list(inv.candidates || []),
+      'Say the number of the one you mean, or give me its link. Nothing was read from any of them yet.',
     ].join('\n');
   }
   if (inv.state === 'failed') {
@@ -796,12 +801,12 @@ async function pickedCandidate(storage, message, history) {
   const id = String(lastReply?.content || '').match(/\brea-[0-9a-f]{8}\b/)?.[0];
   const inv = id ? await loadInvestigation(storage, id) : null;
   if (inv?.state !== 'needs_choice') return '';
-  return inv.candidate_repos?.[(PICK_WORDS[word] || Number(word)) - 1] || '';
+  return inv.candidate_targets?.[(PICK_WORDS[word] || Number(word)) - 1] || '';
 }
 
 export async function handleReaRequest(storage, env, message, { fetcher = fetch, now = Date.now(), random, history = [], build = null, jobLookup = null, remember = null, owner = true, codingBlocked = false } = {}) {
   const picked = await pickedCandidate(storage, message, history).catch(() => '');
-  if (picked) message = `Investigate https://github.com/${picked}`;
+  if (picked) message = `Investigate ${picked}`;
   const request = parseReaRequest(message, { history });
   if (!request) return null;
   const jobs = await refreshReaJobs(storage, env, now, fetcher);
@@ -915,6 +920,7 @@ async function discoverAnswer(env, target, fetcher) {
     const found = [
       ...(repos.repos || []).slice(0, 3).map((r) => `GitHub ${r.full_name}, ${r.stars} stars, licence ${r.license || 'none'}${r.exact ? ' (same name)' : ''}: https://github.com/${r.full_name}`),
       ...(store.ok ? [`App Store: ${store.listing.name} by ${store.listing.seller}, version ${store.listing.version}: ${store.listing.url}`] : []),
+      ...(!store.ok ? (store.candidates || []).slice(0, 2).map((l) => `App Store: ${l.name} by ${l.seller} (similar name, not confirmed): ${l.url}`) : []),
     ];
     lines.push(found.length ? list(found) : 'None. Give me a link or a repository name.');
     if (target.kind === 'private_app') lines.push('', 'Not reachable:', list(PRIVATE_APP_LIMITS));
