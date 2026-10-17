@@ -64,6 +64,19 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-17 ~13:00 UTC — #328 live; BYOK rule satisfied on main; Coding Library reconciled locally, NOT pushed)
+
+- **main** is `a3be02c` (#328). Deploy run 39032277486 succeeded. Shorebird run 39032277542: the patch step succeeded at 12:38:22. **iPhone install NOT verified**: the owner must open the app twice to take the patch.
+- **Paid key check on main**, run 39032277471 (12:22): cap verified. $15 monthly limit, $15 remaining, `BYOK: confirmed_none`. The log shows `CHE_CODING_OPENROUTER_NO_BYOK: true`, so the owner's BYOK fix reached the job. Key-level BYOK spend is zero.
+- **Paid fallback is NOT verified live.** The runtime's paid step runs only when `vars.CHE_CODING_PAID_FALLBACK == 'true'`. The key check hardcodes `'true'`, so its log does not show the variable. Actions variables return 403 from this sandbox. The owner must read or set it at https://github.com/Vondada/chey-app/settings/variables/actions.
+- **No live coding run was started.** A run whose free models fail would reach the paid step if that variable is `true`. That is spending the owner did not ask for in a test.
+- **Independent review of #328 did NOT complete** (Codex usage limit). #328 was merged before review finished.
+- **Coding Library reconcile (local only):** worktree `claude/che-coding-library-reconcile` from `origin/main` a3be02c. Cherry-picked `f9bc0dc`→`e671c2c`, `3b94445`→`b5c92a2`, `211f3a8`→`1635a8d`. No conflicts. The REA commits on the old branch are already on main via #324, so they were not taken. Worker suite: 1452 run, 1445 pass, 0 fail, 7 skipped. The Dart tests from these commits were NOT run (no Flutter here). Not pushed, no PR. The old `claude/che-coding-library` (211f3a8) was not force-pushed.
+- **Next, after owner approval:** decide the paid variable; approve pushing the reconcile under a new branch name (no PR unless asked); then build the Flutter Coding Library page and run `flutter test`.
+- **Held, still unanswered by the owner:** local commit `10eb36e` on `chatgpt/che-coding-free-first-capped-paid` (unpushed). Options: push to a new branch from `origin/main` with no PR, drop it, or keep it held. Also the game-style UI branch choice.
+
+---
+
 ## 2. Current position (ChatGPT, 2026-10-17 ~12:30 UTC — #328 MERGED, live Worker commit verified; iPhone patch verification pending)
 
 - **Current main**: `a3be02cdab7d8ff27522c256e22df05c1d80b805`, squash merge of **PR #328** (free-first coding engine, $15 capped paid-last, verified checkpoints and bounded resume). Branch `chatgpt/che-coding-free-first-capped-paid` last tested head `d2b043f97689195840db0480b712c4ceb93bead8`.
