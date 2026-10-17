@@ -518,9 +518,13 @@ export async function verifyBuild(env, prNumber, fetcher = fetch) {
   const blocking = checks.filter((c) => !/^Workers Builds/i.test(c.name));
   const failed = blocking.filter((c) => !['success', 'skipped', 'neutral'].includes(c.state) && !['queued', 'in_progress', 'pending', 'waiting'].includes(c.state));
   const running = blocking.filter((c) => ['queued', 'in_progress', 'pending', 'waiting'].includes(c.state));
-  // The newest run of each required workflow for this exact commit.
+  // The newest pull-request run of each required workflow for this exact commit. A manual
+  // (workflow_dispatch) or push run on the same commit is not this pull request's check, and a
+  // run GitHub links to other pull requests only is not either.
+  const forThisPr = (r) => r?.event === 'pull_request'
+    && (!Array.isArray(r.pull_requests) || !r.pull_requests.length || r.pull_requests.some((p) => Number(p?.number) === Number(prNumber)));
   const required = REQUIRED_PR_WORKFLOWS.map((path) => {
-    const run = workflowRuns.data.workflow_runs.filter((r) => r?.path === path && r?.head_sha === head).sort((a, b) => Number(b.id) - Number(a.id))[0];
+    const run = workflowRuns.data.workflow_runs.filter((r) => r?.path === path && r?.head_sha === head && forThisPr(r)).sort((a, b) => Number(b.id) - Number(a.id))[0];
     return { path, name: clip(run?.name || path.split('/').pop(), 80), state: !run ? 'missing' : run.status !== 'completed' ? 'running' : run.conclusion === 'success' ? 'success' : clip(run.conclusion || 'unknown', 20) };
   });
   const requiredFailed = required.filter((r) => !['missing', 'running', 'success'].includes(r.state));

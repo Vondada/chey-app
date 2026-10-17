@@ -77,9 +77,9 @@ const WEB_RECORD = (jobId) => ({
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 // Both always-on pull-request workflows, finished green on `head`.
-const greenWorkflows = (head) => [
-  { id: 11, name: 'Check CHE Flutter client', path: '.github/workflows/flutter-check.yml', head_sha: head, status: 'completed', conclusion: 'success' },
-  { id: 12, name: 'CHE UI Analyze', path: '.github/workflows/che-ui-analyze.yml', head_sha: head, status: 'completed', conclusion: 'success' },
+const greenWorkflows = (head, event = 'pull_request') => [
+  { id: 11, name: 'Check CHE Flutter client', path: '.github/workflows/flutter-check.yml', head_sha: head, event, status: 'completed', conclusion: 'success' },
+  { id: 12, name: 'CHE UI Analyze', path: '.github/workflows/che-ui-analyze.yml', head_sha: head, event, status: 'completed', conclusion: 'success' },
 ];
 
 // One fake internet. `opts` turns on failures for the recovery tests.
@@ -599,6 +599,15 @@ test('Codex #324: REA verify waits until every required workflow has run on the 
   assert.equal((await verifyBuild(ENV, 9, fetcher)).state, 'pending');
   workflows = [...greenWorkflows('0'.repeat(40)), greenWorkflows(head)[0]];
   assert.equal((await verifyBuild(ENV, 9, fetcher)).state, 'pending', 'a run on another commit does not count');
+  // Codex #324: a manual or push run on the same commit is not this pull request's check.
+  workflows = [...greenWorkflows(head, 'workflow_dispatch'), ...greenWorkflows(head, 'push')];
+  const manual = await verifyBuild(ENV, 9, fetcher);
+  assert.equal(manual.state, 'pending');
+  assert.match(manual.note, /Waiting for flutter-check\.yml and che-ui-analyze\.yml to start/);
+  workflows = greenWorkflows(head).map((r) => ({ ...r, pull_requests: [{ number: 41 }] }));
+  assert.equal((await verifyBuild(ENV, 9, fetcher)).state, 'pending', 'a run GitHub links only to another pull request does not count');
+  workflows = greenWorkflows(head).map((r) => ({ ...r, pull_requests: [{ number: 9 }] }));
+  assert.equal((await verifyBuild(ENV, 9, fetcher)).state, 'passed', 'a run linked to this pull request counts');
   workflows = greenWorkflows(head);
   const passed = await verifyBuild(ENV, 9, fetcher);
   assert.equal(passed.state, 'passed');
