@@ -263,10 +263,13 @@ jobs:
               if [ "$prov" = openrouter ] && [ "${CHE_ALLOW_PAID_MODELS:-}" != true ]; then list=$(printf '%s\n' "$list" | grep -E ":free$" || true); fi
               [ -n "$list" ] || continue
               strong=$(echo "$list" | grep -iE "coder|codestral|devstral|pro|sonnet|opus|gpt-5|large|70b" || true)
-              ranked=$( { echo "$strong" | grep -viE "preview|exp" | sort -rV || true; echo "$strong" | sort -rV; echo "$list" | sort -rV; } | awk 'NF && !seen[$0]++' | head -3)
+              # Up to two strong stable models, then the best stable fast model (free-tier keys
+              # often have no quota for Pro models but do for Flash), then previews.
+              fast=$(echo "$list" | grep -iE "flash|haiku|turbo" | grep -viE "preview|exp" | sort -rV | head -1 || true)
+              ranked=$( { echo "$strong" | grep -viE "preview|exp" | sort -rV | head -2 || true; echo "$fast"; echo "$strong" | sort -rV; echo "$list" | sort -rV; } | awk 'NF && !seen[$0]++' | head -3)
               candidates="$candidates $(echo $ranked)"
             done
-            candidates=$(echo $candidates | tr ' ' '\n' | awk 'NF' | head -5 | tr '\n' ' ')
+            candidates=$(echo $candidates | tr ' ' '\n' | awk 'NF' | head -6 | tr '\n' ' ')
             model=$(echo $candidates | cut -d' ' -f1)
           fi
           if [ -z "$model" ]; then echo "::error::No usable AI model for the OpenCode runner. Providers with a key:${keyed:- none}. Add one provider key (e.g. OPENROUTER_API_KEY or GEMINI_API_KEY) as a GitHub Actions secret."; exit 1; fi
@@ -297,6 +300,14 @@ jobs:
           code=1; used=""; tried=""
           start=$(date +%s)
           redact() { sed -E 's/(AIza|sk-|gsk_|csk-|hf_|sk-or-)[A-Za-z0-9_-]{8,}/[key]/g' | tr '\n"' '  ' | cut -c1-350; }
+          # OpenCode keeps retrying errors that cannot succeed (no quota, no access to the model,
+          # a request too large for the key's token limit) until the time budget runs out. An
+          # error event naming one of them stops that model at once, so the next one gets the
+          # time. Only error events count: file text the agent reads never stops it.
+          FATAL='ContextOverflowError|exceeded your current quota|RESOURCE_EXHAUSTED|insufficient_quota|does not exist or you do not have access|Request too large for model|"statusCode": ?(401|403|404)'
+          fatal_seen() {
+            { grep -E '"type": ?"error"' /tmp/opencode-events.jsonl 2>/dev/null; grep -iE 'error' /tmp/opencode-stderr.log 2>/dev/null; } | grep -qE "$FATAL"
+          }
           for m in $CANDIDATES; do
             # Total coding budget 14 min so the job never hits its hard limit.
             left=$(( 840 - ($(date +%s) - start) ))
@@ -311,16 +322,26 @@ jobs:
             esac
             used=$m; tried="$tried $m"
             echo "Trying $m"
+            : >/tmp/opencode-events.jsonl; : >/tmp/opencode-stderr.log
             env -u K_GOOGLE -u K_ANTHROPIC -u K_OPENAI -u K_OPENROUTER -u K_GROQ -u K_MISTRAL -u K_CEREBRAS -u K_HF "${kv[@]}" \
               timeout --signal=TERM --kill-after=15s "${left}s" \
               opencode run --format json --auto --model "$m" "$prompt" \
-              >/tmp/opencode-events.jsonl 2>/tmp/opencode-stderr.log
+              >/tmp/opencode-events.jsonl 2>/tmp/opencode-stderr.log &
+            pid=$!
+            stopped=""
+            while kill -0 "$pid" 2>/dev/null; do
+              if fatal_seen; then stopped=yes; kill -TERM "$pid" 2>/dev/null; break; fi
+              sleep 2
+            done
+            wait "$pid"
             code=$?
+            [ -n "$stopped" ] && code=75
             [ "$code" = 0 ] && break
             # A model that already edited files is not retried on another model.
             [ -z "$(git status --porcelain)" ] || break
             why=$( { tail -c 4000 /tmp/opencode-stderr.log; grep -iE 'error|quota|rate|denied|invalid|not found' /tmp/opencode-events.jsonl | tail -2; } 2>/dev/null | redact)
             [ "$code" = 124 ] && why="timed out after ${left}s. $why"
+            [ "$code" = 75 ] && why="stopped after $(( $(date +%s) - start ))s of the run: this model cannot do the request with this key. $why"
             echo "::warning::$m failed (exit $code): ${why:-no error text}"
           done
           # Short, key-free error for CHE's status record.
@@ -530,6 +551,7 @@ jobs:
           fi
 
       - name: Post compact result to CHE mailbox branch
+        id: post
         uses: actions/github-script@v7
         env:
           JOB_ID: ${{ inputs.job_id }}
@@ -565,3 +587,17 @@ jobs:
               content: Buffer.from(content).toString('base64'),
               ...(sha ? { sha } : {}),
             });
+            core.setOutput('state', String(result.state || ''));
+            core.setOutput('failure', String(result.failure || ''));
+
+      # The run's own status says what the coding session did: a session that every model failed
+      # (or that could not deliver) is a red run, never a green wrapper around a blocked job.
+      - name: Fail the run when the coding session was blocked
+        if: steps.post.outputs.state == 'blocked' || steps.post.outputs.state == 'failed'
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+          STATE: ${{ steps.post.outputs.state }}
+          FAILURE: ${{ steps.post.outputs.failure }}
+        run: |
+          echo "::error::CHE coding session $JOB_ID ended $STATE (${FAILURE:-no reason given}). Its record is on che-mailbox; no change was delivered."
+          exit 1
