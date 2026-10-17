@@ -10,7 +10,7 @@
 import { cleanText, NPM_NAME } from './rea_evidence.js';
 import { fetchPublicPage, readablePublicUrl } from './library.js';
 import { reusableLicense } from './code_scout.js';
-import { robotsVerdict } from './rea_web_evidence.js';
+import { REA_ROBOTS_AGENTS, robotsVerdict } from './rea_web_evidence.js';
 
 const UA = 'CHE-REA';
 const MAX_TREE_PATHS = 6000;
@@ -388,14 +388,14 @@ export function featureTerms(feature) {
 
 // ─── Public web pages (static read) ──────────────────────────────────────
 
-// robots.txt for the generic agent. Unreachable or missing robots.txt means allowed.
+// robots.txt as it applies to REA's own agent (CHE-REA), else to '*'. Unreachable or missing robots.txt means allowed.
 export async function robotsAllows(url, fetcher = fetch) {
   let parsed;
   try { parsed = new URL(url); } catch (_) { return { allowed: false, reason: 'That link is not valid.' }; }
   const page = await fetchPublicPage(`${parsed.origin}/robots.txt`, fetcher, { maxBytes: 200_000, userAgent: UA }).catch(() => ({ error: 'unreachable' }));
   if (page.error || !page.raw) return { allowed: true, checked: false };
   const path = `${parsed.pathname || '/'}${parsed.search || ''}`;
-  const verdict = robotsVerdict(page.raw, path);
+  const verdict = robotsVerdict(page.raw, path, REA_ROBOTS_AGENTS.static);
   return verdict.allowed ? { allowed: true, checked: true } : { allowed: false, checked: true, rule: verdict.rule, reason: `The site's robots.txt asks automated readers not to read ${parsed.pathname || '/'} (${verdict.rule}). CHE respects that.` };
 }
 

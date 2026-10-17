@@ -45,6 +45,8 @@ export const REA_WEB_WORKFLOW = 'che-rea-web.yml';
 export const REA_DETAIL_PREFIX = 'rea_inv:';
 const JOB_LOG_LIMIT = 30;
 const STALLED_AFTER_MS = 2 * 60 * 60_000;
+const VERIFIED_STATES = ['passed', 'failed'];
+const VERIFY_RECHECK_MS = 2 * 60_000;
 
 const VERBS = { inspect: 'inspect', 'reverse engineer': 'inspect', 'reverse-engineer': 'inspect', analyze: 'inspect', analyse: 'inspect', explain: 'explain', debug: 'debug', compare: 'compare' };
 const TITLES = { inspect: 'inspection', explain: 'explanation', debug: 'debug review', compare: 'comparison', rebuild: 'rebuild plan' };
@@ -332,7 +334,7 @@ async function saveInvestigation(storage, inv) {
     id: record.id, kind: 'investigation', command: 'inspect', target: record.target, state: record.state, stage: record.stage,
     cache_key: record.cache_key, created_at: record.created_at, updated_at: record.updated_at,
     ...(record.browser?.state === 'queued' ? { browser: 'queued' } : {}),
-    ...(record.build?.job_id && !['complete', 'failed'].includes(record.build.state) ? { build_pending: true } : {}),
+    ...(record.build?.job_id && !['complete', 'failed'].includes(record.build.state) && !VERIFIED_STATES.includes(record.verification?.state) ? { build_pending: true } : {}),
   };
   const next = jobs.filter((j) => j.id !== record.id);
   next.push(entry);
@@ -380,7 +382,10 @@ async function runInvestigation(storage, env, inv, target, { fetcher, now, featu
       lookupAppStore({ name: target.name }, fetcher).catch(() => ({ ok: false })),
     ]);
     if (store.ok) inv.sources.push(linkOf(`App Store: ${store.listing.name} by ${store.listing.seller}`, store.listing.url));
-    const repo = repos.repos?.find((r) => r.exact) || (target.kind === 'app_name' ? repos.repos?.[0] : null);
+    // Only a repository named exactly like the app is taken as it: a similar name is often an
+    // unrelated project, so it is offered as a numbered choice and never picked silently.
+    const repo = repos.repos?.find((r) => r.exact) || null;
+    const similar = (repos.repos || []).filter((r) => !r.exact).slice(0, 4);
     if (target.kind === 'private_app') {
       inv.state = 'limited';
       inv.limitations.push(...PRIVATE_APP_LIMITS);
@@ -389,7 +394,7 @@ async function runInvestigation(storage, env, inv, target, { fetcher, now, featu
         facts = { kind: 'app_store', listing: store.listing };
         inv.target.version = store.listing.version;
       }
-      if (repo && repo.exact) inv.alternatives.push(`A public repository with the same name exists (${repo.full_name}); say "investigate ${repo.full_name}" if it is the same app.`);
+      if (repo && repo.exact) inv.alternatives.push(`A public repository with the same name exists (${repo.full_name}); say "investigate the GitHub repository ${repo.full_name}" if it is the same app.`);
       setStage(inv, 'discover', store.ok ? 'done' : 'blocked', store.ok ? 'Public App Store listing found; the app itself is not reachable.' : 'No public listing found; the app itself is not reachable.', now);
       setStage(inv, 'inspect', 'blocked', 'The binary, source, private APIs and sandbox data are not accessible to CHE.', now);
     } else if (repo) {
@@ -398,11 +403,18 @@ async function runInvestigation(storage, env, inv, target, { fetcher, now, featu
       inv.candidates = (repos.repos || []).slice(0, 4).map((r) => `${r.full_name} (${r.stars} stars)`);
       target = { kind: 'github', full_name: repo.full_name, url: `https://github.com/${repo.full_name}` };
       inv.target = { ...inv.target, kind: 'github', url: target.url };
-      setStage(inv, 'discover', 'done', `Matched to the public repository ${repo.full_name}${repo.exact ? '' : ' (closest name; check it is the right one)'}.`, now);
+      setStage(inv, 'discover', 'done', `Matched to the public repository ${repo.full_name}.`, now);
     } else if (store.ok) {
       target = { kind: 'app_store', id: store.listing.id, url: store.listing.url };
       inv.target = { ...inv.target, kind: 'app_store', url: store.listing.url };
-      setStage(inv, 'discover', 'done', 'No public source code found; the public App Store listing is the source.', now);
+      if (similar.length) inv.alternatives = similar.map((r) => `${r.full_name} (${r.stars} stars) has a similar name but is not confirmed to be this app; say "investigate the GitHub repository ${r.full_name}" if it is.`);
+      setStage(inv, 'discover', 'done', 'No public repository has this exact name; the public App Store listing is the source.', now);
+    } else if (similar.length) {
+      inv.state = 'needs_choice';
+      inv.candidates = similar.map((r) => `${r.full_name} (${r.stars} stars)`);
+      inv.candidate_repos = similar.map((r) => r.full_name);
+      setStage(inv, 'discover', 'blocked', `No public repository or App Store listing is named exactly "${cleanText(target.name, 60)}", so none was picked.`, now);
+      return saveInvestigation(storage, inv);
     } else {
       inv.state = 'failed';
       const why = repos.ok === false && repos.status ? `GitHub search answered ${repos.status}` : 'no public repository or App Store listing matched';
@@ -501,8 +513,12 @@ async function refreshBrowser(storage, env, inv, fetcher, now) {
 }
 
 // A build's coding job and pull request, read from CHE's own job log and GitHub.
-async function refreshBuild(storage, env, inv, { jobLookup, fetcher, now }) {
-  if (!inv?.build?.job_id || ['complete', 'failed'].includes(inv.build.verify_state)) return inv;
+// Background reads (the investigations list and detail) leave a finished verification alone
+// and re-read a pending one at most every VERIFY_RECHECK_MS; "REA verify" (force) always reads.
+async function refreshBuild(storage, env, inv, { jobLookup, fetcher, now, force = false }) {
+  if (!inv?.build?.job_id) return inv;
+  const checked = Date.parse(inv.verification?.checked_at || '') || 0;
+  if (!force && (VERIFIED_STATES.includes(inv.verification?.state) || (checked && now - checked < VERIFY_RECHECK_MS))) return inv;
   const job = jobLookup ? await Promise.resolve(jobLookup(inv.build.job_id)).catch(() => null) : null;
   if (job) {
     const text = `${job.result || ''} ${job.owner_message || ''}`;
@@ -515,7 +531,7 @@ async function refreshBuild(storage, env, inv, { jobLookup, fetcher, now }) {
   }
   if (inv.build.pr_number) {
     const result = await verifyBuild(env, inv.build.pr_number, fetcher);
-    inv.verification = { state: result.state, checks: result.checks, note: result.note };
+    inv.verification = { state: result.state, checks: result.checks, note: result.note, checked_at: new Date(now).toISOString() };
     setStage(inv, 'test', result.state === 'passed' ? 'done' : result.state === 'failed' ? 'failed' : 'running', result.note, now);
     setStage(inv, 'integrate', 'pending', 'Merging and deploying need your separate yes.', now);
     setStage(inv, 'verify', result.state === 'passed' ? 'done' : result.state === 'failed' ? 'failed' : 'running', 'Checked against the pull request\'s CI and changed tests; not verified on the iPhone.', now);
@@ -597,6 +613,13 @@ function investigationAnswer(inv, { reused = false } = {}) {
     if (inv.alternatives?.length) lines.push('', 'What I can do instead:', list(inv.alternatives));
     lines.push('', 'I did not claim anything about its internals.');
     return lines.join('\n');
+  }
+  if (inv.state === 'needs_choice') {
+    return [
+      `No public repository or App Store listing is named exactly "${inv.target.label}", so I did not guess which one you mean, sir. Investigation ${inv.id}.`,
+      'Public repositories with similar names:', list(inv.candidates || []),
+      'Say the number of the one you mean, or "investigate the GitHub repository" and its owner/name. Nothing was read from any of them yet.',
+    ].join('\n');
   }
   if (inv.state === 'failed') {
     const failed = inv.stages.find((s) => s.state === 'failed');
@@ -763,7 +786,22 @@ async function buildInvestigation(storage, env, inv, { build, owner, wanted, now
 }
 
 // Returns null for any message that is not a REA request, so the caller carries on unchanged.
+// "Number two" right after CHE read out similar repositories picks that repository.
+const PICK = /^(?:(?:investigate|use|pick|choose|take)\s+)?(?:(?:number|option|choice)\s+)?(one|two|three|four|first|second|third|fourth|[1-4])(?:st|nd|rd|th)?(?:\s+one)?[\s.!]*$/i;
+const PICK_WORDS = { one: 1, first: 1, two: 2, second: 2, three: 3, third: 3, four: 4, fourth: 4 };
+async function pickedCandidate(storage, message, history) {
+  const word = String(message || '').trim().match(PICK)?.[1]?.toLowerCase();
+  if (!word) return '';
+  const lastReply = [...(Array.isArray(history) ? history : [])].reverse().find((h) => h?.role === 'assistant');
+  const id = String(lastReply?.content || '').match(/\brea-[0-9a-f]{8}\b/)?.[0];
+  const inv = id ? await loadInvestigation(storage, id) : null;
+  if (inv?.state !== 'needs_choice') return '';
+  return inv.candidate_repos?.[(PICK_WORDS[word] || Number(word)) - 1] || '';
+}
+
 export async function handleReaRequest(storage, env, message, { fetcher = fetch, now = Date.now(), random, history = [], build = null, jobLookup = null, remember = null, owner = true, codingBlocked = false } = {}) {
+  const picked = await pickedCandidate(storage, message, history).catch(() => '');
+  if (picked) message = `Investigate https://github.com/${picked}`;
   const request = parseReaRequest(message, { history });
   if (!request) return null;
   const jobs = await refreshReaJobs(storage, env, now, fetcher);
@@ -863,7 +901,7 @@ export async function handleReaRequest(storage, env, message, { fetcher = fetch,
     return { ...result, investigation_id: inv.id };
   }
   if (request.command === 'verify') {
-    const fresh = await refreshBuild(storage, env, inv, { jobLookup, fetcher, now });
+    const fresh = await refreshBuild(storage, env, inv, { jobLookup, fetcher, now, force: true });
     return { ok: fresh.verification?.state === 'passed', investigation_id: inv.id, text: verifyAnswer(fresh) };
   }
   return null;

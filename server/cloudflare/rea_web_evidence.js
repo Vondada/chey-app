@@ -198,7 +198,15 @@ function ruleMatches(pattern, path) {
   return anchored ? at === path.length : true;
 }
 
-export function robotsRules(text) {
+// The product tokens REA identifies itself with, most specific first. RFC 9309: a crawler obeys
+// the group naming its own token (every such group combined) and falls back to '*' only when
+// no group names it. The browser observer is CHE-REA-web, so a CHE-REA group binds it too.
+export const REA_ROBOTS_AGENTS = Object.freeze({
+  static: Object.freeze(['che-rea']),
+  browser: Object.freeze(['che-rea-web', 'che-rea']),
+});
+
+export function robotsRules(text, agents = []) {
   const groups = [];
   let current = null;
   let inAgents = false;
@@ -209,21 +217,26 @@ export function robotsRules(text) {
     const value = found[2].trim();
     if (key === 'user-agent') {
       if (!inAgents) groups.push((current = { agents: [], rules: [] }));
-      current.agents.push(value.toLowerCase());
+      // "CHE-REA/1.0" names the CHE-REA product token.
+      current.agents.push(value.toLowerCase().split('/')[0].trim());
       inAgents = true;
     } else {
       inAgents = false;
       if ((key === 'allow' || key === 'disallow') && current) current.rules.push({ allow: key === 'allow', path: value.slice(0, 500) });
     }
   }
-  return groups.filter((group) => group.agents.includes('*')).flatMap((group) => group.rules);
+  for (const token of [...agents.map((a) => String(a).toLowerCase()), '*']) {
+    const named = groups.filter((group) => group.agents.includes(token));
+    if (named.length) return named.flatMap((group) => group.rules);
+  }
+  return [];
 }
 
-export function robotsVerdict(text, path) {
+export function robotsVerdict(text, path, agents = []) {
   const target = String(path || '/');
   if (target === '/robots.txt') return { allowed: true, rule: '' };
   let best = null;
-  for (const rule of robotsRules(text)) {
+  for (const rule of robotsRules(text, agents)) {
     if (!rule.path || !ruleMatches(rule.path, target)) continue;
     if (!best || rule.path.length > best.path.length || (rule.path.length === best.path.length && rule.allow)) best = rule;
   }

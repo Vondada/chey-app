@@ -19,7 +19,7 @@ import {
   REA_WEB_SCHEMA, REA_WEB_PIN, REA_WEB_ANALYSIS, REA_WEB_SHOT_MAX_BYTES, REA_WEB_LIMITS,
   validateWebSummary, webTargetProblem,
 } from '../../../server/cloudflare/rea_web_evidence.js';
-import { blockedHost, privateAddress, robotsVerdict } from './policy.mjs';
+import { REA_ROBOTS_AGENTS, blockedHost, privateAddress, robotsVerdict } from './policy.mjs';
 
 const NAV_TIMEOUT_MS = 25_000;
 const BUDGET_MS = 90_000;
@@ -145,7 +145,7 @@ async function robotsCheck(url) {
       response.body?.cancel().catch(() => {});
       return { allowed: true, note: `robots.txt answered HTTP ${response.status}, so it was treated as allowing this page.` };
     }
-    const verdict = robotsVerdict(await readCapped(response, 512 * 1024), `${target.pathname}${target.search}`);
+    const verdict = robotsVerdict(await readCapped(response, 512 * 1024), `${target.pathname}${target.search}`, REA_ROBOTS_AGENTS.browser);
     return { ...verdict, note: '' };
   }
   return { allowed: true, note: 'robots.txt kept redirecting, so it was treated as allowing this page.' };

@@ -76,6 +76,11 @@ const WEB_RECORD = (jobId) => ({
 });
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+// Both always-on pull-request workflows, finished green on `head`.
+const greenWorkflows = (head) => [
+  { id: 11, name: 'Check CHE Flutter client', path: '.github/workflows/flutter-check.yml', head_sha: head, status: 'completed', conclusion: 'success' },
+  { id: 12, name: 'CHE UI Analyze', path: '.github/workflows/che-ui-analyze.yml', head_sha: head, status: 'completed', conclusion: 'success' },
+];
 
 // One fake internet. `opts` turns on failures for the recovery tests.
 function world(opts = {}) {
@@ -103,6 +108,8 @@ function world(opts = {}) {
     if (record) return state.records[record[1]] ? json({ content: Buffer.from(JSON.stringify(state.records[record[1]])).toString('base64') }) : json({ message: 'Not Found' }, 404);
     const pr = u.match(/\/repos\/Vondada\/chey-app\/pulls\/(\d+)(\/files)?/);
     if (pr) return state.prs[pr[1]] ? json(pr[2] ? state.prs[pr[1]].files : state.prs[pr[1]].pr) : json({}, 404);
+    const workflowRuns = u.match(/\/actions\/runs\?head_sha=([0-9a-f]+)/);
+    if (workflowRuns) return json({ workflow_runs: Object.values(state.prs).find((p) => p.pr.head.sha === workflowRuns[1])?.workflows || [] });
     const runs = u.match(/\/commits\/([0-9a-f]+)\/check-runs/);
     if (runs) return json({ check_runs: Object.values(state.prs).find((p) => p.pr.head.sha === runs[1])?.checks || [] });
     if (u === 'https://shop.example.com/robots.txt' || u === 'https://walled.example.com/robots.txt') return new Response(state.robots, { status: 200 });
@@ -319,7 +326,7 @@ test('plan writes steps and acceptance checks only; build needs the owner, start
 
 test('verify reads the real pull request: passed only with green checks and changed tests; never claims the iPhone', async () => {
   const head = 'd'.repeat(40);
-  const w = world({ prs: { 412: { pr: { number: 412, state: 'open', draft: true, merged: false, head: { sha: head }, html_url: 'https://github.com/Vondada/chey-app/pull/412' }, files: [{ filename: 'lib/share/che_share.dart' }, { filename: 'test/che_share_test.dart' }], checks: [{ name: 'analyze', status: 'completed', conclusion: 'success', html_url: 'u1' }, { name: 'Worker syntax and unit tests', status: 'completed', conclusion: 'success', html_url: 'u2' }] } } });
+  const w = world({ prs: { 412: { pr: { number: 412, state: 'open', draft: true, merged: false, head: { sha: head }, html_url: 'https://github.com/Vondada/chey-app/pull/412' }, files: [{ filename: 'lib/share/che_share.dart' }, { filename: 'test/che_share_test.dart' }], checks: [{ name: 'analyze', status: 'completed', conclusion: 'success', html_url: 'u1' }, { name: 'Worker syntax and unit tests', status: 'completed', conclusion: 'success', html_url: 'u2' }], workflows: greenWorkflows(head) } } });
   const che = cheWith(w);
   await che.say('Investigate https://github.com/acme/sketchpad');
   await che.say('REA compare');
@@ -339,10 +346,6 @@ test('verify reads the real pull request: passed only with green checks and chan
 
   w.state.prs[412].checks[1].conclusion = 'failure';
   w.state.prs[412].files = [];
-  const store = che.store;
-  const detail = await store.get(`rea_inv:${inv.id}`);
-  detail.build.verify_state = '';
-  await store.put(`rea_inv:${inv.id}`, detail);
   const failed = await che.say('REA verify');
   assert.equal(failed.ok, false);
   assert.match(failed.text, /: failed\.[\s\S]*Failing: Worker syntax and unit tests/);
@@ -553,4 +556,102 @@ test('Codex #324: a refused PR file list leaves verification pending instead of 
   const result = await verifyBuild(ENV, 7, fetcher);
   assert.equal(result.state, 'pending');
   assert.match(result.note, /did not return the changed files of pull request #7 \(status 403\)/);
+});
+
+test('Codex #324: a robots.txt group naming CHE-REA or CHE-REA-web binds REA even when the * group allows everything', async () => {
+  const { robotsVerdict, REA_ROBOTS_AGENTS } = await import('./rea_web_evidence.js');
+  const forRea = 'User-agent: *\nAllow: /\n\nUser-agent: CHE-REA\nDisallow: /\n';
+  assert.equal(robotsVerdict(forRea, '/', REA_ROBOTS_AGENTS.static).allowed, false, 'the static reader obeys its own group');
+  assert.equal(robotsVerdict(forRea, '/', REA_ROBOTS_AGENTS.browser).allowed, false, 'the browser (CHE-REA-web) is bound by the CHE-REA group too');
+  const forBrowser = 'User-agent: *\nAllow: /\n\nUser-agent: che-rea-web/1.0\nDisallow: /private\n';
+  assert.equal(robotsVerdict(forBrowser, '/private/x', REA_ROBOTS_AGENTS.browser).allowed, false);
+  assert.equal(robotsVerdict(forBrowser, '/private/x', REA_ROBOTS_AGENTS.static).allowed, true, 'the static reader is not CHE-REA-web, so * applies');
+  assert.equal(robotsVerdict('User-agent: Googlebot\nDisallow: /\n', '/', REA_ROBOTS_AGENTS.static).allowed, true, 'another crawler\'s group never applies');
+  assert.equal(robotsVerdict('User-agent: *\nDisallow: /\n\nUser-agent: CHE-REA\nAllow: /\n', '/', REA_ROBOTS_AGENTS.static).allowed, true, 'the named group replaces *, it is not merged with it');
+
+  const w = world({ robots: 'User-agent: *\nAllow: /\n\nUser-agent: CHE-REA\nDisallow: /\n' });
+  const che = cheWith(w);
+  const page = await che.say('Investigate https://shop.example.com/');
+  assert.match(page.text, /robots\.txt/);
+  assert.ok(!w.calls.some((c) => c.url === 'https://shop.example.com/'), 'the page itself was never requested');
+});
+
+test('Codex #324: REA verify waits until every required workflow has run on the head commit', async () => {
+  const { verifyBuild } = await import('./rea_features.js');
+  const head = 'f'.repeat(40);
+  let workflows = [];
+  const fetcher = async (url) => {
+    const u = String(url);
+    if (u.endsWith('/pulls/9')) return json({ number: 9, state: 'open', draft: true, head: { sha: head }, html_url: 'https://github.com/Vondada/chey-app/pull/9' });
+    if (u.endsWith('/pulls/9/files?per_page=100')) return json([{ filename: 'test/x_test.dart' }]);
+    if (u.includes('/check-runs')) return json({ check_runs: [{ name: 'analyze', status: 'completed', conclusion: 'success' }] });
+    if (u.includes(`/actions/runs?head_sha=${head}`)) return json({ workflow_runs: workflows });
+    return json({}, 404);
+  };
+  const early = await verifyBuild(ENV, 9, fetcher);
+  assert.equal(early.state, 'pending', 'one early green check is not every check');
+  assert.match(early.note, /Waiting for flutter-check\.yml and che-ui-analyze\.yml to start on this commit/);
+  workflows = greenWorkflows(head).map((r, i) => (i ? { ...r, status: 'in_progress', conclusion: null } : r));
+  assert.equal((await verifyBuild(ENV, 9, fetcher)).state, 'pending');
+  workflows = [...greenWorkflows('0'.repeat(40)), greenWorkflows(head)[0]];
+  assert.equal((await verifyBuild(ENV, 9, fetcher)).state, 'pending', 'a run on another commit does not count');
+  workflows = greenWorkflows(head);
+  const passed = await verifyBuild(ENV, 9, fetcher);
+  assert.equal(passed.state, 'passed');
+  assert.match(passed.note, /Every required check passed/);
+  workflows = [greenWorkflows(head)[0], { ...greenWorkflows(head)[1], conclusion: 'failure' }];
+  const failed = await verifyBuild(ENV, 9, fetcher);
+  assert.equal(failed.state, 'failed');
+  assert.match(failed.note, /Failing: CHE UI Analyze/);
+});
+
+test('Codex #324: an app name with no exact repository is never mapped to a similarly named one', async () => {
+  const w = world();
+  const similar = [{ full_name: 'acme/sketchpad', name: 'sketchpad', stargazers_count: 4200, private: false, license: { spdx_id: 'MIT' } }];
+  const fetcher = async (url, init) => {
+    const u = String(url);
+    if (u.startsWith('https://api.github.com/search/repositories') && /Doodle|Notion/.test(u)) return json({ items: similar });
+    return w.fetcher(url, init);
+  };
+  const che = cheWith({ ...w, fetcher }, { fetcher });
+  const asked = await che.say('Investigate the Doodle app and tell me how its features work.');
+  assert.equal(asked.ok, false);
+  assert.match(asked.text, /did not guess[\s\S]*1\. acme\/sketchpad \(4200 stars\)[\s\S]*Say the number/);
+  assert.ok(!w.calls.some((c) => c.url.startsWith('https://api.github.com/repos/acme/sketchpad/git/trees/')), 'nothing was read from the similar repository');
+  assert.equal(await che.say('number two', { history: [{ role: 'assistant', content: asked.text }] }).then((r) => r?.ok ?? null), null, 'no second candidate: not taken as a choice');
+  const picked = await che.say('number one', { history: [{ role: 'assistant', content: asked.text }] });
+  assert.equal(picked.ok, true);
+  assert.match(picked.text, /acme\/sketchpad/);
+  assert.ok(w.calls.some((c) => c.url.startsWith('https://api.github.com/repos/acme/sketchpad/git/trees/')), 'the chosen repository was read');
+
+  const listed = await che.say('Investigate the Notion app');
+  assert.match(listed.text, /App Store listing/);
+  const { investigations } = await reaInvestigations(che.store, ENV, { fetcher, now: T0 });
+  const notion = investigations.find((i) => /Notion/.test(i.target.label));
+  assert.equal(notion.target.kind, 'app_store', 'the verified store listing is the source');
+  assert.match(notion.alternatives.join(' '), /acme\/sketchpad .*not confirmed to be this app/);
+  const phrase = notion.alternatives.join(' ').match(/say "([^"]+)"/)[1];
+  assert.equal(parseReaRequest(phrase)?.command, 'inspect', 'the phrase CHE suggests is one REA understands');
+  assert.equal(identifyTarget(phrase)?.full_name, 'acme/sketchpad');
+});
+
+test('Codex #324: reading investigations does not re-verify a finished build on GitHub', async () => {
+  const head = 'd'.repeat(40);
+  const w = world({ prs: { 412: { pr: { number: 412, state: 'open', draft: true, merged: false, head: { sha: head }, html_url: 'https://github.com/Vondada/chey-app/pull/412' }, files: [{ filename: 'test/che_share_test.dart' }], checks: [{ name: 'analyze', status: 'completed', conclusion: 'success' }], workflows: greenWorkflows(head) } } });
+  const che = cheWith(w);
+  await che.say('Investigate https://github.com/acme/sketchpad');
+  await che.say('REA compare');
+  const build = await che.say('Build those approved features into yourself.');
+  che.jobs.get(build.build_job_id).status = 'complete';
+  che.jobs.get(build.build_job_id).result = 'I opened draft pull request #412: https://github.com/Vondada/chey-app/pull/412.';
+  assert.match((await che.say('REA verify')).text, /: passed\./);
+  const prReads = () => w.calls.filter((c) => c.url.includes('/pulls/412')).length;
+  const before = prReads();
+  for (let i = 0; i < 3; i++) {
+    await refreshInvestigations(che.store, ENV, { fetcher: w.fetcher, now: T0 + i * 600_000, jobLookup: che.opts.jobLookup });
+    await reaInvestigations(che.store, ENV, { fetcher: w.fetcher, now: T0 + i * 600_000, jobLookup: che.opts.jobLookup });
+  }
+  assert.equal(prReads(), before, 'a passed build is not fetched again on every read');
+  assert.match((await che.say('REA verify')).text, /: passed\./);
+  assert.ok(prReads() > before, 'asking "REA verify" still reads GitHub fresh');
 });
