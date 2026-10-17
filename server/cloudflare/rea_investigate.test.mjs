@@ -75,6 +75,8 @@ const WEB_RECORD = (jobId) => ({
   limitations: ['Only the first screen was captured.'],
 });
 
+import { dnsAnswer } from './fixtures/public_dns.mjs';
+
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 // Both always-on pull-request workflows, finished green on `head`.
 const greenWorkflows = (head, event = 'pull_request') => [
@@ -90,6 +92,8 @@ function world(opts = {}) {
     const u = String(url);
     const method = String(init.method || 'GET').toUpperCase();
     calls.push({ url: u, method, body: init.body ? JSON.parse(init.body) : null });
+    const dns = dnsAnswer(u, { private: opts.privateHosts || [] });
+    if (dns) return dns;
     if (u === 'https://api.github.com/repos/acme/sketchpad') return state.metaStatus === 200 ? json({ full_name: 'acme/sketchpad', private: false, default_branch: 'main', license: { spdx_id: 'MIT', name: 'MIT License' }, description: 'Notes and sketches', stargazers_count: 4200, topics: ['notes'], homepage: 'https://sketchpad.example.org' }) : json({ message: 'unavailable' }, state.metaStatus);
     if (u.startsWith('https://api.github.com/repos/acme/sketchpad/commits/')) return json({ sha: state.sha });
     if (u.startsWith('https://api.github.com/repos/acme/sketchpad/git/trees/')) return state.treeStatus === 200 ? json({ sha: state.sha, tree: TREE.map((path) => ({ path, type: 'blob' })) }) : json({ message: 'API rate limit exceeded' }, state.treeStatus);
@@ -270,6 +274,7 @@ test('robots.txt applies to a disallowed redirect path on the same origin', asyn
   const urls = [];
   const fetcher = async (url) => {
     const href = String(url);
+    if (dnsAnswer(href)) return dnsAnswer(href);
     urls.push(href);
     if (href === 'https://shop.example.com/robots.txt') {
       return new Response('User-agent: *\nDisallow: /private', { status: 200 });
@@ -825,4 +830,48 @@ test('Codex #324: asking about the same app by name again reuses the investigati
   w.state.sha = 'f'.repeat(40);
   const moved = await che.say('Investigate the Sketchpad app');
   assert.notEqual(moved.investigation_id, first.investigation_id, 'a new commit is investigated again');
+});
+
+test('Codex #324: a public-looking name that points at a private address is never read, at the start or after a redirect', async () => {
+  const { privateIp, publicDns } = await import('./library.js');
+  for (const ip of ['10.0.0.7', '127.0.0.1', '169.254.169.254', '172.16.3.4', '192.168.1.1', '100.64.0.1', '0.0.0.0', '224.0.0.1', '::1', 'fe80::1', 'fc00::5', '::ffff:10.0.0.1', '64:ff9b::a00:1']) assert.equal(privateIp(ip), true, ip);
+  for (const ip of ['93.184.216.34', '8.8.8.8', '2606:4700::1111']) assert.equal(privateIp(ip), false, ip);
+
+  const inside = world({ privateHosts: ['shop.example.com'] });
+  const che = cheWith(inside);
+  const out = await che.say('Investigate https://shop.example.com/');
+  assert.match(out.text, /points at a private network address \(10\.0\.0\.7\)/);
+  assert.ok(!inside.calls.some((c) => c.url.startsWith('https://shop.example.com/')), 'neither robots.txt nor the page was requested');
+
+  const hop = world({ privateHosts: ['private.example.net'] });
+  const che2 = cheWith(hop);
+  const moved = await che2.say('Investigate https://hop.example.com/');
+  assert.match(moved.text, /private\.example\.net points at a private network address/);
+  assert.ok(!hop.calls.some((c) => c.url.startsWith('https://private.example.net/')), 'the redirect target on a private address was never requested');
+
+  const silent = await publicDns('shop.example.com', async () => new Response('nope', { status: 503 }));
+  assert.equal(silent.ok, false, 'a DNS answer that cannot be read is refused');
+});
+
+test('Codex #324: REA verify reads every page of changed files before saying no test changed', async () => {
+  const { verifyBuild } = await import('./rea_features.js');
+  const head = 'c'.repeat(40);
+  const pages = { 1: Array.from({ length: 100 }, (_, i) => ({ filename: `lib/a${i}.dart` })), 2: Array.from({ length: 100 }, (_, i) => ({ filename: `lib/b${i}.dart` })), 3: [{ filename: 'test/late_test.dart' }] };
+  const asked = [];
+  const fetcher = async (url) => {
+    const u = String(url);
+    if (u.endsWith('/pulls/5')) return json({ number: 5, state: 'open', draft: true, head: { sha: head }, html_url: 'https://github.com/Vondada/chey-app/pull/5' });
+    const files = u.match(/\/pulls\/5\/files\?per_page=100(?:&page=(\d+))?$/);
+    if (files) { asked.push(Number(files[1] || 1)); return json(pages[Number(files[1] || 1)] || []); }
+    if (u.includes('/check-runs')) return json({ check_runs: [{ name: 'analyze', status: 'completed', conclusion: 'success' }] });
+    if (u.includes('/actions/runs?head_sha=')) return json({ workflow_runs: greenWorkflows(head) });
+    return json({}, 404);
+  };
+  const result = await verifyBuild(ENV, 5, fetcher);
+  assert.deepEqual(asked, [1, 2, 3]);
+  assert.equal(result.state, 'passed');
+  assert.deepEqual(result.tests_changed, ['test/late_test.dart']);
+  pages[2] = null;
+  const broken = async (url) => (String(url).endsWith('&page=2') ? json({ message: 'rate limited' }, 403) : fetcher(url));
+  assert.equal((await verifyBuild(ENV, 5, broken)).state, 'pending', 'a page that failed leaves the files unread, never "no test changed"');
 });

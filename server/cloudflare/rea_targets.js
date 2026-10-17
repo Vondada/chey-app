@@ -395,6 +395,8 @@ export async function robotsAllows(url, fetcher = fetch, { timeoutMs = 10_000 } 
   let parsed;
   try { parsed = new URL(url); } catch (_) { return { allowed: false, reason: 'That link is not valid.' }; }
   const page = await fetchPublicPage(`${parsed.origin}/robots.txt`, fetcher, { maxBytes: 512 * 1024, userAgent: UA, timeoutMs }).catch(() => ({ error: 'unreachable' }));
+  // The site's name points at a private address (or its DNS cannot be checked): nothing is read.
+  if (page.dns) return { allowed: false, checked: false, unreachable: !page.refused, reason: page.error };
   const missing = page.error && ((page.status >= 400 && page.status < 500) || page.error === 'The page kept redirecting.');
   if (missing || (!page.error && !page.raw)) return { allowed: true, checked: false };
   if (page.error) {

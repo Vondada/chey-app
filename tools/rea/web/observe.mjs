@@ -122,9 +122,11 @@ function writeRecord(out, record, shots = []) {
 // a 5xx answer, a redirect to an address that is not public) means do not open anything.
 const UNREACHABLE = (why) => ({ allowed: false, unreachable: true, rule: '', note: `${why} RFC 9309 treats an unreachable robots.txt as asking automated visitors not to open the site, so CHE stopped. Try again later.` });
 
-async function robotsCheck(url) {
-  const target = new URL(url);
-  let address = `${target.origin}/robots.txt`;
+// robots.txt is read once per origin per run; every later check of that origin reuses it.
+const ROBOTS = new Map();
+
+async function robotsFor(origin) {
+  let address = `${origin}/robots.txt`;
   for (let hop = 0; hop <= 5; hop++) {
     if (webTargetProblem(address) || (await resolvesPrivate(new URL(address).hostname))) {
       return UNREACHABLE('robots.txt redirected to an address that is not public, so it could not be read.');
@@ -142,16 +144,23 @@ async function robotsCheck(url) {
     }
     if (response.status >= 400 && response.status < 500) {
       response.body?.cancel().catch(() => {});
-      return { allowed: true, note: '' };
+      return { text: '' };
     }
     if (!response.ok) {
       response.body?.cancel().catch(() => {});
       return UNREACHABLE(`robots.txt answered HTTP ${response.status}.`);
     }
-    const verdict = robotsVerdict(await readCapped(response, 512 * 1024), `${target.pathname}${target.search}`, REA_ROBOTS_AGENTS.browser);
-    return { ...verdict, note: '' };
+    return { text: await readCapped(response, 512 * 1024) };
   }
-  return { allowed: true, note: 'robots.txt kept redirecting, so it was treated as missing (RFC 9309), which allows this page.' };
+  return { text: '', note: 'robots.txt kept redirecting, so it was treated as missing (RFC 9309), which allows this page.' };
+}
+
+async function robotsCheck(url) {
+  const target = new URL(url);
+  if (!ROBOTS.has(target.origin)) ROBOTS.set(target.origin, robotsFor(target.origin));
+  const robots = await ROBOTS.get(target.origin);
+  if (robots.unreachable) return robots;
+  return { ...robotsVerdict(robots.text, `${target.pathname}${target.search}`, REA_ROBOTS_AGENTS.browser), note: robots.note || '' };
 }
 
 // Why a robots verdict stops the run: the site's own rule (`ruled`), or robots.txt being unreachable.
@@ -265,6 +274,17 @@ async function guard(context, net) {
           return await route.abort('blockedbyclient');
         }
         return await route.fulfill({ response });
+      }
+      // Other documents (iframes, in any frame) and the data requests a page makes are crawl
+      // targets too: a path robots.txt disallows is never requested. Scripts, styles, images and
+      // fonts the page needs to draw itself are fetched as a browser would.
+      if (['document', 'xhr', 'fetch'].includes(request.resourceType())) {
+        const target = request.url();
+        if (!verdicts.has(target)) verdicts.set(target, await robotsCheck(target));
+        if (!verdicts.get(target).allowed) {
+          net.robots += 1;
+          return await route.abort('blockedbyclient');
+        }
       }
       if (request.resourceType() === 'script') net.scripts.add(host);
       return await route.continue();
@@ -636,7 +656,7 @@ async function interact(page, out) {
 async function runBrowser(url, base, limitations) {
   const deadline = Date.now() + BUDGET_MS;
   const left = (cap) => Math.max(1, Math.min(cap, deadline - Date.now()));
-  const net = { blocked: 0, held: 0, scripts: new Set(), consoleErrors: 0 };
+  const net = { blocked: 0, held: 0, robots: 0, scripts: new Set(), consoleErrors: 0 };
   const shots = [];
   let browser = null;
   let record = null;
@@ -663,6 +683,7 @@ async function runBrowser(url, base, limitations) {
     record.screenshots = shots.map(({ buffer, ...shot }) => shot);
     if (net.blocked) limitations.push(`${net.blocked} request${net.blocked === 1 ? '' : 's'} to private or local network addresses ${net.blocked === 1 ? 'was' : 'were'} blocked.`);
     if (net.held) limitations.push(`${net.held} later request${net.held === 1 ? '' : 's'} that would have left the page or sent data ${net.held === 1 ? 'was' : 'were'} stopped.`);
+    if (net.robots) limitations.push(`${net.robots} frame or data request${net.robots === 1 ? '' : 's'} to a path robots.txt disallows ${net.robots === 1 ? 'was' : 'were'} not made.`);
     record.limitations = [...STANDARD_LIMITATIONS, ...limitations];
     return { record, shots };
   };

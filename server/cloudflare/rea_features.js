@@ -503,9 +503,21 @@ export async function verifyBuild(env, prNumber, fetcher = fetch) {
   const pr = await get(`/pulls/${Number(prNumber)}`);
   if (!pr.ok) return { state: 'pending', checks: [], note: `GitHub did not return pull request #${prNumber} (status ${pr.status || 'none'}).` };
   const head = String(pr.data?.head?.sha || '');
+  // Every page of the changed files (GitHub lists 100 per page, up to 3,000 files), so a test
+  // file past the first page still counts. A page that fails leaves the list unread.
+  const allFiles = async () => {
+    const out = [];
+    for (let page = 1; page <= 30; page++) {
+      const part = await get(`/pulls/${Number(prNumber)}/files?per_page=100${page > 1 ? `&page=${page}` : ''}`);
+      if (!part.ok || !Array.isArray(part.data)) return part;
+      out.push(...part.data);
+      if (part.data.length < 100) break;
+    }
+    return { ok: true, status: 200, data: out };
+  };
   const [runs, files, workflowRuns] = await Promise.all([
     get(`/commits/${head}/check-runs?per_page=50`),
-    get(`/pulls/${Number(prNumber)}/files?per_page=100`),
+    allFiles(),
     get(`/actions/runs?head_sha=${head}&per_page=50`),
   ]);
   const checks = (runs.data?.check_runs || []).map((r) => ({ name: clip(r.name, 80), state: r.status === 'completed' ? clip(r.conclusion || 'unknown', 20) : clip(r.status, 20), url: String(r.html_url || '') }));

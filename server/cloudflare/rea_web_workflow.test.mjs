@@ -366,6 +366,16 @@ test('Codex #324: an unreachable robots.txt (HTTP 503) stops the browser before 
   assert.equal(missing.record.state, 'complete', 'a missing robots.txt (404) allows the page');
 });
 
+test('Codex #324: an iframe or data request into a robots-disallowed path is never made, and the record says so', { skip: E2E, timeout: 120_000 }, async () => {
+  const { record, log } = await observeFixture('/framed');
+  assert.equal(record.state, 'complete');
+  assert.equal(log.some((e) => e.path.startsWith('/private/')), false, 'neither the iframe nor the fetch reached /private/');
+  assert.equal(log.some((e) => e.path === '/open-data'), true, 'an allowed data request still goes out');
+  // The page is opened at desktop and phone width: the iframe and the fetch are refused each time.
+  assert.match(record.limitations.join(' '), /4 frame or data requests to a path robots\.txt disallows were not made/);
+  assert.equal(log.filter((e) => e.path === '/robots.txt').length, 1, 'robots.txt is read once per origin');
+});
+
 test('robots.txt, bot checks and sign-in walls stop the observation with a refusal', { skip: E2E, timeout: 120_000 }, async () => {
   const robots = await observeFixture('/private/page');
   assert.equal(robots.record.state, 'refused');
