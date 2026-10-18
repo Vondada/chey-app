@@ -77,7 +77,8 @@ test('the Brain endpoints are the owner’s only', async (t) => {
   assert.equal((await che.call('/api/brain/push', { method: 'POST', body: { ops: [] } })).status, 401);
   const status = await (await che.call('/api/brain/status', { token: che.token })).json();
   assert.equal(status.available, true);
-  assert.equal(status.records, 0);
+  assert.equal(status.records, 1, 'a fresh Brain holds only CHE herself (che:core)');
+  assert.equal(status.by_kind.core, 1);
   assert.equal(status.regions.length, 16);
 });
 
@@ -180,7 +181,9 @@ test('a concurrent edit from the phone is kept as a conflict, never dropped, and
   assert.equal(now.body, 'The boiler service is every September.');
   assert.equal(now.rev, 3);
   const digest = (await (await che.call('/api/brain/status', { token: che.token })).json()).digest;
-  assert.equal(digest.sum, fnv1a32('note:x:3'), 'one record, so the digest is its own id:rev hash');
+  const core = await (await che.call('/api/brain/record?id=che:core', { token: che.token })).json();
+  assert.equal(digest.count, 2, 'the note and CHE herself');
+  assert.equal(digest.sum, (fnv1a32('note:x:3') + fnv1a32(`che:core:${core.rev}`)) % 4294967296, 'the digest is the sum of id:rev hashes');
 });
 
 test('a memory deleted on the phone leaves CHE’s memory list and stays deleted through the next projection; an edit there changes its words here', async (t) => {
