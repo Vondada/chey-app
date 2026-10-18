@@ -62,7 +62,7 @@ import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook,
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { LIVE_STATE, liveBacktest, liveDashboard, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
 import { liveIntent, liveReply } from './trading_live_chat.js';
-import { sanitizeOwnerText } from './che_errors.js';
+import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
@@ -5713,18 +5713,23 @@ export class CheState extends DurableObject {
         const library = () => { try { return new CheLibrary(this.ctx.storage).list(); } catch (_) { return []; } };
         // The Office projection owns task records (attribution, handoffs, outcomes); the legacy one skips them.
         const projectAll = () => { projectLegacyState(brain, data, { library: library(), tasks: false }); projectOfficeExperience(brain, data); };
+        // The projection reads every legacy row, so status and sync pulls run it at most every ten
+        // minutes (a pull from the start always). On the Workers Free plan rows read are a daily
+        // allowance for the whole account; spending it makes every stateful request fail until 00:00 UTC.
+        const projectionDue = () => !brain.init() || Date.now() - (Date.parse(brain.meta('legacy_projection', null)?.at || '') || 0) > 10 * 60_000;
         if (path === '/api/brain/status' && request.method === 'GET') {
-          projectAll();
+          if (projectionDue()) projectAll();
           return json(brain.status());
         }
         if (path === '/api/brain/changes' && request.method === 'GET') {
           // Each sync pull also moves the legacy stores a step further into the Brain: a pull from
           // the start (since=0) always, any other at most every ten minutes (the projection reads
           // every legacy row).
-          const lastProjection = Date.parse(brain.status().legacy_projection?.at || '') || 0;
-          if (!Number(q.get('since')) || Date.now() - lastProjection > 10 * 60_000) projectAll();
+          if (!Number(q.get('since')) || projectionDue()) projectAll();
           await backfillConversations(brain, this.ctx.storage, { batch: 100 }).catch(() => null);
-          return json({ ...brain.changes({ since: q.get('since'), limit: q.get('limit') }), digest: brain.digest() });
+          const page = brain.changes({ since: q.get('since'), limit: q.get('limit') });
+          // The phone checks the digest only after the last page, so only the last page carries it.
+          return json(page.more ? page : { ...page, digest: brain.digest() });
         }
         if (path === '/api/brain/push' && request.method === 'POST') {
           const ops = Array.isArray(body.ops) ? body.ops.slice(0, 500) : [];
@@ -5788,7 +5793,7 @@ export class CheState extends DurableObject {
             });
           }
           if (stateChanged) await this.ctx.storage.put('che', data);
-          return json({ results, seq: brain.status().seq, digest: brain.digest() });
+          return json({ results, seq: brain.init() ? Number(brain.meta('seq', 0)) || 0 : 0, digest: brain.digest() });
         }
         if (path === '/api/brain/search' && request.method === 'GET') {
           return json({ hits: brain.search(q.get('q') || '', { limit: q.get('limit'), region: q.get('region') || '' }) });
@@ -10567,6 +10572,20 @@ export class CheState extends DurableObject {
       }
       // Log the real cause; tell the phone what failed without internals.
       console.error('CHE request failed', error?.name, error?.message, error?.diagnostic || '');
+      // Cloudflare's own daily allowance (Workers Free plan) is said as exactly that, with its reset
+      // time, so the owner and the other AIs see the real cause instead of a generic outage.
+      const limit = cloudDailyLimit(error);
+      if (limit) {
+        const response = json({
+          detail: limit.detail,
+          category: 'cloud_daily_limit',
+          cloud_error: limit.cloud_error,
+          resets_at: limit.resets_at,
+          retryable: true,
+        }, 503);
+        response.headers.set('Retry-After', String(limit.retry_after_s));
+        return response;
+      }
       const safe = error?.owner_safe
         ? String(error.message || '').slice(0, 220)
         : "I couldn't finish that just now, sir. Nothing was saved; please ask me again.";
