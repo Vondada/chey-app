@@ -64,6 +64,15 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-18 ~22:20 UTC — production 503 CAUSE CONFIRMED: Cloudflare Workers Free daily Durable Object rows-read allowance used up; resets 00:00 UTC; #343 and #341 MERGED and live)
+
+- **Cause, from production itself:** deploy run 39171339178 (1aaee54 live) — the memory check's pairing got HTTP 503 `cloud_daily_limit`, "free daily allowance for rows read is used up … resets at 00:00 UTC (7:00 PM CDT)". This is Cloudflare's own error, classified by `cloudDailyLimit()` (che_errors.js); nothing was guessed. Every stateful route fails until the reset; `/health` stays 200. Production logs were NOT read (a log-tail workflow was refused by the session's permission rules).
+- **Fix to stop it recurring (#343, ed9670a, live):** Brain sync pages no longer run seven whole-table scans plus a digest scan each (cached per Durable Object until seq moves; digest only on the last page; projection at most every 10 min). Daily-limit errors now answer 503 `cloud_daily_limit` with the reset time and Retry-After (≤280 chars for the phone), also when the Durable Object call itself is refused.
+- **#341 (1aaee54, live):** trading engine review fixes; deploy check prints paper trading; the memory check resets only an object positively named `memory-truth-probe` (never the owner's); a failed pairing prints its HTTP status and detail.
+- **NOT verified:** paper-trading ticks since the 22:00 UTC Globex open (storage refused, so the engine cannot have run); whether usage after 00:00 UTC stays under the allowance (other heavy readers are unmeasured without the Cloudflare dashboard). No trade, fill or order is claimed.
+- **Owner-only:** Workers Paid lifts the daily allowance but costs money — the owner's choice only. Cloudflare dashboard → Workers & Pages → chey-app → Metrics/Logs shows which requests read the most rows.
+- **Next AI:** after 00:00 UTC, confirm a stateful route answers (re-run the deploy check or the owner opens the app), then verify forward paper ticks and the Trading Room panel; then Voice #338, Brain #337. ElevenLabs is out of credits (owner cap; CHE speaks with Fish).
+
 ## 2. Current position (Claude, 2026-10-18 ~18:45 UTC — the whole Brain stack is MERGED and LIVE: #331, #332, #333, #334; GPU benchmark draft PR #335 waits for the owner's iPhone run)
 
 **Merged today, in order, each squash with `[worker-deploy]`, each deploy run green and the live-commit check VERIFIED:**
