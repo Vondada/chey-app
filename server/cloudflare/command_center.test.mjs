@@ -196,6 +196,9 @@ test('3. a slash command and its plain-English request reach the same handler', 
   assert.equal(review.modelCalls, 0);
   assert.match(review.reply, /no Brain review yet/i);
   assert.equal((await che.say('/che-brain-review')).route, 'che_brain_review');
+  // A question about what the owner himself said is his memory question, even when it names the review.
+  assert.equal((await che.say('What have I told you about my brain review?')).route, 'che_memory_provenance');
+  assert.notEqual((await che.say('Did I ask you for a brain review yesterday?')).route, 'che_brain_review');
   assert.deepEqual(parseSlashCommand('/Trade-Chart  NQ please'), { name: 'trade-chart', command: commandById('trade-chart'), input: 'NQ please' });
   assert.equal(parseSlashCommand('Analyze the NQ chart'), null);
 });

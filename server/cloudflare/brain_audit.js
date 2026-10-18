@@ -68,6 +68,14 @@ function count(records, test) {
   return records.filter(test).length;
 }
 
+/** Records the Brain writes about itself: reviews (computed or the model's nightly one), audits, auditor output. */
+export function isBookkeeping(record) {
+  if (!record) return false;
+  const id = String(record.id || '');
+  return record.kind === 'daily_review' || record.kind === 'audit' || record.origin === 'auditor'
+    || id.startsWith('review:') || id.startsWith('audit:') || record.source?.kind === 'nightly_review';
+}
+
 /**
  * The next-morning review of one day, from the Brain's records only. Returns
  * { written: false, reason } when the day had no activity, so nothing is produced
@@ -80,7 +88,10 @@ export function buildDailyReview(store, { now = new Date().toISOString(), since,
   const sinceIso = since || new Date(nowMs - DAY_MS).toISOString();
   const day = dayOf(now);
   const id = `review:brain:${day}`;
-  const activity = store.changedSince(sinceIso).filter((r) => r.id !== id && !r.id.startsWith('audit:'));
+  // The Brain's own bookkeeping is never activity: yesterday's computed review, significance audits,
+  // the model's nightly review projected from the state blob, and anything the auditor wrote. A
+  // review that counted those would write itself again every morning.
+  const activity = store.changedSince(sinceIso).filter((r) => !isBookkeeping(r) && r.id !== id);
   if (!activity.length) return { written: false, reason: 'No Brain activity since the last review.', since: sinceIso };
 
   const attested = activity.filter((r) => ['owner_attested', 'verified_source'].includes(r.verification));
@@ -217,11 +228,20 @@ export function runBrainMaintenance(store, { now = new Date().toISOString(), sin
 export function brainReviewIntent(message) {
   const text = String(message || '').trim().replace(/^(?:hey|hi|ok|okay)?[,\s]*(?:che|chay|chey|shay)\b[,:]?\s*/i, '');
   if (!text || text.length > 160) return false;
-  if (/\b(?:build|fix|change|implement|delete|remove|clear|run\s+the\s+review\s+again|regenerate)\b/i.test(text)) return false;
-  return /\b(?:brain|daily|morning|nightly|night['’]?s|significance)\s+(?:review|audit|report|summary|conclusions?)\b/i.test(text)
-    || /\b(?:read|give|tell|show)\s+(?:me\s+)?(?:my|the|today['’]?s|this\s+morning['’]?s)\s+(?:brain\s+)?(?:review|audit)\b/i.test(text)
-    || /\bwhat\s+did\s+(?:your|the)\s+(?:brain\s+)?(?:audit|review|auditor)\s+(?:find|say|conclude)\b/i.test(text)
-    || /\bwhat(?:['’]s|\s+is)\s+(?:in\s+)?(?:my|the|today['’]?s)\s+(?:brain\s+)?(?:review|audit)\b/i.test(text);
+  // Work on the review, or a review of something else (code, a plan, a website), is not a request to hear it.
+  if (/\b(?:build|fix|change|implement|delete|remove|clear|run\s+the\s+review\s+again|regenerate|rebuild|redo|rewrite|code|repo|pull\s+request|pr|website|plan|spending|log|logs|trail)\b/i.test(text)) return false;
+  // What the owner himself said or asked is an owner-memory question, answered from his own words, never with the review.
+  if (/\b(?:what\s+(?:have|did)\s+i\s+(?:told|tell|say|said|ask|asked|mention)|did\s+i\s+(?:ask|say|tell|mention)|have\s+i\s+(?:asked|said|told|mentioned))\b/i.test(text)) return false;
+  const notAbout = "(?!\\s+(?:of|about|for|on)\\b)";
+  const brainWord = /\b(?:brain|significance|auditor)\b/i.test(text);
+  if (brainWord && /\b(?:review|audit|conclusions?|flag(?:ged)?|verification|learn(?:ed|t)?|happened|find|found)\b/i.test(text)) return true;
+  if (new RegExp(`\\b(?:daily|morning|nightly|night['’]?s|today['’]?s|todays|this\\s+morning['’]?s)\\s+(?:brain\\s+)?(?:review|audit)\\b${notAbout}`, 'i').test(text)) return true;
+  if (new RegExp(`\\b(?:read|give|tell|show)\\s+(?:me\\s+)?(?:my|the|today['’]?s|todays|this\\s+morning['’]?s)\\s+(?:brain\\s+)?(?:review|audit)\\b${notAbout}`, 'i').test(text)) return true;
+  if (/\b(?:what\s+)?did\s+(?:your|the)\s+(?:brain\s+)?(?:audit|review|auditor)\s+(?:find|say|conclude|flag)\b/i.test(text)) return true;
+  if (new RegExp(`\\bwhat(?:['’]s|\\s+is)\\s+(?:in\\s+)?(?:my|the|today['’]?s|todays)\\s+(?:brain\\s+)?review\\b${notAbout}`, 'i').test(text)) return true;
+  if (/\bwhat\s+did\s+you\s+(?:conclude|learn|find)\s+(?:last\s+night|overnight|this\s+morning)\b/i.test(text)) return true;
+  if (/\bwhich\s+records\s+need\s+verification\b|\bis\s+there\s+a\s+(?:brain\s+)?review\s+today\b/i.test(text)) return true;
+  return /^(?:(?:brain|daily|morning)\s+)?review(?:\s+please)?[.!?]?$/i.test(text);
 }
 
 /** The spoken review for the owner, every line from the stored record; honest when there is none. */
@@ -254,9 +274,11 @@ export function speakReview(latest) {
 /** The latest daily review and audit for the morning. */
 export function latestReview(store) {
   if (!store.init()) return { review: null, audit: null };
-  const pick = (kind) => {
-    const row = store.rows("SELECT id FROM brain_records WHERE kind = ? AND deleted = 0 ORDER BY seq DESC LIMIT 1", kind)[0];
+  // Only the computed records: the model's nightly review (review:<time>, model_opinion) is a different
+  // thing and is never read out as "the Brain review".
+  const pick = (kind, prefix) => {
+    const row = store.rows("SELECT id FROM brain_records WHERE kind = ? AND id LIKE ? AND deleted = 0 ORDER BY seq DESC LIMIT 1", kind, `${prefix}%`)[0];
     return row ? store.get(row.id) : null;
   };
-  return { review: pick('daily_review'), audit: pick('audit') };
+  return { review: pick('daily_review', 'review:brain:'), audit: pick('audit', 'audit:') };
 }

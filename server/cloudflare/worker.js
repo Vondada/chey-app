@@ -8733,14 +8733,16 @@ export class CheState extends DurableObject {
         }
         // "Read me my brain review": the next-morning review, spoken from its stored
         // record, every line computed from the day's Brain records. No model.
-        if (ownerDevice && !body.attachment && brainReviewIntent(rawMessage)) {
+        // A question about what the owner himself said ("what have I told you about my brain
+        // review") is his memory question, below, never the review.
+        const memoryQuestion = ownerDevice && !body.attachment ? ownerMemoryQuestion(rawMessage) : null;
+        if (ownerDevice && !body.attachment && !memoryQuestion && brainReviewIntent(rawMessage)) {
           const latest = latestReview(new CheBrainStore(this.ctx.storage));
           return ndjsonReply(speakReview(latest), { source: 'che_brain_review', model_calls: 0, review_id: latest.review?.id || null });
         }
         // What the owner personally said, confirmed, approved or did is
         // answered from owner-attested records only. A model is never asked
         // to fill this in, so it cannot invent a personal memory.
-        const memoryQuestion = ownerDevice && !body.attachment ? ownerMemoryQuestion(rawMessage) : null;
         if (memoryQuestion) {
           const memoryAnswer = answerOwnerMemoryQuestion(data, memoryQuestion, ownerHistory);
           const receipt = answerEvidenceReceipt({ ownerAttested: memoryAnswer.kind === 'owner_attested' });

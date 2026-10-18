@@ -285,7 +285,7 @@ export class CheBrainStore {
     return rowToRecord(this.rows('SELECT * FROM brain_records WHERE id = ?', String(id || ''))[0]);
   }
 
-  write(record, { rev, origin, deleted = false, now }) {
+  write(record, { rev, origin, deleted = false, now, updatedAt }) {
     const at = now || new Date().toISOString();
     const seq = this.nextSeq();
     const hash = deleted ? '' : contentHash(record);
@@ -294,7 +294,7 @@ export class CheBrainStore {
       record.kind, record.region, record.path, deleted ? '' : record.title, deleted ? '' : record.body,
       JSON.stringify(deleted ? { deleted_at: at } : record.source || {}), record.verification,
       JSON.stringify(deleted ? {} : record.significance || {}), JSON.stringify(deleted ? [] : record.links || []),
-      rev, hash, record.created_at || at, at, clip(origin, 40) || 'cloud', deleted ? 1 : 0, seq,
+      rev, hash, record.created_at || at, updatedAt || at, clip(origin, 40) || 'cloud', deleted ? 1 : 0, seq,
     ];
     if (existing) {
       this.sql.exec('UPDATE brain_records SET kind = ?, region = ?, path = ?, title = ?, body = ?, source = ?, verification = ?, significance = ?, links = ?, rev = ?, hash = ?, created_at = ?, updated_at = ?, origin = ?, deleted = ?, seq = ? WHERE id = ?', ...values, record.id);
@@ -433,14 +433,19 @@ export class CheBrainStore {
 
   /**
    * A new significance for a stored record, from the auditor or the owner. Content is untouched; the
-   * revision moves so every replica picks the new score up. Returns 'reassessed' or 'unchanged'.
+   * revision moves so every replica picks the new score up, but the record keeps its author and its
+   * updated_at: a score is bookkeeping about the record, not activity on it, so the daily review does
+   * not count it and "came from the phone" stays true. Returns 'reassessed' or 'unchanged'.
    */
   reassess(id, significance, { origin = 'auditor', now } = {}) {
     const current = this.get(id);
     if (!current || current.deleted) return { outcome: 'missing', id };
     const next = asObject(significance);
     if (JSON.stringify(next) === JSON.stringify(current.significance || {})) return { outcome: 'unchanged', record: current, rev: current.rev };
-    const written = this.write({ ...current, significance: next, places: this.rows('SELECT region, path FROM brain_places WHERE record_id = ?', id) }, { rev: current.rev + 1, origin, now });
+    const written = this.write(
+      { ...current, significance: next, places: this.rows('SELECT region, path FROM brain_places WHERE record_id = ?', id) },
+      { rev: current.rev + 1, origin: current.origin || origin, now, updatedAt: current.updated_at },
+    );
     return { outcome: 'reassessed', record: this.get(id), rev: written.rev };
   }
 

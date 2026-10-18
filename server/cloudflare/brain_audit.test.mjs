@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BRAIN_REGIONS, CheBrainStore } from './brain_store.js';
-import { auditSignificance, brainReviewIntent, buildDailyReview, latestReview, ownerScore, recordAudit, runBrainMaintenance, speakReview } from './brain_audit.js';
+import { auditSignificance, brainReviewIntent, buildDailyReview, isBookkeeping, latestReview, ownerScore, recordAudit, runBrainMaintenance, speakReview } from './brain_audit.js';
 
 async function sqlStorage() {
   let DatabaseSync;
@@ -130,12 +130,19 @@ test('a quiet day after a busy one writes nothing new', async (t) => {
 });
 
 test('the review intent takes the owner’s ways of asking and nothing else; the spoken review reads the stored record', async (t) => {
-  for (const yes of ['Read me my brain review', 'che, what did your audit find this morning?', 'morning review please', "what's in today's brain review", 'brain review', 'daily review']) {
-    assert.equal(brainReviewIntent(yes), true, yes);
-  }
-  for (const no of ['review my code', 'what did the coding job do', 'delete the brain review', 'review the trading plan', 'how was your night', 'read me my messages']) {
-    assert.equal(brainReviewIntent(no), false, no);
-  }
+  const yes = ['Read me my brain review', 'che, what did your audit find this morning?', 'morning review please', "what's in today's brain review", 'brain review', 'daily review',
+    'review my brain', 'brain audit please', 'read my review', 'did your audit find anything', 'what did you conclude last night', 'read me the audit', 'show me the review',
+    'tell me the review', 'what did the review say about silver', 'what is my brain review', 'read todays review', "read today's review", 'what did your auditor conclude',
+    'brain conclusions', 'significance audit', 'what did your review find', 'what happened yesterday in my brain', 'any conclusions from the brain', 'what did the brain audit flag',
+    'which records need verification', 'is there a review today', 'tell me today’s audit', 'what did you learn last night'];
+  for (const text of yes) assert.equal(brainReviewIntent(text), true, text);
+  // Owner-memory questions, work on the review, reviews of other things, generic reports and summaries: not the review.
+  const no = ['review my code', 'what did the coding job do', 'delete the brain review', 'review the trading plan', 'how was your night', 'read me my messages',
+    "how's my brain doing", "what's the review of the trading plan", 'audit the brain code', 'morning brief', 'give me the morning report', 'daily report',
+    'morning summary please', "what's the daily summary", 'give me the review of my website', "what's the audit of my spending", 'what have I told you about my brain review',
+    'did I ask you for a brain review yesterday', 'what did I say about the morning review', 'run the review again', 'regenerate the brain review', 'rebuild the brain review',
+    'the nightly report', "last night's summary", 'code review please', 'good morning che', 'morning', 'read this', 'read aloud', 'brain status', 'brain conflicts', 'show the audit log'];
+  for (const text of no) assert.equal(brainReviewIntent(text), false, text);
   assert.match(speakReview({ review: null, audit: null }), /no Brain review yet/);
   const storage = await sqlStorage();
   if (!storage) return t.skip('node:sqlite unavailable');
@@ -150,4 +157,46 @@ test('the review intent takes the owner’s ways of asking and nothing else; the
   assert.match(speech, /My reading, which is only a reading: A day where the agents struggled/);
   assert.match(speech, /Unknown: /);
   assert.match(speech, /flagged 1 record for verification\.$/);
+});
+
+test('the Brain\'s own bookkeeping is never a day\'s activity: no review writes itself, and the model\'s nightly review is never read out as the Brain review', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  seed(store);
+  const first = runBrainMaintenance(store, { now: NOW, since: T0 });
+  assert.equal(first.review.written, true);
+  // The next morning, exactly 24 hours on: yesterday's own review and audit are the only records touched since.
+  const sameClock = runBrainMaintenance(store, { now: '2026-10-18T07:07:00.000Z', since: NOW });
+  assert.equal(sameClock.review.written, false, 'yesterday\'s review is not today\'s activity');
+  // The model's nightly review, projected from the state blob (review:<time>, model_opinion), is bookkeeping too.
+  store.put({ id: 'review:2026-10-18T07:09:00.000Z', kind: 'daily_review', region: BRAIN_REGIONS.audits, path: 'Nightly reviews', title: 'Nightly review 2026-10-18', body: 'The model thinks the day went well.', source: { kind: 'nightly_review' }, verification: 'model_opinion' }, { now: '2026-10-18T07:09:30.000Z' });
+  const next = runBrainMaintenance(store, { now: '2026-10-18T07:10:00.000Z', since: '2026-10-17T07:08:00.000Z' });
+  assert.equal(next.review.written, false, 'a projected model review is not activity');
+  assert.equal(store.get('review:brain:2026-10-18'), null);
+  const latest = latestReview(store);
+  assert.equal(latest.review.id, 'review:brain:2026-10-17', 'the computed review, not the model\'s');
+  assert.equal(latest.review.verification, 'verified_source');
+  assert.match(speakReview(latest), /^Your Brain review for 2026-10-17, sir/);
+  for (const id of ['review:brain:2026-10-17', 'audit:2026-10-17', 'review:2026-10-18T07:09:00.000Z']) assert.equal(isBookkeeping(store.get(id)), true, id);
+  assert.equal(isBookkeeping(store.get('mem:1')), false);
+});
+
+test('a re-score is bookkeeping about a record, not activity on it: updated_at and author stay, only the revision moves', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  seed(store);
+  const before = store.get('mem:1');
+  assert.equal(before.origin, 'iphone');
+  storage.sql.exec("UPDATE brain_records SET significance = '{}' WHERE id = 'mem:1'");
+  const audit = auditSignificance(store, { now: '2026-11-20T07:07:00.000Z' });
+  assert.ok(audit.changed >= 1);
+  const after = store.get('mem:1');
+  assert.equal(after.rev, before.rev + 1, 'replicas pick the score up through the revision');
+  assert.equal(after.updated_at, before.updated_at, 'the record was not touched today');
+  assert.equal(after.origin, 'iphone', 'the author stays the phone');
+  assert.equal(after.significance.auditor, 'rules_v1');
+  const quiet = buildDailyReview(store, { now: '2026-11-20T07:07:00.000Z', since: '2026-11-19T07:07:00.000Z' });
+  assert.equal(quiet.written, false, 'a month-old record re-scored today is not today\'s activity');
 });
