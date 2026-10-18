@@ -320,3 +320,53 @@ test('a text whose 500th character is a space: two phone pushes, one row, and th
   state = await (await che.call('/api/state', { token: che.token })).json();
   assert.equal(state.memory_records.length, 0);
 });
+
+test('the Memory screen names a memory by position and words: a moved list never deletes a neighbour, missing words are a 404', async (t) => {
+  const che = await owner();
+  if (!che) return t.skip('node:sqlite unavailable');
+  for (const text of ['First memory.', 'Second memory.', 'Third memory.']) {
+    assert.equal((await che.call('/api/memory/add', { method: 'POST', token: che.token, body: { memory: text } })).status, 200);
+  }
+  let state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.deepEqual(state.memories, ['First memory.', 'Second memory.', 'Third memory.']);
+  // The phone still shows an old list where "First memory." sat at index 1: the words win.
+  assert.equal((await che.call('/api/memory/delete', { method: 'POST', token: che.token, body: { index: 1, text: 'first memory.' } })).status, 200);
+  state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.deepEqual(state.memories, ['Second memory.', 'Third memory.'], 'the named memory went, not the one that moved into its slot');
+  // Words the list no longer has: nothing is deleted.
+  assert.equal((await che.call('/api/memory/delete', { method: 'POST', token: che.token, body: { index: 0, text: 'First memory.' } })).status, 404);
+  state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.equal(state.memories.length, 2);
+  // Index alone (older phones) still works on the current list.
+  assert.equal((await che.call('/api/memory/delete', { method: 'POST', token: che.token, body: { index: 0 } })).status, 200);
+  state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.deepEqual(state.memories, ['Third memory.']);
+  assert.equal((await (await che.call('/api/brain/search?q=second', { token: che.token })).json()).hits.length, 0);
+  assert.equal((await (await che.call('/api/brain/search?q=first', { token: che.token })).json()).hits.length, 0);
+});
+
+test('a delete pushed from the phone tombstones the row\'s twins too, and a clean memory is never refused for a word the 500-char window cuts', async (t) => {
+  const che = await owner();
+  if (!che) return t.skip('node:sqlite unavailable');
+  const head = 'Directions to the gate: '.repeat(25);
+  await che.call('/api/memory/add', { method: 'POST', token: che.token, body: { memory: `${head} ending one.` } });
+  await che.call('/api/memory/add', { method: 'POST', token: che.token, body: { memory: `${head} ending two, with the code left out.` } });
+  let state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.equal(state.memories.length, 1);
+  const row = state.memory_records[0];
+  assert.equal(row.brain_twins?.length, 1);
+  const pushed = await (await che.call('/api/brain/push', { method: 'POST', token: che.token, body: { ops: [{ op_id: 'pd1', type: 'delete', id: `mem:${row.id}` }], device: 'iphone' } })).json();
+  assert.equal(pushed.results[0].outcome, 'deleted');
+  state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.equal(state.memories.length, 0);
+  assert.equal((await (await che.call(`/api/brain/record?id=${row.brain_twins[0]}`, { token: che.token })).json()).deleted, true, 'the twin is gone too');
+  assert.equal((await (await che.call('/api/brain/search?q=gate%20ending', { token: che.token })).json()).hits.length, 0);
+  // A 540-character clean text whose collapsed 500th character cuts "pinnacle" after "pin".
+  const filler = 'The hike was long and the view was worth every step of it. '.repeat(9); // 531 chars
+  const text = `${filler.slice(0, 497)}pinnacle of the whole trip, and we came down before dark.`;
+  assert.equal(text.replace(/\s+/g, ' ').trim().slice(497, 500), 'pin');
+  assert.equal((await che.call('/api/memory/add', { method: 'POST', token: che.token, body: { memory: text } })).status, 200);
+  state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.equal(state.memories.length, 1, 'the clean memory is on the Memory screen');
+  assert.equal((await che.call('/api/memory/add', { method: 'POST', token: che.token, body: { memory: 'My card pin is 1234.' } })).status, 400, 'a real secret is still refused');
+});

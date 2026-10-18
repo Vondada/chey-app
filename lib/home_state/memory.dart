@@ -62,15 +62,20 @@ extension _CheHomeMemory on _CHEHomeState {
   Future<CheBrainSyncReceipt?> _syncBrainReplica() async {
     if (_deviceToken == null || _deviceToken!.isEmpty || _brainSyncing) return null;
     _brainSyncing = true;
+    CheBrainSyncReceipt? receipt;
     try {
-      final receipt = await _brainReplica.sync(cheAgentBaseUrl, _authHeaders, get: _brainGet, post: _brainPost);
+      receipt = await _brainReplica.sync(cheAgentBaseUrl, _authHeaders, get: _brainGet, post: _brainPost);
       if (mounted) _set(() {});
-      return receipt;
     } catch (_) {
       return null;
     } finally {
       _brainSyncing = false;
     }
+    // Changes the phone pushed can move CHE's memory list (a deferred delete, an edit): reload it
+    // so the Memory screen never shows a list the cloud no longer has. The outbox is empty now,
+    // so the reload's own sync pushes nothing and this does not recurse.
+    if ((receipt?.acknowledged ?? 0) > 0 && mounted) await _loadAgentState(silent: true);
+    return receipt;
   }
 
   /// When the cloud cannot be reached, the lists the rooms read come from the replica.
@@ -135,12 +140,15 @@ extension _CheHomeMemory on _CHEHomeState {
   Future<void> deleteMemory(int index) async {
     if (!await _ensurePaired()) return;
 
+    // By position and by words: if the list moved under the owner's finger (a deferred phone push
+    // landed), the Worker deletes the memory with these words or answers 404, never a neighbour.
+    final wanted = index >= 0 && index < savedMemories.length ? savedMemories[index] : '';
     http.Response response;
     try {
       response = await http.post(
         Uri.parse('$cheAgentBaseUrl/api/memory/delete'),
         headers: _authHeaders,
-        body: jsonEncode({'index': index}),
+        body: jsonEncode({'index': index, 'text': wanted}),
       );
     } catch (_) {
       // No connection: the deletion is a tombstone in the Brain replica now and
@@ -168,6 +176,11 @@ extension _CheHomeMemory on _CHEHomeState {
     }
 
     await _loadAgentState(silent: true);
+    if (response.statusCode == 404) {
+      await speakText('That memory was already gone, sir; I refreshed the list.', record: false);
+    } else if (response.statusCode != 200) {
+      await speakText('I could not delete that memory, sir; the cloud answered ${response.statusCode}. Nothing was removed.', record: false);
+    }
   }
 
   Future<void> clearAllMemories() async {

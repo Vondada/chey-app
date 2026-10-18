@@ -243,7 +243,12 @@ test('a secret anywhere in a long record is refused, not only in its first 500 c
   const rejected = store.put(sample({ id: 'note:long', body: long }));
   assert.equal(rejected.outcome, 'rejected');
   assert.equal(store.get('note:long'), null);
-  assert.equal(rememberExchange(store, { id: 'x', message: 'Remember this', reply: long, at: '2026-10-10T10:00:00.000Z' }).outcome, 'rejected');
+  // A reply that carries the secret is withheld; the owner's own words stay, the secret never enters.
+  const exchange = rememberExchange(store, { id: 'x', message: 'Remember this', reply: long, at: '2026-10-10T10:00:00.000Z' });
+  assert.equal(exchange.outcome, 'created');
+  assert.doesNotMatch(store.get('conv:x').body, /hunter2|password/);
+  assert.equal(store.get('conv:x').source.reply_withheld, true);
+  assert.equal(rememberExchange(store, { id: 'y', message: long, reply: 'Noted.', at: '2026-10-10T10:00:00.000Z' }).outcome, 'rejected', 'the owner\'s own words with a secret are refused whole');
 });
 
 test('CHE’s own writes never resurrect a deleted record, and the legacy projection respects the tombstone', async (t) => {
@@ -317,4 +322,17 @@ test('the display copy of a display copy is the same copy, even when the cut lan
     assert.equal(once, once.trim());
     assert.ok(sameDisplayCopy(text, once));
   }
+});
+
+test('an exchange whose reply names something sensitive keeps the owner\'s words with the reply withheld; the owner\'s own secret is refused whole', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const kept = rememberExchange(store, { id: 'x1', message: 'where do you keep what I give you', reply: 'In the vault on the phone, sir; I never store passwords in the cloud.', at: '2026-10-18T10:00:00.000Z' });
+  assert.equal(kept.outcome, 'created');
+  const record = store.get('conv:x1');
+  assert.match(record.body, /^You said: where do you keep what I give you\nCHE answered: \(withheld: the reply named something sensitive\)$/);
+  assert.equal(record.source.reply_withheld, true);
+  assert.equal(rememberExchange(store, { id: 'x2', message: 'my password is hunter2', reply: 'Noted.', at: '2026-10-18T10:01:00.000Z' }).outcome, 'rejected');
+  assert.equal(store.get('conv:x2'), null);
 });

@@ -584,17 +584,24 @@ export function rememberExchange(store, { id, message, reply, at, correction = f
   const answered = String(reply || '').trim();
   if (!id || !said) return { outcome: 'rejected', reason: 'empty' };
   const day = (at || new Date().toISOString()).slice(0, 10);
-  return store.putIfAbsent({
+  const record = (body, source) => ({
     id: `conv:${id}`,
     kind: correction ? 'correction' : 'conversation',
     region: BRAIN_REGIONS.conversations,
     path: correction ? 'Corrections' : `Chat/${day}`,
     title: said.slice(0, 90),
-    body: answered ? `You said: ${said}\nCHE answered: ${answered}` : `You said: ${said}`,
-    source: { kind: 'owner_chat', brainmem_id: id, full_text: true },
+    body,
+    source: { kind: 'owner_chat', brainmem_id: id, full_text: true, ...source },
     verification: 'owner_attested',
     created_at: at,
-  }, { origin: 'cloud' });
+  });
+  const whole = store.putIfAbsent(record(answered ? `You said: ${said}\nCHE answered: ${answered}` : `You said: ${said}`, {}), { origin: 'cloud' });
+  // CHE's reply can name a sensitive thing ("I never store passwords") and trip the gate; the
+  // owner's own words are still his and are kept, with the reply withheld and said so.
+  if (whole.outcome === 'rejected' && answered && isSafeText(said)) {
+    return store.putIfAbsent(record(`You said: ${said}\nCHE answered: (withheld: the reply named something sensitive)`, { reply_withheld: true }), { origin: 'cloud' });
+  }
+  return whole;
 }
 
 /** Owner memory rows (data.memory_records) as Personal Memory records with stable ids. */

@@ -405,4 +405,15 @@ void main() {
     expect(searchMs, lessThan(2000));
     expect(loadMs, lessThan(30000));
   }, timeout: const Timeout(Duration(minutes: 5)));
+
+  test('O: forgetting by words finds a memory whose body is full of whitespace (the raw excerpt collapses short of the display copy)', () async {
+    final brain = CheBrainReplica(directory: await freshDir());
+    final body = List.filled(200, 'ab').join('\n\n');
+    final saved = (await brain.remember(id: 'mem:ws', kind: 'memory', region: 'Personal Memory', body: body))!;
+    expect(saved.inlineBody, isFalse, reason: 'the body lives in its own file');
+    final shown = body.replaceAll(RegExp(r'\s+'), ' ').trim();
+    expect(shown.length, 599);
+    expect(await brain.forgetMemoriesShowing(shown.length > 500 ? shown.substring(0, 500).trimRight() : shown), 1);
+    expect(brain.search('ab'), isEmpty);
+  });
 }

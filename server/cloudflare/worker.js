@@ -5679,6 +5679,10 @@ export class CheState extends DurableObject {
               if (record?.deleted || effective === 'deleted' || op?.type === 'delete') {
                 if (legacy) {
                   const texts = new Set(data.memory_records.filter((item) => item.id === legacyId).map((item) => String(item.text || '').toLowerCase()));
+                  // The row's twins (other records behind the same words) go with it, as on the Memory screen.
+                  for (const twin of Array.isArray(legacy.brain_twins) ? legacy.brain_twins : []) {
+                    try { brain.delete(String(twin), { origin }); } catch (_) {}
+                  }
                   data.memory_records = data.memory_records.filter((item) => item.id !== legacyId);
                   data.memories = (data.memories || []).filter((item) => !texts.has(String(item).toLowerCase()));
                   stateChanged = true;
@@ -5691,7 +5695,7 @@ export class CheState extends DurableObject {
                   // and the Memory screen's delete reaches both (deleteMemoriesShowing). Noted on the row.
                   if (!added.added && added.reason === 'duplicate') {
                     const twin = data.memory_records.find((item) => sameDisplayCopy(item.text, record.body));
-                    if (twin) { twin.brain_twins = [...new Set([...(Array.isArray(twin.brain_twins) ? twin.brain_twins : []), record.id])].slice(-8); stateChanged = true; }
+                    if (twin) { twin.brain_twins = [...new Set([...(Array.isArray(twin.brain_twins) ? twin.brain_twins : []), record.id])]; stateChanged = true; }
                   }
                 } else if (legacy && ['updated', 'merged'].includes(effective) && !sameDisplayCopy(legacy.text, record.body)) {
                   const before = String(legacy.text || '').toLowerCase();
@@ -6930,14 +6934,14 @@ export class CheState extends DurableObject {
           try {
             const brain = new CheBrainStore(this.ctx.storage);
             const current = brain.get(`mem:${brainRow.id}`);
-            if (current && !current.deleted && current.body !== fullText && !fullText.startsWith(current.body)) {
+            if (current && (current.deleted || (current.body !== fullText && !fullText.startsWith(current.body)))) {
               // Same first 500 characters, a different text: the list has one row, the Brain keeps both
               // texts. The second lives under its own id as a twin of the row, so the row's delete
               // reaches it and no earlier words are overwritten.
               const twinId = crypto.randomUUID();
               const put = brain.put(ownerMemoryRecord({ ...brainRow, id: twinId }, fullText), { origin: 'owner' });
               if (['created', 'updated', 'merged', 'unchanged'].includes(put.outcome)) {
-                brainRow.brain_twins = [...new Set([...(Array.isArray(brainRow.brain_twins) ? brainRow.brain_twins : []), `mem:${twinId}`])].slice(-8);
+                brainRow.brain_twins = [...new Set([...(Array.isArray(brainRow.brain_twins) ? brainRow.brain_twins : []), `mem:${twinId}`])];
                 await this.ctx.storage.put('che', data);
               }
             } else {
@@ -6960,7 +6964,17 @@ export class CheState extends DurableObject {
         return json({ ok: true, vector_memory: vectorMemoryReadiness(this.keyEnv || this.env).configured ? 'syncing' : 'not_configured' });
       }
       if (path === '/api/memory/delete') {
-        const index = Number(body.index);
+        // The phone names the memory by position and by its words. The list can move between the
+        // screen's load and this call (a deferred phone push, another device), so when the words at
+        // that position differ, the words decide; words the list no longer holds are a 404, never a
+        // delete of whatever moved into the slot.
+        let index = Number(body.index);
+        const words = String(body.text || '').trim().toLowerCase();
+        const at = (i) => String(data.memories[i] ?? '').toLowerCase();
+        if (words && (!Number.isInteger(index) || index < 0 || index >= data.memories.length || at(index) !== words)) {
+          index = data.memories.findIndex((item) => String(item).toLowerCase() === words);
+          if (index < 0) return json({ detail: 'That memory is no longer in the list.' }, 404);
+        }
         if (!Number.isInteger(index) || index < 0 || index >= data.memories.length) {
           return json({ detail: 'Memory not found.' }, 400);
         }
