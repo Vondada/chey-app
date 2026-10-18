@@ -267,14 +267,14 @@ export function brainReviewIntent(message) {
   // audit find". "Read it" counts only after that noun, never in "find the review in my inbox and read it".
   const asks = new RegExp(`\\b${BRAIN_NOUN}\\b`, 'i').test(text) && (
     // The verb starts its clause ("read me", "now read", "can you read"), so "I've read the brain review" is not asking.
-    new RegExp(`(?:^|[,.;:!?]\\s*|\\b(?:please|can\\s+you|could\\s+you|would\\s+you|will\\s+you|now|then|and|just|want\\s+to|let\\s+me|like\\s+to)\\s+)(?:read|give|tell|show|hear|play)\\b[\\s\\S]{0,20}\\b${BRAIN_NOUN}\\b`, 'i').test(text)
+    new RegExp(`(?:^|[,.;:!?]\\s*|\\b(?:please|can\\s+you|could\\s+you|would\\s+you|will\\s+you|now|then|and|just|want\\s+to|let\\s+me|like\\s+to)\\s+)(?:read|give|tell|show|hear)\\b[\\s\\S]{0,20}\\b${BRAIN_NOUN}\\b`, 'i').test(text)
     || new RegExp(`\\b${BRAIN_NOUN}\\b[\\s\\S]{0,40}\\b(?:read|give|tell|show|play|send)\\s+(?:me\\s+)?(?:it|that)\\b`, 'i').test(text)
     || /\bwhat\s+did\b[\s\S]{0,40}\b(?:audit|review)\b[\s\S]{0,12}\b(?:find|say|conclude|flag)\b/i.test(text)
     || /\bwhat\s+did\s+i\s+miss\s+in\b/i.test(text)
     || /\bdid\s+(?:i\s+miss\s+anything\s+in|(?:your|the)\s+(?:brain\s+)?(?:audit|review)\s+find)\b/i.test(text));
   // "Your review of the contract", "yesterday's review from the doctor": CHE reviewing something else
   // (third review of #337). "Of my brain" is still hers.
-  const aboutOther = new RegExp(`\\b${BRAIN_NOUN}\\s+(?:of|from|on|for|about)\\b(?!\\s+(?:my|the|your)\\s+brain\\b)`, 'i').test(text);
+  const aboutOther = new RegExp(`\\b${BRAIN_NOUN}\\s+(?:of|from|on|for|about)\\b(?!\\s+(?:my|the|your)\\s+brain\\s*(?:[,.!?]|$))`, 'i').test(text);
   if (asks && !aboutOther) return true;
   // "What did the last audit find?" with nothing after it can only mean CHE's; "... about my business taxes" is not.
   if (/^what\s+did\s+(?:the\s+)?last\s+(?:audit|review)\s+(?:find|say|flag|conclude)\s*\??\s*$/i.test(text)) return true;

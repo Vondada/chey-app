@@ -382,7 +382,8 @@ test('an explicit request to hear the review wins over talk about it (review of 
     // CHE's review of something else (third review of #337).
     'read me your review of the contract', 'give me your review of my essay', 'tell me your review of the lease',
     'I want to hear your review of the restaurant', 'what did your review of my car say', 'read me your audit of my budget',
-    "read me yesterday's review from the doctor", 'please read me the daily review from my trading desk', 'show me the morning review of the stock market']) {
+    "read me yesterday's review from the doctor", 'please read me the daily review from my trading desk', 'show me the morning review of the stock market',
+    'read me your review of the brain tumor study', 'play the morning review podcast']) {
     assert.equal(brainReviewIntent(said), false, said);
   }
 });
