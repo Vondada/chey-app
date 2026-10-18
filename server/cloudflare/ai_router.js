@@ -862,7 +862,8 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
       if (budget) {
         const fitted = fitToBudget(shaped.input, budget);
         if (fitted.oversize) {
-          errors.push(`${provider.id}: the newest message is longer than its context budget ${budget}`);
+          // Worded so a size skip is never mistaken for a quota or a busy engine.
+          errors.push(`${provider.id}: skipped, the newest message is too long for it (${budget} characters)`);
           continue;
         }
         shaped.input = fitted;
@@ -1058,6 +1059,13 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   const configured = PROVIDERS.filter((p) => !p.keyless && providerEnabled(env, p)).map((p) => p.id);
   const diagnostic = errors.join(' | ').slice(0, 1500);
   console.log("CHE engine errors:", errors);
+  // Every engine that could answer was too small for the newest message: the owner is told so
+  // plainly (and nothing is queued to retry), instead of hearing that CHE is busy.
+  const tooLong = errors.filter((e) => /newest message is too long for it/.test(e));
+  const otherwise = errors.filter((e) => !/newest message is too long for it|resting|daily budget|cooldown active|deadline/i.test(e));
+  if (tooLong.length && !otherwise.length) {
+    throw makeEngineError({ category: 'message_too_long', diagnostic, configured: configured.length > 0 });
+  }
   throw makeEngineError({
     category: errors.some((e) => /offline|network|abort/i.test(e)) ? 'temporary_cloud_unavailable' : 'temporary_cloud_unavailable',
     quota: errors.some((e) => /quota|allowance|4006|neurons|429|budget/.test(e)),

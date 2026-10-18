@@ -3611,3 +3611,41 @@ test('a chat message too long to take is refused whole, saying so; nothing runs 
   const ok = await chat('Send the draft to Mike, but do not send the email yet.');
   assert.equal(ok.status, 200, 'an ordinary message still goes through');
 });
+
+test('when every reachable engine is too small for the message, CHE says so: no "on it", no queued job (review of #349)', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', GROQ_API_KEY: 'g' };
+  const original = globalThis.fetch;
+  const engines = [];
+  // Only chat requests count (the router may list Groq's models, which sends no message).
+  globalThis.fetch = async (url) => { if (/groq.*\/chat\/completions/.test(String(url))) engines.push(String(url)); return new Response('{}', { status: 404 }); };
+  try {
+    const { chat } = await pairedChat(env, saved);
+    const long = 'Please summarize these meeting notes for me. ' + 'The team reviewed the quarter and agreed on next steps. '.repeat(140) + 'But do not email anyone yet.';
+    assert.ok(long.length > 7000 && long.length < 16000);
+    const res = await chat(long);
+    assert.equal(res.status, 413);
+    const body = await res.json();
+    assert.equal(body.category, 'message_too_long');
+    assert.equal(body.retryable, false);
+    assert.match(body.detail, /too long for the AI engines I can reach right now, sir, so I did nothing with it\. Please send it in parts\./);
+    assert.deepEqual(engines, [], 'the 8,000-character engine was never sent a cut message');
+    assert.doesNotMatch(JSON.stringify(saved.get('che')?.jobs || []), /summarize these meeting notes/, 'nothing was queued to retry');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('a correction re-runs the whole previous turn, its last sentence included (review of #349)', async () => {
+  const saved = new Map();
+  const seen = [];
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async (_m, input) => { if (input?.messages) seen.push(String(input.messages.at(-1).content)); return { response: 'Done, sir.' }; } } };
+  const { chat } = await pairedChat(env, saved);
+  const prev = 'Write up the quarterly notes for Mark. ' + 'The numbers look fine and the team did well this quarter. '.repeat(40) + 'But do not email Mark until Friday.';
+  assert.ok(prev.length > 2000);
+  const res = await chat('No, I said Mike not Mark', { history: [{ role: 'user', content: prev }, { role: 'assistant', content: 'Okay sir.' }] });
+  await res.text();
+  const rerun = seen.find((s) => s.includes('quarterly notes')) || '';
+  assert.ok(rerun.length > 2000, `the re-run carried ${rerun.length} characters`);
+  assert.match(rerun, /But do not email Mike until Friday\.$/, 'the late "do not send" survived, corrected');
+});

@@ -1364,6 +1364,8 @@ function sourceExcerpts(grounding) {
 }
 
 export function busyError(error) {
+  // A message too long for every engine is not busy: waiting will not shorten it.
+  if (error?.category === 'message_too_long') return false;
   // Structured router errors (all engines failed) carry a category; their
   // owner-safe message does not contain "busy", so honour the category too.
   return Boolean(error?.quota || error?.busy || [429, 500, 502, 503, 504].includes(error?.status) ||
@@ -7972,7 +7974,7 @@ export class CheState extends DurableObject {
         const intakeLimit = ownerDevice ? 16000 : 4000;
         if (rawMessage.length > intakeLimit) {
           return json({
-            detail: `That message is ${rawMessage.length.toLocaleString('en-US')} characters, sir, more than the ${intakeLimit.toLocaleString('en-US')} I can take at once, so I did nothing with it. Please send it in parts.`,
+            detail: `That message is ${rawMessage.length.toLocaleString('en-US')} characters${ownerDevice ? ', sir,' : ''} more than the ${intakeLimit.toLocaleString('en-US')} I can take at once, so I did nothing with it. Please send it in parts.`,
             category: 'message_too_long', retryable: false,
           }, 413);
         }
@@ -8061,7 +8063,9 @@ export class CheState extends DurableObject {
           return ndjsonReply(checked.text, { source: 'che_source_check', model_calls: 0, verified: checked.ok, recorded: checked.record.length });
         }
         const lastOwner = [...ownerHistory].reverse().find((h) => h && h.role === 'user');
-        const previousText = String(lastOwner?.content || lastOwner?.text || '').slice(0, 2000);
+        // The whole previous turn (up to the intake limit): a correction re-runs it, so its end ("but do
+        // not send anything to Mark until Friday") must survive (review of #349).
+        const previousText = String(lastOwner?.content || lastOwner?.text || '').slice(0, 16000);
         const correction = detectCorrection(rawMessage, previousText);
         let corrections = await loadCorrections(this.ctx.storage).catch(() => []);
         let message = applyCorrections(rawMessage, corrections);
@@ -10616,7 +10620,7 @@ export class CheState extends DurableObject {
         detail: safe,
         category: error?.category || 'temporary_cloud_unavailable',
         retryable: error?.retryable !== false,
-      }, 503);
+      }, error?.category === 'message_too_long' ? 413 : 503);
     }
   }
 
