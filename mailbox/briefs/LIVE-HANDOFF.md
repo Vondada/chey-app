@@ -64,6 +64,24 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-18 ~18:45 UTC — the whole Brain stack is MERGED and LIVE: #331, #332, #333, #334; GPU benchmark draft PR #335 waits for the owner's iPhone run)
+
+**Merged today, in order, each squash with `[worker-deploy]`, each deploy run green and the live-commit check VERIFIED:**
+1. **#331** → `89dde8c` (Unified Brain phases 1–4; eight review rounds, the last a narrow re-review that found the 160-char title cut "abc pin|nacle" refusing a clean memory → titles now cut at a word boundary, `clipWords`). Live 18:16 UTC.
+2. **#332** → `af2bcb6` (significance auditor + labeled morning review + `/che-brain-review`; three reviews; also fixed main's nightly cron, which threw before any Brain maintenance because `fileTech` was never imported). Live 18:20 UTC.
+3. **#333** → `dcdc450` (CHE core + one brain per internal Office worker, recovery report; three reviews; field-level redaction, truthful `dropped` count, REA targets named by host). Live 18:33 UTC.
+4. **#334** → `254df51` (Brain Room navigation: worker orbs, switcher, crumbs, Back, lenses, detail panel, view controls, quiet states; two reviews). Live 18:41 UTC (Worker version b5862815…). The automatic **Shorebird patch run 39155216401 was in progress** at 18:43; check it with `node .claude/skills/che-release/scripts/release_status.mjs` before telling the owner his phone has the Brain Room update. Not verified on a physical iPhone.
+
+**Open:**
+- **#335 `claude/che-gpu-rendering-bench` @ `d8faa77` (DRAFT, base main)** — GPU directive step 1: renderer audit, bundled offline WebGL/WebGPU bench with a validated bridge and WebGPU→WebGL fallback, Settings → **Rendering benchmark**, Playwright runner, `docs/CHE_GPU_RENDERING.md` with VM numbers. Needs: the owner runs Settings → Rendering benchmark on the iPhone and shares the numbers; then rebase onto main (lib/main.dart moved under #334), review, merge. No renderer switch before a ≥1.5× measured gain on the device.
+- **Activity-status branch** `claude/che-activity-status` (dfd299f): rebase on main, PR, review, merge.
+- The cut-off historical-recovery directive: ask the owner for the text after "Historical external AI correspondence must not be…"; Flagstaff archives on che-mailbox are outside correspondence, never worker experience.
+- Owner owed: the two 17 Oct transcripts; a live free-model coding run; the iPhone benchmark numbers.
+
+**Non-blocking follow-ups recorded in `docs/CHE_UNIFIED_BRAIN.md` (review history) and the PR threads:** Memory-screen delete/clear POSTs have no timeout; offline list newest-first vs cloud oldest-first; online re-save racing a pending offline delete; `MAX_MEMORIES=100`; auditor wordings like "I disagree with the brain review" still read as a review request; `blocked` task status falls to 'unknown'; a retired roster entry still draws on the phone; the offline notice shows for any sync error.
+
+**Process that worked (keep):** one reviewer agent per PR in a read-only worktree, probes under `scratchpad/review_*`; fix in the mechanism with a regression test; `run_checks.sh` gated on every PASS line present (`grep -c` must equal the number of lines the branch's changed paths produce; a Worker-only branch has no Dart lines); stacked rebases with `git rebase --onto <new base> <old base>` so only the branch's own commits replay; appended-test conflicts in `*.test.mjs`/`*_test.dart` keep both blocks and re-add the shared closing `});`.
+
 ## 2. Current position (Claude, 2026-10-18 ~18:40 UTC — Brain stack #331 → #334 re-pushed after reviews 7/3/3/2, every blocker fixed with tests and full checks green; a narrow re-review of #331's last commit running; GPU benchmark draft PR #335 open)
 
 **Merge order and heads** (unchanged procedure: after each merge, rebase the next onto `main`, set its base to `main`, mark ready, squash-merge with `[worker-deploy]` in the title and `expectedHeadSha` = the full head SHA, verify the deploy run and `release_status.mjs`):
