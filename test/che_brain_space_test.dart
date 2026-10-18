@@ -631,4 +631,15 @@ void main() {
       c.dispose();
     });
   });
+
+  test('a tick without a repaint still advances the camera animation (economy mode)', () {
+    final c = CheBrainSpaceController(const []);
+    expect(c.economy, isFalse);
+    final before = c.frame.value;
+    c.tick(1 / 60, repaint: false);
+    expect(c.frame.value, before, reason: 'no paint requested');
+    c.tick(1 / 60);
+    expect(c.frame.value, before + 1);
+    c.dispose();
+  });
 }

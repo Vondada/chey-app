@@ -36,6 +36,7 @@ import '../che_ui/che_theme.dart';
 import '../home/che_memory_brain.dart' show CheMemoryDot, cheMemoryCategoryColor;
 import 'che_brain_navigation.dart';
 import 'che_brain_space_model.dart';
+import 'che_frame_budget.dart';
 
 /// Drives the Brain space: selection, camera flights, clusters, filters.
 class CheBrainSpaceController {
@@ -58,6 +59,10 @@ class CheBrainSpaceController {
 
   /// Facets narrowing the view (verified, recent, archived, personal, outcome, project).
   CheBrainLens lens = CheBrainLens.none;
+
+  /// Adaptive 60/30 frame budget from measured frame times (see che_frame_budget.dart).
+  final CheFrameBudget budget = CheFrameBudget();
+  bool get economy => budget.economy;
 
   /// Internal Office workers with a brain around CHE's (CHE's view only).
   List<CheBrainWorkerOrb> workers = const [];
@@ -559,7 +564,7 @@ class CheBrainSpaceController {
   void _repaint() => frame.value++;
 
   /// Advances animations. Returns true while something is still moving.
-  bool tick(double dt) {
+  bool tick(double dt, {bool repaint = true}) {
     time += dt;
     var moving = false;
     if (_flyT < 1 && _flyFrom != null && _flyTo != null) {
@@ -580,7 +585,7 @@ class CheBrainSpaceController {
       _advanceNeurons(dt);
     }
     _born.removeWhere((_, b) => time - b > 1.2);
-    _repaint();
+    if (repaint) _repaint();
     // Alive: always ticking. Reduce Motion: stop when nothing moves.
     return !reduceMotion || moving || selectedId != null || grabbedId != null;
   }
@@ -897,6 +902,7 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
   @override
   void initState() {
     super.initState();
+    SchedulerBinding.instance.addTimingsCallback(_onTimings);
     c.state.addListener(_wake);
     if (widget.active) {
       CheBrainSpaceController.current = c;
@@ -923,6 +929,7 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
 
   @override
   void dispose() {
+    SchedulerBinding.instance.removeTimingsCallback(_onTimings);
     c.state.removeListener(_wake);
     _holdTimer?.cancel();
     _captionTimer?.cancel();
@@ -942,7 +949,16 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
   void _onTick(Duration elapsed) {
     final dt = _last == Duration.zero ? 1 / 60 : (elapsed - _last).inMicroseconds / 1e6;
     _last = elapsed;
-    if (!c.tick(dt.clamp(0, .05).toDouble())) _ticker.stop();
+    // In economy the camera still advances every tick; the painter runs every other one.
+    if (!c.tick(dt.clamp(0, .05).toDouble(), repaint: c.budget.admitTick())) _ticker.stop();
+  }
+
+  /// Real frame times (build + raster) feed the frame budget while the Brain is on screen.
+  void _onTimings(List<FrameTiming> timings) {
+    if (!widget.active || !_ticker.isActive) return;
+    for (final t in timings) {
+      c.budget.observe(t.totalSpan.inMicroseconds / 1000);
+    }
   }
 
   void _say(String text) {
@@ -1500,11 +1516,14 @@ class CheBrainPainter extends CustomPainter {
       final p = cam.project(d, size, worldRadius: .05);
       if (p != null) dust.addAll([p.offset.dx, p.offset.dy]);
     }
-    canvas.drawRawPoints(ui.PointMode.points, Float32List.fromList(far), Paint()
-      ..color = const Color(0x3352E8B0)
-      ..strokeWidth = 7
-      ..strokeCap = StrokeCap.round
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3));
+    // The blurred bokeh is the one costly pass of the backdrop; economy skips it.
+    if (!c.economy) {
+      canvas.drawRawPoints(ui.PointMode.points, Float32List.fromList(far), Paint()
+        ..color = const Color(0x3352E8B0)
+        ..strokeWidth = 7
+        ..strokeCap = StrokeCap.round
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3));
+    }
     canvas.drawRawPoints(ui.PointMode.points, Float32List.fromList(dust), Paint()
       ..color = const Color(0x8062E3F0)
       ..strokeWidth = 1.5
@@ -1720,7 +1739,7 @@ class CheBrainPainter extends CustomPainter {
     // orbs when the camera is close; cluster names in the overview.
     final labelled = <int>[if (selIndex >= 0 && proj[selIndex] != null) selIndex];
     for (final i in order.reversed) {
-      if (labelled.length >= 7) break;
+      if (labelled.length >= (c.economy ? 3 : 7)) break;
       // Memory names only once the owner has moved in; the overview shows
       // lobe names instead, so labels never pile up.
       if (i != selIndex && cam.distance < 14 && proj[i]!.radius > 5) labelled.add(i);

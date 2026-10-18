@@ -53,6 +53,28 @@ Brain is the one scene still drawn as canvas commands, so it is the scene to mea
   text; **Read results aloud** and **Copy results** are the owner's actions; nothing speaks
   on its own. Tests: `test/che_render_bench_test.dart`.
 
+## 2b. Adaptive frame budget (implemented on this branch, device-independent)
+
+The Brain Room now adapts its live rendering to measured frame times, whatever the renderer
+behind it (`lib/brain/che_frame_budget.dart`, wired in `che_brain_space.dart`):
+
+- Input: Flutter's `FrameTiming` (build + raster) for every frame while the Brain is on screen.
+  Never the device model.
+- **Full** rate while frames fit the 60 Hz budget. **Economy** after 20 consecutive frames over
+  20 ms: the painter runs on every other ticker tick (30 Hz paint; the camera and the neuron
+  animation still advance every tick, so nothing slows down visibly), the blurred bokeh pass
+  (the one costly backdrop pass) is skipped, and node labels are capped at 3 instead of 7.
+- Back to full after 120 consecutive frames under 12 ms. Every re-entry into economy doubles
+  that wait (up to 8×), so the level never flickers.
+- Frames between 12 and 20 ms, or an isolated slow frame, change nothing.
+- `CheFrameBudget.describe()` is available for a Read-aloud status; nothing is spoken by itself.
+
+Verified: `test/che_frame_budget_test.dart` (entry, alternation, recovery, doubled waits,
+indifference to the middle band and to isolated slow frames) and the controller tick without a
+repaint. **Not verified on an iPhone:** the 20 ms / 12 ms thresholds come from the 60 Hz budget,
+not from device measurements; the owner's benchmark run will show whether economy engages on his
+phone at 2 000 and 10 000 records.
+
 ## 3. Measurements so far
 
 All numbers below are from this VM (CPU only). They are not iPhone numbers.
