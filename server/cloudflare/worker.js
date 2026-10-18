@@ -60,6 +60,8 @@ import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evi
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
+import { LIVE_STATE, liveBacktest, liveDashboard, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
+import { liveIntent, liveReply } from './trading_live_chat.js';
 import { sanitizeOwnerText } from './che_errors.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
@@ -3390,12 +3392,47 @@ export class CheState extends DurableObject {
   // One paper-trading pass, then its entries go to the trading desk
   // (alerts; simulated-account orders when the owner chose sim mode), and the
   // NinjaTrader sign-in is kept alive.
+  // The Trading Room's forward-paper dashboard with the real broker state: Tradovate's
+  // OAuth sign-in as stored, FundYourEdge as not connected (Rithmic needs a licence), and
+  // live orders disabled. Nothing is assumed about balances or firm rules.
+  async liveTradingDashboard() {
+    const auth = await this.ctx.storage.get('tradovate_auth').catch(() => null);
+    const connected = Boolean(auth?.access_token) && Date.now() < Number(auth.expires_at || 0);
+    const dash = await liveDashboard(this.ctx.storage, { tradovateConnected: connected });
+    return {
+      ...dash,
+      broker: {
+        tradovate: { app_configured: tradovateConfigured(this.keyEnv || this.env), signed_in: connected, expired: Boolean(auth?.access_token) && !connected },
+        fundyouredge: { linked: false, why: 'FundYourEdge accounts trade on Rithmic, whose order API needs a licensed developer kit; CHE has no Rithmic connection.' },
+        live_orders: 'disabled: paper only. A live order needs your explicit approval of that exact order.',
+      },
+    };
+  }
+
+  // Forward paper trading is on unless the owner stopped it (owner, 2026-10-18: "start
+  // automatic forward paper trading tonight"). Arms the alarm for the next minute pass.
+  async ensureLivePaper(now = Date.now()) {
+    let state = await this.ctx.storage.get(LIVE_STATE);
+    if (!state) {
+      state = await setLivePaper(this.ctx.storage, true, now);
+      state = { ...state, started_by: 'owner instruction, 2026-10-18: start forward paper trading tonight' };
+      await this.ctx.storage.put(LIVE_STATE, state);
+    }
+    if (!state.enabled) return { enabled: false };
+    const due = await nextLiveTickAt(this.ctx.storage, now);
+    const alarm = await this.ctx.storage.getAlarm?.();
+    if (due && (!alarm || alarm > due + 5000)) await this.ctx.storage.setAlarm(Math.max(now + 1000, due - 59_000));
+    return { enabled: true, alarm: alarm || null };
+  }
+
   async tradingTick(opts = {}) {
     const book = await paperTick(this.ctx.storage, opts);
     await renewToken(this.ctx.storage).catch(() => null);
     await deskTick(this.ctx.storage, book).catch((error) => console.error('Trading desk tick failed:', error?.message || error));
     // Forward-paper evidence on the same hourly pass. Failures are logged in the run log, not thrown.
     await evidenceTick(this.ctx.storage, { now: opts.now, force: opts.force }).catch((error) => console.error('Trading evidence tick failed:', error?.message || error));
+    // Forward paper trading on 5-minute NQ/MNQ bars, every minute while it is on and CME is open.
+    await liveTick(this.ctx.storage, { now: opts.now }).catch((error) => console.error('Live paper tick failed:', error?.message || error));
     return book;
   }
 
@@ -3434,6 +3471,8 @@ export class CheState extends DurableObject {
     if (Array.isArray(outboxPending) && outboxPending.some((m) => m.state !== 'failed')) times.push(Date.now() + 60_000);
     // Paper trading learns every hour (deterministic, no AI tokens, no money).
     times.push(Math.max(Date.now() + 250, await nextTradingTickAt(this.ctx.storage).catch(() => Date.now() + 3_600_000)));
+    const liveAt = await nextLiveTickAt(this.ctx.storage).catch(() => null);
+    if (liveAt) times.push(Math.max(Date.now() + 250, liveAt));
     if (times.length) await this.ctx.storage.setAlarm(Math.min(...times));
   }
 
@@ -6091,6 +6130,22 @@ export class CheState extends DurableObject {
         if (data.error) return json({ detail: data.error }, 422);
         const results = backtestAll(data.candles);
         return json({ symbol: data.label, data: data.data, bars: data.candles.length, from: data.candles[0].t, to: data.candles[data.candles.length - 1].t, results });
+      }
+      // Forward paper trading (owner, 2026-10-18): the Trading Room's live evidence.
+      if (path === '/api/trading/live' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        return json(await this.liveTradingDashboard());
+      }
+      if (path === '/api/trading/live' && request.method === 'POST') {
+        if (!ownerDevice) return ownerOnly();
+        if (body.action === 'start' || body.action === 'stop') {
+          const state = await setLivePaper(this.ctx.storage, body.action === 'start');
+          if (state.enabled) { await liveTick(this.ctx.storage, { force: true }).catch(() => null); await this.scheduleWork(); }
+          return json({ ok: true, state, dashboard: await this.liveTradingDashboard() });
+        }
+        if (body.action === 'tick') return json({ ok: true, run: await liveTick(this.ctx.storage, { force: true }) });
+        if (body.action === 'backtest') return json(await liveBacktest(this.ctx.storage));
+        return json({ detail: 'Unknown action. Use start, stop, tick or backtest.' }, 400);
       }
       if (path === '/api/trading/paper' && request.method === 'GET') {
         const book = await readBook(this.ctx.storage);
@@ -9243,6 +9298,23 @@ export class CheState extends DurableObject {
         // "swing highs and entries on ETH", "paper trade Apple".
         // Trading desk by voice: paper / sim / live switch, NinjaTrader
         // sign-in, entry alerts, and "take the trade" for live orders.
+        // Forward paper trading by voice (owner, 2026-10-18), answered from the journal only.
+        const live = liveIntent(message);
+        if (live && !body.attachment) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the Trading Room.', { source: 'che_trading_live', ok: false });
+          let already = false;
+          if (live.kind === 'start' || live.kind === 'stop') {
+            already = live.kind === 'start' && Boolean((await this.ctx.storage.get('live_paper_state'))?.enabled);
+            const state = await setLivePaper(this.ctx.storage, live.kind === 'start');
+            if (state.enabled) { await liveTick(this.ctx.storage, { force: true }).catch(() => null); await this.scheduleWork(); }
+          }
+          const dash = await this.liveTradingDashboard();
+          const opens = ['open', 'chart', 'trades', 'positions'].includes(live.kind);
+          return ndjsonReply(liveReply(live.kind, dash, { message, already }), {
+            source: 'che_trading_live', model_calls: 0, ...(opens ? { open_screen: 'trading_room' } : {}),
+            trades_closed: dash.totals.trades, positions_open: dash.positions.length, account: 'PAPER',
+          });
+        }
         const desk = deskIntent(message);
         if (desk) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the trading desk.', { source: 'che_trading_desk', ok: false });
@@ -12043,12 +12115,14 @@ export class CheState extends DurableObject {
   }
 }
 
+let livePaperNudgedAt = 0;
+
 export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(env.CHE_STATE.getByName('owner').nightly());
     ctx.waitUntil(env.CHE_STATE.getByName('owner').modelWatch());
   },
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const path = new URL(request.url).pathname;
     // Public read-only update delivery must work from SideStore/Safari, which
     // cannot attach CHE's paired-device bearer token. There is intentionally
@@ -12056,7 +12130,15 @@ export default {
     if (isMobileUpdatePath(path)) {
       return handleMobileUpdateRequest(request, env);
     }
-    if (path === '/health') return json({ ok: true, agent: 'CHE cloud', ...runtimeVersion(env) });
+    if (path === '/health') {
+      // The deploy check polls /health: it also makes sure the owner's forward paper
+      // trading alarm is armed (at most once every five minutes per Worker instance).
+      if (env.CHE_STATE && ctx?.waitUntil && Date.now() - livePaperNudgedAt > 5 * 60_000) {
+        livePaperNudgedAt = Date.now();
+        ctx.waitUntil(Promise.resolve().then(() => env.CHE_STATE.getByName('owner').ensureLivePaper()).catch(() => null));
+      }
+      return json({ ok: true, agent: 'CHE cloud', ...runtimeVersion(env) });
+    }
     // Public and secret-free: booleans and status words only. The deploy check
     // reads it, and the owner's voice diagnostics can show it.
     if (path === '/api/voice/status' && request.method === 'GET') {
