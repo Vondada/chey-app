@@ -92,6 +92,7 @@ import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSna
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { CheBrainStore, backfillConversations, projectLegacyState, rememberExchange } from './brain_store.js';
+import { latestReview, ownerScore, runBrainMaintenance } from './brain_audit.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
 import {
   disconnectGoogle, finishGoogleConnect, googleChatIntent, googleConnectorStates, googleLabel, googleOwnerStep, googleRecheckPending,
@@ -5641,7 +5642,7 @@ export class CheState extends DurableObject {
       // ─── Brain: the one logical Brain the phone replicates ──────────────
       // Reads and writes are the owner's only. /changes and /push are the two
       // halves of the phone's incremental sync; /status gives real counts.
-      if (path.startsWith('/api/brain/') && ['/api/brain/status', '/api/brain/changes', '/api/brain/push', '/api/brain/search', '/api/brain/folders', '/api/brain/record', '/api/brain/conflicts', '/api/brain/conflicts/resolve'].includes(path)) {
+      if (path.startsWith('/api/brain/') && ['/api/brain/status', '/api/brain/changes', '/api/brain/push', '/api/brain/search', '/api/brain/folders', '/api/brain/record', '/api/brain/conflicts', '/api/brain/conflicts/resolve', '/api/brain/review', '/api/brain/score'].includes(path)) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
         const brain = new CheBrainStore(this.ctx.storage);
         const q = new URL(request.url).searchParams;
@@ -5728,6 +5729,19 @@ export class CheState extends DurableObject {
         }
         if (path === '/api/brain/conflicts/resolve' && request.method === 'POST') {
           return json(brain.resolveConflict(String(body.id || ''), body.choice === 'incoming' ? 'incoming' : 'current'));
+        }
+        // The next-morning review and the significance audit: computed from Brain records by the
+        // nightly pass, never by a model. "Run" rebuilds today's from what is there now.
+        if (path === '/api/brain/review') {
+          if (request.method === 'POST' && body.run === true) {
+            projectLegacyState(brain, data, { library: library() });
+            const run = runBrainMaintenance(brain);
+            return json({ ...latestReview(brain), run });
+          }
+          return json(latestReview(brain));
+        }
+        if (path === '/api/brain/score' && request.method === 'POST') {
+          return json(ownerScore(brain, String(body.id || ''), body.score, { reason: String(body.reason || '') }));
         }
         return json({ detail: 'Method not allowed.' }, 405);
       }
@@ -10400,6 +10414,9 @@ export class CheState extends DurableObject {
       const brain = new CheBrainStore(this.ctx.storage);
       projectLegacyState(brain, data, { library: new CheLibrary(this.ctx.storage).list() });
       await backfillConversations(brain, this.ctx.storage, { batch: 500 });
+      // Then the significance audit and the next-morning review, from those records alone.
+      const maintenance = runBrainMaintenance(brain);
+      console.log('CHE brain maintenance:', JSON.stringify(maintenance.audit), maintenance.review.written ? 'review written' : maintenance.review.reason);
     } catch (error) { console.error('Brain projection failed:', error?.message || error); }
     if (!data.autonomy) return { status: 'paused' };
     const result = await runNightlyReview(this.env, this.ctx.storage, data, this.env.CHE_STRONG_MODEL || STRONG_MODEL);
