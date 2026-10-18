@@ -38,6 +38,18 @@ void main() {
     expect(cheSpeakableText('Use <b>bold</b> text.'), 'Use bold text.');
   });
 
+  test('meaning survives: choices, checkboxes, signs, comparisons and directions (second review of #338)', () {
+    expect(cheSpeakableText('Say [1] to send or [2] to cancel.'), 'Say 1 to send or 2 to cancel.');
+    expect(cheSpeakableText('Rates rose sharply.[3] Then[^2] fell.'), 'Rates rose sharply. Then fell.');
+    expect(cheSpeakableText('- [x] Paid rent\n- [ ] Paid water bill'), 'Paid rent, done. Paid water bill, not done.');
+    expect(cheSpeakableText('The temp is <-5°C tonight.'), 'The temp is less than -5°C tonight.');
+    expect(cheSpeakableText('| Uptime | > 99% |'), 'Uptime, more than 99%.');
+    expect(cheSpeakableText('- > 5 users'), 'more than 5 users.');
+    expect(cheSpeakableText('x <= -3 and y > 2'), 'x at most -3 and y greater than 2');
+    expect(cheSpeakableText('Meet ~~Tuesday~~ Wednesday.'), 'Meet Tuesday (crossed out) Wednesday.');
+    expect(cheSpeakableText('NQ 🔻 0.4%, ES 🔺 0.2%'), 'NQ down 0.4%, ES up 0.2%');
+  });
+
   test('a sentence ends only where a person would stop', () {
     String first(String text, {bool force = false}) {
       final end = cheSentenceEnd(text, 0, force: force);

@@ -114,13 +114,16 @@ Duration chePremiumVoiceWait(String purpose, {int chars = 0}) {
 }
 
 /// How long the phone waits for a clip locked to one provider: the server
-/// tries it at most twice (one short retry after a passing failure) and never
-/// the other voice. Clips after the first are prepared while earlier ones play.
+/// tries it at most twice (a second call only after a server error or a
+/// refused connection, never after a timeout) and never the other voice. The
+/// wait covers both calls, so the phone never gives up on a clip the server is
+/// still making and paying for (a story: 60 s, a short pause, 60 s). Clips after
+/// the first are prepared while earlier ones play.
 Duration cheLockedVoiceWait(String lock, String purpose, {int chars = 0}) {
   if (lock == 'elevenlabs') return const Duration(seconds: 25);
   final fish = chePremiumVoiceWait(purpose, chars: chars) - const Duration(seconds: 9);
   final both = fish * 2 + const Duration(seconds: 2);
-  return both > const Duration(seconds: 90) ? const Duration(seconds: 90) : both;
+  return both > const Duration(seconds: 125) ? const Duration(seconds: 125) : both;
 }
 
 /// Why CHE stayed silent for one clip, in words the owner can read: the phone's

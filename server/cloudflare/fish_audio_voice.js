@@ -394,8 +394,14 @@ function audioResponse(bytes, type, model, cache) {
  * default. `storage` is the Durable Object storage used for the audio cache.
  */
 export async function fishAudioSpeech(env = {}, text, options = {}) {
+  // `onOutcome` hears this request's own result (never another clip's), with `retryable` true
+  // only when a second call cannot be paying twice for one clip.
+  const report = (result) => {
+    try { options.onOutcome?.(result.response ? { status: 'healthy' } : { status: result.why || 'no audio', retryable: Boolean(result.retryable) }); } catch (_) {}
+    return result.response || null;
+  };
   const first = await fishSpeakOnce(env, text, options);
-  if (first.response) return first.response;
+  if (first.response) return report(first);
   // A story falls back to CHE's everyday Fish voice when the expressive model
   // cannot be used here (no API credit, not on this account, today's cap
   // reached), so she still sounds like herself. The reason is this request's
@@ -404,12 +410,16 @@ export async function fishAudioSpeech(env = {}, text, options = {}) {
   // the model changes, and the free model is not counted against the cap.
   // A reply locked to one model (owner, 2026-10-18: one voice per response)
   // never changes model halfway; the phone reports the interruption instead.
-  if (options.locked) return null;
-  if (!EXPRESSIVE_PURPOSES.has(String(options.purpose || '').toLowerCase())) return null;
-  if (!EXPRESSIVE_BLOCKED.has(first.why)) return null;
+  if (options.locked) return report(first);
+  if (!EXPRESSIVE_PURPOSES.has(String(options.purpose || '').toLowerCase())) return report(first);
+  if (!EXPRESSIVE_BLOCKED.has(first.why)) return report(first);
   const fallback = await fishSpeakOnce(env, text, { ...options, model: fishModels(env).everyday });
-  return fallback.response;
+  return report(fallback);
 }
+
+// Rests a locked clip's one retry may skip: a slow or failed server, never a rate limit, credits,
+// a refused key or the daily cap.
+const PASSING_RESTS = new Set(['network', 'slow']);
 
 // Outcomes that mean the expressive model cannot be used right now, but the
 // everyday model may still speak.
@@ -426,7 +436,7 @@ async function fishSpeakOnce(env = {}, text, {
   model: modelOverride = '',
   force = false,
 } = {}) {
-  const none = (why) => ({ response: null, why });
+  const none = (why, retryable = false) => ({ response: null, why, retryable });
   if (!fishAudioReady(env)) return none('not set up');
   const said = String(text || '').replace(/\s+/g, ' ').trim();
   const expressive = EXPRESSIVE_PURPOSES.has(String(purpose || '').toLowerCase());
@@ -450,9 +460,11 @@ async function fishSpeakOnce(env = {}, text, {
     return { response: audioResponse(cached.bytes, cached.type, model, 'hit') };
   }
   // [force] is one bounded retry for a reply already speaking in Fish: a
-  // rest after a slow or failed clip must not switch the voice mid-reply.
-  if (!force && paused(model, now)) {
-    return none((state.pausedUntil.get(model) || 0) > now ? state.pauseWhy.get(model) : state.pauseWhy.get('*'));
+  // rest after a slow or failed clip must not switch the voice mid-reply. It
+  // never skips a rest for a rate limit, credits or a refused key.
+  if (paused(model, now)) {
+    const why = (state.pausedUntil.get(model) || 0) > now ? state.pauseWhy.get(model) : state.pauseWhy.get('*');
+    if (!force || !PASSING_RESTS.has(why)) return none(why, !force && PASSING_RESTS.has(why));
   }
   if ((state.refused.get(key) || 0) > now) return none('refused text');
 
@@ -486,7 +498,7 @@ async function fishSpeakOnce(env = {}, text, {
   }
   return result.bytes
     ? { response: audioResponse(result.bytes, result.type, model, owner ? 'miss' : 'shared') }
-    : none(result.failed);
+    : none(result.failed, Boolean(result.retryable));
 }
 
 async function synthesize(env, { said, model, voice, bitrate, speed, expressive, storage, fetcher, key, now }) {
@@ -529,7 +541,8 @@ async function synthesize(env, { said, model, voice, bitrate, speed, expressive,
       }
       pause(failure.scope === 'key' ? '*' : model, failure.pauseMs, now, failure.status);
       record(failure.status, response.status, model, now, reason);
-      return { failed: failure.status };
+      // Only a server error made no clip, so only it may be asked for again.
+      return { failed: failure.status, retryable: response.status >= 500 };
     }
     const type = (response.headers.get('content-type') || '').toLowerCase();
     if (!/^audio\/|^application\/octet-stream/.test(type)) {
@@ -549,13 +562,14 @@ async function synthesize(env, { said, model, voice, bitrate, speed, expressive,
     const audioType = type.startsWith('audio/') ? type.split(';')[0] : 'audio/mpeg';
     await cacheWrite(storage, key, bytes, audioType, model);
     return { bytes, type: audioType };
-  } catch (_) {
+  } catch (error) {
     // A timeout or network error rests Fish briefly so a slow provider cannot
-    // add its wait to every clip. Never log the key.
+    // add its wait to every clip. Never log the key. A timeout is not retried:
+    // Fish may still be making, and charging for, that clip.
     pause(model, PAUSE_TIMEOUT_MS, now, 'network');
     record('network', 0, model, now);
     await addUsage(storage, model, { failures: 1 }, now);
-    return { failed: 'network' };
+    return { failed: 'network', retryable: error?.name !== 'TimeoutError' };
   }
 }
 

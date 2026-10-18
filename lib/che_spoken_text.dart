@@ -24,22 +24,29 @@ String _inline(String line) {
   s = s.replaceAllMapped(RegExp(r'(\*\*|__)(.+?)\1'), (m) => m[2]!);
   s = s.replaceAllMapped(RegExp(r'(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])'), (m) => m[1]!);
   s = s.replaceAllMapped(RegExp(r'(?<![\w_])_(?!\s)(.+?)(?<!\s)_(?![\w_])'), (m) => m[1]!);
-  s = s.replaceAllMapped(RegExp(r'~~(.+?)~~'), (m) => m[1]!);
+  // Crossed-out words are said as crossed out, so "~~Tuesday~~ Wednesday" never sounds like both days.
+  s = s.replaceAllMapped(RegExp(r'~~(.+?)~~'), (m) => '${m[1]} (crossed out)');
   s = s.replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), ', ');
   // An email in angle brackets is an address, not a tag; only known HTML tags are dropped.
   s = s.replaceAllMapped(RegExp(r'<([^<>\s@]+@[^<>\s]+)>'), (m) => m[1]!);
   s = s.replaceAll(RegExp(r'</?(?:p|div|span|b|i|u|s|em|strong|code|pre|small|sup|sub|a|ul|ol|li|h[1-6]|br)\b[^>]*>', caseSensitive: false), '');
   // Comparisons keep their meaning ("5 > 3" is "5 greater than 3").
   s = s.replaceAllMapped(RegExp(r'(\S)\s+(>=|<=|!=|>|<)\s+(?=\S)'), (m) => '${m[1]} ${const {'>=': 'at least', '<=': 'at most', '!=': 'not equal to', '>': 'greater than', '<': 'less than'}[m[2]]} ');
+  // A leading comparison before a number keeps it too: "> 99%" is "more than 99%", "<-5°C" is "less than -5°C".
+  s = s.replaceAllMapped(RegExp(r'(^|[\s|(])([<>]=?)\s*(?=[-+−]?\$?\d)'), (m) => '${m[1]}${const {'<': 'less than ', '>': 'more than ', '<=': 'at most ', '>=': 'at least '}[m[2]]}');
   // Footnote marks and stray formatting symbols are not read; a product keeps its meaning.
   s = s.replaceAllMapped(RegExp(r'(\d)\s*[*×]\s*(\d)'), (m) => '${m[1]} times ${m[2]}');
-  s = s.replaceAll(RegExp(r'\[\^?\d+\]'), '');
+  // Footnote marks ("[^2]", or "[3]" right after a word) are not read; a choice number in brackets
+  // ("Say [1] to send") keeps its number, so the owner can still choose it.
+  s = s.replaceAll(RegExp(r'\[\^\d+\]'), '');
+  s = s.replaceAll(RegExp(r'(?<=[\w.,;:!?)"”’])\[\d+\]'), '');
+  s = s.replaceAllMapped(RegExp(r'(?<=\s|^)\[(\d+)\](?=[\s,.;:!?]|$)'), (m) => m[1]!);
   s = s.replaceAll(RegExp(r'(?<=\s|^)[*#>]+(?=\s|$)'), '');
   s = s.replaceAll(RegExp(r'\*{2,}|#{2,}'), '');
   s = s.replaceAllMapped(RegExp(r'\\([\\`*_{}\[\]()#+\-.!|>~])'), (m) => m[1]!);
   // Symbols said the way a person says them.
   s = s.replaceAll(RegExp(r'\s*(?:->|→|⟶|=>)\s*'), ' to ');
-  s = s.replaceAll(RegExp(r'\s*(?:<-|←)\s*'), ' from ');
+  s = s.replaceAll(RegExp(r'\s*(?:<-(?!\d)|←)\s*'), ' from ');
   s = s.replaceAll(RegExp(r'\s+&\s+'), ' and ');
   s = s.replaceAll('±', ' plus or minus ');
   s = s.replaceAllMapped(RegExp(r'(^|\s)~(?=\d)'), (m) => '${m[1]}about ');
@@ -51,6 +58,9 @@ String _inline(String line) {
   // Pictures and emoji are not words; status marks become their meaning.
   s = s.replaceAll(RegExp(r'[✅✔✓☑]️?'), ' done ');
   s = s.replaceAll(RegExp(r'[❌✖✗]️?'), ' not done ');
+  // Direction marks keep their meaning (the Trading Room uses them).
+  s = s.replaceAll(RegExp(r'(?:\u{1F53A}|\u{2B06}|\u{1F4C8})\u{FE0F}?', unicode: true), ' up ');
+  s = s.replaceAll(RegExp(r'(?:\u{1F53B}|\u{2B07}|\u{1F4C9})\u{FE0F}?', unicode: true), ' down ');
   s = s.replaceAll(RegExp(r'[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}️‍]', unicode: true), '');
   s = s.replaceAllMapped(RegExp(r'([!?])\1+'), (m) => m[1]!);
   return s;
@@ -82,14 +92,17 @@ String cheSpeakableText(String markdown) {
     if (line.trim().isEmpty) continue;
     if (RegExp(r'^\s*(?:-{3,}|\*{3,}|_{3,})\s*$').hasMatch(line) || _isTableDivider(line)) continue;
     final heading = RegExp(r'^\s*#{1,6}\s+(.*?)\s*#*\s*$').firstMatch(line);
-    final bullet = RegExp(r'^\s*(?:[-*•+])\s+(?:\[[ xX]\]\s+)?(.*)$').firstMatch(line);
+    final bullet = RegExp(r'^\s*(?:[-*•+])\s+(?:\[([ xX])\]\s+)?(.*)$').firstMatch(line);
     final numbered = RegExp(r'^\s*(\d{1,3})[.)]\s+(.*)$').firstMatch(line);
     if (heading != null) {
       out.add(_period(_inline(heading[1]!)));
     } else if (numbered != null) {
       out.add(_period('${numbered[1]}, ${_inline(numbered[2]!).trim()}'));
     } else if (bullet != null) {
-      out.add(_period(_inline(bullet[1]!)));
+      // A checklist says whether each item is done.
+      final check = bullet[1];
+      final item = _inline(bullet[2]!).trim();
+      out.add(_period(check == null ? item : '$item, ${check == ' ' ? 'not done' : 'done'}'));
     } else if (line.trimLeft().startsWith('|')) {
       final cells = line.trim().replaceAll(RegExp(r'^\||\|$'), '').split('|').map((c) => _inline(c).trim()).where((c) => c.isNotEmpty);
       if (cells.isNotEmpty) out.add(_period(cells.join(', ')));

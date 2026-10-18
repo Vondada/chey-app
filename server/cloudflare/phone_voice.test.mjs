@@ -75,12 +75,37 @@ test('a clip locked to ElevenLabs retries a passing failure once and never uses 
   assert.equal(calls.fish.length, 0, 'the locked reply never switched to Fish');
 });
 
-test('a locked ElevenLabs clip that keeps failing stays silent instead of changing voice', async () => {
+test('a locked ElevenLabs clip that times out stays silent: no second paid call, no other voice', async () => {
   const calls = fakeProviders({ eleven: () => 'timeout' });
   const audio = await premiumVoiceSpeech(env(), 'Third part.', { lock: 'elevenlabs', storage: memoryStorage(), ...noWait });
   assert.equal(audio, null);
-  assert.equal(calls.eleven.length, 2, 'one bounded retry, even though the first timeout paused ElevenLabs');
+  // ElevenLabs may already have made and billed a timed-out clip, so it is never asked again (review of #338).
+  assert.equal(calls.eleven.length, 1);
   assert.equal(calls.fish.length, 0);
+});
+
+test('a locked clip skipped by a short server rest gets its one real call; a rate-limit rest is never skipped', async () => {
+  let calls = fakeProviders({ eleven: (n) => (n === 1 ? 503 : 200) });
+  assert.equal(await premiumVoiceSpeech(env(), 'Opening.', { storage: memoryStorage(), ...noWait }).then((a) => a.headers.get('X-CHE-Voice')), 'fish-audio');
+  const next = await premiumVoiceSpeech(env(), 'Next part.', { lock: 'elevenlabs', storage: memoryStorage(), ...noWait });
+  assert.equal(next.headers.get('X-CHE-Voice'), 'elevenlabs-mary', 'the server rest made no call, so the retry is the clip\'s only call');
+  assert.equal(calls.eleven.length, 2);
+  resetPreferredElevenLabsPause();
+  calls = fakeProviders({ eleven: () => 429 });
+  assert.equal(await premiumVoiceSpeech(env(), 'Locked.', { lock: 'elevenlabs', storage: memoryStorage(), ...noWait }), null);
+  assert.equal(await premiumVoiceSpeech(env(), 'Locked again.', { lock: 'elevenlabs', storage: memoryStorage(), ...noWait }), null);
+  assert.equal(calls.eleven.length, 1, 'ElevenLabs asked CHE to wait; no clip skips that rest');
+  assert.equal(calls.fish.length, 0);
+});
+
+test('a locked Fish clip that times out is not asked for again', async () => {
+  const calls = fakeProviders({ fish: () => 200 });
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('fish.audio')) { calls.fish.push(String(url)); const e = new Error('timed out'); e.name = 'TimeoutError'; throw e; }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  assert.equal(await premiumVoiceSpeech(env(), 'Fish part.', { lock: 'fish', selectedProvider: 'fish', storage: memoryStorage(), ...noWait }), null);
+  assert.equal(calls.fish.length, 1);
 });
 
 test('a refused key is not retried: only passing failures earn the one retry', async () => {

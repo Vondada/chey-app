@@ -18,6 +18,9 @@ const PAUSE_SERVER_MS = 60 * 1000;
 const PAUSE_LONG_MS = 10 * 60 * 1000;
 const PAUSE_AFTER_TIMEOUT_MS = 2 * 60 * 1000;
 let pausedUntil = 0;
+// Why ElevenLabs is resting: a locked clip's one retry may skip only a server or connection rest,
+// never one for a rate limit, credits or a refused key.
+let pauseStatus = '';
 // The last outcome, for the Keys tab and the deploy check: a status word, the
 // HTTP code, a time, and ElevenLabs' own reason with the key and voice removed.
 let lastOutcome = null;
@@ -30,6 +33,7 @@ const waiting = [];
 
 export function resetPreferredElevenLabsPause() {
   pausedUntil = 0;
+  pauseStatus = '';
   lastOutcome = null;
   active = 0;
   waiting.length = 0;
@@ -89,9 +93,11 @@ function classifyFailure(code, reason) {
   return null;
 }
 
-function recordFailure(code, status, pauseMs, now = Date.now(), reason = '') {
+function recordFailure(code, status, pauseMs, now = Date.now(), reason = '', retryable = false) {
   pausedUntil = now + pauseMs;
-  lastOutcome = { status, code, at: now, reason };
+  pauseStatus = status;
+  lastOutcome = { status, code, at: now, reason, retryable };
+  return lastOutcome;
 }
 
 // Mary's state for the Keys tab. The status words are the ones the Keys screens
@@ -150,16 +156,25 @@ export function preferredElevenLabsDiagnostics(env = {}, now = Date.now()) {
 }
 
 // Null means CHE's backup voice (Fish) speaks; do not speak a partial clip.
-// This helper is shared by both iOS voice routes. `force` skips a rest; only
+// This helper is shared by both iOS voice routes. `force` skips any rest; only
 // the deploy check uses it, so one real call is made after every deploy.
-export async function preferredElevenLabsSpeech(env = {}, text, fetcher = fetch, { force = false } = {}) {
-  if (!preferredElevenLabsReady(env)) return null;
+// `retry` is a locked clip's one retry: it skips only a server or connection
+// rest. `onOutcome` hears this call's own outcome, with `retryable` true only
+// when a second call cannot be paying twice for one clip (a 5xx, a refused
+// connection, or a rest that made no call); a timeout is never retryable,
+// since ElevenLabs may already have made and billed the clip.
+export async function preferredElevenLabsSpeech(env = {}, text, fetcher = fetch, { force = false, retry = false, onOutcome = null } = {}) {
+  const note = (outcome) => { try { onOutcome?.(outcome); } catch (_) {} return outcome; };
+  if (!preferredElevenLabsReady(env)) { note({ status: 'not set up', retryable: false }); return null; }
   const said = String(text || '').replace(/\s+/g, ' ').trim();
   // Cap each synthesis to avoid runaway paid generation; longer text uses the
   // backup voice without truncating the user's spoken reply.
-  if (!said || said.length > 800) return null;
-  if (!force && Date.now() < pausedUntil) return null;
-  return withSlot(concurrency(env), () => speakOnce(env, said, fetcher));
+  if (!said || said.length > 800) { note({ status: 'too long', retryable: false }); return null; }
+  if (!force && Date.now() < pausedUntil && !(retry && pauseStatus === 'network')) {
+    note({ status: pauseStatus || 'resting', retryable: pauseStatus === 'network', skipped: true });
+    return null;
+  }
+  return withSlot(concurrency(env), () => speakOnce(env, said, fetcher, note));
 }
 
 // The owner's voice controls for Mary. An unset control keeps the default CHE has
@@ -180,7 +195,7 @@ export function elevenVoiceSettings(env = {}) {
   };
 }
 
-async function speakOnce(env, said, fetcher) {
+async function speakOnce(env, said, fetcher, note = (o) => o) {
   const voice = encodeURIComponent(String(env.CHE_ELEVENLABS_VOICE_ID).trim());
   const configuredSpeed = Number(env.CHE_VOICE_SPEED);
   const speed = Number.isFinite(configuredSpeed) && configuredSpeed > 0
@@ -208,20 +223,20 @@ async function speakOnce(env, said, fetcher) {
       const reason = (await response.text().catch(() => '')).slice(0, 600);
       const failure = classifyFailure(response.status, reason);
       const said = elevenLabsRefusalReason(reason, env);
-      if (failure) recordFailure(response.status, failure.status, failure.pauseMs, Date.now(), said);
-      else lastOutcome = { status: 'refused text', code: response.status, at: Date.now(), reason: said };
+      if (failure) note(recordFailure(response.status, failure.status, failure.pauseMs, Date.now(), said, response.status >= 500));
+      else note(lastOutcome = { status: 'refused text', code: response.status, at: Date.now(), reason: said, retryable: false });
       return null;
     }
     if (!/^audio\//i.test(response.headers.get('content-type') || '')) {
-      lastOutcome = { status: 'network', code: response.status, at: Date.now(), reason: 'ElevenLabs answered without audio.' };
+      note(lastOutcome = { status: 'network', code: response.status, at: Date.now(), reason: 'ElevenLabs answered without audio.', retryable: false });
       return null;
     }
     const bytes = await response.arrayBuffer();
     if (!bytes.byteLength || bytes.byteLength > 6 * 1024 * 1024) {
-      lastOutcome = { status: 'network', code: response.status, at: Date.now(), reason: 'ElevenLabs sent an empty or oversized clip.' };
+      note(lastOutcome = { status: 'network', code: response.status, at: Date.now(), reason: 'ElevenLabs sent an empty or oversized clip.', retryable: false });
       return null;
     }
-    lastOutcome = { status: 'healthy', code: 200, at: Date.now() };
+    note(lastOutcome = { status: 'healthy', code: 200, at: Date.now() });
     return new Response(bytes, {
       headers: {
         'Content-Type': response.headers.get('content-type') || 'audio/mpeg',
@@ -234,8 +249,9 @@ async function speakOnce(env, said, fetcher) {
     });
   } catch (error) {
     // Timeouts and network errors fall back to the backup voice. Never log keys.
-    const reason = error?.name === 'TimeoutError' ? 'No answer within 8 seconds.' : 'Could not reach ElevenLabs.';
-    recordFailure(0, 'network', PAUSE_AFTER_TIMEOUT_MS, Date.now(), reason);
+    const timedOut = error?.name === 'TimeoutError';
+    const reason = timedOut ? 'No answer within 8 seconds.' : 'Could not reach ElevenLabs.';
+    note(recordFailure(0, 'network', PAUSE_AFTER_TIMEOUT_MS, Date.now(), reason, !timedOut));
     return null;
   }
 }

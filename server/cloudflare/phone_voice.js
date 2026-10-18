@@ -7,7 +7,7 @@
 // the phone reported hearing: status words, sizes and times, never the text.
 // The deploy check reads it, so a failure on the phone leaves evidence.
 
-import { preferredElevenLabsKeyStatus, preferredElevenLabsLastOutcome, preferredElevenLabsSpeech } from './preferred_elevenlabs_voice.js';
+import { preferredElevenLabsKeyStatus, preferredElevenLabsSpeech } from './preferred_elevenlabs_voice.js';
 import { fishAudioKeyStatus, fishAudioSpeech } from './fish_audio_voice.js';
 
 const VOICE_LOG_KEY = 'voice_log_v1';
@@ -17,11 +17,11 @@ const VOICE_LOG_MAX = 40;
 // reply with a turn id. The first clip may use the backup voice when the
 // chosen one fails before anything played; after that the phone sends `lock`
 // with the provider that spoke, and a locked clip uses only that provider: one
-// short retry for a passing failure, then silence with the reason, never the
-// other voice.
+// short retry only when a second call cannot pay twice for one clip (a server
+// error, a refused connection, or a short rest that made no call), then
+// silence with the reason, never the other voice. A timeout, a rate limit,
+// credits or a refused key are never retried.
 export const VOICE_LOCKS = ['elevenlabs', 'fish'];
-// A rate limit is not retried: the provider asked CHE to wait, and a second call would fail too.
-const TRANSIENT = new Set(['network', 'slow']);
 const TURN_TTL_MS = 20 * 60 * 1000;
 const TURN_MAX = 16;
 
@@ -75,10 +75,6 @@ export function voiceTurnFor(turns, id, current, now = Date.now()) {
   return turn;
 }
 
-function lastStatus(env, provider) {
-  return provider === 'fish' ? fishAudioKeyStatus(env).status : preferredElevenLabsLastOutcome()?.status || '';
-}
-
 function labelled(response, env, provider, extra = {}) {
   const model = provider === 'fish' ? response.headers.get('X-CHE-Fish-Model') || '' : '';
   response.headers.set('X-CHE-Voice-Tag', voiceTag(env, provider, model));
@@ -100,14 +96,20 @@ export async function premiumVoiceSpeech(env = {}, text, {
 } = {}) {
   const primary = selectedProvider === 'fish' ? 'fish' : 'elevenlabs';
   const backup = primary === 'fish' ? 'elevenlabs' : 'fish';
-  const attempt = (provider, force = false) => (provider === 'fish'
-    ? fishAudioSpeech(env, text, { purpose, character, storage, force,
-      ...(lock && turn?.fishModel ? { model: turn.fishModel, locked: true } : lock ? { locked: true } : {}) })
-    : preferredElevenLabsSpeech(env, text, undefined, { force }));
+  // Each attempt reports its own outcome, so a clip running alongside cannot decide this one's retry.
+  let outcome = null;
+  const onOutcome = (o) => { outcome = o; };
+  const attempt = (provider, retry = false) => {
+    outcome = null;
+    return provider === 'fish'
+      ? fishAudioSpeech(env, text, { purpose, character, storage, force: retry, onOutcome,
+        ...(lock && turn?.fishModel ? { model: turn.fishModel, locked: true } : lock ? { locked: true } : {}) })
+      : preferredElevenLabsSpeech(env, text, undefined, { retry, onOutcome });
+  };
   if (VOICE_LOCKS.includes(lock)) {
     let audio = await attempt(lock);
     let attempts = 1;
-    if (!audio && TRANSIENT.has(lastStatus(env, lock))) {
+    if (!audio && outcome?.retryable === true) {
       await sleep(retryDelayMs);
       audio = await attempt(lock, true);
       attempts = 2;
