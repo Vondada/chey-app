@@ -289,3 +289,68 @@ test('the auditor reaches every record over the nights through a persisted curso
   assert.equal(Number(storage.sql.exec("SELECT COUNT(*) AS n FROM brain_records WHERE significance = '{}'")[0].n), 0);
   assert.equal(auditSignificance(store, { now: '2026-10-20T07:07:00.000Z', limit: 500 }).changed, 0);
 });
+
+test('a quiet first night still fixes the review boundary, so a conversation before an early second night is reviewed', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  assert.equal(runBrainMaintenance(store, { now: NOW }).review.written, false);
+  assert.equal(store.meta('brain_review_since'), NOW, 'the boundary is set even when nothing was written');
+  store.put({ id: 'conv:morning', kind: 'conversation', region: BRAIN_REGIONS.conversations, path: 'Chat/2026-10-17', title: 'Morning', body: 'You said: good morning\nCHE answered: good morning, sir.', verification: 'owner_attested' }, { now: '2026-10-17T07:10:00.000Z' });
+  // Night 2 fires eight minutes later than night 1: a one-day window would start after the conversation.
+  const next = runBrainMaintenance(store, { now: '2026-10-17T07:15:00.000Z' });
+  assert.equal(next.review.written, true, 'the 07:10 conversation is in night 2\'s review');
+  assert.match(store.get('review:brain:2026-10-17').body, /1 conversation with the owner kept word for word\./);
+});
+
+test('an import night tells the truth: imported old tasks are not the day\'s agent work, and the day\'s own records stay on the page', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  // The owner's exchange and a correction at 06:00 (low seq) …
+  store.put({ id: 'conv:early', kind: 'conversation', region: BRAIN_REGIONS.conversations, path: 'Chat/2026-10-17', title: 'Early', body: 'You said: hello\nCHE answered: hello, sir.', verification: 'owner_attested' }, { now: '2026-10-17T06:00:00.000Z' });
+  store.put({ id: 'conv:fix', kind: 'correction', region: BRAIN_REGIONS.conversations, path: 'Corrections', title: 'Ana', body: 'You said: Ana, not Anna.\nCHE answered: Noted.', verification: 'owner_attested' }, { now: '2026-10-17T06:01:00.000Z' });
+  // … then the first projection imports 2 100 old records at 07:06, four of them failed July tasks.
+  for (let i = 0; i < 2096; i++) {
+    store.put({ id: `conv:old${i}`, kind: 'conversation', region: BRAIN_REGIONS.conversations, path: 'Chat/2026-06-01', title: `Old talk ${i}`, body: `You said: old ${i}\nCHE answered: yes.`, verification: 'owner_attested', created_at: '2026-06-01T10:00:00.000Z' }, { now: '2026-10-17T07:06:00.000Z' });
+  }
+  for (let i = 0; i < 4; i++) {
+    store.put({ id: `task:old${i}`, kind: 'task', region: BRAIN_REGIONS.tasks, path: 'Historical', title: `July task ${i}`, body: 'Status: failed', source: { kind: 'team_task', status: 'failed' }, verification: 'unverified_reference', created_at: '2026-07-0' + (i + 1) + 'T10:00:00.000Z' }, { now: '2026-10-17T07:06:00.000Z' });
+  }
+  // A task created yesterday whose status changed today is real work (rev 2).
+  store.put({ id: 'task:live', kind: 'task', region: BRAIN_REGIONS.tasks, path: 'Current', title: 'Summarize mail', body: 'Status: running', source: { kind: 'team_task', status: 'running' }, verification: 'unverified_reference', created_at: '2026-10-15T10:00:00.000Z' }, { now: '2026-10-15T10:00:00.000Z' });
+  store.put({ id: 'task:live', kind: 'task', region: BRAIN_REGIONS.tasks, path: 'Current', title: 'Summarize mail', body: 'Status: done', source: { kind: 'team_task', status: 'done' }, verification: 'unverified_reference', created_at: '2026-10-15T10:00:00.000Z' }, { now: '2026-10-17T06:30:00.000Z' });
+  const result = buildDailyReview(store, { now: NOW, since: T0 });
+  assert.equal(result.written, true);
+  const body = store.get('review:brain:2026-10-17').body;
+  assert.match(body, /^- 1 conversation with the owner kept word for word\.$/m, 'the 06:00 exchange is on the page');
+  assert.match(body, /^- 1 correction from the owner\.$/m);
+  assert.match(body, /^- 1 agent task touched: 1 done/m, 'only the task that changed today');
+  assert.match(body, /1997 older records \(created before this window\) were rewritten or brought in/, 'the page holds 2000: 3 fresh records and 1997 imports');
+  assert.doesNotMatch(body, /[1-9]\d* failed/, 'the imported July failures are not today\'s struggle');
+  assert.doesNotMatch(speakReview(latestReview(store)), /[1-9]\d* failed/);
+});
+
+test('a nightly re-score never turns the phone\'s next edit into a conflict', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const record = { id: 'mem:1', kind: 'memory', region: BRAIN_REGIONS.personal, path: 'Family', title: 'Sister', body: 'My sister Ana lives in Lisbon.', verification: 'owner_attested' };
+  assert.equal(store.apply({ type: 'put', record, base_rev: null }, { origin: 'iphone', now: '2026-10-17T02:00:00.000Z' }).outcome, 'created');
+  assert.equal(store.reassess('mem:1', { score: 0.9, reasons: ['owner_attested'] }, { now: NOW }).outcome, 'reassessed');
+  assert.equal(store.get('mem:1').rev, 2);
+  // The phone edits the text it saw at rev 1.
+  const edit = store.apply({ type: 'put', record: { ...record, body: 'My sister Ana lives in Porto now.' }, base_rev: 1 }, { origin: 'iphone', now: '2026-10-17T09:00:00.000Z' });
+  assert.equal(edit.outcome, 'updated', 'an auditor re-score is not a content change');
+  assert.equal(store.conflicts().length, 0);
+  assert.equal(store.get('mem:1').body, 'My sister Ana lives in Porto now.');
+});
+
+test('the owner reporting someone else\'s audit is not a request to hear the Brain review', () => {
+  for (const said of ['the audit found a tax error, remember that', 'the review said my restaurant is great', 'the auditor said we owe 500 dollars', 'the audit found fraud at the client']) {
+    assert.equal(brainReviewIntent(said), false, said);
+  }
+  for (const asked of ['what did the audit find?', 'did the review find anything', 'what did your audit find', 'your review said something about silver']) {
+    assert.equal(brainReviewIntent(asked), true, asked);
+  }
+});

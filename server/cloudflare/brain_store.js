@@ -442,17 +442,23 @@ export class CheBrainStore {
     if (!current || current.deleted) return { outcome: 'missing', id };
     const next = asObject(significance);
     if (JSON.stringify(next) === JSON.stringify(current.significance || {})) return { outcome: 'unchanged', record: current, rev: current.rev };
+    // The content is the same as at content_rev (as amendSource records), so the phone's next edit of
+    // the text it saw is an update, never a conflict the auditor caused.
+    const source = { ...(current.source || {}), content_rev: Number.isFinite(Number(current.source?.content_rev)) ? Number(current.source.content_rev) : current.rev };
     const written = this.write(
-      { ...current, significance: next, places: this.rows('SELECT region, path FROM brain_places WHERE record_id = ?', id) },
+      { ...current, significance: next, source, places: this.rows('SELECT region, path FROM brain_places WHERE record_id = ?', id) },
       { rev: current.rev + 1, origin: current.origin || origin, now, updatedAt: current.updated_at },
     );
     return { outcome: 'reassessed', record: this.get(id), rev: written.rev };
   }
 
   /** Live records touched at or after [sinceIso], newest first: the day's real activity. */
-  changedSince(sinceIso, { limit = 2000 } = {}) {
+  changedSince(sinceIso, { limit = 2000, createdFirst } = {}) {
     if (!this.init()) return [];
     const size = Math.max(1, Math.min(Number(limit) || 2000, 5000));
+    // [createdFirst]: records created at or after that instant come before older ones rewritten or
+    // imported, so a bulk import never pushes the day's own records off the page.
+    if (createdFirst) return this.rows('SELECT * FROM brain_records WHERE updated_at >= ? AND deleted = 0 ORDER BY (created_at >= ?) DESC, seq DESC LIMIT ?', String(sinceIso || ''), String(createdFirst), size).map(rowToRecord);
     return this.rows('SELECT * FROM brain_records WHERE updated_at >= ? AND deleted = 0 ORDER BY seq DESC LIMIT ?', String(sinceIso || ''), size).map(rowToRecord);
   }
 

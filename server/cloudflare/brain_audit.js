@@ -102,10 +102,19 @@ export function buildDailyReview(store, { now = new Date().toISOString(), since,
   // the model's nightly review projected from the state blob, and anything the auditor wrote. A
   // review that counted those would write itself again every morning.
   // A persisted boundary is the last review's own instant: records written in that same millisecond were already counted.
-  const activity = store.changedSince(sinceIso).filter((r) => !isBookkeeping(r) && r.id !== id && (!persisted || r.updated_at > sinceIso));
-  if (!activity.length) return { written: false, reason: 'No Brain activity since the last review.', since: sinceIso };
+  // Fresh records first on the page: an import night (the first production night projects every
+  // legacy row at once) must not push the day's few real records off the 2000-record page.
+  const activity = store.changedSince(sinceIso, { createdFirst: sinceIso }).filter((r) => !isBookkeeping(r) && r.id !== id && (!persisted || r.updated_at > sinceIso));
+  if (!activity.length) {
+    // A quiet first night still fixes the boundary (a meta value, not a record): without it the next
+    // night's window would start a day before that night and miss what happened in between.
+    if (!since && !persisted) store.setMeta('brain_review_since', now);
+    return { written: false, reason: 'No Brain activity since the last review.', since: sinceIso };
+  }
   const total = Number(store.rows(`SELECT COUNT(*) AS n FROM brain_records WHERE updated_at ${persisted ? '>' : '>='} ? AND deleted = 0 AND kind NOT IN ('daily_review', 'audit') AND origin != 'auditor' AND id NOT LIKE 'review:%' AND id NOT LIKE 'audit:%'`, sinceIso)[0]?.n) || activity.length;
-  const imported = activity.filter((r) => r.kind !== 'task' && r.created_at && (Date.parse(r.created_at) || nowMs) < sinceMs);
+  // Created before the window: an import, backfill or edit of something older, not a new event. A task's
+  // first Brain copy (rev 1) of an old task is an import too; a status change since keeps rev > 1 and counts.
+  const imported = activity.filter((r) => r.created_at && (Date.parse(r.created_at) || nowMs) < sinceMs && (r.kind !== 'task' || r.rev === 1));
   const fresh = activity.filter((r) => !imported.includes(r));
 
   const attested = fresh.filter((r) => ['owner_attested', 'verified_source'].includes(r.verification));
@@ -113,7 +122,7 @@ export function buildDailyReview(store, { now = new Date().toISOString(), since,
   const corrections = count(attested, (r) => r.kind === 'correction');
   const memories = count(attested, (r) => r.kind === 'memory' && r.origin !== 'auditor');
   const lessons = count(fresh, (r) => r.kind === 'lesson');
-  const tasks = activity.filter((r) => r.kind === 'task');
+  const tasks = fresh.filter((r) => r.kind === 'task');
   const tasksDone = count(tasks, (r) => ['done', 'completed', 'succeeded', 'success'].includes(String(r.source?.status || '')));
   const tasksFailed = count(tasks, (r) => ['failed', 'error', 'cancelled', 'canceled'].includes(String(r.source?.status || '')));
   const tasksLive = count(tasks, (r) => ['queued', 'running', 'reviewing'].includes(String(r.source?.status || '')));
@@ -258,7 +267,10 @@ export function brainReviewIntent(message) {
   if (new RegExp(`^(?:(?:brain|daily|morning|significance)\\s+)?(?:review|audit|conclusions)${END}`, 'i').test(text)) return true;
   if (new RegExp(`\\b(?:read|give|tell|show|hear)\\s+(?:me\\s+)?${DET}\\s+(?:review|audit)${END}`, 'i').test(text)) return true;
   if (new RegExp(`\\b(?:daily|morning|nightly|night['’]?s|today['’]?s|todays|this\\s+morning['’]?s)\\s+(?:review|audit)${END}`, 'i').test(text)) return true;
-  if (/\b(?:your|the)\s+(?:audit|auditor|review)\s+(?:find|found|say|said|conclude[ds]?|flag(?:ged)?)\b/i.test(text)) return true;
+  if (/\byour\s+(?:audit|auditor|review)\s+(?:find|found|say|said|conclude[ds]?|flag(?:ged)?)\b/i.test(text)) return true;
+  // "the audit found a tax error, remember that" is the owner telling CHE about someone's audit; only a
+  // question about "the audit/review" is a request to hear hers.
+  if (/\bthe\s+(?:audit|auditor|review)\s+(?:find|found|say|said|conclude[ds]?|flag(?:ged)?)\b/i.test(text) && (/^(?:what|did|has|any(?:thing)?|which|so)\b/i.test(text) || /\?\s*$/.test(text))) return true;
   if (new RegExp(`\\b(?:review|audit)\\s+(?:of\\s+)?my\\s+brain${END}`, 'i').test(text)) return true;
   if (new RegExp(`\\b(?:conclusions|what\\s+happened(?:\\s+\\w+)?)\\s+(?:from|in)\\s+(?:my|the|your)\\s+brain${END}`, 'i').test(text)) return true;
   if (new RegExp(`\\bwhat\\s+did\\s+you\\s+(?:conclude|learn|find)\\s+(?:last\\s+night|overnight|this\\s+morning)${END}`, 'i').test(text)) return true;
