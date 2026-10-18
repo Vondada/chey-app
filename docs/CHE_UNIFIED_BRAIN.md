@@ -86,7 +86,7 @@ asked.
 | `base_rev` differs (concurrent edit) | `conflict` — the stored copy stays, the incoming copy is kept in `brain_conflicts`, the client is told and keeps its own copy too |
 | Delete | `deleted` — always wins (owner privacy), tombstone with content cleared, rev+1; CHE's own later writes (`put`, the legacy projection) never recreate it |
 | Put after delete | `deleted` unless the client saw the tombstone (`base_rev` equal), then re-created |
-| Secrets (`isSafeText`: the `isSafeMemoryText` gate run window by window over the whole title and body) | `rejected`, from either side; the phone refuses the same words before writing anything |
+| Secrets (`isSafeText`: the `/api/memory/add` words and the privacy policy's secret class over the whole title, body and source at once) | `rejected`, from either side; the phone refuses the same words before writing anything |
 
 Integrity digest: `count` and `Σ fnv1a32("id:rev") mod 2^32` over all records,
 tombstones included. The phone computes the same (`cheFnv1a32`), and a sync receipt
@@ -116,7 +116,10 @@ backfills 100 brainmem records) · `POST /api/brain/push {ops, device}` ·
 - A memory pushed from the phone (`mem:` kind memory) joins `data.memories` /
   `data.memory_records` with the same id (`addOwnerMemory(..., { id })`); an edit there
   changes its words here; a memory deleted on the phone leaves them (decided by the op,
-  not by the tombstone's source). `/api/memory/delete`, `/api/memory/clear` and
+  not by the tombstone's source). `data.memories` holds a 500-character single-line
+  **display copy** of each memory; the Brain record is the truth, and the projection never
+  writes the copy back over a phone-authored or fuller record (only its active and
+  supersession flags carry over, through `amendSource`). `/api/memory/delete`, `/api/memory/clear` and
   `DELETE /api/library` write tombstones so every replica forgets too.
 - `nightly()` runs the projection and a 500-record backfill batch; no model call.
 
@@ -132,7 +135,10 @@ go to the journal before they return; the outbox is cleared op by op only when t
 Worker has answered; a failed sync leaves outbox and cursor untouched; conflicts keep
 both copies; a rejected record stays, marked `sync_note`; a replayed op is read by its first
 outcome. `remember()` refuses a text that names a password, key or code before anything
-touches the disk. `sync()` pushes, pulls in pages of 500 from the cursor, compares
+touches the disk; `saveMemory` returns what really happened (`saved`, `saved_offline`,
+`refused`, `failed`) and the reply says exactly that, never "saved" for a refusal; an
+offline `deleteMemory` becomes a replica tombstone; a push answered with the Worker's copy
+takes it with its body file (no orphans); a replayed journal queues each op once. `sync()` pushes, pulls in pages of 500 from the cursor, compares
 digests, and returns a `CheBrainSyncReceipt` with real counts and a spoken form.
 
 Wired in: `_loadAgentState` starts a sync after each state load and, when the cloud
@@ -152,7 +158,7 @@ the Keychain vault and never enter the Brain.
 
 Verified (automated, offline, this PR):
 
-- `server/cloudflare/brain_store.test.mjs` — 15 tests: regions/relationships/labels;
+- `server/cloudflare/brain_store.test.mjs` — 17 tests: regions/relationships/labels;
   fnv1a32 reference values; normalization; significance rules and owner override;
   created/unchanged/merged/updated/conflict/resolve; duplicate op; delete wins and
   re-create after tombstone; secrets rejected; changes paging with tombstones and the
@@ -160,26 +166,35 @@ Verified (automated, offline, this PR):
   idempotent legacy projection with stable ids; live exchange word for word and
   resumable brainmem backfill that never replaces it; contentHash ignores links; a secret
   past the 500th character refused; a deleted record not resurrected by `put` or by the
-  projection; a subset of links is unchanged.
-- `server/cloudflare/brain_sync.test.mjs` — 6 tests through the real Worker: owner
+  projection; a subset of links is unchanged; the display copy never overwrites a
+  phone-authored or fuller memory (flags only); a clean text is never refused at a window
+  cut and source fields are scanned.
+- `server/cloudflare/brain_sync.test.mjs` — 7 tests through the real Worker: owner
   gate (401 without a device); phone memory → `/api/state` with the same id, duplicate
   op, `/changes`, no conflict from the projection; Memory-screen delete → tombstone,
   clear → all tombstones, deleted memory not searchable; chat exchange kept word for
   word with the brainmem id, searchable, counted in folders; concurrent edit kept as a
   conflict and resolved by the owner, digest equals one id:rev hash; a phone edit changes
   the memory's words in `/api/state`, a phone delete removes it and the next projection
-  leaves it deleted, a replayed delete answers duplicate/first_outcome deleted.
-- `test/che_brain_replica_test.dart` — 10 tests with an in-memory fake Worker that
+  leaves it deleted, a replayed delete answers duplicate/first_outcome deleted; a 3 000-char
+  phone memory stays whole through the projection while the memory list shows its display
+  copy.
+- `test/che_brain_replica_test.dart` — 11 tests with an in-memory fake Worker that
   returns the same outcomes: durable write + restart replay; push/pull/ack/digest
   match; failed push drops nothing; delete both ways; conflict with both copies,
   rejected record kept, resolve re-queues; 1 203-record paged pull interrupted and
   resumed from its cursor, long body in a file; queued offline request says it did
   not run; a secret never written and a 1 550-char body kept whole across a restart; a
-  replayed op read by its first outcome; scale on the VM: 10 000 records sync 1.9 s,
+  replayed op read by its first outcome; a replayed journal queues each op once; scale on
+  the VM: 10 000 records sync 1.9 s,
   search 10 ms, load 1.6 s; 100 000 records (`CHE_BRAIN_SCALE=100000`) sync 26.7 s,
   search 90 ms, load 14.9 s.
 - `run_checks.sh`: Worker 1455/1462 (7 skipped), skills 17/17, dart analyze clean,
   flutter test +444.
+- Second independent review (2026-10-18): one blocking finding, fixed above (the legacy
+  projection overwrote phone-authored memories with the 500-character display copy), plus
+  the false "saved" reply after a refusal, window-cut false refusals, orphaned body files,
+  unscanned source fields, duplicate ops on replay and the offline delete.
 - First independent review (2026-10-18): three blocking findings, all fixed above
   (deleted memories resurrected by the projection; the secret gate reading only 500
   characters; bodies of 601–2 000 characters truncated on the phone), plus the duplicate

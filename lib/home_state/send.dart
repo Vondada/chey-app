@@ -868,9 +868,9 @@ extension _CheHomeSend on _CHEHomeState {
 
     if (message.toLowerCase().startsWith('remember that ')) {
       final memory = message.substring(14).trim();
-      await saveMemory(memory);
+      final outcome = await saveMemory(memory);
 
-      const reply = 'Got it. I saved that securely, sir.';
+      final reply = _CheHomeMemory.memorySaveSpeech(outcome);
 
       if (!mounted) return;
 

@@ -277,3 +277,37 @@ test('re-sending a subset of a record’s links changes nothing', async (t) => {
   assert.equal(store.put(sample({ id: 'l:1', links: [{ type: 'tests', to: 'c' }] })).outcome, 'merged');
   assert.equal(store.get('l:1').links.length, 3);
 });
+
+test('the legacy display copy never overwrites a phone-authored or fuller memory; only its flags carry over', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const long = `First line of the memory.\nSecond line with detail.\n\n  Indented third   line. ${'More words here. '.repeat(200)}`;
+  store.apply({ op_id: 'p1', type: 'put', record: sample({ id: 'mem:long', kind: 'memory', body: long, source: { kind: 'memory_record' } }) }, { origin: 'iphone' });
+  const legacyText = long.replace(/\s+/g, ' ').trim().slice(0, 500);
+  const data = { memory_records: [{ id: 'long', text: legacyText, title: 'First line', category: 'Family', source: 'owner_chat', verification_status: 'owner_attested', created_at: '2026-10-01T00:00:00.000Z', active: true }] };
+  projectLegacyState(store, data);
+  const after = store.get('mem:long');
+  assert.equal(after.body, long, 'the Brain keeps the whole text with its lines');
+  assert.equal(after.rev, 1, 'no revision churn from the display copy');
+  assert.ok(store.search('words here').length >= 1);
+  data.memory_records[0].active = false;
+  data.memory_records[0].superseded_at = '2026-10-18T00:00:00.000Z';
+  projectLegacyState(store, data);
+  const flagged = store.get('mem:long');
+  assert.equal(flagged.body, long);
+  assert.equal(flagged.source.active, false);
+  assert.equal(flagged.source.superseded_at, '2026-10-18T00:00:00.000Z');
+  assert.equal(flagged.rev, 2);
+  assert.equal(projectLegacyState(store, data).projected, 0, 'and then nothing more');
+});
+
+test('the secret gate reads the whole text at once: no false refusal where a window would cut a word, and source fields are scanned', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const clean = `${'word '.repeat(59)}spin ${'word '.repeat(19)}pins ${'word '.repeat(120)}`;
+  assert.equal(isSafeText(clean), true);
+  assert.equal(store.put(sample({ id: 'note:clean', body: clean })).outcome, 'created');
+  assert.equal(store.put(sample({ id: 'note:src', body: 'A harmless note.', source: { kind: 'test', note: 'the password is hunter2' } })).outcome, 'rejected');
+});

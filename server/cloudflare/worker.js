@@ -5651,8 +5651,8 @@ export class CheState extends DurableObject {
           return json(brain.status());
         }
         if (path === '/api/brain/changes' && request.method === 'GET') {
-          // Each sync pull also moves the legacy stores a step further into the Brain: the first
-          // pull of a sync always, later pages at most every ten minutes (the projection reads
+          // Each sync pull also moves the legacy stores a step further into the Brain: a pull from
+          // the start (since=0) always, any other at most every ten minutes (the projection reads
           // every legacy row).
           const lastProjection = Date.parse(brain.status().legacy_projection?.at || '') || 0;
           if (!Number(q.get('since')) || Date.now() - lastProjection > 10 * 60_000) projectLegacyState(brain, data, { library: library() });

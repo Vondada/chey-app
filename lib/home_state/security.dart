@@ -1242,11 +1242,11 @@ extension _CheHomeSecurity on _CHEHomeState {
     if (rememberMatch != null) {
       final memory = clean.substring(rememberMatch.end).trim();
       if (memory.isNotEmpty) {
-        await saveMemory(memory);
+        final outcome = await saveMemory(memory);
         return jsonEncode({
-          'ok': true,
-          'confirmed': true,
-          'result': 'Saved to CHE memory.',
+          'ok': outcome == 'saved' || outcome == 'saved_offline',
+          'confirmed': outcome == 'saved' || outcome == 'saved_offline',
+          'result': _CheHomeMemory.memorySaveSpeech(outcome),
         });
       }
     }

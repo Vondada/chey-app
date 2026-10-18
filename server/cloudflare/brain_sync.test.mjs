@@ -206,3 +206,23 @@ test('a memory deleted on the phone leaves CHE’s memory list and stays deleted
   assert.equal(replay.results[0].outcome, 'duplicate');
   assert.equal(replay.results[0].first_outcome, 'deleted');
 });
+
+test('a long memory saved on the phone stays whole in the Brain after the projection; the memory list shows its display copy', async (t) => {
+  const che = await owner();
+  if (!che) return t.skip('node:sqlite unavailable');
+  const long = `Plan for the barbershop.\nOpen at nine.\n${'Detail sentence number. '.repeat(120)}fact399`;
+  const record = { id: 'mem:33333333-3333-4333-8333-333333333333', kind: 'memory', region: 'Personal Memory', path: 'Business', title: 'Barbershop plan', body: long, verification: 'owner_attested', source: { kind: 'memory_record' } };
+  const pushed = await (await che.call('/api/brain/push', { method: 'POST', token: che.token, body: { ops: [{ op_id: 'l1', type: 'put', record }], device: 'iphone' } })).json();
+  assert.equal(pushed.results[0].outcome, 'created');
+  const changes = await (await che.call('/api/brain/changes?since=0', { token: che.token })).json();
+  const mine = changes.records.find((r) => r.id === record.id);
+  assert.equal(mine.body, long, 'the whole text comes back to the phone');
+  assert.equal(mine.rev, 1);
+  const state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.equal(state.memories[0].length, 500, 'the memory list holds the display copy');
+  assert.equal((await (await che.call('/api/brain/search?q=fact399', { token: che.token })).json()).hits.length, 1);
+  const status = await (await che.call('/api/brain/status', { token: che.token })).json();
+  assert.equal(status.open_conflicts, 0);
+  const again = await (await che.call(`/api/brain/record?id=${record.id}`, { token: che.token })).json();
+  assert.equal(again.rev, 1, 'a second projection (status) changes nothing');
+});

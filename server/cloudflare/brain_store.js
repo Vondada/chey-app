@@ -14,7 +14,8 @@
 // body is clipped at MAX_BODY_CHARS because a SQLite row in a Durable Object
 // is limited to about two megabytes, and the clip is recorded in its source.
 
-import { isSafeMemoryText } from './research_memory.js';
+import { SENSITIVE_RE } from './research_memory.js';
+import { classifyItem } from './privacy_policy.js';
 
 export const MAX_BODY_CHARS = 1_500_000;
 const MAX_TITLE_CHARS = 200;
@@ -74,18 +75,15 @@ function clip(value, max) {
 }
 
 /**
- * The same secret gate as /api/memory/add, over the whole text: isSafeMemoryText reads 500
- * characters, so a long record is checked window by window (400 wide, 100 overlap), and one
- * password anywhere refuses the record.
+ * The same secret gate as /api/memory/add (the sensitive words and the privacy policy's secret
+ * class), run over the whole text at once, so one password anywhere refuses the record and a
+ * clean text is never refused because a window cut through a word.
  */
 export function isSafeText(text) {
-  const value = String(text ?? '');
-  if (!value.trim()) return false;
-  for (let i = 0; i < value.length; i += 300) {
-    if (!isSafeMemoryText(value.slice(i, i + 400))) return false;
-    if (i + 400 >= value.length) break;
-  }
-  return true;
+  const value = String(text ?? '').replace(/\s+/g, ' ').trim();
+  if (!value) return false;
+  if (SENSITIVE_RE.test(value)) return false;
+  return classifyItem(value) !== 'secret';
 }
 
 function asObject(value) {
@@ -340,7 +338,7 @@ export class CheBrainStore {
     const normalized = normalizeRecord(input.record);
     if (normalized.error) return { outcome: 'rejected', reason: normalized.error };
     // Passwords and other secrets never enter the Brain, from either side.
-    if (!isSafeText(`${normalized.title}\n${normalized.body}`)) {
+    if (!isSafeText(`${normalized.title}\n${normalized.body}\n${JSON.stringify(normalized.source)}`)) {
       return { outcome: 'rejected', reason: 'rejected_sensitive_or_empty', id: normalized.id };
     }
     const current = this.get(normalized.id);
@@ -375,6 +373,16 @@ export class CheBrainStore {
     this.sql.exec('INSERT OR IGNORE INTO brain_conflicts (id, record_id, current, incoming, at, resolved) VALUES (?, ?, ?, ?, ?, ?)',
       conflictId, normalized.id, JSON.stringify(current), JSON.stringify({ ...normalized, hash, base_rev: baseRev, origin }), now || new Date().toISOString(), '');
     return { outcome: 'conflict', record: current, rev: current.rev, conflict_id: conflictId };
+  }
+
+  /** A change to a record's source metadata only (active flag, supersession): content untouched, revision moved. */
+  amendSource(id, patch, { origin = 'cloud', now } = {}) {
+    const current = this.get(id);
+    if (!current || current.deleted) return { outcome: 'missing', id };
+    const source = { ...(current.source || {}), ...asObject(patch) };
+    if (JSON.stringify(source) === JSON.stringify(current.source || {})) return { outcome: 'unchanged', record: current, rev: current.rev };
+    const written = this.write({ ...current, source, places: this.rows('SELECT region, path FROM brain_places WHERE record_id = ?', id) }, { rev: current.rev + 1, origin, now });
+    return { outcome: 'amended', record: this.get(id), rev: written.rev };
   }
 
   /** A record written by CHE herself (not a sync op): created or updated, with the current revision as base. */
@@ -557,6 +565,11 @@ export function rememberExchange(store, { id, message, reply, at, correction = f
 }
 
 /** Owner memory rows (data.memory_records) as Personal Memory records with stable ids. */
+/** What data.memories keeps of a memory: its first 500 characters, whitespace collapsed (research_memory clip). */
+function displayCopy(body) {
+  return String(body || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+}
+
 function memoryRecordToBrain(record) {
   const links = [];
   if (record.superseded_by && record.superseded_by_id) links.push({ type: 'superseded_by', to: `mem:${record.superseded_by_id}` });
@@ -693,8 +706,21 @@ export function projectLegacyState(store, data = {}, { now, library = [] } = {})
     if (candidate.error) return;
     const hash = contentHash(candidate);
     if (hashes[candidate.id] === hash) { skipped += 1; return; }
+    const current = store.get(candidate.id);
     // The owner deleted it: the legacy row may linger a little, the deletion wins.
-    if (store.get(candidate.id)?.deleted) { hashes[candidate.id] = hash; skipped += 1; return; }
+    if (current?.deleted) { hashes[candidate.id] = hash; skipped += 1; return; }
+    // data.memories holds a 500-character, single-line display copy of each memory. When the Brain's
+    // record came from the phone, or is simply the fuller text that copy was cut from, the copy never
+    // overwrites it; only its active and supersession flags are carried over.
+    if (current && candidate.kind === 'memory' && current.kind === 'memory'
+      && (current.origin !== 'cloud' || displayCopy(current.body) === displayCopy(candidate.body))) {
+      const sameFlags = (current.source?.active !== false) === (candidate.source.active !== false)
+        && (current.source?.superseded_at || '') === (candidate.source.superseded_at || '');
+      const result = sameFlags ? { outcome: 'unchanged' } : store.amendSource(candidate.id, { active: candidate.source.active !== false, superseded_at: candidate.source.superseded_at || '' }, { origin: 'cloud', now });
+      hashes[candidate.id] = hash;
+      if (result.outcome === 'amended') projected += 1; else skipped += 1;
+      return;
+    }
     const result = store.put(record, { origin: 'cloud', now });
     if (['created', 'updated', 'merged', 'unchanged'].includes(result.outcome)) {
       hashes[candidate.id] = hash;

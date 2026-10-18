@@ -300,6 +300,19 @@ void main() {
     expect(brain.conflicts.first.local['body'], 'Phone second.');
   });
 
+  test('J: a journal replayed with duplicate op lines queues each op once', () async {
+    final dir = await freshDir();
+    final brain = CheBrainReplica(directory: dir);
+    await brain.remember(id: 'note:dup', kind: 'note', region: 'Learned Knowledge', body: 'Once.');
+    final journal = File('${dir.path}/journal.ndjson');
+    final lines = await journal.readAsString();
+    final opLines = lines.split('\n').where((l) => l.contains('"t":"op"')).join('\n');
+    await journal.writeAsString('$lines$opLines\n', mode: FileMode.append, flush: true);
+    final reopened = CheBrainReplica(directory: dir);
+    await reopened.load();
+    expect(reopened.pendingOps, 1);
+  });
+
   test('F: a queued offline request is a task record that says it did not run', () async {
     final brain = CheBrainReplica(directory: await freshDir());
     final queued = (await brain.queueRemoteRequest('send the report to Claude'))!;

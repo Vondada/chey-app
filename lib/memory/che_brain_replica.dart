@@ -313,7 +313,8 @@ class CheBrainReplica {
         if (record != null) _index(record);
         break;
       case 'op':
-        _outbox.add(Map<String, dynamic>.from(entry['o'] as Map));
+        final op = Map<String, dynamic>.from(entry['o'] as Map);
+        if (!_outbox.any((o) => o['op_id'] == op['op_id'])) _outbox.add(op);
         break;
       case 'ack':
         _outbox.removeWhere((op) => op['op_id'] == entry['op_id']);
@@ -668,6 +669,23 @@ class CheBrainReplica {
     if (buffer != null) { buffer.add(entry); } else { await _append(entry); }
   }
 
+  /// The Worker's copy of a record, taken as it is (a push answered with it): the body file
+  /// follows the record, so a deleted or replaced record leaves no orphan on disk.
+  Future<void> _takeServerCopy(Map<String, dynamic> json) async {
+    final incoming = CheBrainRecord.fromJson(json);
+    if (incoming == null) return;
+    final body = '${json['body'] ?? ''}';
+    try {
+      final file = await _bodyFile(incoming.id);
+      if (incoming.deleted || incoming.inlineBody) {
+        if (await file.exists()) await file.delete();
+      } else {
+        await file.writeAsString(body, flush: true);
+      }
+    } catch (_) {}
+    _index(incoming);
+  }
+
   // ── Sync ───────────────────────────────────────────────────────────────────
 
   /// Push first, then pull, then compare digests. Any transport failure leaves
@@ -715,9 +733,10 @@ class CheBrainReplica {
               break;
             case 'deleted':
               if (serverRecord != null) {
-                _index(CheBrainRecord.fromJson(serverRecord)!);
+                await _takeServerCopy(serverRecord);
                 await _append({'t': 'rec', 'r': _records[id]!.toJson()});
               } else if (local != null) {
+                try { final f = await _bodyFile(id); if (await f.exists()) await f.delete(); } catch (_) {}
                 _index(local.copyWith(deleted: true, pending: false, title: '', excerpt: '', bodyChars: 0, links: const []));
                 await _append({'t': 'rec', 'r': _records[id]!.toJson()});
               }
@@ -732,7 +751,7 @@ class CheBrainReplica {
               _conflicts.add(conflict);
               await _append({'t': 'conflict', 'c': conflict.toJson()});
               if (serverRecord != null) {
-                _index(CheBrainRecord.fromJson(serverRecord)!);
+                await _takeServerCopy(serverRecord);
                 await _append({'t': 'rec', 'r': _records[id]!.toJson()});
               } else if (local != null) {
                 _index(local.copyWith(pending: false, syncNote: 'conflict'));

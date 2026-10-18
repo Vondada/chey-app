@@ -2,11 +2,15 @@ part of '../main.dart';
 
 // Split out of main.dart: _CHEHomeState members (memory).
 extension _CheHomeMemory on _CHEHomeState {
-  Future<void> saveMemory(String memory) async {
-    if (!await _ensurePaired()) return;
+  /// Saves an owner memory and says what really happened: 'saved', 'saved_offline'
+  /// (kept on the phone, reaches the cloud at the next sync), 'refused' (a password or
+  /// key: never kept anywhere but the vault), or 'failed'.
+  Future<String> saveMemory(String memory) async {
+    if (!await _ensurePaired()) return 'failed';
 
     final clean = memory.trim();
-    if (clean.isEmpty) return;
+    if (clean.isEmpty) return 'failed';
+    if (cheBrainTextIsSensitive(clean)) return 'refused';
 
     http.Response response;
     try {
@@ -17,23 +21,29 @@ extension _CheHomeMemory on _CHEHomeState {
       );
     } catch (_) {
       // No connection: the memory is kept in the Brain replica on the phone and
-      // reaches the cloud at the next sync. It is never dropped, and a secret is
-      // never written: the owner hears that it was not kept.
+      // reaches the cloud at the next sync. It is never dropped.
       final kept = await _brainReplica.remember(kind: 'memory', region: 'Personal Memory', path: 'Memory', body: clean, source: {'kind': 'memory_record'});
-      if (kept == null) {
-        await speakText('I did not keep that, sir: it looks like a password or a key, and those stay in the vault only.', record: false);
-      }
       if (mounted) _set(() {});
-      return;
+      return kept == null ? 'refused' : 'saved_offline';
     }
 
     if (response.statusCode == 401) {
       await _clearSecuritySession();
-      return;
+      return 'failed';
     }
+    if (response.statusCode != 200) return response.statusCode == 400 ? 'refused' : 'failed';
 
     await _loadAgentState(silent: true);
+    return 'saved';
   }
+
+  /// The spoken outcome of saveMemory, never a "saved" for something that was not.
+  static String memorySaveSpeech(String outcome) => switch (outcome) {
+        'saved' => 'Got it. I saved that securely, sir.',
+        'saved_offline' => 'Got it. I kept that on the phone, sir; it reaches the cloud when we are back online.',
+        'refused' => 'I did not keep that, sir: it looks like a password or a key, and those stay in the vault only.',
+        _ => 'I could not save that, sir. Nothing was kept; please try again.',
+      };
 
   // ── Brain replica (lib/memory/che_brain_replica.dart) ──────────────────────
 
@@ -125,11 +135,24 @@ extension _CheHomeMemory on _CHEHomeState {
   Future<void> deleteMemory(int index) async {
     if (!await _ensurePaired()) return;
 
-    final response = await http.post(
-      Uri.parse('$cheAgentBaseUrl/api/memory/delete'),
-      headers: _authHeaders,
-      body: jsonEncode({'index': index}),
-    );
+    http.Response response;
+    try {
+      response = await http.post(
+        Uri.parse('$cheAgentBaseUrl/api/memory/delete'),
+        headers: _authHeaders,
+        body: jsonEncode({'index': index}),
+      );
+    } catch (_) {
+      // No connection: the deletion is a tombstone in the Brain replica now and
+      // reaches the cloud (and CHE's memory list) at the next sync.
+      final text = index >= 0 && index < savedMemories.length ? savedMemories[index] : '';
+      final record = memoryRecords.where((r) => '${r['text'] ?? ''}' == text).firstOrNull;
+      if (record != null && '${record['id'] ?? ''}'.isNotEmpty) await _brainReplica.forget('mem:${record['id']}');
+      if (index >= 0 && index < savedMemories.length) savedMemories.removeAt(index);
+      memoryRecords.removeWhere((r) => '${r['text'] ?? ''}' == text);
+      if (mounted) _set(() {});
+      return;
+    }
 
     if (response.statusCode == 401) {
       await _clearSecuritySession();
