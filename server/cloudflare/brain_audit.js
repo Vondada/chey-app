@@ -258,6 +258,33 @@ export function brainReviewIntent(message) {
   if (/\b(?:build|fix|change|implement|delete|remove|clear|run\s+the\s+review\s+again|regenerate|rebuild|redo|rewrite|code|repo|pull\s+request|pr|website|plan|spending|log|logs|trail)\b/i.test(text)) return false;
   // What the owner himself said or asked is an owner-memory question, answered from his own words, never with the review.
   if (/\b(?:what\s+(?:have|did)\s+i\s+(?:told|tell|say|said|ask|asked|mention)|did\s+i\s+(?:ask|say|tell|mention)|have\s+i\s+(?:asked|said|told|mentioned))\b/i.test(text)) return false;
+  // A noun that names CHE's own review: "brain review", "morning review", "your audit". A bare "the
+  // review", "my review" or "the last review" may be anyone's (a doctor's, an accountant's, Amazon's).
+  const BRAIN_NOUN = "(?:(?:brain|morning|daily|nightly|night['’]?s|today['’]?s|todays|yesterday['’]?s|this\\s+morning['’]?s|last\\s+night['’]?s|your)\\s+(?:brain\\s+)?(?:review|audit))";
+  // An explicit request to hear it wins over everything below (review of #337): "read me my brain
+  // review", "thanks, read me my brain review", "I skipped the brain review, give it to me now", "did
+  // your audit find anything wrong", "what did I miss in my morning review", "what did yesterday's
+  // audit find". "Read it" counts only after that noun, never in "find the review in my inbox and read it".
+  const asks = new RegExp(`\\b${BRAIN_NOUN}\\b`, 'i').test(text) && (
+    // The verb starts its clause ("read me", "now read", "can you read"), so "I've read the brain review" is not asking.
+    new RegExp(`(?:^|[,.;:!?]\\s*|\\b(?:please|can\\s+you|could\\s+you|would\\s+you|will\\s+you|now|then|and|just|want\\s+to|let\\s+me|like\\s+to)\\s+)(?:read|give|tell|show|hear)\\b[\\s\\S]{0,20}\\b${BRAIN_NOUN}\\b`, 'i').test(text)
+    || new RegExp(`\\b${BRAIN_NOUN}\\b[\\s\\S]{0,40}\\b(?:read|give|tell|show|play|send)\\s+(?:me\\s+)?(?:it|that)\\b`, 'i').test(text)
+    || /\bwhat\s+did\b[\s\S]{0,40}\b(?:audit|review)\b[\s\S]{0,12}\b(?:find|say|conclude|flag)\b/i.test(text)
+    || /\bwhat\s+did\s+i\s+miss\s+in\b/i.test(text)
+    || /\bdid\s+(?:i\s+miss\s+anything\s+in|(?:your|the)\s+(?:brain\s+)?(?:audit|review)\s+find)\b/i.test(text));
+  // "Your review of the contract", "yesterday's review from the doctor": CHE reviewing something else
+  // (third review of #337). "Of my brain" is still hers.
+  const aboutOther = new RegExp(`\\b${BRAIN_NOUN}\\s+(?:of|from|on|for|about)\\b(?!\\s+(?:my|the|your)\\s+brain\\s*(?:[,.!?]|$))`, 'i').test(text);
+  if (asks && !aboutOther) return true;
+  // "What did the last audit find?" with nothing after it can only mean CHE's; "... about my business taxes" is not.
+  if (/^what\s+did\s+(?:the\s+)?last\s+(?:audit|review)\s+(?:find|say|flag|conclude)\s*\??\s*$/i.test(text)) return true;
+  if (/\b(?:review|audit)\s+(?:is|was|seems)\s+wrong\b|\b(?:disagree|don['’]?t\s+agree|do\s+not\s+agree)\b/i.test(text)) return false;
+  if (/\b(?:cancel|stop|pause|disable|enable|skip|turn\s+(?:off|on)|switch\s+(?:off|on)|reschedule|schedule|move)\s+(?:my|the|this|tomorrow['’]?s|tonight['’]?s|the\s+next)?\s*(?:brain\s+|daily\s+|nightly\s+|morning\s+)?(?:review|audit)\b/i.test(text)) return false;
+  if (/^(?:i|we)(?:['’]ve|\s+have)?\s+(?:already\s+)?(?:read|heard|seen|saw|got|missed|skipped)\b(?![\s\S]*\bread\s+it\b)/i.test(text) && !/\?\s*$/.test(text)) return false;
+  // Thanking counts only as the whole sentence or "thanks for ...": "thank you CHE, now the brain review please" asks.
+  if (/\b(?:thanks|thank\s+you)\s+(?:so\s+much\s+|very\s+much\s+)?for\b|^(?:thanks|thank\s+you)(?:\s+(?:che|chey|so\s+much|very\s+much))?[\s!.,]*$/i.test(text)) return false;
+  if (/\bhow\s+does\b[\s\S]{0,30}\b(?:work|run)\b|\b(?:runs?\s+at|when\s+(?:does|is|will|do)|what\s+time)\b|\b(?:remember\s+(?:that|this)|note\s+that)\b/i.test(text)) return false;
+  if (/\bwhat\s+did\s+(?:last\s+night['’]?s|this\s+morning['’]?s|the\s+(?:nightly|morning|daily))\s+(?:audit|review)\s+(?:find|say|conclude|flag)\b/i.test(text)) return true;
   // Only a Brain-qualified noun, "your/the audit found", or a sentence that ends at the noun: "the review
   // John left", "my daily review at 9" and "what did you find about the brain tumor study" are something else.
   // The sentence ends at the noun (a tail like "John left", "at 9", "from the accountant" makes it something else).
