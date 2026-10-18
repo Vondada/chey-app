@@ -396,9 +396,14 @@ async function memoryTruthProbe(env, token) {
     },
     body: JSON.stringify(body),
   }));
-  const paired = await (await call('/api/pair', { code: String(env.CHE_PAIR_CODE || ''), device_name: 'CHE memory truth check' })).json().catch(() => ({}));
+  await call('/api/memory-probe/reset', {}).catch(() => null);
+  const pairResponse = await call('/api/pair', { code: String(env.CHE_PAIR_CODE || ''), device_name: 'CHE memory truth check' });
+  const paired = await pairResponse.clone().json().catch(() => ({}));
   const device = paired.device_token;
-  if (!device) return { ok: false, error: 'The check could not pair with its test CHE.', steps: [] };
+  if (!device) {
+    const detail = paired.detail || (await pairResponse.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 160);
+    return { ok: false, error: `The check could not pair with its test CHE (HTTP ${pairResponse.status}${detail ? `: ${detail}` : ''}).`, steps: [] };
+  }
   const run = Date.now().toString(36);
   const food = ['pizza', 'sushi'];
   const history = [];
@@ -4524,6 +4529,15 @@ export class CheState extends DurableObject {
   // Every owner ↔ CHE exchange becomes a brain memory, after the reply is
   // sent (never in front of it), whatever route inside /api/chat answered.
   async fetch(request) {
+    // The deploy's memory check starts its isolated test CHE fresh each run, so the records each
+    // run leaves behind cannot grow it past what storage accepts. Only the per-deploy random token
+    // opens this, only the memory check sends it, and never to an object named anything else.
+    if (request.method === 'POST' && new URL(request.url).pathname === '/api/memory-probe/reset') {
+      const name = this.ctx.id?.name;
+      if (!isMemoryProbeRequest(request, this.env) || (name && name !== MEMORY_PROBE_OBJECT)) return json({ detail: 'Not found.' }, 404);
+      await this.ctx.storage.deleteAll();
+      return json({ ok: true, reset: true });
+    }
     const isChat = request.method === 'POST' && new URL(request.url).pathname === '/api/chat';
     // The deploy's memory-truth check talks to its own isolated CHE; its test
     // conversation never grows the owner's shared vector memory.

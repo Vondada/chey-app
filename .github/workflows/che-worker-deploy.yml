@@ -392,6 +392,32 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Check CHE's forward paper trading on the live Worker
+        run: |
+          node --input-type=module <<'JS'
+          // Paper only. Arms the owner's minute alarm, runs one forward-paper pass, and prints what
+          // the records hold: the feed and its label, signals, open positions and the newest trades.
+          import { appendFileSync } from 'node:fs';
+          const summary = (line) => appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
+          let report = null;
+          let lastError = '';
+          for (let attempt = 0; attempt < 3 && !report; attempt++) {
+            try {
+              const response = await fetch('https://chey-app.henryjavoni.workers.dev/api/trading/probe', {
+                method: 'POST', headers: { Authorization: `Bearer ${process.env.CHE_VOICE_PROBE_TOKEN}` }, signal: AbortSignal.timeout(60000),
+              });
+              if (response.ok) report = await response.json(); else lastError = `HTTP ${response.status}`;
+            } catch (error) { lastError = error?.name === 'TimeoutError' ? 'no answer within 60 s' : 'network error'; }
+            if (!report) await new Promise((resolve) => setTimeout(resolve, 4000));
+          }
+          if (!report) { console.log(`::warning title=Trading check did not run::${lastError}`); process.exit(0); }
+          console.log(JSON.stringify(report, null, 2));
+          const f = report.feed || {};
+          const line = `Paper trading ${report.state?.enabled ? 'ON' : 'OFF'} (${report.account}); feed ${f.status || 'none'} ${f.symbol || ''} ${report.contract || ''}, last bar ${f.last_bar || '-'}${f.error ? `, error: ${f.error}` : ''}; market ${report.session?.state}; signals ${report.counts?.signals ?? 0}, entries ${report.counts?.filled ?? 0}, closed ${report.totals?.trades ?? 0} (${report.totals?.wins ?? 0} won, ${report.totals?.losses ?? 0} lost, net ${report.totals?.net_pnl ?? 0}), open ${(report.positions || []).length}`;
+          console.log(`::notice title=Forward paper trading::${line}`);
+          summary(`**Forward paper trading (live Worker):** ${line}.`);
+          JS
+
       - name: Check CHE's memory truth through the live Worker (real chat test)
         run: |
           node --input-type=module <<'JS'
@@ -443,32 +469,6 @@ jobs:
             console.log(`::error title=Memory truth check failed::${failedMemory.map((step) => step.name).join('; ') || report.error || 'see log'}`);
             process.exit(1);
           }
-          JS
-
-      - name: Check CHE's forward paper trading on the live Worker
-        run: |
-          node --input-type=module <<'JS'
-          // Paper only. Arms the owner's minute alarm, runs one forward-paper pass, and prints what
-          // the records hold: the feed and its label, signals, open positions and the newest trades.
-          import { appendFileSync } from 'node:fs';
-          const summary = (line) => appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
-          let report = null;
-          let lastError = '';
-          for (let attempt = 0; attempt < 3 && !report; attempt++) {
-            try {
-              const response = await fetch('https://chey-app.henryjavoni.workers.dev/api/trading/probe', {
-                method: 'POST', headers: { Authorization: `Bearer ${process.env.CHE_VOICE_PROBE_TOKEN}` }, signal: AbortSignal.timeout(60000),
-              });
-              if (response.ok) report = await response.json(); else lastError = `HTTP ${response.status}`;
-            } catch (error) { lastError = error?.name === 'TimeoutError' ? 'no answer within 60 s' : 'network error'; }
-            if (!report) await new Promise((resolve) => setTimeout(resolve, 4000));
-          }
-          if (!report) { console.log(`::warning title=Trading check did not run::${lastError}`); process.exit(0); }
-          console.log(JSON.stringify(report, null, 2));
-          const f = report.feed || {};
-          const line = `Paper trading ${report.state?.enabled ? 'ON' : 'OFF'} (${report.account}); feed ${f.status || 'none'} ${f.symbol || ''} ${report.contract || ''}, last bar ${f.last_bar || '-'}${f.error ? `, error: ${f.error}` : ''}; market ${report.session?.state}; signals ${report.counts?.signals ?? 0}, entries ${report.counts?.filled ?? 0}, closed ${report.totals?.trades ?? 0} (${report.totals?.wins ?? 0} won, ${report.totals?.losses ?? 0} lost, net ${report.totals?.net_pnl ?? 0}), open ${(report.positions || []).length}`;
-          console.log(`::notice title=Forward paper trading::${line}`);
-          summary(`**Forward paper trading (live Worker):** ${line}.`);
           JS
 
       - name: Check CHE's Command Center through the live Worker
