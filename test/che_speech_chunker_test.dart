@@ -114,5 +114,17 @@ void main() {
     }
     expect(clips.join(' '), text);
   });
+
+  test('a sentence waits for the next word, and ~~~ fences are never read (review of #338)', () {
+    final c = CheSpeechChunker();
+    final out = <String>[];
+    out.addAll(c.addCumulative('Well... '));
+    expect(out, isEmpty, reason: '"Well..." may go on');
+    out.addAll(c.addCumulative('Well... maybe not. Here is code:\n~~~\nrm -rf /\n~~~\nAfter that it works.'));
+    out.addAll(c.flush());
+    expect(out.first, 'Well... maybe not.');
+    expect(out.join(' ').contains('rm -rf'), isFalse);
+    expect(out.join(' '), contains('After that it works.'));
+  });
 }
 

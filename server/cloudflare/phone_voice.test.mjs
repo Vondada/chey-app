@@ -216,3 +216,25 @@ test('route: a locked clip that cannot speak answers 204 with the lock, and Fish
   assert.equal(log.index, 2);
   assert.ok(!JSON.stringify(log).includes('Middle of the reply'));
 });
+
+test('route: an older copy written back by a long request never sends the next reply to Mary (review of #338)', async () => {
+  const phone = await pairedPhone();
+  const calls = fakeProviders();
+  const storage = memoryStorage(phone.saved);
+  const stale = structuredClone(phone.saved.get('che')); // a chat turn loaded this before the change
+  const data = await phone.state.loadData();
+  data.voice_choice = { provider: 'elevenlabs', id: OTHER, speed: 1, name: 'Other' };
+  await saveVoiceChoice(storage, data);
+  stale.memories = [...(stale.memories || []), 'added by the long chat turn'];
+  await storage.put('che', stale); // ...and wrote its older copy back, with no voice choice
+  const reply = await phone.edge({ text: 'Next reply.', turn: 'turn-44444444', index: 0 });
+  assert.equal(reply.status, 200);
+  assert.ok(calls.eleven.at(-1).includes(OTHER), 'the chosen voice speaks, not Mary');
+  assert.ok(!calls.eleven.at(-1).includes(MARY));
+});
+
+test('a rate limit is not retried with force while ElevenLabs rests (review of #338)', async () => {
+  const calls = fakeProviders({ eleven: () => 429 });
+  assert.equal(await premiumVoiceSpeech(env(), 'Part.', { lock: 'elevenlabs', storage: memoryStorage(), ...noWait }), null);
+  assert.equal(calls.eleven.length, 1);
+});

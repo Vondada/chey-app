@@ -112,7 +112,7 @@ void main() {
     final server = FakeServer((text, index, lock, call) {
       if (index == 1 && !failed) {
         failed = true;
-        return const CheEdgeResult(failure: 'no voice from CHE\'s server within 19 seconds');
+        return const CheEdgeResult(failure: 'could not reach CHE\'s server');
       }
       return clip('elevenlabs-mary', tag: mary);
     });
@@ -129,12 +129,34 @@ void main() {
     expect(r.silent['Two.'], contains('different voice'));
   });
 
-  test('when neither voice speaks the first clip, the reply stays silent with the reason', () async {
+  test('when neither voice speaks, each part stays silent with its reason and nothing is locked', () async {
     final server = FakeServer((text, index, lock, call) => const CheEdgeResult(maryStatus: 'out of credits', fishStatus: 'out of credits'));
     final r = await speakReply(server, ['One.', 'Two.']);
     expect(r.played, isEmpty);
     expect(r.silent['One.'], contains('Mary is out of credits'));
-    expect(server.requests.length, 1, reason: 'later parts are not requested once no voice could start');
+    expect(server.requests.map((q) => q.lock), ['', ''], reason: 'nothing spoke, so nothing was locked');
+  });
+
+  test('a first part that could not be spoken does not silence the rest (review of #338)', () async {
+    final server = FakeServer((text, index, lock, call) => index == 0 ? const CheEdgeResult(maryStatus: 'rate-limited', fishStatus: 'network') : clip('elevenlabs-mary', tag: mary));
+    final r = await speakReply(server, ['One.', 'Two.', 'Three.']);
+    expect(r.played, ['elevenlabs:Two.', 'elevenlabs:Three.']);
+    expect(r.silent.keys, ['One.']);
+    expect(server.requests.map((q) => q.lock), ['', '', 'elevenlabs'], reason: 'the second part decided the voice, one at a time');
+  });
+
+  test('a timed-out part is not asked again: the server may still be paying for it (review of #338)', () async {
+    final server = FakeServer((text, index, lock, call) => index == 1 ? const CheEdgeResult(failure: 'no voice within 25 seconds', timedOut: true) : clip('elevenlabs-mary', tag: mary));
+    final r = await speakReply(server, ['One.', 'Two.']);
+    expect(server.requests.where((q) => q.index == 1).length, 1);
+    expect(r.played, ['elevenlabs:One.']);
+  });
+
+  test('a different voice from the same provider mid-reply stops the voice (review of #338)', () async {
+    final server = FakeServer((text, index, lock, call) => clip('elevenlabs-mary', tag: index == 0 ? mary : 'elevenlabs:99999999'));
+    final r = await speakReply(server, ['One.', 'Two.']);
+    expect(r.played, ['elevenlabs:One.']);
+    expect(r.silent['Two.'], contains('different voice'));
   });
 
   test('Stop / barge-in ends playback at once and asks for nothing more', () async {

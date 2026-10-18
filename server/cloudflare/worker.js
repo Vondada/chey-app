@@ -4879,6 +4879,9 @@ export class CheState extends DurableObject {
       const data = (await this.ctx.storage.get('che')) || {
         devices: {}, memories: [], failures: {},
       };
+      // Every request sees the owner's newest voice choice, even after an older copy of
+      // `che` was written back by a long request (review of #338).
+      await reconcileVoiceChoice(this.ctx.storage, data);
       data.projects = Array.isArray(data.projects) ? data.projects : [];
       data.vault_items = Array.isArray(data.vault_items) ? data.vault_items : [];
       data.personality = Array.isArray(data.personality) ? data.personality : [];

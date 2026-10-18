@@ -25,6 +25,7 @@ class CheEdgeResult {
     this.tag = '',
     this.fallback = false,
     this.attempts = 1,
+    this.timedOut = false,
   });
 
   final CheVoiceClip? clip;
@@ -40,6 +41,10 @@ class CheEdgeResult {
 
   /// How many tries the server needed for this clip.
   final int attempts;
+
+  /// True when the phone stopped waiting. The server may still be making (and
+  /// paying for) that clip, so it is not asked again.
+  final bool timedOut;
 }
 
 /// The engine label for a clip. A reply without a label is Edge Ava, the voice
@@ -112,7 +117,7 @@ Duration chePremiumVoiceWait(String purpose, {int chars = 0}) {
 /// tries it at most twice (one short retry after a passing failure) and never
 /// the other voice. Clips after the first are prepared while earlier ones play.
 Duration cheLockedVoiceWait(String lock, String purpose, {int chars = 0}) {
-  if (lock == 'elevenlabs') return const Duration(seconds: 19);
+  if (lock == 'elevenlabs') return const Duration(seconds: 25);
   final fish = chePremiumVoiceWait(purpose, chars: chars) - const Duration(seconds: 9);
   final both = fish * 2 + const Duration(seconds: 2);
   return both > const Duration(seconds: 90) ? const Duration(seconds: 90) : both;
@@ -277,7 +282,7 @@ class CheEdgeVoice {
         attempts: int.tryParse(response.headers['x-che-voice-attempts'] ?? '') ?? 1,
       );
     } on TimeoutException {
-      return CheEdgeResult(failure: 'no voice from CHE\'s server within ${wait.inSeconds} seconds');
+      return CheEdgeResult(failure: 'no voice from CHE\'s server within ${wait.inSeconds} seconds', timedOut: true);
     } catch (_) {
       return const CheEdgeResult(failure: 'could not reach CHE\'s server');
     }

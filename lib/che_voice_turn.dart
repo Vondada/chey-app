@@ -50,16 +50,19 @@ class CheVoiceTurn {
 
   final String id;
   final CheTurnSpeak _speak;
-  final Completer<void> _decided = Completer<void>();
   int _next = 0;
+  // Until a clip has spoken, clips decide the voice one at a time, in order, so two
+  // clips can never lock to different voices. Once one has spoken, the rest go ahead
+  // in parallel on that lock.
+  Future<void> _deciding = Future<void>.value();
 
-  /// The provider that spoke the first clip; '' until then, or if none did.
+  /// The provider that spoke the first spoken clip; '' until one has.
   String provider = '';
 
-  /// The voice fingerprint of the first clip.
+  /// The voice fingerprint of the first spoken clip.
   String tag = '';
 
-  /// True when the first clip came from the backup voice.
+  /// True when the first spoken clip came from the backup voice.
   bool fallback = false;
 
   /// Why the reply stopped speaking partway (empty while it speaks).
@@ -84,45 +87,57 @@ class CheVoiceTurn {
   /// Synthesizes the next clip of the reply, in the order clips arrive.
   Future<CheTurnClip> synthesize(String text) async {
     final index = _next++;
-    final result = index == 0 ? await _first(text) : await _later(index, text);
-    return CheTurnClip(index, result);
-  }
-
-  Future<CheEdgeResult> _first(String text) async {
-    try {
-      var r = await _speak(text, turn: id, index: 0);
-      if (r.clip == null && r.failure.isNotEmpty && !_cancelled) {
-        retries += 1;
-        r = await _speak(text, turn: id, index: 0);
+    if (provider.isEmpty) {
+      final before = _deciding;
+      final mine = Completer<void>();
+      _deciding = mine.future;
+      try {
+        await before;
+        if (provider.isEmpty) return CheTurnClip(index, await _unlocked(index, text));
+      } finally {
+        mine.complete();
       }
-      provider = cheVoiceProviderOf(r.clip?.engine);
-      if (provider.isEmpty) {
-        _stop(0, cheSilentVoiceReason(r));
-      } else {
-        tag = r.tag;
-        fallback = r.fallback;
-        _hear(r.tag);
-      }
-      return r;
-    } finally {
-      if (!_decided.isCompleted) _decided.complete();
     }
+    return CheTurnClip(index, await _locked(index, text));
   }
 
-  Future<CheEdgeResult> _later(int index, String text) async {
-    await _decided.future;
-    if (_cancelled) return const CheEdgeResult(failure: 'stopped');
-    if (provider.isEmpty || stoppedBefore(index)) return CheEdgeResult(failure: interruption);
-    var r = await _speak(text, turn: id, index: index, lock: provider);
-    if (r.clip == null && r.failure.isNotEmpty && !_cancelled && !stoppedBefore(index)) {
+  // A lost answer (no connection) is asked once more; a timeout is not, because the
+  // server may still be making, and paying for, that clip.
+  Future<CheEdgeResult> _ask(String text, int index, String lock) async {
+    var r = await _speak(text, turn: id, index: index, lock: lock);
+    if (r.clip == null && r.failure.isNotEmpty && !r.timedOut && !_cancelled && !stoppedBefore(index)) {
       retries += 1;
-      r = await _speak(text, turn: id, index: index, lock: provider);
+      r = await _speak(text, turn: id, index: index, lock: lock);
     }
+    return r;
+  }
+
+  // Before anything has spoken: the chosen voice, or the allowed backup. A clip neither
+  // could speak stays silent with its reason, and the next clip tries again.
+  Future<CheEdgeResult> _unlocked(int index, String text) async {
+    if (_cancelled) return const CheEdgeResult(failure: 'stopped');
+    final r = await _ask(text, index, '');
     final spoke = cheVoiceProviderOf(r.clip?.engine);
-    if (spoke != provider) {
-      // The locked voice could not speak this part (or an older server sent
-      // another voice): the reply stops here rather than change voice.
-      final why = spoke.isEmpty ? cheSilentVoiceReason(r) : 'the server offered a different voice';
+    if (spoke.isNotEmpty) {
+      provider = spoke;
+      tag = r.tag;
+      fallback = r.fallback;
+      _hear(r.tag);
+    }
+    return r;
+  }
+
+  Future<CheEdgeResult> _locked(int index, String text) async {
+    if (_cancelled) return const CheEdgeResult(failure: 'stopped');
+    if (stoppedBefore(index)) return CheEdgeResult(failure: interruption);
+    final r = await _ask(text, index, provider);
+    final spoke = cheVoiceProviderOf(r.clip?.engine);
+    final otherVoice = spoke.isNotEmpty && (spoke != provider || (tag.isNotEmpty && r.tag.isNotEmpty && r.tag != tag));
+    if (spoke.isEmpty || otherVoice) {
+      // The locked voice could not speak this part, or another voice answered (an older
+      // server, or settings that changed mid-reply): the reply stops here rather than
+      // change voice.
+      final why = spoke.isEmpty ? cheSilentVoiceReason(r) : 'a different voice answered';
       _stop(index, '${cheVoiceProviderLabel(provider)} stopped partway through this reply ($why), so the rest is on screen');
       return CheEdgeResult(failure: interruption, maryStatus: r.maryStatus, fishStatus: r.fishStatus);
     }

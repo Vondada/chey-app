@@ -31,6 +31,11 @@ void main() {
     expect(cheSpeakableText('It takes ~5 minutes, 2 * 3 times.'), 'It takes about 5 minutes, 2 times 3 times.');
     expect(cheSpeakableText('```dart\nfinal x = 1;\n```\nDone!!!'), 'Done!');
     expect(cheSpeakableText('snake_case and file_name stay words'), 'snake_case and file_name stay words');
+    // Review of #338: symbols keep their meaning, names and addresses stay.
+    expect(cheSpeakableText('If 5 > 3 and a <= b, stop.'), 'If 5 greater than 3 and a at most b, stop.');
+    expect(cheSpeakableText('Send it to <john@example.com> today.'), 'Send it to john@example.com today.');
+    expect(cheSpeakableText('Open VS Code, then compare A vs B.'), 'Open VS Code, then compare A versus B.');
+    expect(cheSpeakableText('Use <b>bold</b> text.'), 'Use bold text.');
   });
 
   test('a sentence ends only where a person would stop', () {

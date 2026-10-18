@@ -20,7 +20,8 @@ const VOICE_LOG_MAX = 40;
 // short retry for a passing failure, then silence with the reason, never the
 // other voice.
 export const VOICE_LOCKS = ['elevenlabs', 'fish'];
-const TRANSIENT = new Set(['network', 'rate-limited', 'slow']);
+// A rate limit is not retried: the provider asked CHE to wait, and a second call would fail too.
+const TRANSIENT = new Set(['network', 'slow']);
 const TURN_TTL_MS = 20 * 60 * 1000;
 const TURN_MAX = 16;
 
@@ -65,6 +66,7 @@ export function voiceTurnFor(turns, id, current, now = Date.now()) {
   if (!turns || !/^[A-Za-z0-9_-]{8,64}$/.test(String(id || ''))) return null;
   for (const [key, turn] of turns) if (now - turn.at > TURN_TTL_MS) turns.delete(key);
   let turn = turns.get(id);
+  if (turn) turn.at = now; // a long Read This keeps its turn while it is still speaking
   if (!turn) {
     turn = { at: now, choice: current ? JSON.parse(JSON.stringify(current)) : null, fishModel: '' };
     turns.set(id, turn);

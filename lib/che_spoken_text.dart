@@ -26,7 +26,11 @@ String _inline(String line) {
   s = s.replaceAllMapped(RegExp(r'(?<![\w_])_(?!\s)(.+?)(?<!\s)_(?![\w_])'), (m) => m[1]!);
   s = s.replaceAllMapped(RegExp(r'~~(.+?)~~'), (m) => m[1]!);
   s = s.replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), ', ');
-  s = s.replaceAll(RegExp(r'</?[a-zA-Z][^>]*>'), '');
+  // An email in angle brackets is an address, not a tag; only known HTML tags are dropped.
+  s = s.replaceAllMapped(RegExp(r'<([^<>\s@]+@[^<>\s]+)>'), (m) => m[1]!);
+  s = s.replaceAll(RegExp(r'</?(?:p|div|span|b|i|u|s|em|strong|code|pre|small|sup|sub|a|ul|ol|li|h[1-6]|br)\b[^>]*>', caseSensitive: false), '');
+  // Comparisons keep their meaning ("5 > 3" is "5 greater than 3").
+  s = s.replaceAllMapped(RegExp(r'(\S)\s+(>=|<=|!=|>|<)\s+(?=\S)'), (m) => '${m[1]} ${const {'>=': 'at least', '<=': 'at most', '!=': 'not equal to', '>': 'greater than', '<': 'less than'}[m[2]]} ');
   // Footnote marks and stray formatting symbols are not read; a product keeps its meaning.
   s = s.replaceAllMapped(RegExp(r'(\d)\s*[*×]\s*(\d)'), (m) => '${m[1]} times ${m[2]}');
   s = s.replaceAll(RegExp(r'\[\^?\d+\]'), '');
@@ -42,7 +46,7 @@ String _inline(String line) {
   s = s.replaceAll(RegExp(r'\band/or\b', caseSensitive: false), 'and or');
   s = s.replaceAll(RegExp(r'\be\.g\.,?(?=\s)', caseSensitive: false), 'for example');
   s = s.replaceAll(RegExp(r'\bi\.e\.,?(?=\s)', caseSensitive: false), 'that is');
-  s = s.replaceAll(RegExp(r'\bvs\.?(?=\s)', caseSensitive: false), 'versus');
+  s = s.replaceAll(RegExp(r'\bvs\.?(?=\s)'), 'versus'); // lowercase only: "VS Code" stays a name
   s = s.replaceAll(RegExp(r'\bw/(?=\s)'), 'with');
   // Pictures and emoji are not words; status marks become their meaning.
   s = s.replaceAll(RegExp(r'[✅✔✓☑]️?'), ' done ');

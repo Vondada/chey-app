@@ -264,7 +264,10 @@ extension _CheHomeVoice on _CHEHomeState {
     // prefetch so every part can use them, in the correct order.
     // Markdown and technical formatting become natural speech first, so Read
     // This never reads symbols aloud; the transcript keeps the formatting.
-    for (final chunk in cheReadAloudChunks(cheSpeakableText(text))) {
+    final speakable = cheSpeakableText(text);
+    // A message that is only code or symbols still answers Read This (review of #338).
+    final spoken = speakable.isEmpty ? 'That message is only code or symbols, so it is on screen and not read aloud.' : speakable;
+    for (final chunk in cheReadAloudChunks(spoken)) {
       turn.add(cheSpokenText(chunk));
     }
     turn.close();

@@ -68,6 +68,8 @@ int cheSentenceEnd(String text, int from, {bool force = false}) {
       return -1;
     }
     if (!RegExp(r'\s').hasMatch(text[end])) continue;
+    // Mid-stream, wait for the next word: "Well... " may go on as "Well... maybe not."
+    if (!force && !RegExp(r'\S').hasMatch(text.substring(end))) return -1;
     if (c == '.' && !_endsSentence(text, from, i, end)) continue;
     return end;
   }
@@ -164,6 +166,8 @@ class CheSpeechChunker {
   int _released = 0;
 
   List<String> addCumulative(String value) {
+    // A ~~~ fence is a code fence too; it is handled like ```.
+    value = value.replaceAll('~~~', '```');
     if (!value.startsWith(_seen)) {
       // The text was rewritten (e.g. sanitised). Never re-speak what was
       // already handled; only take text beyond the old length.
@@ -185,7 +189,10 @@ class CheSpeechChunker {
       final fence = rest.indexOf('```');
       if (fence < 0) {
         if (_inFence) {
-          rest = '';
+          // Keep a closing fence that is still arriving one backtick at a time.
+          final keep = rest.endsWith('``') ? 2 : rest.endsWith('`') ? 1 : 0;
+          _buffer = force ? '' : rest.substring(rest.length - keep);
+          return out.toString();
         }
         break;
       }
