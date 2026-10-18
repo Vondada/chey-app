@@ -94,7 +94,8 @@ List<String> cheBrainWorkersOf(Map<String, dynamic> record) {
   void add(Object? region, Object? path) {
     final name = '${path ?? ''}'.trim();
     final lower = name.toLowerCase();
-    if ('$region' != 'Office Agents' || name.isEmpty || lower == 'office' || lower == 'office agent' || lower.startsWith('http') || cheBrainExternalAi.hasMatch(name) || cheBrainMentionsExternalAi.hasMatch(name) || out.any((w) => w.toLowerCase() == lower)) return;
+    // CHE's own core record sits in the Office Agents region under her name: she is the centre, never one of her workers.
+    if ('$region' != 'Office Agents' || name.isEmpty || lower == 'che' || lower == 'office' || lower == 'office agent' || lower.startsWith('http') || cheBrainExternalAi.hasMatch(name) || cheBrainMentionsExternalAi.hasMatch(name) || out.any((w) => w.toLowerCase() == lower)) return;
     out.add(name);
   }
   add(record['region'], record['path']);

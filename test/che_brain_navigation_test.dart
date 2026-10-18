@@ -14,6 +14,7 @@ import 'package:chey/brain/che_brain_space_model.dart';
 import 'package:chey/che_ui/che_theme.dart';
 import 'package:chey/home/che_memory_brain.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _now = '2026-10-18T06:00:00.000Z';
@@ -23,7 +24,7 @@ final DateTime _clock = DateTime.parse(_now);
 /// (`recordsJson()`), after the Worker projected CHE's Office into the Brain:
 /// a task shared by Atlas and Knox sits in both brains through its places.
 List<Map<String, dynamic>> _brainRecords({int extra = 0}) => [
-      {'id': 'che:core', 'kind': 'core', 'region': 'CHE Self-Knowledge', 'path': 'CHE', 'title': 'CHE', 'excerpt': 'CHE, the central brain of the Office.', 'verification': 'owner_attested', 'created_at': '2026-10-01T00:00:00.000Z', 'source': {'kind': 'che_core'}, 'links': const [], 'places': [{'region': 'CHE Self-Knowledge', 'path': 'CHE'}]},
+      {'id': 'che:core', 'kind': 'core', 'region': 'CHE Self-Knowledge', 'path': 'CHE', 'title': 'CHE', 'excerpt': 'CHE, the central brain of the Office.', 'verification': 'owner_attested', 'created_at': '2026-10-01T00:00:00.000Z', 'source': {'kind': 'che_core'}, 'links': const [], 'places': [{'region': 'CHE Self-Knowledge', 'path': 'CHE'}, {'region': 'Office Agents', 'path': 'CHE'}]},
       for (final (id, name, role) in [('a-atlas', 'Atlas', 'Research / scout'), ('a-knox', 'Knox', 'Engineering / Codex jobs'), ('a-nova', 'Nova', 'Product / listings')])
         {'id': 'agent:$id', 'kind': 'worker', 'region': 'Office Agents', 'path': name, 'title': name, 'excerpt': '$name, $role. An internal Office worker who reports to CHE.', 'verification': 'owner_attested', 'created_at': '2026-10-01T00:00:00.000Z', 'source': {'kind': 'office_worker', 'role': role}, 'links': [{'type': 'related_to', 'to': 'che:core'}], 'places': [{'region': 'Office Agents', 'path': name}]},
       {'id': 'task:t2', 'kind': 'task', 'region': 'Active and Historical Tasks', 'path': 'Historical', 'title': 'Research silver momentum and hand the implementation to Knox', 'excerpt': 'Task: Research silver momentum and hand the implementation to Knox.\nStatus: failed.\nError: The data source timed out twice.\nHandoffs: Atlas → Knox (2026-10-09).', 'verification': 'unverified_reference', 'created_at': '2026-10-09T08:00:00.000Z', 'source': {'kind': 'team_task', 'agent': 'Atlas', 'status': 'failed', 'outcome': 'failed', 'collaborators': ['Knox']}, 'links': [{'type': 'produced_by_agent', 'to': 'agent:a-atlas'}, {'type': 'escalated_to', 'to': 'agent:a-knox'}], 'places': [{'region': 'Active and Historical Tasks', 'path': 'Historical'}, {'region': 'Office Agents', 'path': 'Atlas'}, {'region': 'Office Agents', 'path': 'Knox'}]},
@@ -189,7 +190,8 @@ void main() {
       c.dispose();
       // Without a roster (offline before the first load) the record names stand, still never a fallback or an outside AI.
       final bare = CheBrainSpaceController(dots);
-      expect(bare.workers.map((w) => w.name).toSet(), {'Atlas', 'Knox', 'Nova', 'Helper'});
+      expect(bare.workers.map((w) => w.name).toSet(), {'Atlas', 'Knox', 'Nova', 'Helper'}, reason: "CHE's core record is placed under Office Agents/CHE by the Worker; she is the centre, never an orb");
+      expect(dots.firstWhere((d) => d.id == 'che:core').workers, isEmpty);
       bare.dispose();
     });
 
@@ -668,5 +670,26 @@ void main() {
       expect(find.textContaining('Brain constellation', findRichText: true), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
     });
+  });
+
+  testWidgets('a state notice\'s action pill is its own VoiceOver button with a tap action', (tester) async {
+    _useScreen(tester, _phone, dpr: 3);
+    final handle = tester.ensureSemantics();
+    final spoken = <String>[];
+    await tester.pumpWidget(_room(_dots(), spoken: spoken));
+    await tester.pump();
+    final c = _controllerOf(tester);
+    c.setScope('Mira');
+    await tester.pump();
+    final pill = find.bySemanticsLabel('Back to CHE');
+    expect(pill, findsOneWidget, reason: 'the pill is not merged into the notice text');
+    final node = tester.getSemantics(pill);
+    expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
+    expect(node.getSemanticsData().hasFlag(SemanticsFlag.isButton), isTrue);
+    expect(node.label, 'Back to CHE');
+    await tester.tap(pill);
+    await tester.pump();
+    expect(c.scope, isNull, reason: 'the pill really goes back to CHE');
+    handle.dispose();
   });
 }

@@ -493,7 +493,9 @@ class CheBrainLens {
         'inferred' || 'unverified' || 'uncertain' => const CheBrainLens(verified: false),
         'recent' || 'new' || 'latest' || "this week's" => const CheBrainLens(recentDays: 7),
         'archived' || 'historical' || 'old' || 'past' => const CheBrainLens(archived: true),
-        'active' || 'current' || 'live' || 'running' => const CheBrainLens(archived: false),
+        'active' || 'current' => const CheBrainLens(archived: false),
+        // The same filter as the "Live tasks" chip, so voice and touch agree.
+        'live' || 'running' => const CheBrainLens(status: 'live'),
         'personal' || 'private' || 'my own' => const CheBrainLens(personal: true),
         'shared' || 'office' => const CheBrainLens(personal: false),
         'failed' || 'broken' => const CheBrainLens(status: 'failed'),

@@ -178,6 +178,9 @@ void main() {
     test('commands', () {
       expect(CheBrainCommand.parse('CHE, open my brain')!.action, CheBrainAction.open);
       expect(CheBrainCommand.parse('Take me inside.')!.action, CheBrainAction.inside);
+      expect(CheBrainCommand.parse('show live tasks')!.lens, const CheBrainLens(status: 'live'), reason: 'the same filter as the Live tasks chip');
+      expect(CheBrainCommand.parse('only show running tasks')!.lens, const CheBrainLens(status: 'live'));
+      expect(CheBrainCommand.parse('show active memories')!.lens, const CheBrainLens(archived: false));
       final f = CheBrainCommand.parse('show my research memories')!;
       expect(f.action, CheBrainAction.filter);
       expect(f.category, 'Research');

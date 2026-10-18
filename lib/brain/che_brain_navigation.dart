@@ -54,6 +54,11 @@ class CheBrainPill extends StatelessWidget {
       selected: selected,
       label: semanticsLabel,
       excludeSemantics: true,
+      // The node carries the tap itself, so VoiceOver activates the pill wherever it sits.
+      onTap: () {
+        HapticFeedback.selectionClick();
+        onTap();
+      },
       child: InkWell(
         onTap: () {
           HapticFeedback.selectionClick();
@@ -385,6 +390,8 @@ class CheBrainStateNotice extends StatelessWidget {
     final color = switch (tone) { CheBrainNoticeTone.quiet => CheColors.textDim, CheBrainNoticeTone.warning => CheColors.warning, CheBrainNoticeTone.error => CheColors.danger };
     return Semantics(
       container: true,
+      // The action pill stays its own VoiceOver button instead of merging into the notice text.
+      explicitChildNodes: true,
       liveRegion: false,
       label: text,
       child: Padding(

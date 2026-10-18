@@ -180,7 +180,7 @@ class CheBrainSpaceController {
   /// never an outside AI or the Office's generic fallback names.
   String? _canonicalWorker(String name, Map<String, String> internal, Set<String> excluded, Map<String, String> seen) {
     final lower = name.trim().toLowerCase();
-    if (lower.isEmpty || lower == 'office' || lower == 'office agent' || lower.startsWith('http') || excluded.contains(lower) || cheBrainExternalAi.hasMatch(name) || cheBrainMentionsExternalAi.hasMatch(name)) return null;
+    if (lower.isEmpty || lower == 'che' || lower == 'office' || lower == 'office agent' || lower.startsWith('http') || excluded.contains(lower) || cheBrainExternalAi.hasMatch(name) || cheBrainMentionsExternalAi.hasMatch(name)) return null;
     if (internal.isNotEmpty) return internal[lower];
     // No roster: the first spelling seen stands for every later casing of the name.
     return seen.putIfAbsent(lower, () => name.trim());

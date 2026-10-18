@@ -334,6 +334,19 @@ the brain in view, a state notice is read once. Noted, not changed: "show my per
 now means the Personal lens (it used to mean the Memory lobe); the lens costs about 3 ms per
 frame at 10 000 records on the VM.
 
+Second independent review (2026-10-18): three blocking findings, fixed. CHE's own core record
+sits under Office Agents/CHE in the Worker's projection, so with no roster at hand (cold start)
+the phone drew a "CHE" worker orb and a crumb "CHE › CHE": CHE is excluded from worker names on
+both sides and the fixture now carries the Worker's real places. A state notice merged its
+action pill into its own VoiceOver node, so "Back to CHE", "Clear filters" and "Retry" had no
+reachable tap: the notice keeps explicit child nodes and every pill's node carries the tap
+itself. "Show live tasks" by voice gave the Active lens (every non-archived record) while the
+Live tasks chip filters by status: voice and chip now agree. Noted, not changed: the offline
+notice shows for any sync error, not only a lost connection; the header title ellipsizes on a
+320-pt screen when Back is shown; a profile-only worker's space label counts the profile the
+header does not; a record moving between two workers with the same name count does not re-lay
+out; a retired roster entry still draws on the phone.
+
 Verified (VM, offline): `test/che_brain_navigation_test.dart` (17: worker orbs with real counts
 and connections, outside AIs excluded; a worker brain offline from the same records,
 failures kept; design tokens and chrome unchanged; switcher and same-space worker view;
