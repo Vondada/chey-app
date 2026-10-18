@@ -94,6 +94,7 @@ import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, op
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { CheBrainStore, backfillConversations, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange, sameDisplayCopy } from './brain_store.js';
 import { brainReviewIntent, latestReview, ownerScore, runBrainMaintenance, speakReview } from './brain_audit.js';
+import { archiveTasks, projectOfficeExperience, recoverHistory, workerBrains } from './brain_office.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
 import {
   disconnectGoogle, finishGoogleConnect, googleChatIntent, googleConnectorStates, googleLabel, googleOwnerStep, googleRecheckPending,
@@ -5644,13 +5645,15 @@ export class CheState extends DurableObject {
       // ─── Brain: the one logical Brain the phone replicates ──────────────
       // Reads and writes are the owner's only. /changes and /push are the two
       // halves of the phone's incremental sync; /status gives real counts.
-      if (path.startsWith('/api/brain/') && ['/api/brain/status', '/api/brain/changes', '/api/brain/push', '/api/brain/search', '/api/brain/folders', '/api/brain/record', '/api/brain/conflicts', '/api/brain/conflicts/resolve', '/api/brain/review', '/api/brain/score'].includes(path)) {
+      if (path.startsWith('/api/brain/') && ['/api/brain/status', '/api/brain/changes', '/api/brain/push', '/api/brain/search', '/api/brain/folders', '/api/brain/record', '/api/brain/conflicts', '/api/brain/conflicts/resolve', '/api/brain/review', '/api/brain/score', '/api/brain/workers', '/api/brain/recovery'].includes(path)) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
         const brain = new CheBrainStore(this.ctx.storage);
         const q = new URL(request.url).searchParams;
         const library = () => { try { return new CheLibrary(this.ctx.storage).list(); } catch (_) { return []; } };
+        // The Office projection owns task records (attribution, handoffs, outcomes); the legacy one skips them.
+        const projectAll = () => { projectLegacyState(brain, data, { library: library(), tasks: false }); projectOfficeExperience(brain, data); };
         if (path === '/api/brain/status' && request.method === 'GET') {
-          projectLegacyState(brain, data, { library: library() });
+          projectAll();
           return json(brain.status());
         }
         if (path === '/api/brain/changes' && request.method === 'GET') {
@@ -5658,7 +5661,7 @@ export class CheState extends DurableObject {
           // the start (since=0) always, any other at most every ten minutes (the projection reads
           // every legacy row).
           const lastProjection = Date.parse(brain.status().legacy_projection?.at || '') || 0;
-          if (!Number(q.get('since')) || Date.now() - lastProjection > 10 * 60_000) projectLegacyState(brain, data, { library: library() });
+          if (!Number(q.get('since')) || Date.now() - lastProjection > 10 * 60_000) projectAll();
           await backfillConversations(brain, this.ctx.storage, { batch: 100 }).catch(() => null);
           return json({ ...brain.changes({ since: q.get('since'), limit: q.get('limit') }), digest: brain.digest() });
         }
@@ -5754,7 +5757,7 @@ export class CheState extends DurableObject {
         // nightly pass, never by a model. "Run" rebuilds today's from what is there now.
         if (path === '/api/brain/review') {
           if (request.method === 'POST' && body.run === true) {
-            projectLegacyState(brain, data, { library: library() });
+            projectAll();
             const run = runBrainMaintenance(brain);
             return json({ ...latestReview(brain), run });
           }
@@ -5762,6 +5765,20 @@ export class CheState extends DurableObject {
         }
         if (path === '/api/brain/score' && request.method === 'POST') {
           return json(ownerScore(brain, String(body.id || ''), body.score, { reason: String(body.reason || '') }));
+        }
+        // CHE at the center and her internal Office workers' brains, with real counts.
+        if (path === '/api/brain/workers' && request.method === 'GET') {
+          projectAll();
+          return json(workerBrains(brain, data));
+        }
+        // Historical recovery: everything CHE already holds, into the Brain, resumably; the report says what is where.
+        if (path === '/api/brain/recovery') {
+          if (request.method === 'POST' && body.run === true) {
+            const report = await recoverHistory(brain, this.ctx.storage, data, { library: library(), batch: Math.max(50, Math.min(Number(body.batch) || 500, 2000)) });
+            return json(report);
+          }
+          if (!brain.init()) return json({ available: false, note: 'Brain storage is not available.' });
+          return json(brain.meta('recovery_report', null) || { available: true, note: 'No recovery pass has run yet. POST {run:true} to run one.' });
         }
         return json({ detail: 'Method not allowed.' }, 405);
       }
@@ -7391,6 +7408,8 @@ export class CheState extends DurableObject {
           updated_at: now,
         };
         data.team_tasks.unshift(assignment);
+        // The recent list is a window, not a ceiling: tasks leaving it are already in the Brain.
+        try { archiveTasks(new CheBrainStore(this.ctx.storage), data.team_tasks.slice(100), data); } catch (_) {}
         data.team_tasks = data.team_tasks.slice(0, 100);
         partner.status = 'working';
         partner.updated_at = now;
@@ -9858,6 +9877,7 @@ export class CheState extends DurableObject {
               updated_at: now,
             };
             data.team_tasks.unshift(completedTask);
+            try { archiveTasks(new CheBrainStore(this.ctx.storage), data.team_tasks.slice(100), data); } catch (_) {}
             // Chat-triggered Office work finishes synchronously rather than
             // through runOneTask; record its result in the same durable,
             // sanitized agent history instead of silently omitting it.
@@ -10469,8 +10489,7 @@ export class CheState extends DurableObject {
     // records hold that it does not: cheap, resumable, and no model is asked.
     try {
       const brain = new CheBrainStore(this.ctx.storage);
-      projectLegacyState(brain, data, { library: new CheLibrary(this.ctx.storage).list() });
-      await backfillConversations(brain, this.ctx.storage, { batch: 500 });
+      await recoverHistory(brain, this.ctx.storage, data, { library: new CheLibrary(this.ctx.storage).list(), batch: 500 });
       // Then the significance audit and the next-morning review, from those records alone.
       const maintenance = runBrainMaintenance(brain);
       console.log('CHE brain maintenance:', JSON.stringify(maintenance.audit), maintenance.review.written ? 'review written' : maintenance.review.reason);

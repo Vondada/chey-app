@@ -791,7 +791,7 @@ ${Number(doc.chars) || 0} characters in ${Number(doc.chunks) || 0} parts, saved 
   };
 }
 
-export function projectLegacyState(store, data = {}, { now, library = [] } = {}) {
+export function projectLegacyState(store, data = {}, { now, library = [], tasks = true } = {}) {
   if (!store.init()) return { projected: 0, skipped: 0, available: false };
   const seen = store.meta('legacy_hashes', {});
   const hashes = seen && typeof seen === 'object' ? seen : {};
@@ -826,7 +826,8 @@ export function projectLegacyState(store, data = {}, { now, library = [] } = {})
   for (const record of Array.isArray(data.memory_records) ? data.memory_records : []) if (record?.id && record.text) consider(memoryRecordToBrain(record));
   for (const note of Array.isArray(data.memory_notes) ? data.memory_notes : []) if (note?.id && note.title) consider(memoryNoteToBrain(note));
   for (const lesson of Array.isArray(data.learned_knowledge) ? data.learned_knowledge : []) if (String(lesson || '').trim()) consider(lessonToBrain(lesson));
-  for (const task of Array.isArray(data.team_tasks) ? data.team_tasks : []) if (task?.id && (task.task || task.title)) consider(taskToBrain(task));
+  // The Office projection (brain_office.js) writes richer task records with attribution; callers that run it pass tasks: false.
+  if (tasks) for (const task of Array.isArray(data.team_tasks) ? data.team_tasks : []) if (task?.id && (task.task || task.title)) consider(taskToBrain(task));
   (Array.isArray(data.nightly_reviews) ? data.nightly_reviews : []).forEach((review, index) => { if (review) consider(reviewToBrain(review, index)); });
   for (const doc of Array.isArray(library) ? library : []) if (doc?.id) consider(libraryDocToBrain(doc));
   store.setMeta('legacy_hashes', hashes);

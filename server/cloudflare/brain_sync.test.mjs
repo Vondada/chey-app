@@ -77,7 +77,8 @@ test('the Brain endpoints are the owner’s only', async (t) => {
   assert.equal((await che.call('/api/brain/push', { method: 'POST', body: { ops: [] } })).status, 401);
   const status = await (await che.call('/api/brain/status', { token: che.token })).json();
   assert.equal(status.available, true);
-  assert.equal(status.records, 0);
+  assert.equal(status.records, 1, 'a fresh Brain holds only CHE herself (che:core)');
+  assert.equal(status.by_kind.core, 1);
   assert.equal(status.regions.length, 16);
 });
 
@@ -180,7 +181,9 @@ test('a concurrent edit from the phone is kept as a conflict, never dropped, and
   assert.equal(now.body, 'The boiler service is every September.');
   assert.equal(now.rev, 3);
   const digest = (await (await che.call('/api/brain/status', { token: che.token })).json()).digest;
-  assert.equal(digest.sum, fnv1a32('note:x:3'), 'one record, so the digest is its own id:rev hash');
+  const core = await (await che.call('/api/brain/record?id=che:core', { token: che.token })).json();
+  assert.equal(digest.count, 2, 'the note and CHE herself');
+  assert.equal(digest.sum, (fnv1a32('note:x:3') + fnv1a32(`che:core:${core.rev}`)) % 4294967296, 'the digest is the sum of id:rev hashes');
 });
 
 test('a memory deleted on the phone leaves CHE’s memory list and stays deleted through the next projection; an edit there changes its words here', async (t) => {
@@ -411,4 +414,29 @@ test('a clean memory whose 160-character title cut ends on a word fragment still
   assert.equal(record.body, text);
   assert.ok(!/pin$/.test(record.title), `the title ends on a whole word: ${record.title}`);
   assert.equal((await (await che.call('/api/brain/search?q=pinnacle', { token: che.token })).json()).hits.length, 1);
+});
+
+test('rebuilding the review keeps every task in its worker\'s brain, and the recovery report route answers on a fresh store', async (t) => {
+  const che = await owner();
+  if (!che) return t.skip('node:sqlite unavailable');
+  const fresh = await (await che.call('/api/brain/recovery', { token: che.token })).json();
+  assert.equal(fresh.available, true);
+  assert.match(fresh.note, /No recovery pass has run yet/);
+  const created = await (await che.call('/api/team/create', { method: 'POST', token: che.token, body: { role: 'Product and listings', specialty: 'Listings and pricing' } })).json();
+  const nova = created.partner;
+  assert.equal(nova.name, 'Nova', 'the first internal worker hired is Nova');
+  assert.equal((await che.call('/api/team/assign', { method: 'POST', token: che.token, body: { partner_id: nova.id, task: 'Write the Etsy listing for the brass lamp.' } })).status, 200);
+  const before = await (await che.call('/api/brain/workers', { token: che.token })).json();
+  const novaBefore = before.workers.find((w) => w.name === 'Nova');
+  assert.equal(novaBefore.records >= 2, true, `her hub record and the task: ${JSON.stringify(novaBefore)}`);
+  assert.equal(novaBefore.tasks.live, 1);
+  const run = await (await che.call('/api/brain/review', { method: 'POST', token: che.token, body: { run: true } })).json();
+  assert.ok(run.run);
+  const after = await (await che.call('/api/brain/workers', { token: che.token })).json();
+  const novaAfter = after.workers.find((w) => w.name === 'Nova');
+  assert.equal(novaAfter.tasks.live, 1, 'the rebuild did not move her task out of her brain');
+  assert.equal(novaAfter.records, novaBefore.records);
+  const task = (await (await che.call('/api/brain/search?q=brass%20lamp', { token: che.token })).json()).hits[0];
+  assert.ok(task);
+  assert.equal(task.source.agent, 'Nova');
 });
