@@ -1062,7 +1062,9 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   // Every engine that could answer was too small for the newest message: the owner is told so
   // plainly (and nothing is queued to retry), instead of hearing that CHE is busy.
   const tooLong = errors.filter((e) => /newest message is too long for it/.test(e));
-  const otherwise = errors.filter((e) => !/newest message is too long for it|resting|daily budget|cooldown active|deadline/i.test(e));
+  // Only when size was the sole reason: an engine resting, over its daily share or failing could
+  // still take the message moments later, so that stays the ordinary busy path (review of #349).
+  const otherwise = errors.filter((e) => !/newest message is too long for it/.test(e));
   if (tooLong.length && !otherwise.length) {
     throw makeEngineError({ category: 'message_too_long', diagnostic, configured: configured.length > 0 });
   }

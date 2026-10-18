@@ -3628,7 +3628,8 @@ test('when every reachable engine is too small for the message, CHE says so: no 
     const body = await res.json();
     assert.equal(body.category, 'message_too_long');
     assert.equal(body.retryable, false);
-    assert.match(body.detail, /too long for the AI engines I can reach right now, sir, so I did nothing with it\. Please send it in parts\./);
+    assert.match(body.detail, /^That message is too long for the AI I can reach right now, sir, so I did nothing with it\. Please send it in parts\.$/);
+    assert.doesNotMatch(body.detail, /engine|provider|model/i, 'the phone shows it, not a generic line');
     assert.deepEqual(engines, [], 'the 8,000-character engine was never sent a cut message');
     assert.doesNotMatch(JSON.stringify(saved.get('che')?.jobs || []), /summarize these meeting notes/, 'nothing was queued to retry');
   } finally {
@@ -3648,4 +3649,21 @@ test('a correction re-runs the whole previous turn, its last sentence included (
   const rerun = seen.find((s) => s.includes('quarterly notes')) || '';
   assert.ok(rerun.length > 2000, `the re-run carried ${rerun.length} characters`);
   assert.match(rerun, /But do not email Mike until Friday\.$/, 'the late "do not send" survived, corrected');
+});
+
+test('a real outage mixed with size skips is still the busy path, never "too long" (review of #349)', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', GROQ_API_KEY: 'g', GEMINI_API_KEY: 'm' };
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => (/generativelanguage|gemini/.test(String(url)) ? new Response('{"error":"internal"}', { status: 500 }) : new Response('{}', { status: 404 }));
+  try {
+    const { chat } = await pairedChat(env, saved);
+    const long = 'Please summarize these meeting notes for me. ' + 'The team reviewed the quarter and agreed on next steps. '.repeat(140) + 'But do not email anyone yet.';
+    const res = await chat(long);
+    const text = await res.text();
+    assert.notEqual(res.status, 413, 'Gemini could take it once it recovers: not a reason to split the message');
+    assert.doesNotMatch(text, /too long/);
+  } finally {
+    globalThis.fetch = original;
+  }
 });

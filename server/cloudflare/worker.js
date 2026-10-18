@@ -3308,7 +3308,9 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
       }
       return { ...answer, response: reply };
     } catch (error) {
-      lastError = error;
+      // A busy or failing engine on an earlier attempt is the truer reason than a later "too long"
+      // from engines that were left (review of #349).
+      if (!(error?.category === 'message_too_long' && lastError && lastError.category !== 'message_too_long')) lastError = error;
       console.error('CHE chat model attempt failed', attempt.model, attempt.system.length, error?.message);
       // Every engine is out of quota: retrying only burns more allowance.
       if (error?.quota) break;
