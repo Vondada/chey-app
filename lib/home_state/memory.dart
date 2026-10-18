@@ -62,7 +62,7 @@ extension _CheHomeMemory on _CHEHomeState {
   Future<CheBrainSyncReceipt?> _syncBrainReplica() async {
     if (_deviceToken == null || _deviceToken!.isEmpty || _brainSyncing) return null;
     _brainSyncing = true;
-    CheBrainSyncReceipt? receipt;
+    final CheBrainSyncReceipt receipt;
     try {
       receipt = await _brainReplica.sync(cheAgentBaseUrl, _authHeaders, get: _brainGet, post: _brainPost);
       if (mounted) _set(() {});
@@ -74,7 +74,7 @@ extension _CheHomeMemory on _CHEHomeState {
     // Changes the phone pushed can move CHE's memory list (a deferred delete, an edit): reload it
     // so the Memory screen never shows a list the cloud no longer has. The outbox is empty now,
     // so the reload's own sync pushes nothing and this does not recurse.
-    if (receipt != null && receipt.acknowledged > 0 && mounted) await _loadAgentState(silent: true);
+    if (receipt.acknowledged > 0 && mounted) await _loadAgentState(silent: true);
     return receipt;
   }
 
