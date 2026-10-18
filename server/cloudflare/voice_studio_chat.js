@@ -2,7 +2,7 @@
 // action runs against the provider's account and reports its real result. No speech
 // model is called and no credits are spent: previews are the provider's free samples,
 // and a voice is saved only after the account confirms it.
-import { availableVoiceChoices, saveVoiceChoice, validateVoiceChoice } from './voice_choices.js';
+import { VOICE_PREF_KEY, availableVoiceChoices, saveVoiceChoice, validateVoiceChoice } from './voice_choices.js';
 import { VOICE_NAMED, fetchElevenLibrary, fetchElevenModels, fetchFishModels, filterLibrary, mightBeVoiceRequest, normalizeVoiceRequest, voiceStudioIntent } from './voice_library.js';
 
 export const STUDIO_LAST_KEY = 'voice_studio_last';
@@ -56,8 +56,30 @@ async function setChoice(ctx, choice) {
   await saveVoiceChoice(ctx.storage, ctx.data);
 }
 
+const PROVIDER_NAME = { elevenlabs: 'ElevenLabs', fish: 'Fish Audio' };
+const voiceName = (v) => `${v.name || 'an unnamed voice'} (${PROVIDER_NAME[v.provider] || v.provider || 'unknown provider'})`;
+const dateOf = (ms) => (Number(ms) > 1e12 ? new Date(Number(ms)).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : '');
+
+// The saved choice and what it replaced, from CHE's own voice record only: no provider call, no guess.
+async function currentVoice(ctx) {
+  let pref = null;
+  try { pref = await ctx.storage.get(VOICE_PREF_KEY); } catch (_) { pref = null; }
+  const choice = pref?.choice || ctx.data.voice_choice || null;
+  const source = 'Where I found it: my saved voice setting on the Worker. I did not call ElevenLabs or search conversation memories for this.';
+  if (!choice) return { ok: true, reply: `No voice choice is saved, sir, so I speak with my default voice. ${source}` };
+  const changed = dateOf(pref?.at || ctx.data.voice_choice_at);
+  const parts = [`My saved voice is ${voiceName(choice)}${changed ? `; the setting was last changed ${changed}` : ''}.`];
+  const before = pref?.before_fish ?? ctx.data.voice_choice_before_fish ?? null;
+  if (choice.provider === 'fish' && before?.provider === 'elevenlabs') parts.push(`The ElevenLabs voice kept for when you switch back is ${voiceName(before)}.`);
+  parts.push(pref?.previous
+    ? `It replaced ${voiceName(pref.previous)}${dateOf(pref.replaced_at) ? ` on ${dateOf(pref.replaced_at)}` : ''}.`
+    : 'My saved setting does not record which voice it replaced, so I will not guess.');
+  return { ok: true, reply: `${parts.join(' ')} ${source}` };
+}
+
 async function act(intent, ctx) {
   switch (intent.kind) {
+    case 'current': return currentVoice(ctx);
     case 'list': return listVoices(intent.provider, ctx);
     case 'refresh': return refreshVoices(ctx);
     case 'provider': return switchProvider(intent.provider, ctx);

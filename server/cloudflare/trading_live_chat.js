@@ -1,6 +1,8 @@
 // The owner's spoken and typed Trading Room commands for forward paper trading
 // (owner, 2026-10-18). Answers come from the journal and the run log only: a trade is
 // never mentioned before its record exists, and nothing here calls a model.
+import { withoutProhibitions } from './owner_action_gate.js';
+
 const WAKE = /^\s*(?:(?:hey\s+)?(?:che|chay|chey)[,:]?\s+)?/i;
 // Start and stop are commands only: "Don't stop paper trading" and "Why did you stop paper
 // trading?" change nothing (review of #339). Every other kind needs trading words of its own.
@@ -20,9 +22,18 @@ const PATTERNS = [
   ['open', /^(?:please\s+)?open\s+(?:up\s+)?(?:your\s+|the\s+)?trading\s+room\b/i],
 ];
 
+// "Analyze MNQ using your latest data ... and whether any paper trades occurred. Don't place any orders":
+// a read of the feed and the journal. An order asked for in the same turn belongs to the desk.
+const ANALYSIS = /\b(?:analy[sz]e|analysis\s+(?:of|on)|break\s+down|assess)\b[\s\S]{0,40}\b(?:mnq|nq|micro\s+nasdaq|nasdaq\s+futures)\b/i;
+// "Analyze the NQ chart" is the chart analyzer's (trading_lab); a read that asks about the feed or the
+// paper journal itself is answered here.
+const FEED_DETAIL = /\b(?:paper\s+trades?|vwap|data\s+delay|delay(?:ed)?|time\s*stamps?|data\s+source|(?:the|its)\s+source|latest\s+(?:available\s+)?(?:market\s+)?data)\b/i;
+const ORDER_ASK = /\b(?:place|submit|enter|buy|sell|short|go\s+long|go\s+short|take\s+(?:the|a)\s+trade|open\s+a\s+(?:position|trade))\b/i;
+
 /** The command in [message], or null. Narrow on purpose: other trading talk keeps its routes. */
 export function liveIntent(message) {
   const text = String(message || '').replace(WAKE, '').trim();
+  if (text && text.length <= 1200 && ANALYSIS.test(text) && FEED_DETAIL.test(text) && !ORDER_ASK.test(withoutProhibitions(text))) return { kind: 'analysis' };
   if (!text || text.length > 160) return null;
   for (const [kind, re] of PATTERNS) if (re.test(text)) return { kind };
   return null;
@@ -44,6 +55,44 @@ function feedLine(d) {
 
 function tradeLine(t) {
   return `${t.side} ${t.qty} ${t.contract}, ${t.strategy}, entered ${t.entry.fill} at ${when(t.entry.time)}, exited ${t.exit.fill} on ${t.exit.reason} at ${when(t.exit.time)}, net ${money(t.net_pnl)}`;
+}
+
+const price = (x) => Number(x).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// The bars of the current session: back from the newest bar until the daily CME break (a gap of 45
+// minutes or more).
+function sessionBars(bars) {
+  const out = [];
+  for (let i = bars.length - 1; i >= 0; i -= 1) {
+    if (out.length && Date.parse(out[0].t) - Date.parse(bars[i].t) >= 45 * 60_000) break;
+    out.unshift(bars[i]);
+  }
+  return out;
+}
+
+/** Price, structure and VWAP from the stored bars only; each says what it was computed from. */
+export function marketRead(bars = []) {
+  const rows = (Array.isArray(bars) ? bars : []).filter((b) => b && Number.isFinite(b.c) && !Number.isNaN(Date.parse(b.t)));
+  if (!rows.length) return 'No price bar is stored yet, so there is no price, structure or VWAP to report.';
+  const last = rows[rows.length - 1];
+  const step = rows.length > 1 ? Math.round((Date.parse(last.t) - Date.parse(rows[rows.length - 2].t)) / 60_000) : 0;
+  const parts = [`Last ${step ? `${step}-minute ` : ''}bar: close ${price(last.c)} at ${when(last.t)}.`];
+  const session = sessionBars(rows);
+  const hour = session.slice(-Math.max(4, step ? Math.round(60 / step) : 12));
+  if (hour.length >= 4) {
+    const half = Math.floor(hour.length / 2);
+    const [a, b] = [hour.slice(0, half), hour.slice(half)];
+    const hi = (x) => Math.max(...x.map((r) => r.h));
+    const lo = (x) => Math.min(...x.map((r) => r.l));
+    const shape = hi(b) > hi(a) && lo(b) > lo(a) ? 'rising, with higher highs and higher lows'
+      : hi(b) < hi(a) && lo(b) < lo(a) ? 'falling, with lower highs and lower lows' : 'mixed, inside a range';
+    parts.push(`Structure over the last ${hour.length} bars: ${shape}, between ${price(lo(hour))} and ${price(hi(hour))}.`);
+  }
+  const volume = session.reduce((n, r) => n + (Number(r.v) || 0), 0);
+  parts.push(volume > 0
+    ? `VWAP since this session's first stored bar at ${when(session[0].t)}: ${price(session.reduce((n, r) => n + ((r.h + r.l + r.c) / 3) * (Number(r.v) || 0), 0) / volume)}, from ${session.length} bars.`
+    : 'VWAP: not available, because the feed gave no volume for this session.');
+  return parts.join(' ');
 }
 
 /** The reply for one command, from the dashboard data. `extra.started` etc. come from the route. */
@@ -96,6 +145,8 @@ export function liveReply(kind, d, extra = {}) {
     case 'performance':
     case 'evidence':
       return `${head} ${feedLine(d)} Since ${d.state.started_at ? when(d.state.started_at) : 'the start'}: ${d.counts.signals} signals, ${d.counts.filled} entries, ${t.trades} closed (${t.wins} won, ${t.losses} lost), ${d.positions.length} open. Net after costs ${money(t.net_pnl)}, profit factor ${t.profit_factor ?? 'not measured'}, max drawdown ${money(t.max_drawdown)}. ${t.trades < d.min_trades ? `Fewer than ${d.min_trades} trades: not yet evidence.` : ''}`;
+    case 'analysis':
+      return `I placed no order, sir. ${feedLine(d)} ${marketRead(d.bars)} Paper trading is ${d.state.enabled ? 'on' : 'off'}: ${d.counts.signals} signals, ${d.counts.filled} entries, ${t.trades} closed (${t.wins} won, ${t.losses} lost), ${d.positions.length} open. This is a read of recorded data, not a forecast.`;
     case 'open':
       return `Opening the Trading Room, sir. ${d.state.enabled ? 'Paper trading is on.' : 'Paper trading is off; say start paper trading to begin.'} ${feedLine(d)}`;
     default:

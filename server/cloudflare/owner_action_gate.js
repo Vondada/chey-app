@@ -38,13 +38,76 @@ function hasVerb(re, t) {
   });
 }
 
+// "Don't place any orders", "do not start a new investigation", "without uploading anything": the
+// owner forbids CHE an action. A prohibition runs to the end of its sentence, or until the turn turns
+// back to a request ("but tell me", "just explain"). "Don't forget to buy" and "never mind" ask for
+// something, so they are not prohibitions.
+const PROHIBITION_START = /\b(?:do\s+not|don['’]?t|never|no\s+need\s+to|without)\s+(?!(?:forget|hesitate|wait|delay|fail|miss|neglect|skip|stop|mind|let\s+me\s+forget)\b)(?:(?:actually|ever|even|just|go\s+and|try\s+to)\s+)*(?=[a-z])/gi;
+const PROHIBITION_END = /[.;!?\n]|,?\s+(?:but|just|only|instead|rather|then|and\s+then)\b|,?\s+and\s+(?=(?:tell|show|give|explain|read|list|check|analy[sz]e|summari[sz]e|describe|report|what|which|how|why|when|where|whether)\b)/i;
+
+const READ_TURN = /\s+(?=(?:explain|tell\s+me|show\s+me|give\s+me|analy[sz]e|summari[sz]e|describe|list|read\s+me)\b)/i;
+
+// The [start, end) spans of the turn's prohibitions.
+export function prohibitionSpans(text) {
+  const t = String(text || '');
+  const spans = [];
+  for (const match of t.matchAll(PROHIBITION_START)) {
+    if (spans.length && match.index < spans[spans.length - 1][1]) continue;
+    // "without" forbids only a gerund: "analyze it without placing orders", not "without delay".
+    if (/^without/i.test(match[0]) && !/^[a-z]+ing\b/i.test(t.slice(match.index + match[0].length))) continue;
+    const rest = t.slice(match.index + match[0].length);
+    // Unpunctuated speech: "dont purchase anything explain your understanding" turns back to a request
+    // at the next read verb after the forbidden one.
+    const first = /^\S+/.exec(rest)?.[0].length || 0;
+    const sentence = PROHIBITION_END.exec(rest);
+    const read = READ_TURN.exec(rest.slice(first));
+    const stop = Math.min(sentence ? sentence.index : rest.length, read ? read.index + first : rest.length);
+    spans.push([match.index, match.index + match[0].length + stop]);
+  }
+  return spans;
+}
+
+// The turn with every prohibition taken out, so an action check reads only what the owner asks for.
+export function withoutProhibitions(text) {
+  const t = String(text || '');
+  let out = '';
+  let at = 0;
+  for (const [start, end] of prohibitionSpans(t)) {
+    out += `${t.slice(at, start)} `;
+    at = end;
+  }
+  return (out + t.slice(at)).replace(/[ \t]{2,}/g, ' ').trim();
+}
+
+// The prohibitions themselves, joined: what the owner told CHE not to do.
+export function prohibitedText(text) {
+  const t = String(text || '');
+  return prohibitionSpans(t).map(([start, end]) => t.slice(start, end)).join('; ');
+}
+
+// "I want to buy three apples tomorrow, but don't purchase anything": the owner's own plan, with the
+// purchase forbidden to CHE, asks her to spend nothing. A purchase aimed at CHE ("buy it but don't pay
+// more than $5", "I want you to buy it") still needs the owner's yes.
+const OWN_PLAN = String.raw`^${VOCATIVE}(?:(?:so|well|and|but|ok|okay|also)\s+)*(?:i\s+(?:want|need|plan|hope|intend|would\s+like)\s+to|i(?:['’]d|d)\s+like\s+to|i\s+am\s+(?:going|planning)\s+to|i(?:['’]m|m)\s+(?:going|planning)\s+to|i\s+will|i['’]ll|i\s+might)\s+(?:go\s+(?:and\s+)?)?`;
+const OWN_MONEY_RE = new RegExp(`${OWN_PLAN}(?:${MONEY_VERB}\\b|${MONEY_ORDER}|${MONEY_TRANSFER})`, 'i');
+const FORBIDDEN_MONEY = new RegExp(`\\b(?:${MONEY_VERB}|carts?|checkout|orders?|ordering|spend|money)\\b`, 'i');
+function onlyOwnPlanMoney(t) {
+  if (!FORBIDDEN_MONEY.test(prohibitedText(t))) return false;
+  const clauses = withoutProhibitions(t).split(/[.;!?]|\b(?:then|and then|and|also|after that|afterwards)\b|,/);
+  return clauses.every((clause) => {
+    const c = clause.trim();
+    const m = MONEY_RE.exec(c);
+    return !m || NEGATED_RE.test(c.slice(0, m.index)) || OWN_MONEY_RE.test(c);
+  });
+}
+
 // Every kind of consequential action the text asks for, in a stable order.
 // Returns [] when the request is ordinary.
 export function classifyOwnerActions(text) {
   const t = String(text || '').replace(/\s+/g, ' ').trim();
   if (!t) return [];
   const kinds = [];
-  if (hasVerb(MONEY_RE, t)) kinds.push('money');
+  if (hasVerb(MONEY_RE, t) && !onlyOwnPlanMoney(t)) kinds.push('money');
   if (hasVerb(DELETE_RE, t)) kinds.push('delete');
   return kinds;
 }

@@ -88,10 +88,16 @@ try {
 }
 
 const saved = new Map();
+// Like Durable Object storage: one key, a list of keys, or an object of entries.
 const storage = {
-  get: async (k) => (saved.has(k) ? structuredClone(saved.get(k)) : undefined),
-  put: async (k, v) => { saved.set(k, structuredClone(v)); },
-  delete: async (k) => saved.delete(k),
+  get: async (k) => (Array.isArray(k)
+    ? new Map(k.filter((key) => saved.has(key)).map((key) => [key, structuredClone(saved.get(key))]))
+    : (saved.has(k) ? structuredClone(saved.get(k)) : undefined)),
+  put: async (k, v) => {
+    if (k && typeof k === 'object') for (const [key, value] of Object.entries(k)) saved.set(key, structuredClone(value));
+    else saved.set(k, structuredClone(v));
+  },
+  delete: async (k) => (Array.isArray(k) ? k.filter((key) => saved.delete(key)).length : saved.delete(k)),
   list: async ({ prefix = '' } = {}) => new Map([...saved].filter(([k]) => k.startsWith(prefix))),
   setAlarm: async () => {},
   deleteAlarm: async () => {},

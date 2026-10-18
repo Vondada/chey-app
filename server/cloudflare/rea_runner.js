@@ -33,6 +33,7 @@ import {
   browserFeatures, buildFeatureMap, buildRequestFor, compareWithChe, pickFeatures, planFor, proposeImprovements, verifyBuild,
 } from './rea_features.js';
 import { validateWebSummary } from './rea_web_evidence.js';
+import { withoutProhibitions } from './owner_action_gate.js';
 
 export const REA_WORKFLOW = 'che-rea-analysis.yml';
 export const REA_WORKFLOW_REF = 'main';
@@ -66,6 +67,8 @@ const RECALL = /\bremember (?:that|the) (?:app|website|site|repo(?:sitory)?|pack
 const PRONOUN_TARGET = /\b(?:this|that|the) (?:app|application|website|site|web ?app|repo(?:sitory)?|project|software|tool)\b/i;
 const NOT_REA = /\b(?:seo|audit|summari[sz]e|remember (?:this|that) (?:page|link)|save (?:this|that)|memori[sz]e|my (?:website|site|app)|your (?:own )?(?:code|app|website|repo))\b/i;
 const NO_CODE_CHANGE = /\b(?:do\s+not|don['’]t|never|without)\s+(?:modify\w*|chang\w*|touch\w*|edit\w*|writ\w*|open\w*)\s+(?:your|the|any|a)?\s*(?:code|pull request|pr)\b|\b(?:chat|conversation)[- ]only\b|\banswer (?:only )?in (?:this )?chat\b/i;
+const SELF_REA = /\b(?:your|che['’]?s|the|my)\s+(?:own\s+)?rea\b/i;
+const SELF_REA_READ = /\b(?:what|which|explain|describe|tell|show|list|status|history|latest|last|most\s+recent|recent|capabilit\w*|evidence)\b/i;
 const OWN_AREAS = /^(?:office|workshop|command center|commands?|brain|mailbox|connections?|trading(?: desk)?|studio|che|chey|keys|settings)$/i;
 
 // `REA inspect: npm:semver@7.7.2`, `REA rebuild: a copy of the search box`, `REA status`.
@@ -77,6 +80,12 @@ export function parseReaRequest(message, { history = [] } = {}) {
   if (explicit) {
     const verb = explicit[1].toLowerCase();
     return { command: ALIASES[verb] || verb, input: explicit[2].trim() };
+  }
+  // "Explain what your REA system can do right now, show your most recent verified investigation ... Do not
+  // start a new investigation": CHE's own REA, read only. A named target to investigate keeps the routes below.
+  if (text.length <= 600 && SELF_REA.test(text) && SELF_REA_READ.test(text)
+    && !(INVESTIGATE.test(withoutProhibitions(text)) && identifyTarget(text))) {
+    return { command: 'status', input: '', natural: true, capabilities: /\b(?:can|capab\w*|able|do\s+right\s+now|what\s+(?:is|does)\b)/i.test(text) };
   }
   const npmNatural = text.match(/\b(reverse[- ]engineer|analy[sz]e|inspect|explain|debug|compare)\b[\s\S]{0,80}\b(?:npm package\b|npm:)/i);
   if (npmNatural) return { command: VERBS[npmNatural[1].toLowerCase().replace(/\s+/g, ' ')] || 'inspect', input: text };
@@ -844,13 +853,14 @@ export async function handleReaRequest(storage, env, message, { fetcher = fetch,
 
   if (request.command === 'capabilities') return { ok: true, text: capabilitiesText(env) };
   if (request.command === 'status') {
+    const head = request.capabilities ? `REA is my reverse-engineering and investigation system. ${capabilitiesText(env)}\n\n` : '';
     const latest = jobs[jobs.length - 1];
     if (latest?.kind === 'investigation') {
       const inv = await loadInvestigation(storage, latest.id);
-      return { ok: true, investigation_id: latest.id, text: `${statusText(env, jobs)}\n\n${inv ? investigationAnswer(inv) : ''}`.trim() };
+      return { ok: true, investigation_id: latest.id, text: `${head}${statusText(env, jobs)}\n\n${inv ? investigationAnswer(inv) : ''}`.trim() };
     }
     const result = latest?.state === 'complete' ? `\n\n${evidenceAnswer(latest.command, latest)}` : '';
-    return { ok: true, text: `${statusText(env, jobs)}${result}` };
+    return { ok: true, text: `${head}${statusText(env, jobs)}${result}` };
   }
 
   const target = request.command === 'inspect' || request.command === 'discover' || ['explain', 'debug', 'compare', 'rebuild'].includes(request.command)
