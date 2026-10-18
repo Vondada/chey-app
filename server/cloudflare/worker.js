@@ -4604,7 +4604,8 @@ export class CheState extends DurableObject {
         const reply = replyFromNdjson(raw);
         // A command the owner ran: its real outcome goes to the run history.
         const slash = parseSlashCommand(message);
-        if (slash) {
+        // A key in a command ("/remember my key PK...") is refused, and its input is not kept either.
+        if (slash && !BROKER_KEY_RE.test(message)) {
           let held = null;
           try { held = JSON.parse(raw); } catch (_) { held = null; }
           const done = raw.split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).filter((e) => e?.type === 'done').pop() || {};
@@ -8039,7 +8040,7 @@ export class CheState extends DurableObject {
         // A broker key said or typed in chat is never kept or sent on to a model (review of #348):
         // the memory filters refuse it by its shape, and CHE says what to do instead.
         if (BROKER_KEY_RE.test(rawMessage)) {
-          return ndjsonReply('I did not keep that, sir: it looks like a broker API key, and keys never go in chat. It may now be exposed, so regenerate it in Alpaca and enter the new one in the Trading Room, where it goes straight to CHE\'s key store.', { source: 'che_secret_refused', ok: false, model_calls: 0 });
+          return ndjsonReply('I did not keep that, sir: it looks like an API key, and keys never go in chat. It may now be exposed, so regenerate it where it came from. A new Alpaca paper key goes in the Trading Room, straight to CHE\'s key store.', { source: 'che_secret_refused', ok: false, model_calls: 0 });
         }
         // A family/guest device never reaches the owner's chat routes below.
         if (!ownerDevice) return this.guestChat(body, rawMessage.slice(0, 4000), activeTenant);

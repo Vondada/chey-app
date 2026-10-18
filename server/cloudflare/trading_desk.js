@@ -135,6 +135,8 @@ export function deskIntent(message) {
   const alpacaTrading = /\balpaca\b/.test(text) && /\b(?:paper|account|keys?|broker|trading)\b/.test(text);
   if (alpacaTrading && /\b(?:remove|delete|disconnect|unlink|forget)\b/.test(text)) return { kind: 'alpaca_remove' };
   if (alpacaTrading && /\b(?:connect|link|set up|setup|add|hook up)\b/.test(text)) return { kind: 'alpaca_setup' };
+  // "Connect Alpaca", "how do I connect alpaca?": the sentence ends at Alpaca, so it means the broker.
+  if (/\b(?:connect|link|set up|setup|hook up)\b[\s\S]{0,20}\balpaca[\s?.!]*$/.test(text)) return { kind: 'alpaca_setup' };
   if (/\b(?:connect|link|sign in to|log in to|hook up)\b[\s\S]{0,30}\b(?:ninja\s?trader|tradovate|trading account|funded account|broker)\b/.test(text)) return { kind: 'connect' };
   const sw = /\b(?:switch|change|go|flip|move|put|set)\b[\s\S]{0,25}\b(?:to|over to|on|into)\b/.test(text);
   if (sw && /\b(?:live|real)(?:\s+money)?\s+(?:trading|account|mode)\b/.test(text)) return { kind: 'mode', mode: 'live' };

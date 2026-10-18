@@ -373,4 +373,6 @@ test('trading intents need the whole request: questions and ordinary sentences a
   assert.deepEqual(deskIntent('remove my Alpaca keys'), { kind: 'alpaca_remove' });
   assert.deepEqual(deskIntent('broker status'), { kind: 'connections' });
   assert.deepEqual(deskIntent('check my trading connections'), { kind: 'connections' });
+  assert.deepEqual(deskIntent('connect alpaca'), { kind: 'alpaca_setup' });
+  assert.deepEqual(deskIntent('how do I connect Alpaca?'), { kind: 'alpaca_setup' });
 });

@@ -3639,11 +3639,25 @@ test('trading connections: one view by voice and over HTTP, Alpaca paper keys ne
 test('an Alpaca key said in chat is refused and never kept anywhere; a Worker secret pair is not silently overridden (review of #348)', async () => {
   const saved = new Map();
   const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { throw new Error('no model may see a key'); } } };
-  const { chat, api } = await pairedChat(env, saved);
-  const say = async (m) => replyFromNdjson(await (await chat(m)).text());
+  // This harness runs the work CHE does after each reply (memory, command history), so the test
+  // proves the key reaches none of it.
+  const waits = [];
+  const state = new CheState({ storage: storageFor(saved), waitUntil: (p) => waits.push(p) }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, body, token = '') => worker.fetch(new Request(`https://che.example${path}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body),
+  }), env);
+  const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
+  const chat = (message) => send('/api/chat', { message }, token);
+  const api = (path, body) => send(path, body, token);
+  const say = async (m) => { const r = replyFromNdjson(await (await chat(m)).text()); await Promise.allSettled(waits); return r; };
+  assert.ok((await say('remember that my favourite colour is teal')).length > 0);
+  assert.match(JSON.stringify([...saved.entries()]), /teal/, 'the after-reply work does run in this harness');
   for (const message of ['connect alpaca with key PKTESTKEY1234567890XY and 9fK2abcdefghijklmnopqS3', 'remember my alpaca key is PKTESTKEY1234567890XY']) {
-    assert.match(await say(message), /^I did not keep that, sir: it looks like a broker API key.*regenerate it in Alpaca and enter the new one in the Trading Room/);
+    assert.match(await say(message), /^I did not keep that, sir: it looks like an API key, and keys never go in chat\..*regenerate it where it came from\. A new Alpaca paper key goes in the Trading Room/);
   }
+  // A key inside a slash command is refused too, and the command's input is not kept.
+  assert.match(await say('/remember my key PKTESTKEY1234567890XY'), /^I did not keep that, sir/);
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.doesNotMatch(JSON.stringify([...saved.entries()]), /PKTESTKEY|9fK2abc/, 'the key is in no memory, cache or record');
   env.CHE_ALPACA_PAPER_KEY_ID = 'PKWORKERSECRET123456';
