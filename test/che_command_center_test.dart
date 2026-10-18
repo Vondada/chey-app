@@ -152,7 +152,7 @@ void main() {
     await openCenter(tester, che: che);
     expect(find.text('Commands'), findsOneWidget);
     expect(find.text('All 82'), findsOneWidget);
-    for (final label in ['Intelligence & Control 9', 'YouTube 11', 'Trading 9', 'Websites, Apps & AI 20', 'Money Management 8',
+    for (final label in ['Intelligence & Control 10', 'YouTube 11', 'Trading 9', 'Websites, Apps & AI 20', 'Money Management 8',
       'Client Scouting & Delivery 9', 'Marketing & Sales 7', 'Office & Automation 8']) {
       expect(find.text(label), findsOneWidget, reason: label);
     }
@@ -251,7 +251,7 @@ void main() {
     final reloaded = CheCommandStore();
     await reloaded.load();
     expect(reloaded.favorites, ['che']);
-    expect(reloaded.cachedCatalog?.commands.length, 81, reason: 'the catalog is cached for offline use');
+    expect(reloaded.cachedCatalog?.commands.length, 82, reason: 'the catalog is cached for offline use');
   });
 
   testWidgets('offline: the cached library still opens and says it may be out of date', (tester) async {
