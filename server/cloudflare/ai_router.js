@@ -379,15 +379,20 @@ export function fitToBudget(input, maxChars) {
   turns = turns.slice(0, -1);
   while (turns.length > 2 && size([...system, ...turns, last]) > maxChars) turns = turns.slice(1);
   const clip = (m, n) => ({ ...m, content: contentText(m.content).slice(0, Math.max(200, n)) });
+  // The newest turn is never cut (issue #345): its end may hold "but don't buy anything yet".
+  // When it cannot fit whole beside a minimal system prompt, the input is marked oversize and
+  // the caller skips this engine for one with more room.
   const lastText = contentText(last?.content);
-  const lastBudget = Math.min(lastText.length, Math.floor(maxChars * 0.35));
-  const turnBudget = Math.floor(maxChars * 0.2);
+  const SYSTEM_FLOOR = 1200;
+  if (lastText.length > maxChars - SYSTEM_FLOOR) return { ...input, oversize: true };
+  const lastBudget = lastText.length;
+  const turnBudget = Math.max(0, Math.min(Math.floor(maxChars * 0.2), maxChars - lastBudget - SYSTEM_FLOOR));
   const turnsSize = size(turns);
-  const fittedTurns = turnsSize > turnBudget ? turns.map((m) => clip(m, Math.floor(turnBudget / Math.max(1, turns.length)))) : turns;
-  const systemBudget = Math.max(1200, maxChars - lastBudget - size(fittedTurns));
+  const fittedTurns = turnsSize <= turnBudget ? turns : turnBudget < 200 ? [] : turns.map((m) => clip(m, Math.floor(turnBudget / Math.max(1, turns.length))));
+  const systemBudget = Math.max(SYSTEM_FLOOR, maxChars - lastBudget - size(fittedTurns));
   const systemSize = Math.max(1, size(system));
   const fittedSystem = system.map((m) => clip(m, Math.floor(systemBudget * (contentText(m.content).length / systemSize))));
-  return { ...input, messages: [...fittedSystem, ...fittedTurns, ...(last ? [clip(last, lastBudget || 200)] : [])] };
+  return { ...input, messages: [...fittedSystem, ...fittedTurns, ...(last ? [last] : [])] };
 }
 
 function compactEngineInput(input) {
@@ -854,7 +859,14 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
         errors.push(`${provider.id}: context budget ${budget} below required ${minInputChars}`);
         continue;
       }
-      if (budget) shaped.input = fitToBudget(shaped.input, budget);
+      if (budget) {
+        const fitted = fitToBudget(shaped.input, budget);
+        if (fitted.oversize) {
+          errors.push(`${provider.id}: the newest message is longer than its context budget ${budget}`);
+          continue;
+        }
+        shaped.input = fitted;
+      }
       const override = modelFor(provider);
       const attemptedModel = override || (strongProviderModel ? provider.strong(env) : provider.fast(env));
       const t0 = Date.now();
@@ -909,6 +921,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
         if (error?.status === 413 && !minInputChars) {
           try {
             const smaller = fitToBudget(shaped.input, Math.floor((budget || 16000) / 2));
+            if (smaller.oversize) throw new Error('the newest message does not fit at half size');
             const retry = await callProvider(env, provider, false, smaller, fetcher, '', office);
             await addEstimatedUsage(env, usageStorage, provider.id, retry.usageTokens, now);
             providerLastError.delete(provider.id);

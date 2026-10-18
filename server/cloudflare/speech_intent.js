@@ -335,13 +335,16 @@ export function asksAboutScreen(text) {
 // Asks the reply model only for turns the rules could not read. Cached and capped,
 // and a failure simply means no reading.
 export async function interpretWithModel({ runText, text, history = [], timeoutMs = 4000, now = Date.now() }) {
+  // The reading model sees at most 600 characters; a longer turn would be read from its start
+  // only, missing a late "don't" (issue #345). It gets no reading, and the full text goes on.
+  if (String(text || '').length > 600) return null;
   const recent = recentTurns(history).slice(-3).map((item) => ({ role: item.role, text: clip(item.text, 160) }));
   const key = `${normalizeForKind(text)}|${recent.map((item) => item.text).join('|')}`;
   const cached = readingCache.get(key);
   if (cached && now - cached.at < READING_TTL_MS) return cached.reading;
   const messages = [
     { role: 'system', content: READING_PROMPT },
-    { role: 'user', content: JSON.stringify({ recent, heard: String(text || '').slice(0, 600) }) },
+    { role: 'user', content: JSON.stringify({ recent, heard: String(text || '') }) },
   ];
   let raw;
   try {

@@ -3595,3 +3595,19 @@ test('"what are you doing" about the screen or an attachment is not answered fro
   assert.notEqual(await sourceOf(await chat('What are you doing?', { screen_context: { screen: 'Trading', summary: 'live chart' } })), 'che_activity_status');
   assert.notEqual(await sourceOf(await chat('What are you doing?', { attachment: { type: 'image', name: 'photo.jpg', data: 'aGk=' } })), 'che_activity_status');
 });
+
+test('a chat message too long to take is refused whole, saying so; nothing runs (issue #345)', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { throw new Error('no model may run'); } } };
+  const { chat } = await pairedChat(env, saved);
+  const long = 'Send the draft to Mike. '.repeat(700) + 'But do not send the email yet.';
+  assert.ok(long.length > 16000);
+  const res = await chat(long);
+  assert.equal(res.status, 413);
+  const body = await res.json();
+  assert.equal(body.category, 'message_too_long');
+  assert.match(body.detail, /^That message is [\d,]+ characters, sir, more than the 16,000 I can take at once, so I did nothing with it\. Please send it in parts\.$/);
+  assert.ok(body.detail.length <= 280, 'the phone shows it in full');
+  const ok = await chat('Send the draft to Mike, but do not send the email yet.');
+  assert.equal(ok.status, 200, 'an ordinary message still goes through');
+});

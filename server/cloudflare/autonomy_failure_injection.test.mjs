@@ -575,8 +575,10 @@ test('router skips engines too small for evidence instead of clipping it', async
   assert.notEqual(out.engine, 'groq');
   assert.ok(sent.every((s) => !String(s.url).includes('groq')));
   assert.ok(sent[0].size >= 15000, 'evidence arrived intact');
-  // Without the floor, the old behavior (clip to fit) still applies.
-  assert.ok(JSON.stringify(fitToBudget({ messages: [{ role: 'user', content: big }] }, 8000)).length < 9000);
+  // Without the floor, the newest message is still never cut (issue #345): it is marked oversize instead.
+  const fitted = fitToBudget({ messages: [{ role: 'user', content: big }] }, 8000);
+  assert.equal(fitted.oversize, true);
+  assert.equal(fitted.messages[0].content, big);
 });
 
 // ─── PR / CI / merge / deploy ────────────────────────────────────────────────

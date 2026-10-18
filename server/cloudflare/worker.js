@@ -7965,10 +7965,19 @@ export class CheState extends DurableObject {
         } catch (error) {
           return json({ detail: error.message }, error.status || 403);
         }
-        const rawMessage = String(body.message || '').trim().slice(0, 16000);
+        const rawMessage = String(body.message || '').trim();
         if (!rawMessage) return json({ detail: 'Message required.' }, 400);
+        // A message is never silently cut (issue #345): its last words may be "but don't send it".
+        // One that is too long is refused whole, saying so, and nothing is done with it.
+        const intakeLimit = ownerDevice ? 16000 : 4000;
+        if (rawMessage.length > intakeLimit) {
+          return json({
+            detail: `That message is ${rawMessage.length.toLocaleString('en-US')} characters, sir, more than the ${intakeLimit.toLocaleString('en-US')} I can take at once, so I did nothing with it. Please send it in parts.`,
+            category: 'message_too_long', retryable: false,
+          }, 413);
+        }
         // A family/guest device never reaches the owner's chat routes below.
-        if (!ownerDevice) return this.guestChat(body, rawMessage.slice(0, 4000), activeTenant);
+        if (!ownerDevice) return this.guestChat(body, rawMessage, activeTenant);
         // Command Center: a plain yes releases a held command (once, fresh);
         // "/name …" runs a catalog command; "run my X workflow" starts a saved
         // workflow. Each runs through this same route and its gates.
