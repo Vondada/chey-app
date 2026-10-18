@@ -114,6 +114,11 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     // The live chart now fills the top of the room; the quote panels follow it.
     expect(find.textContaining('E-mini S&P 500 futures'), findsWidgets);
+    // The live paper panel sits under the chart, so the quote panels are further down.
+    for (var i = 0; i < 12 && find.text('6123', skipOffstage: false).evaluate().isEmpty; i++) {
+      await tester.drag(find.byType(ListView).first, const Offset(0, -300));
+      await tester.pump();
+    }
     await tester.ensureVisible(find.text('6123', skipOffstage: false));
     await tester.pump();
     expect(find.text('6123'), findsOneWidget);
@@ -300,16 +305,20 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     // The live chart sits above the delayed index panels.
+    for (var i = 0; i < 12 && find.text('2.00', skipOffstage: false).evaluate().isEmpty; i++) {
+      await tester.drag(find.byType(ListView).first, const Offset(0, -300));
+      await tester.pump();
+    }
     await tester.ensureVisible(find.text('Nasdaq', skipOffstage: false).last);
     await tester.pump();
     await tester.tap(find.text('Nasdaq').last);
     await tester.pump(const Duration(milliseconds: 100));
-    expect(find.textContaining('NDQ source'), findsOneWidget);
+    expect(find.textContaining('NDQ source', skipOffstage: false), findsOneWidget);
     slowSpx.complete(http.Response(jsonEncode({'candles': [], 'error': 'SPX stale'}), 200));
     await tester.pump(const Duration(milliseconds: 100));
-    expect(find.textContaining('SPX stale'), findsNothing);
-    expect(find.textContaining('NDQ source'), findsOneWidget);
-    expect(find.text('Nasdaq · daily'), findsOneWidget);
+    expect(find.textContaining('SPX stale', skipOffstage: false), findsNothing);
+    expect(find.textContaining('NDQ source', skipOffstage: false), findsOneWidget);
+    expect(find.text('Nasdaq · daily', skipOffstage: false), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
 }
