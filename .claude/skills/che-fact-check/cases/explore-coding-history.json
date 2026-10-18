@@ -1,0 +1,73 @@
+{
+  "about": "17 Oct 2026 EXPLORE failure, twice: a read-only question about CHE's coding execution history went to the language model, which listed repository source files and called the investigation finished. On main all seven wordings below reached the model. They must be answered by the read-only history receipt from stored records: no model, no file names, no job.",
+  "owner": true,
+  "model": "I checked the repository files and the investigation is finished.",
+  "turns": [
+    {
+      "message": "CHE, inspect your latest coding execution history.",
+      "expect": {
+        "route": "che_coding_history",
+        "not": "finished|\\.(?:js|mjs|dart)\\b"
+      }
+    },
+    {
+      "message": "Check your recent coding runs on GitHub Actions and tell me the run IDs, results, model errors, file changes and PRs.",
+      "expect": {
+        "route": "che_coding_history",
+        "not": "finished|\\.(?:js|mjs|dart)\\b"
+      }
+    },
+    {
+      "message": "Look at your recent coding executions and tell me what happened.",
+      "expect": {
+        "route": "che_coding_history",
+        "not": "finished"
+      }
+    },
+    {
+      "message": "How far did Claude get?",
+      "expect": {
+        "route": "che_coding_history",
+        "not": "finished"
+      }
+    },
+    {
+      "message": "Why did that coding job fail?",
+      "expect": {
+        "route": "che_coding_history",
+        "not": "finished"
+      }
+    },
+    {
+      "message": "What files did the coding job change?",
+      "expect": {
+        "route": "che_coding_history",
+        "not": "finished"
+      }
+    },
+    {
+      "message": "chay whats the status of the last coding run",
+      "expect": {
+        "route": "che_coding_history",
+        "not": "finished"
+      }
+    },
+    {
+      "message": "Inspect that coding job.",
+      "history": [
+        {
+          "role": "user",
+          "content": "Investigate npm:semver@7.7.2"
+        },
+        {
+          "role": "assistant",
+          "content": "I started the investigation of npm:semver@7.7.2."
+        }
+      ],
+      "expect": {
+        "route": "che_coding_history",
+        "not": "finished"
+      }
+    }
+  ]
+}
