@@ -369,7 +369,8 @@ test('an explicit request to hear the review wins over talk about it (review of 
     'did I miss anything in the brain review', 'I missed the brain review, can you read it', 'read me my brain review but skip the facts',
     'what did the brain review say about my schedule', 'I got the brain review notification, read it', "I heard there's a brain review, read it",
     "what did yesterday's audit find", 'what did the last audit find', 'thanks, read me my brain review', 'thank you CHE, now the brain review please',
-    'I skipped the brain review, give it to me now', 'read me the brain review, when do you write it?', 'I disagree with that, read me the brain review instead']) {
+    'I skipped the brain review, give it to me now', 'read me the brain review, when do you write it?', 'I disagree with that, read me the brain review instead',
+    'read me your review of my brain']) {
     assert.equal(brainReviewIntent(asked), true, asked);
   }
   for (const said of ['pause the daily review', "I've read the brain review", "I don't agree with the brain review", 'thanks for the brain review',
@@ -377,7 +378,11 @@ test('an explicit request to hear the review wins over talk about it (review of 
     // Someone else's review or audit, even with "read it" (second review of #337).
     'find the review in my inbox and read it', 'the doctor sent the review, read it', 'my accountant did the audit, read it',
     'I got an email with the audit, read it', 'what did the audit committee say', 'what did the last review on Amazon say',
-    'what did the last audit find about my business taxes', 'what did I miss in the last review meeting']) {
+    'what did the last audit find about my business taxes', 'what did I miss in the last review meeting',
+    // CHE's review of something else (third review of #337).
+    'read me your review of the contract', 'give me your review of my essay', 'tell me your review of the lease',
+    'I want to hear your review of the restaurant', 'what did your review of my car say', 'read me your audit of my budget',
+    "read me yesterday's review from the doctor", 'please read me the daily review from my trading desk', 'show me the morning review of the stock market']) {
     assert.equal(brainReviewIntent(said), false, said);
   }
 });
