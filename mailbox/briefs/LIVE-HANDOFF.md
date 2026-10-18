@@ -64,6 +64,30 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-19 ~00:15 UTC — #337, #338, #348, #349 MERGED and LIVE; #350 five tests + voice test FIXED on branch, PR #351 open, NOT merged: needs owner merge approval)
+- **Merged and deployed (deploy probes green each time: memory 12/12, Command Center 5/5, live commit verified):**
+  - #337 Brain follow-ups: b7a8f73 (Shorebird patch success, run 39174139497).
+  - #338 Voice continuity: b5740e1 (Shorebird success, run 39174615190).
+  - #348 Trading connections, Alpaca stock PAPER only, live needs a confirmed second step: 02c066f (Shorebird run 39176219939 was still in progress at last check).
+  - #349 Lossless intake, no silent cut of the owner's sentence: 11c79bb (deploy run 39176717936; Worker only, no Shorebird).
+  - ElevenLabs is still out of credits (6 left); CHE speaks with Fish. That is the owner's cap; never bypass it.
+- **PR #351 (`claude/che-negation-routes`, head ab87375): the five #350 tests plus the voice-choice test.** Each was reproduced first with replay_chat; route after the fix:
+  - Shopping: no money hold.
+  - MNQ: `che_trading_live` read of the feed and journal; "I placed no order".
+  - Video: status only, zero dispatch.
+  - Coding: `che_coding_history`.
+  - REA: `che_rea`, latest *completed* job, never the newest failed one.
+  - Voice: `che_voice_studio`, read from `voice_pref_v1`; records what a new voice replaced from now on, and never guesses Mary.
+  - Shared helper: `owner_action_gate.js` `prohibitionSpans` / `withoutProhibitions`.
+  - Also fixed a pre-existing gap: a bare "CHE buy apples online now" / "Chey delete my notes" was NOT held; it is now.
+  - Tests: `server/cloudflare/readonly_acceptance.test.mjs` (exact owner sentences + unpunctuated variants, side-effect assertions). Full checks green: 1922/1929, 7 skipped.
+  - **Do not merge without the owner's yes** (issue #350: "No unauthorized merge"). After merge: verify the deploy, then the owner retests all six sentences on the iPhone.
+- **Not done yet:**
+  - trading_lab standalone-MNQ analyze; the 160-character cap on other liveIntent kinds.
+  - The #345 compact intent frame and token measurements (do not declare implemented).
+  - #344 Tradovate demo orders (need the owner's Tradovate API approval), Alpaca options, a voice caller for Alpaca paper orders.
+  - #346, #347, #342, #335.
+
 ## 2. Current position (Claude, 2026-10-18 ~22:30 UTC — PRODUCTION RESTORED: owner upgraded Cloudflare to Workers Paid; deploy check of 1aaee54 fully green; forward paper trading ON)
 
 - **Evidence:** deploy run 39171339178 attempt 2 (22:23 UTC): live commit 1aaee54 verified; memory truth 12/12; Command Center 5/5 (79 commands ready, 3 need setup); voice check passed on Fish (ElevenLabs out of credits: owner cap, not bypassed).
