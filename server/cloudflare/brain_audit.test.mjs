@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BRAIN_REGIONS, CheBrainStore } from './brain_store.js';
-import { auditSignificance, buildDailyReview, latestReview, ownerScore, recordAudit, runBrainMaintenance } from './brain_audit.js';
+import { auditSignificance, brainReviewIntent, buildDailyReview, latestReview, ownerScore, recordAudit, runBrainMaintenance, speakReview } from './brain_audit.js';
 
 async function sqlStorage() {
   let DatabaseSync;
@@ -127,4 +127,27 @@ test('a quiet day after a busy one writes nothing new', async (t) => {
   assert.equal(next.audit.written, false);
   assert.equal(store.status().seq, before, 'no record was touched');
   assert.equal(recordAudit(store, { available: false }).written, false);
+});
+
+test('the review intent takes the owner’s ways of asking and nothing else; the spoken review reads the stored record', async (t) => {
+  for (const yes of ['Read me my brain review', 'che, what did your audit find this morning?', 'morning review please', "what's in today's brain review", 'brain review', 'daily review']) {
+    assert.equal(brainReviewIntent(yes), true, yes);
+  }
+  for (const no of ['review my code', 'what did the coding job do', 'delete the brain review', 'review the trading plan', 'how was your night', 'read me my messages']) {
+    assert.equal(brainReviewIntent(no), false, no);
+  }
+  assert.match(speakReview({ review: null, audit: null }), /no Brain review yet/);
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  seed(store);
+  runBrainMaintenance(store, { now: NOW, since: T0 });
+  const speech = speakReview(latestReview(store));
+  assert.match(speech, /^Your Brain review for 2026-10-17, sir, from the records alone\./);
+  assert.match(speech, /Facts: .*2 corrections from the owner\./);
+  assert.match(speech, /Inferences, each from a stated rule: Most agent work failed today/);
+  assert.match(speech, /Hypotheses, not facts: Silver may rise next week/);
+  assert.match(speech, /My reading, which is only a reading: A day where the agents struggled/);
+  assert.match(speech, /Unknown: /);
+  assert.match(speech, /flagged 1 record for verification\.$/);
 });

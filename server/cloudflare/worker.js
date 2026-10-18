@@ -92,7 +92,7 @@ import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSna
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { CheBrainStore, backfillConversations, projectLegacyState, rememberExchange } from './brain_store.js';
-import { latestReview, ownerScore, runBrainMaintenance } from './brain_audit.js';
+import { brainReviewIntent, latestReview, ownerScore, runBrainMaintenance, speakReview } from './brain_audit.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
 import {
   disconnectGoogle, finishGoogleConnect, googleChatIntent, googleConnectorStates, googleLabel, googleOwnerStep, googleRecheckPending,
@@ -8658,6 +8658,12 @@ export class CheState extends DurableObject {
           return ndjsonReply(explained.text, {
             source: 'che_evidence_receipt', model_calls: 0, retracted: explained.retract.length,
           });
+        }
+        // "Read me my brain review": the next-morning review, spoken from its stored
+        // record, every line computed from the day's Brain records. No model.
+        if (ownerDevice && !body.attachment && brainReviewIntent(rawMessage)) {
+          const latest = latestReview(new CheBrainStore(this.ctx.storage));
+          return ndjsonReply(speakReview(latest), { source: 'che_brain_review', model_calls: 0, review_id: latest.review?.id || null });
         }
         // What the owner personally said, confirmed, approved or did is
         // answered from owner-attested records only. A model is never asked

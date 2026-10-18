@@ -343,6 +343,42 @@
    "optional_missing": []
   },
   {
+   "id": "che-brain-review",
+   "category": "intelligence",
+   "title": "Che Brain Review",
+   "summary": "Hear the morning Brain review.",
+   "does": "Reads the latest daily review computed from your Brain’s own records: facts, inferences with their rules, hypotheses marked as such, recommendations, one interpretation, and what is unknown. Says so when there is none yet.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Read me my brain review",
+    "What did your audit find this morning?"
+   ],
+   "needs": [
+    "memory"
+   ],
+   "optional": [],
+   "handler": "brain_audit.brainReviewIntent → latestReview → speakReview",
+   "route": "che_brain_review",
+   "produces": "review",
+   "evidence": "Every line comes from the stored review record, computed from Brain records; zero model calls.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "brain review",
+    "morning review",
+    "daily review",
+    "audit",
+    "conclusions"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "che-recover",
    "category": "intelligence",
    "title": "Che Recover",

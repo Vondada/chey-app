@@ -213,6 +213,44 @@ export function runBrainMaintenance(store, { now = new Date().toISOString(), sin
   return { audit: { examined: audit.examined, changed: audit.changed, flagged: audit.flagged.length, written: auditRecord.written }, review };
 }
 
+/** "Read me my brain review", "morning review", "what did your audit find": the owner asks for the review. */
+export function brainReviewIntent(message) {
+  const text = String(message || '').trim().replace(/^(?:hey|hi|ok|okay)?[,\s]*(?:che|chay|chey|shay)\b[,:]?\s*/i, '');
+  if (!text || text.length > 160) return false;
+  if (/\b(?:build|fix|change|implement|delete|remove|clear|run\s+the\s+review\s+again|regenerate)\b/i.test(text)) return false;
+  return /\b(?:brain|daily|morning|nightly|night['’]?s|significance)\s+(?:review|audit|report|summary|conclusions?)\b/i.test(text)
+    || /\b(?:read|give|tell|show)\s+(?:me\s+)?(?:my|the|today['’]?s|this\s+morning['’]?s)\s+(?:brain\s+)?(?:review|audit)\b/i.test(text)
+    || /\bwhat\s+did\s+(?:your|the)\s+(?:brain\s+)?(?:audit|review|auditor)\s+(?:find|say|conclude)\b/i.test(text)
+    || /\bwhat(?:['’]s|\s+is)\s+(?:in\s+)?(?:my|the|today['’]?s)\s+(?:brain\s+)?(?:review|audit)\b/i.test(text);
+}
+
+/** The spoken review for the owner, every line from the stored record; honest when there is none. */
+export function speakReview(latest) {
+  const review = latest?.review;
+  if (!review) return 'There is no Brain review yet, sir. One is written each morning from the day’s records, and only when something happened.';
+  const section = (name) => {
+    const match = new RegExp(`^${name}\\n((?:- .*\\n?)+)`, 'm').exec(`${review.body}\n`);
+    return match ? match[1].split('\n').filter(Boolean).map((l) => l.replace(/^- /, '')) : [];
+  };
+  const facts = section('FACT');
+  const inferences = section('INFERENCE').filter((l) => !/^None/.test(l));
+  const hypotheses = section('HYPOTHESIS').filter((l) => !/^None/.test(l));
+  const recommendations = section('RECOMMENDATION').filter((l) => !/^Nothing/.test(l));
+  const interpretation = section('INTERPRETATION');
+  const unknown = section('UNKNOWN');
+  const day = String(review.title || '').replace(/^Daily review\s*/, '') || review.created_at?.slice(0, 10) || '';
+  return [
+    `Your Brain review for ${day}, sir, from the records alone.`,
+    facts.length ? `Facts: ${facts.join(' ')}` : '',
+    inferences.length ? `Inferences, each from a stated rule: ${inferences.join(' ')}` : 'No inferences were drawn.',
+    hypotheses.length ? `Hypotheses, not facts: ${hypotheses.join(' ')}` : '',
+    recommendations.length ? `Recommendations: ${recommendations.join(' ')}` : 'Nothing to do from the Brain’s side.',
+    interpretation.length ? `My reading, which is only a reading: ${interpretation.join(' ')}` : '',
+    unknown.length ? `Unknown: ${unknown.join(' ')}` : '',
+    latest.audit?.source?.flagged ? `The significance audit flagged ${latest.audit.source.flagged} record${latest.audit.source.flagged === 1 ? '' : 's'} for verification.` : '',
+  ].filter(Boolean).join(' ');
+}
+
 /** The latest daily review and audit for the morning. */
 export function latestReview(store) {
   if (!store.init()) return { review: null, audit: null };
