@@ -64,6 +64,13 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-18 ~22:30 UTC — PRODUCTION RESTORED: owner upgraded Cloudflare to Workers Paid; deploy check of 1aaee54 fully green; forward paper trading ON)
+
+- **Evidence:** deploy run 39171339178 attempt 2 (22:23 UTC): live commit 1aaee54 verified; memory truth 12/12; Command Center 5/5 (79 commands ready, 3 need setup); voice check passed on Fish (ElevenLabs out of credits: owner cap, not bypassed).
+- **Forward paper trading (live Worker, 22:23:55 UTC):** ON, account PAPER, 24 portfolios; feed **DELAYED** Yahoo MNQ=F for MNQZ6, last bar 22:12 UTC; market open; signals 0, entries 0, closed 0, open 0. No trade exists yet, so none is claimed. Delayed data is never execution evidence.
+- **Historical baseline (backtest, NOT forward evidence):** 6,799 five-minute DELAYED bars 2026-09-14 → 10-16. Largest samples: silver-bullet-5m/trend/2R 11 trades, 63.6% win, out-of-sample 7 trades +1.00 R, folds 3/4; rsi-revert-5m/any/1.5R 173 trades, −0.24 R (worst with a real sample). The "best" 2-trade rows are too small to mean anything.
+- **Next AI:** read forward paper results from the Trading Room / deploy check (never invent); Voice #338; Brain #337; broker PAPER/SIM/LIVE design (live orders stay disabled; each real order needs the owner's explicit approval).
+
 ## 2. Current position (Claude, 2026-10-18 ~22:20 UTC — production 503 CAUSE CONFIRMED: Cloudflare Workers Free daily Durable Object rows-read allowance used up; resets 00:00 UTC; #343 and #341 MERGED and live)
 
 - **Cause, from production itself:** deploy run 39171339178 (1aaee54 live) — the memory check's pairing got HTTP 503 `cloud_daily_limit`, "free daily allowance for rows read is used up … resets at 00:00 UTC (7:00 PM CDT)". This is Cloudflare's own error, classified by `cloudDailyLimit()` (che_errors.js); nothing was guessed. Every stateful route fails until the reset; `/health` stays 200. Production logs were NOT read (a log-tail workflow was refused by the session's permission rules).
