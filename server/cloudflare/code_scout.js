@@ -146,7 +146,7 @@ function ownerBuildAuthorization(message) {
     || /^(?:(?:che|chay|chey|shay)[,:]?\s*)?update\s+che\b/i.test(text)
     || /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:please|now)\s+)?(?:resume|continue|retry|recover|finish)\s+(?:the\s+|my\s+)?(?:previous\s+|last\s+)?(?:authorized\s+)?(?:coding|implementation|self[- ]development)?\s*(?:job|task|work)\b/i.test(text)
     // "Retry the job" authorizes; "don't retry it, is the job done" forbids and asks.
-    || /(?<!\b(?:not|never|don['’]?t|dont)\s)\b(?:diagnose\s+and\s+recover|reopen\b[\s\S]{0,80}\band\s+recover|retry|recover)\b[\s\S]{0,100}\b(?:failed\s+)?(?:coding\s+|engineering\s+)?job\b/i.test(text)) return true;
+    || /(?<!\b(?:not|never|don['’]?t|dont|shouldn['’]?t|needn['’]?t|no\s+need\s+to|don['’]?t\s+want\s+(?:you|u)\s+to|hold\s+off\s+on|cancel|skip|without)\s(?:(?:ever|just|even|really|actually|try\s+to|go\s+and|attempt\s+to|the|a|any|that)\s)*)(?<!\b(?:the|a|any|that|of)\s)\b(?:diagnose\s+and\s+recover|reopen\b[\s\S]{0,80}\band\s+recover|retry|recover)\b[\s\S]{0,100}\b(?:failed\s+)?(?:coding\s+|engineering\s+)?job\b/i.test(text)) return true;
 
   const direct = explicitRepositoryImplementationAuthorization(text)
     || imperativeImplementation(text)
@@ -438,9 +438,9 @@ const FOLLOW_UP = [
 // a free noun phrase, or "show me my letters" and "tell me when it's done" would pass as follow-ups.
 const FOLLOW_UP_TAIL = new RegExp(`^(?:${[
   '[\\s?.!,;:\'"’]+',
-  'please', 'pls', 'plz', 'sir', 'thanks', 'thank\\s+you', 'thx', 'ty', 'cheers', 'ok(?:ay)?', 'now', 'yet', 'so\\s+far', 'today', 'tonight', 'yesterday', 'last\\s+night',
-  'as\\s+of\\s+(?:now|today|this\\s+morning|tonight)', 'at\\s+the\\s+moment', 'currently', 'and\\s+thank\\s+you',
-  'this\\s+(?:morning|afternoon|evening|week|time)', 'last\\s+time', 'earlier', 'lately', 'recently', 'again', 'exactly', 'right\\s+now',
+  'please', 'pls', 'plz', 'sir', 'thanks', 'thank\\s+you', 'thx', 'ty', 'cheers', 'ok(?:ay)?', 'now', 'yet', 'so\\s+far', 'today', 'yesterday', 'last\\s+night',
+  'as\\s+of\\s+(?:now|today|this\\s+morning)', 'at\\s+the\\s+moment', 'currently', 'and\\s+thank\\s+you',
+  'last\\s+time', 'earlier', 'lately', 'recently', 'again', 'exactly', 'right\\s+now',
   'already', 'at\\s+all', 'or\\s+not', 'in\\s+(?:detail|full|short|brief|total|the\\s+end)', 'overall', 'altogether', 'eventually', 'finally', 'briefly', 'aloud', 'out\\s+loud', 'for\\s+me', 'then', 'anyway',
   'che', 'chay', 'chey', 'shay',
   `(?:in|on|for|from|of|with|by|during|about)\\s+(?:${RECORD_REF}|it|that|them)`,
@@ -474,7 +474,7 @@ function questionEnd(clause, { coding, text }) {
       // "Your coding runs on GitHub Actions": the workflow runs are the execution record, not the workflow file.
       /\b(?:github\s+actions?|workflow)\s+(?:runs?|history|results?|executions?)\b|\bruns?\s+(?:on|in)\s+github\s+actions\b/gi,
       /\b(?:coding|opencode|self[- ]development)(?:\s+(?:jobs?|runs?|executions?|sessions?))?(?:['’]s)?\s+(?:execution\s+)?history\b/gi,
-      new RegExp(`${STATE_WORD.source}(?:\\s+(?:of|on|for|about|with|regarding|update|report|check|and|the|that|this|my|your|ur|its|her|last|latest|recent|current|previous|newest|workflow|github|actions|runs?|jobs?|execution))*\\s+${WORK}\\b|\\b${WORK}(?:['’]s)?(?:\\s+(?:execution|run|job|current|latest|overall|is|was|and\\s+its|and\\s+the))*\\s+${STATE_WORD.source}|\\b(?:coding|opencode)\\s+(?:status|state)\\b`, 'gi'),
+      new RegExp(`${STATE_WORD.source}(?:\\s+(?:of|on|for|about|with|regarding|update|report|check|the|that|this|my|your|ur|its|her|last|latest|recent|current|previous|newest|workflow|github|actions|runs?|jobs?|execution))*\\s+${WORK}\\b|\\b${WORK}(?:['’]s)?(?:\\s+(?:execution|run|job|current|latest|overall|is|was))*\\s+${STATE_WORD.source}|\\b(?:coding|opencode)\\s+(?:status|state)\\b`, 'gi'),
       new RegExp(`\\b(?:(?:why|how)\\s+(?:did|has|does|do|is|was)|why['’]d)\\s+(?:it|that|this|everything|${ofRun}|the\\s+(?:job|run|build|tests?|pr|pull\\s+request))\\b[\\s\\S]{0,30}\\b(?:fail|failed|stop|stopped|stuck|broke|broken)\\b`, 'gi'),
       new RegExp(`\\bexplain\\s+why\\s+(?:it|that|this|${ofRun}|the\\s+(?:job|run|build|tests?))\\b[\\s\\S]{0,30}\\b(?:fail|failed|stop|stopped|stuck)\\b`, 'gi'),
       new RegExp(`\\b(?:did|has|have)\\s+${ofRun}\\s+(?:(?:eventually|finally|actually|really|ever|already|still|even)\\s+)?(?:fail|failed|stop|stopped|finish|finished|succeed|succeeded|pass|passed|work|worked|merge|merged|open|opened|create|created|raise|raised|fix|fixed|break|broke|complete|completed|run|ran|push|pushed)\\b`, 'gi'),
@@ -518,14 +518,19 @@ function questionEnd(clause, { coding, text }) {
 // What may stand between the clause's opening and the question itself: the opening phrase, its
 // own small words and the record's own adjectives. "how are my trades and coding status" and
 // "tell mom the coding status" carry another subject there, so they are not the question.
-const HEAD_WORDS = new Set(('the an my your ur its her me us to about on of for with from at please just quickly now so exactly '
-  + 'actually again all any some more everything anything know see hear out up if whether there is are was '
-  + 'were did does has have had can could would will you u like want need tell show give check read explain describe summarize '
-  + 'summarise report inspect look review examine list walk through fill bring speed pull that this also quick question real honest '
-  + 'brief short detailed full complete current latest last recent newest previous most own whole entire exact precise regarding '
-  + 'concerning what which why how when where happened going doing went wrong far long many sir che chay chey shay').split(' '));
-function okHead(head) {
-  const rest = head.replace(QUESTION_OPENING, '').toLowerCase().replace(/[’]/g, "'");
+const HEAD_WORDS = new Set(('the an my your ur its me us to about on of for with from at please just quickly now so exactly '
+  + 'actually again all any some more everything anything know see hear out up if whether there is are was were did does do has have had '
+  + 'tell show give check read explain describe summarize summarise report inspect look review examine list walk through fill '
+  + 'bring speed pull that this also quick question real honest brief short detailed full complete current latest last recent '
+  + 'newest previous most own whole entire exact precise regarding concerning what which why how when where happened going doing '
+  + 'went wrong far long many sir che chay chey shay').split(' '));
+function okHead(head, body) {
+  // The opening phrase ("can you check", "I want to know") is one unit, even when the question's
+  // anchor begins inside it; after it, only the head words may stand before the question.
+  const opening = QUESTION_OPENING.exec(body)?.[0]?.length || 0;
+  // "her latest coding run" is CHE's own record; "tell her the coding status" is a relay to someone.
+  let rest = (head.length <= opening ? '' : head.slice(opening)).toLowerCase().replace(/[’]/g, "'");
+  if (/\bher\s*$/.test(rest) && /^(?:latest|last|recent|previous|current|newest|own|coding|opencode)\b/i.test(body.slice(head.length))) rest = rest.replace(/\bher\s*$/, '');
   return rest.split(/[\s,;:"]+/).filter(Boolean).every((token) => HEAD_WORDS.has(token) || /^(?:che|chey|chay)'s$/.test(token));
 }
 
@@ -556,7 +561,7 @@ export function codingHistoryIntent(message) {
     const { start, end } = questionEnd(body, { coding, text });
     if (end >= 0) {
       if (!QUESTION_OPENING.test(body) && !NOUN_OPENING.test(body)) return false;
-      if (!okHead(body.slice(0, start))) return false;
+      if (!okHead(body.slice(0, start), body)) return false;
       const tail = body.slice(end);
       if (!okTail(tail) && !followUp(tail.trim()) && !NEGATION_CLAUSE.test(tail.trim())) return false;
       asked = true;

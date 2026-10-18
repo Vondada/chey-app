@@ -113,6 +113,11 @@ const HISTORY = [
   'coding status for the latest run',
   'give me an update on the coding job',
   'Check the status of the workflow run for the coding job.',
+  // Tenth review: "her" is CHE's own record only in front of it.
+  'what happened to her latest coding run',
+  'can you check the coding job',
+  'is there any update on the coding job',
+  'what happened to the coding job tonight',
 ];
 
 for (const message of HISTORY) {
@@ -350,6 +355,19 @@ const NOT_HISTORY = [
   'what is a coding status',
   'what counts as coding status',
   "don't retry it but do tell mom. coding status",
+  // Tenth review: a relay to "her", a deferred answer, a second subject joined by "and".
+  'tell her the coding status',
+  'show her the coding status',
+  'give her an update on the coding job',
+  'report to her the latest coding run',
+  'tell her about the last coding job',
+  'whats the news and the coding job status',
+  'show me my results and the coding job status',
+  'show me everything you did, the coding status',
+  'coding status. let me know tonight',
+  'coding status. tell me this evening',
+  'did the coding job pass? let me know tonight',
+  'coding status. show me the error tonight',
 ];
 
 for (const message of NOT_HISTORY) {
@@ -357,6 +375,15 @@ for (const message of NOT_HISTORY) {
     assert.equal(codingHistoryIntent(message), false);
   });
 }
+
+test('a forbidden retry is not a build authorization, however it is worded; a real one still is', () => {
+  for (const no of ["don't retry the job", "don't ever retry the job", 'no need to retry the job', "i don't want you to retry the job", "you shouldn't retry the job", 'do not try to recover the job', 'cancel the retry of the coding job', 'why did the retry of the coding job fail', 'hold off on the retry of the job']) {
+    assert.notEqual(currentTurnActionPolicy(no).mode, 'BUILD', no);
+  }
+  for (const yes of ['retry the coding job', 'recover the failed job', 'please retry the job', 'diagnose and recover the coding job']) {
+    assert.equal(currentTurnActionPolicy(yes).mode, 'BUILD', yes);
+  }
+});
 
 test('an explicit build instruction in the same turn still wins: history is not a substitute for a fix', () => {
   assert.equal(codingHistoryIntent('Inspect the latest coding execution history and fix the bug.'), false);
