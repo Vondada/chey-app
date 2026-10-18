@@ -3584,3 +3584,14 @@ test('"what are you doing" answers from the job records, starts nothing and call
   assert.equal(modelCalls, before, 'no model call');
   assert.equal(saved.get('che').jobs.length, 1, 'nothing started');
 });
+
+test('"what are you doing" about the screen or an attachment is not answered from the job queue (review of #336)', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'That chart shows the S&P falling.' }) } };
+  const { chat } = await pairedChat(env, saved);
+  const sourceOf = async (res) => (await res.text()).trim().split('\n').map((line) => JSON.parse(line)).find((line) => line.type === 'done')?.source || 'model';
+  assert.equal(await sourceOf(await chat('What are you doing?')), 'che_activity_status');
+  assert.notEqual(await sourceOf(await chat("What's happening?", { screen_context: { screen: 'Trading', summary: 'live chart' } })), 'che_activity_status');
+  assert.notEqual(await sourceOf(await chat('What are you doing?', { screen_context: { screen: 'Trading', summary: 'live chart' } })), 'che_activity_status');
+  assert.notEqual(await sourceOf(await chat('What are you doing?', { attachment: { type: 'image', name: 'photo.jpg', data: 'aGk=' } })), 'che_activity_status');
+});
