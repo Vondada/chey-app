@@ -325,7 +325,8 @@ const sized = (sig) => {
 // Fair value gaps between bars j and j+2, newest first, that no later bar has filled.
 function openGaps(c, i, from) {
   const out = [];
-  for (let j = i - 2; j >= Math.max(from, i - 14); j--) {
+  // The gap's third bar must close before the retest bar: the bar that creates a gap is not its retest.
+  for (let j = i - 3; j >= Math.max(from, i - 14); j--) {
     if (c[j].h < c[j + 2].l) {
       const bottom = c[j].h; const top = c[j + 2].l;
       if (top - bottom >= 0.5 && !c.slice(j + 3, i).some((k) => k.l <= top)) out.push({ side: 'long', bottom, top, j });
@@ -347,6 +348,7 @@ function gapRetest(c, i, gaps, label) {
   }
   return null;
 }
+export const INTRADAY_COMMON_RULES = 'All strategies: entries are market orders at the next bar open, checked after costs; a signal with risk under 6 or over 60 index points is skipped; positions are flat by 16:55 New York, before the CME daily break; one position per portfolio.';
 const inSilverBullet = (m) => (m >= 600 && m < 660) || (m >= 840 && m < 900);
 export const INTRADAY_CANDIDATES = Object.freeze({
   'fvg-retest-5m': {
@@ -364,7 +366,26 @@ export const INTRADAY_CANDIDATES = Object.freeze({
     },
   },
   'sweep-mss-5m': {
-    name: 'liquidity sweep and market structure shift', family: 'ICT',
+    name: 'liquidity sweep then market structure shift', family: 'ICT',
+    rules: 'Long: within the last 12 bars a bar traded below the last confirmed swing low (the sweep); now, for the first time since, a bar closes above the last confirmed swing high before the sweep (the shift). Short: mirror. Stop 1 tick beyond the sweep extreme.',
+    entry(c, i, x) {
+      if (i < 3) return null;
+      for (let k = i - 1; k >= Math.max(1, i - 12); k--) {
+        const low = x.lastLow[k - 1]; const high = x.lastHigh[k - 1];
+        if (low != null && c[k].l < low && high != null && c[i].c > high && !c.slice(k, i).some((b) => b.c > high)) {
+          const extreme = Math.min(...c.slice(k, i + 1).map((b) => b.l));
+          return sized({ side: 'long', ref: c[i].c, stop: extreme - 0.25, why: `swept the swing low ${r2(low)}, then closed above the swing high ${r2(high)} (structure shift)` });
+        }
+        if (high != null && c[k].h > high && low != null && c[i].c < low && !c.slice(k, i).some((b) => b.c < low)) {
+          const extreme = Math.max(...c.slice(k, i + 1).map((b) => b.h));
+          return sized({ side: 'short', ref: c[i].c, stop: extreme + 0.25, why: `swept the swing high ${r2(high)}, then closed below the swing low ${r2(low)} (structure shift)` });
+        }
+      }
+      return null;
+    },
+  },
+  'sweep-reclaim-5m': {
+    name: 'liquidity sweep and reclaim', family: 'ICT',
     rules: 'Long: the bar trades below the last confirmed swing low, closes back above it and above the prior bar high. Short: mirror at the last swing high. Stop 1 tick beyond the sweep extreme.',
     entry(c, i, x) {
       if (i < 2) return null;
@@ -416,7 +437,7 @@ export const INTRADAY_CANDIDATES = Object.freeze({
   },
   'orb-15m': {
     name: 'opening range breakout (9:30–9:45 New York)', family: 'Breakout',
-    rules: 'Range: high and low of 9:30–9:45 New York. Entry: the first 5-minute close above the high (long) or below the low (short) between 9:45 and 11:30. Stop: the middle of the range. Flat by 15:55 New York.',
+    rules: 'Range: high and low of 9:30–9:45 New York. Entry: the first 5-minute close above the high (long) or below the low (short) between 9:45 and 11:30. Stop: the middle of the range. Target: the R multiple of the portfolio. Flat by 15:55 New York.',
     flat: tradeMins(15 * 60 + 55),
     entry(c, i, x) {
       if (x.orHigh[i] == null || x.et[i] < 585 || x.et[i] >= 690) return null;
@@ -495,7 +516,7 @@ function conditionOf(c, k, x) {
 
 // Bump this whenever an entry, filter, fill or exit rule changes. The rule code is not in the
 // hash, so without a bump a changed rule would keep loading the old portfolio state and its journal.
-export const ENGINE_VERSION = 'evidence-1';
+export const ENGINE_VERSION = 'evidence-2'; // 2: plans are checked on the fill after costs; FVG retests start after the gap
 
 // A deterministic version: the same engine, candidate, filter, parameters and costs always give the same version.
 export function strategyVersion(candidateId, filterId, params = {}) {
@@ -546,7 +567,9 @@ export function stepPortfolio(pf, candles, ctx = causalContext(candles)) {
       pf.pending = null;
       // The open may already have passed the planned stop or target. Then the plan is void: skip, never invent a fill.
       const side = sig.side || 'long';
-      const inside = side === 'short' ? bar.o < sig.stop && bar.o > sig.target : bar.o > sig.stop && bar.o < sig.target;
+      // Checked on the fill after costs, the price the trade would really have.
+      const fill = fillEntry(bar, contract, pf.costs, side).price;
+      const inside = side === 'short' ? fill < sig.stop && fill > sig.target : fill > sig.stop && fill < sig.target;
       // An intraday plan is void across the CME daily break: it never fills at the next session's open.
       const sameDay = !ctx.day || !sig.trade_day || ctx.day[k] === sig.trade_day;
       if (inside && sameDay) {
@@ -565,7 +588,7 @@ export function stepPortfolio(pf, candles, ctx = causalContext(candles)) {
       // Intraday: flat at the open of the first bar past the portfolio's flat time or in a new CME day.
       const flatten = pf.open.trade_day && ctx.day && (ctx.day[k] !== pf.open.trade_day || ctx.td[k] >= pf.open.flat_td);
       const hit = flatten
-        ? { reason: 'time', exit: fillExit(bar.o, 'time', contract, pf.costs, pf.open.side), same_bar_both: false }
+        ? { reason: 'time', exit: fillExit(bar.o, 'time', contract, pf.costs, pf.open.side), same_bar_both: false, gap: ctx.day[k] !== pf.open.trade_day }
         : exitOn(pf.open, bar, contract, pf.costs);
       if (!flatten) {
         pf.open.max_high = Math.max(pf.open.max_high, bar.h);
@@ -626,7 +649,8 @@ function closeAt(pf, bar, hit) {
     stop: pos.stop,
     target: pos.target,
     risk_points: r4(riskPts),
-    exit: { time: bar.t, raw: hit.exit.raw, fill: hit.exit.price, reason: hit.reason },
+    exit: { time: bar.t, raw: hit.exit.raw, fill: hit.exit.price, reason: hit.reason,
+      ...(hit.reason === 'time' && pos.trade_day && hit.gap ? { note: 'data gap: no bar before the daily break, so it closed at the next bar the feed had' } : {}) },
     same_bar_both_touched: hit.same_bar_both,
     ...settled,
     mfe_points: r2(up),

@@ -236,8 +236,12 @@ function rowToRecord(row) {
   };
 }
 
+// storage → { seq, values }: see CheBrainStore.cached().
+const WHOLE_TABLE_CACHE = new WeakMap();
+
 export class CheBrainStore {
   constructor(storage) {
+    this.storage = storage && typeof storage === 'object' ? storage : null;
     this.sql = storage?.sql || null;
     this.ready = false;
     this.fts = false;
@@ -272,6 +276,23 @@ export class CheBrainStore {
 
   setMeta(key, value) {
     this.sql.exec('INSERT INTO brain_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, JSON.stringify(value));
+  }
+
+  /**
+   * Whole-table answers (the digest, the counts, the folder tree) kept until the next write.
+   * Every record write goes through write(), which moves `seq`, so an unchanged seq means the
+   * answer is unchanged. Each scan reads every row, and on the Workers Free plan rows read are a
+   * daily allowance shared by the whole account; a sync page used to scan the table eight times.
+   */
+  cached(name, compute) {
+    const seq = Number(this.meta('seq', 0)) || 0;
+    let entry = this.storage ? WHOLE_TABLE_CACHE.get(this.storage) : null;
+    if (!entry || entry.seq !== seq) {
+      entry = { seq, values: new Map() };
+      if (this.storage) WHOLE_TABLE_CACHE.set(this.storage, entry);
+    }
+    if (!entry.values.has(name)) entry.values.set(name, compute());
+    return entry.values.get(name);
   }
 
   nextSeq() {
@@ -520,13 +541,15 @@ export class CheBrainStore {
    */
   digest() {
     if (!this.init()) return { count: 0, sum: 0 };
-    let sum = 0;
-    let count = 0;
-    for (const row of this.sql.exec('SELECT id, rev FROM brain_records')) {
-      sum = (sum + fnv1a32(`${row.id}:${row.rev}`)) % 4294967296;
-      count += 1;
-    }
-    return { count, sum };
+    return { ...this.cached('digest', () => {
+      let sum = 0;
+      let count = 0;
+      for (const row of this.sql.exec('SELECT id, rev FROM brain_records')) {
+        sum = (sum + fnv1a32(`${row.id}:${row.rev}`)) % 4294967296;
+        count += 1;
+      }
+      return { count, sum };
+    }) };
   }
 
   search(question, { limit = 8, region = '' } = {}) {
@@ -564,6 +587,10 @@ export class CheBrainStore {
   /** Every region with its subfolders and live record counts. Regions with nothing still appear. */
   folders() {
     if (!this.init()) return [];
+    return structuredClone(this.cached('folders', () => this.scanFolders()));
+  }
+
+  scanFolders() {
     const counts = new Map();
     for (const row of this.sql.exec('SELECT p.region AS region, p.path AS path, COUNT(*) AS n FROM brain_places p JOIN brain_records r ON r.id = p.record_id WHERE r.deleted = 0 GROUP BY p.region, p.path')) {
       if (!counts.has(row.region)) counts.set(row.region, { total: 0, paths: [] });
@@ -617,14 +644,20 @@ export class CheBrainStore {
   /** Real counts for the Brain Status dashboard; nothing here is estimated. */
   status() {
     if (!this.init()) return { available: false };
-    const total = this.rows('SELECT COUNT(*) AS n FROM brain_records')[0]?.n || 0;
-    const deleted = this.rows('SELECT COUNT(*) AS n FROM brain_records WHERE deleted = 1')[0]?.n || 0;
-    const byKind = {};
-    for (const row of this.sql.exec('SELECT kind, COUNT(*) AS n FROM brain_records WHERE deleted = 0 GROUP BY kind')) byKind[row.kind] = Number(row.n) || 0;
-    const byVerification = {};
-    for (const row of this.sql.exec('SELECT verification, COUNT(*) AS n FROM brain_records WHERE deleted = 0 GROUP BY verification')) byVerification[row.verification || 'unknown'] = Number(row.n) || 0;
+    const { total, deleted, byKind, byVerification, chars } = structuredClone(this.cached('counts', () => {
+      const byKind = {};
+      for (const row of this.sql.exec('SELECT kind, COUNT(*) AS n FROM brain_records WHERE deleted = 0 GROUP BY kind')) byKind[row.kind] = Number(row.n) || 0;
+      const byVerification = {};
+      for (const row of this.sql.exec('SELECT verification, COUNT(*) AS n FROM brain_records WHERE deleted = 0 GROUP BY verification')) byVerification[row.verification || 'unknown'] = Number(row.n) || 0;
+      return {
+        total: this.rows('SELECT COUNT(*) AS n FROM brain_records')[0]?.n || 0,
+        deleted: this.rows('SELECT COUNT(*) AS n FROM brain_records WHERE deleted = 1')[0]?.n || 0,
+        byKind,
+        byVerification,
+        chars: this.rows('SELECT COALESCE(SUM(length(body)), 0) AS n FROM brain_records WHERE deleted = 0')[0]?.n || 0,
+      };
+    }));
     const openConflicts = this.rows("SELECT COUNT(*) AS n FROM brain_conflicts WHERE resolved = ''")[0]?.n || 0;
-    const chars = this.rows('SELECT COALESCE(SUM(length(body)), 0) AS n FROM brain_records WHERE deleted = 0')[0]?.n || 0;
     return {
       available: true,
       records: Number(total) - Number(deleted),
