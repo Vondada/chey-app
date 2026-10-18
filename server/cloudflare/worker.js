@@ -60,7 +60,7 @@ import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evi
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
-import { LIVE_STATE, liveBacktest, liveDashboard, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
+import { LIVE_BACKTEST, LIVE_STATE, liveBacktest, liveDashboard, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
 import { liveIntent, liveReply } from './trading_live_chat.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
@@ -397,9 +397,14 @@ async function memoryTruthProbe(env, token) {
     },
     body: JSON.stringify(body),
   }));
-  const paired = await (await call('/api/pair', { code: String(env.CHE_PAIR_CODE || ''), device_name: 'CHE memory truth check' })).json().catch(() => ({}));
+  await call('/api/memory-probe/reset', {}).catch(() => null);
+  const pairResponse = await call('/api/pair', { code: String(env.CHE_PAIR_CODE || ''), device_name: 'CHE memory truth check' });
+  const paired = await pairResponse.clone().json().catch(() => ({}));
   const device = paired.device_token;
-  if (!device) return { ok: false, error: 'The check could not pair with its test CHE.', steps: [] };
+  if (!device) {
+    const detail = paired.detail || (await pairResponse.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 160);
+    return { ok: false, error: `The check could not pair with its test CHE (HTTP ${pairResponse.status}${detail ? `: ${detail}` : ''}).`, steps: [] };
+  }
   const run = Date.now().toString(36);
   const food = ['pizza', 'sushi'];
   const history = [];
@@ -3430,6 +3435,9 @@ export class CheState extends DurableObject {
   async tradingProbe() {
     const ensured = await this.ensureLivePaper();
     const run = ensured.enabled ? await liveTick(this.ctx.storage, { force: true }) : { skipped: 'paper trading is off' };
+    // The historical baseline (same rules and fills, delayed 5-minute history), at most twice a day.
+    const previous = await this.ctx.storage.get(LIVE_BACKTEST);
+    if (!previous?.ok || Date.now() - Date.parse(previous.at) > 12 * 3_600_000) await liveBacktest(this.ctx.storage).catch(() => null);
     const d = await this.liveTradingDashboard();
     const brief = (t) => ({ strategy: t.strategy, filter: t.filter, side: t.side, signal: t.signal?.time, entry: t.entry?.time, entry_fill: t.entry?.fill,
       exit: t.exit?.time, exit_fill: t.exit?.fill, reason: t.exit?.reason, net: t.net_pnl, feed: t.data?.feed?.status });
@@ -3444,6 +3452,12 @@ export class CheState extends DurableObject {
       trades: d.trades.slice(0, 10).map(brief),
       signals: d.signals.slice(-10),
       broker: d.broker,
+      backtest: d.backtest ? {
+        at: d.backtest.at, ok: d.backtest.ok, error: d.backtest.error || null, data: d.backtest.data,
+        rows: (d.backtest.rows || []).map((r) => ({ strategy: r.strategy, filter: r.filter, target_r: r.target_r, trades: r.stats.trades,
+          win_rate: r.stats.win_rate, expectancy_r: r.stats.expectancy_r, net: r.stats.net_pnl, oos_trades: r.oos?.trades ?? 0,
+          oos_expectancy_r: r.oos?.expectancy_r ?? null, folds_positive: r.folds_positive, folds: r.folds })),
+      } : null,
     };
   }
 
@@ -4525,6 +4539,16 @@ export class CheState extends DurableObject {
   // Every owner ↔ CHE exchange becomes a brain memory, after the reply is
   // sent (never in front of it), whatever route inside /api/chat answered.
   async fetch(request) {
+    // The deploy's memory check starts its isolated test CHE fresh each run, so the records each
+    // run leaves behind cannot grow it past what storage accepts. Only the per-deploy random token
+    // opens this, only the memory check sends it, and never to an object named anything else.
+    if (request.method === 'POST' && new URL(request.url).pathname === '/api/memory-probe/reset') {
+      // Only an object positively named as the test CHE is ever cleared: an unknown name refuses,
+      // so the owner's CHE can never be reached by this route.
+      if (!isMemoryProbeRequest(request, this.env) || this.ctx.id?.name !== MEMORY_PROBE_OBJECT) return json({ detail: 'Not found.' }, 404);
+      await this.ctx.storage.deleteAll();
+      return json({ ok: true, reset: true });
+    }
     const isChat = request.method === 'POST' && new URL(request.url).pathname === '/api/chat';
     // The deploy's memory-truth check talks to its own isolated CHE; its test
     // conversation never grows the owner's shared vector memory.
