@@ -145,7 +145,8 @@ function ownerBuildAuthorization(message) {
     || /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:please|now)\s+)?(?:merge|ship)\s+(?:it|the\s+(?:pr|pull\s+request|update))\b/i.test(text)
     || /^(?:(?:che|chay|chey|shay)[,:]?\s*)?update\s+che\b/i.test(text)
     || /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:please|now)\s+)?(?:resume|continue|retry|recover|finish)\s+(?:the\s+|my\s+)?(?:previous\s+|last\s+)?(?:authorized\s+)?(?:coding|implementation|self[- ]development)?\s*(?:job|task|work)\b/i.test(text)
-    || /\b(?:diagnose\s+and\s+recover|reopen\b[\s\S]{0,80}\band\s+recover|retry|recover)\b[\s\S]{0,100}\b(?:failed\s+)?(?:coding\s+|engineering\s+)?job\b/i.test(text)) return true;
+    // "Retry the job" authorizes; "don't retry it, is the job done" forbids and asks.
+    || /(?<!\b(?:not|never|don['’]?t|dont|shouldn['’]?t|needn['’]?t|no\s+need\s+to|don['’]?t\s+want\s+(?:you|u)\s+to|hold\s+off\s+on|cancel|skip|without)\s(?:(?:ever|just|even|really|actually|try\s+to|go\s+and|attempt\s+to|the|a|any|that)\s)*)(?<!\b(?:the|a|any|that|of)\s)\b(?:diagnose\s+and\s+recover|reopen\b[\s\S]{0,80}\band\s+recover|retry|recover)\b[\s\S]{0,100}\b(?:failed\s+)?(?:coding\s+|engineering\s+)?job\b/i.test(text)) return true;
 
   const direct = explicitRepositoryImplementationAuthorization(text)
     || imperativeImplementation(text)
@@ -304,11 +305,281 @@ export function repositoryImplementationIntent(message) {
   return currentTurnActionPolicy(message).codingJobAllowed;
 }
 
+// Read-only history and status of CHE's own coding runs ("latest coding execution history",
+// "coding status", "how far did Claude get", "why did that coding job fail", "what files did the
+// coding job change"). These are answered from the stored job and runtime records: never a job,
+// never a file list. Because the route runs early, it takes a turn only when the whole turn is a
+// question about a coding record; any other request keeps its own route. The checks run in order:
+//   1. a Command Center command, or a request to read CHE's codebase, is repository inspection;
+//   2. an investigation target (URL, package, reference repo, App Store) belongs to REA;
+//   3. any other action in any clause ("email me ...", "revert ...", "remember that ...",
+//      "... then retry it") belongs to the route that does it;
+//   4. another subject (deployment, email, cost, a course, the code itself) keeps its route;
+//   5. the turn must open as a question or a read request ("what", "why", "did", "show", "tell");
+//   6. and it must ask about a definite coding record ("the coding job", "your last coding run"),
+//      not coding jobs in general.
+// Messages addressed to another AI ("tell Claude ...", "ask ChatGPT ...") are deferred by the
+// Worker route to the mailbox and consult routes.
+const HISTORY_TARGET = /https?:\/\/|\bnpm[:\s]|\bgithub\.com\/|\b(?:reference|starred)\s+repo|\bapp\s+store\b/i;
+const CODEBASE_READ = /\b(?:inspect|read|explore|search|scan|trace|audit|open)\s+(?:your|the|che['’]s|my)\s+(?:own\s+)?(?:codebase|code\s*base|source(?:\s+code)?|repo(?:sitory)?|code)\b|\bwith\s+file\s+paths\b/i;
+const WAKE = '(?:(?:hey|hi|ok|okay)[,\\s]+)?(?:che|chay|chey|shay)\\b[,:]?\\s*';
+const ACTION_VERB = '(?:build|fix|improve|implement|add|create|make|change|update|refactor|repair|patch|redesign|design|rewrite|remove|delete|retry|rerun|re-run|restart|resume|start|run|launch|queue|cancel|stop|deploy|ship|release|publish|merge|revert|roll\\s+(?:it\\s+|that\\s+)?back|undo|abort|kill|pause|close|reopen|open|e-?mail|mail|text|message|send|forward|remember|note|save|remind|schedule|book|continue|pick\\s+up|take\\s+over|finish|complete|find|search|look\\s+up|call|play|post|upload|download|approve|reject|recover|debug|diagnose|re-?do|re-?build|kick\\s+(?:it\\s+)?off|put\\s+(?:it\\s+|them\\s+)?back|switch|terminate|rollback)';
+// An action at the start of any clause, or aimed at "it/that": the turn asks CHE to do something.
+const CHANGE_INSTRUCTION = new RegExp([
+  `(?:^|[.;:!?]\\s*|,\\s*(?:and|then|now|please)\\s+|\\b(?:and|then|also|please|now|just)\\s+|\\b(?:can|could|would|will)\\s+(?:you|u)\\s+(?:please\\s+)?|\\bi\\s+(?:want|need)\\s+you\\s+to\\s+|^${WAKE}(?:please\\s+)?)${ACTION_VERB}\\b`,
+  '\\b(?:retry|rerun|restart|resume|fix|deploy|merge|revert|undo|kill|abort|pause|close|ship|e-?mail|send|text|remember|save|cancel|stop|delete|approve|finish|recover|debug|redo|rebuild|terminate|switch)\\s+(?:it|that|this|them)\\b',
+].join('|'), 'i');
+// Voice turns have no punctuation: "whats the latest coding run fix whatever failed" is a second
+// request. A bare verb with an object is one, unless do-support, "to" or a negation makes it part of
+// the question ("did the coding job fix the bug", "why did it fail to merge the PR", "don't change anything").
+const TRAILING_ACTION = new RegExp(`\\b${ACTION_VERB}\\s+(?:whatever|what|everything|anything|it|that|this|them|the|all|my|a|an|your|ur)\\b`, 'gi');
+function trailingAction(text) {
+  for (const match of text.matchAll(TRAILING_ACTION)) {
+    const before = text.slice(0, match.index).split(/[.;:!?]/).pop();
+    // "the latest run", "that build": a noun after its determiner, not an action.
+    if (/\b(?:the|that|this|my|your|ur|its|a|an|latest|last|recent|previous|current|newest|failed|first|second|same|whole)\s+$/i.test(before)) continue;
+    if (!/\b(?:did|does|do|has|have|had|to|not|never|no)\b|n['’]t\b/i.test(before)) return true;
+  }
+  return false;
+}
+// Subjects that other routes own, or that no coding record holds.
+const OTHER_SUBJECT = /\b(?:e-?mails?|inbox|gmail|calendar|texts?|sms|wife|husband|youtube|videos?|essay|homework|near\s+me|costs?|price|pay|paid|spend|spent|bill|invoice|tokens?|deploy(?:ed|ment|s|ing)?|production|prod|shipped|released|i?phone|ipa|app\s+build|shorebird|testflight|objectives?|missions?|goals?|course|class|lesson|tutorial|bootcamp|school|assignment|interview|application|from\s+memory|without\s+checking|(?:don['’]t|do\s+not)\s+check|screenshot|picture|photo|image)\b/i;
+// The code, screens or teaching material about coding, not a coding run's record. "Coding status
+// bug", "coding status code", "Coding Library" and "coding progress in the Python course" are subjects.
+const CODE_SUBJECT = new RegExp([
+  /\b(?:code|source|bug|view|page|screen|dashboard|ui|widget|feature)\s+(?:for|of|in)\s+(?:the\s+|your\s+|che['’]s\s+)?(?:coding|opencode)\b/.source,
+  /\b(?:coding|opencode)\s+(?:(?:status|state|jobs?|runs?|history|sessions?|results?|progress)\s+){0,2}(?:view|page|screen|dashboard|ui|widget|runner|runtime|pipeline|code|source|bugs?|workflow|routes?|routing|handler|function|module|library|course|class|lesson|tutorial|exercises?|bootcamp|practice|homework|challenges?|interview|language|skills?)\b/.source,
+  // How the code works or where it lives: "explain how the coding status route works",
+  // "how does CHE decide the coding job status", "which function computes it", "where is it handled".
+  /\bhow\b(?!\s+far\b)[\s\S]{0,80}\b(?:works?(?!\s+out)|is\s+(?:answered|built|implemented|handled|decided|routed|computed|stored|wired))\b/.source,
+  /\bhow\s+(?:does|do)\b[\s\S]{0,60}\b(?:reports?|decides?|computes?|determines?|knows?|tracks?|stores?|calculates?|chooses?|picks?|routes?|handles?|gets?|sets?)\b/.source,
+  /\b(?:which|what)\s+(?:files?\s+(?:handles?|answers?|builds?|controls?|decides?|implements?|owns?|contains?|runs?|computes?|reports?|is\s+responsible)|(?:function|module|class|handler|route|method|regex|component|endpoint|code\s+path)s?)\b/.source,
+  /\bwhere\s+(?:is|are|does|do)\b[\s\S]{0,50}\b(?:handled|implemented|defined|stored|computed|decided|code|lives?)\b/.source,
+  /\b(?:python|javascript|typescript|swift|java|dart|flutter)\s+(?:course|class|lesson|tutorial)\b/.source,
+  // "Show me the code that reports coding status", "the code path for ...", "read coding_history.js".
+  /\bcode\s+(?:that|which|behind|responsible|path)\b/.source,
+  /\b[\w-]+\.(?:js|mjs|cjs|ts|tsx|dart|py|json|ya?ml|md)\b/.source,
+].join('|'), 'i');
+const CODING = /\b(?:coding|opencode|self[- ]development)\b/i;
+// A coding run, job or session: the record a history question is about.
+const WORK = '(?:coding|opencode|self[- ]development)\\s+(?:jobs?|runs?|sessions?|attempts?|executions?|tasks?|work)';
+// One particular record, not coding jobs in general ("what states can a coding job be in").
+const DEFINITE = /\b(?:the|that|this|my|your|ur|her|its|che['’]?s|chey['’]?s|last|latest|recent|newest|previous|current)\s+(?:(?:last|latest|recent|newest|previous|current|most\s+recent|failed|own)\s+)?(?:coding|opencode|self[- ]development)\b|\b(?:coding|opencode)\s+(?:(?:jobs?|runs?)\s+)?(?:status|state|history|progress)\b/i;
+const STATE_WORD = /\b(?:states?|status|results?|progress|outcomes?|updates?|news)\b/i;
+// The phrases the old "coding status" route answered, kept word for word.
+const STATUS_PHRASE = new RegExp(`^\\s*(?:${WAKE})?(?:(?:what(?:'s|’s| is)\\s+)?(?:the|my)\\s+)?(?:coding job|coding)\\s+status\\??\\s*$|^\\s*what is the status of (?:the|my) coding job\\??\\s*$|^\\s*how(?:'s|’s| is) (?:the|my) coding job( going)?\\??\\s*$|^\\s*what happened (?:to|with) (?:the|my|that) coding job\\??\\s*$|^\\s*check (?:the )?(?:coding|opencode) (?:logs?|job)\\??\\s*$`, 'i');
+// "my tasks", "my jobs" and "my work" are the owner's own items, so a bare noun counts only as
+// "the job" / "that run": one definite record, singular.
+const RECORD_REF = '(?:(?:(?:the|that|this|my|your|ur|its|her|che[\'’]s)\\s+)?(?:(?:last|latest|recent|newest|previous|current|most\\s+recent|failed)\\s+)?(?:coding|opencode|self[- ]development)\\s+(?:jobs?|runs?|sessions?|attempts?|executions?|tasks?|runner|work)|(?:the|that|this|its)\\s+(?:(?:last|latest|previous|failed)\\s+)?(?:job|run|session|attempt|execution))';
+// "Don't change anything," "never retry it": a prohibition on CHE's own actions, which a read-only answer
+// honors by itself. "Don't forget to remind me" and "don't let it happen again" ask for something.
+const PROHIBITION = `(?:do\\s+not|don['’]t|never|no\\s+need\\s+to)\\s+(?:(?:actually|ever|just|even|go\\s+and|try\\s+to|attempt\\s+to|under\\s+any\\s+circumstances)\\s+)*(?:${ACTION_VERB}|do\\s+(?:anything|something|any\\s+\\w+|a\\s+thing|more|work)|touch|modify|edit|alter)\\b`;
+// What the prohibition may be about. Anything else after it ("don't retry but do tell mom") is a
+// request riding in the same clause, so the clause is not an aside and the turn is not a question.
+const PROHIBITION_OBJECT = `(?:\\s+(?:(?:or|and|nor)\\s+)?(?:it|that|this|them|anything(?:\\s+else)?|something|more|again|yet|now|please|sir|any\\s+(?:files?|code|changes?)|${RECORD_REF}|(?:the|my|your|ur|its)\\s+(?:code|repo(?:sitory)?|branch|tests?|pr|pull\\s+request|files?|config|settings|workflow|main)|(?:a|an|another|any|new)\\s+(?:(?:new|fresh|second)\\s+)?(?:(?:coding|opencode)\\s+)?(?:jobs?|runs?|sessions?|attempts?|tasks?|builds?|prs?|pull\\s+requests?|branch(?:es)?)))*`;
+// "Don't retry it or merge it": a second forbidden action may follow without its own "don't".
+const WHOLE_PROHIBITION = `(?:please\\s+)?${PROHIBITION}${PROHIBITION_OBJECT}(?:\\s*(?:,|and|or|nor)\\s*(?:(?:please\\s+)?${PROHIBITION}|(?:${ACTION_VERB}|touch|modify|edit|alter)\\b)${PROHIBITION_OBJECT})*`;
+// How the turn opens once wake words, "please" and leading "don't change anything," clauses are set aside.
+const OPENING_ASIDE = new RegExp(`^\\s*(?:(?:hey|hi|ok|okay|so|and|um|uh)[,\\s]+)*(?:${WAKE})?(?:${WHOLE_PROHIBITION}\\s*[.!?;,]\\s*)*(?:(?:please|just|only|quickly|now|so|then|but)\\s+)*`, 'i');
+const QUESTION_OPENING = /^(?:what(?:['’]s|s)?|which|why(?:['’]d)?|how(?:['’]s|s)?|did(?:n['’]?t)?|does(?:n['’]?t)?|do|has(?:n['’]?t)?|have(?:n['’]?t)?|had|is(?:n['’]?t)?|are(?:n['’]?t)?|was(?:n['’]?t)?|were(?:n['’]?t)?|when|where|any|tell|show|give|check|read|explain|describe|summari[sz]e|report|inspect|look|review|examine|list|walk\s+me\s+through|(?:can|could|would|will)\s+(?:you|u)\s+(?:please\s+)?(?:tell|show|give|check|read|explain|describe|summari[sz]e|list|look|inspect|review)|i\s+(?:want|need|would\s+like|['’]d\s+like)\s+to\s+(?:know|see|hear)|let\s+me\s+(?:know|see|hear))\b/i;
+// A bare record noun phrase ("latest coding execution history?") is a question too, but only when
+// nothing but the record follows it: "the coding job status should be shorter" is a request.
+const NOUN_OPENING = /^(?:the|my|your|ur|her|che['’]s|latest|last|recent|newest|current|previous|most\s+recent|coding|opencode|status|state|progress|history|update|news)\b/i;
+// Talking to or about another AI's messages belongs to the mailbox, consult and status routes.
+const PEERS = 'claude|chatgpt|codex|gemini|cursor|copilot|grok|mistral|groq|deepseek|openai';
+const PEER_TALK = new RegExp(`\\b(?:tell|ask|message|text|e-?mail|ping|notify|let)\\s+(?:${PEERS})\\b|\\b(?:${PEERS})(?:['’]s)?\\s+(?:say|said|reply|replied|respond|responded|answer|answered|write|wrote|think|thinks|thought|messages?|notes?|handoff)\\b|\\b(?:did|has|have)\\s+(?:${PEERS})\\s+(?:say|reply|respond|answer|write|get\\s+back|message)\\b`, 'i');
+// Clauses: sentences, plus "and tell me ..."-style read requests joined to a question.
+const CLAUSE_BREAK = /[.;:!?]+|,?\s+(?:and|then|also)\s+(?=(?:tell|show|give|list|explain|read|summari[sz]e|describe|report|what|why|how|which|when|did|is|was)\b)|,\s*(?=(?:did|does|do|is|was|were|has|have|had|what|why|how|which|when|where|tell|show|give|read|explain|list|check|don['’]t|do\s+not|never|no\s+need|coding|opencode|please|so|but)\b)/i;
+const NEGATION_CLAUSE = new RegExp(`^${WHOLE_PROHIBITION}(?:[\\s?.!,;:'"’]|please|sir|thanks|thank\\s+you|ok(?:ay)?|che|chay|chey|shay)*$`, 'i');
+const TRAILING_PROHIBITION = new RegExp(`\\s+${WHOLE_PROHIBITION}(?:[\\s?.!,;:'"’]|please|sir|thanks|thank\\s+you|ok(?:ay)?)*$`, 'i');
+// What may follow the question inside its own clause: filler, time words, the record itself, its
+// tests or pull request. Any verb there is a second request ("why did it fail cancel it").
+const FIELD = '(?:details?|errors?(?:\\s+messages?)?|failures?(?:\\s+reasons?)?|reasons?|logs?|results?|status|state|summary|receipt|evidence|(?:changed\\s+)?files?|file\\s+(?:list|paths?|names?)|paths?|filenames?|models?|run\\s+(?:ids?|links?|urls?)|links?|urls?|pull\\s+requests?|prs?|tests?(?:\\s+results?)?|progress|outcomes?|diff|changes|bugs?|issues?|problems?|features?|requests?|branch(?:es)?|commits?|workflows?)';
+// One field or a list of them: "the run IDs, results, model errors, file changes and PRs".
+const FIELDS = `${FIELD}(?:\\s*(?:,\\s*(?:and\\s+)?|and\\s+)(?:(?:the|its|model|file|test|run|github|error)\\s+)*${FIELD})*`;
+const ALLOWED_TAIL = new RegExp(`^(?:${[
+  '[\\s?.!,;:\'"’]+',
+  'please', 'pls', 'plz', 'sir', 'thanks', 'thank\\s+you', 'thx', 'ty', 'cheers', 'ok(?:ay)?', 'now', 'yet', 'so\\s+far', 'today', 'tonight', 'yesterday', 'last\\s+night',
+  'as\\s+of\\s+(?:now|today|this\\s+morning|tonight)', 'at\\s+the\\s+moment', 'currently', 'and\\s+thank\\s+you',
+  'this\\s+(?:morning|afternoon|evening|week|time)', 'last\\s+time', 'earlier', 'lately', 'recently', 'again', 'exactly', 'right\\s+now',
+  'already', 'at\\s+all', 'or\\s+not', 'in\\s+(?:detail|full|short|brief|total|the\\s+end)', 'overall', 'altogether', 'eventually', 'finally', 'briefly', 'aloud', 'out\\s+loud', 'for\\s+me', 'then', 'anyway',
+  'che', 'chay', 'chey', 'shay',
+  `(?:in|on|for|from|of|with|by|during|about)\\s+(?:${RECORD_REF}|it|that|them)`,
+  '(?:on|in|from)\\s+(?:github(?:\\s+actions)?|the\\s+runner|opencode|the\\s+runtime)',
+  `(?:(?:the|a|an|its|their|all\\s+the|any)\\s+)?${FIELDS}`,
+  'the\\s+other\\s+(?:day|night|week)',
+  // "fail to merge the PR": the job's own action on its own things, never a bare "to post".
+  `to\\s+${ACTION_VERB}\\s+(?:it|that|them|the\\s+(?:pr|pull\\s+request|tests?|build|branch|code|files?|changes?))`,
+  'and\\s+(?:why|when|how|what\\s+happened)',
+].join('|')})*$`, 'i');
+// A clause that is only courtesy ("thanks", "please, sir").
+const FILLER = /^(?:[\s?.!,;:'"’]+|please|sir|thanks|thank\s+you|ok(?:ay)?|che|chay|chey|shay)*$/i;
+// A verb in the tail is a second request, unless it is a noun after its determiner ("the latest run").
+const TAIL_VERB = new RegExp(`(?<!\\bto\\s)(?<!\\b(?:the|that|this|my|your|ur|its|a|an|latest|last|recent|previous|current|newest|failed)\\s)\\b(?:${ACTION_VERB}|tell|ask|recover|debug|diagnose|redo|rebuild|kick|put|switch|learn|terminate|rollback|approve|finish|cancel|stop|delete)\\b`, 'i');
+
+function okTail(tail) {
+  return tail.length <= 120 && ALLOWED_TAIL.test(tail) && !TAIL_VERB.test(tail);
+}
+
+// A sentence beside the question counts only when it asks about the same record: a bare "tell me",
+// "why?" or "what happened?", a request for one of its fields ("show me the error"), or a question
+// about it ("did it pass?"). Anything else, read verbs included ("give it another go", "tell Mom",
+// "how are my trades?", "what's the weather?"), is another request, and its own route takes the turn.
+const REF = `(?:${RECORD_REF}|it|that|they)`;
+const FOLLOW_UP = [
+  /^(?:(?:and|so|but)\s+)?(?:why|how\s+come|when|since\s+when|what\s+happened|what\s+went\s+wrong|what\s+failed|where\s+did\s+it\s+(?:stop|fail|get\s+stuck)|how\s+long(?:\s+did\s+it\s+(?:take|run))?|is\s+that\s+(?:all|it)|(?:tell|show)\s+me(?:\s+(?:what\s+happened|what\s+went\s+wrong|why|how|when|everything|more))?|let\s+me\s+know|i\s+(?:want|need)\s+to\s+know|explain|be\s+(?:brief|honest|specific)|quick\s+question)\b/i,
+  new RegExp(`^(?:(?:can|could|would|will)\\s+(?:you|u)\\s+(?:please\\s+)?)?(?:tell|show|give|read|explain|list|summari[sz]e|describe|report)(?:\\s+(?:me|us))?\\s+(?:the\\s+|its\\s+|their\\s+|all\\s+the\\s+|any\\s+)?${FIELDS}\\b`, 'i'),
+  new RegExp(`^(?:what(?:['’]s|\\s+is|\\s+was|\\s+were|\\s+are)|how(?:['’]s|\\s+is|\\s+are))\\s+(?:its|their|the)\\s+${FIELDS}\\b`, 'i'),
+  new RegExp(`^(?:did|does|has|have|is|was|were|are|had)(?:n['’]?t)?\\s+(?:${REF}|the\\s+tests?|the\\s+(?:pr|pull\\s+request))\\s+(?:(?:still|already|actually|ever|even|really|finally)\\s+)?(?:pass(?:ed)?|fail(?:ed)?|finish(?:ed)?|complete(?:d)?|succeed(?:ed)?|merged?|running|run|ran|work(?:ed|ing)?|stop(?:ped)?|crash(?:ed)?|done|open(?:ed)?|changed?\\s+(?:any(?:thing)?|files?)|get\\s+(?:merged|reviewed|approved)|push(?:ed)?|time[ds]?\\s+out|go\\s+through|stuck|alive|queued)\\b`, 'i'),
+  new RegExp(`^(?:what|which\\s+(?:files?|models?|tests?)|why|when|where|how\\s+long|how\\s+many\\s+(?:files|tests))\\s+(?:did|does|has|is|was)\\s+${REF}\\s+(?:change|use|fail|stop|break|do|take|try|run|touch|hit|report|say|produce|output)\\b`, 'i'),
+];
+
+// What may follow a follow-up: filler and the record's own fields ("did it pass the tests"), never
+// a free noun phrase, or "show me my letters" and "tell me when it's done" would pass as follow-ups.
+const FOLLOW_UP_TAIL = new RegExp(`^(?:${[
+  '[\\s?.!,;:\'"’]+',
+  'please', 'pls', 'plz', 'sir', 'thanks', 'thank\\s+you', 'thx', 'ty', 'cheers', 'ok(?:ay)?', 'now', 'yet', 'so\\s+far', 'today', 'yesterday', 'last\\s+night',
+  'as\\s+of\\s+(?:now|today|this\\s+morning)', 'at\\s+the\\s+moment', 'currently', 'and\\s+thank\\s+you',
+  'last\\s+time', 'earlier', 'lately', 'recently', 'again', 'exactly', 'right\\s+now',
+  'already', 'at\\s+all', 'or\\s+not', 'in\\s+(?:detail|full|short|brief|total|the\\s+end)', 'overall', 'altogether', 'eventually', 'finally', 'briefly', 'aloud', 'out\\s+loud', 'for\\s+me', 'then', 'anyway',
+  'che', 'chay', 'chey', 'shay',
+  `(?:in|on|for|from|of|with|by|during|about)\\s+(?:${RECORD_REF}|it|that|them)`,
+  '(?:on|in|from)\\s+(?:github(?:\\s+actions)?|the\\s+runner|opencode|the\\s+runtime)',
+  `(?:(?:the|a|an|its|their|all\\s+the|any)\\s+)?${FIELDS}`,
+  'and\\s+(?:why|when|how|what\\s+happened)',
+].join('|')})*$`, 'i');
+
+// True when one follow-up form covers the clause, with only harmless words after it.
+function followUp(body) {
+  return FOLLOW_UP.some((re) => {
+    const match = re.exec(body);
+    if (!match) return false;
+    const tail = body.slice(match[0].length);
+    return tail.length <= 120 && FOLLOW_UP_TAIL.test(tail) && !TAIL_VERB.test(tail);
+  });
+}
+
+// Where the question about a coding record ends in this clause, or -1 when it asks none.
+function questionEnd(clause, { coding, text }) {
+  const ofRun = '(?:(?:the|that|this|my|your|ur)\\s+(?:(?:last|latest|previous|recent|newest|current|most\\s+recent)\\s+)?)?(?:coding|opencode)\\s+(?:jobs?|runs?|attempts?|sessions?)';
+  const anchors = [
+    // "How far did Claude get?" names no coding word; "how far did it get with the upload" is another job.
+    /\bhow\s+far\s+(?:did|has|have)\s+(?:claude|codex|chatgpt|the\s+(?:coding|build)\s+(?:job|run|session))\b[\s\S]{0,20}\b(?:get|gotten|got|come)\b/gi,
+  ];
+  if (coding) {
+    anchors.push(
+      /\bhow\s+far\s+(?:did|has|have)\s+(?:che|chey|chay|shay|she|it|the\s+(?:job|run|session))\b[\s\S]{0,20}\b(?:get|gotten|got|come)\b/gi,
+      /\bhow\s+far\s+(?:along\s+(?:is|are)\s+)?(?:the|my|that|your|ur)\s+(?:coding|opencode)\s+(?:job|run|session)\b(?:\s+(?:got|has\s+gotten|has\s+come|came))?/gi,
+      /\b(?:latest|last|most\s+recent|recent|newest|previous|current)\s+(?:coding|opencode|self[- ]development)\s+(?:execution\s+|run\s+|job\s+|session\s+|attempt\s+)?(?:history|runs?|jobs?|sessions?|attempts?|logs?|results?|status|executions?|state)\b(?:['’]s)?(?:\s+(?:execution\s+)?(?:history|status|state|results?|logs?|outcome|progress))?/gi,
+      // "Your coding runs on GitHub Actions": the workflow runs are the execution record, not the workflow file.
+      /\b(?:github\s+actions?|workflow)\s+(?:runs?|history|results?|executions?)\b|\bruns?\s+(?:on|in)\s+github\s+actions\b/gi,
+      /\b(?:coding|opencode|self[- ]development)(?:\s+(?:jobs?|runs?|executions?|sessions?))?(?:['’]s)?\s+(?:execution\s+)?history\b/gi,
+      new RegExp(`${STATE_WORD.source}(?:\\s+(?:of|on|for|about|with|regarding|update|report|check|the|that|this|my|your|ur|its|her|last|latest|recent|current|previous|newest|workflow|github|actions|runs?|jobs?|execution))*\\s+${WORK}\\b|\\b${WORK}(?:['’]s)?(?:\\s+(?:execution|run|job|current|latest|overall|is|was))*\\s+${STATE_WORD.source}|\\b(?:coding|opencode)\\s+(?:status|state)\\b`, 'gi'),
+      new RegExp(`\\b(?:(?:why|how)\\s+(?:did|has|does|do|is|was)|why['’]d)\\s+(?:it|that|this|everything|${ofRun}|the\\s+(?:job|run|build|tests?|pr|pull\\s+request))\\b[\\s\\S]{0,30}\\b(?:fail|failed|stop|stopped|stuck|broke|broken)\\b`, 'gi'),
+      new RegExp(`\\bexplain\\s+why\\s+(?:it|that|this|${ofRun}|the\\s+(?:job|run|build|tests?))\\b[\\s\\S]{0,30}\\b(?:fail|failed|stop|stopped|stuck)\\b`, 'gi'),
+      new RegExp(`\\b(?:did|has|have)\\s+${ofRun}\\s+(?:(?:eventually|finally|actually|really|ever|already|still|even)\\s+)?(?:fail|failed|stop|stopped|finish|finished|succeed|succeeded|pass|passed|work|worked|merge|merged|open|opened|create|created|raise|raised|fix|fixed|break|broke|complete|completed|run|ran|push|pushed)\\b`, 'gi'),
+      /\bwhat\s+(?:happened|went\s+wrong)\s+(?:to|with)\s+(?:the|my|that|this|the\s+last|the\s+latest|your)\s+(?:coding|opencode)\s+(?:job|run|attempt|session)\b/gi,
+      new RegExp(`\\bhow\\s+did\\s+${ofRun}\\s+go\\b|\\b(?:is|are)\\s+${ofRun}\\s+(?:still\\s+)?(?:running|done|finished|working|stuck|alive|queued)\\b|\\bwhat\\s+did\\s+${ofRun}\\s+do\\b`, 'gi'),
+      /\bshow\s+me\s+the\s+actual\s+(?:result|outcome|evidence)\b/gi,
+      // The same record asked about in other words: how it is doing, whether it crashed, which model,
+      // how long, when, what is blocking it. Each names the coding job itself.
+      new RegExp(`\\bhow(?:['’]?s|\\s+is)\\s+${ofRun}(?:\\s+(?:going|doing|coming\\s+along|looking))?\\b`, 'gi'),
+      new RegExp(`\\b(?:did|has|have)\\s+${ofRun}\\s+(?:crash(?:ed)?(?:\\s+or\\s+(?:time[d]?\\s+out|hang|hung|die|died))?|die|died|time[d]?\\s+out|hang|hung|get\\s+stuck|pass\\s+or\\s+fail|succeed\\s+or\\s+fail)\\b`, 'gi'),
+      new RegExp(`\\b(?:which|what)\\s+models?\\s+(?:did|does|is|was)\\s+${ofRun}\\s+(?:use|using|run\\s+on|try|pick)\\b`, 'gi'),
+      new RegExp(`\\bhow\\s+long\\s+(?:did|has|is)\\s+${ofRun}\\s+(?:take|taken|run|running|been\\s+running|last)\\b`, 'gi'),
+      new RegExp(`\\bwhen\\s+did\\s+${ofRun}\\s+(?:start(?:\\s+running)?|begin|finish|end|run|fail|stop|last\\s+run)\\b`, 'gi'),
+      new RegExp(`\\bwhat(?:['’]?s|\\s+is)\\s+(?:going\\s+on|blocking|wrong|happening|new|the\\s+latest|the\\s+hold-?up)\\s+(?:with|on)\\s+${ofRun}\\b`, 'gi'),
+      new RegExp(`\\bis\\s+${ofRun}\\s+(?:still\\s+)?(?:retrying|recovering|blocked|failing|passing|green|red|ok|okay|alright|healthy)\\b`, 'gi'),
+      new RegExp(`\\bhow\\s+did\\s+${ofRun}\\s+(?:go|do|turn\\s+out|end(?:\\s+up)?)\\b`, 'gi'),
+      // "Inspect that coding job": the job's record, not the code that runs it.
+      /\b(?:inspect|check|look\s+at|review|show\s+me|examine)\s+(?:that|the|my|this|your|the\s+last|the\s+latest)\s+(?:coding|opencode)\s+(?:jobs?|runs?|sessions?|attempts?)\b/gi,
+    );
+    // "What files did the coding job change?" is history; "what files should I change" and "what
+    // would the coding job change" are planning. The files must belong to a coding run and have
+    // been changed by it: "which coding files have tests" and "do not modify files" are not.
+    if (new RegExp(`\\b${WORK}\\b`, 'i').test(text)
+      && (/\b(?:changed|touched|modified|edited|added|created|deleted|removed|wrote)\b/i.test(text)
+        || /\b(?:did|has|have)\b[\s\S]{0,60}\b(?:change|touch|modify|edit|add|create|delete|remove|write)\b/i.test(text))
+      && !/\b(?:should|would|could|might|shall|will)\b/i.test(text)) {
+      anchors.push(/\bfiles\b[\s\S]{0,60}\b(?:changed|touched|modified|edited|added|created|deleted|removed|wrote|change|touch|modify|edit|add|create|delete|remove|write)\b/gi);
+    }
+  }
+  let start = -1;
+  let end = -1;
+  for (const anchor of anchors) {
+    for (const match of clause.matchAll(anchor)) {
+      start = start < 0 ? match.index : Math.min(start, match.index);
+      end = Math.max(end, match.index + match[0].length);
+    }
+  }
+  return { start, end };
+}
+
+// What may stand between the clause's opening and the question itself: the opening phrase, its
+// own small words and the record's own adjectives. "how are my trades and coding status" and
+// "tell mom the coding status" carry another subject there, so they are not the question.
+const HEAD_WORDS = new Set(('the an my your ur its me us to about on of for with from at please just quickly now so exactly '
+  + 'actually again all any some more everything anything know see hear out up if whether there is are was were did does do has have had '
+  + 'tell show give check read explain describe summarize summarise report inspect look review examine list walk through fill '
+  + 'bring speed pull that this also quick question real honest brief short detailed full complete current latest last recent '
+  + 'newest previous most own whole entire exact precise regarding concerning what which why how when where happened going doing '
+  + 'went wrong far long many sir che chay chey shay').split(' '));
+function okHead(head, body) {
+  // The opening phrase ("can you check", "I want to know") is one unit, even when the question's
+  // anchor begins inside it; after it, only the head words may stand before the question.
+  const opening = QUESTION_OPENING.exec(body)?.[0]?.length || 0;
+  // "her latest coding run" is CHE's own record; "tell her the coding status" is a relay to someone.
+  let rest = (head.length <= opening ? '' : head.slice(opening)).toLowerCase().replace(/[’]/g, "'");
+  if (/\bher\s*$/.test(rest) && /^(?:latest|last|recent|previous|current|newest|own|coding|opencode)\b/i.test(body.slice(head.length))) rest = rest.replace(/\bher\s*$/, '');
+  return rest.split(/[\s,;:"]+/).filter(Boolean).every((token) => HEAD_WORDS.has(token) || /^(?:che|chey|chay)'s$/.test(token));
+}
+
+export function codingHistoryIntent(message) {
+  const raw = String(message || '').trim();
+  const text = withoutQuotedText(raw);
+  if (!text || ownerBuildAuthorization(text)) return false;
+  if (/^\s*\//.test(raw) || CODEBASE_READ.test(text)) return false;
+  if (HISTORY_TARGET.test(raw)) return false;
+  // Clauses that only forbid CHE an action are asides; the action check reads the rest.
+  const active = text.split(CLAUSE_BREAK)
+    .map((part) => part.replace(TRAILING_PROHIBITION, ''))
+    .filter((part) => !NEGATION_CLAUSE.test(part.replace(OPENING_ASIDE, '').trim()))
+    .join('. ');
+  if (CHANGE_INSTRUCTION.test(active) || trailingAction(active)) return false;
+  if (OTHER_SUBJECT.test(text) || PEER_TALK.test(text)) return false;
+  if (STATUS_PHRASE.test(text)) return true;
+  if (CODE_SUBJECT.test(text)) return false;
+  const coding = CODING.test(text);
+  // One particular record, not coding jobs in general.
+  if (coding && !DEFINITE.test(text)) return false;
+  // Every clause must be the question, a "don't change anything" aside, or a follow-up about the
+  // same record; anything else in the turn is another request, and its own route takes the whole turn.
+  let asked = false;
+  for (const part of text.split(CLAUSE_BREAK)) {
+    const body = part.replace(OPENING_ASIDE, '').trim();
+    if (!body || FILLER.test(body) || NEGATION_CLAUSE.test(body)) continue;
+    const { start, end } = questionEnd(body, { coding, text });
+    if (end >= 0) {
+      if (!QUESTION_OPENING.test(body) && !NOUN_OPENING.test(body)) return false;
+      if (!okHead(body.slice(0, start), body)) return false;
+      const tail = body.slice(end);
+      if (!okTail(tail) && !followUp(tail.trim()) && !NEGATION_CLAUSE.test(tail.trim())) return false;
+      asked = true;
+    } else if (!followUp(body)) {
+      return false;
+    }
+  }
+  return asked;
+}
+
 export function repositoryInspectionIntent(message) {
   const text = withoutQuotedText(String(message || '').trim());
   if (explicitChatOnlyResponseDirective(text)) return false;
   const policy = currentTurnActionPolicy(text);
   if (policy.mode === EXECUTION_MODE.BUILD) return false;
+
+  // Read-only coding history is answered from the runtime record, never by reading repository files.
+  if (codingHistoryIntent(text)) return false;
 
   // Existing status/mission/change controls have dedicated deterministic
   // routes later in the Worker; source inspection must never hijack them.
